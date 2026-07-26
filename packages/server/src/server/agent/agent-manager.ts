@@ -414,6 +414,8 @@ interface RuntimeCollectionState {
   latestActivityAtByAgentId: Map<string, number>;
 }
 
+type RuntimeClosureDisposition = "reload" | "terminate";
+
 type ActiveManagedAgent =
   | ManagedAgentInitializing
   | ManagedAgentIdle
@@ -593,6 +595,7 @@ export class AgentManager {
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
+  private agentTreeLifecycleTail: Promise<void> = Promise.resolve();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
@@ -1033,7 +1036,11 @@ export class AgentManager {
     agentId: string | undefined,
     options: CreateAgentOptions,
   ): Promise<ManagedAgent> {
-    return this.trackAgentRegistrationOperation(this.createAgentInternal(config, agentId, options));
+    return this.trackAgentRegistrationOperation(
+      this.runManagedDescendantRegistration(options.labels, () =>
+        this.createAgentInternal(config, agentId, options),
+      ),
+    );
   }
 
   private async createAgentInternal(
@@ -1090,7 +1097,9 @@ export class AgentManager {
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(
-      this.resumeAgentFromPersistenceInternal(handle, overrides, agentId, options, resumeOptions),
+      this.runManagedDescendantRegistration(options?.labels, () =>
+        this.resumeAgentFromPersistenceInternal(handle, overrides, agentId, options, resumeOptions),
+      ),
     );
   }
 
@@ -1152,7 +1161,11 @@ export class AgentManager {
     workspaceId: string;
     labels?: Record<string, string>;
   }): Promise<ManagedAgent> {
-    return this.trackAgentRegistrationOperation(this.importProviderSessionInternal(input));
+    return this.trackAgentRegistrationOperation(
+      this.runManagedDescendantRegistration(input.labels, () =>
+        this.importProviderSessionInternal(input),
+      ),
+    );
   }
 
   private async importProviderSessionInternal(input: {
@@ -1229,8 +1242,11 @@ export class AgentManager {
     overrides?: Partial<AgentSessionConfig>,
     options?: { rehydrateFromDisk?: boolean },
   ): Promise<ManagedAgent> {
+    const labels = this.agents.get(agentId)?.labels;
     return this.trackAgentRegistrationOperation(
-      this.reloadAgentSessionInternal(agentId, overrides, options),
+      this.runManagedDescendantRegistration(labels, () =>
+        this.reloadAgentSessionInternal(agentId, overrides, options),
+      ),
     );
   }
 
@@ -1270,7 +1286,7 @@ export class AgentManager {
     try {
       this.assertAcceptingAgentRegistrations();
 
-      const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
+      const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded", "reload");
       try {
         await this.persistSnapshot(closedExisting);
       } finally {
@@ -1394,7 +1410,7 @@ export class AgentManager {
       },
       "agent.manager.close.start",
     );
-    const closedAgent = this.prepareAgentForClosure(agent, "agent closed");
+    const closedAgent = this.prepareAgentForClosure(agent, "agent closed", "terminate");
     let closeError: unknown;
     try {
       await agent.session.close();
@@ -1430,39 +1446,72 @@ export class AgentManager {
     cutoff: Date;
     protectedAgentIds: ReadonlySet<string>;
   }): Promise<IdleAgentCollectionResult> {
+    return this.runAgentTreeLifecycleOperation(() => this.collectIdleAgentsInternal(options));
+  }
+
+  private async collectIdleAgentsInternal(options: {
+    cutoff: Date;
+    protectedAgentIds: ReadonlySet<string>;
+  }): Promise<IdleAgentCollectionResult> {
     const result: IdleAgentCollectionResult = { collected: [], failures: [] };
+    const attemptedAgentIds = new Set<string>();
     await this.refreshManagedParentAgentIds();
     let collectionState = this.resolveRuntimeCollectionState(options.protectedAgentIds);
 
-    for (const agent of Array.from(this.agents.values())) {
-      const current = this.agents.get(agent.id);
-      if (
-        !current ||
-        !this.isIdleAgentCollectable(current, {
-          cutoff: options.cutoff,
-          protectedAgentIds: collectionState.protectedAgentIds,
-          latestActivityAt:
-            collectionState.latestActivityAtByAgentId.get(current.id) ??
-            current.updatedAt.getTime(),
-        })
-      ) {
-        continue;
-      }
+    let removedAgentInPass: boolean;
+    do {
+      removedAgentInPass = false;
+      for (const agent of Array.from(this.agents.values())) {
+        const current = this.agents.get(agent.id);
+        if (
+          !current ||
+          attemptedAgentIds.has(current.id) ||
+          !this.isIdleAgentCollectable(current, {
+            cutoff: options.cutoff,
+            protectedAgentIds: collectionState.protectedAgentIds,
+            latestActivityAt:
+              collectionState.latestActivityAtByAgentId.get(current.id) ??
+              current.updatedAt.getTime(),
+          })
+        ) {
+          continue;
+        }
 
-      const entry: IdleAgentCollectionEntry = {
-        agentId: current.id,
-        provider: current.provider,
-        ...(current.persistence?.sessionId ? { sessionId: current.persistence.sessionId } : {}),
-      };
-      try {
-        await this.closeAgent(current.id);
-        result.collected.push(entry);
-      } catch (error) {
-        result.failures.push({ ...entry, error });
+        attemptedAgentIds.add(current.id);
+        const entry: IdleAgentCollectionEntry = {
+          agentId: current.id,
+          provider: current.provider,
+          ...(current.persistence?.sessionId ? { sessionId: current.persistence.sessionId } : {}),
+        };
+        try {
+          await this.closeAgent(current.id);
+          result.collected.push(entry);
+        } catch (error) {
+          result.failures.push({ ...entry, error });
+        }
+        removedAgentInPass ||= !this.agents.has(current.id);
+        collectionState = this.resolveRuntimeCollectionState(options.protectedAgentIds);
       }
-      collectionState = this.resolveRuntimeCollectionState(options.protectedAgentIds);
-    }
+    } while (removedAgentInPass);
 
+    return result;
+  }
+
+  private runManagedDescendantRegistration<T>(
+    labels: Record<string, string> | undefined,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    return getParentAgentIdFromLabels(labels)
+      ? this.runAgentTreeLifecycleOperation(operation)
+      : operation();
+  }
+
+  private runAgentTreeLifecycleOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.agentTreeLifecycleTail.then(operation);
+    this.agentTreeLifecycleTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
     return result;
   }
 
@@ -1475,9 +1524,7 @@ export class AgentManager {
     };
     for (const agent of this.agents.values()) {
       this.recordRuntimeCollectionActivity(agent, agent.updatedAt.getTime(), state);
-      if (this.hasActiveRuntimeWork(agent)) {
-        this.protectManagedAncestors(agent, state.protectedAgentIds);
-      }
+      this.protectManagedAncestors(agent, state.protectedAgentIds);
       for (const subagent of this.providerSubagents.list(agent.id)) {
         this.recordRuntimeCollectionActivity(agent, Date.parse(subagent.updatedAt), state);
         if (subagent.status === "running") {
@@ -1487,17 +1534,6 @@ export class AgentManager {
       }
     }
     return state;
-  }
-
-  private hasActiveRuntimeWork(agent: LiveManagedAgent): boolean {
-    return (
-      isAgentBusy(agent.lifecycle) ||
-      agent.activeForegroundTurnId !== null ||
-      this.runs.hasRun(agent.id) ||
-      agent.pendingReplacement ||
-      agent.pendingPermissions.size > 0 ||
-      agent.inFlightPermissionResponses.size > 0
-    );
   }
 
   private protectManagedAncestors(agent: LiveManagedAgent, protectedAgentIds: Set<string>): void {
@@ -3045,10 +3081,13 @@ export class AgentManager {
   private prepareAgentForClosure(
     agent: LiveManagedAgent,
     cancelReason: string,
+    disposition: RuntimeClosureDisposition,
   ): ManagedAgentClosed {
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
-    for (const event of this.providerSubagents.cancelRunning(agent.id)) {
-      this.dispatch({ type: "provider_subagent", event });
+    if (disposition === "terminate") {
+      for (const event of this.providerSubagents.cancelRunning(agent.id)) {
+        this.dispatch({ type: "provider_subagent", event });
+      }
     }
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);

@@ -2848,6 +2848,41 @@ test("reloadAgentSession clears provider children before rehydrating from disk",
   expect(manager.listProviderSubagents(snapshot.id)).toEqual([]);
 });
 
+test("reloadAgentSession preserves running provider children by default", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-child-hot-reload-"));
+  let activeSession: TestAgentSession | null = null;
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      activeSession = new TestAgentSession(config);
+      return activeSession;
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+
+  try {
+    const parent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    activeSession?.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: { type: "upsert", id: "running-child", status: "running" },
+    });
+    await manager.flush();
+
+    await manager.reloadAgentSession(parent.id);
+
+    expect(manager.listProviderSubagents(parent.id)).toEqual([
+      expect.objectContaining({ id: "running-child", status: "running" }),
+    ]);
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("hydrateTimelineFromProvider restores and broadcasts provider children from session history", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-child-history-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
@@ -7549,6 +7584,103 @@ test("collectIdleAgents refreshes descendant state after an earlier close", asyn
     });
     expect(manager.getAgent(parent.id)?.lifecycle).toBe("idle");
     expect(manager.getAgent(child.id)?.lifecycle).toBe("running");
+  } finally {
+    closeAllowed.resolve();
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("collectIdleAgents closes managed descendants before their ancestors", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-descendant-close-order-"));
+  const closeOrder: string[] = [];
+  const client = new (class extends TestAgentClient {
+    private sessionCount = 0;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const label = this.sessionCount++ === 0 ? "parent" : "child";
+      return new (class extends TestAgentSession {
+        override async close(): Promise<void> {
+          closeOrder.push(label);
+        }
+      })(config);
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+
+  try {
+    const parent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+      workspaceId: undefined,
+    });
+
+    await manager.collectIdleAgents({
+      cutoff: new Date(Date.now() + 1_000),
+      protectedAgentIds: new Set(),
+    });
+
+    expect(closeOrder).toEqual(["child", "parent"]);
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("collectIdleAgents serializes descendant registration with ancestor collection", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-descendant-registration-race-"));
+  const closeStarted = deferred<void>();
+  const closeAllowed = deferred<void>();
+  const client = new (class extends TestAgentClient {
+    readonly sessions: TestAgentSession[] = [];
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const session =
+        this.sessions.length === 0
+          ? new (class extends TestAgentSession {
+              override async close(): Promise<void> {
+                closeStarted.resolve();
+                await closeAllowed.promise;
+              }
+            })(config)
+          : new TestAgentSession(config);
+      this.sessions.push(session);
+      return session;
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+
+  try {
+    const parent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const collection = manager.collectIdleAgents({
+      cutoff: new Date(Date.now() + 1_000),
+      protectedAgentIds: new Set(),
+    });
+    await closeStarted.promise;
+
+    const childRegistration = manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+      workspaceId: undefined,
+    });
+    await Promise.resolve();
+
+    expect(client.sessions).toHaveLength(1);
+
+    closeAllowed.resolve();
+    await expect(collection).resolves.toEqual({
+      collected: [expect.objectContaining({ agentId: parent.id })],
+      failures: [],
+    });
+    await childRegistration;
+    expect(client.sessions).toHaveLength(2);
   } finally {
     closeAllowed.resolve();
     await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
