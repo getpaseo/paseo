@@ -402,6 +402,83 @@ describe("ClaudeAgentSession sub-agent sidechain updates", () => {
     });
   });
 
+  test("ignores nested provider events for non-subagent parent tools", async () => {
+    queryFactory.mockImplementation(() =>
+      buildQueryMock([
+        {
+          type: "system",
+          subtype: "init",
+          session_id: "nested-tool-session",
+          permissionMode: "default",
+          model: "opus",
+        },
+        {
+          type: "stream_event",
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_start",
+            index: 0,
+            content_block: {
+              type: "tool_use",
+              id: "bash-call-1",
+              name: "Bash",
+              input: { command: "npm test" },
+            },
+          },
+        },
+        {
+          type: "stream_event",
+          parent_tool_use_id: "bash-call-1",
+          event: {
+            type: "content_block_start",
+            index: 1,
+            content_block: {
+              type: "tool_use",
+              id: "nested-read-1",
+              name: "Read",
+              input: { file_path: "package.json" },
+            },
+          },
+        },
+        {
+          type: "assistant",
+          parent_tool_use_id: null,
+          message: {
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "bash-call-1",
+                tool_name: "Bash",
+                content: "done",
+                is_error: false,
+              },
+            ],
+          },
+        },
+        {
+          type: "result",
+          subtype: "success",
+          usage: {
+            input_tokens: 1,
+            cache_read_input_tokens: 0,
+            output_tokens: 1,
+          },
+          total_cost_usd: 0,
+        },
+      ]),
+    );
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({ provider: "claude", cwd: process.cwd() });
+
+    const events = await collectUntilTerminal(streamSession(session, "run nested tool"));
+    await session.close();
+
+    expect(events.some((event) => event.type === "provider_subagent")).toBe(false);
+  });
+
   test("keeps a failed Task subagent failed when the parent turn succeeds", async () => {
     const failedEvents = buildTailScenarioEvents(1);
     const taskResult = failedEvents.find(

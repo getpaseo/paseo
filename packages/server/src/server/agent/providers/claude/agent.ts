@@ -3712,6 +3712,10 @@ class ClaudeAgentSession implements AgentSession {
   ): AgentStreamEvent[] {
     const parentToolUseId = readClaudeParentToolUseId(message);
     if (parentToolUseId) {
+      const parentToolUse = this.toolUseCache.get(parentToolUseId);
+      if (!isClaudeSubagentToolName(parentToolUse?.name)) {
+        return [];
+      }
       return this.sidechainTracker.handleMessage(message, parentToolUseId);
     }
 
@@ -5233,6 +5237,9 @@ function buildClaudePersistedSidechainEvents(
   const toolCalls = readClaudeHistoricalSubagentToolCalls(parentEntries);
   const toolResults = readClaudeHistoricalSubagentToolResults(parentEntries);
   for (const [agentId, entries] of groupClaudeSidechainEntries(sidechainEntries)) {
+    if (!toolResults.has(agentId)) {
+      continue;
+    }
     events.push(
       ...buildClaudePersistedSidechainAgentEvents(
         agentId,
