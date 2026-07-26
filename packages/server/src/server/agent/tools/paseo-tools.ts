@@ -835,14 +835,14 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       },
       { message: "provider must be provider or provider/model, for example codex/gpt-5.4" },
     );
+  const ProviderFeatureValuesInputSchema = z.record(z.string(), z.json());
   const CreateAgentSettingsInputSchema = z
     .object({
       modeId: z.string().optional().describe("Session mode to configure before the first run."),
       thinkingOptionId: z.string().optional().describe("Thinking option ID."),
-      features: z
-        .record(z.string(), z.unknown())
-        .optional()
-        .describe("Provider-specific feature values, for example { fast_mode: true } for Codex."),
+      features: ProviderFeatureValuesInputSchema.optional().describe(
+        "Provider-specific feature values, for example { fast_mode: true } for Codex.",
+      ),
     })
     .strict();
   const UpdateAgentSettingsInputSchema = z
@@ -854,10 +854,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         .nullable()
         .optional()
         .describe("Thinking option ID. Pass null to clear."),
-      features: z
-        .record(z.string(), z.unknown())
-        .optional()
-        .describe("Provider-specific feature values, for example { fast_mode: true } for Codex."),
+      features: ProviderFeatureValuesInputSchema.optional().describe(
+        "Provider-specific feature values, for example { fast_mode: true } for Codex.",
+      ),
     })
     .strict();
   const InspectProviderSettingsInputSchema = z
@@ -865,10 +864,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       modeId: z.string().optional().describe("Draft session mode ID."),
       model: z.string().optional().describe("Draft model ID."),
       thinkingOptionId: z.string().optional().describe("Draft thinking option ID."),
-      features: z
-        .record(z.string(), z.unknown())
-        .optional()
-        .describe("Draft provider feature values."),
+      features: ProviderFeatureValuesInputSchema.optional().describe(
+        "Draft provider feature values.",
+      ),
     })
     .strict();
   const AgentRelationshipInputSchema = z.discriminatedUnion("kind", [

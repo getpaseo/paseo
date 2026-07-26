@@ -1137,6 +1137,48 @@ describe("create_agent MCP tool", () => {
   });
   const ensureWorkspaceForCreate = async () => "workspace-created";
 
+  it("publishes explicit JSON schemas for provider feature values", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      ensureWorkspaceForCreate,
+      logger,
+    });
+    const client = await connectInMemoryMcpClient(server);
+
+    try {
+      const listedTools = await client.listTools();
+
+      for (const toolName of ["create_agent", "update_agent", "inspect_provider"]) {
+        const tool = listedTools.tools.find((candidate) => candidate.name === toolName);
+        expect(tool, `${toolName} tool definition`).toBeDefined();
+
+        const inputSchema = z
+          .object({ properties: z.record(z.string(), z.unknown()) })
+          .passthrough()
+          .parse(tool?.inputSchema);
+        const settingsSchema = z
+          .object({ properties: z.record(z.string(), z.unknown()) })
+          .passthrough()
+          .parse(inputSchema.properties.settings);
+        const featuresSchema = z
+          .object({
+            type: z.literal("object"),
+            additionalProperties: z.object({ $ref: z.string() }).passthrough(),
+          })
+          .passthrough()
+          .parse(settingsSchema.properties.features);
+
+        expect(featuresSchema.additionalProperties.$ref).toMatch(/^#\/definitions\//);
+      }
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   it("requires a concise title no longer than 60 characters", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const server = await createAgentMcpServer({
