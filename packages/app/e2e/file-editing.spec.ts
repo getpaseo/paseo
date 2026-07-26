@@ -95,6 +95,34 @@ test.describe("CodeMirror workspace file editing", () => {
     }
   });
 
+  test("clicking the editor focuses its pane beside an agent", async ({ page }) => {
+    const target = "target.ts:42";
+    const session = await seedAgentWithFileLink(target);
+
+    try {
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await openAgentRoute(page, session);
+
+      await page.getByRole("button", { name: "Split pane right" }).first().click();
+      await expect(page.getByTestId("workspace-tabs-row").filter({ visible: true })).toHaveCount(2);
+      await openWorkspaceFile(page, "target.ts");
+
+      await page
+        .getByTestId(`workspace-tab-agent_${session.agentId}`)
+        .filter({ visible: true })
+        .click();
+      await editor(page).click();
+      await page.keyboard.press("Alt+Shift+W");
+
+      await expect(page.getByTestId("workspace-tab-file_target.ts")).not.toBeVisible();
+      await expect(
+        page.getByTestId(`workspace-tab-agent_${session.agentId}`).filter({ visible: true }),
+      ).toBeVisible();
+    } finally {
+      await session.cleanup();
+    }
+  });
+
   test("shows the full file path and keeps editor controls stable", async ({
     page,
     withWorkspace,
