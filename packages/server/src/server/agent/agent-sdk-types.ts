@@ -2,6 +2,7 @@ import type { Options as ClaudeAgentOptions } from "@anthropic-ai/claude-agent-s
 import type { AgentProviderNotice } from "@getpaseo/protocol/agent-types";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { PaseoToolCatalog } from "./tools/types.js";
+import type { ProcessLaunchStrategy } from "../devcontainer/launch-strategy.js";
 
 export type { AgentProviderNotice };
 
@@ -173,6 +174,13 @@ export interface AgentCapabilityFlags {
   supportsDynamicModes: boolean;
   supportsMcpServers: boolean;
   supportsNativePaseoTools?: boolean;
+  /**
+   * Whether this provider honors the workspace launch strategy — i.e. spawns
+   * its processes inside the workspace's container instead of on the host.
+   * Providers without it are refused on container workspaces rather than
+   * silently running outside the container.
+   */
+  supportsIsolatedLaunch?: boolean;
   supportsReasoningStream: boolean;
   supportsToolInvocations: boolean;
   supportsRewindConversation?: boolean;
@@ -515,6 +523,8 @@ export interface ListImportableSessionsOptions {
    * sessions by working directory should do so before doing expensive work.
    */
   cwd?: string;
+  /** When set, run the listing probe inside the isolated environment. */
+  launchStrategy?: ProcessLaunchStrategy;
 }
 
 export interface ImportableProviderSession {
@@ -584,6 +594,11 @@ export interface AgentSessionConfig {
   internal?: boolean;
 }
 
+export interface ProviderAvailabilityOptions {
+  /** Present when the check is for a container rather than the host. */
+  launchStrategy?: ProcessLaunchStrategy;
+}
+
 export interface AgentLaunchContext {
   agentId?: string;
   env?: Record<string, string>;
@@ -592,6 +607,13 @@ export interface AgentLaunchContext {
    * AgentSessionConfig; providers may adapt it to their native tool surface.
    */
   paseoTools?: PaseoToolCatalog;
+  /**
+   * Process launch strategy for dev container support. When present, providers
+   * should route process spawning through this strategy instead of spawning
+   * directly on the host. When absent, providers spawn locally as before.
+   * This is runtime-only and must never be persisted.
+   */
+  launchStrategy?: ProcessLaunchStrategy;
 }
 
 export interface AgentCreateSessionOptions {
@@ -669,6 +691,8 @@ export type FetchCatalogOptions =
       cwd: string;
       force: boolean;
       timeoutMs?: number;
+      /** When set, run the catalog probe inside the isolated environment. */
+      launchStrategy?: ProcessLaunchStrategy;
     };
 
 export interface ProviderCatalog {
@@ -719,18 +743,31 @@ export interface AgentClient {
    * Check if this provider is available (CLI binary is installed).
    * Returns true if available, false otherwise.
    */
-  isAvailable(): Promise<boolean>;
+  /**
+   * Whether this provider can run for a given launch target. Container
+   * launches pass their strategy so a provider that gates on a binary answers
+   * for the container rather than for the host — and so gates that have
+   * nothing to do with the filesystem (an opt-in env var, a disabled
+   * provider) still apply.
+   */
+  isAvailable(options?: ProviderAvailabilityOptions): Promise<boolean>;
   getDiagnostic?(): Promise<{ diagnostic: string }>;
   /**
    * Archive a durable native session (best-effort). Runtime release belongs to AgentSession.close().
    * Called when Paseo archives an agent so the provider's own UI reflects the same state.
    */
-  archiveNativeSession?(handle: AgentPersistenceHandle): Promise<void>;
+  archiveNativeSession?(
+    handle: AgentPersistenceHandle,
+    options?: { launchStrategy?: ProcessLaunchStrategy },
+  ): Promise<void>;
   /**
    * Unarchive a durable native session in the provider.
    * Called before Paseo clears its archived flag so provider resume can succeed.
    */
-  unarchiveNativeSession?(handle: AgentPersistenceHandle): Promise<void>;
+  unarchiveNativeSession?(
+    handle: AgentPersistenceHandle,
+    options?: { launchStrategy?: ProcessLaunchStrategy },
+  ): Promise<void>;
   /**
    * Release any provider-owned resources held by this client (background
    * processes, sockets, cached subprocesses, etc.). Called when the daemon
