@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.904 - 2026-07-27
+
+### Fixed
+
+- Intrusive attention no longer auto-navigates while you are already in Paseo (Code Server, Browser, or any embedded webview/iframe guest); show a banner instead and only focus-steal when another app or Space has focus
+
 ## 0.2.903 - 2026-07-27
 
 ### Added
