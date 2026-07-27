@@ -5,6 +5,7 @@ import {
   expectNewWorkspaceProjectSelected,
   openGlobalNewWorkspaceComposer,
   openNewWorkspaceComposer,
+  openNewWorkspaceProjectPickerWithShortcut,
 } from "./helpers/new-workspace";
 import { getE2EDaemonPort } from "./helpers/daemon-port";
 import { seedWorkspace, type SeededWorkspace } from "./helpers/seed-client";
@@ -101,6 +102,20 @@ test.describe("New workspace entry points", () => {
         timeout: 30_000,
       });
       await expect(page.getByTestId("host-picker-trigger")).toHaveCount(0);
+    } finally {
+      await seeded.cleanup();
+    }
+  });
+
+  test("Ctrl+P opens the project picker with search focused", async ({ page }) => {
+    const seeded: SeededWorkspace = await seedWorkspace({ repoPrefix: "entry-shortcut-" });
+
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openGlobalNewWorkspaceComposer(page);
+
+      await openNewWorkspaceProjectPickerWithShortcut(page);
     } finally {
       await seeded.cleanup();
     }
