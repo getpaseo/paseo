@@ -45,6 +45,22 @@ describe("planAttentionInterrupt", () => {
     });
   });
 
+  it("never auto-navigates while app is actively visible even with intrusive on", () => {
+    // Code Server / Browser tab inside Paseo must stay put; banner only.
+    expect(
+      planAttentionInterrupt({
+        settings: { ...defaultSettings, attentionIntrusiveMode: true },
+        isActivelyVisible: true,
+        focusedAgentId: "editor-session",
+        focusedTerminalId: null,
+        target: { kind: "agent", id: "a1" },
+      }),
+    ).toMatchObject({
+      showBanner: true,
+      intrusiveFocusAndNavigate: false,
+    });
+  });
+
   it("uses bubble + sound when unfocused with defaults", () => {
     expect(
       planAttentionInterrupt({

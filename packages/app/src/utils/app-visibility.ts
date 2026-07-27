@@ -19,16 +19,32 @@ export function isAppActivelyVisible(input: ActiveAppVisibilityInput): boolean {
   return isAppVisible(input) && (input.native || input.windowFocused);
 }
 
+/**
+ * Electron <webview> / <iframe> guests steal `document.hasFocus()` while the
+ * user is still in the Paseo window (Code Server, Browser, etc.). Treat that
+ * as focused-in-app so intrusive attention banners don't navigate away.
+ */
+export function isGuestContentFocused(activeElement: { tagName?: string } | null): boolean {
+  if (!activeElement || typeof activeElement.tagName !== "string") {
+    return false;
+  }
+  const tag = activeElement.tagName.toUpperCase();
+  return tag === "WEBVIEW" || tag === "IFRAME";
+}
+
 function getDocumentVisible(): boolean {
   return typeof document === "undefined" || document.visibilityState === "visible";
 }
 
 function getWindowFocused(): boolean {
-  return (
-    typeof document === "undefined" ||
-    typeof document.hasFocus !== "function" ||
-    document.hasFocus()
-  );
+  if (typeof document === "undefined") {
+    return true;
+  }
+  if (typeof document.hasFocus === "function" && document.hasFocus()) {
+    return true;
+  }
+  // Guest content focused inside our window (Code Server / Browser webview).
+  return isGuestContentFocused(document.activeElement);
 }
 
 export function getIsAppVisible(appState: string = AppState.currentState): boolean {
