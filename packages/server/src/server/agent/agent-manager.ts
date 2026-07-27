@@ -1388,6 +1388,7 @@ export class AgentManager {
       },
       "agent.manager.close.start",
     );
+    this.cancelRunningProviderSubagents(agentId);
     const closedAgent = this.prepareAgentForClosure(agent, "agent closed");
     let closeError: unknown;
     try {
@@ -1417,6 +1418,20 @@ export class AgentManager {
     }
     if (persistError !== undefined) {
       throw persistError;
+    }
+  }
+
+  private cancelRunningProviderSubagents(parentAgentId: string): void {
+    for (const subagent of this.providerSubagents.list(parentAgentId)) {
+      if (subagent.status !== "running") {
+        continue;
+      }
+      const event = this.providerSubagents.apply(parentAgentId, subagent.provider, {
+        type: "upsert",
+        id: subagent.id,
+        status: "canceled",
+      });
+      this.dispatch({ type: "provider_subagent", event });
     }
   }
 
