@@ -19,7 +19,7 @@ import { createStreamStrategy } from "./strategy";
 import {
   createHistoryStartPaginationState,
   evaluateHistoryStartPagination,
-  getHistoryRevision,
+  rearmHistoryStartPagination,
 } from "./history-start-pagination";
 
 interface CreateWebStreamStrategyInput {
@@ -119,6 +119,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     onNearHistoryStart,
     isLoadingOlderHistory,
     hasOlderHistory,
+    olderHistoryProgressKey,
     scrollEnabled,
     isMobileBreakpoint,
   } = props;
@@ -186,19 +187,19 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   }, [rowVirtualizer]);
   const virtualRows = rowVirtualizer.getVirtualItems();
   const virtualTotalSize = rowVirtualizer.getTotalSize();
-  const historyRevision = getHistoryRevision(segments);
-
   const evaluateHistoryStart = useStableEvent(() => {
     const scrollContainer = scrollContainerRef.current;
     if (!scrollContainer) {
       return;
     }
+    const bottomAnchorSettled =
+      !followOutputRef.current || isScrollContainerNearBottom(scrollContainer);
     const result = evaluateHistoryStartPagination(historyStartPaginationStateRef.current, {
       distanceFromHistoryStart: scrollContainer.scrollTop,
       hasOlderHistory,
       isLoadingOlderHistory,
-      isReady: historyStartReadyRef.current,
-      revision: historyRevision,
+      isReady: historyStartReadyRef.current && bottomAnchorSettled,
+      progressKey: olderHistoryProgressKey,
     });
     historyStartPaginationStateRef.current = result.state;
     if (result.shouldLoad) {
@@ -263,8 +264,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       scrollElementToBottom(scrollContainer, behavior);
       lastKnownScrollTopRef.current = scrollContainer.scrollTop;
       syncNearBottom(scrollContainer, onNearBottomChange);
+      evaluateHistoryStart();
     },
-    [onNearBottomChange],
+    [evaluateHistoryStart, onNearBottomChange],
   );
 
   const scheduleStickToBottom = useCallback(() => {
@@ -402,8 +404,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   }, [
     evaluateHistoryStart,
     hasOlderHistory,
-    historyRevision,
     isLoadingOlderHistory,
+    olderHistoryProgressKey,
     segments.historyMounted.length,
     segments.historyVirtualized.length,
     segments.liveHead.length,
@@ -445,8 +447,14 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
 
     const handleWheel = (event: WheelEvent) => {
       if (event.deltaY < 0) {
+        if (!isLoadingOlderHistory) {
+          historyStartPaginationStateRef.current = rearmHistoryStartPagination(
+            historyStartPaginationStateRef.current,
+          );
+        }
         pendingUserScrollUpIntentRef.current = true;
         cancelPendingStickToBottom();
+        evaluateHistoryStart();
       }
     };
     const handlePointerDown = () => {
@@ -469,8 +477,14 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       }
       const previousTouchY = lastTouchClientYRef.current;
       if (previousTouchY !== null && touch.clientY > previousTouchY + 1) {
+        if (!isLoadingOlderHistory) {
+          historyStartPaginationStateRef.current = rearmHistoryStartPagination(
+            historyStartPaginationStateRef.current,
+          );
+        }
         pendingUserScrollUpIntentRef.current = true;
         cancelPendingStickToBottom();
+        evaluateHistoryStart();
       }
       lastTouchClientYRef.current = touch.clientY;
     };
@@ -499,7 +513,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       scrollContainer.removeEventListener("touchend", handleTouchEnd);
       scrollContainer.removeEventListener("touchcancel", handleTouchEnd);
     };
-  }, [cancelPendingStickToBottom, handleDomScroll]);
+  }, [cancelPendingStickToBottom, evaluateHistoryStart, handleDomScroll, isLoadingOlderHistory]);
 
   useEffect(() => {
     const handle: StreamViewportHandle = {

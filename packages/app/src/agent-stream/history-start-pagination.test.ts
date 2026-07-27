@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createHistoryStartPaginationState,
   evaluateHistoryStartPagination,
+  rearmHistoryStartPagination,
 } from "./history-start-pagination";
 
 const visibleHistoryStart = {
@@ -9,17 +10,17 @@ const visibleHistoryStart = {
   hasOlderHistory: true,
   isLoadingOlderHistory: false,
   isReady: true,
-  revision: "history-1",
+  progressKey: "epoch-1:20",
 };
 
 describe("history start pagination", () => {
-  it("loads once for each visible history revision", () => {
+  it("loads once for each authoritative history cursor", () => {
     const initial = createHistoryStartPaginationState();
     const first = evaluateHistoryStartPagination(initial, visibleHistoryStart);
     const duplicate = evaluateHistoryStartPagination(first.state, visibleHistoryStart);
     const nextPage = evaluateHistoryStartPagination(first.state, {
       ...visibleHistoryStart,
-      revision: "history-2",
+      progressKey: "epoch-1:10",
     });
 
     expect([first.shouldLoad, duplicate.shouldLoad, nextPage.shouldLoad]).toEqual([
@@ -43,6 +44,19 @@ describe("history start pagination", () => {
     expect([first.shouldLoad, away.shouldLoad, returned.shouldLoad]).toEqual([true, false, true]);
   });
 
+  it("re-arms the same cursor when the user makes another upward edge gesture", () => {
+    const first = evaluateHistoryStartPagination(
+      createHistoryStartPaginationState(),
+      visibleHistoryStart,
+    );
+    const retried = evaluateHistoryStartPagination(
+      rearmHistoryStartPagination(first.state),
+      visibleHistoryStart,
+    );
+
+    expect([first.shouldLoad, retried.shouldLoad]).toEqual([true, true]);
+  });
+
   it("waits while history loading is unavailable or already active", () => {
     const state = createHistoryStartPaginationState();
 
@@ -52,6 +66,8 @@ describe("history start pagination", () => {
         .shouldLoad,
       evaluateHistoryStartPagination(state, { ...visibleHistoryStart, isLoadingOlderHistory: true })
         .shouldLoad,
-    ]).toEqual([false, false, false]);
+      evaluateHistoryStartPagination(state, { ...visibleHistoryStart, progressKey: null })
+        .shouldLoad,
+    ]).toEqual([false, false, false, false]);
   });
 });

@@ -247,6 +247,7 @@ export interface AgentStreamViewProps {
   historyPagination?: {
     hasOlder: boolean;
     isLoadingOlder: boolean;
+    progressKey: string | null;
     onLoadOlder: () => void;
   };
 }
@@ -388,10 +389,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       agentId,
       toast,
     });
-    const { isLoadingOlder, hasOlder, loadOlder } = historyPagination
+    const { isLoadingOlder, hasOlder, progressKey, loadOlder } = historyPagination
       ? {
           isLoadingOlder: historyPagination.isLoadingOlder,
           hasOlder: historyPagination.hasOlder,
+          progressKey: historyPagination.progressKey,
           loadOlder: historyPagination.onLoadOlder,
         }
       : agentHistoryPagination;
@@ -1029,6 +1031,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               onNearHistoryStart: loadOlder,
               isLoadingOlderHistory: isLoadingOlder,
               hasOlderHistory: hasOlder,
+              olderHistoryProgressKey: progressKey,
               scrollEnabled: streamScrollEnabled,
               listStyle: stylesheet.list,
               baseListContentContainerStyle: stylesheet.listContentContainer,
@@ -1138,6 +1141,7 @@ function historyPaginationPropsEqual(
   return (
     left?.hasOlder === right?.hasOlder &&
     left?.isLoadingOlder === right?.isLoadingOlder &&
+    left?.progressKey === right?.progressKey &&
     left?.onLoadOlder === right?.onLoadOlder
   );
 }

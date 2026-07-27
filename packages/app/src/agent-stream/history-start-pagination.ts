@@ -1,22 +1,17 @@
-import type { StreamRenderSegments } from "./model";
-
 export const HISTORY_START_THRESHOLD_PX = 96;
 
 export interface HistoryStartPaginationState {
-  requestedRevision: string | null;
+  requestedProgressKey: string | null;
 }
 
 export function createHistoryStartPaginationState(): HistoryStartPaginationState {
-  return { requestedRevision: null };
+  return { requestedProgressKey: null };
 }
 
-export function getHistoryRevision(segments: StreamRenderSegments): string {
-  const oldest = segments.historyVirtualized[0] ?? segments.historyMounted[0];
-  return [
-    oldest?.id ?? "empty",
-    segments.historyVirtualized.length,
-    segments.historyMounted.length,
-  ].join(":");
+export function rearmHistoryStartPagination(
+  _state: HistoryStartPaginationState,
+): HistoryStartPaginationState {
+  return createHistoryStartPaginationState();
 }
 
 export function evaluateHistoryStartPagination(
@@ -26,20 +21,25 @@ export function evaluateHistoryStartPagination(
     hasOlderHistory: boolean;
     isLoadingOlderHistory: boolean;
     isReady: boolean;
-    revision: string;
+    progressKey: string | null;
   },
 ): { state: HistoryStartPaginationState; shouldLoad: boolean } {
   if (input.distanceFromHistoryStart > HISTORY_START_THRESHOLD_PX) {
     return { state: createHistoryStartPaginationState(), shouldLoad: false };
   }
-  if (!input.isReady || !input.hasOlderHistory || input.isLoadingOlderHistory) {
+  if (
+    !input.isReady ||
+    !input.hasOlderHistory ||
+    input.isLoadingOlderHistory ||
+    input.progressKey === null
+  ) {
     return { state, shouldLoad: false };
   }
-  if (state.requestedRevision === input.revision) {
+  if (state.requestedProgressKey === input.progressKey) {
     return { state, shouldLoad: false };
   }
   return {
-    state: { requestedRevision: input.revision },
+    state: { requestedProgressKey: input.progressKey },
     shouldLoad: true,
   };
 }

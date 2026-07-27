@@ -33,7 +33,7 @@ import {
 import {
   createHistoryStartPaginationState,
   evaluateHistoryStartPagination,
-  getHistoryRevision,
+  rearmHistoryStartPagination,
 } from "./history-start-pagination";
 
 const DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION = Object.freeze({
@@ -91,6 +91,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     onNearHistoryStart,
     isLoadingOlderHistory,
     hasOlderHistory,
+    olderHistoryProgressKey,
     scrollEnabled,
     listStyle,
     baseListContentContainerStyle,
@@ -143,16 +144,17 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       ),
     [displayStateHistoryRows, historyRowRevision?.contentById],
   );
-  const historyRevision = getHistoryRevision(segments);
-
   const evaluateHistoryStart = useStableEvent(() => {
     const metrics = streamViewportMetricsRef.current;
+    const hasMeasuredViewport =
+      metrics.viewportMeasuredForKey === metrics.containerKey &&
+      metrics.contentMeasuredForKey === metrics.containerKey;
     const result = evaluateHistoryStartPagination(historyStartPaginationStateRef.current, {
       distanceFromHistoryStart: metrics.contentHeight - metrics.viewportHeight - metrics.offsetY,
       hasOlderHistory,
       isLoadingOlderHistory,
-      isReady: historyStartReadyRef.current,
-      revision: historyRevision,
+      isReady: historyStartReadyRef.current && hasMeasuredViewport,
+      progressKey: olderHistoryProgressKey,
     });
     historyStartPaginationStateRef.current = result.state;
     if (result.shouldLoad) {
@@ -364,9 +366,15 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   });
 
   const handleScrollBeginDrag = useStableEvent(() => {
+    if (!isLoadingOlderHistory) {
+      historyStartPaginationStateRef.current = rearmHistoryStartPagination(
+        historyStartPaginationStateRef.current,
+      );
+    }
     clearPendingUserScrollEnd();
     isUserScrollActiveRef.current = true;
     bottomAnchorController.beginUserScroll();
+    evaluateHistoryStart();
   });
 
   // Defer drag end so momentum can take ownership, but capture the terminal
@@ -444,7 +452,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
 
   useEffect(() => {
     evaluateHistoryStart();
-  }, [evaluateHistoryStart, hasOlderHistory, historyRevision, isLoadingOlderHistory]);
+  }, [evaluateHistoryStart, hasOlderHistory, isLoadingOlderHistory, olderHistoryProgressKey]);
 
   const renderItem = useStableEvent(
     ({ item, index }: ListRenderItemInfo<StreamItem>): ReactElement | null => {
