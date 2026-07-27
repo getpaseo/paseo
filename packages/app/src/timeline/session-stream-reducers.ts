@@ -1132,20 +1132,32 @@ export function processAgentStreamEvent(
       changedHead: false,
     };
   } else if (!hasAuthoritativeBaseline) {
-    const overlay = applyStreamEvent({
-      tail: currentHead,
-      head: [],
-      event,
-      timestamp,
-      source: "live",
-      timelineCursor,
-    });
-    streamResult = {
-      tail: currentTail,
-      head: [...overlay.tail, ...overlay.head],
-      changedTail: false,
-      changedHead: overlay.changedTail || overlay.changedHead,
-    };
+    if (event.type === "timeline" && event.item.type === "user_message") {
+      streamResult = applyStreamEvent({
+        tail: currentTail,
+        head: currentHead,
+        event,
+        timestamp,
+        source: "live",
+        timelineCursor,
+        unmatchedUserMessageInsert: "head",
+      });
+    } else {
+      const overlay = applyStreamEvent({
+        tail: currentHead,
+        head: [],
+        event,
+        timestamp,
+        source: "live",
+        timelineCursor,
+      });
+      streamResult = {
+        tail: currentTail,
+        head: [...overlay.tail, ...overlay.head],
+        changedTail: false,
+        changedHead: overlay.changedTail || overlay.changedHead,
+      };
+    }
   } else {
     streamResult = applyStreamEvent({
       tail: sequencing.resetLiveTimeline ? [] : currentTail,

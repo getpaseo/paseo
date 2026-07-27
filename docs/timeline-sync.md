@@ -78,6 +78,11 @@ items, range, and older-history availability. Live rows received between cache p
 response stay in the separate live head, do not advance a cursor or trigger gap recovery, and are
 reconciled with the authoritative tail and subsequent catch-up.
 
+Every daemon-derived live item carries its timeline epoch and sequence position. Bootstrap
+replacement keeps only positioned rows newer than the page it installs, while unresolved local
+submissions remain governed by the submission registry. This prevents a page from duplicating rows
+it already covers without making the display replica authoritative.
+
 ## Selective and legacy delivery
 
 The app chooses one delivery policy from `server_info.features.selectiveAgentTimeline`:

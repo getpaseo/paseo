@@ -468,6 +468,37 @@ describe("processTimelineResponse", () => {
     expect(getUserTexts(result.head)).toEqual(["remote live prompt"]);
   });
 
+  it("does not duplicate a live row already covered by the bootstrap page", () => {
+    const live = processAgentStreamEvent({
+      ...baseStreamInput,
+      event: makeTimelineEvent("thinking", "reasoning"),
+      seq: 100,
+      epoch: "epoch-1",
+      currentTail: [makeAssistantItem("painted replica")],
+      hasAuthoritativeBaseline: false,
+    });
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: live.tail,
+      currentHead: live.head,
+      isInitializing: true,
+      hasActiveInitDeferred: true,
+      hasAuthoritativeBaseline: false,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "tail",
+        startCursor: { seq: 61 },
+        endCursor: { seq: 100 },
+        entries: [makeTimelineEntry(100, "thinking", "reasoning")],
+      },
+    });
+
+    expect([...result.tail, ...result.head].filter((item) => item.kind === "thought")).toHaveLength(
+      1,
+    );
+  });
+
   it("uses the timeline entry timestamp as canonical", () => {
     const result = processTimelineResponse({
       ...baseTimelineInput,
@@ -2544,6 +2575,39 @@ describe("processAgentStreamEvent", () => {
     expect(result.cursorChanged).toBe(false);
     expect(result.cursor).toBeNull();
     expect(result.sideEffects).toEqual([]);
+  });
+
+  it("reconciles a pre-bootstrap echo with its submitted row", () => {
+    const submitted = makeSubmittedUserMessage("submitted before bootstrap", "client-message-1");
+    const result = processAgentStreamEvent({
+      ...baseStreamInput,
+      event: {
+        type: "timeline",
+        provider: "claude",
+        item: {
+          type: "user_message",
+          text: "canonical presentation",
+          clientMessageId: "client-message-1",
+          messageId: "provider-message-1",
+        },
+      },
+      seq: 51,
+      epoch: "epoch-1",
+      currentTail: [makeAssistantItem("painted replica"), submitted],
+      currentCursor: undefined,
+      hasAuthoritativeBaseline: false,
+    });
+
+    const users = [...result.tail, ...result.head].filter((item) => item.kind === "user_message");
+    expect(users).toEqual([
+      expect.objectContaining({
+        id: "client-message-1",
+        clientMessageId: "client-message-1",
+        messageId: "provider-message-1",
+        text: "submitted before bootstrap",
+        timelineCursor: { epoch: "epoch-1", seq: 51 },
+      }),
+    ]);
   });
 });
 
