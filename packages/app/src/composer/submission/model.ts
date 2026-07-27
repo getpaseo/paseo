@@ -50,7 +50,7 @@ export function acceptMessageSubmission(
     (submission) => submission.clientMessageId === clientMessageId,
   );
   if (index < 0) return submissions as MessageSubmissionRecord[];
-  if (isAgentRunning) {
+  if (isAgentRunning || submissions[index].providerAcknowledged) {
     return submissions.filter((_, submissionIndex) => submissionIndex !== index);
   }
   if (submissions[index].rpcAccepted) return submissions as MessageSubmissionRecord[];

@@ -104,7 +104,7 @@ The daemon's accepted response already waits for the correlated run start, but i
 directory update reach client state separately. An accepted transaction remains active until the
 directory observes that run or canonical ingestion acknowledges the prompt, bridging those ordered
 authorities without inspecting timeline snapshots. Either signal clears only an RPC-accepted
-transaction; it cannot settle a fresh send.
+transaction, regardless of which arrived first; it cannot settle a fresh send.
 Overlapping sends settle independently rather than collapsing to one newest pending message.
 
 Canonical submitted user rows carry the provider's `messageId` and Paseo's optional

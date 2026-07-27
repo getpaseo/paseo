@@ -87,6 +87,28 @@ async function waitForCurrentSubmissionExcludedFromCache(
     .toBe(true);
 }
 
+async function waitForCachedMessageWithoutProviderId(page: Page, prompt: string): Promise<void> {
+  await expect
+    .poll(() =>
+      page.evaluate((messageText) => {
+        const raw = localStorage.getItem("@paseo:replica-cache");
+        if (!raw) return false;
+        const cache = JSON.parse(raw) as {
+          hosts?: Array<{ timeline?: { items?: Array<Record<string, unknown>> } | null }>;
+        };
+        return cache.hosts
+          ?.flatMap((host) => host.timeline?.items ?? [])
+          .some(
+            (item) =>
+              item.kind === "user_message" &&
+              item.text === messageText &&
+              item.messageId === undefined,
+          );
+      }, prompt),
+    )
+    .toBe(true);
+}
+
 async function expectPendingSubmissionNotRestoredAfterReload(page: Page): Promise<void> {
   const prompt = "Keep this cached submission pending.";
   const gate = await installDaemonWebSocketGate(page);
@@ -117,7 +139,7 @@ test.describe("Rewind sheet", () => {
     await expectPendingSubmissionNotRestoredAfterReload(page);
   });
 
-  test("keeps rewind available for a message restored from the legacy cache", async ({ page }) => {
+  test("does not invent rewind identity for an ID-less cached message", async ({ page }) => {
     const prompt = "Restore this rewind identity from the legacy cache.";
     const gate = await installDaemonWebSocketGate(page);
     const session = await seedMockAgentWorkspace({
@@ -139,7 +161,8 @@ test.describe("Rewind sheet", () => {
       const restoredMessage = userMessage(page, prompt);
       await expect(restoredMessage).toBeVisible();
       await restoredMessage.hover();
-      await expect(restoredMessage.getByTestId("rewind-menu-trigger")).toBeVisible();
+      await expect(restoredMessage.getByTestId("rewind-menu-trigger")).toHaveCount(0);
+      await waitForCachedMessageWithoutProviderId(page, prompt);
     } finally {
       if (heldTimelineRequest) gate.releaseHeldClientRequest();
       gate.restore();

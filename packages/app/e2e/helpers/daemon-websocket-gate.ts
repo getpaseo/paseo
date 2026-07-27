@@ -89,6 +89,17 @@ function readAgentStreamEventType(message: ClientRequest | null): string | null 
   return typeof event?.type === "string" ? event.type : null;
 }
 
+function readAgentStreamItemType(message: ClientRequest | null): string | null {
+  if (message?.type !== "agent_stream" || !message.payload || typeof message.payload !== "object") {
+    return null;
+  }
+  const event = (message.payload as { event?: { type?: unknown; item?: { type?: unknown } } })
+    .event;
+  return event?.type === "timeline" && typeof event.item?.type === "string"
+    ? event.item.type
+    : null;
+}
+
 function shouldSuppressServerMessage(input: {
   message: ClientRequest | null;
   messageTypes: ReadonlySet<string>;
@@ -125,6 +136,7 @@ export async function installDaemonWebSocketGate(page: Page) {
   };
   const clientRequestCounts = new Map<string, number>();
   const serverMessageCounts = new Map<string, number>();
+  const agentStreamItemCounts = new Map<string, number>();
   const serverMessageWaiters = new Set<() => void>();
 
   await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
@@ -188,6 +200,15 @@ export async function installDaemonWebSocketGate(page: Page) {
         serverMessageCounts.set(
           serverMessage.type,
           (serverMessageCounts.get(serverMessage.type) ?? 0) + 1,
+        );
+        for (const resolve of serverMessageWaiters) resolve();
+        serverMessageWaiters.clear();
+      }
+      const agentStreamItemType = readAgentStreamItemType(serverMessage);
+      if (agentStreamItemType) {
+        agentStreamItemCounts.set(
+          agentStreamItemType,
+          (agentStreamItemCounts.get(agentStreamItemType) ?? 0) + 1,
         );
         for (const resolve of serverMessageWaiters) resolve();
         serverMessageWaiters.clear();
@@ -357,6 +378,11 @@ export async function installDaemonWebSocketGate(page: Page) {
     },
     async waitForServerMessage(type: string, count = 1): Promise<void> {
       while ((serverMessageCounts.get(type) ?? 0) < count) {
+        await new Promise<void>((resolve) => serverMessageWaiters.add(resolve));
+      }
+    },
+    async waitForAgentStreamItem(type: string, count = 1): Promise<void> {
+      while ((agentStreamItemCounts.get(type) ?? 0) < count) {
         await new Promise<void>((resolve) => serverMessageWaiters.add(resolve));
       }
     },

@@ -340,6 +340,37 @@ async function expectCompletedSubmissionClearsAfterMissedRunningTransition(
   }
 }
 
+async function expectProviderAcknowledgementBeforeRpcAcceptanceSettlesSubmission(
+  page: Page,
+  testInfo: { workerIndex: number },
+): Promise<void> {
+  const gate = await installDaemonWebSocketGate(page);
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: `submission-ack-before-rpc-${testInfo.workerIndex}-`,
+    title: "Submission acknowledgement before RPC",
+    model: "ten-second-stream",
+  });
+  const prompt = "Settle this provider-acknowledged submission.";
+  try {
+    await openAgentRoute(page, { workspaceId: agent.workspaceId, agentId: agent.agentId });
+    await expectComposerVisible(page);
+    await expectAgentIdle(page);
+    gate.setServerMessageSuppressed("agent_status", true);
+    gate.setServerMessageSuppressed("agent_update", true);
+    gate.holdNextServerMessage("send_agent_message_response");
+    const userMessage = await submitMessageWithImage(page, prompt);
+    await gate.waitForHeldServerMessage();
+    await gate.waitForAgentStreamItem("user_message");
+    gate.releaseHeldServerMessage();
+    await gate.drop();
+    await expect(page.getByTestId("turn-working-indicator")).toHaveCount(0);
+    await expect(userMessage).toHaveAttribute("aria-busy", "false");
+  } finally {
+    gate.restore();
+    await agent.cleanup();
+  }
+}
+
 async function expectLegacyAssistantStartsAfterInterruptedPrompt(
   page: Page,
   testInfo: { workerIndex: number },
@@ -565,6 +596,13 @@ test.describe("Agent message submission", () => {
   }, testInfo) => {
     test.setTimeout(90_000);
     await expectCompletedSubmissionClearsAfterMissedRunningTransition(page, testInfo);
+  });
+
+  test("clears a provider acknowledgement that arrives before RPC acceptance", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(90_000);
+    await expectProviderAcknowledgementBeforeRpcAcceptanceSettlesSubmission(page, testInfo);
   });
 
   test("keeps an old-daemon replacement answer after its interrupted prompt", async ({

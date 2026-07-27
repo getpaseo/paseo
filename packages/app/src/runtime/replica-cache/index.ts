@@ -19,9 +19,10 @@ import {
 } from "@/stores/session-store";
 import type { StreamItem } from "@/types/stream";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
+import { getSendingClientMessageIds } from "@/composer/submission/model";
 
 const STORAGE_KEY = "@paseo:replica-cache";
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2;
 const PERSIST_DELAY_MS = 750;
 const MAX_TIMELINE_ITEMS = 50;
 const MAX_CACHE_BYTES = 1024 * 1024;
@@ -129,15 +130,6 @@ function decodeDates(value: unknown): unknown {
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, decodeDates(entry)]));
 }
 
-function restoreCachedStreamItem(item: StreamItem): StreamItem | null {
-  if (item.kind !== "user_message" || item.messageId) return item;
-  const legacyItem = item as StreamItem & { optimistic?: true };
-  if (legacyItem.optimistic || item.clientMessageId) return null;
-  // COMPAT(replicaCacheUserMessageId): before v0.2.3, cache v1 stored the provider ID
-  // only in `id`. Remove after 2027-01-27, once cache v1 predating v0.2.3 is unsupported.
-  return { ...item, messageId: item.id };
-}
-
 function deserializeTimeline(stored: StoredHost["timeline"]): SessionReplica["timeline"] {
   if (!stored) {
     return null;
@@ -148,7 +140,7 @@ function deserializeTimeline(stored: StoredHost["timeline"]): SessionReplica["ti
   }
   return {
     agentId: stored.agentId,
-    items: decoded.flatMap((item) => restoreCachedStreamItem(item) ?? []),
+    items: decoded,
     cursor: stored.cursor,
     hasOlder: stored.hasOlder,
   };
@@ -379,10 +371,21 @@ export class ReplicaCache {
             (workspace) => workspace.workspaceDirectory === focusedAgent.cwd,
           ))
         : undefined;
+      const localSubmissionIds = new Set(
+        getSendingClientMessageIds(
+          focusedAgentId ? session.messageSubmissions.get(focusedAgentId) : undefined,
+        ),
+      );
       const items = focusedAgentId
         ? session.agentStreamTail
             .get(focusedAgentId)
-            ?.filter((item) => item.kind !== "user_message" || item.messageId !== undefined)
+            ?.filter(
+              (item) =>
+                item.kind !== "user_message" ||
+                item.messageId !== undefined ||
+                !item.clientMessageId ||
+                !localSubmissionIds.has(item.clientMessageId),
+            )
         : undefined;
       const timeline =
         focusedAgent && items
