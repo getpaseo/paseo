@@ -320,6 +320,7 @@ export interface CanonicalStreamReplacementInput {
   previousHead: StreamItem[];
   pendingClientMessageId: string | null;
   policy: "preserve-local-submissions" | "replace-history";
+  preserveLiveHead: boolean;
 }
 
 export interface CanonicalStreamReplacementResult {
@@ -334,15 +335,23 @@ function removeUserMessageAt(items: UserMessageItem[], index: number): UserMessa
 function preserveReplacementHead(
   tail: StreamItem[],
   currentHead: StreamItem[],
+  preserveLiveHead: boolean,
 ): CanonicalStreamReplacementResult {
-  const liveAssistantIndex = currentHead.findLastIndex((item) => item.kind === "assistant_message");
-  const submittedRows = currentHead.filter(
-    (item): item is UserMessageItem =>
-      item.kind === "user_message" && item.clientMessageId !== undefined,
+  const retainedHead = preserveLiveHead
+    ? currentHead
+    : currentHead.filter(
+        (item) => item.kind === "user_message" && item.clientMessageId !== undefined,
+      );
+  const tailIds = new Set(tail.map((item) => item.id));
+  const unreconciledHead = retainedHead.filter(
+    (item) => item.kind === "assistant_message" || !tailIds.has(item.id),
   );
-  if (liveAssistantIndex < 0) return { tail, head: submittedRows };
+  const liveAssistantIndex = unreconciledHead.findLastIndex(
+    (item) => item.kind === "assistant_message",
+  );
+  if (liveAssistantIndex < 0) return { tail, head: unreconciledHead };
 
-  const liveAssistant = currentHead[liveAssistantIndex];
+  const liveAssistant = unreconciledHead[liveAssistantIndex];
   const tailAssistant = tail.at(-1);
   if (
     liveAssistant.kind !== "assistant_message" ||
@@ -350,19 +359,14 @@ function preserveReplacementHead(
     tailAssistant.kind !== "assistant_message" ||
     !liveAssistant.text.startsWith(tailAssistant.text)
   ) {
-    return { tail, head: submittedRows };
+    return { tail, head: unreconciledHead };
   }
 
-  const head: StreamItem[] = [];
-  currentHead.forEach((item, index) => {
-    if (index === liveAssistantIndex) {
-      head.push({ ...liveAssistant, text: tailAssistant.text });
-      return;
-    }
-    if (item.kind === "user_message" && item.clientMessageId) {
-      head.push(item);
-    }
-  });
+  const head = [
+    ...unreconciledHead.slice(0, liveAssistantIndex),
+    { ...liveAssistant, text: tailAssistant.text },
+    ...unreconciledHead.slice(liveAssistantIndex + 1),
+  ];
   return { tail: tail.slice(0, -1), head };
 }
 
@@ -423,7 +427,7 @@ export function replaceWithCanonicalStream(
     );
   });
 
-  return preserveReplacementHead(nextTail, nextHead);
+  return preserveReplacementHead(nextTail, nextHead, input.preserveLiveHead);
 }
 
 export interface AssistantMessageItem {
@@ -1407,6 +1411,45 @@ export interface ApplyStreamEventResult {
   changedHead: boolean;
 }
 
+function applyCanonicalUserMessageEvent(params: {
+  tail: StreamItem[];
+  head: StreamItem[];
+  event: AgentStreamEventPayload;
+  timestamp: Date;
+}): ApplyStreamEventResult | null {
+  const { tail, head, event, timestamp } = params;
+  if (event.type !== "timeline" || event.item.type !== "user_message") return null;
+  const normalized = normalizeChunk(event.item.text);
+  if (!normalized.hasContent) {
+    return { tail, head, changedTail: false, changedHead: false };
+  }
+
+  const flushedTail = head.length > 0 ? flushHeadToTail(tail, head) : tail;
+  const flushedHead = head.length > 0 ? [] : head;
+  const canonical = createUserMessage({
+    id:
+      event.item.messageId ??
+      createUniqueTimelineId([...tail, ...head], "user", normalized.chunk.trim(), timestamp),
+    messageId: event.item.messageId,
+    clientMessageId: event.item.clientMessageId,
+    text: normalized.chunk,
+    timestamp,
+  });
+  const reconciled = upsertUserMessageAcrossStream({
+    tail: flushedTail,
+    head: flushedHead,
+    message: canonical,
+    insert: "tail",
+    presentation: "existing",
+  });
+  return {
+    tail: reconciled.tail,
+    head: reconciled.head,
+    changedTail: flushedTail !== tail || reconciled.changedTail,
+    changedHead: flushedHead !== head || reconciled.changedHead,
+  };
+}
+
 /**
  * Apply a stream event using head/tail model.
  *
@@ -1427,38 +1470,13 @@ export function applyStreamEvent(params: {
   timelineCursor?: TimelinePosition;
 }): ApplyStreamEventResult {
   const { tail, head, event, timestamp } = params;
+  const canonicalUserResult = applyCanonicalUserMessageEvent({ tail, head, event, timestamp });
+  if (canonicalUserResult) return canonicalUserResult;
   const source = params.source ?? "live";
   let nextTail = tail;
   let nextHead = head;
   let changedTail = false;
   let changedHead = false;
-
-  if (event.type === "timeline" && event.item.type === "user_message") {
-    const normalized = normalizeChunk(event.item.text);
-    if (!normalized.hasContent) {
-      return { tail, head, changedTail: false, changedHead: false };
-    }
-    const canonical = createUserMessage({
-      id:
-        event.item.messageId ??
-        createUniqueTimelineId([...tail, ...head], "user", normalized.chunk.trim(), timestamp),
-      messageId: event.item.messageId,
-      clientMessageId: event.item.clientMessageId,
-      text: normalized.chunk,
-      timestamp,
-    });
-    const reconciled = upsertUserMessageAcrossStream({
-      tail,
-      head,
-      message: canonical,
-      insert: "none",
-      presentation: "existing",
-    });
-    if (reconciled.location) {
-      return reconciled;
-    }
-  }
-
   const flushHead = () => {
     if (nextHead.length === 0) {
       return;

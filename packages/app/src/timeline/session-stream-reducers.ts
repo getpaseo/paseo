@@ -233,6 +233,7 @@ function applyTimelineReplacePath(args: {
   currentHead: StreamItem[];
   pendingClientMessageId: string | null;
   replacementPolicy: "preserve-local-submissions" | "replace-history";
+  preserveLiveHead: boolean;
   toHydratedEvents: (
     units: TimelineUnit[],
   ) => Array<{ event: AgentStreamEventPayload; timestamp: Date }>;
@@ -245,6 +246,7 @@ function applyTimelineReplacePath(args: {
     currentHead,
     pendingClientMessageId,
     replacementPolicy,
+    preserveLiveHead,
     toHydratedEvents,
   } = args;
   const hydratedTail = hydrateStreamState(toHydratedEvents(timelineUnits), { source: "canonical" });
@@ -254,6 +256,7 @@ function applyTimelineReplacePath(args: {
     previousHead: currentHead,
     pendingClientMessageId,
     policy: replacementPolicy,
+    preserveLiveHead,
   });
   const cursor: TimelineCursor | null =
     payload.startCursor && payload.endCursor
@@ -867,6 +870,7 @@ export function processTimelineResponse(
         currentHead,
         pendingClientMessageId,
         replacementPolicy,
+        preserveLiveHead: currentCursor?.epoch === payload.epoch,
         toHydratedEvents,
       })
     : applyTimelineIncrementalPath({

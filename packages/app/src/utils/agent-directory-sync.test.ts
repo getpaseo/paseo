@@ -134,6 +134,39 @@ describe("message submission lifecycle ordering", () => {
     ).toBeUndefined();
     store.clearSession(serverId);
   });
+
+  it("clears accepted pending state when canonical history arrives after a missed run", () => {
+    const serverId = "server-canonical-after-missed-run";
+    const agentId = "agent-1";
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null as unknown as DaemonClient);
+    applyAgentStatus({
+      serverId,
+      agentId,
+      status: "idle",
+      updatedAt: "2026-07-27T10:00:00.000Z",
+    });
+    const clientMessageId = beginPendingSubmission(serverId, agentId);
+    store.acceptAgentMessageSubmission(serverId, agentId, clientMessageId);
+
+    store.setAgentStreamState(serverId, agentId, {
+      tail: [
+        createUserMessage({
+          id: "provider-message",
+          messageId: "provider-message",
+          clientMessageId,
+          text: "Run this",
+          timestamp: new Date("2026-07-27T10:00:01.000Z"),
+        }),
+      ],
+      head: [],
+    });
+
+    expect(
+      useSessionStore.getState().sessions[serverId]?.messageSubmissions.get(agentId),
+    ).toBeUndefined();
+    store.clearSession(serverId);
+  });
 });
 
 describe("replaceFetchedAgentDirectory", () => {

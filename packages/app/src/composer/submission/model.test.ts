@@ -5,6 +5,7 @@ import {
   beginMessageSubmission,
   getPendingMessageSubmission,
   observeMessageSubmissionRunning,
+  observeMessageSubmissionCanonical,
   rejectMessageSubmission,
   type MessageSubmissionState,
 } from "./model";
@@ -38,6 +39,44 @@ describe("message submission model", () => {
     ]);
     expect(getPendingMessageSubmission(accepted.submissions)).toEqual(accepted.submissions[0]);
     expect(runningObserved).toEqual([]);
+  });
+
+  it("closes RPC-accepted pending state when canonical history proves acceptance", () => {
+    const message = createUserMessage({
+      clientMessageId: "client-1",
+      text: "hello",
+      timestamp: new Date("2026-07-26T10:00:00.000Z"),
+    });
+    const begun = beginMessageSubmission(initialState(), {
+      message,
+      submittedAt: message.timestamp,
+      acceptance: "rpc-and-running",
+    });
+    const accepted = acceptMessageSubmission(begun, "client-1");
+
+    expect(observeMessageSubmissionCanonical(accepted.submissions, ["client-1"])).toEqual([]);
+  });
+
+  it("remembers canonical acceptance until an in-flight RPC rejection settles", () => {
+    const message = createUserMessage({
+      clientMessageId: "client-1",
+      text: "hello",
+      timestamp: new Date("2026-07-26T10:00:00.000Z"),
+    });
+    const begun = beginMessageSubmission(initialState(), {
+      message,
+      submittedAt: message.timestamp,
+      acceptance: "rpc-and-running",
+    });
+    const canonicalObserved = observeMessageSubmissionCanonical(begun.submissions, ["client-1"]);
+
+    expect(getPendingMessageSubmission(canonicalObserved)).toBeNull();
+    expect(
+      rejectMessageSubmission({ ...begun, submissions: canonicalObserved }, "client-1"),
+    ).toEqual({
+      outcome: "accepted",
+      state: { ...begun, submissions: [] },
+    });
   });
 
   it("rejects a row when an unrelated running transition precedes its RPC error", () => {

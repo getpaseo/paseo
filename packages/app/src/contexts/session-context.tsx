@@ -192,9 +192,7 @@ type WorkspaceSetupProgressPayload = Extract<
 
 type SessionStoreActions = ReturnType<typeof useSessionStore.getState>;
 type SetInitializingAgents = SessionStoreActions["setInitializingAgents"];
-type SetAgentStreamTail = SessionStoreActions["setAgentStreamTail"];
-type SetAgentStreamHead = SessionStoreActions["setAgentStreamHead"];
-type ClearAgentStreamHead = SessionStoreActions["clearAgentStreamHead"];
+type SetAgentStreamState = SessionStoreActions["setAgentStreamState"];
 type SetAgentTimelineCursor = SessionStoreActions["setAgentTimelineCursor"];
 type MarkAgentHistorySynchronized = SessionStoreActions["markAgentHistorySynchronized"];
 type SetAgentAuthoritativeHistoryApplied =
@@ -237,9 +235,7 @@ function applyTimelineStreamPatches(input: {
   serverId: string;
   currentTail: StreamItem[];
   currentHead: StreamItem[];
-  setAgentStreamTail: SetAgentStreamTail;
-  setAgentStreamHead: SetAgentStreamHead;
-  clearAgentStreamHead: ClearAgentStreamHead;
+  setAgentStreamState: SetAgentStreamState;
   setAgentTimelineCursor: SetAgentTimelineCursor;
 }): void {
   const {
@@ -248,30 +244,15 @@ function applyTimelineStreamPatches(input: {
     serverId,
     currentTail,
     currentHead,
-    setAgentStreamTail,
-    setAgentStreamHead,
-    clearAgentStreamHead,
+    setAgentStreamState,
     setAgentTimelineCursor,
   } = input;
 
-  if (result.tail !== currentTail) {
-    setAgentStreamTail(serverId, (prev) => {
-      const next = new Map(prev);
-      next.set(agentId, result.tail);
-      return next;
+  if (result.tail !== currentTail || result.head !== currentHead) {
+    setAgentStreamState(serverId, agentId, {
+      ...(result.tail !== currentTail ? { tail: result.tail } : {}),
+      ...(result.head !== currentHead ? { head: result.head } : {}),
     });
-  }
-
-  if (result.head !== currentHead) {
-    if (result.head.length === 0) {
-      clearAgentStreamHead(serverId, agentId);
-    } else {
-      setAgentStreamHead(serverId, (prev) => {
-        const next = new Map(prev);
-        next.set(agentId, result.head);
-        return next;
-      });
-    }
   }
 
   if (result.cursorChanged) {
@@ -701,9 +682,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         serverId,
         currentTail,
         currentHead,
-        setAgentStreamTail,
-        setAgentStreamHead,
-        clearAgentStreamHead,
+        setAgentStreamState,
         setAgentTimelineCursor,
       });
 
@@ -725,13 +704,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       });
     },
     [
-      clearAgentStreamHead,
       markAgentHistorySynchronized,
       recoverTimelineGap,
       serverId,
       setAgentAuthoritativeHistoryApplied,
-      setAgentStreamHead,
-      setAgentStreamTail,
+      setAgentStreamState,
       setAgentTimelineCursor,
       setAgentTimelineHasOlder,
       setInitializingAgents,

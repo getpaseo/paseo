@@ -330,6 +330,39 @@ describe("processTimelineResponse", () => {
     expect(result.head).toEqual([{ ...liveAssistant, text: "Live" }, submitted]);
   });
 
+  it("preserves newer live head items when canonical replacement ends in a tool call", () => {
+    const liveThought: StreamItem = {
+      kind: "thought",
+      id: "live-thought",
+      text: "newer reasoning",
+      timestamp: new Date(3000),
+      status: "loading",
+    };
+    const liveAssistant = makeAssistantItem("newer answer", "live-answer");
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentHead: [liveThought, liveAssistant],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
+      payload: {
+        ...baseTimelineInput.payload,
+        reset: true,
+        epoch: "epoch-1",
+        startCursor: { seq: 1 },
+        endCursor: { seq: 1 },
+        entries: [
+          makeToolCallTimelineEntry(1, "canonical-call", "completed", {
+            type: "read",
+            filePath: "/tmp/older.ts",
+          }),
+        ],
+      },
+    });
+
+    expect(result.tail.map((item) => item.kind)).toEqual(["tool_call"]);
+    expect(result.head).toEqual([liveThought, liveAssistant]);
+  });
+
   it("uses the timeline entry timestamp as canonical", () => {
     const result = processTimelineResponse({
       ...baseTimelineInput,

@@ -11,12 +11,13 @@ export type MessageSubmissionRecord = PendingMessageSubmission &
   (
     | { phase: "waiting-for-rpc"; acceptance: MessageSubmissionAcceptance }
     | { phase: "waiting-for-running" }
+    | { phase: "canonical-observed" }
   );
 
 export function getPendingMessageSubmission(
   submissions: readonly MessageSubmissionRecord[] | null | undefined,
 ): PendingMessageSubmission | null {
-  return submissions?.at(-1) ?? null;
+  return submissions?.findLast((submission) => submission.phase !== "canonical-observed") ?? null;
 }
 
 export interface MessageSubmissionState {
@@ -75,6 +76,11 @@ export function acceptMessageSubmission(
   );
   if (index === -1) return state;
   const submission = state.submissions[index];
+  if (submission.phase === "canonical-observed") {
+    const submissions = state.submissions.slice();
+    submissions.splice(index, 1);
+    return { ...state, submissions };
+  }
   if (submission.phase === "waiting-for-running") return state;
   const nextSubmission: MessageSubmissionRecord | null =
     submission.acceptance === "rpc-only" || isAgentRunning
@@ -97,6 +103,34 @@ export function observeMessageSubmissionRunning(
   return next.length === submissions.length ? (submissions as MessageSubmissionRecord[]) : next;
 }
 
+export function observeMessageSubmissionCanonical(
+  submissions: readonly MessageSubmissionRecord[],
+  clientMessageIds: readonly string[],
+): MessageSubmissionRecord[] {
+  if (clientMessageIds.length === 0) return submissions as MessageSubmissionRecord[];
+  const observed = new Set(clientMessageIds);
+  let changed = false;
+  const next = submissions.flatMap((submission): MessageSubmissionRecord[] => {
+    if (!observed.has(submission.clientMessageId)) return [submission];
+    if (submission.phase === "waiting-for-running") {
+      changed = true;
+      return [];
+    }
+    if (submission.phase === "waiting-for-rpc") {
+      changed = true;
+      return [
+        {
+          clientMessageId: submission.clientMessageId,
+          submittedAt: submission.submittedAt,
+          phase: "canonical-observed",
+        },
+      ];
+    }
+    return [submission];
+  });
+  return changed ? next : (submissions as MessageSubmissionRecord[]);
+}
+
 function removeSubmittedMessage(items: StreamItem[], clientMessageId: string): StreamItem[] {
   const next = items.filter(
     (item) => item.kind !== "user_message" || item.clientMessageId !== clientMessageId,
@@ -115,7 +149,7 @@ export function rejectMessageSubmission(
   const submission = state.submissions[index];
   const submissions = state.submissions.slice();
   submissions.splice(index, 1);
-  if (submission.phase === "waiting-for-running") {
+  if (submission.phase === "waiting-for-running" || submission.phase === "canonical-observed") {
     return { outcome: "accepted", state: { ...state, submissions } };
   }
   return {

@@ -1486,7 +1486,7 @@ describe("turn lifecycle events", () => {
     );
   });
 
-  it("reconciles a submitted user message that was pending in the streaming head", () => {
+  it("flushes an interrupted head when its submitted prompt becomes canonical", () => {
     const submitted: StreamItem = {
       kind: "user_message",
       id: "msg_head_submitted",
@@ -1511,11 +1511,58 @@ describe("turn lifecycle events", () => {
       source: "live",
     });
 
-    assert.strictEqual(result.tail.length, 0);
-    const userMessages = result.head.filter((item) => item.kind === "user_message");
+    assert.deepStrictEqual(result.head, []);
+    const userMessages = result.tail.filter((item) => item.kind === "user_message");
     assert.strictEqual(userMessages.length, 1);
     assert.strictEqual(userMessages[0]?.id, "msg_head_submitted");
     assert.strictEqual(userMessages[0]?.messageId, "provider-owned-head");
+  });
+
+  it("keeps a replacement assistant separate after an interrupted prompt is reconciled", () => {
+    const interruptedAssistant: StreamItem = {
+      kind: "assistant_message",
+      id: "interrupted",
+      text: "old answer",
+      timestamp: new Date("2025-01-01T15:03:01Z"),
+    };
+    const submitted = createUserMessage({
+      clientMessageId: "msg_interrupt",
+      text: "replacement prompt",
+      timestamp: new Date("2025-01-01T15:03:02Z"),
+    });
+    const reconciled = applyStreamEvent({
+      tail: [],
+      head: [interruptedAssistant, submitted],
+      event: {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "user_message",
+          text: submitted.text,
+          messageId: "provider-prompt",
+          clientMessageId: submitted.clientMessageId,
+        },
+      },
+      timestamp: new Date("2025-01-01T15:03:03Z"),
+    });
+    const replacement = applyStreamEvent({
+      tail: reconciled.tail,
+      head: reconciled.head,
+      event: {
+        type: "timeline",
+        provider: "opencode",
+        item: { type: "assistant_message", text: "new answer" },
+      },
+      timestamp: new Date("2025-01-01T15:03:04Z"),
+    });
+
+    expect(replacement.tail.map((item) => item.kind)).toEqual([
+      "assistant_message",
+      "user_message",
+    ]);
+    expect(replacement.head).toEqual([
+      expect.objectContaining({ kind: "assistant_message", text: "new answer" }),
+    ]);
   });
 
   it("replaces multiple submitted user messages in FIFO order", () => {

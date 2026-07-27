@@ -13,6 +13,7 @@ import {
   acceptMessageSubmission,
   beginMessageSubmission,
   observeMessageSubmissionRunning,
+  observeMessageSubmissionCanonical,
   rejectMessageSubmission,
   type MessageSubmissionRecord,
   type MessageSubmissionRejectionOutcome,
@@ -1105,8 +1106,33 @@ export const useSessionStore = create<SessionStore>()(
             }
           }
 
-          if (!changedTail && !changedHead) {
+          const canonicalClientMessageIds = [
+            ...(state.tail ?? session.agentStreamTail.get(agentId) ?? []),
+            ...(state.head ?? session.agentStreamHead.get(agentId) ?? []),
+          ].flatMap((item) =>
+            item.kind === "user_message" && item.clientMessageId && item.messageId
+              ? [item.clientMessageId]
+              : [],
+          );
+          const currentSubmissions = session.messageSubmissions.get(agentId) ?? [];
+          const observedSubmissions = observeMessageSubmissionCanonical(
+            currentSubmissions,
+            canonicalClientMessageIds,
+          );
+          const changedSubmissions = observedSubmissions !== currentSubmissions;
+
+          if (!changedTail && !changedHead && !changedSubmissions) {
             return prev;
+          }
+
+          let messageSubmissions = session.messageSubmissions;
+          if (changedSubmissions) {
+            messageSubmissions = new Map(session.messageSubmissions);
+            if (observedSubmissions.length > 0) {
+              messageSubmissions.set(agentId, observedSubmissions);
+            } else {
+              messageSubmissions.delete(agentId);
+            }
           }
 
           return {
@@ -1117,6 +1143,7 @@ export const useSessionStore = create<SessionStore>()(
                 ...session,
                 agentStreamTail: nextTail,
                 agentStreamHead: nextHead,
+                messageSubmissions,
               },
             },
           };
