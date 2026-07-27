@@ -246,6 +246,14 @@ export function registerWindowManager(): void {
     }
   });
 
+  ipcMain.handle("paseo:window:isFocused", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) {
+      return false;
+    }
+    return win.isFocused();
+  });
+
   ipcMain.handle("paseo:window:updateWindowControls", (event, update?: unknown) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) {
@@ -287,6 +295,19 @@ export function setupWindowResizeEvents(win: BrowserWindow): void {
     }
     win.webContents.send("paseo:window:resized", {});
   };
+
+  const notifyFocusState = (focused: boolean) => {
+    if (win.isDestroyed() || win.webContents.isDestroyed()) {
+      return;
+    }
+    win.webContents.send("paseo:window:focus-state", { focused });
+  };
+  win.on("focus", () => notifyFocusState(true));
+  win.on("blur", () => notifyFocusState(false));
+  // Initial snapshot after the page can receive events.
+  win.webContents.once("did-finish-load", () => {
+    notifyFocusState(!win.isDestroyed() && win.isFocused());
+  });
 
   win.on("resize", notifyResized);
   win.on("enter-full-screen", notifyResized);

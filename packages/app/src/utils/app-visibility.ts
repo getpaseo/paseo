@@ -1,4 +1,5 @@
 import { AppState } from "react-native";
+import { getDesktopWindow } from "@/desktop/electron/window";
 import { isNative } from "@/constants/platform";
 
 interface AppVisibilityInput {
@@ -36,6 +37,18 @@ function getDocumentVisible(): boolean {
   return typeof document === "undefined" || document.visibilityState === "visible";
 }
 
+function getElectronOsWindowFocused(): boolean | null {
+  const isFocused = getDesktopWindow()?.isFocused;
+  if (typeof isFocused !== "function") {
+    return null;
+  }
+  try {
+    return Boolean(isFocused());
+  } catch {
+    return null;
+  }
+}
+
 function getWindowFocused(): boolean {
   if (typeof document === "undefined") {
     return true;
@@ -44,7 +57,19 @@ function getWindowFocused(): boolean {
     return true;
   }
   // Guest content focused inside our window (Code Server / Browser webview).
-  return isGuestContentFocused(document.activeElement);
+  if (isGuestContentFocused(document.activeElement)) {
+    return true;
+  }
+  // Most reliable for Electron: OS BrowserWindow focus (true with webview guests).
+  const electronFocused = getElectronOsWindowFocused();
+  if (electronFocused !== null) {
+    return electronFocused;
+  }
+  // No hasFocus API — assume focused (SSR / odd environments).
+  if (typeof document.hasFocus !== "function") {
+    return true;
+  }
+  return false;
 }
 
 export function getIsAppVisible(appState: string = AppState.currentState): boolean {
