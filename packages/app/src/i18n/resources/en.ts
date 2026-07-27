@@ -983,6 +983,15 @@ export const en = {
         archiveFailed: "Failed to archive workspace",
       },
     },
+    tree: {
+      empty: "No agents or terminals",
+      loading: "Loading…",
+      untitledAgent: "Untitled agent",
+      expandWorkspace: "Expand workspace tree",
+      collapseWorkspace: "Collapse workspace tree",
+      expandAgent: "Expand {{label}}",
+      collapseAgent: "Collapse {{label}}",
+    },
   },
   newWorkspace: {
     title: "New workspace",

@@ -984,6 +984,15 @@ export const ja: TranslationResources = {
         archiveFailed: "ワークスペースのアーカイブに失敗しました",
       },
     },
+    tree: {
+      empty: "エージェントもターミナルもありません",
+      loading: "読み込み中…",
+      untitledAgent: "無題のエージェント",
+      expandWorkspace: "ワークスペースツリーを展開",
+      collapseWorkspace: "ワークスペースツリーを折りたたむ",
+      expandAgent: "{{label}}を展開",
+      collapseAgent: "{{label}}を折りたたむ",
+    },
   },
   newWorkspace: {
     title: "新しいワークスペース",

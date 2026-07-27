@@ -973,6 +973,15 @@ export const ar: TranslationResources = {
         archiveFailed: "فشل في أرشفة مساحة العمل",
       },
     },
+    tree: {
+      empty: "No agents or terminals",
+      loading: "Loading…",
+      untitledAgent: "Untitled agent",
+      expandWorkspace: "Expand workspace tree",
+      collapseWorkspace: "Collapse workspace tree",
+      expandAgent: "Expand {{label}}",
+      collapseAgent: "Collapse {{label}}",
+    },
   },
   newWorkspace: {
     title: "مساحة عمل جديدة",

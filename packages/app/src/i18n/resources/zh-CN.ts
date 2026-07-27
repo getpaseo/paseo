@@ -962,6 +962,15 @@ export const zhCN: TranslationResources = {
         archiveFailed: "归档工作区失败",
       },
     },
+    tree: {
+      empty: "No agents or terminals",
+      loading: "Loading…",
+      untitledAgent: "Untitled agent",
+      expandWorkspace: "Expand workspace tree",
+      collapseWorkspace: "Collapse workspace tree",
+      expandAgent: "Expand {{label}}",
+      collapseAgent: "Collapse {{label}}",
+    },
   },
   newWorkspace: {
     title: "新建 workspace",

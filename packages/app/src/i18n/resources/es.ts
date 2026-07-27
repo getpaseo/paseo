@@ -1004,6 +1004,15 @@ export const es: TranslationResources = {
         archiveFailed: "No se pudo archivar el espacio de trabajo",
       },
     },
+    tree: {
+      empty: "Sin agentes ni terminales",
+      loading: "Cargando…",
+      untitledAgent: "Agente sin título",
+      expandWorkspace: "Expandir árbol del espacio de trabajo",
+      collapseWorkspace: "Contraer árbol del espacio de trabajo",
+      expandAgent: "Expandir {{label}}",
+      collapseAgent: "Contraer {{label}}",
+    },
   },
   newWorkspace: {
     title: "Nuevo espacio de trabajo",

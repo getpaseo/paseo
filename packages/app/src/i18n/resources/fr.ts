@@ -1003,6 +1003,15 @@ export const fr: TranslationResources = {
         archiveFailed: "Échec de l'archivage de l'espace de travail",
       },
     },
+    tree: {
+      empty: "Aucun agent ni terminal",
+      loading: "Chargement…",
+      untitledAgent: "Agent sans titre",
+      expandWorkspace: "Développer l'arbre de l'espace de travail",
+      collapseWorkspace: "Réduire l'arbre de l'espace de travail",
+      expandAgent: "Développer {{label}}",
+      collapseAgent: "Réduire {{label}}",
+    },
   },
   newWorkspace: {
     title: "Nouvel espace de travail",
