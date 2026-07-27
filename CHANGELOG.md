@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.903 - 2026-07-27
+
+### Added
+
+- Sync the fork with official Paseo v0.2.2 (Claude 5 context-window fixes) while keeping fork-only desktop attention, Android push, Browser localhost tunneling, and mobile notification diagnostics ([#21](https://github.com/iamriajul/paseo/pull/21) by [@iamriajul](https://github.com/iamriajul))
+
 ## 0.2.901 - 2026-07-26
 
 ### Fixed
