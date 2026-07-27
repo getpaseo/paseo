@@ -1935,6 +1935,60 @@ export const ar: TranslationResources = {
           alert: "Alert",
         },
       },
+      mobile: {
+        title: "Notifications",
+        permission: {
+          label: "Notification permission",
+          request: "Request",
+          granted: "Granted",
+          denied: "Denied",
+          undetermined: "Not determined",
+          unknown: "Unknown",
+        },
+        projectId: {
+          label: "Expo project ID",
+        },
+        projectIdMissing: "Missing — this APK was built without PASEO_EXPO_PROJECT_ID",
+        token: {
+          label: "Expo push token",
+          copy: "Copy",
+        },
+        tokenMissing: "No token yet",
+        hosts: {
+          connected: "{{count}} connected host(s)",
+        },
+        actions: {
+          label: "Push setup",
+          description:
+            "Register this device with connected hosts, or send a local OS notification to verify permission.",
+          register: "Register",
+          testLocal: "Test local",
+        },
+        testLocal: {
+          title: "Paseo notification test",
+          body: "Local notification works on this device.",
+        },
+        messages: {
+          permissionGranted: "Notification permission granted.",
+          permissionDenied: "Notification permission denied.",
+          registered: "Registered push token with {{count}} host(s).",
+          tokenReadyNoHosts: "Got a push token, but no connected hosts to register with.",
+          localTestSent: "Local test notification sent.",
+          tokenCopied: "Push token copied.",
+        },
+        errors: {
+          missingProjectId:
+            "Missing Expo project ID in this build. Rebuild the APK with PASEO_EXPO_PROJECT_ID set.",
+          tokenEmpty: "Expo returned an empty push token.",
+          tokenFailed: "Failed to fetch Expo push token.",
+          refreshFailed: "Failed to refresh notification status.",
+          permissionFailed: "Failed to request notification permission.",
+          permissionRequired: "Notification permission is required.",
+          registerFailed: "Failed to register push token.",
+          localTestFailed: "Failed to send local test notification.",
+          copyFailed: "Failed to copy token.",
+        },
+      },
       actions: {
         granted: "ممنوح",
         request: "طلب",

@@ -2,25 +2,11 @@ import { useCallback, useEffect, useRef } from "react";
 import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Notifications from "expo-notifications";
-import Constants from "expo-constants";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { isWeb } from "@/constants/platform";
+import { getExpoProjectId } from "@/utils/expo-project-id";
 
 const STORAGE_PREFIX = "@paseo:expo-push-token:";
-
-function getExpoProjectId(): string | null {
-  const constants = Constants as unknown as {
-    easConfig?: { projectId?: unknown };
-    expoConfig?: { extra?: { eas?: { projectId?: unknown } } };
-  };
-  const fromEas = constants?.easConfig?.projectId;
-  if (typeof fromEas === "string" && fromEas.trim()) return fromEas.trim();
-
-  const fromExtra = constants?.expoConfig?.extra?.eas?.projectId;
-  if (typeof fromExtra === "string" && fromExtra.trim()) return fromExtra.trim();
-
-  return null;
-}
 
 async function ensurePushPermission(): Promise<boolean> {
   const existing = await Notifications.getPermissionsAsync();

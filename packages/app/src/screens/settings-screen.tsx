@@ -79,7 +79,9 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/component
 import { DesktopPermissionsSection } from "@/desktop/components/desktop-permissions-section";
 import { BrowserDataSection } from "@/desktop/components/browser-data-section";
 import { IntegrationsSection } from "@/desktop/components/integrations-section";
+import { MobileNotificationsSection } from "@/components/settings/mobile-notifications-section";
 import { isElectronRuntime } from "@/desktop/host";
+import { isNative } from "@/constants/platform";
 import { useDesktopAppUpdater } from "@/desktop/updates/use-desktop-app-updater";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
 import { resolveAppVersion } from "@/utils/app-version";
@@ -154,7 +156,7 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
     id: "permissions",
     labelKey: "settings.sections.permissions",
     icon: Shield,
-    desktopOnly: true,
+    // Desktop: OS permission + attention settings. Mobile: push diagnostics / test.
   },
   { id: "diagnostics", labelKey: "settings.sections.diagnostics", icon: Stethoscope },
   { id: "about", labelKey: "settings.sections.about", icon: Info },
@@ -1414,7 +1416,13 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
         case "integrations":
           return isDesktopApp ? <IntegrationsSection /> : null;
         case "permissions":
-          return isDesktopApp ? <DesktopPermissionsSection /> : null;
+          if (isDesktopApp) {
+            return <DesktopPermissionsSection />;
+          }
+          if (isNative) {
+            return <MobileNotificationsSection />;
+          }
+          return null;
         case "diagnostics":
           return (
             <DiagnosticsSection
