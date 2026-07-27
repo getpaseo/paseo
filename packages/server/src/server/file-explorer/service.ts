@@ -305,7 +305,8 @@ export async function streamExplorerFile(
     const fileTypeSample = sample.subarray(0, bytesRead);
     const ext = path.extname(filePath.resolvedPath).toLowerCase();
     const isImage = ext in IMAGE_MIME_TYPES;
-    const isBinary = isImage || isLikelyBinary(fileTypeSample) || !isValidUtf8(fileTypeSample);
+    const isBinary =
+      isImage || isLikelyBinary(fileTypeSample) || !isValidUtf8Prefix(fileTypeSample);
     let kind: ExplorerFileKind = "text";
     let mimeType = textMimeTypeForExtension(ext);
     if (isImage) {
@@ -324,17 +325,22 @@ export async function streamExplorerFile(
       size: Number(stats.size),
       modifiedAt: stats.mtime.toISOString(),
       revision: fileRevision(stats),
-      chunks: readFileHandleChunks(handle),
+      chunks: readFileHandleChunks(handle, Number(stats.size)),
     });
   } finally {
     await handle.close();
   }
 }
 
-async function* readFileHandleChunks(handle: FileHandle): AsyncIterable<Uint8Array> {
+async function* readFileHandleChunks(
+  handle: FileHandle,
+  advertisedSize: number,
+): AsyncIterable<Uint8Array> {
   let position = 0;
-  while (true) {
-    const chunk = Buffer.allocUnsafe(FILE_EXPLORER_STREAM_CHUNK_BYTES);
+  while (position < advertisedSize) {
+    const chunk = Buffer.allocUnsafe(
+      Math.min(FILE_EXPLORER_STREAM_CHUNK_BYTES, advertisedSize - position),
+    );
     const { bytesRead } = await handle.read(chunk, 0, chunk.byteLength, position);
     if (bytesRead === 0) return;
     position += bytesRead;
@@ -626,6 +632,15 @@ function isLikelyBinary(buffer: Buffer): boolean {
 function isValidUtf8(buffer: Buffer): boolean {
   try {
     new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isValidUtf8Prefix(buffer: Buffer): boolean {
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(buffer, { stream: true });
     return true;
   } catch {
     return false;

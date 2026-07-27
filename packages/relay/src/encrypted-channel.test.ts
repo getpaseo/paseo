@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
-import { createClientChannel, createDaemonChannel, Transport } from "./encrypted-channel.js";
+import {
+  createClientChannel,
+  createDaemonChannel,
+  EncryptedChannel,
+  Transport,
+} from "./encrypted-channel.js";
 import {
   deriveSharedKey,
   encrypt,
@@ -47,6 +52,41 @@ async function waitForAsyncDelivery(): Promise<void> {
 }
 
 describe("EncryptedChannel", () => {
+  it("waits for transport send completion", async () => {
+    let completeSend: (() => void) | undefined;
+    const transport: Transport = {
+      send: () =>
+        new Promise<void>((resolve) => {
+          completeSend = resolve;
+        }),
+      close: () => undefined,
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+    };
+    const first = generateKeyPair();
+    const second = generateKeyPair();
+    const channel = new EncryptedChannel(
+      transport,
+      deriveSharedKey(first.secretKey, second.publicKey),
+      {},
+      { binaryCiphertext: true },
+    );
+    channel.setState("open");
+    let completed = false;
+
+    const sending = channel.send(new Uint8Array([1, 2, 3]).buffer).then(() => {
+      completed = true;
+      return undefined;
+    });
+    await Promise.resolve();
+    expect(completed).toBe(false);
+
+    completeSend?.();
+    await sending;
+    expect(completed).toBe(true);
+  });
+
   it("establishes encrypted channel between daemon and client", async () => {
     const [daemonTransport, clientTransport] = createMockTransportPair();
 

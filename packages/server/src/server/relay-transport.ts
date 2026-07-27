@@ -28,7 +28,7 @@ export interface RelayTransportController {
 interface RelaySocketLike {
   readyState: number;
   bufferedAmount?: number;
-  send: (data: string | Uint8Array | ArrayBuffer) => void;
+  send: (data: string | Uint8Array | ArrayBuffer, callback?: (error?: Error) => void) => void;
   close: (code?: number, reason?: string) => void;
   terminate?: () => void;
   on: (event: "message" | "close" | "error", listener: (...args: unknown[]) => void) => void;
@@ -467,16 +467,23 @@ function createRelayTransportAdapter(
   logger: pino.Logger,
 ): RelayTransport {
   const relayTransport: RelayTransport = {
-    send: (data) => {
-      try {
-        socket.send(data);
-      } catch (err) {
-        // Socket likely transitioned to closed between checks; let onclose/onerror
-        // drive cleanup. Without this guard the synchronous throw would propagate
-        // up as an uncaughtException and take down the daemon.
-        logger.warn({ err }, "relay_socket_send_failed");
-      }
-    },
+    send: (data) =>
+      new Promise<void>((resolve, reject) => {
+        try {
+          socket.send(data, (error) => {
+            if (!error) {
+              resolve();
+              return;
+            }
+            logger.warn({ err: error }, "relay_socket_send_failed");
+            reject(error);
+          });
+        } catch (error) {
+          const err = error instanceof Error ? error : new Error(String(error));
+          logger.warn({ err }, "relay_socket_send_failed");
+          reject(err);
+        }
+      }),
     close: (code?: number, reason?: string) => socket.close(code, reason),
     onmessage: null,
     onclose: null,

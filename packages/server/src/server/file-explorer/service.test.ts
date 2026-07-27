@@ -1,8 +1,13 @@
-import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { getExplorerFileVersion, readExplorerFile, writeExplorerFile } from "./service.js";
+import {
+  getExplorerFileVersion,
+  readExplorerFile,
+  streamExplorerFile,
+  writeExplorerFile,
+} from "./service.js";
 
 async function createHomeTempDir(prefix: string): Promise<string> {
   return mkdtemp(path.join(os.homedir(), prefix));
@@ -187,6 +192,52 @@ describe("file explorer service", () => {
       expect(result.encoding).toBe("none");
       expect(result.content).toBeUndefined();
       expect(result.mimeType).toBe("application/octet-stream");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("streams exactly the advertised bytes when the file grows", async () => {
+    const root = await createTempDir("paseo-file-stream-growth-");
+
+    try {
+      const filePath = path.join(root, "growing.log");
+      const initial = Buffer.alloc(300 * 1024, 0x61);
+      await writeFile(filePath, initial);
+      let advertisedSize = 0;
+      const chunks: Uint8Array[] = [];
+
+      await streamExplorerFile({ root, relativePath: "growing.log" }, async (file) => {
+        advertisedSize = file.size;
+        await appendFile(filePath, Buffer.alloc(300 * 1024, 0x62));
+        for await (const chunk of file.chunks) chunks.push(chunk);
+      });
+
+      const streamed = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
+      expect(advertisedSize).toBe(initial.byteLength);
+      expect(streamed.byteLength).toBe(advertisedSize);
+      expect(Buffer.compare(streamed, initial)).toBe(0);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies sampled text when UTF-8 crosses the sample boundary", async () => {
+    const root = await createTempDir("paseo-file-stream-utf8-");
+
+    try {
+      const content = Buffer.concat([Buffer.alloc(8191, 0x61), Buffer.from("€"), Buffer.from("z")]);
+      await writeFile(path.join(root, "sample.txt"), content);
+      let kind: string | undefined;
+      let encoding: string | undefined;
+
+      await streamExplorerFile({ root, relativePath: "sample.txt" }, async (file) => {
+        kind = file.kind;
+        encoding = file.encoding;
+      });
+
+      expect(kind).toBe("text");
+      expect(encoding).toBe("utf-8");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

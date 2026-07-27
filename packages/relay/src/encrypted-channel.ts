@@ -19,7 +19,7 @@ import {
 import { arrayBufferToBase64, base64ToArrayBuffer } from "./base64.js";
 
 export interface Transport {
-  send(data: string | ArrayBuffer): void;
+  send(data: string | ArrayBuffer): void | Promise<void>;
   close(code?: number, reason?: string): void;
   onmessage: ((message: TransportMessage) => void) | null;
   onclose: ((code: number, reason: string) => void) | null;
@@ -267,7 +267,7 @@ export async function createDaemonChannel(
           daemonKeyPair,
           binaryCiphertext,
         });
-        transport.send(
+        const readySend = transport.send(
           JSON.stringify({
             type: "e2ee_ready",
             ...(binaryCiphertext
@@ -275,6 +275,11 @@ export async function createDaemonChannel(
               : {}),
           } satisfies E2EEReadyMessage),
         );
+        if (readySend) {
+          void readySend.catch((error) => {
+            events.onerror?.(error instanceof Error ? error : new Error(String(error)));
+          });
+        }
 
         channel.setState("open");
         events.onopen?.();
@@ -455,12 +460,12 @@ export class EncryptedChannel {
 
     const ciphertext = encrypt(this.sharedKey, data);
     if (this.options.binaryCiphertext && data instanceof ArrayBuffer) {
-      this.transport.send(ciphertext);
+      await this.transport.send(ciphertext);
       return;
     }
     // COMPAT(binaryCiphertext): added in v0.2.3, remove base64 binary sends
     // after 2027-01-27 once the supported peer floor includes negotiation.
-    this.transport.send(arrayBufferToBase64(ciphertext));
+    await this.transport.send(arrayBufferToBase64(ciphertext));
   }
 
   outboundWireByteLength(data: string | ArrayBuffer): number {
@@ -489,7 +494,7 @@ export class EncryptedChannel {
     // "ready" but do not re-key. Re-keying here would desync
     // the channel and cause decrypt failures.
     if (keysEqual(nextSharedKey, this.sharedKey)) {
-      this.transport.send(
+      await this.transport.send(
         JSON.stringify({
           type: "e2ee_ready",
           ...(this.options.binaryCiphertext
