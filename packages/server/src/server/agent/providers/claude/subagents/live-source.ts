@@ -27,7 +27,26 @@ interface TaskStartedMessage {
   description?: string;
   subagent_type?: string;
   task_type?: string;
+  prompt?: string;
   skip_transcript?: boolean;
+}
+
+/** Task-tool subagents. Backgrounded shell commands announce as `local_bash`. */
+const CLAUDE_SUBAGENT_TASK_TYPE = "local_agent";
+
+/**
+ * Not every announced task is a subagent. Verified on the wire:
+ *
+ *   Task subagent      task_type "local_agent", subagent_type "general-purpose"
+ *   background shell   task_type "local_bash",  no subagent_type
+ *
+ * Both carry a `tool_use_id`, so presence of an id is not a discriminator — filtering on it
+ * alone puts `sleep 20` in the subagents track. Releases that predate `task_type` are covered
+ * by requiring a subagent type instead.
+ */
+function isSubagentTask(message: TaskStartedMessage): boolean {
+  if (message.task_type) return message.task_type === CLAUDE_SUBAGENT_TASK_TYPE;
+  return readString(message.subagent_type) !== undefined;
 }
 
 interface TaskUpdatedMessage {
@@ -152,10 +171,8 @@ export class ClaudeTaskProtocolSource {
 
   private observeTaskStarted(message: TaskStartedMessage): SubagentObservation[] {
     const id = readString(message.tool_use_id);
-    // Tasks without a tool_use id are not Task-tool subagents (workflows, background chores),
-    // and skip_transcript marks ambient housekeeping the transcript should not show. Filtering
-    // on the announcement is exact; the sidechain frames carry no equivalent signal.
-    if (!id || message.skip_transcript === true) return [];
+    // skip_transcript marks ambient housekeeping the transcript should not show.
+    if (!id || message.skip_transcript === true || !isSubagentTask(message)) return [];
 
     this.sawTaskStarted = true;
     this.subagentIdByTaskId.set(message.task_id, id);
@@ -164,7 +181,7 @@ export class ClaudeTaskProtocolSource {
 
     const title = readString(message.subagent_type);
     const description = readString(message.description);
-    return [
+    const observations: SubagentObservation[] = [
       {
         kind: "declared",
         id,
@@ -173,6 +190,14 @@ export class ClaudeTaskProtocolSource {
         ...(description ? { description } : {}),
       },
     ];
+
+    // Open the child's timeline with the prompt it was actually given. Without this the pane
+    // starts mid-conversation, showing replies to a question the reader never sees.
+    const prompt = readString(message.prompt);
+    if (prompt) {
+      observations.push({ kind: "timeline", id, item: { type: "user_message", text: prompt } });
+    }
+    return observations;
   }
 
   private observeTaskUpdated(message: TaskUpdatedMessage): SubagentObservation[] {

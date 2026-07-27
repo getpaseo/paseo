@@ -90,11 +90,66 @@ describe("ClaudeTaskProtocolSource", () => {
     ]);
   });
 
-  it("ignores tasks that are not Task-tool subagents", () => {
+  it("ignores tasks that carry no tool_use id", () => {
     const source = new ClaudeTaskProtocolSource();
-    // Workflows and background chores announce without a tool_use id.
     expect(source.observe(taskStarted({ tool_use_id: undefined }))).toEqual([]);
     expect(source.isActive).toBe(false);
+  });
+
+  it("ignores a backgrounded shell command", () => {
+    const source = new ClaudeTaskProtocolSource();
+    // Real wire shape: a backgrounded Bash announces with a tool_use_id but no subagent_type,
+    // so filtering on the id alone would put `sleep 20` in the subagents track.
+    expect(
+      source.observe(
+        taskStarted({
+          task_id: "b51skux0z",
+          tool_use_id: "toolu_01MgVdcGPYnqE8cJQuccFtkU",
+          task_type: "local_bash",
+          subagent_type: undefined,
+          description: "Sleep 20 seconds in background",
+        }),
+      ),
+    ).toEqual([]);
+    expect(source.isActive).toBe(false);
+  });
+
+  it("ignores a workflow run", () => {
+    const source = new ClaudeTaskProtocolSource();
+    expect(
+      source.observe(taskStarted({ task_type: "local_workflow", subagent_type: undefined })),
+    ).toEqual([]);
+  });
+
+  it("accepts a subagent from a release that predates task_type", () => {
+    const source = new ClaudeTaskProtocolSource();
+    const observations = source.observe(taskStarted({ task_type: undefined }));
+    expect(observations[0]).toMatchObject({ kind: "declared", title: "general-purpose" });
+  });
+
+  it("ignores an untyped task with no subagent type", () => {
+    const source = new ClaudeTaskProtocolSource();
+    expect(source.observe(taskStarted({ task_type: undefined, subagent_type: undefined }))).toEqual(
+      [],
+    );
+  });
+
+  it("opens the child timeline with the prompt it was given", () => {
+    const source = new ClaudeTaskProtocolSource();
+    const observations = source.observe(
+      taskStarted({ prompt: "Reply with just the word: banana" }),
+    );
+
+    expect(observations[1]).toEqual({
+      kind: "timeline",
+      id: "toolu_01DgLoPMW9",
+      item: { type: "user_message", text: "Reply with just the word: banana" },
+    });
+  });
+
+  it("declares without a timeline item when no prompt was announced", () => {
+    const source = new ClaudeTaskProtocolSource();
+    expect(source.observe(taskStarted())).toHaveLength(1);
   });
 
   it("ignores ambient housekeeping tasks", () => {
