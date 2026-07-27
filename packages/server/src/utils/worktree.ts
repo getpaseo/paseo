@@ -51,8 +51,11 @@ const READ_ONLY_GIT_ENV = {
 
 export interface WorktreeConfig {
   branchName: string;
-  worktreeIncludeSummary?: WorktreeIncludeSummary;
   worktreePath: string;
+}
+
+export interface CreatedWorktreeConfig extends WorktreeConfig {
+  worktreeIncludeSummary: WorktreeIncludeSummary;
 }
 
 export interface WorktreeRuntimeEnv {
@@ -1283,7 +1286,7 @@ export const createWorktree = async ({
   runSetup,
   paseoHome,
   worktreesRoot,
-}: CreateWorktreeOptions): Promise<WorktreeConfig> => {
+}: CreateWorktreeOptions): Promise<CreatedWorktreeConfig> => {
   const sourcePlan = await resolveWorktreeSourcePlan({ cwd, source, desiredSlug: worktreeSlug });
   const { worktreeIncludePlan, worktreePath } = await (async () => {
     try {

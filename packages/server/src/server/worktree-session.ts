@@ -605,11 +605,11 @@ export async function createPaseoWorktreeWorkflow(
   const workspace = createdWorktree.workspace;
   const setupContinuation = options?.setupContinuation ?? { kind: "workspace" };
 
-  if (createdWorktree.created && createdWorktree.worktree.worktreeIncludeSummary?.skipped.length) {
+  if (createdWorktree.created && createdWorktree.worktreeIncludeSummary?.skipped.length) {
     dependencies.sessionLogger.warn(
       {
-        materialized: createdWorktree.worktree.worktreeIncludeSummary.materialized,
-        skipped: createdWorktree.worktree.worktreeIncludeSummary.skipped,
+        materialized: createdWorktree.worktreeIncludeSummary.materialized,
+        skipped: createdWorktree.worktreeIncludeSummary.skipped,
         worktreePath: createdWorktree.worktree.worktreePath,
       },
       "Worktree include completed with skipped entries",
