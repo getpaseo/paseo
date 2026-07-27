@@ -191,7 +191,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     width: "100%",
     maxWidth: MAX_CONTENT_WIDTH,
     alignSelf: "center",
-    marginHorizontal: "auto",
     paddingHorizontal: theme.spacing[2],
   },
   turnFooterRow: {
