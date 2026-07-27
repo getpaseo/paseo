@@ -301,6 +301,7 @@ export async function streamExplorerFile(
     }
 
     const advertisedSize = Number(stats.size);
+    const advertisedRevision = fileRevision(stats);
     const ext = path.extname(filePath.resolvedPath).toLowerCase();
     const isImage = ext in IMAGE_MIME_TYPES;
     const isBinary = isImage || (await isFileHandleBinary(handle, advertisedSize));
@@ -321,8 +322,8 @@ export async function streamExplorerFile(
       mimeType,
       size: advertisedSize,
       modifiedAt: stats.mtime.toISOString(),
-      revision: fileRevision(stats),
-      chunks: readFileHandleChunks(handle, advertisedSize),
+      revision: advertisedRevision,
+      chunks: readFileHandleChunks(handle, advertisedSize, advertisedRevision),
     });
   } finally {
     await handle.close();
@@ -366,6 +367,7 @@ async function isFileHandleBinary(handle: FileHandle, advertisedSize: number): P
 async function* readFileHandleChunks(
   handle: FileHandle,
   advertisedSize: number,
+  advertisedRevision: string,
 ): AsyncIterable<Uint8Array> {
   let position = 0;
   while (position < advertisedSize) {
@@ -378,6 +380,14 @@ async function* readFileHandleChunks(
     }
     position += bytesRead;
     yield chunk.subarray(0, bytesRead);
+  }
+
+  const finalStats = await handle.stat({ bigint: true });
+  if (
+    Number(finalStats.size) === advertisedSize &&
+    fileRevision(finalStats) !== advertisedRevision
+  ) {
+    throw new Error("File changed during transfer");
   }
 }
 

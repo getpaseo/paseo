@@ -169,7 +169,10 @@ export async function createClientChannel(
   };
   const sendHello = () => {
     try {
-      transport.send(helloText);
+      const result = transport.send(helloText);
+      if (result) {
+        void result.catch(emitSendError);
+      }
       return true;
     } catch (error) {
       // This can happen during daemon restarts while the socket transitions

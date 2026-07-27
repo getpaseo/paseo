@@ -242,6 +242,31 @@ describe("file explorer service", () => {
     }
   });
 
+  it("fails a stream when the file is overwritten in place", async () => {
+    const root = await createTempDir("paseo-file-stream-overwrite-");
+
+    try {
+      const filePath = path.join(root, "changing.log");
+      const initial = Buffer.alloc(600 * 1024, 0x61);
+      await writeFile(filePath, initial);
+
+      await expect(
+        streamExplorerFile({ root, relativePath: "changing.log" }, async (file) => {
+          let chunkIndex = 0;
+          for await (const _chunk of file.chunks) {
+            chunkIndex += 1;
+            if (chunkIndex === 1) {
+              const replacement = Buffer.alloc(initial.byteLength, 0x62);
+              await writeFile(filePath, replacement);
+            }
+          }
+        }),
+      ).rejects.toThrow("File changed during transfer");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("classifies sampled text when UTF-8 crosses the sample boundary", async () => {
     const root = await createTempDir("paseo-file-stream-utf8-");
 
