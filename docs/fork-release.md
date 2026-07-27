@@ -127,21 +127,25 @@ Configure these repository secrets once for a secure, stable signing key:
 
 Fork APKs do **not** get push notifications unless you also configure Expo + Firebase for the APK package id (default `sh.paseo`). The local Gradle fork build path needs:
 
-| Secret                        | Value                                                                |
-| ----------------------------- | -------------------------------------------------------------------- |
-| `PASEO_EXPO_PROJECT_ID`       | Expo project UUID (baked into the app as `extra.eas.projectId`)      |
-| `GOOGLE_SERVICES_FILE_BASE64` | Base64 of `google-services.json` for package `sh.paseo` (or your id) |
+| Kind     | Name                          | Value                                                                |
+| -------- | ----------------------------- | -------------------------------------------------------------------- |
+| Variable | `PASEO_EXPO_PROJECT_ID`       | Expo project UUID (baked in as `extra.eas.projectId`)                |
+| Variable | `PASEO_EXPO_OWNER`            | Expo account/org slug (optional; sets app `owner`)                   |
+| Variable | `PASEO_EXPO_UPDATES_URL`      | EAS Update URL, e.g. `https://u.expo.dev/<project-uuid>` (optional)  |
+| Secret   | `GOOGLE_SERVICES_FILE_BASE64` | Base64 of `google-services.json` for package `sh.paseo` (or your id) |
 
-Encode the client config file (not a Firebase service-account private key):
+Expo project id / owner / updates URL are **not secrets** — store them as repository **Variables** (`Settings → Secrets and variables → Actions → Variables`). The workflow reads `vars.*` first and only falls back to `secrets.*` if you previously stored them as secrets.
 
 ```bash
+gh variable set PASEO_EXPO_PROJECT_ID --repo <owner>/paseo -b '<expo-project-uuid>'
+gh variable set PASEO_EXPO_OWNER --repo <owner>/paseo -b '<expo-username-or-org>'
+gh variable set PASEO_EXPO_UPDATES_URL --repo <owner>/paseo -b 'https://u.expo.dev/<expo-project-uuid>'
 base64 -w0 google-services.json | gh secret set GOOGLE_SERVICES_FILE_BASE64 --repo <owner>/paseo
-gh secret set PASEO_EXPO_PROJECT_ID --repo <owner>/paseo -b '<expo-project-uuid>'
 ```
 
 You must still upload the **Firebase FCM service account** to that same Expo project (Expo dashboard / `eas credentials`). That server credential is separate from `google-services.json`. Without it, the APK may register an Expo token that never delivers.
 
-If either secret is missing, the fork APK still builds; the workflow warns and push will not work on that install.
+If project id or google-services is missing, the fork APK still builds; the workflow warns and push will not work on that install.
 
 If all four Android signing secrets are missing, the workflow still publishes an APK using the committed public insecure fallback key at `scripts/android-insecure-fallback-upload-keystore.jks.base64`. This is only a convenience path for fork smoke testing. Anyone with the repository can sign an APK with that public fallback key, so do not distribute fallback-signed APKs as trusted production builds.
 

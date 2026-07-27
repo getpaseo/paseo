@@ -149,9 +149,13 @@ jobs:
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-      # Optional mobile push inputs for fork APKs. projectId is required to obtain
-      # Expo push tokens; google-services.json is required for FCM on Android.
-      PASEO_EXPO_PROJECT_ID: ${{ secrets.PASEO_EXPO_PROJECT_ID }}
+      # Optional mobile push / Expo identity for fork APKs.
+      # projectId + owner + updates URL are non-secret: prefer repository Variables
+      # (vars.*), with secrets.* only as a fallback if someone stored them there.
+      # google-services.json remains a secret (contains client config).
+      PASEO_EXPO_PROJECT_ID: ${{ vars.PASEO_EXPO_PROJECT_ID || secrets.PASEO_EXPO_PROJECT_ID }}
+      PASEO_EXPO_OWNER: ${{ vars.PASEO_EXPO_OWNER || secrets.PASEO_EXPO_OWNER }}
+      PASEO_EXPO_UPDATES_URL: ${{ vars.PASEO_EXPO_UPDATES_URL || secrets.PASEO_EXPO_UPDATES_URL }}
       GOOGLE_SERVICES_FILE_BASE64: ${{ secrets.GOOGLE_SERVICES_FILE_BASE64 }}
 
     steps:
@@ -297,9 +301,22 @@ jobs:
           push_ready=true
           if [[ -z "${PASEO_EXPO_PROJECT_ID:-}" ]]; then
             push_ready=false
-            echo "::warning title=Fork Android push incomplete::PASEO_EXPO_PROJECT_ID is not set. The APK will build, but mobile push token registration will fail."
+            echo "::warning title=Fork Android push incomplete::PASEO_EXPO_PROJECT_ID is not set as a repository Variable (or Secret). The APK will build, but mobile push token registration will fail."
           else
-            echo "PASEO_EXPO_PROJECT_ID is configured for this fork Android build."
+            # Log only length/prefix — UUID is not secret but avoid full dump noise.
+            echo "PASEO_EXPO_PROJECT_ID is configured for this fork Android build (len=${#PASEO_EXPO_PROJECT_ID})."
+          fi
+
+          if [[ -n "${PASEO_EXPO_OWNER:-}" ]]; then
+            echo "PASEO_EXPO_OWNER is set."
+          else
+            echo "PASEO_EXPO_OWNER is unset (optional; app.config.js will omit owner)."
+          fi
+
+          if [[ -n "${PASEO_EXPO_UPDATES_URL:-}" ]]; then
+            echo "PASEO_EXPO_UPDATES_URL is set."
+          else
+            echo "PASEO_EXPO_UPDATES_URL is unset (fork builds disable upstream EAS updates by default)."
           fi
 
           if [[ -z "${GOOGLE_SERVICES_FILE_BASE64:-}" ]]; then
