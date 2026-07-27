@@ -1,3 +1,4 @@
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   createContext,
   useCallback,
@@ -14,7 +15,6 @@ import {
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
-  ActivityIndicator,
   Modal,
   Pressable,
   Text,
@@ -717,7 +717,7 @@ function resolveDropdownItemLeadingContent(input: {
 }): ReactElement | null {
   const { isPending, isSuccess, leading, theme } = input;
   if (isPending) {
-    return <ActivityIndicator size={16} color={theme.colors.foregroundMuted} />;
+    return <LoadingSpinner size={16} color={theme.colors.foregroundMuted} />;
   }
   if (isSuccess) {
     return <CheckCircle size={16} color={theme.colors.palette.green[500]} />;

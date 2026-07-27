@@ -1,8 +1,8 @@
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   View,
   Pressable,
   Text,
-  ActivityIndicator,
   StyleSheet as RNStyleSheet,
   type PressableStateCallbackType,
 } from "react-native";
@@ -884,7 +884,7 @@ function ComposerCancelButton({
     ? t("composer.cancel.cancelingAgent")
     : t("composer.cancel.stopAgent");
   const icon = isCancellingAgent ? (
-    <ActivityIndicator size="small" color="white" />
+    <LoadingSpinner size="small" color="white" />
   ) : (
     <Square size={buttonIconSize} color="white" fill="white" />
   );
@@ -984,7 +984,7 @@ function ComposerVoiceModeButton({
   const renderTriggerContent = useCallback(
     ({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => {
       if (isVoiceSwitching) {
-        return <ActivityIndicator size="small" color="white" />;
+        return <LoadingSpinner size="small" color="white" />;
       }
       const colorMapping = hovered ? iconForegroundMapping : iconForegroundMutedMapping;
       return <ThemedAudioLines size={buttonIconSize} uniProps={colorMapping} />;

@@ -8,11 +8,19 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { ActivityIndicator } from "react-native";
 import { measureElement as measureVirtualElement, useVirtualizer } from "@tanstack/react-virtual";
+import { withUnistyles } from "react-native-unistyles";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { useStableEvent } from "@/hooks/use-stable-event";
+import type { Theme } from "@/styles/theme";
 import { estimateStreamItemHeight } from "./web-virtualization";
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./strategy";
 import { createStreamStrategy } from "./strategy";
+import {
+  createHistoryStartPaginationState,
+  evaluateHistoryStartPagination,
+  getHistoryRevision,
+} from "./history-start-pagination";
 
 interface CreateWebStreamStrategyInput {
   isMobileBreakpoint: boolean;
@@ -25,7 +33,11 @@ const USER_SCROLL_DELTA_EPSILON = 1;
 const BOTTOM_OVERSCROLL_TOLERANCE_PX = 2;
 const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 64;
 const AUTO_SCROLL_RESUME_THRESHOLD_PX = 1;
-const HISTORY_START_THRESHOLD_PX = 96;
+
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
+const foregroundMutedColorMapping = (theme: Theme) => ({
+  color: theme.colors.foregroundMuted,
+});
 
 const historyStartSlotStyle: CSSProperties = {
   display: "flex",
@@ -133,6 +145,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const pendingAutoScrollTimeoutRef = useRef<number | null>(null);
   const pendingVirtualRowMeasureFramesRef = useRef(new Map<Element, number>());
   const historyStartReadyRef = useRef(false);
+  const historyStartPaginationStateRef = useRef(createHistoryStartPaginationState());
   const shouldUseVirtualizer = segments.historyVirtualized.length > 0;
   const {
     renderHistoryVirtualizedRow,
@@ -173,6 +186,25 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   }, [rowVirtualizer]);
   const virtualRows = rowVirtualizer.getVirtualItems();
   const virtualTotalSize = rowVirtualizer.getTotalSize();
+  const historyRevision = getHistoryRevision(segments);
+
+  const evaluateHistoryStart = useStableEvent(() => {
+    const scrollContainer = scrollContainerRef.current;
+    if (!scrollContainer) {
+      return;
+    }
+    const result = evaluateHistoryStartPagination(historyStartPaginationStateRef.current, {
+      distanceFromHistoryStart: scrollContainer.scrollTop,
+      hasOlderHistory,
+      isLoadingOlderHistory,
+      isReady: historyStartReadyRef.current,
+      revision: historyRevision,
+    });
+    historyStartPaginationStateRef.current = result.state;
+    if (result.shouldLoad) {
+      onNearHistoryStart();
+    }
+  });
 
   const measureVirtualizedRowElement = useCallback(
     (node: HTMLDivElement | null) => {
@@ -297,24 +329,20 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
 
     lastKnownScrollTopRef.current = currentScrollTop;
     updateScrollMetrics();
-    if (
-      historyStartReadyRef.current &&
-      hasOlderHistory &&
-      currentScrollTop <= HISTORY_START_THRESHOLD_PX
-    ) {
-      onNearHistoryStart();
-    }
-  }, [cancelPendingStickToBottom, hasOlderHistory, onNearHistoryStart, updateScrollMetrics]);
+    evaluateHistoryStart();
+  }, [cancelPendingStickToBottom, evaluateHistoryStart, updateScrollMetrics]);
 
   useEffect(() => {
+    historyStartPaginationStateRef.current = createHistoryStartPaginationState();
     const frame = window.requestAnimationFrame(() => {
       historyStartReadyRef.current = true;
+      evaluateHistoryStart();
     });
     return () => {
       window.cancelAnimationFrame(frame);
       historyStartReadyRef.current = false;
     };
-  }, [props.agentId]);
+  }, [evaluateHistoryStart, props.agentId]);
 
   useLayoutEffect(() => {
     if (!isActivationReady) {
@@ -370,7 +398,12 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
 
   useEffect(() => {
     updateScrollMetrics();
+    evaluateHistoryStart();
   }, [
+    evaluateHistoryStart,
+    hasOlderHistory,
+    historyRevision,
+    isLoadingOlderHistory,
     segments.historyMounted.length,
     segments.historyVirtualized.length,
     segments.liveHead.length,
@@ -386,8 +419,10 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     }
 
     updateScrollMetrics();
+    evaluateHistoryStart();
     const observer = new ResizeObserver(() => {
       updateScrollMetrics();
+      evaluateHistoryStart();
       if (!followOutputRef.current) {
         return;
       }
@@ -400,7 +435,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     return () => {
       observer.disconnect();
     };
-  }, [scheduleStickToBottom, updateScrollMetrics]);
+  }, [evaluateHistoryStart, scheduleStickToBottom, updateScrollMetrics]);
 
   useEffect(() => {
     const scrollContainer = scrollContainerRef.current;
@@ -546,15 +581,20 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     return renderLiveAuxiliary();
   }, [renderLiveAuxiliary]);
   const historyStartSlot = useMemo(() => {
-    if (!isLoadingOlderHistory) {
+    if (!hasOlderHistory && !isLoadingOlderHistory) {
       return null;
     }
     return (
-      <div style={historyStartSlotStyle} data-testid="load-older-history-spinner">
-        <ActivityIndicator size="small" />
+      <div
+        style={historyStartSlotStyle}
+        data-testid={isLoadingOlderHistory ? "load-older-history-spinner" : undefined}
+      >
+        {isLoadingOlderHistory ? (
+          <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
+        ) : null}
       </div>
     );
-  }, [isLoadingOlderHistory]);
+  }, [hasOlderHistory, isLoadingOlderHistory]);
   const shouldRenderEmpty =
     !boundary.hasMountedHistory &&
     !boundary.hasVirtualizedHistory &&

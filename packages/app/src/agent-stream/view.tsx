@@ -1,3 +1,4 @@
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
   forwardRef,
   memo,
@@ -17,7 +18,6 @@ import {
   Text,
   Pressable,
   Platform,
-  ActivityIndicator,
   type PressableStateCallbackType,
   type StyleProp,
   type ViewStyle,
@@ -1194,7 +1194,7 @@ function ToolCallSlot({
   return <ToolCall {...rest} onInlineDetailsExpandedChange={handleExpandedChange} />;
 }
 
-const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedCheckIcon = withUnistyles(Check);
 const ThemedXIcon = withUnistyles(X);
 
@@ -1241,7 +1241,7 @@ function PermissionActionButton({
   return (
     <Pressable testID={testID} style={pressableStyle} onPress={handlePress} disabled={isResponding}>
       {isRespondingAction ? (
-        <ThemedActivityIndicator size="small" uniProps={colorMapping} />
+        <ThemedLoadingSpinner size="small" uniProps={colorMapping} />
       ) : (
         <View style={permissionStyles.optionContent}>
           <Icon size={14} uniProps={colorMapping} />
