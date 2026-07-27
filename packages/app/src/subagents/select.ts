@@ -28,6 +28,10 @@ export interface ProviderSubagentRow {
   // one names the row — collapsing them here is what makes every row read alike.
   title: string | null;
   description: string | null;
+  // Observed from the subagent itself. Null means "not observed yet" and must render as nothing,
+  // never as the parent agent's model or thinking setting.
+  model: string | null;
+  effort: string | null;
   status: ProviderSubagentDescriptorPayload["status"];
   requiresAttention: boolean;
   createdAt: Date;
@@ -106,6 +110,8 @@ export function selectProviderSubagentsForParent(
       provider: subagent.provider,
       title: subagent.title,
       description: subagent.description,
+      model: subagent.model ?? null,
+      effort: subagent.effort ?? null,
       status: subagent.status,
       requiresAttention: subagent.status === "failed",
       createdAt: new Date(subagent.createdAt),

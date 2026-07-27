@@ -3728,7 +3728,7 @@ class ClaudeAgentSession implements AgentSession {
   ): AgentStreamEvent[] {
     const parentToolUseId = readClaudeParentToolUseId(message);
     if (parentToolUseId) {
-      return this.sidechainTracker.handleMessage(message, parentToolUseId);
+      return this.translateSidechainFrameToEvents(message, parentToolUseId);
     }
 
     const events: AgentStreamEvent[] = [];
@@ -3793,6 +3793,33 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     return events;
+  }
+
+  /**
+   * A frame from inside a subagent, routed to that child rather than the parent's transcript.
+   */
+  private translateSidechainFrameToEvents(
+    message: SDKMessage,
+    parentToolUseId: string,
+  ): AgentStreamEvent[] {
+    // Once a CLI announces its tasks it announces all of them, so a frame for one that was never
+    // declared is work the filter already rejected — a workflow child, ambient housekeeping, a
+    // grandchild announced in someone else's session. Attributing it anyway materializes exactly
+    // what the filter prevents: a nameless descriptor stuck running, plus a timeline no surface
+    // can open, both held for the session's lifetime.
+    if (
+      this.taskProtocolSource.announcesTasks &&
+      !this.taskProtocolSource.isDeclared(parentToolUseId)
+    ) {
+      return [];
+    }
+    // The child's own frames are the only place its model appears; the task protocol does not
+    // announce it. Read per frame rather than snapshotting, since a provider can swap models
+    // mid-flight on overload or refusal fallback.
+    const runtimeEvents = foldSubagentObservations(
+      this.taskProtocolSource.observeSidechainFrame(message, parentToolUseId),
+    ).map((event): AgentStreamEvent => ({ type: "provider_subagent", provider: "claude", event }));
+    return [...runtimeEvents, ...this.sidechainTracker.handleMessage(message, parentToolUseId)];
   }
 
   /**

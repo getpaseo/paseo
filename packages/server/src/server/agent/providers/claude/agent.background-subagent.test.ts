@@ -127,6 +127,41 @@ describe("background Claude subagents", () => {
     });
   });
 
+  test("keeps a filtered task out of the track even when it emits sidechain frames", async () => {
+    // A workflow child is refused at declaration, but its frames still carry a parent_tool_use_id.
+    // Attributing them would recreate exactly what the filter rejected: a descriptor with no
+    // title and a defaulted "running" status — a nameless row that never finishes.
+    queryFactory.mockImplementation(() =>
+      buildQueryMock([
+        { type: "system", subtype: "init", session_id: "bg-session", permissionMode: "default" },
+        {
+          type: "system",
+          subtype: "task_started",
+          task_id: "wf-1",
+          tool_use_id: "toolu_workflow",
+          task_type: "local_workflow",
+          workflow_name: "spec",
+          description: "Run the spec workflow",
+        },
+        {
+          type: "assistant",
+          parent_tool_use_id: "toolu_workflow",
+          message: { model: "claude-opus-5", content: [{ type: "text", text: "working" }] },
+        },
+        { type: "result", subtype: "success", usage: {}, total_cost_usd: 0 },
+      ]),
+    );
+    const session = await new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({ provider: "claude", cwd: process.cwd() });
+    const events = await collectUntilTerminal(streamSession(session, "run the workflow"));
+    await session.close();
+
+    expect(events.filter((event) => event.type === "provider_subagent")).toEqual([]);
+  });
+
   test("labels the parent's Task card with the type and task", async () => {
     // Without this the card renders as a bare "Task": the tracker that normally supplies the
     // sub_agent detail never runs, because no frame carries parent_tool_use_id.

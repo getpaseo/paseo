@@ -213,6 +213,76 @@ describe("observeReplaySubagents", () => {
   });
 });
 
+describe("replay runtime", () => {
+  it("reads the model and effort off the subagent's own transcript", () => {
+    const observations = observeReplaySubagents({
+      subagents: [
+        {
+          agentId: AGENT_ID,
+          meta: { toolUseId: TOOL_USE_ID },
+          entries: [{ type: "assistant", effort: "high", message: { model: "claude-opus-5" } }],
+        },
+      ],
+      parent: parentWithTaskCall(),
+      convertEntry: () => [],
+    });
+
+    expect(observations.find((o) => o.kind === "runtime")).toEqual({
+      kind: "runtime",
+      id: TOOL_USE_ID,
+      model: "claude-opus-5",
+      effort: "high",
+    });
+  });
+
+  it("takes the last observed values when the model changes mid-transcript", () => {
+    const observations = observeReplaySubagents({
+      subagents: [
+        {
+          agentId: AGENT_ID,
+          meta: { toolUseId: TOOL_USE_ID },
+          entries: [
+            { type: "assistant", effort: "high", message: { model: "claude-opus-5" } },
+            { type: "assistant", effort: "low", message: { model: "claude-sonnet-5" } },
+          ],
+        },
+      ],
+      parent: parentWithTaskCall(),
+      convertEntry: () => [],
+    });
+
+    expect(observations.find((o) => o.kind === "runtime")).toMatchObject({
+      model: "claude-sonnet-5",
+      effort: "low",
+    });
+  });
+
+  it("reports nothing when the transcript never names a model or effort", () => {
+    const observations = observeReplaySubagents({
+      subagents: [{ agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID }, entries: [] }],
+      parent: parentWithTaskCall(),
+      convertEntry: () => [],
+    });
+    expect(observations.some((o) => o.kind === "runtime")).toBe(false);
+  });
+
+  it("passes through a model the manifest does not know", () => {
+    // Claude Code is an Anthropic-compatible client; subagents legitimately report other models.
+    const observations = observeReplaySubagents({
+      subagents: [
+        {
+          agentId: AGENT_ID,
+          meta: { toolUseId: TOOL_USE_ID },
+          entries: [{ type: "assistant", message: { model: "glm-5.1" } }],
+        },
+      ],
+      parent: parentWithTaskCall(),
+      convertEntry: () => [],
+    });
+    expect(observations.find((o) => o.kind === "runtime")).toMatchObject({ model: "glm-5.1" });
+  });
+});
+
 describe("live and replay agree", () => {
   // The property the design exists to guarantee: one session, two sources, one descriptor.
   // This is inexpressible against the inference implementation, where the paths share no

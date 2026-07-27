@@ -1,7 +1,11 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import type { AgentMetadata } from "../../../agent-sdk-types.js";
-import type { ProviderSubagentStatus } from "../../../provider-subagents/store.js";
+import type {
+  ProviderSubagentStatus,
+  ProviderSubagentUsage,
+} from "../../../provider-subagents/store.js";
+import { resolveObservedClaudeModelId } from "../models.js";
 import type { SubagentObservation } from "./observation.js";
 
 /**
@@ -64,6 +68,23 @@ interface TaskNotificationMessage {
   task_id: string;
   tool_use_id?: string;
   status?: string;
+  usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number };
+}
+
+interface TaskProgressMessage {
+  task_id: string;
+  usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number };
+}
+
+function readUsage(
+  usage: { total_tokens?: number; tool_uses?: number; duration_ms?: number } | undefined,
+): ProviderSubagentUsage | null {
+  if (!usage) return null;
+  const observed: ProviderSubagentUsage = {};
+  if (typeof usage.total_tokens === "number") observed.totalTokens = usage.total_tokens;
+  if (typeof usage.tool_uses === "number") observed.toolUses = usage.tool_uses;
+  if (typeof usage.duration_ms === "number") observed.durationMs = usage.duration_ms;
+  return Object.keys(observed).length > 0 ? observed : null;
 }
 
 function readString(value: unknown): string | undefined {
@@ -119,7 +140,10 @@ export class ClaudeTaskProtocolSource {
   private readonly backgroundedIds = new Set<string>();
   /** Last status emitted per subagent, so a redundant announcement is not re-broadcast. */
   private readonly lastStatusById = new Map<string, ProviderSubagentStatus>();
+  /** Last model reported per subagent, so an unchanged model is not re-broadcast. */
+  private readonly lastModelById = new Map<string, string>();
   private sawTaskStarted = false;
+  private sawAnyTask = false;
   private readonly getToolInput: (toolUseId: string) => AgentMetadata | null | undefined;
 
   constructor(input: ClaudeTaskProtocolSourceInput = {}) {
@@ -135,6 +159,28 @@ export class ClaudeTaskProtocolSource {
     return this.sawTaskStarted;
   }
 
+  /**
+   * True once this session announced any task at all, including the ones filtered out.
+   *
+   * Deliberately not `isActive`: that one answers "does a declarative owner exist for subagent
+   * descriptors", and stays false in a session whose only tasks were rejected. This one answers
+   * "does this CLI announce its tasks" — and once it does, every task is announced, so a frame
+   * for an id that was never declared is provably work the filter refused rather than something
+   * this source has yet to hear about.
+   */
+  get announcesTasks(): boolean {
+    return this.sawAnyTask;
+  }
+
+  /**
+   * Whether this source declared the given subagent. Callers route frames through this before
+   * attributing anything to an id: a frame for a task that was never declared belongs to work
+   * the declaration filter already rejected.
+   */
+  isDeclared(subagentId: string): boolean {
+    return this.declaredIds.has(subagentId);
+  }
+
   observe(message: SDKMessage): SubagentObservation[] {
     if (message.type !== "system") return [];
     switch (message.subtype) {
@@ -144,6 +190,8 @@ export class ClaudeTaskProtocolSource {
         return this.observeTaskUpdated(message as unknown as TaskUpdatedMessage);
       case "task_notification":
         return this.observeTaskNotification(message as unknown as TaskNotificationMessage);
+      case "task_progress":
+        return this.observeTaskProgress(message as unknown as TaskProgressMessage);
       default:
         return [];
     }
@@ -161,7 +209,9 @@ export class ClaudeTaskProtocolSource {
     this.declaredIds.clear();
     this.backgroundedIds.clear();
     this.lastStatusById.clear();
+    this.lastModelById.clear();
     this.sawTaskStarted = false;
+    this.sawAnyTask = false;
   }
 
   /**
@@ -187,6 +237,10 @@ export class ClaudeTaskProtocolSource {
   }
 
   private observeTaskStarted(message: TaskStartedMessage): SubagentObservation[] {
+    // Recorded before the filter: what this proves is that the CLI announces its tasks, which is
+    // true whether or not this particular one is a subagent.
+    this.sawAnyTask = true;
+
     const id = readString(message.tool_use_id);
     // skip_transcript marks ambient housekeeping the transcript should not show.
     if (!id || message.skip_transcript === true || !isSubagentTask(message)) return [];
@@ -230,7 +284,47 @@ export class ClaudeTaskProtocolSource {
   }
 
   private observeTaskNotification(message: TaskNotificationMessage): SubagentObservation[] {
-    return this.observeStatus(message.task_id, message.status);
+    const observations = this.observeUsage(message.task_id, message.usage);
+    observations.push(...this.observeStatus(message.task_id, message.status));
+    return observations;
+  }
+
+  /**
+   * `task_progress` fires once per tool use, not on a timer, so this is an accurate live cost
+   * signal rather than a sampled one. It matters most for backgrounded subagents, which emit no
+   * sidechain frames at all and would otherwise show no activity while they work.
+   */
+  private observeTaskProgress(message: TaskProgressMessage): SubagentObservation[] {
+    return this.observeUsage(message.task_id, message.usage);
+  }
+
+  private observeUsage(
+    taskId: string,
+    raw: { total_tokens?: number; tool_uses?: number; duration_ms?: number } | undefined,
+  ): SubagentObservation[] {
+    const id = this.subagentIdByTaskId.get(taskId);
+    const usage = readUsage(raw);
+    if (!id || !usage) return [];
+    return [{ kind: "usage", id, usage }];
+  }
+
+  /**
+   * The model the child is actually running, read off its own assistant frames.
+   *
+   * Routed through the declaration for the same reason status is: a frame carrying the tool_use
+   * id of a task this source filtered out — ambient housekeeping, a workflow child, a nested
+   * grandchild announced in someone else's session — would otherwise fold to an upsert with no
+   * identity and a defaulted "running" status. That is the nameless, never-finishing row the
+   * declaration filter exists to prevent, arriving by a different door.
+   */
+  observeSidechainFrame(message: SDKMessage, subagentId: string): SubagentObservation[] {
+    if (message.type !== "assistant" || !this.declaredIds.has(subagentId)) return [];
+    const model = resolveObservedClaudeModelId(
+      typeof message.message?.model === "string" ? message.message.model : undefined,
+    );
+    if (!model || this.lastModelById.get(subagentId) === model) return [];
+    this.lastModelById.set(subagentId, model);
+    return [{ kind: "runtime", id: subagentId, model }];
   }
 
   /**

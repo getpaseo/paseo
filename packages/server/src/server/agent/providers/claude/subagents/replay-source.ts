@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { AgentTimelineItem } from "../../../agent-sdk-types.js";
 import { normalizeProviderReplayTimestamp } from "../../../provider-history-timestamps.js";
+import { resolveObservedClaudeModelId } from "../models.js";
 import type { SubagentObservation } from "./observation.js";
 
 /**
@@ -50,8 +51,29 @@ export interface ClaudeReplayEntry {
   type?: unknown;
   agentId?: unknown;
   timestamp?: unknown;
+  /** Claude Code stamps the active effort on each assistant entry. */
+  effort?: unknown;
   message?: { content?: unknown; [key: string]: unknown };
   [key: string]: unknown;
+}
+
+/**
+ * Last-observed model and effort from a subagent's own assistant entries.
+ *
+ * Effort is replay-only: the SDK's live assistant message does not carry it, and it can be
+ * silently downgraded for the selected model, so any live value would be a guess.
+ */
+function readRuntime(entries: readonly ClaudeReplayEntry[]): { model?: string; effort?: string } {
+  const runtime: { model?: string; effort?: string } = {};
+  for (const entry of entries) {
+    if (entry.type !== "assistant") continue;
+    const effort = typeof entry.effort === "string" ? entry.effort.trim() : "";
+    if (effort) runtime.effort = effort;
+    const rawModel = (entry.message as { model?: unknown } | undefined)?.model;
+    const model = resolveObservedClaudeModelId(typeof rawModel === "string" ? rawModel : undefined);
+    if (model) runtime.model = model;
+  }
+  return runtime;
 }
 
 export interface ClaudeReplaySubagentInput {
@@ -107,6 +129,28 @@ function resolveLink(
   return { id: subagent.agentId, toolCallId: null, failed: null };
 }
 
+/**
+ * The parent's tool input is the same source the live path reads, so it wins; meta.json fills the
+ * gap when the parent's Task call is missing from the transcript.
+ */
+function declareSubagent(
+  subagent: ClaudeReplaySubagentInput,
+  link: ResolvedLink,
+  toolCall: { title?: string; description?: string } | undefined,
+): SubagentObservation {
+  const title = toolCall?.title ?? subagent.meta?.agentType;
+  const description = toolCall?.description ?? subagent.meta?.description;
+  const firstTimestamp = normalizeProviderReplayTimestamp(subagent.entries[0]?.timestamp);
+  return {
+    kind: "declared",
+    id: link.id,
+    ...(title ? { title } : {}),
+    ...(description ? { description } : {}),
+    ...(link.toolCallId ? { toolCallId: link.toolCallId } : {}),
+    ...(firstTimestamp ? { timestamp: firstTimestamp } : {}),
+  };
+}
+
 function observeSubagent(
   subagent: ClaudeReplaySubagentInput,
   parent: ClaudeReplayParentFacts,
@@ -115,21 +159,14 @@ function observeSubagent(
   const link = resolveLink(subagent, parent);
   const toolCall = link.toolCallId ? parent.toolCalls.get(link.toolCallId) : undefined;
 
-  // The parent's tool input is the same source the live path reads, so it wins; meta.json fills
-  // the gap when the parent's Task call is missing from the transcript.
-  const title = toolCall?.title ?? subagent.meta?.agentType;
-  const description = toolCall?.description ?? subagent.meta?.description;
+  const observations: SubagentObservation[] = [declareSubagent(subagent, link, toolCall)];
 
-  const observations: SubagentObservation[] = [];
-  const firstTimestamp = normalizeProviderReplayTimestamp(subagent.entries[0]?.timestamp);
-  observations.push({
-    kind: "declared",
-    id: link.id,
-    ...(title ? { title } : {}),
-    ...(description ? { description } : {}),
-    ...(link.toolCallId ? { toolCallId: link.toolCallId } : {}),
-    ...(firstTimestamp ? { timestamp: firstTimestamp } : {}),
-  });
+  // Never inherited from the parent: an unobserved value stays absent so the store's sticky
+  // merge keeps whatever it already had.
+  const runtime = readRuntime(subagent.entries);
+  if (runtime.model !== undefined || runtime.effort !== undefined) {
+    observations.push({ kind: "runtime", id: link.id, ...runtime });
+  }
 
   for (const entry of subagent.entries) {
     const timestamp = normalizeProviderReplayTimestamp(entry.timestamp);

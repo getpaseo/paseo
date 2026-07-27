@@ -21,6 +21,16 @@ export interface ProviderSubagentDescriptor {
   updatedAt: string;
   toolCallId: string | null;
   cwd: string | null;
+  model: string | null;
+  effort: string | null;
+  usage: ProviderSubagentUsage | null;
+}
+
+/** Cost of a subagent's own work, as its provider reports it. */
+export interface ProviderSubagentUsage {
+  totalTokens?: number;
+  toolUses?: number;
+  durationMs?: number;
 }
 
 export type ProviderSubagentInputEvent =
@@ -29,9 +39,16 @@ export type ProviderSubagentInputEvent =
       id: string;
       title?: string | null;
       description?: string | null;
-      status: ProviderSubagentStatus;
+      /**
+       * Omit to keep the stored status. An upsert that only reports model or usage says nothing
+       * about whether the child is still running, and must not revert a finished one.
+       */
+      status?: ProviderSubagentStatus;
       toolCallId?: string | null;
       cwd?: string | null;
+      model?: string | null;
+      effort?: string | null;
+      usage?: ProviderSubagentUsage | null;
       timestamp?: string;
     }
   | {
@@ -56,6 +73,30 @@ export type ProviderSubagentStoreEvent =
 
 function storeKey(parentAgentId: string, subagentId: string): string {
   return `${parentAgentId}\0${subagentId}`;
+}
+
+/**
+ * Sticky upsert semantics for a descriptor field: an omitted value preserves what is stored, an
+ * explicit `null` clears it. Providers observe these fields incrementally — a model only becomes
+ * known once the child's first assistant frame arrives — so a partial upsert must never blank
+ * fields it says nothing about.
+ */
+function stickyField<T>(next: T | undefined, previous: T | null | undefined): T | null {
+  return next === undefined ? (previous ?? null) : next;
+}
+
+/**
+ * Usage grows monotonically, so a partial report merges onto the last one rather than replacing
+ * it: task_progress carries tokens and tool count while the child runs, and duration only lands
+ * when it finishes. An explicit null still clears.
+ */
+function mergeUsage(
+  next: ProviderSubagentUsage | null | undefined,
+  previous: ProviderSubagentUsage | null | undefined,
+): ProviderSubagentUsage | null {
+  if (next === undefined) return previous ?? null;
+  if (next === null) return null;
+  return { ...previous, ...next };
 }
 
 export class ProviderSubagentStore {
@@ -100,15 +141,16 @@ export class ProviderSubagentStore {
       id: event.id,
       parentAgentId,
       provider,
-      title: event.title === undefined ? (previous?.title ?? null) : event.title,
-      description:
-        event.description === undefined ? (previous?.description ?? null) : event.description,
-      status: event.status,
+      title: stickyField(event.title, previous?.title),
+      description: stickyField(event.description, previous?.description),
+      status: event.status ?? previous?.status ?? "running",
       createdAt: previous?.createdAt ?? timestamp,
       updatedAt: timestamp,
-      toolCallId:
-        event.toolCallId === undefined ? (previous?.toolCallId ?? null) : event.toolCallId,
-      cwd: event.cwd === undefined ? (previous?.cwd ?? null) : event.cwd,
+      toolCallId: stickyField(event.toolCallId, previous?.toolCallId),
+      cwd: stickyField(event.cwd, previous?.cwd),
+      model: stickyField(event.model, previous?.model),
+      effort: stickyField(event.effort, previous?.effort),
+      usage: mergeUsage(event.usage, previous?.usage),
     };
     this.descriptors.set(key, subagent);
     return { type: "upsert", subagent };

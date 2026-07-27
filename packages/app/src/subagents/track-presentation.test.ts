@@ -84,6 +84,8 @@ describe("countFinishedSubagents", () => {
         provider: "claude",
         title: "running",
         description: null,
+        model: null,
+        effort: null,
         status: "running",
         requiresAttention: false,
         createdAt: new Date("2026-04-20T00:00:00.000Z"),
@@ -95,6 +97,8 @@ describe("countFinishedSubagents", () => {
         provider: "claude",
         title: "failed",
         description: null,
+        model: null,
+        effort: null,
         status: "failed",
         requiresAttention: true,
         createdAt: new Date("2026-04-20T00:00:01.000Z"),
@@ -179,6 +183,8 @@ describe("buildSubagentRowPresentationData for provider rows", () => {
       provider: "claude",
       title: "title" in overrides ? (overrides.title ?? null) : "general-purpose",
       description: overrides.description ?? null,
+      model: overrides.model ?? null,
+      effort: overrides.effort ?? null,
       status: overrides.status ?? "running",
       requiresAttention: false,
       createdAt: overrides.createdAt ?? new Date("2026-07-26T00:00:00.000Z"),
@@ -220,5 +226,41 @@ describe("buildSubagentRowPresentationData for provider rows", () => {
 
   it("leaves managed subagent rows with no subtitle", () => {
     expect(buildSubagentRowPresentationData(row({ id: "a", title: "Managed" })).subtitle).toBe("");
+  });
+});
+
+describe("subagent runtime and usage in the row subtitle", () => {
+  function providerRow(overrides: Partial<ProviderSubagentRow> = {}): ProviderSubagentRow {
+    return {
+      kind: "provider",
+      id: "toolu_1",
+      parentAgentId: "parent",
+      provider: "claude",
+      title: "general-purpose",
+      description: "Reply with banana",
+      model: null,
+      effort: null,
+      status: "running",
+      requiresAttention: false,
+      createdAt: new Date("2026-07-26T00:00:00.000Z"),
+      ...overrides,
+    };
+  }
+
+  it("appends the observed model and effort after the type", () => {
+    expect(
+      buildSubagentRowPresentationData(providerRow({ model: "claude-opus-5", effort: "high" }))
+        .subtitle,
+    ).toBe("general-purpose · claude-opus-5 · high");
+  });
+
+  it("keeps cost out of the row, which carries identity only", () => {
+    // Tokens are a context-size reading dominated by the reused prompt cache, and a tool count
+    // says little at a glance. Neither survives in a dense row; the pane shows both.
+    expect(buildSubagentRowPresentationData(providerRow()).subtitle).toBe("general-purpose");
+  });
+
+  it("never invents a model, effort, or cost that was not observed", () => {
+    expect(buildSubagentRowPresentationData(providerRow()).subtitle).toBe("general-purpose");
   });
 });

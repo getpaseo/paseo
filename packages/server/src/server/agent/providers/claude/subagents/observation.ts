@@ -2,6 +2,7 @@ import type { AgentTimelineItem } from "../../../agent-sdk-types.js";
 import type {
   ProviderSubagentInputEvent,
   ProviderSubagentStatus,
+  ProviderSubagentUsage,
 } from "../../../provider-subagents/store.js";
 
 /**
@@ -11,8 +12,8 @@ import type {
  * no accumulation, no dedupe. That keeps the live stream and the on-disk replay speaking one
  * vocabulary, so a fact is derived once instead of once per path.
  *
- * The union is deliberately small. Model, effort, and usage need descriptor fields that do not
- * exist yet; they arrive as new variants when those land.
+ * The union stays small on purpose: a kind earns its place when a descriptor field exists to
+ * receive it and a source exists to report it.
  */
 export type SubagentObservation =
   | {
@@ -27,6 +28,13 @@ export type SubagentObservation =
       timestamp?: string;
     }
   | { kind: "status"; id: string; status: ProviderSubagentStatus; timestamp?: string }
+  /**
+   * What the child is actually running on. Observed from its own frames, never inherited: the
+   * provider can swap models mid-flight and silently downgrade effort for the chosen model.
+   */
+  | { kind: "runtime"; id: string; model?: string; effort?: string; timestamp?: string }
+  /** Cost of the child's own work. Climbs while it runs; duration lands when it finishes. */
+  | { kind: "usage"; id: string; usage: ProviderSubagentUsage; timestamp?: string }
   | { kind: "timeline"; id: string; item: AgentTimelineItem; timestamp?: string };
 
 /**
@@ -48,6 +56,30 @@ export function foldSubagentObservations(
         type: "timeline",
         id: observation.id,
         item: observation.item,
+        ...(observation.timestamp ? { timestamp: observation.timestamp } : {}),
+      });
+      continue;
+    }
+
+    if (observation.kind === "runtime") {
+      // No status: a model report says nothing about whether the child is still running, and
+      // task_notification carries usage alongside a terminal status, so asserting one here
+      // would revert a finished child depending on fold order.
+      events.push({
+        type: "upsert",
+        id: observation.id,
+        ...(observation.model === undefined ? {} : { model: observation.model }),
+        ...(observation.effort === undefined ? {} : { effort: observation.effort }),
+        ...(observation.timestamp ? { timestamp: observation.timestamp } : {}),
+      });
+      continue;
+    }
+
+    if (observation.kind === "usage") {
+      events.push({
+        type: "upsert",
+        id: observation.id,
+        usage: observation.usage,
         ...(observation.timestamp ? { timestamp: observation.timestamp } : {}),
       });
       continue;

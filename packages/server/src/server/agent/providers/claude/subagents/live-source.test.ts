@@ -301,3 +301,123 @@ describe("ClaudeTaskProtocolSource", () => {
     ).toEqual([]);
   });
 });
+
+describe("ClaudeTaskProtocolSource usage and runtime", () => {
+  function taskProgress(usage: Record<string, number>, taskId = "a1730a6215e1f5cf6"): SDKMessage {
+    return {
+      type: "system",
+      subtype: "task_progress",
+      task_id: taskId,
+      usage,
+      last_tool_name: "Read",
+    } as unknown as SDKMessage;
+  }
+
+  function assistantFrame(model: string): SDKMessage {
+    return { type: "assistant", message: { model, content: [] } } as unknown as SDKMessage;
+  }
+
+  it("reports usage as the child works", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted());
+    // Real shape: task_progress fires once per tool use, not on a timer.
+    expect(
+      source.observe(taskProgress({ total_tokens: 16484, tool_uses: 1, duration_ms: 2474 })),
+    ).toEqual([
+      {
+        kind: "usage",
+        id: "toolu_01DgLoPMW9",
+        usage: { totalTokens: 16484, toolUses: 1, durationMs: 2474 },
+      },
+    ]);
+  });
+
+  it("reports terminal usage and status together", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted());
+    const observations = source.observe({
+      type: "system",
+      subtype: "task_notification",
+      task_id: "a1730a6215e1f5cf6",
+      tool_use_id: "toolu_01DgLoPMW9",
+      status: "completed",
+      usage: { total_tokens: 32271, tool_uses: 2, duration_ms: 10934 },
+    } as unknown as SDKMessage);
+
+    expect(observations).toEqual([
+      {
+        kind: "usage",
+        id: "toolu_01DgLoPMW9",
+        usage: { totalTokens: 32271, toolUses: 2, durationMs: 10934 },
+      },
+      { kind: "status", id: "toolu_01DgLoPMW9", status: "completed" },
+    ]);
+  });
+
+  it("ignores usage for a task it never declared", () => {
+    const source = new ClaudeTaskProtocolSource();
+    expect(source.observe(taskProgress({ total_tokens: 1 }, "b51skux0z"))).toEqual([]);
+  });
+
+  it("reads the model off the child's own frames", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted());
+    expect(
+      source.observeSidechainFrame(assistantFrame("claude-opus-5"), "toolu_01DgLoPMW9"),
+    ).toEqual([{ kind: "runtime", id: "toolu_01DgLoPMW9", model: "claude-opus-5" }]);
+  });
+
+  it("re-reports only when the model actually changes", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted());
+    source.observeSidechainFrame(assistantFrame("claude-opus-5"), "toolu_01DgLoPMW9");
+    // A dated alias is the same model; a mid-flight fallback is not.
+    expect(
+      source.observeSidechainFrame(assistantFrame("claude-opus-5-20260724"), "toolu_01DgLoPMW9"),
+    ).toEqual([]);
+    expect(
+      source.observeSidechainFrame(assistantFrame("claude-sonnet-5"), "toolu_01DgLoPMW9"),
+    ).toEqual([{ kind: "runtime", id: "toolu_01DgLoPMW9", model: "claude-sonnet-5" }]);
+  });
+
+  it("never reports a placeholder model", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted());
+    expect(source.observeSidechainFrame(assistantFrame("<synthetic>"), "toolu_01DgLoPMW9")).toEqual(
+      [],
+    );
+  });
+
+  it("ignores a frame from a task it never declared", () => {
+    // A filtered task still emits frames carrying its tool_use id. Reporting a model for one
+    // would create a descriptor the declaration filter deliberately refused — with no title and
+    // a defaulted "running" status, which the track renders as a nameless row that never ends.
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(
+      taskStarted({
+        task_id: "b51skux0z",
+        tool_use_id: "toolu_01MgVdcGPYnqE8cJQuccFtkU",
+        task_type: "local_bash",
+        subagent_type: undefined,
+      }),
+    );
+
+    expect(
+      source.observeSidechainFrame(
+        assistantFrame("claude-opus-5"),
+        "toolu_01MgVdcGPYnqE8cJQuccFtkU",
+      ),
+    ).toEqual([]);
+    expect(source.isDeclared("toolu_01MgVdcGPYnqE8cJQuccFtkU")).toBe(false);
+  });
+
+  it("never reports effort, which the live stream does not carry", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted());
+    const all = [
+      ...source.observe(taskProgress({ total_tokens: 1 })),
+      ...source.observeSidechainFrame(assistantFrame("claude-opus-5"), "toolu_01DgLoPMW9"),
+    ];
+    expect(all.some((o) => "effort" in o && o.effort !== undefined)).toBe(false);
+  });
+});
