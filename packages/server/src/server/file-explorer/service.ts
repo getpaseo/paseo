@@ -300,13 +300,17 @@ export async function streamExplorerFile(
       throw new Error("Requested path is not a file");
     }
 
-    const sample = Buffer.alloc(Math.min(FILE_TYPE_SAMPLE_BYTES, Number(stats.size)));
+    const advertisedSize = Number(stats.size);
+    const sample = Buffer.alloc(Math.min(FILE_TYPE_SAMPLE_BYTES, advertisedSize));
     const { bytesRead } = await handle.read(sample, 0, sample.byteLength, 0);
     const fileTypeSample = sample.subarray(0, bytesRead);
     const ext = path.extname(filePath.resolvedPath).toLowerCase();
     const isImage = ext in IMAGE_MIME_TYPES;
-    const isBinary =
-      isImage || isLikelyBinary(fileTypeSample) || !isValidUtf8Prefix(fileTypeSample);
+    const isValidTextSample =
+      bytesRead === advertisedSize
+        ? isValidUtf8(fileTypeSample)
+        : isValidUtf8Prefix(fileTypeSample);
+    const isBinary = isImage || isLikelyBinary(fileTypeSample) || !isValidTextSample;
     let kind: ExplorerFileKind = "text";
     let mimeType = textMimeTypeForExtension(ext);
     if (isImage) {
@@ -322,10 +326,10 @@ export async function streamExplorerFile(
       kind,
       encoding: isBinary ? "binary" : "utf-8",
       mimeType,
-      size: Number(stats.size),
+      size: advertisedSize,
       modifiedAt: stats.mtime.toISOString(),
       revision: fileRevision(stats),
-      chunks: readFileHandleChunks(handle, Number(stats.size)),
+      chunks: readFileHandleChunks(handle, advertisedSize),
     });
   } finally {
     await handle.close();
@@ -342,7 +346,9 @@ async function* readFileHandleChunks(
       Math.min(FILE_EXPLORER_STREAM_CHUNK_BYTES, advertisedSize - position),
     );
     const { bytesRead } = await handle.read(chunk, 0, chunk.byteLength, position);
-    if (bytesRead === 0) return;
+    if (bytesRead === 0) {
+      throw new Error("File changed during transfer");
+    }
     position += bytesRead;
     yield chunk.subarray(0, bytesRead);
   }

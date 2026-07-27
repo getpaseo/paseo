@@ -1,4 +1,4 @@
-import { appendFile, chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdtemp, rm, stat, truncate, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -222,6 +222,26 @@ describe("file explorer service", () => {
     }
   });
 
+  it("fails a stream when the file shrinks below its advertised size", async () => {
+    const root = await createTempDir("paseo-file-stream-truncate-");
+
+    try {
+      const filePath = path.join(root, "shrinking.log");
+      await writeFile(filePath, Buffer.alloc(300 * 1024, 0x61));
+
+      await expect(
+        streamExplorerFile({ root, relativePath: "shrinking.log" }, async (file) => {
+          await truncate(filePath, 100 * 1024);
+          for await (const _chunk of file.chunks) {
+            // Consume until the stream detects the premature EOF.
+          }
+        }),
+      ).rejects.toThrow("File changed during transfer");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("classifies sampled text when UTF-8 crosses the sample boundary", async () => {
     const root = await createTempDir("paseo-file-stream-utf8-");
 
@@ -238,6 +258,23 @@ describe("file explorer service", () => {
 
       expect(kind).toBe("text");
       expect(encoding).toBe("utf-8");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects incomplete UTF-8 when the whole file was sampled", async () => {
+    const root = await createTempDir("paseo-file-stream-invalid-utf8-");
+
+    try {
+      await writeFile(path.join(root, "invalid.txt"), Buffer.from([0x61, 0xe2, 0x82]));
+      let kind: string | undefined;
+
+      await streamExplorerFile({ root, relativePath: "invalid.txt" }, async (file) => {
+        kind = file.kind;
+      });
+
+      expect(kind).toBe("binary");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
