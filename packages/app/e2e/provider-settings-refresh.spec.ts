@@ -146,6 +146,14 @@ test.describe("provider settings overlay stack", () => {
       await expect(shortcuts).not.toBeVisible({ timeout: 10_000 });
       await expect(selector).toBeVisible();
 
+      await page.keyboard.press("ControlOrMeta+K");
+      const commandCenter = page.getByTestId("command-center-panel");
+      await expect(commandCenter).toBeVisible({ timeout: 10_000 });
+      await expect(commandCenter.getByTestId("command-center-input")).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(commandCenter).not.toBeVisible({ timeout: 10_000 });
+      await expect(selector).toBeVisible();
+
       const settingsButton = page.getByTestId("selector-header-settings-mock");
       await settingsButton.click();
 
