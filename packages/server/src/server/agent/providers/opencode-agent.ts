@@ -3791,6 +3791,7 @@ class OpenCodeAgentSession implements AgentSession {
     return (
       event.type === "message.updated" &&
       event.properties.info.role === "user" &&
+      !event.properties.info.summary?.diffs &&
       !this.emittedUserMessageIds.has(event.properties.info.id)
     );
   }
