@@ -41,6 +41,10 @@ import {
   type HistoryStartPaginationInput,
   type HistoryStartPaginationTransition,
 } from "./history-start-pagination";
+import {
+  createHistoryStartSettleScheduler,
+  type HistoryStartSettleScheduler,
+} from "./history-start-settle-scheduler";
 
 const DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION = Object.freeze({
   minIndexForVisible: 0,
@@ -127,7 +131,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     createHistoryStartPaginationState,
   );
   const historyStartPaginationStateRef = useRef(historyStartPaginationState);
-  const historyStartSettleFrameIdRef = useRef<number | null>(null);
+  const historyStartSettleSchedulerRef = useRef<HistoryStartSettleScheduler | null>(null);
 
   const historyItems = useMemo(() => {
     if (segments.historyVirtualized.length === 0) {
@@ -183,7 +187,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         }
         void (async () => {
           const started = await onNearHistoryStart();
-          if (started !== false) {
+          if (started === true) {
             return;
           }
           applyHistoryStartPaginationTransition({
@@ -205,30 +209,25 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     applyHistoryStartPaginationTransition(transition);
   });
   const scheduleHistoryStartSettle = useStableEvent(() => {
-    const pendingFrame = historyStartSettleFrameIdRef.current;
-    if (pendingFrame !== null) {
-      cancelAnimationFrame(pendingFrame);
+    let scheduler = historyStartSettleSchedulerRef.current;
+    if (!scheduler) {
+      scheduler = createHistoryStartSettleScheduler({
+        settleFrames: HISTORY_START_SETTLE_FRAMES,
+        requestFrame: requestAnimationFrame,
+        cancelFrame: cancelAnimationFrame,
+        isSettling: () => historyStartPaginationStateRef.current.status === "settling",
+        isLoading: () => getHistoryStartPaginationInput().isLoadingOlderHistory,
+        onSettle: () => {
+          const transition = settleHistoryStartPagination(
+            historyStartPaginationStateRef.current,
+            getHistoryStartPaginationInput(),
+          );
+          applyHistoryStartPaginationTransition(transition);
+        },
+      });
+      historyStartSettleSchedulerRef.current = scheduler;
     }
-    let remainingFrames = HISTORY_START_SETTLE_FRAMES;
-    const settle = () => {
-      if (historyStartPaginationStateRef.current.status !== "settling") {
-        historyStartSettleFrameIdRef.current = null;
-        return;
-      }
-      const input = getHistoryStartPaginationInput();
-      if (input.isLoadingOlderHistory || remainingFrames > 0) {
-        remainingFrames -= input.isLoadingOlderHistory ? 0 : 1;
-        historyStartSettleFrameIdRef.current = requestAnimationFrame(settle);
-        return;
-      }
-      historyStartSettleFrameIdRef.current = null;
-      const transition = settleHistoryStartPagination(
-        historyStartPaginationStateRef.current,
-        input,
-      );
-      applyHistoryStartPaginationTransition(transition);
-    };
-    historyStartSettleFrameIdRef.current = requestAnimationFrame(settle);
+    scheduler.schedule();
   });
 
   const clearNativeViewportSettling = useCallback(() => {
@@ -339,11 +338,8 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     return () => {
       cancelAnimationFrame(frame);
       clearPendingUserScrollEnd();
-      const settleFrame = historyStartSettleFrameIdRef.current;
-      if (settleFrame !== null) {
-        historyStartSettleFrameIdRef.current = null;
-        cancelAnimationFrame(settleFrame);
-      }
+      historyStartSettleSchedulerRef.current?.cancel();
+      historyStartSettleSchedulerRef.current = null;
     };
   }, [agentId, clearNativeViewportSettling, clearPendingUserScrollEnd, evaluateHistoryStart]);
 

@@ -3,6 +3,7 @@ import {
   createAssistantImageAcquisitionCache,
   createAssistantImageFileAcquisitionKey,
   createAssistantImageFilePreviewAttachmentId,
+  createAssistantImageOccurrenceKey,
 } from "./acquisition-cache";
 
 describe("assistant image acquisition cache", () => {
@@ -90,6 +91,7 @@ describe("assistant image acquisition cache", () => {
 
   it("scopes persisted file previews to the rendered message occurrence", () => {
     const first = createAssistantImageFilePreviewAttachmentId({
+      serverId: "server-1",
       occurrenceKey: "message-1:image-1",
       mimeType: "image/png",
       path: "/workspace/screenshot.png",
@@ -98,6 +100,7 @@ describe("assistant image acquisition cache", () => {
       contentLength: 512,
     });
     const second = createAssistantImageFilePreviewAttachmentId({
+      serverId: "server-1",
       occurrenceKey: "message-2:image-1",
       mimeType: "image/png",
       path: "/workspace/screenshot.png",
@@ -105,6 +108,13 @@ describe("assistant image acquisition cache", () => {
       modifiedAt: "2026-07-27T12:00:00.000Z",
       contentLength: 512,
     });
+
+    expect(second).not.toBe(first);
+  });
+
+  it("scopes message occurrences to their agent", () => {
+    const first = createAssistantImageOccurrenceKey({ agentId: "agent-1", itemId: "message-1" });
+    const second = createAssistantImageOccurrenceKey({ agentId: "agent-2", itemId: "message-1" });
 
     expect(second).not.toBe(first);
   });

@@ -5,7 +5,15 @@ export interface AssistantImageAcquisitionCache<T> {
   size(): number;
 }
 
+export function createAssistantImageOccurrenceKey(input: {
+  agentId: string;
+  itemId: string;
+}): string {
+  return `${input.agentId}:${input.itemId}`;
+}
+
 export function createAssistantImageFilePreviewAttachmentId(input: {
+  serverId?: string;
   occurrenceKey: string;
   mimeType: string;
   path: string;
@@ -19,7 +27,7 @@ export function createAssistantImageFilePreviewAttachmentId(input: {
     size: input.size,
     modifiedAt: input.modifiedAt,
     contentLength: input.contentLength,
-    contentKey: input.occurrenceKey,
+    contentKey: `${input.serverId ?? "unknown-server"}:${input.occurrenceKey}`,
   });
 }
 

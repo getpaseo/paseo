@@ -130,7 +130,7 @@ describe("createWebStreamStrategy", () => {
             routeBottomAnchorRequest: null,
             isAuthoritativeHistoryReady: true,
             onNearBottomChange: vi.fn(),
-            onNearHistoryStart: vi.fn(),
+            onNearHistoryStart: vi.fn().mockReturnValue(true),
             isLoadingOlderHistory: false,
             hasOlderHistory: false,
             olderHistoryProgressKey: null,
@@ -174,7 +174,7 @@ describe("createWebStreamStrategy", () => {
       routeBottomAnchorRequest: null,
       isAuthoritativeHistoryReady: true,
       onNearBottomChange: vi.fn(),
-      onNearHistoryStart: vi.fn(),
+      onNearHistoryStart: vi.fn().mockReturnValue(true),
       isLoadingOlderHistory: false,
       hasOlderHistory: false,
       olderHistoryProgressKey: null,
@@ -230,7 +230,7 @@ describe("createWebStreamStrategy", () => {
           routeBottomAnchorRequest: null,
           isAuthoritativeHistoryReady: true,
           onNearBottomChange: vi.fn(),
-          onNearHistoryStart: vi.fn(),
+          onNearHistoryStart: vi.fn().mockReturnValue(true),
           isLoadingOlderHistory: false,
           hasOlderHistory: false,
           olderHistoryProgressKey: null,
@@ -296,7 +296,7 @@ describe("createWebStreamStrategy", () => {
     });
     const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
     const viewportRef = React.createRef<StreamViewportHandle>();
-    const onNearHistoryStart = vi.fn();
+    const onNearHistoryStart = vi.fn().mockReturnValue(true);
     const renderInput = {
       agentId: "agent",
       boundary: {
@@ -370,10 +370,10 @@ describe("createWebStreamStrategy", () => {
     expect(onNearHistoryStart).not.toHaveBeenCalled();
   });
 
-  it("retries a skipped history request when the user scrolls up in a short timeline", async () => {
+  it("retries when a history callback does not start a request", async () => {
     const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
     const viewportRef = React.createRef<StreamViewportHandle>();
-    const onNearHistoryStart = vi.fn(async () => false);
+    const onNearHistoryStart = vi.fn(async () => undefined);
     const renderInput: StreamRenderInput = {
       agentId: "agent",
       segments: {
@@ -392,7 +392,7 @@ describe("createWebStreamStrategy", () => {
       routeBottomAnchorRequest: null,
       isAuthoritativeHistoryReady: true,
       onNearBottomChange: vi.fn(),
-      onNearHistoryStart,
+      onNearHistoryStart: onNearHistoryStart as unknown as StreamRenderInput["onNearHistoryStart"],
       isLoadingOlderHistory: false,
       hasOlderHistory: true,
       olderHistoryProgressKey: "epoch-1:20",
@@ -449,7 +449,7 @@ describe("createWebStreamStrategy", () => {
     );
     const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
     const viewportRef = React.createRef<StreamViewportHandle>();
-    const onNearHistoryStart = vi.fn();
+    const onNearHistoryStart = vi.fn().mockReturnValue(true);
     const initialHistory = Array.from({ length: 20 }, (_, index) => userMessage(index + 60));
     const renderInput: StreamRenderInput = {
       agentId: "agent",
@@ -566,7 +566,7 @@ describe("createWebStreamStrategy", () => {
       viewportRef,
       routeBottomAnchorRequest,
       onNearBottomChange: vi.fn(),
-      onNearHistoryStart: vi.fn(),
+      onNearHistoryStart: vi.fn().mockReturnValue(true),
       isLoadingOlderHistory: false,
       hasOlderHistory: false,
       olderHistoryProgressKey: null,
@@ -674,7 +674,7 @@ describe("createWebStreamStrategy", () => {
       viewportRef,
       routeBottomAnchorRequest,
       onNearBottomChange: vi.fn(),
-      onNearHistoryStart: vi.fn(),
+      onNearHistoryStart: vi.fn().mockReturnValue(true),
       isLoadingOlderHistory: false,
       hasOlderHistory: false,
       olderHistoryProgressKey: null,
@@ -771,7 +771,7 @@ describe("createWebStreamStrategy", () => {
       viewportRef,
       routeBottomAnchorRequest,
       onNearBottomChange: vi.fn(),
-      onNearHistoryStart: vi.fn(),
+      onNearHistoryStart: vi.fn().mockReturnValue(true),
       isLoadingOlderHistory: false,
       hasOlderHistory: false,
       olderHistoryProgressKey: null,
@@ -870,7 +870,7 @@ describe("createWebStreamStrategy", () => {
       viewportRef,
       routeBottomAnchorRequest: null,
       onNearBottomChange: vi.fn(),
-      onNearHistoryStart: vi.fn(),
+      onNearHistoryStart: vi.fn().mockReturnValue(true),
       isLoadingOlderHistory: false,
       hasOlderHistory: false,
       olderHistoryProgressKey: null,

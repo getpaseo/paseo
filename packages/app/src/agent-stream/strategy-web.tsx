@@ -264,7 +264,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       const requestedProgressKey = olderHistoryProgressKey;
       void (async () => {
         const started = await onNearHistoryStart();
-        if (started !== false) {
+        if (started === true) {
           return;
         }
         applyHistoryStartPaginationTransition({

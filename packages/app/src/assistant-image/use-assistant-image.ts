@@ -157,6 +157,7 @@ function createFileAcquisition(input: {
       }
       return await persistAttachmentFromBytes({
         id: createAssistantImageFilePreviewAttachmentId({
+          serverId: input.serverId,
           occurrenceKey: input.occurrenceKey,
           mimeType: file.mime,
           path: file.path || resolution.path,
