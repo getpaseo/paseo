@@ -182,11 +182,26 @@ describe("ClaudeTaskProtocolSource", () => {
     expect(source.observe(taskUpdated("completed", "unknown-task"))).toEqual([]);
   });
 
-  it("still routes a notification for an undeclared task when it carries the tool_use id", () => {
+  it("does not readmit a filtered task through its notification", () => {
     const source = new ClaudeTaskProtocolSource();
-    expect(source.observe(taskNotification("failed", "unknown-task"))).toEqual([
-      { kind: "status", id: "toolu_01DgLoPMW9", status: "failed" },
-    ]);
+    // A backgrounded shell is filtered at declaration, but it still gets a task_notification
+    // carrying a tool_use_id. Routing status off that id would recreate the descriptor with a
+    // status and no identity — a nameless row in the subagents track.
+    source.observe(
+      taskStarted({
+        task_id: "b51skux0z",
+        tool_use_id: "toolu_01MgVdcGPYnqE8cJQuccFtkU",
+        task_type: "local_bash",
+        subagent_type: undefined,
+      }),
+    );
+
+    expect(source.observe(taskNotification("completed", "b51skux0z"))).toEqual([]);
+  });
+
+  it("drops a notification for a task it never declared", () => {
+    const source = new ClaudeTaskProtocolSource();
+    expect(source.observe(taskNotification("failed", "unknown-task"))).toEqual([]);
   });
 
   it("reports inactivity until a task is announced, for older CLIs", () => {

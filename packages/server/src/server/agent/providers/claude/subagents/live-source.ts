@@ -207,19 +207,23 @@ export class ClaudeTaskProtocolSource {
       if (backgrounded) this.backgroundedIds.add(id);
       else this.backgroundedIds.delete(id);
     }
-    return this.observeStatus(message.task_id, undefined, message.patch?.status);
+    return this.observeStatus(message.task_id, message.patch?.status);
   }
 
   private observeTaskNotification(message: TaskNotificationMessage): SubagentObservation[] {
-    return this.observeStatus(message.task_id, message.tool_use_id, message.status);
+    return this.observeStatus(message.task_id, message.status);
   }
 
-  private observeStatus(
-    taskId: string,
-    toolUseId: string | undefined,
-    rawStatus: string | undefined,
-  ): SubagentObservation[] {
-    const id = this.subagentIdByTaskId.get(taskId) ?? readString(toolUseId);
+  /**
+   * Status is routed only through a task this source declared.
+   *
+   * `task_notification` also fires for the tasks deliberately filtered above, and it carries a
+   * `tool_use_id`. Falling back to that id would readmit exactly what the filter rejected — as a
+   * descriptor holding a status and no identity, which the track renders as a nameless row.
+   * A status without a declaration describes nothing, so it is dropped.
+   */
+  private observeStatus(taskId: string, rawStatus: string | undefined): SubagentObservation[] {
+    const id = this.subagentIdByTaskId.get(taskId);
     if (!id) return [];
     const status = mapTaskStatus(rawStatus);
     if (!status || this.lastStatusById.get(id) === status) return [];
