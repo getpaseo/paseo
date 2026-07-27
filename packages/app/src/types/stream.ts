@@ -537,13 +537,19 @@ function preserveReplacementHead(
     return { tail: reconciledTail, head: unreconciledHead, acknowledgedClientMessageIds: [] };
   }
 
-  const isNewerContinuation =
-    liveAssistant.messageId !== undefined &&
-    liveAssistant.messageId === tailAssistant.messageId &&
+  const hasNewerCursor =
     liveAssistant.timelineCursor !== undefined &&
     tailAssistant.timelineCursor !== undefined &&
     liveAssistant.timelineCursor.epoch === tailAssistant.timelineCursor.epoch &&
     liveAssistant.timelineCursor.seq > tailAssistant.timelineCursor.seq;
+  const hasMatchingProviderMessageId =
+    liveAssistant.messageId !== undefined && liveAssistant.messageId === tailAssistant.messageId;
+  const hasIdlessTextContinuation =
+    liveAssistant.messageId === undefined &&
+    tailAssistant.messageId === undefined &&
+    liveAssistant.text.startsWith(tailAssistant.text);
+  const isNewerContinuation =
+    hasNewerCursor && (hasMatchingProviderMessageId || hasIdlessTextContinuation);
   if (isNewerContinuation) {
     const text = liveAssistant.text.startsWith(tailAssistant.text)
       ? liveAssistant.text

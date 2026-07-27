@@ -586,6 +586,39 @@ describe("processTimelineResponse", () => {
     expect(assistants[0]?.timelineCursor).toEqual({ epoch: "epoch-1", seq: 101 });
   });
 
+  it("keeps a newer live assistant continuation without a provider message ID", () => {
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [makeAssistantItem("painted replica")],
+      currentHead: [
+        {
+          kind: "assistant_message",
+          id: "assistant-live",
+          text: "canonical prefix continuation",
+          timestamp: new Date(2001),
+          timelineCursor: { epoch: "epoch-1", seq: 101 },
+        },
+      ],
+      isInitializing: true,
+      hasActiveInitDeferred: true,
+      hasAuthoritativeBaseline: false,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "tail",
+        startCursor: { seq: 61 },
+        endCursor: { seq: 100 },
+        entries: [makeTimelineEntry(100, "canonical prefix")],
+      },
+    });
+
+    const assistants = [...result.tail, ...result.head].filter(
+      (item) => item.kind === "assistant_message",
+    );
+    expect(assistants).toHaveLength(1);
+    expect(assistants[0]?.text).toBe("canonical prefix continuation");
+    expect(assistants[0]?.timelineCursor).toEqual({ epoch: "epoch-1", seq: 101 });
+  });
+
   it("keeps a canonical live user row newer than the bootstrap page", () => {
     const live = processAgentStreamEvent({
       ...baseStreamInput,
