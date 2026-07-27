@@ -50,6 +50,10 @@ export function useOverlayLayer(kind: OverlayKind): number {
   return useContext(OverlayLayerContext) + OVERLAY_Z[kind];
 }
 
+export function useCurrentOverlayLayer(): number {
+  return useContext(OverlayLayerContext);
+}
+
 export function OverlayLayerProvider({ layer, children }: { layer: number; children: ReactNode }) {
   return createElement(OverlayLayerContext.Provider, { value: layer }, children);
 }
@@ -68,6 +72,7 @@ interface WebOverlayEntry {
 const webOverlayEntries: WebOverlayEntry[] = [];
 let webOverlayOrder = 0;
 let webOverlayListenersAttached = false;
+let webOverlayFocusCheckQueued = false;
 
 function getTopWebOverlay(): WebOverlayEntry | undefined {
   return webOverlayEntries.reduce<WebOverlayEntry | undefined>((top, entry) => {
@@ -104,7 +109,18 @@ function handleWebOverlayFocus(event: FocusEvent): void {
   const top = getTopWebOverlay();
   const scope = top?.getScope();
   if (!scope || scope.contains(event.target as Node)) return;
-  focusFirstElement(scope);
+  if (webOverlayFocusCheckQueued) return;
+
+  // React can autofocus a child before its parent scope ref attaches. Defer
+  // enforcement until the commit finishes so a newly mounted higher overlay
+  // can register without the previous scope stealing the requested focus.
+  webOverlayFocusCheckQueued = true;
+  queueMicrotask(() => {
+    webOverlayFocusCheckQueued = false;
+    const currentScope = getTopWebOverlay()?.getScope();
+    if (!currentScope || currentScope.contains(document.activeElement)) return;
+    focusFirstElement(currentScope);
+  });
 }
 
 function handleWebOverlayKeyDown(event: KeyboardEvent): void {
@@ -185,8 +201,11 @@ export function useWebOverlayRegistration({ active, layer, onKeyDown }: WebOverl
   const layerRef = useRef(layer);
   const keyHandlerRef = useRef(onKeyDown);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
+  const removeEntryRef = useRef<(() => void) | null>(null);
+  const activeRef = useRef(active);
   const wasActiveRef = useRef(false);
 
+  activeRef.current = active;
   layerRef.current = layer;
   keyHandlerRef.current = onKeyDown;
   if (active && !wasActiveRef.current && typeof document !== "undefined") {
@@ -195,13 +214,19 @@ export function useWebOverlayRegistration({ active, layer, onKeyDown }: WebOverl
   }
   wasActiveRef.current = active;
 
-  const setScope = useCallback((node: unknown) => {
-    scopeRef.current =
-      typeof HTMLElement !== "undefined" && node instanceof HTMLElement ? node : null;
-  }, []);
+  const syncRegistration = useCallback(() => {
+    const shouldRegister =
+      activeRef.current &&
+      scopeRef.current != null &&
+      typeof window !== "undefined" &&
+      typeof document !== "undefined";
+    if (!shouldRegister) {
+      removeEntryRef.current?.();
+      removeEntryRef.current = null;
+      return;
+    }
+    if (removeEntryRef.current) return;
 
-  useLayoutEffect(() => {
-    if (!active || typeof window === "undefined" || typeof document === "undefined") return;
     const entry: WebOverlayEntry = {
       id: idRef.current,
       order: ++webOverlayOrder,
@@ -210,8 +235,27 @@ export function useWebOverlayRegistration({ active, layer, onKeyDown }: WebOverl
       getKeyHandler: () => keyHandlerRef.current,
       restoreFocus: restoreFocusRef.current,
     };
-    return addWebOverlay(entry);
-  }, [active]);
+    removeEntryRef.current = addWebOverlay(entry);
+  }, []);
+
+  const setScope = useCallback(
+    (node: unknown) => {
+      scopeRef.current =
+        typeof HTMLElement !== "undefined" && node instanceof HTMLElement ? node : null;
+      // Host refs attach before descendant layout effects and autofocus. Register
+      // here so the previous overlay cannot redirect that pending focus.
+      syncRegistration();
+    },
+    [syncRegistration],
+  );
+
+  useLayoutEffect(() => {
+    syncRegistration();
+    return () => {
+      removeEntryRef.current?.();
+      removeEntryRef.current = null;
+    };
+  }, [active, syncRegistration]);
 
   return setScope;
 }

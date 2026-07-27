@@ -138,6 +138,14 @@ test.describe("provider settings overlay stack", () => {
       await page.keyboard.press("Shift+Tab");
       await expect.poll(() => hasFocusWithin(selector)).toBe(true);
 
+      await page.keyboard.press("Shift+?");
+      const shortcuts = page.getByTestId("keyboard-shortcuts-dialog");
+      await expect(shortcuts).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByPlaceholder("Search shortcuts")).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(shortcuts).not.toBeVisible({ timeout: 10_000 });
+      await expect(selector).toBeVisible();
+
       const settingsButton = page.getByTestId("selector-header-settings-mock");
       await settingsButton.click();
 

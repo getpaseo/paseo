@@ -34,7 +34,12 @@ import { FloatingScrollView, FloatingSurface } from "@/components/ui/floating";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { isWeb } from "@/constants/platform";
 import { useDismissKeyboardOnOpen } from "@/components/ui/keyboard-dismiss";
-import { getOverlayRoot, OverlayLayerProvider, useOverlayLayer } from "@/lib/overlay-root";
+import {
+  getOverlayRoot,
+  OverlayLayerProvider,
+  useOverlayLayer,
+  useWebOverlayRegistration,
+} from "@/lib/overlay-root";
 
 // Action status for menu items with loading/success feedback
 export type ActionStatus = "idle" | "pending" | "success";
@@ -185,6 +190,7 @@ function renderDropdownSurface(input: {
   content: ReactElement;
   surfaceNativeID: string;
   onExited: () => void;
+  scopeRef: (node: View | null) => void;
 }): ReactElement {
   const {
     frameStyle,
@@ -195,6 +201,7 @@ function renderDropdownSurface(input: {
     content,
     surfaceNativeID,
     onExited,
+    scopeRef,
   } = input;
 
   const body = scrollable ? (
@@ -212,7 +219,9 @@ function renderDropdownSurface(input: {
 
   return (
     <FloatingSurface
+      ref={scopeRef}
       collapsable={false}
+      tabIndex={-1}
       nativeID={surfaceNativeID}
       testID={testID}
       style={surfaceStyle}
@@ -503,16 +512,21 @@ export function DropdownMenuContent({
     setOpen(false);
   }, [setOpen]);
 
-  useEffect(() => {
-    if (!isWeb || !modalVisible || typeof window === "undefined") return undefined;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+  const handleWebOverlayKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return false;
+      event.preventDefault();
       event.stopPropagation();
       handleClose();
-    };
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [handleClose, modalVisible]);
+      return true;
+    },
+    [handleClose],
+  );
+  const setWebOverlayScope = useWebOverlayRegistration({
+    active: isWeb && modalVisible,
+    layer: floatingLayer,
+    onKeyDown: handleWebOverlayKeyDown,
+  });
 
   // Measure trigger when opening
   useEffect(() => {
@@ -656,6 +670,7 @@ export function DropdownMenuContent({
               scrollViewportStyle,
               content,
               surfaceNativeID,
+              scopeRef: setWebOverlayScope,
               onExited: () => setModalVisible(false),
             })
           : null}
