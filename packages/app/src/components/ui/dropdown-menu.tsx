@@ -34,7 +34,7 @@ import { FloatingScrollView, FloatingSurface } from "@/components/ui/floating";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { isWeb } from "@/constants/platform";
 import { useDismissKeyboardOnOpen } from "@/components/ui/keyboard-dismiss";
-import { getOverlayRoot, OVERLAY_Z } from "@/lib/overlay-root";
+import { getOverlayRoot, OverlayLayerProvider, useOverlayLayer } from "@/lib/overlay-root";
 
 // Action status for menu items with loading/success feedback
 export type ActionStatus = "idle" | "pending" | "success";
@@ -449,6 +449,7 @@ export function DropdownMenuContent({
   testID?: string;
 }>): ReactElement | null {
   const { t } = useTranslation();
+  const floatingLayer = useOverlayLayer("floating");
   const { open, setOpen, triggerRef, flushPendingSelect } =
     useDropdownMenuContext("DropdownMenuContent");
   const [modalVisible, setModalVisible] = useState(false);
@@ -631,27 +632,35 @@ export function DropdownMenuContent({
   );
 
   const overlay = (
-    <View style={[styles.overlay, isWeb ? styles.overlayWeb : null]}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={t("menu.backdrop")}
-        style={styles.backdrop}
-        onPress={handleClose}
-        testID={testID ? `${testID}-backdrop` : undefined}
-      />
-      {!closing
-        ? renderDropdownSurface({
-            frameStyle,
-            testID,
-            surfaceStyle,
-            scrollable,
-            scrollViewportStyle,
-            content,
-            surfaceNativeID,
-            onExited: () => setModalVisible(false),
-          })
-        : null}
-    </View>
+    <OverlayLayerProvider layer={floatingLayer}>
+      <View
+        style={[
+          styles.overlay,
+          isWeb ? styles.overlayWeb : null,
+          isWeb ? { zIndex: floatingLayer } : null,
+        ]}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t("menu.backdrop")}
+          style={styles.backdrop}
+          onPress={handleClose}
+          testID={testID ? `${testID}-backdrop` : undefined}
+        />
+        {!closing
+          ? renderDropdownSurface({
+              frameStyle,
+              testID,
+              surfaceStyle,
+              scrollable,
+              scrollViewportStyle,
+              content,
+              surfaceNativeID,
+              onExited: () => setModalVisible(false),
+            })
+          : null}
+      </View>
+    </OverlayLayerProvider>
   );
 
   if (isWeb && typeof document !== "undefined") {
@@ -905,7 +914,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   overlayWeb: {
     ...StyleSheet.absoluteFillObject,
-    zIndex: OVERLAY_Z.modal,
     pointerEvents: "auto" as const,
   },
   backdrop: {

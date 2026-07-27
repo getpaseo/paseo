@@ -6,7 +6,7 @@ import { Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from "r
 import type { StyleProp, TextInputProps, ViewStyle } from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { getOverlayRoot, OVERLAY_Z } from "../lib/overlay-root";
+import { getOverlayRoot, OverlayLayerProvider, useOverlayLayer } from "../lib/overlay-root";
 import {
   BottomSheetBackdrop,
   BottomSheetScrollView,
@@ -91,7 +91,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     alignItems: "center",
     padding: theme.spacing[6],
-    zIndex: OVERLAY_Z.modal,
     pointerEvents: "auto" as const,
   },
   desktopCard: {
@@ -525,6 +524,7 @@ export function AdaptiveModalSheet({
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
+  const modalLayer = useOverlayLayer("modal");
   const insets = useSafeAreaInsets();
   const resolvedSnapPoints = useMemo(() => snapPoints ?? ["65%", "90%"], [snapPoints]);
   const compactSafeAreaPadding = useMemo(
@@ -610,13 +610,14 @@ export function AdaptiveModalSheet({
     () => [
       styles.desktopOverlay,
       isWeb && {
+        zIndex: modalLayer,
         opacity: isWebClosing ? 0 : 1,
         transitionDuration: `${WEB_EXIT_DURATION_MS}ms`,
         transitionProperty: "opacity",
         transitionTimingFunction: "ease",
       },
     ],
-    [isWebClosing],
+    [isWebClosing, modalLayer],
   );
 
   useEffect(() => {
@@ -700,7 +701,7 @@ export function AdaptiveModalSheet({
   }
 
   const cardInner = (
-    <>
+    <OverlayLayerProvider layer={modalLayer}>
       <SheetHeaderView header={header} onClose={onClose} />
       {scrollable ? (
         <View style={styles.desktopScrollContainer}>
@@ -717,7 +718,7 @@ export function AdaptiveModalSheet({
         <View style={[styles.desktopStaticContent, contentContainerStyle]}>{children}</View>
       )}
       {footer ? <View style={footerStyle}>{footer}</View> : null}
-    </>
+    </OverlayLayerProvider>
   );
 
   const desktopContent = (

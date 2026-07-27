@@ -78,6 +78,14 @@ ordinary portals regardless of `z-index`, which would hide app toasts and
 tooltips behind the menu. The shared overlay scale keeps menus below toasts and
 lets tooltip portals paint above both.
 
+The shared overlay scale is relative for interactive surfaces: a base floating
+panel is below a base modal, while a floating panel rendered from inside a modal
+inherits that modal's layer and paints above it. Wrap portal content in
+`OverlayLayerProvider`; do not assign one global menu z-index. Desktop web
+comboboxes must use `overlay-root` too. Rendering them through React Native
+Web's `<Modal>` puts them in the browser top layer, where no ordinary modal
+portal can cover them.
+
 ## Gotcha 2 — Portal breaks lifecycle and coordinate-system inheritance
 
 A Portal escapes Android's hit-test, but it also escapes two things you were

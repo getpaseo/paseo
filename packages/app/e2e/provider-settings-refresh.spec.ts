@@ -63,6 +63,29 @@ async function closeSheetByHeaderButton(page: Page, testId: string) {
   await expect(sheet).not.toBeVisible({ timeout: 10_000 });
 }
 
+async function expectOverlayAbove(page: Page, frontTestId: string, backTestId: string) {
+  const frontCoversBack = await page.evaluate(
+    ({ frontTestId: frontId, backTestId: backId }) => {
+      const front = document.querySelector(`[data-testid="${frontId}"]`);
+      const back = document.querySelector(`[data-testid="${backId}"]`);
+      if (!(front instanceof HTMLElement) || !(back instanceof HTMLElement)) return false;
+
+      const frontRect = front.getBoundingClientRect();
+      const backRect = back.getBoundingClientRect();
+      const left = Math.max(frontRect.left, backRect.left);
+      const right = Math.min(frontRect.right, backRect.right);
+      const top = Math.max(frontRect.top, backRect.top);
+      const bottom = Math.min(frontRect.bottom, backRect.bottom);
+      if (left >= right || top >= bottom) return false;
+
+      const topElement = document.elementFromPoint((left + right) / 2, (top + bottom) / 2);
+      return topElement != null && front.contains(topElement);
+    },
+    { frontTestId, backTestId },
+  );
+  expect(frontCoversBack).toBe(true);
+}
+
 async function expectProviderSettingsVisible(page: Page) {
   await expect(page.getByTestId("provider-settings-sheet")).toBeVisible({ timeout: 10_000 });
   await expect(page.getByRole("button", { name: "Add model" })).toBeVisible();
@@ -89,7 +112,35 @@ async function exerciseProviderSettingsStack(page: Page) {
   await expectProviderSettingsVisible(page);
 }
 
-test.describe("provider settings bottom-sheet stack", () => {
+test.describe("provider settings overlay stack", () => {
+  test("provider settings covers the desktop model selector without closing it", async ({
+    page,
+  }) => {
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "provider-modal-layer-",
+      title: "Provider modal layer e2e",
+    });
+
+    try {
+      await openAgentRoute(page, session);
+      await expectComposerVisible(page);
+
+      await page.getByRole("button", { name: /Select model/ }).click();
+      const selector = page.getByTestId("combobox-desktop-container");
+      await expect(selector).toBeVisible({ timeout: 10_000 });
+      await page.getByTestId("selector-header-settings-mock").click();
+
+      const settings = page.getByTestId("provider-settings-sheet");
+      await expect(settings).toBeVisible({ timeout: 10_000 });
+      await expectOverlayAbove(page, "provider-settings-sheet", "combobox-desktop-container");
+
+      await closeSheetByHeaderButton(page, "provider-settings-sheet");
+      await expect(selector).toBeVisible();
+    } finally {
+      await session.cleanup();
+    }
+  });
+
   test("provider settings and children close back through the model selector stack", async ({
     page,
   }) => {

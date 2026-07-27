@@ -23,6 +23,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -62,6 +63,7 @@ import {
 } from "@/components/adaptive-modal-sheet";
 import { FloatingSurface } from "@/components/ui/floating";
 import { useDismissKeyboardOnOpen } from "@/components/ui/keyboard-dismiss";
+import { getOverlayRoot, OverlayLayerProvider, useOverlayLayer } from "@/lib/overlay-root";
 import { buildDesktopFrameStyle } from "./combobox-frame-style";
 
 export { buildDesktopFrameStyle } from "./combobox-frame-style";
@@ -1050,6 +1052,7 @@ function MobileComboboxBody(props: MobileBodyProps): ReactElement {
 }
 
 interface DesktopBodyProps {
+  overlayLayer: number;
   isOpen: boolean;
   handleClose: () => void;
   refs: ReturnType<typeof useFloating>["refs"];
@@ -1166,14 +1169,17 @@ function DesktopComboboxOptionsBody(props: {
 }
 
 function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
-  return (
-    <Modal
-      transparent
-      animationType="none"
-      visible={props.isOpen}
-      onRequestClose={props.handleClose}
-    >
-      <View ref={props.refs.setOffsetParent} collapsable={false} style={styles.desktopOverlay}>
+  const overlay = (
+    <OverlayLayerProvider layer={props.overlayLayer}>
+      <View
+        ref={props.refs.setOffsetParent}
+        collapsable={false}
+        style={[
+          styles.desktopOverlay,
+          isWeb ? styles.desktopOverlayWeb : null,
+          isWeb ? { zIndex: props.overlayLayer } : null,
+        ]}
+      >
         <Pressable style={styles.desktopBackdrop} onPress={props.handleClose} />
         <FloatingSurface
           testID="combobox-desktop-container"
@@ -1215,6 +1221,21 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
           {props.footer ? <View style={styles.footer}>{props.footer}</View> : null}
         </FloatingSurface>
       </View>
+    </OverlayLayerProvider>
+  );
+
+  if (isWeb && typeof document !== "undefined") {
+    return createPortal(overlay, getOverlayRoot());
+  }
+
+  return (
+    <Modal
+      transparent
+      animationType="none"
+      visible={props.isOpen}
+      onRequestClose={props.handleClose}
+    >
+      {overlay}
     </Modal>
   );
 }
@@ -1257,6 +1278,7 @@ export function Combobox({
   const resolvedEmptyText = emptyText ?? t("common.empty.noOptionsMatchSearch");
   const resolvedTitle = title ?? t("common.actions.select");
   const isMobile = useIsCompactFormFactor();
+  const floatingLayer = useOverlayLayer("floating");
   const safeAreaInsets = useSafeAreaInsets();
   const titleColor = theme.colors.foreground;
   const effectiveOptionsPosition = resolveEffectiveOptionsPosition(isMobile, optionsPosition);
@@ -1556,6 +1578,7 @@ export function Combobox({
 
   return (
     <DesktopComboboxBody
+      overlayLayer={floatingLayer}
       isOpen={isOpen}
       handleClose={handleClose}
       refs={refs}
@@ -1706,6 +1729,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   desktopOverlay: {
     flex: 1,
+  },
+  desktopOverlayWeb: {
+    ...StyleSheet.absoluteFillObject,
+    pointerEvents: "auto" as const,
   },
   desktopBackdrop: {
     position: "absolute",
