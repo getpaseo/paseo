@@ -410,6 +410,61 @@ function removeUserMessageAt(items: UserMessageItem[], index: number): UserMessa
   return [...items.slice(0, index), ...items.slice(index + 1)];
 }
 
+function mergeRetainedLifecycleItem(tail: StreamItem[], retained: StreamItem): StreamItem[] | null {
+  if (!retained.timelineCursor) {
+    return null;
+  }
+  if (isAgentToolCallItem(retained)) {
+    const tailIndex = findExistingAgentToolCallIndex(tail, retained.payload.data.callId);
+    const existing = tail[tailIndex];
+    if (tailIndex < 0 || !existing || !isAgentToolCallItem(existing)) {
+      return null;
+    }
+    const next = [...tail];
+    next[tailIndex] = mergeAgentToolCallItem(
+      existing,
+      retained.payload.data,
+      retained.timestamp,
+      retained.timelineCursor,
+    );
+    return next;
+  }
+  if (retained.kind === "todo_list") {
+    const tailIndex = tail.length - 1;
+    const existing = tail[tailIndex];
+    if (!existing || existing.kind !== "todo_list" || existing.provider !== retained.provider) {
+      return null;
+    }
+    const next = [...tail];
+    next[tailIndex] = {
+      ...existing,
+      timelineCursor: retained.timelineCursor,
+      timestamp: retained.timestamp,
+      items: retained.items,
+    };
+    return next;
+  }
+  if (retained.kind === "compaction" && retained.status === "completed") {
+    const tailIndex = tail.findIndex(
+      (item) => item.kind === "compaction" && item.status === "loading",
+    );
+    const existing = tail[tailIndex];
+    if (tailIndex < 0 || !existing || existing.kind !== "compaction") {
+      return null;
+    }
+    const next = [...tail];
+    next[tailIndex] = {
+      ...existing,
+      timelineCursor: retained.timelineCursor,
+      status: "completed",
+      trigger: retained.trigger ?? existing.trigger,
+      preTokens: retained.preTokens ?? existing.preTokens,
+    };
+    return next;
+  }
+  return null;
+}
+
 function reconcileReplacementHeadAgainstTail(
   tail: StreamItem[],
   retainedHead: StreamItem[],
@@ -417,23 +472,11 @@ function reconcileReplacementHeadAgainstTail(
   let reconciledTail = tail;
   const reconciledHeadIndexes = new Set<number>();
   for (const [headIndex, item] of retainedHead.entries()) {
-    if (!isAgentToolCallItem(item) || !item.timelineCursor) {
+    const nextTail = mergeRetainedLifecycleItem(reconciledTail, item);
+    if (!nextTail) {
       continue;
     }
-    const tailIndex = findExistingAgentToolCallIndex(reconciledTail, item.payload.data.callId);
-    const existing = reconciledTail[tailIndex];
-    if (tailIndex < 0 || !existing || !isAgentToolCallItem(existing)) {
-      continue;
-    }
-    if (reconciledTail === tail) {
-      reconciledTail = [...tail];
-    }
-    reconciledTail[tailIndex] = mergeAgentToolCallItem(
-      existing,
-      item.payload.data,
-      item.timestamp,
-      item.timelineCursor,
-    );
+    reconciledTail = nextTail;
     reconciledHeadIndexes.add(headIndex);
   }
 
