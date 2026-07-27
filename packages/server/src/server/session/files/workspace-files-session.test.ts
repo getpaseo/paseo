@@ -30,13 +30,21 @@ function makeDir(prefix: string): string {
   return dir;
 }
 
-function makeSubsystem(options: { hasBinaryChannel?: boolean } = {}) {
+function makeSubsystem(
+  options: {
+    hasBinaryChannel?: boolean;
+    emitBinary?: (frame: Uint8Array) => Promise<void> | void;
+  } = {},
+) {
   const emitted: SessionOutboundMessage[] = [];
   const binary: Uint8Array[] = [];
   let hasBinary = options.hasBinaryChannel ?? false;
   const host: WorkspaceFilesSessionHost = {
     emit: (msg) => emitted.push(msg),
-    emitBinary: (frame) => binary.push(frame),
+    emitBinary: async (frame) => {
+      binary.push(frame);
+      await options.emitBinary?.(frame);
+    },
     hasBinaryChannel: () => hasBinary,
   };
   const paseoHome = makeDir("workspace-files-home-");
@@ -135,6 +143,74 @@ describe("WorkspaceFilesSession", () => {
       FileTransferOpcode.FileEnd,
     ]);
   });
+
+  test("streams a real file larger than the socket limit as paced ordered chunks", async () => {
+    const cwd = makeDir("workspace-files-large-binary-");
+    const fileBytes = Buffer.alloc(8 * 1024 * 1024 + 123);
+    for (let index = 0; index < fileBytes.length; index += 1) {
+      fileBytes[index] = index % 251;
+    }
+    writeFileSync(join(cwd, "large.bin"), fileBytes);
+
+    let releaseFirstChunk: (() => void) | undefined;
+    const firstChunkSent = new Promise<void>((resolve) => {
+      releaseFirstChunk = resolve;
+    });
+    let chunkSends = 0;
+    const { subsystem, emitted, binary } = makeSubsystem({
+      hasBinaryChannel: true,
+      emitBinary: async (frame) => {
+        if (decodeFileTransferFrame(frame)?.opcode !== FileTransferOpcode.FileChunk) return;
+        chunkSends += 1;
+        if (chunkSends === 1) await firstChunkSent;
+      },
+    });
+
+    const transfer = subsystem.handleFileExplorerRequest({
+      type: "file_explorer_request",
+      cwd,
+      path: "large.bin",
+      mode: "file",
+      requestId: "req-large-binary",
+      acceptBinary: true,
+    });
+
+    await expect.poll(() => chunkSends).toBe(1);
+    expect(binary.map((frame) => decodeFileTransferFrame(frame)?.opcode)).toEqual([
+      FileTransferOpcode.FileBegin,
+      FileTransferOpcode.FileChunk,
+    ]);
+
+    await subsystem.handleFileExplorerRequest({
+      type: "file_explorer_request",
+      cwd,
+      path: ".",
+      mode: "list",
+      requestId: "req-unrelated-list",
+    });
+    expect(emitted).toEqual([
+      expect.objectContaining({
+        type: "file_explorer_response",
+        payload: expect.objectContaining({ requestId: "req-unrelated-list", error: null }),
+      }),
+    ]);
+
+    releaseFirstChunk?.();
+    await transfer;
+
+    const frames = binary.map((frame) => decodeFileTransferFrame(frame));
+    const chunks = frames.flatMap((frame) =>
+      frame?.opcode === FileTransferOpcode.FileChunk ? [frame.payload] : [],
+    );
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.every((chunk) => chunk.byteLength <= 256 * 1024)).toBe(true);
+    expect(
+      Buffer.compare(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))), fileBytes),
+    ).toBe(0);
+    expect(frames.at(0)?.opcode).toBe(FileTransferOpcode.FileBegin);
+    expect(frames.at(-1)?.opcode).toBe(FileTransferOpcode.FileEnd);
+    expect(emitted).toHaveLength(1);
+  }, 30_000);
 
   test("rejects an empty file-explorer cwd with an error envelope", async () => {
     const { subsystem, emitted } = makeSubsystem();

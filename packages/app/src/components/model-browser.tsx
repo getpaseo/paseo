@@ -34,6 +34,7 @@ import {
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
 import { useProviderSettingsStore } from "@/stores/provider-settings-store";
+import { useCurrentOverlayLayer } from "@/lib/overlay-root";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import {
   resolveInitialModelBrowserView,
@@ -52,6 +53,36 @@ const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedSearch = withUnistyles(Search);
 const ThemedSettings = withUnistyles(Settings);
 const ThemedStar = withUnistyles(Star);
+
+function ProviderSettingsAction({
+  accessibilityLabel,
+  provider,
+  serverId,
+}: {
+  accessibilityLabel: string;
+  provider: string;
+  serverId: string | null;
+}) {
+  const overlayParentLayer = useCurrentOverlayLayer();
+  const handlePress = useCallback(() => {
+    if (!serverId) return;
+    useProviderSettingsStore.getState().open({ serverId, provider, overlayParentLayer });
+  }, [overlayParentLayer, provider, serverId]);
+
+  return (
+    <Pressable
+      onPress={handlePress}
+      disabled={!serverId}
+      hitSlop={8}
+      style={iconButtonStyle}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      testID={`selector-header-settings-${provider}`}
+    >
+      <HeaderSettingsIcon disabled={!serverId} />
+    </Pressable>
+  );
+}
 
 const IndependentScrollGestureContext = createContext<ReturnType<typeof Gesture.Native> | null>(
   null,
@@ -237,11 +268,6 @@ export function useModelBrowser({
     setSearchQuery(value);
   }, []);
 
-  const openProviderSettings = useCallback(() => {
-    if (!serverId || view.kind !== "provider") return;
-    useProviderSettingsStore.getState().open({ serverId, provider: view.providerId });
-  }, [serverId, view]);
-
   const singleProviderView = providers.length === 1;
   const header = useMemo<SheetHeader>(() => {
     if (view.kind === "all") {
@@ -254,19 +280,13 @@ export function useModelBrowser({
       ),
       back: singleProviderView ? undefined : { onPress: handleBackToAll },
       actions: (
-        <Pressable
-          onPress={openProviderSettings}
-          disabled={!serverId}
-          hitSlop={8}
-          style={iconButtonStyle}
-          accessibilityRole="button"
+        <ProviderSettingsAction
+          serverId={serverId}
+          provider={view.providerId}
           accessibilityLabel={t("modelSelector.openProviderSettings", {
             provider: view.providerLabel,
           })}
-          testID={`selector-header-settings-${view.providerId}`}
-        >
-          <HeaderSettingsIcon disabled={!serverId} />
-        </Pressable>
+        />
       ),
       search: {
         onChange: handleSearchQueryChange,
@@ -279,7 +299,6 @@ export function useModelBrowser({
   }, [
     handleBackToAll,
     handleSearchQueryChange,
-    openProviderSettings,
     searchResetKey,
     serverId,
     singleProviderView,

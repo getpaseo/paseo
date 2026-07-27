@@ -77,6 +77,10 @@ export function useLoadOlderAgentHistory({
     useSessionStore((state) =>
       state.sessions[serverId]?.agentTimelineOlderFetchInFlight.get(agentId),
     ) === true;
+  const progressKey = useSessionStore((state) => {
+    const cursor = state.sessions[serverId]?.agentTimelineCursor.get(agentId);
+    return cursor ? `${cursor.epoch}:${cursor.startSeq}` : null;
+  });
   const setOlderFetchInFlight = useSessionStore(
     (state) => state.setAgentTimelineOlderFetchInFlight,
   );
@@ -116,6 +120,7 @@ export function useLoadOlderAgentHistory({
   return {
     isLoadingOlder,
     hasOlder,
+    progressKey,
     loadOlder,
   };
 }

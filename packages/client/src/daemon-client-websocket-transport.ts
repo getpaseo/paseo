@@ -3,6 +3,7 @@ import type {
   WebSocketFactory,
   WebSocketLike,
 } from "./daemon-client-transport-types.js";
+import { extractRelayMessage } from "./daemon-client-transport-utils.js";
 
 export function defaultWebSocketFactory(
   url: string,
@@ -52,9 +53,23 @@ export function createWebSocketTransportFactory(factory: WebSocketFactory): Daem
       onOpen: (handler) => bindWsHandler(ws, "open", handler),
       onClose: (handler) => bindWsHandler(ws, "close", handler),
       onError: (handler) => bindWsHandler(ws, "error", handler),
-      onMessage: (handler) => bindWsHandler(ws, "message", handler),
+      onMessage: (handler) => bindWsMessageHandler(ws, handler),
     };
   };
+}
+
+function bindWsMessageHandler(
+  ws: WebSocketLike,
+  handler: (data: unknown, isBinary: boolean) => void,
+): () => void {
+  const listener = (...args: unknown[]) => {
+    const message = extractRelayMessage(
+      args[0],
+      typeof args[1] === "boolean" ? args[1] : undefined,
+    );
+    handler(message.data, message.isBinary);
+  };
+  return bindWsHandler(ws, "message", listener);
 }
 
 function bindTemporaryEarlyCloseErrorHandler(ws: WebSocketLike): () => void {

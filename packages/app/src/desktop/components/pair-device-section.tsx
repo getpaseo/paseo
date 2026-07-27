@@ -1,15 +1,22 @@
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { ActivityIndicator, Image, Text, TextInput, View } from "react-native";
+import { Image, Text, TextInput, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import * as QRCode from "qrcode";
 import { useQuery } from "@tanstack/react-query";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { RotateCw, Copy, Check } from "lucide-react-native";
 import { settingsStyles } from "@/styles/settings";
 import { Button } from "@/components/ui/button";
 import { getDesktopDaemonPairing, shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 import { useState } from "react";
+import type { Theme } from "@/styles/theme";
+
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
+const foregroundMutedColorMapping = (theme: Theme) => ({
+  color: theme.colors.foregroundMuted,
+});
 
 type PairingViewState =
   | { tag: "loading" }
@@ -184,7 +191,7 @@ function PairDeviceBody(props: PairDeviceBodyProps) {
   if (viewState.tag === "loading") {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="small" />
+        <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
         <Text style={styles.hint}>{labels.loadingOffer}</Text>
       </View>
     );
@@ -240,7 +247,7 @@ function PairDeviceQrContent(props: {
   if (props.qrQuery.isError) {
     return <Text style={styles.hint}>{props.unavailableLabel}</Text>;
   }
-  return <ActivityIndicator size="small" />;
+  return <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />;
 }
 
 const styles = StyleSheet.create((theme) => ({

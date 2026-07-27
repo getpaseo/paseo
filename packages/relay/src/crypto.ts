@@ -8,8 +8,8 @@
  * Bundle format (binary):
  *   [nonce (24 bytes)] [ciphertext...]
  *
- * Transport format:
- *   The encrypted-channel sends the bundle as base64 text over WebSocket.
+ * The encrypted channel chooses the WebSocket representation. Crypto remains
+ * byte-oriented so frame kind is never inferred from plaintext contents.
  */
 
 import nacl from "tweetnacl";
@@ -139,7 +139,7 @@ export function encrypt(sharedKey: SharedKey, data: string | ArrayBuffer): Array
   return toArrayBuffer(out);
 }
 
-export function decrypt(sharedKey: SharedKey, data: ArrayBuffer): string | ArrayBuffer {
+export function decrypt(sharedKey: SharedKey, data: ArrayBuffer): ArrayBuffer {
   const bytes = new Uint8Array(data);
   if (bytes.byteLength < NONCE_LENGTH) {
     throw new Error("Ciphertext bundle too short");
@@ -152,10 +152,5 @@ export function decrypt(sharedKey: SharedKey, data: ArrayBuffer): string | Array
     throw new Error("Decryption failed");
   }
 
-  const plaintext = toArrayBuffer(opened);
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(plaintext);
-  } catch {
-    return plaintext;
-  }
+  return toArrayBuffer(opened);
 }

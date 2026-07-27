@@ -1,7 +1,7 @@
 export interface DaemonTransport {
   send: (data: string | Uint8Array | ArrayBuffer) => void;
   close: (code?: number, reason?: string) => void;
-  onMessage: (handler: (data: unknown) => void) => () => void;
+  onMessage: (handler: (data: unknown, isBinary: boolean) => void) => () => void;
   onOpen: (handler: () => void) => () => void;
   onClose: (handler: (event?: unknown) => void) => () => void;
   onError: (handler: (event?: unknown) => void) => () => void;

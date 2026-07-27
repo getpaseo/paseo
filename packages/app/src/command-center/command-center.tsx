@@ -31,6 +31,11 @@ import { useAggregatedAgents, type AggregatedAgent } from "@/hooks/use-aggregate
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useProjects } from "@/hooks/use-projects";
+import {
+  OverlayLayerProvider,
+  useGlobalWebOverlayLayer,
+  useWebOverlayRegistration,
+} from "@/lib/overlay-root";
 import { useHosts } from "@/runtime/host-runtime";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
@@ -372,15 +377,6 @@ function useCommandCenterState(): CommandCenterState {
     return cancel;
   }, [open]);
 
-  useEffect(() => {
-    if (!open || !isWeb) return;
-    const listener = (event: KeyboardEvent) => {
-      if (key(event.key)) event.preventDefault();
-    };
-    window.addEventListener("keydown", listener, true);
-    return () => window.removeEventListener("keydown", listener, true);
-  }, [key, open]);
-
   return {
     open,
     query,
@@ -553,6 +549,7 @@ export function CommandCenter() {
   const state = useCommandCenterState();
   const isCompact = useIsCompactFormFactor();
   const showBottomSheet = isCompact && isNative;
+  const modalLayer = useGlobalWebOverlayLayer("modal", isWeb && state.open && !showBottomSheet);
   const listRef = useRef<FlatList<CommandCenterListRow>>(null);
   const bottomSheetListRef = useRef<BottomSheetFlatListMethods>(null);
   const bottomSheetInputRef = useRef<React.ElementRef<typeof BottomSheetTextInput>>(null);
@@ -618,6 +615,19 @@ export function CommandCenter() {
     [state],
   );
   const submit = useCallback(() => state.key("Enter"), [state]);
+  const handleWebOverlayKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      if (!state.key(event.key)) return false;
+      event.preventDefault();
+      return true;
+    },
+    [state],
+  );
+  const setWebOverlayScope = useWebOverlayRegistration({
+    active: isWeb && state.open && !showBottomSheet,
+    layer: modalLayer,
+    onKeyDown: handleWebOverlayKeyDown,
+  });
   const backdrop = useCallback(
     (props: React.ComponentProps<typeof BottomSheetBackdrop>) => (
       <BottomSheetBackdrop {...props} disappearsOnIndex={-1} appearsOnIndex={0} opacity={0.45} />
@@ -663,27 +673,29 @@ export function CommandCenter() {
   }
   if (!state.open) return null;
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={state.close}>
-      <View style={styles.overlay}>
-        <Pressable style={styles.backdrop} onPress={state.close} />
-        <View testID="command-center-panel" style={styles.panel}>
-          <View style={styles.header}>
-            <ThemedTextInput
-              testID="command-center-input"
-              ref={state.inputRef}
-              value={state.query}
-              onChangeText={state.setQuery}
-              placeholder={t("shell.commandCenter.placeholder")}
-              style={styles.input}
-              autoCapitalize="none"
-              autoCorrect={false}
-              autoFocus
-            />
+    <OverlayLayerProvider layer={isWeb ? modalLayer : 0}>
+      <Modal visible transparent animationType="fade" onRequestClose={state.close}>
+        <View style={styles.overlay}>
+          <Pressable style={styles.backdrop} onPress={state.close} />
+          <View ref={setWebOverlayScope} testID="command-center-panel" style={styles.panel}>
+            <View style={styles.header}>
+              <ThemedTextInput
+                testID="command-center-input"
+                ref={state.inputRef}
+                value={state.query}
+                onChangeText={state.setQuery}
+                placeholder={t("shell.commandCenter.placeholder")}
+                style={styles.input}
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoFocus
+              />
+            </View>
+            <FlatList ref={listRef} style={styles.results} {...commonListProps} />
           </View>
-          <FlatList ref={listRef} style={styles.results} {...commonListProps} />
         </View>
-      </View>
-    </Modal>
+      </Modal>
+    </OverlayLayerProvider>
   );
 }
 
