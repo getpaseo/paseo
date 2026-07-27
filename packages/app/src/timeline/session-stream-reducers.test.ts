@@ -2403,7 +2403,7 @@ describe("processAgentStreamEvent", () => {
     });
   });
 
-  it("derives submitted idle status on turn_completed for running agent", () => {
+  it("does not mark a running replacement idle on an earlier turn_completed", () => {
     const turnCompletedEvent: AgentStreamEventPayload = {
       type: "turn_completed",
       provider: "claude",
@@ -2420,11 +2420,8 @@ describe("processAgentStreamEvent", () => {
       timestamp: new Date(2000),
     });
 
-    expect(result.agentChanged).toBe(true);
-    expect(result.agent).not.toBe(null);
-    expect(result.agent!.status).toBe("idle");
-    expect(result.agent!.updatedAt.getTime()).toBe(2000);
-    expect(result.agent!.lastActivityAt.getTime()).toBe(2000);
+    expect(result.agentChanged).toBe(false);
+    expect(result.agent).toBe(null);
   });
 
   it("derives submitted error status on turn_failed for running agent", () => {
@@ -2509,15 +2506,16 @@ describe("processAgentStreamEvent", () => {
     expect(result.agent).toBe(null);
   });
 
-  it("preserves updatedAt when agent timestamp is newer than event", () => {
-    const turnCompletedEvent: AgentStreamEventPayload = {
-      type: "turn_completed",
+  it("preserves updatedAt when a failing event is older than the agent", () => {
+    const turnFailedEvent: AgentStreamEventPayload = {
+      type: "turn_failed",
       provider: "claude",
+      error: "something broke",
     };
 
     const result = processAgentStreamEvent({
       ...baseStreamInput,
-      event: turnCompletedEvent,
+      event: turnFailedEvent,
       currentAgent: {
         status: "running",
         updatedAt: new Date(5000),
@@ -2833,7 +2831,7 @@ describe("processAgentStreamEvents", () => {
     ]);
   });
 
-  it("returns the final submitted lifecycle patch across a batch", () => {
+  it("does not derive lifecycle state from a terminal event in a batch", () => {
     const result = processAgentStreamEvents({
       events: [
         makeStreamReducerEvent(makeTimelineEvent("Done"), 1),
@@ -2856,12 +2854,8 @@ describe("processAgentStreamEvents", () => {
 
     expect(result.head).toEqual([]);
     expect(result.tail).toHaveLength(1);
-    expect(result.agentChanged).toBe(true);
-    expect(result.agent).toMatchObject({
-      status: "idle",
-      updatedAt: new Date(3000),
-      lastActivityAt: new Date(3000),
-    });
+    expect(result.agentChanged).toBe(false);
+    expect(result.agent).toBe(null);
   });
 
   it("keeps a live Claude assistant paragraph contiguous when init tail hydration lands mid-stream", () => {

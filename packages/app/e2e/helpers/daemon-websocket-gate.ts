@@ -81,6 +81,27 @@ function forceTimelineReset(message: string | Buffer, enabled: boolean): string 
   return JSON.stringify(envelope);
 }
 
+function readAgentStreamEventType(message: ClientRequest | null): string | null {
+  if (message?.type !== "agent_stream" || !message.payload || typeof message.payload !== "object") {
+    return null;
+  }
+  const event = (message.payload as { event?: { type?: unknown } }).event;
+  return typeof event?.type === "string" ? event.type : null;
+}
+
+function shouldSuppressServerMessage(input: {
+  message: ClientRequest | null;
+  messageTypes: ReadonlySet<string>;
+  agentStreamEventTypes: ReadonlySet<string>;
+  suppressAgentStream: boolean;
+}): boolean {
+  const messageType = typeof input.message?.type === "string" ? input.message.type : null;
+  if (messageType && input.messageTypes.has(messageType)) return true;
+  if (input.suppressAgentStream && messageType === "agent_stream") return true;
+  const eventType = readAgentStreamEventType(input.message);
+  return Boolean(eventType && input.agentStreamEventTypes.has(eventType));
+}
+
 export async function installDaemonWebSocketGate(page: Page) {
   let acceptingConnections = true;
   let reconnectWithFreshClient = false;
@@ -94,6 +115,7 @@ export async function installDaemonWebSocketGate(page: Page) {
   let heldServerMessage: { browser: WebSocketRoute; message: string | Buffer } | null = null;
   let resolveHeldServerMessage: (() => void) | null = null;
   const suppressedServerMessageTypes = new Set<string>();
+  const suppressedAgentStreamEventTypes = new Set<string>();
   const activeSockets = new Set<WebSocketRoute>();
   let latestServer: WebSocketRoute | null = null;
   const directoryStarts: DirectoryRequestStartCounts = {
@@ -177,12 +199,14 @@ export async function installDaemonWebSocketGate(page: Page) {
         return;
       }
       if (
-        typeof serverMessage?.type === "string" &&
-        suppressedServerMessageTypes.has(serverMessage.type)
-      ) {
+        shouldSuppressServerMessage({
+          message: serverMessage,
+          messageTypes: suppressedServerMessageTypes,
+          agentStreamEventTypes: suppressedAgentStreamEventTypes,
+          suppressAgentStream,
+        })
+      )
         return;
-      }
-      if (suppressAgentStream && serverMessage?.type === "agent_stream") return;
       try {
         ws.send(outboundMessage);
       } catch {
@@ -303,6 +327,13 @@ export async function installDaemonWebSocketGate(page: Page) {
         suppressedServerMessageTypes.add(type);
       } else {
         suppressedServerMessageTypes.delete(type);
+      }
+    },
+    setAgentStreamEventSuppressed(type: string, suppressed: boolean): void {
+      if (suppressed) {
+        suppressedAgentStreamEventTypes.add(type);
+      } else {
+        suppressedAgentStreamEventTypes.delete(type);
       }
     },
     setAssistantMessageIdsStripped(stripped: boolean): void {

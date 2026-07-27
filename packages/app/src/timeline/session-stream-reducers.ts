@@ -212,13 +212,12 @@ function deriveProjectedLifecycleStatus(
     return null;
   }
   switch (event.type) {
-    case "turn_completed":
-      return "idle";
     case "turn_failed":
       return "error";
+    case "turn_completed":
     case "turn_canceled":
-      // A canceled turn can be either a final user cancel or an interrupt before
-      // a replacement turn starts. The daemon snapshot is authoritative here.
+      // A terminal event can belong to an interrupted turn while its replacement
+      // is still running. The daemon snapshot is authoritative here.
       return null;
     default:
       return null;

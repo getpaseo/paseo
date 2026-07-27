@@ -357,6 +357,7 @@ async function expectLegacyAssistantStartsAfterInterruptedPrompt(
     await expect(page.getByText("Cycle 1", { exact: true })).toBeVisible();
     await queueMessage(page, prompt);
     gate.setAssistantMessageIdsStripped(true);
+    gate.setAgentStreamEventSuppressed("turn_canceled", true);
     await page.getByRole("button", { name: "Send queued message now" }).click();
     const promptRow = page.getByTestId("user-message").filter({ hasText: prompt });
     const replacementAnswer = page.getByText("(end of synthetic stream)", { exact: true }).last();
@@ -365,6 +366,7 @@ async function expectLegacyAssistantStartsAfterInterruptedPrompt(
     await expectRenderedBefore(promptRow, replacementAnswer);
   } finally {
     gate.setAssistantMessageIdsStripped(false);
+    gate.setAgentStreamEventSuppressed("turn_canceled", false);
     await agent.cleanup();
   }
 }
@@ -396,11 +398,16 @@ async function expectStaleCanonicalPagePreservesNewerLiveOutput(
     gate.truncateHeldTimelineAfterLast("tool_call");
     expect(gate.getHeldTimelineLastItemType()).toBe("tool_call");
 
-    await agent.client.sendAgentMessage(agent.agentId, "Stream after the stale snapshot.");
-    const cycleHeadings = page.getByText("Cycle 1", { exact: true });
-    await expect(cycleHeadings).toHaveCount(2);
+    const nextPrompt = "Stream after the stale snapshot.";
+    await agent.client.sendAgentMessage(agent.agentId, nextPrompt);
+    const nextPromptRow = page.getByTestId("user-message").filter({ hasText: nextPrompt });
+    const liveAssistant = nextPromptRow.locator(
+      'xpath=following::*[@data-testid="assistant-message"][1]',
+    );
+    await expect(nextPromptRow).toBeVisible();
+    await expect(liveAssistant).toContainText("Cycle 1");
     gate.releaseHeldServerMessage();
-    await expect(cycleHeadings).toHaveCount(2);
+    await expect(liveAssistant).toContainText("Cycle 1");
   } finally {
     await agent.cleanup();
   }

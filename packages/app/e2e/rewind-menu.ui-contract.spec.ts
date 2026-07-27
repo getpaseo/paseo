@@ -61,7 +61,62 @@ async function rewriteCachedMessageAsLegacyRow(page: Page, prompt: string): Prom
   }, prompt);
 }
 
+async function waitForCurrentSubmissionInCache(page: Page, prompt: string): Promise<void> {
+  await expect
+    .poll(() =>
+      page.evaluate((messageText) => {
+        const raw = localStorage.getItem("@paseo:replica-cache");
+        if (!raw) return false;
+        const cache = JSON.parse(raw) as {
+          hosts?: Array<{ timeline?: { items?: Array<Record<string, unknown>> } | null }>;
+        };
+        return cache.hosts
+          ?.flatMap((host) => host.timeline?.items ?? [])
+          .some(
+            (item) =>
+              item.kind === "user_message" &&
+              item.text === messageText &&
+              typeof item.clientMessageId === "string" &&
+              item.messageId === undefined,
+          );
+      }, prompt),
+    )
+    .toBe(true);
+}
+
+async function expectPendingSubmissionNotRewindableAfterReload(page: Page): Promise<void> {
+  const prompt = "Keep this cached submission pending.";
+  const gate = await installDaemonWebSocketGate(page);
+  const session = await seedMockAgentWorkspace({
+    repoPrefix: "rewind-current-cache-e2e-",
+    title: "Current cache submission e2e",
+  });
+
+  try {
+    await openAgentRoute(page, session);
+    await expectComposerVisible(page);
+    gate.holdNextClientRequest("send_agent_message_request");
+    await submitMessage(page, prompt);
+    await gate.waitForHeldClientRequest();
+    await waitForCurrentSubmissionInCache(page, prompt);
+    await gate.drop();
+    await page.reload();
+
+    const restoredMessage = userMessage(page, prompt);
+    await expect(restoredMessage).toBeVisible();
+    await restoredMessage.hover();
+    await expect(restoredMessage.getByTestId("rewind-menu-trigger")).toHaveCount(0);
+  } finally {
+    gate.restore();
+    await session.cleanup();
+  }
+}
+
 test.describe("Rewind sheet", () => {
+  test("does not restore a pending submission as a rewindable legacy message", async ({ page }) => {
+    await expectPendingSubmissionNotRewindableAfterReload(page);
+  });
+
   test("keeps rewind available for a message restored from the legacy cache", async ({ page }) => {
     const prompt = "Restore this rewind identity from the legacy cache.";
     const gate = await installDaemonWebSocketGate(page);

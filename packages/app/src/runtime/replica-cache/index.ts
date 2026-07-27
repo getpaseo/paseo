@@ -130,7 +130,7 @@ function decodeDates(value: unknown): unknown {
 }
 
 function restoreCachedStreamItem(item: StreamItem): StreamItem {
-  if (item.kind !== "user_message" || item.messageId) return item;
+  if (item.kind !== "user_message" || item.messageId || item.clientMessageId) return item;
   const legacyItem = item as StreamItem & { optimistic?: true };
   if (legacyItem.optimistic) return item;
   // COMPAT(replicaCacheUserMessageId): before v0.2.3, cache v1 stored the provider ID
