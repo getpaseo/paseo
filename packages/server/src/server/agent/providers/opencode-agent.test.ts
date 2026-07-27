@@ -4446,3 +4446,53 @@ function waitForAbort(signal: AbortSignal): Promise<void> {
     signal.addEventListener("abort", () => resolve(), { once: true });
   });
 }
+
+describe("OpenCode snapshot summary false-idle regression", () => {
+  test("user message.updated carrying snapshot diffs does not start a turn", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const openCodeClient = new TestOpenCodeClient();
+    openCodeClient.sessionCreateResponse = { data: { id: "ses_snapshot" } };
+    runtime.enqueueClient(openCodeClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession(
+      { provider: "opencode", cwd: "/workspace/repo" },
+      { env: { PASEO_AGENT_ID: "snapshot-agent" } },
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    // Captured live shape: after the turn goes idle OpenCode writes the filesystem
+    // snapshot diff onto the user message, with no time.end on the message.
+    openCodeClient.emitEvent({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "msg_snapshot_user",
+          sessionID: "ses_snapshot",
+          role: "user",
+          time: { created: 1000 },
+          summary: {
+            diffs: [{ file: "packages/server/src/thing.ts", additions: 3, deletions: 1 }],
+          },
+        },
+      },
+    });
+    // Drain marker: events are processed in order, so observing this one proves
+    // the snapshot update above was already handled.
+    openCodeClient.emitEvent({
+      type: "session.created",
+      properties: {
+        info: { id: "ses_snapshot_child", parentID: "ses_snapshot", title: "Drain marker" },
+      },
+    });
+    await vi.waitFor(() => {
+      expect(events).toContainEqual(expect.objectContaining({ type: "provider_subagent" }));
+    });
+
+    expect(events.some((event) => event.type === "turn_started")).toBe(false);
+    await session.close();
+  });
+});

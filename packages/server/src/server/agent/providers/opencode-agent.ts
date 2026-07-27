@@ -3745,7 +3745,11 @@ class OpenCodeAgentSession implements AgentSession {
     // OpenCode publishes the persisted user message before it marks the runner
     // busy. That message is the earliest unambiguous boundary for a plugin-
     // initiated parent turn; session metadata and assistant echoes are not.
-    if (event.type === "message.updated" && event.properties.info.role === "user") {
+    if (
+      event.type === "message.updated" &&
+      event.properties.info.role === "user" &&
+      !event.properties.info.summary?.diffs
+    ) {
       if (this.emittedUserMessageIds.has(event.properties.info.id)) {
         return false;
       }
