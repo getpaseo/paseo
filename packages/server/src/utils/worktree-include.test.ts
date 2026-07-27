@@ -301,6 +301,21 @@ describe.skipIf(isPlatform("win32"))("worktree include materialization", () => {
     expect(readFileSync(join(worktreeRoot, "copy-dir", "state.txt"), "utf8")).toBe("copy-dir-v2\n");
   });
 
+  it("replaces an existing directory snapshot without retaining destination-only files", async () => {
+    mkdirSync(join(sourceRoot, "cache"));
+    writeFileSync(join(sourceRoot, "cache", "current.txt"), "current\n");
+    writeFileSync(join(sourceRoot, ".worktreeinclude"), "cache/**\n");
+    mkdirSync(join(worktreeRoot, "cache"));
+    writeFileSync(join(worktreeRoot, "cache", "stale.txt"), "stale\n");
+
+    const plan = await readWorktreeIncludePlan({ sourceRoot });
+    const result = await materializeWorktreeIncludePlan({ plan, worktreeRoot });
+
+    expect(result).toMatchObject({ materialized: 1, skipped: [] });
+    expect(readFileSync(join(worktreeRoot, "cache", "current.txt"), "utf8")).toBe("current\n");
+    expect(existsSync(join(worktreeRoot, "cache", "stale.txt"))).toBe(false);
+  });
+
   it("skips a destination parent symlink without writing through it", async () => {
     mkdirSync(join(sourceRoot, "config"), { recursive: true });
     writeFileSync(join(sourceRoot, "config", "local.json"), "{}\n");
@@ -377,6 +392,18 @@ describe.skipIf(isPlatform("win32"))("worktree include materialization", () => {
     expect(readFileSync(linkedPath, "utf8")).toBe("v2\n");
     expect(readFileSync(join(copiedDirectoryPath, "state.txt"), "utf8")).toBe("v1\n");
     expect(readFileSync(join(linkedDirectoryPath, "state.txt"), "utf8")).toBe("v2\n");
+  });
+
+  it("rejects source links that alias Git metadata", async () => {
+    mkdirSync(join(sourceRoot, ".git"));
+    writeFileSync(join(sourceRoot, ".git", "config"), "secret\n");
+    symlinkSync(join(sourceRoot, ".git"), join(sourceRoot, "metadata"), "dir");
+    writeFileSync(join(sourceRoot, ".worktreeinclude"), "metadata\n");
+
+    const plan = await readWorktreeIncludePlan({ sourceRoot });
+
+    expect(plan.materializations).toEqual([]);
+    expect(plan.skipped).toEqual([expect.objectContaining({ raw: "metadata", reason: "unsafe" })]);
   });
 
   it("treats hard links as ordinary files", async () => {

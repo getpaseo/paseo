@@ -1318,7 +1318,7 @@ export const createWorktree = async ({
       };
     } catch (error) {
       return rollbackCreatedWorktreeBranch(
-        { cwd, createdBranchName: sourcePlan.createdBranchName },
+        { cwd, createdBranchName: sourcePlan.createdBranchNameBeforeWorktreeAdd },
         error,
       );
     }
@@ -1398,6 +1398,7 @@ interface ResolveWorktreeSourcePlanOptions {
 interface WorktreeSourcePlan {
   branchName: string;
   createdBranchName?: string;
+  createdBranchNameBeforeWorktreeAdd?: string;
   metadataBaseRefName: string;
   changeRequestLookupTarget?: PaseoWorktreeChangeRequestLookupTarget;
   addArguments: string[];
@@ -1485,7 +1486,12 @@ async function resolveCheckoutBranchWorktreeSourcePlan(options: {
 
   return {
     branchName: options.branchName,
-    ...(needsFetch ? { createdBranchName: options.branchName } : {}),
+    ...(needsFetch
+      ? {
+          createdBranchName: options.branchName,
+          createdBranchNameBeforeWorktreeAdd: options.branchName,
+        }
+      : {}),
     metadataBaseRefName: options.branchName,
     addArguments: [options.branchName],
   };
@@ -1546,6 +1552,7 @@ async function resolveChangeRequestWorktreeSourcePlan(options: {
     return {
       branchName: localBranchName,
       createdBranchName: localBranchName,
+      createdBranchNameBeforeWorktreeAdd: localBranchName,
       metadataBaseRefName: normalizedBaseRefName,
       changeRequestLookupTarget: {
         headRef: source.headRef,

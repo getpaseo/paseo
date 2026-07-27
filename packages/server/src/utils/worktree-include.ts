@@ -378,23 +378,13 @@ async function copyStagedMaterializationToExistingDestination(options: {
   staged: StagedWorktreeIncludeMaterialization;
 }): Promise<void> {
   const backupPath = join(options.staged.directoryPath, "backup");
-  const sourceKind = options.resolved.materialization.sourceKind;
-  await copyMaterializationPath({
-    destinationPath: backupPath,
-    sourceKind,
-    sourcePath: options.destinationPath,
-  });
+  await rename(options.destinationPath, backupPath);
   try {
-    await copyMaterializationPath({
-      destinationPath: options.destinationPath,
-      sourceKind,
-      sourcePath: options.staged.entryPath,
-    });
+    await rename(options.staged.entryPath, options.destinationPath);
   } catch (error) {
     await restoreCopiedDestination({
       backupPath,
       destinationPath: options.destinationPath,
-      sourceKind,
     });
     throw error;
   }
@@ -419,16 +409,11 @@ async function copyMaterializationPath(options: {
 async function restoreCopiedDestination(options: {
   backupPath: string;
   destinationPath: string;
-  sourceKind: WorktreeIncludeSourceKind;
 }): Promise<void> {
   try {
     const destinationStats = await lstatIfExists(options.destinationPath);
     if (destinationStats !== null) {
-      if (
-        destinationStats.isSymbolicLink() ||
-        (options.sourceKind === "file" && !destinationStats.isFile()) ||
-        (options.sourceKind === "directory" && !destinationStats.isDirectory())
-      ) {
+      if (destinationStats.isSymbolicLink()) {
         throw new Error("destination changed while restoring a failed materialization");
       }
       await rm(options.destinationPath, {
@@ -806,6 +791,14 @@ function assertSourcePathIsSafe(options: {
     throw new WorktreeIncludeError(
       "unsupported_source",
       `.worktreeinclude entry '${options.entry.raw}' on line ${options.entry.lineNumber} resolves outside the source checkout`,
+    );
+  }
+
+  const canonicalRelativePath = relative(options.sourceRoot, options.sourcePath);
+  if (canonicalRelativePath.split(/[\\/]/).some((segment) => segment.toLowerCase() === ".git")) {
+    throw new WorktreeIncludeError(
+      "unsupported_source",
+      `.worktreeinclude entry '${options.entry.raw}' on line ${options.entry.lineNumber} resolves into Git metadata`,
     );
   }
 

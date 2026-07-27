@@ -128,14 +128,16 @@ and whole-line comments are ignored. A single star matches within a path segment
 star matches recursively; a directory ending in /\*\* materializes that directory as one
 recursive entry. Absolute paths, parent-directory paths, and .git paths are rejected.
 
-Copy entries are independent snapshots: a copied file is replaced on a later materialization,
-and a copied directory merges into an existing directory. Symlink entries point directly at
+Copy entries are independent snapshots: a copied file or directory replaces an existing path on
+a later materialization. Symlink entries point directly at
 the live source file or directory, so changes through either path affect the same data. Paseo
 does not replace an existing file, directory, or different link with a symlink.
 
-Entries must resolve to regular files or directories. Copy entries reject source symbolic links
-and nested symbolic links so Paseo never writes through an unexpected path. A symlinked
-directory intentionally exposes its live source contents.
+Entries must resolve to regular files or directories. A top-level source symbolic link is
+dereferenced only when its canonical target remains inside the source checkout: `copy` snapshots
+that target and `symlink` links directly to it. Directory snapshots reject nested symbolic links
+so Paseo never writes through an unexpected path. A symlinked directory intentionally exposes its
+live source contents.
 
 Prefer paths ignored by the target branch. For a symlinked directory, use an ignore rule without
 a trailing slash (for example, node_modules, not node_modules/), because Git treats the link
