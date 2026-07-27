@@ -15,6 +15,7 @@ import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { useDraftAgentCreateFlow, type DraftCreateAttempt } from "@/composer/draft/create-flow";
+import { claimDraftAutoSubmit, releaseDraftAutoSubmit } from "@/composer/draft/auto-submit-claim";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-draft-agent-config";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
@@ -554,20 +555,22 @@ export function WorkspaceDraftAgentTab({
     client &&
     !composerState.isModelLoading,
   );
-  const autoSubmitKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!isReadyForPendingAutoSubmit) {
       return;
     }
+    // Claim BEFORE consume/create so concurrent effect runs (remount, dep thrash)
+    // cannot both start createAgent for the same New Workspace submission.
+    // Matches daemon logs: two "Creating agent" at the same millisecond.
     const submitKey = `${serverId}:${workspaceId}:${draftId}`;
-    if (autoSubmitKeyRef.current === submitKey) {
+    if (!claimDraftAutoSubmit(submitKey)) {
       return;
     }
     const submission = consumePendingAutoSubmit({ serverId, workspaceId, draftId });
     if (!submission) {
+      releaseDraftAutoSubmit(submitKey);
       return;
     }
-    autoSubmitKeyRef.current = submitKey;
     setDraftText("");
     setDraftAttachments([]);
     const preparedAttempt =
@@ -587,7 +590,9 @@ export function WorkspaceDraftAgentTab({
     void createPromise.catch(() => {
       setDraftText(submission.text);
       setDraftAttachments(composerWorkspaceAttachment.userAttachmentsOnly(submission.attachments));
-      autoSubmitKeyRef.current = null;
+      // Only release on failure so a later retry can run; success leaves the
+      // claim held for the session so remounts cannot double-create.
+      releaseDraftAutoSubmit(submitKey);
     });
   }, [
     continueCreateFromAttempt,
