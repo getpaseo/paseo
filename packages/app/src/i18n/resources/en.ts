@@ -918,6 +918,8 @@ export const en = {
         openSettings: "Open project settings",
         openNewWindow: "Open in new window",
         openNewWindowFailed: "Couldn't open a new window",
+        openFolder: "Open in file manager",
+        openFolderFailed: "Couldn't open folder",
         remove: "Remove project",
         removing: "Removing...",
       },

@@ -899,6 +899,8 @@ export const zhCN: TranslationResources = {
         openSettings: "打开 project 设置",
         openNewWindow: "在新窗口中打开",
         openNewWindowFailed: "无法打开新窗口",
+        openFolder: "Open in file manager",
+        openFolderFailed: "Couldn't open folder",
         remove: "移除 project",
         removing: "正在移除...",
       },

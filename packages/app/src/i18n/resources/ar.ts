@@ -908,6 +908,8 @@ export const ar: TranslationResources = {
         openSettings: "افتح إعدادات المشروع",
         openNewWindow: "Open in new window",
         openNewWindowFailed: "Couldn't open a new window",
+        openFolder: "Open in file manager",
+        openFolderFailed: "Couldn't open folder",
         remove: "إزالة المشروع",
         removing: "جارٍ الإزالة...",
       },

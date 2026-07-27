@@ -930,6 +930,8 @@ export const ru: TranslationResources = {
         openSettings: "Открыть настройки проекта",
         openNewWindow: "Open in new window",
         openNewWindowFailed: "Couldn't open a new window",
+        openFolder: "Open in file manager",
+        openFolderFailed: "Couldn't open folder",
         remove: "Удалить проект",
         removing: "Удаление...",
       },

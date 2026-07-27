@@ -39,6 +39,7 @@ import {
   ChevronDown,
   ChevronRight,
   ExternalLink,
+  FolderOpen,
   GitPullRequest,
   Settings,
   MoreVertical,
@@ -131,6 +132,7 @@ import {
   getIsElectron,
 } from "@/constants/platform";
 import { getDesktopHost } from "@/desktop/host";
+import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
 
 const workspaceKeyExtractor = (workspace: SidebarWorkspacePlacement) => workspace.workspaceKey;
 
@@ -150,6 +152,7 @@ const ThemedPlus = withUnistyles(Plus);
 const ThemedMoreVertical = withUnistyles(MoreVertical);
 const ThemedTrash2 = withUnistyles(Trash2);
 const ThemedSettings = withUnistyles(Settings);
+const ThemedFolderOpen = withUnistyles(FolderOpen);
 
 const foregroundColorMapping = (theme: Theme) => ({
   color: theme.colors.foreground,
@@ -537,6 +540,7 @@ const settingsLeadingIcon = <ThemedSettings size={14} uniProps={foregroundMutedC
 const openInNewWindowLeadingIcon = (
   <ThemedExternalLink size={14} uniProps={foregroundMutedColorMapping} />
 );
+const folderOpenLeadingIcon = <ThemedFolderOpen size={14} uniProps={foregroundMutedColorMapping} />;
 
 function renderKebabTriggerIcon({ hovered }: { hovered?: boolean }) {
   return (
@@ -579,6 +583,26 @@ function ProjectKebabMenu({
         toast.error(t("sidebar.project.actions.openNewWindowFailed"));
       });
   }, [projectPath, t, toast]);
+  const { targets: desktopOpenTargets } = useDesktopOpenTargets({
+    isLocalExecution: getIsElectron(),
+  });
+  const fileManagerTarget = useMemo(
+    () => desktopOpenTargets.find((target) => target.kind === "file-manager"),
+    [desktopOpenTargets],
+  );
+  const canOpenInFileManager =
+    getIsElectron() && projectPath.trim().length > 0 && fileManagerTarget !== undefined;
+  const handleOpenInFileManager = useCallback(() => {
+    const trimmedPath = projectPath.trim();
+    if (trimmedPath.length === 0 || !fileManagerTarget) return;
+    void openDesktopTarget({
+      editorId: fileManagerTarget.id,
+      workspacePath: trimmedPath,
+    }).catch((error) => {
+      console.warn("[sidebar] openInFileManager failed", error);
+      toast.error(t("sidebar.project.actions.openFolderFailed"));
+    });
+  }, [projectPath, fileManagerTarget, t, toast]);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -607,6 +631,15 @@ function ProjectKebabMenu({
             onSelect={handleOpenInNewWindow}
           >
             {t("sidebar.project.actions.openNewWindow")}
+          </DropdownMenuItem>
+        ) : null}
+        {canOpenInFileManager ? (
+          <DropdownMenuItem
+            testID={`sidebar-project-menu-open-folder-${projectKey}`}
+            leading={folderOpenLeadingIcon}
+            onSelect={handleOpenInFileManager}
+          >
+            {t("sidebar.project.actions.openFolder")}
           </DropdownMenuItem>
         ) : null}
         <DropdownMenuItem
@@ -661,6 +694,26 @@ function WorkspaceRowRightGroup({
   onTogglePin?: () => void;
 }) {
   const { t } = useTranslation();
+  const toast = useToast();
+  const { targets: desktopOpenTargets } = useDesktopOpenTargets({
+    isLocalExecution: getIsElectron(),
+  });
+  const fileManagerTarget = useMemo(
+    () => desktopOpenTargets.find((target) => target.kind === "file-manager"),
+    [desktopOpenTargets],
+  );
+  const workspacePath = workspace.workspaceDirectory ?? workspace.projectRootPath;
+  const handleOpenInFileManager = useCallback(() => {
+    const trimmedPath = (workspacePath ?? "").trim();
+    if (trimmedPath.length === 0 || !fileManagerTarget) return;
+    void openDesktopTarget({
+      editorId: fileManagerTarget.id,
+      workspacePath: trimmedPath,
+    }).catch((error) => {
+      console.warn("[sidebar] openInFileManager failed", error);
+      toast.error(t("sidebar.project.actions.openFolderFailed"));
+    });
+  }, [workspacePath, fileManagerTarget, t, toast]);
   const showShortcut = showShortcutBadge && shortcutNumber !== null;
   const showKebab = Boolean(onArchive && (isHovered || isTouchPlatform));
   const showKebabInSlot = showKebab && !showShortcut;
@@ -698,6 +751,7 @@ function WorkspaceRowRightGroup({
                 archiveShortcutKeys={archiveShortcutKeys}
                 isPinned={isPinned}
                 onTogglePin={onTogglePin}
+                onOpenInFileManager={handleOpenInFileManager}
               />
             ) : null}
           </SidebarWorkspaceTrailingActionOverlay>
