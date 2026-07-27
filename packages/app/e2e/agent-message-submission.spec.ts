@@ -454,6 +454,55 @@ async function expectStaleCanonicalPagePreservesNewerLiveOutput(
   }
 }
 
+async function expectCanonicalOrderWinsAcrossOverlappingClients(
+  page: Page,
+  testInfo: { workerIndex: number },
+): Promise<void> {
+  const gate = await installDaemonWebSocketGate(page);
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: `submission-cross-client-order-${testInfo.workerIndex}-`,
+    title: "Cross-client submission order",
+    model: "ten-second-stream",
+  });
+  const localPrompt = "Send this after the other client turn.";
+  const remotePrompt = "Commit this other client turn first.";
+  try {
+    await openAgentRoute(page, { workspaceId: agent.workspaceId, agentId: agent.agentId });
+    await expectComposerVisible(page);
+    await expectAgentIdle(page);
+    gate.holdNextClientRequest("send_agent_message_request");
+    const localRow = await submitMessageWithImage(page, localPrompt);
+    await gate.waitForHeldClientRequest();
+
+    await agent.client.sendAgentMessage(agent.agentId, remotePrompt);
+    await agent.client.waitForFinish(agent.agentId, 30_000);
+    const remoteRow = page.getByTestId("user-message").filter({ hasText: remotePrompt });
+    await expect(remoteRow).toBeVisible();
+
+    const userMessageCount = gate.getAgentStreamItemCount("user_message");
+    gate.releaseHeldClientRequest();
+    await gate.waitForAgentStreamItem("user_message", userMessageCount + 1);
+    await expect(localRow).toHaveAttribute("aria-busy", "false");
+    await expect(localRow.getByRole("button", { name: "Open image attachment" })).toBeVisible();
+    await expect
+      .poll(async () => {
+        const localElement = await localRow.elementHandle();
+        if (!localElement) return false;
+        return remoteRow.evaluate(
+          (remoteElement, localNode) =>
+            Boolean(
+              remoteElement.compareDocumentPosition(localNode) & Node.DOCUMENT_POSITION_FOLLOWING,
+            ),
+          localElement,
+        );
+      })
+      .toBe(true);
+  } finally {
+    gate.restore();
+    await agent.cleanup();
+  }
+}
+
 async function expectRenderedBefore(first: Locator, second: Locator): Promise<void> {
   const secondElement = await second.elementHandle();
   if (!secondElement) throw new Error("Expected the second timeline item to be rendered");
@@ -626,5 +675,11 @@ test.describe("Agent message submission", () => {
   }, testInfo) => {
     test.setTimeout(90_000);
     await expectStaleCanonicalPagePreservesNewerLiveOutput(page, testInfo);
+  });
+
+  test("uses canonical order when another client turn overtakes a held submission", async ({
+    page,
+  }, testInfo) => {
+    await expectCanonicalOrderWinsAcrossOverlappingClients(page, testInfo);
   });
 });

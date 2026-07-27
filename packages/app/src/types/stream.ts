@@ -367,6 +367,25 @@ export function upsertUserMessageAcrossStream(
   };
 }
 
+function placeCanonicalUserMessageAtTail(
+  tail: StreamItem[],
+  message: UserMessageItem,
+  insertWhenUnmatched: boolean,
+): Pick<UserMessageProductionResult, "items" | "message" | "matched"> {
+  const produced = produceUserMessage(tail, message, null, "existing");
+  if (!produced.matched && !insertWhenUnmatched) {
+    return produced;
+  }
+  const preceding = produced.matched
+    ? [...produced.items.slice(0, produced.index), ...produced.items.slice(produced.index + 1)]
+    : produced.items;
+  return {
+    items: [...preceding, produced.message],
+    message: produced.message,
+    matched: produced.matched,
+  };
+}
+
 export interface CanonicalStreamReplacementInput {
   canonical: StreamItem[];
   previousTail: StreamItem[];
@@ -483,10 +502,7 @@ export function replaceWithCanonicalStream(
     if (!local.clientMessageId || !sendingClientMessageIds.has(local.clientMessageId)) {
       continue;
     }
-    const insertionIndex = nextTail.findIndex(
-      (item) => item.timestamp.getTime() > local.timestamp.getTime(),
-    );
-    nextTail.splice(insertionIndex < 0 ? nextTail.length : insertionIndex, 0, local);
+    nextTail.push(local);
   }
 
   nextHead = nextHead.filter((item) => {
@@ -1510,21 +1526,15 @@ function applyCanonicalUserMessageEvent(params: {
     text: normalized.chunk,
     timestamp,
   });
-  const reconciled = upsertUserMessageAcrossStream({
-    tail: flushedTail,
-    head: flushedHead,
-    message: canonical,
-    insert: normalized.hasContent ? "tail" : "none",
-    presentation: "existing",
-  });
+  const reconciled = placeCanonicalUserMessageAtTail(flushedTail, canonical, normalized.hasContent);
   return {
-    tail: reconciled.tail,
-    head: reconciled.head,
-    changedTail: flushedTail !== tail || reconciled.changedTail,
-    changedHead: flushedHead !== head || reconciled.changedHead,
+    tail: reconciled.items,
+    head: flushedHead,
+    changedTail: flushedTail !== tail || reconciled.items !== flushedTail,
+    changedHead: flushedHead !== head,
     acknowledgedClientMessageIds:
-      reconciled.location?.matched && reconciled.location.message.clientMessageId
-        ? [reconciled.location.message.clientMessageId]
+      reconciled.matched && reconciled.message.clientMessageId
+        ? [reconciled.message.clientMessageId]
         : [],
   };
 }

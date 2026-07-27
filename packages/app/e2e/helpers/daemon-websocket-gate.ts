@@ -403,6 +403,9 @@ export async function installDaemonWebSocketGate(page: Page) {
     getClientRequestCount(type: string): number {
       return clientRequestCounts.get(type) ?? 0;
     },
+    getAgentStreamItemCount(type: string): number {
+      return agentStreamItemCounts.get(type) ?? 0;
+    },
     async waitForServerMessage(type: string, count = 1): Promise<void> {
       while ((serverMessageCounts.get(type) ?? 0) < count) {
         await new Promise<void>((resolve) => serverMessageWaiters.add(resolve));

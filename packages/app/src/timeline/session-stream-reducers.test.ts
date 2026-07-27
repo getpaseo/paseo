@@ -556,7 +556,7 @@ describe("processTimelineResponse", () => {
     expect(result.tail).toEqual([]);
   });
 
-  it("does not move an unmatched submission during timeline replacement", () => {
+  it("keeps an unmatched submission after the canonical replacement range", () => {
     const unmatched = makeSubmittedUserMessage("first submission", "client-first");
     const acknowledged: StreamItem[] = [
       {
@@ -604,10 +604,10 @@ describe("processTimelineResponse", () => {
             },
           },
           {
-            ...makeTimelineEntry(4, "response to all three submissions"),
+            ...makeTimelineEntry(4, "response to canonical submissions"),
             item: {
               type: "assistant_message",
-              text: "response to all three submissions",
+              text: "response to canonical submissions",
               messageId: "assistant-response",
             },
           },
@@ -622,14 +622,14 @@ describe("processTimelineResponse", () => {
         text: "text" in item ? item.text : undefined,
       })),
     ).toEqual([
-      { kind: "user_message", id: "client-first", text: "first submission" },
       { kind: "user_message", id: "provider-second", text: "second submission" },
       { kind: "user_message", id: "provider-third", text: "third submission" },
       {
         kind: "assistant_message",
         id: "assistant-response",
-        text: "response to all three submissions",
+        text: "response to canonical submissions",
       },
+      { kind: "user_message", id: "client-first", text: "first submission" },
     ]);
   });
 
@@ -1195,7 +1195,7 @@ describe("processTimelineResponse", () => {
     ]);
   });
 
-  it("acknowledges a head prompt in place while catch-up history arrives", () => {
+  it("moves an acknowledged head prompt to its catch-up sequence position", () => {
     const prompt = makeSubmittedUserMessage("New prompt", "new-prompt");
 
     const result = processTimelineResponse({
@@ -1227,8 +1227,8 @@ describe("processTimelineResponse", () => {
 
     expect([...result.tail, ...result.head].map((item) => item.kind)).toEqual([
       "assistant_message",
-      "user_message",
       "tool_call",
+      "user_message",
     ]);
     expect(
       [...result.tail, ...result.head]
@@ -1427,7 +1427,7 @@ describe("processTimelineResponse", () => {
     ]);
   });
 
-  it("acknowledges a local prompt in place when a remote user row also arrives", () => {
+  it("places a local prompt after an earlier remote canonical row", () => {
     const prompt = makeSubmittedUserMessage("Local prompt", "local-prompt");
 
     const result = processTimelineResponse({
@@ -1462,7 +1462,7 @@ describe("processTimelineResponse", () => {
 
     expect(
       result.tail.filter((item) => item.kind === "user_message").map((item) => item.text),
-    ).toEqual(["Local prompt", "Remote prompt"]);
+    ).toEqual(["Remote prompt", "Local prompt"]);
   });
 
   it("keeps an unmatched submitted prompt when catch-up contains only a remote user row", () => {
