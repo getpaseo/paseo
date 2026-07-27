@@ -77,6 +77,26 @@ describe("checkout git diff batching", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
+  it("stops before generating diffs when more than 10,000 files changed", async () => {
+    for (let index = 0; index <= 10_000; index += 1) {
+      writeFileSync(join(repoDir, `untracked-${index}.txt`), "x\n");
+    }
+
+    await expect(
+      getCheckoutDiff(repoDir, { mode: "uncommitted", includeStructured: true }),
+    ).rejects.toThrow("Diff too large to display");
+    expect(spawnCounters.trackedTextDiffCalls).toBe(0);
+  });
+
+  it("stops before generating diffs when more than 10,000 lines changed", async () => {
+    writeFileSync(join(repoDir, "file-0.txt"), "changed\n".repeat(10_001));
+
+    await expect(
+      getCheckoutDiff(repoDir, { mode: "uncommitted", includeStructured: true }),
+    ).rejects.toThrow("Diff too large to display");
+    expect(spawnCounters.trackedTextDiffCalls).toBe(0);
+  });
+
   it("uses per-file tracked git diff commands for tracked file diffs", async () => {
     const result = await getCheckoutDiff(repoDir, {
       mode: "uncommitted",

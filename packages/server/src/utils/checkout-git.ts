@@ -583,6 +583,8 @@ function buildGitDiffArgs(args: { ignoreWhitespace?: boolean; extra: string[] })
 }
 
 const TRACKED_DIFF_NUMSTAT_MAX_BYTES = 2 * 1024 * 1024; // 2MB
+const CHECKOUT_DIFF_MAX_FILES = 10_000;
+const CHECKOUT_DIFF_MAX_CHANGED_LINES = 10_000;
 const EMPTY_TREE_OBJECT_ID = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 function isUnbornHeadDiffError(error: unknown): boolean {
@@ -2835,6 +2837,20 @@ export async function getCheckoutDiff(
     effectiveRefsForDiff = { ...refsForDiff, baseRef: EMPTY_TREE_OBJECT_ID };
     changes = await listCheckoutFileChanges(cwd, effectiveRefsForDiff, ignoreWhitespace);
   }
+  if (compare.includeStructured) {
+    if (changes.length > CHECKOUT_DIFF_MAX_FILES) {
+      throw new Error("Diff too large to display");
+    }
+    const trackedStats = await getTrackedNumstatByPath(cwd, effectiveRefsForDiff, ignoreWhitespace);
+    let changedLines = 0;
+    for (const stat of trackedStats.values()) {
+      changedLines += (stat?.additions ?? 0) + (stat?.deletions ?? 0);
+      if (changedLines > CHECKOUT_DIFF_MAX_CHANGED_LINES) {
+        throw new Error("Diff too large to display");
+      }
+    }
+  }
+
   changes.sort((a, b) => {
     if (a.path === b.path) return 0;
     return a.path < b.path ? -1 : 1;

@@ -119,6 +119,7 @@ import {
   type InlineReviewActions,
 } from "@/review";
 import { usePublishWorkingDiffAttachment, useWorkingDiff } from "@/git/use-working-diff";
+import { DiffTooLargeState, isDiffTooLargeError } from "@/git/diff-too-large-state";
 
 export type { GitActionId, GitAction, GitActions } from "@/git/policy";
 
@@ -1802,6 +1803,9 @@ function DiffBodyContent({
         <ThemedLoadingSpinner size="large" uniProps={foregroundMutedIconColorMapping} />
       </View>
     );
+  }
+  if (isDiffTooLargeError(diffErrorMessage)) {
+    return <DiffTooLargeState />;
   }
   if (diffErrorMessage) {
     return (

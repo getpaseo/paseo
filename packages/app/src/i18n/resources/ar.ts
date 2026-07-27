@@ -764,6 +764,8 @@ export const ar: TranslationResources = {
         closeChangesTab: "إغلاق علامة تبويب التغييرات",
         binaryFile: "ملف ثنائي",
         tooLarge: "الفرق كبير جدًا بحيث لا يمكن عرضه",
+        previewTooLargeTitle: "هذا الفرق كبير جدًا بحيث لا يمكن معاينته",
+        previewTooLargeDescription: "ضيّق نطاق المقارنة لمعاينتها هنا",
         unified: "الفرق الموحدة",
         split: "فرق جنبًا إلى جنب",
         switchToUnified: "التبديل إلى الفرق الموحد",

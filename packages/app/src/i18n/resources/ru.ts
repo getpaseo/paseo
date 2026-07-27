@@ -786,6 +786,8 @@ export const ru: TranslationResources = {
         closeChangesTab: "Закрыть вкладку «Изменения»",
         binaryFile: "Бинарный файл",
         tooLarge: "Разница слишком велика для отображения",
+        previewTooLargeTitle: "Этот diff слишком велик для предпросмотра",
+        previewTooLargeDescription: "Сузьте сравнение, чтобы просмотреть его здесь",
         unified: "Единый дифференциал",
         split: "Параллельная разница",
         switchToUnified: "Переключить на объединенный diff",

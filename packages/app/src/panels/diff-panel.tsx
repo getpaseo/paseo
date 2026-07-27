@@ -17,6 +17,7 @@ import {
   resolveDiffLayout,
   SharedDiffView,
 } from "@/git/diff-pane";
+import { DiffTooLargeState, isDiffTooLargeError } from "@/git/diff-too-large-state";
 import { useCommitDiffFiles } from "@/git/use-diff-files";
 import { usePublishWorkingDiffAttachment, useWorkingDiff } from "@/git/use-working-diff";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
@@ -119,6 +120,9 @@ function WorkingDiffBody({
   }
   if (workingDiff.notGit) {
     return <PanelState message={t("workspace.git.diff.notRepository")} />;
+  }
+  if (isDiffTooLargeError(workingDiff.diffPayloadError?.message ?? null)) {
+    return <DiffTooLargeState />;
   }
   if (workingDiff.diffPayloadError) {
     return (
