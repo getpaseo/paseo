@@ -17,16 +17,22 @@ export type AssistantForkTarget = "tab" | "workspace";
 interface AssistantForkMenuProps {
   onFork: (target: AssistantForkTarget) => Promise<void> | void;
   testID?: string;
+  iconSize?: number;
 }
 
-const ThemedSplit = withUnistyles(Split);
-
-const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
-const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+// Prefer withUnistyles mappings over uniProps — lucide forwards unknown props to
+// SVG <path> on web, which logs React DOM warnings for `uniProps`.
+const ThemedSplitForeground = withUnistyles(Split, (theme: Theme) => ({
+  color: theme.colors.foreground,
+}));
+const ThemedSplitMuted = withUnistyles(Split, (theme: Theme) => ({
+  color: theme.colors.foregroundMuted,
+}));
 
 export const AssistantForkMenu = memo(function AssistantForkMenu({
   onFork,
   testID = "assistant-fork-menu",
+  iconSize = 14,
 }: AssistantForkMenuProps) {
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
@@ -69,7 +75,7 @@ export const AssistantForkMenu = memo(function AssistantForkMenu({
     [t],
   );
 
-  const forkIcon = useMemo(() => <ThemedSplit size={16} uniProps={foregroundColorMapping} />, []);
+  const forkIcon = useMemo(() => <ThemedSplitForeground size={iconSize} />, [iconSize]);
 
   return (
     <DropdownMenu open={isOpen} onOpenChange={handleOpenChange}>
@@ -83,12 +89,10 @@ export const AssistantForkMenu = memo(function AssistantForkMenu({
               style={triggerStyle}
               testID={`${testID}-trigger`}
             >
-              {({ hovered, open }) => (
-                <ThemedSplit
-                  size={16}
-                  uniProps={hovered || open ? foregroundColorMapping : foregroundMutedColorMapping}
-                />
-              )}
+              {({ hovered, open }) => {
+                const Icon = hovered || open ? ThemedSplitForeground : ThemedSplitMuted;
+                return <Icon size={iconSize} />;
+              }}
             </DropdownMenuTrigger>
           </View>
         </TooltipTrigger>
@@ -122,7 +126,7 @@ export const AssistantForkMenu = memo(function AssistantForkMenu({
 
 const styles = StyleSheet.create((theme) => ({
   trigger: {
-    padding: theme.spacing[1],
+    padding: 2,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "transparent",

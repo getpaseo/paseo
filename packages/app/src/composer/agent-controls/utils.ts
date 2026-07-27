@@ -79,14 +79,9 @@ export function formatAgentModeLabel(mode: ControlLabelInput): string {
 }
 
 export function formatThinkingOptionLabel(option: ControlLabelInput): string {
-  const rawLabel = (option.label ?? option.id).trim();
-  const compactId = option.id.replace(/[\s_-]+/g, "").toLowerCase();
-  const compactLabel = rawLabel.replace(/[\s_-]+/g, "").toLowerCase();
-
-  if (compactId === "xhigh" || compactLabel === "xhigh") {
-    return i18n.t("agentControls.thinking.extraHigh");
-  }
-
+  // Use the provider-returned label (or id) as-is after light formatting — do not
+  // localize option names; mixing locale strings with English provider labels
+  // (e.g. zh "超高" next to "High") looks broken.
   return formatControlLabel(option, true);
 }
 

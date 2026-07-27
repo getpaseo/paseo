@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createCompactMarkdownStyles, createMarkdownStyles } from "./markdown-styles";
+import {
+  createCompactMarkdownStyles,
+  createMarkdownStyles,
+  createThinkingMarkdownStyles,
+} from "./markdown-styles";
 import { darkTheme } from "./theme";
 
 describe("createMarkdownStyles", () => {
@@ -70,6 +74,22 @@ describe("createMarkdownStyles", () => {
     });
   });
 
+  it("keeps thinking prose on the reply line-height with muted color and tight paragraphs", () => {
+    const styles = createThinkingMarkdownStyles(darkTheme);
+
+    expect(styles.body).toMatchObject({
+      color: darkTheme.colors.foregroundMuted,
+      fontSize: darkTheme.fontSize.base,
+      lineHeight: Math.round(darkTheme.fontSize.base * 1.4),
+    });
+    expect(styles.text).toMatchObject({
+      color: darkTheme.colors.foregroundMuted,
+    });
+    expect(styles.paragraph).toMatchObject({
+      marginBottom: darkTheme.spacing[1],
+    });
+  });
+
   it("uses the mono font-size token directly for inline and block code", () => {
     const styles = createMarkdownStyles(darkTheme);
     const compactStyles = createCompactMarkdownStyles(darkTheme);
@@ -92,5 +112,41 @@ describe("createMarkdownStyles", () => {
       fontSize: darkTheme.fontSize.code,
       lineHeight: Math.round(darkTheme.fontSize.code * 1.45),
     });
+  });
+
+  it("keeps reply prose on the continuous / related vertical rhythm", () => {
+    const styles = createMarkdownStyles(darkTheme);
+
+    expect(styles.paragraph).toMatchObject({
+      marginBottom: darkTheme.spacing[2],
+    });
+    expect(styles.heading2).toMatchObject({
+      marginTop: darkTheme.spacing[4],
+      marginBottom: darkTheme.spacing[2],
+    });
+    expect(styles.table).toMatchObject({
+      marginVertical: darkTheme.spacing[2],
+    });
+  });
+
+  it("overrides library light fence defaults with theme surface colors", () => {
+    const styles = createMarkdownStyles(darkTheme);
+
+    expect(styles.fence).toMatchObject({
+      backgroundColor: darkTheme.colors.surface2,
+      borderColor: darkTheme.colors.border,
+      borderWidth: darkTheme.borderWidth[1],
+      color: darkTheme.colors.foreground,
+      marginVertical: darkTheme.spacing[2],
+    });
+    expect(styles.code_block).toMatchObject({
+      backgroundColor: darkTheme.colors.surface2,
+      borderColor: darkTheme.colors.border,
+      borderWidth: darkTheme.borderWidth[1],
+      color: darkTheme.colors.foreground,
+      marginVertical: darkTheme.spacing[2],
+    });
+    expect(styles.fence.backgroundColor).not.toBe("#f5f5f5");
+    expect(styles.code_block.backgroundColor).not.toBe("#f5f5f5");
   });
 });

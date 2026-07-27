@@ -169,4 +169,22 @@ describe("browser automation protocol integration", () => {
       }).browserTools,
     ).toEqual({ enabled: true });
   });
+
+  test("mutable daemon config defaults dictation and voice mode off and accepts patches", () => {
+    const parsed = MutableDaemonConfigSchema.parse({
+      mcp: { injectIntoAgents: false },
+    });
+    expect(parsed.dictation).toEqual({ enabled: false });
+    expect(parsed.voiceMode).toEqual({ enabled: false });
+
+    expect(
+      MutableDaemonConfigPatchSchema.parse({
+        dictation: { enabled: true },
+        voiceMode: { enabled: true },
+      }),
+    ).toMatchObject({
+      dictation: { enabled: true },
+      voiceMode: { enabled: true },
+    });
+  });
 });

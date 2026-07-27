@@ -118,6 +118,20 @@ Cards inside a section sit closer than sections. Rows inside a card touch — on
 
 Rows have generous vertical padding: roughly 16px of content plus 16px of vertical padding for settings rows, 8–12px for sidebar list items where many rows must fit. Compressing rows below the established density to fit more on the screen is wrong. Too many rows means more cards or more sections, not smaller rows.
 
+### Agent reply vertical rhythm
+
+The agent stream owns between-item spacing via `gapBelow` from `packages/app/src/agent-stream/spacing.ts` (`STREAM_ITEM_GAP`). Process rows (thinking / tool / todo) must not add their own outer `marginBottom` on `ExpandableBadge` — stacking badge margin with stream gap is how reply rhythm goes uneven.
+
+Horizontal gutters belong on the scroll content container only: native FlatList uses `listContentContainer` (`spacing[3]` on xs / `spacing[4]` on md). The web virtualizer in `strategy-web.tsx` must mirror the same tokens — a tighter hardcoded mobile value makes expanded tool cards look edge-to-edge.
+
+| Gap        | Token        | px  | Use                                                            |
+| ---------- | ------------ | --- | -------------------------------------------------------------- |
+| continuous | `spacing[2]` | 8   | Within a process sequence; split blocks of one assistant reply |
+| related    | `spacing[3]` | 12  | Process row ↔ assistant prose                                  |
+| turn       | `spacing[4]` | 16  | Turn boundaries (e.g. user message → tools)                    |
+
+Assistant markdown prose in `packages/app/src/styles/markdown-styles.ts` follows the same scale: paragraph bottom 8, h1/h2 top 16 / bottom 8, table / fence vertical 8. Fence and `code_block` must set theme `surface2` background, `border`, and `foreground` explicitly — `react-native-markdown-display` defaults to light `#f5f5f5` / `#CCCCCC`, which leaks into dark themes if left unoverridden.
+
 The whitespace is the design.
 
 ---
@@ -167,7 +181,7 @@ Terminology:
 
 ## 10. States
 
-Loading is inline by default. `<LoadingSpinner size={14} color={foregroundMuted} />` sits next to the thing it relates to (`packages/app/src/screens/settings/providers-section.tsx:227-231`). Page-level loading is a centered `<LoadingSpinner size="large">` (`packages/app/src/screens/sessions-screen.tsx:69-72`). Card-level loading is a single short line, not a spinner. In-row dropdown items use `<DropdownMenuItem status="pending" pendingLabel="Removing...">`; the menu item handles its own pending state.
+Loading is inline by default. `<LoadingSpinner size={14} color={foregroundMuted} />` sits next to the thing it relates to (`packages/app/src/screens/settings/providers-section.tsx:227-231`). Page-level loading is a centered thin `<LoadingSpinner size="large">` (18px) (`packages/app/src/screens/sessions-screen.tsx:69-72`). Card-level loading is a single short line, not a spinner. In-row dropdown items use `<DropdownMenuItem status="pending" pendingLabel="Removing...">`; the menu item handles its own pending state.
 
 Empty states are short noun phrases. Centered, muted, one or two lines. Sessions screen pairs the empty noun with a single ghost button to navigate back (`packages/app/src/screens/sessions-screen.tsx:74-81`); that pairing is the maximum elaboration. Illustrations and CTAs disguised as empty states are wrong.
 

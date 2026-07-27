@@ -2411,6 +2411,10 @@ export class DaemonClient {
         if (msg.payload.requestId !== requestId) {
           return null;
         }
+        // Cascade-deleted children reuse the same requestId; wait for the root.
+        if (msg.payload.agentId !== agentId) {
+          return null;
+        }
         return msg.payload;
       },
     });
@@ -4499,11 +4503,15 @@ export class DaemonClient {
     });
   }
 
-  async listProviderUsage(options?: { requestId?: string }): Promise<ProviderUsageListPayload> {
+  async listProviderUsage(options?: {
+    requestId?: string;
+    forceRefresh?: boolean;
+  }): Promise<ProviderUsageListPayload> {
     return this.sendNamespacedCorrelatedSessionRequest({
       requestId: options?.requestId,
       message: {
         type: "provider.usage.list.request",
+        ...(options?.forceRefresh === true ? { forceRefresh: true } : {}),
       },
     });
   }

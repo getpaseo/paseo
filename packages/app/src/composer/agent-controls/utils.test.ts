@@ -74,13 +74,14 @@ describe("formatThinkingOptionLabel", () => {
     expect(formatThinkingOptionLabel({ id: "low", label: "low" })).toBe("Low");
     expect(formatThinkingOptionLabel({ id: "medium", label: "medium" })).toBe("Medium");
     expect(formatThinkingOptionLabel({ id: "high", label: "high" })).toBe("High");
-    expect(formatThinkingOptionLabel({ id: "xhigh", label: "xhigh" })).toBe("Extra high");
+    expect(formatThinkingOptionLabel({ id: "xhigh", label: "xhigh" })).toBe("Xhigh");
   });
 
-  it("sentence-cases split provider labels", () => {
+  it("sentence-cases split provider labels without localizing them", () => {
     expect(formatThinkingOptionLabel({ id: "extra_high", label: "extra_high" })).toBe("Extra high");
     expect(formatThinkingOptionLabel({ id: "think-hard", label: "think-hard" })).toBe("Think hard");
-    expect(formatThinkingOptionLabel({ id: "xhigh", label: "XHigh" })).toBe("Extra high");
+    expect(formatThinkingOptionLabel({ id: "xhigh", label: "XHigh" })).toBe("X high");
+    expect(formatThinkingOptionLabel({ id: "xhigh", label: "Extra High" })).toBe("Extra high");
   });
 });
 
@@ -148,7 +149,7 @@ describe("resolveAgentModelSelection", () => {
     });
 
     expect(selection.selectedThinkingId).toBe("xhigh");
-    expect(selection.displayThinking).toBe("Extra high");
+    expect(selection.displayThinking).toBe("Xhigh");
   });
 
   it("falls back to the provider default model label instead of Auto", () => {

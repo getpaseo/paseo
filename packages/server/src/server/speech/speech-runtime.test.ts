@@ -158,4 +158,69 @@ describe("createSpeechService readiness", () => {
 
     runtime.stop();
   });
+
+  it("tears down local speech when applySpeechConfig disables all features", async () => {
+    const dictationStt = createStubStt("dictation-local");
+    const cleanup = vi.fn();
+
+    initializeLocalSpeechServicesMock.mockResolvedValue({
+      turnDetectionService: null,
+      sttService: null,
+      ttsService: null,
+      dictationSttService: dictationStt,
+      localVoiceTtsProvider: null,
+      localModelConfig: null,
+      availability: {
+        configured: false,
+        modelsDir: null,
+      },
+      cleanup,
+    });
+
+    const runtime = createSpeechService({
+      logger: pino({ level: "silent" }),
+      speechConfig: createSpeechConfig({
+        dictationStt: { provider: "local", enabled: true, explicit: true },
+        voiceTurnDetection: { provider: "local", enabled: false, explicit: true },
+        voiceStt: { provider: "local", enabled: false, explicit: true },
+        voiceTts: { provider: "local", enabled: false, explicit: true },
+      }),
+    });
+    runtime.start();
+    await runtime.ready;
+    expect(runtime.getReadiness().dictation.available).toBe(true);
+
+    initializeLocalSpeechServicesMock.mockResolvedValue({
+      turnDetectionService: null,
+      sttService: null,
+      ttsService: null,
+      dictationSttService: null,
+      localVoiceTtsProvider: null,
+      localModelConfig: null,
+      availability: {
+        configured: false,
+        modelsDir: null,
+      },
+      cleanup: () => {},
+    });
+
+    await runtime.applySpeechConfig({
+      speechConfig: createSpeechConfig({
+        dictationStt: { provider: "local", enabled: false, explicit: true },
+        voiceTurnDetection: { provider: "local", enabled: false, explicit: true },
+        voiceStt: { provider: "local", enabled: false, explicit: true },
+        voiceTts: { provider: "local", enabled: false, explicit: true },
+      }),
+    });
+
+    const readiness = runtime.getReadiness();
+    expect(readiness.voiceFeature.enabled).toBe(false);
+    expect(readiness.voiceFeature.reasonCode).toBe("disabled");
+    expect(readiness.dictation.enabled).toBe(false);
+    expect(readiness.realtimeVoice.enabled).toBe(false);
+    expect(runtime.resolveDictationStt()).toBeNull();
+    expect(cleanup).toHaveBeenCalled();
+
+    runtime.stop();
+  });
 });

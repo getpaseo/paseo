@@ -236,11 +236,7 @@ function ProjectSettingsBody({
 
       <View style={styles.headerBlock}>
         <View style={styles.titleRow}>
-          <ProjectTitleIcon
-            iconDataUri={projectIconDataUri}
-            projectName={project.projectName}
-            projectKey={project.projectKey}
-          />
+          <ProjectTitleIcon iconDataUri={projectIconDataUri} />
           <ProjectNameEditor project={project} client={client} />
         </View>
         <HostContext hosts={hosts} selectedHost={selectedHost} onSelectHost={onSelectHost} />
@@ -908,24 +904,13 @@ function ProjectNameEditor({ project, client }: ProjectNameEditorProps) {
   );
 }
 
-function ProjectTitleIcon({
-  iconDataUri,
-  projectName,
-  projectKey,
-}: {
-  iconDataUri: string | null;
-  projectName: string;
-  projectKey: string;
-}) {
-  const initial = projectName.trim().charAt(0).toUpperCase() || "?";
+function ProjectTitleIcon({ iconDataUri }: { iconDataUri: string | null }) {
   return (
     <ProjectIconView
       iconDataUri={iconDataUri}
-      initial={initial}
-      projectKey={projectKey}
       imageStyle={styles.titleIcon}
       fallbackStyle={styles.titleIconFallback}
-      textStyle={styles.titleIconFallbackText}
+      iconSize={20}
     />
   );
 }
@@ -1313,10 +1298,6 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
     alignItems: "center",
     justifyContent: "center",
-  },
-  titleIconFallbackText: {
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.medium,
   },
   iconColor: {
     color: theme.colors.foregroundMuted,

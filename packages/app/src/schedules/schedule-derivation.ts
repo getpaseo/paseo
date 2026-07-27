@@ -1,4 +1,5 @@
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
+import { i18n } from "@/i18n/i18next";
 import { describeScheduleCwd } from "@/schedules/schedule-project-targets";
 
 // Derived from existing fields only — no new protocol state. "active"/"paused"
@@ -66,9 +67,12 @@ function resolveTarget(input: ResolveScheduleInput): ScheduleTargetResolution {
   if (schedule.target.type === "agent") {
     const agent = agentsByKey.get(agentKey(serverId, schedule.target.agentId));
     if (agent) {
-      return { label: agent.title?.trim() || "Untitled agent", provider: agent.provider };
+      return {
+        label: agent.title?.trim() || i18n.t("schedules.form.untitledAgent"),
+        provider: agent.provider,
+      };
     }
-    return { label: "Agent unavailable", provider: null };
+    return { label: i18n.t("schedules.form.agentUnavailable"), provider: null };
   }
   return {
     label: describeScheduleCwd({ serverId, cwd: schedule.target.config.cwd, projectNameByCwd }),

@@ -17,10 +17,33 @@ interface WebNotificationInstance {
   addEventListener: (type: "click", listener: (event: Event) => void) => void;
 }
 
+interface WebServiceWorkerRegistration {
+  showNotification: (
+    title: string,
+    options?: {
+      body?: string;
+      data?: Record<string, unknown>;
+      icon?: string;
+    },
+  ) => Promise<void>;
+}
+
+interface WebServiceWorkerContainer {
+  ready?: Promise<WebServiceWorkerRegistration>;
+  register: (
+    scriptUrl: string,
+    options: { scope: string; updateViaCache: "none" },
+  ) => Promise<WebServiceWorkerRegistration>;
+}
+
 export const WEB_NOTIFICATION_CLICK_EVENT = "paseo:web-notification-click";
 
 let permissionRequest: Promise<boolean> | null = null;
+let serviceWorkerRegistrationRequest: Promise<WebServiceWorkerRegistration | null> | null = null;
 let notificationIconUrl: string | null | undefined;
+
+const WEB_NOTIFICATION_SERVICE_WORKER_PATH = "/paseo-notification-sw.js";
+const WEB_NOTIFICATION_ROUTE_KEY = "__paseoNotificationRoute";
 
 function getDesktopNotificationSender():
   | ((payload: {
@@ -66,6 +89,33 @@ function getWebNotificationConstructor(): {
   return NotificationConstructor ?? null;
 }
 
+function getWebServiceWorkerContainer(): WebServiceWorkerContainer | null {
+  return (
+    (globalThis as { navigator?: { serviceWorker?: WebServiceWorkerContainer } }).navigator
+      ?.serviceWorker ?? null
+  );
+}
+
+async function ensureWebServiceWorkerRegistration(): Promise<WebServiceWorkerRegistration | null> {
+  const serviceWorker = getWebServiceWorkerContainer();
+  if (!serviceWorker) {
+    return null;
+  }
+  if (!serviceWorkerRegistrationRequest) {
+    serviceWorkerRegistrationRequest = serviceWorker
+      .register(WEB_NOTIFICATION_SERVICE_WORKER_PATH, {
+        scope: "/",
+        updateViaCache: "none",
+      })
+      .then(async (registration) => {
+        return serviceWorker.ready ? await serviceWorker.ready : registration;
+      })
+      .catch(() => null);
+  }
+
+  return await serviceWorkerRegistrationRequest;
+}
+
 async function ensureNotificationPermission(): Promise<boolean> {
   const NotificationConstructor = getWebNotificationConstructor();
   if (!NotificationConstructor) {
@@ -84,10 +134,13 @@ async function ensureNotificationPermission(): Promise<boolean> {
     NotificationConstructor.requestPermission
       ? NotificationConstructor.requestPermission()
       : "denied",
-  ).then((permission) => permission === "granted");
-  const result = await permissionRequest;
-  permissionRequest = null;
-  return result;
+  )
+    .then((permission) => permission === "granted")
+    .catch(() => false)
+    .finally(() => {
+      permissionRequest = null;
+    });
+  return await permissionRequest;
 }
 
 export async function ensureOsNotificationPermission(): Promise<boolean> {
@@ -178,11 +231,40 @@ export async function sendOsNotification(payload: OsNotificationPayload): Promis
   if (NotificationConstructor) {
     const granted = await ensureNotificationPermission();
     if (granted) {
-      const notification = new NotificationConstructor(payload.title, {
+      const options = {
         body: payload.body,
         data: payload.data,
         icon: getWebNotificationIconUrl(),
-      }) as WebNotificationInstance;
+      };
+      const serviceWorkerRegistration = await ensureWebServiceWorkerRegistration();
+      if (serviceWorkerRegistration) {
+        const serviceWorkerOptions = {
+          ...options,
+          data: {
+            ...payload.data,
+            [WEB_NOTIFICATION_ROUTE_KEY]: buildNotificationRoute(payload.data),
+          },
+        };
+        try {
+          await serviceWorkerRegistration.showNotification(payload.title, serviceWorkerOptions);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+
+      let notification: WebNotificationInstance;
+      try {
+        notification = new NotificationConstructor(
+          payload.title,
+          options,
+        ) as WebNotificationInstance;
+      } catch (error) {
+        if (error instanceof TypeError) {
+          return false;
+        }
+        throw error;
+      }
       if (hasNotificationClickTarget(payload.data)) {
         attachWebClickHandler(notification, payload.data);
       }

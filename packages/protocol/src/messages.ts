@@ -139,6 +139,13 @@ const MutableBrowserToolsConfigSchema = z
     enabled: z.boolean().default(false),
   })
   .passthrough();
+
+const MutableFeatureToggleSchema = z
+  .object({
+    enabled: z.boolean(),
+  })
+  .passthrough();
+
 export const MutableDaemonConfigSchema = z
   .object({
     mcp: z
@@ -147,6 +154,9 @@ export const MutableDaemonConfigSchema = z
       })
       .passthrough(),
     browserTools: MutableBrowserToolsConfigSchema.default({ enabled: false }),
+    // Opt-in: do not load speech models or show composer controls until enabled.
+    dictation: MutableFeatureToggleSchema.default({ enabled: false }),
+    voiceMode: MutableFeatureToggleSchema.default({ enabled: false }),
     providers: z.record(z.string(), MutableDaemonProviderConfigSchema).default({}),
     metadataGeneration: MutableMetadataGenerationConfigSchema.default({ providers: [] }),
     autoArchiveAfterMerge: z.boolean().default(false),
@@ -160,6 +170,8 @@ export const MutableDaemonConfigPatchSchema = z
   .object({
     mcp: MutableDaemonConfigSchema.shape.mcp.partial().optional(),
     browserTools: MutableBrowserToolsConfigSchema.partial().optional(),
+    dictation: MutableFeatureToggleSchema.partial().optional(),
+    voiceMode: MutableFeatureToggleSchema.partial().optional(),
     providers: z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
       .optional(),
@@ -299,6 +311,8 @@ const AgentUsageSchema: z.ZodType<AgentUsage> = z.object({
   totalCostUsd: z.number().optional(),
   contextWindowMaxTokens: z.number().optional(),
   contextWindowUsedTokens: z.number().optional(),
+  // COMPAT(contextWindowEstimated): added in v0.2.0-beta.4, remove after 2027-01-24.
+  contextWindowEstimated: z.boolean().optional(),
 });
 
 const McpStdioServerConfigSchema = z.object({
@@ -1308,6 +1322,8 @@ export const ProviderDiagnosticRequestMessageSchema = z.object({
 export const ProviderUsageListRequestMessageSchema = z.object({
   type: z.literal("provider.usage.list.request"),
   requestId: z.string(),
+  // Optional: bypass daemon usage cache (e.g. Settings refresh after a transient network error).
+  forceRefresh: z.boolean().optional(),
 });
 
 export const ResumeAgentRequestMessageSchema = z.object({

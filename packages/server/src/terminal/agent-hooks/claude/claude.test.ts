@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -67,14 +67,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function createRegisteredInstallOptions(root: string) {
+  return {
+    env: {
+      CLAUDE_CONFIG_DIR: join(root, "claude"),
+      CODEX_HOME: join(root, "codex"),
+      CURSOR_CONFIG_DIR: join(root, "cursor"),
+      GROK_HOME: join(root, "grok"),
+      OPENCODE_CONFIG_DIR: join(root, "opencode"),
+    },
+    homeDir: join(root, "home"),
+  };
+}
+
 describe("Claude terminal agent hooks", () => {
   it("installs registered provider hooks idempotently", () => {
-    const configDir = createTempDir("paseo-claude-config-");
+    const root = createTempDir("paseo-claude-config-");
     const provider = AGENT_HOOK_PROVIDERS.claude;
     const install = provider.install;
+    const options = createRegisteredInstallOptions(root);
+    const configDir = options.env.CLAUDE_CONFIG_DIR;
 
-    installRegisteredAgentHooks({ configDir });
-    installRegisteredAgentHooks({ configDir });
+    installRegisteredAgentHooks(options);
+    installRegisteredAgentHooks(options);
 
     const settings = readSettings(configDir);
     for (const event of provider.events) {
@@ -86,11 +101,14 @@ describe("Claude terminal agent hooks", () => {
         `if [ -n "$PASEO_TERMINAL_ID" ]; then "\${PASEO_HOOK_CLI:-paseo}" hooks ${provider.id} ${event.event}; fi`,
       );
     }
-    expect(registeredAgentHooksAreInstalled({ configDir })).toBe(true);
+    expect(registeredAgentHooksAreInstalled(options)).toBe(true);
   });
 
   it("preserves unrelated user hooks", () => {
-    const configDir = createTempDir("paseo-claude-config-preserve-");
+    const root = createTempDir("paseo-claude-config-preserve-");
+    const options = createRegisteredInstallOptions(root);
+    const configDir = options.env.CLAUDE_CONFIG_DIR;
+    mkdirSync(configDir, { recursive: true });
     writeFileSync(
       join(configDir, "settings.json"),
       `${JSON.stringify(
@@ -110,7 +128,7 @@ describe("Claude terminal agent hooks", () => {
       )}\n`,
     );
 
-    installRegisteredAgentHooks({ configDir });
+    installRegisteredAgentHooks(options);
 
     const settings = readSettings(configDir);
     expect(settings.theme).toBe("dark");
@@ -121,8 +139,10 @@ describe("Claude terminal agent hooks", () => {
   });
 
   it("uninstalls only marker-matched hooks", () => {
-    const configDir = createTempDir("paseo-claude-config-uninstall-");
-    installRegisteredAgentHooks({ configDir });
+    const root = createTempDir("paseo-claude-config-uninstall-");
+    const options = createRegisteredInstallOptions(root);
+    const configDir = options.env.CLAUDE_CONFIG_DIR;
+    installRegisteredAgentHooks(options);
     const settings = readSettings(configDir);
     settings.hooks = {
       ...settings.hooks,
@@ -136,11 +156,11 @@ describe("Claude terminal agent hooks", () => {
     };
     writeFileSync(join(configDir, "settings.json"), `${JSON.stringify(settings, null, 2)}\n`);
 
-    uninstallRegisteredAgentHooks({ configDir });
+    uninstallRegisteredAgentHooks(options);
 
     const nextSettings = readSettings(configDir);
     expect(hookCommands(nextSettings, "Stop")).toEqual(["say still-here"]);
-    expect(registeredAgentHooksAreInstalled({ configDir })).toBe(false);
+    expect(registeredAgentHooksAreInstalled(options)).toBe(false);
   });
 
   it("builds a minimal gated hook command", () => {

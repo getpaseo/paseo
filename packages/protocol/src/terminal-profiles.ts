@@ -5,6 +5,8 @@ export const DEFAULT_TERMINAL_PROFILES: readonly TerminalProfile[] = [
   { id: "claude", name: "Claude Code", command: "claude", icon: "claude" },
   { id: "codex", name: "Codex", command: "codex", icon: "codex" },
   { id: "opencode", name: "OpenCode", command: "opencode", icon: "opencode" },
+  { id: "grok", name: "Grok", command: "grok", icon: "grok" },
+  { id: "cursor", name: "Cursor", command: "cursor-agent", icon: "cursor" },
 ];
 
 const WELL_KNOWN_COMMAND_ICONS = new Map(KNOWN_PROVIDER_ICON_NAMES.map((name) => [name, name]));

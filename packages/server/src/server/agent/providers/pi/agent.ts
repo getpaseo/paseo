@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { rm as fsRm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import type { Logger } from "pino";
@@ -2466,6 +2467,12 @@ export class PiRpcAgentClient implements AgentClient {
     } catch {
       return false;
     }
+  }
+
+  async deleteNativeSession(handle: AgentPersistenceHandle): Promise<void> {
+    const sessionFile = handle.nativeHandle;
+    if (!sessionFile) return;
+    await fsRm(sessionFile, { force: true });
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {

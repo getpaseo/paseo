@@ -47,10 +47,14 @@ describe("terminal agent hook provider registry", () => {
     const logger = createWarningLogger();
     writeFileSync(badClaudeConfigDir, "");
 
+    const cursorConfigDir = join(root, "cursor");
+    const grokHome = join(root, "grok");
     const results = installRegisteredAgentHooks({
       env: {
         CLAUDE_CONFIG_DIR: badClaudeConfigDir,
         CODEX_HOME: codexHome,
+        CURSOR_CONFIG_DIR: cursorConfigDir,
+        GROK_HOME: grokHome,
         OPENCODE_CONFIG_DIR: opencodeConfigDir,
       },
       homeDir: join(root, "home"),
@@ -59,9 +63,13 @@ describe("terminal agent hook provider registry", () => {
 
     expect(results.map((result) => result.configPath)).toEqual([
       join(codexHome, "hooks.json"),
+      join(cursorConfigDir, "hooks.json"),
+      join(grokHome, "hooks", "paseo-terminal-activity.json"),
       join(opencodeConfigDir, "plugins", "paseo-terminal-activity.js"),
     ]);
     expect(existsSync(join(codexHome, "hooks.json"))).toBe(true);
+    expect(existsSync(join(cursorConfigDir, "hooks.json"))).toBe(true);
+    expect(existsSync(join(grokHome, "hooks", "paseo-terminal-activity.json"))).toBe(true);
     expect(existsSync(join(opencodeConfigDir, "plugins", "paseo-terminal-activity.js"))).toBe(true);
     expect(logger.entries).toEqual([
       {

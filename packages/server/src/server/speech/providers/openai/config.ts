@@ -55,7 +55,7 @@ const OpenAiTtsOptionsSchema = z.object({
 });
 
 function isOpenAiProviderActive(provider: { enabled?: boolean; provider: string }): boolean {
-  return provider.enabled !== false && provider.provider === "openai";
+  return provider.enabled === true && provider.provider === "openai";
 }
 
 function pickIfOpenAi<T>(

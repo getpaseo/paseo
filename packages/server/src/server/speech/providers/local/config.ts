@@ -70,7 +70,7 @@ function persistedLocalFeatureModel(
   enabled: boolean | undefined,
   model: string | undefined,
 ): string | undefined {
-  if (provider !== "local" || enabled === false) {
+  if (provider !== "local" || enabled !== true) {
     return undefined;
   }
   return model;
@@ -82,11 +82,11 @@ function shouldIncludeLocalProviderConfig(params: {
   persisted: PersistedConfig;
 }): boolean {
   const localRequestedByFeature =
-    (params.providers.dictationStt.enabled !== false &&
+    (params.providers.dictationStt.enabled === true &&
       params.providers.dictationStt.provider === "local") ||
-    (params.providers.voiceStt.enabled !== false &&
+    (params.providers.voiceStt.enabled === true &&
       params.providers.voiceStt.provider === "local") ||
-    (params.providers.voiceTts.enabled !== false && params.providers.voiceTts.provider === "local");
+    (params.providers.voiceTts.enabled === true && params.providers.voiceTts.provider === "local");
 
   return (
     localRequestedByFeature ||

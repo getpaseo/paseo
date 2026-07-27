@@ -5312,13 +5312,14 @@ test("sends provider.usage.list.request and resolves provider.usage.list.respons
   mock.triggerOpen();
   await connectPromise;
 
-  const usagePromise = client.listProviderUsage({ requestId: "usage-1" });
+  const usagePromise = client.listProviderUsage({ requestId: "usage-1", forceRefresh: true });
 
   expect(JSON.parse(assertStr(mock.sent[0]))).toEqual({
     type: "session",
     message: {
       type: "provider.usage.list.request",
       requestId: "usage-1",
+      forceRefresh: true,
     },
   });
 

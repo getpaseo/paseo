@@ -6,7 +6,7 @@ export type WorkspaceHeaderCheckoutState =
   | { kind: "ready"; checkout: { isGit: boolean; currentBranch: string | null } };
 
 type WorkspaceHeaderRenderState =
-  | { kind: "skeleton" }
+  | { kind: "loading" }
   | {
       kind: "ready";
       title: string;
@@ -51,7 +51,7 @@ export function resolveWorkspaceHeaderRenderState(input: {
   checkoutState: WorkspaceHeaderCheckoutState;
 }): WorkspaceHeaderRenderState {
   if (!input.workspace) {
-    return { kind: "skeleton" };
+    return { kind: "loading" };
   }
 
   const header = resolveWorkspaceHeader({ workspace: input.workspace });

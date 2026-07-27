@@ -13,6 +13,7 @@ import {
 import { getHostRuntimeStore, type HostRuntimeStore } from "@/runtime/host-runtime";
 import { planInitialAgentTimelineSync, planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import { i18n } from "@/i18n/i18next";
+import { toErrorMessage } from "@/utils/error-messages";
 
 export type SetAgentInitializing = (agentId: string, initializing: boolean) => void;
 
@@ -72,7 +73,7 @@ export function ensureAgentIsInitialized(input: EnsureAgentIsInitializedInput): 
 
   input.runtime.fetchAgentTimeline(serverId, agentId, timelineRequest).catch((error) => {
     setAgentInitializing(agentId, false);
-    rejectInitDeferred(key, error instanceof Error ? error : new Error(String(error)));
+    rejectInitDeferred(key, error instanceof Error ? error : new Error(toErrorMessage(error)));
   });
 
   return deferred.promise;

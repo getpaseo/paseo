@@ -1,45 +1,45 @@
 import { useMemo } from "react";
-import {
-  Image,
-  type ImageStyle,
-  type StyleProp,
-  Text,
-  type TextStyle,
-  View,
-  type ViewStyle,
-} from "react-native";
-import { deriveProjectIconColor } from "@/utils/project-icon-color";
+import { Image, type ImageStyle, type StyleProp, View, type ViewStyle } from "react-native";
+import { withUnistyles } from "react-native-unistyles";
+import { Folder, FolderOpen } from "lucide-react-native";
+import type { Theme } from "@/styles/theme";
+import { ICON_SIZE } from "@/styles/theme";
 
-const WHITE_TEXT = { color: "#ffffff" } as const;
+const ThemedFolder = withUnistyles(Folder);
+const ThemedFolderOpen = withUnistyles(FolderOpen);
+
+const foregroundMutedColorMapping = (theme: Theme) => ({
+  color: theme.colors.foregroundMuted,
+});
 
 export function ProjectIconView({
   iconDataUri,
-  initial,
-  projectKey,
   imageStyle,
   fallbackStyle,
-  textStyle,
+  expanded = false,
+  iconSize = ICON_SIZE.sm,
 }: {
   iconDataUri: string | null;
-  initial: string;
-  projectKey: string;
   imageStyle: StyleProp<ImageStyle>;
   fallbackStyle: StyleProp<ViewStyle>;
-  textStyle: StyleProp<TextStyle>;
+  /** When true, uses an open folder glyph (sidebar expand/collapse). */
+  expanded?: boolean;
+  /** Outline glyph size when there is no project image. */
+  iconSize?: number;
 }) {
   const imageSource = useMemo(() => ({ uri: iconDataUri ?? "" }), [iconDataUri]);
-  const fallbackStyles = useMemo(
-    () => [fallbackStyle, { backgroundColor: deriveProjectIconColor(projectKey) }],
-    [fallbackStyle, projectKey],
-  );
-  const textStyles = useMemo(() => [textStyle, WHITE_TEXT], [textStyle]);
 
   if (iconDataUri) {
     return <Image source={imageSource} style={imageStyle} />;
   }
+
   return (
-    <View style={fallbackStyles}>
-      <Text style={textStyles}>{initial}</Text>
+    <View style={fallbackStyle}>
+      {expanded ? (
+        <ThemedFolderOpen size={iconSize} uniProps={foregroundMutedColorMapping} />
+      ) : (
+        <ThemedFolder size={iconSize} uniProps={foregroundMutedColorMapping} />
+      )}
     </View>
   );
 }

@@ -1,6 +1,5 @@
+import { getErrorMessage } from "@getpaseo/protocol/error-utils";
+
 export function toErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
+  return getErrorMessage(error);
 }

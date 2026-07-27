@@ -1,22 +1,21 @@
-const SYNCED_LOADER_DURATION_MS = 950;
-export const SYNCED_LOADER_DOT_COUNT = 6;
+const SYNCED_LOADER_HALF_CYCLE_MS = 900;
 
-const SYNCED_LOADER_OPACITY_STATES = [
-  [1, 0, 0.78, 0, 0.56, 0.34],
-  [0.78, 1, 0.56, 0, 0.34, 0],
-  [0.56, 0.78, 0.34, 1, 0, 0],
-  [0.34, 0.56, 0, 0.78, 0, 1],
-  [0, 0.34, 0, 0.56, 1, 0.78],
-  [0, 0, 1, 0.34, 0.78, 0.56],
-] as const;
-
-export function getSyncedLoaderStep(nowMs: number): number {
+/** Triangle-wave progress in [0, 1] shared across all SyncedLoader instances. */
+export function getSyncedLoaderProgress(nowMs: number): number {
   "worklet";
-  const elapsedMs = nowMs % SYNCED_LOADER_DURATION_MS;
-  return Math.floor((elapsedMs * SYNCED_LOADER_DOT_COUNT) / SYNCED_LOADER_DURATION_MS);
+  const cycleMs = SYNCED_LOADER_HALF_CYCLE_MS * 2;
+  const elapsedMs = ((nowMs % cycleMs) + cycleMs) % cycleMs;
+  if (elapsedMs < SYNCED_LOADER_HALF_CYCLE_MS) {
+    return elapsedMs / SYNCED_LOADER_HALF_CYCLE_MS;
+  }
+  return 1 - (elapsedMs - SYNCED_LOADER_HALF_CYCLE_MS) / SYNCED_LOADER_HALF_CYCLE_MS;
 }
 
-export function getSyncedLoaderDotOpacity(step: number, dot: number): number {
+export function getSyncedLoaderPulse(progress: number): { opacity: number; scale: number } {
   "worklet";
-  return SYNCED_LOADER_OPACITY_STATES[step]?.[dot] ?? 0;
+  const t = Math.min(1, Math.max(0, progress));
+  return {
+    scale: 0.55 + t * 0.45,
+    opacity: 0.28 + t * 0.72,
+  };
 }

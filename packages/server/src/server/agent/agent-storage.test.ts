@@ -192,6 +192,39 @@ describe("AgentStorage", () => {
     expect(persisted.config?.extra?.claude).toMatchObject({ maxThinkingTokens: 1024 });
   });
 
+  test("persists and reloads lastUsage so reopened agents keep context usage", async () => {
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: "agent-usage",
+        lifecycle: "closed",
+        lastUsage: {
+          contextWindowMaxTokens: 500_000,
+          contextWindowUsedTokens: 12_448,
+        },
+      }),
+    );
+
+    const [record] = await storage.list();
+    expect(record.lastUsage).toEqual({
+      contextWindowMaxTokens: 500_000,
+      contextWindowUsedTokens: 12_448,
+    });
+
+    const reloaded = new AgentStorage(storagePath, logger);
+    const [persisted] = await reloaded.list();
+    expect(persisted.lastUsage).toEqual({
+      contextWindowMaxTokens: 500_000,
+      contextWindowUsedTokens: 12_448,
+    });
+  });
+
+  test("omits lastUsage when the agent never reported usage", async () => {
+    await storage.applySnapshot(createManagedAgent({ id: "agent-no-usage", lifecycle: "closed" }));
+
+    const [record] = await storage.list();
+    expect(record.lastUsage).toBeUndefined();
+  });
+
   test("applySnapshot stores and reloads featureValues when present", async () => {
     await storage.applySnapshot(
       createManagedAgent({

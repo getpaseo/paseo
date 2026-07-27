@@ -296,6 +296,9 @@ function mergeMutableConfigIntoPersistedConfig(params: {
     } as PersistedConfig["agents"];
   }
 
+  const dictationEnabled = readFeatureToggleEnabled(mutable.dictation, false);
+  const voiceModeEnabled = readFeatureToggleEnabled(mutable.voiceMode, false);
+
   return {
     ...persisted,
     daemon: {
@@ -315,6 +318,17 @@ function mergeMutableConfigIntoPersistedConfig(params: {
         ? { terminalProfiles: mutable.terminalProfiles }
         : {}),
     },
+    features: {
+      ...persisted.features,
+      dictation: {
+        ...persisted.features?.dictation,
+        enabled: dictationEnabled,
+      },
+      voiceMode: {
+        ...persisted.features?.voiceMode,
+        enabled: voiceModeEnabled,
+      },
+    },
     agents: nextAgents,
   } as PersistedConfig;
 }
@@ -325,6 +339,13 @@ function readBrowserToolsEnabled(mutable: MutableDaemonConfig): boolean {
     return false;
   }
   return browserTools["enabled"] === true;
+}
+
+function readFeatureToggleEnabled(value: unknown, defaultEnabled: boolean): boolean {
+  if (!isRecord(value) || typeof value["enabled"] !== "boolean") {
+    return defaultEnabled;
+  }
+  return value["enabled"];
 }
 
 function readMetadataGenerationProviders(

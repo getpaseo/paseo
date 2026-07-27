@@ -75,19 +75,19 @@ function computeRequiredLocalModelIds(params: {
 }): LocalSpeechModelId[] {
   const ids = new Set<LocalSpeechModelId>();
   if (
-    params.providers.dictationStt.enabled !== false &&
+    params.providers.dictationStt.enabled === true &&
     params.providers.dictationStt.provider === "local"
   ) {
     ids.add(params.models.dictationLocalSttModel);
   }
   if (
-    params.providers.voiceStt.enabled !== false &&
+    params.providers.voiceStt.enabled === true &&
     params.providers.voiceStt.provider === "local"
   ) {
     ids.add(params.models.voiceLocalSttModel);
   }
   if (
-    params.providers.voiceTts.enabled !== false &&
+    params.providers.voiceTts.enabled === true &&
     params.providers.voiceTts.provider === "local"
   ) {
     ids.add(params.models.voiceLocalTtsModel);
@@ -96,7 +96,7 @@ function computeRequiredLocalModelIds(params: {
 }
 
 function isLocalProviderEnabled(provider: { enabled?: boolean; provider: string }): boolean {
-  return provider.enabled !== false && provider.provider === "local";
+  return provider.enabled === true && provider.provider === "local";
 }
 
 function warnLocalConfigMissing(logger: Logger, feature: string): void {
@@ -134,6 +134,99 @@ function initializeLocalVoiceTts(params: {
   return new WorkerBackedTextToSpeechProvider(client);
 }
 
+function isAnyLocalProviderEnabled(providers: RequestedSpeechProviders): boolean {
+  return (
+    isLocalProviderEnabled(providers.voiceTurnDetection) ||
+    isLocalProviderEnabled(providers.voiceStt) ||
+    isLocalProviderEnabled(providers.dictationStt) ||
+    isLocalProviderEnabled(providers.voiceTts)
+  );
+}
+
+function createLocalSpeechWorkerClient(params: {
+  logger: Logger;
+  localConfig: NonNullable<PaseoSpeechConfig["local"]>;
+  localModels: ReturnType<typeof resolveConfiguredLocalModels>;
+  speechConfig: PaseoSpeechConfig | null;
+}): LocalSpeechWorkerClient {
+  return new LocalSpeechWorkerClient({
+    logger: params.logger,
+    config: {
+      modelsDir: params.localConfig.modelsDir,
+      voiceSttModel: params.localModels.voiceLocalSttModel,
+      dictationSttModel: params.localModels.dictationLocalSttModel,
+      voiceTtsModel: params.localModels.voiceLocalTtsModel,
+      voiceTtsSpeakerId: params.speechConfig?.local?.models.voiceTtsSpeakerId,
+      voiceTtsSpeed: params.speechConfig?.local?.models.voiceTtsSpeed,
+    },
+  });
+}
+
+function resolveLocalProviderService<T>(params: {
+  enabled: boolean;
+  workerClient: LocalSpeechWorkerClient | null;
+  logger: Logger;
+  feature: string;
+  create: (client: LocalSpeechWorkerClient) => T;
+}): T | null {
+  if (!params.enabled) {
+    return null;
+  }
+  if (!params.workerClient) {
+    warnLocalConfigMissing(params.logger, params.feature);
+    return null;
+  }
+  return params.create(params.workerClient);
+}
+
+function initializeEnabledLocalProviders(params: {
+  providers: RequestedSpeechProviders;
+  workerClient: LocalSpeechWorkerClient | null;
+  logger: Logger;
+}): {
+  turnDetectionService: TurnDetectionProvider | null;
+  sttService: SpeechToTextProvider | null;
+  dictationSttService: SpeechToTextProvider | null;
+  localVoiceTtsProvider: TextToSpeechProvider | null;
+  ttsService: TextToSpeechProvider | null;
+} {
+  const turnDetectionService = resolveLocalProviderService({
+    enabled: isLocalProviderEnabled(params.providers.voiceTurnDetection),
+    workerClient: params.workerClient,
+    logger: params.logger,
+    feature: "turn detection",
+    create: (client) => initializeLocalTurnDetection({ client }),
+  });
+  const sttService = resolveLocalProviderService({
+    enabled: isLocalProviderEnabled(params.providers.voiceStt),
+    workerClient: params.workerClient,
+    logger: params.logger,
+    feature: "voice STT",
+    create: (client) => initializeLocalVoiceStt({ client }),
+  });
+  const dictationSttService = resolveLocalProviderService({
+    enabled: isLocalProviderEnabled(params.providers.dictationStt),
+    workerClient: params.workerClient,
+    logger: params.logger,
+    feature: "dictation STT",
+    create: (client) => initializeLocalDictationStt({ client }),
+  });
+  const localVoiceTtsProvider = resolveLocalProviderService({
+    enabled: isLocalProviderEnabled(params.providers.voiceTts),
+    workerClient: params.workerClient,
+    logger: params.logger,
+    feature: "voice TTS",
+    create: (client) => initializeLocalVoiceTts({ client }),
+  });
+  return {
+    turnDetectionService,
+    sttService,
+    dictationSttService,
+    localVoiceTtsProvider,
+    ttsService: localVoiceTtsProvider,
+  };
+}
+
 export async function initializeLocalSpeechServices(params: {
   providers: RequestedSpeechProviders;
   speechConfig: PaseoSpeechConfig | null;
@@ -142,77 +235,27 @@ export async function initializeLocalSpeechServices(params: {
   const { providers, logger, speechConfig } = params;
   const localConfig = speechConfig?.local ?? null;
   const localModels = resolveConfiguredLocalModels(speechConfig);
-
-  let sttService: SpeechToTextProvider | null = null;
-  let ttsService: TextToSpeechProvider | null = null;
-  let dictationSttService: SpeechToTextProvider | null = null;
-  let turnDetectionService: TurnDetectionProvider | null = null;
-  let localVoiceTtsProvider: TextToSpeechProvider | null = null;
-
   const requiredLocalModelIds = computeRequiredLocalModelIds({
     providers,
     models: localModels,
   });
-
-  const workerClient = localConfig
-    ? new LocalSpeechWorkerClient({
-        logger,
-        config: {
-          modelsDir: localConfig.modelsDir,
-          voiceSttModel: localModels.voiceLocalSttModel,
-          dictationSttModel: localModels.dictationLocalSttModel,
-          voiceTtsModel: localModels.voiceLocalTtsModel,
-          voiceTtsSpeakerId: speechConfig?.local?.models.voiceTtsSpeakerId,
-          voiceTtsSpeed: speechConfig?.local?.models.voiceTtsSpeed,
-        },
-      })
-    : null;
-
-  if (isLocalProviderEnabled(providers.voiceTurnDetection)) {
-    if (workerClient) {
-      turnDetectionService = initializeLocalTurnDetection({ client: workerClient });
-    } else {
-      warnLocalConfigMissing(logger, "turn detection");
-    }
-  }
-
-  if (isLocalProviderEnabled(providers.voiceStt)) {
-    if (workerClient) {
-      sttService = initializeLocalVoiceStt({ client: workerClient });
-    } else {
-      warnLocalConfigMissing(logger, "voice STT");
-    }
-  }
-
-  if (isLocalProviderEnabled(providers.dictationStt)) {
-    if (workerClient) {
-      dictationSttService = initializeLocalDictationStt({ client: workerClient });
-    } else {
-      warnLocalConfigMissing(logger, "dictation STT");
-    }
-  }
-
-  if (isLocalProviderEnabled(providers.voiceTts)) {
-    if (workerClient) {
-      localVoiceTtsProvider = initializeLocalVoiceTts({ client: workerClient });
-    } else {
-      warnLocalConfigMissing(logger, "voice TTS");
-    }
-    if (localVoiceTtsProvider) {
-      ttsService = localVoiceTtsProvider;
-    }
-  }
-
-  const cleanup = () => {
-    workerClient?.shutdown();
-  };
+  const workerClient =
+    localConfig && isAnyLocalProviderEnabled(providers)
+      ? createLocalSpeechWorkerClient({
+          logger,
+          localConfig,
+          localModels,
+          speechConfig,
+        })
+      : null;
+  const services = initializeEnabledLocalProviders({
+    providers,
+    workerClient,
+    logger,
+  });
 
   return {
-    turnDetectionService,
-    sttService,
-    ttsService,
-    dictationSttService,
-    localVoiceTtsProvider,
+    ...services,
     localModelConfig: localConfig
       ? {
           modelsDir: localConfig.modelsDir,
@@ -220,6 +263,8 @@ export async function initializeLocalSpeechServices(params: {
         }
       : null,
     availability: getLocalSpeechAvailability(speechConfig),
-    cleanup,
+    cleanup: () => {
+      workerClient?.shutdown();
+    },
   };
 }

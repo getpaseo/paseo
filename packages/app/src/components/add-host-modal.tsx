@@ -1,11 +1,15 @@
-import { useCallback, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert, Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { Check, ChevronDown, ChevronRight, Eye, EyeOff, Link2 } from "lucide-react-native";
 import type { HostProfile } from "@/types/host-connection";
-import { useHosts, useHostMutations } from "@/runtime/host-runtime";
+import {
+  readInitialDaemonConnectionHint,
+  useHosts,
+  useHostMutations,
+} from "@/runtime/host-runtime";
 import {
   parseConnectionUri,
   serializeConnectionUri,
@@ -14,14 +18,20 @@ import {
 import { DaemonConnectionTestError } from "@/utils/test-daemon-connection";
 import { AdaptiveModalSheet, AdaptiveTextInput, type SheetHeader } from "./adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
+import {
+  normalizeDirectConnectionDraft,
+  readPageLocationHint,
+  resolveInitialDirectConnectionDraft,
+  type DirectConnectionDraft,
+} from "./add-host-direct-draft";
 
 const FLEX_ONE_STYLE = { flex: 1 } as const;
 
-interface DirectConnectionDraft {
-  host: string;
-  port: string;
-  useTls: boolean;
-  password: string;
+function resolveOpeningDirectConnectionDraft(): DirectConnectionDraft {
+  return resolveInitialDirectConnectionDraft(
+    readInitialDaemonConnectionHint(),
+    readPageLocationHint(),
+  );
 }
 
 interface PreparedDirectConnection {
@@ -32,7 +42,6 @@ interface PreparedDirectConnection {
 }
 
 interface DirectConnectionLabels {
-  hostRequired: string;
   invalidPort: string;
   invalidConnection: string;
   failedToConnect: (endpoint: string) => string;
@@ -145,12 +154,11 @@ function isIpv6Host(host: string): boolean {
 function buildConnectionUriFromDraft(
   draft: DirectConnectionDraft,
   labels: DirectConnectionLabels,
+  emptyHostFallback: DirectConnectionDraft,
 ): string {
-  const host = draft.host.trim();
-  const port = Number(draft.port.trim());
-  if (!host) {
-    throw new Error(labels.hostRequired);
-  }
+  const normalized = normalizeDirectConnectionDraft(draft, emptyHostFallback);
+  const host = normalized.host;
+  const port = Number(normalized.port);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error(labels.invalidPort);
   }
@@ -159,16 +167,17 @@ function buildConnectionUriFromDraft(
     host,
     port,
     isIpv6: isIpv6Host(host),
-    useTls: draft.useTls,
-    ...(draft.password ? { password: draft.password } : {}),
+    useTls: normalized.useTls,
+    ...(normalized.password ? { password: normalized.password } : {}),
   });
 }
 
 function prepareDirectConnection(
   draft: DirectConnectionDraft,
   labels: DirectConnectionLabels,
+  emptyHostFallback: DirectConnectionDraft,
 ): PreparedDirectConnection {
-  const parsed = parseConnectionUri(buildConnectionUriFromDraft(draft, labels));
+  const parsed = parseConnectionUri(buildConnectionUriFromDraft(draft, labels, emptyHostFallback));
   const endpoint = parsed.isIpv6
     ? `[${parsed.host}]:${parsed.port}`
     : `${parsed.host}:${parsed.port}`;
@@ -298,25 +307,44 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
 
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const [host, setHost] = useState("");
-  const [port, setPort] = useState("6767");
-  const [useTls, setUseTls] = useState(false);
+  const [host, setHost] = useState(() => resolveOpeningDirectConnectionDraft().host);
+  const [port, setPort] = useState(() => resolveOpeningDirectConnectionDraft().port);
+  const [useTls, setUseTls] = useState(() => resolveOpeningDirectConnectionDraft().useTls);
   const [password, setPassword] = useState("");
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
   const [advancedUri, setAdvancedUri] = useState("");
   const [inputResetKey, bumpInputResetKey] = useReducer((key: number) => key + 1, 0);
+  const [hasSameOriginHint, setHasSameOriginHint] = useState(
+    () => readInitialDaemonConnectionHint() !== null,
+  );
 
-  const clearInput = useCallback(() => {
-    setHost("");
-    setPort("6767");
-    setUseTls(false);
-    setPassword("");
+  const applyDraft = useCallback((draft: DirectConnectionDraft) => {
+    setHost(draft.host);
+    setPort(draft.port);
+    setUseTls(draft.useTls);
+    setPassword(draft.password);
     setIsPasswordVisible(false);
     setIsAdvancedOpen(false);
     setAdvancedUri("");
     bumpInputResetKey();
   }, []);
+
+  const clearInput = useCallback(() => {
+    const draft = resolveOpeningDirectConnectionDraft();
+    setHasSameOriginHint(readInitialDaemonConnectionHint() !== null);
+    applyDraft(draft);
+  }, [applyDraft]);
+
+  useEffect(() => {
+    if (!visible) {
+      return;
+    }
+    const hint = readInitialDaemonConnectionHint();
+    setHasSameOriginHint(hint !== null);
+    applyDraft(resolveInitialDirectConnectionDraft(hint, readPageLocationHint()));
+    setErrorMessage("");
+  }, [applyDraft, visible]);
 
   const connectIcon = useMemo(
     () => <Link2 size={16} color={theme.colors.accentForeground} />,
@@ -335,7 +363,6 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
   );
   const directConnectionLabels = useMemo<DirectConnectionLabels>(
     () => ({
-      hostRequired: t("pairing.direct.errors.hostRequired"),
       invalidPort: t("pairing.direct.errors.invalidPort"),
       invalidConnection: t("pairing.direct.errors.invalidConnection"),
       failedToConnect: (endpoint) => t("pairing.direct.errors.failedToConnect", { endpoint }),
@@ -373,6 +400,7 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
       connection = prepareDirectConnection(
         { host, port, useTls, password },
         directConnectionLabels,
+        resolveOpeningDirectConnectionDraft(),
       );
     } catch (error) {
       const message =
@@ -457,7 +485,11 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
     if (!isAdvancedOpen) {
       try {
         setAdvancedUri(
-          buildConnectionUriFromDraft({ host, port, useTls, password }, directConnectionLabels),
+          buildConnectionUriFromDraft(
+            { host, port, useTls, password },
+            directConnectionLabels,
+            resolveOpeningDirectConnectionDraft(),
+          ),
         );
       } catch {
         setAdvancedUri("");
@@ -491,7 +523,9 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
       onClose={handleClose}
       testID="add-host-modal"
     >
-      <Text style={styles.helper}>{t("pairing.direct.helper")}</Text>
+      <Text style={styles.helper}>
+        {hasSameOriginHint ? t("pairing.direct.helperSameOrigin") : t("pairing.direct.helper")}
+      </Text>
 
       <View style={styles.portRow}>
         <View style={hostFieldStyle}>

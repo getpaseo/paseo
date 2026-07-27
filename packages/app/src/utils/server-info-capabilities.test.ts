@@ -4,6 +4,7 @@ import type { DaemonServerInfo } from "@/stores/session-store";
 import {
   getServerCapabilities,
   getVoiceReadinessState,
+  isVoiceFeatureEnabled,
   resolveVoiceUnavailableMessage,
 } from "./server-info-capabilities";
 
@@ -115,5 +116,31 @@ describe("server-info-capabilities", () => {
         mode: "dictation",
       }),
     ).toBeNull();
+  });
+
+  it("reports feature enabled state and legacy absence", () => {
+    expect(isVoiceFeatureEnabled({ serverInfo: buildServerInfo(), mode: "dictation" })).toBeNull();
+    expect(
+      isVoiceFeatureEnabled({
+        serverInfo: buildServerInfo({
+          voice: {
+            dictation: { enabled: false, reason: "Dictation is disabled in daemon config." },
+            voice: { enabled: true, reason: "" },
+          },
+        }),
+        mode: "dictation",
+      }),
+    ).toBe(false);
+    expect(
+      isVoiceFeatureEnabled({
+        serverInfo: buildServerInfo({
+          voice: {
+            dictation: { enabled: true, reason: "" },
+            voice: { enabled: true, reason: "" },
+          },
+        }),
+        mode: "voice",
+      }),
+    ).toBe(true);
   });
 });

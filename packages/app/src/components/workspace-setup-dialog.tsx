@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Image, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { createNameId } from "mnemonic-id";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
+import { ProjectIconView } from "@/components/project-icon-view";
 import { Composer } from "@/composer";
 import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
@@ -24,10 +25,10 @@ import type {
   CreateAgentRequestOptions,
   DaemonClient,
 } from "@getpaseo/client/internal/daemon-client";
-import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
+import { ICON_SIZE } from "@/styles/theme";
 import type { MessagePayload } from "@/composer/types";
 
 function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
@@ -377,10 +378,6 @@ export function WorkspaceSetupDialog() {
 
   const workspaceTitle = resolveWorkspaceTitle({ workspace, displayName, sourceDirectory });
 
-  const placeholderLabel = projectIconPlaceholderLabelFromDisplayName(workspaceTitle);
-  const placeholderInitial = placeholderLabel.charAt(0).toUpperCase();
-
-  const iconSource = useMemo(() => (iconDataUri ? { uri: iconDataUri } : null), [iconDataUri]);
   const agentControlsWithDisabled = useMemo(
     () =>
       composerState
@@ -395,19 +392,18 @@ export function WorkspaceSetupDialog() {
   const subtitleContent = useMemo(
     () => (
       <View style={styles.subtitleRow}>
-        {iconSource ? (
-          <Image source={iconSource} style={styles.projectIcon} />
-        ) : (
-          <View style={styles.projectIconFallback}>
-            <Text style={styles.projectIconFallbackText}>{placeholderInitial}</Text>
-          </View>
-        )}
+        <ProjectIconView
+          iconDataUri={iconDataUri}
+          imageStyle={styles.projectIcon}
+          fallbackStyle={styles.projectIconFallback}
+          iconSize={ICON_SIZE.md}
+        />
         <Text style={styles.projectTitle} numberOfLines={1}>
           {workspaceTitle}
         </Text>
       </View>
     ),
-    [iconSource, placeholderInitial, workspaceTitle],
+    [iconDataUri, workspaceTitle],
   );
 
   const sheetHeader = useMemo<SheetHeader>(
@@ -469,14 +465,8 @@ const styles = StyleSheet.create((theme) => ({
     width: theme.iconSize.md,
     height: theme.iconSize.md,
     borderRadius: theme.borderRadius.sm,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
     alignItems: "center",
     justifyContent: "center",
-  },
-  projectIconFallbackText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: 9,
   },
   projectTitle: {
     fontSize: theme.fontSize.sm,

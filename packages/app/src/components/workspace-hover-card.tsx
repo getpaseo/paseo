@@ -36,7 +36,7 @@ import type { PrHint } from "@/git/use-pr-status-query";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { shortenPath } from "@/utils/shorten-path";
 import { copyToClipboard } from "@/utils/copy-to-clipboard";
-import { PrBadge } from "@/components/sidebar-workspace-list";
+import { PrBadge } from "@/components/pr-badge";
 import { useHoverSafeZone } from "@/hooks/use-hover-safe-zone";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { FloatingSurface } from "@/components/ui/floating";

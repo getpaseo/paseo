@@ -10,6 +10,22 @@ category: Configuration
 
 Paseo has first-class voice support for dictation and voice mode conversations with your coding environment.
 
+## Enable or disable in Settings
+
+In the app: **Settings → Host → Agents**.
+
+- **Dictation** — microphone-to-text in the composer
+- **Voice mode** — realtime voice conversations with agents
+
+These map to `features.dictation.enabled` and `features.voiceMode.enabled` in `$PASEO_HOME/config.json` (both default to on). Turning a feature off updates the running daemon without a restart and tears down local speech workers/monitors for that feature so it does not keep consuming resources.
+
+You can also set env overrides (these win over config):
+
+- `PASEO_DICTATION_ENABLED=0`
+- `PASEO_VOICE_MODE_ENABLED=0`
+
+When a feature is disabled, the composer hides its entry points.
+
 ## Philosophy
 
 Voice is local-first. You can run speech fully on-device, or choose OpenAI for speech features. For voice reasoning/orchestration, Paseo reuses agent providers already installed and authenticated on your machine.

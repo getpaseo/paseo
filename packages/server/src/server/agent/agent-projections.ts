@@ -86,6 +86,7 @@ export function toStoredAgentRecord(
     runtimeInfo,
     features: normalizeFeatures(agent.features),
     persistence,
+    lastUsage: sanitizeUsage(agent.lastUsage),
     lastError: agent.lastError ?? undefined,
     requiresAttention: agent.attention.requiresAttention,
     attentionReason: agent.attention.requiresAttention ? agent.attention.attentionReason : null,
@@ -425,7 +426,7 @@ function sanitizeMetadataArray(value: unknown): AgentMetadata[] | undefined {
   return sanitized.length > 0 ? sanitized : undefined;
 }
 
-type UsageNumericField = Exclude<keyof AgentUsage, never>;
+type UsageNumericField = Exclude<keyof AgentUsage, "contextWindowEstimated">;
 
 function assignFiniteNumber(
   source: { [key: string]: JsonValue },
@@ -458,6 +459,12 @@ function sanitizeUsage(value: unknown): AgentUsage | undefined {
     if (!assignFiniteNumber(sanitized, result, field)) {
       return undefined;
     }
+  }
+  const estimated = sanitized["contextWindowEstimated"];
+  if (typeof estimated === "boolean") {
+    result.contextWindowEstimated = estimated;
+  } else if (estimated !== undefined && estimated !== null) {
+    return undefined;
   }
   return Object.keys(result).length ? result : undefined;
 }

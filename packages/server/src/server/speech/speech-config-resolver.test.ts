@@ -1,18 +1,15 @@
-import path from "node:path";
-
 import { describe, expect, test } from "vitest";
 
 import { PersistedConfigSchema } from "../persisted-config.js";
 import { resolveSpeechConfig } from "./speech-config-resolver.js";
 
 describe("resolveSpeechConfig", () => {
-  test("resolves local-first defaults without env overrides", () => {
-    const paseoHome = "/tmp/paseo-home";
+  test("resolves local-first defaults with voice features off", () => {
     const persisted = PersistedConfigSchema.parse({});
     const env = {} as NodeJS.ProcessEnv;
 
     const result = resolveSpeechConfig({
-      paseoHome,
+      paseoHome: "/tmp/paseo-home",
       env,
       persisted,
     });
@@ -21,36 +18,25 @@ describe("resolveSpeechConfig", () => {
     expect(result.speech.providers.dictationStt).toEqual({
       provider: "local",
       explicit: false,
-      enabled: true,
+      enabled: false,
     });
     expect(result.speech.providers.voiceTurnDetection).toEqual({
       provider: "local",
       explicit: false,
-      enabled: true,
+      enabled: false,
     });
     expect(result.speech.providers.voiceStt).toEqual({
       provider: "local",
       explicit: false,
-      enabled: true,
+      enabled: false,
     });
     expect(result.speech.providers.voiceTts).toEqual({
       provider: "local",
       explicit: false,
-      enabled: true,
+      enabled: false,
     });
-    expect(result.speech.local).toEqual({
-      modelsDir: path.join(paseoHome, "models", "local-speech"),
-      models: {
-        dictationStt: "parakeet-tdt-0.6b-v2-int8",
-        voiceStt: "parakeet-tdt-0.6b-v2-int8",
-        voiceTts: "kokoro-en-v0_19",
-        voiceTtsSpeakerId: 0,
-      },
-    });
-    expect(result.speech.local?.models.dictationStt).toBe("parakeet-tdt-0.6b-v2-int8");
-    expect(result.speech.local?.models.voiceStt).toBe("parakeet-tdt-0.6b-v2-int8");
-    expect(result.speech.local?.models.voiceTts).toBe("kokoro-en-v0_19");
-    expect(result.speech.local?.models.voiceTtsSpeakerId).toBe(0);
+    // No local model config until a voice feature is enabled (or modelsDir is set).
+    expect(result.speech.local).toBeUndefined();
     expect(result.speech.sttLanguages).toEqual({
       dictation: "en",
       voice: "en",
@@ -60,7 +46,9 @@ describe("resolveSpeechConfig", () => {
   test("resolves feature-scoped local speech settings", () => {
     const persisted = PersistedConfigSchema.parse({
       features: {
+        dictation: { enabled: true },
         voiceMode: {
+          enabled: true,
           turnDetection: { provider: "local" },
           stt: { provider: "openai", model: "gpt-4o-transcribe" },
         },
@@ -199,5 +187,25 @@ describe("resolveSpeechConfig", () => {
       explicit: false,
       enabled: false,
     });
+  });
+
+  test("enables providers when feature flags are explicitly on", () => {
+    const persisted = PersistedConfigSchema.parse({
+      features: {
+        dictation: { enabled: true },
+        voiceMode: { enabled: true },
+      },
+    });
+
+    const result = resolveSpeechConfig({
+      paseoHome: "/tmp/paseo-home",
+      env: {} as NodeJS.ProcessEnv,
+      persisted,
+    });
+
+    expect(result.speech.providers.dictationStt.enabled).toBe(true);
+    expect(result.speech.providers.voiceTurnDetection.enabled).toBe(true);
+    expect(result.speech.providers.voiceStt.enabled).toBe(true);
+    expect(result.speech.providers.voiceTts.enabled).toBe(true);
   });
 });

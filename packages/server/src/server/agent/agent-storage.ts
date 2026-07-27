@@ -33,6 +33,21 @@ const PERSISTENCE_HANDLE_SCHEMA = z
   .nullable()
   .optional();
 
+// Persist the last-known usage so a reopened or restarted agent can show its
+// prior context-window meter before a live session re-reports it. All fields are
+// optional leaves; providers that never report usage simply omit the block.
+const STORED_AGENT_USAGE_SCHEMA = z
+  .object({
+    inputTokens: z.number().optional(),
+    cachedInputTokens: z.number().optional(),
+    outputTokens: z.number().optional(),
+    totalCostUsd: z.number().optional(),
+    contextWindowMaxTokens: z.number().optional(),
+    contextWindowUsedTokens: z.number().optional(),
+    contextWindowEstimated: z.boolean().optional(),
+  })
+  .optional();
+
 const STORED_AGENT_SCHEMA = z.object({
   id: z.string(),
   provider: z.string(),
@@ -59,6 +74,7 @@ const STORED_AGENT_SCHEMA = z.object({
     .optional(),
   features: z.array(AgentFeatureSchema).optional(),
   persistence: PERSISTENCE_HANDLE_SCHEMA,
+  lastUsage: STORED_AGENT_USAGE_SCHEMA,
   lastError: z.string().nullable().optional(),
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),

@@ -1,17 +1,15 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { View, Text, ScrollView as RNScrollView } from "react-native";
-import { ScrollView as GHScrollView } from "react-native-gesture-handler";
+import { View, Text } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { isWeb } from "@/constants/platform";
 import type { DiffLine } from "@/utils/tool-call-parsers";
 import { diffLinePrefix } from "@/utils/diff-highlight";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
+import { BiAxisCodeScroll } from "./bi-axis-code-scroll";
 import { getCodeInsets } from "./code-insets";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
-import { isWeb } from "@/constants/platform";
-
-const ScrollView = isWeb ? RNScrollView : GHScrollView;
 
 interface DiffViewerProps {
   diffLines: DiffLine[];
@@ -172,30 +170,16 @@ export function DiffViewer({
     </View>
   );
 
-  const horizontalScroll = (
-    <ScrollView
-      horizontal
-      nestedScrollEnabled
-      showsHorizontalScrollIndicator
-      contentContainerStyle={styles.horizontalContent}
-      onLayout={handleInnerLayout}
-    >
-      {lines}
-    </ScrollView>
-  );
-
-  const content = (
-    <ScrollView
+  return (
+    <BiAxisCodeScroll
       style={outerScrollStyle}
-      contentContainerStyle={webVerticalContentStyle}
-      nestedScrollEnabled
-      showsVerticalScrollIndicator
+      contentContainerStyle={[webVerticalContentStyle, styles.horizontalContent]}
     >
-      {horizontalScroll}
-    </ScrollView>
+      <View onLayout={handleInnerLayout} style={styles.measureWidth}>
+        {lines}
+      </View>
+    </BiAxisCodeScroll>
   );
-
-  return content;
 }
 
 const styles = StyleSheet.create((theme) => {
@@ -214,6 +198,10 @@ const styles = StyleSheet.create((theme) => {
     horizontalContent: {
       flexDirection: "column" as const,
       paddingRight: insets.extraRight,
+    },
+    measureWidth: {
+      alignSelf: "flex-start",
+      minWidth: "100%",
     },
     linesContainer: {
       alignSelf: "flex-start",

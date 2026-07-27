@@ -10,6 +10,7 @@ import {
 import { StyleSheet } from "react-native-unistyles";
 
 import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
+import { BiAxisCodeScroll } from "@/components/bi-axis-code-scroll";
 import { isWeb } from "@/constants/platform";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
@@ -115,20 +116,20 @@ export function ScrollableCodeSurface({
       accessibilityLabel={accessibilityLabel}
       codeSurface
     >
-      <ScrollView
-        style={outerScrollStyle}
-        contentContainerStyle={contentStyle}
-        nestedScrollEnabled
-        showsVerticalScrollIndicator
-      >
-        {horizontal ? (
-          <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
-            {codeContent}
-          </ScrollView>
-        ) : (
-          codeContent
-        )}
-      </ScrollView>
+      {horizontal ? (
+        <BiAxisCodeScroll style={outerScrollStyle} contentContainerStyle={contentStyle}>
+          {codeContent}
+        </BiAxisCodeScroll>
+      ) : (
+        <ScrollView
+          style={outerScrollStyle}
+          contentContainerStyle={contentStyle}
+          nestedScrollEnabled
+          showsVerticalScrollIndicator
+        >
+          {codeContent}
+        </ScrollView>
+      )}
     </SurfaceCard>
   );
 }

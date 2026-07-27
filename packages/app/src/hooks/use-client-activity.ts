@@ -4,6 +4,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { getIsElectron, isWeb, isNative } from "@/constants/platform";
 import { readDesktopSystemIdleTimeMs } from "@/desktop/electron/idle";
 import { invokeDesktopCommand } from "@/desktop/electron/invoke";
+import { getIsAppActivelyVisible } from "@/utils/app-visibility";
 import {
   type ClientActivityTracker,
   createClientActivityTracker,
@@ -40,7 +41,10 @@ export function useClientActivity({
       deviceType: isWeb ? "web" : "mobile",
       initialFocusedAgentId: focusedAgentId,
       initialFocusedTerminalId: focusedTerminalId,
-      initialAppVisible: AppState.currentState === "active",
+      // On web, "in foreground" means the tab is visible AND the window has OS focus —
+      // a visible-but-unfocused tab must still be treated as backgrounded so attention
+      // notifications fire for it instead of being suppressed as "actively viewed".
+      initialAppVisible: isWeb ? getIsAppActivelyVisible() : AppState.currentState === "active",
       now: () => Date.now(),
       onAppResumed: (awayMs) => onAppResumedRef.current?.(awayMs),
     });
@@ -66,15 +70,21 @@ export function useClientActivity({
       tracker.maybeSendImmediateHeartbeat();
     };
 
-    const handleVisibilityChange = () => {
-      const visible = document.visibilityState === "visible";
+    // "Foreground" combines page visibility and window focus. document.visibilityState
+    // alone stays "visible" while the window is merely unfocused (e.g. the user switched
+    // to another app), which would otherwise keep suppressing notifications for a session
+    // the user isn't actually looking at.
+    const handleActiveVisibilityChange = () => {
+      const visible = getIsAppActivelyVisible();
       const { changed } = tracker.notifyAppVisibility(visible);
       if (changed && visible) {
         tracker.maybeSendImmediateHeartbeat();
       }
     };
 
-    document.addEventListener("visibilitychange", handleVisibilityChange);
+    document.addEventListener("visibilitychange", handleActiveVisibilityChange);
+    window.addEventListener("focus", handleActiveVisibilityChange);
+    window.addEventListener("blur", handleActiveVisibilityChange);
     window.addEventListener("focus", handleUserActivity);
     window.addEventListener("pointerdown", handleUserActivity, { passive: true });
     window.addEventListener("keydown", handleUserActivity);
@@ -82,7 +92,9 @@ export function useClientActivity({
     window.addEventListener("touchstart", handleUserActivity, { passive: true });
 
     return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      document.removeEventListener("visibilitychange", handleActiveVisibilityChange);
+      window.removeEventListener("focus", handleActiveVisibilityChange);
+      window.removeEventListener("blur", handleActiveVisibilityChange);
       window.removeEventListener("focus", handleUserActivity);
       window.removeEventListener("pointerdown", handleUserActivity);
       window.removeEventListener("keydown", handleUserActivity);

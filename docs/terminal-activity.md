@@ -60,6 +60,19 @@ Codex hook mapping:
 - `PermissionRequest` → `needs-input`
 - `Stop` → `idle`
 
+Grok hook mapping:
+
+- `UserPromptSubmit`, `PreToolUse`, `PostToolUse` → `running`
+- `Stop`, `StopFailure`, `SessionEnd` → `idle`
+- `Notification` with `reason` or `matcher` equal to `idle_prompt` → `needs-input`
+
+Cursor hook mapping (Cursor `hooks.json` camelCase events):
+
+- `beforeSubmitPrompt`, `preToolUse`, `postToolUse` → `running`
+- `stop`, `sessionEnd` → `idle`
+
+Cursor’s documented hooks target the Cursor agent loop via `~/.cursor/hooks.json`. Paseo still installs them so Cursor Agent / any `cursor-agent` build that loads that file can report activity. Outside a Paseo terminal they stay inert because the command is gated on `PASEO_TERMINAL_ID`. If a given `cursor-agent` build ignores user hooks, the Cursor terminal profile still launches; activity dots simply will not update until the CLI honors hooks.
+
 OpenCode uses a server plugin instead of command hooks. The plugin listens to OpenCode bus events and emits these Paseo hook events:
 
 - `session.status` with `busy` or `retry` → `running`
@@ -89,6 +102,8 @@ When enabled, Paseo installs provider hooks globally:
 
 - Claude hooks are written to `~/.claude/settings.json` (or `CLAUDE_CONFIG_DIR/settings.json` when that override is set).
 - Codex hooks are written to `~/.codex/hooks.json` (or `CODEX_HOME/hooks.json` when that override is set). Codex supports a native `commandWindows`, so each Paseo hook includes both POSIX and Windows commands. Non-managed Codex hooks are trust-gated by Codex; users may see Codex's hook review prompt before the hook runs.
+- Grok hooks are written to `~/.grok/hooks/paseo-terminal-activity.json` (or `$GROK_HOME/hooks/paseo-terminal-activity.json` when that override is set). The dedicated file keeps Paseo’s markers out of other Grok hook files.
+- Cursor hooks are merged into `~/.cursor/hooks.json` (or `CURSOR_CONFIG_DIR/hooks.json` when that override is set) using Cursor’s flat `{ version, hooks }` shape.
 - OpenCode gets a self-contained plugin at `$XDG_CONFIG_HOME/opencode/plugins/paseo-terminal-activity.js` (or `~/.config/opencode/plugins/paseo-terminal-activity.js` when XDG is unset; `OPENCODE_CONFIG_DIR` still wins when set).
 
 Installation is marker-based/idempotent for config hooks and exact-file/idempotent for the OpenCode plugin. Paseo preserves user hooks, removes only its own marker-matched command hooks, and leaves hooks installed across daemon shutdown. Outside a Paseo terminal they are inert because the command or plugin is gated on `PASEO_TERMINAL_ID`.

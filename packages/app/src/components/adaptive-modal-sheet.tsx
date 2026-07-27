@@ -194,9 +194,16 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[4],
     flexGrow: 1,
   },
+  // Keep body geometry on a real View rather than BottomSheetScrollView's
+  // content container. Gorhom can replace that container style while measuring
+  // a modal, which drops the horizontal inset for every sheet (web + native).
   bottomSheetContent: {
+    flexGrow: 1,
     padding: theme.spacing[SHEET_HORIZONTAL_PADDING_SCALE],
     gap: theme.spacing[4],
+  },
+  bottomSheetScrollContent: {
+    flexGrow: 1,
   },
   bottomSheetStaticContent: {
     flex: 1,
@@ -532,24 +539,26 @@ export function AdaptiveModalSheet({
       getCompactSheetSafeAreaPadding({
         isCompact: isMobile,
         hasFooter: Boolean(footer),
-        baseContentPadding: theme.spacing[SHEET_HORIZONTAL_PADDING_SCALE],
+        // Scrollable sheets apply their base padding in the inner body View.
+        // The scroll container only needs the extra device inset.
+        baseContentPadding: scrollable ? 0 : theme.spacing[SHEET_HORIZONTAL_PADDING_SCALE],
         baseFooterPadding: theme.spacing[3],
         safeAreaBottom: insets.bottom,
       }),
-    [footer, insets.bottom, isMobile, theme.spacing],
+    [footer, insets.bottom, isMobile, scrollable, theme.spacing],
   );
-  const bottomSheetContentStyle = useMemo(
-    // Gorhom spreads this outer array into StyleSheet.compose, which accepts two arguments on web.
+  const bottomSheetScrollContentStyle = useMemo(
     () => [
-      styles.bottomSheetContent,
-      [
-        contentContainerStyle,
-        compactSafeAreaPadding.contentPaddingBottom != null
-          ? { paddingBottom: compactSafeAreaPadding.contentPaddingBottom }
-          : null,
-      ],
+      styles.bottomSheetScrollContent,
+      compactSafeAreaPadding.contentPaddingBottom != null
+        ? { paddingBottom: compactSafeAreaPadding.contentPaddingBottom }
+        : null,
     ],
-    [compactSafeAreaPadding.contentPaddingBottom, contentContainerStyle],
+    [compactSafeAreaPadding.contentPaddingBottom],
+  );
+  const bottomSheetBodyStyle = useMemo(
+    () => [styles.bottomSheetContent, contentContainerStyle],
+    [contentContainerStyle],
   );
   const bottomSheetStaticContentStyle = useMemo(
     () => [
@@ -660,11 +669,11 @@ export function AdaptiveModalSheet({
         {scrollable ? (
           <BottomSheetScrollView
             style={sizeContentToCurrentSnapPoint ? styles.bottomSheetVisibleScroll : undefined}
-            contentContainerStyle={bottomSheetContentStyle}
+            contentContainerStyle={bottomSheetScrollContentStyle}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            {children}
+            <View style={bottomSheetBodyStyle}>{children}</View>
           </BottomSheetScrollView>
         ) : (
           <View style={bottomSheetStaticContentStyle}>{children}</View>

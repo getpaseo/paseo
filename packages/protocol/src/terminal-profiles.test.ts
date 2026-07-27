@@ -23,11 +23,13 @@ describe("resolveTerminalProfiles", () => {
     expect(result).toBe(custom);
   });
 
-  it("default profiles include claude, codex, opencode", () => {
+  it("default profiles include claude, codex, opencode, grok, and cursor", () => {
     const ids = DEFAULT_TERMINAL_PROFILES.map((p) => p.id);
     expect(ids).toContain("claude");
     expect(ids).toContain("codex");
     expect(ids).toContain("opencode");
+    expect(ids).toContain("grok");
+    expect(ids).toContain("cursor");
   });
 
   it("claude profile has the correct icon", () => {
@@ -43,6 +45,18 @@ describe("resolveTerminalProfiles", () => {
   it("opencode profile has the correct icon", () => {
     const opencode = DEFAULT_TERMINAL_PROFILES.find((p) => p.id === "opencode");
     expect(opencode?.icon).toBe("opencode");
+  });
+
+  it("grok profile has the correct icon and command", () => {
+    const grok = DEFAULT_TERMINAL_PROFILES.find((p) => p.id === "grok");
+    expect(grok?.command).toBe("grok");
+    expect(grok?.icon).toBe("grok");
+  });
+
+  it("cursor profile uses cursor-agent with the cursor icon", () => {
+    const cursor = DEFAULT_TERMINAL_PROFILES.find((p) => p.id === "cursor");
+    expect(cursor?.command).toBe("cursor-agent");
+    expect(cursor?.icon).toBe("cursor");
   });
 });
 

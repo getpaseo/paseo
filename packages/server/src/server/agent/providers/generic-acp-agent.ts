@@ -1,12 +1,22 @@
 import type { Logger } from "pino";
 import { z } from "zod";
 
-import type { AgentCapabilityFlags } from "../agent-sdk-types.js";
+import type {
+  AgentCapabilityFlags,
+  AgentMetadata,
+  AgentMode,
+  AgentSessionConfig,
+} from "../agent-sdk-types.js";
 import { checkProviderLaunchAvailable, resolveProviderLaunch } from "../provider-launch-config.js";
 import {
   ACPAgentClient,
   type ACPClientCapabilityMeta,
   type ACPConfigFeatureOption,
+  type ACPContextUsageResolver,
+  type ACPLaunchOnlyConfig,
+  type ACPModelDefinitionTransformer,
+  type ACPSessionLaunchArgsPlacement,
+  type ACPToolSnapshot,
   DEFAULT_ACP_CAPABILITIES,
   type ACPExtensionCommandsParser,
 } from "./acp-agent.js";
@@ -49,6 +59,16 @@ interface GenericACPAgentClientOptions {
   clientCapabilityMeta?: ACPClientCapabilityMeta;
   configFeatureOptions?: ACPConfigFeatureOption[];
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  defaultModes?: AgentMode[];
+  modelDefinitionTransformer?: ACPModelDefinitionTransformer;
+  contextUsageResolver?: ACPContextUsageResolver;
+  sessionLaunchArgs?: (config: AgentSessionConfig) => string[];
+  sessionLaunchArgsPlacement?: ACPSessionLaunchArgsPlacement;
+  autoApprovePermissionModes?: readonly string[];
+  launchOnlyConfig?: ACPLaunchOnlyConfig;
+  persistenceMetadata?: (config: AgentSessionConfig) => AgentMetadata;
+  userMessageTextTransformer?: (text: string) => string | null;
+  toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
 }
 
 export class GenericACPAgentClient extends ACPAgentClient {
@@ -66,6 +86,16 @@ export class GenericACPAgentClient extends ACPAgentClient {
         env: options.env,
       },
       defaultCommand: options.command,
+      defaultModes: options.defaultModes,
+      modelDefinitionTransformer: options.modelDefinitionTransformer,
+      contextUsageResolver: options.contextUsageResolver,
+      sessionLaunchArgs: options.sessionLaunchArgs,
+      sessionLaunchArgsPlacement: options.sessionLaunchArgsPlacement,
+      autoApprovePermissionModes: options.autoApprovePermissionModes,
+      launchOnlyConfig: options.launchOnlyConfig,
+      persistenceMetadata: options.persistenceMetadata,
+      userMessageTextTransformer: options.userMessageTextTransformer,
+      toolSnapshotTransformer: options.toolSnapshotTransformer,
       capabilities: buildGenericACPCapabilities(providerParams),
       waitForInitialCommands: options.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: options.initialCommandsWaitTimeoutMs,

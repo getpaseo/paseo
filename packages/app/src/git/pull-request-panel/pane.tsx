@@ -49,7 +49,6 @@ import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { getForgePresentation } from "@/git/forge";
 import { CLIENT_FORGE_VIEW_MODULES } from "@/git/forges/view";
 import type { PaneNativeContribution } from "@/git/client-forge-module";
-import { PrActivitySkeleton } from "./activity-skeleton";
 import {
   collapseActivity,
   expandActivity,
@@ -640,7 +639,11 @@ export function PullRequestPane({
               </Button>
             </View>
           ) : null}
-          {activityLoading ? <PrActivitySkeleton /> : null}
+          {activityLoading ? (
+            <View style={styles.activityLoading} testID="pr-pane-activity-loading">
+              <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
+            </View>
+          ) : null}
           {!activityLoading && visibleEntries.length === 0 ? (
             <Text style={sectionKitStyles.emptyText}>No activity yet</Text>
           ) : null}
@@ -1404,6 +1407,11 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 28,
     paddingRight: theme.spacing[3],
     paddingBottom: theme.spacing[2],
+  },
+  activityLoading: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: theme.spacing[4],
   },
   toolbarTrailing: {
     marginLeft: "auto",

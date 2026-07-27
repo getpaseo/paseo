@@ -73,6 +73,7 @@ export interface StreamRenderInput {
   isLoadingOlderHistory: boolean;
   hasOlderHistory: boolean;
   scrollEnabled: boolean;
+  bottomContentInset?: number;
   listStyle: StyleProp<ViewStyle>;
   baseListContentContainerStyle: StyleProp<ViewStyle>;
   forwardListContentContainerStyle: StyleProp<ViewStyle>;

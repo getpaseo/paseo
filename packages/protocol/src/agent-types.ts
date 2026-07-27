@@ -179,6 +179,8 @@ export interface AgentUsage {
   totalCostUsd?: number;
   contextWindowMaxTokens?: number;
   contextWindowUsedTokens?: number;
+  // COMPAT(contextWindowEstimated): added in v0.2.0-beta.4, remove after 2027-01-24.
+  contextWindowEstimated?: boolean;
 }
 
 export const TOOL_CALL_ICON_NAMES = [

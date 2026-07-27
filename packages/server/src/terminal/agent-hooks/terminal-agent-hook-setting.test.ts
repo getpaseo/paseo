@@ -1,9 +1,10 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { DaemonConfigStore } from "../../server/daemon-config-store.js";
+import { registeredAgentHooksAreInstalled } from "./provider-registry.js";
 import { applyTerminalAgentHookSetting } from "./terminal-agent-hook-setting.js";
 
 const temporaryDirs: string[] = [];
@@ -26,6 +27,8 @@ function createInstallEnv(root: string) {
     env: {
       CLAUDE_CONFIG_DIR: join(root, "claude"),
       CODEX_HOME: join(root, "codex"),
+      CURSOR_CONFIG_DIR: join(root, "cursor"),
+      GROK_HOME: join(root, "grok"),
       OPENCODE_CONFIG_DIR: join(root, "opencode"),
     },
     homeDir: join(root, "home"),
@@ -36,6 +39,8 @@ function hookPaths(root: string) {
   return {
     claude: join(root, "claude", "settings.json"),
     codex: join(root, "codex", "hooks.json"),
+    cursor: join(root, "cursor", "hooks.json"),
+    grok: join(root, "grok", "hooks", "paseo-terminal-activity.json"),
     opencode: join(root, "opencode", "plugins", "paseo-terminal-activity.js"),
   };
 }
@@ -65,6 +70,8 @@ describe("applyTerminalAgentHookSetting", () => {
     const paths = hookPaths(root);
     expect(existsSync(paths.claude)).toBe(false);
     expect(existsSync(paths.codex)).toBe(false);
+    expect(existsSync(paths.cursor)).toBe(false);
+    expect(existsSync(paths.grok)).toBe(false);
     expect(existsSync(paths.opencode)).toBe(false);
   });
 
@@ -77,6 +84,8 @@ describe("applyTerminalAgentHookSetting", () => {
     const paths = hookPaths(root);
     expect(existsSync(paths.claude)).toBe(true);
     expect(existsSync(paths.codex)).toBe(true);
+    expect(existsSync(paths.cursor)).toBe(true);
+    expect(existsSync(paths.grok)).toBe(true);
     expect(existsSync(paths.opencode)).toBe(true);
   });
 
@@ -84,15 +93,22 @@ describe("applyTerminalAgentHookSetting", () => {
     const root = createTempDir("paseo-hook-setting-");
     const store = createStore(createTempDir("paseo-hook-setting-home-"), false);
     const paths = hookPaths(root);
+    const install = createInstallEnv(root);
 
-    applyTerminalAgentHookSetting({ store, install: createInstallEnv(root) });
+    applyTerminalAgentHookSetting({ store, install });
     expect(existsSync(paths.opencode)).toBe(false);
 
     store.patch({ enableTerminalAgentHooks: true });
     expect(existsSync(paths.codex)).toBe(true);
+    expect(existsSync(paths.cursor)).toBe(true);
+    expect(existsSync(paths.grok)).toBe(true);
     expect(existsSync(paths.opencode)).toBe(true);
+    expect(registeredAgentHooksAreInstalled(install)).toBe(true);
 
     store.patch({ enableTerminalAgentHooks: false });
     expect(existsSync(paths.opencode)).toBe(false);
+    expect(registeredAgentHooksAreInstalled(install)).toBe(false);
+    expect(readFileSync(paths.cursor, "utf8")).not.toContain("hooks cursor");
+    expect(readFileSync(paths.grok, "utf8")).not.toContain("hooks grok");
   });
 });

@@ -101,7 +101,9 @@ interface ACPModelSelectionInternals {
       configId: string;
       value: string;
     }) => Promise<unknown>;
+    unstable_setSessionModel?: (input: { sessionId: string; modelId: string }) => Promise<void>;
   };
+  availableModels?: Array<{ modelId: string; name: string; description?: string | null }> | null;
   configOptions: SessionConfigOption[];
 }
 
@@ -412,6 +414,83 @@ function prepareConfiguredOverrideSession(
 
   return { internals, setSessionMode, unstableSetSessionModel, setSessionConfigOption };
 }
+
+test("ACP setModel prefers config-option path so model-dependent features refresh", async () => {
+  const session = createSessionWithConfig({});
+  const setSessionConfigOption = vi.fn(async () => ({
+    configOptions: [
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: "opus",
+        options: [
+          { value: "sonnet", name: "Sonnet" },
+          { value: "opus", name: "Opus" },
+        ],
+      },
+      {
+        id: "context",
+        name: "Context",
+        category: "model_config",
+        type: "select",
+        currentValue: "1m",
+        options: [
+          { value: "300k", name: "300K" },
+          { value: "1m", name: "1M" },
+        ],
+      },
+    ],
+  }));
+  const unstableSetSessionModel = vi.fn(async () => undefined);
+  const internals = asInternals<ACPModelSelectionInternals>(session);
+  internals.sessionId = "session-1";
+  internals.connection = {
+    setSessionConfigOption,
+    unstable_setSessionModel: unstableSetSessionModel,
+  };
+  internals.availableModels = [
+    { modelId: "sonnet", name: "Sonnet", description: null },
+    { modelId: "opus", name: "Opus", description: null },
+  ];
+  internals.configOptions = [
+    {
+      id: "model",
+      name: "Model",
+      category: "model",
+      type: "select",
+      currentValue: "sonnet",
+      options: [
+        { value: "sonnet", name: "Sonnet" },
+        { value: "opus", name: "Opus" },
+      ],
+    },
+    {
+      id: "context",
+      name: "Context",
+      category: "model_config",
+      type: "select",
+      currentValue: "300k",
+      options: [
+        { value: "300k", name: "300K" },
+        { value: "1m", name: "1M" },
+      ],
+    },
+  ];
+
+  await session.setModel("opus");
+
+  expect(setSessionConfigOption).toHaveBeenCalledWith({
+    sessionId: "session-1",
+    configId: "model",
+    value: "opus",
+  });
+  expect(unstableSetSessionModel).not.toHaveBeenCalled();
+  expect(internals.configOptions.find((option) => option.id === "context")).toMatchObject({
+    currentValue: "1m",
+  });
+});
 
 test("ACP setModel only uses config-option fallback when the matching select choice contains the model", async () => {
   const logger = createTestLogger();
@@ -1680,6 +1759,73 @@ describe("ACPAgentClient fetchCatalog", () => {
       models: [],
       modes: [],
     });
+  });
+});
+
+describe("ACPAgentClient deleteNativeSession", () => {
+  function makeClient(args: {
+    extMethod: ReturnType<typeof vi.fn>;
+    supportsDelete?: boolean;
+    deleteLocal?: ReturnType<typeof vi.fn>;
+  }) {
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: { extMethod: args.extMethod },
+          initialize: {
+            agentCapabilities:
+              args.supportsDelete === false
+                ? { sessionCapabilities: { list: {} } }
+                : { sessionCapabilities: { delete: {} } },
+          },
+        } as unknown as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {}
+
+      protected override async deleteLocalNativeSession(
+        handle: AgentPersistenceHandle,
+      ): Promise<void> {
+        await args.deleteLocal?.(handle);
+      }
+    }
+
+    return new TestACPAgentClient({
+      provider: "kimi",
+      logger: createTestLogger(),
+      defaultCommand: ["kimi", "acp"],
+      defaultModes: [],
+    });
+  }
+
+  test("calls session/delete via extMethod when the agent advertises delete", async () => {
+    const extMethod = vi.fn().mockResolvedValue({});
+    const deleteLocal = vi.fn().mockResolvedValue(undefined);
+    const client = makeClient({ extMethod, deleteLocal });
+
+    await client.deleteNativeSession({
+      provider: "kimi",
+      sessionId: "sess-1",
+      nativeHandle: "sess-1",
+    });
+
+    expect(deleteLocal).toHaveBeenCalledOnce();
+    expect(extMethod).toHaveBeenCalledWith("session/delete", { sessionId: "sess-1" });
+  });
+
+  test("skips protocol delete when the agent omits sessionCapabilities.delete", async () => {
+    const extMethod = vi.fn().mockResolvedValue({});
+    const deleteLocal = vi.fn().mockResolvedValue(undefined);
+    const client = makeClient({ extMethod, supportsDelete: false, deleteLocal });
+
+    await client.deleteNativeSession({
+      provider: "kimi",
+      sessionId: "sess-1",
+    });
+
+    expect(deleteLocal).toHaveBeenCalledOnce();
+    expect(extMethod).not.toHaveBeenCalled();
   });
 });
 

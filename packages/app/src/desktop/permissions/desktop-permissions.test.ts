@@ -25,7 +25,7 @@ function fakeEnvironment(input: FakeEnvironmentInput = {}): DesktopPermissionEnv
 }
 
 describe("desktop-permissions", () => {
-  it("shows section only in desktop web runtime", () => {
+  it("shows the section in browser and desktop web runtimes", () => {
     expect(
       createDesktopPermissions(
         fakeEnvironment({ isWeb: false }),
@@ -36,7 +36,7 @@ describe("desktop-permissions", () => {
       createDesktopPermissions(
         fakeEnvironment({ isWeb: true, desktopHost: null }),
       ).shouldShowDesktopPermissionSection(),
-    ).toBe(false);
+    ).toBe(true);
 
     expect(
       createDesktopPermissions(

@@ -1,0 +1,60 @@
+diff --git a/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.js b/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.js
+index 5a0d049..c2fe858 100644
+--- a/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.js
++++ b/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.js
+@@ -33,8 +33,14 @@ const withUnistyles = (Component, mappings) => {
+       ...unistyleProps
+     } = narrowedProps.uniProps ? narrowedProps.uniProps(proxifiedTheme, proxifiedRuntime) : {};
+     const emptyStyles = narrowedProps.style ? Object.fromEntries(Object.entries(Object.getOwnPropertyDescriptors(narrowedProps.style)).filter(([key]) => !key.startsWith('unistyles') && !key.startsWith('_')).map(([key]) => [key, undefined])) : undefined;
++    // Never forward the `uniProps` mapping function to the wrapped component. Otherwise it
++    // leaks onto DOM/SVG leaves (e.g. lucide icons render it on <path>) and React warns.
++    const {
++      uniProps: _uniProps,
++      ...forwardableProps
++    } = props;
+     const combinedProps = {
+-      ...(0, _utils.deepMergeObjects)(mappingsProps, unistyleProps, props),
++      ...(0, _utils.deepMergeObjects)(mappingsProps, unistyleProps, forwardableProps),
+       ...(narrowedProps.style ? {
+         // Override default component styles with undefined values to reset them
+         style: emptyStyles
+diff --git a/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.js b/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.js
+index 5904a73..a9c4ea9 100644
+--- a/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.js
++++ b/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.js
+@@ -28,8 +28,14 @@ export const withUnistyles = (Component, mappings) => {
+       ...unistyleProps
+     } = narrowedProps.uniProps ? narrowedProps.uniProps(proxifiedTheme, proxifiedRuntime) : {};
+     const emptyStyles = narrowedProps.style ? Object.fromEntries(Object.entries(Object.getOwnPropertyDescriptors(narrowedProps.style)).filter(([key]) => !key.startsWith('unistyles') && !key.startsWith('_')).map(([key]) => [key, undefined])) : undefined;
++    // Never forward the `uniProps` mapping function to the wrapped component. Otherwise it
++    // leaks onto DOM/SVG leaves (e.g. lucide icons render it on <path>) and React warns.
++    const {
++      uniProps: _uniProps,
++      ...forwardableProps
++    } = props;
+     const combinedProps = {
+-      ...deepMergeObjects(mappingsProps, unistyleProps, props),
++      ...deepMergeObjects(mappingsProps, unistyleProps, forwardableProps),
+       ...(narrowedProps.style ? {
+         // Override default component styles with undefined values to reset them
+         style: emptyStyles
+diff --git a/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.native.js b/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.native.js
+index b89343e..bb2b0d7 100644
+--- a/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.native.js
++++ b/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.native.js
+@@ -60,8 +60,14 @@ export const withUnistyles = (Component, mappings) => {
+     } = narrowedProps.uniProps ? narrowedProps.uniProps(proxifiedTheme, proxifiedRuntime) : {};
+     const styleSecrets = getSecrets(narrowedProps.style);
+     const contentContainerStyleSecrets = getSecrets(narrowedProps.contentContainerStyle);
++    // Never forward the `uniProps` mapping function to the wrapped component. Otherwise it
++    // leaks onto DOM/SVG leaves (e.g. lucide icons render it on <path>) and React warns.
++    const {
++      uniProps: _uniProps,
++      ...forwardableProps
++    } = props;
+     const finalProps = {
+-      ...deepMergeObjects(mappingsProps, unistyleProps, props),
++      ...deepMergeObjects(mappingsProps, unistyleProps, forwardableProps),
+       ...(narrowedProps.style ? {
+         style: styleSecrets.styles
+       } : {}),

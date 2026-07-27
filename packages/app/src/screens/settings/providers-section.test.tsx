@@ -306,6 +306,8 @@ function makeConfig(providers: MutableDaemonConfig["providers"] = {}): MutableDa
   return {
     mcp: { injectIntoAgents: false },
     browserTools: { enabled: false },
+    dictation: { enabled: true },
+    voiceMode: { enabled: true },
     providers,
     metadataGeneration: { providers: [] },
     autoArchiveAfterMerge: false,

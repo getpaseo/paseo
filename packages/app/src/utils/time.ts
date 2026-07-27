@@ -1,38 +1,44 @@
+import { i18n } from "@/i18n/i18next";
+
 /**
  * Format a date as a human-friendly relative time string
  * Examples: "just now", "5m ago", "2h ago", "3d ago", "Jan 15"
+ * Pass a BCP 47 locale (e.g. "zh-CN") for localized compact output.
+ * Defaults to the active app language.
  */
-export function formatTimeAgo(date: Date, now: Date = new Date()): string {
+export function formatTimeAgo(date: Date, now: Date = new Date(), locale?: string): string {
   const diffMs = now.getTime() - date.getTime();
   const diffSec = Math.floor(diffMs / 1000);
   const diffMin = Math.floor(diffSec / 60);
   const diffHour = Math.floor(diffMin / 60);
   const diffDay = Math.floor(diffHour / 24);
+  const resolvedLocale = locale ?? i18n.language;
+  const isZh = Boolean(resolvedLocale?.toLowerCase().startsWith("zh"));
 
   if (diffSec < 10) {
-    return "just now";
+    return isZh ? "刚刚" : "just now";
   }
 
   if (diffMin < 1) {
-    return `${diffSec}s ago`;
+    return isZh ? `${diffSec} 秒前` : `${diffSec}s ago`;
   }
 
   if (diffHour < 1) {
-    return `${diffMin}m ago`;
+    return isZh ? `${diffMin} 分钟前` : `${diffMin}m ago`;
   }
 
   if (diffDay < 1) {
-    return `${diffHour}h ago`;
+    return isZh ? `${diffHour} 小时前` : `${diffHour}h ago`;
   }
 
   if (diffDay < 7) {
-    return `${diffDay}d ago`;
+    return isZh ? `${diffDay} 天前` : `${diffDay}d ago`;
   }
 
   // For older dates, show abbreviated month and day
-  const month = date.toLocaleDateString("en-US", { month: "short" });
+  const month = date.toLocaleDateString(isZh ? "zh-CN" : "en-US", { month: "short" });
   const day = date.getDate();
-  return `${month} ${day}`;
+  return isZh ? `${month}${day}日` : `${month} ${day}`;
 }
 
 function isSameLocalDay(a: Date, b: Date): boolean {

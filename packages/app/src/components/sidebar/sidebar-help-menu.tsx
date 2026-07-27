@@ -30,31 +30,23 @@ import { openExternalUrl } from "@/utils/open-external-url";
 const DISCORD_URL = "https://discord.gg/jz8T2uahpH";
 const GITHUB_ISSUE_URL = "https://github.com/getpaseo/paseo/issues/new";
 const CHANGELOG_URL = "https://paseo.sh/changelog";
-const ThemedActivity = withUnistyles(Activity);
-const ThemedCircleHelp = withUnistyles(CircleHelp);
-const ThemedGift = withUnistyles(Gift);
-const ThemedKeyboard = withUnistyles(Keyboard);
-const ThemedDiscordIcon = withUnistyles(DiscordIcon);
-const ThemedGitHubIcon = withUnistyles(GitHubIcon);
-const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
-const foregroundMutedColorMapping = (theme: Theme) => ({
-  color: theme.colors.foregroundMuted,
-});
-const diagnosticLeadingIcon = (
-  <ThemedActivity size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
-);
-const shortcutsLeadingIcon = (
-  <ThemedKeyboard size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
-);
-const discordLeadingIcon = (
-  <ThemedDiscordIcon size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
-);
-const githubLeadingIcon = (
-  <ThemedGitHubIcon size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
-);
-const changelogLeadingIcon = (
-  <ThemedGift size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
-);
+
+// Prefer withUnistyles mappings over uniProps — lucide forwards unknown props to
+// SVG <path> on web, which logs React DOM warnings for `uniProps`.
+const mutedIconProps = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const foregroundIconProps = (theme: Theme) => ({ color: theme.colors.foreground });
+const ThemedActivity = withUnistyles(Activity, mutedIconProps);
+const ThemedCircleHelpMuted = withUnistyles(CircleHelp, mutedIconProps);
+const ThemedCircleHelpForeground = withUnistyles(CircleHelp, foregroundIconProps);
+const ThemedGift = withUnistyles(Gift, mutedIconProps);
+const ThemedKeyboard = withUnistyles(Keyboard, mutedIconProps);
+const ThemedDiscordIcon = withUnistyles(DiscordIcon, mutedIconProps);
+const ThemedGitHubIcon = withUnistyles(GitHubIcon, mutedIconProps);
+const diagnosticLeadingIcon = <ThemedActivity size={ICON_SIZE.sm} />;
+const shortcutsLeadingIcon = <ThemedKeyboard size={ICON_SIZE.sm} />;
+const discordLeadingIcon = <ThemedDiscordIcon size={ICON_SIZE.sm} />;
+const githubLeadingIcon = <ThemedGitHubIcon size={ICON_SIZE.sm} />;
+const changelogLeadingIcon = <ThemedGift size={ICON_SIZE.sm} />;
 
 function HostVersionHint({ host }: { host: HostProfile }) {
   const { t } = useTranslation();
@@ -113,12 +105,10 @@ export function SidebarHelpMenu() {
               accessibilityRole="button"
               accessibilityLabel={t("sidebar.help.trigger")}
             >
-              {({ hovered }) => (
-                <ThemedCircleHelp
-                  size={ICON_SIZE.md}
-                  uniProps={hovered ? foregroundColorMapping : foregroundMutedColorMapping}
-                />
-              )}
+              {({ hovered }) => {
+                const HelpIcon = hovered ? ThemedCircleHelpForeground : ThemedCircleHelpMuted;
+                return <HelpIcon size={ICON_SIZE.md} />;
+              }}
             </DropdownMenuTrigger>
           </View>
         </TooltipTrigger>

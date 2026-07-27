@@ -7,13 +7,3 @@ export function projectDisplayNameFromProjectId(projectId: string): string {
   const segments = projectId.split(/[\\/]/).filter(Boolean);
   return segments[segments.length - 1] || projectId;
 }
-
-export function projectIconPlaceholderLabelFromDisplayName(displayName: string): string {
-  const trimmedDisplayName = displayName.trim();
-  if (!trimmedDisplayName) {
-    return "";
-  }
-
-  const segments = trimmedDisplayName.split("/").filter(Boolean);
-  return segments[segments.length - 1] || trimmedDisplayName;
-}

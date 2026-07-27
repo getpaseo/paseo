@@ -70,6 +70,58 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.workspaceTitleSource).toBe("title");
   });
 
+  it("defaults send button visibility to always when storage is empty", async () => {
+    const deps = makeDeps();
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sendButtonVisibility).toBe("always");
+  });
+
+  it("loads send button visibility from app settings", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ sendButtonVisibility: "whenContent" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sendButtonVisibility).toBe("whenContent");
+  });
+
+  it("defaults enter key behavior to send when storage is empty", async () => {
+    const deps = makeDeps();
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.enterKeyBehavior).toBe("send");
+  });
+
+  it("loads enter key behavior from app settings", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ enterKeyBehavior: "newline" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.enterKeyBehavior).toBe("newline");
+  });
+
+  it("falls back to send for unknown enter key behavior values", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ enterKeyBehavior: "submit-and-newline" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.enterKeyBehavior).toBe("send");
+  });
+
   it("loads configured terminal scrollback lines from app settings", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
@@ -92,6 +144,26 @@ describe("loadAppSettingsFromStorage", () => {
     const result = await loadAppSettingsFromStorage(deps);
 
     expect(result.workspaceTitleSource).toBe("branch");
+  });
+
+  it("defaults sidebar project icons to shown when storage is empty", async () => {
+    const deps = makeDeps();
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.showSidebarProjectIcons).toBe(true);
+  });
+
+  it("loads sidebar project icon visibility from app settings", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ showSidebarProjectIcons: false }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.showSidebarProjectIcons).toBe(false);
   });
 
   it("drops an unknown workspace title source back to title", async () => {

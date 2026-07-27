@@ -17,6 +17,7 @@ import {
   redactAppDiagnosticReport,
 } from "@/diagnostics/app-diagnostic-report";
 import { collectDesktopDiagnosticSections } from "@/diagnostics/desktop-diagnostic-report";
+import { collectNotificationDiagnosticSection } from "@/diagnostics/notification-diagnostic-report";
 import { getHostRuntimeStore, useHosts, type HostRuntimeSnapshot } from "@/runtime/host-runtime";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { HostProfile } from "@/types/host-connection";
@@ -99,6 +100,11 @@ export function AppDiagnosticSheet({
         }),
       );
       updateRunProgress("client", t("settings.diagnostics.app.progress.client"), "done");
+
+      const notificationsLabel = t("settings.diagnostics.app.progress.notifications");
+      updateRunProgress("notifications", notificationsLabel, "running");
+      sections.push(collectNotificationDiagnosticSection());
+      updateRunProgress("notifications", notificationsLabel, "done");
 
       if (isDesktopApp) {
         const desktopLabel = t("settings.diagnostics.app.progress.desktop");

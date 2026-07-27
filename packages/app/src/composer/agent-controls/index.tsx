@@ -22,7 +22,7 @@ import {
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
-import { Brain, ListTodo, Settings2, ShieldCheck, Zap } from "lucide-react-native";
+import { Brain, Gauge, ListTodo, Settings2, ShieldCheck, Zap } from "lucide-react-native";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
 import {
@@ -167,6 +167,7 @@ function findOptionLabel(
 const FEATURE_ICONS: Record<string, typeof Zap> = {
   "list-todo": ListTodo,
   "shield-check": ShieldCheck,
+  gauge: Gauge,
   zap: Zap,
 };
 

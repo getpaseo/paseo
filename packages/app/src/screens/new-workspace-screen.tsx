@@ -61,7 +61,6 @@ import { getForgePresentation } from "@/git/forge";
 import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { generateMessageId } from "@/types/stream";
 import { toErrorMessage } from "@/utils/error-messages";
-import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import {
   getHostProjectSourceDirectory,
   hostProjectFromRoute,
@@ -180,7 +179,6 @@ interface PickerOptionData {
 
 const BRANCH_OPTION_PREFIX = "branch:";
 const PR_OPTION_PREFIX = "github-pr:";
-const PROJECT_ICON_FALLBACK_FONT_SIZE = 10;
 // Height of a single picker-trigger badge. The Base-row spacer reserves exactly
 // this so toggling Isolation to Local hides the row without shifting the form.
 const BADGE_HEIGHT = 28;
@@ -283,8 +281,7 @@ function ProjectPickerTrigger({
   iconColor: string;
   iconSize: number;
 }) {
-  const placeholderLabel = projectIconPlaceholderLabelFromDisplayName(label);
-  const placeholderInitial = placeholderLabel.charAt(0).toUpperCase() || "?";
+  const { t } = useTranslation();
   return (
     <Tooltip>
       <TooltipTrigger asChild triggerRefProp="ref">
@@ -295,17 +292,15 @@ function ProjectPickerTrigger({
           disabled={disabled}
           style={badgePressableStyle}
           accessibilityRole="button"
-          accessibilityLabel="Workspace project"
+          accessibilityLabel={t("newWorkspace.projectPicker.accessibilityLabel")}
         >
           <View style={styles.badgeIconBox}>
             {projectKey ? (
               <ProjectIconView
                 iconDataUri={iconDataUri}
-                initial={placeholderInitial}
-                projectKey={projectKey}
                 imageStyle={styles.projectIcon}
                 fallbackStyle={styles.projectIconFallback}
-                textStyle={styles.projectIconFallbackText}
+                iconSize={iconSize}
               />
             ) : (
               <Folder size={iconSize} color={iconColor} />
@@ -317,7 +312,7 @@ function ProjectPickerTrigger({
         </ComboboxTrigger>
       </TooltipTrigger>
       <TooltipContent side="top" align="center" offset={8}>
-        <Text style={styles.tooltipText}>Choose project</Text>
+        <Text style={styles.tooltipText}>{t("newWorkspace.projectPicker.chooseProject")}</Text>
       </TooltipContent>
     </Tooltip>
   );
@@ -418,7 +413,6 @@ function IsolationOptionItem({
 
 function ProjectOptionItem({
   testID,
-  projectKey,
   iconDataUri,
   label,
   description,
@@ -428,7 +422,6 @@ function ProjectOptionItem({
   onPress,
 }: {
   testID: string;
-  projectKey: string;
   iconDataUri: string | null;
   label: string;
   description: string | undefined;
@@ -437,22 +430,18 @@ function ProjectOptionItem({
   disabled: boolean;
   onPress: () => void;
 }) {
-  const placeholderLabel = projectIconPlaceholderLabelFromDisplayName(label);
-  const placeholderInitial = placeholderLabel.charAt(0).toUpperCase() || "?";
   const leadingSlot = useMemo(
     () => (
       <View style={styles.rowIconBox}>
         <ProjectIconView
           iconDataUri={iconDataUri}
-          initial={placeholderInitial}
-          projectKey={projectKey}
           imageStyle={styles.projectIcon}
           fallbackStyle={styles.projectIconFallback}
-          textStyle={styles.projectIconFallbackText}
+          iconSize={ICON_SIZE.sm}
         />
       </View>
     ),
-    [iconDataUri, placeholderInitial, projectKey],
+    [iconDataUri],
   );
 
   return (
@@ -551,7 +540,6 @@ function NewWorkspaceProjectPickerOption({
   return (
     <ProjectOptionItem
       testID={`new-workspace-project-picker-option-${project.projectKey}`}
-      projectKey={project.projectKey}
       iconDataUri={projectIconDataByProjectKey.get(project.projectKey) ?? null}
       label={project.projectName}
       description={sourceDirectory}
@@ -654,6 +642,7 @@ function IsolationPickerTrigger({
   iconColor: string;
   iconSize: number;
 }) {
+  const { t } = useTranslation();
   return (
     <ComboboxTrigger
       ref={pickerAnchorRef}
@@ -662,7 +651,7 @@ function IsolationPickerTrigger({
       disabled={disabled}
       style={badgePressableStyle}
       accessibilityRole="button"
-      accessibilityLabel="Workspace isolation"
+      accessibilityLabel={t("newWorkspace.isolation.accessibilityLabel")}
     >
       <View style={styles.badgeIconBox}>
         {isolation === "worktree" ? (
@@ -1336,7 +1325,8 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
   const { isCompact, isPending, project, host, isolation, base } = input;
 
   const selectedHostLabel =
-    host.allHosts.find((h) => h.serverId === host.selectedServerId)?.label ?? "Host";
+    host.allHosts.find((h) => h.serverId === host.selectedServerId)?.label ??
+    t("newWorkspace.hostPicker.fallbackLabel");
   const showHostControl = host.allHosts.length > 1;
   const isolationTriggerLabel = isolationLabel(t, isolation.effectiveIsolation);
   const addProjectAction = useMemo(
@@ -1376,14 +1366,14 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
         value={project.selectedOptionId}
         onSelect={project.onSelect}
         searchable
-        searchPlaceholder="Search projects"
-        title="Project"
+        searchPlaceholder={t("newWorkspace.projectPicker.searchPlaceholder")}
+        title={t("newWorkspace.fields.project")}
         open={project.openState}
         onOpenChange={project.onOpenChange}
         desktopPlacement="bottom-start"
         desktopMinWidth={360}
         anchorRef={project.anchorRef}
-        emptyText="No projects available."
+        emptyText={t("newWorkspace.projectPicker.empty")}
         renderOption={project.renderOption}
         footer={addProjectAction}
       />
@@ -1400,7 +1390,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
         onOpenChange={host.onOpenChange}
         anchorRef={host.anchorRef}
         searchable={false}
-        title="Host"
+        title={t("newWorkspace.hostPicker.title")}
         desktopPlacement="bottom-start"
         desktopMinWidth={200}
         hostOptionTestID={newWorkspaceHostOptionTestID}
@@ -1641,7 +1631,7 @@ export function NewWorkspaceScreen({
     queryKey: ["checkout-status", selectedServerId, selectedSourceDirectory],
     queryFn: async () => {
       if (!selectedSourceDirectory) {
-        throw new Error("Choose a project");
+        throw new Error(t("newWorkspace.errors.chooseProject"));
       }
       const connectedClient = withConnectedClient();
       return connectedClient.getCheckoutStatus(selectedSourceDirectory);
@@ -1669,7 +1659,7 @@ export function NewWorkspaceScreen({
     ],
     queryFn: async () => {
       if (!selectedSourceDirectory) {
-        throw new Error("Choose a project");
+        throw new Error(t("newWorkspace.errors.chooseProject"));
       }
       const connectedClient = withConnectedClient();
       return connectedClient.getBranchSuggestions({
@@ -1862,10 +1852,10 @@ export function NewWorkspaceScreen({
       attachments: AgentAttachment[];
     }): CreatePaseoWorktreeInput => {
       if (!selectedProject) {
-        throw new Error("Choose a project");
+        throw new Error(t("newWorkspace.errors.chooseProject"));
       }
       if (!selectedSourceDirectory) {
-        throw new Error("Choose a host for this project");
+        throw new Error(t("newWorkspace.errors.chooseHostForProject"));
       }
       const checkoutRequest = resolveCheckoutRequest(selectedItem, currentBranch);
       const firstAgentContext = buildFirstAgentContext(input);
@@ -1878,7 +1868,7 @@ export function NewWorkspaceScreen({
         ...checkoutRequest,
       };
     },
-    [currentBranch, selectedItem, selectedProject, selectedSourceDirectory],
+    [currentBranch, selectedItem, selectedProject, selectedSourceDirectory, t],
   );
 
   const ensureWorkspace = useCallback(
@@ -1892,10 +1882,10 @@ export function NewWorkspaceScreen({
         return createdWorkspace;
       }
       if (!selectedProject) {
-        throw new Error("Choose a project");
+        throw new Error(t("newWorkspace.errors.chooseProject"));
       }
       if (!selectedSourceDirectory) {
-        throw new Error("Choose a host for this project");
+        throw new Error(t("newWorkspace.errors.chooseHostForProject"));
       }
       const normalizedWorkspace = supportsWorkspaceMultiplicity
         ? await createMultiplicityWorkspace({
@@ -2268,12 +2258,6 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.sm,
     alignItems: "center",
     justifyContent: "center",
-  },
-  projectIconFallbackText: {
-    // Single uppercase initial inside an iconSize.md (16px) square — below the
-    // smallest font-size token, so it stays a literal sized to the box.
-    fontSize: PROJECT_ICON_FALLBACK_FONT_SIZE,
-    fontWeight: "600",
   },
   rowIconBox: {
     width: theme.iconSize.md,

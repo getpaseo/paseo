@@ -6,6 +6,7 @@ import { z } from "zod";
 import type {
   ProviderUsage,
   ProviderUsageBalance,
+  ProviderUsageDetail,
   ProviderUsageWindow,
 } from "../../../server/messages.js";
 import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
@@ -182,6 +183,11 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
       });
     }
 
+    const details: ProviderUsageDetail[] = [];
+    if (resp.email) {
+      details.push({ id: "account_email", label: "Account email", value: resp.email });
+    }
+
     return {
       providerId: this.providerId,
       displayName: this.displayName,
@@ -189,7 +195,7 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
       planLabel: resp.plan_type ?? null,
       windows,
       balances,
-      details: [],
+      details,
       error: null,
     };
   }

@@ -5,6 +5,7 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="robots" content="noindex,nofollow" />
     <meta name="theme-color" content="#181B1A" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Paseo" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -32,7 +33,7 @@
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
       }
-      /* Prevent white flash before React mounts */
+      /* Fallback before the persisted-theme boot script runs (new users / auto). */
       @media (prefers-color-scheme: dark) {
         html,
         body {
@@ -50,6 +51,38 @@
         overflow: hidden;
       }
     </style>
+    <!-- Sync shell background with @paseo:app-settings before paint.
+         Keep surface0 colors aligned with packages/app/src/styles/theme.ts THEME_SURFACE0.
+         Inject a style rule so body/#root also match before they exist (body is not
+         available yet in <head>; prefers-color-scheme fallback must not win). -->
+    <script>
+      (function () {
+        try {
+          var raw = localStorage.getItem("@paseo:app-settings");
+          if (!raw) return;
+          var theme = JSON.parse(raw).theme;
+          var surface0 = {
+            light: "#ffffff",
+            dark: "#181B1A",
+            zinc: "#18181b",
+            midnight: "#161820",
+            claude: "#1f1f1e",
+            ghostty: "#282c34",
+            deepspace: "#101010",
+          }[theme];
+          if (!surface0) return;
+          var root = document.documentElement;
+          root.style.backgroundColor = surface0;
+          root.style.colorScheme = theme === "light" ? "light" : "dark";
+          var style = document.createElement("style");
+          style.setAttribute("data-paseo-boot-theme", "true");
+          style.textContent = "html,body,#root{background-color:" + surface0 + "!important;}";
+          document.head.appendChild(style);
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.setAttribute("content", surface0);
+        } catch (e) {}
+      })();
+    </script>
     <style>
       button,
       a,

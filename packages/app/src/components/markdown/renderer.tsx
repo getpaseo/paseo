@@ -28,7 +28,11 @@ import { MarkdownParagraphView, MarkdownTextSpan } from "@/components/markdown-t
 import { MarkdownTableCellText } from "@/components/markdown-text-selection";
 import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-list";
 import { markdownNodeContainsType } from "@/utils/markdown-ast";
-import { createCompactMarkdownStyles, createMarkdownStyles } from "@/styles/markdown-styles";
+import {
+  createCompactMarkdownStyles,
+  createMarkdownStyles,
+  createThinkingMarkdownStyles,
+} from "@/styles/markdown-styles";
 import type { Theme } from "@/styles/theme";
 import { openExternalUrl } from "@/utils/open-external-url";
 import {
@@ -43,7 +47,10 @@ export type MarkdownStyles = Record<string, TextStyle & ViewStyle & { [key: stri
 
 interface MarkdownWithStableRendererProps {
   children: ReactNode;
-  style: ReturnType<typeof createMarkdownStyles> | ReturnType<typeof createCompactMarkdownStyles>;
+  style:
+    | ReturnType<typeof createMarkdownStyles>
+    | ReturnType<typeof createCompactMarkdownStyles>
+    | ReturnType<typeof createThinkingMarkdownStyles>;
   rules?: RenderRules;
   markdownit?: ReturnType<typeof MarkdownIt>;
   onLinkPress?: (url: string) => boolean;
@@ -62,12 +69,18 @@ function compactMarkdownStyleMapping(theme: Theme): Partial<MarkdownWithStableRe
   return { style: createCompactMarkdownStyles(theme) };
 }
 
+function thinkingMarkdownStyleMapping(theme: Theme): Partial<MarkdownWithStableRendererProps> {
+  return { style: createThinkingMarkdownStyles(theme) };
+}
+
 const defaultMarkdownParser = MarkdownIt({ typographer: true, linkify: true });
 const EMPTY_TEXT_STYLE: TextStyle = {};
 const MARKDOWN_LIST_ITEM_CONTENT_FLEX: ViewStyle = { flex: 1, flexShrink: 1, minWidth: 0 };
 export interface MarkdownRendererProps {
   text: string;
   compact?: boolean;
+  /** Muted reply-rhythm prose for expanded thinking blocks. */
+  thinking?: boolean;
   rules?: RenderRules;
   markdownit?: ReturnType<typeof MarkdownIt>;
   onLinkPress?: (url: string) => boolean;
@@ -79,6 +92,7 @@ export interface MarkdownRendererProps {
 export function MarkdownRenderer({
   text,
   compact = false,
+  thinking = false,
   rules,
   markdownit = defaultMarkdownParser,
   onLinkPress,
@@ -94,6 +108,7 @@ export function MarkdownRenderer({
   const rendererProps = useMemo(
     () => ({
       compact,
+      thinking,
       rules: markdownRules,
       markdownit,
       onLinkPress,
@@ -103,6 +118,7 @@ export function MarkdownRenderer({
     [
       allowedImageHandlers,
       compact,
+      thinking,
       markdownRules,
       markdownit,
       onLinkPress,
@@ -189,16 +205,30 @@ function MarkdownPart({
   return <MarkdownFragment text={part.text} {...rendererProps} />;
 }
 
+function resolveMarkdownStyleMapping(input: {
+  compact?: boolean;
+  thinking?: boolean;
+}): typeof markdownStyleMapping {
+  if (input.thinking) {
+    return thinkingMarkdownStyleMapping;
+  }
+  if (input.compact) {
+    return compactMarkdownStyleMapping;
+  }
+  return markdownStyleMapping;
+}
+
 function MarkdownFragment({
   text,
   compact,
+  thinking,
   rules,
   markdownit,
   onLinkPress,
   allowedImageHandlers,
   topLevelMaxExceededItem,
 }: MarkdownRendererProps & { rules: RenderRules }) {
-  const uniProps = compact ? compactMarkdownStyleMapping : markdownStyleMapping;
+  const uniProps = resolveMarkdownStyleMapping({ compact, thinking });
   return (
     <ThemedMarkdown
       uniProps={uniProps}

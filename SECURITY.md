@@ -64,6 +64,8 @@ CORS is not a complete security boundary. It controls which browser origins can 
 
 Paseo validates the `Host` header on every HTTP request and every WebSocket upgrade against an allowlist (Vite-style semantics). By default, only `localhost`, `*.localhost`, and any literal IP address (IPv4 or IPv6) are accepted. Additional hostnames can be configured via `hostnames` in `config.json` or the `PASEO_HOSTNAMES` env var (comma-separated; entries beginning with `.` match a domain and its subdomains; the value `true` disables the allowlist entirely). Requests with unrecognized hosts are rejected with `403 Host not allowed`.
 
+WebSocket upgrades from browser origins that are neither same-origin nor allowlisted are rejected — unless the upgrade carries a valid daemon-password bearer subprotocol. Proving knowledge of the password at upgrade time is a stronger credential than an origin allowlist entry, so this lets a daemon web UI served from one host connect directly to another password-protected daemon (for example, the visitor's own machine at `localhost:6767`) without CORS configuration. Daemons without a password keep the strict origin policy.
+
 ## Agent authentication
 
 Paseo wraps agent CLIs (Claude Code, Codex, OpenCode) but does not manage their authentication. Each agent provider handles its own credentials. Paseo never stores or transmits provider API keys. Agents run in your user context with your existing credentials.

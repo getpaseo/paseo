@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { useRetainedPanelActive } from "@/components/retained-panel";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import { useCheckoutCommitsQuery, type CheckoutCommitsQueryResult } from "@/git/use-commits-query";
 import { ThemedChevron, chevronColorMapping } from "@/git/themed-chevron";
+import type { Theme } from "@/styles/theme";
 import { normalizeBranchOptionName } from "@/utils/branch-suggestions";
 import { CommitRow } from "./commit-row";
 
@@ -15,22 +17,21 @@ interface CommitsSectionProps {
   onCommitPress: (sha: string) => void;
 }
 
-function CommitsSectionSkeleton() {
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
+const foregroundMutedColorMapping = (theme: Theme) => ({
+  color: theme.colors.foregroundMuted,
+});
+
+function CommitsSectionLoading() {
   const { t } = useTranslation();
   return (
     <View
       accessible
       accessibilityLabel={t("workspace.git.diff.commits.loading")}
-      style={styles.skeleton}
-      testID="commits-section-skeleton"
+      style={styles.loading}
+      testID="commits-section-loading"
     >
-      <View style={styles.skeletonRow}>
-        <View style={styles.skeletonDot} />
-        <View style={styles.skeletonSha} />
-        <View style={styles.skeletonSubject} />
-        <View style={styles.skeletonTimestamp} />
-        <View style={styles.skeletonCaret} />
-      </View>
+      <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
     </View>
   );
 }
@@ -53,7 +54,7 @@ function CommitsSectionContent({
     );
   }
   if (query.status !== "loaded") {
-    return <CommitsSectionSkeleton />;
+    return <CommitsSectionLoading />;
   }
   const workspaceCommits = query.data.commits.filter((commit) => !commit.isOnBase);
   const baseRef = normalizeBranchOptionName(query.data.baseRef) ?? t("workspace.git.diff.base");
@@ -213,47 +214,10 @@ const styles = StyleSheet.create((theme) => ({
     paddingRight: theme.spacing[3],
     paddingVertical: theme.spacing[2],
   },
-  skeleton: {
-    paddingBottom: theme.spacing[1],
-    gap: theme.spacing[2],
-  },
-  skeletonRow: {
-    flexDirection: "row",
+  loading: {
     alignItems: "center",
-    gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[1],
-    minHeight: 20,
-  },
-  skeletonDot: {
-    width: 8,
-    height: 8,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.surface2,
-  },
-  skeletonSha: {
-    width: 48,
-    height: 10,
-    borderRadius: theme.borderRadius.sm,
-    backgroundColor: theme.colors.surface2,
-  },
-  skeletonSubject: {
-    flex: 1,
-    minWidth: 0,
-    height: 12,
-    borderRadius: theme.borderRadius.sm,
-    backgroundColor: theme.colors.surface2,
-  },
-  skeletonTimestamp: {
-    width: 40,
-    height: 10,
-    borderRadius: theme.borderRadius.sm,
-    backgroundColor: theme.colors.surface2,
-    flexShrink: 0,
-  },
-  skeletonCaret: {
-    width: 16,
-    height: 16,
-    flexShrink: 0,
+    justifyContent: "center",
+    paddingVertical: theme.spacing[3],
+    minHeight: 28,
   },
 }));

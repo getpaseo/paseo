@@ -8,9 +8,6 @@ import type { Theme } from "@/styles/theme";
 import { Shortcut } from "@/components/ui/shortcut";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 
-const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
-const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-
 type SidebarHeaderRowVariant = "header" | "compact";
 
 interface SidebarHeaderRowProps {
@@ -42,7 +39,16 @@ export function SidebarHeaderRow({
   variant = "header",
   shortcutKeys = null,
 }: SidebarHeaderRowProps) {
-  const ThemedIcon = useMemo(() => withUnistyles(Icon), [Icon]);
+  // Prefer withUnistyles mappings over uniProps — lucide forwards unknown props to
+  // SVG <path> on web, which logs React DOM warnings for `uniProps`.
+  const ThemedIconMuted = useMemo(
+    () => withUnistyles(Icon, (theme: Theme) => ({ color: theme.colors.foregroundMuted })),
+    [Icon],
+  );
+  const ThemedIconForeground = useMemo(
+    () => withUnistyles(Icon, (theme: Theme) => ({ color: theme.colors.foreground })),
+    [Icon],
+  );
 
   const containerStyle = useMemo(
     () => (variant === "compact" ? styles.containerCompact : styles.container),
@@ -61,12 +67,10 @@ export function SidebarHeaderRow({
   const renderChildren = useCallback(
     (state: PressableStateCallbackType & { hovered?: boolean }) => {
       const isHighlighted = Boolean(state.hovered) || isActive;
+      const HeaderIcon = isHighlighted ? ThemedIconForeground : ThemedIconMuted;
       return (
         <>
-          <ThemedIcon
-            size={ICON_SIZE.sm}
-            uniProps={isHighlighted ? foregroundColorMapping : foregroundMutedColorMapping}
-          />
+          <HeaderIcon size={ICON_SIZE.sm} />
           <SidebarHeaderRowLabel label={label} isHighlighted={isHighlighted} />
           {shortcutKeys && Boolean(state.hovered) ? (
             <Shortcut chord={shortcutKeys} style={styles.shortcut} />
@@ -74,7 +78,7 @@ export function SidebarHeaderRow({
         </>
       );
     },
-    [ThemedIcon, isActive, label, shortcutKeys],
+    [ThemedIconForeground, ThemedIconMuted, isActive, label, shortcutKeys],
   );
 
   return (

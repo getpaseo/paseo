@@ -20,6 +20,7 @@ interface GlobalSnapshot {
   dispatchEvent: unknown;
   focus: unknown;
   location: unknown;
+  navigator: unknown;
 }
 
 const originalGlobals: GlobalSnapshot = {
@@ -28,6 +29,7 @@ const originalGlobals: GlobalSnapshot = {
   dispatchEvent: (globalThis as { dispatchEvent?: unknown }).dispatchEvent,
   focus: (globalThis as { focus?: unknown }).focus,
   location: (globalThis as { location?: unknown }).location,
+  navigator: (globalThis as { navigator?: unknown }).navigator,
 };
 
 async function loadModuleForPlatform(
@@ -65,6 +67,10 @@ function restoreGlobals(): void {
   (globalThis as { dispatchEvent?: unknown }).dispatchEvent = originalGlobals.dispatchEvent;
   (globalThis as { focus?: unknown }).focus = originalGlobals.focus;
   (globalThis as { location?: unknown }).location = originalGlobals.location;
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: originalGlobals.navigator,
+  });
 }
 
 describe("sendOsNotification", () => {
@@ -196,20 +202,14 @@ describe("sendOsNotification", () => {
 
     await sendOsNotification({
       title: "Agent finished",
-      data: {
-        serverId: "srv with space",
-        workspaceId: "workspace-1",
-        agentId: "agent/1",
-      },
+      data: { serverId: "srv with space", agentId: "agent/1" },
     });
 
     const clicked = created[0];
     expect(clicked.clickListeners).toHaveLength(1);
     clicked.clickListeners[0]?.({} as Event);
 
-    expect(assign).toHaveBeenCalledWith(
-      "/h/srv%20with%20space/workspace/workspace-1?open=agent%3Aagent%2F1",
-    );
+    expect(assign).toHaveBeenCalledWith("/h/srv%20with%20space");
   });
 
   it("returns false when the Notification API is unavailable", async () => {
@@ -220,6 +220,96 @@ describe("sendOsNotification", () => {
       body: "Done",
       data: { serverId: "srv-1", agentId: "agent-1" },
     });
+
+    expect(sent).toBe(false);
+  });
+
+  it("returns false when a mobile browser rejects the Notification constructor", async () => {
+    class MobileNotification {
+      static permission = "granted";
+
+      constructor() {
+        throw new TypeError(
+          "Failed to construct 'Notification': Illegal constructor. Use ServiceWorkerRegistration.showNotification() instead.",
+        );
+      }
+    }
+
+    (globalThis as { Notification?: unknown }).Notification = MobileNotification;
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {},
+    });
+
+    const { sendOsNotification } = await loadModuleForPlatform("web");
+    const sent = await sendOsNotification({
+      title: "Agent finished",
+      body: "Done",
+    });
+
+    expect(sent).toBe(false);
+  });
+
+  it("uses an existing service worker registration on mobile browsers", async () => {
+    const construct = vi.fn();
+    class MobileNotification {
+      static permission = "granted";
+
+      constructor() {
+        construct();
+      }
+    }
+    const showNotification = vi.fn(async () => undefined);
+    const registration = { showNotification };
+    const register = vi.fn(async () => registration);
+
+    (globalThis as { Notification?: unknown }).Notification = MobileNotification;
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        serviceWorker: {
+          register,
+          ready: Promise.resolve(registration),
+        },
+      },
+    });
+
+    const { sendOsNotification } = await loadModuleForPlatform("web");
+    const sent = await sendOsNotification({
+      title: "Agent finished",
+      body: "Done",
+      data: { serverId: "srv-1", agentId: "agent-1" },
+    });
+
+    expect(sent).toBe(true);
+    expect(register).toHaveBeenCalledWith("/paseo-notification-sw.js", {
+      scope: "/",
+      updateViaCache: "none",
+    });
+    expect(showNotification).toHaveBeenCalledWith("Agent finished", {
+      body: "Done",
+      data: {
+        serverId: "srv-1",
+        agentId: "agent-1",
+        __paseoNotificationRoute: "/h/srv-1",
+      },
+      icon: undefined,
+    });
+    expect(construct).not.toHaveBeenCalled();
+  });
+
+  it("does not reject when notification permission cannot be requested", async () => {
+    const MobileNotification = Object.assign(vi.fn(), {
+      permission: "default",
+      requestPermission: vi.fn(async () => {
+        throw new TypeError("Notification permission must be requested from a user gesture");
+      }),
+    });
+
+    (globalThis as { Notification?: unknown }).Notification = MobileNotification;
+
+    const { sendOsNotification } = await loadModuleForPlatform("web");
+    const sent = await sendOsNotification({ title: "Agent finished" });
 
     expect(sent).toBe(false);
   });

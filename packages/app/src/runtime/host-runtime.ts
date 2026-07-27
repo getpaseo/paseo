@@ -21,6 +21,7 @@ import {
   normalizeHostPort,
   shouldUseTlsForDefaultHostedRelay,
 } from "@/utils/daemon-endpoints";
+import { normalizeDaemonListenEndpoint } from "@/utils/daemon-listen-endpoint";
 import { resolveAppVersion } from "@/utils/app-version";
 import { ConnectionOfferSchema, type ConnectionOffer } from "@getpaseo/protocol/connection-offer";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
@@ -1543,7 +1544,10 @@ export class HostRuntimeStore {
   private async bootstrapInitialConnectionHint(
     hint: InitialDaemonConnectionHint,
   ): Promise<boolean> {
-    const connection = connectionFromListen(hint.listen);
+    // Host headers for :80/:443 often omit the port. Normalize before probing
+    // so same-origin HTTPS (e.g. nip.io behind nginx) can connect.
+    const listen = normalizeDaemonListenEndpoint(hint.listen, hint.useTls === true) ?? hint.listen;
+    const connection = connectionFromListen(listen);
     if (!connection) {
       return false;
     }

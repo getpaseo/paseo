@@ -86,13 +86,13 @@ describe("workspace source of truth consumption", () => {
     expect(missing.currentBranch).toBeNull();
   });
 
-  it("keeps the header skeleton while the workspace descriptor is missing", () => {
+  it("keeps the header loading while the workspace descriptor is missing", () => {
     expect(
       resolveWorkspaceHeaderRenderState({
         workspace: null,
         checkoutState: { kind: "pending" },
       }),
-    ).toEqual({ kind: "skeleton" });
+    ).toEqual({ kind: "loading" });
   });
 
   it("keeps cached git workspace identity visible while checkout status refreshes", () => {

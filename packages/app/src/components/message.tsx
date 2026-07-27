@@ -48,7 +48,7 @@ import {
   FileSymlink,
 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import type { Theme } from "@/styles/theme";
+import { FONT_SIZE, ICON_SIZE, type Theme } from "@/styles/theme";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import Animated, {
   Easing,
@@ -66,6 +66,7 @@ import type { TodoEntry, UserMessageImageAttachment } from "@/types/stream";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
+import { localizeToolCallDisplayName } from "@/utils/localize-tool-call-display-name";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
 import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-list";
 import { markdownNodeContainsType } from "@/utils/markdown-ast";
@@ -92,6 +93,7 @@ import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-con
 import { PlanCard } from "./plan-card";
 import { useToolCallSheet } from "./tool-call-sheet";
 import { ToolCallDetailsContent } from "./tool-call-details";
+import { shouldRevealMutedDisclosure } from "./expandable-badge-state";
 import {
   AssistantInlineCodePathLink,
   type AssistantFileLinkSource,
@@ -197,9 +199,10 @@ const WEB_TOOLCALL_SHIMMER_KEYFRAME_CSS = `
 let webToolCallShimmerRegistered = false;
 const SCROLL_EDGE_EPSILON = 0.5;
 
-// Font size for stream metadata (timestamps, durations, live elapsed timer).
-// Lives between theme.fontSize.xs (12) and theme.fontSize.sm (14); no token.
-export const STREAM_METADATA_FONT_SIZE = 13;
+// Shared font size for timestamps, durations, and the live elapsed timer.
+export const STREAM_METADATA_FONT_SIZE = FONT_SIZE.xs;
+export const STREAM_METADATA_ICON_SIZE = ICON_SIZE.xs;
+export const STREAM_METADATA_LINE_HEIGHT = 16;
 type ScrollAxis = "x" | "y";
 
 function ensureWebToolCallShimmerKeyframes() {
@@ -335,7 +338,8 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   },
   content: {
     alignItems: "flex-end",
-    maxWidth: "100%",
+    maxWidth: "92%",
+    minWidth: 0,
     cursor: "auto",
   },
   containerSpacing: {
@@ -349,17 +353,32 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   },
   bubble: {
     backgroundColor: theme.colors.surface3,
-    borderRadius: theme.borderRadius["2xl"],
+    borderRadius: theme.borderRadius.lg,
     borderTopRightRadius: theme.borderRadius.sm,
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[4],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[3],
     minWidth: 0,
+    maxWidth: "100%",
     flexShrink: 1,
   },
   text: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
-    ...(isWeb ? { lineHeight: 22, overflowWrap: "anywhere" as const } : {}),
+    ...(isWeb
+      ? {
+          lineHeight: Math.round(theme.fontSize.base * 1.4),
+          overflowWrap: "anywhere" as const,
+          wordBreak: "break-word" as const,
+        }
+      : {}),
+  },
+  markdownContainer: {
+    width: "100%",
+    minWidth: 0,
+    flexShrink: 1,
+    // Cancel the last paragraph's marginBottom so bubble paddingTop/Bottom stay
+    // symmetric (paragraph margin owns multi-paragraph gaps only).
+    marginBottom: -theme.spacing[2],
   },
   imagePreviewContainer: {
     flexDirection: "row",
@@ -376,17 +395,17 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   },
   copyButton: {
     alignSelf: "center",
-    padding: theme.spacing[1],
-    paddingTop: theme.spacing[1],
+    padding: 2,
+    paddingTop: 2,
     marginTop: 0,
-    marginRight: -theme.spacing[1],
+    marginRight: -2,
   },
   trailingRow: {
     alignSelf: "flex-end",
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[2],
-    marginTop: theme.spacing[2],
+    gap: theme.spacing[1],
+    marginTop: theme.spacing[1],
   },
   trailingRowHidden: {
     opacity: 0,
@@ -397,6 +416,7 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   timestampText: {
     color: theme.colors.foregroundMuted,
     fontSize: STREAM_METADATA_FONT_SIZE,
+    lineHeight: STREAM_METADATA_LINE_HEIGHT,
   },
 }));
 
@@ -463,7 +483,7 @@ export const UserMessage = memo(function UserMessage({
       !resolvedDisableOuterSpacing && [
         isFirstInGroup ? userMessageStylesheet.containerFirstInGroup : null,
         isLastInGroup ? userMessageStylesheet.containerLastInGroup : null,
-        !isFirstInGroup || !isLastInGroup ? userMessageStylesheet.containerSpacing : null,
+        !isLastInGroup ? userMessageStylesheet.containerSpacing : null,
       ],
     ],
     [resolvedDisableOuterSpacing, isFirstInGroup, isLastInGroup],
@@ -491,7 +511,6 @@ export const UserMessage = memo(function UserMessage({
     ],
     [showTrailingRow],
   );
-
   return (
     <View style={containerStyle} testID="user-message">
       <View
@@ -531,9 +550,9 @@ export const UserMessage = memo(function UserMessage({
             </View>
           ) : null}
           {hasText ? (
-            <Text selectable style={userMessageStylesheet.text}>
-              {message}
-            </Text>
+            <View style={userMessageStylesheet.markdownContainer}>
+              <MarkdownRenderer text={message} />
+            </View>
           ) : null}
         </View>
         {hasText ? (
@@ -571,14 +590,14 @@ const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
   container: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[2],
+    gap: theme.spacing[1],
   },
   copyButton: {
     alignSelf: "center",
-    padding: theme.spacing[1],
-    paddingTop: theme.spacing[1],
+    padding: 2,
+    paddingTop: 2,
     marginTop: 0,
-    marginLeft: -theme.spacing[1],
+    marginLeft: -2,
   },
   labelWrapper: {
     position: "relative",
@@ -586,6 +605,7 @@ const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
   labelSizer: {
     color: theme.colors.foregroundMuted,
     fontSize: STREAM_METADATA_FONT_SIZE,
+    lineHeight: STREAM_METADATA_LINE_HEIGHT,
     opacity: 0,
   },
   labelOverlay: {
@@ -594,6 +614,7 @@ const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
     left: 0,
     color: theme.colors.foregroundMuted,
     fontSize: STREAM_METADATA_FONT_SIZE,
+    lineHeight: STREAM_METADATA_LINE_HEIGHT,
   },
 }));
 
@@ -611,6 +632,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   durationMs,
   onFork,
 }: AssistantTurnFooterProps) {
+  const { t } = useTranslation();
   const [hovered, setHovered] = useState(false);
   const [pressedReveal, setPressedReveal] = useState(false);
   const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -625,8 +647,11 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   }, []);
 
   const durationLabel = useMemo(
-    () => (durationMs !== undefined ? `Worked for ${formatDuration(durationMs)}` : ""),
-    [durationMs],
+    () =>
+      durationMs !== undefined
+        ? t("message.turnFooter.workedFor", { duration: formatDuration(durationMs) })
+        : "",
+    [durationMs, t],
   );
   const timestampLabel = useMemo(
     () => (completedAt ? formatMessageTimestamp(completedAt) : ""),
@@ -662,15 +687,26 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
       <TurnCopyButton
         getContent={getContent}
         containerStyle={assistantTurnFooterStylesheet.copyButton}
+        iconSize={STREAM_METADATA_ICON_SIZE}
       />
-      {canFork ? <AssistantForkMenu onFork={handleFork} /> : null}
+      {canFork ? (
+        <AssistantForkMenu onFork={handleFork} iconSize={STREAM_METADATA_ICON_SIZE} />
+      ) : null}
       {durationLabel ? (
         <Pressable
           onPress={handlePress}
           onHoverIn={handleHoverIn}
           onHoverOut={handleHoverOut}
+          hitSlop={8}
           accessibilityRole={canSwap ? "button" : undefined}
-          accessibilityLabel={canSwap ? `${durationLabel}, ended ${timestampLabel}` : durationLabel}
+          accessibilityLabel={
+            canSwap
+              ? t("message.turnFooter.endedAt", {
+                  duration: durationLabel,
+                  time: timestampLabel,
+                })
+              : durationLabel
+          }
         >
           <View style={assistantTurnFooterStylesheet.labelWrapper}>
             {/* Sizer reserves space for whichever label is longer so the
@@ -738,7 +774,8 @@ interface AssistantMessageProps {
 
 export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   container: {
-    paddingVertical: theme.spacing[3],
+    paddingTop: 0,
+    paddingBottom: 0,
     ...(isWeb ? { userSelect: "text" as const } : {}),
   },
   containerCompactTop: {
@@ -746,6 +783,9 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   },
   containerCompactBottom: {
     paddingBottom: 0,
+  },
+  blockSpacing: {
+    marginBottom: theme.spacing[2],
   },
   imageFrame: {
     width: "100%",
@@ -1110,9 +1150,9 @@ function nodeHasParentType(parent: unknown, type: string): boolean {
 const turnCopyButtonStylesheet = StyleSheet.create((theme) => ({
   container: {
     alignSelf: "flex-start",
-    padding: theme.spacing[2],
+    padding: theme.spacing[1],
     paddingTop: 0,
-    marginTop: theme.spacing[2],
+    marginTop: theme.spacing[1],
   },
   iconColor: {
     color: theme.colors.foregroundMuted,
@@ -1127,6 +1167,7 @@ interface TurnCopyButtonProps {
   containerStyle?: StyleProp<ViewStyle>;
   accessibilityLabel?: string;
   copiedAccessibilityLabel?: string;
+  iconSize?: number;
 }
 
 export const TurnCopyButton = memo(function TurnCopyButton({
@@ -1134,6 +1175,7 @@ export const TurnCopyButton = memo(function TurnCopyButton({
   containerStyle,
   accessibilityLabel,
   copiedAccessibilityLabel,
+  iconSize = ICON_SIZE.sm,
 }: TurnCopyButtonProps) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
@@ -1187,35 +1229,58 @@ export const TurnCopyButton = memo(function TurnCopyButton({
           ? turnCopyButtonStylesheet.iconHoveredColor.color
           : turnCopyButtonStylesheet.iconColor.color;
         return copied ? (
-          <Check size={16} color={iconColor} />
+          <Check size={iconSize} color={iconColor} />
         ) : (
-          <Copy size={16} color={iconColor} />
+          <Copy size={iconSize} color={iconColor} />
         );
       }}
     </Pressable>
   );
 });
 
+function colorWithAlpha(color: string, alpha: number): string {
+  if (color.startsWith("#") && (color.length === 7 || color.length === 4)) {
+    const hex =
+      color.length === 4
+        ? `#${color[1]}${color[1]}${color[2]}${color[2]}${color[3]}${color[3]}`
+        : color;
+    const r = Number.parseInt(hex.slice(1, 3), 16);
+    const g = Number.parseInt(hex.slice(3, 5), 16);
+    const b = Number.parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  return color;
+}
+
 const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
-  container: {
-    marginHorizontal: -13,
-  },
+  // Stream gapBelow owns between-item spacing — keep badge outer margins at 0.
   containerSpacing: {
-    marginBottom: theme.spacing[1],
+    marginBottom: 0,
   },
   containerLastInSequence: {
-    marginBottom: theme.spacing[4],
+    marginBottom: 0,
   },
   pressable: {
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: theme.borderWidth[1],
-    borderColor: "transparent",
-    paddingHorizontal: theme.spacing[2],
+    minHeight: 34,
+    borderRadius: theme.borderRadius.md,
+    paddingHorizontal: 0,
     paddingVertical: theme.spacing[1],
     overflow: "hidden",
   },
+  // Thinking headers share the reply prose rhythm — no extra chrome padding.
+  pressableMuted: {
+    minHeight: 0,
+    paddingVertical: 0,
+  },
   pressablePressed: {
-    opacity: 0.9,
+    opacity: 0.72,
+  },
+  thinkingDetails: {
+    paddingHorizontal: 0,
+    paddingBottom: 0,
+    // Cancel the last thinking paragraph's marginBottom so only the stream gap
+    // separates this block from the next reply line (avoids a blank-line look).
+    marginBottom: -theme.spacing[1],
   },
   headerRow: {
     flexDirection: "row",
@@ -1226,20 +1291,26 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     overflow: "hidden",
+    gap: theme.spacing[1],
+    // Anchor absolute shimmer overlays to this row (needed on web).
+    position: "relative",
   },
   iconBadge: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: 24,
+    height: 24,
+    flexShrink: 0,
     alignItems: "center",
     justifyContent: "center",
-    marginRight: theme.spacing[1],
     backgroundColor: "transparent",
   },
   label: {
     color: theme.colors.foregroundMuted,
+    fontFamily: theme.fontFamily.ui,
     fontSize: theme.fontSize.base,
+    // Match assistant markdown body line-height (base * 1.4).
+    lineHeight: Math.round(theme.fontSize.base * 1.4),
     fontWeight: theme.fontWeight.normal,
+    letterSpacing: 0,
     flexShrink: 0,
   },
   labelActive: {
@@ -1249,27 +1320,60 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     opacity: 0.72,
   },
+  // Keep layout metrics while the web shimmer overlay paints the visible glyphs.
+  labelShimmerAnchor: {
+    opacity: 0,
+  },
   secondaryLabel: {
     flexShrink: 1,
     minWidth: 0,
     color: theme.colors.foregroundMuted,
+    fontFamily: theme.fontFamily.ui,
     fontSize: theme.fontSize.base,
+    lineHeight: Math.round(theme.fontSize.base * 1.4),
     fontWeight: theme.fontWeight.normal,
-    marginLeft: theme.spacing[2],
+    letterSpacing: 0,
+    marginLeft: 0,
   },
   secondaryLabelActive: {
     color: theme.colors.foreground,
   },
+  labelMuted: {
+    color: theme.colors.foregroundMuted,
+  },
+  secondaryLabelMuted: {
+    color: theme.colors.foregroundMuted,
+  },
   shimmerText: {
     color: "transparent",
     fontSize: theme.fontSize.base,
+    lineHeight: Math.round(theme.fontSize.base * 1.4),
     fontWeight: theme.fontWeight.normal,
+  },
+  // Resting glyph fill for background-clip shimmer (peak paints on top).
+  shimmerLabelFill: {
+    backgroundColor: colorWithAlpha(theme.colors.foreground, 0.72),
+  },
+  shimmerSecondaryFill: {
+    backgroundColor: theme.colors.foregroundMuted,
   },
   spacer: {
     flex: 1,
   },
   chevron: {
     flexShrink: 0,
+  },
+  // Trailing disclosure for muted/thinking rows. Keep the slot mounted so
+  // hover reveal does not shift the label (see docs/hover.md failure mode 2).
+  disclosureSlot: {
+    width: 20,
+    height: Math.round(theme.fontSize.base * 1.4),
+    flexShrink: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  disclosureSlotHidden: {
+    opacity: 0,
   },
   openFileButton: {
     marginLeft: theme.spacing[1],
@@ -1313,11 +1417,14 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
     left: 0,
     flexDirection: "row",
     alignItems: "center",
+    // Must match labelRow gap or secondary glyphs ghost-offset against the base row.
+    gap: theme.spacing[1],
     overflow: "hidden",
   },
   shimmerMaskRow: {
     flexDirection: "row",
     alignItems: "center",
+    gap: theme.spacing[1],
     width: "100%",
     height: "100%",
   },
@@ -1461,16 +1568,16 @@ function NativeShimmerPeakSvg({ gradientId }: { gradientId: string }) {
 
 interface AssistantMessageBlockContainerProps {
   block: string;
-  marginBottom: number;
+  hasSpacingBelow: boolean;
   children: ReactNode;
 }
 
 function AssistantMessageBlockContainer({
   block,
-  marginBottom,
+  hasSpacingBelow,
   children,
 }: AssistantMessageBlockContainerProps) {
-  const style = useMemo(() => (marginBottom > 0 ? { marginBottom } : undefined), [marginBottom]);
+  const style = hasSpacingBelow ? assistantMessageStylesheet.blockSpacing : undefined;
   const handleLayout = useCallback(
     (event: LayoutChangeEvent) => {
       const { width, height } = event.nativeEvent.layout;
@@ -1940,7 +2047,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         <AssistantMessageBlockContainer
           key={key}
           block={block}
-          marginBottom={index < keyedBlocks.length - 1 ? 12 : 0}
+          hasSpacingBelow={index < keyedBlocks.length - 1}
         >
           <MemoizedMarkdownBlock
             text={block}
@@ -1962,6 +2069,9 @@ interface SpeakMessageProps {
 
 const speakMessageStylesheet = StyleSheet.create((theme) => ({
   container: {
+    paddingVertical: 0,
+  },
+  containerPadded: {
     paddingVertical: theme.spacing[3],
   },
   containerSpacing: {
@@ -1971,19 +2081,20 @@ const speakMessageStylesheet = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-    marginBottom: theme.spacing[2],
+    marginBottom: theme.spacing[1],
   },
   headerLabel: {
     fontFamily: theme.fontFamily.ui,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
+    lineHeight: Math.round(theme.fontSize.base * 1.4),
     color: theme.colors.foregroundMuted,
   },
   text: {
     fontFamily: theme.fontFamily.ui,
     fontSize: theme.fontSize.base,
-    lineHeight: 22,
-    color: theme.colors.foreground,
+    lineHeight: Math.round(theme.fontSize.base * 1.4),
+    color: theme.colors.foregroundMuted,
   },
 }));
 
@@ -1997,6 +2108,8 @@ export const SpeakMessage = memo(function SpeakMessage({
   const containerStyle = useMemo(
     () => [
       speakMessageStylesheet.container,
+      // Stream layout owns vertical rhythm; keep padding only outside the stream.
+      !resolvedDisableOuterSpacing && speakMessageStylesheet.containerPadded,
       !resolvedDisableOuterSpacing && speakMessageStylesheet.containerSpacing,
     ],
     [resolvedDisableOuterSpacing],
@@ -2389,6 +2502,8 @@ interface ExpandableBadgeProps {
   isLastInSequence?: boolean;
   disableOuterSpacing?: boolean;
   borderlessWhenExpanded?: boolean;
+  /** Muted chrome for thinking rows: gray label, disclosure only on hover/press. */
+  emphasis?: "default" | "muted";
   testID?: string;
 }
 
@@ -2480,6 +2595,9 @@ interface ExpandableBadgeLabelRowProps {
   onOpenFilePress: (event: GestureResponderEvent) => void;
   onOpenFileHoverIn: () => void;
   onOpenFileHoverOut: () => void;
+  /** Trailing disclosure rendered immediately after the label text (not row-end). */
+  showMutedDisclosure: boolean;
+  mutedDisclosureStyle: StyleProp<ViewStyle>;
 }
 
 function ExpandableBadgeLabelRow({
@@ -2506,6 +2624,8 @@ function ExpandableBadgeLabelRow({
   onOpenFilePress,
   onOpenFileHoverIn,
   onOpenFileHoverOut,
+  showMutedDisclosure,
+  mutedDisclosureStyle,
 }: ExpandableBadgeLabelRowProps) {
   const { t } = useTranslation();
   return (
@@ -2526,6 +2646,7 @@ function ExpandableBadgeLabelRow({
         shouldMeasureWebShimmer={shouldMeasureWebShimmer}
         onSecondaryLayout={onSecondaryLayout}
       />
+      <ExpandableBadgeMutedDisclosure visible={showMutedDisclosure} style={mutedDisclosureStyle} />
       {showOpenFileButton ? (
         <Pressable
           onPress={onOpenFilePress}
@@ -2620,19 +2741,119 @@ function renderExpandableBadgeIconSlot({
   showChevron,
   chevronStyle,
   iconNode,
+  chevronActive = true,
 }: {
   showChevron: boolean;
   chevronStyle: StyleProp<ViewStyle>;
   iconNode: ReactNode;
+  chevronActive?: boolean;
 }): ReactNode {
   if (showChevron) {
     return (
       <View style={chevronStyle}>
-        <ThemedChevronRightIcon size={12} uniProps={foregroundColorMapping} />
+        <ThemedChevronRightIcon
+          size={12}
+          uniProps={chevronActive ? foregroundColorMapping : foregroundMutedColorMapping}
+        />
       </View>
     );
   }
   return iconNode;
+}
+
+function resolveExpandableLabelStyle(input: {
+  emphasis: NonNullable<ExpandableBadgeProps["emphasis"]>;
+  isActive: boolean;
+  isLoading: boolean;
+  isWebShimmer: boolean;
+}): StyleProp<TextStyle> {
+  return [
+    expandableBadgeStylesheet.label,
+    input.emphasis === "muted" ? expandableBadgeStylesheet.labelMuted : null,
+    input.emphasis === "default" && input.isActive ? expandableBadgeStylesheet.labelActive : null,
+    input.isLoading ? expandableBadgeStylesheet.labelLoading : null,
+    // Web shimmer paints glyphs in the overlay; keep this node for layout only.
+    input.isWebShimmer ? expandableBadgeStylesheet.labelShimmerAnchor : null,
+  ];
+}
+
+function resolveExpandableSecondaryLabelStyle(input: {
+  emphasis: NonNullable<ExpandableBadgeProps["emphasis"]>;
+  isActive: boolean;
+  isWebShimmer: boolean;
+}): StyleProp<TextStyle> {
+  return [
+    expandableBadgeStylesheet.secondaryLabel,
+    input.emphasis === "muted" ? expandableBadgeStylesheet.secondaryLabelMuted : null,
+    input.emphasis === "default" && input.isActive
+      ? expandableBadgeStylesheet.secondaryLabelActive
+      : null,
+    input.isWebShimmer ? expandableBadgeStylesheet.labelShimmerAnchor : null,
+  ];
+}
+
+function resolveMutedDisclosureStyle(input: {
+  visible: boolean;
+  isExpanded: boolean;
+}): StyleProp<ViewStyle> {
+  return [
+    expandableBadgeStylesheet.disclosureSlot,
+    !input.visible && expandableBadgeStylesheet.disclosureSlotHidden,
+    inlineUnistylesStyle({
+      transform: input.isExpanded ? [{ scale: 1.3 }, { rotate: "90deg" }] : [{ scale: 1.3 }],
+    }),
+  ];
+}
+
+function resolveExpandableBadgeIconChrome(input: {
+  icon: ExpandableBadgeProps["icon"];
+  isMuted: boolean;
+  isError: boolean;
+  isActive: boolean;
+  isInteractive: boolean;
+  isHovered: boolean;
+  isExpanded: boolean;
+  chevronStyle: StyleProp<ViewStyle>;
+}): ReactNode {
+  const ThemedIcon = input.icon && !input.isMuted ? withUnistyles(input.icon) : null;
+  const iconNode = renderExpandableBadgeIcon({
+    isError: input.isError,
+    isActive: input.isActive,
+    ThemedIcon,
+  });
+  return renderExpandableBadgeIconSlot({
+    // Default tool rows: chevron replaces the resting icon on hover/expand.
+    // Muted thinking rows use a trailing disclosure instead (no left icon).
+    showChevron: !input.isMuted && input.isInteractive && (input.isHovered || input.isExpanded),
+    chevronStyle: input.chevronStyle,
+    iconNode,
+  });
+}
+
+function ExpandableBadgeLeadingIcon({
+  isMuted,
+  iconSlotNode,
+}: {
+  isMuted: boolean;
+  iconSlotNode: ReactNode;
+}) {
+  if (isMuted) return null;
+  return <View style={expandableBadgeStylesheet.iconBadge}>{iconSlotNode}</View>;
+}
+
+function ExpandableBadgeMutedDisclosure({
+  visible,
+  style,
+}: {
+  visible: boolean;
+  style: StyleProp<ViewStyle>;
+}) {
+  if (!visible) return null;
+  return (
+    <View style={style} pointerEvents="none">
+      <ThemedChevronRightIcon size={12} uniProps={foregroundMutedColorMapping} />
+    </View>
+  );
 }
 
 function computeShimmerMetrics(input: {
@@ -2752,6 +2973,7 @@ export const ExpandableBadge = memo(function ExpandableBadge({
   isLastInSequence = false,
   disableOuterSpacing,
   borderlessWhenExpanded = false,
+  emphasis = "default",
   testID,
 }: ExpandableBadgeProps) {
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
@@ -2759,6 +2981,7 @@ export const ExpandableBadge = memo(function ExpandableBadge({
   const [isOpenFileHovered, setIsOpenFileHovered] = useState(false);
   const [isPressed, setIsPressed] = useState(false);
   const isInteractive = Boolean(onToggle);
+  const isMuted = emphasis === "muted";
   const hasDetailContent = Boolean(renderDetails);
   const detailContent = hasDetailContent && isExpanded ? renderDetails?.() : null;
   const detailWrapperRef = useRef<View | null>(null);
@@ -2907,7 +3130,6 @@ export const ExpandableBadge = memo(function ExpandableBadge({
 
   const containerStyle = useMemo(
     () => [
-      expandableBadgeStylesheet.container,
       !resolvedDisableOuterSpacing &&
         (isLastInSequence
           ? expandableBadgeStylesheet.containerLastInSequence
@@ -2920,11 +3142,14 @@ export const ExpandableBadge = memo(function ExpandableBadge({
   const pressableStyle = useMemo(
     () => [
       expandableBadgeStylesheet.pressable,
+      isMuted ? expandableBadgeStylesheet.pressableMuted : null,
       isPressed && isInteractive ? expandableBadgeStylesheet.pressablePressed : null,
-      isExpanded && expandableBadgeStylesheet.pressableExpanded,
+      // Borderless (flat) expansions skip the surface/card chrome so body text
+      // can sit flush with the header label and surrounding stream content.
+      isExpanded && !borderlessWhenExpanded && expandableBadgeStylesheet.pressableExpanded,
       isExpanded && !borderlessWhenExpanded && expandableBadgeStylesheet.pressableExpandedAttached,
     ],
-    [borderlessWhenExpanded, isExpanded, isInteractive, isPressed],
+    [borderlessWhenExpanded, isExpanded, isInteractive, isMuted, isPressed],
   );
 
   const detailWrapperStyle = useMemo(
@@ -2940,39 +3165,51 @@ export const ExpandableBadge = memo(function ExpandableBadge({
     [isExpanded, isInteractive],
   );
 
-  const isActive = isHovered || isExpanded;
+  // Muted (thinking) rows stay gray even when expanded; only default chrome
+  // brightens the label on hover/expand.
+  const isActive = !isMuted && (isHovered || isExpanded);
+  const mutedDisclosureVisible = shouldRevealMutedDisclosure({
+    isInteractive,
+    isHovered,
+    isPressed,
+  });
 
   const labelStyle = useMemo(
-    () => [
-      expandableBadgeStylesheet.label,
-      isActive && expandableBadgeStylesheet.labelActive,
-      isLoading && expandableBadgeStylesheet.labelLoading,
-    ],
-    [isActive, isLoading],
+    () =>
+      resolveExpandableLabelStyle({
+        emphasis,
+        isActive,
+        isLoading,
+        isWebShimmer,
+      }),
+    [emphasis, isActive, isLoading, isWebShimmer],
   );
 
   const secondaryLabelStyle = useMemo(
-    () => [
-      expandableBadgeStylesheet.secondaryLabel,
-      isActive && expandableBadgeStylesheet.secondaryLabelActive,
-    ],
-    [isActive],
+    () =>
+      resolveExpandableSecondaryLabelStyle({
+        emphasis,
+        isActive,
+        isWebShimmer,
+      }),
+    [emphasis, isActive, isWebShimmer],
   );
 
   const shimmerLabelTextStyle = useMemo(
     () => [
       expandableBadgeStylesheet.label,
-      isLoading && expandableBadgeStylesheet.labelLoading,
       expandableBadgeStylesheet.shimmerText,
+      expandableBadgeStylesheet.shimmerLabelFill,
       shimmerLabelStyle,
     ],
-    [isLoading, shimmerLabelStyle],
+    [shimmerLabelStyle],
   );
 
   const shimmerSecondaryTextStyle = useMemo(
     () => [
       expandableBadgeStylesheet.secondaryLabel,
       expandableBadgeStylesheet.shimmerText,
+      expandableBadgeStylesheet.shimmerSecondaryFill,
       shimmerSecondaryStyle,
     ],
     [shimmerSecondaryStyle],
@@ -2989,13 +3226,24 @@ export const ExpandableBadge = memo(function ExpandableBadge({
     [isExpanded],
   );
 
-  const ThemedIcon = useMemo(() => (icon ? withUnistyles(icon) : null), [icon]);
-  const iconNode = renderExpandableBadgeIcon({ isError, isActive, ThemedIcon });
-  const iconSlotNode = renderExpandableBadgeIconSlot({
-    showChevron: isInteractive && (isHovered || isExpanded),
+  const iconSlotNode = resolveExpandableBadgeIconChrome({
+    icon,
+    isMuted,
+    isError,
+    isActive,
+    isInteractive,
+    isHovered,
+    isExpanded,
     chevronStyle,
-    iconNode,
   });
+  const mutedDisclosureStyle = useMemo(
+    () =>
+      resolveMutedDisclosureStyle({
+        visible: mutedDisclosureVisible,
+        isExpanded,
+      }),
+    [isExpanded, mutedDisclosureVisible],
+  );
 
   const pressHandlers = isInteractive
     ? {
@@ -3020,7 +3268,7 @@ export const ExpandableBadge = memo(function ExpandableBadge({
         style={pressableStyle}
       >
         <View style={expandableBadgeStylesheet.headerRow}>
-          <View style={expandableBadgeStylesheet.iconBadge}>{iconSlotNode}</View>
+          <ExpandableBadgeLeadingIcon isMuted={isMuted} iconSlotNode={iconSlotNode} />
           <ExpandableBadgeLabelRow
             label={label}
             labelStyle={labelStyle}
@@ -3045,6 +3293,8 @@ export const ExpandableBadge = memo(function ExpandableBadge({
             onOpenFilePress={handleOpenFilePress}
             onOpenFileHoverIn={handleOpenFileHoverIn}
             onOpenFileHoverOut={handleOpenFileHoverOut}
+            showMutedDisclosure={isMuted && isInteractive}
+            mutedDisclosureStyle={mutedDisclosureStyle}
           />
         </View>
       </Pressable>
@@ -3073,6 +3323,7 @@ function areExpandableBadgePropsEqual(previous: ExpandableBadgeProps, next: Expa
   if (previous.isLastInSequence !== next.isLastInSequence) return false;
   if (previous.disableOuterSpacing !== next.disableOuterSpacing) return false;
   if (previous.borderlessWhenExpanded !== next.borderlessWhenExpanded) return false;
+  if (previous.emphasis !== next.emphasis) return false;
   if (previous.testID !== next.testID) return false;
   if (previous.onToggle !== next.onToggle) return false;
   if (previous.onOpenFile !== next.onOpenFile) return false;
@@ -3100,6 +3351,34 @@ interface ToolCallProps {
   maxDetailHeight?: number;
 }
 
+function resolveThinkingDetailText(input: {
+  args: unknown;
+  detail: ToolCallDetail | undefined;
+}): string | null {
+  if (typeof input.args === "string" && input.args.trim()) {
+    return input.args;
+  }
+  const detail = input.detail;
+  if (!detail) {
+    return null;
+  }
+  if (detail.type === "plain_text") {
+    const text = detail.text?.trim();
+    if (text) {
+      return text;
+    }
+  }
+  if (detail.type === "unknown") {
+    if (typeof detail.input === "string" && detail.input.trim()) {
+      return detail.input;
+    }
+    if (typeof detail.output === "string" && detail.output.trim()) {
+      return detail.output;
+    }
+  }
+  return null;
+}
+
 export const ToolCall = memo(function ToolCall({
   toolName,
   args,
@@ -3118,11 +3397,13 @@ export const ToolCall = memo(function ToolCall({
   forceInline = false,
   maxDetailHeight = 400,
 }: ToolCallProps) {
+  const { t } = useTranslation();
   const { openToolCall } = useToolCallSheet();
   const [isExpanded, setIsExpanded] = useState(defaultExpanded ?? false);
 
   const isMobile = useIsCompactFormFactor();
   const shouldRenderInline = !isMobile || forceInline;
+  const isThinking = toolName.trim().toLowerCase() === "thinking";
 
   const effectiveDetail = useMemo<ToolCallDetail | undefined>(() => {
     if (detail) {
@@ -3151,6 +3432,10 @@ export const ToolCall = memo(function ToolCall({
       }),
     [toolName, status, error, effectiveDetail, metadata, cwd],
   );
+  const displayName = useMemo(
+    () => localizeToolCallDisplayName(t, presentation.displayName),
+    [presentation.displayName, t],
+  );
   const handleOpenFile = useMemo(() => {
     const openFilePath = presentation.openFilePath;
     if (!openFilePath || !onOpenFilePath) {
@@ -3162,12 +3447,12 @@ export const ToolCall = memo(function ToolCall({
   const handleToggle = useCallback(() => {
     if (!shouldRenderInline) {
       openToolCall({
-        displayName: presentation.displayName,
+        displayName,
         summary: presentation.summary,
         detail: effectiveDetail,
         errorText: presentation.errorText,
         icon: presentation.icon,
-        showLoadingSkeleton: presentation.isLoadingDetails,
+        showLoading: presentation.isLoadingDetails,
       });
     } else {
       setIsExpanded((prev) => !prev);
@@ -3175,7 +3460,7 @@ export const ToolCall = memo(function ToolCall({
   }, [
     shouldRenderInline,
     openToolCall,
-    presentation.displayName,
+    displayName,
     presentation.summary,
     presentation.errorText,
     presentation.icon,
@@ -3210,23 +3495,39 @@ export const ToolCall = memo(function ToolCall({
     };
   }, [onInlineDetailsExpandedChange]);
 
+  const thinkingDetailText = useMemo(() => {
+    if (!isThinking) return null;
+    return resolveThinkingDetailText({ args, detail: effectiveDetail });
+  }, [args, effectiveDetail, isThinking]);
+
   // Render inline details for desktop
   const renderDetails = useCallback(() => {
     if (!shouldRenderInline) return null;
+    // Thinking uses the same markdown metrics as assistant replies (flush, muted).
+    if (thinkingDetailText) {
+      return (
+        <View style={expandableBadgeStylesheet.thinkingDetails}>
+          <MarkdownRenderer text={thinkingDetailText} thinking enableHtmlish={false} />
+        </View>
+      );
+    }
     return (
       <ToolCallDetailsContent
         detail={effectiveDetail}
         errorText={presentation.errorText}
         maxHeight={maxDetailHeight}
-        showLoadingSkeleton={presentation.isLoadingDetails}
+        showLoading={presentation.isLoadingDetails}
+        chrome={isThinking ? "flat" : "card"}
       />
     );
   }, [
     shouldRenderInline,
+    thinkingDetailText,
     effectiveDetail,
     presentation.errorText,
     presentation.isLoadingDetails,
     maxDetailHeight,
+    isThinking,
   ]);
 
   if (presentation.isPlan && effectiveDetail?.type === "plan") {
@@ -3242,9 +3543,9 @@ export const ToolCall = memo(function ToolCall({
   return (
     <ExpandableBadge
       testID="tool-call-badge"
-      label={presentation.displayName}
+      label={displayName}
       secondaryLabel={presentation.summary}
-      icon={presentation.icon}
+      icon={isThinking ? undefined : presentation.icon}
       isExpanded={shouldRenderInline && isExpanded}
       onToggle={presentation.canOpenDetails ? handleToggle : undefined}
       onOpenFile={handleOpenFile}
@@ -3254,6 +3555,8 @@ export const ToolCall = memo(function ToolCall({
       isLastInSequence={isLastInSequence}
       disableOuterSpacing={disableOuterSpacing}
       onDetailHoverChange={onInlineDetailsHoverChange}
+      borderlessWhenExpanded={isThinking}
+      emphasis={isThinking ? "muted" : "default"}
     />
   );
 }, areToolCallPropsEqual);

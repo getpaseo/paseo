@@ -156,7 +156,7 @@ describe("translation resources", () => {
     expect(ja.settings.providers.models.many).toBe("{{count}}つのモデル");
     expect(ptBR.settings.providers.models.many).toBe("{{count}} modelos");
     expect(ru.settings.providers.models.many).toBe("{{count}} моделей");
-    expect(zhCN.settings.providers.models.many).toBe("{{count}} 个 Model");
+    expect(zhCN.settings.providers.models.many).toBe("{{count}} 个模型");
   });
 
   it("keeps local connection fallback errors translated", () => {
@@ -328,6 +328,18 @@ describe("translation resources", () => {
     expect(en.sessions.title).toBe("History");
     expect(en.sessions.empty).toBe("No sessions yet");
     expect(en.sessions.actions.loadMore).toBe("Load more");
+    expect(en.sessions.manage.manage).toBe("Manage");
+    expect(en.sessions.manage.done).toBe("Done");
+    expect(en.sessions.manage.hint).toBe("Only archived sessions can be selected for deletion.");
+    expect(en.sessions.manage.selectAll).toBe("Select all");
+    expect(en.sessions.manage.invertSelection).toBe("Invert");
+    expect(en.sessions.manage.delete).toBe("Delete");
+    expect(en.sessions.manage.deleteSelected).toBe("Delete ({{count}})");
+    expect(en.sessions.manage.deleting).toBe("Deleting...");
+    expect(en.sessions.manage.deleteConfirmTitle).toBe("Delete {{count}} session(s)?");
+    expect(en.sessions.manage.deleteConfirmMessage).toBe(
+      "This permanently removes the selected archived sessions from Paseo and deletes each provider's conversation history when possible. This cannot be undone.",
+    );
     expect(en.agentList.fallbackTitle).toBe("New session");
     expect(en.agentList.dateSections.today).toBe("Today");
     expect(en.agentList.dateSections.older).toBe("Older");
@@ -336,11 +348,6 @@ describe("translation resources", () => {
     expect(en.agentList.badges.archived).toBe("Archived");
     expect(en.agentList.badges.pending).toBe("{{count}} pending");
     expect(en.agentList.badges.attention).toBe("Attention");
-    expect(en.agentList.archiveSheet.hostOffline).toBe("Host offline");
-    expect(en.agentList.archiveSheet.runningAgent).toBe(
-      "This agent is still running. Archiving it will stop the agent.",
-    );
-    expect(en.agentList.archiveSheet.archive).toBe("Archive");
   });
 
   it("includes message utility keys for the Batch 4I migration", () => {

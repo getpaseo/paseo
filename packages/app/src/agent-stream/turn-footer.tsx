@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useMemo, type ReactNode } from "react";
+import React, { memo, useCallback } from "react";
 import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
@@ -22,10 +22,7 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 
 const ThemedSyncedLoader = withUnistyles(SyncedLoader);
 const workingIndicatorColorMapping = (theme: Theme) => ({
-  color:
-    theme.colorScheme === "light"
-      ? theme.colors.palette.amber[700]
-      : theme.colors.palette.amber[500],
+  color: theme.colors.foreground,
 });
 
 export type TurnContentStrategy = StreamStrategy;
@@ -50,11 +47,7 @@ export const TurnFooter = memo(function TurnFooter({
   onForkAssistantTurn?: AssistantTurnForkHandler;
 }) {
   if (isRunning) {
-    return (
-      <TurnFooterRow>
-        <RunningTurnFooter inFlightTurnStartedAt={inFlightTurnStartedAt} />
-      </TurnFooterRow>
-    );
+    return <RunningTurnFooter inFlightTurnStartedAt={inFlightTurnStartedAt} />;
   }
   if (!host) {
     return null;
@@ -109,7 +102,7 @@ const WorkingIndicator = memo(function WorkingIndicator({
   return (
     <View style={stylesheet.turnFooterContent}>
       <View style={stylesheet.workingLoader}>
-        <ThemedSyncedLoader size={14} uniProps={workingIndicatorColorMapping} />
+        <ThemedSyncedLoader size={20} uniProps={workingIndicatorColorMapping} />
       </View>
       {inFlightTurnStartedAt ? (
         <LiveElapsed
@@ -181,34 +174,26 @@ function CompletedTurnFooter({
   );
 }
 
-function TurnFooterRow({ children }: { children: ReactNode }) {
-  const rowStyle = useMemo(() => [stylesheet.streamItemWrapper, stylesheet.turnFooterRow], []);
-  return <View style={rowStyle}>{children}</View>;
+function TurnFooterRow({ children }: { children: React.ReactNode }) {
+  return <View style={stylesheet.turnFooterSlot}>{children}</View>;
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
-  streamItemWrapper: {
+  turnFooterSlot: {
     width: "100%",
     maxWidth: MAX_CONTENT_WIDTH,
-    alignSelf: "center",
-    paddingHorizontal: theme.spacing[2],
-  },
-  turnFooterRow: {
-    marginTop: theme.spacing[4],
-  },
-  turnFooterSlot: {
     flexDirection: "row",
     alignItems: "center",
-    alignSelf: "flex-start",
-    minHeight: 24,
-    paddingBottom: theme.spacing[6],
+    alignSelf: "center",
+    minHeight: 20,
+    paddingBottom: theme.spacing[4],
   },
   turnFooterContent: {
-    height: 24,
+    height: 20,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "flex-start",
-    gap: theme.spacing[3],
+    gap: theme.spacing[2],
   },
   workingElapsed: {
     color: theme.colors.foregroundMuted,
@@ -216,6 +201,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     fontVariant: ["tabular-nums"],
   },
   workingLoader: {
-    marginLeft: -2,
+    width: 20,
+    height: 20,
   },
 }));

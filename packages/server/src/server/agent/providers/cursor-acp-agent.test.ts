@@ -1,7 +1,11 @@
 import { describe, expect, test, vi } from "vitest";
 
 import type { SpawnedACPProcess, SessionStateResponse } from "./acp-agent.js";
-import { CURSOR_FAST_FEATURE_OPTION, CursorACPAgentClient } from "./cursor-acp-agent.js";
+import {
+  CURSOR_CONTEXT_FEATURE_OPTION,
+  CURSOR_FAST_FEATURE_OPTION,
+  CursorACPAgentClient,
+} from "./cursor-acp-agent.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 
 describe("CursorACPAgentClient model discovery", () => {
@@ -14,6 +18,19 @@ describe("CursorACPAgentClient model discovery", () => {
       options: [
         { value: "false", name: "Off" },
         { value: "true", name: "Fast" },
+      ],
+    };
+  }
+
+  function contextConfigOption(currentValue: "300k" | "1m") {
+    return {
+      id: "context",
+      name: "Context",
+      type: "select" as const,
+      currentValue,
+      options: [
+        { value: "300k", name: "300K" },
+        { value: "1m", name: "1M" },
       ],
     };
   }
@@ -67,6 +84,7 @@ describe("CursorACPAgentClient model discovery", () => {
           label: "gpt-5.4",
           description: undefined,
           isDefault: true,
+          contextWindowMaxTokens: 272_000,
           thinkingOptions: undefined,
           defaultThinkingOptionId: undefined,
         },
@@ -116,6 +134,7 @@ describe("CursorACPAgentClient model discovery", () => {
           label: "Composer 2.5",
           description: undefined,
           isDefault: true,
+          contextWindowMaxTokens: 200_000,
           thinkingOptions: undefined,
           defaultThinkingOptionId: undefined,
         },
@@ -137,6 +156,72 @@ describe("CursorACPAgentClient model discovery", () => {
         cwd: "/tmp/cursor",
       }),
     ).resolves.toEqual([
+      {
+        type: "select",
+        id: CURSOR_FAST_FEATURE_OPTION.id,
+        label: "Fast",
+        description: "Cursor fast mode",
+        tooltip: "Select Cursor fast mode",
+        icon: "zap",
+        value: "false",
+        options: [
+          {
+            id: "false",
+            label: "Off",
+            isDefault: true,
+            description: undefined,
+            metadata: undefined,
+          },
+          {
+            id: "true",
+            label: "Fast",
+            isDefault: false,
+            description: undefined,
+            metadata: undefined,
+          },
+        ],
+      },
+    ]);
+  });
+
+  test("exposes Cursor context length through provider features", async () => {
+    const client = new TestCursorACPAgentClient({
+      sessionId: "session-1",
+      models: null,
+      configOptions: [contextConfigOption("300k"), fastConfigOption("false")],
+    });
+
+    await expect(
+      client.listFeatures({
+        provider: "acp",
+        cwd: "/tmp/cursor",
+      }),
+    ).resolves.toEqual([
+      {
+        type: "select",
+        id: CURSOR_CONTEXT_FEATURE_OPTION.id,
+        label: "Context",
+        description: "Cursor context length",
+        tooltip: "Select context window length",
+        icon: "gauge",
+        value: "300k",
+        options: [
+          {
+            id: "300k",
+            label: "300K",
+            isDefault: true,
+            description: undefined,
+            metadata: undefined,
+          },
+          {
+            id: "1m",
+            label: "1M",
+            isDefault: false,
+            description: undefined,
+            metadata: undefined,
+          },
+        ],
+      },
       {
         type: "select",
         id: CURSOR_FAST_FEATURE_OPTION.id,

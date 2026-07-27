@@ -107,7 +107,7 @@ export const baseColors = {
   },
 } as const;
 
-export type ThemeName = "light" | "dark" | "zinc" | "midnight" | "claude" | "ghostty";
+export type ThemeName = "light" | "dark" | "zinc" | "midnight" | "claude" | "ghostty" | "deepspace";
 
 // Diff stat colors — light uses muted tones, dark uses the brighter palette values
 const lightDiffColors = {
@@ -425,6 +425,27 @@ const ghosttyDarkColors = buildDarkSemanticColors({
   destructive: "#c44a55", // red with slight cool lean against the slate-blue surfaces
 });
 
+// Deep Space — pure neutral grays (equal R/G/B), deeper void than Zinc
+const deepspaceDarkColors = buildDarkSemanticColors({
+  surface0: "#101010",
+  surface1: "#171717",
+  surface2: "#212121",
+  surface3: "#2e2e2e",
+  surface4: "#3d3d3d",
+  surfaceDiffEmpty: "#1c1c1c",
+  surfaceSidebar: "#0c0c0c",
+  surfaceSidebarHover: "#151515",
+  foregroundMuted: "#9a9a9a",
+  foregroundExtraMuted: "#6a6a6a",
+  scrollbarHandle: "#6a6a6a",
+  border: "#1f1f1f",
+  borderAccent: "#2a2a2a",
+  accent: "#c8c8c8",
+  accentBright: "#e8e8e8",
+  accentForeground: "#101010",
+  destructive: "#c44a4a",
+});
+
 export const SPACING = {
   0: 0,
   1: 4,
@@ -576,6 +597,7 @@ export const darkZincTheme = buildDarkTheme(zincDarkColors);
 export const darkMidnightTheme = buildDarkTheme(midnightDarkColors);
 export const darkClaudeTheme = buildDarkTheme(claudeDarkColors);
 export const darkGhosttyTheme = buildDarkTheme(ghosttyDarkColors);
+export const darkDeepspaceTheme = buildDarkTheme(deepspaceDarkColors);
 
 export const lightTheme = {
   colorScheme: "light" as const,
@@ -619,7 +641,8 @@ type UnistylesThemeKey =
   | "darkZinc"
   | "darkMidnight"
   | "darkClaude"
-  | "darkGhostty";
+  | "darkGhostty"
+  | "darkDeepspace";
 
 export const THEME_TO_UNISTYLES: Record<ThemeName, UnistylesThemeKey> = {
   light: "light",
@@ -628,6 +651,7 @@ export const THEME_TO_UNISTYLES: Record<ThemeName, UnistylesThemeKey> = {
   midnight: "darkMidnight",
   claude: "darkClaude",
   ghostty: "darkGhostty",
+  deepspace: "darkDeepspace",
 };
 
 export const THEME_SWATCHES: Record<ThemeName, string> = {
@@ -637,4 +661,16 @@ export const THEME_SWATCHES: Record<ThemeName, string> = {
   midnight: "#4A6BA8",
   claude: "#D97757",
   ghostty: "#8caaee",
+  deepspace: "#6a6a6a",
+};
+
+/** App background (`surface0`) per named theme — keep in sync with `public/index.html` boot script. */
+export const THEME_SURFACE0: Record<ThemeName, string> = {
+  light: lightTheme.colors.surface0,
+  dark: darkTheme.colors.surface0,
+  zinc: darkZincTheme.colors.surface0,
+  midnight: darkMidnightTheme.colors.surface0,
+  claude: darkClaudeTheme.colors.surface0,
+  ghostty: darkGhosttyTheme.colors.surface0,
+  deepspace: darkDeepspaceTheme.colors.surface0,
 };

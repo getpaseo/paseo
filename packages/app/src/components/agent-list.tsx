@@ -2,25 +2,22 @@ import {
   View,
   Text,
   Pressable,
-  Modal,
   RefreshControl,
   FlatList,
   type ListRenderItem,
   type PressableStateCallbackType,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useCallback, useMemo, useState, type ReactElement } from "react";
+import { useCallback, useMemo, type ReactElement } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { formatTimeAgo } from "@/utils/time";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
-import { useSessionStore } from "@/stores/session-store";
-import { Archive, ChevronRight } from "lucide-react-native";
+import { Archive, Check, ChevronRight } from "lucide-react-native";
 import { getProviderIcon } from "@/components/provider-icons";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
-import { useArchiveAgent } from "@/hooks/use-archive-agent";
+import { isArchivedAgentSelectable, toAgentListKey } from "@/components/agent-list-selection";
 
 interface AgentListProps {
   agents: AggregatedAgent[];
@@ -32,6 +29,9 @@ interface AgentListProps {
   listFooterComponent?: ReactElement | null;
   showAttentionIndicator?: boolean;
   showHostColumn?: boolean;
+  selectionMode?: boolean;
+  selectedKeys?: ReadonlySet<string>;
+  onToggleSelect?: (agent: AggregatedAgent) => void;
 }
 
 type DateSectionKey = "today" | "yesterday" | "thisWeek" | "thisMonth" | "older";
@@ -43,6 +43,8 @@ const DATE_SECTION_ORDER = [
   "thisMonth",
   "older",
 ] as const satisfies readonly DateSectionKey[];
+
+const EMPTY_SELECTED_KEYS: ReadonlySet<string> = new Set();
 
 type FlatListItem =
   | { type: "header"; key: string; section: DateSectionKey }
@@ -201,28 +203,46 @@ function SessionRowTrailingAttention({
   );
 }
 
+function SelectionCheck({ checked, disabled }: { checked: boolean; disabled: boolean }) {
+  const { theme } = useUnistyles();
+  return (
+    <View
+      style={[
+        styles.selectionCheck,
+        checked && styles.selectionCheckChecked,
+        disabled && styles.selectionCheckDisabled,
+      ]}
+    >
+      {checked ? <Check size={12} color={theme.colors.primaryForeground} /> : null}
+    </View>
+  );
+}
+
 function SessionRow({
   agent,
   isMobile,
   selectedAgentId,
   showAttentionIndicator,
   showHostColumn,
+  selectionMode,
+  isChecked,
   onPress,
-  onLongPress,
 }: {
   agent: AggregatedAgent;
   isMobile: boolean;
   selectedAgentId?: string;
   showAttentionIndicator: boolean;
   showHostColumn: boolean;
+  selectionMode: boolean;
+  isChecked: boolean;
   onPress: (agent: AggregatedAgent) => void;
-  onLongPress: (agent: AggregatedAgent) => void;
 }) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const timeAgo = formatTimeAgo(agent.lastActivityAt);
-  const agentKey = `${agent.serverId}:${agent.id}`;
-  const isSelected = selectedAgentId === agentKey;
+  const agentKey = toAgentListKey(agent);
+  const isRouteSelected = selectedAgentId === agentKey;
+  const isSelectable = isArchivedAgentSelectable(agent);
   const projectName = agent.projectPlacement?.projectName ?? "";
   const branch = agent.projectPlacement?.checkout.currentBranch ?? "";
   const workspaceName = agent.projectPlacement?.workspaceName ?? "";
@@ -232,19 +252,23 @@ function SessionRow({
   const pressableStyle = useCallback(
     ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.row,
-      isSelected && styles.rowSelected,
+      isRouteSelected && !selectionMode && styles.rowSelected,
+      isChecked && selectionMode && styles.rowSelected,
+      selectionMode && !isSelectable && styles.rowSelectionDisabled,
       Boolean(hovered) && styles.rowHovered,
       pressed && styles.rowPressed,
     ],
-    [isSelected],
+    [isChecked, isRouteSelected, isSelectable, selectionMode],
   );
 
   const handlePress = useCallback(() => onPress(agent), [onPress, agent]);
-  const handleLongPress = useCallback(() => onLongPress(agent), [onLongPress, agent]);
 
   const sessionTitleStyle = useMemo(
-    () => [styles.sessionTitle, isSelected && styles.sessionTitleHighlighted],
-    [isSelected],
+    () => [
+      styles.sessionTitle,
+      isRouteSelected && !selectionMode && styles.sessionTitleHighlighted,
+    ],
+    [isRouteSelected, selectionMode],
   );
 
   const archivedIcon = useMemo(
@@ -254,13 +278,22 @@ function SessionRow({
   const showDesktopAttention =
     !isMobile && showAttentionIndicator && Boolean(agent.requiresAttention);
 
+  const accessibilityState = useMemo(() => {
+    if (!selectionMode) {
+      return undefined;
+    }
+    return { checked: isChecked, disabled: !isSelectable };
+  }, [isChecked, isSelectable, selectionMode]);
+
   return (
     <Pressable
       style={pressableStyle}
       onPress={handlePress}
-      onLongPress={handleLongPress}
+      disabled={selectionMode && !isSelectable}
       testID={`agent-row-${agent.serverId}-${agent.id}`}
+      accessibilityState={accessibilityState}
     >
+      {selectionMode ? <SelectionCheck checked={isChecked} disabled={!isSelectable} /> : null}
       <View style={styles.rowContent}>
         <View style={styles.rowTitleRow}>
           <WorkspaceTitlePrefix
@@ -365,71 +398,35 @@ export function AgentList({
   listFooterComponent,
   showAttentionIndicator = true,
   showHostColumn = false,
+  selectionMode = false,
+  selectedKeys,
+  onToggleSelect,
 }: AgentListProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const insets = useSafeAreaInsets();
-  const [actionAgent, setActionAgent] = useState<AggregatedAgent | null>(null);
   const isMobile = useIsCompactFormFactor();
-  const { archiveAgent } = useArchiveAgent();
-
-  const actionClient = useSessionStore((state) =>
-    actionAgent?.serverId ? (state.sessions[actionAgent.serverId]?.client ?? null) : null,
-  );
-
-  const isActionSheetVisible = actionAgent !== null;
-  const isActionDaemonUnavailable = Boolean(actionAgent?.serverId && !actionClient);
+  const resolvedSelectedKeys = selectedKeys ?? EMPTY_SELECTED_KEYS;
 
   const handleAgentPress = useCallback(
     (agent: AggregatedAgent) => {
-      if (isActionSheetVisible) {
+      if (selectionMode) {
+        if (!isArchivedAgentSelectable(agent)) {
+          return;
+        }
+        onToggleSelect?.(agent);
         return;
       }
 
-      const serverId = agent.serverId;
-      const agentId = agent.id;
-
       onAgentSelect?.();
       navigateToAgent({
-        serverId,
-        agentId,
+        serverId: agent.serverId,
+        agentId: agent.id,
         workspaceId: agent.workspaceId,
         pin: true,
       });
     },
-    [isActionSheetVisible, onAgentSelect],
+    [onAgentSelect, onToggleSelect, selectionMode],
   );
-
-  const handleAgentLongPress = useCallback(
-    (agent: AggregatedAgent) => {
-      const isRunning = agent.status === "running";
-      if (isRunning) {
-        setActionAgent(agent);
-        return;
-      }
-
-      const client = useSessionStore.getState().sessions[agent.serverId]?.client ?? null;
-      if (!client) {
-        setActionAgent(agent);
-        return;
-      }
-      void archiveAgent({ serverId: agent.serverId, agentId: agent.id }).catch(() => {});
-    },
-    [archiveAgent],
-  );
-
-  const handleCloseActionSheet = useCallback(() => {
-    setActionAgent(null);
-  }, []);
-
-  const handleArchiveAgent = useCallback(() => {
-    if (!actionAgent || !actionClient) {
-      return;
-    }
-    // Timeout errors are swallowed — the daemon will still process the archive
-    void archiveAgent({ serverId: actionAgent.serverId, agentId: actionAgent.id }).catch(() => {});
-    setActionAgent(null);
-  }, [actionAgent, actionClient, archiveAgent]);
 
   const flatItems = useMemo((): FlatListItem[] => {
     const buckets = new Map<DateSectionKey, AggregatedAgent[]>();
@@ -448,7 +445,7 @@ export function AgentList({
       }
       result.push({ type: "header", key: `header:${section}`, section });
       for (const agent of data) {
-        result.push({ type: "agent", key: `${agent.serverId}:${agent.id}`, agent });
+        result.push({ type: "agent", key: toAgentListKey(agent), agent });
       }
     }
     return result;
@@ -470,16 +467,18 @@ export function AgentList({
           selectedAgentId={selectedAgentId}
           showAttentionIndicator={showAttentionIndicator}
           showHostColumn={showHostColumn}
+          selectionMode={selectionMode}
+          isChecked={resolvedSelectedKeys.has(item.key)}
           onPress={handleAgentPress}
-          onLongPress={handleAgentLongPress}
         />
       );
     },
     [
-      handleAgentLongPress,
       handleAgentPress,
       isMobile,
+      resolvedSelectedKeys,
       selectedAgentId,
+      selectionMode,
       showAttentionIndicator,
       showHostColumn,
       t,
@@ -491,14 +490,6 @@ export function AgentList({
   const refreshColors = useMemo(
     () => [theme.colors.foregroundMuted],
     [theme.colors.foregroundMuted],
-  );
-  const sheetContainerStyle = useMemo(
-    () => [styles.sheetContainer, { paddingBottom: Math.max(insets.bottom, theme.spacing[6]) }],
-    [insets.bottom, theme.spacing],
-  );
-  const sheetArchiveTextStyle = useMemo(
-    () => [styles.sheetArchiveText, isActionDaemonUnavailable && styles.sheetArchiveTextDisabled],
-    [isActionDaemonUnavailable],
   );
 
   const refreshControl = useMemo(
@@ -515,55 +506,17 @@ export function AgentList({
   );
 
   return (
-    <>
-      <FlatList
-        data={flatItems}
-        style={styles.list}
-        contentContainerStyle={styles.listContent}
-        keyExtractor={keyExtractor}
-        renderItem={renderItem}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-        ListFooterComponent={listFooterComponent}
-        refreshControl={refreshControl}
-      />
-
-      <Modal
-        visible={isActionSheetVisible}
-        animationType="fade"
-        transparent
-        onRequestClose={handleCloseActionSheet}
-      >
-        <View style={styles.sheetOverlay}>
-          <Pressable style={styles.sheetBackdrop} onPress={handleCloseActionSheet} />
-          <View style={sheetContainerStyle}>
-            <View style={styles.sheetHandle} />
-            <Text style={styles.sheetTitle}>
-              {isActionDaemonUnavailable
-                ? t("agentList.archiveSheet.hostOffline")
-                : t("agentList.archiveSheet.runningAgent")}
-            </Text>
-            <View style={styles.sheetButtonRow}>
-              <Pressable
-                style={[styles.sheetButton, styles.sheetCancelButton]}
-                onPress={handleCloseActionSheet}
-                testID="agent-action-cancel"
-              >
-                <Text style={styles.sheetCancelText}>{t("common.actions.cancel")}</Text>
-              </Pressable>
-              <Pressable
-                disabled={isActionDaemonUnavailable}
-                style={[styles.sheetButton, styles.sheetArchiveButton]}
-                onPress={handleArchiveAgent}
-                testID="agent-action-archive"
-              >
-                <Text style={sheetArchiveTextStyle}>{t("agentList.archiveSheet.archive")}</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
-    </>
+    <FlatList
+      data={flatItems}
+      style={styles.list}
+      contentContainerStyle={styles.listContent}
+      keyExtractor={keyExtractor}
+      renderItem={renderItem}
+      showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+      ListFooterComponent={listFooterComponent}
+      refreshControl={refreshControl}
+    />
   );
 }
 
@@ -644,11 +597,32 @@ const styles = StyleSheet.create((theme) => ({
   rowSelected: {
     backgroundColor: theme.colors.surface2,
   },
+  rowSelectionDisabled: {
+    opacity: 0.45,
+  },
   rowHovered: {
     backgroundColor: theme.colors.surface1,
   },
   rowPressed: {
     backgroundColor: theme.colors.surface2,
+  },
+  selectionCheck: {
+    width: 18,
+    height: 18,
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+    borderColor: theme.colors.borderAccent,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: theme.spacing[2],
+    flexShrink: 0,
+  },
+  selectionCheckChecked: {
+    backgroundColor: theme.colors.primary,
+    borderColor: theme.colors.primary,
+  },
+  selectionCheckDisabled: {
+    opacity: 0.4,
   },
   sessionTitle: {
     flexShrink: 1,
@@ -724,69 +698,5 @@ const styles = StyleSheet.create((theme) => ({
   },
   badgeTextDanger: {
     color: theme.colors.palette.red[300],
-  },
-  sheetOverlay: {
-    flex: 1,
-    justifyContent: "flex-end",
-  },
-  sheetBackdrop: {
-    position: "absolute",
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    backgroundColor: "rgba(0,0,0,0.35)",
-  },
-  sheetContainer: {
-    backgroundColor: theme.colors.surface2,
-    borderTopLeftRadius: theme.borderRadius["2xl"],
-    borderTopRightRadius: theme.borderRadius["2xl"],
-    paddingHorizontal: theme.spacing[6],
-    paddingTop: theme.spacing[4],
-    gap: theme.spacing[4],
-  },
-  sheetHandle: {
-    alignSelf: "center",
-    width: 40,
-    height: 4,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.foregroundMuted,
-    opacity: 0.3,
-  },
-  sheetTitle: {
-    fontSize: theme.fontSize.lg,
-    fontWeight: theme.fontWeight.semibold,
-    color: theme.colors.foreground,
-    textAlign: "center",
-  },
-  sheetButtonRow: {
-    flexDirection: "row",
-    gap: theme.spacing[3],
-  },
-  sheetButton: {
-    flex: 1,
-    borderRadius: theme.borderRadius.lg,
-    paddingVertical: theme.spacing[4],
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  sheetArchiveButton: {
-    backgroundColor: theme.colors.primary,
-  },
-  sheetArchiveText: {
-    color: theme.colors.primaryForeground,
-    fontWeight: theme.fontWeight.semibold,
-    fontSize: theme.fontSize.base,
-  },
-  sheetArchiveTextDisabled: {
-    opacity: 0.5,
-  },
-  sheetCancelButton: {
-    backgroundColor: theme.colors.surface1,
-  },
-  sheetCancelText: {
-    color: theme.colors.foreground,
-    fontWeight: theme.fontWeight.semibold,
-    fontSize: theme.fontSize.base,
   },
 }));

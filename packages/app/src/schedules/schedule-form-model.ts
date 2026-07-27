@@ -23,6 +23,7 @@ import {
   type ProviderModelsByProvider,
   type UserModifiedFields,
 } from "@/provider-selection/resolve-agent-form";
+import { i18n } from "@/i18n/i18next";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import { shortenPath } from "@/utils/shorten-path";
 import { normalizeScheduleFormCadence } from "./schedule-cadence-options";
@@ -297,7 +298,7 @@ function resolveModeDisplay(input: {
 }): ScheduleFormDisplay {
   const modeId = input.modeId.trim();
   if (!modeId) {
-    return { label: "Default mode" };
+    return { label: i18n.t("schedules.form.fields.modePlaceholder") };
   }
   return { label: input.modeOptions.find((mode) => mode.id === modeId)?.label ?? modeId };
 }
@@ -417,7 +418,7 @@ function buildInitialModelDisplay(modelId: string): ScheduleFormDisplay | null {
 
 function buildInitialModeDisplay(modeId: string): ScheduleFormDisplay {
   if (!modeId) {
-    return { label: "Default mode" };
+    return { label: i18n.t("schedules.form.fields.modePlaceholder") };
   }
   return { label: modeId };
 }
@@ -845,7 +846,7 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
       modeOptions: [],
       availableThinkingOptions: [],
       selectedModelDisplay: null,
-      selectedModeDisplay: { label: "Default mode" },
+      selectedModeDisplay: { label: i18n.t("schedules.form.fields.modePlaceholder") },
       selectedThinkingDisplay: null,
       providerSnapshotRequest: null,
     };

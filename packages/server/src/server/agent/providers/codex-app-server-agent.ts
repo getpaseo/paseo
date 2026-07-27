@@ -80,6 +80,10 @@ import {
 } from "./codex/app-server-transport.js";
 import { type CodexUserMessageTurnIndex, revertCodexConversation } from "./codex/rewind.js";
 import {
+  readCodexContextUsageFromRollout,
+  resolveCodexRolloutFile,
+} from "./codex/context-usage.js";
+import {
   materializeProviderImage,
   renderProviderImageOutputAsAssistantMarkdown,
   type ProviderImageOutput,
@@ -557,6 +561,16 @@ function firstPositiveFiniteNumber(primary: unknown, secondary: unknown): number
   return undefined;
 }
 
+function firstFiniteNumber(primary: unknown, secondary: unknown): number | undefined {
+  if (typeof primary === "number" && Number.isFinite(primary)) {
+    return primary;
+  }
+  if (typeof secondary === "number" && Number.isFinite(secondary)) {
+    return secondary;
+  }
+  return undefined;
+}
+
 function tokenizeCommandArgs(args: string): string[] {
   const tokens: string[] = [];
   let current = "";
@@ -882,19 +896,21 @@ function filterCodexThreadsByCwd(
 }
 
 export function toAgentUsage(tokenUsage: unknown): AgentUsage | undefined {
-  const usage = toObjectRecord(tokenUsage);
-  if (!usage) return undefined;
-  const last = toObjectRecord(usage.last);
+  const raw = toObjectRecord(tokenUsage);
+  if (!raw) return undefined;
+  // Codex may nest the counters under `info` — the shape used by rollout
+  // `token_count` events and some app-server `thread/tokenUsage/updated` payloads.
+  const usage = toObjectRecord(raw.info) ?? raw;
+  const last = toObjectRecord(usage.last) ?? toObjectRecord(usage.last_token_usage);
   const contextWindowMaxTokens = firstPositiveFiniteNumber(
     usage.model_context_window,
     usage.modelContextWindow,
   );
   const contextWindowUsedTokens = firstPositiveFiniteNumber(last?.total_tokens, last?.totalTokens);
   return {
-    inputTokens: typeof last?.inputTokens === "number" ? last.inputTokens : undefined,
-    cachedInputTokens:
-      typeof last?.cachedInputTokens === "number" ? last.cachedInputTokens : undefined,
-    outputTokens: typeof last?.outputTokens === "number" ? last.outputTokens : undefined,
+    inputTokens: firstFiniteNumber(last?.inputTokens, last?.input_tokens),
+    cachedInputTokens: firstFiniteNumber(last?.cachedInputTokens, last?.cached_input_tokens),
+    outputTokens: firstFiniteNumber(last?.outputTokens, last?.output_tokens),
     ...(contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {}),
     ...(contextWindowUsedTokens !== undefined ? { contextWindowUsedTokens } : {}),
   };
@@ -3149,6 +3165,10 @@ export class CodexAppServerAgentSession implements AgentSession {
   private warnedInvalidNotificationPayloads = new Set<string>();
   private warnedIncompleteEditToolCallIds = new Set<string>();
   private latestUsage: AgentUsage | undefined;
+  // Cached rollout path for the current session; the lookup walks the sessions
+  // tree so it is resolved once per session, not per turn.
+  private codexRolloutUsage: { sessionId: string; path: string } | null = null;
+  private contextUsageRefreshInFlight: Promise<void> | null = null;
   private latestPlanResult: { callId: string; text: string; turnId: string | null } | null = null;
   private readonly userMessageTurnIndexes = new Map<string, number>();
   private readonly userMessageTurnIds: string[] = [];
@@ -3242,6 +3262,9 @@ export class CodexAppServerAgentSession implements AgentSession {
           allowArchivedHistory: this.initialResumePurpose === "history",
         });
         await this.loadPersistedHistory();
+        // Reopened sessions have no live usage yet; seed the context meter from
+        // the rollout file so it shows last-known usage instead of a blank ring.
+        await this.refreshContextUsageFromRollout();
       }
 
       this.connected = true;
@@ -5330,6 +5353,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.activeClientMessageId = null;
     this.pendingSubAgentNotificationsByThreadId.clear();
     this.resetTurnTrackingState();
+    // Codex writes the turn's token_count to the rollout around completion; pick
+    // up fresh context-window usage even when the app-server sends no notification.
+    void this.refreshContextUsageFromRollout();
   }
 
   private resetTurnTrackingState(): void {
@@ -5383,6 +5409,65 @@ export class CodexAppServerAgentSession implements AgentSession {
         provider: CODEX_PROVIDER,
         usage: this.latestUsage,
       });
+    }
+    // Some Codex CLI versions omit context-window fields (or the notification
+    // entirely) — fall back to the session rollout so the context meter fills.
+    if (
+      this.latestUsage?.contextWindowMaxTokens === undefined ||
+      this.latestUsage?.contextWindowUsedTokens === undefined
+    ) {
+      void this.refreshContextUsageFromRollout();
+    }
+  }
+
+  /**
+   * Best-effort context-window usage from the Codex session rollout file. The
+   * app-server's token-usage notification is unreliable across CLI versions, so
+   * we read `model_context_window` + last-turn totals from disk and emit a
+   * `usage_updated` when they differ from what we already reported.
+   *
+   * Concurrent calls (e.g. the token-usage fallback and turn completion firing
+   * together) coalesce into a single filesystem read.
+   */
+  private refreshContextUsageFromRollout(): Promise<void> {
+    if (this.contextUsageRefreshInFlight) return this.contextUsageRefreshInFlight;
+    const run = this.readAndEmitRolloutContextUsage().finally(() => {
+      this.contextUsageRefreshInFlight = null;
+    });
+    this.contextUsageRefreshInFlight = run;
+    return run;
+  }
+
+  private async readAndEmitRolloutContextUsage(): Promise<void> {
+    const sessionId = this.currentThreadId;
+    if (!sessionId) return;
+    try {
+      if (this.codexRolloutUsage?.sessionId !== sessionId) {
+        const rolloutFile = await resolveCodexRolloutFile(resolveCodexHomeDir(), sessionId);
+        this.codexRolloutUsage = rolloutFile ? { sessionId, path: rolloutFile } : null;
+      }
+      const rolloutPath = this.codexRolloutUsage?.path;
+      if (!rolloutPath) return;
+      const signals = await readCodexContextUsageFromRollout(rolloutPath);
+      if (!signals) return;
+      if (
+        this.latestUsage?.contextWindowMaxTokens === signals.contextWindowMaxTokens &&
+        this.latestUsage?.contextWindowUsedTokens === signals.contextWindowUsedTokens
+      ) {
+        return;
+      }
+      this.latestUsage = {
+        ...this.latestUsage,
+        contextWindowMaxTokens: signals.contextWindowMaxTokens,
+        contextWindowUsedTokens: signals.contextWindowUsedTokens,
+      };
+      this.notifySubscribers({
+        type: "usage_updated",
+        provider: CODEX_PROVIDER,
+        usage: this.latestUsage,
+      });
+    } catch {
+      // Best-effort fallback; leave the meter on its last-known value.
     }
   }
 
@@ -6487,6 +6572,15 @@ export class CodexAppServerAgentClient implements AgentClient {
       await client.request("thread/archive", { threadId });
     } finally {
       await client.dispose();
+    }
+  }
+
+  async deleteNativeSession(handle: AgentPersistenceHandle): Promise<void> {
+    const sessionId = handle.nativeHandle ?? handle.sessionId;
+    if (!sessionId) return;
+    const rolloutFile = await resolveCodexRolloutFile(resolveCodexHomeDir(), sessionId);
+    if (rolloutFile) {
+      await fs.rm(rolloutFile, { force: true });
     }
   }
 

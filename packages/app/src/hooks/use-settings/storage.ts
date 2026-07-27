@@ -9,6 +9,8 @@ export const APP_SETTINGS_QUERY_KEY = ["app-settings"];
 const LEGACY_SETTINGS_KEY = "@paseo:settings";
 
 export type SendBehavior = "interrupt" | "queue";
+export type SendButtonVisibility = "always" | "whenContent";
+export type EnterKeyBehavior = "send" | "newline";
 export type ReleaseChannel = "stable" | "beta";
 export type ServiceUrlBehavior = "ask" | "in-app" | "external";
 export type WorkspaceTitleSource = "title" | "branch";
@@ -18,6 +20,8 @@ const VALID_THEMES = new Set<string>([...Object.keys(THEME_TO_UNISTYLES), "auto"
 const VALID_SERVICE_URL_BEHAVIORS = new Set<ServiceUrlBehavior>(["ask", "in-app", "external"]);
 const VALID_WORKSPACE_TITLE_SOURCES = new Set<WorkspaceTitleSource>(["title", "branch"]);
 const VALID_TOOL_CALL_DETAIL_LEVELS = new Set<ToolCallDetailLevel>(["overview", "detailed"]);
+const VALID_SEND_BUTTON_VISIBILITIES = new Set<SendButtonVisibility>(["always", "whenContent"]);
+const VALID_ENTER_KEY_BEHAVIORS = new Set<EnterKeyBehavior>(["send", "newline"]);
 export const DEFAULT_TERMINAL_SCROLLBACK_LINES = 10_000;
 export const MIN_TERMINAL_SCROLLBACK_LINES = 0;
 export const MAX_TERMINAL_SCROLLBACK_LINES = 1_000_000;
@@ -33,6 +37,8 @@ export interface AppSettings {
   theme: ThemeName | "auto";
   language: AppLanguage;
   sendBehavior: SendBehavior;
+  sendButtonVisibility: SendButtonVisibility;
+  enterKeyBehavior: EnterKeyBehavior;
   serviceUrlBehavior: ServiceUrlBehavior;
   terminalScrollbackLines: number;
   uiFontFamily: string; // "" = platform default UI stack
@@ -41,6 +47,8 @@ export interface AppSettings {
   codeFontSize: number; // clamped px, default 12
   syntaxTheme: SyntaxThemeId; // default "one"
   workspaceTitleSource: WorkspaceTitleSource;
+  /** When false, sidebar project rows hide the leading avatar/icon. */
+  showSidebarProjectIcons: boolean;
   autoExpandReasoning: boolean;
   toolCallDetailLevel: ToolCallDetailLevel;
   vimKeybindings: boolean;
@@ -57,6 +65,8 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   theme: "auto",
   language: "system",
   sendBehavior: "interrupt",
+  sendButtonVisibility: "always",
+  enterKeyBehavior: "send",
   serviceUrlBehavior: "ask",
   terminalScrollbackLines: DEFAULT_TERMINAL_SCROLLBACK_LINES,
   uiFontFamily: "",
@@ -65,6 +75,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   codeFontSize: DEFAULT_CODE_FONT_SIZE,
   syntaxTheme: "one",
   workspaceTitleSource: "title",
+  showSidebarProjectIcons: true,
   autoExpandReasoning: false,
   toolCallDetailLevel: "detailed",
   vimKeybindings: false,
@@ -188,7 +199,33 @@ function parseToolCallDetailLevel(stored: StoredAppSettings): ToolCallDetailLeve
   return null;
 }
 
-function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
+function pickComposerAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
+  const result: Partial<AppSettings> = {};
+  if (stored.sendBehavior === "interrupt" || stored.sendBehavior === "queue") {
+    result.sendBehavior = stored.sendBehavior;
+  }
+  if (
+    typeof stored.sendButtonVisibility === "string" &&
+    VALID_SEND_BUTTON_VISIBILITIES.has(stored.sendButtonVisibility)
+  ) {
+    result.sendButtonVisibility = stored.sendButtonVisibility;
+  }
+  if (
+    typeof stored.enterKeyBehavior === "string" &&
+    VALID_ENTER_KEY_BEHAVIORS.has(stored.enterKeyBehavior)
+  ) {
+    result.enterKeyBehavior = stored.enterKeyBehavior;
+  }
+  if (
+    typeof stored.serviceUrlBehavior === "string" &&
+    VALID_SERVICE_URL_BEHAVIORS.has(stored.serviceUrlBehavior)
+  ) {
+    result.serviceUrlBehavior = stored.serviceUrlBehavior;
+  }
+  return result;
+}
+
+function pickAppearanceAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   const result: Partial<AppSettings> = {};
   if (typeof stored.theme === "string" && VALID_THEMES.has(stored.theme)) {
     result.theme = stored.theme;
@@ -196,15 +233,6 @@ function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   const language = parseAppLanguage(stored.language);
   if (language !== null) {
     result.language = language;
-  }
-  if (stored.sendBehavior === "interrupt" || stored.sendBehavior === "queue") {
-    result.sendBehavior = stored.sendBehavior;
-  }
-  if (
-    typeof stored.serviceUrlBehavior === "string" &&
-    VALID_SERVICE_URL_BEHAVIORS.has(stored.serviceUrlBehavior)
-  ) {
-    result.serviceUrlBehavior = stored.serviceUrlBehavior;
   }
   const terminalScrollbackLines = parseTerminalScrollbackLines(stored.terminalScrollbackLines);
   if (terminalScrollbackLines !== null) {
@@ -244,6 +272,9 @@ function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   ) {
     result.workspaceTitleSource = stored.workspaceTitleSource;
   }
+  if (typeof stored.showSidebarProjectIcons === "boolean") {
+    result.showSidebarProjectIcons = stored.showSidebarProjectIcons;
+  }
   if (typeof stored.autoExpandReasoning === "boolean") {
     result.autoExpandReasoning = stored.autoExpandReasoning;
   }
@@ -252,6 +283,13 @@ function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
     result.toolCallDetailLevel = toolCallDetailLevel;
   }
   return result;
+}
+
+function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
+  return {
+    ...pickComposerAppSettings(stored),
+    ...pickAppearanceAppSettings(stored),
+  };
 }
 
 function pickAppSettingsFromLegacy(legacy: Record<string, unknown>): Partial<AppSettings> {

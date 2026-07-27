@@ -1,25 +1,16 @@
 import { memo, useCallback, useMemo, useState, type ReactNode } from "react";
-import { useTranslation } from "react-i18next";
-import {
-  ActivityIndicator,
-  Pressable,
-  Text,
-  View,
-  type GestureResponderEvent,
-  type ViewStyle,
-} from "react-native";
+import { ActivityIndicator, Text, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   CircleAlert,
-  ExternalLink,
   Folder,
   FolderGit2,
-  GitPullRequest,
   Globe,
   Monitor,
   SquareTerminal,
 } from "lucide-react-native";
 import { WorkspaceHoverCard } from "@/components/workspace-hover-card";
+import { PrBadge } from "@/components/pr-badge";
 import { SyncedLoader } from "@/components/synced-loader";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { useAppSettings } from "@/hooks/use-settings";
@@ -30,7 +21,6 @@ import { ForgeBrandIcon } from "@/git/forge-icon";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { isEmphasizedStatusDotBucket } from "@/utils/status-dot-color";
 import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
-import { openExternalUrl } from "@/utils/open-external-url";
 import { resolveSidebarWorkspacePrimaryLabel } from "@/components/sidebar/sidebar-workspace-title";
 
 const DEFAULT_STATUS_DOT_SIZE = 7;
@@ -38,7 +28,6 @@ const EMPHASIZED_STATUS_DOT_SIZE = 9;
 const DEFAULT_STATUS_DOT_OFFSET = 0;
 const EMPHASIZED_STATUS_DOT_OFFSET = -1;
 
-const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const amberColorMapping = (theme: Theme) => ({ color: theme.colors.palette.amber[500] });
 const syncedLoaderColorMapping = (theme: Theme) => ({
@@ -48,12 +37,8 @@ const syncedLoaderColorMapping = (theme: Theme) => ({
       : theme.colors.palette.amber[500],
 });
 const blueColorMapping = (theme: Theme) => ({ color: theme.colors.palette.blue[500] });
-const greenColorMapping = (theme: Theme) => ({ color: theme.colors.palette.green[500] });
 const redColorMapping = (theme: Theme) => ({ color: theme.colors.palette.red[500] });
-const purpleColorMapping = (theme: Theme) => ({ color: theme.colors.palette.purple[500] });
 
-const ThemedExternalLink = withUnistyles(ExternalLink);
-const ThemedGitPullRequest = withUnistyles(GitPullRequest);
 const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
 const ThemedCircleAlert = withUnistyles(CircleAlert);
 const ThemedSyncedLoader = withUnistyles(SyncedLoader);
@@ -294,59 +279,6 @@ function StatusDotOverlay({
   return <View style={overlayStyle} />;
 }
 
-function PrBadge({ hint }: { hint: PrHint }) {
-  const { t } = useTranslation();
-  const [isHovered, setIsHovered] = useState(false);
-  const handlePress = useCallback(
-    (event: GestureResponderEvent) => {
-      event.stopPropagation();
-      void openExternalUrl(hint.url);
-    },
-    [hint.url],
-  );
-  const textStyle = useMemo(
-    () => (isHovered ? [prBadgeStyles.text, prBadgeStyles.textHovered] : prBadgeStyles.text),
-    [isHovered],
-  );
-  const iconUniProps = isHovered ? foregroundColorMapping : getPrIconUniMapping(hint.state);
-  const presentation = getForgePresentation(normalizeForge(hint.forge));
-
-  const handlePressIn = useCallback((event: GestureResponderEvent) => event.stopPropagation(), []);
-  const handleHoverIn = useCallback(() => setIsHovered(true), []);
-  const handleHoverOut = useCallback(() => setIsHovered(false), []);
-
-  const pressableStyle = useMemo(
-    () => [prBadgeStyles.badge, isHovered && prBadgeStyles.badgePressed],
-    [isHovered],
-  );
-
-  return (
-    <Pressable
-      accessibilityRole="link"
-      accessibilityLabel={t("workspace.git.pr.accessibility.pullRequest", {
-        number: hint.number,
-        context: presentation.changeRequestContext,
-      })}
-      hitSlop={4}
-      onPressIn={handlePressIn}
-      onPress={handlePress}
-      onHoverIn={handleHoverIn}
-      onHoverOut={handleHoverOut}
-      style={pressableStyle}
-    >
-      {isHovered ? (
-        <ThemedExternalLink size={12} uniProps={iconUniProps} />
-      ) : (
-        <ThemedGitPullRequest size={12} uniProps={iconUniProps} />
-      )}
-      <Text style={textStyle} numberOfLines={1}>
-        {presentation.numberPrefix}
-        {hint.number}
-      </Text>
-    </Pressable>
-  );
-}
-
 function ChecksBadge({ checks, forge }: { checks: PrHint["checks"]; forge: PrHint["forge"] }) {
   if (!checks || checks.length === 0) return null;
   const failed = checks.filter((check) => check.status === "failure").length;
@@ -358,17 +290,6 @@ function ChecksBadge({ checks, forge }: { checks: PrHint["checks"]; forge: PrHin
       <Text style={checksBadgeStyles.text}>{failed} failed</Text>
     </View>
   );
-}
-
-function getPrIconUniMapping(state: PrHint["state"]) {
-  switch (state) {
-    case "merged":
-      return purpleColorMapping;
-    case "open":
-      return greenColorMapping;
-    case "closed":
-      return redColorMapping;
-  }
 }
 
 function getStatusDotColorStyle(bucket: SidebarStateBucket) {
@@ -385,26 +306,6 @@ function getStatusDotColorStyle(bucket: SidebarStateBucket) {
       return null;
   }
 }
-
-const prBadgeStyles = StyleSheet.create((theme) => ({
-  badge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 2,
-  },
-  badgePressed: {
-    opacity: 0.82,
-  },
-  text: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
-    lineHeight: 14,
-    color: theme.colors.foregroundMuted,
-  },
-  textHovered: {
-    color: theme.colors.foreground,
-  },
-}));
 
 const checksBadgeStyles = StyleSheet.create((theme) => ({
   badge: {

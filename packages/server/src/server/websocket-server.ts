@@ -742,7 +742,7 @@ export class VoiceAssistantWebSocketServer {
       path: "/ws",
       handleProtocols: (protocols) => selectWebSocketProtocol(protocols, password),
       verifyClient: ({ req }, callback) => {
-        this.verifyWsUpgrade(req, allowedOrigins, hostnames, callback);
+        this.verifyWsUpgrade(req, allowedOrigins, hostnames, password, callback);
       },
     });
     wss.on("connection", (ws, request) => {
@@ -795,6 +795,7 @@ export class VoiceAssistantWebSocketServer {
     req: IncomingMessage,
     allowedOrigins: Set<string>,
     hostnames: HostnamesConfig | undefined,
+    password: string | undefined,
     callback: (res: boolean, code?: number, message?: string) => void,
   ): void {
     if (!this.acceptingConnections) {
@@ -818,11 +819,15 @@ export class VoiceAssistantWebSocketServer {
 
     if (!origin || allowedOrigins.has("*") || allowedOrigins.has(origin) || sameOrigin) {
       callback(true);
-    } else {
-      this.incrementRuntimeCounter("originRejected");
-      this.logger.warn({ ...requestMetadata, origin }, "Rejected connection from origin");
-      callback(false, 403, "Origin not allowed");
+      return;
     }
+    if (isCrossOriginUpgradePasswordAuthorized(password, req.headers["sec-websocket-protocol"])) {
+      callback(true);
+      return;
+    }
+    this.incrementRuntimeCounter("originRejected");
+    this.logger.warn({ ...requestMetadata, origin }, "Rejected connection from origin");
+    callback(false, 403, "Origin not allowed");
   }
 
   private async attachAuthenticatedSocket(
@@ -2590,6 +2595,30 @@ function isLoopbackAlias(hostname: string): boolean {
     return true;
   }
   return /^127(?:\.\d{1,3}){3}$/.test(normalized);
+}
+
+/**
+ * A cross-origin browser upgrade (origin neither allowlisted nor same-origin)
+ * is still accepted when the client proves knowledge of the daemon password at
+ * upgrade time via the bearer subprotocol. This lets a daemon web UI served
+ * from one host connect directly to another password-protected daemon (e.g.
+ * the visitor's own machine at localhost:6767) without CORS configuration.
+ * Unauthenticated cross-origin pages remain blocked, so the DNS-rebinding /
+ * CSRF protection is unchanged for daemons without a password — and guessing
+ * attempts against password-protected daemons still have to beat bcrypt.
+ */
+export function isCrossOriginUpgradePasswordAuthorized(
+  password: string | undefined,
+  secWebSocketProtocol: string | undefined,
+): boolean {
+  if (!password) {
+    return false;
+  }
+  const token = extractWsBearerToken(extractWsBearerProtocol(secWebSocketProtocol));
+  if (token === null) {
+    return false;
+  }
+  return isBearerTokenValid({ password, token });
 }
 
 export function isWebSocketSameOrigin(

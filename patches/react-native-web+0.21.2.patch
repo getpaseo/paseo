@@ -1,0 +1,40 @@
+diff --git a/node_modules/react-native-web/dist/cjs/modules/createDOMProps/index.js b/node_modules/react-native-web/dist/cjs/modules/createDOMProps/index.js
+index d643013..fcfce61 100644
+--- a/node_modules/react-native-web/dist/cjs/modules/createDOMProps/index.js
++++ b/node_modules/react-native-web/dist/cjs/modules/createDOMProps/index.js
+@@ -804,10 +804,11 @@ var createDOMProps = (elementType, props, options) => {
+     }
+   }
+ 
+-  // Resolve styles
+-  if (pointerEvents != null) {
+-    (0, _warnOnce.warnOnce)('pointerEvents', "props.pointerEvents is deprecated. Use style.pointerEvents");
+-  }
++  // Resolve styles.
++  // The `props.pointerEvents` value is folded into resolved style below, so the prop is fully
++  // supported. We drop the upstream deprecation warnOnce: it fires once per session for the whole
++  // app (including third-party libs like @gorhom, react-navigation we can't edit), so it can never
++  // be silenced by touching our own call sites. Behavior is unchanged.
+   var _StyleSheet = (0, _StyleSheet2.default)([style, pointerEvents && pointerEventsStyles[pointerEvents]], (0, _objectSpread2.default)({
+       writingDirection: 'ltr'
+     }, options)),
+diff --git a/node_modules/react-native-web/dist/modules/createDOMProps/index.js b/node_modules/react-native-web/dist/modules/createDOMProps/index.js
+index 18f5e8b..5e57f2e 100644
+--- a/node_modules/react-native-web/dist/modules/createDOMProps/index.js
++++ b/node_modules/react-native-web/dist/modules/createDOMProps/index.js
+@@ -800,10 +800,11 @@ var createDOMProps = (elementType, props, options) => {
+     }
+   }
+ 
+-  // Resolve styles
+-  if (pointerEvents != null) {
+-    warnOnce('pointerEvents', "props.pointerEvents is deprecated. Use style.pointerEvents");
+-  }
++  // Resolve styles.
++  // The `props.pointerEvents` value is folded into resolved style below, so the prop is fully
++  // supported. We drop the upstream deprecation warnOnce: it fires once per session for the whole
++  // app (including third-party libs like @gorhom, react-navigation we can't edit), so it can never
++  // be silenced by touching our own call sites. Behavior is unchanged.
+   var _StyleSheet = StyleSheet([style, pointerEvents && pointerEventsStyles[pointerEvents]], _objectSpread({
+       writingDirection: 'ltr'
+     }, options)),

@@ -11,6 +11,8 @@ import {
 } from "./agent-hook-installer.js";
 import { claudeAgentHookProvider } from "./claude/claude.js";
 import { codexAgentHookProvider } from "./codex/codex.js";
+import { cursorAgentHookProvider } from "./cursor/cursor.js";
+import { grokAgentHookProvider } from "./grok/grok.js";
 import { opencodeAgentHookProvider } from "./opencode/opencode.js";
 
 export type {
@@ -22,6 +24,8 @@ export type {
 export const AGENT_HOOK_PROVIDERS = {
   [claudeAgentHookProvider.id]: claudeAgentHookProvider,
   [codexAgentHookProvider.id]: codexAgentHookProvider,
+  [cursorAgentHookProvider.id]: cursorAgentHookProvider,
+  [grokAgentHookProvider.id]: grokAgentHookProvider,
   [opencodeAgentHookProvider.id]: opencodeAgentHookProvider,
 } satisfies Record<string, AgentHookProvider>;
 

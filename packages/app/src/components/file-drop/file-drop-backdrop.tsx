@@ -7,8 +7,11 @@ import { useTranslation } from "react-i18next";
 import type { Theme } from "@/styles/theme";
 import { useFileDropContext } from "./context";
 
-const ThemedUpload = withUnistyles(Upload);
-const primaryIconColorMapping = (theme: Theme) => ({ color: theme.colors.primary });
+// Prefer withUnistyles mappings over uniProps — lucide forwards unknown props to
+// SVG <path> on web, which logs React DOM warnings for `uniProps`.
+const ThemedUpload = withUnistyles(Upload, (theme: Theme) => ({
+  color: theme.colors.primary,
+}));
 
 /**
  * Drop overlay rendered by FileDropZone. Reads `isDragging` on the UI thread so the dim
@@ -37,7 +40,7 @@ export function FileDropBackdrop() {
     <Animated.View style={overlayStyle} pointerEvents="none">
       <View style={styles.backdrop} />
       <View style={styles.content}>
-        <ThemedUpload size={32} uniProps={primaryIconColorMapping} />
+        <ThemedUpload size={32} />
         <Text style={styles.text}>{t("composer.attachments.dropFilesHere")}</Text>
       </View>
     </Animated.View>

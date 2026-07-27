@@ -26,7 +26,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import { useMutation } from "@tanstack/react-query";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
-import { Check, ChevronDown, X } from "lucide-react-native";
+import { ArrowDown, Check, X } from "lucide-react-native";
 import { usePanelStore } from "@/stores/panel-store";
 import {
   AssistantMessage,
@@ -241,6 +241,7 @@ export interface AgentStreamViewProps {
   pendingPermissions: Map<string, PendingPermission>;
   routeBottomAnchorRequest?: BottomAnchorRouteRequest | null;
   isAuthoritativeHistoryReady?: boolean;
+  bottomContentInset?: number;
   toast?: ToastApi | null;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
   readOnly?: boolean;
@@ -328,6 +329,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       pendingPermissions,
       routeBottomAnchorRequest = null,
       isAuthoritativeHistoryReady = true,
+      bottomContentInset = 0,
       toast,
       onOpenWorkspaceFile,
       readOnly = false,
@@ -1001,6 +1003,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const streamScrollEnabled =
       !streamRenderStrategy.shouldDisableParentScrollOnInlineDetailsExpansion() ||
       expandedInlineToolCallIds.size === 0;
+    const scrollToBottomContainerStyle = useMemo(
+      () => [stylesheet.scrollToBottomContainer, { bottom: bottomContentInset + 8 }],
+      [bottomContentInset],
+    );
     const historyRowRevision = useMemo(
       () => ({
         contentById: projectedToolCalls.historyGroupUpdatesByHostId,
@@ -1030,22 +1036,27 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               isLoadingOlderHistory: isLoadingOlder,
               hasOlderHistory: hasOlder,
               scrollEnabled: streamScrollEnabled,
+              bottomContentInset,
               listStyle: stylesheet.list,
-              baseListContentContainerStyle: stylesheet.listContentContainer,
+              baseListContentContainerStyle: [
+                stylesheet.listContentContainer,
+                bottomContentInset > 0 ? { paddingTop: bottomContentInset } : null,
+              ],
               forwardListContentContainerStyle: stylesheet.forwardListContentContainer,
             })}
           </MessageOuterSpacingProvider>
           {!isNearBottom && (
-            <View style={stylesheet.scrollToBottomContainer} pointerEvents="box-none">
+            <View style={scrollToBottomContainerStyle} pointerEvents="box-none">
               <Animated.View entering={scrollIndicatorFadeIn} exiting={scrollIndicatorFadeOut}>
                 <Pressable
                   style={stylesheet.scrollToBottomButton}
                   onPress={scrollToBottom}
+                  hitSlop={8}
                   accessibilityRole="button"
                   accessibilityLabel={t("agentStream.scrollToBottom")}
                   testID="scroll-to-bottom-button"
                 >
-                  <ChevronDown size={24} color={stylesheet.scrollToBottomIcon.color} />
+                  <ArrowDown size={18} color={stylesheet.scrollToBottomIcon.color} />
                 </Pressable>
               </Animated.View>
             </View>
@@ -1161,6 +1172,7 @@ function agentStreamViewPropsEqual(
   if (left.isAuthoritativeHistoryReady !== right.isAuthoritativeHistoryReady) {
     reasons.push("isAuthoritativeHistoryReady");
   }
+  if (left.bottomContentInset !== right.bottomContentInset) reasons.push("bottomContentInset");
   if (left.toast !== right.toast) reasons.push("toast");
   if (left.onOpenWorkspaceFile !== right.onOpenWorkspaceFile) reasons.push("onOpenWorkspaceFile");
   if (left.readOnly !== right.readOnly) reasons.push("readOnly");
@@ -1477,7 +1489,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     width: "100%",
     maxWidth: MAX_CONTENT_WIDTH,
     alignSelf: "center",
-    paddingHorizontal: theme.spacing[2],
   },
   listContentContainer: {
     paddingVertical: 0,
@@ -1498,7 +1509,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     width: "100%",
     maxWidth: MAX_CONTENT_WIDTH,
     alignSelf: "center",
-    paddingHorizontal: theme.spacing[2],
   },
   emptyState: {
     flex: 1,
@@ -1540,9 +1550,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     alignItems: "center",
   },
   scrollToBottomButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: theme.colors.surface2,
     alignItems: "center",
     justifyContent: "center",

@@ -55,6 +55,7 @@ import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./quer
 import { realClaudeRewindSdk, revertClaudeConversation, revertClaudeFiles } from "./rewind.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import { claudeProjectDirSync } from "./project-dir.js";
+import { deleteClaudeNativeSession } from "./delete-native-session.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
 import {
   isProviderImageMarkdown,
@@ -1618,6 +1619,13 @@ export class ClaudeAgentClient implements AgentClient {
       throw new Error(`ClaudeAgentClient received config for provider '${config.provider}'`);
     }
     return { ...config, provider: "claude" } as ClaudeAgentConfig;
+  }
+
+  async deleteNativeSession(handle: AgentPersistenceHandle): Promise<void> {
+    const cwd = (handle.metadata as Partial<AgentSessionConfig> | undefined)?.cwd;
+    const sessionId = handle.sessionId;
+    const configDir = process.env.CLAUDE_CONFIG_DIR ?? undefined;
+    await deleteClaudeNativeSession(cwd, sessionId, configDir);
   }
 }
 

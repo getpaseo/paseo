@@ -135,13 +135,13 @@ export function ToastViewport({
         toValue: 0,
         duration: 140,
         easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
+        useNativeDriver: !isWeb,
       }),
       Animated.timing(translateY, {
         toValue: -8,
         duration: 140,
         easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
+        useNativeDriver: !isWeb,
       }),
     ]).start(({ finished }) => {
       if (finished) {
@@ -202,13 +202,13 @@ export function ToastViewport({
         toValue: 1,
         duration: 140,
         easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
+        useNativeDriver: !isWeb,
       }),
       Animated.timing(translateY, {
         toValue: 0,
         duration: 140,
         easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
+        useNativeDriver: !isWeb,
       }),
     ]).start();
 

@@ -63,6 +63,38 @@ describe("DaemonConfigStore", () => {
     }
   });
 
+  test("patch persists dictation and voice mode enabled flags into features", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        dictation: { enabled: true },
+        voiceMode: { enabled: true },
+        providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+    );
+
+    store.patch({
+      dictation: { enabled: false },
+      voiceMode: { enabled: false },
+    });
+
+    const persisted = loadPersistedConfig(paseoHome);
+    expect(persisted.features?.dictation?.enabled).toBe(false);
+    expect(persisted.features?.voiceMode?.enabled).toBe(false);
+    expect(store.get().dictation).toEqual({ enabled: false });
+    expect(store.get().voiceMode).toEqual({ enabled: false });
+  });
+
   test("patch persists provider enabled flags into config.json", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);
@@ -95,6 +127,8 @@ describe("DaemonConfigStore", () => {
       {
         mcp: { injectIntoAgents: false },
         browserTools: { enabled: false },
+        dictation: { enabled: true },
+        voiceMode: { enabled: true },
         providers: {},
         metadataGeneration: { providers: [] },
         autoArchiveAfterMerge: false,
@@ -152,6 +186,8 @@ describe("DaemonConfigStore", () => {
       {
         mcp: { injectIntoAgents: false },
         browserTools: { enabled: false },
+        dictation: { enabled: true },
+        voiceMode: { enabled: true },
         providers: {
           gemini: {},
           claude: { enabled: false },
@@ -203,6 +239,8 @@ describe("DaemonConfigStore", () => {
       {
         mcp: { injectIntoAgents: false },
         browserTools: { enabled: false },
+        dictation: { enabled: true },
+        voiceMode: { enabled: true },
         providers: { gemini: {} },
         metadataGeneration: { providers: [] },
         autoArchiveAfterMerge: false,
@@ -257,6 +295,8 @@ describe("DaemonConfigStore", () => {
       {
         mcp: { injectIntoAgents: false },
         browserTools: { enabled: false },
+        dictation: { enabled: true },
+        voiceMode: { enabled: true },
         providers: {
           gemini: {},
           claude: { enabled: false },
@@ -316,6 +356,8 @@ describe("DaemonConfigStore", () => {
       {
         mcp: { injectIntoAgents: false },
         browserTools: { enabled: false },
+        dictation: { enabled: true },
+        voiceMode: { enabled: true },
         providers: {},
         metadataGeneration: { providers: [] },
         autoArchiveAfterMerge: false,
@@ -342,6 +384,8 @@ describe("DaemonConfigStore", () => {
       {
         mcp: { injectIntoAgents: false },
         browserTools: { enabled: false },
+        dictation: { enabled: true },
+        voiceMode: { enabled: true },
         providers: {},
         metadataGeneration: { providers: [] },
         autoArchiveAfterMerge: false,
@@ -368,6 +412,8 @@ describe("DaemonConfigStore", () => {
       {
         mcp: { injectIntoAgents: false },
         browserTools: { enabled: false },
+        dictation: { enabled: true },
+        voiceMode: { enabled: true },
         providers: {},
         metadataGeneration: { providers: [] },
         autoArchiveAfterMerge: false,
@@ -391,6 +437,8 @@ describe("DaemonConfigStore", () => {
       {
         mcp: { injectIntoAgents: false },
         browserTools: { enabled: false },
+        dictation: { enabled: true },
+        voiceMode: { enabled: true },
         providers: {},
         metadataGeneration: { providers: [] },
         autoArchiveAfterMerge: false,
@@ -433,6 +481,8 @@ describe("DaemonConfigStore", () => {
       {
         mcp: { injectIntoAgents: false },
         browserTools: { enabled: false },
+        dictation: { enabled: true },
+        voiceMode: { enabled: true },
         providers: {},
         metadataGeneration: { providers: [] },
         autoArchiveAfterMerge: false,
@@ -482,6 +532,8 @@ describe("DaemonConfigStore", () => {
       {
         mcp: { injectIntoAgents: false },
         browserTools: { enabled: false },
+        dictation: { enabled: true },
+        voiceMode: { enabled: true },
         providers: {},
         metadataGeneration: { providers: [] },
         autoArchiveAfterMerge: false,
@@ -535,6 +587,8 @@ describe("DaemonConfigStore", () => {
       {
         mcp: { injectIntoAgents: false },
         browserTools: { enabled: false },
+        dictation: { enabled: true },
+        voiceMode: { enabled: true },
         providers: {},
         autoArchiveAfterMerge: false,
         enableTerminalAgentHooks: false,
@@ -559,6 +613,8 @@ describe("DaemonConfigStore", () => {
       {
         mcp: { injectIntoAgents: false },
         browserTools: { enabled: false },
+        dictation: { enabled: true },
+        voiceMode: { enabled: true },
         providers: {},
         autoArchiveAfterMerge: false,
         enableTerminalAgentHooks: false,

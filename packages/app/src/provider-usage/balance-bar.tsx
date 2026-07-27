@@ -1,7 +1,8 @@
 import { useMemo } from "react";
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { clampPct, formatAmount, formatResetLabel } from "./format";
+import { clampPct, formatAmount, formatAmountLeft, formatResetLabel } from "./format";
+import { localizeProviderUsageLabel } from "./labels";
 import type { ProviderUsageBalance, ProviderUsageTone } from "./types";
 
 interface ResolvedBalance {
@@ -18,7 +19,7 @@ function resolveBalance(balance: ProviderUsageBalance): ResolvedBalance {
     return { amountText: `${usedText} / ${formatAmount(limit, unit)}`, usedPct };
   }
   if (remaining != null) {
-    return { amountText: `${formatAmount(remaining, unit)} left`, usedPct: null };
+    return { amountText: formatAmountLeft(formatAmount(remaining, unit)), usedPct: null };
   }
   if (used != null) {
     return { amountText: formatAmount(used, unit), usedPct: null };
@@ -53,7 +54,7 @@ export function ProviderUsageBalanceBar({ balance }: { balance: ProviderUsageBal
     <View style={styles.container}>
       <View style={styles.labelRow}>
         <Text style={styles.label} numberOfLines={1}>
-          {balance.label}
+          {localizeProviderUsageLabel(balance.id, balance.label)}
         </Text>
         <Text style={styles.value}>
           {amountText}

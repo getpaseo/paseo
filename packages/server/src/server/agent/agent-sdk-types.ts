@@ -209,6 +209,8 @@ export interface AgentUsage {
   totalCostUsd?: number;
   contextWindowMaxTokens?: number;
   contextWindowUsedTokens?: number;
+  // COMPAT(contextWindowEstimated): added in v0.2.0-beta.4, remove after 2027-01-24.
+  contextWindowEstimated?: boolean;
 }
 
 export const TOOL_CALL_ICON_NAMES = [
@@ -731,6 +733,11 @@ export interface AgentClient {
    * Called before Paseo clears its archived flag so provider resume can succeed.
    */
   unarchiveNativeSession?(handle: AgentPersistenceHandle): Promise<void>;
+  /**
+   * Permanently delete a durable native session (best-effort).
+   * Called when Paseo hard-deletes an agent so the provider's own history also goes away.
+   */
+  deleteNativeSession?(handle: AgentPersistenceHandle): Promise<void>;
   /**
    * Release any provider-owned resources held by this client (background
    * processes, sockets, cached subprocesses, etc.). Called when the daemon

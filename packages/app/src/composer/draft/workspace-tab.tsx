@@ -1,13 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import { Keyboard, ScrollView, StyleSheet as RNStyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Keyboard, ScrollView, Text, View, type LayoutChangeEvent } from "react-native";
 import { useTranslation } from "react-i18next";
-import ReanimatedAnimated from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import invariant from "tiny-invariant";
 import { Composer } from "@/composer";
+import { ComposerDock } from "@/composer/dock";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { ComposerImportPill } from "@/composer/draft/import-pill";
 import { AgentStreamView } from "@/agent-stream/view";
@@ -335,7 +333,6 @@ export function WorkspaceDraftAgentTab({
   onOpenImportSheet,
 }: WorkspaceDraftAgentTabProps) {
   const { t } = useTranslation();
-  const insets = useSafeAreaInsets();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const workspaceFields = useWorkspaceFields(serverId, workspaceId, (w) => ({
@@ -438,6 +435,17 @@ export function WorkspaceDraftAgentTab({
   const { onLayout: onInputAreaLayout, isBelow: isCompactComposerLayout } = useContainerWidthBelow(
     COMPACT_FORM_FACTOR_WIDTH,
     { initialIsBelow: isCompactFormFactor },
+  );
+  const [composerAreaHeight, setComposerAreaHeight] = useState(0);
+  const handleComposerAreaLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      onInputAreaLayout(event);
+      const nextHeight = event.nativeEvent.layout.height;
+      setComposerAreaHeight((current) =>
+        Math.abs(current - nextHeight) < 1 ? current : nextHeight,
+      );
+    },
+    [onInputAreaLayout],
   );
   const workspaceAttachmentScopeKey = useWorkspaceAttachmentScopeKey({
     serverId,
@@ -608,19 +616,6 @@ export function WorkspaceDraftAgentTab({
     focusInputRef.current = focus;
   }, []);
 
-  const { style: composerKeyboardStyle } = useKeyboardShiftStyle({
-    mode: "translate",
-  });
-
-  const inputAreaWrapperStyle = useMemo(
-    () => [
-      animatedStaticStyles.inputAreaWrapper,
-      { paddingBottom: insets.bottom },
-      composerKeyboardStyle,
-    ],
-    [insets.bottom, composerKeyboardStyle],
-  );
-
   const handleDropdownCloseFocus = useCallback(() => {
     focusInputRef.current?.();
   }, []);
@@ -644,6 +639,7 @@ export function WorkspaceDraftAgentTab({
               context={draftAgent}
               streamItems={optimisticStreamItems}
               pendingPermissions={EMPTY_PENDING_PERMISSIONS}
+              bottomContentInset={composerAreaHeight}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
             />
           </View>
@@ -660,7 +656,7 @@ export function WorkspaceDraftAgentTab({
         )}
       </View>
 
-      <ReanimatedAnimated.View style={inputAreaWrapperStyle} onLayout={onInputAreaLayout}>
+      <ComposerDock compact={isCompactFormFactor} onLayout={handleComposerAreaLayout}>
         {importPillPress ? (
           <View style={styles.importPillRow}>
             <View style={styles.importPillContent}>
@@ -692,20 +688,15 @@ export function WorkspaceDraftAgentTab({
           agentControls={composerAgentControls}
           isCompactLayout={isCompactComposerLayout}
         />
-      </ReanimatedAnimated.View>
+      </ComposerDock>
     </FileDropZone>
   );
 }
 
-const animatedStaticStyles = RNStyleSheet.create({
-  inputAreaWrapper: {
-    width: "100%",
-  },
-});
-
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
+    position: "relative",
     width: "100%",
     backgroundColor: theme.colors.surface0,
   },

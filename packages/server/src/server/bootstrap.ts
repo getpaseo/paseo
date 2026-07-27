@@ -126,6 +126,8 @@ import type { OpenAiSpeechProviderConfig } from "./speech/providers/openai/confi
 import type { LocalSpeechProviderConfig } from "./speech/providers/local/config.js";
 import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
+import { resolveSpeechConfig } from "./speech/speech-config-resolver.js";
+import { loadPersistedConfig } from "./persisted-config.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
@@ -511,6 +513,12 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
   const initialConfig: MutableDaemonConfig = {
     mcp: { injectIntoAgents: config.mcpInjectIntoAgents ?? true },
     browserTools: { enabled: config.browserToolsEnabled ?? false },
+    dictation: {
+      enabled: config.speech?.providers.dictationStt.enabled === true,
+    },
+    voiceMode: {
+      enabled: config.speech?.providers.voiceStt.enabled === true,
+    },
     providers,
     metadataGeneration: {
       providers: config.metadataGeneration?.providers ?? [],
@@ -1435,6 +1443,32 @@ export async function createPaseoDaemon(
     logger,
     openaiConfig: config.openai,
     speechConfig: config.speech,
+  });
+  const reapplySpeechFromPersistedConfig = (): void => {
+    try {
+      const persisted = loadPersistedConfig(config.paseoHome, logger);
+      const resolved = resolveSpeechConfig({
+        paseoHome: config.paseoHome,
+        env: process.env,
+        persisted,
+      });
+      void speechService
+        .applySpeechConfig({
+          speechConfig: resolved.speech,
+          openaiConfig: resolved.openai,
+        })
+        .catch((error) => {
+          logger.warn({ err: error }, "Failed to reapply speech config after daemon config change");
+        });
+    } catch (error) {
+      logger.warn({ err: error }, "Failed to resolve speech config after daemon config change");
+    }
+  };
+  daemonConfigStore.onFieldChange("dictation.enabled", () => {
+    reapplySpeechFromPersistedConfig();
+  });
+  daemonConfigStore.onFieldChange("voiceMode.enabled", () => {
+    reapplySpeechFromPersistedConfig();
   });
   logger.info({ elapsed: elapsed() }, "Speech service created");
 

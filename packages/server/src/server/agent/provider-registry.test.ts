@@ -44,6 +44,7 @@ const mockState = vi.hoisted(() => {
     isCommandAvailable: vi.fn(async (_command: string) => false),
     runtimeModels: new Map<string, AgentModelDefinition[]>(),
     cursorListFeaturesConfigs: [] as AgentSessionConfig[],
+    genericAcpDeleteCalls: [] as Array<{ provider: string; sessionId: string }>,
     reset() {
       this.constructorArgs.claude = [];
       this.constructorArgs.codex = [];
@@ -56,6 +57,7 @@ const mockState = vi.hoisted(() => {
       this.isCommandAvailable.mockImplementation(async (_command: string) => false);
       this.runtimeModels.clear();
       this.cursorListFeaturesConfigs = [];
+      this.genericAcpDeleteCalls = [];
     },
   };
 });
@@ -317,6 +319,13 @@ vi.mock("./providers/generic-acp-agent.js", () => ({
 
     async resumeSession(): Promise<never> {
       throw new Error("not implemented");
+    }
+
+    async deleteNativeSession(handle: { provider: string; sessionId: string }): Promise<void> {
+      mockState.genericAcpDeleteCalls.push({
+        provider: handle.provider,
+        sessionId: handle.sessionId,
+      });
     }
 
     async fetchCatalog(): Promise<ProviderCatalog> {
@@ -636,6 +645,30 @@ test("new provider extending acp uses GenericACPAgentClient", () => {
       label: "My Agent",
       providerParams: undefined,
     },
+  ]);
+});
+
+test("wrapped ACP clients forward deleteNativeSession to the inner client", async () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      "my-agent": {
+        extends: "acp",
+        label: "My Agent",
+        command: ["my-agent", "--acp"],
+      },
+    },
+  });
+
+  const client = registry["my-agent"].createClient(logger);
+  expect(client.deleteNativeSession).toBeTypeOf("function");
+
+  await client.deleteNativeSession?.({
+    provider: "my-agent",
+    sessionId: "sess-wrapped-1",
+  });
+
+  expect(mockState.genericAcpDeleteCalls).toEqual([
+    { provider: "acp", sessionId: "sess-wrapped-1" },
   ]);
 });
 

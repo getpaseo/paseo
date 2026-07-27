@@ -1344,6 +1344,48 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("extracts usage from info-wrapped token_count payloads (rollout shape)", () => {
+    expect(
+      toAgentUsage({
+        info: {
+          model_context_window: 258400,
+          total_token_usage: { total_tokens: 14763528 },
+          last_token_usage: {
+            input_tokens: 125992,
+            cached_input_tokens: 123648,
+            output_tokens: 182,
+            total_tokens: 126174,
+          },
+        },
+      }),
+    ).toEqual({
+      inputTokens: 125992,
+      cachedInputTokens: 123648,
+      outputTokens: 182,
+      contextWindowMaxTokens: 258400,
+      contextWindowUsedTokens: 126174,
+    });
+  });
+
+  test("extracts usage from top-level last_token_usage payloads", () => {
+    expect(
+      toAgentUsage({
+        model_context_window: 258400,
+        last_token_usage: {
+          input_tokens: 100,
+          output_tokens: 20,
+          total_tokens: 120,
+        },
+      }),
+    ).toEqual({
+      inputTokens: 100,
+      cachedInputTokens: undefined,
+      outputTokens: 20,
+      contextWindowMaxTokens: 258400,
+      contextWindowUsedTokens: 120,
+    });
+  });
+
   test("normalizes raw output schemas for Codex structured outputs", () => {
     const input = {
       type: "object",

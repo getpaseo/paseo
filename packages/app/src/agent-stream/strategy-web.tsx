@@ -10,6 +10,7 @@ import React, {
 } from "react";
 import { ActivityIndicator } from "react-native";
 import { measureElement as measureVirtualElement, useVirtualizer } from "@tanstack/react-virtual";
+import { SPACING } from "@/styles/theme";
 import { estimateStreamItemHeight } from "./web-virtualization";
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./strategy";
 import { createStreamStrategy } from "./strategy";
@@ -108,6 +109,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     isLoadingOlderHistory,
     hasOlderHistory,
     scrollEnabled,
+    bottomContentInset = 0,
     isMobileBreakpoint,
   } = props;
   const scrollContainerRef = useRef<HTMLElement | null>(null);
@@ -490,17 +492,19 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   }, [cancelPendingStickToBottom, forceStickToBottom, scheduleStickToBottom, viewportRef]);
 
   const contentContainerStyle = useMemo((): CSSProperties => {
+    // Keep in sync with `listContentContainer` in view.tsx (xs: spacing[3], md: spacing[4]).
+    const horizontalPadding = isMobileBreakpoint ? SPACING[3] : SPACING[4];
     return {
       display: "flex",
       flexDirection: "column",
       minHeight: "100%",
-      paddingTop: 16,
-      paddingBottom: 16,
-      paddingLeft: isMobileBreakpoint ? 8 : 16,
-      paddingRight: isMobileBreakpoint ? 8 : 16,
+      paddingTop: SPACING[4],
+      paddingBottom: SPACING[4] + bottomContentInset,
+      paddingLeft: horizontalPadding,
+      paddingRight: horizontalPadding,
       boxSizing: "border-box",
     };
-  }, [isMobileBreakpoint]);
+  }, [bottomContentInset, isMobileBreakpoint]);
   const scrollContainerStyle = useMemo((): CSSProperties => {
     return {
       flex: 1,

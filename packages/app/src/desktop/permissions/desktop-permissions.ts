@@ -123,7 +123,7 @@ function mapNotificationPermissionString(permission: string): DesktopPermissionS
 
 export function createDesktopPermissions(env: DesktopPermissionEnvironment): DesktopPermissions {
   function shouldShowDesktopPermissionSection(): boolean {
-    return env.isWeb && env.getDesktopHost() !== null;
+    return env.isWeb;
   }
 
   async function getNotificationPermissionStatus(): Promise<DesktopPermissionStatus> {

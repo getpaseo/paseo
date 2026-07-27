@@ -23,7 +23,6 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { useShallow } from "zustand/shallow";
 import {
   ArrowUp,
-  Square,
   Pencil,
   AudioLines,
   CircleDot,
@@ -40,7 +39,12 @@ import {
   type DraftAgentControlsProps,
 } from "@/composer/agent-controls";
 import { ContextWindowMeter } from "@/components/context-window-meter";
+import {
+  resolveContextWindowValues,
+  resolveModelContextWindowMaxTokens,
+} from "@/components/context-window-meter.utils";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
+import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useSessionStore } from "@/stores/session-store";
 import { useFilePicker } from "@/hooks/use-file-picker";
 import { useFileDrop } from "@/components/file-drop/use-file-drop";
@@ -113,6 +117,7 @@ import { AttachmentLabel, AttachmentPill, AttachmentThumbnail } from "@/componen
 import { AttachmentLightbox } from "@/components/attachment-lightbox";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useIsDictationReady } from "@/hooks/use-is-dictation-ready";
+import { useVoiceFeatureUiEnabled } from "@/hooks/use-voice-feature-ui-enabled";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
@@ -192,11 +197,6 @@ function resolveCheckoutRemoteUrl(
   return checkoutStatus?.remoteUrl ?? null;
 }
 
-function buildCancelButtonStyle(isConnected: boolean, isCancellingAgent: boolean): object[] {
-  const disabled = !isConnected || isCancellingAgent ? styles.buttonDisabled : undefined;
-  return [styles.cancelButton, disabled].filter((value): value is object => Boolean(value));
-}
-
 function buildRealtimeVoiceButtonStyle(
   hovered: boolean | undefined,
   voiceButtonDisabled: boolean,
@@ -213,12 +213,15 @@ function buildRealtimeVoiceButtonStyle(
 function buildAgentStateSelector(serverId: string, agentId: string) {
   return (state: ReturnType<typeof useSessionStore.getState>) => {
     const agent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
+    const usage = agent?.lastUsage ?? {};
     return {
       status: agent?.status ?? null,
-      contextWindowMaxTokens: agent?.lastUsage?.contextWindowMaxTokens ?? null,
-      contextWindowUsedTokens: agent?.lastUsage?.contextWindowUsedTokens ?? null,
-      totalCostUsd: agent?.lastUsage?.totalCostUsd ?? null,
+      contextWindowMaxTokens: usage.contextWindowMaxTokens ?? null,
+      contextWindowUsedTokens: usage.contextWindowUsedTokens ?? null,
+      contextWindowEstimated: usage.contextWindowEstimated ?? false,
+      totalCostUsd: usage.totalCostUsd ?? null,
       model: agent?.model ?? null,
+      runtimeModelId: agent?.runtimeInfo?.model ?? null,
       provider: agent?.provider ?? null,
     };
   };
@@ -227,26 +230,29 @@ function buildAgentStateSelector(serverId: string, agentId: string) {
 function renderContextWindowMeter(
   contextWindowMaxTokens: number | null,
   contextWindowUsedTokens: number | null,
+  contextWindowEstimated: boolean,
   totalCostUsd: number | null,
   showPercentage: boolean,
   serverId: string,
   provider: string | null,
   pending: boolean,
+  showUnavailable: boolean,
   glyphSize: number,
 ): ReactElement | null {
-  const hasData = contextWindowMaxTokens !== null && contextWindowUsedTokens !== null;
-  if (!hasData && !pending) {
+  if (contextWindowMaxTokens === null && !pending && !showUnavailable) {
     return null;
   }
   return (
     <ContextWindowMeter
       maxTokens={contextWindowMaxTokens}
       usedTokens={contextWindowUsedTokens}
+      estimated={contextWindowEstimated}
       totalCostUsd={totalCostUsd}
       showPercentage={showPercentage}
       serverId={serverId}
       provider={provider}
       pending={pending}
+      showUnavailable={showUnavailable}
       glyphSize={glyphSize}
     />
   );
@@ -851,81 +857,6 @@ const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 const EMPTY_ARRAY: readonly QueuedMessage[] = [];
 const StableMessageInput = memo(MessageInput);
 
-function resolveContextWindowValues(
-  rawMax: number | null,
-  rawUsed: number | null,
-): { contextWindowMaxTokens: number | null; contextWindowUsedTokens: number | null } {
-  if (typeof rawMax === "number" && typeof rawUsed === "number") {
-    return { contextWindowMaxTokens: rawMax, contextWindowUsedTokens: rawUsed };
-  }
-  return { contextWindowMaxTokens: null, contextWindowUsedTokens: null };
-}
-
-interface ComposerCancelButtonProps {
-  buttonIconSize: number;
-  cancelButtonStyle: (object | undefined)[];
-  handleCancelAgent: () => void;
-  isConnected: boolean;
-  isCancellingAgent: boolean;
-  agentInterruptKeys: ReturnType<typeof useShortcutKeys>;
-  t: TFunction;
-}
-
-function ComposerCancelButton({
-  buttonIconSize,
-  cancelButtonStyle,
-  handleCancelAgent,
-  isConnected,
-  isCancellingAgent,
-  agentInterruptKeys,
-  t,
-}: ComposerCancelButtonProps) {
-  const accessibilityLabel = isCancellingAgent
-    ? t("composer.cancel.cancelingAgent")
-    : t("composer.cancel.stopAgent");
-  const icon = isCancellingAgent ? (
-    <ActivityIndicator size="small" color="white" />
-  ) : (
-    <Square size={buttonIconSize} color="white" fill="white" />
-  );
-  const shortcutNode = agentInterruptKeys ? <Shortcut chord={agentInterruptKeys} /> : null;
-  return (
-    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-      <TooltipTrigger
-        onPress={handleCancelAgent}
-        disabled={!isConnected || isCancellingAgent}
-        accessibilityLabel={accessibilityLabel}
-        accessibilityRole="button"
-        style={cancelButtonStyle}
-      >
-        {icon}
-      </TooltipTrigger>
-      <TooltipContent side="top" align="center" offset={8}>
-        <View style={styles.tooltipRow}>
-          <Text style={styles.tooltipText}>{t("composer.cancel.interrupt")}</Text>
-          {shortcutNode}
-        </View>
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
-interface ComposerCancelButtonSlotProps extends ComposerCancelButtonProps {
-  isAgentRunning: boolean;
-  hasSendableContent: boolean;
-  isProcessing: boolean;
-}
-
-function ComposerCancelButtonSlot({
-  isAgentRunning,
-  hasSendableContent,
-  isProcessing,
-  ...rest
-}: ComposerCancelButtonSlotProps) {
-  if (!isAgentRunning || hasSendableContent || isProcessing) return null;
-  return <ComposerCancelButton {...rest} />;
-}
-
 interface ComposerVoiceModeButtonProps {
   buttonIconSize: number;
   handleToggleRealtimeVoice: () => void;
@@ -940,33 +871,33 @@ interface ComposerVoiceModeButtonProps {
 
 interface ComposerRightControlsSlotProps extends ComposerVoiceModeButtonProps {
   isVoiceModeForAgent: boolean;
+  isVoiceModeFeatureEnabled: boolean;
   hasAgent: boolean;
   isAgentRunning: boolean;
   hasSendableContent: boolean;
-  isProcessing: boolean;
   isCompact: boolean;
-  cancelButton: ReactElement;
 }
 
 function ComposerRightControlsSlot({
   isVoiceModeForAgent,
+  isVoiceModeFeatureEnabled,
   hasAgent,
   isAgentRunning,
   hasSendableContent,
-  isProcessing,
   isCompact,
-  cancelButton,
   ...voiceProps
 }: ComposerRightControlsSlotProps) {
   const hideVoiceForCompactInput = isCompact && hasSendableContent;
   const showVoiceModeButton =
-    !isVoiceModeForAgent && hasAgent && !isAgentRunning && !hideVoiceForCompactInput;
-  const shouldShowCancelButton = isAgentRunning && !hasSendableContent && !isProcessing;
-  if (!showVoiceModeButton && !shouldShowCancelButton) return null;
+    isVoiceModeFeatureEnabled &&
+    !isVoiceModeForAgent &&
+    hasAgent &&
+    !isAgentRunning &&
+    !hideVoiceForCompactInput;
+  if (!showVoiceModeButton) return null;
   return (
     <View style={styles.rightControls}>
-      {showVoiceModeButton ? <ComposerVoiceModeButton {...voiceProps} /> : null}
-      {cancelButton}
+      <ComposerVoiceModeButton {...voiceProps} />
     </View>
   );
 }
@@ -1062,16 +993,31 @@ export function Composer({
   toastErrorRef.current = toast.error;
   const voice = useVoiceOptional();
   const voiceToggleKeys = useShortcutKeys("voice-toggle");
-  const agentInterruptKeys = useShortcutKeys("agent-interrupt");
   const isDictationReady = useIsDictationReady({
     serverId,
     isConnected,
     agentDirectoryStatus,
   });
+  const isDictationFeatureEnabled = useVoiceFeatureUiEnabled(serverId, "dictation");
+  const isVoiceModeFeatureEnabled = useVoiceFeatureUiEnabled(serverId, "voice");
 
   const { settings: appSettings } = useAppSettings();
 
   const agentState = useSessionStore(useShallow(buildAgentStateSelector(serverId, agentId)));
+  const { entries: providerSnapshotEntries } = useProvidersSnapshot(serverId, {
+    cwd,
+    enabled: Boolean(agentState.provider),
+  });
+  const modelContextWindowMaxTokens = useMemo(() => {
+    const models = providerSnapshotEntries?.find(
+      (entry) => entry.provider === agentState.provider,
+    )?.models;
+    return resolveModelContextWindowMaxTokens({
+      models,
+      runtimeModelId: agentState.runtimeModelId,
+      configuredModelId: agentState.model,
+    });
+  }, [agentState.model, agentState.provider, agentState.runtimeModelId, providerSnapshotEntries]);
 
   const queuedMessagesRaw = useSessionStore((state) =>
     state.sessions[serverId]?.queuedMessages?.get(agentId),
@@ -1695,11 +1641,6 @@ export function Composer({
     [],
   );
 
-  const cancelButtonStyle = useMemo(
-    () => buildCancelButtonStyle(isConnected, isCancellingAgent),
-    [isConnected, isCancellingAgent],
-  );
-
   const isVoiceSwitching = voice?.isVoiceSwitching ?? false;
   const voiceButtonDisabled = !isConnected || isVoiceSwitching;
   const realtimeVoiceButtonStyle = useCallback(
@@ -1708,43 +1649,14 @@ export function Composer({
     [isCompactLayout, voiceButtonDisabled],
   );
 
-  const cancelButton = useMemo(
-    () => (
-      <ComposerCancelButtonSlot
-        isAgentRunning={isAgentRunning}
-        hasSendableContent={hasSendableContent}
-        isProcessing={isProcessing}
-        buttonIconSize={buttonIconSize}
-        cancelButtonStyle={cancelButtonStyle}
-        handleCancelAgent={handleCancelAgent}
-        isConnected={isConnected}
-        isCancellingAgent={isCancellingAgent}
-        agentInterruptKeys={agentInterruptKeys}
-        t={t}
-      />
-    ),
-    [
-      agentInterruptKeys,
-      buttonIconSize,
-      cancelButtonStyle,
-      handleCancelAgent,
-      hasSendableContent,
-      isAgentRunning,
-      isCancellingAgent,
-      isConnected,
-      isProcessing,
-      t,
-    ],
-  );
-
   const rightContent = useMemo(
     () => (
       <ComposerRightControlsSlot
         isVoiceModeForAgent={isVoiceModeForAgent}
+        isVoiceModeFeatureEnabled={isVoiceModeFeatureEnabled}
         hasAgent={hasAgent}
         isAgentRunning={isAgentRunning}
         hasSendableContent={hasSendableContent}
-        isProcessing={isProcessing}
         isCompact={isCompactLayout}
         buttonIconSize={buttonIconSize}
         handleToggleRealtimeVoice={handleToggleRealtimeVoice}
@@ -1753,19 +1665,17 @@ export function Composer({
         realtimeVoiceButtonStyle={realtimeVoiceButtonStyle}
         voiceToggleKeys={voiceToggleKeys}
         t={t}
-        cancelButton={cancelButton}
       />
     ),
     [
       buttonIconSize,
-      cancelButton,
       handleToggleRealtimeVoice,
       hasAgent,
       hasSendableContent,
       isAgentRunning,
       isConnected,
       isCompactLayout,
-      isProcessing,
+      isVoiceModeFeatureEnabled,
       isVoiceModeForAgent,
       isVoiceSwitching,
       realtimeVoiceButtonStyle,
@@ -1774,10 +1684,12 @@ export function Composer({
     ],
   );
 
-  const { contextWindowMaxTokens, contextWindowUsedTokens } = resolveContextWindowValues(
-    agentState.contextWindowMaxTokens,
-    agentState.contextWindowUsedTokens,
-  );
+  const { maxTokens: contextWindowMaxTokens, usedTokens: contextWindowUsedTokens } =
+    resolveContextWindowValues({
+      reportedMaxTokens: agentState.contextWindowMaxTokens,
+      reportedUsedTokens: agentState.contextWindowUsedTokens,
+      modelMaxTokens: modelContextWindowMaxTokens,
+    });
 
   const contextWindowPending =
     agentState.status === "initializing" || agentState.status === "running";
@@ -1788,20 +1700,24 @@ export function Composer({
       renderContextWindowMeter(
         contextWindowMaxTokens,
         contextWindowUsedTokens,
+        agentState.contextWindowEstimated,
         agentState.totalCostUsd,
         false,
         serverId,
         agentState.provider,
         contextWindowPending,
+        agentState.status !== null,
         contextWindowMeterGlyphSize,
       ),
     [
       contextWindowMaxTokens,
       contextWindowUsedTokens,
+      agentState.contextWindowEstimated,
       agentState.totalCostUsd,
       serverId,
       agentState.provider,
       contextWindowPending,
+      agentState.status,
       contextWindowMeterGlyphSize,
     ],
   );
@@ -2040,7 +1956,8 @@ export function Composer({
   );
 
   const messageInputAutoFocus = autoFocus && isDesktopWebBreakpoint;
-  const submitLoadingPressHandler = isAgentRunning ? handleCancelAgent : undefined;
+  const submitLoadingPressHandler =
+    isAgentRunning && isConnected && !isCancellingAgent ? handleCancelAgent : undefined;
   const sendErrorNode = useMemo(
     () => (sendError ? <Text style={styles.sendErrorText}>{sendError}</Text> : null),
     [sendError],
@@ -2094,10 +2011,13 @@ export function Composer({
                 onAddImages={addImages}
                 client={client}
                 isReadyForDictation={isDictationReady}
+                isDictationFeatureEnabled={isDictationFeatureEnabled}
+                sendButtonVisibility={appSettings.sendButtonVisibility}
+                enterKeyBehavior={appSettings.enterKeyBehavior}
                 placeholder={messagePlaceholder}
                 autoFocus={messageInputAutoFocus}
                 autoFocusKey={`${serverId}:${agentId}:${autoFocusKey ?? ""}`}
-                disabled={isSubmitLoading}
+                disabled={isSubmitLoading || isCancellingAgent}
                 isPaneFocused={isPaneFocused}
                 leftContent={leftContent}
                 beforeVoiceContent={beforeVoiceContent}
@@ -2163,6 +2083,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     width: "100%",
     overflow: "visible",
     paddingHorizontal: theme.spacing[4],
+    paddingTop: theme.spacing[4],
     paddingBottom: theme.spacing[4],
   },
   inputAreaLocked: {
@@ -2177,15 +2098,6 @@ const styles = StyleSheet.create((theme: Theme) => ({
     position: "relative",
     width: "100%",
     gap: theme.spacing[3],
-  },
-  cancelButton: {
-    width: 28,
-    height: 28,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.palette.red[600],
-    alignItems: "center",
-    justifyContent: "center",
-    marginLeft: theme.spacing[1],
   },
   rightControls: {
     flexDirection: "row",

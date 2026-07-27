@@ -9,35 +9,26 @@ import Animated, {
 } from "react-native-reanimated";
 import { scheduleOnUI } from "react-native-worklets";
 import { useRetainedPanelActive } from "@/components/retained-panel";
-import {
-  SYNCED_LOADER_DOT_COUNT,
-  getSyncedLoaderDotOpacity,
-  getSyncedLoaderStep,
-} from "@/components/synced-loader-state";
+import { getSyncedLoaderProgress, getSyncedLoaderPulse } from "@/components/synced-loader-state";
 
-const GRID_COLUMNS = 2;
-const DOT_KEYS = Array.from({ length: SYNCED_LOADER_DOT_COUNT }, (_, i) => `dot-${i}`);
-const sharedStep = makeMutable(0);
+const sharedProgress = makeMutable(0);
 const activeLoaderCount = makeMutable(0);
 const clockRunning = makeMutable(false);
-let nextStepListenerId = 1;
+let nextProgressListenerId = 1;
 
-function advanceSharedStep(): void {
+function advanceSharedProgress(): void {
   "worklet";
   if (activeLoaderCount.value === 0) {
     clockRunning.value = false;
     return;
   }
 
-  const nextStep = getSyncedLoaderStep(Date.now());
-  if (sharedStep.value !== nextStep) {
-    sharedStep.value = nextStep;
-  }
-  requestAnimationFrame(advanceSharedStep);
+  sharedProgress.value = getSyncedLoaderProgress(Date.now());
+  requestAnimationFrame(advanceSharedProgress);
 }
 
-function registerStepListener(
-  step: SharedValue<number>,
+function registerProgressListener(
+  progress: SharedValue<number>,
   registered: SharedValue<boolean>,
   listenerId: number,
 ): void {
@@ -47,65 +38,63 @@ function registerStepListener(
   }
 
   registered.value = true;
-  step.value = getSyncedLoaderStep(Date.now());
-  sharedStep.addListener(listenerId, (nextStep) => {
-    step.value = nextStep;
+  progress.value = getSyncedLoaderProgress(Date.now());
+  sharedProgress.addListener(listenerId, (nextProgress) => {
+    progress.value = nextProgress;
   });
   activeLoaderCount.value += 1;
 
   if (!clockRunning.value) {
     clockRunning.value = true;
-    sharedStep.value = step.value;
-    requestAnimationFrame(advanceSharedStep);
+    sharedProgress.value = progress.value;
+    requestAnimationFrame(advanceSharedProgress);
   }
 }
 
-function unregisterStepListener(registered: SharedValue<boolean>, listenerId: number): void {
+function unregisterProgressListener(registered: SharedValue<boolean>, listenerId: number): void {
   "worklet";
   if (!registered.value) {
     return;
   }
 
   registered.value = false;
-  sharedStep.removeListener(listenerId);
+  sharedProgress.removeListener(listenerId);
   activeLoaderCount.value -= 1;
 }
 
-function useSyncedLoaderStep(active: boolean, reduceMotion: boolean): SharedValue<number> {
-  // The local value lets retained loaders detach from the app-wide clock without
-  // unmounting their animated views or leaving hidden style worklets subscribed.
-  const step = useSharedValue(reduceMotion ? 0 : getSyncedLoaderStep(Date.now()));
+function useSyncedLoaderProgress(active: boolean, reduceMotion: boolean): SharedValue<number> {
+  const progress = useSharedValue(reduceMotion ? 1 : getSyncedLoaderProgress(Date.now()));
   const registered = useSharedValue(false);
-  const [listenerId] = useState(() => nextStepListenerId++);
+  const [listenerId] = useState(() => nextProgressListenerId++);
 
   useLayoutEffect(() => {
     if (!active || reduceMotion) {
       return;
     }
 
-    scheduleOnUI(registerStepListener, step, registered, listenerId);
+    scheduleOnUI(registerProgressListener, progress, registered, listenerId);
     return () => {
-      scheduleOnUI(unregisterStepListener, registered, listenerId);
+      scheduleOnUI(unregisterProgressListener, registered, listenerId);
     };
-  }, [active, listenerId, reduceMotion, registered, step]);
+  }, [active, listenerId, progress, reduceMotion, registered]);
 
-  return step;
+  return progress;
 }
 
 export function SyncedLoader({ size = 10, color }: { size?: number; color: string }) {
   const active = useRetainedPanelActive();
   const reduceMotion = useReducedMotion();
-  const step = useSyncedLoaderStep(active, reduceMotion);
+  const progress = useSyncedLoaderProgress(active, Boolean(reduceMotion));
+  const dotSize = Math.max(4, Math.round(size * 0.42));
 
-  const gap = Math.max(1, Math.round(size * 0.12));
-  const dotSize = Math.max(2, Math.floor((size - gap * 2) / 3));
-  const gridWidth = dotSize * 2 + gap;
-  const gridHeight = dotSize * 3 + gap * 2;
+  const animatedStyle = useAnimatedStyle(() => {
+    const pulse = getSyncedLoaderPulse(progress.value);
+    return {
+      opacity: pulse.opacity,
+      transform: [{ scale: pulse.scale }],
+    };
+  });
 
-  const gridStyle = useMemo(
-    () => ({ width: gridWidth, height: gridHeight }),
-    [gridHeight, gridWidth],
-  );
   const containerStyle = useMemo(
     () =>
       ({
@@ -117,49 +106,6 @@ export function SyncedLoader({ size = 10, color }: { size?: number; color: strin
     [size],
   );
 
-  return (
-    <View style={containerStyle}>
-      <View style={gridStyle}>
-        {Array.from({ length: SYNCED_LOADER_DOT_COUNT }).map((_, dotIndex) => {
-          const rowIndex = Math.floor(dotIndex / GRID_COLUMNS);
-          const columnIndex = dotIndex % GRID_COLUMNS;
-
-          return (
-            <SpinnerDot
-              key={DOT_KEYS[dotIndex]}
-              color={color}
-              dotSize={dotSize}
-              dotIndex={dotIndex}
-              step={step}
-              left={columnIndex * (dotSize + gap)}
-              top={rowIndex * (dotSize + gap)}
-            />
-          );
-        })}
-      </View>
-    </View>
-  );
-}
-
-function SpinnerDot({
-  color,
-  dotSize,
-  dotIndex,
-  step,
-  left,
-  top,
-}: {
-  color: string;
-  dotSize: number;
-  dotIndex: number;
-  step: SharedValue<number>;
-  left: number;
-  top: number;
-}) {
-  const animatedStyle = useAnimatedStyle(() => ({
-    opacity: getSyncedLoaderDotOpacity(step.value, dotIndex),
-  }));
-
   const dotStyle = useMemo(
     () => [
       animatedStyle,
@@ -168,13 +114,14 @@ function SpinnerDot({
         height: dotSize,
         borderRadius: dotSize / 2,
         backgroundColor: color,
-        position: "absolute" as const,
-        left,
-        top,
       },
     ],
-    [animatedStyle, dotSize, color, left, top],
+    [animatedStyle, color, dotSize],
   );
 
-  return <Animated.View style={dotStyle} />;
+  return (
+    <View style={containerStyle}>
+      <Animated.View style={dotStyle} />
+    </View>
+  );
 }

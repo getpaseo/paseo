@@ -28,6 +28,21 @@ export function getVoiceReadinessState(params: {
   return voice.voice;
 }
 
+/**
+ * Whether a voice feature is enabled on the host.
+ * Returns `null` when capability metadata is absent (legacy daemon — keep UI).
+ */
+export function isVoiceFeatureEnabled(params: {
+  serverInfo: DaemonServerInfo | null | undefined;
+  mode: VoiceReadinessMode;
+}): boolean | null {
+  const readiness = getVoiceReadinessState(params);
+  if (!readiness) {
+    return null;
+  }
+  return readiness.enabled;
+}
+
 export function resolveVoiceUnavailableMessage(params: {
   serverInfo: DaemonServerInfo | null | undefined;
   mode: VoiceReadinessMode;

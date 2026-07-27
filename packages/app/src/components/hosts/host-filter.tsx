@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, useState, type ReactElement } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { ChevronDown, Server } from "lucide-react-native";
+import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { HostProfile } from "@/types/host-connection";
 import type { Theme } from "@/styles/theme";
@@ -33,12 +34,18 @@ export function HostFilter({
   onSelectHost,
   triggerTestID,
 }: HostFilterProps): ReactElement {
+  const { t } = useTranslation();
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const filterAnchorRef = useRef<View>(null);
+  const allHostsLabel = t("settings.allHosts");
 
   const selectedHostLabel = useMemo(
-    () => getHostPickerLabel(hosts, selectedHost, { includeAllHost: true }),
-    [hosts, selectedHost],
+    () =>
+      getHostPickerLabel(hosts, selectedHost, {
+        includeAllHost: true,
+        labels: { allHosts: allHostsLabel },
+      }),
+    [hosts, selectedHost, allHostsLabel],
   );
 
   const handleFilterOpen = useCallback(() => setIsFilterOpen(true), []);

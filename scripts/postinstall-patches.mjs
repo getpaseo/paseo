@@ -21,6 +21,14 @@ const patchedPackages = [
     patchPrefix: "react-native-gesture-handler+",
   },
   {
+    nodeModulesPath: "node_modules/react-native-unistyles",
+    patchPrefix: "react-native-unistyles+",
+  },
+  {
+    nodeModulesPath: "node_modules/react-native-web",
+    patchPrefix: "react-native-web+",
+  },
+  {
     nodeModulesPath: "packages/server/node_modules/@opencode-ai/sdk",
     patchPrefix: "@opencode-ai+sdk+",
     cwd: "packages/server",

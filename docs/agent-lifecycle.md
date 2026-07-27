@@ -94,6 +94,39 @@ Provider session connection owns every process it spawns until the session is re
 `connect()` must dispose that process before rethrowing; the manager cannot clean up a session it never
 received.
 
+## Delete
+
+Delete is a **hard remove**: the Paseo agent record is permanently erased from disk and the provider's
+own native session history is deleted too (best-effort). There is no undo.
+
+Delete runs through `Session.deleteAgentFully` (`packages/server/src/server/session.ts`):
+
+History uses a Manage mode; only archived sessions are selectable; batch delete via confirmDialog. No long-press.
+
+1. Load the stored record (captures `provider` + `persistence` before the delete fence)
+2. **Cascade-delete children** — any agent whose `paseo.parent-agent-id` label matches the deleted
+   agent is recursively deleted first, each emitting its own `agent_deleted` event
+3. Set the delete fence so in-flight background writes are discarded
+4. Close the runtime (kills the provider process if still running)
+5. Flush queued persistence writes to prevent a background write from recreating the record
+6. **Delete native session (best-effort)** — calls `AgentClient.deleteNativeSession?` with the
+   captured persistence handle; errors are logged as warnings, not propagated
+7. Remove the Paseo agent record from storage and clear in-memory agent state
+8. Emit `agent_deleted` to connected clients
+
+### Provider coverage
+
+| Provider                    | What gets deleted                                                                                                                                                                                         |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude                      | `~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl` + sidecar dir `<sessionId>/`                                                                                                                         |
+| OpenCode                    | Native session via `session.delete` RPC against the running OpenCode server                                                                                                                               |
+| Codex                       | Rollout JSONL file resolved via `resolveCodexRolloutFile` (file delete only; no API call)                                                                                                                 |
+| Pi                          | Session file path from `nativeHandle`                                                                                                                                                                     |
+| OMP                         | Session file path from `nativeHandle`                                                                                                                                                                     |
+| All ACP providers           | Capability-gated ACP `session/delete` via a short-lived probe (`ACPAgentClient.deleteNativeSession`). Agents that omit `sessionCapabilities.delete` skip this step; soft vs hard delete is agent-defined. |
+| Grok (ACP) local fallback   | Also removes `~/.grok/sessions/<encodeURIComponent(cwd)>/<sessionId>/` (Grok does not advertise protocol delete today).                                                                                   |
+| Cursor (ACP) local fallback | Also removes `~/.cursor/acp-sessions/<sessionId>/` (Cursor ACP returns Method not found for `session/delete` today).                                                                                      |
+
 ## Tabs vs archive
 
 These are two distinct concepts that used to be conflated:

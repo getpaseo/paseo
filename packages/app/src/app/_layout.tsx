@@ -3,7 +3,6 @@ import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
 import { PortalProvider } from "@gorhom/portal";
 import { QueryClientProvider } from "@tanstack/react-query";
 import * as Linking from "expo-linking";
-import * as Notifications from "expo-notifications";
 import { Stack, useNavigationContainerRef, usePathname, useRouter } from "expo-router";
 import {
   createContext,
@@ -11,8 +10,8 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
-  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -20,7 +19,8 @@ import { AppState, useWindowDimensions, View } from "react-native";
 import { GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { applyThemeSetting } from "@/styles/apply-theme-setting";
 import { CommandCenter, CommandCenterRootActions } from "@/command-center/command-center";
 import { CommandCenterProvider } from "@/command-center/provider";
 import { AddProjectFlowHost } from "@/components/add-project-flow-host";
@@ -41,7 +41,6 @@ import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-short
 import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
 import { HostChooserModal, useHostChooser } from "@/hosts/host-chooser";
 import {
-  getIsElectronRuntime,
   getIsElectronRuntimeMac,
   HEADER_INNER_HEIGHT,
   useIsCompactFormFactor,
@@ -80,6 +79,7 @@ import { useFaviconStatus } from "@/hooks/use-favicon-status";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { KeyboardShiftProvider } from "@/hooks/use-keyboard-shift-style";
 import { useCompactWebViewportZoomLock } from "@/hooks/use-compact-web-viewport-zoom-lock";
+import { useNotificationOpenListener } from "@/hooks/use-notification-open-listener";
 import { useOpenProject } from "@/hooks/use-open-project";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useStableEvent } from "@/hooks/use-stable-event";
@@ -101,7 +101,7 @@ import { getDaemonStartService } from "@/runtime/daemon-start-service";
 import { applyAppearance } from "@/screens/settings/appearance/apply-appearance";
 import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
 import { flushDraftPersistStorage } from "@/stores/draft-store";
-import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
+import type { ThemeName } from "@/styles/theme";
 import { installWebScrollbarStyles } from "@/styles/install-web-scrollbar-styles";
 import type { HostProfile } from "@/types/host-connection";
 import { toggleDesktopSidebarsWithCheckoutIntent } from "@/utils/desktop-sidebar-toggle";
@@ -118,11 +118,6 @@ import {
 } from "@/utils/host-routes";
 import { buildNotificationRoute, resolveNotificationTarget } from "@/utils/notification-routing";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
-import {
-  ensureOsNotificationPermission,
-  WEB_NOTIFICATION_CLICK_EVENT,
-  type WebNotificationClickDetail,
-} from "@/utils/os-notifications";
 
 polyfillCrypto();
 
@@ -144,7 +139,6 @@ const HostRuntimeBootstrapContext = createContext<HostRuntimeBootstrapState>({
 
 function PushNotificationRouter() {
   const router = useRouter();
-  const lastHandledIdRef = useRef<string | null>(null);
   const openNotification = useStableEvent((data: Record<string, unknown> | undefined) => {
     const target = resolveNotificationTarget(data);
     const serverId = target.serverId;
@@ -158,94 +152,7 @@ function PushNotificationRouter() {
     router.navigate(buildNotificationRoute(data));
   });
 
-  useEffect(() => {
-    if (isWeb) {
-      let removeDesktopNotificationListener: (() => void) | null = null;
-      let cancelled = false;
-
-      if (getIsElectronRuntime()) {
-        void ensureOsNotificationPermission();
-
-        const unlistenResult = getDesktopHost()?.events?.on?.(
-          "notification-click",
-          (payload: unknown) => {
-            const data =
-              typeof payload === "object" &&
-              payload !== null &&
-              "data" in payload &&
-              typeof (payload as { data?: unknown }).data === "object" &&
-              (payload as { data?: unknown }).data !== null
-                ? (payload as { data: Record<string, unknown> }).data
-                : undefined;
-            openNotification(data);
-          },
-        );
-
-        void Promise.resolve(unlistenResult).then((unlisten) => {
-          if (typeof unlisten !== "function") {
-            return;
-          }
-          if (cancelled) {
-            unlisten();
-            return;
-          }
-          removeDesktopNotificationListener = unlisten;
-          return;
-        });
-      }
-
-      const openFromWebClick = (event: Event) => {
-        const customEvent = event as CustomEvent<WebNotificationClickDetail>;
-        event.preventDefault();
-        openNotification(customEvent.detail?.data);
-      };
-
-      window.addEventListener(WEB_NOTIFICATION_CLICK_EVENT, openFromWebClick as EventListener);
-
-      return () => {
-        cancelled = true;
-        removeDesktopNotificationListener?.();
-        window.removeEventListener(WEB_NOTIFICATION_CLICK_EVENT, openFromWebClick as EventListener);
-      };
-    }
-
-    Notifications.setNotificationHandler({
-      handleNotification: async () => ({
-        // When the app is open, don't show OS banners.
-        shouldShowAlert: false,
-        shouldShowBanner: false,
-        shouldShowList: false,
-        shouldPlaySound: false,
-        shouldSetBadge: false,
-      }),
-    });
-
-    const openFromResponse = (response: Notifications.NotificationResponse) => {
-      const identifier = response.notification.request.identifier;
-      if (lastHandledIdRef.current === identifier) {
-        return;
-      }
-      lastHandledIdRef.current = identifier;
-
-      const data = response.notification.request.content.data as
-        | Record<string, unknown>
-        | undefined;
-      openNotification(data);
-    };
-
-    const subscription = Notifications.addNotificationResponseReceivedListener(openFromResponse);
-
-    void Notifications.getLastNotificationResponseAsync().then((response) => {
-      if (response) {
-        openFromResponse(response);
-      }
-      return;
-    });
-
-    return () => {
-      subscription.remove();
-    };
-  }, [openNotification]);
+  useNotificationOpenListener(openNotification);
 
   return null;
 }
@@ -417,7 +324,15 @@ interface AppContainerProps {
   chromeEnabled?: boolean;
 }
 
-const THEME_CYCLE_ORDER: ThemeName[] = ["dark", "zinc", "midnight", "claude", "ghostty", "light"];
+const THEME_CYCLE_ORDER: ThemeName[] = [
+  "dark",
+  "zinc",
+  "midnight",
+  "claude",
+  "ghostty",
+  "deepspace",
+  "light",
+];
 const WINDOW_SIDEBAR_TOGGLE_HORIZONTAL_PADDING = 12;
 
 function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppContainerProps) {
@@ -617,21 +532,18 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
   const { settings, isLoading: settingsLoading } = useAppSettings();
   const { upsertConnectionFromOfferUrl } = useHostMutations();
 
-  // Apply theme setting on mount and when it changes
-  useEffect(() => {
+  // Apply theme before paint once settings resolve (and when the user changes it).
+  // Web seeds the settings query + Unistyles `initialTheme` from localStorage so
+  // this is usually a no-op on first paint; native waits for AsyncStorage.
+  useLayoutEffect(() => {
     if (settingsLoading) return;
-    if (settings.theme === "auto") {
-      UnistylesRuntime.setAdaptiveThemes(true);
-    } else {
-      UnistylesRuntime.setAdaptiveThemes(false);
-      UnistylesRuntime.setTheme(THEME_TO_UNISTYLES[settings.theme]);
-    }
+    applyThemeSetting(settings.theme);
   }, [settingsLoading, settings.theme]);
 
   // Apply font / size / syntax appearance settings on mount and when they change.
   // Sibling to the theme effect above; order is irrelevant because both patch all
   // six registered theme keys, so the active key is always current.
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (settingsLoading) return;
     applyAppearance({
       uiFontFamily: settings.uiFontFamily,
@@ -649,9 +561,15 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
     settings.syntaxTheme,
   ]);
 
+  // Avoid painting the tree under DEFAULT/system colors before persisted settings
+  // resolve (native AsyncStorage). Web usually has sync-hydrated settings already.
+  if (settingsLoading) {
+    return <View style={layoutStyles.surfaceFill} />;
+  }
+
   return (
     <VoiceProvider>
-      <DesktopWindowControlsSync enabled={!settingsLoading} />
+      <DesktopWindowControlsSync enabled />
       <OfferLinkListener upsertDaemonFromOfferUrl={upsertConnectionFromOfferUrl} />
       <HostSessionManager />
       <FaviconStatusSync />

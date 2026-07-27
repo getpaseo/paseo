@@ -1,4 +1,5 @@
 import type { ScheduleCadence } from "@getpaseo/protocol/schedule/types";
+import { i18n } from "@/i18n/i18next";
 import { everyMsToParts } from "@/utils/schedule-format";
 
 type CronCadence = Extract<ScheduleCadence, { type: "cron" }>;
@@ -10,6 +11,20 @@ export interface CadencePresetOption {
 }
 
 export const CUSTOM_CRON_PRESET_ID = "custom";
+
+const PRESET_LABEL_KEYS = {
+  "every-minute": "schedules.cadence.presets.everyMinute",
+  "every-hour": "schedules.cadence.presets.everyHour",
+  "daily-9": "schedules.cadence.presets.daily9",
+  "weekdays-9": "schedules.cadence.presets.weekdays9",
+  "mondays-9": "schedules.cadence.presets.mondays9",
+  [CUSTOM_CRON_PRESET_ID]: "schedules.cadence.presets.custom",
+} as const;
+
+export function cadencePresetLabel(id: string): string {
+  const key = PRESET_LABEL_KEYS[id as keyof typeof PRESET_LABEL_KEYS];
+  return i18n.t(key ?? PRESET_LABEL_KEYS[CUSTOM_CRON_PRESET_ID]);
+}
 
 export const CADENCE_PRESET_OPTIONS: CadencePresetOption[] = [
   { id: "every-minute", label: "Every minute", expression: "* * * * *" },
@@ -29,9 +44,7 @@ export function resolveCronPresetId(cadence: CronCadence): string {
 
 export function resolveCronPresetDisplay(cadence: CronCadence): { label: string } {
   return {
-    label:
-      CADENCE_PRESET_OPTIONS.find((option) => option.id === resolveCronPresetId(cadence))?.label ??
-      "Custom cron",
+    label: cadencePresetLabel(resolveCronPresetId(cadence)),
   };
 }
 

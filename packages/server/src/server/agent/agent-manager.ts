@@ -1577,7 +1577,7 @@ export class AgentManager {
         persistence: record.persistence ?? null,
         historyPrimed: true,
         lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
-        lastUsage: undefined,
+        lastUsage: record.lastUsage,
         lastError: record.lastError ?? undefined,
         attention: { requiresAttention: false },
         internal: record.internal,
@@ -4310,6 +4310,23 @@ export class AgentManager {
       this.logger.warn(
         { error, provider, sessionId: persistence.sessionId },
         "Failed to archive native session (best-effort)",
+      );
+    }
+  }
+
+  async deleteNativeSessionBestEffort(
+    provider: AgentProvider,
+    persistence: AgentPersistenceHandle | null | undefined,
+  ): Promise<void> {
+    if (!persistence) return;
+    const client = this.clients.get(provider);
+    if (!client?.deleteNativeSession) return;
+    try {
+      await client.deleteNativeSession(persistence);
+    } catch (error) {
+      this.logger.warn(
+        { error, provider, sessionId: persistence.sessionId },
+        "Failed to delete native session (best-effort)",
       );
     }
   }

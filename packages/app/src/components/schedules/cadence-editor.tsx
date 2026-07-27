@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useReducer, useState, type ReactNode } from "react";
 import { Text, View } from "react-native";
+import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import type { ScheduleCadence } from "@getpaseo/protocol/schedule/types";
 import type { FieldControlSize } from "@/components/ui/control-geometry";
@@ -7,6 +8,7 @@ import { Field, FormTextInput } from "@/components/ui/form-field";
 import { SelectField, type SelectFieldOption } from "@/components/ui/select-field";
 import {
   CADENCE_PRESET_OPTIONS,
+  cadencePresetLabel,
   normalizeScheduleFormCadence,
   resolveCronPresetDisplay,
   resolveCronPresetId,
@@ -23,13 +25,6 @@ export interface CadenceEditorProps {
   size?: FieldControlSize;
 }
 
-const PRESET_OPTIONS: SelectFieldOption<string>[] = CADENCE_PRESET_OPTIONS.map((option) => ({
-  id: option.id,
-  value: option.id,
-  label: option.label,
-  testID: `schedule-cadence-preset-${option.id}`,
-}));
-
 function getCronPreview(expression: string, timezone: string, error: string | null): string | null {
   if (error || !expression) {
     return null;
@@ -42,6 +37,7 @@ function buildCronCadence(expression: string, timezone: string): CronCadence {
 }
 
 export function CadenceEditor({ value, onChange, error, size = "md" }: CadenceEditorProps) {
+  const { t } = useTranslation();
   const deviceTimeZone = useMemo(getDeviceTimeZone, []);
   const normalizedValue = normalizeScheduleFormCadence(value, deviceTimeZone);
   const [cronText, setCronText] = useState(() => normalizedValue.expression);
@@ -57,6 +53,13 @@ export function CadenceEditor({ value, onChange, error, size = "md" }: CadenceEd
   );
   const selectedPresetId = resolveCronPresetId(currentCadence);
   const selectedPresetDisplay = resolveCronPresetDisplay(currentCadence);
+  // Labels come from i18n; useTranslation() re-renders this component on language change.
+  const presetOptions: SelectFieldOption<string>[] = CADENCE_PRESET_OPTIONS.map((option) => ({
+    id: option.id,
+    value: option.id,
+    label: cadencePresetLabel(option.id),
+    testID: `schedule-cadence-preset-${option.id}`,
+  }));
 
   const handlePresetChange = useCallback(
     (presetId: string) => {
@@ -87,18 +90,18 @@ export function CadenceEditor({ value, onChange, error, size = "md" }: CadenceEd
   }
 
   return (
-    <Field label="Cadence">
+    <Field label={t("schedules.cadence.fieldLabel")}>
       <View style={styles.stack}>
         <SelectField
-          label="Cadence"
+          label={t("schedules.cadence.fieldLabel")}
           value={selectedPresetId === "custom" ? null : selectedPresetId}
           selectedDisplay={selectedPresetDisplay}
-          options={PRESET_OPTIONS}
+          options={presetOptions}
           onChange={handlePresetChange}
-          placeholder="Select cadence"
-          emptyText="No cadences found"
+          placeholder={t("schedules.cadence.placeholder")}
+          emptyText={t("schedules.cadence.empty")}
           searchable={false}
-          title="Cadence"
+          title={t("schedules.cadence.fieldLabel")}
           size={size}
           triggerTestID="schedule-cadence-preset-trigger"
           field={false}
@@ -107,7 +110,7 @@ export function CadenceEditor({ value, onChange, error, size = "md" }: CadenceEd
         <FormTextInput
           size={size}
           testID="cadence-cron-expression"
-          accessibilityLabel="Cron expression"
+          accessibilityLabel={t("schedules.cadence.cronAccessibility")}
           initialValue={cronText}
           resetKey={`cadence-cron-${fieldResetKey}`}
           value={cronText}

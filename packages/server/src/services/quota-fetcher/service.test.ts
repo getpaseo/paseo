@@ -562,6 +562,7 @@ describe("real provider usage fetchers", () => {
         expect.objectContaining({ id: "weekly", usedPct: 8 }),
       ]),
       balances: [expect.objectContaining({ id: "credits", remaining: 0 })],
+      details: [{ id: "account_email", label: "Account email", value: "user@example.com" }],
     });
   });
 
@@ -673,12 +674,14 @@ describe("real provider usage fetchers", () => {
       balances: [
         expect.objectContaining({
           id: "plan_usage",
-          used: 15,
+          // No percent fields in this fixture → fall back to includedSpend cents.
+          used: 10,
           remaining: 25,
           limit: 40,
           resetsAt: null,
         }),
       ],
+      details: [{ id: "bonus_spend", label: "Bonus usage", value: "$5.00" }],
     });
   });
 
@@ -724,6 +727,10 @@ describe("real provider usage fetchers", () => {
               usage: { creditUsage: 0 },
             }),
         ],
+        [
+          "https://cli-chat-proxy.grok.com/v1/settings",
+          () => jsonResponse({ subscription_tier_display: "SuperGrok Heavy" }),
+        ],
       ]),
     );
 
@@ -731,6 +738,7 @@ describe("real provider usage fetchers", () => {
 
     expect(grok).toMatchObject({
       status: "available",
+      planLabel: "SuperGrok Heavy",
       balances: [
         expect.objectContaining({
           id: "monthly_credits",

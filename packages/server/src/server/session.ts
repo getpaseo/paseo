@@ -59,7 +59,7 @@ import { loadPersistedConfig } from "./persisted-config.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
-import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
+import { getParentAgentIdFromLabels, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
 import {
@@ -1734,7 +1734,7 @@ export class Session {
       try {
         await this.dispatchInboundMessage(msg, source);
       } catch (error) {
-        const err = error instanceof Error ? error : new Error(String(error));
+        const err = error instanceof Error ? error : new Error(getErrorMessage(error));
         this.sessionLogger.error({ err }, "Error handling message");
 
         const requestId =
@@ -2319,6 +2319,29 @@ export class Session {
       (await this.agentStorage.get(agentId))?.workspaceId ??
       null;
 
+    await this.deleteAgentFully(agentId, requestId);
+
+    if (knownWorkspaceId) {
+      await this.emitWorkspaceUpdateForWorkspaceId(knownWorkspaceId);
+    }
+  }
+
+  /**
+   * Core delete logic for a single agent. Used by handleDeleteAgentRequest and
+   * recursively for cascade-deleting child agents.
+   */
+  private async deleteAgentFully(agentId: string, requestId: string): Promise<void> {
+    // Capture provider + persistence BEFORE the delete fence, which blocks
+    // further storage reads, and before closeAgent() may clear live state.
+    const storedRecord = await this.agentStorage.get(agentId);
+
+    // Cascade-delete child agents (agents whose parent label points to this one).
+    const allRecords = await this.agentStorage.list();
+    const children = allRecords.filter((r) => r.labels?.[PARENT_AGENT_ID_LABEL] === agentId);
+    for (const child of children) {
+      await this.deleteAgentFully(child.id, requestId);
+    }
+
     // File-backed storage still needs an early delete fence before closeAgent().
     beginAgentDeleteIfSupported(this.agentStorage, agentId);
 
@@ -2334,6 +2357,14 @@ export class Session {
     // Drain queued persistence from the just-closed agent before removing its
     // durable snapshot, otherwise an in-flight background write can recreate it.
     await this.agentManager.flush();
+
+    // Best-effort deletion of the provider's own native session.
+    if (storedRecord?.persistence) {
+      await this.agentManager.deleteNativeSessionBestEffort(
+        storedRecord.provider,
+        storedRecord.persistence,
+      );
+    }
 
     try {
       await this.agentStorage.remove(agentId);
@@ -2351,10 +2382,6 @@ export class Session {
     });
 
     this.agentUpdates.removeAgent(agentId);
-
-    if (knownWorkspaceId) {
-      await this.emitWorkspaceUpdateForWorkspaceId(knownWorkspaceId);
-    }
   }
 
   private async handleArchiveAgentRequest(agentId: string, requestId: string): Promise<void> {
@@ -2950,7 +2977,7 @@ export class Session {
       this.handleAgentRunError(agentId, error, "Failed to send agent message");
       return {
         ok: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       };
     }
   }
@@ -3283,7 +3310,7 @@ export class Session {
         },
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       this.sessionLogger.error({ err: error }, "Failed to import agent");
       this.emit({
         type: "status",
@@ -3762,7 +3789,7 @@ export class Session {
         payload: {
           directories: [],
           entries: [],
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
           requestId,
         },
       });
@@ -6111,7 +6138,7 @@ export class Session {
           hasOlder: false,
           hasNewer: false,
           entries: [],
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         },
       });
     }
@@ -6142,7 +6169,7 @@ export class Session {
           requestId: msg.requestId,
           parentAgentId: msg.parentAgentId,
           subagents: [],
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         },
       });
     }
@@ -6211,7 +6238,7 @@ export class Session {
           hasOlder: false,
           hasNewer: false,
           rows: [],
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         },
       });
     }
@@ -6267,7 +6294,7 @@ export class Session {
           itemCount: 0,
           boundaryCursor: msg.boundaryCursor ?? null,
           boundaryMessageId: msg.boundaryMessageId ?? null,
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         },
       });
     }
@@ -6313,7 +6340,7 @@ export class Session {
           logger: this.sessionLogger,
         });
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         this.handleAgentRunError(agentId, error, "Failed to send agent message");
         this.emit({
           type: "send_agent_message_response",

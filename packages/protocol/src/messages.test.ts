@@ -146,6 +146,20 @@ describe("provider usage list message contract", () => {
     });
   });
 
+  test("accepts optional forceRefresh on provider usage list requests", () => {
+    const parsed = SessionInboundMessageSchema.parse({
+      type: "provider.usage.list.request",
+      requestId: "usage-force",
+      forceRefresh: true,
+    });
+
+    expect(parsed).toEqual({
+      type: "provider.usage.list.request",
+      requestId: "usage-force",
+      forceRefresh: true,
+    });
+  });
+
   test("accepts new providers and new usage windows as normalized data", () => {
     const parsed = SessionOutboundMessageSchema.parse({
       type: "provider.usage.list.response",

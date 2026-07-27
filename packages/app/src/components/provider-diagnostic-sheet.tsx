@@ -579,7 +579,7 @@ export function ProviderDiagnosticSheet({
   onClose,
   serverId,
 }: ProviderDiagnosticSheetProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { theme } = useUnistyles();
   const isCompact = useIsCompactFormFactor();
   const { entries: snapshotEntries, refresh, isRefreshing } = useProvidersSnapshot(serverId);
@@ -625,8 +625,8 @@ export function ProviderDiagnosticSheet({
   const fetchedAtLabel = useMemo(() => {
     if (!providerEntry?.fetchedAt) return null;
     void clockTick;
-    return formatTimeAgo(new Date(providerEntry.fetchedAt));
-  }, [providerEntry?.fetchedAt, clockTick]);
+    return formatTimeAgo(new Date(providerEntry.fetchedAt), new Date(), i18n.language);
+  }, [providerEntry?.fetchedAt, clockTick, i18n.language]);
 
   useEffect(() => {
     if (!visible) {

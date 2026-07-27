@@ -1,7 +1,8 @@
 import { useMemo } from "react";
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { clampPct, formatPct, formatResetLabel } from "./format";
+import { clampPct, formatPct, formatResetLabel, formatRunsOutLabel } from "./format";
+import { localizeProviderUsageLabel } from "./labels";
 import { deriveTone } from "./tone";
 import type { ProviderUsageTone, ProviderUsageWindow } from "./types";
 
@@ -36,14 +37,14 @@ export function ProviderUsageWindowBar({ window }: { window: ProviderUsageWindow
 
   const isAtRisk = window.runsOutAt != null && window.shortfallPct != null;
   const trailing = isAtRisk
-    ? `runs out ${formatResetLabel(window.runsOutAt)?.replace("resets ", "") ?? ""}`.trim()
+    ? formatRunsOutLabel(window.runsOutAt)
     : formatResetLabel(window.resetsAt);
 
   return (
     <View style={styles.container}>
       <View style={styles.labelRow}>
         <Text style={styles.label} numberOfLines={1}>
-          {window.label}
+          {localizeProviderUsageLabel(window.id, window.label)}
         </Text>
         <Text style={styles.value}>
           {usedPct != null ? formatPct(usedPct) : "—"}

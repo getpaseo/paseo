@@ -1,4 +1,5 @@
 import { StyleSheet } from "react-native-unistyles";
+import { resolveInitialUnistylesSettings } from "./resolve-initial-unistyles-settings";
 import {
   lightTheme,
   darkTheme,
@@ -6,6 +7,7 @@ import {
   darkMidnightTheme,
   darkClaudeTheme,
   darkGhosttyTheme,
+  darkDeepspaceTheme,
 } from "./theme";
 
 StyleSheet.configure({
@@ -16,6 +18,7 @@ StyleSheet.configure({
     darkMidnight: darkMidnightTheme,
     darkClaude: darkClaudeTheme,
     darkGhostty: darkGhosttyTheme,
+    darkDeepspace: darkDeepspaceTheme,
   },
   breakpoints: {
     xs: 0,
@@ -24,9 +27,7 @@ StyleSheet.configure({
     lg: 992,
     xl: 1200,
   },
-  settings: {
-    adaptiveThemes: true,
-  },
+  settings: resolveInitialUnistylesSettings(),
 });
 
 // Type augmentation for TypeScript
@@ -37,6 +38,7 @@ interface AppThemes {
   darkMidnight: typeof darkMidnightTheme;
   darkClaude: typeof darkClaudeTheme;
   darkGhostty: typeof darkGhosttyTheme;
+  darkDeepspace: typeof darkDeepspaceTheme;
 }
 
 interface AppBreakpoints {

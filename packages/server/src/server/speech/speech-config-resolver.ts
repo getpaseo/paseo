@@ -44,7 +44,8 @@ const RequestedSpeechProvidersSchema = z.object({
 });
 
 function resolveOptionalBooleanFlag(value: unknown): boolean {
-  return OptionalBooleanFlagSchema.parse(value) ?? true;
+  // Voice/dictation are opt-in — missing flags stay off so models are not loaded.
+  return OptionalBooleanFlagSchema.parse(value) ?? false;
 }
 
 interface FeatureProviderInputs {

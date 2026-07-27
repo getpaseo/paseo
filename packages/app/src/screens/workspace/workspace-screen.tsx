@@ -45,6 +45,7 @@ import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
 import { ScreenHeader } from "@/components/headers/screen-header";
 import { ScreenTitle } from "@/components/headers/screen-title";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Shortcut } from "@/components/ui/shortcut";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import {
@@ -241,24 +242,45 @@ function buildWorkspaceFileLocation(
   return { path: fields.path, lineStart: fields.lineStart, lineEnd: fields.lineEnd };
 }
 
-const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
-const ThemedEllipsis = withUnistyles(Ellipsis);
-const ThemedEllipsisVertical = withUnistyles(EllipsisVertical);
-const ThemedChevronDown = withUnistyles(ChevronDown);
-const ThemedCopy = withUnistyles(Copy);
-const ThemedRotateCw = withUnistyles(RotateCw);
-const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
-const ThemedArrowRightToLine = withUnistyles(ArrowRightToLine);
-const ThemedCopyX = withUnistyles(CopyX);
-const ThemedPencil = withUnistyles(Pencil);
-const ThemedX = withUnistyles(X);
-const ThemedSquarePen = withUnistyles(SquarePen);
-const ThemedSquareTerminal = withUnistyles(SquareTerminal);
-const ThemedGlobe = withUnistyles(Globe);
-const ThemedImport = withUnistyles(ImportIcon);
-const ThemedSettings = withUnistyles(Settings);
-const ThemedPanelRight = withUnistyles(PanelRight);
-const ThemedSourceControlPanelIcon = withUnistyles(SourceControlPanelIcon);
+// Prefer withUnistyles mappings over uniProps — lucide forwards unknown props to
+// SVG <path> on web, which logs React DOM warnings for `uniProps`.
+const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
+const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const extraMutedColorMapping = (theme: Theme) => ({
+  color: theme.colors.foregroundExtraMuted,
+});
+
+const ThemedActivityIndicator = withUnistyles(ActivityIndicator, mutedColorMapping);
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner, mutedColorMapping);
+const ThemedEllipsis = withUnistyles(Ellipsis, mutedColorMapping);
+const ThemedEllipsisForeground = withUnistyles(Ellipsis, foregroundColorMapping);
+const ThemedEllipsisVertical = withUnistyles(EllipsisVertical, mutedColorMapping);
+const ThemedEllipsisVerticalForeground = withUnistyles(EllipsisVertical, foregroundColorMapping);
+const ThemedChevronDown = withUnistyles(ChevronDown, mutedColorMapping);
+const ThemedCopy = withUnistyles(Copy, mutedColorMapping);
+const ThemedRotateCw = withUnistyles(RotateCw, mutedColorMapping);
+const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine, mutedColorMapping);
+const ThemedArrowRightToLine = withUnistyles(ArrowRightToLine, mutedColorMapping);
+const ThemedCopyX = withUnistyles(CopyX, mutedColorMapping);
+const ThemedPencil = withUnistyles(Pencil, mutedColorMapping);
+const ThemedX = withUnistyles(X, mutedColorMapping);
+const ThemedSquarePen = withUnistyles(SquarePen, mutedColorMapping);
+const ThemedSquareTerminal = withUnistyles(SquareTerminal, mutedColorMapping);
+const ThemedGlobe = withUnistyles(Globe, mutedColorMapping);
+const ThemedImport = withUnistyles(ImportIcon, mutedColorMapping);
+const ThemedSettings = withUnistyles(Settings, mutedColorMapping);
+const ThemedPanelRight = withUnistyles(PanelRight, mutedColorMapping);
+const ThemedPanelRightForeground = withUnistyles(PanelRight, foregroundColorMapping);
+const ThemedPanelRightExtraMuted = withUnistyles(PanelRight, extraMutedColorMapping);
+const ThemedSourceControlPanelIcon = withUnistyles(SourceControlPanelIcon, mutedColorMapping);
+const ThemedSourceControlPanelIconForeground = withUnistyles(
+  SourceControlPanelIcon,
+  foregroundColorMapping,
+);
+const ThemedSourceControlPanelIconExtraMuted = withUnistyles(
+  SourceControlPanelIcon,
+  extraMutedColorMapping,
+);
 
 interface DynamicProviderIconProps {
   iconKey: string;
@@ -271,22 +293,16 @@ function DynamicProviderIcon({ iconKey, size, color = "" }: DynamicProviderIconP
   return <Icon size={size} color={color} />;
 }
 
-const ThemedDynamicProviderIcon = withUnistyles(DynamicProviderIcon);
-
-const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
-const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-const extraMutedColorMapping = (theme: Theme) => ({
-  color: theme.colors.foregroundExtraMuted,
-});
+const ThemedDynamicProviderIcon = withUnistyles(DynamicProviderIcon, mutedColorMapping);
 
 const sourceControlPanelStrokeWidth15 = { strokeWidth: 1.5 };
 
-const MENU_NEW_AGENT_ICON = <ThemedSquarePen size={16} uniProps={mutedColorMapping} />;
-const MENU_NEW_TERMINAL_ICON = <ThemedSquareTerminal size={16} uniProps={mutedColorMapping} />;
-const MENU_NEW_BROWSER_ICON = <ThemedGlobe size={16} uniProps={mutedColorMapping} />;
-const MENU_IMPORT_ICON = <ThemedImport size={16} uniProps={mutedColorMapping} />;
-const MENU_COPY_ICON = <ThemedCopy size={16} uniProps={mutedColorMapping} />;
-const MENU_SETTINGS_ICON = <ThemedSettings size={16} uniProps={mutedColorMapping} />;
+const MENU_NEW_AGENT_ICON = <ThemedSquarePen size={16} />;
+const MENU_NEW_TERMINAL_ICON = <ThemedSquareTerminal size={16} />;
+const MENU_NEW_BROWSER_ICON = <ThemedGlobe size={16} />;
+const MENU_IMPORT_ICON = <ThemedImport size={16} />;
+const MENU_COPY_ICON = <ThemedCopy size={16} />;
+const MENU_SETTINGS_ICON = <ThemedSettings size={16} />;
 const GATED_WORKSPACE_HEADER_LEFT = <SidebarMenuToggle />;
 
 interface WorkspaceScreenProps {
@@ -543,7 +559,7 @@ function MobileTabTrailingAccessory({
         hitSlop={8}
         style={mobileTabMenuTriggerStyle}
       >
-        <ThemedEllipsis size={14} uniProps={mutedColorMapping} />
+        <ThemedEllipsis size={14} />
       </DropdownMenuTrigger>
       <DropdownMenuContent side="bottom" align="end" width={220} testID={menuTestIDBase}>
         {menuEntries.map((entry) =>
@@ -566,19 +582,19 @@ function MobileTabDropdownMenuItem({
   const leading = useMemo(() => {
     switch (entry.icon) {
       case "copy":
-        return <ThemedCopy size={16} uniProps={mutedColorMapping} />;
+        return <ThemedCopy size={16} />;
       case "rotate-cw":
-        return <ThemedRotateCw size={16} uniProps={mutedColorMapping} />;
+        return <ThemedRotateCw size={16} />;
       case "arrow-left-to-line":
-        return <ThemedArrowLeftToLine size={16} uniProps={mutedColorMapping} />;
+        return <ThemedArrowLeftToLine size={16} />;
       case "arrow-right-to-line":
-        return <ThemedArrowRightToLine size={16} uniProps={mutedColorMapping} />;
+        return <ThemedArrowRightToLine size={16} />;
       case "copy-x":
-        return <ThemedCopyX size={16} uniProps={mutedColorMapping} />;
+        return <ThemedCopyX size={16} />;
       case "pencil":
-        return <ThemedPencil size={16} uniProps={mutedColorMapping} />;
+        return <ThemedPencil size={16} />;
       case "x":
-        return <ThemedX size={16} uniProps={mutedColorMapping} />;
+        return <ThemedX size={16} />;
       default:
         return undefined;
     }
@@ -842,7 +858,7 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
             normalizedWorkspaceId={normalizedWorkspaceId}
           />
         </View>
-        <ThemedChevronDown size={14} uniProps={mutedColorMapping} />
+        <ThemedChevronDown size={14} />
       </Pressable>
 
       <Combobox
@@ -1024,13 +1040,13 @@ function HeaderMenuProfileItem({
     if (!icon) {
       return (
         <View style={styles.headerMenuProfileIconWrapper}>
-          <ThemedSquareTerminal size={16} uniProps={mutedColorMapping} />
+          <ThemedSquareTerminal size={16} />
         </View>
       );
     }
     return (
       <View style={styles.headerMenuProfileIconWrapper}>
-        <ThemedDynamicProviderIcon iconKey={icon} size={16} uniProps={mutedColorMapping} />
+        <ThemedDynamicProviderIcon iconKey={icon} size={16} />
       </View>
     );
   }, [icon]);
@@ -1051,9 +1067,13 @@ function WorkspaceHeaderMenuTriggerIcon({
   open: boolean;
   isMobile: boolean;
 }) {
-  const Icon = isMobile ? ThemedEllipsisVertical : ThemedEllipsis;
-  const colorMapping = hovered || open ? foregroundColorMapping : mutedColorMapping;
-  return <Icon size={16} uniProps={colorMapping} />;
+  const highlighted = hovered || open;
+  if (isMobile) {
+    const Icon = highlighted ? ThemedEllipsisVerticalForeground : ThemedEllipsisVertical;
+    return <Icon size={16} />;
+  }
+  const Icon = highlighted ? ThemedEllipsisForeground : ThemedEllipsis;
+  return <Icon size={16} />;
 }
 
 function WorkspaceHeaderMenu({
@@ -1266,7 +1286,7 @@ function WorkspaceHeaderTitleBar({
     <View style={styles.headerTitleContainer}>
       {isLoading ? (
         <View style={styles.headerTitleTextGroup}>
-          <View style={styles.headerTitleSkeleton} />
+          <ThemedLoadingSpinner size="small" />
         </View>
       ) : (
         <View style={styles.headerTitleTextGroup}>
@@ -1373,7 +1393,7 @@ function renderWorkspaceContent(input: RenderWorkspaceContentInput): React.React
   if (!activeTabDescriptor && !hasHydratedAgents) {
     return (
       <View style={styles.emptyState}>
-        <ThemedActivityIndicator uniProps={mutedColorMapping} />
+        <ThemedActivityIndicator />
       </View>
     );
   }
@@ -3254,8 +3274,8 @@ function WorkspaceScreenContent({
     if (!isRouteFocused || isNative || typeof document === "undefined" || activeTabDescriptor) {
       return;
     }
-    document.title = "Workspace";
-  }, [activeTabDescriptor, isRouteFocused]);
+    document.title = t("workspace.route.browserTabTitle");
+  }, [activeTabDescriptor, isRouteFocused, t]);
   const buildPaneContentModel = useCallback(
     (input: {
       tab: WorkspaceTabDescriptor;
@@ -3517,11 +3537,13 @@ function WorkspaceScreenContent({
                     style={explorerToggleStyle}
                   >
                     {({ hovered, pressed }) => {
-                      const active = hovered || pressed;
-                      const colorMapping = active ? foregroundColorMapping : extraMutedColorMapping;
+                      const SourceControlIcon =
+                        hovered || pressed
+                          ? ThemedSourceControlPanelIconForeground
+                          : ThemedSourceControlPanelIconExtraMuted;
                       return (
                         <>
-                          <ThemedSourceControlPanelIcon size={16} uniProps={colorMapping} />
+                          <SourceControlIcon size={16} />
                           {workspaceDescriptor?.diffStat ? (
                             <DiffStat
                               additions={workspaceDescriptor.diffStat.additions}
@@ -3564,9 +3586,9 @@ function WorkspaceScreenContent({
             accessibilityState={explorerToggleAccessibilityState}
           >
             {({ hovered, pressed }) => {
-              const colorMapping =
-                hovered || pressed ? foregroundColorMapping : extraMutedColorMapping;
-              return <ThemedPanelRight size={16} uniProps={colorMapping} />;
+              const PanelIcon =
+                hovered || pressed ? ThemedPanelRightForeground : ThemedPanelRightExtraMuted;
+              return <PanelIcon size={16} />;
             }}
           </HeaderToggleButton>
         ) : null}
@@ -3584,17 +3606,15 @@ function WorkspaceScreenContent({
             accessibilityState={explorerToggleAccessibilityState}
           >
             {({ hovered }) => {
-              const colorMapping =
-                isExplorerOpen || hovered ? foregroundColorMapping : mutedColorMapping;
-              return isGitCheckout ? (
-                <ThemedSourceControlPanelIcon
-                  size={20}
-                  uniProps={colorMapping}
-                  {...sourceControlPanelStrokeWidth15}
-                />
-              ) : (
-                <ThemedPanelRight size={20} uniProps={colorMapping} />
-              );
+              const highlighted = isExplorerOpen || hovered;
+              if (isGitCheckout) {
+                const SourceControlIcon = highlighted
+                  ? ThemedSourceControlPanelIconForeground
+                  : ThemedSourceControlPanelIcon;
+                return <SourceControlIcon size={20} {...sourceControlPanelStrokeWidth15} />;
+              }
+              const PanelIcon = highlighted ? ThemedPanelRightForeground : ThemedPanelRight;
+              return <PanelIcon size={20} />;
             }}
           </HeaderToggleButton>
         ) : null}
@@ -3912,7 +3932,11 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
   },
   headerTitleContainer: {
-    flex: 1,
+    // Shrink-only: the parent `left` slot in ScreenHeader already grows to
+    // reserve the row's remaining width (via justifyContent: "space-between"
+    // against `right`). Growing here too left a large dead strip of header
+    // background between the kebab menu and the right-side controls.
+    flexGrow: 0,
     flexShrink: 1,
     minWidth: 0,
     flexDirection: "row",
@@ -3927,10 +3951,9 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     overflow: "hidden",
     flexShrink: 1,
-    flexGrow: {
-      xs: 1,
-      md: 0,
-    },
+    // Keep the kebab next to the title. Growing this group on compact widths
+    // pushed the menu to the far edge of the header (large empty gap).
+    flexGrow: 0,
     flexDirection: {
       xs: "column",
       md: "row",
@@ -3954,14 +3977,6 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
     minWidth: 0,
     maxWidth: "60%",
-  },
-  headerTitleSkeleton: {
-    width: 220,
-    maxWidth: "100%",
-    height: 22,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.surface3,
-    opacity: 0.25,
   },
   headerRight: {
     flexDirection: "row",
@@ -3992,6 +4007,7 @@ const styles = StyleSheet.create((theme) => ({
   compactHeaderMenuCluster: {
     flexDirection: "row",
     alignItems: "center",
+    flexShrink: 0,
     gap: {
       xs: 0,
       md: theme.spacing[2],

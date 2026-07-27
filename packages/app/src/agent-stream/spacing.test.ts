@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { StreamItem } from "@/types/stream";
-import { getAssistantBlockSpacing, isSameAssistantBlockGroup } from "./spacing";
+import {
+  getAssistantBlockSpacing,
+  getGapBetweenStreamItems,
+  isSameAssistantBlockGroup,
+  STREAM_ITEM_GAP,
+} from "./spacing";
 
 function assistantBlock(params: {
   id: string;
@@ -33,6 +38,25 @@ function toolCallBlock(id: string): Extract<StreamItem, { kind: "tool_call" }> {
         status: "executing",
       },
     },
+  };
+}
+
+function userMessage(id: string): Extract<StreamItem, { kind: "user_message" }> {
+  return {
+    kind: "user_message",
+    id,
+    text: id,
+    timestamp: new Date("2026-05-01T00:00:00.000Z"),
+  };
+}
+
+function thought(id: string): Extract<StreamItem, { kind: "thought" }> {
+  return {
+    kind: "thought",
+    id,
+    text: id,
+    timestamp: new Date("2026-05-01T00:00:00.000Z"),
+    status: "ready",
   };
 }
 
@@ -119,5 +143,44 @@ describe("getAssistantBlockSpacing", () => {
     expect(
       getAssistantBlockSpacing({ item: headBlock, aboveItem: tailBlock, belowItem: null }),
     ).toBe("compactTop");
+  });
+});
+
+describe("getGapBetweenStreamItems", () => {
+  it("uses the continuous rhythm within dense sequences", () => {
+    expect(getGapBetweenStreamItems(userMessage("a"), userMessage("b"))).toBe(
+      STREAM_ITEM_GAP.continuous,
+    );
+    expect(getGapBetweenStreamItems(toolCallBlock("a"), thought("b"))).toBe(
+      STREAM_ITEM_GAP.continuous,
+    );
+  });
+
+  it("uses the related rhythm between process rows and assistant prose", () => {
+    const assistant = assistantBlock({ id: "a", blockGroupId: "group-1", blockIndex: 0 });
+    expect(getGapBetweenStreamItems(assistant, toolCallBlock("tool"))).toBe(
+      STREAM_ITEM_GAP.related,
+    );
+    expect(getGapBetweenStreamItems(toolCallBlock("tool"), assistant)).toBe(
+      STREAM_ITEM_GAP.related,
+    );
+  });
+
+  it("uses the continuous rhythm for split blocks in one assistant response", () => {
+    const first = assistantBlock({ id: "a", blockGroupId: "group-1", blockIndex: 0 });
+    const second = assistantBlock({ id: "b", blockGroupId: "group-1", blockIndex: 1 });
+    expect(getGapBetweenStreamItems(first, second)).toBe(STREAM_ITEM_GAP.continuous);
+  });
+
+  it("uses the turn rhythm for unrelated content", () => {
+    const assistant = assistantBlock({ id: "a", blockGroupId: "group-1", blockIndex: 0 });
+    expect(getGapBetweenStreamItems(userMessage("user"), toolCallBlock("tool"))).toBe(
+      STREAM_ITEM_GAP.turn,
+    );
+    expect(getGapBetweenStreamItems(assistant, userMessage("user"))).toBe(STREAM_ITEM_GAP.turn);
+  });
+
+  it("does not add trailing space without a following item", () => {
+    expect(getGapBetweenStreamItems(userMessage("user"), null)).toBe(0);
   });
 });

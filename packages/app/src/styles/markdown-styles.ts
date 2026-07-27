@@ -34,11 +34,12 @@ export function createMarkdownStyles(theme: Theme) {
       flexShrink: 1,
       minWidth: 0,
       overflowWrap: "anywhere" as const,
+      ...(isWeb ? { wordBreak: "break-word" as const } : {}),
     },
 
     paragraph: {
       marginTop: 0,
-      marginBottom: theme.spacing[3],
+      marginBottom: theme.spacing[2],
       flexWrap: "wrap" as const,
       flexDirection: "row" as const,
       alignItems: "flex-start" as const,
@@ -54,46 +55,40 @@ export function createMarkdownStyles(theme: Theme) {
 
     heading1: {
       ...webSelectableTextStyle,
-      fontSize: theme.fontSize["3xl"],
-      fontWeight: theme.fontWeight.bold,
+      fontSize: theme.fontSize["2xl"],
+      fontWeight: theme.fontWeight.medium,
       color: theme.colors.foreground,
-      marginTop: theme.spacing[6],
-      marginBottom: theme.spacing[3],
-      lineHeight: 32,
-      borderBottomWidth: 1,
-      borderBottomColor: theme.colors.border,
-      paddingBottom: theme.spacing[2],
+      marginTop: theme.spacing[4],
+      marginBottom: theme.spacing[2],
+      lineHeight: 30,
     },
 
     heading2: {
       ...webSelectableTextStyle,
-      fontSize: theme.fontSize["2xl"],
-      fontWeight: theme.fontWeight.bold,
-      color: theme.colors.foreground,
-      marginTop: theme.spacing[6],
-      marginBottom: theme.spacing[3],
-      lineHeight: 28,
-      borderBottomWidth: 1,
-      borderBottomColor: theme.colors.border,
-      paddingBottom: theme.spacing[2],
-    },
-
-    heading3: {
-      ...webSelectableTextStyle,
       fontSize: theme.fontSize.xl,
-      fontWeight: theme.fontWeight.semibold,
+      fontWeight: theme.fontWeight.medium,
       color: theme.colors.foreground,
       marginTop: theme.spacing[4],
       marginBottom: theme.spacing[2],
       lineHeight: 26,
     },
 
-    heading4: {
+    heading3: {
       ...webSelectableTextStyle,
       fontSize: theme.fontSize.lg,
-      fontWeight: theme.fontWeight.semibold,
+      fontWeight: theme.fontWeight.medium,
       color: theme.colors.foreground,
-      marginTop: theme.spacing[4],
+      marginTop: theme.spacing[3],
+      marginBottom: theme.spacing[2],
+      lineHeight: 24,
+    },
+
+    heading4: {
+      ...webSelectableTextStyle,
+      fontSize: theme.fontSize.base,
+      fontWeight: theme.fontWeight.medium,
+      color: theme.colors.foreground,
+      marginTop: theme.spacing[3],
       marginBottom: theme.spacing[2],
       lineHeight: 24,
     },
@@ -101,9 +96,9 @@ export function createMarkdownStyles(theme: Theme) {
     heading5: {
       ...webSelectableTextStyle,
       fontSize: theme.fontSize.base,
-      fontWeight: theme.fontWeight.semibold,
+      fontWeight: theme.fontWeight.medium,
       color: theme.colors.foreground,
-      marginTop: theme.spacing[3],
+      marginTop: theme.spacing[2],
       marginBottom: theme.spacing[1],
       lineHeight: 22,
     },
@@ -111,13 +106,12 @@ export function createMarkdownStyles(theme: Theme) {
     heading6: {
       ...webSelectableTextStyle,
       fontSize: theme.fontSize.base,
-      fontWeight: theme.fontWeight.semibold,
+      fontWeight: theme.fontWeight.medium,
       color: theme.colors.foregroundMuted,
-      marginTop: theme.spacing[3],
+      marginTop: theme.spacing[2],
       marginBottom: theme.spacing[1],
       lineHeight: 20,
-      textTransform: "uppercase" as const,
-      letterSpacing: 0.5,
+      letterSpacing: 0,
     },
 
     // =========================================================================
@@ -147,6 +141,7 @@ export function createMarkdownStyles(theme: Theme) {
       flexShrink: 1,
       minWidth: 0,
       overflowWrap: "anywhere" as const,
+      ...(isWeb ? { wordBreak: "break-word" as const } : {}),
     },
 
     blocklink: {
@@ -156,6 +151,7 @@ export function createMarkdownStyles(theme: Theme) {
       flexShrink: 1,
       minWidth: 0,
       overflowWrap: "anywhere" as const,
+      ...(isWeb ? { wordBreak: "break-word" as const } : {}),
     },
 
     // =========================================================================
@@ -175,12 +171,16 @@ export function createMarkdownStyles(theme: Theme) {
       lineHeight: Math.round(theme.fontSize.code * 1.45),
     },
 
+    // Explicitly override react-native-markdown-display defaults (#f5f5f5 /
+    // #CCCCCC) so dark themes never leak a light code surface.
     code_block: {
       ...webSelectableTextStyle,
       backgroundColor: theme.colors.surface2,
-      color: theme.colors.foreground,
-      padding: theme.spacing[3],
+      borderWidth: theme.borderWidth[1],
+      borderColor: theme.colors.border,
       borderRadius: theme.borderRadius.md,
+      padding: theme.spacing[3],
+      color: theme.colors.foreground,
       fontFamily: theme.fontFamily.mono,
       fontSize: theme.fontSize.code,
       marginVertical: theme.spacing[2],
@@ -189,14 +189,14 @@ export function createMarkdownStyles(theme: Theme) {
     fence: {
       ...webSelectableTextStyle,
       backgroundColor: theme.colors.surface2,
-      color: theme.colors.foreground,
-      padding: theme.spacing[3],
-      borderRadius: theme.borderRadius.md,
-      borderWidth: 1,
+      borderWidth: theme.borderWidth[1],
       borderColor: theme.colors.border,
+      borderRadius: theme.borderRadius.md,
+      padding: theme.spacing[3],
+      color: theme.colors.foreground,
       fontFamily: theme.fontFamily.mono,
       fontSize: theme.fontSize.code,
-      marginVertical: theme.spacing[3],
+      marginVertical: theme.spacing[2],
     },
 
     pre: {
@@ -211,7 +211,7 @@ export function createMarkdownStyles(theme: Theme) {
       borderWidth: 1,
       borderColor: theme.colors.border,
       borderRadius: theme.borderRadius.md,
-      marginVertical: theme.spacing[3],
+      marginVertical: theme.spacing[2],
     },
 
     thead: {
@@ -303,13 +303,12 @@ export function createMarkdownStyles(theme: Theme) {
     // =========================================================================
 
     blockquote: {
-      backgroundColor: theme.colors.surface2,
-      borderLeftWidth: 4,
-      borderLeftColor: theme.colors.primary,
-      paddingHorizontal: theme.spacing[4],
-      paddingVertical: theme.spacing[3],
+      backgroundColor: "transparent",
+      borderLeftWidth: 2,
+      borderLeftColor: theme.colors.borderAccent,
+      paddingHorizontal: theme.spacing[3],
+      paddingVertical: theme.spacing[1],
       marginVertical: theme.spacing[3],
-      borderRadius: theme.borderRadius.md,
     },
 
     // =========================================================================
@@ -340,6 +339,40 @@ export function createMarkdownStyles(theme: Theme) {
     },
 
     softbreak: {},
+  };
+}
+
+/**
+ * Thinking / reasoning prose: same size and line-height as assistant replies,
+ * muted color, and no trailing paragraph gap (the stream owns separation from
+ * the next reply line — stacking paragraph margin + stream gap looked like a
+ * blank line).
+ */
+export function createThinkingMarkdownStyles(theme: Theme) {
+  const baseStyles = createMarkdownStyles(theme);
+  const proseLineHeight = Math.round(theme.fontSize.base * 1.4);
+
+  return {
+    ...baseStyles,
+
+    body: {
+      ...baseStyles.body,
+      color: theme.colors.foregroundMuted,
+      fontSize: theme.fontSize.base,
+      lineHeight: proseLineHeight,
+    },
+
+    text: {
+      ...baseStyles.text,
+      color: theme.colors.foregroundMuted,
+    },
+
+    paragraph: {
+      ...baseStyles.paragraph,
+      // Keep a tight step between thinking paragraphs; zero trailing gap so the
+      // following stream item (assistant line / speak) sits on the same rhythm.
+      marginBottom: theme.spacing[1],
+    },
   };
 }
 

@@ -14,6 +14,10 @@ describe("formatTimeAgo", () => {
   ])("formats %s as %s", (date, expected) => {
     expect(formatTimeAgo(new Date(date), now)).toBe(expected);
   });
+
+  it("formats compact Chinese relative times", () => {
+    expect(formatTimeAgo(new Date("2026-07-16T10:00:00.000Z"), now, "zh-CN")).toBe("2 小时前");
+  });
 });
 
 describe("formatDuration", () => {

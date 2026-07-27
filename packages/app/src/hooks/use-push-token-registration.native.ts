@@ -4,7 +4,6 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Notifications from "expo-notifications";
 import Constants from "expo-constants";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { isWeb } from "@/constants/platform";
 
 const STORAGE_PREFIX = "@paseo:expo-push-token:";
 
@@ -36,7 +35,6 @@ export function usePushTokenRegistration(params: { client: DaemonClient; serverI
   const lastSentTokenRef = useRef<string | null>(null);
 
   const registerIfPossible = useCallback(async () => {
-    if (isWeb) return;
     if (!client.isConnected) return;
     const token = tokenRef.current;
     if (!token) return;
@@ -46,8 +44,6 @@ export function usePushTokenRegistration(params: { client: DaemonClient; serverI
   }, [client]);
 
   useEffect(() => {
-    if (isWeb) return;
-
     const storageKey = `${STORAGE_PREFIX}${serverId}`;
     let cancelled = false;
 
