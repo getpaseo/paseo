@@ -73,6 +73,7 @@ describe("agent timeline state", () => {
       range: { epoch: "epoch-1", startSeq: 51, endSeq: 100 },
       older: "available",
       synchronized: true,
+      acknowledgedClientMessageIds: [],
     });
 
     expect(
@@ -93,6 +94,7 @@ describe("agent timeline state", () => {
       range: null,
       older: "none",
       synchronized: true,
+      acknowledgedClientMessageIds: [],
     });
 
     expect(

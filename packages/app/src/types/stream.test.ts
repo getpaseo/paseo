@@ -1350,7 +1350,10 @@ describe("turn lifecycle events", () => {
         },
       },
       new Date("2025-01-01T15:03:11Z"),
-      { source: "canonical" },
+      {
+        source: "canonical",
+        timelineCursor: { epoch: "epoch-1", seq: 42 },
+      },
     );
 
     const userMessages = state.filter((item) => item.kind === "user_message");
@@ -1361,6 +1364,7 @@ describe("turn lifecycle events", () => {
     assert.strictEqual(userMessage.messageId, "provider-owned-canonical");
     assert.strictEqual(userMessage.text, "Analyze this");
     assert.strictEqual(userMessage.timestamp.getTime(), submittedTimestamp.getTime());
+    assert.deepStrictEqual(userMessage.timelineCursor, { epoch: "epoch-1", seq: 42 });
     assert.deepStrictEqual(userMessage.images, [image]);
     assert.deepStrictEqual(userMessage.attachments, [attachment]);
   });

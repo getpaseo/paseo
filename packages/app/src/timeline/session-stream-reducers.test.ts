@@ -173,6 +173,7 @@ const baseTimelineInput: ProcessTimelineResponseInput = {
   hasActiveInitDeferred: false,
   initRequestDirection: "tail",
   sendingClientMessageIds: [],
+  hasAuthoritativeBaseline: true,
 };
 
 const baseStreamInput: ProcessAgentStreamEventInput = {
@@ -360,6 +361,111 @@ describe("processTimelineResponse", () => {
 
     expect(result.tail.map((item) => item.kind)).toEqual(["tool_call"]);
     expect(result.head).toEqual([liveThought, liveAssistant]);
+  });
+
+  it("replaces a painted replica with an empty authoritative timeline", () => {
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [makeAssistantItem("painted replica")],
+      isInitializing: true,
+      hasActiveInitDeferred: true,
+      hasAuthoritativeBaseline: false,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "tail",
+        startCursor: null,
+        endCursor: null,
+        entries: [],
+        hasOlder: false,
+      },
+    });
+
+    expect(result.tail).toEqual([]);
+    expect(result.cursor).toBeNull();
+  });
+
+  it("keeps a newer live assistant continuation when bootstrap ends on the same message", () => {
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [makeAssistantItem("painted replica")],
+      currentHead: [
+        {
+          kind: "assistant_message",
+          id: "assistant-live",
+          messageId: "assistant-live",
+          text: " continuation",
+          timestamp: new Date(2001),
+          timelineCursor: { epoch: "epoch-1", seq: 101 },
+        },
+      ],
+      isInitializing: true,
+      hasActiveInitDeferred: true,
+      hasAuthoritativeBaseline: false,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "tail",
+        startCursor: { seq: 61 },
+        endCursor: { seq: 100 },
+        entries: [
+          {
+            ...makeTimelineEntry(100, "canonical prefix"),
+            item: {
+              type: "assistant_message",
+              text: "canonical prefix",
+              messageId: "assistant-live",
+            },
+          },
+        ],
+      },
+    });
+
+    const assistants = [...result.tail, ...result.head].filter(
+      (item) => item.kind === "assistant_message",
+    );
+    expect(assistants).toHaveLength(1);
+    expect(assistants[0]?.text).toBe("canonical prefix continuation");
+    expect(assistants[0]?.timelineCursor).toEqual({ epoch: "epoch-1", seq: 101 });
+  });
+
+  it("keeps a canonical live user row newer than the bootstrap page", () => {
+    const live = processAgentStreamEvent({
+      ...baseStreamInput,
+      event: {
+        type: "timeline",
+        provider: "claude",
+        item: {
+          type: "user_message",
+          text: "remote live prompt",
+          clientMessageId: "remote-client-message",
+        },
+      },
+      seq: 101,
+      epoch: "epoch-1",
+      currentTail: [makeAssistantItem("painted replica")],
+      hasAuthoritativeBaseline: false,
+    });
+    expect(live.head[0]).toMatchObject({
+      kind: "user_message",
+      timelineCursor: { epoch: "epoch-1", seq: 101 },
+    });
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: live.tail,
+      currentHead: live.head,
+      isInitializing: true,
+      hasActiveInitDeferred: true,
+      hasAuthoritativeBaseline: false,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "tail",
+        startCursor: { seq: 61 },
+        endCursor: { seq: 100 },
+        entries: [makeTimelineEntry(100, "canonical answer")],
+      },
+    });
+
+    expect(getUserTexts(result.head)).toEqual(["remote live prompt"]);
   });
 
   it("uses the timeline entry timestamp as canonical", () => {
@@ -2416,6 +2522,28 @@ describe("processAgentStreamEvent", () => {
       startSeq: 1,
       endSeq: 1,
     });
+  });
+
+  it("renders a live row over painted items without creating an authoritative cursor", () => {
+    const result = processAgentStreamEvent({
+      ...baseStreamInput,
+      event: makeTimelineEvent("live before bootstrap", "user_message"),
+      seq: 51,
+      epoch: "epoch-1",
+      currentTail: [makeAssistantItem("painted replica")],
+      currentCursor: undefined,
+      hasAuthoritativeBaseline: false,
+    });
+
+    expect(getAssistantTexts(result.tail)).toEqual(["painted replica"]);
+    expect(getUserTexts(result.head)).toEqual(["live before bootstrap"]);
+    expect(result.head[0]).toMatchObject({
+      kind: "user_message",
+      timelineCursor: { epoch: "epoch-1", seq: 51 },
+    });
+    expect(result.cursorChanged).toBe(false);
+    expect(result.cursor).toBeNull();
+    expect(result.sideEffects).toEqual([]);
   });
 });
 

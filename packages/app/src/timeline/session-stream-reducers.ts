@@ -89,6 +89,7 @@ export interface ProcessTimelineResponseInput {
   hasActiveInitDeferred: boolean;
   initRequestDirection: InitRequestDirection;
   sendingClientMessageIds: readonly string[];
+  hasAuthoritativeBaseline: boolean;
 }
 
 export interface ProcessTimelineResponseOutput {
@@ -233,6 +234,10 @@ function applyTimelineReplacePath(args: {
     previousHead: currentHead,
     sendingClientMessageIds,
     preserveLiveHead,
+    canonicalCoverage: {
+      epoch: payload.epoch,
+      endSeq: payload.endCursor?.seq ?? null,
+    },
   });
   const cursor: TimelineCursor | null =
     payload.startCursor && payload.endCursor
@@ -574,43 +579,6 @@ function reconcileOverlappingProjectedReasoning(params: {
     : { tail: params.tail, head: params.head, reconciled: false };
 }
 
-function reconcileProjectedUserOverlay(params: {
-  tail: StreamItem[];
-  head: StreamItem[];
-  unit: TimelineUnit;
-}): { tail: StreamItem[]; head: StreamItem[]; reconciled: boolean } {
-  const { event } = params.unit;
-  if (event.type !== "timeline" || event.item.type !== "user_message") {
-    return { tail: params.tail, head: params.head, reconciled: false };
-  }
-  const userItem = event.item;
-  const overlayIndex = params.head.findIndex(
-    (item) =>
-      item.kind === "user_message" &&
-      matchesLocalUserMessageIdentity(
-        {
-          messageId: userItem.messageId,
-          clientMessageId: userItem.clientMessageId,
-          text: userItem.text,
-        },
-        item,
-      ),
-  );
-  const overlay = params.head[overlayIndex];
-  if (overlayIndex < 0 || !overlay || overlay.kind !== "user_message") {
-    return { tail: params.tail, head: params.head, reconciled: false };
-  }
-  const canonical = reduceStreamUpdate([], event, params.unit.timestamp, {
-    source: "canonical",
-  })[0];
-  if (!canonical || canonical.kind !== "user_message") {
-    return { tail: params.tail, head: params.head, reconciled: false };
-  }
-  const head = [...params.head];
-  head[overlayIndex] = mergeCanonicalUserWithLocalPresentation(canonical, overlay);
-  return { tail: params.tail, head, reconciled: true };
-}
-
 function reconcileOverlappingProjectedStreamItems(params: {
   tail: StreamItem[];
   head: StreamItem[];
@@ -624,16 +592,13 @@ function reconcileOverlappingProjectedStreamItems(params: {
   if (params.currentEndSeq === undefined) return { tail, head, reconciledUnits };
 
   for (const unit of params.units) {
-    let reconciled = reconcileProjectedUserOverlay({ tail, head, unit });
-    if (!reconciled.reconciled) {
-      reconciled = reconcileOverlappingProjectedAssistant({
-        tail,
-        head,
-        unit,
-        epoch: params.epoch,
-        currentEndSeq: params.currentEndSeq,
-      });
-    }
+    let reconciled = reconcileOverlappingProjectedAssistant({
+      tail,
+      head,
+      unit,
+      epoch: params.epoch,
+      currentEndSeq: params.currentEndSeq,
+    });
     if (!reconciled.reconciled) {
       reconciled = reconcileOverlappingProjectedReasoning({
         tail,
@@ -859,6 +824,7 @@ export function processTimelineResponse(
     hasActiveInitDeferred,
     initRequestDirection,
     sendingClientMessageIds,
+    hasAuthoritativeBaseline,
   } = input;
 
   // ------------------------------------------------------------------
@@ -930,7 +896,8 @@ export function processTimelineResponse(
         currentTail,
         currentHead,
         sendingClientMessageIds,
-        preserveLiveHead: currentCursor?.epoch === payload.epoch,
+        preserveLiveHead:
+          currentCursor?.epoch === payload.epoch || (!payload.reset && !hasAuthoritativeBaseline),
         toHydratedEvents,
       })
     : applyTimelineIncrementalPath({

@@ -575,8 +575,10 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       const isInitializing = session?.initializingAgents.get(agentId) === true;
       const activeInitDeferred = getInitDeferred(initKey);
       const hasActiveInitDeferred = Boolean(activeInitDeferred);
-      const currentCursor = session?.agentTimelineCursor.get(agentId);
-      const currentTail = session?.agentStreamTail.get(agentId) ?? [];
+      const timeline = selectAgentTimelineState(session, agentId);
+      const currentCursor =
+        timeline.status === "synced" ? (timeline.range ?? undefined) : undefined;
+      const currentTail = timeline.status === "cold" ? [] : timeline.items;
       const currentHead = session?.agentStreamHead.get(agentId) ?? [];
       const sendingClientMessageIds = getSendingClientMessageIds(
         session?.messageSubmissions.get(agentId),
@@ -592,6 +594,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         hasActiveInitDeferred,
         initRequestDirection: activeInitDeferred?.requestDirection ?? "tail",
         sendingClientMessageIds,
+        hasAuthoritativeBaseline: timeline.status === "synced",
       });
 
       if (result.error) {

@@ -5,11 +5,16 @@ import React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import "@/styles/unistyles";
 import type { StreamItem } from "@/types/stream";
 import type { StreamRenderInput, StreamSegmentRenderers, StreamViewportHandle } from "./strategy";
 import { createWebStreamStrategy } from "./strategy-web";
 
 vi.hoisted(() => {
+  Object.defineProperty(globalThis, "__DEV__", {
+    configurable: true,
+    value: false,
+  });
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     value: () => ({
@@ -22,6 +27,10 @@ vi.hoisted(() => {
       removeEventListener: () => {},
       removeListener: () => {},
     }),
+  });
+  Object.defineProperty(window.screen, "orientation", {
+    configurable: true,
+    value: { type: "landscape-primary" },
   });
 });
 

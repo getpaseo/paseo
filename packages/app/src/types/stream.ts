@@ -88,6 +88,7 @@ export interface UserMessageItem {
   id: string;
   clientMessageId?: string;
   messageId?: string;
+  timelineCursor?: TimelinePosition;
   text: string;
   timestamp: Date;
   images?: UserMessageImageAttachment[];
@@ -98,6 +99,7 @@ export interface UserMessageInput {
   id?: string;
   clientMessageId?: string;
   messageId?: string;
+  timelineCursor?: TimelinePosition;
   text: string;
   timestamp: Date;
   images?: UserMessageImageAttachment[];
@@ -114,6 +116,7 @@ export function createUserMessage(input: UserMessageInput): UserMessageItem {
     id,
     ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
     ...(input.messageId ? { messageId: input.messageId } : {}),
+    ...(input.timelineCursor ? { timelineCursor: input.timelineCursor } : {}),
     text: input.text,
     timestamp: input.timestamp,
     ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
@@ -236,11 +239,13 @@ function produceUserMessage(
     ...presentation,
     clientMessageId: incoming.clientMessageId ?? existing.clientMessageId,
     messageId: incoming.messageId ?? existing.messageId,
+    timelineCursor: incoming.timelineCursor ?? existing.timelineCursor,
   });
   if (
     existing.id === merged.id &&
     existing.clientMessageId === merged.clientMessageId &&
     existing.messageId === merged.messageId &&
+    existing.timelineCursor === merged.timelineCursor &&
     existing.text === merged.text &&
     existing.timestamp === merged.timestamp &&
     existing.images === merged.images &&
@@ -392,6 +397,7 @@ export interface CanonicalStreamReplacementInput {
   previousHead: StreamItem[];
   sendingClientMessageIds: readonly string[];
   preserveLiveHead: boolean;
+  canonicalCoverage: { epoch: string; endSeq: number | null };
 }
 
 export interface CanonicalStreamReplacementResult {
@@ -434,9 +440,30 @@ function preserveReplacementHead(
   if (
     liveAssistant.kind !== "assistant_message" ||
     !tailAssistant ||
-    tailAssistant.kind !== "assistant_message" ||
-    !liveAssistant.text.startsWith(tailAssistant.text)
+    tailAssistant.kind !== "assistant_message"
   ) {
+    return { tail, head: unreconciledHead, acknowledgedClientMessageIds: [] };
+  }
+
+  const isNewerContinuation =
+    liveAssistant.messageId !== undefined &&
+    liveAssistant.messageId === tailAssistant.messageId &&
+    liveAssistant.timelineCursor !== undefined &&
+    tailAssistant.timelineCursor !== undefined &&
+    liveAssistant.timelineCursor.epoch === tailAssistant.timelineCursor.epoch &&
+    liveAssistant.timelineCursor.seq > tailAssistant.timelineCursor.seq;
+  if (isNewerContinuation) {
+    const text = liveAssistant.text.startsWith(tailAssistant.text)
+      ? liveAssistant.text
+      : `${tailAssistant.text}${liveAssistant.text}`;
+    const head = [
+      ...unreconciledHead.slice(0, liveAssistantIndex),
+      { ...liveAssistant, text },
+      ...unreconciledHead.slice(liveAssistantIndex + 1),
+    ];
+    return { tail: tail.slice(0, -1), head, acknowledgedClientMessageIds: [] };
+  }
+  if (!liveAssistant.text.startsWith(tailAssistant.text)) {
     return { tail, head: unreconciledHead, acknowledgedClientMessageIds: [] };
   }
 
@@ -507,7 +534,13 @@ export function replaceWithCanonicalStream(
 
   nextHead = nextHead.filter((item) => {
     if (item.kind !== "user_message" || !item.clientMessageId) return true;
-    return sendingClientMessageIds.has(item.clientMessageId);
+    if (sendingClientMessageIds.has(item.clientMessageId)) return true;
+    if (!input.preserveLiveHead || !item.timelineCursor) return false;
+    return (
+      item.timelineCursor.epoch === input.canonicalCoverage.epoch &&
+      (input.canonicalCoverage.endSeq === null ||
+        item.timelineCursor.seq > input.canonicalCoverage.endSeq)
+    );
   });
 
   const replacement = preserveReplacementHead(
@@ -675,6 +708,7 @@ function appendUserMessage(
   _source: StreamUpdateSource,
   messageId?: string,
   clientMessageId?: string,
+  timelineCursor?: TimelinePosition,
 ): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
   if (!hasContent) {
@@ -686,6 +720,7 @@ function appendUserMessage(
     id: messageId ?? createUniqueTimelineId(state, "user", chunkSeed, timestamp),
     clientMessageId,
     messageId,
+    timelineCursor,
     text: chunk,
     timestamp,
   });
@@ -1148,6 +1183,7 @@ function reduceTimelineEvent(
           source,
           item.messageId,
           item.clientMessageId,
+          timelineCursor,
         ),
       );
     case "assistant_message":
@@ -1510,8 +1546,9 @@ function applyCanonicalUserMessageEvent(params: {
   head: StreamItem[];
   event: AgentStreamEventPayload;
   timestamp: Date;
+  timelineCursor?: TimelinePosition;
 }): ApplyStreamEventResult | null {
-  const { tail, head, event, timestamp } = params;
+  const { tail, head, event, timestamp, timelineCursor } = params;
   if (event.type !== "timeline" || event.item.type !== "user_message") return null;
   const normalized = normalizeChunk(event.item.text);
 
@@ -1523,6 +1560,7 @@ function applyCanonicalUserMessageEvent(params: {
       createUniqueTimelineId([...tail, ...head], "user", normalized.chunk.trim(), timestamp),
     messageId: event.item.messageId,
     clientMessageId: event.item.clientMessageId,
+    timelineCursor,
     text: normalized.chunk,
     timestamp,
   });
@@ -1559,7 +1597,13 @@ export function applyStreamEvent(params: {
   timelineCursor?: TimelinePosition;
 }): ApplyStreamEventResult {
   const { tail, head, event, timestamp } = params;
-  const canonicalUserResult = applyCanonicalUserMessageEvent({ tail, head, event, timestamp });
+  const canonicalUserResult = applyCanonicalUserMessageEvent({
+    tail,
+    head,
+    event,
+    timestamp,
+    timelineCursor: params.timelineCursor,
+  });
   if (canonicalUserResult) return canonicalUserResult;
   const source = params.source ?? "live";
   let nextTail = tail;
