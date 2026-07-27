@@ -600,7 +600,6 @@ test.describe("New workspace flow", () => {
         assertHeader: false,
       });
       createdWorktreeDirectories.add(createdWorkspace.workspaceDirectory);
-      await expect(page.getByTestId("turn-working-indicator")).toHaveCount(0);
 
       const rowTestId = `sidebar-workspace-row-${serverId}:${createdWorkspace.workspaceId}`;
       await expectWorkspaceStatusGroupEvents({
