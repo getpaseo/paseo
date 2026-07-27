@@ -123,12 +123,45 @@ export function createUserMessage(input: UserMessageInput): UserMessageItem {
   };
 }
 
+export function appendSubmittedUserMessage(input: {
+  tail: StreamItem[];
+  head: StreamItem[];
+  message: UserMessageItem;
+}): { tail: StreamItem[]; head: StreamItem[] } {
+  const clientMessageId = input.message.clientMessageId;
+  if (!clientMessageId) {
+    throw new Error("Submitted user message requires client identity");
+  }
+  const alreadyExists = [...input.tail, ...input.head].some(
+    (item) => item.kind === "user_message" && item.clientMessageId === clientMessageId,
+  );
+  if (alreadyExists) {
+    throw new Error(`Submitted user message already exists: ${clientMessageId}`);
+  }
+  return input.head.length > 0
+    ? { tail: input.tail, head: [...input.head, input.message] }
+    : { tail: [...input.tail, input.message], head: input.head };
+}
+
+export function removeSubmittedUserMessage(input: {
+  tail: StreamItem[];
+  head: StreamItem[];
+  clientMessageId: string;
+}): { tail: StreamItem[]; head: StreamItem[] } {
+  const remove = (items: StreamItem[]) => {
+    const next = items.filter(
+      (item) => item.kind !== "user_message" || item.clientMessageId !== input.clientMessageId,
+    );
+    return next.length === items.length ? items : next;
+  };
+  return { tail: remove(input.tail), head: remove(input.head) };
+}
+
 // COMPAT(userMessageClientId): added in v0.2.0, remove after 2027-01-20 once the
 // supported daemon floor emits clientMessageId on submitted user messages. Until then a
 // locally submitted row (clientMessageId, no messageId) and its canonical twin from an
-// old daemon (messageId, no clientMessageId) share no identifier, so they are matched by
-// the id the client supplied over the wire or by text. Direction-independent: either row
-// can already be in the timeline when the other arrives.
+// old daemon (messageId, no clientMessageId) share no identifier, so canonical ingestion
+// may match an explicit local candidate by the id supplied over the wire or by text.
 function matchesLegacyCanonicalUserMessage(
   submitted: UserMessageItem,
   canonical: UserMessageItem,
@@ -138,17 +171,21 @@ function matchesLegacyCanonicalUserMessage(
   return canonical.messageId === submitted.clientMessageId || canonical.text === submitted.text;
 }
 
-function matchesUserMessage(existing: UserMessageItem, incoming: UserMessageItem): boolean {
+type UserMessageMatchPolicy = "canonical-incoming" | "handoff";
+
+function matchesUserMessage(
+  existing: UserMessageItem,
+  incoming: UserMessageItem,
+  policy: UserMessageMatchPolicy,
+): boolean {
   if (existing.clientMessageId && incoming.clientMessageId) {
     return existing.clientMessageId === incoming.clientMessageId;
   }
   if (existing.messageId && incoming.messageId) {
     return existing.messageId === incoming.messageId;
   }
-  return (
-    matchesLegacyCanonicalUserMessage(existing, incoming) ||
-    matchesLegacyCanonicalUserMessage(incoming, existing)
-  );
+  if (matchesLegacyCanonicalUserMessage(existing, incoming)) return true;
+  return policy === "handoff" && matchesLegacyCanonicalUserMessage(incoming, existing);
 }
 
 export function upsertUserMessage(
@@ -173,9 +210,10 @@ function produceUserMessage(
   incoming: UserMessageItem,
   insertAt: number | null,
   presentationPolicy: UserMessagePresentationPolicy,
+  matchPolicy: UserMessageMatchPolicy = "canonical-incoming",
 ): UserMessageProductionResult {
   const index = items.findIndex(
-    (item) => item.kind === "user_message" && matchesUserMessage(item, incoming),
+    (item) => item.kind === "user_message" && matchesUserMessage(item, incoming, matchPolicy),
   );
   if (index < 0) {
     if (insertAt === null) {
@@ -221,6 +259,7 @@ export interface UserMessageStreamUpsertInput {
   message: UserMessageItem;
   insert: "tail" | "head" | "prepend-tail" | "none";
   presentation: UserMessagePresentationPolicy;
+  matchPolicy?: UserMessageMatchPolicy;
 }
 
 export interface UserMessageStreamUpsertResult extends ApplyStreamEventResult {
@@ -235,7 +274,13 @@ export interface UserMessageStreamUpsertResult extends ApplyStreamEventResult {
 export function upsertUserMessageAcrossStream(
   input: UserMessageStreamUpsertInput,
 ): UserMessageStreamUpsertResult {
-  const tailResult = produceUserMessage(input.tail, input.message, null, input.presentation);
+  const tailResult = produceUserMessage(
+    input.tail,
+    input.message,
+    null,
+    input.presentation,
+    input.matchPolicy,
+  );
   if (tailResult.matched) {
     return {
       tail: tailResult.items,
@@ -250,7 +295,13 @@ export function upsertUserMessageAcrossStream(
       },
     };
   }
-  const headResult = produceUserMessage(input.head, input.message, null, input.presentation);
+  const headResult = produceUserMessage(
+    input.head,
+    input.message,
+    null,
+    input.presentation,
+    input.matchPolicy,
+  );
   if (headResult.matched) {
     return {
       tail: input.tail,
@@ -280,6 +331,7 @@ export function upsertUserMessageAcrossStream(
       input.message,
       input.head.length,
       input.presentation,
+      input.matchPolicy,
     );
     return {
       tail: input.tail,
@@ -299,6 +351,7 @@ export function upsertUserMessageAcrossStream(
     input.message,
     input.insert === "prepend-tail" ? 0 : input.tail.length,
     input.presentation,
+    input.matchPolicy,
   );
   return {
     tail: inserted.items,
@@ -318,14 +371,14 @@ export interface CanonicalStreamReplacementInput {
   canonical: StreamItem[];
   previousTail: StreamItem[];
   previousHead: StreamItem[];
-  pendingClientMessageId: string | null;
-  policy: "preserve-local-submissions" | "replace-history";
+  sendingClientMessageIds: readonly string[];
   preserveLiveHead: boolean;
 }
 
 export interface CanonicalStreamReplacementResult {
   tail: StreamItem[];
   head: StreamItem[];
+  acknowledgedClientMessageIds: string[];
 }
 
 function removeUserMessageAt(items: UserMessageItem[], index: number): UserMessageItem[] {
@@ -336,11 +389,15 @@ function preserveReplacementHead(
   tail: StreamItem[],
   currentHead: StreamItem[],
   preserveLiveHead: boolean,
+  sendingClientMessageIds: ReadonlySet<string>,
 ): CanonicalStreamReplacementResult {
   const retainedHead = preserveLiveHead
     ? currentHead
     : currentHead.filter(
-        (item) => item.kind === "user_message" && item.clientMessageId !== undefined,
+        (item) =>
+          item.kind === "user_message" &&
+          item.clientMessageId !== undefined &&
+          sendingClientMessageIds.has(item.clientMessageId),
       );
   const tailIds = new Set(tail.map((item) => item.id));
   const unreconciledHead = retainedHead.filter(
@@ -349,7 +406,9 @@ function preserveReplacementHead(
   const liveAssistantIndex = unreconciledHead.findLastIndex(
     (item) => item.kind === "assistant_message",
   );
-  if (liveAssistantIndex < 0) return { tail, head: unreconciledHead };
+  if (liveAssistantIndex < 0) {
+    return { tail, head: unreconciledHead, acknowledgedClientMessageIds: [] };
+  }
 
   const liveAssistant = unreconciledHead[liveAssistantIndex];
   const tailAssistant = tail.at(-1);
@@ -359,7 +418,7 @@ function preserveReplacementHead(
     tailAssistant.kind !== "assistant_message" ||
     !liveAssistant.text.startsWith(tailAssistant.text)
   ) {
-    return { tail, head: unreconciledHead };
+    return { tail, head: unreconciledHead, acknowledgedClientMessageIds: [] };
   }
 
   const head = [
@@ -367,18 +426,20 @@ function preserveReplacementHead(
     { ...liveAssistant, text: tailAssistant.text },
     ...unreconciledHead.slice(liveAssistantIndex + 1),
   ];
-  return { tail: tail.slice(0, -1), head };
+  return { tail: tail.slice(0, -1), head, acknowledgedClientMessageIds: [] };
 }
 
 export function replaceWithCanonicalStream(
   input: CanonicalStreamReplacementInput,
 ): CanonicalStreamReplacementResult {
+  const sendingClientMessageIds = new Set(input.sendingClientMessageIds);
   let unmatchedTailMessages = input.previousTail.filter(
     (item): item is UserMessageItem =>
       item.kind === "user_message" && item.clientMessageId !== undefined,
   );
   let nextHead = input.previousHead;
   const nextTail: StreamItem[] = [];
+  const acknowledgedClientMessageIds = new Set<string>();
 
   for (const item of input.canonical) {
     if (item.kind !== "user_message") {
@@ -390,6 +451,12 @@ export function replaceWithCanonicalStream(
     if (tailResult.matched) {
       unmatchedTailMessages = removeUserMessageAt(unmatchedTailMessages, tailResult.index);
       nextTail.push(tailResult.message);
+      if (
+        tailResult.message.clientMessageId &&
+        sendingClientMessageIds.has(tailResult.message.clientMessageId)
+      ) {
+        acknowledgedClientMessageIds.add(tailResult.message.clientMessageId);
+      }
       continue;
     }
 
@@ -400,6 +467,12 @@ export function replaceWithCanonicalStream(
         ...headResult.items.slice(headResult.index + 1),
       ];
       nextTail.push(headResult.message);
+      if (
+        headResult.message.clientMessageId &&
+        sendingClientMessageIds.has(headResult.message.clientMessageId)
+      ) {
+        acknowledgedClientMessageIds.add(headResult.message.clientMessageId);
+      }
       continue;
     }
 
@@ -407,10 +480,7 @@ export function replaceWithCanonicalStream(
   }
 
   for (const local of unmatchedTailMessages) {
-    if (
-      input.policy === "replace-history" &&
-      local.clientMessageId !== input.pendingClientMessageId
-    ) {
+    if (!local.clientMessageId || !sendingClientMessageIds.has(local.clientMessageId)) {
       continue;
     }
     const insertionIndex = nextTail.findIndex(
@@ -421,13 +491,19 @@ export function replaceWithCanonicalStream(
 
   nextHead = nextHead.filter((item) => {
     if (item.kind !== "user_message" || !item.clientMessageId) return true;
-    return (
-      input.policy === "preserve-local-submissions" ||
-      item.clientMessageId === input.pendingClientMessageId
-    );
+    return sendingClientMessageIds.has(item.clientMessageId);
   });
 
-  return preserveReplacementHead(nextTail, nextHead, input.preserveLiveHead);
+  const replacement = preserveReplacementHead(
+    nextTail,
+    nextHead,
+    input.preserveLiveHead,
+    sendingClientMessageIds,
+  );
+  return {
+    ...replacement,
+    acknowledgedClientMessageIds: [...acknowledgedClientMessageIds],
+  };
 }
 
 export interface AssistantMessageItem {
@@ -572,6 +648,7 @@ export function handoffCreatedAgentUserMessageToStream(params: {
     ...params,
     insert: "tail",
     presentation: "incoming",
+    matchPolicy: "handoff",
   });
 }
 
@@ -1409,6 +1486,7 @@ export interface ApplyStreamEventResult {
   head: StreamItem[];
   changedTail: boolean;
   changedHead: boolean;
+  acknowledgedClientMessageIds?: string[];
 }
 
 function applyCanonicalUserMessageEvent(params: {
@@ -1447,6 +1525,10 @@ function applyCanonicalUserMessageEvent(params: {
     head: reconciled.head,
     changedTail: flushedTail !== tail || reconciled.changedTail,
     changedHead: flushedHead !== head || reconciled.changedHead,
+    acknowledgedClientMessageIds:
+      reconciled.location?.matched && reconciled.location.message.clientMessageId
+        ? [reconciled.location.message.clientMessageId]
+        : [],
   };
 }
 

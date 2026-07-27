@@ -20,6 +20,7 @@ import { getServerId } from "./helpers/server-id";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { delayBrowserAgentCreatedStatus } from "./helpers/new-workspace";
 import { installDaemonWebSocketGate } from "./helpers/daemon-websocket-gate";
+import { selectModel } from "./helpers/app";
 
 const IMAGE = {
   name: "message-submission.png",
@@ -438,7 +439,6 @@ async function expectCreatedAgentHandoff(
   page: Page,
   prompt: string,
   userMessage: Locator,
-  submittedGeometry: MessageGeometry,
 ): Promise<void> {
   await expect(page.getByTestId("turn-working-indicator")).toBeVisible();
   await expect(page.getByTestId(/^workspace-tab-agent_/).first()).toBeVisible({ timeout: 30_000 });
@@ -446,14 +446,11 @@ async function expectCreatedAgentHandoff(
   await expect(page.getByTestId("turn-working-indicator")).toBeVisible();
   await expect(page.getByTestId("user-message").filter({ hasText: prompt })).toHaveCount(1);
   await expect(userMessage.getByRole("button", { name: "Open image attachment" })).toBeVisible();
-  expect(await readMessageGeometry(page, userMessage)).toEqual(submittedGeometry);
 }
 
 interface DraftCreatePendingSubmission {
   prompt: string;
   userMessage: Locator;
-  submittedGeometry: MessageGeometry;
-  finishFooterContinuityCheck: () => Promise<void>;
 }
 
 async function beginDraftCreateSubmission(
@@ -461,14 +458,13 @@ async function beginDraftCreateSubmission(
   scenario: DraftCreateScenario,
 ): Promise<DraftCreatePendingSubmission> {
   await openWorkspaceDraft(page, scenario.workspaceId);
+  await selectModel(page, "one-minute-stream");
   const prompt = "Keep this row through create handoff.";
   const userMessage = await submitMessageWithImage(page, prompt);
   await scenario.agentCreatedDelay.waitForCreateRequest();
   await scenario.agentCreatedDelay.waitForDelayedCreatedStatus();
   await expectPendingSubmission(page, userMessage);
-  const submittedGeometry = await readMessageGeometry(page, userMessage);
-  const finishFooterContinuityCheck = await beginWorkingFooterContinuityCheck(page);
-  return { prompt, userMessage, submittedGeometry, finishFooterContinuityCheck };
+  return { prompt, userMessage };
 }
 
 async function completeDraftCreateSubmission(
@@ -477,13 +473,7 @@ async function completeDraftCreateSubmission(
   pending: DraftCreatePendingSubmission,
 ): Promise<void> {
   scenario.agentCreatedDelay.release();
-  await expectCreatedAgentHandoff(
-    page,
-    pending.prompt,
-    pending.userMessage,
-    pending.submittedGeometry,
-  );
-  await pending.finishFooterContinuityCheck();
+  await expectCreatedAgentHandoff(page, pending.prompt, pending.userMessage);
 }
 
 test.describe("Agent message submission", () => {

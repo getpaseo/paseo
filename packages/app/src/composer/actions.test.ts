@@ -6,13 +6,16 @@ import type {
   UserComposerAttachment,
   WorkspaceComposerAttachment,
 } from "@/attachments/types";
-import type { StreamItem } from "@/types/stream";
+import {
+  appendSubmittedUserMessage,
+  removeSubmittedUserMessage,
+  type StreamItem,
+} from "@/types/stream";
 import {
   acceptMessageSubmission,
   beginMessageSubmission,
   rejectMessageSubmission,
-  type MessageSubmissionAcceptance,
-  type MessageSubmissionState,
+  type MessageSubmissionRecord,
 } from "@/composer/submission/model";
 import {
   cancelComposerAgent,
@@ -195,47 +198,61 @@ function createFakeSendClient(
 interface FakeStream extends MessageSubmissionWriter {
   head: Map<string, StreamItem[]>;
   tail: Map<string, StreamItem[]>;
-  acceptance: MessageSubmissionAcceptance;
 }
 
-function createFakeStream(
-  initialHead: Map<string, StreamItem[]> = new Map(),
-  options: { acceptance?: MessageSubmissionAcceptance } = {},
-): FakeStream {
+function createFakeStream(initialHead: Map<string, StreamItem[]> = new Map()): FakeStream {
   const fake: FakeStream = {
     head: new Map(initialHead),
     tail: new Map(),
-    acceptance: options.acceptance ?? "rpc-and-running",
     begin: (agentId, message) => {
-      const next = beginMessageSubmission(readSubmission(fake, agentId), {
+      const current = readSubmission(fake, agentId);
+      const stream = appendSubmittedUserMessage({
+        tail: current.tail,
+        head: current.head,
         message,
-        submittedAt: message.timestamp,
-        acceptance: fake.acceptance,
       });
-      writeSubmission(fake, agentId, next);
+      writeSubmission(fake, agentId, {
+        ...stream,
+        submissions: beginMessageSubmission(current.submissions, {
+          clientMessageId: message.clientMessageId!,
+          submittedAt: message.timestamp,
+        }),
+      });
     },
     accept: (agentId, clientMessageId) => {
-      writeSubmission(
-        fake,
-        agentId,
-        acceptMessageSubmission(readSubmission(fake, agentId), clientMessageId),
-      );
+      const current = readSubmission(fake, agentId);
+      writeSubmission(fake, agentId, {
+        ...current,
+        submissions: acceptMessageSubmission(current.submissions, clientMessageId, true),
+      });
     },
     reject: (agentId, clientMessageId) => {
-      const result = rejectMessageSubmission(readSubmission(fake, agentId), clientMessageId);
-      writeSubmission(fake, agentId, result.state);
+      const current = readSubmission(fake, agentId);
+      const result = rejectMessageSubmission(current.submissions, clientMessageId);
+      const stream =
+        result.outcome === "rejected"
+          ? removeSubmittedUserMessage({
+              tail: current.tail,
+              head: current.head,
+              clientMessageId,
+            })
+          : current;
+      writeSubmission(fake, agentId, { ...stream, submissions: result.submissions });
       return result.outcome;
     },
   };
   return fake;
 }
 
-const submissionsByFakeStream = new WeakMap<
-  FakeStream,
-  Map<string, MessageSubmissionState["submissions"]>
->();
+const submissionsByFakeStream = new WeakMap<FakeStream, Map<string, MessageSubmissionRecord[]>>();
 
-function readSubmission(fake: FakeStream, agentId: string): MessageSubmissionState {
+interface FakeSubmissionState {
+  tail: StreamItem[];
+  head: StreamItem[];
+  submissions: MessageSubmissionRecord[];
+}
+
+function readSubmission(fake: FakeStream, agentId: string): FakeSubmissionState {
   return {
     tail: fake.tail.get(agentId) ?? [],
     head: fake.head.get(agentId) ?? [],
@@ -243,7 +260,7 @@ function readSubmission(fake: FakeStream, agentId: string): MessageSubmissionSta
   };
 }
 
-function writeSubmission(fake: FakeStream, agentId: string, state: MessageSubmissionState): void {
+function writeSubmission(fake: FakeStream, agentId: string, state: FakeSubmissionState): void {
   fake.tail = new Map(fake.tail).set(agentId, state.tail);
   fake.head = new Map(fake.head).set(agentId, state.head);
   const submissions = submissionsByFakeStream.get(fake) ?? new Map();
@@ -405,7 +422,7 @@ describe("dispatchComposerAgentMessage", () => {
   });
 
   it("rolls back an already-running force send when its RPC fails", async () => {
-    const stream = createFakeStream(new Map(), { acceptance: "rpc-only" });
+    const stream = createFakeStream();
     const transportError = new Error("Force send failed while the prior turn was running");
     const client = createFakeSendClient({ rejection: transportError });
 

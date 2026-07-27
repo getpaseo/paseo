@@ -1,247 +1,111 @@
 import { describe, expect, it } from "vitest";
-import { createUserMessage, type StreamItem } from "@/types/stream";
 import {
   acceptMessageSubmission,
   beginMessageSubmission,
-  getPendingMessageSubmission,
-  observeMessageSubmissionRunning,
+  getActiveMessageSubmissions,
+  getSendingClientMessageIds,
+  observeAcceptedMessageSubmissionsRunning,
   observeMessageSubmissionCanonical,
   rejectMessageSubmission,
-  type MessageSubmissionState,
 } from "./model";
 
-function initialState(head: StreamItem[] = []): MessageSubmissionState {
-  return { tail: [], head, submissions: [] };
-}
+const submittedAt = new Date("2026-07-26T10:00:00.000Z");
 
-describe("message submission model", () => {
-  it("waits for authoritative running after RPC acceptance", () => {
-    const message = createUserMessage({
-      clientMessageId: "client-1",
-      text: "hello",
-      timestamp: new Date("2026-07-26T10:00:00.000Z"),
-    });
-    const begun = beginMessageSubmission(initialState(), {
-      message,
-      submittedAt: message.timestamp,
-      acceptance: "rpc-and-running",
+describe("message submission transactions", () => {
+  it("tracks every in-flight submission independently", () => {
+    const first = beginMessageSubmission([], { clientMessageId: "client-1", submittedAt });
+    const both = beginMessageSubmission(first, {
+      clientMessageId: "client-2",
+      submittedAt: new Date(submittedAt.getTime() + 1),
     });
 
-    const accepted = acceptMessageSubmission(begun, "client-1");
-    const runningObserved = observeMessageSubmissionRunning(accepted.submissions);
+    expect(getActiveMessageSubmissions(both).map((item) => item.clientMessageId)).toEqual([
+      "client-1",
+      "client-2",
+    ]);
+    expect(getSendingClientMessageIds(both)).toEqual(["client-1", "client-2"]);
+  });
 
-    expect(accepted.submissions).toEqual([
+  it("removes only the RPC-accepted transaction", () => {
+    const both = beginMessageSubmission(
+      beginMessageSubmission([], { clientMessageId: "client-1", submittedAt }),
+      { clientMessageId: "client-2", submittedAt },
+    );
+
+    expect(acceptMessageSubmission(both, "client-1", true)).toEqual([
       {
-        clientMessageId: "client-1",
-        submittedAt: message.timestamp,
-        phase: "waiting-for-running",
+        clientMessageId: "client-2",
+        submittedAt,
+        rpcAccepted: false,
+        providerAcknowledged: false,
       },
     ]);
-    expect(getPendingMessageSubmission(accepted.submissions)).toEqual(accepted.submissions[0]);
-    expect(runningObserved).toEqual([]);
   });
 
-  it("closes RPC-accepted pending state when canonical history proves acceptance", () => {
-    const message = createUserMessage({
-      clientMessageId: "client-1",
-      text: "hello",
-      timestamp: new Date("2026-07-26T10:00:00.000Z"),
-    });
-    const begun = beginMessageSubmission(initialState(), {
-      message,
-      submittedAt: message.timestamp,
-      acceptance: "rpc-and-running",
-    });
-    const accepted = acceptMessageSubmission(begun, "client-1");
+  it("bridges an accepted RPC until the correlated running state is observed", () => {
+    const sending = beginMessageSubmission([], { clientMessageId: "client-1", submittedAt });
+    const accepted = acceptMessageSubmission(sending, "client-1", false);
 
-    expect(observeMessageSubmissionCanonical(accepted.submissions, ["client-1"])).toEqual([]);
+    expect(getActiveMessageSubmissions(accepted)).toHaveLength(1);
+    expect(accepted[0].rpcAccepted).toBe(true);
+    expect(observeAcceptedMessageSubmissionsRunning(accepted)).toEqual([]);
   });
 
-  it("remembers canonical acceptance until an in-flight RPC rejection settles", () => {
-    const message = createUserMessage({
-      clientMessageId: "client-1",
-      text: "hello",
-      timestamp: new Date("2026-07-26T10:00:00.000Z"),
-    });
-    const begun = beginMessageSubmission(initialState(), {
-      message,
-      submittedAt: message.timestamp,
-      acceptance: "rpc-and-running",
-    });
-    const canonicalObserved = observeMessageSubmissionCanonical(begun.submissions, ["client-1"]);
+  it("settles an accepted RPC when provider acknowledgement arrives after running was missed", () => {
+    const sending = beginMessageSubmission([], { clientMessageId: "client-1", submittedAt });
+    const accepted = acceptMessageSubmission(sending, "client-1", false);
 
-    expect(getPendingMessageSubmission(canonicalObserved)).toBeNull();
-    expect(
-      rejectMessageSubmission({ ...begun, submissions: canonicalObserved }, "client-1"),
-    ).toEqual({
-      outcome: "accepted",
-      state: { ...begun, submissions: [] },
-    });
+    expect(observeMessageSubmissionCanonical(accepted, ["client-1"])).toEqual([]);
   });
 
-  it("rejects a row when an unrelated running transition precedes its RPC error", () => {
-    const message = createUserMessage({
-      clientMessageId: "client-1",
-      text: "hello",
-      timestamp: new Date("2026-07-26T10:00:00.000Z"),
-    });
-    const begun = beginMessageSubmission(initialState(), {
-      message,
-      submittedAt: message.timestamp,
-      acceptance: "rpc-and-running",
-    });
-
-    const runningObserved = observeMessageSubmissionRunning(begun.submissions);
-    const rejected = rejectMessageSubmission(
-      { ...begun, submissions: runningObserved },
-      "client-1",
+  it("records provider acknowledgement without settling another transaction", () => {
+    const both = beginMessageSubmission(
+      beginMessageSubmission([], { clientMessageId: "client-1", submittedAt }),
+      { clientMessageId: "client-2", submittedAt },
     );
+    const observed = observeMessageSubmissionCanonical(both, ["client-1"]);
 
-    expect(runningObserved).toBe(begun.submissions);
-    expect(getPendingMessageSubmission(runningObserved)).toEqual(runningObserved[0]);
-    expect(rejected).toEqual({
-      outcome: "rejected",
-      state: { tail: [], head: [], submissions: [] },
-    });
-  });
-
-  it("does not accept an already-running force send from agent status alone", () => {
-    const message = createUserMessage({
-      clientMessageId: "client-1",
-      text: "hello",
-      timestamp: new Date("2026-07-26T10:00:00.000Z"),
-    });
-    const begun = beginMessageSubmission(initialState(), {
-      message,
-      submittedAt: message.timestamp,
-      acceptance: "rpc-only",
-    });
-
-    expect(observeMessageSubmissionRunning(begun.submissions)).toBe(begun.submissions);
-  });
-
-  it("begins and accepts without changing the submitted row", () => {
-    const submittedAt = new Date("2026-07-26T10:00:00.000Z");
-    const message = createUserMessage({
-      clientMessageId: "client-1",
-      text: "hello",
-      timestamp: submittedAt,
-    });
-
-    const begun = beginMessageSubmission(initialState(), {
-      message,
-      submittedAt,
-      acceptance: "rpc-only",
-    });
-    const accepted = acceptMessageSubmission(begun, "client-1");
-
-    expect(begun).toEqual({
-      tail: [message],
-      head: [],
-      submissions: [
-        {
-          clientMessageId: "client-1",
-          submittedAt,
-          phase: "waiting-for-rpc",
-          acceptance: "rpc-only",
-        },
-      ],
-    });
-    expect(accepted.tail).toBe(begun.tail);
-    expect(accepted.head).toBe(begun.head);
-    expect(accepted.submissions).toEqual([]);
-  });
-
-  it("rejects by removing the submitted row and closing pending", () => {
-    const submittedAt = new Date("2026-07-26T10:00:00.000Z");
-    const message = createUserMessage({
-      clientMessageId: "client-1",
-      text: "hello",
-      timestamp: submittedAt,
-    });
-    const existingHead = createUserMessage({
-      id: "provider-prior",
-      messageId: "provider-prior",
-      text: "prior",
-      timestamp: new Date(0),
-    });
-    const begun = beginMessageSubmission(initialState([existingHead]), {
-      message,
-      submittedAt,
-      acceptance: "rpc-and-running",
-    });
-
-    expect(rejectMessageSubmission(begun, "client-1")).toEqual({
-      outcome: "rejected",
-      state: {
-        tail: [],
-        head: [existingHead],
-        submissions: [],
-      },
-    });
-  });
-
-  it("treats RPC acceptance waiting for running as authoritatively accepted", () => {
-    const message = createUserMessage({
-      clientMessageId: "client-1",
-      text: "hello",
-      timestamp: new Date("2026-07-26T10:00:00.000Z"),
-    });
-    const state = initialState([message]);
-
-    const waitingForRunning = {
-      ...state,
-      submissions: [
-        {
-          clientMessageId: "client-1",
-          submittedAt: message.timestamp,
-          phase: "waiting-for-running" as const,
-        },
-      ],
-    };
-
-    expect(rejectMessageSubmission(waitingForRunning, "client-1")).toEqual({
-      outcome: "accepted",
-      state: { ...waitingForRunning, submissions: [] },
-    });
-  });
-
-  it("reports unknown when neither pending nor its submitted row exists", () => {
-    const state = initialState();
-
-    expect(rejectMessageSubmission(state, "client-1")).toEqual({
-      outcome: "unknown",
-      state,
-    });
-  });
-});
-
-describe("submitting alongside repeated history", () => {
-  it("appends a resubmitted prompt instead of adopting an identical older row", () => {
-    // A row from a daemon that never recorded clientMessageId, e.g. history created
-    // before the field existed. Sending the same text again must be a new message.
-    const olderRow = createUserMessage({
-      id: "provider-1",
-      messageId: "provider-1",
-      text: "continue",
-      timestamp: new Date("2026-07-26T10:00:00.000Z"),
-    });
-    const resubmitted = createUserMessage({
-      clientMessageId: "client-2",
-      text: "continue",
-      timestamp: new Date("2026-07-26T10:05:00.000Z"),
-      attachments: [{ type: "text", mimeType: "text/plain", text: "attachment" }],
-    });
-
-    const begun = beginMessageSubmission(
-      { tail: [olderRow], head: [], submissions: [] },
+    expect(observed).toEqual([
       {
-        message: resubmitted,
-        submittedAt: resubmitted.timestamp,
-        acceptance: "rpc-and-running",
+        clientMessageId: "client-1",
+        submittedAt,
+        rpcAccepted: false,
+        providerAcknowledged: true,
       },
-    );
+      {
+        clientMessageId: "client-2",
+        submittedAt,
+        rpcAccepted: false,
+        providerAcknowledged: false,
+      },
+    ]);
+    expect(getSendingClientMessageIds(observed)).toEqual(["client-2"]);
+  });
 
-    expect(begun.tail).toEqual([olderRow, resubmitted]);
+  it("does not roll back a provider-acknowledged prompt on a later transport error", () => {
+    const sending = beginMessageSubmission([], { clientMessageId: "client-1", submittedAt });
+    const observed = observeMessageSubmissionCanonical(sending, ["client-1"]);
+
+    expect(rejectMessageSubmission(observed, "client-1")).toEqual({
+      outcome: "accepted",
+      submissions: [],
+    });
+  });
+
+  it("rejects an unacknowledged transaction", () => {
+    const sending = beginMessageSubmission([], { clientMessageId: "client-1", submittedAt });
+
+    expect(rejectMessageSubmission(sending, "client-1")).toEqual({
+      outcome: "rejected",
+      submissions: [],
+    });
+  });
+
+  it("does not create duplicate transaction identity", () => {
+    const sending = beginMessageSubmission([], { clientMessageId: "client-1", submittedAt });
+
+    expect(() =>
+      beginMessageSubmission(sending, { clientMessageId: "client-1", submittedAt }),
+    ).toThrow("Message submission already exists");
   });
 });

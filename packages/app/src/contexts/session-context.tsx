@@ -53,7 +53,7 @@ import {
 } from "@/utils/agent-initialization";
 import { encodeImages } from "@/utils/encode-images";
 import { derivePendingPermissionKey } from "@/utils/agent-snapshots";
-import { getPendingMessageSubmission } from "@/composer/submission/model";
+import { getSendingClientMessageIds } from "@/composer/submission/model";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { patchWorkspaceScripts } from "@/contexts/session-workspace-scripts";
 import { useToast } from "@/contexts/toast-context";
@@ -248,10 +248,17 @@ function applyTimelineStreamPatches(input: {
     setAgentTimelineCursor,
   } = input;
 
-  if (result.tail !== currentTail || result.head !== currentHead) {
+  if (
+    result.tail !== currentTail ||
+    result.head !== currentHead ||
+    result.acknowledgedClientMessageIds.length > 0
+  ) {
     setAgentStreamState(serverId, agentId, {
       ...(result.tail !== currentTail ? { tail: result.tail } : {}),
       ...(result.head !== currentHead ? { head: result.head } : {}),
+      ...(result.acknowledgedClientMessageIds.length > 0
+        ? { acknowledgedClientMessageIds: result.acknowledgedClientMessageIds }
+        : {}),
     });
   }
 
@@ -320,10 +327,12 @@ function finalizeTimelineApplication(input: {
   }
   if (shouldMarkAuthoritativeHistoryApplied) {
     setAgentAuthoritativeHistoryApplied(serverId, agentId, true);
-    useCreateFlowStore.getState().clearByAgent({ serverId, agentId });
     markAgentHistorySynchronized(serverId, agentId);
     const session = useSessionStore.getState().sessions[serverId];
     const agent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId);
+    if (agent?.status === "running") {
+      useCreateFlowStore.getState().clearByAgent({ serverId, agentId });
+    }
     if (agent && agent.status !== "running") {
       getHostRuntimeStore().drainQueuedAgentMessage(serverId, agentId);
     }
@@ -640,9 +649,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       const currentCursor = session?.agentTimelineCursor.get(agentId);
       const currentTail = session?.agentStreamTail.get(agentId) ?? [];
       const currentHead = session?.agentStreamHead.get(agentId) ?? [];
-      const pendingClientMessageId =
-        getPendingMessageSubmission(session?.messageSubmissions.get(agentId))?.clientMessageId ??
-        null;
+      const sendingClientMessageIds = getSendingClientMessageIds(
+        session?.messageSubmissions.get(agentId),
+      );
 
       setAgentTimelineHasOlder(serverId, (prev) => {
         if (prev.get(agentId) === payload.hasOlder) {
@@ -662,7 +671,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         isInitializing,
         hasActiveInitDeferred,
         initRequestDirection: activeInitDeferred?.requestDirection ?? "tail",
-        pendingClientMessageId,
+        sendingClientMessageIds,
       });
 
       if (result.error) {
@@ -790,7 +799,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       serverId,
       setAgentStreamState,
       setAgentTimelineCursor,
-      setAgents,
       recoverTimelineGap,
     });
 
@@ -806,6 +814,13 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         event.type === "turn_canceled"
       ) {
         voiceRuntime?.onTurnEvent(serverId, agentId, event.type);
+      }
+      if (
+        event.type === "turn_completed" ||
+        event.type === "turn_failed" ||
+        event.type === "turn_canceled"
+      ) {
+        useCreateFlowStore.getState().clearByAgent({ serverId, agentId });
       }
 
       agentStreamReducerQueue.enqueue(agentId, {

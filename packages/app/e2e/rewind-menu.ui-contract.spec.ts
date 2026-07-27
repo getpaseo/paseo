@@ -61,7 +61,10 @@ async function rewriteCachedMessageAsLegacyRow(page: Page, prompt: string): Prom
   }, prompt);
 }
 
-async function waitForCurrentSubmissionInCache(page: Page, prompt: string): Promise<void> {
+async function waitForCurrentSubmissionExcludedFromCache(
+  page: Page,
+  prompt: string,
+): Promise<void> {
   await expect
     .poll(() =>
       page.evaluate((messageText) => {
@@ -70,7 +73,7 @@ async function waitForCurrentSubmissionInCache(page: Page, prompt: string): Prom
         const cache = JSON.parse(raw) as {
           hosts?: Array<{ timeline?: { items?: Array<Record<string, unknown>> } | null }>;
         };
-        return cache.hosts
+        return !cache.hosts
           ?.flatMap((host) => host.timeline?.items ?? [])
           .some(
             (item) =>
@@ -84,7 +87,7 @@ async function waitForCurrentSubmissionInCache(page: Page, prompt: string): Prom
     .toBe(true);
 }
 
-async function expectPendingSubmissionNotRewindableAfterReload(page: Page): Promise<void> {
+async function expectPendingSubmissionNotRestoredAfterReload(page: Page): Promise<void> {
   const prompt = "Keep this cached submission pending.";
   const gate = await installDaemonWebSocketGate(page);
   const session = await seedMockAgentWorkspace({
@@ -98,14 +101,11 @@ async function expectPendingSubmissionNotRewindableAfterReload(page: Page): Prom
     gate.holdNextClientRequest("send_agent_message_request");
     await submitMessage(page, prompt);
     await gate.waitForHeldClientRequest();
-    await waitForCurrentSubmissionInCache(page, prompt);
+    await waitForCurrentSubmissionExcludedFromCache(page, prompt);
     await gate.drop();
     await page.reload();
 
-    const restoredMessage = userMessage(page, prompt);
-    await expect(restoredMessage).toBeVisible();
-    await restoredMessage.hover();
-    await expect(restoredMessage.getByTestId("rewind-menu-trigger")).toHaveCount(0);
+    await expect(userMessage(page, prompt)).toHaveCount(0);
   } finally {
     gate.restore();
     await session.cleanup();
@@ -113,8 +113,8 @@ async function expectPendingSubmissionNotRewindableAfterReload(page: Page): Prom
 }
 
 test.describe("Rewind sheet", () => {
-  test("does not restore a pending submission as a rewindable legacy message", async ({ page }) => {
-    await expectPendingSubmissionNotRewindableAfterReload(page);
+  test("does not restore a local-only submission from the display cache", async ({ page }) => {
+    await expectPendingSubmissionNotRestoredAfterReload(page);
   });
 
   test("keeps rewind available for a message restored from the legacy cache", async ({ page }) => {

@@ -96,9 +96,9 @@ function applyAgentStatus(input: {
   });
 }
 
-describe("message submission lifecycle ordering", () => {
-  it("keeps idle and pending when acceptance precedes authoritative running", () => {
-    const serverId = "server-accept-before-running";
+describe("message submission authority", () => {
+  it("does not settle a submission from an unrelated running transition", () => {
+    const serverId = "server-running-is-not-submission-ack";
     const agentId = "agent-1";
     const store = useSessionStore.getState();
     store.initializeSession(serverId, null as unknown as DaemonClient);
@@ -109,18 +109,6 @@ describe("message submission lifecycle ordering", () => {
       updatedAt: "2026-07-27T10:00:00.000Z",
     });
     const clientMessageId = beginPendingSubmission(serverId, agentId);
-
-    store.acceptAgentMessageSubmission(serverId, agentId, clientMessageId);
-
-    const session = useSessionStore.getState().sessions[serverId];
-    expect(session?.agents.get(agentId)?.status).toBe("idle");
-    expect(session?.messageSubmissions.get(agentId)).toEqual([
-      {
-        clientMessageId,
-        submittedAt: new Date("2026-07-27T10:00:00.000Z"),
-        phase: "waiting-for-running",
-      },
-    ]);
 
     applyAgentStatus({
       serverId,
@@ -129,14 +117,19 @@ describe("message submission lifecycle ordering", () => {
       updatedAt: "2026-07-27T10:00:01.000Z",
     });
 
-    expect(
-      useSessionStore.getState().sessions[serverId]?.messageSubmissions.get(agentId),
-    ).toBeUndefined();
+    expect(useSessionStore.getState().sessions[serverId]?.messageSubmissions.get(agentId)).toEqual([
+      {
+        clientMessageId,
+        submittedAt: new Date("2026-07-27T10:00:00.000Z"),
+        rpcAccepted: false,
+        providerAcknowledged: false,
+      },
+    ]);
     store.clearSession(serverId);
   });
 
-  it("clears accepted pending state when canonical history arrives after a missed run", () => {
-    const serverId = "server-canonical-after-missed-run";
+  it("settles provider acknowledgement only when timeline ingestion reports it", () => {
+    const serverId = "server-explicit-provider-ack";
     const agentId = "agent-1";
     const store = useSessionStore.getState();
     store.initializeSession(serverId, null as unknown as DaemonClient);
@@ -147,8 +140,6 @@ describe("message submission lifecycle ordering", () => {
       updatedAt: "2026-07-27T10:00:00.000Z",
     });
     const clientMessageId = beginPendingSubmission(serverId, agentId);
-    store.acceptAgentMessageSubmission(serverId, agentId, clientMessageId);
-
     store.setAgentStreamState(serverId, agentId, {
       tail: [
         createUserMessage({
@@ -163,8 +154,18 @@ describe("message submission lifecycle ordering", () => {
     });
 
     expect(
-      useSessionStore.getState().sessions[serverId]?.messageSubmissions.get(agentId),
-    ).toBeUndefined();
+      useSessionStore.getState().sessions[serverId]?.messageSubmissions.get(agentId)?.[0]
+        ?.providerAcknowledged,
+    ).toBe(false);
+
+    store.setAgentStreamState(serverId, agentId, {
+      acknowledgedClientMessageIds: [clientMessageId],
+    });
+
+    expect(
+      useSessionStore.getState().sessions[serverId]?.messageSubmissions.get(agentId)?.[0]
+        ?.providerAcknowledged,
+    ).toBe(true);
     store.clearSession(serverId);
   });
 });

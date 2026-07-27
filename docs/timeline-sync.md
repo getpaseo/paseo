@@ -96,34 +96,33 @@ footer, and permanently drops attachments because the daemon does not echo them 
 A submitted prompt is one `UserMessageItem` row. That row is the authoritative local presentation:
 its stable identity, text, timestamp, images, and attachments do not change when the provider
 acknowledges it. Submission lifecycle is a separate record keyed by agent, not another row shape or
-a property inferred from message identity. It begins in `waiting-for-rpc`. Submissions made while a
-stored agent is not running require both the RPC and an authoritative non-running-to-running
-transition; RPC-first moves to `waiting-for-running`, while running-first moves to
-`running-observed`. The second observation removes the record. A force-send that begins while the
-agent is already running requires only RPC acceptance, so prior running state cannot count as new
-acceptance proof.
+a property inferred from message identity. The transaction registry holds every unresolved send and
+records RPC acceptance and provider acknowledgement independently. Provider acknowledgement exists
+solely so a later transport error cannot roll back a prompt already observed canonically.
 
-An accepted send response does not project agent lifecycle. If it arrives while the replica is
-still non-running, the lifecycle record remains `waiting-for-running` until the real transition, so
-the footer has no blank frame. A transport error rolls back only `waiting-for-rpc`;
-`running-observed` proves the run started and preserves the submitted row.
+The daemon's accepted response already waits for the correlated run start, but its response and the
+directory update reach client state separately. An accepted transaction remains active until the
+directory observes that run or canonical ingestion acknowledges the prompt, bridging those ordered
+authorities without inspecting timeline snapshots. Either signal clears only an RPC-accepted
+transaction; it cannot settle a fresh send.
+Overlapping sends settle independently rather than collapsing to one newest pending message.
 
 Canonical submitted user rows carry the provider's `messageId` and Paseo's optional
 `clientMessageId`. The user-message producer reconciles them by `clientMessageId`, adds provider
 identity to the existing row, and keeps the local presentation in its original timeline slot.
 Content matching is limited to the dated compatibility path for daemon timelines created before
-that field existed, and it is direction-independent: either the submitted row or its legacy
-canonical twin can arrive second. Generic reducers and consumers do not reimplement message
-identity matching.
+that field existed. Canonical ingestion may match only an explicit unreconciled local candidate;
+the draft-create handoff is the one boundary that also permits the legacy canonical twin to have
+arrived first. Generic reducers and consumers do not reimplement message identity matching.
 
 Ordinary bootstrap, same-epoch reset, and catch-up replacement preserve unmatched locally submitted
 rows because a provider may never echo them. A known epoch change or rewind replaces history and
-drops acknowledged local rows omitted by the new canonical epoch; only the explicitly pending
-submission crosses that destructive boundary.
+drops acknowledged local rows omitted by the new canonical epoch; every transaction not yet
+acknowledged by the provider, and no other local row, crosses that destructive boundary.
 
-Canonical replacement owns both timeline lanes. It reconciles matching submitted head rows in the
-head lane and omits their canonical copies from the tail. If a live assistant head is the canonical
-assistant prefix, it also stays in the head lane. No row may be returned in both lanes.
+Canonical replacement owns both timeline lanes. A matching local row keeps its presentation ID and
+payload while taking the canonical row's ordered position. If a live assistant head is the
+canonical assistant prefix, it stays in the head lane. No row may be returned in both lanes.
 
 ## Relevant code
 

@@ -172,7 +172,7 @@ const baseTimelineInput: ProcessTimelineResponseInput = {
   isInitializing: false,
   hasActiveInitDeferred: false,
   initRequestDirection: "tail",
-  pendingClientMessageId: null,
+  sendingClientMessageIds: [],
 };
 
 const baseStreamInput: ProcessAgentStreamEventInput = {
@@ -182,7 +182,6 @@ const baseStreamInput: ProcessAgentStreamEventInput = {
   currentTail: [],
   currentHead: [],
   currentCursor: undefined,
-  currentAgent: null,
   timestamp: new Date(2000),
 };
 
@@ -306,7 +305,7 @@ describe("processTimelineResponse", () => {
       currentTail: [],
       currentHead: [liveAssistant, submitted],
       currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
-      pendingClientMessageId: "client-new-prompt",
+      sendingClientMessageIds: ["client-new-prompt"],
       payload: {
         ...baseTimelineInput.payload,
         reset: true,
@@ -479,7 +478,7 @@ describe("processTimelineResponse", () => {
       ...baseTimelineInput,
       currentTail: [submitted],
       currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
-      pendingClientMessageId: "submitted-unmatched",
+      sendingClientMessageIds: ["submitted-unmatched"],
       payload: {
         ...baseTimelineInput.payload,
         reset: true,
@@ -491,7 +490,27 @@ describe("processTimelineResponse", () => {
     expect(result.tail).toEqual([submitted]);
   });
 
-  it("keeps an acknowledged local row omitted by a same-epoch replacement", () => {
+  it("keeps every unresolved submission during replacement", () => {
+    const first = makeSubmittedUserMessage("first pending", "client-first");
+    const second = makeSubmittedUserMessage("second pending", "client-second");
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [first, second],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
+      sendingClientMessageIds: ["client-first", "client-second"],
+      payload: {
+        ...baseTimelineInput.payload,
+        reset: true,
+        epoch: "epoch-2",
+        entries: [],
+      },
+    });
+
+    expect(result.tail).toEqual([first, second]);
+  });
+
+  it("drops an acknowledged local row omitted by a same-epoch replacement", () => {
     const acknowledged = createUserMessage({
       clientMessageId: "client-local-only",
       text: "provider may not echo this",
@@ -502,7 +521,7 @@ describe("processTimelineResponse", () => {
       ...baseTimelineInput,
       currentTail: [acknowledged],
       currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
-      pendingClientMessageId: null,
+      sendingClientMessageIds: [],
       payload: {
         ...baseTimelineInput.payload,
         reset: true,
@@ -511,7 +530,7 @@ describe("processTimelineResponse", () => {
       },
     });
 
-    expect(result.tail).toEqual([acknowledged]);
+    expect(result.tail).toEqual([]);
   });
 
   it("drops an acknowledged local row omitted by a known epoch change", () => {
@@ -525,7 +544,7 @@ describe("processTimelineResponse", () => {
       ...baseTimelineInput,
       currentTail: [acknowledged],
       currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
-      pendingClientMessageId: null,
+      sendingClientMessageIds: [],
       payload: {
         ...baseTimelineInput.payload,
         reset: true,
@@ -559,7 +578,7 @@ describe("processTimelineResponse", () => {
     const result = processTimelineResponse({
       ...baseTimelineInput,
       currentTail: [unmatched, ...acknowledged],
-      pendingClientMessageId: "client-first",
+      sendingClientMessageIds: ["client-first"],
       payload: {
         ...baseTimelineInput.payload,
         reset: true,
@@ -807,6 +826,7 @@ describe("processTimelineResponse", () => {
         text: "local presentation",
       }),
     ]);
+    expect(result.acknowledgedClientMessageIds).toEqual(["client-message"]);
   });
 
   it("reconciles multiple submitted user messages in canonical order", () => {
@@ -961,7 +981,6 @@ describe("processTimelineResponse", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
-      currentAgent: null,
     });
 
     const result = processTimelineResponse({
@@ -1039,7 +1058,6 @@ describe("processTimelineResponse", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
-      currentAgent: null,
     });
     expect(getAssistantTexts(live.tail)).toHaveLength(1);
     expect(getAssistantTexts(live.head)).toHaveLength(1);
@@ -1087,7 +1105,6 @@ describe("processTimelineResponse", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
-      currentAgent: null,
     });
 
     const result = processTimelineResponse({
@@ -1278,7 +1295,6 @@ describe("processTimelineResponse", () => {
       currentTail: [prompt],
       currentHead: [],
       currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
-      currentAgent: null,
     });
 
     const result = processTimelineResponse({
@@ -1323,7 +1339,6 @@ describe("processTimelineResponse", () => {
       currentTail: [prompt],
       currentHead: [],
       currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
-      currentAgent: null,
     });
 
     const result = processTimelineResponse({
@@ -2402,150 +2417,6 @@ describe("processAgentStreamEvent", () => {
       endSeq: 1,
     });
   });
-
-  it("does not mark a running replacement idle on an earlier turn_completed", () => {
-    const turnCompletedEvent: AgentStreamEventPayload = {
-      type: "turn_completed",
-      provider: "claude",
-    };
-
-    const result = processAgentStreamEvent({
-      ...baseStreamInput,
-      event: turnCompletedEvent,
-      currentAgent: {
-        status: "running",
-        updatedAt: new Date(1000),
-        lastActivityAt: new Date(1000),
-      },
-      timestamp: new Date(2000),
-    });
-
-    expect(result.agentChanged).toBe(false);
-    expect(result.agent).toBe(null);
-  });
-
-  it("derives submitted error status on turn_failed for running agent", () => {
-    const turnFailedEvent: AgentStreamEventPayload = {
-      type: "turn_failed",
-      provider: "claude",
-      error: "something broke",
-    };
-
-    const result = processAgentStreamEvent({
-      ...baseStreamInput,
-      event: turnFailedEvent,
-      currentAgent: {
-        status: "running",
-        updatedAt: new Date(1000),
-        lastActivityAt: new Date(1000),
-      },
-      timestamp: new Date(2000),
-    });
-
-    expect(result.agentChanged).toBe(true);
-    expect(result.agent!.status).toBe("error");
-  });
-
-  it("does not derive submitted idle status on turn_canceled for running agent", () => {
-    const turnCanceledEvent: AgentStreamEventPayload = {
-      type: "turn_canceled",
-      provider: "codex",
-      reason: "interrupted",
-    };
-
-    const result = processAgentStreamEvent({
-      ...baseStreamInput,
-      event: turnCanceledEvent,
-      currentAgent: {
-        status: "running",
-        updatedAt: new Date(1000),
-        lastActivityAt: new Date(1000),
-      },
-      timestamp: new Date(2000),
-    });
-
-    expect(result.agentChanged).toBe(false);
-    expect(result.agent).toBe(null);
-  });
-
-  it("does not change agent when status is not running", () => {
-    const turnCompletedEvent: AgentStreamEventPayload = {
-      type: "turn_completed",
-      provider: "claude",
-    };
-
-    const result = processAgentStreamEvent({
-      ...baseStreamInput,
-      event: turnCompletedEvent,
-      currentAgent: {
-        status: "idle",
-        updatedAt: new Date(1000),
-        lastActivityAt: new Date(1000),
-      },
-      timestamp: new Date(2000),
-    });
-
-    expect(result.agentChanged).toBe(false);
-    expect(result.agent).toBe(null);
-  });
-
-  it("does not change agent when no agent is provided", () => {
-    const turnCompletedEvent: AgentStreamEventPayload = {
-      type: "turn_completed",
-      provider: "claude",
-    };
-
-    const result = processAgentStreamEvent({
-      ...baseStreamInput,
-      event: turnCompletedEvent,
-      currentAgent: null,
-      timestamp: new Date(2000),
-    });
-
-    expect(result.agentChanged).toBe(false);
-    expect(result.agent).toBe(null);
-  });
-
-  it("preserves updatedAt when a failing event is older than the agent", () => {
-    const turnFailedEvent: AgentStreamEventPayload = {
-      type: "turn_failed",
-      provider: "claude",
-      error: "something broke",
-    };
-
-    const result = processAgentStreamEvent({
-      ...baseStreamInput,
-      event: turnFailedEvent,
-      currentAgent: {
-        status: "running",
-        updatedAt: new Date(5000),
-        lastActivityAt: new Date(5000),
-      },
-      timestamp: new Date(2000),
-    });
-
-    expect(result.agentChanged).toBe(true);
-    expect(result.agent!.updatedAt.getTime()).toBe(5000);
-    expect(result.agent!.lastActivityAt.getTime()).toBe(5000);
-  });
-
-  it("does not produce agent patch for non-terminal events", () => {
-    const result = processAgentStreamEvent({
-      ...baseStreamInput,
-      event: makeTimelineEvent("just text"),
-      currentAgent: {
-        status: "running",
-        updatedAt: new Date(1000),
-        lastActivityAt: new Date(1000),
-      },
-      seq: 1,
-      epoch: "epoch-1",
-      timestamp: new Date(2000),
-    });
-
-    expect(result.agentChanged).toBe(false);
-    expect(result.agent).toBe(null);
-  });
 });
 
 describe("processAgentStreamEvents", () => {
@@ -2558,7 +2429,6 @@ describe("processAgentStreamEvents", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
-      currentAgent: null,
     });
 
     expect(result.changedTail).toBe(false);
@@ -2586,7 +2456,6 @@ describe("processAgentStreamEvents", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
-      currentAgent: null,
     });
 
     expect(result.changedTail).toBe(false);
@@ -2609,7 +2478,6 @@ describe("processAgentStreamEvents", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
-      currentAgent: null,
     });
 
     expect(result.changedTail).toBe(true);
@@ -2627,7 +2495,6 @@ describe("processAgentStreamEvents", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
-      currentAgent: null,
     });
 
     expect(result.changedTail).toBe(true);
@@ -2645,7 +2512,6 @@ describe("processAgentStreamEvents", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
-      currentAgent: null,
     });
 
     expect(result.changedTail).toBe(true);
@@ -2677,7 +2543,6 @@ describe("processAgentStreamEvents", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
-      currentAgent: null,
     });
 
     expect(result.changedTail).toBe(true);
@@ -2703,7 +2568,6 @@ describe("processAgentStreamEvents", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
-      currentAgent: null,
     });
 
     expect(result.changedTail).toBe(true);
@@ -2728,7 +2592,6 @@ describe("processAgentStreamEvents", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
-      currentAgent: null,
     });
 
     expect(result.changedTail).toBe(true);
@@ -2820,7 +2683,6 @@ describe("processAgentStreamEvents", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
-      currentAgent: null,
     });
 
     expect(getAssistantTexts([...result.tail, ...result.head])).toEqual([
@@ -2845,17 +2707,10 @@ describe("processAgentStreamEvents", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
-      currentAgent: {
-        status: "running",
-        updatedAt: new Date(1000),
-        lastActivityAt: new Date(1000),
-      },
     });
 
     expect(result.head).toEqual([]);
     expect(result.tail).toHaveLength(1);
-    expect(result.agentChanged).toBe(false);
-    expect(result.agent).toBe(null);
   });
 
   it("keeps a live Claude assistant paragraph contiguous when init tail hydration lands mid-stream", () => {
@@ -3004,7 +2859,6 @@ describe("createAgentStreamReducerQueue", () => {
         currentTail,
         currentHead,
         currentCursor: undefined,
-        currentAgent: null,
       }),
       commit: (agentId, result) => {
         currentTail = result.tail;
@@ -3046,7 +2900,6 @@ describe("createAgentStreamReducerQueue", () => {
         currentTail: [],
         currentHead: [],
         currentCursor: undefined,
-        currentAgent: null,
       }),
       commit: (agentId, result) => {
         commits.push(
@@ -3076,7 +2929,6 @@ describe("createAgentStreamReducerQueue", () => {
         currentTail,
         currentHead,
         currentCursor,
-        currentAgent: null,
       }),
       commit: (_agentId, result) => {
         currentTail = result.tail;
@@ -3126,7 +2978,6 @@ describe("createAgentStreamReducerQueue", () => {
         currentTail: [],
         currentHead: [],
         currentCursor: undefined,
-        currentAgent: null,
       }),
       commit: (agentId, result) => {
         commits.push(

@@ -157,12 +157,14 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
       }),
     ];
   }, [machine]);
-  const pendingMessageSubmission = useMemo<PendingMessageSubmission | null>(() => {
-    if (machine.tag !== "creating") return null;
-    return {
-      clientMessageId: machine.attempt.clientMessageId,
-      submittedAt: machine.attempt.timestamp,
-    };
+  const pendingMessageSubmissions = useMemo<readonly PendingMessageSubmission[]>(() => {
+    if (machine.tag !== "creating") return [];
+    return [
+      {
+        clientMessageId: machine.attempt.clientMessageId,
+        submittedAt: machine.attempt.timestamp,
+      },
+    ];
   }, [machine]);
 
   const draftAgent = useMemo<TDraftAgent | null>(() => {
@@ -212,6 +214,14 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
             }),
           );
           markPendingCreateLifecycle({ draftId, lifecycle: "sent" });
+          if (
+            useSessionStore.getState().sessions[pendingServerId]?.agents.get(createResult.agentId)
+              ?.status === "running"
+          ) {
+            useCreateFlowStore
+              .getState()
+              .clearByAgent({ serverId: pendingServerId, agentId: createResult.agentId });
+          }
         }
 
         await onCreateSuccess({ result: createResult.result, attempt });
@@ -335,7 +345,7 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
     formErrorMessage,
     isSubmitting,
     submittedStreamItems,
-    pendingMessageSubmission,
+    pendingMessageSubmissions,
     draftAgent,
     handleCreateFromInput,
     continueCreateFromAttempt,
