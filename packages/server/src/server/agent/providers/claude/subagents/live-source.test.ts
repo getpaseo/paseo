@@ -421,3 +421,67 @@ describe("ClaudeTaskProtocolSource usage and runtime", () => {
     expect(all.some((o) => "effort" in o && o.effort !== undefined)).toBe(false);
   });
 });
+
+describe("ClaudeTaskProtocolSource effort from hooks", () => {
+  // Real hook shapes (Claude Code 2.1.220): agent_id equals task_started's task_id, and
+  // effort.level is the ACTIVE level after any silent downgrade.
+  function hook(overrides: Record<string, unknown> = {}) {
+    return {
+      agent_id: "a1730a6215e1f5cf6",
+      agent_type: "general-purpose",
+      effort: { level: "high" },
+      ...overrides,
+    };
+  }
+
+  it("reports effort for a declared subagent, routed by agent_id", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted());
+    expect(source.observeHook(hook())).toEqual([
+      { kind: "runtime", id: "toolu_01DgLoPMW9", effort: "high" },
+    ]);
+  });
+
+  it("does not re-report an unchanged effort", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted());
+    source.observeHook(hook());
+    // PreToolUse and PostToolUse both fire on every tool use.
+    expect(source.observeHook(hook())).toEqual([]);
+  });
+
+  it("reports a downgrade when the level actually changes", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted());
+    source.observeHook(hook());
+    expect(source.observeHook(hook({ effort: { level: "medium" } }))).toEqual([
+      { kind: "runtime", id: "toolu_01DgLoPMW9", effort: "medium" },
+    ]);
+  });
+
+  it("ignores a hook from the parent turn", () => {
+    // Stop fires with effort but no agent_id: that is the parent, not a child.
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted());
+    expect(source.observeHook(hook({ agent_id: undefined }))).toEqual([]);
+  });
+
+  it("ignores a hook for a subagent it never declared", () => {
+    const source = new ClaudeTaskProtocolSource();
+    expect(source.observeHook(hook())).toEqual([]);
+  });
+
+  it("ignores a hook that carries no effort", () => {
+    // SubagentStart fires without effort — documented as absent for lifecycle hooks.
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted());
+    expect(source.observeHook(hook({ effort: undefined }))).toEqual([]);
+  });
+
+  it("survives a hook input of an unexpected shape", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted());
+    expect(source.observeHook({} as never)).toEqual([]);
+    expect(source.observeHook({ agent_id: 42, effort: { level: 7 } } as never)).toEqual([]);
+  });
+});

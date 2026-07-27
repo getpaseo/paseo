@@ -41,8 +41,12 @@ import {
   resolveClaudeDisabledThinkingForModel,
 } from "./model-manifest.js";
 import { parsePartialJsonObject } from "./partial-json.js";
+import { mergeClaudeHooks } from "./hooks.js";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
-import { ClaudeTaskProtocolSource } from "./subagents/live-source.js";
+import {
+  ClaudeTaskProtocolSource,
+  type ClaudeHookObservationInput,
+} from "./subagents/live-source.js";
 import {
   observeReplaySubagents,
   parseClaudeSubagentMeta,
@@ -3099,6 +3103,10 @@ class ClaudeAgentSession implements AgentSession {
       ...(effort ? { effort } : {}),
       ...extraClaudeOptions,
       ...settingsOptions,
+      // Merged rather than assigned above: extraClaudeOptions is spread after the base, so any
+      // user-configured hooks would otherwise replace these wholesale and silently stop effort
+      // from being observed.
+      hooks: mergeClaudeHooks(this.buildSubagentEffortHooks(), extraClaudeOptions?.hooks),
       ...(this.persistSession === undefined ? {} : { persistSession: this.persistSession }),
       env: sdkEnv,
     };
@@ -4368,6 +4376,40 @@ class ClaudeAgentSession implements AgentSession {
 
   private pushEvent(event: AgentStreamEvent) {
     this.notifySubscribers(event);
+  }
+
+  /**
+   * Effort is reachable only through hooks.
+   *
+   * It appears nowhere on the message stream — verified by scanning every message type at depth
+   * — and the level Paseo requests is not necessarily the level that runs, because a model that
+   * does not support it is silently downgraded. A hook firing inside a subagent reports the
+   * active post-downgrade level alongside the subagent's `agent_id`.
+   *
+   * These are observation-only: they record what they see and always return an empty result, so
+   * they can never alter tool execution or turn control.
+   */
+  private buildSubagentEffortHooks(): NonNullable<ClaudeOptions["hooks"]> {
+    const observe = async (input: unknown): Promise<Record<string, never>> => {
+      try {
+        for (const event of foldSubagentObservations(
+          this.taskProtocolSource.observeHook(input as ClaudeHookObservationInput),
+        )) {
+          this.notifySubscribers({ type: "provider_subagent", provider: "claude", event });
+        }
+      } catch (error) {
+        this.logger.debug({ err: error }, "Failed to read subagent effort from hook");
+      }
+      return {};
+    };
+
+    // SubagentStart carries no effort (documented as absent for lifecycle hooks), so the value
+    // lands on the child's first tool use. SubagentStop covers a child that used no tools.
+    return {
+      PreToolUse: [{ hooks: [observe] }],
+      PostToolUse: [{ hooks: [observe] }],
+      SubagentStop: [{ hooks: [observe] }],
+    };
   }
 
   private notifySubscribers(event: AgentStreamEvent): void {

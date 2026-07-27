@@ -71,6 +71,17 @@ interface TaskNotificationMessage {
   usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number };
 }
 
+/**
+ * The subset of a hook input this source reads. Every hook shares these base fields: `agent_id`
+ * is set when the hook fires from inside a subagent, and `effort.level` is the ACTIVE level for
+ * that turn, after any silent downgrade for the selected model.
+ */
+export interface ClaudeHookObservationInput {
+  agent_id?: unknown;
+  agent_type?: unknown;
+  effort?: { level?: unknown } | undefined;
+}
+
 interface TaskProgressMessage {
   task_id: string;
   usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number };
@@ -142,6 +153,8 @@ export class ClaudeTaskProtocolSource {
   private readonly lastStatusById = new Map<string, ProviderSubagentStatus>();
   /** Last model reported per subagent, so an unchanged model is not re-broadcast. */
   private readonly lastModelById = new Map<string, string>();
+  /** Last effort reported per subagent, for the same reason. */
+  private readonly lastEffortById = new Map<string, string>();
   private sawTaskStarted = false;
   private sawAnyTask = false;
   private readonly getToolInput: (toolUseId: string) => AgentMetadata | null | undefined;
@@ -210,6 +223,7 @@ export class ClaudeTaskProtocolSource {
     this.backgroundedIds.clear();
     this.lastStatusById.clear();
     this.lastModelById.clear();
+    this.lastEffortById.clear();
     this.sawTaskStarted = false;
     this.sawAnyTask = false;
   }
@@ -306,6 +320,26 @@ export class ClaudeTaskProtocolSource {
     const usage = readUsage(raw);
     if (!id || !usage) return [];
     return [{ kind: "usage", id, usage }];
+  }
+
+  /**
+   * Effort as reported by a hook firing inside a subagent.
+   *
+   * This is the only live source: the message stream carries no effort at any depth, and the
+   * value Paseo requested is not necessarily the one that ran, because a model that does not
+   * support the requested level is silently downgraded. Hooks report the post-downgrade level.
+   *
+   * `agent_id` is the same id `task_started` calls `task_id`, so it routes through the table
+   * already built at declaration — no second identity to reconcile.
+   */
+  observeHook(input: ClaudeHookObservationInput): SubagentObservation[] {
+    const taskId = readString(input.agent_id);
+    const effort = readString(input.effort?.level);
+    if (!taskId || !effort) return [];
+    const id = this.subagentIdByTaskId.get(taskId);
+    if (!id || this.lastEffortById.get(id) === effort) return [];
+    this.lastEffortById.set(id, effort);
+    return [{ kind: "runtime", id, effort }];
   }
 
   /**
