@@ -49,7 +49,7 @@ import {
   type ClaudeReplayParentFacts,
   type ClaudeSubagentMeta,
 } from "./subagents/replay-source.js";
-import { foldSubagentObservations } from "./subagents/observation.js";
+import { foldSubagentObservations, type SubagentObservation } from "./subagents/observation.js";
 import { buildClaudeFeatures, claudeModelSupportsFastMode } from "./feature-definitions.js";
 import {
   buildBinaryDiagnosticRows,
@@ -1991,7 +1991,9 @@ class ClaudeAgentSession implements AgentSession {
   private autonomousTurn: AutonomousTurnState | null = null;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly timelineAssembler = new TimelineAssembler();
-  private readonly taskProtocolSource = new ClaudeTaskProtocolSource();
+  private readonly taskProtocolSource = new ClaudeTaskProtocolSource({
+    getToolInput: (toolUseId) => this.toolUseCache.get(toolUseId)?.input ?? null,
+  });
   private readonly sidechainTracker = new ClaudeSidechainTracker({
     getToolInput: (toolUseId) => this.toolUseCache.get(toolUseId)?.input ?? null,
     // Releases that predate the task protocol announce nothing, so the tracker keeps deriving
@@ -3734,8 +3736,14 @@ class ClaudeAgentSession implements AgentSession {
     // Subagent identity and lifecycle are announced by Claude Code's task protocol, so they are
     // read rather than inferred from sidechain frames. `task_started` precedes the child's first
     // frame, so the descriptor exists before any timeline item lands on it.
-    for (const event of foldSubagentObservations(this.taskProtocolSource.observe(message))) {
+    const subagentObservations = this.taskProtocolSource.observe(message);
+    for (const event of foldSubagentObservations(subagentObservations)) {
       events.push({ type: "provider_subagent", provider: "claude", event });
+    }
+    for (const observation of subagentObservations) {
+      if (observation.kind !== "declared") continue;
+      const card = this.buildSubagentToolCallCard(observation);
+      if (card) events.push(card);
     }
     if (message.type !== "system") {
       const sessionCapture = this.captureSessionIdFromMessage(message);
@@ -3785,6 +3793,40 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     return events;
+  }
+
+  /**
+   * The Task card in the parent transcript, built from the declaration.
+   *
+   * The sidechain tracker also emits this card, enriched with the child's action log, and the two
+   * collapse on the shared tool-call id. Emitting it at declaration matters because a
+   * backgrounded subagent produces no sidechain frames at all — verified on the wire — so the
+   * tracker never runs for one and its card would otherwise stay an unlabeled "Task".
+   */
+  private buildSubagentToolCallCard(
+    declaration: Extract<SubagentObservation, { kind: "declared" }>,
+  ): AgentStreamEvent | null {
+    const toolCall = mapClaudeRunningToolCall({
+      name: "Task",
+      callId: declaration.id,
+      input: null,
+      output: null,
+    });
+    if (!toolCall) return null;
+    return {
+      type: "timeline",
+      provider: "claude",
+      item: {
+        ...toolCall,
+        detail: {
+          type: "sub_agent",
+          ...(declaration.title ? { subAgentType: declaration.title } : {}),
+          ...(declaration.description ? { description: declaration.description } : {}),
+          log: "",
+          actions: [],
+        },
+      },
+    };
   }
 
   private appendSidechainResultEvents(message: SDKMessage, events: AgentStreamEvent[]): void {

@@ -54,6 +54,25 @@ describe("ClaudeTaskProtocolSource", () => {
     ]);
   });
 
+  it("prefers the name the Task call gave over the agent type", () => {
+    // The replay source titles a subagent `input.name ?? subagent_type`. Live reads the same
+    // field from the same Task call, so one subagent is named identically on both paths.
+    const source = new ClaudeTaskProtocolSource({
+      getToolInput: (toolUseId) =>
+        toolUseId === "toolu_01DgLoPMW9" ? { name: "docs-scout", subagent_type: "Explore" } : null,
+    });
+
+    expect(source.observe(taskStarted({ subagent_type: "Explore" }))[0]).toMatchObject({
+      kind: "declared",
+      title: "docs-scout",
+    });
+  });
+
+  it("falls back to the agent type when the Task call named nothing", () => {
+    const source = new ClaudeTaskProtocolSource({ getToolInput: () => ({ description: "x" }) });
+    expect(source.observe(taskStarted())[0]).toMatchObject({ title: "general-purpose" });
+  });
+
   it("routes a status update through the task_id it learned at declaration", () => {
     const source = new ClaudeTaskProtocolSource();
     source.observe(taskStarted());

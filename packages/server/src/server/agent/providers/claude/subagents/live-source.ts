@@ -1,5 +1,6 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
+import type { AgentMetadata } from "../../../agent-sdk-types.js";
 import type { ProviderSubagentStatus } from "../../../provider-subagents/store.js";
 import type { SubagentObservation } from "./observation.js";
 
@@ -91,6 +92,17 @@ function mapTaskStatus(status: string | undefined): ProviderSubagentStatus | und
   }
 }
 
+export interface ClaudeTaskProtocolSourceInput {
+  /**
+   * The parent's Task tool input, by tool_use id.
+   *
+   * `task_started` announces `subagent_type`, but the Task call itself may also carry an explicit
+   * `name`, and the replay source prefers that name over the type. Reading the same field from the
+   * same place is what keeps one subagent titled identically live and on reopen.
+   */
+  getToolInput?: (toolUseId: string) => AgentMetadata | null | undefined;
+}
+
 export class ClaudeTaskProtocolSource {
   /** task_id -> canonical subagent id (the Task tool_use id). Populated by task_started. */
   private readonly subagentIdByTaskId = new Map<string, string>();
@@ -108,6 +120,11 @@ export class ClaudeTaskProtocolSource {
   /** Last status emitted per subagent, so a redundant announcement is not re-broadcast. */
   private readonly lastStatusById = new Map<string, ProviderSubagentStatus>();
   private sawTaskStarted = false;
+  private readonly getToolInput: (toolUseId: string) => AgentMetadata | null | undefined;
+
+  constructor(input: ClaudeTaskProtocolSourceInput = {}) {
+    this.getToolInput = input.getToolInput ?? (() => null);
+  }
 
   /**
    * True once this session has announced at least one task. Older Claude Code releases predate
@@ -179,7 +196,9 @@ export class ClaudeTaskProtocolSource {
     this.declaredIds.add(id);
     this.lastStatusById.set(id, "running");
 
-    const title = readString(message.subagent_type);
+    // An explicit `name` on the Task call wins over the agent type, matching how replay titles the
+    // same subagent. Without it a fan-out of five Explores reads as five identical rows.
+    const title = readString(this.getToolInput(id)?.name) ?? readString(message.subagent_type);
     const description = readString(message.description);
     const observations: SubagentObservation[] = [
       {
