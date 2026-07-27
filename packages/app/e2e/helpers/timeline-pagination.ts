@@ -17,6 +17,7 @@ interface LongTimelineAgentOptions {
 }
 
 interface LongTimelineAgent extends MockAgentWorkspace {
+  initialTailOldestPrompt: string;
   oldestPrompt: string;
   newestPrompt: string;
 }
@@ -28,6 +29,11 @@ const HISTORY_START_THRESHOLD_PX = 96;
 interface TimelineViewportSnapshot {
   scrollHeight: number;
   scrollTop: number;
+}
+
+interface TimelinePromptPositionSnapshot {
+  prompt: string;
+  top: number;
 }
 
 interface OlderHistoryLoadingOperation {
@@ -61,9 +67,39 @@ export async function seedLongMockAgentTimeline(
 
   return {
     ...agent,
+    initialTailOldestPrompt: promptForTurn(Math.max(0, options.turns - 20)),
     oldestPrompt: promptForTurn(0),
     newestPrompt: promptForTurn(options.turns - 1),
   };
+}
+
+export async function rememberTimelinePromptPosition(
+  page: Page,
+  prompt: string,
+): Promise<TimelinePromptPositionSnapshot> {
+  const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+  const item = timeline.getByText(prompt, { exact: true });
+  await expect(item).toBeVisible();
+  const box = await item.boundingBox();
+  if (!box) {
+    throw new Error(`Expected a rendered timeline item for ${prompt}`);
+  }
+  return { prompt, top: box.y };
+}
+
+export async function expectTimelinePromptPositionPreserved(
+  page: Page,
+  before: TimelinePromptPositionSnapshot,
+): Promise<void> {
+  const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+  const item = timeline.getByText(before.prompt, { exact: true });
+  await expect(item).toBeVisible();
+  await expect
+    .poll(async () => {
+      const box = await item.boundingBox();
+      return box ? Math.abs(box.y - before.top) : Number.POSITIVE_INFINITY;
+    })
+    .toBeLessThanOrEqual(2);
 }
 
 export async function openAgentTimeline(page: Page, agent: LongTimelineAgent): Promise<void> {

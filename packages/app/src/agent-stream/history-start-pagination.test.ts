@@ -3,6 +3,7 @@ import {
   createHistoryStartPaginationState,
   evaluateHistoryStartPagination,
   isHistoryStartLoadingOperation,
+  rearmHistoryStartPagination,
   settleHistoryStartPagination,
   type HistoryStartPaginationInput,
 } from "./history-start-pagination";
@@ -109,6 +110,25 @@ describe("history start pagination", () => {
       false,
     ]);
     expect(away.state).toEqual({ status: "ready" });
+  });
+
+  it("allows another user attempt after a request finishes without progress", () => {
+    const first = evaluateHistoryStartPagination(
+      createHistoryStartPaginationState(),
+      visibleHistoryStart,
+    );
+    const inFlight = evaluateHistoryStartPagination(first.state, {
+      ...visibleHistoryStart,
+      isLoadingOlderHistory: true,
+    });
+    const failed = evaluateHistoryStartPagination(inFlight.state, visibleHistoryStart);
+    const retried = evaluateHistoryStartPagination(
+      rearmHistoryStartPagination(failed.state),
+      visibleHistoryStart,
+    );
+
+    expect(failed.state).toEqual({ status: "latched" });
+    expect(retried.shouldLoad).toBe(true);
   });
 
   it("does not mistake repeated edge observations for a finished request", () => {

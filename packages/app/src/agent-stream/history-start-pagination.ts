@@ -27,6 +27,12 @@ export function isHistoryStartLoadingOperation(state: HistoryStartPaginationStat
   return state.status === "loading" || state.status === "settling";
 }
 
+export function rearmHistoryStartPagination(
+  state: HistoryStartPaginationState,
+): HistoryStartPaginationState {
+  return state.status === "latched" ? { status: "ready" } : state;
+}
+
 export function evaluateHistoryStartPagination(
   state: HistoryStartPaginationState,
   input: HistoryStartPaginationInput,

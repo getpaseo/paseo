@@ -179,6 +179,7 @@ function createDataImageAcquisition(input: {
         id: createPreviewAttachmentId({
           mimeType: dataImage.mimeType,
           contentLength: dataImage.base64.length,
+          contentKey: dataImage.cacheKey,
         }),
         dataUrl: source,
         mimeType: dataImage.mimeType,
