@@ -18,13 +18,19 @@ export interface SubagentRowPresentationData {
 }
 
 export function buildSubagentRowPresentationData(row: SubagentRow): SubagentRowPresentationData {
-  const label = resolveRowLabel(row.title);
+  // Provider subagents carry the task in `description` and the subagent type in `title`. The
+  // task is what tells two siblings apart in a fan-out, so it names the row and the type drops
+  // to the secondary line. Providers that report no task (OpenCode, Codex) keep the previous
+  // behavior: type as the label, empty subtitle.
+  const description = resolveRowLabel(row.description);
+  const title = resolveRowLabel(row.title);
+  const label = description ?? title;
   const status = presentationStatus(row);
   return {
     key: `${row.kind}_subagent_${row.id}`,
     kind: "agent",
     label: label ?? "",
-    subtitle: "",
+    subtitle: description && title ? title : "",
     titleState: label ? "ready" : "loading",
     statusBucket: deriveSidebarStateBucket({
       status,
@@ -52,7 +58,7 @@ export function countFinishedSubagents(rows: readonly SubagentRow[]): number {
   return rows.filter((row) => row.kind === "provider" && row.status !== "running").length;
 }
 
-export function resolveRowLabel(title: SubagentRow["title"]): string | null {
+export function resolveRowLabel(title: string | null | undefined): string | null {
   if (typeof title !== "string") {
     return null;
   }

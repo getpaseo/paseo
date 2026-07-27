@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { PaseoSubagentRow, SubagentRow } from "./select";
+import type { PaseoSubagentRow, ProviderSubagentRow, SubagentRow } from "./select";
 import {
   buildSubagentRowPresentationData,
   countFinishedSubagents,
@@ -15,6 +15,7 @@ function row(
     id: overrides.id,
     provider: overrides.provider ?? "codex",
     title: overrides.title ?? `Agent ${overrides.id}`,
+    description: null,
     status: overrides.status ?? "idle",
     requiresAttention: overrides.requiresAttention ?? false,
     createdAt: overrides.createdAt ?? new Date("2026-04-20T00:00:00.000Z"),
@@ -82,6 +83,7 @@ describe("countFinishedSubagents", () => {
         parentAgentId: "parent",
         provider: "claude",
         title: "running",
+        description: null,
         status: "running",
         requiresAttention: false,
         createdAt: new Date("2026-04-20T00:00:00.000Z"),
@@ -92,6 +94,7 @@ describe("countFinishedSubagents", () => {
         parentAgentId: "parent",
         provider: "claude",
         title: "failed",
+        description: null,
         status: "failed",
         requiresAttention: true,
         createdAt: new Date("2026-04-20T00:00:01.000Z"),
@@ -164,5 +167,58 @@ describe("buildSubagentRowPresentationData", () => {
       buildSubagentRowPresentationData(row({ id: "a", status: "idle", requiresAttention: true }))
         .statusBucket,
     ).toBe("done");
+  });
+});
+
+describe("buildSubagentRowPresentationData for provider rows", () => {
+  function providerRow(overrides: Partial<ProviderSubagentRow> = {}): ProviderSubagentRow {
+    return {
+      kind: "provider",
+      id: overrides.id ?? "toolu_1",
+      parentAgentId: "parent",
+      provider: "claude",
+      title: "title" in overrides ? (overrides.title ?? null) : "general-purpose",
+      description: overrides.description ?? null,
+      status: overrides.status ?? "running",
+      requiresAttention: false,
+      createdAt: overrides.createdAt ?? new Date("2026-07-26T00:00:00.000Z"),
+    };
+  }
+
+  it("names the row after the task and demotes the subagent type", () => {
+    const presentation = buildSubagentRowPresentationData(
+      providerRow({ title: "general-purpose", description: "Reply with banana" }),
+    );
+    expect(presentation.label).toBe("Reply with banana");
+    expect(presentation.subtitle).toBe("general-purpose");
+  });
+
+  it("tells two siblings of the same type apart", () => {
+    const left = buildSubagentRowPresentationData(
+      providerRow({ id: "a", description: "Summarize the docs" }),
+    );
+    const right = buildSubagentRowPresentationData(
+      providerRow({ id: "b", description: "Reply with banana" }),
+    );
+    expect(left.label).not.toBe(right.label);
+  });
+
+  it("keeps type-as-label and an empty subtitle when a provider reports no task", () => {
+    const presentation = buildSubagentRowPresentationData(
+      providerRow({ title: "Provider child", description: null }),
+    );
+    expect(presentation.label).toBe("Provider child");
+    expect(presentation.subtitle).toBe("");
+  });
+
+  it("stays in the loading state when neither field is known", () => {
+    const presentation = buildSubagentRowPresentationData(
+      providerRow({ title: null, description: null }),
+    );
+    expect(presentation.titleState).toBe("loading");
+  });
+
+  it("leaves managed subagent rows with no subtitle", () => {
+    expect(buildSubagentRowPresentationData(row({ id: "a", title: "Managed" })).subtitle).toBe("");
   });
 });
