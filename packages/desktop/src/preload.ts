@@ -44,29 +44,56 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
   window: {
     openNew: (options?: { pendingOpenProjectPath?: string | null }) =>
       ipcRenderer.invoke("paseo:window:openNew", options),
-    getCurrentWindow: () => ({
-      toggleMaximize: () => ipcRenderer.invoke("paseo:window:toggleMaximize"),
-      setFullscreen: (fullscreen: boolean) =>
-        ipcRenderer.invoke("paseo:window:setFullscreen", fullscreen),
-      isFullscreen: () => ipcRenderer.invoke("paseo:window:isFullscreen"),
-      updateWindowControls: (update: {
-        height?: number;
-        backgroundColor?: string;
-        foregroundColor?: string;
-        trafficLightOffsetY?: number;
-      }) => ipcRenderer.invoke("paseo:window:updateWindowControls", update),
-      onResized: (handler: EventHandler): (() => void) => {
-        const listener = (_ipcEvent: Electron.IpcRendererEvent, payload: unknown) => {
-          handler(payload);
-        };
-        ipcRenderer.on("paseo:window:resized", listener);
-        return () => {
-          ipcRenderer.removeListener("paseo:window:resized", listener);
-        };
-      },
-      setBadgeCount: (count?: number) => ipcRenderer.invoke("paseo:window:setBadgeCount", count),
-      focus: () => ipcRenderer.invoke("paseo:window:focus") as Promise<boolean>,
-    }),
+    getCurrentWindow: () => {
+      // Cache OS window focus from main. document.hasFocus() is false when an
+      // embedded <webview>/<iframe> (Code Server, Browser) holds focus even though
+      // the Paseo BrowserWindow is still focused.
+      let osWindowFocused = true;
+      const focusListener = (
+        _ipcEvent: Electron.IpcRendererEvent,
+        payload: { focused?: unknown },
+      ) => {
+        if (payload && typeof payload.focused === "boolean") {
+          osWindowFocused = payload.focused;
+        }
+      };
+      ipcRenderer.on("paseo:window:focus-state", focusListener);
+      void ipcRenderer
+        .invoke("paseo:window:isFocused")
+        .then((focused: unknown) => {
+          if (typeof focused === "boolean") {
+            osWindowFocused = focused;
+          }
+          return undefined;
+        })
+        .catch(() => undefined);
+
+      return {
+        toggleMaximize: () => ipcRenderer.invoke("paseo:window:toggleMaximize"),
+        setFullscreen: (fullscreen: boolean) =>
+          ipcRenderer.invoke("paseo:window:setFullscreen", fullscreen),
+        isFullscreen: () => ipcRenderer.invoke("paseo:window:isFullscreen"),
+        updateWindowControls: (update: {
+          height?: number;
+          backgroundColor?: string;
+          foregroundColor?: string;
+          trafficLightOffsetY?: number;
+        }) => ipcRenderer.invoke("paseo:window:updateWindowControls", update),
+        onResized: (handler: EventHandler): (() => void) => {
+          const listener = (_ipcEvent: Electron.IpcRendererEvent, payload: unknown) => {
+            handler(payload);
+          };
+          ipcRenderer.on("paseo:window:resized", listener);
+          return () => {
+            ipcRenderer.removeListener("paseo:window:resized", listener);
+          };
+        },
+        setBadgeCount: (count?: number) => ipcRenderer.invoke("paseo:window:setBadgeCount", count),
+        focus: () => ipcRenderer.invoke("paseo:window:focus") as Promise<boolean>,
+        /** Sync: OS BrowserWindow focused (true while Code Server webview has focus). */
+        isFocused: () => osWindowFocused,
+      };
+    },
   },
   dialog: {
     ask: (message: string, options?: Record<string, unknown>) =>

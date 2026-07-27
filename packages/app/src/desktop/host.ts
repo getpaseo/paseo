@@ -117,6 +117,8 @@ export interface DesktopWindowBridge {
   ) => Promise<() => void> | (() => void);
   setBadgeCount?: (count?: number) => Promise<void>;
   focus?: () => Promise<boolean>;
+  /** Sync OS window focus (true when this BrowserWindow is focused, including guest webviews). */
+  isFocused?: () => boolean;
   onDragDropEvent?: <TEvent = unknown>(
     handler: (event: TEvent) => void,
   ) => Promise<() => void> | (() => void);
