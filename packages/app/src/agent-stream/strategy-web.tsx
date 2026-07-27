@@ -331,9 +331,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         settleFrames: HISTORY_START_SETTLE_FRAMES,
         requestFrame: (callback) => window.requestAnimationFrame(callback),
         cancelFrame: (frame) => window.cancelAnimationFrame(frame),
-        isSettling: () =>
-          historyStartPaginationStateRef.current.status === "settling" &&
-          historyStartPrependAnchorActiveRef.current,
+        isSettling: () => historyStartPaginationStateRef.current.status === "settling",
         isLoading: () => {
           const input = getHistoryStartPaginationInput();
           return (
@@ -581,11 +579,15 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   useEffect(() => {
     updateScrollMetrics();
     evaluateHistoryStart();
+    if (historyStartPaginationStateRef.current.status === "settling") {
+      scheduleHistoryStartPrependSettle();
+    }
   }, [
     evaluateHistoryStart,
     hasOlderHistory,
     isLoadingOlderHistory,
     olderHistoryProgressKey,
+    scheduleHistoryStartPrependSettle,
     segments.historyMounted.length,
     segments.historyVirtualized.length,
     segments.liveHead.length,
@@ -605,6 +607,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     const observer = new ResizeObserver(() => {
       if (historyStartPrependAnchorActiveRef.current) {
         applyHistoryStartPrependAnchor();
+      }
+      if (historyStartPaginationStateRef.current.status === "settling") {
         scheduleHistoryStartPrependSettle();
       }
       updateScrollMetrics();

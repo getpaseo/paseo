@@ -363,6 +363,59 @@ describe("processTimelineResponse", () => {
     expect(result.head).toEqual([liveThought, liveAssistant]);
   });
 
+  it("keeps a newer live tool completion when bootstrap contains the running call", () => {
+    const callId = "toolu_live_completion";
+    const liveCompletion = hydrateStreamState(
+      [
+        {
+          event: {
+            type: "timeline",
+            provider: "claude",
+            item: makeToolCallTimelineEntry(2, callId, "completed", {
+              type: "read",
+              filePath: "/tmp/example.ts",
+            }).item,
+          } as AgentStreamEventPayload,
+          timestamp: new Date(2000),
+          timelineCursor: { epoch: "epoch-1", seq: 2 },
+        },
+      ],
+      { source: "canonical" },
+    );
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentHead: liveCompletion,
+      hasAuthoritativeBaseline: false,
+      isInitializing: true,
+      hasActiveInitDeferred: true,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "tail",
+        reset: false,
+        epoch: "epoch-1",
+        startCursor: { seq: 1 },
+        endCursor: { seq: 1 },
+        entries: [
+          makeToolCallTimelineEntry(1, callId, "running", {
+            type: "unknown",
+            input: { file_path: "/tmp/example.ts" },
+            output: null,
+          }),
+        ],
+      },
+    });
+
+    expect(getAgentToolCalls([...result.tail, ...result.head])).toEqual([
+      expect.objectContaining({
+        timelineCursor: { epoch: "epoch-1", seq: 2 },
+        payload: expect.objectContaining({
+          data: expect.objectContaining({ callId, status: "completed" }),
+        }),
+      }),
+    ]);
+  });
+
   it("replaces a painted replica with an empty authoritative timeline", () => {
     const result = processTimelineResponse({
       ...baseTimelineInput,

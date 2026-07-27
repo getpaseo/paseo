@@ -410,6 +410,44 @@ function removeUserMessageAt(items: UserMessageItem[], index: number): UserMessa
   return [...items.slice(0, index), ...items.slice(index + 1)];
 }
 
+function reconcileReplacementHeadAgainstTail(
+  tail: StreamItem[],
+  retainedHead: StreamItem[],
+): { tail: StreamItem[]; head: StreamItem[] } {
+  let reconciledTail = tail;
+  const reconciledHeadIndexes = new Set<number>();
+  for (const [headIndex, item] of retainedHead.entries()) {
+    if (!isAgentToolCallItem(item) || !item.timelineCursor) {
+      continue;
+    }
+    const tailIndex = findExistingAgentToolCallIndex(reconciledTail, item.payload.data.callId);
+    const existing = reconciledTail[tailIndex];
+    if (tailIndex < 0 || !existing || !isAgentToolCallItem(existing)) {
+      continue;
+    }
+    if (reconciledTail === tail) {
+      reconciledTail = [...tail];
+    }
+    reconciledTail[tailIndex] = mergeAgentToolCallItem(
+      existing,
+      item.payload.data,
+      item.timestamp,
+      item.timelineCursor,
+    );
+    reconciledHeadIndexes.add(headIndex);
+  }
+
+  const tailIds = new Set(reconciledTail.map((item) => item.id));
+  return {
+    tail: reconciledTail,
+    head: retainedHead.filter(
+      (item, index) =>
+        !reconciledHeadIndexes.has(index) &&
+        (item.kind === "assistant_message" || !tailIds.has(item.id)),
+    ),
+  };
+}
+
 function preserveReplacementHead(
   tail: StreamItem[],
   currentHead: StreamItem[],
@@ -435,25 +473,25 @@ function preserveReplacementHead(
           item.clientMessageId !== undefined &&
           sendingClientMessageIds.has(item.clientMessageId),
       );
-  const tailIds = new Set(tail.map((item) => item.id));
-  const unreconciledHead = retainedHead.filter(
-    (item) => item.kind === "assistant_message" || !tailIds.has(item.id),
+  const { tail: reconciledTail, head: unreconciledHead } = reconcileReplacementHeadAgainstTail(
+    tail,
+    retainedHead,
   );
   const liveAssistantIndex = unreconciledHead.findLastIndex(
     (item) => item.kind === "assistant_message",
   );
   if (liveAssistantIndex < 0) {
-    return { tail, head: unreconciledHead, acknowledgedClientMessageIds: [] };
+    return { tail: reconciledTail, head: unreconciledHead, acknowledgedClientMessageIds: [] };
   }
 
   const liveAssistant = unreconciledHead[liveAssistantIndex];
-  const tailAssistant = tail.at(-1);
+  const tailAssistant = reconciledTail.at(-1);
   if (
     liveAssistant.kind !== "assistant_message" ||
     !tailAssistant ||
     tailAssistant.kind !== "assistant_message"
   ) {
-    return { tail, head: unreconciledHead, acknowledgedClientMessageIds: [] };
+    return { tail: reconciledTail, head: unreconciledHead, acknowledgedClientMessageIds: [] };
   }
 
   const isNewerContinuation =
@@ -472,10 +510,14 @@ function preserveReplacementHead(
       { ...liveAssistant, text },
       ...unreconciledHead.slice(liveAssistantIndex + 1),
     ];
-    return { tail: tail.slice(0, -1), head, acknowledgedClientMessageIds: [] };
+    return {
+      tail: reconciledTail.slice(0, -1),
+      head,
+      acknowledgedClientMessageIds: [],
+    };
   }
   if (!liveAssistant.text.startsWith(tailAssistant.text)) {
-    return { tail, head: unreconciledHead, acknowledgedClientMessageIds: [] };
+    return { tail: reconciledTail, head: unreconciledHead, acknowledgedClientMessageIds: [] };
   }
 
   const head = [
@@ -483,7 +525,11 @@ function preserveReplacementHead(
     { ...liveAssistant, text: tailAssistant.text },
     ...unreconciledHead.slice(liveAssistantIndex + 1),
   ];
-  return { tail: tail.slice(0, -1), head, acknowledgedClientMessageIds: [] };
+  return {
+    tail: reconciledTail.slice(0, -1),
+    head,
+    acknowledgedClientMessageIds: [],
+  };
 }
 
 export function replaceWithCanonicalStream(
