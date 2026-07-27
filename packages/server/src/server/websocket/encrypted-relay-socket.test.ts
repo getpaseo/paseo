@@ -26,12 +26,18 @@ class BlockingChannel implements EncryptedRelayChannel {
     this.closes.push({ code, reason });
   }
 
+  outboundWireByteLength(data: string | ArrayBuffer): number {
+    const plaintextBytes =
+      typeof data === "string" ? new TextEncoder().encode(data).byteLength : data.byteLength;
+    return plaintextBytes + 40;
+  }
+
   drain(): void {
     this.resolveSend?.();
   }
 }
 
-test("the encrypted send queue terminates its physical transport at the hard bound", async () => {
+test("negotiated binary ciphertext accepts the exact hard bound and rejects one byte over", async () => {
   const channel = new BlockingChannel();
   let terminations = 0;
   const socket = createEncryptedRelaySocket({
@@ -43,11 +49,11 @@ test("the encrypted send queue terminates its physical transport at the hard bou
     },
   });
 
-  socket.send(new Uint8Array(5 * 1024 * 1024));
+  socket.send(new Uint8Array(MAX_PHYSICAL_SOCKET_BUFFERED_BYTES - 40));
   expect(channel.sent).toHaveLength(1);
-  expect(socket.bufferedAmount).toBeGreaterThan(5 * 1024 * 1024);
+  expect(socket.bufferedAmount).toBe(MAX_PHYSICAL_SOCKET_BUFFERED_BYTES);
 
-  socket.send(new Uint8Array(2 * 1024 * 1024));
+  socket.send(new Uint8Array(1));
 
   expect(channel.sent).toHaveLength(1);
   expect(terminations).toBe(1);
@@ -93,7 +99,7 @@ test("pending encryption and underlying relay backpressure share one hard bound"
   socket.send(new Uint8Array(3 * 1024 * 1024));
   expect(channel.sent).toHaveLength(1);
 
-  transportBufferedAmount = 4 * 1024 * 1024;
+  transportBufferedAmount = 6 * 1024 * 1024;
   socket.send(new Uint8Array(1));
 
   expect(channel.sent).toHaveLength(1);

@@ -1,6 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
 import { createClientChannel, createDaemonChannel, Transport } from "./encrypted-channel.js";
-import { generateKeyPair, exportPublicKey } from "./crypto.js";
+import {
+  deriveSharedKey,
+  encrypt,
+  exportPublicKey,
+  generateKeyPair,
+  importPublicKey,
+} from "./crypto.js";
+import { arrayBufferToBase64 } from "./base64.js";
 
 /**
  * Creates a pair of connected mock transports.
@@ -25,11 +32,11 @@ function createMockTransportPair(): [Transport, Transport] {
 
   // Wire them together
   (transportA.send as ReturnType<typeof vi.fn>).mockImplementation((data: string | ArrayBuffer) => {
-    setTimeout(() => transportB.onmessage?.(data), 0);
+    setTimeout(() => transportB.onmessage?.({ data, isBinary: data instanceof ArrayBuffer }), 0);
   });
 
   (transportB.send as ReturnType<typeof vi.fn>).mockImplementation((data: string | ArrayBuffer) => {
-    setTimeout(() => transportA.onmessage?.(data), 0);
+    setTimeout(() => transportA.onmessage?.({ data, isBinary: data instanceof ArrayBuffer }), 0);
   });
 
   return [transportA, transportB];
@@ -193,7 +200,7 @@ describe("EncryptedChannel", () => {
 
     // Send invalid hello
     setTimeout(() => {
-      daemonTransport.onmessage?.('{"type":"invalid"}');
+      daemonTransport.onmessage?.({ data: '{"type":"invalid"}', isBinary: false });
     }, 0);
 
     await expect(daemonChannelPromise).rejects.toThrow("Invalid hello message");
@@ -227,7 +234,7 @@ describe("EncryptedChannel", () => {
     )?.[0];
     expect(typeof firstHello).toBe("string");
 
-    daemonTransport.onmessage?.(firstHello as string);
+    daemonTransport.onmessage?.({ data: firstHello as string, isBinary: false });
     await waitForAsyncDelivery();
 
     expect(daemonTransport.close).not.toHaveBeenCalled();
@@ -264,9 +271,149 @@ describe("EncryptedChannel", () => {
       key: exportPublicKey(attackerKeyPair.publicKey),
     });
 
-    daemonTransport.onmessage?.(attackerHello);
+    daemonTransport.onmessage?.({ data: attackerHello, isBinary: false });
     await waitForAsyncDelivery();
 
     expect(daemonTransport.close).toHaveBeenCalledWith(1008, "E2EE re-handshake key mismatch");
+  });
+
+  it("preserves ASCII-only binary frames in negotiated mode", async () => {
+    const [daemonTransport, clientTransport] = createMockTransportPair();
+    const daemonKeyPair = generateKeyPair();
+    const daemonMessages: (string | ArrayBuffer)[] = [];
+    let resolveOpen: (() => void) | null = null;
+    const opened = new Promise<void>((resolve) => {
+      resolveOpen = resolve;
+    });
+
+    const daemonChannelPromise = createDaemonChannel(daemonTransport, daemonKeyPair, {
+      onmessage: (data) => daemonMessages.push(data),
+    });
+    const clientChannel = await createClientChannel(
+      clientTransport,
+      exportPublicKey(daemonKeyPair.publicKey),
+      { onopen: () => resolveOpen?.() },
+    );
+    await daemonChannelPromise;
+    await opened;
+
+    const binary = new TextEncoder().encode("ASCII terminal output").buffer;
+    (clientTransport.send as ReturnType<typeof vi.fn>).mockClear();
+    await clientChannel.send(binary);
+    await waitForAsyncDelivery();
+
+    const ciphertext = (clientTransport.send as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    expect(ciphertext).toBeInstanceOf(ArrayBuffer);
+    expect((ciphertext as ArrayBuffer).byteLength).toBe(binary.byteLength + 40);
+    expect(daemonMessages[0]).toBeInstanceOf(ArrayBuffer);
+    expect(new Uint8Array(daemonMessages[0] as ArrayBuffer)).toEqual(new Uint8Array(binary));
+  });
+
+  it("keeps negotiated text as base64 text frames", async () => {
+    const [daemonTransport, clientTransport] = createMockTransportPair();
+    const daemonKeyPair = generateKeyPair();
+    const daemonMessages: (string | ArrayBuffer)[] = [];
+    let resolveOpen: (() => void) | null = null;
+    const opened = new Promise<void>((resolve) => {
+      resolveOpen = resolve;
+    });
+    const daemonChannelPromise = createDaemonChannel(daemonTransport, daemonKeyPair, {
+      onmessage: (data) => daemonMessages.push(data),
+    });
+    const clientChannel = await createClientChannel(
+      clientTransport,
+      exportPublicKey(daemonKeyPair.publicKey),
+      { onopen: () => resolveOpen?.() },
+    );
+    await daemonChannelPromise;
+    await opened;
+
+    (clientTransport.send as ReturnType<typeof vi.fn>).mockClear();
+    await clientChannel.send("text payload");
+    await waitForAsyncDelivery();
+
+    expect(typeof (clientTransport.send as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toBe(
+      "string",
+    );
+    expect(daemonMessages).toEqual(["text payload"]);
+  });
+
+  it("new client stays base64-only when an old daemon does not accept the capability", async () => {
+    const daemonKeyPair = generateKeyPair();
+    const clientTransport: Transport = {
+      send: vi.fn(),
+      close: vi.fn(),
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+    };
+    let resolveOpen: (() => void) | null = null;
+    const opened = new Promise<void>((resolve) => {
+      resolveOpen = resolve;
+    });
+    const clientChannel = await createClientChannel(
+      clientTransport,
+      exportPublicKey(daemonKeyPair.publicKey),
+      { onopen: () => resolveOpen?.() },
+    );
+
+    const hello = JSON.parse(
+      (clientTransport.send as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string,
+    ) as { key: string };
+    expect(hello).toMatchObject({ capabilities: { binaryCiphertext: true } });
+    clientTransport.onmessage?.({ data: JSON.stringify({ type: "e2ee_ready" }), isBinary: false });
+    await opened;
+
+    (clientTransport.send as ReturnType<typeof vi.fn>).mockClear();
+    await clientChannel.send(new TextEncoder().encode("legacy binary").buffer);
+    expect(typeof (clientTransport.send as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toBe(
+      "string",
+    );
+  });
+
+  it("new daemon stays base64-only for an old client and drains pipelined traffic", async () => {
+    const daemonKeyPair = generateKeyPair();
+    const clientKeyPair = generateKeyPair();
+    const daemonMessages: (string | ArrayBuffer)[] = [];
+    const daemonTransport: Transport = {
+      send: vi.fn(),
+      close: vi.fn(),
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+    };
+    const channelPromise = createDaemonChannel(daemonTransport, daemonKeyPair, {
+      onmessage: (data) => daemonMessages.push(data),
+    });
+    const sharedKey = deriveSharedKey(
+      clientKeyPair.secretKey,
+      importPublicKey(exportPublicKey(daemonKeyPair.publicKey)),
+    );
+    daemonTransport.onmessage?.({
+      data: JSON.stringify({
+        type: "e2ee_hello",
+        key: exportPublicKey(clientKeyPair.publicKey),
+      }),
+      isBinary: false,
+    });
+    daemonTransport.onmessage?.({
+      data: arrayBufferToBase64(encrypt(sharedKey, "pipelined legacy text")),
+      isBinary: false,
+    });
+
+    const daemonChannel = await channelPromise;
+    await waitForAsyncDelivery();
+    expect(daemonMessages).toEqual(["pipelined legacy text"]);
+    expect(
+      JSON.parse((daemonTransport.send as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]),
+    ).toEqual({
+      type: "e2ee_ready",
+    });
+
+    (daemonTransport.send as ReturnType<typeof vi.fn>).mockClear();
+    await daemonChannel.send(new Uint8Array([1, 2, 3]).buffer);
+    expect(typeof (daemonTransport.send as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toBe(
+      "string",
+    );
   });
 });

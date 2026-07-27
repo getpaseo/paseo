@@ -484,7 +484,8 @@ function createRelayTransportAdapter(
   };
 
   socket.on("message", (data, isBinary) => {
-    relayTransport.onmessage?.(normalizeMessageData(data, isBinary === true));
+    const binary = isBinary === true;
+    relayTransport.onmessage?.({ data: normalizeMessageData(data, binary), isBinary: binary });
   });
   socket.on("close", (code, reason) => {
     const closeCode = typeof code === "number" ? code : 1006;

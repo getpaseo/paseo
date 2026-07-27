@@ -41,5 +41,5 @@ Terminal frames share the daemon main event loop with all agent traffic. The `ev
 ## Known remaining contention (follow-up candidates)
 
 - A single large `agent_stream` message (e.g. a 250KB diff payload) measurably delays terminal echo (~100ms-class dips) — cost is split between daemon serialization and app-side parse/render on the shared browser main thread.
-- Relay-attached clients pay pure-JS tweetnacl encryption + base64 per frame on the daemon main loop (`packages/relay/src/encrypted-channel.ts`).
+- Relay-attached clients pay pure-JS tweetnacl encryption on the daemon main loop (`packages/relay/src/encrypted-channel.ts`). Negotiated binary application frames stay binary ciphertext and avoid base64 encode/decode; text and mixed-version traffic remain base64 WebSocket text frames.
 - `sendToClient` re-stringifies session messages per socket; only matters for multi-socket connections.

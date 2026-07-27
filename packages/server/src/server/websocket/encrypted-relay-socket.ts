@@ -1,12 +1,10 @@
 import { EventEmitter } from "node:events";
-import { MAX_PHYSICAL_SOCKET_BUFFERED_BYTES, outboundFrameByteLength } from "./physical-socket.js";
-
-// NaCl adds a 24-byte nonce and 16-byte authenticator before base64 encoding.
-const ENCRYPTED_FRAME_OVERHEAD_BYTES = 40;
+import { MAX_PHYSICAL_SOCKET_BUFFERED_BYTES } from "./physical-socket.js";
 
 export interface EncryptedRelayChannel {
   setState: (state: "open") => void;
   send: (data: string | ArrayBuffer) => Promise<void>;
+  outboundWireByteLength: (data: string | ArrayBuffer) => number;
   close: (code?: number, reason?: string) => void;
 }
 
@@ -58,7 +56,7 @@ export function createEncryptedRelaySocket(params: {
     send: (data) => {
       if (readyState !== 1) return;
       const outbound = normalizeRelaySendPayload(data);
-      const outboundBytes = encryptedRelayFrameByteLength(outbound);
+      const outboundBytes = channel.outboundWireByteLength(outbound);
       const queuedBytes = pendingEncryptedBytes + (getTransportBufferedAmount() ?? 0);
       if (queuedBytes + outboundBytes > MAX_PHYSICAL_SOCKET_BUFFERED_BYTES) {
         terminate();
@@ -92,9 +90,4 @@ function normalizeRelaySendPayload(data: string | Uint8Array | ArrayBuffer): str
   const out = new Uint8Array(view.byteLength);
   out.set(view);
   return out.buffer;
-}
-
-function encryptedRelayFrameByteLength(data: string | ArrayBuffer): number {
-  const encryptedBytes = outboundFrameByteLength(data) + ENCRYPTED_FRAME_OVERHEAD_BYTES;
-  return 4 * Math.ceil(encryptedBytes / 3);
 }
