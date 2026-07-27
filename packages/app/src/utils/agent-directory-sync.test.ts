@@ -114,11 +114,13 @@ describe("message submission lifecycle ordering", () => {
 
     const session = useSessionStore.getState().sessions[serverId];
     expect(session?.agents.get(agentId)?.status).toBe("idle");
-    expect(session?.messageSubmissions.get(agentId)).toEqual({
-      clientMessageId,
-      submittedAt: new Date("2026-07-27T10:00:00.000Z"),
-      phase: "waiting-for-running",
-    });
+    expect(session?.messageSubmissions.get(agentId)).toEqual([
+      {
+        clientMessageId,
+        submittedAt: new Date("2026-07-27T10:00:00.000Z"),
+        phase: "waiting-for-running",
+      },
+    ]);
 
     applyAgentStatus({
       serverId,

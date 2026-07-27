@@ -10,7 +10,6 @@ import type { StreamItem } from "@/types/stream";
 import {
   acceptMessageSubmission,
   beginMessageSubmission,
-  observeMessageSubmissionRunning,
   rejectMessageSubmission,
   type MessageSubmissionAcceptance,
   type MessageSubmissionState,
@@ -233,14 +232,14 @@ function createFakeStream(
 
 const submissionsByFakeStream = new WeakMap<
   FakeStream,
-  Map<string, MessageSubmissionState["submission"]>
+  Map<string, MessageSubmissionState["submissions"]>
 >();
 
 function readSubmission(fake: FakeStream, agentId: string): MessageSubmissionState {
   return {
     tail: fake.tail.get(agentId) ?? [],
     head: fake.head.get(agentId) ?? [],
-    submission: submissionsByFakeStream.get(fake)?.get(agentId) ?? null,
+    submissions: submissionsByFakeStream.get(fake)?.get(agentId) ?? [],
   };
 }
 
@@ -248,23 +247,8 @@ function writeSubmission(fake: FakeStream, agentId: string, state: MessageSubmis
   fake.tail = new Map(fake.tail).set(agentId, state.tail);
   fake.head = new Map(fake.head).set(agentId, state.head);
   const submissions = submissionsByFakeStream.get(fake) ?? new Map();
-  submissions.set(agentId, state.submission);
+  submissions.set(agentId, state.submissions);
   submissionsByFakeStream.set(fake, submissions);
-}
-
-function applyFakeAuthoritativeRunning(
-  fake: FakeStream,
-  agentId: string,
-  clientMessageId: string,
-): void {
-  const state = readSubmission(fake, agentId);
-  if (state.submission?.clientMessageId !== clientMessageId) {
-    return;
-  }
-  writeSubmission(fake, agentId, {
-    ...state,
-    submission: observeMessageSubmissionRunning(state.submission),
-  });
 }
 
 function createFakeQueue(
@@ -420,43 +404,10 @@ describe("dispatchComposerAgentMessage", () => {
     expect(stream.tail.get("agent") ?? []).toEqual([]);
   });
 
-  it("keeps the submitted prompt when authoritative running wins a late transport error", async () => {
-    const stream = createFakeStream();
-    const transportError = new Error("Connection lost after authoritative running");
-    const client = createFakeSendClient({
-      rejection: transportError,
-      beforeRejection: ({ agentId, options }) => {
-        applyFakeAuthoritativeRunning(stream, agentId, options.messageId);
-      },
-    });
-
-    await expect(
-      dispatchComposerAgentMessage({
-        client,
-        agentId: "agent",
-        text: "accepted before transport loss",
-        attachments: [],
-        encodeImages: passthroughEncodeImages,
-        submission: stream,
-      }),
-    ).resolves.toBeUndefined();
-
-    expect(stream.tail.get("agent")).toHaveLength(1);
-    expect(stream.tail.get("agent")?.[0]).toMatchObject({
-      kind: "user_message",
-      text: "accepted before transport loss",
-    });
-  });
-
   it("rolls back an already-running force send when its RPC fails", async () => {
     const stream = createFakeStream(new Map(), { acceptance: "rpc-only" });
     const transportError = new Error("Force send failed while the prior turn was running");
-    const client = createFakeSendClient({
-      rejection: transportError,
-      beforeRejection: ({ agentId, options }) => {
-        applyFakeAuthoritativeRunning(stream, agentId, options.messageId);
-      },
-    });
+    const client = createFakeSendClient({ rejection: transportError });
 
     await expect(
       dispatchComposerAgentMessage({

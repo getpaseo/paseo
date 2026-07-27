@@ -10,7 +10,7 @@ import {
 } from "./model";
 
 function initialState(head: StreamItem[] = []): MessageSubmissionState {
-  return { tail: [], head, submission: null };
+  return { tail: [], head, submissions: [] };
 }
 
 describe("message submission model", () => {
@@ -27,18 +27,20 @@ describe("message submission model", () => {
     });
 
     const accepted = acceptMessageSubmission(begun, "client-1");
-    const runningObserved = observeMessageSubmissionRunning(accepted.submission);
+    const runningObserved = observeMessageSubmissionRunning(accepted.submissions);
 
-    expect(accepted.submission).toEqual({
-      clientMessageId: "client-1",
-      submittedAt: message.timestamp,
-      phase: "waiting-for-running",
-    });
-    expect(getPendingMessageSubmission(accepted.submission)).toEqual(accepted.submission);
-    expect(runningObserved).toBeNull();
+    expect(accepted.submissions).toEqual([
+      {
+        clientMessageId: "client-1",
+        submittedAt: message.timestamp,
+        phase: "waiting-for-running",
+      },
+    ]);
+    expect(getPendingMessageSubmission(accepted.submissions)).toEqual(accepted.submissions[0]);
+    expect(runningObserved).toEqual([]);
   });
 
-  it("keeps a row when authoritative running precedes a late RPC error", () => {
+  it("rejects a row when an unrelated running transition precedes its RPC error", () => {
     const message = createUserMessage({
       clientMessageId: "client-1",
       text: "hello",
@@ -50,18 +52,17 @@ describe("message submission model", () => {
       acceptance: "rpc-and-running",
     });
 
-    const runningObserved = observeMessageSubmissionRunning(begun.submission);
-    const rejected = rejectMessageSubmission({ ...begun, submission: runningObserved }, "client-1");
+    const runningObserved = observeMessageSubmissionRunning(begun.submissions);
+    const rejected = rejectMessageSubmission(
+      { ...begun, submissions: runningObserved },
+      "client-1",
+    );
 
-    expect(runningObserved).toEqual({
-      clientMessageId: "client-1",
-      submittedAt: message.timestamp,
-      phase: "running-observed",
-    });
-    expect(getPendingMessageSubmission(runningObserved)).toBeNull();
+    expect(runningObserved).toBe(begun.submissions);
+    expect(getPendingMessageSubmission(runningObserved)).toEqual(runningObserved[0]);
     expect(rejected).toEqual({
-      outcome: "accepted",
-      state: { ...begun, submission: null },
+      outcome: "rejected",
+      state: { tail: [], head: [], submissions: [] },
     });
   });
 
@@ -77,7 +78,7 @@ describe("message submission model", () => {
       acceptance: "rpc-only",
     });
 
-    expect(observeMessageSubmissionRunning(begun.submission)).toBe(begun.submission);
+    expect(observeMessageSubmissionRunning(begun.submissions)).toBe(begun.submissions);
   });
 
   it("begins and accepts without changing the submitted row", () => {
@@ -98,16 +99,18 @@ describe("message submission model", () => {
     expect(begun).toEqual({
       tail: [message],
       head: [],
-      submission: {
-        clientMessageId: "client-1",
-        submittedAt,
-        phase: "waiting-for-rpc",
-        acceptance: "rpc-only",
-      },
+      submissions: [
+        {
+          clientMessageId: "client-1",
+          submittedAt,
+          phase: "waiting-for-rpc",
+          acceptance: "rpc-only",
+        },
+      ],
     });
     expect(accepted.tail).toBe(begun.tail);
     expect(accepted.head).toBe(begun.head);
-    expect(accepted.submission).toBeNull();
+    expect(accepted.submissions).toEqual([]);
   });
 
   it("rejects by removing the submitted row and closing pending", () => {
@@ -134,12 +137,12 @@ describe("message submission model", () => {
       state: {
         tail: [],
         head: [existingHead],
-        submission: null,
+        submissions: [],
       },
     });
   });
 
-  it("treats running-observed as authoritatively accepted", () => {
+  it("treats RPC acceptance waiting for running as authoritatively accepted", () => {
     const message = createUserMessage({
       clientMessageId: "client-1",
       text: "hello",
@@ -147,18 +150,20 @@ describe("message submission model", () => {
     });
     const state = initialState([message]);
 
-    const runningObserved = {
+    const waitingForRunning = {
       ...state,
-      submission: {
-        clientMessageId: "client-1",
-        submittedAt: message.timestamp,
-        phase: "running-observed" as const,
-      },
+      submissions: [
+        {
+          clientMessageId: "client-1",
+          submittedAt: message.timestamp,
+          phase: "waiting-for-running" as const,
+        },
+      ],
     };
 
-    expect(rejectMessageSubmission(runningObserved, "client-1")).toEqual({
+    expect(rejectMessageSubmission(waitingForRunning, "client-1")).toEqual({
       outcome: "accepted",
-      state: { ...runningObserved, submission: null },
+      state: { ...waitingForRunning, submissions: [] },
     });
   });
 
@@ -190,7 +195,7 @@ describe("submitting alongside repeated history", () => {
     });
 
     const begun = beginMessageSubmission(
-      { tail: [olderRow], head: [], submission: null },
+      { tail: [olderRow], head: [], submissions: [] },
       {
         message: resubmitted,
         submittedAt: resubmitted.timestamp,

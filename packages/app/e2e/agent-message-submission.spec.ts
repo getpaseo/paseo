@@ -8,6 +8,9 @@ import {
   expectComposerEditable,
   expectAttachmentPill,
   expectComposerVisible,
+  fillComposerDraft,
+  sendDraftToQueue,
+  startRunningMockAgent,
 } from "./helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "./helpers/mock-agent";
 import { readScrollMetrics } from "./helpers/agent-bottom-anchor";
@@ -16,6 +19,7 @@ import { waitForWorkspaceTabsVisible } from "./helpers/workspace-tabs";
 import { getServerId } from "./helpers/server-id";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { delayBrowserAgentCreatedStatus } from "./helpers/new-workspace";
+import { installDaemonWebSocketGate } from "./helpers/daemon-websocket-gate";
 
 const IMAGE = {
   name: "message-submission.png",
@@ -46,10 +50,16 @@ interface RejectionScenario {
   errorMessage: string;
 }
 
+interface UnrelatedRunningScenario {
+  gate: Awaited<ReturnType<typeof gateNextAgentMessage>>;
+  agent: Awaited<ReturnType<typeof seedMockAgentWorkspace>>;
+}
+
 const test = baseTest.extend<{
   submissionScenario: SubmissionScenario;
   draftCreateScenario: DraftCreateScenario;
   rejectionScenario: RejectionScenario;
+  unrelatedRunningScenario: UnrelatedRunningScenario;
 }>({
   submissionScenario: async ({ page }, provide, testInfo) => {
     const gate = await gateNextAgentMessage(page);
@@ -85,6 +95,19 @@ const test = baseTest.extend<{
     await expectComposerVisible(page);
     await expectAgentIdle(page);
     await provide({ errorMessage });
+    await agent.cleanup();
+  },
+  unrelatedRunningScenario: async ({ page }, provide, testInfo) => {
+    const gate = await gateNextAgentMessage(page);
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: `unrelated-running-${testInfo.workerIndex}-`,
+      title: "Unrelated running transition",
+      model: "one-minute-stream",
+    });
+    await openAgentRoute(page, { workspaceId: agent.workspaceId, agentId: agent.agentId });
+    await expectComposerVisible(page);
+    await expectAgentIdle(page);
+    await provide({ gate, agent });
     await agent.cleanup();
   },
 });
@@ -219,6 +242,79 @@ async function retryRestoredSubmission(page: Page, prompt: string): Promise<void
   await expect(page.getByTestId("composer-image-attachment-pill")).toHaveCount(0);
 }
 
+async function queueMessage(page: Page, prompt: string): Promise<void> {
+  await fillComposerDraft(page, prompt);
+  await sendDraftToQueue(page);
+}
+
+async function expectQueuedSendFailuresRestored(page: Page, prompts: string[]): Promise<void> {
+  await expect(page.getByRole("button", { name: "Send queued message now" })).toHaveCount(
+    prompts.length,
+  );
+  for (const prompt of prompts) {
+    await expect(page.getByTestId("user-message").filter({ hasText: prompt })).toHaveCount(0);
+  }
+}
+
+async function expectFailedSubmissionRestored(page: Page, prompt: string): Promise<void> {
+  await expectComposerDraft(page, prompt);
+  await expectComposerEditable(page);
+  await expect(page.getByTestId("user-message").filter({ hasText: prompt })).toHaveCount(0);
+}
+
+async function expectInterruptedTurnOrderAfterReconnect(
+  page: Page,
+  testInfo: { workerIndex: number },
+): Promise<void> {
+  const gate = await installDaemonWebSocketGate(page);
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: `submission-reconnect-${testInfo.workerIndex}-`,
+    title: "Submission reconnect ordering",
+    model: "ten-second-stream",
+  });
+  const prompt = "Keep this prompt before its response.";
+  try {
+    await openAgentRoute(page, { workspaceId: agent.workspaceId, agentId: agent.agentId });
+    await expectComposerVisible(page);
+    await agent.client.sendAgentMessage(agent.agentId, "Start the turn that will be interrupted.");
+    await expect(page.getByRole("button", { name: /stop|cancel/i }).first()).toBeVisible();
+    await expect(page.getByText("Cycle 1", { exact: true })).toBeVisible();
+    await queueMessage(page, prompt);
+    gate.setAgentStreamSuppressed(true);
+    await page.getByRole("button", { name: "Send queued message now" }).click();
+    const promptRow = page.getByTestId("user-message").filter({ hasText: prompt });
+    await expect(promptRow).toBeVisible();
+    await gate.waitForServerMessage("send_agent_message_response");
+    await gate.drop();
+    await agent.client.waitForFinish(agent.agentId, 30_000);
+    gate.setAgentStreamSuppressed(false);
+    gate.forceNextTimelineEpochReset();
+    gate.restoreFresh();
+    await gate.waitForServerMessage("fetch_agent_timeline_response", 2);
+    const response = page.getByText("(end of synthetic stream)", { exact: true }).last();
+    await expect(promptRow).toBeVisible();
+    await expect(response).toBeVisible();
+    await expectRenderedBefore(promptRow, response);
+  } finally {
+    gate.restore();
+    await agent.cleanup();
+  }
+}
+
+async function expectRenderedBefore(first: Locator, second: Locator): Promise<void> {
+  const secondElement = await second.elementHandle();
+  if (!secondElement) throw new Error("Expected the second timeline item to be rendered");
+  expect(
+    await first.evaluate(
+      (firstElement, secondNode) =>
+        Boolean(
+          firstElement.compareDocumentPosition(secondNode) & Node.DOCUMENT_POSITION_FOLLOWING,
+        ),
+      secondElement,
+    ),
+  ).toBe(true);
+}
+
 async function openWorkspaceDraft(page: Page, workspaceId: string): Promise<void> {
   await page.goto(buildHostWorkspaceRoute(getServerId(), workspaceId));
   await waitForWorkspaceTabsVisible(page);
@@ -310,5 +406,55 @@ test.describe("Agent message submission", () => {
     await submitMessageThatWillBeRejected(page, prompt);
     await expectRejectedSubmissionRestored(page, { prompt, ...rejectionScenario });
     await retryRestoredSubmission(page, prompt);
+  });
+
+  test("restores overlapping queued sends when their connection fails", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(120_000);
+    const gate = await gateNextAgentMessage(page);
+    const agent = await startRunningMockAgent(page, {
+      prefix: `overlapping-queued-send-${testInfo.workerIndex}-`,
+      model: "one-minute-stream",
+      prompt: "Keep the agent running while messages queue.",
+    });
+    const prompts = ["Restore the first queued send.", "Restore the second queued send."];
+    try {
+      await queueMessage(page, prompts[0]);
+      await queueMessage(page, prompts[1]);
+      await page.getByRole("button", { name: "Send queued message now" }).first().click();
+      await gate.waitForRequest(1);
+      await page.getByRole("button", { name: "Send queued message now" }).first().click();
+      await gate.waitForRequest(2);
+      await gate.disconnect();
+      await expectQueuedSendFailuresRestored(page, prompts);
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
+  test("does not accept a failed submission from an unrelated running turn", async ({
+    page,
+    unrelatedRunningScenario,
+  }) => {
+    const prompt = "Restore this unsent prompt.";
+    await submitMessageThatWillBeRejected(page, prompt);
+    await unrelatedRunningScenario.gate.waitForRequest();
+    await unrelatedRunningScenario.agent.client.sendAgentMessage(
+      unrelatedRunningScenario.agent.agentId,
+      "Start an unrelated turn.",
+    );
+    await expect(
+      page.getByTestId("user-message").filter({ hasText: "Start an unrelated turn." }),
+    ).toBeVisible();
+    await unrelatedRunningScenario.gate.disconnect();
+    await expectFailedSubmissionRestored(page, prompt);
+  });
+
+  test("keeps a submitted prompt before its response when canonical history arrives", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(90_000);
+    await expectInterruptedTurnOrderAfterReconnect(page, testInfo);
   });
 });

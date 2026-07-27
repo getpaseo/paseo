@@ -374,7 +374,6 @@ export function replaceWithCanonicalStream(
       item.kind === "user_message" && item.clientMessageId !== undefined,
   );
   let nextHead = input.previousHead;
-  const matchedHeadClientMessageIds = new Set<string>();
   const nextTail: StreamItem[] = [];
 
   for (const item of input.canonical) {
@@ -392,10 +391,11 @@ export function replaceWithCanonicalStream(
 
     const headResult = produceUserMessage(nextHead, item, null, "existing");
     if (headResult.matched) {
-      nextHead = headResult.items;
-      if (headResult.message.clientMessageId) {
-        matchedHeadClientMessageIds.add(headResult.message.clientMessageId);
-      }
+      nextHead = [
+        ...headResult.items.slice(0, headResult.index),
+        ...headResult.items.slice(headResult.index + 1),
+      ];
+      nextTail.push(headResult.message);
       continue;
     }
 
@@ -417,7 +417,6 @@ export function replaceWithCanonicalStream(
 
   nextHead = nextHead.filter((item) => {
     if (item.kind !== "user_message" || !item.clientMessageId) return true;
-    if (matchedHeadClientMessageIds.has(item.clientMessageId)) return true;
     return (
       input.policy === "preserve-local-submissions" ||
       item.clientMessageId === input.pendingClientMessageId

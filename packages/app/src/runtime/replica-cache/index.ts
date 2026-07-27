@@ -129,6 +129,15 @@ function decodeDates(value: unknown): unknown {
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, decodeDates(entry)]));
 }
 
+function restoreCachedStreamItem(item: StreamItem): StreamItem {
+  if (item.kind !== "user_message" || item.messageId) return item;
+  const legacyItem = item as StreamItem & { optimistic?: true };
+  if (legacyItem.optimistic) return item;
+  // COMPAT(replicaCacheUserMessageId): before v0.2.3, cache v1 stored the provider ID
+  // only in `id`. Remove after 2027-01-27, once cache v1 predating v0.2.3 is unsupported.
+  return { ...item, messageId: item.id };
+}
+
 function deserializeTimeline(stored: StoredHost["timeline"]): SessionReplica["timeline"] {
   if (!stored) {
     return null;
@@ -139,7 +148,7 @@ function deserializeTimeline(stored: StoredHost["timeline"]): SessionReplica["ti
   }
   return {
     agentId: stored.agentId,
-    items: decoded,
+    items: decoded.map(restoreCachedStreamItem),
     cursor: stored.cursor,
     hasOlder: stored.hasOlder,
   };

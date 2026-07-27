@@ -36,23 +36,23 @@ function readSendRequest(message: WebSocketMessage): SendAgentMessageRequest | n
 
 export async function gateNextAgentMessage(page: Page) {
   let serverSocket: WebSocketRoute | null = null;
-  let heldMessage: WebSocketMessage | null = null;
-  let hasHeldRequest = false;
-  let resolveRequest: ((request: SendAgentMessageRequest) => void) | null = null;
-  const requestSeen = new Promise<SendAgentMessageRequest>((resolve) => {
-    resolveRequest = resolve;
-  });
+  let browserSocket: WebSocketRoute | null = null;
+  const heldMessages: Array<WebSocketMessage | null> = [];
+  const requests: SendAgentMessageRequest[] = [];
+  const requestWaiters = new Set<() => void>();
 
   await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
+    browserSocket = ws;
     const server = ws.connectToServer();
     serverSocket = server;
 
     ws.onMessage((message) => {
       const request = readSendRequest(message);
-      if (request && !hasHeldRequest) {
-        heldMessage = message;
-        hasHeldRequest = true;
-        resolveRequest?.(request);
+      if (request) {
+        heldMessages.push(message);
+        requests.push(request);
+        for (const resolve of requestWaiters) resolve();
+        requestWaiters.clear();
         return;
       }
       server.send(message);
@@ -61,14 +61,26 @@ export async function gateNextAgentMessage(page: Page) {
     server.onMessage((message) => ws.send(message));
   });
 
+  const waitForRequest = async (count = 1): Promise<SendAgentMessageRequest> => {
+    while (requests.length < count) {
+      await new Promise<void>((resolve) => requestWaiters.add(resolve));
+    }
+    return requests[count - 1];
+  };
+
   return {
-    waitForRequest: () => requestSeen,
-    accept() {
+    waitForRequest,
+    accept(index = 0) {
+      const heldMessage = heldMessages[index];
       if (!serverSocket || !heldMessage) {
         throw new Error("No held send-agent-message request to accept");
       }
       serverSocket.send(heldMessage);
-      heldMessage = null;
+      heldMessages[index] = null;
+    },
+    async disconnect(): Promise<void> {
+      if (!browserSocket) throw new Error("No browser daemon socket to disconnect");
+      await browserSocket.close({ code: 1008, reason: "Dropped by submission test." });
     },
   };
 }

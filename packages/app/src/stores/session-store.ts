@@ -376,7 +376,7 @@ export interface SessionState {
   // Stream state (head/tail model)
   agentStreamTail: Map<string, StreamItem[]>;
   agentStreamHead: Map<string, StreamItem[]>;
-  messageSubmissions: Map<string, MessageSubmissionRecord>;
+  messageSubmissions: Map<string, MessageSubmissionRecord[]>;
   agentTimelineCursor: Map<string, AgentTimelineCursorState>;
   agentTimelineHasOlder: Map<string, boolean>;
   agentTimelineOlderFetchInFlight: Map<string, boolean>;
@@ -594,22 +594,22 @@ const agentLastActivityCoalescer = createAgentLastActivityCoalescer();
 function applyAgentStateToMessageSubmissions(input: {
   previousAgents: Map<string, Agent>;
   nextAgents: Map<string, Agent>;
-  submissions: Map<string, MessageSubmissionRecord>;
-}): Map<string, MessageSubmissionRecord> {
+  submissions: Map<string, MessageSubmissionRecord[]>;
+}): Map<string, MessageSubmissionRecord[]> {
   let nextSubmissions = input.submissions;
-  const write = (agentId: string, submission: MessageSubmissionRecord | null): void => {
+  const write = (agentId: string, submissions: MessageSubmissionRecord[]): void => {
     if (nextSubmissions === input.submissions) nextSubmissions = new Map(input.submissions);
-    if (submission) {
-      nextSubmissions.set(agentId, submission);
+    if (submissions.length > 0) {
+      nextSubmissions.set(agentId, submissions);
     } else {
       nextSubmissions.delete(agentId);
     }
   };
 
-  for (const [agentId, submission] of input.submissions) {
+  for (const [agentId, submissions] of input.submissions) {
     const nextAgent = input.nextAgents.get(agentId);
     if (!nextAgent) {
-      write(agentId, null);
+      write(agentId, []);
       continue;
     }
     const previousAgent = input.previousAgents.get(agentId);
@@ -618,8 +618,8 @@ function applyAgentStateToMessageSubmissions(input: {
       previousAgent.status !== "running" &&
       nextAgent.status === "running";
     if (!observedRunningTransition) continue;
-    const nextSubmission = observeMessageSubmissionRunning(submission);
-    if (nextSubmission !== submission) write(agentId, nextSubmission);
+    const nextSubmission = observeMessageSubmissionRunning(submissions);
+    if (nextSubmission !== submissions) write(agentId, nextSubmission);
   }
   return nextSubmissions;
 }
@@ -1133,7 +1133,7 @@ export const useSessionStore = create<SessionStore>()(
             {
               tail: session.agentStreamTail.get(agentId) ?? [],
               head: session.agentStreamHead.get(agentId) ?? [],
-              submission: session.messageSubmissions.get(agentId) ?? null,
+              submissions: session.messageSubmissions.get(agentId) ?? [],
             },
             {
               message,
@@ -1145,10 +1145,10 @@ export const useSessionStore = create<SessionStore>()(
             },
           );
           const messageSubmissions = new Map(session.messageSubmissions);
-          if (!next.submission) {
+          if (next.submissions.length === 0) {
             throw new Error("Beginning a message submission must create lifecycle state");
           }
-          messageSubmissions.set(agentId, next.submission);
+          messageSubmissions.set(agentId, next.submissions);
           return {
             ...prev,
             sessions: {
@@ -1168,19 +1168,20 @@ export const useSessionStore = create<SessionStore>()(
         set((prev) => {
           const session = prev.sessions[serverId];
           if (!session) return prev;
-          const currentSubmission = session.messageSubmissions.get(agentId) ?? null;
+          const currentSubmissions = session.messageSubmissions.get(agentId) ?? [];
           const next = acceptMessageSubmission(
             {
               tail: session.agentStreamTail.get(agentId) ?? [],
               head: session.agentStreamHead.get(agentId) ?? [],
-              submission: currentSubmission,
+              submissions: currentSubmissions,
             },
             clientMessageId,
+            session.agents.get(agentId)?.status === "running",
           );
-          if (next.submission === currentSubmission) return prev;
+          if (next.submissions === currentSubmissions) return prev;
           const messageSubmissions = new Map(session.messageSubmissions);
-          if (next.submission) {
-            messageSubmissions.set(agentId, next.submission);
+          if (next.submissions.length > 0) {
+            messageSubmissions.set(agentId, next.submissions);
           } else {
             messageSubmissions.delete(agentId);
           }
@@ -1201,16 +1202,20 @@ export const useSessionStore = create<SessionStore>()(
           if (!session) return prev;
           const currentTail = session.agentStreamTail.get(agentId) ?? [];
           const currentHead = session.agentStreamHead.get(agentId) ?? [];
-          const currentSubmission = session.messageSubmissions.get(agentId) ?? null;
+          const currentSubmissions = session.messageSubmissions.get(agentId) ?? [];
           const result = rejectMessageSubmission(
-            { tail: currentTail, head: currentHead, submission: currentSubmission },
+            { tail: currentTail, head: currentHead, submissions: currentSubmissions },
             clientMessageId,
           );
           outcome = result.outcome;
           const next = result.state;
           if (outcome === "unknown") return prev;
           const messageSubmissions = new Map(session.messageSubmissions);
-          messageSubmissions.delete(agentId);
+          if (next.submissions.length > 0) {
+            messageSubmissions.set(agentId, next.submissions);
+          } else {
+            messageSubmissions.delete(agentId);
+          }
           return {
             ...prev,
             sessions: {
