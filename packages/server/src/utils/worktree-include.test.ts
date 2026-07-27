@@ -194,6 +194,20 @@ describe("worktree include planning", () => {
     },
   );
 
+  it.skipIf(isPlatform("win32"))("matches globs beneath a safe symlinked directory", async () => {
+    mkdirSync(join(sourceRoot, "actual-config"));
+    writeFileSync(join(sourceRoot, "actual-config", "runtime.env"), "runtime\n");
+    symlinkSync(join(sourceRoot, "actual-config"), join(sourceRoot, "config"), "dir");
+    writeFileSync(join(sourceRoot, ".worktreeinclude"), "config/*.env\n");
+
+    const plan = await readWorktreeIncludePlan({ sourceRoot });
+
+    expect(plan.materializations).toEqual([
+      expect.objectContaining({ relativePath: "config/runtime.env", sourceKind: "file" }),
+    ]);
+    expect(plan.skipped).toEqual([]);
+  });
+
   it.skipIf(isPlatform("win32"))(
     "does not scan unrelated directories for bounded globs",
     async () => {
@@ -491,6 +505,27 @@ describe.skipIf(isPlatform("win32"))("worktree include materialization", () => {
       expect.objectContaining({ raw: "runtime.env", reason: "missing" }),
     ]);
   });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "skips ordinary filesystem failures during materialization revalidation",
+    async () => {
+      mkdirSync(join(sourceRoot, "private"));
+      writeFileSync(join(sourceRoot, "private", "state.txt"), "private\n");
+      writeFileSync(join(sourceRoot, ".worktreeinclude"), "private/**\n");
+      const plan = await readWorktreeIncludePlan({ sourceRoot });
+      chmodSync(join(sourceRoot, "private"), 0o000);
+
+      try {
+        const result = await materializeWorktreeIncludePlan({ plan, worktreeRoot });
+        expect(result).toMatchObject({ materialized: 0 });
+        expect(result.skipped).toEqual([
+          expect.objectContaining({ raw: "private/**", reason: "materialization" }),
+        ]);
+      } finally {
+        chmodSync(join(sourceRoot, "private"), 0o700);
+      }
+    },
+  );
 });
 
 describe.skipIf(!isPlatform("win32"))("worktree include Windows directory links", () => {

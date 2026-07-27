@@ -256,7 +256,7 @@ export async function materializeWorktreeIncludePlan(
         sourceRoot: options.plan.sourceRoot,
       });
     } catch (error) {
-      if (isSkippableWorktreeIncludeError(error)) {
+      if (isSkippableWorktreeIncludeError(error) || getErrorCode(error) !== null) {
         skipped.push(toSkippedEntry(entry, error));
         continue;
       }
@@ -599,6 +599,7 @@ async function collectWorktreeIncludeCandidates(options: {
     directoryPath: string,
     directorySegments: string[],
     patterns: string[],
+    ancestorCanonicalDirectories: ReadonlySet<string>,
   ): Promise<void> {
     let entries: Dirent<string>[];
     try {
@@ -634,13 +635,52 @@ async function collectWorktreeIncludeCandidates(options: {
       const descendantPatterns = patterns.filter((pattern) =>
         canGlobMatchDescendant(pattern, pathSegments),
       );
-      if (entry.isDirectory() && descendantPatterns.length > 0) {
-        await visit(sourcePath, pathSegments, descendantPatterns);
+      if ((entry.isDirectory() || entry.isSymbolicLink()) && descendantPatterns.length > 0) {
+        try {
+          const canonicalDirectory = await realpath(sourcePath);
+          const canonicalStats = await lstat(canonicalDirectory);
+          const canonicalRelativePath = relative(options.sourceRoot, canonicalDirectory);
+          const isGitMetadata = canonicalRelativePath
+            .split(/[\\/]/)
+            .some((segment) => segment.toLowerCase() === ".git");
+          const overlapsProtectedRoot = options.excludedSourceRoots.some(
+            (excludedRoot) =>
+              isPathInsideRoot(excludedRoot, canonicalDirectory) ||
+              isPathInsideRoot(canonicalDirectory, excludedRoot),
+          );
+          if (
+            !canonicalStats.isDirectory() ||
+            !isPathInsideRoot(options.sourceRoot, canonicalDirectory) ||
+            isGitMetadata ||
+            overlapsProtectedRoot ||
+            ancestorCanonicalDirectories.has(canonicalDirectory)
+          ) {
+            continue;
+          }
+          await visit(
+            sourcePath,
+            pathSegments,
+            descendantPatterns,
+            new Set([...ancestorCanonicalDirectories, canonicalDirectory]),
+          );
+        } catch (error) {
+          if (getErrorCode(error) === null) {
+            throw error;
+          }
+          for (const pattern of descendantPatterns) {
+            errorsByPattern.set(pattern, error);
+          }
+        }
       }
     }
   }
 
-  await visit(options.sourceRoot, [], options.patterns);
+  await visit(
+    options.sourceRoot,
+    [],
+    options.patterns,
+    new Set([await realpath(options.sourceRoot)]),
+  );
   return { candidates: candidates.sort(), errorsByPattern };
 }
 
