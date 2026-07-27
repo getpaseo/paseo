@@ -30,6 +30,12 @@ import { buildAgentBranchNameSeed } from "./agent/prompt-attachments.js";
 import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 
 export interface CreatePaseoWorktreeInput extends CreateWorktreeCoreInput {
+  /**
+   * The container backend this workspace was created with, or null for Host.
+   * Recorded on the workspace so a worktree created with a container selected
+   * actually gets one — the directory path already did this.
+   */
+  containerBackend?: string | null;
   projectId?: string;
   title?: string;
 }
@@ -92,6 +98,7 @@ export async function createPaseoWorktree(
       baseBranch: resolveIntentBaseBranch(createdWorktree.intent),
       title: input.title?.trim() || resolveFirstAgentPromptTitle(input.firstAgentContext),
       expectsInitialAgent: Boolean(input.firstAgentContext),
+      ...(input.containerBackend === undefined ? {} : { containerBackend: input.containerBackend }),
     });
 
     deps.github.invalidate({ cwd: createdWorktree.worktree.worktreePath });

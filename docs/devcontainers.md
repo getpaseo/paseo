@@ -49,11 +49,43 @@ The cost: these labels are a CLI convention we reproduce rather than a documente
 
 `runGitCommand` never routes through a launch strategy. The workspace folder is bind-mounted, so host git operates on exactly the same files, and:
 
-- A worktree workspace's `.git` is a **file** pointing at the main repo's host path, which is not mounted. In-container git would fail outright.
 - Worktree lifecycle (add/remove) happens before any container exists.
 - Credentials, SSH agent, and the user's git config live on the host.
+- A stopped container would otherwise mean no branch, no status and no Changes view at all.
 
 If you are tempted to make git container-aware, that is the list to answer first.
+
+### The agent's git, which is a different question
+
+Paseo's git running on the host says nothing about the agent's. An agent is a shell inside the container and will run `git status`, `git diff` and `git commit` of its own accord. For a plain clone that works — `.git` is a real directory inside the mount, and nothing in it names the host. For a **linked worktree** it does not, because a worktree is three paths pointing at each other and two of them are absolute:
+
+```
+wt/.git                          →  /repo/main/.git/worktrees/wt   ← absolute
+main/.git/worktrees/wt/commondir →  ../..                          ← relative
+main/.git/worktrees/wt/gitdir    →  /repo/wt/.git                  ← absolute, points back
+```
+
+Only the workspace folder is mounted, so the first dangles and the agent gets `fatal: not a git repository`.
+
+`devcontainer up --mount-git-worktree-common-dir` mounts the git directory where the relative link resolves. It only works when the worktree's links **are** relative, and it does nothing at all otherwise: no warning, no error, `outcome: success`, git still dead. So the decision is made at creation, from two facts already in hand:
+
+- **Is this a worktree?** The new-workspace request says so — it is what the user chose in the isolation picker. Nothing stats the directory for it, which would also read a submodule's `.git` file as a worktree's.
+- **Can git read relative links?** Only the **host's** git is checked. That looks like an omission and is not: linking one worktree relatively marks the whole _repository_ with `extensions.relativeWorktrees`, so the choice is not per-container. Every workspace on that repository lives with it — sibling worktrees, the main checkout, and whichever containers each of them runs in — so asking one image would answer for all of them.
+
+If the workspace has a container backend and the host's git is 2.48+, the worktree is created with `--relative-paths` and its container starts with `--mount-git-worktree-common-dir`. Otherwise it is created the ordinary way, and the agent's git sees nothing — as before.
+
+**What an old git in the image does then.** It refuses the repository outright:
+
+```
+fatal: unknown repository extensions found:
+	relativeworktrees
+```
+
+and it refuses it for **every workspace on that repository**, not only the worktree — including a plain non-worktree workspace on the main checkout. A separate clone is unaffected, because the extension is per-repository and clones do not inherit it. This is the cost of the feature being repo-wide, and it is why the host gate is the honest place to draw the line: an image that old could not have used a relative worktree anyway.
+
+**Worktrees are also locked.** `git worktree prune` deletes the admin directory (HEAD, index, reflog) of any worktree whose `gitdir` names a missing path, and `git gc` runs it on a three-month timer. A container mounts one worktree, so every _sibling_ reads as missing from inside it — an agent running `git gc` there would delete another workspace's state, and `git worktree repair` cannot undo it. `git worktree lock` at creation makes that impossible.
+
+The lock cuts both ways, because prune is also how a _stale_ registration gets healed: a worktree whose directory went away without git being told keeps its branch pinned, and restore depends on clearing it. So the paths that heal one call `unlockStaleWorktrees` first, which unlocks only entries whose directory is already gone. Removing a Paseo worktree by hand now takes `git worktree remove -f -f` or an unlock; the lock reason says so.
 
 ## Gotchas that cost real time
 
@@ -223,3 +255,5 @@ behaves the same, which is what the docker-gated tests are for.
 - **Shell integration and the bundled `paseo` hook CLI** are injected into the host-side environment (`buildTerminalEnvironment` prepends host paths), so a container terminal doesn't get zsh integration or the hook CLI on its PATH.
 - **Provider catalogs are fetched for every configured provider** during a probe, so a machine with several configured providers pays several in-container spawns per probe. Fetching only the selected provider's catalog would need the probe container to survive, which option B deliberately gives up.
 - **The provider snapshot is keyed by cwd**, so two workspaces sharing a directory with different backends overwrite each other's provider list. Fixing it properly means keying snapshots by workspace, which is a refactor beyond the container feature. The probe itself no longer contributes to this: it never writes the shared snapshot.
+- **A subdirectory workspace mounts the whole repository.** The devcontainer CLI's `--mount-workspace-git-root` defaults to **true**, and Paseo does not override it, so pointing a workspace at `repo/packages/app` mounts `repo` at `/workspaces/repo` and sets the workspace folder to `/workspaces/repo/packages/app` inside it. That is how git works in those containers — and it is more of the host than the workspace folder. `ContainerExecSpec.hostWorkspaceFolder` is still the workspace cwd, so `resolveCwd` treats a sibling directory as outside the workspace and falls back to the workspace folder, even though the sibling is genuinely present in the container.
+- **A worktree created inside a container is registered with container paths.** The admin directory persists in the host repo, but its `gitdir` names a path only the container had, so the host reads it as prunable and refuses to check that branch out (`already used by worktree at /workspaces/…`). If the worktree also landed outside the mount, its files are gone with the container. Paseo has no record of it either way.

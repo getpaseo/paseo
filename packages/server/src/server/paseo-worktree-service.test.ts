@@ -842,7 +842,10 @@ test.skipIf(isPlatform("win32"))(
     });
     expect(existsSync(created.worktreePath)).toBe(true);
 
-    execFileSync("git", ["worktree", "remove", created.worktreePath, "--force"], {
+    // Paseo locks its worktrees, and a locked one refuses a plain `remove`
+    // — git asks for `-f -f` or an unlock, which is what its own removal path
+    // does. Removing it by hand takes the same two steps.
+    execFileSync("git", ["worktree", "remove", created.worktreePath, "-f", "-f"], {
       cwd: repoDir,
       stdio: "pipe",
     });
@@ -924,7 +927,13 @@ test.skipIf(isPlatform("win32"))(
       }),
     ).rejects.toMatchObject({ name: "BranchAlreadyCheckedOutError" });
 
-    // The restore-side prune frees the stale registration; recreate then succeeds.
+    // The restore side unlocks and then prunes, which frees the stale
+    // registration; recreate then succeeds. Prune alone would not: Paseo locks
+    // its worktrees so a container cannot prune a live sibling away.
+    execFileSync("git", ["worktree", "unlock", created.worktreePath], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
     execFileSync("git", ["worktree", "prune"], { cwd: repoDir, stdio: "pipe" });
 
     const recreated = await createWorktree({

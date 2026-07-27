@@ -26,6 +26,7 @@ import {
 import type { LaunchStrategyRegistry } from "./devcontainer/launch-strategy-registry.js";
 import type { ContainerBackendRegistry } from "./devcontainer/container-backend-registry.js";
 import { ContainerProbeCoordinator } from "./devcontainer/container-probe-coordinator.js";
+import { hostGitSupportsRelativeWorktrees } from "./devcontainer/relative-worktrees.js";
 import { ContainerNotRunningError } from "./devcontainer/launch-strategy-registry.js";
 import type { ContainerRef } from "./devcontainer/container-backend.js";
 import { discoverDevContainerConfig } from "./devcontainer/config-discovery.js";
@@ -4472,7 +4473,9 @@ export class Session {
           { workspaceId, cwd, adopted },
           adopted ? "Reusing running dev container for workspace" : "Starting dev container",
         );
-        const handle = await backend.up(ref);
+        // The record already knows this; the backend must not have to guess by
+        // looking at the directory, where a submodule would look the same.
+        const handle = await backend.up({ ...ref, isWorktree: workspace.kind === "worktree" });
         registry.activateContainer(key, cwd, handle);
         if (adopted) {
           void this.checkContainerConfigStaleness(workspace);
@@ -4825,6 +4828,25 @@ export class Session {
       // status projection without a second resolve.
       forge: snapshot.forge.forge,
     };
+  }
+
+  /**
+   * Whether a new worktree should be linked by relative path.
+   *
+   * Only a relative link works from inside a container, so this follows the
+   * container backend being chosen at all. The version gate is the host's git
+   * alone, because the choice is not per-container: linking one worktree
+   * relatively marks the whole *repository* with `extensions.relativeWorktrees`,
+   * and every workspace sharing that repository — other worktrees, the main
+   * checkout, whichever containers they run in — lives with the result. An
+   * image whose git is older than 2.48 will refuse that repository, which is
+   * the same answer it would give for a worktree it could not resolve anyway.
+   */
+  private async shouldLinkWorktreeRelatively(input: {
+    containerBackend: string | null;
+  }): Promise<boolean> {
+    if (!input.containerBackend) return false;
+    return hostGitSupportsRelativeWorktrees();
   }
 
   private async describeCreatedWorktreeWorkspace(
@@ -5699,6 +5721,10 @@ export class Session {
         githubPrNumber: source.githubPrNumber,
         firstAgentContext: request.firstAgentContext,
         title: request.title,
+        containerBackend: request.containerBackend ?? null,
+        relativePaths: await this.shouldLinkWorktreeRelatively({
+          containerBackend: request.containerBackend ?? null,
+        }),
       },
       source.baseBranch
         ? { resolveDefaultBranch: async () => source.baseBranch as string }

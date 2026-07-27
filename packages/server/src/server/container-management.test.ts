@@ -1,4 +1,5 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -1796,4 +1797,63 @@ dockerTest(
       .catch(() => {});
   },
   120_000,
+);
+
+dockerTest(
+  "real backend: an agent's own git works inside a worktree workspace",
+  async () => {
+    // A linked worktree keeps its git directory outside the workspace folder,
+    // so by default only Paseo's host-side git can see the repository and the
+    // agent's `git status` answers "not a git repository". The fix is two
+    // parts: relative links, and asking the CLI to mount the common dir.
+    const root = mkdtempSync(path.join(tmpdir(), "paseo-devcontainer-real-"));
+    const repo = path.join(root, "main");
+    execFileSync("git", ["init", "-q", repo]);
+    execFileSync("git", ["config", "user.email", "t@t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    writeFileSync(path.join(repo, "tracked.txt"), "hello");
+    execFileSync("git", ["add", "-A"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "init"], { cwd: repo });
+    const worktree = path.join(root, "wt");
+    // Linked relatively, which is what the creation path does when the image's
+    // git can read it. Absolute links are what the CLI's mount flag cannot help.
+    execFileSync("git", ["worktree", "add", "--relative-paths", "-q", worktree, "-b", "feature"], {
+      cwd: repo,
+    });
+    writeFileSync(path.join(worktree, ".devcontainer.json"), '{"image":"alpine:latest"}');
+
+    const backend = createDevContainerBackend({ logger: createTestLogger() });
+    const ref = { key: "real-worktree-git", kind: "workspace" as const, workspaceFolder: worktree };
+    expect(await backend.isAvailable()).toBe(true);
+
+    try {
+      const handle = await backend.up({ ...ref, isWorktree: true });
+      const strategy = backend.createStrategy(ref.key, worktree, handle);
+
+      const child = strategy.spawn(
+        "sh",
+        [
+          "-c",
+          "command -v git >/dev/null 2>&1 || apk add --no-cache git >/dev/null 2>&1; git -c safe.directory='*' rev-parse --abbrev-ref HEAD",
+        ],
+        { cwd: worktree, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      let output = "";
+      child.stdout?.on("data", (chunk: Buffer) => {
+        output += chunk.toString();
+      });
+      child.stderr?.on("data", (chunk: Buffer) => {
+        output += chunk.toString();
+      });
+      const [code] = (await once(child, "close")) as [number | null];
+
+      expect(output).not.toContain("not a git repository");
+      expect(code).toBe(0);
+      expect(output.trim()).toContain("feature");
+    } finally {
+      await backend.stop(ref, { remove: true }).catch(() => {});
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+  180_000,
 );

@@ -122,6 +122,70 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(metadata).toMatchObject({ version: 1, baseRefName: "main" });
     });
 
+    it("locks the worktree so a prune cannot take it away", async () => {
+      // A container mounts one worktree, so every other worktree of that repo
+      // reads as missing from inside it. `git worktree prune` — which `git gc`
+      // runs on a timer — would then delete a live workspace's HEAD, index and
+      // reflog, and `git worktree repair` cannot bring those back.
+      await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "locked",
+        source: { kind: "branch-off", baseBranch: "main", branchName: "locked" },
+        paseoHome,
+      });
+      const adminDir = join(repoDir, ".git", "worktrees", "locked");
+      expect(existsSync(adminDir)).toBe(true);
+
+      // Point the entry at a path that does not exist — exactly what a
+      // container sees for a worktree it has not mounted.
+      writeFileSync(join(adminDir, "gitdir"), "/nowhere/locked/.git\n");
+      execFileSync("git", ["worktree", "prune", "-v"], { cwd: repoDir });
+
+      expect(existsSync(adminDir)).toBe(true);
+      expect(
+        execFileSync("git", ["worktree", "list"], { cwd: repoDir, encoding: "utf8" }),
+      ).toContain("locked");
+    });
+
+    it("still removes a locked worktree when the workspace goes away", async () => {
+      // The lock has to be undone by the one path that is allowed to remove it,
+      // or archiving a workspace would leave the worktree behind forever.
+      const result = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "removable",
+        source: { kind: "branch-off", baseBranch: "main", branchName: "removable" },
+        paseoHome,
+      });
+
+      await deletePaseoWorktree({ cwd: repoDir, worktreePath: result.worktreePath, paseoHome });
+
+      expect(existsSync(result.worktreePath)).toBe(false);
+      expect(existsSync(join(repoDir, ".git", "worktrees", "removable"))).toBe(false);
+    });
+
+    it("links the worktree relatively when asked, so a container can use it", async () => {
+      // Absolute links name host paths, which is why the agent's own git
+      // inside a container answers "not a git repository" for a worktree.
+      const result = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "relative",
+        source: { kind: "branch-off", baseBranch: "main", branchName: "relative" },
+        paseoHome,
+        relativePaths: true,
+      });
+
+      const link = readFileSync(join(result.worktreePath, ".git"), "utf8");
+      expect(link).toContain("gitdir: ../");
+      expect(link).not.toContain(repoDir);
+      // Still a working worktree on the host, which keeps using it.
+      expect(
+        execFileSync("git", ["status", "--short", "--branch"], {
+          cwd: result.worktreePath,
+          encoding: "utf8",
+        }),
+      ).toContain("relative");
+    });
+
     it("creates and owns worktrees under a configured root", async () => {
       const worktreesRoot = join(tempDir, "custom-worktrees");
       const projectHash = await deriveWorktreeProjectHash(repoDir);

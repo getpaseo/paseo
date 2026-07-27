@@ -261,6 +261,13 @@ export function createDevContainerBackend(
     if (removeExisting) {
       args.push("--remove-existing-container");
     }
+    // A linked worktree keeps its git directory outside the workspace folder,
+    // so without this the agent's own git finds no repository. The CLI only
+    // acts on it when the worktree's links are relative, which is decided when
+    // the worktree is created.
+    if (options.isWorktree) {
+      args.push("--mount-git-worktree-common-dir");
+    }
 
     const result = await runDevContainerCli(args, options);
     const parsed = parseDevContainerUpResult(result.stdout);

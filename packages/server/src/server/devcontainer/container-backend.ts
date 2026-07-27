@@ -95,6 +95,13 @@ export interface ContainerUpOptions extends ContainerRef {
   onProgress?: (line: string) => void;
   /** Aborts the underlying CLI run (probe cancelled, client disconnected) */
   signal?: AbortSignal;
+  /**
+   * Whether the workspace folder is a linked git worktree, which the caller
+   * already knows from the workspace record. Such a workspace keeps its git
+   * directory outside the folder, so the backend has to mount that too or the
+   * agent's own git finds no repository at all.
+   */
+  isWorktree?: boolean;
 }
 
 export interface ContainerStopOptions {
