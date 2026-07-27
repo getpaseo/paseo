@@ -7,6 +7,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { isAgentArchiving, setAgentArchiving } from "@/hooks/use-archive-agent";
 import { queryClient } from "@/data/query-client";
+import { createUserMessage } from "@/types/stream";
 import { applyAgentDirectoryDelta, replaceFetchedAgentDirectory } from "./agent-directory-sync";
 
 function createAgentPayload(
@@ -63,6 +64,75 @@ function createEntry(agent: AgentSnapshotPayload): FetchAgentsEntry {
 function permission(id: string): AgentPermissionRequest {
   return { id, provider: "codex", name: id, kind: "tool", title: id };
 }
+
+function beginPendingSubmission(serverId: string, agentId: string): string {
+  const clientMessageId = `client-${agentId}`;
+  useSessionStore.getState().beginAgentMessageSubmission(
+    serverId,
+    agentId,
+    createUserMessage({
+      clientMessageId,
+      text: "Run this",
+      timestamp: new Date("2026-07-27T10:00:00.000Z"),
+    }),
+  );
+  return clientMessageId;
+}
+
+function applyAgentStatus(input: {
+  serverId: string;
+  agentId: string;
+  status: AgentSnapshotPayload["status"];
+  updatedAt: string;
+}): void {
+  const agent = createAgentPayload({
+    id: input.agentId,
+    status: input.status,
+    updatedAt: input.updatedAt,
+  });
+  applyAgentDirectoryDelta({
+    serverId: input.serverId,
+    delta: { kind: "upsert", agent, project: createEntry(agent).project },
+  });
+}
+
+describe("message submission lifecycle ordering", () => {
+  it("keeps idle and pending when acceptance precedes authoritative running", () => {
+    const serverId = "server-accept-before-running";
+    const agentId = "agent-1";
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null as unknown as DaemonClient);
+    applyAgentStatus({
+      serverId,
+      agentId,
+      status: "idle",
+      updatedAt: "2026-07-27T10:00:00.000Z",
+    });
+    const clientMessageId = beginPendingSubmission(serverId, agentId);
+
+    store.acceptAgentMessageSubmission(serverId, agentId, clientMessageId);
+
+    const session = useSessionStore.getState().sessions[serverId];
+    expect(session?.agents.get(agentId)?.status).toBe("idle");
+    expect(session?.messageSubmissions.get(agentId)).toEqual({
+      clientMessageId,
+      submittedAt: new Date("2026-07-27T10:00:00.000Z"),
+      phase: "waiting-for-running",
+    });
+
+    applyAgentStatus({
+      serverId,
+      agentId,
+      status: "running",
+      updatedAt: "2026-07-27T10:00:01.000Z",
+    });
+
+    expect(
+      useSessionStore.getState().sessions[serverId]?.messageSubmissions.get(agentId),
+    ).toBeUndefined();
+    store.clearSession(serverId);
+  });
+});
 
 describe("replaceFetchedAgentDirectory", () => {
   it("preserves timeline initialization while replacing directory state", () => {

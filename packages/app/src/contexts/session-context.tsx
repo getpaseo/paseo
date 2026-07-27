@@ -53,6 +53,7 @@ import {
 } from "@/utils/agent-initialization";
 import { encodeImages } from "@/utils/encode-images";
 import { derivePendingPermissionKey } from "@/utils/agent-snapshots";
+import { getPendingMessageSubmission } from "@/composer/submission/model";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { patchWorkspaceScripts } from "@/contexts/session-workspace-scripts";
 import { useToast } from "@/contexts/toast-context";
@@ -658,6 +659,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       const currentCursor = session?.agentTimelineCursor.get(agentId);
       const currentTail = session?.agentStreamTail.get(agentId) ?? [];
       const currentHead = session?.agentStreamHead.get(agentId) ?? [];
+      const pendingClientMessageId =
+        getPendingMessageSubmission(session?.messageSubmissions.get(agentId))?.clientMessageId ??
+        null;
 
       setAgentTimelineHasOlder(serverId, (prev) => {
         if (prev.get(agentId) === payload.hasOlder) {
@@ -677,6 +681,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         isInitializing,
         hasActiveInitDeferred,
         initRequestDirection: activeInitDeferred?.requestDirection ?? "tail",
+        pendingClientMessageId,
       });
 
       if (result.error) {

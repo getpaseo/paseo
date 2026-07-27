@@ -25,6 +25,7 @@ import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { SidebarCallout } from "@/components/sidebar-callout";
 import { Composer } from "@/composer";
+import { getPendingMessageSubmission } from "@/composer/submission/model";
 import { RewindComposerRestoreProvider } from "@/components/rewind/composer-restore";
 import { getProviderIcon } from "@/components/provider-icons";
 import {
@@ -1288,6 +1289,11 @@ const AgentStreamSection = memo(function AgentStreamSection({
   const streamItemsRaw = useSessionStore((state) =>
     agentId ? state.sessions[serverId]?.agentStreamTail?.get(agentId) : undefined,
   );
+  const pendingMessageSubmission = useSessionStore((state) =>
+    agentId
+      ? getPendingMessageSubmission(state.sessions[serverId]?.messageSubmissions.get(agentId))
+      : null,
+  );
   const streamItems = streamItemsRaw ?? EMPTY_STREAM_ITEMS;
   const pendingPermissionList = useStoreWithEqualityFn(
     useSessionStore,
@@ -1327,6 +1333,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
       routeBottomAnchorRequest={routeBottomAnchorRequest}
       isAuthoritativeHistoryReady={hasAppliedAuthoritativeHistory}
       toast={toast}
+      pendingMessageSubmission={pendingMessageSubmission}
       onOpenWorkspaceFile={onOpenWorkspaceFile}
     />
   );

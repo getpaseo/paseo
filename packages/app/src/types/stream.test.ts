@@ -4,9 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyStreamEvent,
-  appendOptimisticUserMessageToStream,
-  buildOptimisticUserMessage,
-  clearOptimisticUserMessages,
+  createUserMessage,
   handoffCreatedAgentUserMessageToStream,
   hydrateStreamState,
   mergeToolCallDetail,
@@ -14,12 +12,117 @@ import {
   type AgentToolCallItem,
   type StreamItem,
   isAgentToolCallItem,
+  upsertUserMessage,
+  upsertUserMessageAcrossStream,
 } from "./stream";
 import type { AgentProvider, ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display";
 
 type CanonicalToolStatus = "running" | "completed" | "failed" | "canceled";
+
+describe("user message identity", () => {
+  it("adds provider identity without replacing local presentation", () => {
+    const timestamp = new Date("2026-07-26T10:00:00.000Z");
+    const local = createUserMessage({
+      clientMessageId: "client-1",
+      text: "local text",
+      timestamp,
+      images: [
+        {
+          id: "image-1",
+          mimeType: "image/png",
+          storageType: "web-indexeddb",
+          storageKey: "image-1.png",
+          createdAt: timestamp.getTime(),
+        },
+      ],
+      attachments: [{ type: "text", mimeType: "text/plain", text: "attachment" }],
+    });
+    const canonical = createUserMessage({
+      id: "provider-1",
+      messageId: "provider-1",
+      clientMessageId: "client-1",
+      text: "provider text",
+      timestamp: new Date("2026-07-26T10:00:01.000Z"),
+    });
+
+    const first = upsertUserMessage([local], canonical);
+    const second = upsertUserMessage(first, canonical);
+
+    expect(first).toEqual([
+      {
+        ...local,
+        messageId: "provider-1",
+        clientMessageId: "client-1",
+      },
+    ]);
+    expect(first[0]).toBe(second[0]);
+  });
+
+  it("keeps local presentation when a later canonical row omits provider identity", () => {
+    const timestamp = new Date("2026-07-27T10:00:00.000Z");
+    const local = createUserMessage({
+      clientMessageId: "client-1",
+      messageId: "provider-1",
+      text: "local text",
+      timestamp,
+      images: [
+        {
+          id: "image-1",
+          mimeType: "image/png",
+          storageType: "web-indexeddb",
+          storageKey: "image-1.png",
+          createdAt: timestamp.getTime(),
+        },
+      ],
+      attachments: [{ type: "text", mimeType: "text/plain", text: "local attachment" }],
+    });
+    const canonicalWithoutProviderIdentity = createUserMessage({
+      id: "canonical-page-row",
+      clientMessageId: "client-1",
+      text: "provider-shaped text",
+      timestamp: new Date("2026-07-27T10:00:01.000Z"),
+    });
+
+    const result = upsertUserMessage([local], canonicalWithoutProviderIdentity);
+
+    expect(result).toEqual([local]);
+  });
+
+  it("matches a submitted message against a legacy canonical row that has no client identity", () => {
+    // Daemons before v0.2.0 do not echo clientMessageId. During agent creation the
+    // legacy canonical row can land before the local submission is handed off, so the
+    // submitted row arrives as `incoming` and must still match by text.
+    const timestamp = new Date("2026-07-27T11:00:00.000Z");
+    const legacyCanonical = createUserMessage({
+      id: "provider-1",
+      messageId: "provider-1",
+      text: "review this",
+      timestamp,
+    });
+    const submitted = createUserMessage({
+      clientMessageId: "client-1",
+      text: "review this",
+      timestamp: new Date("2026-07-27T11:00:01.000Z"),
+      attachments: [{ type: "text", mimeType: "text/plain", text: "attachment" }],
+    });
+
+    const result = handoffCreatedAgentUserMessageToStream({
+      tail: [legacyCanonical],
+      head: [],
+      message: submitted,
+    });
+
+    expect(result.tail).toEqual([
+      {
+        ...submitted,
+        id: "client-1",
+        messageId: "provider-1",
+      },
+    ]);
+  });
+});
 
 function assistantTimeline(
   text: string,
@@ -895,15 +998,15 @@ describe("stream reducer canonical tool calls", () => {
     assert.strictEqual(todos.items[0]?.text, "Task 1");
   });
 
-  it("preserves optimistic user message images when authoritative user message arrives", () => {
+  it("preserves submitted user message images when authoritative user message arrives", () => {
     const messageId = "msg-user-images";
-    const optimisticTimestamp = new Date("2025-01-01T11:10:00Z");
-    const optimisticImages = [
+    const submittedTimestamp = new Date("2025-01-01T11:10:00Z");
+    const submittedImages = [
       {
-        id: "att-optimistic",
+        id: "att-submitted",
         mimeType: "image/jpeg",
         storageType: "native-file" as const,
-        storageKey: "/tmp/optimistic.jpg",
+        storageKey: "/tmp/submitted.jpg",
         createdAt: Date.now(),
       },
     ];
@@ -911,10 +1014,10 @@ describe("stream reducer canonical tool calls", () => {
       {
         kind: "user_message",
         id: messageId,
+        clientMessageId: messageId,
         text: "Analyze this image",
-        timestamp: optimisticTimestamp,
-        optimistic: true,
-        images: optimisticImages,
+        timestamp: submittedTimestamp,
+        images: submittedImages,
       },
     ];
     const event: AgentStreamEventPayload = {
@@ -933,9 +1036,9 @@ describe("stream reducer canonical tool calls", () => {
 
     assert.ok(message);
     assert.strictEqual(message.id, messageId);
-    assert.deepStrictEqual(message.images, optimisticImages);
+    assert.deepStrictEqual(message.images, submittedImages);
     assert.strictEqual(message.text, "Analyze this image");
-    assert.strictEqual(message.timestamp.getTime(), optimisticTimestamp.getTime());
+    assert.strictEqual(message.timestamp.getTime(), submittedTimestamp.getTime());
   });
 
   it("keeps canonical assistant/user/assistant order during replay", () => {
@@ -981,7 +1084,7 @@ describe("stream reducer canonical tool calls", () => {
     );
   });
 
-  it("keeps live optimistic assistant merge behavior", () => {
+  it("keeps live submitted assistant merge behavior", () => {
     const state: StreamItem[] = [
       {
         kind: "assistant_message",
@@ -1117,23 +1220,23 @@ describe("turn lifecycle events", () => {
   });
 
   it.each(["codex", "opencode", "pi"] satisfies AgentProvider[])(
-    "replaces an optimistic user message when a live %s provider-owned id echo arrives without text matching",
+    "replaces a submitted user message when a live %s provider-owned id echo arrives without text matching",
     (provider) => {
-      const optimisticTimestamp = new Date("2025-01-01T15:02:00Z");
+      const submittedTimestamp = new Date("2025-01-01T15:02:00Z");
       const serverTimestamp = new Date("2025-01-01T15:02:01Z");
-      const optimistic: StreamItem = {
+      const submitted: StreamItem = {
         kind: "user_message",
-        id: "msg_optimistic",
+        id: "msg_submitted",
+        clientMessageId: "msg_submitted",
         text: "same user text",
-        timestamp: optimisticTimestamp,
-        optimistic: true,
+        timestamp: submittedTimestamp,
         images: [
           {
             id: "image-1",
             mimeType: "image/png",
             storageType: "web-indexeddb",
             storageKey: "image-1",
-            createdAt: optimisticTimestamp.getTime(),
+            createdAt: submittedTimestamp.getTime(),
           },
         ],
         attachments: [
@@ -1147,7 +1250,7 @@ describe("turn lifecycle events", () => {
       };
 
       const state = reduceStreamUpdate(
-        [optimistic],
+        [submitted],
         {
           type: "timeline",
           provider,
@@ -1155,6 +1258,7 @@ describe("turn lifecycle events", () => {
             type: "user_message",
             text: "server-owned rendered text",
             messageId: "provider-owned-id",
+            clientMessageId: "msg_submitted",
           },
         },
         serverTimestamp,
@@ -1165,28 +1269,28 @@ describe("turn lifecycle events", () => {
       assert.strictEqual(userMessages.length, 1);
       const userMessage = userMessages[0];
       invariant(userMessage?.kind === "user_message");
-      assert.strictEqual(userMessage.id, "provider-owned-id");
-      assert.strictEqual(userMessage.text, optimistic.text);
-      assert.strictEqual(userMessage.timestamp.getTime(), optimistic.timestamp.getTime());
-      assert.strictEqual(userMessage.optimistic, undefined);
-      assert.deepStrictEqual(userMessage.images, optimistic.images);
-      assert.deepStrictEqual(userMessage.attachments, optimistic.attachments);
+      assert.strictEqual(userMessage.id, "msg_submitted");
+      assert.strictEqual(userMessage.messageId, "provider-owned-id");
+      assert.strictEqual(userMessage.text, submitted.text);
+      assert.strictEqual(userMessage.timestamp.getTime(), submitted.timestamp.getTime());
+      assert.deepStrictEqual(userMessage.images, submitted.images);
+      assert.deepStrictEqual(userMessage.attachments, submitted.attachments);
     },
   );
 
-  it("replaces one optimistic plain-text user message with the next live server user message", () => {
-    const optimisticTimestamp = new Date("2025-01-01T15:03:00Z");
+  it("replaces one submitted plain-text user message with the next live server user message", () => {
+    const submittedTimestamp = new Date("2025-01-01T15:03:00Z");
     const serverTimestamp = new Date("2025-01-01T15:03:01Z");
-    const optimistic: StreamItem = {
+    const submitted: StreamItem = {
       kind: "user_message",
-      id: "msg_optimistic",
+      id: "msg_submitted",
+      clientMessageId: "msg_submitted",
       text: "typed plain text",
-      timestamp: optimisticTimestamp,
-      optimistic: true,
+      timestamp: submittedTimestamp,
     };
 
     const state = reduceStreamUpdate(
-      [optimistic],
+      [submitted],
       {
         type: "timeline",
         provider: "opencode",
@@ -1204,20 +1308,20 @@ describe("turn lifecycle events", () => {
     assert.strictEqual(userMessages.length, 1);
     const userMessage = userMessages[0];
     invariant(userMessage?.kind === "user_message");
-    assert.strictEqual(userMessage.id, "msg_opencode_provider_owned");
+    assert.strictEqual(userMessage.id, "msg_submitted");
+    assert.strictEqual(userMessage.messageId, "msg_opencode_provider_owned");
     assert.strictEqual(userMessage.text, "typed plain text");
-    assert.strictEqual(userMessage.timestamp.getTime(), optimisticTimestamp.getTime());
-    assert.strictEqual(userMessage.optimistic, undefined);
+    assert.strictEqual(userMessage.timestamp.getTime(), submittedTimestamp.getTime());
   });
 
-  it("replaces an optimistic image user message with the next canonical server user message", () => {
-    const optimisticTimestamp = new Date("2025-01-01T15:03:10Z");
+  it("replaces a submitted image user message with the next canonical server user message", () => {
+    const submittedTimestamp = new Date("2025-01-01T15:03:10Z");
     const image = {
       id: "image-canonical",
       mimeType: "image/png",
       storageType: "web-indexeddb" as const,
       storageKey: "image-canonical",
-      createdAt: optimisticTimestamp.getTime(),
+      createdAt: submittedTimestamp.getTime(),
     };
     const attachment = {
       type: "text" as const,
@@ -1225,16 +1329,16 @@ describe("turn lifecycle events", () => {
       text: "context",
       title: "context.txt",
     };
-    const optimistic = buildOptimisticUserMessage({
-      id: "msg_optimistic_canonical",
+    const submitted = createUserMessage({
+      clientMessageId: "msg_submitted_canonical",
       text: "Analyze this",
-      timestamp: optimisticTimestamp,
+      timestamp: submittedTimestamp,
       images: [image],
       attachments: [attachment],
     });
 
     const state = reduceStreamUpdate(
-      [optimistic],
+      [submitted],
       {
         type: "timeline",
         provider: "claude",
@@ -1242,7 +1346,7 @@ describe("turn lifecycle events", () => {
           type: "user_message",
           text: "server-rendered attachment text",
           messageId: "provider-owned-canonical",
-          clientMessageId: optimistic.id,
+          clientMessageId: submitted.id,
         },
       },
       new Date("2025-01-01T15:03:11Z"),
@@ -1253,17 +1357,17 @@ describe("turn lifecycle events", () => {
     assert.strictEqual(userMessages.length, 1);
     const userMessage = userMessages[0];
     invariant(userMessage?.kind === "user_message");
-    assert.strictEqual(userMessage.id, "provider-owned-canonical");
+    assert.strictEqual(userMessage.id, "msg_submitted_canonical");
+    assert.strictEqual(userMessage.messageId, "provider-owned-canonical");
     assert.strictEqual(userMessage.text, "Analyze this");
-    assert.strictEqual(userMessage.timestamp.getTime(), optimisticTimestamp.getTime());
-    assert.strictEqual(userMessage.optimistic, undefined);
+    assert.strictEqual(userMessage.timestamp.getTime(), submittedTimestamp.getTime());
     assert.deepStrictEqual(userMessage.images, [image]);
     assert.deepStrictEqual(userMessage.attachments, [attachment]);
   });
 
-  it("places optimistic user messages through one append helper", () => {
-    const optimistic = buildOptimisticUserMessage({
-      id: "msg_append_once",
+  it("places submitted user messages through the identity producer", () => {
+    const submitted = createUserMessage({
+      clientMessageId: "msg_append_once",
       text: "append once",
       timestamp: new Date("2025-01-01T15:03:20Z"),
     });
@@ -1274,28 +1378,30 @@ describe("turn lifecycle events", () => {
       timestamp: new Date("2025-01-01T15:03:19Z"),
     };
 
-    const first = appendOptimisticUserMessageToStream({
+    const first = upsertUserMessageAcrossStream({
       tail: [],
       head: [headItem],
-      message: optimistic,
-      placement: "active-head",
+      message: submitted,
+      insert: "head",
+      presentation: "existing",
     });
-    const second = appendOptimisticUserMessageToStream({
+    const second = upsertUserMessageAcrossStream({
       tail: first.tail,
       head: first.head,
-      message: optimistic,
-      placement: "active-head",
+      message: submitted,
+      insert: "head",
+      presentation: "existing",
     });
     assert.deepStrictEqual(first.tail, []);
-    assert.deepStrictEqual(first.head, [headItem, optimistic]);
+    assert.deepStrictEqual(first.head, [headItem, submitted]);
     assert.strictEqual(second.changedHead, false);
     assert.strictEqual(second.head, first.head);
   });
 
-  it("hands rich optimistic content to an authoritative create message without duplicating it", () => {
+  it("hands rich submitted content to its create message without overwriting an earlier user row", () => {
     const timestamp = new Date("2025-01-01T15:03:20Z");
-    const optimistic = buildOptimisticUserMessage({
-      id: "client-user",
+    const submitted = createUserMessage({
+      clientMessageId: "client-user",
       text: "",
       timestamp,
       images: [
@@ -1317,32 +1423,44 @@ describe("turn lifecycle events", () => {
         },
       ],
     });
+    const precedingProviderRow: StreamItem = {
+      kind: "user_message",
+      id: "provider-system-user",
+      messageId: "provider-system-user",
+      text: "provider setup prompt",
+      timestamp: new Date("2025-01-01T15:03:20.500Z"),
+    };
     const canonical: StreamItem = {
       kind: "user_message",
       id: "provider-user",
+      messageId: "provider-user",
+      clientMessageId: "client-user",
       text: "server-rendered attachment text",
       timestamp: new Date("2025-01-01T15:03:21Z"),
     };
 
     const handedOff = handoffCreatedAgentUserMessageToStream({
-      tail: [canonical],
+      tail: [precedingProviderRow, canonical],
       head: [],
-      message: optimistic,
+      message: submitted,
     });
     const repeated = handoffCreatedAgentUserMessageToStream({
       tail: handedOff.tail,
       head: handedOff.head,
-      message: optimistic,
+      message: submitted,
     });
 
     assert.deepStrictEqual(handedOff.tail, [
+      precedingProviderRow,
       {
         kind: "user_message",
-        id: "provider-user",
-        text: optimistic.text,
-        timestamp: optimistic.timestamp,
-        images: optimistic.images,
-        attachments: optimistic.attachments,
+        id: "client-user",
+        clientMessageId: "client-user",
+        messageId: "provider-user",
+        text: submitted.text,
+        timestamp: submitted.timestamp,
+        images: submitted.images,
+        attachments: submitted.attachments,
       },
     ]);
     assert.deepStrictEqual(handedOff.head, []);
@@ -1364,22 +1482,22 @@ describe("turn lifecycle events", () => {
     );
     assert.deepStrictEqual(
       afterNextUser.filter((item) => item.kind === "user_message").map((item) => item.id),
-      ["provider-user", "provider-next-user"],
+      ["provider-system-user", "client-user", "provider-next-user"],
     );
   });
 
-  it("reconciles an optimistic user message that was pending in the streaming head", () => {
-    const optimistic: StreamItem = {
+  it("reconciles a submitted user message that was pending in the streaming head", () => {
+    const submitted: StreamItem = {
       kind: "user_message",
-      id: "msg_head_optimistic",
+      id: "msg_head_submitted",
+      clientMessageId: "msg_head_submitted",
       text: "plain text in head",
       timestamp: new Date("2025-01-01T15:03:02Z"),
-      optimistic: true,
     };
 
     const result = applyStreamEvent({
       tail: [],
-      head: [optimistic],
+      head: [submitted],
       event: {
         type: "timeline",
         provider: "opencode",
@@ -1393,33 +1511,33 @@ describe("turn lifecycle events", () => {
       source: "live",
     });
 
-    assert.strictEqual(result.head.length, 0);
-    const userMessages = result.tail.filter((item) => item.kind === "user_message");
+    assert.strictEqual(result.tail.length, 0);
+    const userMessages = result.head.filter((item) => item.kind === "user_message");
     assert.strictEqual(userMessages.length, 1);
-    assert.strictEqual(userMessages[0]?.id, "provider-owned-head");
-    assert.strictEqual(userMessages[0]?.optimistic, undefined);
+    assert.strictEqual(userMessages[0]?.id, "msg_head_submitted");
+    assert.strictEqual(userMessages[0]?.messageId, "provider-owned-head");
   });
 
-  it("replaces multiple optimistic user messages in FIFO order", () => {
-    const optimisticTimestamp = new Date("2025-01-01T15:04:00Z");
+  it("replaces multiple submitted user messages in FIFO order", () => {
+    const submittedTimestamp = new Date("2025-01-01T15:04:00Z");
     const serverTimestamp = new Date("2025-01-01T15:04:01Z");
-    const firstOptimistic: StreamItem = {
+    const firstSubmitted: StreamItem = {
       kind: "user_message",
-      id: "msg_optimistic_1",
+      id: "msg_submitted_1",
+      clientMessageId: "msg_submitted_1",
       text: "first typed text",
-      timestamp: optimisticTimestamp,
-      optimistic: true,
+      timestamp: submittedTimestamp,
     };
-    const secondOptimistic: StreamItem = {
+    const secondSubmitted: StreamItem = {
       kind: "user_message",
-      id: "msg_optimistic_2",
+      id: "msg_submitted_2",
+      clientMessageId: "msg_submitted_2",
       text: "second typed text",
       timestamp: new Date("2025-01-01T15:04:00.500Z"),
-      optimistic: true,
     };
 
     const afterFirstEcho = reduceStreamUpdate(
-      [firstOptimistic, secondOptimistic],
+      [firstSubmitted, secondSubmitted],
       {
         type: "timeline",
         provider: "opencode",
@@ -1427,6 +1545,7 @@ describe("turn lifecycle events", () => {
           type: "user_message",
           text: "first server text",
           messageId: "provider-owned-first",
+          clientMessageId: "msg_submitted_1",
         },
       },
       serverTimestamp,
@@ -1441,6 +1560,7 @@ describe("turn lifecycle events", () => {
           type: "user_message",
           text: "second server text",
           messageId: "provider-owned-second",
+          clientMessageId: "msg_submitted_2",
         },
       },
       new Date("2025-01-01T15:04:02Z"),
@@ -1450,30 +1570,30 @@ describe("turn lifecycle events", () => {
     const userMessages = state.filter((item) => item.kind === "user_message");
     assert.strictEqual(userMessages.length, 2);
     assert.deepStrictEqual(
-      userMessages.map((item) => [item.id, item.text, item.optimistic]),
+      userMessages.map((item) => [item.id, item.text, item.messageId]),
       [
-        ["provider-owned-first", "first typed text", undefined],
-        ["provider-owned-second", "second typed text", undefined],
+        ["msg_submitted_1", "first typed text", "provider-owned-first"],
+        ["msg_submitted_2", "second typed text", "provider-owned-second"],
       ],
     );
   });
 
-  it("does not shift later prompts when an earlier optimistic prompt has no canonical echo", () => {
+  it("does not shift later prompts when an earlier submitted prompt has no canonical echo", () => {
     const staleTimestamp = new Date("2025-01-01T15:04:00Z");
     const submittedTimestamp = new Date("2025-01-01T15:04:01Z");
     const stalePrompt: StreamItem = {
       kind: "user_message",
       id: "msg_stale",
+      clientMessageId: "msg_stale",
       text: "first prompt without an echo",
       timestamp: staleTimestamp,
-      optimistic: true,
     };
     const submittedPrompt: StreamItem = {
       kind: "user_message",
       id: "msg_submitted",
+      clientMessageId: "msg_submitted",
       text: "later submitted prompt",
       timestamp: submittedTimestamp,
-      optimistic: true,
     };
 
     const state = reduceStreamUpdate(
@@ -1496,15 +1616,16 @@ describe("turn lifecycle events", () => {
       stalePrompt,
       {
         kind: "user_message",
-        id: "provider-owned-submitted",
+        id: "msg_submitted",
         clientMessageId: submittedPrompt.id,
+        messageId: "provider-owned-submitted",
         text: submittedPrompt.text,
         timestamp: submittedPrompt.timestamp,
       },
     ]);
   });
 
-  it("appends a live server user message when no optimistic user message is pending", () => {
+  it("appends a live server user message when no submitted user message is pending", () => {
     const state = reduceStreamUpdate(
       [],
       {
@@ -1523,21 +1644,11 @@ describe("turn lifecycle events", () => {
     const userMessages = state.filter((item) => item.kind === "user_message");
     assert.strictEqual(userMessages.length, 1);
     assert.strictEqual(userMessages[0]?.id, "provider-owned-resume");
-    assert.strictEqual(userMessages[0]?.optimistic, undefined);
   });
 
-  it("does not match a server user message to an optimistic from a rewound turn after pending optimistics are cleared", () => {
-    const optimistic: StreamItem = {
-      kind: "user_message",
-      id: "msg_rewound_optimistic",
-      text: "rewound text",
-      timestamp: new Date("2025-01-01T15:04:04Z"),
-      optimistic: true,
-    };
-    const cleared = clearOptimisticUserMessages([optimistic]);
-
+  it("appends a server user message after a rewound local row was removed", () => {
     const state = reduceStreamUpdate(
-      cleared,
+      [],
       {
         type: "timeline",
         provider: "opencode",
@@ -1555,7 +1666,6 @@ describe("turn lifecycle events", () => {
     assert.strictEqual(userMessages.length, 1);
     assert.strictEqual(userMessages[0]?.id, "provider-owned-after-rewind");
     assert.strictEqual(userMessages[0]?.text, "future server echo");
-    assert.strictEqual(userMessages[0]?.optimistic, undefined);
   });
 
   it("keeps canonical repeated user messages distinct during hydration", () => {

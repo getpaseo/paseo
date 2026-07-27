@@ -87,22 +87,345 @@ export interface UserMessageItem {
   kind: "user_message";
   id: string;
   clientMessageId?: string;
-  text: string;
-  timestamp: Date;
-  optimistic?: true;
-  images?: UserMessageImageAttachment[];
-  attachments?: AgentAttachment[];
-}
-
-export interface OptimisticUserMessageInput {
-  id: string;
+  messageId?: string;
   text: string;
   timestamp: Date;
   images?: UserMessageImageAttachment[];
   attachments?: AgentAttachment[];
 }
 
-export type OptimisticUserMessagePlacement = "tail" | "active-head";
+export interface UserMessageInput {
+  id?: string;
+  clientMessageId?: string;
+  messageId?: string;
+  text: string;
+  timestamp: Date;
+  images?: UserMessageImageAttachment[];
+  attachments?: AgentAttachment[];
+}
+
+export function createUserMessage(input: UserMessageInput): UserMessageItem {
+  const id = input.id ?? input.clientMessageId ?? input.messageId;
+  if (!id) {
+    throw new Error("User message identity is required");
+  }
+  return {
+    kind: "user_message",
+    id,
+    ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
+    ...(input.messageId ? { messageId: input.messageId } : {}),
+    text: input.text,
+    timestamp: input.timestamp,
+    ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
+    ...(input.attachments && input.attachments.length > 0
+      ? { attachments: input.attachments }
+      : {}),
+  };
+}
+
+// COMPAT(userMessageClientId): added in v0.2.0, remove after 2027-01-20 once the
+// supported daemon floor emits clientMessageId on submitted user messages. Until then a
+// locally submitted row (clientMessageId, no messageId) and its canonical twin from an
+// old daemon (messageId, no clientMessageId) share no identifier, so they are matched by
+// the id the client supplied over the wire or by text. Direction-independent: either row
+// can already be in the timeline when the other arrives.
+function matchesLegacyCanonicalUserMessage(
+  submitted: UserMessageItem,
+  canonical: UserMessageItem,
+): boolean {
+  if (submitted.clientMessageId === undefined || submitted.messageId !== undefined) return false;
+  if (canonical.messageId === undefined) return false;
+  return canonical.messageId === submitted.clientMessageId || canonical.text === submitted.text;
+}
+
+function matchesUserMessage(existing: UserMessageItem, incoming: UserMessageItem): boolean {
+  if (existing.clientMessageId && incoming.clientMessageId) {
+    return existing.clientMessageId === incoming.clientMessageId;
+  }
+  if (existing.messageId && incoming.messageId) {
+    return existing.messageId === incoming.messageId;
+  }
+  return (
+    matchesLegacyCanonicalUserMessage(existing, incoming) ||
+    matchesLegacyCanonicalUserMessage(incoming, existing)
+  );
+}
+
+export function upsertUserMessage(
+  items: StreamItem[],
+  incoming: UserMessageItem,
+  insertAt = items.length,
+): StreamItem[] {
+  return produceUserMessage(items, incoming, insertAt, "existing").items;
+}
+
+type UserMessagePresentationPolicy = "existing" | "incoming";
+
+interface UserMessageProductionResult {
+  items: StreamItem[];
+  index: number;
+  message: UserMessageItem;
+  matched: boolean;
+}
+
+function produceUserMessage(
+  items: StreamItem[],
+  incoming: UserMessageItem,
+  insertAt: number | null,
+  presentationPolicy: UserMessagePresentationPolicy,
+): UserMessageProductionResult {
+  const index = items.findIndex(
+    (item) => item.kind === "user_message" && matchesUserMessage(item, incoming),
+  );
+  if (index < 0) {
+    if (insertAt === null) {
+      return { items, index: -1, message: incoming, matched: false };
+    }
+    return {
+      items: [...items.slice(0, insertAt), incoming, ...items.slice(insertAt)],
+      index: insertAt,
+      message: incoming,
+      matched: false,
+    };
+  }
+
+  const existing = items[index];
+  if (!existing || existing.kind !== "user_message") {
+    throw new Error("User message upsert matched a non-user row");
+  }
+  const presentation = presentationPolicy === "incoming" ? incoming : existing;
+  const merged = createUserMessage({
+    ...presentation,
+    clientMessageId: incoming.clientMessageId ?? existing.clientMessageId,
+    messageId: incoming.messageId ?? existing.messageId,
+  });
+  if (
+    existing.id === merged.id &&
+    existing.clientMessageId === merged.clientMessageId &&
+    existing.messageId === merged.messageId &&
+    existing.text === merged.text &&
+    existing.timestamp === merged.timestamp &&
+    existing.images === merged.images &&
+    existing.attachments === merged.attachments
+  ) {
+    return { items, index, message: existing, matched: true };
+  }
+  const next = [...items];
+  next[index] = merged;
+  return { items: next, index, message: merged, matched: true };
+}
+
+export interface UserMessageStreamUpsertInput {
+  tail: StreamItem[];
+  head: StreamItem[];
+  message: UserMessageItem;
+  insert: "tail" | "head" | "prepend-tail" | "none";
+  presentation: UserMessagePresentationPolicy;
+}
+
+export interface UserMessageStreamUpsertResult extends ApplyStreamEventResult {
+  location: {
+    lane: "tail" | "head";
+    index: number;
+    message: UserMessageItem;
+    matched: boolean;
+  } | null;
+}
+
+export function upsertUserMessageAcrossStream(
+  input: UserMessageStreamUpsertInput,
+): UserMessageStreamUpsertResult {
+  const tailResult = produceUserMessage(input.tail, input.message, null, input.presentation);
+  if (tailResult.matched) {
+    return {
+      tail: tailResult.items,
+      head: input.head,
+      changedTail: tailResult.items !== input.tail,
+      changedHead: false,
+      location: {
+        lane: "tail",
+        index: tailResult.index,
+        message: tailResult.message,
+        matched: true,
+      },
+    };
+  }
+  const headResult = produceUserMessage(input.head, input.message, null, input.presentation);
+  if (headResult.matched) {
+    return {
+      tail: input.tail,
+      head: headResult.items,
+      changedTail: false,
+      changedHead: headResult.items !== input.head,
+      location: {
+        lane: "head",
+        index: headResult.index,
+        message: headResult.message,
+        matched: true,
+      },
+    };
+  }
+  if (input.insert === "none") {
+    return {
+      tail: input.tail,
+      head: input.head,
+      changedTail: false,
+      changedHead: false,
+      location: null,
+    };
+  }
+  if (input.insert === "head") {
+    const inserted = produceUserMessage(
+      input.head,
+      input.message,
+      input.head.length,
+      input.presentation,
+    );
+    return {
+      tail: input.tail,
+      head: inserted.items,
+      changedTail: false,
+      changedHead: true,
+      location: {
+        lane: "head",
+        index: inserted.index,
+        message: inserted.message,
+        matched: false,
+      },
+    };
+  }
+  const inserted = produceUserMessage(
+    input.tail,
+    input.message,
+    input.insert === "prepend-tail" ? 0 : input.tail.length,
+    input.presentation,
+  );
+  return {
+    tail: inserted.items,
+    head: input.head,
+    changedTail: true,
+    changedHead: false,
+    location: {
+      lane: "tail",
+      index: inserted.index,
+      message: inserted.message,
+      matched: false,
+    },
+  };
+}
+
+export interface CanonicalStreamReplacementInput {
+  canonical: StreamItem[];
+  previousTail: StreamItem[];
+  previousHead: StreamItem[];
+  pendingClientMessageId: string | null;
+  policy: "preserve-local-submissions" | "replace-history";
+}
+
+export interface CanonicalStreamReplacementResult {
+  tail: StreamItem[];
+  head: StreamItem[];
+}
+
+function removeUserMessageAt(items: UserMessageItem[], index: number): UserMessageItem[] {
+  return [...items.slice(0, index), ...items.slice(index + 1)];
+}
+
+function preserveReplacementHead(
+  tail: StreamItem[],
+  currentHead: StreamItem[],
+): CanonicalStreamReplacementResult {
+  const liveAssistantIndex = currentHead.findLastIndex((item) => item.kind === "assistant_message");
+  const submittedRows = currentHead.filter(
+    (item): item is UserMessageItem =>
+      item.kind === "user_message" && item.clientMessageId !== undefined,
+  );
+  if (liveAssistantIndex < 0) return { tail, head: submittedRows };
+
+  const liveAssistant = currentHead[liveAssistantIndex];
+  const tailAssistant = tail.at(-1);
+  if (
+    liveAssistant.kind !== "assistant_message" ||
+    !tailAssistant ||
+    tailAssistant.kind !== "assistant_message" ||
+    !liveAssistant.text.startsWith(tailAssistant.text)
+  ) {
+    return { tail, head: submittedRows };
+  }
+
+  const head: StreamItem[] = [];
+  currentHead.forEach((item, index) => {
+    if (index === liveAssistantIndex) {
+      head.push({ ...liveAssistant, text: tailAssistant.text });
+      return;
+    }
+    if (item.kind === "user_message" && item.clientMessageId) {
+      head.push(item);
+    }
+  });
+  return { tail: tail.slice(0, -1), head };
+}
+
+export function replaceWithCanonicalStream(
+  input: CanonicalStreamReplacementInput,
+): CanonicalStreamReplacementResult {
+  let unmatchedTailMessages = input.previousTail.filter(
+    (item): item is UserMessageItem =>
+      item.kind === "user_message" && item.clientMessageId !== undefined,
+  );
+  let nextHead = input.previousHead;
+  const matchedHeadClientMessageIds = new Set<string>();
+  const nextTail: StreamItem[] = [];
+
+  for (const item of input.canonical) {
+    if (item.kind !== "user_message") {
+      nextTail.push(item);
+      continue;
+    }
+
+    const tailResult = produceUserMessage(unmatchedTailMessages, item, null, "existing");
+    if (tailResult.matched) {
+      unmatchedTailMessages = removeUserMessageAt(unmatchedTailMessages, tailResult.index);
+      nextTail.push(tailResult.message);
+      continue;
+    }
+
+    const headResult = produceUserMessage(nextHead, item, null, "existing");
+    if (headResult.matched) {
+      nextHead = headResult.items;
+      if (headResult.message.clientMessageId) {
+        matchedHeadClientMessageIds.add(headResult.message.clientMessageId);
+      }
+      continue;
+    }
+
+    nextTail.push(item);
+  }
+
+  for (const local of unmatchedTailMessages) {
+    if (
+      input.policy === "replace-history" &&
+      local.clientMessageId !== input.pendingClientMessageId
+    ) {
+      continue;
+    }
+    const insertionIndex = nextTail.findIndex(
+      (item) => item.timestamp.getTime() > local.timestamp.getTime(),
+    );
+    nextTail.splice(insertionIndex < 0 ? nextTail.length : insertionIndex, 0, local);
+  }
+
+  nextHead = nextHead.filter((item) => {
+    if (item.kind !== "user_message" || !item.clientMessageId) return true;
+    if (matchedHeadClientMessageIds.has(item.clientMessageId)) return true;
+    return (
+      input.policy === "preserve-local-submissions" ||
+      item.clientMessageId === input.pendingClientMessageId
+    );
+  });
+
+  return preserveReplacementHead(nextTail, nextHead);
+}
 
 export interface AssistantMessageItem {
   kind: "assistant_message";
@@ -237,124 +560,23 @@ function markThoughtReady(item: ThoughtItem): ThoughtItem {
   };
 }
 
-function buildUserMessageItem(input: {
-  id: string;
-  clientMessageId?: string;
-  text: string;
-  timestamp: Date;
-  optimistic?: UserMessageItem | null;
-}): UserMessageItem {
-  if (input.optimistic) {
-    return {
-      kind: "user_message",
-      id: input.id,
-      ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
-      text: input.optimistic.text,
-      timestamp: input.optimistic.timestamp,
-      ...(input.optimistic.images && input.optimistic.images.length > 0
-        ? { images: input.optimistic.images }
-        : {}),
-      ...(input.optimistic.attachments && input.optimistic.attachments.length > 0
-        ? { attachments: input.optimistic.attachments }
-        : {}),
-    };
-  }
-
-  return {
-    kind: "user_message",
-    id: input.id,
-    ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
-    text: input.text,
-    timestamp: input.timestamp,
-  };
-}
-
-export function buildOptimisticUserMessage(input: OptimisticUserMessageInput): UserMessageItem {
-  return {
-    kind: "user_message",
-    id: input.id,
-    text: input.text,
-    timestamp: input.timestamp,
-    optimistic: true,
-    ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
-    ...(input.attachments && input.attachments.length > 0
-      ? { attachments: input.attachments }
-      : {}),
-  };
-}
-
-export function appendOptimisticUserMessageToStream(params: {
-  tail: StreamItem[];
-  head: StreamItem[];
-  message: UserMessageItem;
-  placement: OptimisticUserMessagePlacement;
-}): ApplyStreamEventResult {
-  const { tail, head, message, placement } = params;
-  if (tail.some((item) => item.id === message.id) || head.some((item) => item.id === message.id)) {
-    return { tail, head, changedTail: false, changedHead: false };
-  }
-
-  if (placement === "active-head" && head.length > 0) {
-    return {
-      tail,
-      head: [...head, message],
-      changedTail: false,
-      changedHead: true,
-    };
-  }
-
-  return {
-    tail: [...tail, message],
-    head,
-    changedTail: true,
-    changedHead: false,
-  };
-}
-
 export function handoffCreatedAgentUserMessageToStream(params: {
   tail: StreamItem[];
   head: StreamItem[];
   message: UserMessageItem;
 }): ApplyStreamEventResult {
-  const { tail, head, message } = params;
-  const items = [...tail, ...head];
-  const userIndex = items.findIndex((item) => item.kind === "user_message");
-  if (userIndex < 0) {
-    return appendOptimisticUserMessageToStream({
-      tail,
-      head,
-      message,
-      placement: "tail",
-    });
-  }
-
-  const userMessage = items[userIndex];
-  if (!userMessage || userMessage.kind !== "user_message" || userMessage.optimistic) {
-    return { tail, head, changedTail: false, changedHead: false };
-  }
-
-  const handedOffMessage = buildUserMessageItem({
-    id: userMessage.id,
-    text: message.text,
-    timestamp: message.timestamp,
-    optimistic: message,
+  return upsertUserMessageAcrossStream({
+    ...params,
+    insert: "tail",
+    presentation: "incoming",
   });
-  if (userIndex < tail.length) {
-    const nextTail = [...tail];
-    nextTail[userIndex] = handedOffMessage;
-    return { tail: nextTail, head, changedTail: true, changedHead: false };
-  }
-
-  const nextHead = [...head];
-  nextHead[userIndex - tail.length] = handedOffMessage;
-  return { tail, head: nextHead, changedTail: false, changedHead: true };
 }
 
 function appendUserMessage(
   state: StreamItem[],
   text: string,
   timestamp: Date,
-  source: StreamUpdateSource,
+  _source: StreamUpdateSource,
   messageId?: string,
   clientMessageId?: string,
 ): StreamItem[] {
@@ -364,37 +586,14 @@ function appendUserMessage(
   }
 
   const chunkSeed = chunk.trim() || chunk;
-  const entryId = messageId ?? createUniqueTimelineId(state, "user", chunkSeed, timestamp);
-  const optimisticIndex = state.findIndex(
-    (entry) =>
-      entry.kind === "user_message" &&
-      entry.optimistic &&
-      (clientMessageId !== undefined
-        ? entry.id === clientMessageId
-        : source === "live" || entry.id === messageId || entry.text === chunk),
-  );
-  const optimistic = optimisticIndex >= 0 ? (state[optimisticIndex] as UserMessageItem) : null;
-
-  const nextItem = buildUserMessageItem({
-    id: entryId,
+  const nextItem = createUserMessage({
+    id: messageId ?? createUniqueTimelineId(state, "user", chunkSeed, timestamp),
     clientMessageId,
+    messageId,
     text: chunk,
     timestamp,
-    optimistic,
   });
-
-  if (optimisticIndex >= 0) {
-    const next = [...state];
-    next[optimisticIndex] = nextItem;
-    return next;
-  }
-
-  return [...state, nextItem];
-}
-
-export function clearOptimisticUserMessages(state: StreamItem[]): StreamItem[] {
-  const next = state.filter((item) => item.kind !== "user_message" || !item.optimistic);
-  return next.length === state.length ? state : next;
+  return upsertUserMessage(state, nextItem);
 }
 
 function appendAssistantMessage(
@@ -426,8 +625,8 @@ function appendAssistantMessage(
     return [...state.slice(0, -1), updated];
   }
 
-  // If the last item is a user_message (optimistic append to head during
-  // interrupt), look one further back for the streaming assistant_message.
+  // A submitted user row can follow the streaming assistant during interrupt.
+  // In that case, look one row further back for the assistant to extend.
   const secondLast = state[state.length - 2];
   if (
     source === "live" &&
@@ -1149,7 +1348,6 @@ export function flushHeadToTail(tail: StreamItem[], head: StreamItem[]): StreamI
   if (newItems.length === 0) {
     return tail;
   }
-
   return [...tail, ...newItems];
 }
 
@@ -1177,8 +1375,7 @@ function shouldFlushHead(input: {
     return true;
   }
 
-  // Find the last streamable item in head (skip trailing non-streamable
-  // items like an optimistic user_message appended during interrupt).
+  // Find the last streamable item in head (skip trailing non-streamable items).
   let lastStreamable: StreamItem | undefined;
   for (let i = head.length - 1; i >= 0; i--) {
     if (isStreamableKind(head[i].kind)) {
@@ -1236,6 +1433,32 @@ export function applyStreamEvent(params: {
   let nextHead = head;
   let changedTail = false;
   let changedHead = false;
+
+  if (event.type === "timeline" && event.item.type === "user_message") {
+    const normalized = normalizeChunk(event.item.text);
+    if (!normalized.hasContent) {
+      return { tail, head, changedTail: false, changedHead: false };
+    }
+    const canonical = createUserMessage({
+      id:
+        event.item.messageId ??
+        createUniqueTimelineId([...tail, ...head], "user", normalized.chunk.trim(), timestamp),
+      messageId: event.item.messageId,
+      clientMessageId: event.item.clientMessageId,
+      text: normalized.chunk,
+      timestamp,
+    });
+    const reconciled = upsertUserMessageAcrossStream({
+      tail,
+      head,
+      message: canonical,
+      insert: "none",
+      presentation: "existing",
+    });
+    if (reconciled.location) {
+      return reconciled;
+    }
+  }
 
   const flushHead = () => {
     if (nextHead.length === 0) {

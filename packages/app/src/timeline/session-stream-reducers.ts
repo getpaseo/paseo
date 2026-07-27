@@ -2,14 +2,16 @@ import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
 import type { Agent } from "@/stores/session-store";
 import { useSessionStore } from "@/stores/session-store";
-import type { AssistantMessageItem, StreamItem, UserMessageItem } from "@/types/stream";
+import type { AssistantMessageItem, StreamItem } from "@/types/stream";
 import {
   applyStreamEvent,
   flushHeadToTail,
   hydrateStreamState,
   isAgentToolCallItem,
   mergeAgentToolCallItem,
+  replaceWithCanonicalStream,
   reduceStreamUpdate,
+  upsertUserMessageAcrossStream,
 } from "@/types/stream";
 
 const AGENT_STREAM_REDUCER_FLUSH_DELAY_MS = 16 * 3;
@@ -88,6 +90,7 @@ export interface ProcessTimelineResponseInput {
   isInitializing: boolean;
   hasActiveInitDeferred: boolean;
   initRequestDirection: InitRequestDirection;
+  pendingClientMessageId: string | null;
 }
 
 export interface ProcessTimelineResponseOutput {
@@ -201,7 +204,7 @@ function shouldResolveTimelineInit({
   return responseDirection === initRequestDirection;
 }
 
-function deriveOptimisticLifecycleStatus(
+function deriveProjectedLifecycleStatus(
   currentStatus: AgentLifecycleStatus,
   event: AgentStreamEventPayload,
 ): AgentLifecycleStatus | null {
@@ -222,55 +225,35 @@ function deriveOptimisticLifecycleStatus(
   }
 }
 
-function preserveReplacePathAssistantHead(params: {
-  tail: StreamItem[];
-  currentHead: StreamItem[];
-}): {
-  tail: StreamItem[];
-  head: StreamItem[];
-} {
-  const { tail, currentHead } = params;
-  const liveAssistant = currentHead.findLast(
-    (item): item is Extract<StreamItem, { kind: "assistant_message" }> =>
-      item.kind === "assistant_message",
-  );
-  if (!liveAssistant) {
-    return { tail, head: [] };
-  }
-  const tailAssistant = tail.at(-1);
-  if (!tailAssistant || tailAssistant.kind !== "assistant_message") {
-    return { tail, head: currentHead };
-  }
-  if (!liveAssistant.text.startsWith(tailAssistant.text)) {
-    return { tail, head: [] };
-  }
-  return {
-    tail: tail.slice(0, -1),
-    head: [{ ...liveAssistant, text: tailAssistant.text }],
-  };
-}
-
 function applyTimelineReplacePath(args: {
   timelineUnits: TimelineUnit[];
   payload: ProcessTimelineResponseInput["payload"];
   bootstrapPolicy: ReturnType<typeof deriveBootstrapTailTimelinePolicy>;
   currentTail: StreamItem[];
   currentHead: StreamItem[];
+  pendingClientMessageId: string | null;
+  replacementPolicy: "preserve-local-submissions" | "replace-history";
   toHydratedEvents: (
     units: TimelineUnit[],
   ) => Array<{ event: AgentStreamEventPayload; timestamp: Date }>;
 }): TimelinePathResult {
-  const { timelineUnits, payload, bootstrapPolicy, currentTail, currentHead, toHydratedEvents } =
-    args;
+  const {
+    timelineUnits,
+    payload,
+    bootstrapPolicy,
+    currentTail,
+    currentHead,
+    pendingClientMessageId,
+    replacementPolicy,
+    toHydratedEvents,
+  } = args;
   const hydratedTail = hydrateStreamState(toHydratedEvents(timelineUnits), { source: "canonical" });
-  const reconciledTail = reconcileLocalUserPresentationAfterReplace({
-    canonicalTail: hydratedTail,
+  const { tail, head } = replaceWithCanonicalStream({
+    canonical: hydratedTail,
     previousTail: currentTail,
     previousHead: currentHead,
-  });
-  const { tail, head } = preserveReplacePathAssistantHead({
-    tail: reconciledTail,
-    currentHead,
+    pendingClientMessageId,
+    policy: replacementPolicy,
   });
   const cursor: TimelineCursor | null =
     payload.startCursor && payload.endCursor
@@ -285,133 +268,6 @@ function applyTimelineReplacePath(args: {
     sideEffects.push({ type: "catch_up", cursor: bootstrapPolicy.catchUpCursor });
   }
   return { tail, head, cursor, cursorChanged: true, sideEffects };
-}
-
-function collectLocallyPresentedUserMessages(items: StreamItem[]): Array<{
-  ordinal: number;
-  item: UserMessageItem;
-}> {
-  const localUsers: Array<{ ordinal: number; item: UserMessageItem }> = [];
-  let ordinal = 0;
-  for (const item of items) {
-    if (item.kind !== "user_message") {
-      continue;
-    }
-    if (item.optimistic || item.images?.length || item.attachments?.length) {
-      localUsers.push({ ordinal, item });
-    }
-    ordinal += 1;
-  }
-  return localUsers;
-}
-
-function mergeCanonicalUserWithLocalPresentation(
-  canonical: UserMessageItem,
-  local: UserMessageItem,
-): UserMessageItem {
-  return {
-    kind: "user_message",
-    id: canonical.id,
-    ...(canonical.clientMessageId ? { clientMessageId: canonical.clientMessageId } : {}),
-    text: local.text,
-    timestamp: local.timestamp,
-    ...(local.images && local.images.length > 0 ? { images: local.images } : {}),
-    ...(local.attachments && local.attachments.length > 0
-      ? { attachments: local.attachments }
-      : {}),
-  };
-}
-
-interface CanonicalUserMessageIdentity {
-  messageId?: string;
-  clientMessageId?: string;
-  text: string;
-}
-
-function matchesLocalUserMessageIdentity(
-  canonical: CanonicalUserMessageIdentity,
-  optimistic: UserMessageItem,
-): boolean {
-  if (canonical.clientMessageId !== undefined) {
-    return canonical.clientMessageId === optimistic.id;
-  }
-  if (canonical.messageId === optimistic.id) {
-    return true;
-  }
-  // COMPAT(userMessageClientId): added in v0.2.0, remove after 2027-01-20 once
-  // the supported daemon floor emits clientMessageId on submitted user messages.
-  return canonical.text.length > 0 && canonical.text === optimistic.text;
-}
-
-function reconcileLocalUserPresentationAfterReplace(params: {
-  canonicalTail: StreamItem[];
-  previousTail: StreamItem[];
-  previousHead: StreamItem[];
-}): StreamItem[] {
-  const localUsers = collectLocallyPresentedUserMessages([
-    ...params.previousTail,
-    ...params.previousHead,
-  ]);
-  if (localUsers.length === 0) {
-    return params.canonicalTail;
-  }
-
-  const canonicalUserIndexes: number[] = [];
-  params.canonicalTail.forEach((item, index) => {
-    if (item.kind === "user_message") {
-      canonicalUserIndexes.push(index);
-    }
-  });
-
-  const nextTail = [...params.canonicalTail];
-  const claimedCanonicalIndexes = new Set<number>();
-  const unmatched: UserMessageItem[] = [];
-
-  for (const local of localUsers) {
-    const exactIndex = canonicalUserIndexes.find((index) => {
-      if (claimedCanonicalIndexes.has(index)) return false;
-      const canonical = params.canonicalTail[index];
-      return (
-        canonical?.kind === "user_message" &&
-        matchesLocalUserMessageIdentity(
-          {
-            messageId: canonical.id,
-            clientMessageId: canonical.clientMessageId,
-            text: canonical.text,
-          },
-          local.item,
-        )
-      );
-    });
-    const ordinalIndex = canonicalUserIndexes[local.ordinal];
-    const ordinalItem = ordinalIndex === undefined ? undefined : params.canonicalTail[ordinalIndex];
-    const canonicalIndex =
-      exactIndex ??
-      (ordinalIndex !== undefined &&
-      !claimedCanonicalIndexes.has(ordinalIndex) &&
-      ordinalItem?.kind === "user_message" &&
-      ordinalItem.clientMessageId === undefined
-        ? ordinalIndex
-        : undefined);
-    const canonicalItem = canonicalIndex === undefined ? undefined : nextTail[canonicalIndex];
-    if (canonicalIndex === undefined || !canonicalItem || canonicalItem.kind !== "user_message") {
-      if (local.item.optimistic) {
-        unmatched.push(local.item);
-      }
-      continue;
-    }
-    nextTail[canonicalIndex] = mergeCanonicalUserWithLocalPresentation(canonicalItem, local.item);
-    claimedCanonicalIndexes.add(canonicalIndex);
-  }
-
-  for (const item of unmatched) {
-    const insertionIndex = nextTail.findIndex(
-      (canonical) => canonical.timestamp.getTime() > item.timestamp.getTime(),
-    );
-    nextTail.splice(insertionIndex < 0 ? nextTail.length : insertionIndex, 0, item);
-  }
-
-  return nextTail;
 }
 
 interface IncrementalAcceptResult {
@@ -514,6 +370,34 @@ function mergePrependedCanonicalTail(olderTail: StreamItem[], currentTail: Strea
   if (currentTail.length === 0) {
     return olderTail;
   }
+
+  const remainingOlder: StreamItem[] = [];
+  let reconciledCurrent = currentTail;
+  for (const item of olderTail) {
+    if (item.kind !== "user_message") {
+      remainingOlder.push(item);
+      continue;
+    }
+    const result = upsertUserMessageAcrossStream({
+      tail: reconciledCurrent,
+      head: [],
+      message: item,
+      insert: "prepend-tail",
+      presentation: "existing",
+    });
+    if (result.location?.matched) {
+      remainingOlder.push(result.location.message);
+      reconciledCurrent = [
+        ...result.tail.slice(0, result.location.index),
+        ...result.tail.slice(result.location.index + 1),
+      ];
+    } else {
+      remainingOlder.push(item);
+    }
+  }
+  olderTail = remainingOlder;
+  currentTail = reconciledCurrent;
+  if (olderTail.length === 0) return currentTail;
 
   const olderLast = olderTail.at(-1);
   const currentFirst = currentTail[0];
@@ -906,6 +790,7 @@ export function processTimelineResponse(
     isInitializing,
     hasActiveInitDeferred,
     initRequestDirection,
+    pendingClientMessageId,
   } = input;
 
   // ------------------------------------------------------------------
@@ -967,6 +852,10 @@ export function processTimelineResponse(
     hasActiveInitDeferred,
   });
   const replace = bootstrapPolicy.replace;
+  const replacementPolicy =
+    currentCursor && currentCursor.epoch !== payload.epoch
+      ? "replace-history"
+      : "preserve-local-submissions";
 
   const sideEffects: TimelineReducerSideEffect[] = [];
   const timelineResult = replace
@@ -976,6 +865,8 @@ export function processTimelineResponse(
         bootstrapPolicy,
         currentTail,
         currentHead,
+        pendingClientMessageId,
+        replacementPolicy,
         toHydratedEvents,
       })
     : applyTimelineIncrementalPath({
@@ -1230,7 +1121,7 @@ export function processAgentStreamEvent(
       };
 
   // ------------------------------------------------------------------
-  // Optimistic lifecycle status
+  // Projected lifecycle status
   // ------------------------------------------------------------------
   let agentPatch: AgentPatch | null = null;
   let agentChanged = false;
@@ -1241,15 +1132,15 @@ export function processAgentStreamEvent(
       event.type === "turn_canceled" ||
       event.type === "turn_failed")
   ) {
-    const optimisticStatus = deriveOptimisticLifecycleStatus(currentAgent.status, event);
-    if (optimisticStatus) {
+    const projectedStatus = deriveProjectedLifecycleStatus(currentAgent.status, event);
+    if (projectedStatus) {
       const nextUpdatedAtMs = Math.max(currentAgent.updatedAt.getTime(), timestamp.getTime());
       const nextLastActivityAtMs = Math.max(
         currentAgent.lastActivityAt.getTime(),
         timestamp.getTime(),
       );
       agentPatch = {
-        status: optimisticStatus,
+        status: projectedStatus,
         updatedAt: new Date(nextUpdatedAtMs),
         lastActivityAt: new Date(nextLastActivityAtMs),
       };

@@ -87,14 +87,43 @@ its completion advances `seqEnd`, followed by a merged assistant message. The ap
 remaining page through the existing stream reducer. It must not append full projected text to a
 live prefix.
 
-Optimistic user prompts occupy stable timeline slots. Catch-up never extracts, delays, or reinserts
-them. A canonical user row replaces its matching slot in place; an unmatched prompt stays exactly
-where the user submitted it. Other canonical rows are applied after the already-present timeline
-instead of relocating visible user messages around newly fetched history.
+Every path that sends a message to an agent — composer send, dictation accept-and-send, queued
+send-now, and the automatic queue drain in `HostRuntime` — goes through
+`dispatchComposerAgentMessage` with a submission writer. There is no second transport for the same
+product action: calling `client.sendAgentMessage` directly skips the submitted row and the pending
+footer, and permanently drops attachments because the daemon does not echo them back.
+
+A submitted prompt is one `UserMessageItem` row. That row is the authoritative local presentation:
+its stable identity, text, timestamp, images, and attachments do not change when the provider
+acknowledges it. Submission lifecycle is a separate record keyed by agent, not another row shape or
+a property inferred from message identity. It begins in `waiting-for-rpc`. Submissions made while a
+stored agent is not running require both the RPC and an authoritative non-running-to-running
+transition; RPC-first moves to `waiting-for-running`, while running-first moves to
+`running-observed`. The second observation removes the record. A force-send that begins while the
+agent is already running requires only RPC acceptance, so prior running state cannot count as new
+acceptance proof.
+
+An accepted send response does not project agent lifecycle. If it arrives while the replica is
+still non-running, the lifecycle record remains `waiting-for-running` until the real transition, so
+the footer has no blank frame. A transport error rolls back only `waiting-for-rpc`;
+`running-observed` proves the run started and preserves the submitted row.
 
 Canonical submitted user rows carry the provider's `messageId` and Paseo's optional
-`clientMessageId`. Clients reconcile optimistic prompts by `clientMessageId`. Content matching is
-limited to the dated compatibility path for daemon timelines created before that field existed.
+`clientMessageId`. The user-message producer reconciles them by `clientMessageId`, adds provider
+identity to the existing row, and keeps the local presentation in its original timeline slot.
+Content matching is limited to the dated compatibility path for daemon timelines created before
+that field existed, and it is direction-independent: either the submitted row or its legacy
+canonical twin can arrive second. Generic reducers and consumers do not reimplement message
+identity matching.
+
+Ordinary bootstrap, same-epoch reset, and catch-up replacement preserve unmatched locally submitted
+rows because a provider may never echo them. A known epoch change or rewind replaces history and
+drops acknowledged local rows omitted by the new canonical epoch; only the explicitly pending
+submission crosses that destructive boundary.
+
+Canonical replacement owns both timeline lanes. It reconciles matching submitted head rows in the
+head lane and omits their canonical copies from the tail. If a live assistant head is the canonical
+assistant prefix, it also stays in the head lane. No row may be returned in both lanes.
 
 ## Relevant code
 
