@@ -9,7 +9,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   getOverlayRoot,
   OverlayLayerProvider,
-  useOverlayLayer,
+  useGlobalWebOverlayLayer,
   useWebOverlayRegistration,
 } from "../lib/overlay-root";
 import {
@@ -501,7 +501,6 @@ export function AdaptiveModalSheet({
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
-  const modalLayer = useOverlayLayer("modal");
   const insets = useSafeAreaInsets();
   const resolvedSnapPoints = useMemo(() => snapPoints ?? ["65%", "90%"], [snapPoints]);
   const compactSafeAreaPadding = useMemo(
@@ -559,6 +558,7 @@ export function AdaptiveModalSheet({
   });
   const [shouldRenderWeb, setShouldRenderWeb] = useState(visible);
   const [isWebClosing, setIsWebClosing] = useState(false);
+  const modalLayer = useGlobalWebOverlayLayer("modal", isWeb && !isMobile && shouldRenderWeb);
   const nativeModalDismissNotifiedRef = useRef(!visible);
   const handleDismiss = useCallback(() => {
     handleSheetDismiss();
