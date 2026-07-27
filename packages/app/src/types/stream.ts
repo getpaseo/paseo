@@ -406,6 +406,16 @@ export interface CanonicalStreamReplacementResult {
   acknowledgedClientMessageIds: string[];
 }
 
+function isAfterCanonicalCoverage(
+  position: TimelinePosition,
+  coverage: CanonicalStreamReplacementInput["canonicalCoverage"],
+): boolean {
+  return (
+    position.epoch === coverage.epoch &&
+    (coverage.endSeq === null || position.seq > coverage.endSeq)
+  );
+}
+
 function removeUserMessageAt(items: UserMessageItem[], index: number): UserMessageItem[] {
   return [...items.slice(0, index), ...items.slice(index + 1)];
 }
@@ -503,9 +513,7 @@ function preserveReplacementHead(
     ? currentHead.filter(
         (item) =>
           !item.timelineCursor ||
-          (item.timelineCursor.epoch === canonicalCoverage.epoch &&
-            (canonicalCoverage.endSeq === null ||
-              item.timelineCursor.seq > canonicalCoverage.endSeq)) ||
+          isAfterCanonicalCoverage(item.timelineCursor, canonicalCoverage) ||
           (item.kind === "assistant_message" &&
             canonicalTailAssistant?.kind === "assistant_message" &&
             item.text.startsWith(canonicalTailAssistant.text)),
@@ -631,22 +639,25 @@ export function replaceWithCanonicalStream(
     nextTail.push(item);
   }
 
+  const retainedTailMessages: UserMessageItem[] = [];
   for (const local of unmatchedTailMessages) {
-    if (!local.clientMessageId || !sendingClientMessageIds.has(local.clientMessageId)) {
-      continue;
+    if (local.clientMessageId && sendingClientMessageIds.has(local.clientMessageId)) {
+      nextTail.push(local);
+    } else if (
+      input.preserveLiveHead &&
+      local.timelineCursor &&
+      isAfterCanonicalCoverage(local.timelineCursor, input.canonicalCoverage)
+    ) {
+      retainedTailMessages.push(local);
     }
-    nextTail.push(local);
   }
+  nextHead = [...retainedTailMessages, ...nextHead];
 
   nextHead = nextHead.filter((item) => {
     if (item.kind !== "user_message" || !item.clientMessageId) return true;
     if (sendingClientMessageIds.has(item.clientMessageId)) return true;
     if (!input.preserveLiveHead || !item.timelineCursor) return false;
-    return (
-      item.timelineCursor.epoch === input.canonicalCoverage.epoch &&
-      (input.canonicalCoverage.endSeq === null ||
-        item.timelineCursor.seq > input.canonicalCoverage.endSeq)
-    );
+    return isAfterCanonicalCoverage(item.timelineCursor, input.canonicalCoverage);
   });
 
   const replacement = preserveReplacementHead(

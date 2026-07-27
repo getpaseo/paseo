@@ -660,6 +660,53 @@ describe("processTimelineResponse", () => {
     expect(getUserTexts(result.head)).toEqual(["remote live prompt"]);
   });
 
+  it("keeps a provider-acknowledged painted-tail prompt newer than the bootstrap page", () => {
+    const submitted = makeSubmittedUserMessage("submitted before bootstrap", "client-message-1");
+    const live = processAgentStreamEvent({
+      ...baseStreamInput,
+      event: {
+        type: "timeline",
+        provider: "claude",
+        item: {
+          type: "user_message",
+          text: "canonical presentation",
+          clientMessageId: "client-message-1",
+          messageId: "provider-message-1",
+        },
+      },
+      seq: 51,
+      epoch: "epoch-1",
+      currentTail: [makeAssistantItem("painted replica"), submitted],
+      currentCursor: undefined,
+      hasAuthoritativeBaseline: false,
+    });
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: live.tail,
+      currentHead: live.head,
+      sendingClientMessageIds: [],
+      isInitializing: true,
+      hasActiveInitDeferred: true,
+      hasAuthoritativeBaseline: false,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "tail",
+        startCursor: { seq: 11 },
+        endCursor: { seq: 50 },
+        entries: [makeTimelineEntry(50, "canonical answer")],
+      },
+    });
+
+    expect(getUserTexts([...result.tail, ...result.head])).toEqual(["submitted before bootstrap"]);
+    expect(result.head[0]).toMatchObject({
+      kind: "user_message",
+      clientMessageId: "client-message-1",
+      messageId: "provider-message-1",
+      timelineCursor: { epoch: "epoch-1", seq: 51 },
+    });
+  });
+
   it("does not duplicate a live row already covered by the bootstrap page", () => {
     const live = processAgentStreamEvent({
       ...baseStreamInput,
@@ -2202,7 +2249,10 @@ describe("processTimelineResponse", () => {
 
     expect(getAssistantTexts(result.tail)).toEqual(["older chunk newer chunk"]);
     expect(result.tail[0]).toEqual(
-      expect.objectContaining({ timelineCursor: { epoch: "epoch-1", seq: 3 } }),
+      expect.objectContaining({
+        id: "assistant-newer",
+        timelineCursor: { epoch: "epoch-1", seq: 3 },
+      }),
     );
     expect(result.cursor).toEqual({
       epoch: "epoch-1",

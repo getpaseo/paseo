@@ -410,16 +410,15 @@ function mergePrependedCanonicalTail(olderTail: StreamItem[], currentTail: Strea
     return [...olderTail, ...currentTail];
   }
 
-  return [
-    ...olderTail.slice(0, -1),
-    {
-      ...olderLast,
-      text: `${olderLast.text}${currentFirst.text}`,
-      timestamp: currentFirst.timestamp,
-      ...(currentFirst.timelineCursor ? { timelineCursor: currentFirst.timelineCursor } : {}),
-    },
-    ...currentTail.slice(1),
-  ];
+  const mergedAssistant: AssistantMessageItem = {
+    ...currentFirst,
+    text: `${olderLast.text}${currentFirst.text}`,
+  };
+  if (mergedAssistant.messageId === undefined && olderLast.messageId !== undefined) {
+    mergedAssistant.messageId = olderLast.messageId;
+  }
+
+  return [...olderTail.slice(0, -1), mergedAssistant, ...currentTail.slice(1)];
 }
 
 function replaceLiveAssistantWithProjectedText(params: {
