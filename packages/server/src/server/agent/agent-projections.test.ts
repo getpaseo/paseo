@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-manager.js";
 import {
+  buildStoredAgentPayload,
   toAgentPayload,
   toRecentProviderSessionDescriptorPayload,
   toStoredAgentRecord,
@@ -217,6 +218,42 @@ describe("toStoredAgentRecord", () => {
 });
 
 describe("toAgentPayload", () => {
+  it("redacts sensitive headers from live and stored status snapshots", () => {
+    const authorization = "Bearer regression-secret-must-not-escape";
+    const persistence: AgentPersistenceHandle = {
+      provider: "claude",
+      sessionId: "persist-sensitive",
+      metadata: {
+        mcpServers: {
+          paseo: {
+            type: "http",
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-123",
+            headers: {
+              Authorization: authorization,
+              "X-Non-Secret": "preserved",
+            },
+          },
+        },
+      },
+    };
+    const agent = createManagedAgent({ persistence });
+    const livePayload = toAgentPayload(agent);
+    const storedRecord = toStoredAgentRecord(agent);
+
+    // Simulate a legacy record written before metadata redaction was introduced.
+    storedRecord.persistence = persistence;
+    const storedPayload = buildStoredAgentPayload(storedRecord, ["claude"]);
+
+    for (const payload of [livePayload, storedPayload]) {
+      const headers = payload.persistence?.metadata?.mcpServers?.paseo?.headers;
+      expect(JSON.stringify(payload)).not.toContain(authorization);
+      expect(headers).toEqual({
+        Authorization: "[REDACTED]",
+        "X-Non-Secret": "preserved",
+      });
+    }
+  });
+
   it("serializes dates, clones arrays, and hides session", () => {
     const permissionA = createPermission({ id: "perm-a" });
     const permissionB = createPermission({
