@@ -1498,9 +1498,6 @@ function applyCanonicalUserMessageEvent(params: {
   const { tail, head, event, timestamp } = params;
   if (event.type !== "timeline" || event.item.type !== "user_message") return null;
   const normalized = normalizeChunk(event.item.text);
-  if (!normalized.hasContent) {
-    return { tail, head, changedTail: false, changedHead: false };
-  }
 
   const flushedTail = head.length > 0 ? flushHeadToTail(tail, head) : tail;
   const flushedHead = head.length > 0 ? [] : head;
@@ -1517,7 +1514,7 @@ function applyCanonicalUserMessageEvent(params: {
     tail: flushedTail,
     head: flushedHead,
     message: canonical,
-    insert: "tail",
+    insert: normalized.hasContent ? "tail" : "none",
     presentation: "existing",
   });
   return {

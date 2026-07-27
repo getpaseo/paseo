@@ -153,6 +153,16 @@ async function submitMessageWithImage(page: Page, prompt: string): Promise<Locat
   return page.getByTestId("user-message").filter({ hasText: prompt }).last();
 }
 
+async function submitImageOnlyMessage(page: Page): Promise<Locator> {
+  await attachImageFromMenu(page, IMAGE);
+  await expectAttachmentPill(page, "composer-image-attachment-pill");
+  await page.getByRole("textbox", { name: "Message agent..." }).first().press("Enter");
+  const userMessage = page.getByTestId("user-message").last();
+  await expect(userMessage).toBeVisible();
+  await expect(userMessage.getByRole("button", { name: "Open image attachment" })).toBeVisible();
+  return userMessage;
+}
+
 async function expectPendingSubmission(page: Page, userMessage: Locator): Promise<void> {
   await expect(userMessage).toBeVisible();
   await expect(page.getByTestId("turn-working-indicator")).toBeVisible();
@@ -312,13 +322,12 @@ async function expectCompletedSubmissionClearsAfterMissedRunningTransition(
     title: "Submission missed running transition",
     model: "ten-second-stream",
   });
-  const prompt = "Clear this submission from canonical history.";
   try {
     await openAgentRoute(page, { workspaceId: agent.workspaceId, agentId: agent.agentId });
     await expectComposerVisible(page);
     await expectAgentIdle(page);
     gate.holdNextClientRequest("send_agent_message_request");
-    const userMessage = await submitMessageWithImage(page, prompt);
+    const userMessage = await submitImageOnlyMessage(page);
     await gate.waitForHeldClientRequest();
     gate.setServerMessageSuppressed("agent_status", true);
     gate.setServerMessageSuppressed("agent_update", true);
@@ -591,7 +600,7 @@ test.describe("Agent message submission", () => {
     await expectInterruptedTurnOrderAfterReconnect(page, testInfo);
   });
 
-  test("clears an accepted submission when canonical history arrives after a missed running transition", async ({
+  test("clears an attachment-only submission when canonical history arrives after a missed running transition", async ({
     page,
   }, testInfo) => {
     test.setTimeout(90_000);
