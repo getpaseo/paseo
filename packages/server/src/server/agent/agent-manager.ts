@@ -71,7 +71,6 @@ import type { PaseoToolCatalogFactory } from "./tools/types.js";
 import {
   ProviderSubagentStore,
   type ProviderSubagentDescriptor,
-  type ProviderSubagentInputEvent,
   type ProviderSubagentStoreEvent,
 } from "./provider-subagents/store.js";
 
@@ -410,13 +409,6 @@ export interface IdleAgentCollectionResult {
   failures: IdleAgentCollectionFailure[];
 }
 
-interface RuntimeCollectionState {
-  protectedAgentIds: Set<string>;
-  latestActivityAtByAgentId: Map<string, number>;
-}
-
-type RuntimeClosureDisposition = "reload" | "terminate";
-
 type ActiveManagedAgent =
   | ManagedAgentInitializing
   | ManagedAgentIdle
@@ -582,8 +574,6 @@ export class AgentManager {
   private readonly clients = new Map<AgentProvider, AgentClient>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
   private readonly agents = new Map<string, LiveManagedAgent>();
-  private managedParentAgentIds = new Map<string, string>();
-  private readonly retainedDescendantActivityAtByAgentId = new Map<string, number>();
   private readonly timelineStore = new InMemoryAgentTimelineStore();
   private readonly providerSubagents = new ProviderSubagentStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
@@ -597,7 +587,6 @@ export class AgentManager {
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
-  private agentTreeLifecycleTail: Promise<void> = Promise.resolve();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
@@ -1212,7 +1201,7 @@ export class AgentManager {
         publishWhenReady: true,
       });
       for (const event of imported.providerSubagentEvents ?? []) {
-        const update = this.applyProviderSubagentEvent(agent.id, event.provider, event.event);
+        const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
         this.dispatch({ type: "provider_subagent", event: update });
       }
       return agent;
@@ -1272,12 +1261,10 @@ export class AgentManager {
       : await client.createSession(providerLaunchConfig, launchContext);
 
     let handedToRegistration = false;
-    let closedExistingRuntime = false;
     try {
       this.assertAcceptingAgentRegistrations();
 
-      const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded", "reload");
-      closedExistingRuntime = true;
+      const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
       try {
         await this.persistSnapshot(closedExisting);
       } finally {
@@ -1297,7 +1284,7 @@ export class AgentManager {
 
       // Preserve existing labels and timeline during reload.
       handedToRegistration = true;
-      return await this.registerSession(session, storedConfig, agentId, {
+      return this.registerSession(session, storedConfig, agentId, {
         labels: existing.labels,
         workspaceId: existing.workspaceId,
         owner: existing.owner,
@@ -1310,9 +1297,6 @@ export class AgentManager {
         attention: preservedAttention,
       });
     } finally {
-      if (closedExistingRuntime && !this.agents.has(agentId)) {
-        this.cancelRunningProviderSubagents(agentId);
-      }
       if (!handedToRegistration) {
         await this.closeUnregisteredSession(session);
       }
@@ -1404,7 +1388,7 @@ export class AgentManager {
       },
       "agent.manager.close.start",
     );
-    const closedAgent = this.prepareAgentForClosure(agent, "agent closed", "terminate");
+    const closedAgent = this.prepareAgentForClosure(agent, "agent closed");
     let closeError: unknown;
     try {
       await agent.session.close();
@@ -1440,249 +1424,44 @@ export class AgentManager {
     cutoff: Date;
     protectedAgentIds: ReadonlySet<string>;
   }): Promise<IdleAgentCollectionResult> {
-    return this.runAgentTreeLifecycleOperation(() => this.collectIdleAgentsInternal(options));
-  }
-
-  private async collectIdleAgentsInternal(options: {
-    cutoff: Date;
-    protectedAgentIds: ReadonlySet<string>;
-  }): Promise<IdleAgentCollectionResult> {
     const result: IdleAgentCollectionResult = { collected: [], failures: [] };
-    const attemptedAgentIds = new Set<string>();
-    await this.refreshManagedParentAgentIds();
-    let collectionState = this.resolveRuntimeCollectionState(options.protectedAgentIds);
 
-    let removedAgentInPass: boolean;
-    do {
-      removedAgentInPass = false;
-      for (const agent of Array.from(this.agents.values())) {
-        const current = this.agents.get(agent.id);
-        if (
-          !current ||
-          attemptedAgentIds.has(current.id) ||
-          !this.isIdleAgentCollectable(current, {
-            cutoff: options.cutoff,
-            protectedAgentIds: collectionState.protectedAgentIds,
-            latestActivityAt:
-              collectionState.latestActivityAtByAgentId.get(current.id) ??
-              current.updatedAt.getTime(),
-          })
-        ) {
-          continue;
-        }
-
-        attemptedAgentIds.add(current.id);
-        const entry: IdleAgentCollectionEntry = {
-          agentId: current.id,
-          provider: current.provider,
-          ...(current.persistence?.sessionId ? { sessionId: current.persistence.sessionId } : {}),
-        };
-        try {
-          await this.closeAgent(current.id);
-          result.collected.push(entry);
-        } catch (error) {
-          result.failures.push({ ...entry, error });
-        }
-        removedAgentInPass ||= !this.agents.has(current.id);
-        collectionState = this.resolveRuntimeCollectionState(options.protectedAgentIds);
+    for (const agent of Array.from(this.agents.values())) {
+      const current = this.agents.get(agent.id);
+      if (!current || !this.isIdleAgentCollectable(current, options)) {
+        continue;
       }
-    } while (removedAgentInPass);
 
-    return result;
-  }
-
-  private publishManagedDescendantRegistration(
-    labels: Record<string, string> | undefined,
-    operation: () => Promise<void>,
-  ): Promise<void> {
-    return getParentAgentIdFromLabels(labels)
-      ? this.runAgentTreeLifecycleOperation(operation)
-      : operation();
-  }
-
-  private runAgentTreeLifecycleOperation<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.agentTreeLifecycleTail.then(operation);
-    this.agentTreeLifecycleTail = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
-  }
-
-  private resolveRuntimeCollectionState(
-    protectedAgentIds: ReadonlySet<string>,
-  ): RuntimeCollectionState {
-    const state: RuntimeCollectionState = {
-      protectedAgentIds: new Set(protectedAgentIds),
-      latestActivityAtByAgentId: new Map(this.retainedDescendantActivityAtByAgentId),
-    };
-    for (const agent of this.agents.values()) {
-      this.recordRuntimeCollectionActivity(agent, agent.updatedAt.getTime(), state);
-      if (this.shouldProtectManagedAncestors(agent, protectedAgentIds)) {
-        this.protectManagedAncestors(agent, state.protectedAgentIds);
-      }
-      for (const subagent of this.providerSubagents.list(agent.id)) {
-        this.recordRuntimeCollectionActivity(agent, Date.parse(subagent.updatedAt), state);
-        if (subagent.status === "running") {
-          state.protectedAgentIds.add(agent.id);
-          this.protectManagedAncestors(agent, state.protectedAgentIds);
-        }
+      const entry: IdleAgentCollectionEntry = {
+        agentId: current.id,
+        provider: current.provider,
+        ...(current.persistence?.sessionId ? { sessionId: current.persistence.sessionId } : {}),
+      };
+      try {
+        await this.closeAgent(current.id);
+        result.collected.push(entry);
+      } catch (error) {
+        result.failures.push({ ...entry, error });
       }
     }
-    return state;
+
+    return result;
   }
 
-  private shouldProtectManagedAncestors(
+  private isIdleAgentCollectable(
     agent: LiveManagedAgent,
-    externallyProtectedAgentIds: ReadonlySet<string>,
-  ): boolean {
-    return (
-      agent.lifecycle === "initializing" ||
-      agent.lifecycle === "running" ||
-      this.isIdleAgentCollectionEligible(agent, externallyProtectedAgentIds)
-    );
-  }
-
-  private isIdleAgentCollectionEligible(
-    agent: LiveManagedAgent,
-    protectedAgentIds: ReadonlySet<string>,
+    options: { cutoff: Date; protectedAgentIds: ReadonlySet<string> },
   ): agent is ManagedAgentIdle {
     return (
       agent.lifecycle === "idle" &&
+      agent.updatedAt.getTime() <= options.cutoff.getTime() &&
       !agent.internal &&
-      !protectedAgentIds.has(agent.id) &&
+      !options.protectedAgentIds.has(agent.id) &&
       agent.activeForegroundTurnId === null &&
       !this.runs.hasRun(agent.id) &&
       !agent.pendingReplacement &&
       agent.pendingPermissions.size === 0 &&
       agent.inFlightPermissionResponses.size === 0
-    );
-  }
-
-  private protectManagedAncestors(agent: LiveManagedAgent, protectedAgentIds: Set<string>): void {
-    for (const parentAgentId of this.listManagedAncestorIds(agent)) {
-      protectedAgentIds.add(parentAgentId);
-    }
-  }
-
-  private recordRuntimeCollectionActivity(
-    agent: LiveManagedAgent,
-    activityAt: number,
-    state: RuntimeCollectionState,
-  ): void {
-    for (const agentId of [agent.id, ...this.listManagedAncestorIds(agent)]) {
-      const current = state.latestActivityAtByAgentId.get(agentId) ?? Number.NEGATIVE_INFINITY;
-      if (activityAt > current) {
-        state.latestActivityAtByAgentId.set(agentId, activityAt);
-      }
-    }
-  }
-
-  private listManagedAncestorIds(agent: LiveManagedAgent): string[] {
-    return this.listManagedAncestorIdsFrom(agent.id, getParentAgentIdFromLabels(agent.labels));
-  }
-
-  private listManagedAncestorIdsFrom(agentId: string, parentAgentId: string | null): string[] {
-    const ancestorIds: string[] = [];
-    const visited = new Set([agentId]);
-    let currentParentAgentId = parentAgentId;
-    while (currentParentAgentId && !visited.has(currentParentAgentId)) {
-      visited.add(currentParentAgentId);
-      ancestorIds.push(currentParentAgentId);
-      const parent = this.agents.get(currentParentAgentId);
-      currentParentAgentId = parent
-        ? getParentAgentIdFromLabels(parent.labels)
-        : (this.managedParentAgentIds.get(currentParentAgentId) ?? null);
-    }
-    return ancestorIds;
-  }
-
-  private async refreshManagedParentAgentIds(): Promise<void> {
-    if (!this.registry) {
-      return;
-    }
-    const nextParentAgentIds = new Map<string, string>();
-    const records = await this.registry.list();
-    for (const record of records) {
-      const parentAgentId = getParentAgentIdFromLabels(record.labels);
-      if (parentAgentId) {
-        nextParentAgentIds.set(record.id, parentAgentId);
-      }
-    }
-    for (const agent of this.agents.values()) {
-      const parentAgentId = getParentAgentIdFromLabels(agent.labels);
-      if (parentAgentId) {
-        nextParentAgentIds.set(agent.id, parentAgentId);
-      } else {
-        nextParentAgentIds.delete(agent.id);
-      }
-    }
-    this.managedParentAgentIds = nextParentAgentIds;
-    for (const record of records) {
-      if (record.archivedAt) {
-        continue;
-      }
-      this.recordRetainedDescendantActivityForAncestors(
-        record.id,
-        getParentAgentIdFromLabels(record.labels),
-        Date.parse(record.lastActivityAt ?? record.updatedAt),
-      );
-    }
-  }
-
-  private retainManagedDescendantActivity(agent: LiveManagedAgent): void {
-    let latestActivityAt = Math.max(
-      agent.updatedAt.getTime(),
-      this.retainedDescendantActivityAtByAgentId.get(agent.id) ?? Number.NEGATIVE_INFINITY,
-    );
-    for (const subagent of this.providerSubagents.list(agent.id)) {
-      latestActivityAt = Math.max(latestActivityAt, Date.parse(subagent.updatedAt));
-    }
-    this.recordRetainedDescendantActivityForAncestors(
-      agent.id,
-      getParentAgentIdFromLabels(agent.labels),
-      latestActivityAt,
-    );
-    this.retainedDescendantActivityAtByAgentId.delete(agent.id);
-  }
-
-  private recordRetainedDescendantActivityForAncestors(
-    agentId: string,
-    parentAgentId: string | null,
-    activityAt: number,
-  ): void {
-    if (!Number.isFinite(activityAt)) {
-      return;
-    }
-    for (const ancestorId of this.listManagedAncestorIdsFrom(agentId, parentAgentId)) {
-      const current =
-        this.retainedDescendantActivityAtByAgentId.get(ancestorId) ?? Number.NEGATIVE_INFINITY;
-      if (activityAt > current) {
-        this.retainedDescendantActivityAtByAgentId.set(ancestorId, activityAt);
-      }
-    }
-  }
-
-  private updateManagedParentAgentId(agentId: string, labels: Record<string, string>): void {
-    const parentAgentId = getParentAgentIdFromLabels(labels);
-    if (parentAgentId) {
-      this.managedParentAgentIds.set(agentId, parentAgentId);
-    } else {
-      this.managedParentAgentIds.delete(agentId);
-    }
-  }
-
-  private isIdleAgentCollectable(
-    agent: LiveManagedAgent,
-    options: {
-      cutoff: Date;
-      protectedAgentIds: ReadonlySet<string>;
-      latestActivityAt: number;
-    },
-  ): agent is ManagedAgentIdle {
-    return (
-      this.isIdleAgentCollectionEligible(agent, options.protectedAgentIds) &&
-      options.latestActivityAt <= options.cutoff.getTime()
     );
   }
 
@@ -1910,7 +1689,6 @@ export class AgentManager {
     const liveAgent = this.agents.get(agentId);
     if (liveAgent) {
       liveAgent.labels = applyLabelPatch(liveAgent.labels, patch);
-      this.updateManagedParentAgentId(agentId, liveAgent.labels);
       this.touchUpdatedAt(liveAgent);
       await this.persistSnapshot(liveAgent);
       this.emitState(liveAgent, { persist: false });
@@ -1939,7 +1717,6 @@ export class AgentManager {
       updatedAt: this.nextStoredUpdatedAt(record),
     };
     await registry.upsert(nextRecord);
-    this.updateManagedParentAgentId(agentId, nextRecord.labels);
     return nextRecord;
   }
 
@@ -2978,17 +2755,11 @@ export class AgentManager {
         options,
       });
 
-      await this.publishManagedDescendantRegistration(managed.labels, async () => {
-        this.assertAcceptingAgentRegistrations();
-        if (this.agents.has(resolvedAgentId)) {
-          throw new Error(`Agent with id ${resolvedAgentId} already exists`);
-        }
-        this.agents.set(resolvedAgentId, managed);
-        this.updateManagedParentAgentId(resolvedAgentId, managed.labels);
-        registered = true;
-        // Initialize previousStatus to track transitions
-        this.previousStatuses.set(resolvedAgentId, managed.lifecycle);
-      });
+      this.assertAcceptingAgentRegistrations();
+      this.agents.set(resolvedAgentId, managed);
+      registered = true;
+      // Initialize previousStatus to track transitions
+      this.previousStatuses.set(resolvedAgentId, managed.lifecycle);
       await this.refreshRuntimeInfo(managed, { emit: false });
       this.assertAgentRegistrationActive(managed);
       await this.persistSnapshot(managed, {
@@ -3150,13 +2921,8 @@ export class AgentManager {
   private prepareAgentForClosure(
     agent: LiveManagedAgent,
     cancelReason: string,
-    disposition: RuntimeClosureDisposition,
   ): ManagedAgentClosed {
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
-    if (disposition === "terminate") {
-      this.cancelRunningProviderSubagents(agent.id);
-    }
-    this.retainManagedDescendantActivity(agent);
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);
     if (agent.unsubscribeSession) {
@@ -3185,15 +2951,8 @@ export class AgentManager {
     };
   }
 
-  private cancelRunningProviderSubagents(parentAgentId: string): void {
-    for (const event of this.providerSubagents.cancelRunning(parentAgentId)) {
-      this.dispatch({ type: "provider_subagent", event });
-    }
-  }
-
   private discardRetainedAgentState(agentId: string): void {
     this.timelineStore.delete(agentId);
-    this.retainedDescendantActivityAtByAgentId.delete(agentId);
     for (const event of this.providerSubagents.deleteParent(agentId)) {
       this.dispatch({ type: "provider_subagent", event });
     }
@@ -3282,29 +3041,12 @@ export class AgentManager {
     }
   }
 
-  private applyProviderSubagentEvent(
-    parentAgentId: string,
-    provider: AgentProvider,
-    event: ProviderSubagentInputEvent,
-  ): ProviderSubagentStoreEvent {
-    const removedExistingSubagent =
-      event.type === "remove" && this.providerSubagents.get(parentAgentId, event.id) !== null;
-    const update = this.providerSubagents.apply(parentAgentId, provider, event);
-    if (removedExistingSubagent) {
-      const parent = this.agents.get(parentAgentId);
-      if (parent) {
-        this.touchUpdatedAt(parent);
-      }
-    }
-    return update;
-  }
-
   private async dispatchSessionEvent(
     agent: ActiveManagedAgent,
     event: AgentStreamEvent,
   ): Promise<void> {
     if (event.type === "provider_subagent") {
-      const update = this.applyProviderSubagentEvent(agent.id, event.provider, event.event);
+      const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
       this.dispatch({ type: "provider_subagent", event: update });
       return;
     }
@@ -3487,7 +3229,7 @@ export class AgentManager {
       }
     }
     for (const event of providerSubagentEvents) {
-      const update = this.applyProviderSubagentEvent(agent.id, event.provider, event.event);
+      const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
       if (broadcast) {
         this.dispatch({ type: "provider_subagent", event: update });
       }
@@ -3524,7 +3266,7 @@ export class AgentManager {
     try {
       for await (const event of agent.session.streamHistory()) {
         if (event.type === "provider_subagent") {
-          const update = this.applyProviderSubagentEvent(agent.id, event.provider, event.event);
+          const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
           const managerEvent: AgentManagerEvent = { type: "provider_subagent", event: update };
           if (deferredBroadcast) {
             providerSubagentEvents.push(managerEvent);

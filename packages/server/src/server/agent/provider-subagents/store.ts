@@ -124,22 +124,6 @@ export class ProviderSubagentStore {
     return this.descriptors.get(storeKey(parentAgentId, subagentId)) ?? null;
   }
 
-  cancelRunning(
-    parentAgentId: string,
-    timestamp = new Date().toISOString(),
-  ): ProviderSubagentStoreEvent[] {
-    return this.list(parentAgentId)
-      .filter((subagent) => subagent.status === "running")
-      .map((subagent) =>
-        this.apply(parentAgentId, subagent.provider, {
-          type: "upsert",
-          id: subagent.id,
-          status: "canceled",
-          timestamp,
-        }),
-      );
-  }
-
   fetchTimeline(
     parentAgentId: string,
     subagentId: string,

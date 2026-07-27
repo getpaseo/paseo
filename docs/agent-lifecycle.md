@@ -24,9 +24,8 @@ primed.
 The daemon collects an eligible idle runtime after 30 minutes and sweeps every 15 seconds. Only
 unarchived, non-internal agents that are exactly `idle`, have no active or pending run, replacement,
 or permission, and have not been activated during the idle window are eligible. `running`,
-`initializing`, and `error` agents stay resident. Running or initializing managed descendants and
-running provider-owned subagents keep their ancestors resident. Descendant activity also starts a
-fresh idle window for those ancestors. Collection does not cascade or change parentage.
+`initializing`, and `error` agents stay resident. Subagents are considered independently; collection
+does not cascade or change parentage.
 
 Active schedules targeting an existing agent protect that agent from collection. Paused, completed,
 and new-agent schedules do not. A pane may remain open after collection; its next prompt resumes the
