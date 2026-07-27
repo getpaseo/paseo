@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.906 - 2026-07-27
+
+### Fixed
+
+- Prevent New Workspace from creating two agents for one prompt (race in draft auto-submit)
+
 ## 0.2.905 - 2026-07-27
 
 ### Fixed
