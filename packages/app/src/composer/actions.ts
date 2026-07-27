@@ -46,7 +46,7 @@ export interface ComposerSendClient {
       images: Array<{ data: string; mimeType: string }>;
       attachments: ReturnType<typeof splitComposerAttachmentsForSubmit>["attachments"];
     },
-  ) => Promise<void>;
+  ) => Promise<void | { outOfBand?: boolean }>;
   uploadFile: (input: { fileName: string; mimeType: string; bytes: Uint8Array }) => Promise<{
     requestId: string;
     file: {
@@ -67,7 +67,7 @@ export interface ComposerCancelClient {
 
 export interface MessageSubmissionWriter {
   begin: (agentId: string, message: UserMessageItem) => void;
-  accept: (agentId: string, clientMessageId: string) => void;
+  accept: (agentId: string, clientMessageId: string, outOfBand: boolean | undefined) => void;
   reject: (agentId: string, clientMessageId: string) => MessageSubmissionRejectionOutcome;
 }
 
@@ -183,12 +183,12 @@ export async function dispatchComposerAgentMessage(
   input.submission.begin(input.agentId, userMessage);
   try {
     const imagesData = await input.encodeImages(wirePayload.images);
-    await input.client.sendAgentMessage(input.agentId, input.text, {
+    const result = await input.client.sendAgentMessage(input.agentId, input.text, {
       messageId: clientMessageId,
       images: imagesData ?? [],
       attachments: wirePayload.attachments,
     });
-    input.submission.accept(input.agentId, clientMessageId);
+    input.submission.accept(input.agentId, clientMessageId, result?.outOfBand);
   } catch (error) {
     const outcome = input.submission.reject(input.agentId, clientMessageId);
     if (outcome === "accepted") return;

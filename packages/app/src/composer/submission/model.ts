@@ -45,12 +45,22 @@ export function acceptMessageSubmission(
   submissions: readonly MessageSubmissionRecord[],
   clientMessageId: string,
   isAgentRunning: boolean,
+  outOfBand: boolean | undefined,
 ): MessageSubmissionRecord[] {
   const index = submissions.findIndex(
     (submission) => submission.clientMessageId === clientMessageId,
   );
   if (index < 0) return submissions as MessageSubmissionRecord[];
-  if (isAgentRunning || submissions[index].providerAcknowledged) {
+  // COMPAT(messageSubmissionDisposition): daemons before v0.2.3 omitted outOfBand.
+  // Their normal-send response follows the ordered running/canonical events, while an
+  // out-of-band response arrives with the agent still idle. Remove after 2027-01-27.
+  const legacyOutOfBand = outOfBand === undefined && !isAgentRunning;
+  if (
+    outOfBand === true ||
+    legacyOutOfBand ||
+    isAgentRunning ||
+    submissions[index].providerAcknowledged
+  ) {
     return submissions.filter((_, submissionIndex) => submissionIndex !== index);
   }
   if (submissions[index].rpcAccepted) return submissions as MessageSubmissionRecord[];

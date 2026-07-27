@@ -68,6 +68,24 @@ function stripAssistantMessageId(
   return JSON.stringify(envelope);
 }
 
+function stripMessageSubmissionDisposition(
+  message: string | Buffer,
+  enabled: boolean,
+  messageType: unknown,
+): string | Buffer {
+  if (!enabled || messageType !== "send_agent_message_response" || typeof message !== "string") {
+    return message;
+  }
+  const envelope = JSON.parse(message) as {
+    message?: { payload?: Record<string, unknown> };
+    payload?: Record<string, unknown>;
+  };
+  const payload = envelope.message?.payload ?? envelope.payload;
+  if (!payload) return message;
+  delete payload.outOfBand;
+  return JSON.stringify(envelope);
+}
+
 function forceTimelineReset(message: string | Buffer, enabled: boolean): string | Buffer {
   if (!enabled || typeof message !== "string") return message;
   const envelope = JSON.parse(message) as {
@@ -119,6 +137,7 @@ export async function installDaemonWebSocketGate(page: Page) {
   let suppressAgentStream = false;
   let forceTimelineEpochReset = false;
   let stripAssistantMessageIds = false;
+  let stripSubmissionDisposition = false;
   let heldClientRequestType: string | null = null;
   let heldClientRequest: { server: WebSocketRoute; message: string | Buffer } | null = null;
   let resolveHeldClientRequest: (() => void) | null = null;
@@ -190,6 +209,11 @@ export async function installDaemonWebSocketGate(page: Page) {
       let outboundMessage = stripAssistantMessageId(
         message,
         stripAssistantMessageIds,
+        serverMessage?.type,
+      );
+      outboundMessage = stripMessageSubmissionDisposition(
+        outboundMessage,
+        stripSubmissionDisposition,
         serverMessage?.type,
       );
       const shouldForceTimelineReset =
@@ -359,6 +383,9 @@ export async function installDaemonWebSocketGate(page: Page) {
     },
     setAssistantMessageIdsStripped(stripped: boolean): void {
       stripAssistantMessageIds = stripped;
+    },
+    setMessageSubmissionDispositionStripped(stripped: boolean): void {
+      stripSubmissionDisposition = stripped;
     },
     setAgentStreamSuppressed(suppressed: boolean): void {
       suppressAgentStream = suppressed;

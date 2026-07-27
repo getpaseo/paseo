@@ -223,7 +223,7 @@ function createFakeStream(initialHead: Map<string, StreamItem[]> = new Map()): F
       const current = readSubmission(fake, agentId);
       writeSubmission(fake, agentId, {
         ...current,
-        submissions: acceptMessageSubmission(current.submissions, clientMessageId, true),
+        submissions: acceptMessageSubmission(current.submissions, clientMessageId, true, false),
       });
     },
     reject: (agentId, clientMessageId) => {

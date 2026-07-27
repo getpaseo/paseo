@@ -10,8 +10,10 @@ export function createMessageSubmissionWriter(serverId: string): MessageSubmissi
   return {
     begin: (agentId, message) =>
       useSessionStore.getState().beginAgentMessageSubmission(serverId, agentId, message),
-    accept: (agentId, clientMessageId) =>
-      useSessionStore.getState().acceptAgentMessageSubmission(serverId, agentId, clientMessageId),
+    accept: (agentId, clientMessageId, outOfBand) =>
+      useSessionStore
+        .getState()
+        .acceptAgentMessageSubmission(serverId, agentId, clientMessageId, outOfBand),
     reject: (agentId, clientMessageId) =>
       useSessionStore.getState().rejectAgentMessageSubmission(serverId, agentId, clientMessageId),
   };

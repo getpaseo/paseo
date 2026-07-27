@@ -80,13 +80,16 @@ class FakeDaemonClient {
     this.setConnectionState({ status: "disconnected", reason: "client_closed" });
   }
 
-  async sendAgentMessage(...args: Parameters<DaemonClient["sendAgentMessage"]>): Promise<void> {
+  async sendAgentMessage(
+    ...args: Parameters<DaemonClient["sendAgentMessage"]>
+  ): ReturnType<DaemonClient["sendAgentMessage"]> {
     this.sentAgentMessages.push(args);
     for (const waiter of this.sentMessageWaiters) waiter();
     const response = this.sendAgentMessageResponses.shift();
     if (response) await response;
     const failure = this.sendAgentMessageFailures.shift();
     if (failure) throw failure;
+    return {};
   }
 
   async waitForSentMessages(count: number): Promise<void> {

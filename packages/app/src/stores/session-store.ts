@@ -486,6 +486,7 @@ interface SessionStoreActions {
     serverId: string,
     agentId: string,
     clientMessageId: string,
+    outOfBand: boolean | undefined,
   ) => void;
   rejectAgentMessageSubmission: (
     serverId: string,
@@ -1177,7 +1178,7 @@ export const useSessionStore = create<SessionStore>()(
         });
       },
 
-      acceptAgentMessageSubmission: (serverId, agentId, clientMessageId) => {
+      acceptAgentMessageSubmission: (serverId, agentId, clientMessageId, outOfBand) => {
         set((prev) => {
           const session = prev.sessions[serverId];
           if (!session) return prev;
@@ -1186,6 +1187,7 @@ export const useSessionStore = create<SessionStore>()(
             currentSubmissions,
             clientMessageId,
             session.agents.get(agentId)?.status === "running",
+            outOfBand,
           );
           if (submissions === currentSubmissions) return prev;
           const messageSubmissions = new Map(session.messageSubmissions);

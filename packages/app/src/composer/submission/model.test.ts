@@ -32,7 +32,7 @@ describe("message submission transactions", () => {
       { clientMessageId: "client-2", submittedAt },
     );
 
-    expect(acceptMessageSubmission(both, "client-1", true)).toEqual([
+    expect(acceptMessageSubmission(both, "client-1", true, false)).toEqual([
       {
         clientMessageId: "client-2",
         submittedAt,
@@ -44,7 +44,7 @@ describe("message submission transactions", () => {
 
   it("bridges an accepted RPC until the correlated running state is observed", () => {
     const sending = beginMessageSubmission([], { clientMessageId: "client-1", submittedAt });
-    const accepted = acceptMessageSubmission(sending, "client-1", false);
+    const accepted = acceptMessageSubmission(sending, "client-1", false, false);
 
     expect(getActiveMessageSubmissions(accepted)).toHaveLength(1);
     expect(accepted[0].rpcAccepted).toBe(true);
@@ -53,9 +53,21 @@ describe("message submission transactions", () => {
 
   it("settles an accepted RPC when provider acknowledgement arrives after running was missed", () => {
     const sending = beginMessageSubmission([], { clientMessageId: "client-1", submittedAt });
-    const accepted = acceptMessageSubmission(sending, "client-1", false);
+    const accepted = acceptMessageSubmission(sending, "client-1", false, false);
 
     expect(observeMessageSubmissionCanonical(accepted, ["client-1"])).toEqual([]);
+  });
+
+  it("settles an explicitly out-of-band acceptance without lifecycle inference", () => {
+    const sending = beginMessageSubmission([], { clientMessageId: "client-1", submittedAt });
+
+    expect(acceptMessageSubmission(sending, "client-1", false, true)).toEqual([]);
+  });
+
+  it("settles an idle acceptance from a daemon without submission disposition", () => {
+    const sending = beginMessageSubmission([], { clientMessageId: "client-1", submittedAt });
+
+    expect(acceptMessageSubmission(sending, "client-1", false, undefined)).toEqual([]);
   });
 
   it("records provider acknowledgement without settling another transaction", () => {
