@@ -16,6 +16,12 @@
 
 - Keep the fork's Code Server tabs, Browser localhost/loopback tunneling, PDF preview, task backlog, provider quota resets, and original Android package ID while adopting the official 0.2 release line ([#14](https://github.com/iamriajul/paseo/pull/14))
 
+## 0.2.2 - 2026-07-25
+
+### Fixed
+
+- Claude 5 models now use the correct context windows.
+
 ## 0.2.1 - 2026-07-24
 
 ### Added
