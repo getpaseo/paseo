@@ -303,11 +303,18 @@ describe("relay-transport control lifecycle", () => {
       onopen: () => resolveClientOpen?.(),
     });
 
+    let attachedCompleted = false;
+    void attached.then(() => {
+      attachedCompleted = true;
+      return undefined;
+    });
+    await clientOpen;
+    await Promise.resolve();
+    expect(attachedCompleted).toBe(false);
+    dataSocket.completeNextSend();
     const encryptedSocket = (await attached) as {
       send: (data: Uint8Array) => void | Promise<void>;
     };
-    await clientOpen;
-    dataSocket.completeNextSend();
     let completed = false;
 
     const sending = Promise.resolve(encryptedSocket.send(new Uint8Array([1, 2, 3]))).then(() => {

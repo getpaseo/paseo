@@ -52,6 +52,29 @@ async function waitForAsyncDelivery(): Promise<void> {
 }
 
 describe("EncryptedChannel", () => {
+  it("rejects the daemon handshake when the ready frame fails to send", async () => {
+    const daemonKeyPair = generateKeyPair();
+    const clientKeyPair = generateKeyPair();
+    const transport: Transport = {
+      send: () => Promise.reject(new Error("ready send failed")),
+      close: () => undefined,
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+    };
+    const channel = createDaemonChannel(transport, daemonKeyPair);
+
+    transport.onmessage?.({
+      data: JSON.stringify({
+        type: "e2ee_hello",
+        key: exportPublicKey(clientKeyPair.publicKey),
+      }),
+      isBinary: false,
+    });
+
+    await expect(channel).rejects.toThrow("ready send failed");
+  });
+
   it("waits for transport send completion", async () => {
     let completeSend: (() => void) | undefined;
     const transport: Transport = {

@@ -280,6 +280,24 @@ describe("file explorer service", () => {
     }
   });
 
+  it("detects binary bytes beyond the initial classification block", async () => {
+    const root = await createTempDir("paseo-file-stream-late-binary-");
+
+    try {
+      const content = Buffer.concat([Buffer.alloc(8192, 0x61), Buffer.from([0xff])]);
+      await writeFile(path.join(root, "late-binary.unknown"), content);
+      let kind: string | undefined;
+
+      await streamExplorerFile({ root, relativePath: "late-binary.unknown" }, async (file) => {
+        kind = file.kind;
+      });
+
+      expect(kind).toBe("binary");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("expands a ~ prefix in relative paths against the user home directory", async () => {
     const root = await createHomeTempDir(".paseo-file-explorer-home-");
 

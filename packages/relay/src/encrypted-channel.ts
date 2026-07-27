@@ -263,11 +263,7 @@ export async function createDaemonChannel(
         const sharedKey = deriveSharedKey(daemonKeyPair.secretKey, clientPublicKey);
 
         const binaryCiphertext = supportsBinaryCiphertext(msg);
-        const channel = new EncryptedChannel(transport, sharedKey, events, {
-          daemonKeyPair,
-          binaryCiphertext,
-        });
-        const readySend = transport.send(
+        await transport.send(
           JSON.stringify({
             type: "e2ee_ready",
             ...(binaryCiphertext
@@ -275,12 +271,11 @@ export async function createDaemonChannel(
               : {}),
           } satisfies E2EEReadyMessage),
         );
-        if (readySend) {
-          void readySend.catch((error) => {
-            events.onerror?.(error instanceof Error ? error : new Error(String(error)));
-          });
-        }
 
+        const channel = new EncryptedChannel(transport, sharedKey, events, {
+          daemonKeyPair,
+          binaryCiphertext,
+        });
         channel.setState("open");
         events.onopen?.();
 

@@ -301,16 +301,9 @@ export async function streamExplorerFile(
     }
 
     const advertisedSize = Number(stats.size);
-    const sample = Buffer.alloc(Math.min(FILE_TYPE_SAMPLE_BYTES, advertisedSize));
-    const { bytesRead } = await handle.read(sample, 0, sample.byteLength, 0);
-    const fileTypeSample = sample.subarray(0, bytesRead);
     const ext = path.extname(filePath.resolvedPath).toLowerCase();
     const isImage = ext in IMAGE_MIME_TYPES;
-    const isValidTextSample =
-      bytesRead === advertisedSize
-        ? isValidUtf8(fileTypeSample)
-        : isValidUtf8Prefix(fileTypeSample);
-    const isBinary = isImage || isLikelyBinary(fileTypeSample) || !isValidTextSample;
+    const isBinary = isImage || (await isFileHandleBinary(handle, advertisedSize));
     let kind: ExplorerFileKind = "text";
     let mimeType = textMimeTypeForExtension(ext);
     if (isImage) {
@@ -334,6 +327,40 @@ export async function streamExplorerFile(
   } finally {
     await handle.close();
   }
+}
+
+async function isFileHandleBinary(handle: FileHandle, advertisedSize: number): Promise<boolean> {
+  if (advertisedSize === 0) return false;
+
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let position = 0;
+  let suspiciousBytes = 0;
+  while (position < advertisedSize) {
+    const block = Buffer.allocUnsafe(Math.min(FILE_TYPE_SAMPLE_BYTES, advertisedSize - position));
+    const { bytesRead } = await handle.read(block, 0, block.byteLength, position);
+    if (bytesRead === 0) {
+      throw new Error("File changed during transfer");
+    }
+    const bytes = block.subarray(0, bytesRead);
+    for (const byte of bytes) {
+      if (byte === 0) return true;
+      const isControl = byte < 32 && byte !== 9 && byte !== 10 && byte !== 13;
+      if (isControl || byte === 127) suspiciousBytes += 1;
+    }
+    try {
+      decoder.decode(bytes, { stream: true });
+    } catch {
+      return true;
+    }
+    position += bytesRead;
+  }
+
+  try {
+    decoder.decode();
+  } catch {
+    return true;
+  }
+  return suspiciousBytes / advertisedSize > 0.3;
 }
 
 async function* readFileHandleChunks(
@@ -638,15 +665,6 @@ function isLikelyBinary(buffer: Buffer): boolean {
 function isValidUtf8(buffer: Buffer): boolean {
   try {
     new TextDecoder("utf-8", { fatal: true }).decode(buffer);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function isValidUtf8Prefix(buffer: Buffer): boolean {
-  try {
-    new TextDecoder("utf-8", { fatal: true }).decode(buffer, { stream: true });
     return true;
   } catch {
     return false;
