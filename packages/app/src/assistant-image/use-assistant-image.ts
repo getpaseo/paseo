@@ -20,7 +20,10 @@ import {
 } from "@/utils/assistant-image-metadata";
 import { resolveAssistantImageSource } from "@/utils/assistant-image-source";
 import type { AssistantImageSourceResolution } from "@/utils/assistant-image-source";
-import { createAssistantImageAcquisitionCache } from "./acquisition-cache";
+import {
+  createAssistantImageAcquisitionCache,
+  createAssistantImageFileAcquisitionKey,
+} from "./acquisition-cache";
 import {
   createAssistantImageLifecycle,
   transitionAssistantImageLifecycle,
@@ -49,6 +52,7 @@ export type AssistantImageResult =
 
 interface UseAssistantImageInput {
   source: string;
+  occurrenceKey: string;
   client?: DaemonClient | null;
   workspaceRoot?: string;
   serverId?: string;
@@ -122,15 +126,24 @@ function createFileAcquisition(input: {
   client?: DaemonClient | null;
   resolution: AssistantImageSourceResolution | null;
   serverId?: string;
+  occurrenceKey: string;
   unavailableMessage: string;
 }): AttachmentAcquisition | null {
-  if (!input.client || input.resolution?.kind !== "file_rpc") {
+  if (input.resolution?.kind !== "file_rpc") {
     return null;
   }
   const { client, resolution } = input;
   return {
-    key: `file:${input.serverId ?? "unknown-server"}:${resolution.cwd}:${resolution.path}`,
+    key: createAssistantImageFileAcquisitionKey({
+      serverId: input.serverId,
+      occurrenceKey: input.occurrenceKey,
+      cwd: resolution.cwd,
+      path: resolution.path,
+    }),
     locate: async () => {
+      if (!client) {
+        throw new Error(input.unavailableMessage);
+      }
       const file = await client.readFile(resolution.cwd, resolution.path);
       if (file.kind !== "image") {
         throw new Error(input.unavailableMessage);
@@ -265,6 +278,7 @@ function getAcquisitionFailure(input: {
 
 export function useAssistantImage({
   source,
+  occurrenceKey,
   client,
   workspaceRoot,
   serverId,
@@ -281,9 +295,10 @@ export function useAssistantImage({
         client,
         resolution,
         serverId,
+        occurrenceKey,
         unavailableMessage: t("message.attachments.imagePreviewUnavailable"),
       }),
-    [client, resolution, serverId, t],
+    [client, occurrenceKey, resolution, serverId, t],
   );
   const dataImageAcquisition = useMemo(
     () => createDataImageAcquisition({ source, dataImage }),

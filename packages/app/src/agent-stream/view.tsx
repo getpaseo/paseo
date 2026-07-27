@@ -694,6 +694,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             toast={toast}
           >
             <AssistantMessage
+              occurrenceKey={item.id}
               message={item.text}
               timestamp={item.timestamp.getTime()}
               workspaceRoot={workspaceRoot}

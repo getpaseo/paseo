@@ -723,6 +723,7 @@ export const LiveElapsed = memo(function LiveElapsed({
 });
 
 interface AssistantMessageProps {
+  occurrenceKey: string;
   message: string;
   timestamp: number;
   workspaceRoot?: string;
@@ -783,6 +784,7 @@ const ASSISTANT_IMAGE_MIN_HEIGHT = 160;
 
 function AssistantMarkdownImage({
   source,
+  occurrenceKey,
   alt,
   hasLeadingContent,
   client,
@@ -790,6 +792,7 @@ function AssistantMarkdownImage({
   serverId,
 }: {
   source: string;
+  occurrenceKey: string;
   alt?: string;
   hasLeadingContent: boolean;
   client?: DaemonClient | null;
@@ -803,7 +806,13 @@ function AssistantMarkdownImage({
     }),
     [hasLeadingContent],
   );
-  const image = useAssistantImage({ source, client, workspaceRoot, serverId });
+  const image = useAssistantImage({
+    source,
+    occurrenceKey,
+    client,
+    workspaceRoot,
+    serverId,
+  });
   const binding = image.status === "failed" ? null : image.binding;
   const aspectRatio = image.status === "failed" ? null : image.aspectRatio;
   const imageUri = binding?.uri ?? "";
@@ -1410,6 +1419,7 @@ function MarkdownListView({ baseStyle, spacing, children }: MarkdownListViewProp
 }
 
 export const AssistantMessage = memo(function AssistantMessage({
+  occurrenceKey,
   message,
   timestamp: _timestamp,
   workspaceRoot,
@@ -1744,6 +1754,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           <AssistantMarkdownImage
             key={node.key}
             source={String(node.attributes?.src ?? "")}
+            occurrenceKey={`${occurrenceKey}:${node.key}`}
             alt={typeof node.attributes?.alt === "string" ? node.attributes.alt : undefined}
             hasLeadingContent={hasLeadingContent}
             client={client}
@@ -1753,7 +1764,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         );
       },
     };
-  }, [client, fileLinkActions, markdownParser, serverId, workspaceRoot]);
+  }, [client, fileLinkActions, markdownParser, occurrenceKey, serverId, workspaceRoot]);
 
   const blocks = useMemo(() => splitMarkdownBlocks(message), [message]);
   const keyedBlocks = useMemo(

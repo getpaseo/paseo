@@ -3,6 +3,15 @@ export interface AssistantImageAcquisitionCache<T> {
   size(): number;
 }
 
+export function createAssistantImageFileAcquisitionKey(input: {
+  serverId?: string;
+  occurrenceKey: string;
+  cwd: string;
+  path: string;
+}): string {
+  return `file:${input.serverId ?? "unknown-server"}:${input.occurrenceKey}:${input.cwd}:${input.path}`;
+}
+
 export function createAssistantImageAcquisitionCache<T>(input: {
   capacity: number;
 }): AssistantImageAcquisitionCache<T> {

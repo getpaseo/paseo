@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createAssistantImageAcquisitionCache } from "./acquisition-cache";
+import {
+  createAssistantImageAcquisitionCache,
+  createAssistantImageFileAcquisitionKey,
+} from "./acquisition-cache";
 
 describe("assistant image acquisition cache", () => {
   it("evicts a rejected acquisition so the next request can retry", async () => {
@@ -42,5 +45,45 @@ describe("assistant image acquisition cache", () => {
       located: ["a", "b", "c", "b-again"],
       size: 2,
     });
+  });
+
+  it("reuses an acquired image when the current locator is unavailable", async () => {
+    const cache = createAssistantImageAcquisitionCache<string>({ capacity: 2 });
+    let unavailableCalls = 0;
+
+    await cache.acquire("message:image", async () => "persisted attachment");
+    const cached = await cache.acquire("message:image", async () => {
+      unavailableCalls += 1;
+      throw new Error("daemon disconnected");
+    });
+
+    expect({ cached, unavailableCalls }).toEqual({
+      cached: "persisted attachment",
+      unavailableCalls: 0,
+    });
+  });
+
+  it("scopes file acquisitions to the rendered message occurrence", () => {
+    const first = createAssistantImageFileAcquisitionKey({
+      serverId: "server",
+      occurrenceKey: "message-1:image-1",
+      cwd: "/workspace",
+      path: "screenshot.png",
+    });
+    const remount = createAssistantImageFileAcquisitionKey({
+      serverId: "server",
+      occurrenceKey: "message-1:image-1",
+      cwd: "/workspace",
+      path: "screenshot.png",
+    });
+    const laterMessage = createAssistantImageFileAcquisitionKey({
+      serverId: "server",
+      occurrenceKey: "message-2:image-1",
+      cwd: "/workspace",
+      path: "screenshot.png",
+    });
+
+    expect(remount).toBe(first);
+    expect(laterMessage).not.toBe(first);
   });
 });
