@@ -1461,8 +1461,23 @@ export class AgentManager {
       !this.runs.hasRun(agent.id) &&
       !agent.pendingReplacement &&
       agent.pendingPermissions.size === 0 &&
-      agent.inFlightPermissionResponses.size === 0
+      agent.inFlightPermissionResponses.size === 0 &&
+      !this.hasRunningChild(agent.id)
     );
+  }
+
+  private hasRunningChild(parentAgentId: string): boolean {
+    for (const agent of this.agents.values()) {
+      if (
+        agent.lifecycle === "running" &&
+        getParentAgentIdFromLabels(agent.labels) === parentAgentId
+      ) {
+        return true;
+      }
+    }
+    return this.providerSubagents
+      .list(parentAgentId)
+      .some((subagent) => subagent.status === "running");
   }
 
   async archiveAgent(agentId: string): Promise<{ archivedAt: string }> {
