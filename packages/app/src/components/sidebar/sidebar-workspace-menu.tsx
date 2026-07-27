@@ -2,17 +2,8 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import {
-  Archive,
-  CircleCheck,
-  Copy,
-  FolderOpen,
-  MoreVertical,
-  Pencil,
-  Pin,
-  PinOff,
-} from "lucide-react-native";
-import { getIsElectron, isNative, isWeb } from "@/constants/platform";
+import { Archive, CircleCheck, Copy, MoreVertical, Pencil, Pin, PinOff } from "lucide-react-native";
+import { isNative, isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import {
@@ -22,6 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Shortcut } from "@/components/ui/shortcut";
+import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -35,7 +27,6 @@ const ThemedPencil = withUnistyles(Pencil);
 const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedPin = withUnistyles(Pin);
 const ThemedPinOff = withUnistyles(PinOff);
-const ThemedFolderOpen = withUnistyles(FolderOpen);
 
 const copyLeadingIcon = <ThemedCopy size={14} uniProps={foregroundMutedColorMapping} />;
 const renameLeadingIcon = <ThemedPencil size={14} uniProps={foregroundMutedColorMapping} />;
@@ -45,7 +36,6 @@ const markAsReadLeadingIcon = (
 const archiveLeadingIcon = <ThemedArchive size={14} uniProps={foregroundMutedColorMapping} />;
 const pinLeadingIcon = <ThemedPin size={14} uniProps={foregroundMutedColorMapping} />;
 const unpinLeadingIcon = <ThemedPinOff size={14} uniProps={foregroundMutedColorMapping} />;
-const folderOpenLeadingIcon = <ThemedFolderOpen size={14} uniProps={foregroundMutedColorMapping} />;
 
 function renderTriggerIcon({ hovered }: { hovered?: boolean }) {
   return (
@@ -69,7 +59,7 @@ interface SidebarWorkspaceMenuProps {
   archiveShortcutKeys?: ShortcutKey[][] | null;
   isPinned?: boolean;
   onTogglePin?: () => void;
-  onOpenInFileManager?: () => void;
+  openInFileManagerPath?: string | null;
 }
 
 export function SidebarWorkspaceMenu({
@@ -85,7 +75,7 @@ export function SidebarWorkspaceMenu({
   archiveShortcutKeys,
   isPinned,
   onTogglePin,
-  onOpenInFileManager,
+  openInFileManagerPath,
 }: SidebarWorkspaceMenuProps) {
   const { t } = useTranslation();
   const archiveTrailing = useMemo(
@@ -150,15 +140,10 @@ export function SidebarWorkspaceMenu({
             {isPinned ? t("sidebar.workspace.actions.unpin") : t("sidebar.workspace.actions.pin")}
           </DropdownMenuItem>
         ) : null}
-        {onOpenInFileManager && getIsElectron() ? (
-          <DropdownMenuItem
-            testID={`sidebar-workspace-menu-open-folder-${workspaceKey}`}
-            leading={folderOpenLeadingIcon}
-            onSelect={onOpenInFileManager}
-          >
-            {t("sidebar.project.actions.openFolder")}
-          </DropdownMenuItem>
-        ) : null}
+        <OpenInFileManagerMenuItem
+          path={openInFileManagerPath}
+          testID={`sidebar-workspace-menu-open-folder-${workspaceKey}`}
+        />
         <DropdownMenuItem
           testID={`sidebar-workspace-menu-archive-${workspaceKey}`}
           leading={archiveLeadingIcon}
