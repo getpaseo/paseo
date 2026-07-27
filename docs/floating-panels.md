@@ -86,6 +86,12 @@ comboboxes must use `overlay-root` too. Rendering them through React Native
 Web's `<Modal>` puts them in the browser top layer, where no ordinary modal
 portal can cover them.
 
+Painting and keyboard ownership use the same relative layer model. Register
+desktop modal and combobox focus scopes with `useWebOverlayRegistration`; the
+highest painted scope alone receives overlay keys, traps focus, and restores
+focus when it closes. Do not add component-local global Escape listeners: two
+stacked overlays would both close on one keypress.
+
 ## Gotcha 2 — Portal breaks lifecycle and coordinate-system inheritance
 
 A Portal escapes Android's hit-test, but it also escapes two things you were

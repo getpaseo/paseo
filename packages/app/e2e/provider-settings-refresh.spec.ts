@@ -1,3 +1,4 @@
+import type { Locator } from "@playwright/test";
 import { expect, test, type Page } from "./fixtures";
 import { expectComposerVisible } from "./helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "./helpers/mock-agent";
@@ -86,6 +87,10 @@ async function expectOverlayAbove(page: Page, frontTestId: string, backTestId: s
   expect(frontCoversBack).toBe(true);
 }
 
+async function hasFocusWithin(locator: Locator): Promise<boolean> {
+  return locator.evaluate((element) => element.contains(document.activeElement));
+}
+
 async function expectProviderSettingsVisible(page: Page) {
   await expect(page.getByTestId("provider-settings-sheet")).toBeVisible({ timeout: 10_000 });
   await expect(page.getByRole("button", { name: "Add model" })).toBeVisible();
@@ -128,14 +133,22 @@ test.describe("provider settings overlay stack", () => {
       await page.getByRole("button", { name: /Select model/ }).click();
       const selector = page.getByTestId("combobox-desktop-container");
       await expect(selector).toBeVisible({ timeout: 10_000 });
-      await page.getByTestId("selector-header-settings-mock").click();
+      const searchInput = page.getByRole("textbox", { name: /search models/i });
+      await expect(searchInput).toBeFocused();
+      await page.keyboard.press("Shift+Tab");
+      await expect.poll(() => hasFocusWithin(selector)).toBe(true);
+
+      const settingsButton = page.getByTestId("selector-header-settings-mock");
+      await settingsButton.click();
 
       const settings = page.getByTestId("provider-settings-sheet");
       await expect(settings).toBeVisible({ timeout: 10_000 });
       await expectOverlayAbove(page, "provider-settings-sheet", "combobox-desktop-container");
 
-      await closeSheetByHeaderButton(page, "provider-settings-sheet");
+      await page.keyboard.press("Escape");
+      await expect(settings).not.toBeVisible({ timeout: 10_000 });
       await expect(selector).toBeVisible();
+      await expect(settingsButton).toBeFocused();
     } finally {
       await session.cleanup();
     }

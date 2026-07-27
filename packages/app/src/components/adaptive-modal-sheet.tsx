@@ -6,7 +6,12 @@ import { Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from "r
 import type { StyleProp, TextInputProps, ViewStyle } from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { getOverlayRoot, OverlayLayerProvider, useOverlayLayer } from "../lib/overlay-root";
+import {
+  getOverlayRoot,
+  OverlayLayerProvider,
+  useOverlayLayer,
+  useWebOverlayRegistration,
+} from "../lib/overlay-root";
 import {
   BottomSheetBackdrop,
   BottomSheetScrollView,
@@ -54,35 +59,7 @@ export interface SheetHeader {
   search?: SheetHeaderSearch;
 }
 
-type EscHandler = () => void;
-const escStack: EscHandler[] = [];
-let escListenerAttached = false;
 const ABSOLUTE_FILL_STYLE = { ...StyleSheet.absoluteFillObject };
-
-function handleEscKeyDown(event: KeyboardEvent) {
-  if (event.key !== "Escape") return;
-  const top = escStack[escStack.length - 1];
-  if (!top) return;
-  event.stopPropagation();
-  event.preventDefault();
-  top();
-}
-
-function pushEscHandler(handler: EscHandler): () => void {
-  escStack.push(handler);
-  if (!escListenerAttached && typeof window !== "undefined") {
-    window.addEventListener("keydown", handleEscKeyDown, true);
-    escListenerAttached = true;
-  }
-  return () => {
-    const index = escStack.lastIndexOf(handler);
-    if (index !== -1) escStack.splice(index, 1);
-    if (escStack.length === 0 && escListenerAttached && typeof window !== "undefined") {
-      window.removeEventListener("keydown", handleEscKeyDown, true);
-      escListenerAttached = false;
-    }
-  };
-}
 
 const styles = StyleSheet.create((theme) => ({
   desktopOverlay: {
@@ -620,10 +597,21 @@ export function AdaptiveModalSheet({
     [isWebClosing, modalLayer],
   );
 
-  useEffect(() => {
-    if (!isWeb || isMobile || !visible) return;
-    return pushEscHandler(onClose);
-  }, [visible, isMobile, onClose]);
+  const handleWebOverlayKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return false;
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
+      return true;
+    },
+    [onClose],
+  );
+  const setWebOverlayScope = useWebOverlayRegistration({
+    active: isWeb && !isMobile && visible,
+    layer: modalLayer,
+    onKeyDown: handleWebOverlayKeyDown,
+  });
 
   useEffect(() => {
     if (visible) {
@@ -728,7 +716,15 @@ export function AdaptiveModalSheet({
         style={ABSOLUTE_FILL_STYLE}
         onPress={onClose}
       />
-      <View style={desktopCardStyle}>{cardInner}</View>
+      <View
+        ref={setWebOverlayScope}
+        style={desktopCardStyle}
+        role="dialog"
+        aria-modal
+        tabIndex={-1}
+      >
+        {cardInner}
+      </View>
     </View>
   );
 

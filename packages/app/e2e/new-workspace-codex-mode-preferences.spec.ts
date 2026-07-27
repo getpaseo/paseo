@@ -100,11 +100,7 @@ async function selectMode(page: Page, label: string): Promise<void> {
   await expect(searchInput).toBeVisible({ timeout: 10_000 });
   await searchInput.fill(label);
 
-  const option = page
-    .getByRole("dialog")
-    .last()
-    .getByText(new RegExp(`^${escapeRegex(label)}$`, "i"))
-    .first();
+  const option = popup.getByText(new RegExp(`^${escapeRegex(label)}$`, "i")).first();
   await expect(option).toBeVisible({ timeout: 10_000 });
   await option.click({ force: true });
   await expect(searchInput).not.toBeVisible({ timeout: 5_000 });
