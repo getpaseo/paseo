@@ -50,7 +50,39 @@ export function outboundFrameByteLength(data: string | Uint8Array | ArrayBuffer)
 interface BoundedPhysicalSocket {
   readyState: number;
   bufferedAmount?: number;
-  send: (data: string | Uint8Array | ArrayBuffer) => void;
+  send: (
+    data: string | Uint8Array | ArrayBuffer,
+    callback?: (error?: Error) => void,
+  ) => void | Promise<void>;
+}
+
+export async function sendBoundedPhysicalFrameAndWait(params: {
+  socket: BoundedPhysicalSocket;
+  frame: string | Uint8Array | ArrayBuffer;
+  frameBytes?: number;
+  onHighWater: () => void;
+}): Promise<boolean> {
+  const { socket, frame, frameBytes = outboundFrameByteLength(frame), onHighWater } = params;
+  if (socket.readyState !== 1) return false;
+  if (!physicalSocketHasCapacity(socket, frameBytes)) {
+    onHighWater();
+    return false;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    let callbackUsed = false;
+    const result = socket.send(frame, (error) => {
+      callbackUsed = true;
+      if (error) reject(error);
+      else resolve();
+    });
+    if (result && typeof result.then === "function") {
+      result.then(resolve, reject);
+    } else if (socket.send.length < 2 && !callbackUsed) {
+      resolve();
+    }
+  });
+  return true;
 }
 
 export function physicalSocketHasCapacity(
@@ -73,6 +105,9 @@ export function sendBoundedPhysicalFrame(params: {
     onHighWater();
     return false;
   }
-  socket.send(frame);
+  const result = socket.send(frame);
+  if (result && typeof result.then === "function") {
+    void result.catch(() => undefined);
+  }
   return true;
 }

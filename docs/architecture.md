@@ -252,6 +252,10 @@ Terminal I/O is sent as binary WebSocket frames decoded by `decodeTerminalStream
 Terminal PTY size is last-interacting-client-wins. A client claims the PTY size only when its terminal viewport genuinely changes size or the user focuses/taps the terminal. Passive rendering work — attaching, restoring visibility, font settling, renderer refits, or just looking at a visible terminal — must not send a resize frame. The server does not broadcast resize ownership; the resized PTY redraws through normal output, and every attached client renders that output in its own local viewport.
 
 There is also a separate file-transfer binary frame format in the same directory, used for download/upload streams.
+File downloads keep the existing `FileBegin`/`FileChunk`/`FileEnd` framing and stream 256 KiB chunks
+from one stable file handle. Each transfer awaits completion of its own physical WebSocket send before
+reading the next chunk; it is scoped to the requesting physical socket and does not queue unrelated
+messages or transfers.
 
 ### Compatibility rules
 

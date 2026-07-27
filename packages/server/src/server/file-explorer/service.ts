@@ -76,12 +76,24 @@ export interface FileExplorerFileBytes {
   revision: string;
 }
 
+export interface FileExplorerFileStream {
+  path: string;
+  kind: ExplorerFileKind;
+  encoding: "utf-8" | "binary";
+  mimeType: string;
+  size: number;
+  modifiedAt: string;
+  revision: string;
+  chunks: AsyncIterable<Uint8Array>;
+}
+
 const TEXT_MIME_TYPES: Record<string, string> = {
   ".json": "application/json",
 };
 
 const DEFAULT_TEXT_MIME_TYPE = "text/plain";
 const FILE_TYPE_SAMPLE_BYTES = 8192;
+export const FILE_EXPLORER_STREAM_CHUNK_BYTES = 256 * 1024;
 export const MAX_EDITABLE_FILE_BYTES = 1024 * 1024;
 const READ_FILE_OPEN_FLAGS =
   process.platform === "win32" ? constants.O_RDONLY : constants.O_RDONLY | constants.O_NOFOLLOW;
@@ -272,6 +284,61 @@ export async function readExplorerFileBytes({
     };
   } finally {
     await handle.close();
+  }
+}
+
+export async function streamExplorerFile(
+  { root, relativePath }: ReadFileParams,
+  consume: (file: FileExplorerFileStream) => Promise<void>,
+): Promise<void> {
+  const filePath = await resolveScopedPath({ root, relativePath });
+  const handle = await openFileForRead(filePath.resolvedPath);
+
+  try {
+    const stats = await handle.stat({ bigint: true });
+    if (!stats.isFile()) {
+      throw new Error("Requested path is not a file");
+    }
+
+    const sample = Buffer.alloc(Math.min(FILE_TYPE_SAMPLE_BYTES, Number(stats.size)));
+    const { bytesRead } = await handle.read(sample, 0, sample.byteLength, 0);
+    const fileTypeSample = sample.subarray(0, bytesRead);
+    const ext = path.extname(filePath.resolvedPath).toLowerCase();
+    const isImage = ext in IMAGE_MIME_TYPES;
+    const isBinary = isImage || isLikelyBinary(fileTypeSample) || !isValidUtf8(fileTypeSample);
+    let kind: ExplorerFileKind = "text";
+    let mimeType = textMimeTypeForExtension(ext);
+    if (isImage) {
+      kind = "image";
+      mimeType = IMAGE_MIME_TYPES[ext];
+    } else if (isBinary) {
+      kind = "binary";
+      mimeType = "application/octet-stream";
+    }
+
+    await consume({
+      path: normalizeRelativePath({ root, targetPath: filePath.requestedPath }),
+      kind,
+      encoding: isBinary ? "binary" : "utf-8",
+      mimeType,
+      size: Number(stats.size),
+      modifiedAt: stats.mtime.toISOString(),
+      revision: fileRevision(stats),
+      chunks: readFileHandleChunks(handle),
+    });
+  } finally {
+    await handle.close();
+  }
+}
+
+async function* readFileHandleChunks(handle: FileHandle): AsyncIterable<Uint8Array> {
+  let position = 0;
+  while (true) {
+    const chunk = Buffer.allocUnsafe(FILE_EXPLORER_STREAM_CHUNK_BYTES);
+    const { bytesRead } = await handle.read(chunk, 0, chunk.byteLength, position);
+    if (bytesRead === 0) return;
+    position += bytesRead;
+    yield chunk.subarray(0, bytesRead);
   }
 }
 
