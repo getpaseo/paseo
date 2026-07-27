@@ -3,6 +3,7 @@ import { Image } from "react-native";
 import { useTranslation } from "react-i18next";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AttachmentMetadata } from "@/attachments/types";
+import { retainAttachmentForGarbageCollection } from "@/attachments/gc-retention";
 import {
   persistAttachmentFromBytes,
   persistAttachmentFromDataUrl,
@@ -23,6 +24,7 @@ import type { AssistantImageSourceResolution } from "@/utils/assistant-image-sou
 import {
   createAssistantImageAcquisitionCache,
   createAssistantImageFileAcquisitionKey,
+  createAssistantImageFilePreviewAttachmentId,
 } from "./acquisition-cache";
 import {
   createAssistantImageLifecycle,
@@ -84,6 +86,7 @@ interface DataImage {
 
 const attachmentAcquisitionCache = createAssistantImageAcquisitionCache<AttachmentMetadata>({
   capacity: 500,
+  onRetain: (attachment) => retainAttachmentForGarbageCollection(attachment.id),
 });
 
 function acquireAttachment(acquisition: AttachmentAcquisition): Promise<AttachmentMetadata> {
@@ -153,7 +156,8 @@ function createFileAcquisition(input: {
         throw new Error(input.unavailableMessage);
       }
       return await persistAttachmentFromBytes({
-        id: createPreviewAttachmentId({
+        id: createAssistantImageFilePreviewAttachmentId({
+          occurrenceKey: input.occurrenceKey,
           mimeType: file.mime,
           path: file.path || resolution.path,
           size: file.size,

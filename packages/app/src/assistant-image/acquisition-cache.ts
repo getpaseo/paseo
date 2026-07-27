@@ -1,6 +1,26 @@
+import { createPreviewAttachmentId } from "@/attachments/utils";
+
 export interface AssistantImageAcquisitionCache<T> {
   acquire(key: string, locate: () => Promise<T>): Promise<T>;
   size(): number;
+}
+
+export function createAssistantImageFilePreviewAttachmentId(input: {
+  occurrenceKey: string;
+  mimeType: string;
+  path: string;
+  size: number;
+  modifiedAt?: string | null;
+  contentLength: number;
+}): string {
+  return createPreviewAttachmentId({
+    mimeType: input.mimeType,
+    path: input.path,
+    size: input.size,
+    modifiedAt: input.modifiedAt,
+    contentLength: input.contentLength,
+    contentKey: input.occurrenceKey,
+  });
 }
 
 export function createAssistantImageFileAcquisitionKey(input: {
@@ -14,11 +34,24 @@ export function createAssistantImageFileAcquisitionKey(input: {
 
 export function createAssistantImageAcquisitionCache<T>(input: {
   capacity: number;
+  onRetain?: (value: T) => () => void;
 }): AssistantImageAcquisitionCache<T> {
   if (!Number.isInteger(input.capacity) || input.capacity < 1) {
     throw new Error("Assistant image acquisition cache capacity must be a positive integer.");
   }
-  const entries = new Map<string, Promise<T>>();
+  interface CacheEntry {
+    pending: Promise<T>;
+    release: (() => void) | null;
+  }
+  const entries = new Map<string, CacheEntry>();
+
+  const evict = (key: string, entry: CacheEntry) => {
+    if (entries.get(key) === entry) {
+      entries.delete(key);
+    }
+    entry.release?.();
+    entry.release = null;
+  };
 
   return {
     acquire(key, locate) {
@@ -26,23 +59,28 @@ export function createAssistantImageAcquisitionCache<T>(input: {
       if (cached) {
         entries.delete(key);
         entries.set(key, cached);
-        return cached;
+        return cached.pending;
       }
       const pending = locate();
-      entries.set(key, pending);
+      const entry: CacheEntry = { pending, release: null };
+      entries.set(key, entry);
       if (entries.size > input.capacity) {
         const leastRecentlyUsedKey = entries.keys().next().value;
         if (leastRecentlyUsedKey !== undefined) {
-          entries.delete(leastRecentlyUsedKey);
+          const leastRecentlyUsedEntry = entries.get(leastRecentlyUsedKey);
+          if (leastRecentlyUsedEntry) {
+            evict(leastRecentlyUsedKey, leastRecentlyUsedEntry);
+          }
         }
       }
       void (async () => {
         try {
-          await pending;
-        } catch {
-          if (entries.get(key) === pending) {
-            entries.delete(key);
+          const value = await pending;
+          if (entries.get(key) === entry) {
+            entry.release = input.onRetain?.(value) ?? null;
           }
+        } catch {
+          evict(key, entry);
         }
       })();
       return pending;

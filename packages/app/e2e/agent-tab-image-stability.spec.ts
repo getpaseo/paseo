@@ -1,6 +1,11 @@
 import type { Page } from "@playwright/test";
 import { expect, test as base } from "./fixtures";
-import { openWorkspaceWithAgents, type ArchiveTabAgent } from "./helpers/archive-tab";
+import {
+  clickSessionRow,
+  openSessions,
+  openWorkspaceWithAgents,
+  type ArchiveTabAgent,
+} from "./helpers/archive-tab";
 import { seedWorkspace, type SeedDaemonClient, type SeededWorkspace } from "./helpers/seed-client";
 
 const IMAGE_ALT = "Synthetic image";
@@ -83,5 +88,37 @@ test("switching between settled agent tabs keeps the image timeline valid", asyn
   await page.getByRole("button", { name: imageAgent.title, exact: true }).click();
 
   await expect(page.getByRole("img", { name: IMAGE_ALT })).toHaveCount(1, { timeout: 30_000 });
+  await expectNoObservedImagePreviewError(page);
+});
+
+test("reopening an image timeline after editing another draft keeps its image available", async ({
+  imageWorkspace: workspace,
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const imageAgent = await createMockAgent(workspace.client, {
+    cwd: workspace.repoPath,
+    workspaceId: workspace.workspaceId,
+    title: `Image cleanup ${Date.now()}`,
+  });
+  const otherAgent = await createMockAgent(workspace.client, {
+    cwd: workspace.repoPath,
+    workspaceId: workspace.workspaceId,
+    title: `Draft cleanup ${Date.now()}`,
+  });
+  await workspace.client.sendAgentMessage(imageAgent.id, IMAGE_PROMPT);
+  await workspace.client.waitForFinish(imageAgent.id, 15_000);
+  await openWorkspaceWithAgents(page, [otherAgent, imageAgent]);
+  await expect(page.getByRole("img", { name: IMAGE_ALT })).toBeVisible({ timeout: 30_000 });
+
+  await page.getByRole("button", { name: otherAgent.title, exact: true }).click();
+  await page
+    .getByRole("textbox", { name: "Message agent..." })
+    .fill("Keep this draft while I check history");
+  await openSessions(page);
+  await observeImagePreviewErrors(page);
+  await clickSessionRow(page, imageAgent.title);
+
+  await expect(page.getByRole("img", { name: IMAGE_ALT })).toBeVisible({ timeout: 30_000 });
   await expectNoObservedImagePreviewError(page);
 });

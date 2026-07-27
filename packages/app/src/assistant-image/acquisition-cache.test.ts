@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createAssistantImageAcquisitionCache,
   createAssistantImageFileAcquisitionKey,
+  createAssistantImageFilePreviewAttachmentId,
 } from "./acquisition-cache";
 
 describe("assistant image acquisition cache", () => {
@@ -85,5 +86,47 @@ describe("assistant image acquisition cache", () => {
 
     expect(remount).toBe(first);
     expect(laterMessage).not.toBe(first);
+  });
+
+  it("scopes persisted file previews to the rendered message occurrence", () => {
+    const first = createAssistantImageFilePreviewAttachmentId({
+      occurrenceKey: "message-1:image-1",
+      mimeType: "image/png",
+      path: "/workspace/screenshot.png",
+      size: 512,
+      modifiedAt: "2026-07-27T12:00:00.000Z",
+      contentLength: 512,
+    });
+    const second = createAssistantImageFilePreviewAttachmentId({
+      occurrenceKey: "message-2:image-1",
+      mimeType: "image/png",
+      path: "/workspace/screenshot.png",
+      size: 512,
+      modifiedAt: "2026-07-27T12:00:00.000Z",
+      contentLength: 512,
+    });
+
+    expect(second).not.toBe(first);
+  });
+
+  it("retains successful values until their cache entry is evicted", async () => {
+    const retained: string[] = [];
+    const released: string[] = [];
+    const cache = createAssistantImageAcquisitionCache<string>({
+      capacity: 1,
+      onRetain(value) {
+        retained.push(value);
+        return () => released.push(value);
+      },
+    });
+
+    await cache.acquire("first", async () => "attachment-1");
+    expect({ retained, released }).toEqual({ retained: ["attachment-1"], released: [] });
+
+    await cache.acquire("second", async () => "attachment-2");
+    expect({ retained, released }).toEqual({
+      retained: ["attachment-1", "attachment-2"],
+      released: ["attachment-1"],
+    });
   });
 });
