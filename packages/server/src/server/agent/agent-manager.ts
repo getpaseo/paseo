@@ -1388,6 +1388,7 @@ export class AgentManager {
       },
       "agent.manager.close.start",
     );
+    await this.drainSessionEvents(agentId);
     this.cancelRunningProviderSubagents(agentId);
     const closedAgent = this.prepareAgentForClosure(agent, "agent closed");
     let closeError: unknown;

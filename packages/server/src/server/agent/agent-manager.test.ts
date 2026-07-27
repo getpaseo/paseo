@@ -7777,8 +7777,27 @@ test("closed provider subagents do not block collection after resume", async () 
         status: "running",
       },
     });
+    client.sessions[0]!.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: {
+        type: "upsert",
+        id: "provider-child-finishing",
+        title: "Finishing provider child",
+        status: "running",
+      },
+    });
     await manager.flush();
 
+    client.sessions[0]!.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: {
+        type: "upsert",
+        id: "provider-child-finishing",
+        status: "completed",
+      },
+    });
     await manager.closeAgent(parent.id);
     await ensureAgentLoaded(parent.id, {
       agentManager: manager,
@@ -7788,6 +7807,9 @@ test("closed provider subagents do not block collection after resume", async () 
 
     expect(manager.getProviderSubagent(parent.id, "provider-child-running")?.status).toBe(
       "canceled",
+    );
+    expect(manager.getProviderSubagent(parent.id, "provider-child-finishing")?.status).toBe(
+      "completed",
     );
     const collection = await manager.collectIdleAgents({
       cutoff: new Date(Date.now() + 1_000),
