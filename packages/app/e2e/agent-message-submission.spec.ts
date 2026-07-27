@@ -10,6 +10,7 @@ import {
   expectComposerVisible,
 } from "./helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "./helpers/mock-agent";
+import { readScrollMetrics } from "./helpers/agent-bottom-anchor";
 import { seedWorkspace } from "./helpers/seed-client";
 import { waitForWorkspaceTabsVisible } from "./helpers/workspace-tabs";
 import { getServerId } from "./helpers/server-id";
@@ -139,10 +140,11 @@ async function expectPendingSubmission(page: Page, userMessage: Locator): Promis
   await expect(userMessage.getByRole("button", { name: "Open image attachment" })).toBeVisible();
 }
 
-async function readMessageGeometry(userMessage: Locator): Promise<MessageGeometry> {
+async function readMessageGeometry(page: Page, userMessage: Locator): Promise<MessageGeometry> {
   const box = await userMessage.boundingBox();
   if (!box) throw new Error("Submitted user message has no browser geometry");
-  return { x: box.x, y: box.y, width: box.width, height: box.height };
+  const { offsetY } = await readScrollMetrics(page);
+  return { x: box.x, y: box.y + offsetY, width: box.width, height: box.height };
 }
 
 async function beginWorkingFooterContinuityCheck(page: Page): Promise<() => Promise<void>> {
@@ -184,7 +186,7 @@ async function expectAcceptedSubmission(
   await expect(page.getByTestId("turn-working-indicator")).toBeVisible();
   await expect(userMessage).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
   await expect(page.getByTestId("turn-working-indicator")).toBeVisible();
-  expect(await readMessageGeometry(userMessage)).toEqual(submittedGeometry);
+  expect(await readMessageGeometry(page, userMessage)).toEqual(submittedGeometry);
 }
 
 async function submitMessageThatWillBeRejected(page: Page, prompt: string): Promise<void> {
@@ -236,7 +238,7 @@ async function expectCreatedAgentHandoff(
   await expect(page.getByTestId("turn-working-indicator")).toBeVisible();
   await expect(page.getByTestId("user-message").filter({ hasText: prompt })).toHaveCount(1);
   await expect(userMessage.getByRole("button", { name: "Open image attachment" })).toBeVisible();
-  expect(await readMessageGeometry(userMessage)).toEqual(submittedGeometry);
+  expect(await readMessageGeometry(page, userMessage)).toEqual(submittedGeometry);
 }
 
 interface DraftCreatePendingSubmission {
@@ -256,7 +258,7 @@ async function beginDraftCreateSubmission(
   await scenario.agentCreatedDelay.waitForCreateRequest();
   await scenario.agentCreatedDelay.waitForDelayedCreatedStatus();
   await expectPendingSubmission(page, userMessage);
-  const submittedGeometry = await readMessageGeometry(userMessage);
+  const submittedGeometry = await readMessageGeometry(page, userMessage);
   const finishFooterContinuityCheck = await beginWorkingFooterContinuityCheck(page);
   return { prompt, userMessage, submittedGeometry, finishFooterContinuityCheck };
 }
@@ -284,7 +286,7 @@ test.describe("Agent message submission", () => {
     const userMessage = await submitMessageWithImage(page, "Hold this submission.");
     await expectPendingSubmission(page, userMessage);
     await submissionScenario.gate.waitForRequest();
-    const submittedGeometry = await readMessageGeometry(userMessage);
+    const submittedGeometry = await readMessageGeometry(page, userMessage);
     const finishFooterContinuityCheck = await beginWorkingFooterContinuityCheck(page);
     submissionScenario.gate.accept();
     await expectAcceptedSubmission(page, userMessage, submittedGeometry);
