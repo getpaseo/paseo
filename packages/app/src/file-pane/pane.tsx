@@ -26,6 +26,10 @@ import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
+import { PdfPreview } from "@/components/pdf-preview";
+import { hasPdfExtension, isPdfFile } from "@/pdf/pdf-mime";
+import type { PdfPreviewDocument } from "@/pdf/pdf-preview-props";
+import { usePdfDownload } from "@/pdf/use-pdf-download";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { persistAttachmentFromBytes } from "@/attachments/service";
@@ -59,6 +63,8 @@ interface FilePreviewBodyProps {
   location: WorkspaceFileLocation;
   navigationRevision: number;
   imagePreviewUri: string | null;
+  pdfDocument: PdfPreviewDocument | null;
+  onDownloadPdf?: () => void;
 }
 
 type TextExplorerFile = ExplorerFile & { kind: "text" };
@@ -89,24 +95,42 @@ function formatFileSize({ size }: { size: number }): string {
 async function createFilePanePreview(file: FileReadResult | null): Promise<{
   file: ExplorerFile | null;
   imageAttachment: AttachmentMetadata | null;
+  pdfDocument: PdfPreviewDocument | null;
 }> {
   if (!file) {
-    return { file: null, imageAttachment: null };
+    return { file: null, imageAttachment: null, pdfDocument: null };
   }
 
   const explorerFile = explorerFileFromReadResult(file);
+  const previewId = createPreviewAttachmentId({
+    mimeType: file.mime,
+    path: file.path,
+    size: file.size,
+    modifiedAt: file.modifiedAt,
+    contentLength: file.bytes.byteLength,
+  });
+
+  // Handed to a system PDF viewer as-is. Where that viewer needs a file on
+  // disk, the shell stages one — the pane only supplies the bytes and a stable
+  // identity for it.
+  if (isPdfFile(explorerFile)) {
+    return {
+      file: explorerFile,
+      imageAttachment: null,
+      pdfDocument: {
+        bytes: file.bytes,
+        cacheId: previewId,
+        fileName: getFileNameFromPath(file.path) ?? "document.pdf",
+      },
+    };
+  }
+
   if (file.kind !== "image") {
-    return { file: explorerFile, imageAttachment: null };
+    return { file: explorerFile, imageAttachment: null, pdfDocument: null };
   }
 
   const imageAttachment = await persistAttachmentFromBytes({
-    id: createPreviewAttachmentId({
-      mimeType: file.mime,
-      path: file.path,
-      size: file.size,
-      modifiedAt: file.modifiedAt,
-      contentLength: file.bytes.byteLength,
-    }),
+    id: previewId,
     bytes: file.bytes,
     mimeType: file.mime,
     fileName: getFileNameFromPath(file.path),
@@ -115,6 +139,7 @@ async function createFilePanePreview(file: FileReadResult | null): Promise<{
   return {
     file: explorerFile,
     imageAttachment,
+    pdfDocument: null,
   };
 }
 
@@ -210,6 +235,8 @@ function FilePreviewBody({
   location,
   navigationRevision,
   imagePreviewUri,
+  pdfDocument,
+  onDownloadPdf,
 }: FilePreviewBodyProps) {
   const theme = UnistylesRuntime.getTheme();
   const { t } = useTranslation();
@@ -370,9 +397,30 @@ function FilePreviewBody({
     );
   }
 
+  if (isPdfFile(preview)) {
+    if (!pdfDocument) {
+      return (
+        <View style={styles.centerState}>
+          <ActivityIndicator size="small" />
+          <Text style={styles.loadingText}>{t("panels.file.loading")}</Text>
+        </View>
+      );
+    }
+
+    return (
+      <PdfPreview {...pdfDocument} onDownload={onDownloadPdf} testID="workspace-file-pdf-preview" />
+    );
+  }
+
   return (
     <View style={styles.centerState}>
-      <Text style={styles.emptyText}>{t("panels.file.binaryPreviewUnavailable")}</Text>
+      <Text style={styles.emptyText}>
+        {/* A .pdf that did not arrive as application/pdf came from a daemon
+            older than PDF preview support — the mime is the capability. */}
+        {hasPdfExtension(filePath)
+          ? t("panels.file.pdf.hostUpdateRequired")
+          : t("panels.file.binaryPreviewUnavailable")}
+      </Text>
       <Text style={styles.binaryMetaText}>{formatFileSize({ size: preview.size })}</Text>
     </View>
   );
@@ -396,7 +444,8 @@ export function FilePane({
     key: string | null;
     file: ExplorerFile | null;
     imageAttachment: AttachmentMetadata | null;
-  }>({ key: null, file: null, imageAttachment: null });
+    pdfDocument: PdfPreviewDocument | null;
+  }>({ key: null, file: null, imageAttachment: null, pdfDocument: null });
 
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   // COMPAT(workspaceFileEditing): added in v0.2.0, remove after 2027-01-18 once daemon floor >= v0.2.0.
@@ -450,10 +499,18 @@ export function FilePane({
   useEffect(() => setMarkdownMode("preview"), [readTarget?.path]);
 
   const previewKey = readTarget ? `${readTarget.cwd}:${readTarget.path}` : null;
-  const preview = resolvedPreview.key === previewKey ? resolvedPreview.file : null;
+  const isCurrentPreview = resolvedPreview.key === previewKey;
+  const preview = isCurrentPreview ? resolvedPreview.file : null;
   const imagePreviewUri = useAttachmentPreviewUrl(
-    resolvedPreview.key === previewKey ? resolvedPreview.imageAttachment : null,
+    isCurrentPreview ? resolvedPreview.imageAttachment : null,
   );
+  const pdfDocument = isCurrentPreview ? resolvedPreview.pdfDocument : null;
+  const onDownloadPdf = usePdfDownload({
+    serverId,
+    workspaceRoot: normalizedWorkspaceRoot,
+    readTarget,
+    pdfDocument,
+  });
   const isMarkdown = isMarkdownPreview(preview, location.path);
   const editable = isEditableTextFile({
     preview,
@@ -483,6 +540,8 @@ export function FilePane({
       location={location}
       navigationRevision={navigationRevision}
       imagePreviewUri={imagePreviewUri}
+      pdfDocument={pdfDocument}
+      onDownloadPdf={onDownloadPdf}
     />
   );
 }
@@ -526,6 +585,8 @@ function FilePanePresentation({
   location,
   navigationRevision,
   imagePreviewUri,
+  pdfDocument,
+  onDownloadPdf,
 }: {
   serverId: string;
   client: DaemonClient | null;
@@ -544,6 +605,8 @@ function FilePanePresentation({
   location: WorkspaceFileLocation;
   navigationRevision: number;
   imagePreviewUri: string | null;
+  pdfDocument: PdfPreviewDocument | null;
+  onDownloadPdf?: () => void;
 }) {
   if (!client && readTarget) {
     return (
@@ -598,6 +661,8 @@ function FilePanePresentation({
         location={location}
         navigationRevision={navigationRevision}
         imagePreviewUri={imagePreviewUri}
+        pdfDocument={pdfDocument}
+        onDownloadPdf={onDownloadPdf}
       />
     </View>
   );
@@ -774,6 +839,7 @@ function EditableFilePane({
           location={location}
           navigationRevision={navigationRevision}
           imagePreviewUri={null}
+          pdfDocument={null}
         />
       )}
     </View>

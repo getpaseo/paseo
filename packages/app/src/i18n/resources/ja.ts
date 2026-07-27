@@ -1491,6 +1491,13 @@ export const ja: TranslationResources = {
       binaryPreviewUnavailable: "バイナリプレビューが利用できません",
       failedToLoad: "ファイルの読み込みに失敗しました",
       failedToLoadPreview: "ファイルプレビューの読み込みに失敗しました",
+      pdf: {
+        title: "PDFプレビュー",
+        loading: "PDFを描画中...",
+        failed: "このPDFを描画できませんでした",
+        unsupportedPlatform: "このプラットフォームではPDFプレビューはまだ利用できません",
+        hostUpdateRequired: "PDFをプレビューするにはホストを更新してください",
+      },
       editor: {
         fileSize: "ファイルサイズ {{size}}",
         lines: "{{count}} 行",

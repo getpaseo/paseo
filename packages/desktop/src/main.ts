@@ -711,6 +711,10 @@ async function createWindow(
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: true,
+      // Enables Chromium's built-in PDF viewer, which the file panel's PDF
+      // preview renders into. Electron gates it behind `plugins`; NPAPI/PPAPI
+      // are long gone, so this no longer admits third-party plugin content.
+      plugins: true,
     },
   });
 

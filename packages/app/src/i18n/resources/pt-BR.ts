@@ -1504,6 +1504,13 @@ export const ptBR: TranslationResources = {
       binaryPreviewUnavailable: "Prévia binária indisponível",
       failedToLoad: "Falha ao carregar arquivo",
       failedToLoadPreview: "Falha ao carregar prévia do arquivo",
+      pdf: {
+        title: "Prévia do PDF",
+        loading: "Renderizando o PDF...",
+        failed: "Não foi possível renderizar este PDF",
+        unsupportedPlatform: "A prévia de PDF ainda não é compatível com esta plataforma",
+        hostUpdateRequired: "Atualize o host para visualizar PDFs",
+      },
       editor: {
         fileSize: "Tamanho {{size}}",
         lines: "{{count}} linhas",

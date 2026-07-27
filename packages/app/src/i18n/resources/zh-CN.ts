@@ -1456,6 +1456,13 @@ export const zhCN: TranslationResources = {
       binaryPreviewUnavailable: "二进制预览不可用",
       failedToLoad: "加载文件失败",
       failedToLoadPreview: "加载文件预览失败",
+      pdf: {
+        title: "PDF 预览",
+        loading: "正在渲染 PDF...",
+        failed: "无法渲染此 PDF",
+        unsupportedPlatform: "此平台尚不支持 PDF 预览",
+        hostUpdateRequired: "请更新主机以预览 PDF",
+      },
       editor: {
         fileSize: "文件大小 {{size}}",
         lines: "{{count}} 行",

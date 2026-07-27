@@ -714,6 +714,7 @@ export class Session {
         emit: (msg) => this.emit(msg),
         emitBinary: (frame) => this.emitBinary(frame),
         hasBinaryChannel: () => this.onBinaryMessage !== null,
+        getClientBufferedAmount: () => this.getTransportBufferedAmount(),
       },
       downloadTokenStore,
       paseoHome,

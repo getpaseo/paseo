@@ -1013,8 +1013,18 @@ function binaryFileKind(mime: string, encoding: string): FileReadResult["kind"] 
   return "binary";
 }
 
-function concatByteChunks(chunks: Uint8Array[], size: number): Uint8Array {
-  const bytes = new Uint8Array(size);
+/**
+ * Sized from the chunks themselves, not the advertised size: a file read is
+ * delivered as N chunks, and a length that disagrees with the metadata (the
+ * file changed under the daemon mid-read) must not truncate the payload or
+ * throw out of `set`.
+ */
+function concatByteChunks(chunks: Uint8Array[]): Uint8Array {
+  let total = 0;
+  for (const chunk of chunks) {
+    total += chunk.byteLength;
+  }
+  const bytes = new Uint8Array(total);
   let offset = 0;
   for (const chunk of chunks) {
     bytes.set(chunk, offset);
@@ -5449,12 +5459,12 @@ export class DaemonClient {
       return;
     }
 
-    const bytes = concatByteChunks(transfer.chunks, transfer.size);
+    const bytes = concatByteChunks(transfer.chunks);
     this.activeBinaryFileTransfers.delete(frame.requestId);
     this.completedBinaryFileReads.set(frame.requestId, {
       bytes,
       mime: transfer.mime,
-      size: transfer.size,
+      size: bytes.byteLength,
       path: transfer.path,
       kind: binaryFileKind(transfer.mime, transfer.encoding),
       modifiedAt: transfer.modifiedAt,

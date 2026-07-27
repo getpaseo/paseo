@@ -14,7 +14,7 @@ import {
   pathToFileUri,
 } from "@/attachments/utils";
 
-const IMAGE_EXTENSION_BY_MIME_TYPE: Record<string, string> = {
+const EXTENSION_BY_MIME_TYPE: Record<string, string> = {
   "image/png": ".png",
   "image/jpeg": ".jpg",
   "image/jpg": ".jpg",
@@ -26,6 +26,9 @@ const IMAGE_EXTENSION_BY_MIME_TYPE: Record<string, string> = {
   "image/tiff": ".tiff",
   "image/bmp": ".bmp",
   "image/svg+xml": ".svg",
+  // Staged PDFs must keep the extension: a native viewer decides what to do
+  // with the file by looking at it.
+  "application/pdf": ".pdf",
 };
 
 function extensionForAttachment(params: { fileName?: string | null; mimeType: string }): string {
@@ -33,7 +36,7 @@ function extensionForAttachment(params: { fileName?: string | null; mimeType: st
   if (fromName) {
     return fromName;
   }
-  return IMAGE_EXTENSION_BY_MIME_TYPE[params.mimeType] ?? ".img";
+  return EXTENSION_BY_MIME_TYPE[params.mimeType] ?? ".img";
 }
 
 async function ensureDirectory(fileSystem: AttachmentFileSystem, uri: string): Promise<void> {

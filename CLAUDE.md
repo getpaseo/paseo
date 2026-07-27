@@ -36,6 +36,7 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 | [docs/floating-panels.md](docs/floating-panels.md)                 | Anchored popovers — Portal/Modal escape for Android, lifecycle gates, keyboard-shared-value, status-bar offset, the flash      |
 | [docs/expo-router.md](docs/expo-router.md)                         | Expo Router route ownership, startup restore, and native blank-screen gotchas                                                  |
 | [docs/file-icons.md](docs/file-icons.md)                           | Material icon theme integration for the file explorer                                                                          |
+| [docs/pdf-preview.md](docs/pdf-preview.md)                         | System PDF viewers per platform, the Android gap, chunked file transfer and its size bounds                                    |
 | [docs/providers.md](docs/providers.md)                             | Adding a new agent provider end-to-end                                                                                         |
 | [docs/forge-providers.md](docs/forge-providers.md)                 | Adding a git forge: registry/manifest, drop-in checklist, self-host/GHES, the two facts tiers                                  |
 | [docs/custom-providers.md](docs/custom-providers.md)               | Custom provider config: Z.AI, Alibaba/Qwen, ACP agents, profiles, custom binaries                                              |
