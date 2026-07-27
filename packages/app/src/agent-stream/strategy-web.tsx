@@ -555,6 +555,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     return {
       display: "flex",
       flexDirection: "column",
+      // Center chat column in the pane (matches composer marginHorizontal: auto).
+      alignItems: "center",
       minHeight: "100%",
       paddingTop: 16,
       paddingBottom: 16,
@@ -575,6 +577,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const virtualRowsContainerStyle = useMemo((): CSSProperties => {
     return {
       position: "relative",
+      // Full-width measure box; rows center their content inside.
       width: "100%",
       height: virtualTotalSize,
     };
@@ -586,6 +589,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       left: 0,
       display: "flex",
       flexDirection: "column",
+      alignItems: "center",
       width: "100%",
       transform: `translateY(${start}px)`,
     }),

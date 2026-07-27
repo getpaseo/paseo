@@ -1529,11 +1529,15 @@ const stylesheet = StyleSheet.create((theme) => ({
     width: "100%",
     maxWidth: MAX_CONTENT_WIDTH,
     alignSelf: "center",
+    // CSS-friendly centering when this node is a web flex/block child.
+    marginHorizontal: "auto",
     paddingHorizontal: theme.spacing[2],
   },
   listContentContainer: {
     paddingVertical: 0,
     flexGrow: 1,
+    // Keep native FlatList rows centered in wide panes.
+    alignItems: "center",
     paddingHorizontal: {
       xs: theme.spacing[3],
       md: theme.spacing[4],
@@ -1550,6 +1554,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     width: "100%",
     maxWidth: MAX_CONTENT_WIDTH,
     alignSelf: "center",
+    marginHorizontal: "auto",
     paddingHorizontal: theme.spacing[2],
   },
   activeSearchResult: {
