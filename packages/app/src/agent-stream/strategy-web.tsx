@@ -256,15 +256,16 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       const anchorRow = segments.historyMounted.at(-1) ?? segments.historyVirtualized.at(-1);
       const anchorElement =
         contentNode && anchorRow ? findHistoryRowElement(contentNode, anchorRow.id) : null;
-      if (!scrollContainer || !anchorRow || !anchorElement) {
-        return;
+      if (scrollContainer && anchorRow && anchorElement) {
+        historyStartPrependAnchorRef.current = {
+          progressKey: olderHistoryProgressKey,
+          rowId: anchorRow.id,
+          viewportOffset:
+            anchorElement.getBoundingClientRect().top - scrollContainer.getBoundingClientRect().top,
+        };
+      } else {
+        historyStartPrependAnchorRef.current = null;
       }
-      historyStartPrependAnchorRef.current = {
-        progressKey: olderHistoryProgressKey,
-        rowId: anchorRow.id,
-        viewportOffset:
-          anchorElement.getBoundingClientRect().top - scrollContainer.getBoundingClientRect().top,
-      };
       historyStartPrependAnchorActiveRef.current = false;
       const requestedProgressKey = olderHistoryProgressKey;
       void (async () => {

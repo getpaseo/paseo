@@ -140,4 +140,26 @@ describe("assistant image acquisition cache", () => {
       released: ["attachment-1"],
     });
   });
+
+  it("does not evict a value while an active consumer retains it", async () => {
+    const released: string[] = [];
+    const cache = createAssistantImageAcquisitionCache<string>({
+      capacity: 1,
+      onRetain: (value) => () => released.push(value),
+    });
+
+    const first = cache.acquireRetained("first", async () => "attachment-1");
+    await first.promise;
+    const second = cache.acquireRetained("second", async () => "attachment-2");
+    await second.promise;
+
+    expect({ released, size: cache.size() }).toEqual({ released: [], size: 2 });
+
+    first.release();
+    expect({ released, size: cache.size() }).toEqual({
+      released: ["attachment-1"],
+      size: 1,
+    });
+    second.release();
+  });
 });

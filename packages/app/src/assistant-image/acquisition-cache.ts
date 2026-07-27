@@ -2,6 +2,10 @@ import { createPreviewAttachmentId } from "@/attachments/utils";
 
 export interface AssistantImageAcquisitionCache<T> {
   acquire(key: string, locate: () => Promise<T>): Promise<T>;
+  acquireRetained(
+    key: string,
+    locate: () => Promise<T>,
+  ): { promise: Promise<T>; value?: T; release: () => void };
   peek(key: string): T | undefined;
   size(): number;
 }
@@ -53,6 +57,7 @@ export function createAssistantImageAcquisitionCache<T>(input: {
     resolved: boolean;
     value?: T;
     release: (() => void) | null;
+    activeConsumers: number;
   }
   const entries = new Map<string, CacheEntry>();
 
@@ -64,42 +69,79 @@ export function createAssistantImageAcquisitionCache<T>(input: {
     entry.release = null;
   };
 
+  const enforceCapacity = () => {
+    while (entries.size > input.capacity) {
+      let evicted = false;
+      for (const [key, entry] of entries) {
+        if (entry.activeConsumers > 0) {
+          continue;
+        }
+        evict(key, entry);
+        evicted = true;
+        break;
+      }
+      if (!evicted) {
+        return;
+      }
+    }
+  };
+
+  const acquireEntry = (key: string, locate: () => Promise<T>, retain: boolean): CacheEntry => {
+    const cached = entries.get(key);
+    if (cached) {
+      entries.delete(key);
+      entries.set(key, cached);
+      if (retain) {
+        cached.activeConsumers += 1;
+      }
+      return cached;
+    }
+    const pending = locate();
+    const entry: CacheEntry = {
+      pending,
+      resolved: false,
+      release: null,
+      activeConsumers: retain ? 1 : 0,
+    };
+    entries.set(key, entry);
+    enforceCapacity();
+    void (async () => {
+      try {
+        const value = await pending;
+        const release = input.onRetain?.(value) ?? null;
+        if (entries.get(key) === entry) {
+          entry.value = value;
+          entry.resolved = true;
+          entry.release = release;
+        } else {
+          release?.();
+        }
+      } catch {
+        evict(key, entry);
+      }
+    })();
+    return entry;
+  };
+
   return {
     acquire(key, locate) {
-      const cached = entries.get(key);
-      if (cached) {
-        entries.delete(key);
-        entries.set(key, cached);
-        return cached.pending;
-      }
-      const pending = locate();
-      const entry: CacheEntry = { pending, resolved: false, release: null };
-      entries.set(key, entry);
-      if (entries.size > input.capacity) {
-        const leastRecentlyUsedKey = entries.keys().next().value;
-        if (leastRecentlyUsedKey !== undefined) {
-          const leastRecentlyUsedEntry = entries.get(leastRecentlyUsedKey);
-          if (leastRecentlyUsedEntry) {
-            evict(leastRecentlyUsedKey, leastRecentlyUsedEntry);
+      return acquireEntry(key, locate, false).pending;
+    },
+    acquireRetained(key, locate) {
+      const entry = acquireEntry(key, locate, true);
+      let released = false;
+      return {
+        promise: entry.pending,
+        ...(entry.resolved ? { value: entry.value } : {}),
+        release() {
+          if (released) {
+            return;
           }
-        }
-      }
-      void (async () => {
-        try {
-          const value = await pending;
-          const release = input.onRetain?.(value) ?? null;
-          if (entries.get(key) === entry) {
-            entry.value = value;
-            entry.resolved = true;
-            entry.release = release;
-          } else {
-            release?.();
-          }
-        } catch {
-          evict(key, entry);
-        }
-      })();
-      return pending;
+          released = true;
+          entry.activeConsumers = Math.max(0, entry.activeConsumers - 1);
+          enforceCapacity();
+        },
+      };
     },
     peek(key) {
       const entry = entries.get(key);

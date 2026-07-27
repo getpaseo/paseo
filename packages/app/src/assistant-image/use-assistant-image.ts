@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import type { ImageLoadEvent } from "react-native";
 import { useTranslation } from "react-i18next";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -301,16 +309,16 @@ function usePreviewUrl(attachment: AttachmentMetadata | null | undefined): Previ
       ? `${id}:${storageType}:${storageKey}:${mimeType}`
       : null;
   const [entry, setEntry] = useState<{ key: string | null; state: PreviewUrlState }>(() => {
-    const cached = previewKey ? previewUrlCache.peek(previewKey) : undefined;
     return {
       key: previewKey,
-      state: cached ? { status: "loaded", uri: cached.uri } : { status: "waiting" },
+      state: { status: "waiting" },
     };
   });
   const getCurrentAttachment = useStableEvent(() => attachment ?? null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     let disposed = false;
+    let releaseCurrent: (() => void) | null = null;
     const current = getCurrentAttachment();
 
     if (!current || !previewKey) {
@@ -318,21 +326,34 @@ function usePreviewUrl(attachment: AttachmentMetadata | null | undefined): Previ
       return;
     }
 
-    const cached = previewUrlCache.peek(previewKey);
-    if (cached) {
-      setEntry({ key: previewKey, state: { status: "loaded", uri: cached.uri } });
-      return;
+    const acquireCurrent = () => {
+      releaseCurrent?.();
+      const retained = previewUrlCache.acquireRetained(previewKey, async () => ({
+        attachment: current,
+        uri: await resolveAttachmentPreviewUrl(current),
+      }));
+      releaseCurrent = retained.release;
+      return retained;
+    };
+    const initial = acquireCurrent();
+    if (initial.value) {
+      setEntry({ key: previewKey, state: { status: "loaded", uri: initial.value.uri } });
+      return () => {
+        disposed = true;
+        releaseCurrent?.();
+      };
     }
 
     setEntry({ key: previewKey, state: { status: "loading" } });
     void (async () => {
+      let firstAttempt: ReturnType<typeof acquireCurrent> | null = initial;
       try {
         const preview = await runAssistantImageOperationWithRetry({
-          operation: async () =>
-            await previewUrlCache.acquire(previewKey, async () => ({
-              attachment: current,
-              uri: await resolveAttachmentPreviewUrl(current),
-            })),
+          operation: async () => {
+            const retained = firstAttempt ?? acquireCurrent();
+            firstAttempt = null;
+            return await retained.promise;
+          },
           shouldStop: () => disposed,
         });
         if (!disposed) {
@@ -347,15 +368,12 @@ function usePreviewUrl(attachment: AttachmentMetadata | null | undefined): Previ
 
     return () => {
       disposed = true;
+      releaseCurrent?.();
     };
   }, [getCurrentAttachment, previewKey]);
 
   if (!previewKey) {
     return { status: "waiting" };
-  }
-  const cached = previewUrlCache.peek(previewKey);
-  if (cached) {
-    return { status: "loaded", uri: cached.uri };
   }
   return entry.key === previewKey ? entry.state : { status: "waiting" };
 }
