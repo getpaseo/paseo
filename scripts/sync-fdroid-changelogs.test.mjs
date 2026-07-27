@@ -3,10 +3,12 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import androidVersionCodes from "../packages/app/android-version-codes.js";
+import {
+  getFdroidVersionCodes,
+  getNativeBuildVersionCode,
+} from "../packages/app/android-version-codes.js";
 import { formatFdroidChangelog, syncFdroidChangelogs } from "./sync-fdroid-changelogs.mjs";
 
-const { getFdroidVersionCodes, getNativeBuildVersionCode } = androidVersionCodes;
 const CHANGELOG_CHARACTER_LIMIT = 500;
 
 function withTempRepo(fn, { changelog, version = "0.2.3" }) {

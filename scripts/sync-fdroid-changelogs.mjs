@@ -19,7 +19,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 // CommonJS on purpose: packages/app/app.config.js and the Expo config plugin both
 // require it, so the ABI table has exactly one definition across all three callers.
-import androidVersionCodes from "../packages/app/android-version-codes.js";
+import { getFdroidVersionCodes as defaultGetFdroidVersionCodes } from "../packages/app/android-version-codes.js";
 import { parseChangelogEntries, parseChangelogSections } from "./changelog-utils.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -140,8 +140,7 @@ export function formatFdroidChangelog(bodyLines, options = {}) {
 export function syncFdroidChangelogs(argv = process.argv.slice(2), deps = {}) {
   const cwd = deps.cwd ?? rootDir;
   const args = parseArgs(argv);
-  const getFdroidVersionCodes =
-    deps.getFdroidVersionCodes ?? androidVersionCodes.getFdroidVersionCodes;
+  const getFdroidVersionCodes = deps.getFdroidVersionCodes ?? defaultGetFdroidVersionCodes;
 
   const version =
     args.version || JSON.parse(readFileSync(path.join(cwd, "package.json"), "utf8")).version;
