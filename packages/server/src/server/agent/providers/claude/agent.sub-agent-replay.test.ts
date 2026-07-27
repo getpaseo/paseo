@@ -190,10 +190,13 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
       meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
     });
 
-    const events = upserts(await replayDescriptors());
-    expect(events.every((event) => event.type === "upsert" && event.status === "running")).toBe(
-      true,
-    );
+    // Asserted as "nothing terminal" rather than "every upsert says running": an upsert that
+    // reports only usage carries no status at all, deliberately, so that a cost report arriving
+    // after completion cannot revert a finished child.
+    const statuses = upserts(await replayDescriptors()).map((event) => event.status);
+    expect(statuses).not.toContain("completed");
+    expect(statuses).not.toContain("failed");
+    expect(statuses).toContain("running");
   });
 
   test.each([

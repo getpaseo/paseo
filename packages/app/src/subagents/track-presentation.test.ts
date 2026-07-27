@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PaseoSubagentRow, ProviderSubagentRow, SubagentRow } from "./select";
 import {
+  buildSubagentPaneDetails,
   buildSubagentRowPresentationData,
   countFinishedSubagents,
   formatHeaderLabel,
@@ -262,5 +263,59 @@ describe("subagent runtime and usage in the row subtitle", () => {
 
   it("never invents a model, effort, or cost that was not observed", () => {
     expect(buildSubagentRowPresentationData(providerRow()).subtitle).toBe("general-purpose");
+  });
+});
+
+describe("buildSubagentPaneDetails", () => {
+  it("renders nothing before a descriptor arrives", () => {
+    expect(buildSubagentPaneDetails(null)).toBe("");
+  });
+
+  it("renders nothing when the runtime was never observed", () => {
+    expect(buildSubagentPaneDetails({ model: null, effort: null, usage: null })).toBe("");
+  });
+
+  it("lists the observed model and effort", () => {
+    expect(buildSubagentPaneDetails({ model: "claude-opus-5", effort: "high", usage: null })).toBe(
+      "claude-opus-5 · high",
+    );
+  });
+
+  it("shows duration alongside cost, unlike the dense track row", () => {
+    expect(
+      buildSubagentPaneDetails({
+        model: "claude-opus-5",
+        effort: null,
+        usage: { totalTokens: 16484, toolUses: 2, durationMs: 10934 },
+      }),
+    ).toBe("claude-opus-5 · 16.5k tokens, 2 tools, 10.9s");
+  });
+
+  it("shows duration on its own for a child that reported no token cost", () => {
+    expect(
+      buildSubagentPaneDetails({ model: null, effort: null, usage: { durationMs: 4100 } }),
+    ).toBe("4.1s");
+  });
+
+  it("keeps sub-second and multi-minute durations terse", () => {
+    expect(
+      buildSubagentPaneDetails({ model: null, effort: null, usage: { durationMs: 412 } }),
+    ).toBe("412ms");
+    expect(
+      buildSubagentPaneDetails({ model: null, effort: null, usage: { durationMs: 125_400 } }),
+    ).toBe("2m 5s");
+    expect(
+      buildSubagentPaneDetails({ model: null, effort: null, usage: { durationMs: 119_600 } }),
+    ).toBe("2m 0s");
+  });
+
+  it("omits a zeroed usage report rather than showing 0 tokens", () => {
+    expect(
+      buildSubagentPaneDetails({
+        model: null,
+        effort: null,
+        usage: { totalTokens: 0, toolUses: 0, durationMs: 0 },
+      }),
+    ).toBe("");
   });
 });

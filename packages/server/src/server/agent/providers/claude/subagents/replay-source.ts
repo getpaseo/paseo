@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { AgentTimelineItem } from "../../../agent-sdk-types.js";
 import { normalizeProviderReplayTimestamp } from "../../../provider-history-timestamps.js";
+import type { ProviderSubagentUsage } from "../../../provider-subagents/store.js";
 import { resolveObservedClaudeModelId } from "../models.js";
 import type { SubagentObservation } from "./observation.js";
 
@@ -74,6 +75,104 @@ function readRuntime(entries: readonly ClaudeReplayEntry[]): { model?: string; e
     if (model) runtime.model = model;
   }
   return runtime;
+}
+
+/**
+ * Token counters as Claude Code stamps them onto an assistant entry. Undocumented internals, so
+ * every field is optional and a wrong-typed field reads as absent rather than failing the entry.
+ */
+const ClaudeReplayUsageSchema = z.object({
+  input_tokens: z.number().optional().catch(undefined),
+  cache_creation_input_tokens: z.number().optional().catch(undefined),
+  cache_read_input_tokens: z.number().optional().catch(undefined),
+  output_tokens: z.number().optional().catch(undefined),
+});
+
+/**
+ * The one number the live path calls `total_tokens`.
+ *
+ * This is not a guess. Claude Code 2.1.220 finalizes a subagent by summing the usage block of the
+ * LAST assistant message — `input + (cache_creation ?? 0) + (cache_read ?? 0) + output` — and ships
+ * that as `usage.total_tokens` on `task_notification`; `task_progress` reports the same sum from
+ * the live tracker as it climbs. So it is a context-size reading at the final turn, not a
+ * cumulative spend across turns, which is why a small subagent reports a number in the tens of
+ * thousands: the reused prompt cache dominates it. Summing per-entry usage instead would multiply
+ * the cached prefix by the turn count and report a number several times larger than the live path.
+ */
+function readTotalTokens(raw: unknown): number | undefined {
+  const parsed = ClaudeReplayUsageSchema.safeParse(raw);
+  if (!parsed.success) return undefined;
+  const { input_tokens, cache_creation_input_tokens, cache_read_input_tokens, output_tokens } =
+    parsed.data;
+  const counters = [
+    input_tokens,
+    cache_creation_input_tokens,
+    cache_read_input_tokens,
+    output_tokens,
+  ];
+  // An object with none of the four counters is not a usage block; reporting 0 would claim the
+  // subagent spent nothing.
+  if (counters.every((counter) => counter === undefined)) return undefined;
+  return counters.reduce((total: number, counter) => total + (counter ?? 0), 0);
+}
+
+function countToolUses(content: unknown): number {
+  if (!Array.isArray(content)) return 0;
+  let count = 0;
+  for (const block of content) {
+    if (typeof block !== "object" || block === null) continue;
+    if ((block as { type?: unknown }).type === "tool_use") count++;
+  }
+  return count;
+}
+
+/**
+ * Cost of a subagent's run, recovered from its own transcript.
+ *
+ * Descriptors are in-memory and dropped when the agent closes, so without this a reopened agent
+ * permanently loses its children's counters. The live path gets these numbers handed to it by
+ * Claude Code; here they are re-derived to match those definitions:
+ *
+ *   totalTokens  last assistant entry's summed usage — exact (see readTotalTokens)
+ *   toolUses     tool_use blocks across assistant entries — exact, same traversal
+ *   durationMs   last entry timestamp minus first — an approximation: the live value is measured
+ *                from task start to task end, and the transcript's first entry is written slightly
+ *                after the task starts, so this reads a touch short.
+ *
+ * A field only appears when the transcript actually shows it. Absent means "not observed", and the
+ * store merges usage field-by-field, so a partial report never blanks what is already there.
+ */
+function readUsage(entries: readonly ClaudeReplayEntry[]): ProviderSubagentUsage | null {
+  let sawAssistant = false;
+  let toolUses = 0;
+  let totalTokens: number | undefined;
+  let firstTimestamp: string | null = null;
+  let lastTimestamp: string | null = null;
+
+  for (const entry of entries) {
+    const timestamp = normalizeProviderReplayTimestamp(entry.timestamp);
+    if (timestamp) {
+      firstTimestamp ??= timestamp;
+      lastTimestamp = timestamp;
+    }
+    if (entry.type !== "assistant") continue;
+    sawAssistant = true;
+    toolUses += countToolUses(entry.message?.content);
+    const observed = readTotalTokens(entry.message?.usage);
+    if (observed !== undefined) totalTokens = observed;
+  }
+
+  const usage: ProviderSubagentUsage = {};
+  if (totalTokens !== undefined) usage.totalTokens = totalTokens;
+  // Zero tool uses is a real observation, but only once the child has spoken at all.
+  if (sawAssistant) usage.toolUses = toolUses;
+  if (firstTimestamp && lastTimestamp) {
+    const durationMs = Date.parse(lastTimestamp) - Date.parse(firstTimestamp);
+    // A single timestamped entry yields 0, which is a measurement failure rather than an instant
+    // run. Leave it absent so the store keeps whatever it had.
+    if (durationMs > 0) usage.durationMs = durationMs;
+  }
+  return Object.keys(usage).length > 0 ? usage : null;
 }
 
 export interface ClaudeReplaySubagentInput {
@@ -166,6 +265,18 @@ function observeSubagent(
   const runtime = readRuntime(subagent.entries);
   if (runtime.model !== undefined || runtime.effort !== undefined) {
     observations.push({ kind: "runtime", id: link.id, ...runtime });
+  }
+
+  const usage = readUsage(subagent.entries);
+  if (usage) {
+    // Stamp the run's end, not replay time, so a rebuilt descriptor does not look freshly active.
+    const lastTimestamp = normalizeProviderReplayTimestamp(subagent.entries.at(-1)?.timestamp);
+    observations.push({
+      kind: "usage",
+      id: link.id,
+      usage,
+      ...(lastTimestamp ? { timestamp: lastTimestamp } : {}),
+    });
   }
 
   for (const entry of subagent.entries) {

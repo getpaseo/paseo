@@ -1,3 +1,4 @@
+import type { ProviderSubagentDescriptorPayload } from "@getpaseo/protocol/messages";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import type { SubagentRow } from "./select";
@@ -45,10 +46,19 @@ export function buildSubagentRowPresentationData(row: SubagentRow): SubagentRowP
   };
 }
 
+export type SubagentRuntimeFacts = Pick<
+  ProviderSubagentDescriptorPayload,
+  "model" | "effort" | "usage"
+>;
+
+export interface SubagentUsage {
+  totalTokens?: number;
+  toolUses?: number;
+  durationMs?: number;
+}
+
 /** Tokens read best abbreviated; duration only once the child has finished. */
-export function formatSubagentUsage(
-  usage: { totalTokens?: number; toolUses?: number; durationMs?: number } | null,
-): string | null {
+export function formatSubagentUsage(usage: SubagentUsage | null): string | null {
   if (!usage) return null;
   const parts: string[] = [];
   if (typeof usage.totalTokens === "number" && usage.totalTokens > 0) {
@@ -62,6 +72,48 @@ export function formatSubagentUsage(
     parts.push(`${usage.toolUses} ${usage.toolUses === 1 ? "tool" : "tools"}`);
   }
   return parts.length > 0 ? parts.join(", ") : null;
+}
+
+/**
+ * The subagent pane has the room the dense track row does not, so its header carries the whole
+ * observed runtime on one line. Absent fields render as nothing — never the parent's model or
+ * thinking setting.
+ */
+export function buildSubagentPaneDetails(descriptor: SubagentRuntimeFacts | null): string {
+  if (!descriptor) return "";
+  const parts = [
+    descriptor.model?.trim(),
+    descriptor.effort?.trim(),
+    formatSubagentUsageDetail(descriptor.usage ?? null),
+  ].filter((part): part is string => Boolean(part));
+  return parts.join(" · ");
+}
+
+/**
+ * The pane has room the dense row does not, so a finished child's wall time joins its cost.
+ * Providers report `durationMs` only once the child is done.
+ */
+function formatSubagentUsageDetail(usage: SubagentUsage | null): string | null {
+  const cost = formatSubagentUsage(usage);
+  const duration =
+    typeof usage?.durationMs === "number" && usage.durationMs > 0
+      ? formatDuration(usage.durationMs)
+      : null;
+  const parts = [cost, duration].filter((part): part is string => Boolean(part));
+  return parts.length > 0 ? parts.join(", ") : null;
+}
+
+function formatDuration(durationMs: number): string {
+  if (durationMs < 1000) {
+    return `${Math.round(durationMs)}ms`;
+  }
+  const totalSeconds = durationMs / 1000;
+  if (totalSeconds < 60) {
+    return `${Math.round(totalSeconds * 10) / 10}s`;
+  }
+  const rounded = Math.round(totalSeconds);
+  const minutes = Math.floor(rounded / 60);
+  return `${minutes}m ${rounded % 60}s`;
 }
 
 export function formatHeaderLabel(rows: readonly SubagentRow[]): string {

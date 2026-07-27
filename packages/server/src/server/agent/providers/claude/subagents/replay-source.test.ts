@@ -10,6 +10,7 @@ import { foldSubagentObservations, type SubagentObservation } from "./observatio
 import {
   observeReplaySubagents,
   parseClaudeSubagentMeta,
+  type ClaudeReplayEntry,
   type ClaudeReplayParentFacts,
 } from "./replay-source.js";
 
@@ -205,7 +206,7 @@ describe("observeReplaySubagents", () => {
       convertEntry: () => [{ type: "reasoning", text: "thinking" }],
     });
 
-    expect(observations[1]).toMatchObject({
+    expect(observations.find((observation) => observation.kind === "timeline")).toMatchObject({
       kind: "timeline",
       id: TOOL_USE_ID,
       timestamp: "2026-07-26T06:27:47.034Z",
@@ -280,6 +281,169 @@ describe("replay runtime", () => {
       convertEntry: () => [],
     });
     expect(observations.find((o) => o.kind === "runtime")).toMatchObject({ model: "glm-5.1" });
+  });
+});
+
+describe("replay usage", () => {
+  function usageOf(entries: ClaudeReplayEntry[]): SubagentObservation | undefined {
+    return observeReplaySubagents({
+      subagents: [{ agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID }, entries }],
+      parent: parentWithTaskCall(),
+      convertEntry: () => [],
+    }).find((observation) => observation.kind === "usage");
+  }
+
+  it("derives the counters Claude Code itself reports, from a real transcript's shape", () => {
+    // Shape and numbers taken from an on-disk subagent transcript. Claude Code finalizes a
+    // subagent from the LAST assistant entry's usage, so the earlier, smaller turn must not win
+    // and must not be added in.
+    expect(
+      usageOf([
+        {
+          type: "assistant",
+          timestamp: "2026-07-23T23:18:43.023Z",
+          message: {
+            model: "claude-opus-5",
+            content: [
+              { type: "tool_use", name: "Read" },
+              { type: "text", text: "hi" },
+            ],
+            usage: {
+              input_tokens: 4,
+              cache_creation_input_tokens: 15_000,
+              cache_read_input_tokens: 0,
+              output_tokens: 120,
+            },
+          },
+        },
+        { type: "user", timestamp: "2026-07-23T23:20:00.000Z", message: { content: [] } },
+        {
+          type: "assistant",
+          timestamp: "2026-07-23T23:49:05.068Z",
+          message: {
+            model: "claude-opus-5",
+            content: [{ type: "tool_use", name: "Grep" }],
+            usage: {
+              input_tokens: 2293,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 65_024,
+              output_tokens: 1376,
+            },
+          },
+        },
+      ]),
+    ).toEqual({
+      kind: "usage",
+      id: TOOL_USE_ID,
+      // 2293 + 0 + 65024 + 1376 — the last turn's context, matching the live path's total_tokens.
+      usage: { totalTokens: 68_693, toolUses: 2, durationMs: 1_822_045 },
+      timestamp: "2026-07-23T23:49:05.068Z",
+    });
+  });
+
+  it("reports zero tool uses for a child that only answered", () => {
+    expect(
+      usageOf([
+        {
+          type: "assistant",
+          timestamp: "2026-07-27T16:42:14.698Z",
+          message: { content: [{ type: "text", text: "done" }], usage: { input_tokens: 16_434 } },
+        },
+        {
+          type: "user",
+          timestamp: "2026-07-27T16:42:16.926Z",
+          message: { content: "ignored" },
+        },
+      ]),
+    ).toMatchObject({ usage: { totalTokens: 16_434, toolUses: 0, durationMs: 2228 } });
+  });
+
+  it("emits nothing for a transcript with no entries", () => {
+    expect(usageOf([])).toBeUndefined();
+  });
+
+  it("omits duration when the transcript spans no measurable time", () => {
+    const observation = usageOf([
+      {
+        type: "assistant",
+        timestamp: "2026-07-27T16:42:14.698Z",
+        message: { content: [], usage: { input_tokens: 10 } },
+      },
+    ]);
+    expect(observation).toMatchObject({ usage: { totalTokens: 10, toolUses: 0 } });
+    expect(observation?.kind === "usage" && observation.usage.durationMs).toBeUndefined();
+  });
+
+  it("omits totalTokens when no entry carries a usage block", () => {
+    const observation = usageOf([
+      { type: "assistant", timestamp: "2026-07-27T16:42:14.698Z", message: { content: [] } },
+      {
+        type: "assistant",
+        timestamp: "2026-07-27T16:42:20.000Z",
+        message: { content: [{ type: "tool_use", name: "Bash" }], usage: "not-an-object" },
+      },
+    ]);
+    expect(observation).toMatchObject({ usage: { toolUses: 1, durationMs: 5302 } });
+    expect(observation?.kind === "usage" && observation.usage.totalTokens).toBeUndefined();
+  });
+
+  it("keeps the last usage-bearing entry when the final assistant entry has none", () => {
+    expect(
+      usageOf([
+        {
+          type: "assistant",
+          timestamp: "2026-07-27T16:42:14.698Z",
+          message: { content: [], usage: { input_tokens: 900, output_tokens: 100 } },
+        },
+        { type: "assistant", timestamp: "2026-07-27T16:42:20.000Z", message: { content: [] } },
+      ]),
+    ).toMatchObject({ usage: { totalTokens: 1000 } });
+  });
+
+  it("only reports counters the transcript actually shows", () => {
+    // A user-only transcript says nothing about cost: no assistant turn, so no tool count either.
+    const observation = usageOf([
+      { type: "user", timestamp: "2026-07-27T16:42:14.698Z", message: { content: "prompt" } },
+      { type: "user", timestamp: "2026-07-27T16:42:20.000Z", message: { content: "more" } },
+    ]);
+    expect(observation).toMatchObject({ usage: { durationMs: 5302 } });
+    expect(observation?.kind === "usage" && observation.usage.toolUses).toBeUndefined();
+  });
+
+  it("lands on the descriptor and merges rather than replaces", () => {
+    const store = new ProviderSubagentStore();
+    for (const event of foldSubagentObservations([
+      { kind: "usage", id: TOOL_USE_ID, usage: { totalTokens: 100, toolUses: 3, durationMs: 5 } },
+    ])) {
+      store.apply("parent", "claude", event);
+    }
+    const observations = observeReplaySubagents({
+      subagents: [
+        {
+          agentId: AGENT_ID,
+          meta: { toolUseId: TOOL_USE_ID },
+          entries: [
+            {
+              type: "assistant",
+              timestamp: "2026-07-27T16:42:14.698Z",
+              message: { content: [], usage: { input_tokens: 7 } },
+            },
+          ],
+        },
+      ],
+      parent: parentWithTaskCall(),
+      convertEntry: () => [],
+    });
+    for (const event of foldSubagentObservations(observations)) {
+      store.apply("parent", "claude", event);
+    }
+
+    // durationMs was never observed on replay, so the value already stored survives.
+    expect(store.get("parent", TOOL_USE_ID)?.usage).toEqual({
+      totalTokens: 7,
+      toolUses: 0,
+      durationMs: 5,
+    });
   });
 });
 
