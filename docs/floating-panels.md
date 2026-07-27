@@ -95,7 +95,11 @@ stacked overlays would both close on one keypress.
 If an overlay is rendered by a global host rather than beneath its opener in
 the React tree, carry the opener's current layer through the host store and
 restore it with `OverlayLayerProvider`. Otherwise painting and keyboard
-ownership silently reset at the app root.
+ownership silently reset at the app root. When the opener is a global keyboard
+action and has no component context to carry, resolve the host layer with
+`useGlobalWebOverlayLayer` on its closed-to-open transition. It captures the
+current top registered layer before the new host joins the stack; do not give a
+global dialog a fixed root-derived modal layer.
 
 ## Gotcha 2 — Portal breaks lifecycle and coordinate-system inheritance
 

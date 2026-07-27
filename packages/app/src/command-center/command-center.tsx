@@ -31,7 +31,11 @@ import { useAggregatedAgents, type AggregatedAgent } from "@/hooks/use-aggregate
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useProjects } from "@/hooks/use-projects";
-import { useOverlayLayer, useWebOverlayRegistration } from "@/lib/overlay-root";
+import {
+  OverlayLayerProvider,
+  useGlobalWebOverlayLayer,
+  useWebOverlayRegistration,
+} from "@/lib/overlay-root";
 import { useHosts } from "@/runtime/host-runtime";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
@@ -545,7 +549,7 @@ export function CommandCenter() {
   const state = useCommandCenterState();
   const isCompact = useIsCompactFormFactor();
   const showBottomSheet = isCompact && isNative;
-  const modalLayer = useOverlayLayer("modal");
+  const modalLayer = useGlobalWebOverlayLayer("modal", isWeb && state.open && !showBottomSheet);
   const listRef = useRef<FlatList<CommandCenterListRow>>(null);
   const bottomSheetListRef = useRef<BottomSheetFlatListMethods>(null);
   const bottomSheetInputRef = useRef<React.ElementRef<typeof BottomSheetTextInput>>(null);
@@ -669,27 +673,29 @@ export function CommandCenter() {
   }
   if (!state.open) return null;
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={state.close}>
-      <View style={styles.overlay}>
-        <Pressable style={styles.backdrop} onPress={state.close} />
-        <View ref={setWebOverlayScope} testID="command-center-panel" style={styles.panel}>
-          <View style={styles.header}>
-            <ThemedTextInput
-              testID="command-center-input"
-              ref={state.inputRef}
-              value={state.query}
-              onChangeText={state.setQuery}
-              placeholder={t("shell.commandCenter.placeholder")}
-              style={styles.input}
-              autoCapitalize="none"
-              autoCorrect={false}
-              autoFocus
-            />
+    <OverlayLayerProvider layer={isWeb ? modalLayer : 0}>
+      <Modal visible transparent animationType="fade" onRequestClose={state.close}>
+        <View style={styles.overlay}>
+          <Pressable style={styles.backdrop} onPress={state.close} />
+          <View ref={setWebOverlayScope} testID="command-center-panel" style={styles.panel}>
+            <View style={styles.header}>
+              <ThemedTextInput
+                testID="command-center-input"
+                ref={state.inputRef}
+                value={state.query}
+                onChangeText={state.setQuery}
+                placeholder={t("shell.commandCenter.placeholder")}
+                style={styles.input}
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoFocus
+              />
+            </View>
+            <FlatList ref={listRef} style={styles.results} {...commonListProps} />
           </View>
-          <FlatList ref={listRef} style={styles.results} {...commonListProps} />
         </View>
-      </View>
-    </Modal>
+      </Modal>
+    </OverlayLayerProvider>
   );
 }
 

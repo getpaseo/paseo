@@ -4,6 +4,7 @@ import {
   useCallback,
   useContext,
   useLayoutEffect,
+  useMemo,
   useRef,
   type ReactNode,
 } from "react";
@@ -50,11 +51,25 @@ export function useOverlayLayer(kind: OverlayKind): number {
   return useContext(OverlayLayerContext) + OVERLAY_Z[kind];
 }
 
+/**
+ * Resolves a globally hosted web overlay above whichever registered overlay
+ * was topmost when it opened. Global hosts live outside their opener's React
+ * tree, so context alone cannot preserve that relative ownership.
+ */
+export function useGlobalWebOverlayLayer(kind: OverlayKind, active: boolean): number {
+  const contextualLayer = useOverlayLayer(kind);
+  return useMemo(() => {
+    if (!active) return contextualLayer;
+    const topLayer = getTopWebOverlay()?.getLayer() ?? 0;
+    return Math.max(contextualLayer, topLayer + OVERLAY_Z[kind]);
+  }, [active, contextualLayer, kind]);
+}
+
 export function useCurrentOverlayLayer(): number {
   return useContext(OverlayLayerContext);
 }
 
-export function OverlayLayerProvider({ layer, children }: { layer: number; children: ReactNode }) {
+export function OverlayLayerProvider({ layer, children }: { layer: number; children?: ReactNode }) {
   return createElement(OverlayLayerContext.Provider, { value: layer }, children);
 }
 

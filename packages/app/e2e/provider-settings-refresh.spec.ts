@@ -154,6 +154,16 @@ test.describe("provider settings overlay stack", () => {
       await expect(commandCenter).not.toBeVisible({ timeout: 10_000 });
       await expect(selector).toBeVisible();
 
+      await page.keyboard.press("ControlOrMeta+K");
+      await expect(commandCenter).toBeVisible({ timeout: 10_000 });
+      await commandCenter.getByText("Add project", { exact: true }).click();
+      const addProject = page.getByTestId("add-project-flow");
+      await expect(addProject).toBeVisible({ timeout: 10_000 });
+      await expect(addProject.getByTestId("add-project-flow-input")).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(addProject).not.toBeVisible({ timeout: 10_000 });
+      await expect(selector).toBeVisible();
+
       const settingsButton = page.getByTestId("selector-header-settings-mock");
       await settingsButton.click();
 
