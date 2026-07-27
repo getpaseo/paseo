@@ -20,28 +20,28 @@ import {
   releaseAttachmentPreviewUrl,
   resolveAttachmentPreviewUrl,
 } from "@/attachments/service";
-import {
-  createPreviewAttachmentId,
-  getFileNameFromPath,
-  parseImageDataUrl,
-} from "@/attachments/utils";
+import { createPreviewAttachmentId, parseImageDataUrl } from "@/attachments/utils";
 import {
   getAssistantImageMetadata,
   setAssistantImageMetadata,
 } from "@/utils/assistant-image-metadata";
 import { resolveAssistantImageSource } from "@/utils/assistant-image-source";
-import type { AssistantImageSourceResolution } from "@/utils/assistant-image-source";
+import { createAssistantImageAcquisitionCache } from "./acquisition-cache";
 import {
-  createAssistantImageAcquisitionCache,
-  createAssistantImageFileAcquisitionKey,
-  createAssistantImageFilePreviewAttachmentId,
-} from "./acquisition-cache";
+  createAssistantImageFileAcquisition,
+  type AssistantImageAcquisition,
+  type AssistantImageFileAcquisitionPort,
+} from "./file-acquisition";
 import {
   createAssistantImageLifecycle,
   transitionAssistantImageLifecycle,
   type AssistantImageLifecycle,
   type AssistantImageLifecycleEvent,
 } from "./lifecycle";
+import {
+  type AssistantImageRenderedDimensionsReader,
+  resolveAssistantImageLoadDimensions,
+} from "./load-dimensions";
 import { runAssistantImageOperationWithRetry } from "./retry";
 
 interface AssistantImageRenderBinding {
@@ -51,35 +51,17 @@ interface AssistantImageRenderBinding {
   onError: () => void;
 }
 
-function getImageLoadDimensions(
-  event: ImageLoadEvent,
-  renderedImage: unknown,
-): { width: number; height: number } | null {
-  const nativeEvent = event.nativeEvent as ImageLoadEvent["nativeEvent"] & {
-    target?: { naturalWidth?: unknown; naturalHeight?: unknown };
-  };
-  const source = nativeEvent.source;
-  if (source && source.width > 0 && source.height > 0) {
-    return source;
-  }
-  const { naturalWidth, naturalHeight } = nativeEvent.target ?? {};
-  if (
-    typeof naturalWidth === "number" &&
-    typeof naturalHeight === "number" &&
-    naturalWidth > 0 &&
-    naturalHeight > 0
-  ) {
-    return { width: naturalWidth, height: naturalHeight };
-  }
-
-  if (isWeb && renderedImage instanceof HTMLElement) {
-    const image = renderedImage.querySelector("img");
-    if (image && image.naturalWidth > 0 && image.naturalHeight > 0) {
-      return { width: image.naturalWidth, height: image.naturalHeight };
+const renderedDimensions: AssistantImageRenderedDimensionsReader = {
+  read(renderedImage) {
+    if (!isWeb || !(renderedImage instanceof HTMLElement)) {
+      return null;
     }
-  }
-  return null;
-}
+    const image = renderedImage.querySelector("img");
+    return image && image.naturalWidth > 0 && image.naturalHeight > 0
+      ? { width: image.naturalWidth, height: image.naturalHeight }
+      : null;
+  },
+};
 
 export type AssistantImageResult =
   | {
@@ -113,11 +95,6 @@ type AttachmentAcquisitionState =
   | { status: "loading" }
   | { status: "loaded"; attachment: AttachmentMetadata }
   | { status: "failed"; error: unknown };
-
-interface AttachmentAcquisition {
-  key: string;
-  locate: () => Promise<AttachmentMetadata>;
-}
 
 interface DataImage {
   mimeType: string;
@@ -169,12 +146,12 @@ function rememberLoadedImage(uri: string, aspectRatio: number): void {
   }
 }
 
-function acquireAttachment(acquisition: AttachmentAcquisition): Promise<AttachmentMetadata> {
+function acquireAttachment(acquisition: AssistantImageAcquisition): Promise<AttachmentMetadata> {
   return attachmentAcquisitionCache.acquire(acquisition.key, acquisition.locate);
 }
 
 function useAttachmentAcquisition(
-  acquisition: AttachmentAcquisition | null,
+  acquisition: AssistantImageAcquisition | null,
 ): AttachmentAcquisitionState {
   const acquisitionKey = acquisition?.key ?? null;
   const [entry, setEntry] = useState<{
@@ -232,54 +209,10 @@ function useAttachmentAcquisition(
   return entry.key === acquisitionKey ? entry.state : { status: "waiting" };
 }
 
-function createFileAcquisition(input: {
-  client?: DaemonClient | null;
-  resolution: AssistantImageSourceResolution | null;
-  serverId?: string;
-  occurrenceKey: string;
-  unavailableMessage: string;
-}): AttachmentAcquisition | null {
-  if (input.resolution?.kind !== "file_rpc") {
-    return null;
-  }
-  const { client, resolution } = input;
-  return {
-    key: createAssistantImageFileAcquisitionKey({
-      serverId: input.serverId,
-      occurrenceKey: input.occurrenceKey,
-      cwd: resolution.cwd,
-      path: resolution.path,
-    }),
-    locate: async () => {
-      if (!client) {
-        throw new Error(input.unavailableMessage);
-      }
-      const file = await client.readFile(resolution.cwd, resolution.path);
-      if (file.kind !== "image") {
-        throw new Error(input.unavailableMessage);
-      }
-      return await persistAttachmentFromBytes({
-        id: createAssistantImageFilePreviewAttachmentId({
-          serverId: input.serverId,
-          occurrenceKey: input.occurrenceKey,
-          mimeType: file.mime,
-          path: file.path || resolution.path,
-          size: file.size,
-          modifiedAt: file.modifiedAt,
-          contentLength: file.bytes.byteLength,
-        }),
-        bytes: file.bytes,
-        mimeType: file.mime,
-        fileName: getFileNameFromPath(file.path || resolution.path),
-      });
-    },
-  };
-}
-
 function createDataImageAcquisition(input: {
   source: string;
   dataImage: DataImage | null;
-}): AttachmentAcquisition | null {
+}): AssistantImageAcquisition | null {
   if (!input.dataImage) {
     return null;
   }
@@ -436,17 +369,21 @@ export function useAssistantImage({
     [source, workspaceRoot],
   );
   const dataImage = useMemo(() => parseImageDataUrl(source), [source]);
-  const fileAcquisition = useMemo(
-    () =>
-      createFileAcquisition({
-        client,
-        resolution,
-        serverId,
-        occurrenceKey,
-        unavailableMessage: t("message.attachments.imagePreviewUnavailable"),
-      }),
-    [client, occurrenceKey, resolution, serverId, t],
-  );
+  const fileAcquisition = useMemo(() => {
+    const port: AssistantImageFileAcquisitionPort | null = client
+      ? {
+          readFile: async (cwd, path) => await client.readFile(cwd, path),
+          persist: persistAttachmentFromBytes,
+        }
+      : null;
+    return createAssistantImageFileAcquisition({
+      port,
+      resolution,
+      serverId,
+      occurrenceKey,
+      unavailableMessage: t("message.attachments.imagePreviewUnavailable"),
+    });
+  }, [client, occurrenceKey, resolution, serverId, t]);
   const dataImageAcquisition = useMemo(
     () => createDataImageAcquisition({ source, dataImage }),
     [dataImage, source],
@@ -520,7 +457,15 @@ export function useAssistantImage({
       if (!uri) {
         return;
       }
-      const dimensions = getImageLoadDimensions(event, renderedImageRef.current);
+      const nativeEvent = event.nativeEvent as ImageLoadEvent["nativeEvent"] & {
+        target?: { naturalWidth?: unknown; naturalHeight?: unknown };
+      };
+      const dimensions = resolveAssistantImageLoadDimensions({
+        source: nativeEvent.source,
+        target: nativeEvent.target,
+        renderedImage: renderedImageRef.current,
+        renderedDimensions,
+      });
       const metadata = dimensions
         ? setAssistantImageMetadata({ source, workspaceRoot, serverId }, dimensions)
         : null;
