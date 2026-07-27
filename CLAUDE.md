@@ -51,6 +51,7 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 | [docs/browser-capture-harness.md](docs/browser-capture-harness.md) | Real-Electron browser screenshot harness and compositor-surface gotcha                                                         |
 | [docs/android.md](docs/android.md)                                 | App variants, local/cloud builds, EAS workflows                                                                                |
 | [docs/docker.md](docs/docker.md)                                   | Running the daemon and bundled web UI in Docker, volumes, agent images, security                                               |
+| [docs/devcontainers.md](docs/devcontainers.md)                     | Dev containers — launch strategies, exec gotchas, what crosses into the container, what stays on the host                      |
 | [docs/release.md](docs/release.md)                                 | Release playbook, draft releases, completion checklist                                                                         |
 | [docs/terminal-activity.md](docs/terminal-activity.md)             | Terminal activity indicators — source-agnostic tracker, agent hook reporting, adding a new hook provider                       |
 | [SECURITY.md](SECURITY.md)                                         | Relay threat model, E2E encryption, DNS rebinding, agent auth                                                                  |

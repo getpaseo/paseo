@@ -1,7 +1,7 @@
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
-import { promises } from "node:fs";
+
 import os from "node:os";
 import path from "node:path";
 import {
@@ -55,6 +55,10 @@ import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./quer
 import { realClaudeRewindSdk, revertClaudeConversation, revertClaudeFiles } from "./rewind.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import { claudeProjectDirSync } from "./project-dir.js";
+import {
+  createLaunchFileSystem,
+  type LaunchFileSystem,
+} from "../../../devcontainer/launch-filesystem.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
 import {
   isProviderImageMarkdown,
@@ -84,6 +88,7 @@ import {
   type AgentRunResult,
   type AgentSession,
   type AgentSessionConfig,
+  type ProviderAvailabilityOptions,
   type AgentSlashCommand,
   type AgentStreamEvent,
   type AgentTimelineItem,
@@ -111,8 +116,8 @@ import { withTimeout } from "../../../../utils/promise-timeout.js";
 import { terminateWithTreeKill } from "../../../../utils/tree-kill.js";
 import { execCommand } from "../../../../utils/spawn.js";
 import { composeSystemPromptParts } from "../../system-prompt.js";
+import type { ProcessLaunchStrategy } from "../../../devcontainer/launch-strategy.js";
 
-const fsPromises = promises;
 const CLAUDE_SETTING_SOURCES: NonNullable<ClaudeOptions["settingSources"]> = [
   "user",
   "project",
@@ -283,6 +288,7 @@ const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: true,
   supportsRewindBoth: true,
+  supportsIsolatedLaunch: true,
 };
 
 const DEFAULT_MODES: AgentMode[] = [
@@ -374,6 +380,7 @@ interface ClaudeAgentSessionOptions {
   handle?: AgentPersistenceHandle;
   agentId?: string;
   launchEnv?: Record<string, string>;
+  launchStrategy?: ProcessLaunchStrategy;
   persistSession?: boolean;
   logger: Logger;
   queryFactory?: ClaudeQueryFactory;
@@ -1466,6 +1473,7 @@ export class ClaudeAgentClient implements AgentClient {
       runtimeSettings: this.runtimeSettings,
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
+      launchStrategy: launchContext?.launchStrategy,
       persistSession: options?.persistSession,
       logger: this.logger,
       queryFactory: this.queryFactory,
@@ -1489,16 +1497,21 @@ export class ClaudeAgentClient implements AgentClient {
       cwd: merged.cwd,
     };
     const claudeConfig = this.assertConfig(mergedConfig);
-    return new ClaudeAgentSession(claudeConfig, {
+    const session = new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
       runtimeSettings: this.runtimeSettings,
       handle,
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
+      launchStrategy: launchContext?.launchStrategy,
       logger: this.logger,
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
     });
+    // Before the caller can touch it: a resumed session's history is part of
+    // what it means for the session to exist.
+    await session.hydratePersistedHistory();
+    return session;
   }
 
   async fetchCatalog(_options: FetchCatalogOptions): Promise<ProviderCatalog> {
@@ -1549,19 +1562,27 @@ export class ClaudeAgentClient implements AgentClient {
   async listImportableSessions(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]> {
-    const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
-    const sessionsRoot = options?.cwd
-      ? claudeProjectDirSync(options.cwd, { configDir })
+    // A container workspace's sessions were written inside the container,
+    // under its HOME and keyed by its cwd. The host's copies belong to a
+    // different environment.
+    const files = createLaunchFileSystem(options?.launchStrategy);
+    const strategy = options?.launchStrategy;
+    const configDir = files.isIsolated
+      ? path.join(await files.homeDir(), ".claude")
+      : (process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude"));
+    const sessionCwd =
+      options?.cwd && strategy?.isIsolated ? strategy.resolveCwd(options.cwd) : options?.cwd;
+    const sessionsRoot = sessionCwd
+      ? claudeProjectDirSync(sessionCwd, { configDir })
       : path.join(configDir, "projects");
-    if (!(await pathExists(sessionsRoot))) {
-      return [];
-    }
     const limit = options?.limit ?? 20;
-    const candidates = await collectRecentClaudeSessions(sessionsRoot, limit * 3, {
-      rootIsProjectDir: Boolean(options?.cwd),
+    const candidates = await collectRecentClaudeSessions(files, sessionsRoot, limit * 3, {
+      rootIsProjectDir: Boolean(sessionCwd),
     });
     const parsed = await Promise.all(
-      candidates.map((candidate) => parseClaudeSessionDescriptor(candidate.path, candidate.mtime)),
+      candidates.map((candidate) =>
+        parseClaudeSessionDescriptor(files, candidate.path, candidate.mtime),
+      ),
     );
     return parsed
       .filter((session): session is ImportableProviderSession => session !== null)
@@ -1577,10 +1598,18 @@ export class ClaudeAgentClient implements AgentClient {
     });
   }
 
-  async isAvailable(): Promise<boolean> {
+  async isAvailable(options?: ProviderAvailabilityOptions): Promise<boolean> {
+    const strategy = options?.launchStrategy;
+    if (strategy?.isIsolated) {
+      // The host's copy is irrelevant: this session would run in the container.
+      return strategy
+        .resolveExecutable(CLAUDE_CONTAINER_COMMAND)
+        .then(() => true)
+        .catch(() => false);
+    }
     const launch = await resolveProviderLaunch({
       commandConfig: this.runtimeSettings?.command,
-      defaultBinary: "claude",
+      defaultBinary: CLAUDE_CONTAINER_COMMAND,
     });
     const availability = await checkProviderLaunchAvailable(launch);
     return availability.available;
@@ -1621,10 +1650,18 @@ export class ClaudeAgentClient implements AgentClient {
   }
 }
 
+/**
+ * The command name Claude Code installs on PATH. Container sessions launch
+ * this name and let the image's PATH resolve it.
+ */
+const CLAUDE_CONTAINER_COMMAND = "claude";
+/** Subagent transcripts nest a level or two below the session directory. */
+const SIDECHAIN_SEARCH_DEPTH = 4;
+
 async function resolveClaudeBinary(runtimeSettings?: ProviderRuntimeSettings): Promise<string> {
   const launch = await resolveProviderLaunch({
     commandConfig: runtimeSettings?.command,
-    defaultBinary: "claude",
+    defaultBinary: CLAUDE_CONTAINER_COMMAND,
   });
   const availability = await checkProviderLaunchAvailable(launch);
   if (availability.available) {
@@ -1960,6 +1997,12 @@ class ClaudeAgentSession implements AgentSession {
 
   private readonly config: ClaudeAgentConfig;
   private readonly launchEnv?: Record<string, string>;
+  private readonly launchStrategy?: ProcessLaunchStrategy;
+  /**
+   * Where this session's transcripts live: the container's filesystem when the
+   * agent runs in one, the host's otherwise.
+   */
+  private readonly transcriptFiles: LaunchFileSystem;
   private readonly agentId?: string;
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
   private readonly runtimeSettings?: ProviderRuntimeSettings;
@@ -2015,6 +2058,8 @@ class ClaudeAgentSession implements AgentSession {
   constructor(config: ClaudeAgentConfig, options: ClaudeAgentSessionOptions) {
     this.config = config;
     assertClaudeThinkingOptionSupported(config.model, config.thinkingOptionId);
+    this.launchStrategy = options.launchStrategy;
+    this.transcriptFiles = createLaunchFileSystem(options.launchStrategy);
     this.launchEnv = options.launchEnv;
     this.agentId = options.agentId;
     this.defaults = options.defaults;
@@ -2034,7 +2079,6 @@ class ClaudeAgentSession implements AgentSession {
       }
       this.claudeSessionId = handle.sessionId;
       this.persistence = handle;
-      this.loadPersistedHistory(handle.sessionId);
     } else {
       this.claudeSessionId = null;
       this.persistence = null;
@@ -2496,10 +2540,10 @@ class ClaudeAgentSession implements AgentSession {
       // (see `claude --help`), so the SDK's persistSession=false is silently dropped
       // in stream-json mode. Sweep the transcript ourselves so ephemeral runs
       // (metadata generator, branch-name generator) don't show up as resumable.
-      const historyPath = this.resolveHistoryPath(this.claudeSessionId);
+      const historyPath = await this.resolveHistoryPath(this.claudeSessionId);
       if (historyPath) {
         try {
-          await promises.rm(historyPath, { force: true });
+          await this.transcriptFiles.remove(historyPath);
         } catch (error) {
           this.logger.warn(
             { err: error, historyPath, claudeSessionId: this.claudeSessionId },
@@ -2550,9 +2594,7 @@ class ClaudeAgentSession implements AgentSession {
       sessionId: this.claudeSessionId,
       messageId: target.messageId,
       resolveMessageId: (messageId) => this.resolveClaudeMessageId(messageId),
-      setSessionId: (sessionId) => {
-        this.rebindConversationSession(sessionId);
-      },
+      setSessionId: (sessionId) => this.rebindConversationSession(sessionId),
     });
   }
 
@@ -2728,7 +2770,7 @@ class ClaudeAgentSession implements AgentSession {
     return candidates;
   }
 
-  private rebindConversationSession(sessionId: string): void {
+  private async rebindConversationSession(sessionId: string): Promise<void> {
     const oldSessionId = this.claudeSessionId;
     this.claudeSessionId = sessionId;
     this.pendingFreshSessionId = null;
@@ -2741,7 +2783,7 @@ class ClaudeAgentSession implements AgentSession {
     this.userMessageIds = [];
     this.emittedUserMessageIds.clear();
     this.rewindTurnAnchors.length = 0;
-    this.loadPersistedHistory(sessionId);
+    await this.readPersistedHistory(sessionId).catch(() => undefined);
     if (oldSessionId && oldSessionId !== sessionId) {
       this.dispatchEvents([
         {
@@ -2918,6 +2960,7 @@ class ClaudeAgentSession implements AgentSession {
       {
         runtimeSettings: this.runtimeSettings,
         launchEnv: this.launchEnv,
+        launchStrategy: this.launchStrategy,
         queryFactory: this.queryFactory,
         onChildProcess: (child) => {
           this.childProcess = child;
@@ -3025,6 +3068,21 @@ class ClaudeAgentSession implements AgentSession {
     });
   }
 
+  /**
+   * Which `claude` the SDK should launch. Host sessions get the binary
+   * resolved against the daemon's PATH; container sessions get the path the
+   * container resolves for itself. Neither has a JS extension, so the SDK
+   * treats it as a native executable and passes only CLI flags — which is what
+   * exec-ing it needs.
+   */
+  private async resolveClaudeExecutable(): Promise<string> {
+    const strategy = this.launchStrategy;
+    // The host's copy is irrelevant to a container session — and the host may
+    // not have one at all.
+    if (!strategy?.isIsolated) return this.resolveBinary();
+    return strategy.resolveExecutable(CLAUDE_CONTAINER_COMMAND);
+  }
+
   private async buildOptions(): Promise<ClaudeOptions> {
     const { thinking, effort, ultracode } = this.resolveThinkingConfig();
     const appendedSystemPrompt = this.buildAppendedSystemPrompt();
@@ -3033,7 +3091,7 @@ class ClaudeAgentSession implements AgentSession {
     const sdkEnv = this.buildSdkEnv(extraClaudeOptions);
     assertClaudeAutoModeEligible(this.currentMode, sdkEnv);
 
-    const claudeBinary = await this.resolveBinary();
+    const claudeBinary = await this.resolveClaudeExecutable();
     this.logger.debug(
       {
         claudeBinary,
@@ -4311,18 +4369,31 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private loadPersistedHistory(sessionId: string): void {
-    try {
-      const historyPath = this.resolveHistoryPath(sessionId);
-      if (!historyPath || !fs.existsSync(historyPath)) {
-        return;
-      }
-      const content = fs.readFileSync(historyPath, "utf8");
-      this.ingestPersistedHistory(content);
-      this.ingestPersistedSidechains(content, readClaudeSidechainHistory(historyPath));
-    } catch {
-      // ignore history load failures
-    }
+  /**
+   * Load this session's transcript into the replayable history.
+   *
+   * Reading it is I/O — for a container session, an exec into the container
+   * (~75ms) rather than a local file read — so it cannot happen in the
+   * constructor. It happens before the session is handed to anyone instead:
+   * ClaudeAgentClient.resumeSession awaits this, and so does every path that
+   * rebinds the session id. Nothing can therefore observe the history in a
+   * half-loaded state, and no reader has to remember to await anything.
+   */
+  async hydratePersistedHistory(): Promise<void> {
+    if (!this.claudeSessionId) return;
+    await this.readPersistedHistory(this.claudeSessionId).catch(() => undefined);
+  }
+
+  private async readPersistedHistory(sessionId: string): Promise<void> {
+    const historyPath = await this.resolveHistoryPath(sessionId);
+    if (!historyPath) return;
+    const content = await this.transcriptFiles.readFile(historyPath);
+    if (content === null) return;
+    this.ingestPersistedHistory(content);
+    this.ingestPersistedSidechains(
+      content,
+      await readClaudeSidechainHistory(this.transcriptFiles, historyPath),
+    );
   }
 
   private ingestPersistedHistory(content: string): void {
@@ -4406,29 +4477,50 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private resolveHistoryPath(sessionId: string): string | null {
+  /**
+   * Where this session's transcript is. Claude keys the directory off the cwd
+   * it ran in, so a container session's transcript sits under the container's
+   * HOME, named for the container's cwd — neither of which the host shares.
+   */
+  private async resolveHistoryPath(sessionId: string): Promise<string | null> {
     const cwd = this.config.cwd;
     if (!cwd) return null;
-    const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
-    const candidates = [cwd];
-    try {
-      const realCwd = fs.realpathSync(cwd);
-      if (realCwd !== cwd) {
-        candidates.push(realCwd);
+    const configDir = await this.resolveTranscriptConfigDir();
+    const candidates = [this.resolveTranscriptCwd(cwd)];
+    if (!this.transcriptFiles.isIsolated) {
+      try {
+        const realCwd = fs.realpathSync(cwd);
+        if (realCwd !== cwd) {
+          candidates.push(realCwd);
+        }
+      } catch {
+        // Fall back to the configured cwd when the path has already disappeared.
       }
-    } catch {
-      // Fall back to the configured cwd when the path has already disappeared.
     }
     for (const candidate of candidates) {
       const historyPath = path.join(
         claudeProjectDirSync(candidate, { configDir }),
         `${sessionId}.jsonl`,
       );
-      if (fs.existsSync(historyPath)) {
+      if (await this.transcriptFiles.exists(historyPath)) {
         return historyPath;
       }
     }
-    return path.join(claudeProjectDirSync(cwd, { configDir }), `${sessionId}.jsonl`);
+    return path.join(claudeProjectDirSync(candidates[0], { configDir }), `${sessionId}.jsonl`);
+  }
+
+  /** The cwd Claude saw — the container's path for a container session. */
+  private resolveTranscriptCwd(cwd: string): string {
+    return this.launchStrategy?.isIsolated ? this.launchStrategy.resolveCwd(cwd) : cwd;
+  }
+
+  private async resolveTranscriptConfigDir(): Promise<string> {
+    if (!this.transcriptFiles.isIsolated) {
+      return process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+    }
+    // The daemon's CLAUDE_CONFIG_DIR describes the host's install, not this
+    // container's; the container's own HOME is the only thing that applies.
+    return path.join(await this.transcriptFiles.homeDir(), ".claude");
   }
 
   private convertHistoryEntry(entry: ClaudeHistoryEntry): AgentTimelineItem[] {
@@ -5132,27 +5224,23 @@ function parseClaudeHistoryRecords(content: string): ClaudeHistoryEntry[] {
   return entries;
 }
 
-function readClaudeSidechainHistory(historyPath: string): string[] {
+async function readClaudeSidechainHistory(
+  files: LaunchFileSystem,
+  historyPath: string,
+): Promise<string[]> {
   const sessionDirectory = path.join(
     path.dirname(historyPath),
     path.basename(historyPath, ".jsonl"),
   );
   const sidechainDirectory = path.join(sessionDirectory, "subagents");
-  if (!fs.existsSync(sidechainDirectory)) return [];
-
+  const entries = await files.listFiles(sidechainDirectory, {
+    suffix: ".jsonl",
+    maxDepth: SIDECHAIN_SEARCH_DEPTH,
+  });
   const contents: string[] = [];
-  const directories = [sidechainDirectory];
-  while (directories.length > 0) {
-    const directory = directories.pop();
-    if (!directory) continue;
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      const entryPath = path.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        directories.push(entryPath);
-      } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
-        contents.push(fs.readFileSync(entryPath, "utf8"));
-      }
-    }
+  for (const entry of entries) {
+    const content = await files.readFile(entry.path);
+    if (content) contents.push(content);
   }
   return contents;
 }
@@ -5500,59 +5588,22 @@ interface ClaudeSessionCandidate {
   mtime: Date;
 }
 
-async function pathExists(target: string): Promise<boolean> {
-  try {
-    await fsPromises.access(target);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function collectRecentClaudeSessions(
+  files: LaunchFileSystem,
   root: string,
   limit: number,
   options?: { rootIsProjectDir?: boolean },
 ): Promise<ClaudeSessionCandidate[]> {
-  let rootEntries: string[];
-  try {
-    rootEntries = await fsPromises.readdir(root);
-  } catch {
-    return [];
-  }
-  const fileEntries = options?.rootIsProjectDir
-    ? rootEntries.filter((file) => file.endsWith(".jsonl")).map((file) => path.join(root, file))
-    : (
-        await Promise.all(
-          rootEntries.map(async (dirName) => {
-            const projectPath = path.join(root, dirName);
-            try {
-              const stats = await fsPromises.stat(projectPath);
-              if (!stats.isDirectory()) return [] as string[];
-              const files = await fsPromises.readdir(projectPath);
-              return files
-                .filter((file) => file.endsWith(".jsonl"))
-                .map((file) => path.join(projectPath, file));
-            } catch {
-              return [] as string[];
-            }
-          }),
-        )
-      ).flat();
-  const statResults = await Promise.all(
-    fileEntries.map(async (fullPath) => {
-      try {
-        const fileStats = await fsPromises.stat(fullPath);
-        return { path: fullPath, mtime: fileStats.mtime };
-      } catch {
-        return null;
-      }
-    }),
-  );
-  const candidates: ClaudeSessionCandidate[] = statResults.filter(
-    (entry): entry is ClaudeSessionCandidate => entry !== null,
-  );
-  return candidates.sort((a, b) => b.mtime.getTime() - a.mtime.getTime()).slice(0, limit);
+  // Project directories sit one level below the sessions root, transcripts one
+  // below that; pointing at a single project directory needs only the files.
+  const entries = await files.listFiles(root, {
+    suffix: ".jsonl",
+    maxDepth: options?.rootIsProjectDir ? 1 : 2,
+  });
+  return entries
+    .map((entry) => ({ path: entry.path, mtime: new Date(entry.mtimeMs) }))
+    .sort((a, b) => b.mtime.getTime() - a.mtime.getTime())
+    .slice(0, limit);
 }
 
 interface ClaudeSessionDescriptorAccumulator {
@@ -5602,13 +5653,12 @@ function applyClaudeSessionEntryToAccumulator(
 }
 
 async function parseClaudeSessionDescriptor(
+  files: LaunchFileSystem,
   filePath: string,
   mtime: Date,
 ): Promise<ImportableProviderSession | null> {
-  let content: string;
-  try {
-    content = await fsPromises.readFile(filePath, "utf8");
-  } catch {
+  const content = await files.readFile(filePath);
+  if (content === null) {
     return null;
   }
 

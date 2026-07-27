@@ -147,6 +147,7 @@ export function findByType<T extends SessionOutboundMessage["type"]>(
 export interface ProviderSnapshotManagerSpies {
   getSnapshot: ReturnType<typeof vi.fn<[cwd?: string], ProviderSnapshotEntry[]>>;
   refreshSnapshotForCwd: ReturnType<typeof vi.fn<[unknown], Promise<void>>>;
+  probeSnapshotForCwd: ReturnType<typeof vi.fn<[unknown], Promise<ProviderSnapshotEntry[]>>>;
   refreshSettingsSnapshot: ReturnType<typeof vi.fn<[unknown], Promise<void>>>;
   warmUpSnapshotForCwd: ReturnType<typeof vi.fn<[unknown], Promise<void>>>;
   listRegisteredProviderIds: ReturnType<typeof vi.fn<[], AgentProvider[]>>;
@@ -171,6 +172,7 @@ export function createProviderSnapshotManagerStub(): {
 } & ProviderSnapshotManagerSpies {
   const getSnapshot = vi.fn<[cwd?: string], ProviderSnapshotEntry[]>(() => []);
   const refreshSnapshotForCwd = vi.fn<[unknown], Promise<void>>(async () => {});
+  const probeSnapshotForCwd = vi.fn<[unknown], Promise<ProviderSnapshotEntry[]>>(async () => []);
   const refreshSettingsSnapshot = vi.fn<[unknown], Promise<void>>(async () => {});
   const warmUpSnapshotForCwd = vi.fn<[unknown], Promise<void>>(async () => {});
   const listRegisteredProviderIds = vi.fn<[], AgentProvider[]>(() => []);
@@ -210,6 +212,7 @@ export function createProviderSnapshotManagerStub(): {
   const stub = {
     getSnapshot,
     refreshSnapshotForCwd,
+    probeSnapshotForCwd,
     refreshSettingsSnapshot,
     warmUpSnapshotForCwd,
     listRegisteredProviderIds,
@@ -235,6 +238,7 @@ export function createProviderSnapshotManagerStub(): {
     manager,
     getSnapshot,
     refreshSnapshotForCwd,
+    probeSnapshotForCwd,
     refreshSettingsSnapshot,
     warmUpSnapshotForCwd,
     listRegisteredProviderIds,

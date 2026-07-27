@@ -587,6 +587,34 @@ export const ptBR: TranslationResources = {
         copyBranchName: "Copiar nome da branch",
         showSetup: "Mostrar configuração",
       },
+      container: {
+        running: "Executando em contêiner",
+        runningTooltip: "Agentes e terminais são executados dentro do contêiner deste workspace",
+        starting: "Iniciando contêiner",
+        startingTooltip:
+          "Construindo e iniciando o ambiente do contêiner. Agentes e terminais aguardarão até que esteja pronto.",
+        stopped: "Contêiner parado",
+        stoppedTooltip: "O ambiente do contêiner não está mais em execução",
+        details: {
+          backend: "Backend",
+          image: "Imagem",
+          container: "Contêiner",
+          user: "Usuário",
+          started: "Iniciado",
+        },
+        configChangedTitle: "Configuração do contêiner alterada",
+        configChangedMessage:
+          "O devcontainer.json foi alterado desde a construção do contêiner. Reconstrua para aplicar as alterações.",
+        dismiss: "Descartar",
+        rebuildAction: "Reconstruir contêiner",
+        restartAction: "Reiniciar contêiner",
+        rebuildConfirmTitle: "Reconstruir contêiner",
+        rebuildConfirmMessage:
+          "Todos os agentes e terminais em execução serão interrompidos. Reconstruir o contêiner?",
+        restartConfirmTitle: "Reiniciar contêiner",
+        restartConfirmMessage:
+          "Todos os agentes e terminais em execução serão reiniciados. Reiniciar o contêiner?",
+      },
       toasts: {
         workspacePathUnavailable: "O caminho do workspace ainda não está disponível",
         branchNameUnavailable: "Nome da branch indisponível",
@@ -1003,6 +1031,7 @@ export const ptBR: TranslationResources = {
       label: "Isolamento",
     },
     fields: {
+      host: "Host",
       project: "Projeto",
       base: "Base",
       baseNotApplicable: "Não aplicável",
@@ -1278,6 +1307,13 @@ export const ptBR: TranslationResources = {
       hostDisconnected: "Host não está conectado",
       pendingRequired: "Nenhuma configuração de workspace está pendente",
       composerStateRequired: "O estado do composer da configuração do workspace é obrigatório",
+    },
+    containerBackend: {
+      label: "Ambiente de execução",
+      host: "Host",
+      devcontainer: "Contêiner de desenvolvimento",
+      probing: "{{backend}} — iniciando…",
+      probeFailed: "Não foi possível inspecionar o contêiner: {{error}}",
     },
   },
   onboarding: {

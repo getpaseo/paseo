@@ -11,6 +11,11 @@ import { resolve, sep } from "node:path";
 import { assertAbsolutePath, isSameOrDescendantPath } from "../server/path-utils.js";
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 import { deriveTerminalActivityStatusBucket } from "@getpaseo/protocol/terminal-activity";
+import {
+  deserializeLaunchStrategy,
+  type ContainerExecSpec,
+  type ProcessLaunchStrategy,
+} from "../server/devcontainer/launch-strategy.js";
 
 export interface TerminalListItem {
   id: string;
@@ -60,6 +65,12 @@ export interface TerminalManager {
     env?: Record<string, string>;
     command?: string;
     args?: string[];
+    /**
+     * Serialized description of the workspace's container, when it has one.
+     * A strategy object cannot cross the terminal worker's process boundary;
+     * this can, and each side rebuilds the strategy from it.
+     */
+    containerExec?: ContainerExecSpec | null;
     rows?: number;
     cols?: number;
     activityToken?: string;
@@ -99,6 +110,29 @@ export interface TerminalManagerOptions {
 
 function createActivityToken(): string {
   return randomBytes(32).toString("base64url");
+}
+
+/**
+ * Environment the terminal's shell needs to report activity back to the
+ * daemon. For an isolated terminal, loopback means the container itself, so
+ * the reporting URL is rewritten to a route that reaches the host — and
+ * dropped when there is none.
+ */
+function buildTerminalActivityEnv(input: {
+  terminalId: string;
+  activityToken: string;
+  activityUrl: string | null;
+  launchStrategy: ProcessLaunchStrategy | null;
+}): Record<string, string> {
+  const reachableUrl =
+    input.activityUrl && input.launchStrategy
+      ? input.launchStrategy.resolveDaemonUrl(input.activityUrl)
+      : input.activityUrl;
+  return {
+    PASEO_TERMINAL_ID: input.terminalId,
+    PASEO_ACTIVITY_TOKEN: input.activityToken,
+    ...(reachableUrl ? { PASEO_TERMINAL_ACTIVITY_URL: reachableUrl } : {}),
+  };
 }
 
 export function createTerminalManager(
@@ -317,6 +351,7 @@ export function createTerminalManager(
       env?: Record<string, string>;
       command?: string;
       args?: string[];
+      containerExec?: ContainerExecSpec | null;
       rows?: number;
       cols?: number;
       activityToken?: string;
@@ -331,15 +366,18 @@ export function createTerminalManager(
         inheritedEnv || options.env ? { ...inheritedEnv, ...options.env } : undefined;
       const terminalId = options.id ?? randomUUID();
       const activityToken = options.activityToken ?? createActivityToken();
-      const terminalActivityUrl =
-        options.activityUrl === undefined
-          ? (managerOptions.getTerminalActivityUrl?.() ?? null)
-          : options.activityUrl;
-      const activityEnv = {
-        PASEO_TERMINAL_ID: terminalId,
-        PASEO_ACTIVITY_TOKEN: activityToken,
-        ...(terminalActivityUrl ? { PASEO_TERMINAL_ACTIVITY_URL: terminalActivityUrl } : {}),
-      };
+      const launchStrategy = options.containerExec
+        ? deserializeLaunchStrategy(options.containerExec)
+        : null;
+      const activityEnv = buildTerminalActivityEnv({
+        terminalId,
+        activityToken,
+        activityUrl:
+          options.activityUrl === undefined
+            ? (managerOptions.getTerminalActivityUrl?.() ?? null)
+            : options.activityUrl,
+        launchStrategy,
+      });
       terminalActivityTokenById.set(terminalId, activityToken);
       let session: TerminalSession;
       try {
@@ -353,9 +391,9 @@ export function createTerminalManager(
             ...(options.command ? { command: options.command } : {}),
             ...(options.args ? { args: options.args } : {}),
             ...(options.rows !== undefined ? { rows: options.rows } : {}),
-            ...(options.cols !== undefined ? { cols: options.cols } : {}),
             ...(mergedEnv ? { env: mergedEnv } : {}),
             activityEnv,
+            ...(launchStrategy ? { launchStrategy } : {}),
           }),
         );
       } catch (error) {

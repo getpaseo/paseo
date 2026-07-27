@@ -14,6 +14,7 @@ import type {
 import type { ProviderAvailability } from "../../agent/agent-manager.js";
 import type { ProviderUsageService } from "../../../services/quota-fetcher/service.js";
 import { expandTilde } from "../../../utils/path.js";
+import { LocalLaunchStrategy } from "../../devcontainer/launch-strategy.js";
 
 // COMPAT(customModeIcons): the only mode icons known to clients before v0.1.84. Any
 // other icon name is downgraded to "ShieldCheck" for those clients.
@@ -375,9 +376,14 @@ export class ProviderCatalogSession {
     msg: Extract<SessionInboundMessage, { type: "refresh_providers_snapshot_request" }>,
   ): Promise<void> {
     if (msg.cwd) {
+      // containerBackend: null means "answer for the host", which the
+      // new-workspace screen needs because the directory it is pointed at may
+      // already hold a container-backed workspace. A backend id cannot be
+      // honoured here — probing one has its own RPC — so it is ignored.
       await this.providerSnapshotManager.refreshSnapshotForCwd({
         cwd: expandTilde(msg.cwd),
         providers: msg.providers,
+        ...(msg.containerBackend === null ? { launchStrategy: new LocalLaunchStrategy() } : {}),
       });
     } else {
       await this.providerSnapshotManager.refreshSettingsSnapshot({

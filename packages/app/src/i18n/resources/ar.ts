@@ -584,6 +584,34 @@ export const ar: TranslationResources = {
         copyBranchName: "انسخ اسم الفرع",
         showSetup: "إظهار الإعداد",
       },
+      container: {
+        running: "يعمل في حاوية",
+        runningTooltip: "تعمل الوكلاء والطرفيات داخل حاوية مساحة العمل هذه",
+        starting: "بدء الحاوية",
+        startingTooltip:
+          "جاري بناء وبدء بيئة الحاوية. سينتظر الوكلاء والمحطات الطرفية حتى تكون جاهزة.",
+        stopped: "توقفت الحاوية",
+        stoppedTooltip: "بيئة الحاوية لم تعد تعمل",
+        details: {
+          backend: "الخلفية",
+          image: "الصورة",
+          container: "الحاوية",
+          user: "المستخدم",
+          started: "بدأ",
+        },
+        configChangedTitle: "تم تغيير إعدادات الحاوية",
+        configChangedMessage:
+          "تم تغيير devcontainer.json منذ بناء الحاوية. أعد البناء لتطبيق التغييرات.",
+        dismiss: "تجاهل",
+        rebuildAction: "إعادة بناء الحاوية",
+        restartAction: "إعادة تشغيل الحاوية",
+        rebuildConfirmTitle: "إعادة بناء الحاوية",
+        rebuildConfirmMessage:
+          "سيتم إيقاف جميع الوكلاء والمحطات الطرفية قيد التشغيل. هل تريد إعادة بناء الحاوية؟",
+        restartConfirmTitle: "إعادة تشغيل الحاوية",
+        restartConfirmMessage:
+          "سيتم إعادة تشغيل جميع الوكلاء والمحطات الطرفية قيد التشغيل. هل تريد إعادة تشغيل الحاوية؟",
+      },
       toasts: {
         workspacePathUnavailable: "مسار Workspace غير متاح بعد",
         branchNameUnavailable: "اسم الفرع غير متوفر",
@@ -981,6 +1009,7 @@ export const ar: TranslationResources = {
       label: "العزل",
     },
     fields: {
+      host: "المضيف",
       project: "المشروع",
       base: "الأساس",
       baseNotApplicable: "غير قابل للتطبيق",
@@ -1251,6 +1280,13 @@ export const ar: TranslationResources = {
       hostDisconnected: "Host غير متصل",
       pendingRequired: "لا يوجد إعداد معلق لمساحة العمل",
       composerStateRequired: "مطلوب حالة مؤلف إعداد Workspace",
+    },
+    containerBackend: {
+      label: "بيئة التنفيذ",
+      host: "المضيف",
+      devcontainer: "حاوية التطوير",
+      probing: "{{backend}} — جارٍ التشغيل…",
+      probeFailed: "تعذّر فحص الحاوية: {{error}}",
     },
   },
   onboarding: {

@@ -43,6 +43,8 @@ const execFileAsync = promisify(execFile);
 const READ_ONLY_GIT_ENV = {
   GIT_OPTIONAL_LOCKS: "0",
 } as const;
+/** Shown by `git worktree list` when someone wonders why it cannot be pruned. */
+const PASEO_WORKTREE_LOCK_REASON = "Managed by Paseo; remove the workspace instead of pruning";
 
 export interface WorktreeConfig {
   branchName: string;
@@ -203,6 +205,15 @@ export interface CreateWorktreeOptions {
   runSetup: boolean;
   paseoHome?: string;
   worktreesRoot?: string;
+  /**
+   * Link the worktree by relative path instead of absolute. Only a worktree
+   * linked this way can be used from inside a container, because the absolute
+   * form names host paths the container does not have. It writes
+   * `extensions.relativeWorktrees` on the repository, which git older than 2.48
+   * refuses to open — so the caller sets this only once it knows both the host
+   * and the image can read the result.
+   */
+  relativePaths?: boolean;
 }
 
 interface ResolveExistingWorktreeForSlugOptions {
@@ -586,6 +597,93 @@ async function assertPortAvailable(port: number): Promise<void> {
   });
 }
 
+/**
+ * Lock a worktree Paseo created, so nothing can prune it out from under us.
+ *
+ * `git worktree prune` deletes the admin directory — HEAD, index, reflog — of
+ * any worktree whose `gitdir` file names a path that does not exist, and
+ * `git gc` runs it on a three-month timer. A container is exactly that case:
+ * it mounts one worktree, so every *other* worktree of the repo reads as
+ * missing from inside it, and an agent running `git gc` there would delete a
+ * sibling workspace's state. Locking is git's own answer for a worktree whose
+ * files are not always reachable, and it survives both directions.
+ */
+async function lockPaseoWorktree(options: { cwd: string; worktreePath: string }): Promise<void> {
+  try {
+    await runGitCommand(
+      ["worktree", "lock", options.worktreePath, "--reason", PASEO_WORKTREE_LOCK_REASON],
+      { cwd: options.cwd, timeout: 30_000 },
+    );
+  } catch {
+    // Older git, or a worktree git no longer tracks. The worktree is still
+    // usable; it just keeps the prune exposure it had before.
+  }
+}
+
+/**
+ * Locked worktrees cannot be removed *or pruned*, so every path that heals a
+ * stale registration has to undo the lock first — removal here, and restore in
+ * workspace-recovery-service.
+ */
+export async function unlockPaseoWorktree(options: {
+  cwd: string;
+  worktreePath: string;
+}): Promise<void> {
+  try {
+    await runGitCommand(["worktree", "unlock", options.worktreePath], {
+      cwd: options.cwd,
+      timeout: 30_000,
+    });
+  } catch {
+    // Not locked, or already gone. Removal handles both.
+  }
+}
+
+/**
+ * Unlock every locked worktree whose directory is gone, so a following prune
+ * can clear the registration.
+ *
+ * Paseo locks its worktrees so nothing can prune a live one away, but the same
+ * lock stops prune from healing a *stale* entry — a worktree whose directory
+ * was removed without git being told. Restore depends on that healing: the
+ * stale entry keeps the branch pinned, and recreating it fails with "branch
+ * already checked out". Unlocking by path is not enough, because a record from
+ * an older version may not remember where its worktree was.
+ */
+export async function unlockStaleWorktrees(options: { cwd: string }): Promise<void> {
+  let listing: string;
+  try {
+    listing = (
+      await runGitCommand(["worktree", "list", "--porcelain"], {
+        cwd: options.cwd,
+        timeout: 30_000,
+      })
+    ).stdout;
+  } catch {
+    return;
+  }
+
+  let worktreePath: string | null = null;
+  let locked = false;
+  const flush = async (): Promise<void> => {
+    if (worktreePath && locked && !existsSync(worktreePath)) {
+      await unlockPaseoWorktree({ cwd: options.cwd, worktreePath });
+    }
+    worktreePath = null;
+    locked = false;
+  };
+  for (const line of listing.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("worktree ")) {
+      await flush();
+      worktreePath = trimmed.slice("worktree ".length);
+    } else if (trimmed === "locked" || trimmed.startsWith("locked ")) {
+      locked = true;
+    }
+  }
+  await flush();
+}
+
 async function inferRepoRootPathFromWorktreePath(worktreePath: string): Promise<string> {
   try {
     const commonDir = await getGitCommonDir(worktreePath);
@@ -657,6 +755,10 @@ export async function runWorktreeSetupCommands(options: {
     if (result.exitCode !== 0) {
       if (options.cleanupOnFailure) {
         try {
+          await unlockPaseoWorktree({
+            cwd: options.worktreePath,
+            worktreePath: options.worktreePath,
+          });
           await runGitCommand(["worktree", "remove", options.worktreePath, "--force"], {
             cwd: options.worktreePath,
             timeout: 120_000,
@@ -1138,6 +1240,8 @@ export async function deletePaseoWorktree({
 
   if (cwd) {
     try {
+      // Paseo locks the worktrees it creates; `remove` refuses a locked one.
+      await unlockPaseoWorktree({ cwd, worktreePath: resolvedWorktree });
       await runGitCommand(["worktree", "remove", resolvedWorktree, "--force"], {
         cwd,
         timeout: 120_000,
@@ -1154,6 +1258,9 @@ export async function deletePaseoWorktree({
 
   if (cwd) {
     try {
+      // Prune skips locked entries, so a lock that outlived a failed removal
+      // above would strand the admin directory permanently.
+      await unlockStaleWorktrees({ cwd });
       await runGitCommand(["worktree", "prune"], { cwd, timeout: 30_000 });
     } catch {
       // not critical; git will prune lazily
@@ -1233,6 +1340,7 @@ export const createWorktree = async ({
   runSetup,
   paseoHome,
   worktreesRoot,
+  relativePaths,
 }: CreateWorktreeOptions): Promise<WorktreeConfig> => {
   const sourcePlan = await resolveWorktreeSourcePlan({ cwd, source, desiredSlug: worktreeSlug });
   let worktreePath = join(await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot), worktreeSlug);
@@ -1247,10 +1355,20 @@ export const createWorktree = async ({
   }
 
   // Primitive owner for `git worktree add`; callers route through createWorktreeCore.
-  await runGitCommand(["worktree", "add", finalWorktreePath, ...sourcePlan.addArguments], {
-    cwd,
-    timeout: 120_000,
-  });
+  await runGitCommand(
+    [
+      "worktree",
+      "add",
+      ...(relativePaths ? ["--relative-paths"] : []),
+      finalWorktreePath,
+      ...sourcePlan.addArguments,
+    ],
+    {
+      cwd,
+      timeout: 120_000,
+    },
+  );
+  await lockPaseoWorktree({ cwd, worktreePath: finalWorktreePath });
   worktreePath = normalizePathForOwnership(finalWorktreePath);
 
   if (sourcePlan.pushRemote) {

@@ -18,6 +18,8 @@ import {
   resolveSnapshotCwd,
 } from "./provider-snapshot-manager.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
+import { ContainerNotRunningError } from "../devcontainer/launch-strategy-registry.js";
+import { LocalLaunchStrategy } from "../devcontainer/launch-strategy.js";
 
 const TEST_CAPABILITIES = {
   supportsStreaming: false,
@@ -76,6 +78,53 @@ describe("ProviderSnapshotManager public surface", () => {
       expect(ids).toEqual(
         expect.arrayContaining(["claude", "codex", "opencode", "copilot", "pi", "omp"]),
       );
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("a stopped container makes providers unavailable, not errored", async () => {
+    // The model picker turns red on "error". A workspace whose container is
+    // merely stopped has an unknown tool list, which is not a failure the user
+    // can act on — and it used to paint every provider red.
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      resolveLaunchStrategy: async () => {
+        throw new ContainerNotRunningError("ws-1");
+      },
+    });
+    try {
+      await manager.refreshSnapshotForCwd({ cwd: "/repo/app", providers: ["claude"] });
+
+      const entry = manager.getSnapshot("/repo/app").find((e) => e.provider === "claude");
+      expect(entry?.status).toBe("unavailable");
+      expect(entry?.error).toContain("container is not running");
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("an explicit host strategy skips the workspace's container entirely", async () => {
+    // The new-workspace screen points at a directory that may already hold a
+    // container-backed workspace; asking for Host must not consult it.
+    let resolverCalls = 0;
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      resolveLaunchStrategy: async () => {
+        resolverCalls += 1;
+        throw new ContainerNotRunningError("ws-1");
+      },
+    });
+    try {
+      await manager.refreshSnapshotForCwd({
+        cwd: "/repo/app",
+        providers: ["claude"],
+        launchStrategy: new LocalLaunchStrategy(),
+      });
+
+      expect(resolverCalls).toBe(0);
+      const entry = manager.getSnapshot("/repo/app").find((e) => e.provider === "claude");
+      expect(entry?.status).not.toBe("unavailable");
     } finally {
       manager.destroy();
     }

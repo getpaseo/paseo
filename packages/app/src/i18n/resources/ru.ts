@@ -589,6 +589,34 @@ export const ru: TranslationResources = {
         copyBranchName: "Скопировать название ветки",
         showSetup: "Показать настройки",
       },
+      container: {
+        running: "Запуск в контейнере",
+        runningTooltip: "Агенты и терминалы выполняются в контейнере этого рабочего пространства",
+        starting: "Запуск контейнера",
+        startingTooltip:
+          "Сборка и запуск контейнерной среды. Агенты и терминалы будут ждать готовности.",
+        stopped: "Контейнер остановлен",
+        stoppedTooltip: "Контейнерная среда больше не запущена",
+        details: {
+          backend: "Бэкенд",
+          image: "Образ",
+          container: "Контейнер",
+          user: "Пользователь",
+          started: "Запущен",
+        },
+        configChangedTitle: "Конфигурация контейнера изменена",
+        configChangedMessage:
+          "devcontainer.json изменился с момента сборки контейнера. Пересоберите, чтобы применить изменения.",
+        dismiss: "Отклонить",
+        rebuildAction: "Пересобрать контейнер",
+        restartAction: "Перезапустить контейнер",
+        rebuildConfirmTitle: "Пересобрать контейнер",
+        rebuildConfirmMessage:
+          "Все запущенные агенты и терминалы будут остановлены. Пересобрать контейнер?",
+        restartConfirmTitle: "Перезапустить контейнер",
+        restartConfirmMessage:
+          "Все запущенные агенты и терминалы будут перезапущены. Перезапустить контейнер?",
+      },
       toasts: {
         workspacePathUnavailable: "Путь Workspace пока недоступен.",
         branchNameUnavailable: "Название филиала недоступно",
@@ -1003,6 +1031,7 @@ export const ru: TranslationResources = {
       label: "Изоляция",
     },
     fields: {
+      host: "Хост",
       project: "Проект",
       base: "База",
       baseNotApplicable: "Неприменимо",
@@ -1283,6 +1312,13 @@ export const ru: TranslationResources = {
       hostDisconnected: "Host не подключен",
       pendingRequired: "Никакой настройки рабочей области не ожидается.",
       composerStateRequired: "Требуется состояние композитора настройки Workspace.",
+    },
+    containerBackend: {
+      label: "Среда выполнения",
+      host: "Хост",
+      devcontainer: "Контейнер разработки",
+      probing: "{{backend}} — запуск…",
+      probeFailed: "Не удалось проверить контейнер: {{error}}",
     },
   },
   onboarding: {

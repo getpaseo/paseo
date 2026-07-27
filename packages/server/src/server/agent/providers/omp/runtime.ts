@@ -13,6 +13,7 @@ import type {
   OmpThinkingLevel,
 } from "./rpc-types.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+import type { ProcessLaunchStrategy } from "../../../devcontainer/launch-strategy.js";
 
 export interface OmpRuntimeLaunch {
   cwd: string;
@@ -39,6 +40,8 @@ export interface OmpStartSessionInput {
   noSession?: boolean;
   systemPrompt?: string;
   extraArgs?: string[];
+  /** When set, spawn inside the isolated environment instead of on the host. */
+  launchStrategy?: ProcessLaunchStrategy;
 }
 
 export interface OmpRuntimeSession {

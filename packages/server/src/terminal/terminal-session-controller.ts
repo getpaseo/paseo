@@ -20,6 +20,7 @@ import {
   encodeTerminalStreamFrame,
   type TerminalStreamFrame,
 } from "@getpaseo/protocol/binary-frames/index";
+import type { ProcessLaunchStrategy } from "../server/devcontainer/launch-strategy.js";
 import { TerminalOutputCoalescer } from "./terminal-output-coalescer.js";
 import {
   MAX_CLIENT_BUFFERED_BYTES,
@@ -31,7 +32,7 @@ import {
   resolveTerminalSubscriptionSnapshotMode,
   type TerminalRestoreOptions,
 } from "./terminal-restore.js";
-import type { TerminalSession } from "./terminal.js";
+import { type TerminalSession } from "./terminal.js";
 import type { TerminalManager, TerminalsChangedEvent } from "./terminal-manager.js";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import { terminalSubscriptionKey } from "@getpaseo/protocol/terminal-subscription-key";
@@ -74,7 +75,16 @@ export interface TerminalSessionControllerOptions {
   // daemon attaches per-row soft-wrap flags to snapshots; otherwise it omits them
   // so old (strict-schema) clients still parse the snapshot.
   clientSupportsWrapReflow?: () => boolean;
-  // Current max bytes queued on the client's transport(s) but not yet sent.
+  /**
+   * Resolves the launch strategy for a workspace cwd, awaiting any pending
+   * container activation. When provided, terminals are spawned inside the
+   * container via the strategy's wrapCommand. When absent, terminals spawn
+   * on the host as before.
+   */
+  resolveLaunchStrategy?: (
+    cwd: string,
+    workspaceId?: string,
+  ) => Promise<ProcessLaunchStrategy | null>;
   // Drives the snapshot catch-up fallback: a keeping-up client reports ~0 and
   // keeps streaming; a backed-up client trips the snapshot path. Defaults to a
   // constant 0 (no backpressure signal) so callers without a transport always
@@ -130,7 +140,9 @@ export class TerminalSessionController {
   private readonly listTerminalWorkspaceRoots: () => Promise<readonly string[]>;
   private readonly clientSupportsWrapReflow: () => boolean;
   private readonly getClientBufferedAmount: () => number | null;
-
+  private readonly resolveLaunchStrategy:
+    | ((cwd: string, workspaceId?: string) => Promise<ProcessLaunchStrategy | null>)
+    | null;
   // A subscription is scoped to a (cwd, workspaceId) pair, keyed by
   // terminalSubscriptionKey: two workspaces sharing a cwd subscribe and unsub
   // independently, and each only receives its own workspace's terminals. The
@@ -158,6 +170,7 @@ export class TerminalSessionController {
       (async () => (await this.listTerminalWorkspaceRefs()).map((workspace) => workspace.cwd));
     this.clientSupportsWrapReflow = options.clientSupportsWrapReflow ?? (() => false);
     this.getClientBufferedAmount = options.getClientBufferedAmount ?? (() => 0);
+    this.resolveLaunchStrategy = options.resolveLaunchStrategy ?? null;
   }
 
   start(): void {
@@ -504,6 +517,7 @@ export class TerminalSessionController {
     );
   }
 
+  // oxlint-disable-next-line eslint(complexity): terminal creation has many branches
   private async handleCreateTerminalRequest(msg: CreateTerminalRequest): Promise<void> {
     if (!this.terminalManager) {
       this.emit({
@@ -542,13 +556,23 @@ export class TerminalSessionController {
         });
         return;
       }
-
+      // Resolve the launch strategy in the parent process — that is where the
+      // registry lives — and hand the terminal manager its serialized form.
+      // The wrapping itself happens next to the terminal's environment, which
+      // is only assembled once the manager has minted the activity token.
+      // With no explicit command, the shell comes from wherever the terminal
+      // runs: the container's own user for an isolated terminal, the host's
+      // $SHELL otherwise.
+      const launchStrategy = this.resolveLaunchStrategy
+        ? await this.resolveLaunchStrategy(msg.cwd, workspaceId)
+        : null;
       const session = await this.terminalManager.createTerminal({
         cwd: msg.cwd,
         workspaceId,
         name: msg.name,
         command: msg.command,
         args: msg.args,
+        containerExec: launchStrategy?.serialize() ?? null,
         rows: msg.size?.rows,
         cols: msg.size?.cols,
       });

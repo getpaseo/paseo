@@ -7,6 +7,7 @@ import {
   isPaseoOwnedWorktreeCwd,
   mapWorkspaceCwdToWorktree,
   rollbackCreatedPaseoWorktree,
+  unlockStaleWorktrees,
 } from "../../../utils/worktree.js";
 import { WorktreeRequestError, toWorktreeRequestError } from "../../worktree-errors.js";
 import {
@@ -166,6 +167,10 @@ export function createWorkspaceRecoveryService(deps: {
     }
 
     try {
+      // Paseo locks its worktrees so no stray prune can delete a live one, and
+      // prune skips locked entries — including this stale one, which would
+      // then keep the branch pinned and fail the restore.
+      await unlockStaleWorktrees({ cwd: sourceRepoRoot });
       await runGitCommand(["worktree", "prune"], { cwd: sourceRepoRoot, timeout: 30_000 });
     } catch {
       // A stale worktree registration is not guaranteed; creation reports any real conflict.

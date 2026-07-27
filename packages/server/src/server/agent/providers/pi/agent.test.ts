@@ -19,6 +19,8 @@ import { describe, expect, onTestFinished, test } from "vitest";
 import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
 import { PiRpcAgentClient, PiRpcAgentSession, transformPiModels } from "./agent.js";
 import { FakePi } from "./test-utils/fake-pi.js";
+import { FakeIsolatedLaunchStrategy } from "../../../devcontainer/test-utils/fake-isolated-strategy.js";
+import { isPlatform } from "../../../../test-utils/platform.js";
 
 const ONE_BY_ONE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
@@ -1779,5 +1781,149 @@ describe("transformPiModels", () => {
         description: "openrouter/OpenAI: GPT-5.5",
       },
     ]);
+  });
+});
+
+// The fake strategy stands in for a container by running the same POSIX
+// commands on the host, so it needs a host that has them.
+describe.skipIf(isPlatform("win32"))("PiRpcAgentClient in a container", () => {
+  function createContainerHome(): string {
+    const home = mkdtempSync(path.join(tmpdir(), "paseo-pi-container-home-"));
+    onTestFinished(() => rmSync(home, { recursive: true, force: true }));
+    return home;
+  }
+
+  function createStrategy(options: { home: string; hostCwd: string; missing?: string[] }) {
+    return new FakeIsolatedLaunchStrategy({
+      hostWorkspaceFolder: options.hostCwd,
+      remoteWorkspaceFolder: "/workspaces/project",
+      environmentEnv: { HOME: options.home },
+      ...(options.missing ? { missingExecutables: options.missing } : {}),
+    });
+  }
+
+  test("starts Pi in the container rather than on the host", async () => {
+    const hostCwd = mkdtempSync(path.join(tmpdir(), "paseo-pi-host-cwd-"));
+    onTestFinished(() => rmSync(hostCwd, { recursive: true, force: true }));
+    const strategy = createStrategy({ home: createContainerHome(), hostCwd });
+    const pi = new FakePi();
+    const client = createClient(pi);
+
+    const session = await client.createSession(createConfig({ cwd: hostCwd }), {
+      launchStrategy: strategy,
+    });
+    onTestFinished(() => session.close());
+
+    expect(pi.recordedInputs[0]?.launchStrategy).toBe(strategy);
+  });
+
+  test("puts the Paseo extension where the container's Pi can open it", async () => {
+    // The extension carries the system prompt, and Pi opens the path itself.
+    // Written with node:fs it would land in the daemon's /tmp, which the
+    // container cannot see.
+    const hostCwd = mkdtempSync(path.join(tmpdir(), "paseo-pi-host-cwd-"));
+    onTestFinished(() => rmSync(hostCwd, { recursive: true, force: true }));
+    const strategy = createStrategy({ home: createContainerHome(), hostCwd });
+    const pi = new FakePi();
+    const client = createClient(pi);
+
+    const session = await client.createSession(
+      createConfig({ cwd: hostCwd, systemPrompt: "be brief" }),
+      { launchStrategy: strategy },
+    );
+    onTestFinished(() => session.close());
+
+    const extensionPath = pi.recordedLaunches[0]?.extensionPaths?.[0];
+    expect(extensionPath).toEqual(expect.any(String));
+    const wroteThroughContainer = strategy.recordedSpawns.some(
+      (call) => call.command === "sh" && call.args[1]?.includes(extensionPath!),
+    );
+    expect(wroteThroughContainer).toBe(true);
+    expect(readUtf8File(extensionPath!)).toContain("be brief");
+  });
+
+  test("merges the container's own global MCP config, not the daemon's", async () => {
+    const home = createContainerHome();
+    const hostCwd = mkdtempSync(path.join(tmpdir(), "paseo-pi-host-cwd-"));
+    onTestFinished(() => rmSync(hostCwd, { recursive: true, force: true }));
+    mkdirSync(path.join(home, ".pi", "agent"), { recursive: true });
+    writeFileSync(
+      path.join(home, ".pi", "agent", "mcp.json"),
+      JSON.stringify({ mcpServers: { inContainer: { url: "https://example.com/in-container" } } }),
+    );
+    const strategy = createStrategy({ home, hostCwd });
+    const pi = new FakePi();
+    pi.queueCommands([
+      {
+        name: "mcp",
+        description: "Show MCP server status",
+        source: "extension",
+        sourceInfo: { source: "npm:pi-mcp-adapter" },
+      },
+    ]);
+    const client = createClient(pi);
+
+    const session = await client.createSession(
+      createConfig({
+        cwd: hostCwd,
+        mcpServers: { paseo: { type: "http", url: "http://10.0.2.2:6767/mcp/agents" } },
+      }),
+      { launchStrategy: strategy },
+    );
+    onTestFinished(() => session.close());
+
+    const configPath = pi.recordedLaunches[1]?.mcpConfigPath;
+    expect(configPath).toEqual(expect.any(String));
+    const written = JSON.parse(readUtf8File(configPath!)) as {
+      mcpServers: Record<string, unknown>;
+    };
+    expect(Object.keys(written.mcpServers).sort()).toEqual(["inContainer", "paseo"]);
+  });
+
+  test("lists the container's sessions, keyed by the container's cwd", async () => {
+    // Previously this returned nothing at all for a container workspace.
+    const home = createContainerHome();
+    const hostCwd = mkdtempSync(path.join(tmpdir(), "paseo-pi-host-cwd-"));
+    onTestFinished(() => rmSync(hostCwd, { recursive: true, force: true }));
+    const sessionsDir = path.join(home, ".pi", "agent", "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+    writeFileSync(
+      path.join(sessionsDir, "session-1.jsonl"),
+      `${JSON.stringify({
+        type: "session",
+        id: "session-1",
+        cwd: "/workspaces/project",
+        timestamp: "2026-01-01T00:00:00.000Z",
+      })}\n${JSON.stringify({
+        type: "message",
+        timestamp: "2026-01-01T00:01:00.000Z",
+        message: { role: "user", content: "inside the container" },
+      })}\n`,
+    );
+    const strategy = createStrategy({ home, hostCwd });
+    const client = createClient();
+
+    const sessions = await client.listImportableSessions({
+      cwd: hostCwd,
+      launchStrategy: strategy,
+    });
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].cwd).toBe("/workspaces/project");
+    expect(sessions[0].lastPromptPreview).toBe("inside the container");
+  });
+
+  test("reports availability from the container's PATH", async () => {
+    const hostCwd = mkdtempSync(path.join(tmpdir(), "paseo-pi-host-cwd-"));
+    onTestFinished(() => rmSync(hostCwd, { recursive: true, force: true }));
+    const home = createContainerHome();
+    const client = createClient();
+
+    const present = createStrategy({ home, hostCwd });
+    expect(await client.isAvailable({ launchStrategy: present })).toBe(true);
+    expect(present.resolvedExecutables).toEqual(["pi"]);
+
+    const absent = createStrategy({ home, hostCwd, missing: ["pi"] });
+    expect(await client.isAvailable({ launchStrategy: absent })).toBe(false);
   });
 });

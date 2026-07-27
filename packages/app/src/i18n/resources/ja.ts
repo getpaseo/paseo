@@ -586,6 +586,34 @@ export const ja: TranslationResources = {
         copyBranchName: "ブランチ名をコピー",
         showSetup: "セットアップを表示",
       },
+      container: {
+        running: "コンテナで実行中",
+        runningTooltip: "エージェントとターミナルはこのワークスペースのコンテナ内で実行されます",
+        starting: "コンテナを起動中",
+        startingTooltip:
+          "コンテナ環境をビルドして起動しています。エージェントとターミナルは準備ができるまで待機します。",
+        stopped: "コンテナが停止しました",
+        stoppedTooltip: "コンテナ環境は実行されていません",
+        details: {
+          backend: "バックエンド",
+          image: "イメージ",
+          container: "コンテナ",
+          user: "ユーザー",
+          started: "開始",
+        },
+        configChangedTitle: "コンテナ設定が変更されました",
+        configChangedMessage:
+          "コンテナのビルド後にdevcontainer.jsonが変更されました。変更を適用するには再ビルドしてください。",
+        dismiss: "閉じる",
+        rebuildAction: "コンテナを再ビルド",
+        restartAction: "コンテナを再起動",
+        rebuildConfirmTitle: "コンテナを再ビルド",
+        rebuildConfirmMessage:
+          "実行中のすべてのエージェントとターミナルが停止されます。コンテナを再ビルドしますか？",
+        restartConfirmTitle: "コンテナを再起動",
+        restartConfirmMessage:
+          "実行中のすべてのエージェントとターミナルが再起動されます。コンテナを再起動しますか？",
+      },
       toasts: {
         workspacePathUnavailable: "ワークスペースパスはまだ利用できません",
         branchNameUnavailable: "ブランチ名が利用できません",
@@ -992,6 +1020,7 @@ export const ja: TranslationResources = {
       label: "分離方法",
     },
     fields: {
+      host: "ホスト",
       project: "プロジェクト",
       base: "ベース",
       baseNotApplicable: "該当なし",
@@ -1265,6 +1294,13 @@ export const ja: TranslationResources = {
       hostDisconnected: "ホストが接続されていません",
       pendingRequired: "保留中のワークスペースセットアップがありません",
       composerStateRequired: "ワークスペースセットアップのコンポーザー状態が必要です",
+    },
+    containerBackend: {
+      label: "実行環境",
+      host: "ホスト",
+      devcontainer: "Dev Container",
+      probing: "{{backend}} — 起動中…",
+      probeFailed: "コンテナを検査できませんでした: {{error}}",
     },
   },
   onboarding: {

@@ -167,7 +167,10 @@ export function runGitCommand(
 
         // `core.quotepath=false` makes git emit raw UTF-8 paths instead of
         // octal-escaping non-ASCII bytes (e.g. `测试文件.txt` vs `"\346\265\213..."`).
-        const child = spawnProcess("git", ["-c", "core.quotepath=false", ...args], {
+        const gitArgs = ["-c", "core.quotepath=false", ...args];
+        // Git always runs on the host, including for container workspaces —
+        // see docs/devcontainers.md ("Git runs on the host").
+        const child = spawnProcess("git", gitArgs, {
           cwd: options.cwd,
           envOverlay,
           shell: false,

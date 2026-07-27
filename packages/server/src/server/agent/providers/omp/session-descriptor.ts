@@ -1,5 +1,3 @@
-import type { Dirent } from "node:fs";
-import { open, readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -9,6 +7,11 @@ import type {
 } from "../../agent-sdk-types.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import { createRealpathAwarePathMatcher } from "../../../../utils/path.js";
+import {
+  createLaunchFileSystem,
+  type LaunchFileSystem,
+} from "../../../devcontainer/launch-filesystem.js";
+import type { ProcessLaunchStrategy } from "../../../devcontainer/launch-strategy.js";
 
 const OMP_CONFIG_DIR_NAME = ".omp";
 const OMP_AGENT_DIR_ENV = "OMP_AGENT_DIR";
@@ -23,6 +26,8 @@ const FULL_SCAN_LINE_LIMIT = 2_000;
 // remains recursive rather than applying Pi's historical parent-only depth cap.
 const IMPORT_CANDIDATE_OVERSCAN = 40;
 const IMPORT_CANDIDATE_MIN = 400;
+// Deep enough for nested subagent transcripts without walking a whole HOME.
+const SESSION_SEARCH_DEPTH = 8;
 
 interface OmpSessionDescriptorOptions extends ListImportableSessionsOptions {
   sessionDir?: string;
@@ -74,17 +79,26 @@ export interface OmpImportSessionConfig {
 export async function listOmpImportableSessions(
   options: OmpSessionDescriptorOptions = {},
 ): Promise<ImportableProviderSession[]> {
-  const sessionsDir = await resolveOmpSessionsDir(options);
-  const files = await walkJsonlFiles(sessionsDir);
-  const matchesCwd = options.cwd ? createRealpathAwarePathMatcher(options.cwd) : null;
+  // For a container workspace the sessions are the container's: written by the
+  // agent inside it, under its HOME. Reading the host's would list another
+  // machine's conversations.
+  const files = createLaunchFileSystem(options.launchStrategy);
+  const sessionsDir = await resolveOmpSessionsDir(options, files);
+  // Session records carry the cwd the agent ran in, which inside a container
+  // is the container's path rather than the host's.
+  const matchCwd =
+    options.cwd && options.launchStrategy?.isIsolated
+      ? options.launchStrategy.resolveCwd(options.cwd)
+      : options.cwd;
+  const matchesCwd = matchCwd ? createRealpathAwarePathMatcher(matchCwd) : null;
   const limit = options.limit ?? 20;
-  const ranked = await rankSessionFilesByMtime(files);
+  const ranked = await rankSessionFilesByMtime(files, sessionsDir);
   const candidateLimit = Math.max(limit * IMPORT_CANDIDATE_OVERSCAN, IMPORT_CANDIDATE_MIN);
   const candidates = matchesCwd ? ranked : ranked.slice(0, candidateLimit);
   const sessions: ImportableProviderSession[] = [];
 
   for (const entry of candidates) {
-    const session = await readOmpImportableSession(entry.file);
+    const session = await readOmpImportableSession(files, entry.file);
     if (!session) continue;
     if (matchesCwd && !matchesCwd(session.cwd)) continue;
     sessions.push(session);
@@ -100,16 +114,29 @@ export async function listOmpImportableSessions(
 
 export async function readOmpImportSessionConfig(
   filePath: string,
+  launchStrategy?: ProcessLaunchStrategy,
 ): Promise<OmpImportSessionConfig> {
-  const descriptor = await readOmpSessionDescriptor(filePath);
+  // The transcript being imported lives wherever the agent wrote it.
+  const descriptor = await readOmpSessionDescriptor(
+    createLaunchFileSystem(launchStrategy),
+    filePath,
+  );
   if (!descriptor) return {};
   return toOmpImportSessionConfig(descriptor);
 }
 
-async function resolveOmpSessionsDir(options: OmpSessionDescriptorOptions): Promise<string> {
-  const env = options.env ?? process.env;
-  const homeDir = options.homeDir ?? homedir();
-  const baseDir = options.cwd ?? process.cwd();
+async function resolveOmpSessionsDir(
+  options: OmpSessionDescriptorOptions,
+  files: LaunchFileSystem,
+): Promise<string> {
+  // The container has its own HOME and its own settings file; the daemon's
+  // environment says nothing about either.
+  const env = files.isIsolated ? {} : (options.env ?? process.env);
+  const homeDir = files.isIsolated ? await files.homeDir() : (options.homeDir ?? homedir());
+  const baseDir =
+    options.cwd && options.launchStrategy?.isIsolated
+      ? options.launchStrategy.resolveCwd(options.cwd)
+      : (options.cwd ?? process.cwd());
 
   if (options.sessionDir?.trim()) {
     return resolveConfigPath(options.sessionDir, { baseDir, homeDir });
@@ -125,7 +152,8 @@ async function resolveOmpSessionsDir(options: OmpSessionDescriptorOptions): Prom
 
   const settingsSessionDir = await readConfiguredSessionDir({
     agentDir,
-    cwd: options.cwd,
+    cwd: baseDir,
+    files,
   });
   if (settingsSessionDir?.trim()) {
     return resolveConfigPath(settingsSessionDir, { baseDir, homeDir });
@@ -150,19 +178,28 @@ function resolveOmpAgentDir(input: {
 async function readConfiguredSessionDir(input: {
   agentDir: string;
   cwd: string | undefined;
+  files: LaunchFileSystem;
 }): Promise<string | null> {
   const values = await Promise.all([
-    readSessionDirFromSettings(path.join(input.agentDir, "settings.json")),
+    readSessionDirFromSettings(input.files, path.join(input.agentDir, "settings.json")),
     input.cwd
-      ? readSessionDirFromSettings(path.join(input.cwd, OMP_CONFIG_DIR_NAME, "settings.json"))
+      ? readSessionDirFromSettings(
+          input.files,
+          path.join(input.cwd, OMP_CONFIG_DIR_NAME, "settings.json"),
+        )
       : null,
   ]);
   return values[1] ?? values[0] ?? null;
 }
 
-async function readSessionDirFromSettings(settingsPath: string): Promise<string | null> {
+async function readSessionDirFromSettings(
+  files: LaunchFileSystem,
+  settingsPath: string,
+): Promise<string | null> {
   try {
-    const parsed = JSON.parse(await readFile(settingsPath, "utf8")) as unknown;
+    const content = await files.readFile(settingsPath);
+    if (content === null) return null;
+    const parsed = JSON.parse(content) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return null;
     }
@@ -183,42 +220,25 @@ function resolveConfigPath(value: string, options: { baseDir: string; homeDir: s
   return path.isAbsolute(value) ? value : path.resolve(options.baseDir, value);
 }
 
-async function walkJsonlFiles(root: string): Promise<string[]> {
-  let entries: Dirent[];
-  try {
-    entries = await readdir(root, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-
-  const files = await Promise.all(
-    entries.map(async (entry) => {
-      const entryPath = path.join(root, entry.name);
-      if (entry.isDirectory()) {
-        return await walkJsonlFiles(entryPath);
-      }
-      return entry.isFile() && entry.name.endsWith(".jsonl") ? [entryPath] : [];
-    }),
-  );
-  return files.flat();
-}
-
-async function rankSessionFilesByMtime(files: string[]): Promise<RankedSessionFile[]> {
-  const ranked = await Promise.all(
-    files.map(async (file) => {
-      const mtime = await readFileMtime(file);
-      return mtime ? { file, mtime } : null;
-    }),
-  );
-  return ranked
-    .filter((entry): entry is RankedSessionFile => entry !== null)
+/**
+ * Newest first. OMP keeps nested completed-subagent transcripts importable, so
+ * discovery stays recursive rather than applying Pi's parent-only depth cap.
+ */
+async function rankSessionFilesByMtime(
+  files: LaunchFileSystem,
+  root: string,
+): Promise<RankedSessionFile[]> {
+  const found = await files.listFiles(root, { suffix: ".jsonl", maxDepth: SESSION_SEARCH_DEPTH });
+  return found
+    .map((entry) => ({ file: entry.path, mtime: new Date(entry.mtimeMs) }))
     .sort((left, right) => right.mtime.getTime() - left.mtime.getTime());
 }
 
 async function readOmpImportableSession(
+  files: LaunchFileSystem,
   filePath: string,
 ): Promise<ImportableProviderSession | null> {
-  const descriptor = await readOmpSessionDescriptor(filePath);
+  const descriptor = await readOmpSessionDescriptor(files, filePath);
   if (!descriptor) return null;
 
   return {
@@ -233,14 +253,17 @@ async function readOmpImportableSession(
   };
 }
 
-async function readOmpSessionDescriptor(filePath: string): Promise<OmpSessionDescriptor | null> {
+async function readOmpSessionDescriptor(
+  files: LaunchFileSystem,
+  filePath: string,
+): Promise<OmpSessionDescriptor | null> {
   // OMP may emit title/session_info lines before the session header.
-  const headChunk = await readHeadChunk(filePath);
+  const headChunk = await files.readHead(filePath, HEAD_BYTES);
   if (!headChunk) return null;
   const header = parseSessionHeaderFromChunk(headChunk);
   if (!header) return null;
 
-  const tail = await readTail(filePath).catch(() => "");
+  const tail = (await files.readTail(filePath, TAIL_BYTES)) ?? "";
   const tailInfo = parseSessionTail(tail);
   const headInfo = parseSessionHeadFromChunk(headChunk);
   const title =
@@ -251,7 +274,10 @@ async function readOmpSessionDescriptor(filePath: string): Promise<OmpSessionDes
   const model = tailInfo.model ?? headInfo.model;
   const thinkingOptionId = tailInfo.thinkingOptionId ?? headInfo.thinkingOptionId;
   const lastActivityAt =
-    tailInfo.lastActivityAt ?? (await readFileMtime(filePath)) ?? header.createdAt ?? new Date(0);
+    tailInfo.lastActivityAt ??
+    (await readFileMtime(files, filePath)) ??
+    header.createdAt ??
+    new Date(0);
 
   return {
     cwd: header.cwd,
@@ -269,19 +295,6 @@ function toOmpImportSessionConfig(descriptor: OmpSessionDescriptor): OmpImportSe
     ...(descriptor.model ? { model: descriptor.model } : {}),
     ...(descriptor.thinkingOptionId ? { thinkingOptionId: descriptor.thinkingOptionId } : {}),
   };
-}
-
-async function readHeadChunk(filePath: string): Promise<string | null> {
-  const handle = await open(filePath, "r").catch(() => null);
-  if (!handle) return null;
-  try {
-    const buffer = Buffer.alloc(HEAD_BYTES);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    if (bytesRead <= 0) return null;
-    return buffer.subarray(0, bytesRead).toString("utf8");
-  } finally {
-    await handle.close().catch(() => undefined);
-  }
 }
 
 function parseSessionHeaderFromChunk(chunk: string): OmpSessionHeader | null {
@@ -331,26 +344,12 @@ function parseSessionHeadFromChunk(chunk: string): OmpSessionHead {
   return { title, firstUserMessage, model, thinkingOptionId };
 }
 
-async function readTail(filePath: string): Promise<string> {
-  const fileStats = await stat(filePath);
-  const start = Math.max(0, fileStats.size - TAIL_BYTES);
-  const length = fileStats.size - start;
-  const handle = await open(filePath, "r");
-  try {
-    const buffer = Buffer.alloc(length);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
-    return buffer.subarray(0, bytesRead).toString("utf8");
-  } finally {
-    await handle.close().catch(() => undefined);
-  }
-}
-
-async function readFileMtime(filePath: string): Promise<Date | null> {
-  try {
-    return (await stat(filePath)).mtime;
-  } catch {
-    return null;
-  }
+async function readFileMtime(files: LaunchFileSystem, filePath: string): Promise<Date | null> {
+  const [entry] = await files.listFiles(path.dirname(filePath), {
+    suffix: path.basename(filePath),
+    maxDepth: 1,
+  });
+  return entry ? new Date(entry.mtimeMs) : null;
 }
 
 function parseSessionHeader(firstLine: string): OmpSessionHeader | null {

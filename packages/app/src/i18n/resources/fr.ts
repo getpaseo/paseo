@@ -589,6 +589,35 @@ export const fr: TranslationResources = {
         copyBranchName: "Copier le nom de la branche",
         showSetup: "Afficher la configuration",
       },
+      container: {
+        running: "Exécution dans le conteneur",
+        runningTooltip:
+          "Les agents et les terminaux s'exécutent dans le conteneur de cet espace de travail",
+        starting: "Démarrage du conteneur",
+        startingTooltip:
+          "Construction et démarrage de l'environnement conteneurisé. Les agents et terminaux attendront qu'il soit prêt.",
+        stopped: "Conteneur arrêté",
+        stoppedTooltip: "L'environnement conteneurisé n'est plus en cours d'exécution",
+        details: {
+          backend: "Backend",
+          image: "Image",
+          container: "Conteneur",
+          user: "Utilisateur",
+          started: "Démarré",
+        },
+        configChangedTitle: "Configuration du conteneur modifiée",
+        configChangedMessage:
+          "Le devcontainer.json a changé depuis la construction du conteneur. Reconstruisez pour appliquer les modifications.",
+        dismiss: "Ignorer",
+        rebuildAction: "Reconstruire le conteneur",
+        restartAction: "Redémarrer le conteneur",
+        rebuildConfirmTitle: "Reconstruire le conteneur",
+        rebuildConfirmMessage:
+          "Tous les agents et terminaux en cours d'exécution seront arrêtés. Reconstruire le conteneur ?",
+        restartConfirmTitle: "Redémarrer le conteneur",
+        restartConfirmMessage:
+          "Tous les agents et terminaux en cours d'exécution seront redémarrés. Redémarrer le conteneur ?",
+      },
       toasts: {
         workspacePathUnavailable: "Le cheminWorkspacen'est pas encore disponible",
         branchNameUnavailable: "Nom de la succursale non disponible",
@@ -1011,6 +1040,7 @@ export const fr: TranslationResources = {
       label: "Isolation",
     },
     fields: {
+      host: "Hôte",
       project: "Projet",
       base: "Base",
       baseNotApplicable: "Non applicable",
@@ -1295,6 +1325,13 @@ export const fr: TranslationResources = {
       hostDisconnected: "Hostn'est pas connecté",
       pendingRequired: "Aucune configuration d'espace de travail n'est en attente",
       composerStateRequired: "L'état du compositeur de configurationWorkspaceest requis",
+    },
+    containerBackend: {
+      label: "Environnement d'exécution",
+      host: "Hôte",
+      devcontainer: "Conteneur de développement",
+      probing: "{{backend}} — démarrage…",
+      probeFailed: "Impossible d'inspecter le conteneur : {{error}}",
     },
   },
   onboarding: {

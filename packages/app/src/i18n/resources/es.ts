@@ -589,6 +589,35 @@ export const es: TranslationResources = {
         copyBranchName: "Copiar nombre de sucursal",
         showSetup: "Mostrar configuración",
       },
+      container: {
+        running: "Ejecutando en contenedor",
+        runningTooltip:
+          "Los agentes y terminales se ejecutan dentro del contenedor de este espacio de trabajo",
+        starting: "Iniciando contenedor",
+        startingTooltip:
+          "Construyendo e iniciando el entorno del contenedor. Los agentes y terminales esperarán hasta que esté listo.",
+        stopped: "Contenedor detenido",
+        stoppedTooltip: "El entorno del contenedor ya no está en ejecución",
+        details: {
+          backend: "Backend",
+          image: "Imagen",
+          container: "Contenedor",
+          user: "Usuario",
+          started: "Iniciado",
+        },
+        configChangedTitle: "Configuración del contenedor cambiada",
+        configChangedMessage:
+          "El devcontainer.json ha cambiado desde que se construyó el contenedor. Reconstruye para aplicar los cambios.",
+        dismiss: "Descartar",
+        rebuildAction: "Reconstruir contenedor",
+        restartAction: "Reiniciar contenedor",
+        rebuildConfirmTitle: "Reconstruir contenedor",
+        rebuildConfirmMessage:
+          "Se detendrán todos los agentes y terminales en ejecución. ¿Reconstruir el contenedor?",
+        restartConfirmTitle: "Reiniciar contenedor",
+        restartConfirmMessage:
+          "Se reiniciarán todos los agentes y terminales en ejecución. ¿Reiniciar el contenedor?",
+      },
       toasts: {
         workspacePathUnavailable: "La rutaWorkspaceaún no está disponible",
         branchNameUnavailable: "Nombre de la sucursal no disponible",
@@ -1012,6 +1041,7 @@ export const es: TranslationResources = {
       label: "Aislamiento",
     },
     fields: {
+      host: "Host",
       project: "Proyecto",
       base: "Base",
       baseNotApplicable: "No aplicable",
@@ -1292,6 +1322,13 @@ export const es: TranslationResources = {
       hostDisconnected: "Hostno está conectado",
       pendingRequired: "No hay ninguna configuración de espacio de trabajo pendiente",
       composerStateRequired: "Se requiere el estado del compositor de configuraciónWorkspace",
+    },
+    containerBackend: {
+      label: "Entorno de ejecución",
+      host: "Host",
+      devcontainer: "Contenedor de desarrollo",
+      probing: "{{backend}} — iniciando…",
+      probeFailed: "No se pudo inspeccionar el contenedor: {{error}}",
     },
   },
   onboarding: {
