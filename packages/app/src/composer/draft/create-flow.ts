@@ -214,14 +214,6 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
             }),
           );
           markPendingCreateLifecycle({ draftId, lifecycle: "sent" });
-          if (
-            useSessionStore.getState().sessions[pendingServerId]?.agents.get(createResult.agentId)
-              ?.status === "running"
-          ) {
-            useCreateFlowStore
-              .getState()
-              .clearByAgent({ serverId: pendingServerId, agentId: createResult.agentId });
-          }
         }
 
         await onCreateSuccess({ result: createResult.result, attempt });

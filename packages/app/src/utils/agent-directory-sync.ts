@@ -9,7 +9,6 @@ import { acceptAgentDirectoryUpdate } from "@/utils/agent-directory-update-polic
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useDraftStore } from "@/stores/draft-store";
 import { getInitDeferred, getInitKey, rejectInitDeferred } from "@/utils/agent-initialization";
-import { useCreateFlowStore } from "@/stores/create-flow-store";
 
 type AgentDirectoryFetchEntry = FetchAgentsEntry;
 export type AgentDirectoryDelta = Extract<
@@ -53,9 +52,6 @@ function upsertAgentDirectoryReplica(
       previousAgent?.projectPlacement,
   };
   const acceptedAgent = upsertAgentReplica(serverId, agent);
-  if (acceptedAgent.status === "running") {
-    useCreateFlowStore.getState().clearByAgent({ serverId, agentId: acceptedAgent.id });
-  }
   if (acceptedAgent.archivedAt) {
     clearArchiveAgentPending({ queryClient, serverId, agentId: acceptedAgent.id });
   }
@@ -178,12 +174,6 @@ export function replaceFetchedAgentDirectory(input: {
   const store = useSessionStore.getState();
 
   for (const agent of fetchedAgents.values()) {
-    if (agent.status === "running") {
-      useCreateFlowStore.getState().clearByAgent({
-        serverId: input.serverId,
-        agentId: agent.id,
-      });
-    }
     if (agent.archivedAt) {
       clearArchiveAgentPending({ queryClient, serverId: input.serverId, agentId: agent.id });
     }

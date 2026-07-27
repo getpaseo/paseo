@@ -327,12 +327,10 @@ function finalizeTimelineApplication(input: {
   }
   if (shouldMarkAuthoritativeHistoryApplied) {
     setAgentAuthoritativeHistoryApplied(serverId, agentId, true);
+    useCreateFlowStore.getState().clearByAgent({ serverId, agentId });
     markAgentHistorySynchronized(serverId, agentId);
     const session = useSessionStore.getState().sessions[serverId];
     const agent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId);
-    if (agent?.status === "running") {
-      useCreateFlowStore.getState().clearByAgent({ serverId, agentId });
-    }
     if (agent && agent.status !== "running") {
       getHostRuntimeStore().drainQueuedAgentMessage(serverId, agentId);
     }
@@ -815,14 +813,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       ) {
         voiceRuntime?.onTurnEvent(serverId, agentId, event.type);
       }
-      if (
-        event.type === "turn_completed" ||
-        event.type === "turn_failed" ||
-        event.type === "turn_canceled"
-      ) {
-        useCreateFlowStore.getState().clearByAgent({ serverId, agentId });
-      }
-
       agentStreamReducerQueue.enqueue(agentId, {
         event: streamEvent,
         seq,
