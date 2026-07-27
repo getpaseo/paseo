@@ -668,7 +668,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             client={client}
             isFirstInGroup={layoutItem.isFirstInUserGroup}
             isLastInGroup={layoutItem.isLastInUserGroup}
-            isPending={pendingMessageSubmission?.clientMessageId === item.clientMessageId}
+            isPending={
+              pendingMessageSubmission !== null &&
+              pendingMessageSubmission.clientMessageId === item.clientMessageId
+            }
           />
         );
       },
