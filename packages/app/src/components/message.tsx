@@ -101,7 +101,7 @@ import {
   useAssistantFileLinkActions,
   useAssistantLinkPress,
 } from "@/assistant-file-links";
-import { getCompactionMarkerLabel } from "./message-compaction-label";
+import { getCompactionMarkerLabel, getCompactionRecapPreview } from "./message-compaction-label";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { persistAttachmentFromBytes, persistAttachmentFromDataUrl } from "@/attachments/service";
 import {
@@ -2205,6 +2205,8 @@ interface CompactionMarkerProps {
   status: "loading" | "completed";
   trigger?: "auto" | "manual";
   preTokens?: number;
+  summary?: string;
+  shortSummary?: string;
 }
 
 const compactionStylesheet = StyleSheet.create((theme) => ({
@@ -2225,6 +2227,34 @@ const compactionStylesheet = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
   },
+  recapContent: {
+    alignItems: "center",
+    flexShrink: 1,
+    gap: theme.spacing[1],
+  },
+  recapPreview: {
+    color: theme.colors.foregroundMuted,
+    fontFamily: theme.fontFamily.ui,
+    fontSize: 13,
+    lineHeight: 18,
+    textAlign: "center",
+  },
+  recapDetails: {
+    marginHorizontal: theme.spacing[4],
+    marginBottom: theme.spacing[3],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    backgroundColor: theme.colors.surface1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.md,
+    borderWidth: theme.borderWidth[1],
+  },
+  recapDetailsText: {
+    color: theme.colors.foreground,
+    fontFamily: theme.fontFamily.ui,
+    fontSize: 13,
+    lineHeight: 20,
+  },
   text: {
     fontFamily: theme.fontFamily.ui,
     fontSize: 13,
@@ -2236,21 +2266,79 @@ export const CompactionMarker = memo(function CompactionMarker({
   status,
   trigger,
   preTokens,
+  summary,
+  shortSummary,
 }: CompactionMarkerProps) {
   const label = getCompactionMarkerLabel({ status, trigger, preTokens });
+  const recapPreview = getCompactionRecapPreview({ summary, shortSummary });
+  const detailedSummary = summary?.trim() || null;
+  const [isExpanded, setIsExpanded] = useState(false);
+  const accessibilityState = useMemo(() => ({ expanded: isExpanded }), [isExpanded]);
+  const handlePress = useCallback(() => {
+    setIsExpanded((expanded) => !expanded);
+  }, []);
 
-  return (
+  if (status === "loading" || !recapPreview) {
+    return (
+      <View style={compactionStylesheet.container}>
+        <View style={compactionStylesheet.line} />
+        <View style={compactionStylesheet.label}>
+          {status === "loading" ? (
+            <ActivityIndicator size="small" color="#a1a1aa" />
+          ) : (
+            <Scissors size={12} color="#a1a1aa" />
+          )}
+          <Text style={compactionStylesheet.text}>{label}</Text>
+        </View>
+        <View style={compactionStylesheet.line} />
+      </View>
+    );
+  }
+
+  let recapChevron: ReactNode = null;
+  if (detailedSummary) {
+    const RecapChevron = isExpanded ? ChevronDown : ChevronRight;
+    recapChevron = <RecapChevron size={12} color="#a1a1aa" />;
+  }
+
+  const recapHeader = (
     <View style={compactionStylesheet.container}>
       <View style={compactionStylesheet.line} />
-      <View style={compactionStylesheet.label}>
-        {status === "loading" ? (
-          <ActivityIndicator size="small" color="#a1a1aa" />
-        ) : (
+      <View style={compactionStylesheet.recapContent}>
+        <View style={compactionStylesheet.label}>
           <Scissors size={12} color="#a1a1aa" />
-        )}
-        <Text style={compactionStylesheet.text}>{label}</Text>
+          <Text style={compactionStylesheet.text}>{label}</Text>
+          {recapChevron}
+        </View>
+        <Text selectable numberOfLines={2} style={compactionStylesheet.recapPreview}>
+          {recapPreview}
+        </Text>
       </View>
       <View style={compactionStylesheet.line} />
+    </View>
+  );
+
+  return (
+    <View>
+      {detailedSummary ? (
+        <Pressable
+          accessibilityLabel={`${label}. ${recapPreview}`}
+          accessibilityRole="button"
+          accessibilityState={accessibilityState}
+          onPress={handlePress}
+        >
+          {recapHeader}
+        </Pressable>
+      ) : (
+        recapHeader
+      )}
+      {isExpanded && detailedSummary ? (
+        <View style={compactionStylesheet.recapDetails}>
+          <Text selectable style={compactionStylesheet.recapDetailsText}>
+            {detailedSummary}
+          </Text>
+        </View>
+      ) : null}
     </View>
   );
 });

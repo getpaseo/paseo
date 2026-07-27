@@ -600,6 +600,8 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
     status: z.enum(["loading", "completed"]),
     trigger: z.enum(["auto", "manual"]).optional(),
     preTokens: z.number().optional(),
+    summary: z.string().optional(),
+    shortSummary: z.string().optional(),
   }),
 ]);
 

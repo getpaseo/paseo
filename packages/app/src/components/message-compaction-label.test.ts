@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { i18n } from "@/i18n/i18next";
-import { getCompactionMarkerLabel } from "./message-compaction-label";
+import { getCompactionMarkerLabel, getCompactionRecapPreview } from "./message-compaction-label";
 
 describe("getCompactionMarkerLabel", () => {
   it("renders loading, automatic, manual, tokenized, and fallback labels", () => {
@@ -25,5 +25,35 @@ describe("getCompactionMarkerLabel", () => {
     } finally {
       await i18n.changeLanguage("en");
     }
+  });
+});
+
+describe("getCompactionRecapPreview", () => {
+  it("prefers a non-empty short recap", () => {
+    expect(
+      getCompactionRecapPreview({
+        summary: "Detailed recap",
+        shortSummary: "Short recap",
+      }),
+    ).toBe("Short recap");
+  });
+
+  it("falls back to a non-empty detailed recap", () => {
+    expect(
+      getCompactionRecapPreview({
+        summary: "Detailed recap",
+        shortSummary: "   ",
+      }),
+    ).toBe("Detailed recap");
+  });
+
+  it("returns null when no non-empty recap exists", () => {
+    expect(getCompactionRecapPreview({})).toBeNull();
+    expect(
+      getCompactionRecapPreview({
+        summary: "",
+        shortSummary: "   ",
+      }),
+    ).toBeNull();
   });
 });

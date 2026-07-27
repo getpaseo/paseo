@@ -244,7 +244,7 @@ function mapAutoCompactionEndEvent(event: unknown): OmpRuntimeEventMapping {
   if (!parsed.success) {
     return { handled: true, item: null, logReason: "malformed_omp_auto_compaction_end" };
   }
-  const preTokens = readCompactionPreTokens(parsed.data.result);
+  const details = parsed.data.aborted ? {} : readOmpCompactionDetails(parsed.data.result);
   // Wire compaction items only support loading/completed, so every end event clears loading.
   return {
     handled: true,
@@ -252,7 +252,7 @@ function mapAutoCompactionEndEvent(event: unknown): OmpRuntimeEventMapping {
       type: "compaction",
       status: "completed",
       trigger: "auto",
-      ...(preTokens !== undefined ? { preTokens } : {}),
+      ...details,
     },
   };
 }
@@ -305,11 +305,27 @@ function readEventType(value: unknown): string | null {
   return typeof value.type === "string" ? value.type : null;
 }
 
-function readCompactionPreTokens(value: unknown): number | undefined {
+export function readOmpCompactionDetails(value: unknown): {
+  preTokens?: number;
+  summary?: string;
+  shortSummary?: string;
+} {
   if (!isRecord(value)) {
-    return undefined;
+    return {};
   }
-  return typeof value.tokensBefore === "number" ? value.tokensBefore : undefined;
+  const summary =
+    typeof value.summary === "string" && value.summary.trim().length > 0
+      ? value.summary
+      : undefined;
+  const shortSummary =
+    typeof value.shortSummary === "string" && value.shortSummary.trim().length > 0
+      ? value.shortSummary
+      : undefined;
+  return {
+    ...(typeof value.tokensBefore === "number" ? { preTokens: value.tokensBefore } : {}),
+    ...(summary !== undefined ? { summary } : {}),
+    ...(shortSummary !== undefined ? { shortSummary } : {}),
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
