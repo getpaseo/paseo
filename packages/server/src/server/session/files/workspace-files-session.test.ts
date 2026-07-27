@@ -10,6 +10,7 @@ import {
   type FileTransferFrame,
 } from "@getpaseo/protocol/binary-frames/index";
 import {
+  FILE_TRANSFER_CHUNK_BYTES,
   WorkspaceFilesSession,
   type WorkspaceFilesSessionHost,
 } from "./workspace-files-session.js";
@@ -38,6 +39,7 @@ function makeSubsystem(options: { hasBinaryChannel?: boolean } = {}) {
     emit: (msg) => emitted.push(msg),
     emitBinary: (frame) => binary.push(frame),
     hasBinaryChannel: () => hasBinary,
+    getClientBufferedAmount: () => 0,
   };
   const paseoHome = makeDir("workspace-files-home-");
   const subsystem = new WorkspaceFilesSession({
@@ -134,6 +136,34 @@ describe("WorkspaceFilesSession", () => {
       FileTransferOpcode.FileChunk,
       FileTransferOpcode.FileEnd,
     ]);
+  });
+
+  test("chunks binary file reads below the physical socket limit", async () => {
+    const cwd = makeDir("workspace-files-chunked-");
+    const contents = Buffer.alloc(FILE_TRANSFER_CHUNK_BYTES * 2 + 7, 0x61);
+    writeFileSync(join(cwd, "archive.bin"), contents);
+    const { subsystem, binary } = makeSubsystem({ hasBinaryChannel: true });
+
+    await subsystem.handleFileExplorerRequest({
+      type: "file_explorer_request",
+      cwd,
+      path: "archive.bin",
+      mode: "file",
+      requestId: "req-chunked",
+      acceptBinary: true,
+    });
+
+    const frames = binary.map((frame) => decodeFileTransferFrame(frame));
+    const chunks = frames.filter(
+      (frame): frame is Extract<FileTransferFrame, { opcode: 0x11 }> =>
+        frame?.opcode === FileTransferOpcode.FileChunk,
+    );
+    expect(chunks.map((frame) => frame.payload.byteLength)).toEqual([
+      FILE_TRANSFER_CHUNK_BYTES,
+      FILE_TRANSFER_CHUNK_BYTES,
+      7,
+    ]);
+    expect(Buffer.concat(chunks.map((frame) => Buffer.from(frame.payload)))).toEqual(contents);
   });
 
   test("rejects an empty file-explorer cwd with an error envelope", async () => {

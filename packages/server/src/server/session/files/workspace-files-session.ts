@@ -37,6 +37,7 @@ export interface WorkspaceFilesSessionHost {
   emit(msg: SessionOutboundMessage): void;
   emitBinary(frame: Uint8Array): void;
   hasBinaryChannel(): boolean;
+  getClientBufferedAmount(): number | null;
 }
 
 export interface WorkspaceFilesSessionOptions {
@@ -46,6 +47,12 @@ export interface WorkspaceFilesSessionOptions {
   logger: pino.Logger;
   fileObserver?: FileObserver;
 }
+
+export const FILE_TRANSFER_CHUNK_BYTES = 256 * 1024;
+// Encrypted relay frames expand during encryption + base64 transport. Stay
+// below the shared physical socket hard limit while the peer drains its queue.
+const FILE_TRANSFER_HIGH_WATER_BYTES = 4 * 1024 * 1024;
+const FILE_TRANSFER_BACKPRESSURE_POLL_MS = 10;
 
 /**
  * A client's workspace file-access surface: browsing directories, reading file
@@ -194,13 +201,24 @@ export class WorkspaceFilesSession {
               },
             }),
           );
-          this.host.emitBinary(
-            encodeFileTransferFrame({
-              opcode: FileTransferOpcode.FileChunk,
-              requestId,
-              payload: file.bytes,
-            }),
-          );
+          for (
+            let offset = 0;
+            offset < file.bytes.byteLength;
+            offset += FILE_TRANSFER_CHUNK_BYTES
+          ) {
+            await this.waitForBinaryCapacity();
+            this.host.emitBinary(
+              encodeFileTransferFrame({
+                opcode: FileTransferOpcode.FileChunk,
+                requestId,
+                payload: file.bytes.subarray(
+                  offset,
+                  Math.min(offset + FILE_TRANSFER_CHUNK_BYTES, file.bytes.byteLength),
+                ),
+              }),
+            );
+          }
+          await this.waitForBinaryCapacity();
           this.host.emitBinary(
             encodeFileTransferFrame({
               opcode: FileTransferOpcode.FileEnd,
@@ -356,6 +374,14 @@ export class WorkspaceFilesSession {
           error: getErrorMessage(error),
           requestId,
         },
+      });
+    }
+  }
+
+  private async waitForBinaryCapacity(): Promise<void> {
+    while ((this.host.getClientBufferedAmount() ?? 0) > FILE_TRANSFER_HIGH_WATER_BYTES) {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, FILE_TRANSFER_BACKPRESSURE_POLL_MS);
       });
     }
   }

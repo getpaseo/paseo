@@ -1463,6 +1463,8 @@ export const ja: TranslationResources = {
   downloads: {
     requestTokenFailed: "ダウンロードトークンのリクエストに失敗しました。",
     hostUnavailable: "ダウンロードホストが利用できません。",
+    relayFileTooLarge:
+      "This file is too large to download through the relay (max {{size}}). Add a direct connection to download it.",
     cancelled: "ダウンロードがキャンセルされました。",
     failed: "ファイルのダウンロードに失敗しました。",
     shareFile: "ファイルを共有",

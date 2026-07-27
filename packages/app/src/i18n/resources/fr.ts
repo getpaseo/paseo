@@ -1493,6 +1493,8 @@ export const fr: TranslationResources = {
   downloads: {
     requestTokenFailed: "Échec de la demande du jeton de téléchargement.",
     hostUnavailable: "L'hôte de téléchargement n'est pas disponible.",
+    relayFileTooLarge:
+      "This file is too large to download through the relay (max {{size}}). Add a direct connection to download it.",
     cancelled: "Le téléchargement a été annulé.",
     failed: "Échec du téléchargement du fichier.",
     shareFile: "Partager un fichier",

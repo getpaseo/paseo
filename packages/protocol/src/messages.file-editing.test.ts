@@ -11,13 +11,23 @@ import {
 
 describe("workspace file editing messages", () => {
   test("keeps the capability optional for older server info payloads", () => {
+    const features = ServerInfoStatusPayloadSchema.parse({
+      status: "server_info",
+      serverId: "server-1",
+      features: {},
+    }).features;
+    expect(features?.workspaceFileEditing).toBeUndefined();
+    expect(features?.relayFileDownloads).toBeUndefined();
+  });
+
+  test("parses the relay file download capability", () => {
     expect(
       ServerInfoStatusPayloadSchema.parse({
         status: "server_info",
         serverId: "server-1",
-        features: {},
-      }).features?.workspaceFileEditing,
-    ).toBeUndefined();
+        features: { relayFileDownloads: true },
+      }).features?.relayFileDownloads,
+    ).toBe(true);
   });
 
   test("parses subscribe, unsubscribe, and version update messages", () => {

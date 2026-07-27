@@ -1790,7 +1790,14 @@ test("readFile resolves from binary file frames when the daemon supports them", 
     encodeFileTransferFrame({
       opcode: FileTransferOpcode.FileChunk,
       requestId: "req-binary",
-      payload: new TextEncoder().encode("hello"),
+      payload: new TextEncoder().encode("he"),
+    }),
+  );
+  mock.triggerMessage(
+    encodeFileTransferFrame({
+      opcode: FileTransferOpcode.FileChunk,
+      requestId: "req-binary",
+      payload: new TextEncoder().encode("llo"),
     }),
   );
   mock.triggerMessage(

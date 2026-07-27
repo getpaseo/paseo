@@ -1481,6 +1481,8 @@ export const ru: TranslationResources = {
   downloads: {
     requestTokenFailed: "Не удалось запросить токен загрузки.",
     hostUnavailable: "Хост загрузки недоступен.",
+    relayFileTooLarge:
+      "This file is too large to download through the relay (max {{size}}). Add a direct connection to download it.",
     cancelled: "Загрузка отменена.",
     failed: "Не удалось загрузить файл.",
     shareFile: "Поделиться файлом",

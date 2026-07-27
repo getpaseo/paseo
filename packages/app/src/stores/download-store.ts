@@ -37,12 +37,10 @@ interface DownloadState {
     fileName: string;
     path: string;
     daemonProfile: HostProfile | undefined;
-    requestFileDownloadToken: (path: string) => Promise<{
-      token: string | null;
-      fileName: string | null;
-      mimeType: string | null;
-      error: string | null;
-    }>;
+    activeConnectionId: string | null;
+    supportsRelayFileDownloads: boolean;
+    requestFileDownloadToken: (path: string) => Promise<DownloadTokenResult>;
+    requestFileBytes: (path: string) => Promise<RelayFileResult>;
   }) => Promise<void>;
 
   updateProgress: (id: string, progress: DownloadProgress) => void;
@@ -52,9 +50,27 @@ interface DownloadState {
   dismissAllCompleted: () => void;
 }
 
+interface DownloadTokenResult {
+  token: string | null;
+  fileName: string | null;
+  mimeType: string | null;
+  size: number | null;
+  error: string | null;
+}
+
+interface RelayFileResult {
+  bytes: Uint8Array;
+  mime: string;
+  size: number;
+}
+
 function generateDownloadId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
+
+// The existing binary read API assembles the file in memory on both peers.
+// Keep relay fallback bounded until the protocol grows a streaming download sink.
+export const MAX_RELAY_DOWNLOAD_BYTES = 32 * 1024 * 1024;
 
 export const useDownloadStore = create<DownloadState>()((set, get) => ({
   downloads: new Map(),
@@ -66,7 +82,10 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
     fileName,
     path,
     daemonProfile,
+    activeConnectionId,
+    supportsRelayFileDownloads,
     requestFileDownloadToken,
+    requestFileBytes,
   }) => {
     const id = generateDownloadId();
     const download: Download = {
@@ -89,71 +108,35 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
         throw new Error(tokenResponse.error ?? i18n.t("downloads.requestTokenFailed"));
       }
 
-      const downloadTarget = resolveDaemonDownloadTarget(daemonProfile);
-      if (!downloadTarget.baseUrl) {
-        throw new Error(i18n.t("downloads.hostUnavailable"));
-      }
-
       const resolvedFileName = tokenResponse.fileName ?? fileName;
-      const downloadUrl = buildDownloadUrl(
-        downloadTarget.baseUrl,
-        tokenResponse.token,
-        isWeb ? downloadTarget.authCredentials : null,
-      );
-
-      if (isWeb) {
-        triggerBrowserDownload(downloadUrl, resolvedFileName);
+      const downloadTarget = resolveDaemonDownloadTarget(daemonProfile, activeConnectionId);
+      if (!downloadTarget.baseUrl) {
+        const bytesWritten = await downloadViaRelay({
+          path,
+          fileName: resolvedFileName,
+          tokenResponse,
+          supportsRelayFileDownloads,
+          requestFileBytes,
+        });
+        get().updateProgress(id, {
+          percent: 1,
+          bytesWritten,
+          totalBytes: bytesWritten,
+          speed: 0,
+          eta: 0,
+        });
         get().completeDownload(id);
         return;
       }
 
-      const downloadStartTime = Date.now();
-      const targetFile = resolveDownloadTargetFile(resolvedFileName);
-      const downloadResumable = LegacyFileSystem.createDownloadResumable(
-        downloadUrl,
-        targetFile.uri,
-        downloadTarget.authHeader
-          ? { headers: { Authorization: downloadTarget.authHeader } }
-          : undefined,
-        (data) => {
-          const now = Date.now();
-          const { totalBytesWritten, totalBytesExpectedToWrite } = data;
-
-          if (totalBytesExpectedToWrite <= 0) {
-            return;
-          }
-
-          const percent = totalBytesWritten / totalBytesExpectedToWrite;
-          const elapsed = (now - downloadStartTime) / 1000;
-          const speed = elapsed > 0 ? totalBytesWritten / elapsed : 0;
-          const remaining = totalBytesExpectedToWrite - totalBytesWritten;
-          const eta = speed > 0 ? remaining / speed : 0;
-
-          get().updateProgress(id, {
-            percent,
-            bytesWritten: totalBytesWritten,
-            totalBytes: totalBytesExpectedToWrite,
-            speed,
-            eta,
-          });
-        },
-      );
-
-      const result = await downloadResumable.downloadAsync();
-      if (!result) {
-        throw new Error(i18n.t("downloads.cancelled"));
-      }
-
+      await downloadViaDirect({
+        target: { ...downloadTarget, baseUrl: downloadTarget.baseUrl },
+        token: tokenResponse.token,
+        fileName: resolvedFileName,
+        mimeType: tokenResponse.mimeType,
+        onProgress: (progress) => get().updateProgress(id, progress),
+      });
       get().completeDownload(id);
-
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(result.uri, {
-          mimeType: tokenResponse.mimeType ?? undefined,
-          dialogTitle: resolvedFileName
-            ? i18n.t("downloads.shareFileNamed", { fileName: resolvedFileName })
-            : i18n.t("downloads.shareFile"),
-        });
-      }
     } catch (error) {
       const message = error instanceof Error ? error.message : i18n.t("downloads.failed");
       if (isWeb) {
@@ -244,8 +227,13 @@ interface DownloadTarget {
   authCredentials: { username: string; password: string } | null;
 }
 
-function resolveDaemonDownloadTarget(daemon?: HostProfile): DownloadTarget {
-  const connection = daemon?.connections.find((conn) => conn.type === "directTcp") ?? null;
+function resolveDaemonDownloadTarget(
+  daemon: HostProfile | undefined,
+  activeConnectionId: string | null,
+): DownloadTarget {
+  const activeConnection =
+    daemon?.connections.find((connection) => connection.id === activeConnectionId) ?? null;
+  const connection = activeConnection?.type === "directTcp" ? activeConnection : null;
   if (!connection) {
     return { baseUrl: null, authHeader: null, authCredentials: null };
   }
@@ -299,6 +287,101 @@ function buildDownloadUrl(
   return url.toString();
 }
 
+async function downloadViaRelay(input: {
+  path: string;
+  fileName: string;
+  tokenResponse: DownloadTokenResult;
+  supportsRelayFileDownloads: boolean;
+  requestFileBytes: (path: string) => Promise<RelayFileResult>;
+}): Promise<number> {
+  if (!input.supportsRelayFileDownloads) {
+    throw new Error(i18n.t("downloads.hostUnavailable"));
+  }
+  assertRelayDownloadSize(input.tokenResponse.size);
+
+  const relayFile = await input.requestFileBytes(input.path);
+  assertRelayDownloadSize(relayFile.bytes.byteLength);
+  const mimeType = input.tokenResponse.mimeType ?? relayFile.mime;
+
+  if (isWeb) {
+    triggerBrowserByteDownload(relayFile.bytes, mimeType, input.fileName);
+    return relayFile.bytes.byteLength;
+  }
+
+  const targetFile = resolveDownloadTargetFile(input.fileName);
+  targetFile.write(relayFile.bytes);
+  await shareDownloadedFile(targetFile.uri, input.fileName, mimeType);
+  return relayFile.bytes.byteLength;
+}
+
+async function downloadViaDirect(input: {
+  target: DownloadTarget & { baseUrl: string };
+  token: string;
+  fileName: string;
+  mimeType: string | null;
+  onProgress: (progress: DownloadProgress) => void;
+}): Promise<void> {
+  const downloadUrl = buildDownloadUrl(
+    input.target.baseUrl,
+    input.token,
+    isWeb ? input.target.authCredentials : null,
+  );
+  if (isWeb) {
+    triggerBrowserDownload(downloadUrl, input.fileName);
+    return;
+  }
+
+  const downloadStartTime = Date.now();
+  const targetFile = resolveDownloadTargetFile(input.fileName);
+  const downloadResumable = LegacyFileSystem.createDownloadResumable(
+    downloadUrl,
+    targetFile.uri,
+    input.target.authHeader ? { headers: { Authorization: input.target.authHeader } } : undefined,
+    ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
+      if (totalBytesExpectedToWrite <= 0) return;
+      const elapsed = (Date.now() - downloadStartTime) / 1000;
+      const speed = elapsed > 0 ? totalBytesWritten / elapsed : 0;
+      input.onProgress({
+        percent: totalBytesWritten / totalBytesExpectedToWrite,
+        bytesWritten: totalBytesWritten,
+        totalBytes: totalBytesExpectedToWrite,
+        speed,
+        eta: speed > 0 ? (totalBytesExpectedToWrite - totalBytesWritten) / speed : 0,
+      });
+    },
+  );
+
+  const result = await downloadResumable.downloadAsync();
+  if (!result) {
+    throw new Error(i18n.t("downloads.cancelled"));
+  }
+  await shareDownloadedFile(result.uri, input.fileName, input.mimeType);
+}
+
+function assertRelayDownloadSize(size: number | null): void {
+  if (size !== null && size > MAX_RELAY_DOWNLOAD_BYTES) {
+    throw new Error(
+      i18n.t("downloads.relayFileTooLarge", {
+        size: formatFileSize(MAX_RELAY_DOWNLOAD_BYTES),
+      }),
+    );
+  }
+}
+
+async function shareDownloadedFile(
+  uri: string,
+  fileName: string,
+  mimeType: string | null,
+): Promise<void> {
+  if (!(await Sharing.isAvailableAsync())) return;
+  await Sharing.shareAsync(uri, {
+    mimeType: mimeType ?? undefined,
+    dialogTitle: fileName
+      ? i18n.t("downloads.shareFileNamed", { fileName })
+      : i18n.t("downloads.shareFile"),
+  });
+}
+
 function triggerBrowserDownload(url: string, fileName: string) {
   if (typeof document === "undefined") {
     if (typeof window !== "undefined") {
@@ -314,6 +397,13 @@ function triggerBrowserDownload(url: string, fileName: string) {
   document.body.appendChild(link);
   link.click();
   link.remove();
+}
+
+function triggerBrowserByteDownload(bytes: Uint8Array, mimeType: string, fileName: string): void {
+  const blob = new Blob([new Uint8Array(bytes)], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  triggerBrowserDownload(url, fileName);
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 function resolveDownloadTargetFile(fileName: string): FSFile {
@@ -352,6 +442,10 @@ function splitFileName(fileName: string): { base: string; ext: string } {
     base: fileName.slice(0, lastDot),
     ext: fileName.slice(lastDot),
   };
+}
+
+function formatFileSize(bytes: number): string {
+  return `${Math.round(bytes / (1024 * 1024))} MB`;
 }
 
 export function formatSpeed(bytesPerSecond: number): string {
