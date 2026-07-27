@@ -12,7 +12,7 @@ import {
   planAttentionInterrupt,
   type AttentionFocusTarget,
 } from "@/utils/attention-interrupt-plan";
-import { playAttentionSound } from "@/utils/attention-sound";
+import { playAttentionSound, resolveAttentionSoundPreset } from "@/utils/attention-sound";
 import { buildNotificationRoute } from "@/utils/notification-routing";
 import { sendOsNotification } from "@/utils/os-notifications";
 
@@ -64,7 +64,7 @@ export async function deliverAttentionInterrupt(
       attentionIntrusiveMode: settings.attentionIntrusiveMode,
       attentionOsBubbleEnabled: settings.attentionOsBubbleEnabled,
       attentionSoundEnabled: settings.attentionSoundEnabled,
-      attentionSoundPreset: settings.attentionSoundPreset,
+      attentionSoundPreset: resolveAttentionSoundPreset(settings.attentionSoundPreset),
     },
     isActivelyVisible,
     focusedAgentId: input.focusedAgentId,

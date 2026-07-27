@@ -1,16 +1,41 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { View, Text } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { RotateCw } from "lucide-react-native";
+import { View, Text, type PressableStateCallbackType } from "react-native";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
+import { ChevronDown, RotateCw } from "lucide-react-native";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { SegmentedControl } from "@/components/ui/segmented-control";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { DesktopPermissionRow } from "@/desktop/components/desktop-permission-row";
 import { useDesktopPermissions } from "@/desktop/permissions/use-desktop-permissions";
-import { useAppSettings, type AttentionSoundPreset } from "@/hooks/use-settings";
+import {
+  ATTENTION_SOUND_PRESETS,
+  useAppSettings,
+  type AttentionSoundPreset,
+} from "@/hooks/use-settings";
+import { playAttentionSound } from "@/utils/attention-sound";
 import { settingsStyles } from "@/styles/settings";
 import { SettingsSection } from "@/screens/settings/settings-section";
+import type { Theme } from "@/styles/theme";
+import { ICON_SIZE } from "@/styles/theme";
+
+const ThemedChevronDown = withUnistyles(ChevronDown);
+const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+
+function dropdownTriggerStyle({
+  pressed = false,
+}: PressableStateCallbackType & { hovered?: boolean }) {
+  return [styles.trigger, pressed ? styles.triggerPressed : null];
+}
+
+function attentionPresetLabelKey(preset: AttentionSoundPreset): string {
+  return `settings.permissions.attention.preset.${preset}`;
+}
 
 export function DesktopPermissionsSection() {
   const { t } = useTranslation();
@@ -73,30 +98,21 @@ export function DesktopPermissionsSection() {
   const handlePresetChange = useCallback(
     (value: AttentionSoundPreset) => {
       void updateSettings({ attentionSoundPreset: value });
+      // Preview on select so the user can hear before saving preference matters.
+      playAttentionSound(value);
     },
     [updateSettings],
   );
 
-  const presetOptions = useMemo(
-    () => [
-      {
-        value: "soft" as const,
-        label: t("settings.permissions.attention.preset.soft"),
-        testID: "attention-sound-preset-soft",
-      },
-      {
-        value: "ping" as const,
-        label: t("settings.permissions.attention.preset.ping"),
-        testID: "attention-sound-preset-ping",
-      },
-      {
-        value: "classic" as const,
-        label: t("settings.permissions.attention.preset.classic"),
-        testID: "attention-sound-preset-classic",
-      },
-    ],
-    [t],
-  );
+  const presetSelectHandlers = useMemo(() => {
+    const handlers = {} as Record<AttentionSoundPreset, () => void>;
+    for (const preset of ATTENTION_SOUND_PRESETS) {
+      handlers[preset] = () => handlePresetChange(preset);
+    }
+    return handlers;
+  }, [handlePresetChange]);
+
+  const selectedPresetLabel = t(attentionPresetLabelKey(settings.attentionSoundPreset));
 
   const isBusy = isRefreshing || requestingPermission !== null;
   const notificationsGranted = snapshot?.notifications.state === "granted";
@@ -224,14 +240,37 @@ export function DesktopPermissionsSection() {
                 {t("settings.permissions.attention.preset.description")}
               </Text>
             </View>
-            <SegmentedControl
-              options={presetOptions}
-              value={settings.attentionSoundPreset}
-              onValueChange={handlePresetChange}
-              size="xs"
-              style={styles.presetControl}
-              testID="attention-sound-preset"
-            />
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                style={dropdownTriggerStyle}
+                accessibilityLabel={t("settings.permissions.attention.preset.accessibilityLabel", {
+                  value: selectedPresetLabel,
+                })}
+                testID="attention-sound-preset"
+              >
+                <Text style={styles.triggerText} numberOfLines={1}>
+                  {selectedPresetLabel}
+                </Text>
+                <ThemedChevronDown size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                side="bottom"
+                align="end"
+                width={220}
+                testID="attention-sound-preset-menu"
+              >
+                {ATTENTION_SOUND_PRESETS.map((preset) => (
+                  <DropdownMenuItem
+                    key={preset}
+                    selected={settings.attentionSoundPreset === preset}
+                    onSelect={presetSelectHandlers[preset]}
+                    testID={`attention-sound-preset-${preset}`}
+                  >
+                    {t(attentionPresetLabelKey(preset))}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </View>
         </View>
       </SettingsSection>
@@ -245,7 +284,24 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[4],
     paddingBottom: theme.spacing[2],
   },
-  presetControl: {
-    maxWidth: 220,
+  trigger: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingVertical: theme.spacing[1.5],
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface0,
+    maxWidth: 180,
+  },
+  triggerPressed: {
+    backgroundColor: theme.colors.surface2,
+  },
+  triggerText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    flexShrink: 1,
   },
 }));

@@ -101,6 +101,20 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.attentionSoundPreset).toBe("ping");
   });
 
+  it("migrates legacy classic attention sound preset to bell", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          attentionSoundPreset: "classic",
+        }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.attentionSoundPreset).toBe("bell");
+  });
+
   it("loads configured terminal scrollback lines from app settings", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({

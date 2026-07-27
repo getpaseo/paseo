@@ -7,6 +7,7 @@ const focusWindow = vi.fn(async () => true);
 
 vi.mock("@/utils/attention-sound", () => ({
   playAttentionSound,
+  resolveAttentionSoundPreset: (preset: string) => preset,
 }));
 
 vi.mock("@/utils/os-notifications", () => ({

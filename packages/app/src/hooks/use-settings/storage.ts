@@ -13,13 +13,38 @@ export type ReleaseChannel = "stable" | "beta";
 export type ServiceUrlBehavior = "ask" | "in-app" | "external";
 export type WorkspaceTitleSource = "title" | "branch";
 export type ToolCallDetailLevel = "overview" | "detailed";
-export type AttentionSoundPreset = "soft" | "ping" | "classic";
+/** Curated attention chimes for agent/terminal interrupts. Default soft. */
+export type AttentionSoundPreset =
+  | "soft"
+  | "chime"
+  | "ping"
+  | "glass"
+  | "knock"
+  | "pulse"
+  | "bell"
+  | "drop"
+  | "spark"
+  | "alert";
+
+/** Stable display order for settings dropdown. */
+export const ATTENTION_SOUND_PRESETS: readonly AttentionSoundPreset[] = [
+  "soft",
+  "chime",
+  "ping",
+  "glass",
+  "knock",
+  "pulse",
+  "bell",
+  "drop",
+  "spark",
+  "alert",
+] as const;
 
 const VALID_THEMES = new Set<string>([...Object.keys(THEME_TO_UNISTYLES), "auto"]);
 const VALID_SERVICE_URL_BEHAVIORS = new Set<ServiceUrlBehavior>(["ask", "in-app", "external"]);
 const VALID_WORKSPACE_TITLE_SOURCES = new Set<WorkspaceTitleSource>(["title", "branch"]);
 const VALID_TOOL_CALL_DETAIL_LEVELS = new Set<ToolCallDetailLevel>(["overview", "detailed"]);
-const VALID_ATTENTION_SOUND_PRESETS = new Set<AttentionSoundPreset>(["soft", "ping", "classic"]);
+const VALID_ATTENTION_SOUND_PRESETS = new Set<AttentionSoundPreset>(ATTENTION_SOUND_PRESETS);
 export const DEFAULT_TERMINAL_SCROLLBACK_LINES = 10_000;
 export const MIN_TERMINAL_SCROLLBACK_LINES = 0;
 export const MAX_TERMINAL_SCROLLBACK_LINES = 1_000_000;
@@ -61,7 +86,11 @@ export interface Settings extends AppSettings {
   releaseChannel: ReleaseChannel;
 }
 
-type StoredAppSettings = Partial<AppSettings> & { compactToolCalls?: unknown };
+type StoredAppSettings = Partial<Omit<AppSettings, "attentionSoundPreset">> & {
+  compactToolCalls?: unknown;
+  /** May include legacy "classic" before the 10-sound expansion. */
+  attentionSoundPreset?: string;
+};
 
 export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   theme: "auto",
@@ -280,11 +309,14 @@ function pickAttentionAppSettings(stored: StoredAppSettings): Partial<AppSetting
   if (typeof stored.attentionSoundEnabled === "boolean") {
     result.attentionSoundEnabled = stored.attentionSoundEnabled;
   }
-  if (
-    typeof stored.attentionSoundPreset === "string" &&
-    VALID_ATTENTION_SOUND_PRESETS.has(stored.attentionSoundPreset)
-  ) {
-    result.attentionSoundPreset = stored.attentionSoundPreset;
+  if (typeof stored.attentionSoundPreset === "string") {
+    // COMPAT(attentionSoundClassic): "classic" renamed to "bell" when the preset set expanded.
+    const rawPreset = stored.attentionSoundPreset;
+    if (rawPreset === "classic") {
+      result.attentionSoundPreset = "bell";
+    } else if (VALID_ATTENTION_SOUND_PRESETS.has(rawPreset as AttentionSoundPreset)) {
+      result.attentionSoundPreset = rawPreset as AttentionSoundPreset;
+    }
   }
   return result;
 }

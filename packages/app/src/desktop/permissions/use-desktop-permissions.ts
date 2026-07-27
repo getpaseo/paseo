@@ -13,6 +13,7 @@ import {
   DEFAULT_CLIENT_SETTINGS,
   normalizeAppSettings,
 } from "@/hooks/use-settings/storage";
+import { playAttentionSound } from "@/utils/attention-sound";
 import { sendOsNotification } from "@/utils/os-notifications";
 
 export interface UseDesktopPermissionsReturn {
@@ -130,14 +131,25 @@ export function useDesktopPermissions(): UseDesktopPermissionsReturn {
       const settings = normalizeAppSettings(
         queryClient.getQueryData(APP_SETTINGS_QUERY_KEY) ?? DEFAULT_CLIENT_SETTINGS,
       );
+      // Always preview the curated in-app chime for the selected preset so Test
+      // matches what banners/intrusive use. OS bubble sound is system-owned and
+      // is not preset-selectable.
+      if (settings.attentionSoundEnabled) {
+        playAttentionSound(settings.attentionSoundPreset);
+      }
+
       if (!settings.attentionOsBubbleEnabled) {
-        setTestNotificationError(t("desktop.permissions.testNotification.notDelivered"));
+        // Sound-only test when bubble is off still counts as success if we played.
+        if (!settings.attentionSoundEnabled) {
+          setTestNotificationError(t("desktop.permissions.testNotification.notDelivered"));
+        }
         return;
       }
       const sent = await sendOsNotification({
         title: t("desktop.permissions.testNotification.title"),
         body: t("desktop.permissions.testNotification.body"),
-        silent: !settings.attentionSoundEnabled,
+        // Silent OS bubble: curated preset already played above; avoid double OS chime.
+        silent: true,
       });
       if (!sent) {
         setTestNotificationError(t("desktop.permissions.testNotification.notDelivered"));
