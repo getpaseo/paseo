@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import {
-  buildOptimisticUserMessage,
+  createUserMessage,
   hydrateStreamState,
   type AgentToolCallItem,
   type StreamItem,
@@ -119,12 +119,12 @@ function makeAssistantItem(
   };
 }
 
-function makeOptimisticUserMessage(
+function makeSubmittedUserMessage(
   text: string,
-  id = `optimistic-${text.length}`,
+  id = `submitted-${text.length}`,
 ): Extract<StreamItem, { kind: "user_message" }> {
-  return buildOptimisticUserMessage({
-    id,
+  return createUserMessage({
+    clientMessageId: id,
     text,
     timestamp: new Date(1000),
   });
@@ -172,6 +172,7 @@ const baseTimelineInput: ProcessTimelineResponseInput = {
   isInitializing: false,
   hasActiveInitDeferred: false,
   initRequestDirection: "tail",
+  sendingClientMessageIds: [],
 };
 
 const baseStreamInput: ProcessAgentStreamEventInput = {
@@ -181,7 +182,6 @@ const baseStreamInput: ProcessAgentStreamEventInput = {
   currentTail: [],
   currentHead: [],
   currentCursor: undefined,
-  currentAgent: null,
   timestamp: new Date(2000),
 };
 
@@ -293,6 +293,75 @@ describe("processTimelineResponse", () => {
     expect(result.sideEffects.some((e) => e.type === "flush_pending_updates")).toBe(true);
   });
 
+  it("keeps a live assistant and submitted head prompt in one lane during replacement", () => {
+    const submitted = makeSubmittedUserMessage("New prompt", "client-new-prompt");
+    const liveAssistant = {
+      ...makeAssistantItem("Live answer", "answer-1"),
+      messageId: "answer-1",
+    };
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [],
+      currentHead: [liveAssistant, submitted],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
+      sendingClientMessageIds: ["client-new-prompt"],
+      payload: {
+        ...baseTimelineInput.payload,
+        reset: true,
+        epoch: "epoch-1",
+        startCursor: { seq: 1 },
+        endCursor: { seq: 1 },
+        entries: [
+          {
+            ...makeTimelineEntry(1, "Live", "assistant_message"),
+            item: {
+              type: "assistant_message",
+              text: "Live",
+              messageId: "answer-1",
+            },
+          },
+        ],
+      },
+    });
+
+    expect(result.tail).toEqual([]);
+    expect(result.head).toEqual([{ ...liveAssistant, text: "Live" }, submitted]);
+  });
+
+  it("preserves newer live head items when canonical replacement ends in a tool call", () => {
+    const liveThought: StreamItem = {
+      kind: "thought",
+      id: "live-thought",
+      text: "newer reasoning",
+      timestamp: new Date(3000),
+      status: "loading",
+    };
+    const liveAssistant = makeAssistantItem("newer answer", "live-answer");
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentHead: [liveThought, liveAssistant],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
+      payload: {
+        ...baseTimelineInput.payload,
+        reset: true,
+        epoch: "epoch-1",
+        startCursor: { seq: 1 },
+        endCursor: { seq: 1 },
+        entries: [
+          makeToolCallTimelineEntry(1, "canonical-call", "completed", {
+            type: "read",
+            filePath: "/tmp/older.ts",
+          }),
+        ],
+      },
+    });
+
+    expect(result.tail.map((item) => item.kind)).toEqual(["tool_call"]);
+    expect(result.head).toEqual([liveThought, liveAssistant]);
+  });
+
   it("uses the timeline entry timestamp as canonical", () => {
     const result = processTimelineResponse({
       ...baseTimelineInput,
@@ -321,12 +390,12 @@ describe("processTimelineResponse", () => {
     expect(assistant?.timestamp.toISOString()).toBe("2025-01-01T12:00:04.000Z");
   });
 
-  it("reconciles an optimistic user message during tail replacement", () => {
+  it("reconciles a submitted user message during tail replacement", () => {
     const image = {
-      id: "optimistic-image",
+      id: "submitted-image",
       mimeType: "image/png",
       storageType: "web-indexeddb" as const,
-      storageKey: "optimistic-image",
+      storageKey: "submitted-image",
       createdAt: 1000,
     };
     const attachment = {
@@ -335,8 +404,8 @@ describe("processTimelineResponse", () => {
       text: "attached context",
       title: "context.txt",
     };
-    const optimistic = buildOptimisticUserMessage({
-      id: "optimistic-create-user",
+    const submitted = createUserMessage({
+      clientMessageId: "submitted-create-user",
       text: "Analyze this",
       timestamp: new Date(1000),
       images: [image],
@@ -345,7 +414,7 @@ describe("processTimelineResponse", () => {
 
     const result = processTimelineResponse({
       ...baseTimelineInput,
-      currentTail: [optimistic],
+      currentTail: [submitted],
       payload: {
         ...baseTimelineInput.payload,
         reset: true,
@@ -358,6 +427,7 @@ describe("processTimelineResponse", () => {
               type: "user_message",
               text: "server-rendered attachment text",
               messageId: "canonical-create-user",
+              clientMessageId: "submitted-create-user",
             },
           },
         ],
@@ -367,13 +437,14 @@ describe("processTimelineResponse", () => {
     const userMessages = result.tail.filter((item) => item.kind === "user_message");
     expect(userMessages).toHaveLength(1);
     expect(userMessages[0]).toMatchObject({
-      id: "canonical-create-user",
+      id: "submitted-create-user",
+      clientMessageId: "submitted-create-user",
+      messageId: "canonical-create-user",
       text: "Analyze this",
       timestamp: new Date(1000),
       images: [image],
       attachments: [attachment],
     });
-    expect(userMessages[0]?.optimistic).toBeUndefined();
 
     const repeated = processTimelineResponse({
       ...baseTimelineInput,
@@ -390,6 +461,7 @@ describe("processTimelineResponse", () => {
               type: "user_message",
               text: "server-rendered attachment text",
               messageId: "canonical-create-user",
+              clientMessageId: "submitted-create-user",
             },
           },
         ],
@@ -399,24 +471,93 @@ describe("processTimelineResponse", () => {
     expect(repeated.tail.filter((item) => item.kind === "user_message")).toEqual(userMessages);
   });
 
-  it("keeps an unmatched optimistic user message during tail replacement", () => {
-    const optimistic = makeOptimisticUserMessage("still sending", "optimistic-unmatched");
+  it("keeps an unmatched submitted user message during tail replacement", () => {
+    const submitted = makeSubmittedUserMessage("still sending", "submitted-unmatched");
 
     const result = processTimelineResponse({
       ...baseTimelineInput,
-      currentTail: [optimistic],
+      currentTail: [submitted],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
+      sendingClientMessageIds: ["submitted-unmatched"],
       payload: {
         ...baseTimelineInput.payload,
         reset: true,
+        epoch: "epoch-2",
         entries: [],
       },
     });
 
-    expect(result.tail).toEqual([optimistic]);
+    expect(result.tail).toEqual([submitted]);
   });
 
-  it("does not move an unmatched submission during timeline replacement", () => {
-    const unmatched = makeOptimisticUserMessage("first submission", "client-first");
+  it("keeps every unresolved submission during replacement", () => {
+    const first = makeSubmittedUserMessage("first pending", "client-first");
+    const second = makeSubmittedUserMessage("second pending", "client-second");
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [first, second],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
+      sendingClientMessageIds: ["client-first", "client-second"],
+      payload: {
+        ...baseTimelineInput.payload,
+        reset: true,
+        epoch: "epoch-2",
+        entries: [],
+      },
+    });
+
+    expect(result.tail).toEqual([first, second]);
+  });
+
+  it("drops an acknowledged local row omitted by a same-epoch replacement", () => {
+    const acknowledged = createUserMessage({
+      clientMessageId: "client-local-only",
+      text: "provider may not echo this",
+      timestamp: new Date(1000),
+    });
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [acknowledged],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
+      sendingClientMessageIds: [],
+      payload: {
+        ...baseTimelineInput.payload,
+        reset: true,
+        epoch: "epoch-1",
+        entries: [],
+      },
+    });
+
+    expect(result.tail).toEqual([]);
+  });
+
+  it("drops an acknowledged local row omitted by a known epoch change", () => {
+    const acknowledged = createUserMessage({
+      clientMessageId: "client-prior-epoch",
+      text: "prior prompt",
+      timestamp: new Date(1000),
+    });
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [acknowledged],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
+      sendingClientMessageIds: [],
+      payload: {
+        ...baseTimelineInput.payload,
+        reset: true,
+        epoch: "epoch-2",
+        entries: [],
+      },
+    });
+
+    expect(result.tail).toEqual([]);
+  });
+
+  it("keeps an unmatched submission after the canonical replacement range", () => {
+    const unmatched = makeSubmittedUserMessage("first submission", "client-first");
     const acknowledged: StreamItem[] = [
       {
         kind: "user_message",
@@ -437,6 +578,7 @@ describe("processTimelineResponse", () => {
     const result = processTimelineResponse({
       ...baseTimelineInput,
       currentTail: [unmatched, ...acknowledged],
+      sendingClientMessageIds: ["client-first"],
       payload: {
         ...baseTimelineInput.payload,
         reset: true,
@@ -462,10 +604,10 @@ describe("processTimelineResponse", () => {
             },
           },
           {
-            ...makeTimelineEntry(4, "response to all three submissions"),
+            ...makeTimelineEntry(4, "response to canonical submissions"),
             item: {
               type: "assistant_message",
-              text: "response to all three submissions",
+              text: "response to canonical submissions",
               messageId: "assistant-response",
             },
           },
@@ -480,14 +622,14 @@ describe("processTimelineResponse", () => {
         text: "text" in item ? item.text : undefined,
       })),
     ).toEqual([
-      { kind: "user_message", id: "client-first", text: "first submission" },
       { kind: "user_message", id: "provider-second", text: "second submission" },
       { kind: "user_message", id: "provider-third", text: "third submission" },
       {
         kind: "assistant_message",
         id: "assistant-response",
-        text: "response to all three submissions",
+        text: "response to canonical submissions",
       },
+      { kind: "user_message", id: "client-first", text: "first submission" },
     ]);
   });
 
@@ -620,11 +762,11 @@ describe("processTimelineResponse", () => {
       startSeq: 1,
       endSeq: 1,
     };
-    const optimistic = makeOptimisticUserMessage("sent while catching up", "optimistic-after");
+    const submitted = makeSubmittedUserMessage("sent while catching up", "submitted-after");
 
     const result = processTimelineResponse({
       ...baseTimelineInput,
-      currentTail: [optimistic],
+      currentTail: [submitted],
       currentCursor: existingCursor,
       payload: {
         ...baseTimelineInput.payload,
@@ -644,16 +786,19 @@ describe("processTimelineResponse", () => {
 
     const userMessages = result.tail.filter((item) => item.kind === "user_message");
     expect(userMessages).toHaveLength(1);
-    expect(userMessages[0]?.id).toBe("canonical-after");
-    expect(userMessages[0]?.optimistic).toBeUndefined();
+    expect(userMessages[0]).toMatchObject({
+      id: "submitted-after",
+      clientMessageId: "submitted-after",
+      messageId: "canonical-after",
+    });
   });
 
-  it("reconciles an optimistic user message by client message id", () => {
-    const optimistic = makeOptimisticUserMessage("local presentation", "client-message");
+  it("reconciles a submitted user message by client message id", () => {
+    const submitted = makeSubmittedUserMessage("local presentation", "client-message");
 
     const result = processTimelineResponse({
       ...baseTimelineInput,
-      currentTail: [optimistic],
+      currentTail: [submitted],
       currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
       payload: {
         ...baseTimelineInput.payload,
@@ -675,20 +820,21 @@ describe("processTimelineResponse", () => {
     const userMessages = result.tail.filter((item) => item.kind === "user_message");
     expect(userMessages).toEqual([
       expect.objectContaining({
-        id: "provider-message",
+        id: "client-message",
         clientMessageId: "client-message",
+        messageId: "provider-message",
         text: "local presentation",
       }),
     ]);
-    expect(userMessages[0]?.optimistic).toBeUndefined();
+    expect(result.acknowledgedClientMessageIds).toEqual(["client-message"]);
   });
 
-  it("reconciles multiple optimistic user messages in canonical order", () => {
+  it("reconciles multiple submitted user messages in canonical order", () => {
     const result = processTimelineResponse({
       ...baseTimelineInput,
       currentTail: [
-        makeOptimisticUserMessage("first prompt", "optimistic-first"),
-        makeOptimisticUserMessage("second prompt", "optimistic-second"),
+        makeSubmittedUserMessage("first prompt", "submitted-first"),
+        makeSubmittedUserMessage("second prompt", "submitted-second"),
       ],
       currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
       payload: {
@@ -699,14 +845,14 @@ describe("processTimelineResponse", () => {
         entries: [
           {
             ...makeTimelineEntry(2, "first prompt", "user_message"),
-            item: { type: "user_message", text: "first prompt", messageId: "optimistic-first" },
+            item: { type: "user_message", text: "first prompt", messageId: "submitted-first" },
           },
           {
             ...makeTimelineEntry(3, "second prompt", "user_message"),
             item: {
               type: "user_message",
               text: "second prompt",
-              messageId: "optimistic-second",
+              messageId: "submitted-second",
             },
           },
         ],
@@ -716,15 +862,15 @@ describe("processTimelineResponse", () => {
     expect(
       result.tail
         .filter((item) => item.kind === "user_message")
-        .map((item) => ({ id: item.id, text: item.text, optimistic: item.optimistic })),
+        .map((item) => ({ id: item.id, text: item.text, messageId: item.messageId })),
     ).toEqual([
-      { id: "optimistic-first", text: "first prompt", optimistic: undefined },
-      { id: "optimistic-second", text: "second prompt", optimistic: undefined },
+      { id: "submitted-first", text: "first prompt", messageId: "submitted-first" },
+      { id: "submitted-second", text: "second prompt", messageId: "submitted-second" },
     ]);
   });
 
-  it("keeps a tail optimistic prompt before a reconciled live assistant head", () => {
-    const prompt = makeOptimisticUserMessage("new prompt", "optimistic-new-prompt");
+  it("keeps a tail submitted prompt before a reconciled live assistant head", () => {
+    const prompt = makeSubmittedUserMessage("new prompt", "submitted-new-prompt");
 
     const result = processTimelineResponse({
       ...baseTimelineInput,
@@ -763,8 +909,8 @@ describe("processTimelineResponse", () => {
     ).toEqual(["new prompt", "Hello"]);
   });
 
-  it("keeps a tail optimistic prompt before a live head flushed by catch-up", () => {
-    const prompt = makeOptimisticUserMessage("new prompt", "optimistic-new-prompt");
+  it("keeps a tail submitted prompt before a live head flushed by catch-up", () => {
+    const prompt = makeSubmittedUserMessage("new prompt", "submitted-new-prompt");
 
     const result = processTimelineResponse({
       ...baseTimelineInput,
@@ -835,7 +981,6 @@ describe("processTimelineResponse", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
-      currentAgent: null,
     });
 
     const result = processTimelineResponse({
@@ -913,7 +1058,6 @@ describe("processTimelineResponse", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
-      currentAgent: null,
     });
     expect(getAssistantTexts(live.tail)).toHaveLength(1);
     expect(getAssistantTexts(live.head)).toHaveLength(1);
@@ -961,7 +1105,6 @@ describe("processTimelineResponse", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
-      currentAgent: null,
     });
 
     const result = processTimelineResponse({
@@ -1000,7 +1143,7 @@ describe("processTimelineResponse", () => {
   });
 
   it("does not move a submitted prompt when catch-up history arrives", () => {
-    const prompt = makeOptimisticUserMessage("New prompt", "new-prompt");
+    const prompt = makeSubmittedUserMessage("New prompt", "new-prompt");
 
     const result = processTimelineResponse({
       ...baseTimelineInput,
@@ -1024,7 +1167,7 @@ describe("processTimelineResponse", () => {
   });
 
   it("does not move an unmatched head prompt when catch-up history arrives", () => {
-    const prompt = makeOptimisticUserMessage("New prompt", "new-prompt");
+    const prompt = makeSubmittedUserMessage("New prompt", "new-prompt");
 
     const result = processTimelineResponse({
       ...baseTimelineInput,
@@ -1052,8 +1195,8 @@ describe("processTimelineResponse", () => {
     ]);
   });
 
-  it("acknowledges a head prompt in place while catch-up history arrives", () => {
-    const prompt = makeOptimisticUserMessage("New prompt", "new-prompt");
+  it("moves an acknowledged head prompt to its catch-up sequence position", () => {
+    const prompt = makeSubmittedUserMessage("New prompt", "new-prompt");
 
     const result = processTimelineResponse({
       ...baseTimelineInput,
@@ -1084,18 +1227,18 @@ describe("processTimelineResponse", () => {
 
     expect([...result.tail, ...result.head].map((item) => item.kind)).toEqual([
       "assistant_message",
-      "user_message",
       "tool_call",
+      "user_message",
     ]);
     expect(
       [...result.tail, ...result.head]
         .filter((item) => item.kind === "user_message")
-        .map((item) => item.optimistic),
-    ).toEqual([undefined]);
+        .map((item) => item.clientMessageId),
+    ).toEqual(["new-prompt"]);
   });
 
   it("does not move a prompt around unrelated catch-up history", () => {
-    const prompt = makeOptimisticUserMessage("New prompt", "new-prompt");
+    const prompt = makeSubmittedUserMessage("New prompt", "new-prompt");
 
     const result = processTimelineResponse({
       ...baseTimelineInput,
@@ -1141,7 +1284,7 @@ describe("processTimelineResponse", () => {
   });
 
   it("does not move a prompt or its live answer around catch-up history", () => {
-    const prompt = makeOptimisticUserMessage("New prompt", "new-prompt");
+    const prompt = makeSubmittedUserMessage("New prompt", "new-prompt");
     const live = processAgentStreamEvents({
       events: [
         makeStreamReducerEvent(
@@ -1152,7 +1295,6 @@ describe("processTimelineResponse", () => {
       currentTail: [prompt],
       currentHead: [],
       currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
-      currentAgent: null,
     });
 
     const result = processTimelineResponse({
@@ -1186,7 +1328,7 @@ describe("processTimelineResponse", () => {
   });
 
   it("does not move a prompt or its live answer around catch-up tool history", () => {
-    const prompt = makeOptimisticUserMessage("New prompt", "new-prompt");
+    const prompt = makeSubmittedUserMessage("New prompt", "new-prompt");
     const live = processAgentStreamEvents({
       events: [
         makeStreamReducerEvent(
@@ -1197,7 +1339,6 @@ describe("processTimelineResponse", () => {
       currentTail: [prompt],
       currentHead: [],
       currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
-      currentAgent: null,
     });
 
     const result = processTimelineResponse({
@@ -1228,7 +1369,7 @@ describe("processTimelineResponse", () => {
   });
 
   it("never moves submitted messages behind a later assistant response", () => {
-    const unmatched = makeOptimisticUserMessage("first submission", "client-first");
+    const unmatched = makeSubmittedUserMessage("first submission", "client-first");
     const acknowledged: StreamItem[] = [
       {
         kind: "user_message",
@@ -1286,8 +1427,8 @@ describe("processTimelineResponse", () => {
     ]);
   });
 
-  it("acknowledges a local prompt in place when a remote user row also arrives", () => {
-    const prompt = makeOptimisticUserMessage("Local prompt", "local-prompt");
+  it("places a local prompt after an earlier remote canonical row", () => {
+    const prompt = makeSubmittedUserMessage("Local prompt", "local-prompt");
 
     const result = processTimelineResponse({
       ...baseTimelineInput,
@@ -1320,17 +1461,12 @@ describe("processTimelineResponse", () => {
     });
 
     expect(
-      result.tail
-        .filter((item) => item.kind === "user_message")
-        .map((item) => ({ text: item.text, optimistic: item.optimistic })),
-    ).toEqual([
-      { text: "Local prompt", optimistic: undefined },
-      { text: "Remote prompt", optimistic: undefined },
-    ]);
+      result.tail.filter((item) => item.kind === "user_message").map((item) => item.text),
+    ).toEqual(["Remote prompt", "Local prompt"]);
   });
 
-  it("keeps an unmatched optimistic prompt when catch-up contains only a remote user row", () => {
-    const prompt = makeOptimisticUserMessage("Local prompt", "local-prompt");
+  it("keeps an unmatched submitted prompt when catch-up contains only a remote user row", () => {
+    const prompt = makeSubmittedUserMessage("Local prompt", "local-prompt");
 
     const result = processTimelineResponse({
       ...baseTimelineInput,
@@ -1355,17 +1491,12 @@ describe("processTimelineResponse", () => {
     });
 
     expect(
-      result.tail
-        .filter((item) => item.kind === "user_message")
-        .map((item) => ({ text: item.text, optimistic: item.optimistic })),
-    ).toEqual([
-      { text: "Local prompt", optimistic: true },
-      { text: "Remote prompt", optimistic: undefined },
-    ]);
+      result.tail.filter((item) => item.kind === "user_message").map((item) => item.text),
+    ).toEqual(["Local prompt", "Remote prompt"]);
   });
 
   it("does not match equal prompt text when canonical client message ids differ", () => {
-    const prompt = makeOptimisticUserMessage("continue", "local-prompt");
+    const prompt = makeSubmittedUserMessage("continue", "local-prompt");
 
     const result = processTimelineResponse({
       ...baseTimelineInput,
@@ -1393,10 +1524,10 @@ describe("processTimelineResponse", () => {
     expect(
       result.tail
         .filter((item) => item.kind === "user_message")
-        .map((item) => ({ id: item.id, optimistic: item.optimistic })),
+        .map((item) => ({ id: item.id, messageId: item.messageId })),
     ).toEqual([
-      { id: "local-prompt", optimistic: true },
-      { id: "remote-prompt", optimistic: undefined },
+      { id: "local-prompt", messageId: undefined },
+      { id: "remote-prompt", messageId: "remote-prompt" },
     ]);
   });
 
@@ -1639,8 +1770,8 @@ describe("processTimelineResponse", () => {
     });
   });
 
-  it("does not reconcile an active optimistic user message from a before-page response", () => {
-    const optimistic = makeOptimisticUserMessage("active prompt", "optimistic-active");
+  it("does not reconcile an active submitted user message from a before-page response", () => {
+    const submitted = makeSubmittedUserMessage("active prompt", "submitted-active");
     const existingCursor: TimelineCursor = {
       epoch: "epoch-1",
       startSeq: 3,
@@ -1649,7 +1780,7 @@ describe("processTimelineResponse", () => {
 
     const result = processTimelineResponse({
       ...baseTimelineInput,
-      currentTail: [optimistic],
+      currentTail: [submitted],
       currentCursor: existingCursor,
       payload: {
         ...baseTimelineInput.payload,
@@ -1672,8 +1803,8 @@ describe("processTimelineResponse", () => {
 
     const userMessages = result.tail.filter((item) => item.kind === "user_message");
     expect(userMessages).toHaveLength(2);
-    expect(userMessages.map((item) => item.id)).toEqual(["canonical-before", "optimistic-active"]);
-    expect(userMessages[1]?.optimistic).toBe(true);
+    expect(userMessages.map((item) => item.id)).toEqual(["canonical-before", "submitted-active"]);
+    expect(userMessages[1]?.clientMessageId).toBe("submitted-active");
   });
 
   it("leaves the cursor alone when a before page makes no progress", () => {
@@ -1810,6 +1941,68 @@ describe("processTimelineResponse", () => {
         status: "completed",
         detailType: "read",
       },
+    ]);
+  });
+
+  it("removes a reconciled submitted prompt before coalescing a tool call at the pagination seam", () => {
+    const clientMessageId = "client-boundary-prompt";
+    const callId = "toolu_submitted_boundary";
+    const currentTail = [
+      makeSubmittedUserMessage("Inspect the file", clientMessageId),
+      ...hydrateStreamState(
+        [
+          {
+            event: {
+              type: "timeline",
+              provider: "claude",
+              item: makeToolCallTimelineEntry(3, callId, "completed", {
+                type: "read",
+                filePath: "/tmp/example.ts",
+              }).item,
+            } as AgentStreamEventPayload,
+            timestamp: new Date(3000),
+          },
+        ],
+        { source: "canonical" },
+      ),
+    ];
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail,
+      currentCursor: { epoch: "epoch-1", startSeq: 3, endSeq: 5 },
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        epoch: "epoch-1",
+        startCursor: { seq: 1 },
+        endCursor: { seq: 2 },
+        entries: [
+          {
+            ...makeTimelineEntry(1, "Inspect the file", "user_message"),
+            item: {
+              type: "user_message",
+              text: "Inspect the file",
+              messageId: "provider-boundary-prompt",
+              clientMessageId,
+            },
+          },
+          makeToolCallTimelineEntry(2, callId, "running", {
+            type: "unknown",
+            input: { file_path: "/tmp/example.ts" },
+            output: null,
+          }),
+        ],
+      },
+    });
+
+    expect(result.tail.filter((item) => item.kind === "user_message")).toHaveLength(1);
+    expect(getAgentToolCalls(result.tail)).toEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          data: expect.objectContaining({ callId, status: "completed" }),
+        }),
+      }),
     ]);
   });
 
@@ -2224,152 +2417,6 @@ describe("processAgentStreamEvent", () => {
       endSeq: 1,
     });
   });
-
-  it("derives optimistic idle status on turn_completed for running agent", () => {
-    const turnCompletedEvent: AgentStreamEventPayload = {
-      type: "turn_completed",
-      provider: "claude",
-    };
-
-    const result = processAgentStreamEvent({
-      ...baseStreamInput,
-      event: turnCompletedEvent,
-      currentAgent: {
-        status: "running",
-        updatedAt: new Date(1000),
-        lastActivityAt: new Date(1000),
-      },
-      timestamp: new Date(2000),
-    });
-
-    expect(result.agentChanged).toBe(true);
-    expect(result.agent).not.toBe(null);
-    expect(result.agent!.status).toBe("idle");
-    expect(result.agent!.updatedAt.getTime()).toBe(2000);
-    expect(result.agent!.lastActivityAt.getTime()).toBe(2000);
-  });
-
-  it("derives optimistic error status on turn_failed for running agent", () => {
-    const turnFailedEvent: AgentStreamEventPayload = {
-      type: "turn_failed",
-      provider: "claude",
-      error: "something broke",
-    };
-
-    const result = processAgentStreamEvent({
-      ...baseStreamInput,
-      event: turnFailedEvent,
-      currentAgent: {
-        status: "running",
-        updatedAt: new Date(1000),
-        lastActivityAt: new Date(1000),
-      },
-      timestamp: new Date(2000),
-    });
-
-    expect(result.agentChanged).toBe(true);
-    expect(result.agent!.status).toBe("error");
-  });
-
-  it("does not derive optimistic idle status on turn_canceled for running agent", () => {
-    const turnCanceledEvent: AgentStreamEventPayload = {
-      type: "turn_canceled",
-      provider: "codex",
-      reason: "interrupted",
-    };
-
-    const result = processAgentStreamEvent({
-      ...baseStreamInput,
-      event: turnCanceledEvent,
-      currentAgent: {
-        status: "running",
-        updatedAt: new Date(1000),
-        lastActivityAt: new Date(1000),
-      },
-      timestamp: new Date(2000),
-    });
-
-    expect(result.agentChanged).toBe(false);
-    expect(result.agent).toBe(null);
-  });
-
-  it("does not change agent when status is not running", () => {
-    const turnCompletedEvent: AgentStreamEventPayload = {
-      type: "turn_completed",
-      provider: "claude",
-    };
-
-    const result = processAgentStreamEvent({
-      ...baseStreamInput,
-      event: turnCompletedEvent,
-      currentAgent: {
-        status: "idle",
-        updatedAt: new Date(1000),
-        lastActivityAt: new Date(1000),
-      },
-      timestamp: new Date(2000),
-    });
-
-    expect(result.agentChanged).toBe(false);
-    expect(result.agent).toBe(null);
-  });
-
-  it("does not change agent when no agent is provided", () => {
-    const turnCompletedEvent: AgentStreamEventPayload = {
-      type: "turn_completed",
-      provider: "claude",
-    };
-
-    const result = processAgentStreamEvent({
-      ...baseStreamInput,
-      event: turnCompletedEvent,
-      currentAgent: null,
-      timestamp: new Date(2000),
-    });
-
-    expect(result.agentChanged).toBe(false);
-    expect(result.agent).toBe(null);
-  });
-
-  it("preserves updatedAt when agent timestamp is newer than event", () => {
-    const turnCompletedEvent: AgentStreamEventPayload = {
-      type: "turn_completed",
-      provider: "claude",
-    };
-
-    const result = processAgentStreamEvent({
-      ...baseStreamInput,
-      event: turnCompletedEvent,
-      currentAgent: {
-        status: "running",
-        updatedAt: new Date(5000),
-        lastActivityAt: new Date(5000),
-      },
-      timestamp: new Date(2000),
-    });
-
-    expect(result.agentChanged).toBe(true);
-    expect(result.agent!.updatedAt.getTime()).toBe(5000);
-    expect(result.agent!.lastActivityAt.getTime()).toBe(5000);
-  });
-
-  it("does not produce agent patch for non-terminal events", () => {
-    const result = processAgentStreamEvent({
-      ...baseStreamInput,
-      event: makeTimelineEvent("just text"),
-      currentAgent: {
-        status: "running",
-        updatedAt: new Date(1000),
-        lastActivityAt: new Date(1000),
-      },
-      seq: 1,
-      epoch: "epoch-1",
-      timestamp: new Date(2000),
-    });
-
-    expect(result.agentChanged).toBe(false);
-    expect(result.agent).toBe(null);
-  });
 });
 
 describe("processAgentStreamEvents", () => {
@@ -2382,7 +2429,6 @@ describe("processAgentStreamEvents", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
-      currentAgent: null,
     });
 
     expect(result.changedTail).toBe(false);
@@ -2410,7 +2456,6 @@ describe("processAgentStreamEvents", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
-      currentAgent: null,
     });
 
     expect(result.changedTail).toBe(false);
@@ -2433,7 +2478,6 @@ describe("processAgentStreamEvents", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
-      currentAgent: null,
     });
 
     expect(result.changedTail).toBe(true);
@@ -2451,7 +2495,6 @@ describe("processAgentStreamEvents", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
-      currentAgent: null,
     });
 
     expect(result.changedTail).toBe(true);
@@ -2469,7 +2512,6 @@ describe("processAgentStreamEvents", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
-      currentAgent: null,
     });
 
     expect(result.changedTail).toBe(true);
@@ -2501,7 +2543,6 @@ describe("processAgentStreamEvents", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
-      currentAgent: null,
     });
 
     expect(result.changedTail).toBe(true);
@@ -2527,7 +2568,6 @@ describe("processAgentStreamEvents", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
-      currentAgent: null,
     });
 
     expect(result.changedTail).toBe(true);
@@ -2552,7 +2592,6 @@ describe("processAgentStreamEvents", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
-      currentAgent: null,
     });
 
     expect(result.changedTail).toBe(true);
@@ -2644,7 +2683,6 @@ describe("processAgentStreamEvents", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
-      currentAgent: null,
     });
 
     expect(getAssistantTexts([...result.tail, ...result.head])).toEqual([
@@ -2655,7 +2693,7 @@ describe("processAgentStreamEvents", () => {
     ]);
   });
 
-  it("returns the final optimistic lifecycle patch across a batch", () => {
+  it("does not derive lifecycle state from a terminal event in a batch", () => {
     const result = processAgentStreamEvents({
       events: [
         makeStreamReducerEvent(makeTimelineEvent("Done"), 1),
@@ -2669,21 +2707,10 @@ describe("processAgentStreamEvents", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
-      currentAgent: {
-        status: "running",
-        updatedAt: new Date(1000),
-        lastActivityAt: new Date(1000),
-      },
     });
 
     expect(result.head).toEqual([]);
     expect(result.tail).toHaveLength(1);
-    expect(result.agentChanged).toBe(true);
-    expect(result.agent).toMatchObject({
-      status: "idle",
-      updatedAt: new Date(3000),
-      lastActivityAt: new Date(3000),
-    });
   });
 
   it("keeps a live Claude assistant paragraph contiguous when init tail hydration lands mid-stream", () => {
@@ -2832,7 +2859,6 @@ describe("createAgentStreamReducerQueue", () => {
         currentTail,
         currentHead,
         currentCursor: undefined,
-        currentAgent: null,
       }),
       commit: (agentId, result) => {
         currentTail = result.tail;
@@ -2874,7 +2900,6 @@ describe("createAgentStreamReducerQueue", () => {
         currentTail: [],
         currentHead: [],
         currentCursor: undefined,
-        currentAgent: null,
       }),
       commit: (agentId, result) => {
         commits.push(
@@ -2904,7 +2929,6 @@ describe("createAgentStreamReducerQueue", () => {
         currentTail,
         currentHead,
         currentCursor,
-        currentAgent: null,
       }),
       commit: (_agentId, result) => {
         currentTail = result.tail;
@@ -2954,7 +2978,6 @@ describe("createAgentStreamReducerQueue", () => {
         currentTail: [],
         currentHead: [],
         currentCursor: undefined,
-        currentAgent: null,
       }),
       commit: (agentId, result) => {
         commits.push(

@@ -3,10 +3,9 @@
     "setup": [
       "npm ci",
       "node ./scripts/seed-ios-native-cache.mjs",
-      "PASEO_DEV_MANAGED_HOME=1 PASEO_DEV_SEED_HOME=\"$PASEO_SOURCE_CHECKOUT_PATH/.dev/paseo-home\" PASEO_HOME=\"$PWD/.dev/paseo-home\" ./scripts/dev-home.sh",
+      "node ./scripts/seed-worktree-dev-state.mjs",
       "npm run build:server",
-      "npm run build --workspace=@getpaseo/expo-two-way-audio",
-      "cp \"$PASEO_SOURCE_CHECKOUT_PATH/packages/server/.env\" \"$PWD/packages/server/.env\""
+      "npm run build --workspace=@getpaseo/expo-two-way-audio"
     ]
   },
   "scripts": {

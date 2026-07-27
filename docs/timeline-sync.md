@@ -87,14 +87,42 @@ its completion advances `seqEnd`, followed by a merged assistant message. The ap
 remaining page through the existing stream reducer. It must not append full projected text to a
 live prefix.
 
-Optimistic user prompts occupy stable timeline slots. Catch-up never extracts, delays, or reinserts
-them. A canonical user row replaces its matching slot in place; an unmatched prompt stays exactly
-where the user submitted it. Other canonical rows are applied after the already-present timeline
-instead of relocating visible user messages around newly fetched history.
+Every path that sends a message to an agent — composer send, dictation accept-and-send, queued
+send-now, and the automatic queue drain in `HostRuntime` — goes through
+`dispatchComposerAgentMessage` with a submission writer. There is no second transport for the same
+product action: calling `client.sendAgentMessage` directly skips the submitted row and the pending
+footer, and permanently drops attachments because the daemon does not echo them back.
+
+A submitted prompt is one `UserMessageItem` row. That row is the authoritative local presentation:
+its stable identity, text, timestamp, images, and attachments do not change when the provider
+acknowledges it. Submission lifecycle is a separate record keyed by agent, not another row shape or
+a property inferred from message identity. The transaction registry holds every unresolved send and
+records RPC acceptance and provider acknowledgement independently. Provider acknowledgement exists
+solely so a later transport error cannot roll back a prompt already observed canonically.
+
+The daemon's accepted response already waits for the correlated run start, but its response and the
+directory update reach client state separately. An accepted transaction remains active until the
+directory observes that run or canonical ingestion acknowledges the prompt, bridging those ordered
+authorities without inspecting timeline snapshots. Either signal clears only an RPC-accepted
+transaction, regardless of which arrived first; it cannot settle a fresh send.
+Overlapping sends settle independently rather than collapsing to one newest pending message.
 
 Canonical submitted user rows carry the provider's `messageId` and Paseo's optional
-`clientMessageId`. Clients reconcile optimistic prompts by `clientMessageId`. Content matching is
-limited to the dated compatibility path for daemon timelines created before that field existed.
+`clientMessageId`. The user-message producer reconciles them by `clientMessageId`, adds provider
+identity to the existing row, and keeps the local presentation in its original timeline slot.
+Content matching is limited to the dated compatibility path for daemon timelines created before
+that field existed. Canonical ingestion may match only an explicit unreconciled local candidate;
+the draft-create handoff is the one boundary that also permits the legacy canonical twin to have
+arrived first. Generic reducers and consumers do not reimplement message identity matching.
+
+Ordinary bootstrap, same-epoch reset, and catch-up replacement preserve unmatched locally submitted
+rows because a provider may never echo them. A known epoch change or rewind replaces history and
+drops acknowledged local rows omitted by the new canonical epoch; every transaction not yet
+acknowledged by the provider, and no other local row, crosses that destructive boundary.
+
+Canonical replacement owns both timeline lanes. A matching local row keeps its presentation ID and
+payload while taking the canonical row's ordered position. If a live assistant head is the
+canonical assistant prefix, it stays in the head lane. No row may be returned in both lanes.
 
 ## Relevant code
 
