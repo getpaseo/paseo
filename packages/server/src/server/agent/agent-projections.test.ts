@@ -254,6 +254,32 @@ describe("toAgentPayload", () => {
     }
   });
 
+  it("redacts sensitive headers from legacy stored runtime metadata", () => {
+    const authorization = "Bearer legacy-runtime-secret-must-not-escape";
+    const storedRecord = toStoredAgentRecord(createManagedAgent());
+
+    // Simulate a legacy record written before runtime metadata redaction was introduced.
+    storedRecord.runtimeInfo = {
+      provider: "claude",
+      sessionId: "session-123",
+      extra: {
+        headers: {
+          Authorization: authorization,
+          "X-Non-Secret": "preserved",
+        },
+      },
+    };
+
+    const payload = buildStoredAgentPayload(storedRecord, ["claude"]);
+    const headers = payload.runtimeInfo?.extra?.headers;
+
+    expect(JSON.stringify(payload)).not.toContain(authorization);
+    expect(headers).toEqual({
+      Authorization: "[REDACTED]",
+      "X-Non-Secret": "preserved",
+    });
+  });
+
   it("serializes dates, clones arrays, and hides session", () => {
     const permissionA = createPermission({ id: "perm-a" });
     const permissionB = createPermission({

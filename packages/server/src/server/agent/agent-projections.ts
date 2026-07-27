@@ -169,8 +169,9 @@ function buildStoredRuntimeInfo(record: StoredAgentRecord): AgentRuntimeInfo | u
   if (Object.prototype.hasOwnProperty.call(ri, "modeId")) {
     runtimeInfo.modeId = ri.modeId ?? null;
   }
-  if (ri.extra) {
-    runtimeInfo.extra = ri.extra;
+  const extra = sanitizeMetadata(ri.extra);
+  if (extra !== undefined) {
+    runtimeInfo.extra = extra;
   }
   return runtimeInfo;
 }
