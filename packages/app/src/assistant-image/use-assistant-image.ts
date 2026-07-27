@@ -146,10 +146,6 @@ function rememberLoadedImage(uri: string, aspectRatio: number): void {
   }
 }
 
-function acquireAttachment(acquisition: AssistantImageAcquisition): Promise<AttachmentMetadata> {
-  return attachmentAcquisitionCache.acquire(acquisition.key, acquisition.locate);
-}
-
 function useAttachmentAcquisition(
   acquisition: AssistantImageAcquisition | null,
 ): AttachmentAcquisitionState {
@@ -167,22 +163,40 @@ function useAttachmentAcquisition(
 
   useEffect(() => {
     let disposed = false;
+    let releaseCurrent: (() => void) | null = null;
     if (!acquisition || !acquisitionKey) {
       setEntry({ key: null, state: { status: "waiting" } });
       return;
     }
 
-    const cached = attachmentAcquisitionCache.peek(acquisitionKey);
-    if (cached) {
-      setEntry({ key: acquisitionKey, state: { status: "loaded", attachment: cached } });
-      return;
+    const acquireCurrent = () => {
+      releaseCurrent?.();
+      const retained = attachmentAcquisitionCache.acquireRetained(
+        acquisitionKey,
+        acquisition.locate,
+      );
+      releaseCurrent = retained.release;
+      return retained;
+    };
+    const initial = acquireCurrent();
+    if (initial.value) {
+      setEntry({ key: acquisitionKey, state: { status: "loaded", attachment: initial.value } });
+      return () => {
+        disposed = true;
+        releaseCurrent?.();
+      };
     }
 
     setEntry({ key: acquisitionKey, state: { status: "loading" } });
     void (async () => {
+      let firstAttempt: ReturnType<typeof acquireCurrent> | null = initial;
       try {
         const attachment = await runAssistantImageOperationWithRetry({
-          operation: async () => await acquireAttachment(acquisition),
+          operation: async () => {
+            const retained = firstAttempt ?? acquireCurrent();
+            firstAttempt = null;
+            return await retained.promise;
+          },
           shouldStop: () => disposed,
         });
         if (!disposed) {
@@ -196,6 +210,7 @@ function useAttachmentAcquisition(
     })();
     return () => {
       disposed = true;
+      releaseCurrent?.();
     };
   }, [acquisition, acquisitionKey]);
 

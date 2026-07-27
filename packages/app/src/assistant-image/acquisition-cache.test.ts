@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  collectRetainedAttachmentIds,
+  retainAttachmentForGarbageCollection,
+} from "@/attachments/gc-retention";
+import {
   createAssistantImageAcquisitionCache,
   createAssistantImageFileAcquisitionKey,
   createAssistantImageFilePreviewAttachmentId,
@@ -161,5 +165,29 @@ describe("assistant image acquisition cache", () => {
       size: 1,
     });
     second.release();
+  });
+
+  it("protects every actively consumed attachment from garbage collection past capacity", async () => {
+    const cache = createAssistantImageAcquisitionCache<{ id: string }>({
+      capacity: 1,
+      onRetain: (attachment) => retainAttachmentForGarbageCollection(attachment.id),
+    });
+
+    const first = cache.acquireRetained("first", async () => ({ id: "mounted-image-1" }));
+    await first.promise;
+    const second = cache.acquireRetained("second", async () => ({ id: "mounted-image-2" }));
+    await second.promise;
+
+    expect(collectRetainedAttachmentIds()).toEqual(new Set(["mounted-image-1", "mounted-image-2"]));
+
+    first.release();
+    expect(collectRetainedAttachmentIds()).toEqual(new Set(["mounted-image-2"]));
+    second.release();
+    await expect(
+      cache.acquire("cleanup", async () => {
+        throw new Error("cleanup");
+      }),
+    ).rejects.toThrow("cleanup");
+    expect(collectRetainedAttachmentIds()).toEqual(new Set());
   });
 });
