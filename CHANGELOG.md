@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.2.3 - 2026-07-27
+
+### Added
+
+- Manage workspace scripts from the CLI and agent MCP tools ([#1992](https://github.com/getpaseo/paseo/pull/1992) by [@mcowger](https://github.com/mcowger))
+- Copy terminal IDs from terminal tab menus ([#2371](https://github.com/getpaseo/paseo/pull/2371))
+- Long Markdown lines wrap by default in the file editor ([#2459](https://github.com/getpaseo/paseo/pull/2459))
+
+### Improved
+
+- Desktop stops its managed daemon when you quit unless “Keep daemon running after quit” is enabled ([#2454](https://github.com/getpaseo/paseo/pull/2454))
+- Remote terminal and file traffic uses less bandwidth over encrypted connections ([#2480](https://github.com/getpaseo/paseo/pull/2480))
+- Workspace search now shows and matches project names ([#2345](https://github.com/getpaseo/paseo/pull/2345) by [@cleiter](https://github.com/cleiter))
+- Claude usage shows model-specific weekly limits ([#2303](https://github.com/getpaseo/paseo/pull/2303) by [@cleiter](https://github.com/cleiter))
+- OMP models show only the thinking levels they support ([#2171](https://github.com/getpaseo/paseo/pull/2171) by [@bendavid](https://github.com/bendavid))
+
+### Fixed
+
+- Image uploads preserve the correct image format ([#2380](https://github.com/getpaseo/paseo/pull/2380))
+- Large file views no longer disconnect the session ([#2482](https://github.com/getpaseo/paseo/pull/2482))
+- Reaching the top of a chat loads the complete older history ([#2481](https://github.com/getpaseo/paseo/pull/2481))
+- Parent agents stay available while child agents are working ([#2458](https://github.com/getpaseo/paseo/pull/2458))
+- Stale client connections no longer exhaust daemon memory ([#2169](https://github.com/getpaseo/paseo/pull/2169))
+- Pin and unpin shortcuts work when sidebar sections are collapsed ([#2299](https://github.com/getpaseo/paseo/pull/2299) by [@cleiter](https://github.com/cleiter))
+- `Shift+Tab` no longer changes a background agent’s permission mode ([#1848](https://github.com/getpaseo/paseo/pull/1848) by [@cleiter](https://github.com/cleiter))
+- Proxied services preserve ports in redirects ([#2288](https://github.com/getpaseo/paseo/pull/2288) by [@cleiter](https://github.com/cleiter))
+- Provider settings open correctly above the model selector ([#2476](https://github.com/getpaseo/paseo/pull/2476))
+- Clicking the file editor correctly focuses its pane ([#2457](https://github.com/getpaseo/paseo/pull/2457))
+
 ## 0.2.2 - 2026-07-25
 
 ### Fixed
