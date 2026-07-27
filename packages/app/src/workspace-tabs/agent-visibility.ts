@@ -9,8 +9,26 @@ export interface WorkspaceAgentVisibility {
   knownAgentIds: Set<string>;
 }
 
-function agentBelongsToWorkspace(agent: Agent, workspaceId: string): boolean {
-  return normalizeWorkspaceOpaqueId(agent.workspaceId) === workspaceId;
+function resolveAgentWorkspaceId(agent: Agent, agentsById: Map<string, Agent>): string | null {
+  let current: Agent | undefined = agent;
+  const visited = new Set<string>();
+  while (current && !visited.has(current.id)) {
+    visited.add(current.id);
+    const workspaceId = normalizeWorkspaceOpaqueId(current.workspaceId);
+    if (workspaceId) {
+      return workspaceId;
+    }
+    current = current.parentAgentId ? agentsById.get(current.parentAgentId) : undefined;
+  }
+  return null;
+}
+
+function agentBelongsToWorkspace(
+  agent: Agent,
+  workspaceId: string,
+  agentsById: Map<string, Agent>,
+): boolean {
+  return resolveAgentWorkspaceId(agent, agentsById) === workspaceId;
 }
 
 export function deriveWorkspaceAgentVisibility(input: {
@@ -36,7 +54,7 @@ export function deriveWorkspaceAgentVisibility(input: {
     ...(sessionAgents?.entries() ?? []),
   ]);
   for (const agent of sessionAgents?.values() ?? []) {
-    if (!agentBelongsToWorkspace(agent, workspaceId)) {
+    if (!agentBelongsToWorkspace(agent, workspaceId, agentsById)) {
       continue;
     }
     knownAgentIds.add(agent.id);
@@ -49,7 +67,7 @@ export function deriveWorkspaceAgentVisibility(input: {
     }
   }
   for (const agent of agentDetails?.values() ?? []) {
-    if (!agentBelongsToWorkspace(agent, workspaceId)) {
+    if (!agentBelongsToWorkspace(agent, workspaceId, agentsById)) {
       continue;
     }
     knownAgentIds.add(agent.id);
