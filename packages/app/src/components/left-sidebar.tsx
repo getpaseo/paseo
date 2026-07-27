@@ -943,8 +943,13 @@ function DesktopSidebar({
   );
 }
 
+// Below this header width the inline Project|Status control is hidden; Group by
+// remains available in the gear menu. Sized for "Workspaces by [Project|Status] + icons".
+const WORKSPACES_GROUP_MODE_MIN_WIDTH = 300;
+
 function WorkspacesSectionHeader() {
   const { theme } = useUnistyles();
+  const [showGroupMode, setShowGroupMode] = useState(true);
   const setCommandCenterOpen = useKeyboardShortcutsStore((state) => state.setCommandCenterOpen);
   const commandCenterKeys = useShortcutKeys("toggle-command-center");
   const handleSearchPress = useCallback(() => setCommandCenterOpen(true), [setCommandCenterOpen]);
@@ -955,48 +960,57 @@ function WorkspacesSectionHeader() {
     ],
     [],
   );
+  const handleHeaderLayout = useCallback(
+    (event: { nativeEvent: { layout: { width: number } } }) => {
+      const next = event.nativeEvent.layout.width >= WORKSPACES_GROUP_MODE_MIN_WIDTH;
+      setShowGroupMode((prev) => (prev === next ? prev : next));
+    },
+    [],
+  );
 
   return (
-    <View>
-      <View style={styles.workspacesSectionHeader}>
-        <Text style={styles.workspacesSectionTitle}>Workspaces</Text>
-        <View style={styles.workspacesSectionActions}>
-          <Tooltip delayDuration={300}>
-            <TooltipTrigger asChild>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Open command center"
-                testID="sidebar-command-center-search"
-                style={searchButtonStyle}
-                onPress={handleSearchPress}
-              >
-                {({ hovered, pressed }) => (
-                  <Search
-                    size={14}
-                    color={
-                      hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted
-                    }
-                  />
-                )}
-              </Pressable>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" align="center" offset={8}>
-              <IconTooltipContent label="Search" shortcutKeys={commandCenterKeys} />
-            </TooltipContent>
-          </Tooltip>
-          <Tooltip delayDuration={300}>
-            <TooltipTrigger asChild>
-              <View>
-                <SidebarDisplayPreferencesMenu />
-              </View>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" align="center" offset={8}>
-              <IconTooltipContent label="Display preferences" />
-            </TooltipContent>
-          </Tooltip>
-        </View>
+    <View style={styles.workspacesSectionHeader} onLayout={handleHeaderLayout}>
+      <View style={styles.workspacesSectionLeading}>
+        <Text style={styles.workspacesSectionTitle} numberOfLines={1}>
+          Workspaces
+        </Text>
+        <SidebarGroupModeControl visible={showGroupMode} />
       </View>
-      <SidebarGroupModeControl />
+      <View style={styles.workspacesSectionActions}>
+        <Tooltip delayDuration={300}>
+          <TooltipTrigger asChild>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Open command center"
+              testID="sidebar-command-center-search"
+              style={searchButtonStyle}
+              onPress={handleSearchPress}
+            >
+              {({ hovered, pressed }) => (
+                <Search
+                  size={14}
+                  color={
+                    hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted
+                  }
+                />
+              )}
+            </Pressable>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center" offset={8}>
+            <IconTooltipContent label="Search" shortcutKeys={commandCenterKeys} />
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip delayDuration={300}>
+          <TooltipTrigger asChild>
+            <View>
+              <SidebarDisplayPreferencesMenu />
+            </View>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center" offset={8}>
+            <IconTooltipContent label="Display preferences" />
+          </TooltipContent>
+        </Tooltip>
+      </View>
     </View>
   );
 }
@@ -1041,15 +1055,24 @@ const styles = StyleSheet.create((theme) => ({
     paddingTop: theme.spacing[1],
     paddingBottom: theme.spacing[1],
   },
+  workspacesSectionLeading: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1.5],
+    flex: 1,
+    minWidth: 0,
+  },
   workspacesSectionTitle: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
+    flexShrink: 0,
   },
   workspacesSectionActions: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
+    flexShrink: 0,
   },
   workspacesHeaderIconButton: {
     width: 28,

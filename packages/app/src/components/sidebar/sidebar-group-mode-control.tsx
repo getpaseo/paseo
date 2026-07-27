@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from "react";
-import { View } from "react-native";
+import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { useSidebarViewStore, type SidebarGroupMode } from "@/stores/sidebar-view-store";
@@ -9,10 +9,17 @@ const OPTIONS: Array<{ value: SidebarGroupMode; label: string; testID: string }>
   { value: "status", label: "Status", testID: "sidebar-group-mode-status" },
 ];
 
+interface SidebarGroupModeControlProps {
+  /** Hide when the Workspaces header is too narrow; gear menu still has Group by. */
+  visible?: boolean;
+  style?: StyleProp<ViewStyle>;
+}
+
 /**
- * Obvious Project | Status control so Status grouping is not buried in the gear menu.
+ * Inline Project | Status control for the Workspaces header row.
+ * Gear → Group by remains the always-available fallback.
  */
-export function SidebarGroupModeControl() {
+export function SidebarGroupModeControl({ visible = true, style }: SidebarGroupModeControlProps) {
   const groupMode = useSidebarViewStore((state) => state.groupMode);
   const setGroupMode = useSidebarViewStore((state) => state.setGroupMode);
 
@@ -33,8 +40,15 @@ export function SidebarGroupModeControl() {
     [setGroupMode],
   );
 
+  if (!visible) {
+    return null;
+  }
+
   return (
-    <View style={styles.wrap} testID="sidebar-group-mode-control">
+    <View style={[styles.row, style]} testID="sidebar-group-mode-control">
+      <Text style={styles.byLabel} numberOfLines={1}>
+        by
+      </Text>
       <SegmentedControl
         options={options}
         value={groupMode}
@@ -47,8 +61,18 @@ export function SidebarGroupModeControl() {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  wrap: {
-    paddingHorizontal: theme.spacing[2],
-    paddingBottom: theme.spacing[2],
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1.5],
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  byLabel: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.normal,
+    textTransform: "lowercase",
+    flexShrink: 0,
   },
 }));
