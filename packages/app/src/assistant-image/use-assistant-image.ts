@@ -179,16 +179,10 @@ function useAttachmentAcquisition(
       state: cached ? { status: "loaded", attachment: cached } : { status: "waiting" },
     };
   });
-  const acquireCurrent = useStableEvent(async () => {
-    if (!acquisition) {
-      return null;
-    }
-    return await acquireAttachment(acquisition);
-  });
 
   useEffect(() => {
     let disposed = false;
-    if (!acquisitionKey) {
+    if (!acquisition || !acquisitionKey) {
       setEntry({ key: null, state: { status: "waiting" } });
       return;
     }
@@ -203,13 +197,7 @@ function useAttachmentAcquisition(
     void (async () => {
       try {
         const attachment = await runAssistantImageOperationWithRetry({
-          operation: async () => {
-            const current = await acquireCurrent();
-            if (!current) {
-              throw new Error("Assistant image acquisition is unavailable.");
-            }
-            return current;
-          },
+          operation: async () => await acquireAttachment(acquisition),
           shouldStop: () => disposed,
         });
         if (!disposed) {
@@ -224,7 +212,7 @@ function useAttachmentAcquisition(
     return () => {
       disposed = true;
     };
-  }, [acquireCurrent, acquisitionKey]);
+  }, [acquisition, acquisitionKey]);
 
   if (!acquisitionKey) {
     return { status: "waiting" };
