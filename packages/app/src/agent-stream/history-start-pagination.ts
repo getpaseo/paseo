@@ -33,6 +33,20 @@ export function rearmHistoryStartPagination(
   return state.status === "latched" ? { status: "ready" } : state;
 }
 
+export function abandonHistoryStartPaginationRequest(
+  state: HistoryStartPaginationState,
+  requestedProgressKey: string,
+): HistoryStartPaginationState {
+  if (
+    state.status !== "loading" ||
+    state.requestObserved ||
+    state.requestedProgressKey !== requestedProgressKey
+  ) {
+    return state;
+  }
+  return { status: "latched" };
+}
+
 export function evaluateHistoryStartPagination(
   state: HistoryStartPaginationState,
   input: HistoryStartPaginationInput,

@@ -370,10 +370,10 @@ describe("createWebStreamStrategy", () => {
     expect(onNearHistoryStart).not.toHaveBeenCalled();
   });
 
-  it("retries a latched history request when the user scrolls up in a short timeline", async () => {
+  it("retries a skipped history request when the user scrolls up in a short timeline", async () => {
     const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
     const viewportRef = React.createRef<StreamViewportHandle>();
-    const onNearHistoryStart = vi.fn();
+    const onNearHistoryStart = vi.fn(async () => false);
     const renderInput: StreamRenderInput = {
       agentId: "agent",
       segments: {
@@ -417,23 +417,13 @@ describe("createWebStreamStrategy", () => {
     Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 0 });
     await act(async () => {
       await new Promise((resolve) => requestAnimationFrame(resolve));
-    });
-    act(() => {
-      scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -120 }));
-      scrollContainer.dispatchEvent(new Event("scroll"));
+      await Promise.resolve();
     });
     expect(onNearHistoryStart).toHaveBeenCalledTimes(1);
 
-    act(() => {
-      root?.render(strategy.render({ ...renderInput, isLoadingOlderHistory: true }));
-    });
-    act(() => {
-      root?.render(strategy.render(renderInput));
-    });
-    expect(onNearHistoryStart).toHaveBeenCalledTimes(1);
-
-    act(() => {
+    await act(async () => {
       scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -120 }));
+      await Promise.resolve();
     });
     expect(onNearHistoryStart).toHaveBeenCalledTimes(2);
   });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  abandonHistoryStartPaginationRequest,
   createHistoryStartPaginationState,
   evaluateHistoryStartPagination,
   isHistoryStartLoadingOperation,
@@ -129,6 +130,17 @@ describe("history start pagination", () => {
 
     expect(failed.state).toEqual({ status: "latched" });
     expect(retried.shouldLoad).toBe(true);
+  });
+
+  it("latches an attempt that becomes invalid before entering flight", () => {
+    const requested = evaluateHistoryStartPagination(
+      createHistoryStartPaginationState(),
+      visibleHistoryStart,
+    );
+
+    expect(abandonHistoryStartPaginationRequest(requested.state, "epoch-1:20")).toEqual({
+      status: "latched",
+    });
   });
 
   it("does not mistake repeated edge observations for a finished request", () => {

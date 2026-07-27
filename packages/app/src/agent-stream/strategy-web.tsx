@@ -17,6 +17,7 @@ import { estimateStreamItemHeight } from "./web-virtualization";
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./strategy";
 import { createStreamStrategy } from "./strategy";
 import {
+  abandonHistoryStartPaginationRequest,
   createHistoryStartPaginationState,
   evaluateHistoryStartPagination,
   isHistoryStartLoadingOperation,
@@ -260,7 +261,20 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
           anchorElement.getBoundingClientRect().top - scrollContainer.getBoundingClientRect().top,
       };
       historyStartPrependAnchorActiveRef.current = false;
-      onNearHistoryStart();
+      const requestedProgressKey = olderHistoryProgressKey;
+      void (async () => {
+        const started = await onNearHistoryStart();
+        if (started !== false) {
+          return;
+        }
+        applyHistoryStartPaginationTransition({
+          state: abandonHistoryStartPaginationRequest(
+            historyStartPaginationStateRef.current,
+            requestedProgressKey,
+          ),
+          shouldLoad: false,
+        });
+      })();
     },
   );
   const evaluateHistoryStart = useStableEvent(() => {

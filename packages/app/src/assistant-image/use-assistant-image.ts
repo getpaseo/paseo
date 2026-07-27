@@ -30,6 +30,7 @@ import {
   type AssistantImageLifecycle,
   type AssistantImageLifecycleEvent,
 } from "./lifecycle";
+import { runAssistantImageOperationWithRetry } from "./retry";
 
 interface AssistantImageRenderBinding {
   uri: string;
@@ -104,7 +105,10 @@ function useAttachmentAcquisition(
     setState({ status: "loading" });
     void (async () => {
       try {
-        const attachment = await acquireAttachment(acquisition);
+        const attachment = await runAssistantImageOperationWithRetry({
+          operation: async () => await acquireAttachment(acquisition),
+          shouldStop: () => disposed,
+        });
         if (!disposed) {
           setState({ status: "loaded", attachment });
         }
@@ -207,7 +211,10 @@ function usePreviewUrl(attachment: AttachmentMetadata | null | undefined): Previ
     setState({ status: "loading" });
     void (async () => {
       try {
-        const uri = await resolveAttachmentPreviewUrl(current);
+        const uri = await runAssistantImageOperationWithRetry({
+          operation: async () => await resolveAttachmentPreviewUrl(current),
+          shouldStop: () => disposed,
+        });
         if (disposed) {
           await releaseAttachmentPreviewUrl({ attachment: current, url: uri });
           return;

@@ -40,11 +40,14 @@ export interface LoadOlderAgentHistoryDeps {
 export async function loadOlderAgentHistory(
   agentId: string,
   deps: LoadOlderAgentHistoryDeps,
-): Promise<void> {
+): Promise<boolean> {
   const { client, cursor, hasOlder, isLoadingOlder, setInFlight, toast, logger, failedMessage } =
     deps;
-  if (!client || !cursor || !hasOlder || isLoadingOlder) {
-    return;
+  if (isLoadingOlder) {
+    return true;
+  }
+  if (!client || !cursor || !hasOlder) {
+    return false;
   }
 
   setInFlight(true);
@@ -62,6 +65,7 @@ export async function loadOlderAgentHistory(
   } finally {
     setInFlight(false);
   }
+  return true;
 }
 
 export function useLoadOlderAgentHistory({
@@ -105,10 +109,10 @@ export function useLoadOlderAgentHistory({
     [agentId, serverId, setOlderFetchInFlight],
   );
 
-  const loadOlder = useCallback(() => {
+  const loadOlder = useCallback(async (): Promise<boolean> => {
     const session = useSessionStore.getState().sessions[serverId];
     const timeline = selectAgentTimelineState(session, agentId);
-    void loadOlderAgentHistory(agentId, {
+    return await loadOlderAgentHistory(agentId, {
       client: session?.client
         ? {
             fetchAgentTimeline: (timelineAgentId, request) =>
