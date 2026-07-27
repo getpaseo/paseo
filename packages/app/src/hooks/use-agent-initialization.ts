@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { useSessionStore } from "@/stores/session-store";
+import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
 import {
   createInitDeferred,
   getInitDeferred,
@@ -52,8 +52,9 @@ export function ensureAgentIsInitialized(input: EnsureAgentIsInitializedInput): 
   }
 
   const session = useSessionStore.getState().sessions[serverId];
-  const cursor = session?.agentTimelineCursor.get(agentId);
-  const hasAuthoritativeHistory = session?.agentAuthoritativeHistoryApplied.get(agentId) === true;
+  const timeline = selectAgentTimelineState(session, agentId);
+  const cursor = timeline.status === "synced" ? (timeline.range ?? undefined) : undefined;
+  const hasAuthoritativeHistory = timeline.status === "synced";
   const timelineRequest = planInitialAgentTimelineSync({ cursor, hasAuthoritativeHistory });
 
   const deferred = createInitDeferred(key, timelineRequest.direction);

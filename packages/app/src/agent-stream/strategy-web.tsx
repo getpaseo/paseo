@@ -19,11 +19,20 @@ import { createStreamStrategy } from "./strategy";
 import {
   createHistoryStartPaginationState,
   evaluateHistoryStartPagination,
-  rearmHistoryStartPagination,
+  isHistoryStartLoadingOperation,
+  settleHistoryStartPagination,
+  type HistoryStartPaginationInput,
+  type HistoryStartPaginationTransition,
 } from "./history-start-pagination";
 
 interface CreateWebStreamStrategyInput {
   isMobileBreakpoint: boolean;
+}
+
+interface HistoryStartPrependAnchor {
+  progressKey: string;
+  scrollHeight: number;
+  scrollTop: number;
 }
 
 type ScrollBehaviorLike = "auto" | "smooth";
@@ -33,6 +42,7 @@ const USER_SCROLL_DELTA_EPSILON = 1;
 const BOTTOM_OVERSCROLL_TOLERANCE_PX = 2;
 const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 64;
 const AUTO_SCROLL_RESUME_THRESHOLD_PX = 1;
+const HISTORY_START_SETTLE_FRAMES = 2;
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -146,7 +156,13 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const pendingAutoScrollTimeoutRef = useRef<number | null>(null);
   const pendingVirtualRowMeasureFramesRef = useRef(new Map<Element, number>());
   const historyStartReadyRef = useRef(false);
-  const historyStartPaginationStateRef = useRef(createHistoryStartPaginationState());
+  const [historyStartPaginationState, setHistoryStartPaginationState] = useState(
+    createHistoryStartPaginationState,
+  );
+  const historyStartPaginationStateRef = useRef(historyStartPaginationState);
+  const historyStartPrependAnchorRef = useRef<HistoryStartPrependAnchor | null>(null);
+  const historyStartPrependAnchorActiveRef = useRef(false);
+  const historyStartSettleFrameRef = useRef<number | null>(null);
   const shouldUseVirtualizer = segments.historyVirtualized.length > 0;
   const {
     renderHistoryVirtualizedRow,
@@ -176,6 +192,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   });
   useEffect(() => {
     rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (_item, _delta, instance) => {
+      if (historyStartPrependAnchorActiveRef.current) {
+        return false;
+      }
       const viewportHeight = instance.scrollRect?.height ?? 0;
       const scrollOffset = instance.scrollOffset ?? 0;
       const remainingDistance = instance.getTotalSize() - (scrollOffset + viewportHeight);
@@ -187,25 +206,130 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   }, [rowVirtualizer]);
   const virtualRows = rowVirtualizer.getVirtualItems();
   const virtualTotalSize = rowVirtualizer.getTotalSize();
-  const evaluateHistoryStart = useStableEvent(() => {
+  const getHistoryStartPaginationInput = useStableEvent((): HistoryStartPaginationInput | null => {
     const scrollContainer = scrollContainerRef.current;
     if (!scrollContainer) {
-      return;
+      return null;
     }
     const bottomAnchorSettled =
       !followOutputRef.current || isScrollContainerNearBottom(scrollContainer);
-    const result = evaluateHistoryStartPagination(historyStartPaginationStateRef.current, {
+    return {
       distanceFromHistoryStart: scrollContainer.scrollTop,
       hasOlderHistory,
       isLoadingOlderHistory,
       isReady: historyStartReadyRef.current && bottomAnchorSettled,
       progressKey: olderHistoryProgressKey,
-    });
-    historyStartPaginationStateRef.current = result.state;
-    if (result.shouldLoad) {
-      onNearHistoryStart();
-    }
+    };
   });
+  const applyHistoryStartPaginationTransition = useStableEvent(
+    (transition: HistoryStartPaginationTransition) => {
+      const previousState = historyStartPaginationStateRef.current;
+      historyStartPaginationStateRef.current = transition.state;
+      if (transition.state !== previousState) {
+        setHistoryStartPaginationState(transition.state);
+      }
+      if (!isHistoryStartLoadingOperation(transition.state)) {
+        historyStartPrependAnchorRef.current = null;
+        historyStartPrependAnchorActiveRef.current = false;
+      }
+      if (!transition.shouldLoad || olderHistoryProgressKey === null) {
+        return;
+      }
+      const scrollContainer = scrollContainerRef.current;
+      if (!scrollContainer) {
+        return;
+      }
+      historyStartPrependAnchorRef.current = {
+        progressKey: olderHistoryProgressKey,
+        scrollHeight: scrollContainer.scrollHeight,
+        scrollTop: scrollContainer.scrollTop,
+      };
+      historyStartPrependAnchorActiveRef.current = false;
+      onNearHistoryStart();
+    },
+  );
+  const evaluateHistoryStart = useStableEvent(() => {
+    const input = getHistoryStartPaginationInput();
+    if (!input) {
+      return;
+    }
+    const transition = evaluateHistoryStartPagination(
+      historyStartPaginationStateRef.current,
+      input,
+    );
+    applyHistoryStartPaginationTransition(transition);
+  });
+  const applyHistoryStartPrependAnchor = useStableEvent(() => {
+    const scrollContainer = scrollContainerRef.current;
+    const anchor = historyStartPrependAnchorRef.current;
+    if (!scrollContainer || !anchor || !historyStartPrependAnchorActiveRef.current) {
+      return;
+    }
+    const contentGrowth = scrollContainer.scrollHeight - anchor.scrollHeight;
+    scrollContainer.scrollTop = anchor.scrollTop + contentGrowth;
+    lastKnownScrollTopRef.current = scrollContainer.scrollTop;
+  });
+  const scheduleHistoryStartPrependSettle = useStableEvent(() => {
+    const pendingFrame = historyStartSettleFrameRef.current;
+    if (pendingFrame !== null) {
+      window.cancelAnimationFrame(pendingFrame);
+    }
+    let stableFrames = 0;
+    let previousGeometry = "";
+    const sample = () => {
+      applyHistoryStartPrependAnchor();
+      const scrollContainer = scrollContainerRef.current;
+      const input = getHistoryStartPaginationInput();
+      if (!scrollContainer || !input || !historyStartPrependAnchorActiveRef.current) {
+        historyStartSettleFrameRef.current = null;
+        return;
+      }
+      const geometry = `${scrollContainer.scrollHeight}:${scrollContainer.scrollTop}`;
+      const hasPendingRowMeasurements = pendingVirtualRowMeasureFramesRef.current.size > 0;
+      if (
+        input.isLoadingOlderHistory ||
+        hasPendingRowMeasurements ||
+        geometry !== previousGeometry
+      ) {
+        stableFrames = 0;
+      } else {
+        stableFrames += 1;
+      }
+      previousGeometry = geometry;
+      if (stableFrames < HISTORY_START_SETTLE_FRAMES) {
+        historyStartSettleFrameRef.current = window.requestAnimationFrame(sample);
+        return;
+      }
+      historyStartSettleFrameRef.current = null;
+      historyStartPrependAnchorActiveRef.current = false;
+      const transition = settleHistoryStartPagination(
+        historyStartPaginationStateRef.current,
+        input,
+      );
+      historyStartPrependAnchorRef.current = null;
+      applyHistoryStartPaginationTransition(transition);
+    };
+    historyStartSettleFrameRef.current = window.requestAnimationFrame(sample);
+  });
+
+  useLayoutEffect(() => {
+    const anchor = historyStartPrependAnchorRef.current;
+    if (!anchor || anchor.progressKey === olderHistoryProgressKey) {
+      return;
+    }
+    historyStartPrependAnchorActiveRef.current = true;
+    evaluateHistoryStart();
+    applyHistoryStartPrependAnchor();
+    scheduleHistoryStartPrependSettle();
+  }, [
+    applyHistoryStartPrependAnchor,
+    evaluateHistoryStart,
+    olderHistoryProgressKey,
+    scheduleHistoryStartPrependSettle,
+    segments.historyMounted,
+    segments.historyVirtualized,
+    virtualTotalSize,
+  ]);
 
   const measureVirtualizedRowElement = useCallback(
     (node: HTMLDivElement | null) => {
@@ -335,7 +459,11 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   }, [cancelPendingStickToBottom, evaluateHistoryStart, updateScrollMetrics]);
 
   useEffect(() => {
-    historyStartPaginationStateRef.current = createHistoryStartPaginationState();
+    const initialHistoryStartState = createHistoryStartPaginationState();
+    historyStartPaginationStateRef.current = initialHistoryStartState;
+    setHistoryStartPaginationState(initialHistoryStartState);
+    historyStartPrependAnchorRef.current = null;
+    historyStartPrependAnchorActiveRef.current = false;
     const frame = window.requestAnimationFrame(() => {
       historyStartReadyRef.current = true;
       evaluateHistoryStart();
@@ -343,6 +471,11 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     return () => {
       window.cancelAnimationFrame(frame);
       historyStartReadyRef.current = false;
+      const settleFrame = historyStartSettleFrameRef.current;
+      if (settleFrame !== null) {
+        historyStartSettleFrameRef.current = null;
+        window.cancelAnimationFrame(settleFrame);
+      }
     };
   }, [evaluateHistoryStart, props.agentId]);
 
@@ -423,6 +556,10 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     updateScrollMetrics();
     evaluateHistoryStart();
     const observer = new ResizeObserver(() => {
+      if (historyStartPrependAnchorActiveRef.current) {
+        applyHistoryStartPrependAnchor();
+        scheduleHistoryStartPrependSettle();
+      }
       updateScrollMetrics();
       evaluateHistoryStart();
       if (!followOutputRef.current) {
@@ -437,7 +574,13 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     return () => {
       observer.disconnect();
     };
-  }, [evaluateHistoryStart, scheduleStickToBottom, updateScrollMetrics]);
+  }, [
+    applyHistoryStartPrependAnchor,
+    evaluateHistoryStart,
+    scheduleHistoryStartPrependSettle,
+    scheduleStickToBottom,
+    updateScrollMetrics,
+  ]);
 
   useEffect(() => {
     const scrollContainer = scrollContainerRef.current;
@@ -447,14 +590,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
 
     const handleWheel = (event: WheelEvent) => {
       if (event.deltaY < 0) {
-        if (!isLoadingOlderHistory) {
-          historyStartPaginationStateRef.current = rearmHistoryStartPagination(
-            historyStartPaginationStateRef.current,
-          );
-        }
         pendingUserScrollUpIntentRef.current = true;
         cancelPendingStickToBottom();
-        evaluateHistoryStart();
       }
     };
     const handlePointerDown = () => {
@@ -477,14 +614,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       }
       const previousTouchY = lastTouchClientYRef.current;
       if (previousTouchY !== null && touch.clientY > previousTouchY + 1) {
-        if (!isLoadingOlderHistory) {
-          historyStartPaginationStateRef.current = rearmHistoryStartPagination(
-            historyStartPaginationStateRef.current,
-          );
-        }
         pendingUserScrollUpIntentRef.current = true;
         cancelPendingStickToBottom();
-        evaluateHistoryStart();
       }
       lastTouchClientYRef.current = touch.clientY;
     };
@@ -513,7 +644,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       scrollContainer.removeEventListener("touchend", handleTouchEnd);
       scrollContainer.removeEventListener("touchcancel", handleTouchEnd);
     };
-  }, [cancelPendingStickToBottom, evaluateHistoryStart, handleDomScroll, isLoadingOlderHistory]);
+  }, [cancelPendingStickToBottom, handleDomScroll]);
 
   useEffect(() => {
     const handle: StreamViewportHandle = {
@@ -595,20 +726,21 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     return renderLiveAuxiliary();
   }, [renderLiveAuxiliary]);
   const historyStartSlot = useMemo(() => {
-    if (!hasOlderHistory && !isLoadingOlderHistory) {
+    const isLoadingOperation = isHistoryStartLoadingOperation(historyStartPaginationState);
+    if (!hasOlderHistory && !isLoadingOperation) {
       return null;
     }
     return (
       <div
         style={historyStartSlotStyle}
-        data-testid={isLoadingOlderHistory ? "load-older-history-spinner" : undefined}
+        data-testid={isLoadingOperation ? "load-older-history-spinner" : undefined}
       >
-        {isLoadingOlderHistory ? (
+        {isLoadingOperation ? (
           <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
         ) : null}
       </div>
     );
-  }, [hasOlderHistory, isLoadingOlderHistory]);
+  }, [hasOlderHistory, historyStartPaginationState]);
   const shouldRenderEmpty =
     !boundary.hasMountedHistory &&
     !boundary.hasVirtualizedHistory &&

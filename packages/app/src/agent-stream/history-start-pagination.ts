@@ -1,33 +1,71 @@
 export const HISTORY_START_THRESHOLD_PX = 96;
 
-export interface HistoryStartPaginationState {
-  requestedProgressKey: string | null;
+export type HistoryStartPaginationState =
+  | { status: "ready" }
+  | { status: "loading"; requestedProgressKey: string; requestObserved: boolean }
+  | { status: "settling"; loadedProgressKey: string }
+  | { status: "latched" };
+
+export interface HistoryStartPaginationInput {
+  distanceFromHistoryStart: number;
+  hasOlderHistory: boolean;
+  isLoadingOlderHistory: boolean;
+  isReady: boolean;
+  progressKey: string | null;
+}
+
+export interface HistoryStartPaginationTransition {
+  state: HistoryStartPaginationState;
+  shouldLoad: boolean;
 }
 
 export function createHistoryStartPaginationState(): HistoryStartPaginationState {
-  return { requestedProgressKey: null };
+  return { status: "ready" };
 }
 
-export function rearmHistoryStartPagination(
-  _state: HistoryStartPaginationState,
-): HistoryStartPaginationState {
-  return createHistoryStartPaginationState();
+export function isHistoryStartLoadingOperation(state: HistoryStartPaginationState): boolean {
+  return state.status === "loading" || state.status === "settling";
 }
 
 export function evaluateHistoryStartPagination(
   state: HistoryStartPaginationState,
-  input: {
-    distanceFromHistoryStart: number;
-    hasOlderHistory: boolean;
-    isLoadingOlderHistory: boolean;
-    isReady: boolean;
-    progressKey: string | null;
-  },
-): { state: HistoryStartPaginationState; shouldLoad: boolean } {
-  if (input.distanceFromHistoryStart > HISTORY_START_THRESHOLD_PX) {
-    return { state: createHistoryStartPaginationState(), shouldLoad: false };
+  input: HistoryStartPaginationInput,
+): HistoryStartPaginationTransition {
+  if (state.status === "loading") {
+    if (input.progressKey !== null && input.progressKey !== state.requestedProgressKey) {
+      return {
+        state: { status: "settling", loadedProgressKey: input.progressKey },
+        shouldLoad: false,
+      };
+    }
+    if (input.isLoadingOlderHistory && !state.requestObserved) {
+      return { state: { ...state, requestObserved: true }, shouldLoad: false };
+    }
+    if (!input.isLoadingOlderHistory && !input.hasOlderHistory) {
+      return { state: { status: "latched" }, shouldLoad: false };
+    }
+    if (
+      state.requestObserved &&
+      !input.isLoadingOlderHistory &&
+      input.progressKey === state.requestedProgressKey
+    ) {
+      return { state: { status: "latched" }, shouldLoad: false };
+    }
+    return { state, shouldLoad: false };
+  }
+
+  if (state.status === "settling") {
+    return { state, shouldLoad: false };
+  }
+
+  const isAtHistoryStart = input.distanceFromHistoryStart <= HISTORY_START_THRESHOLD_PX;
+  if (!isAtHistoryStart) {
+    return state.status === "ready"
+      ? { state, shouldLoad: false }
+      : { state: { status: "ready" }, shouldLoad: false };
   }
   if (
+    state.status === "latched" ||
     !input.isReady ||
     !input.hasOlderHistory ||
     input.isLoadingOlderHistory ||
@@ -35,11 +73,42 @@ export function evaluateHistoryStartPagination(
   ) {
     return { state, shouldLoad: false };
   }
-  if (state.requestedProgressKey === input.progressKey) {
+  return {
+    state: {
+      status: "loading",
+      requestedProgressKey: input.progressKey,
+      requestObserved: false,
+    },
+    shouldLoad: true,
+  };
+}
+
+export function settleHistoryStartPagination(
+  state: HistoryStartPaginationState,
+  input: HistoryStartPaginationInput,
+): HistoryStartPaginationTransition {
+  if (state.status !== "settling") {
     return { state, shouldLoad: false };
   }
+  const isAtHistoryStart = input.distanceFromHistoryStart <= HISTORY_START_THRESHOLD_PX;
+  if (
+    !isAtHistoryStart ||
+    !input.isReady ||
+    !input.hasOlderHistory ||
+    input.isLoadingOlderHistory ||
+    input.progressKey === null
+  ) {
+    return {
+      state: isAtHistoryStart ? { status: "latched" } : { status: "ready" },
+      shouldLoad: false,
+    };
+  }
   return {
-    state: { requestedProgressKey: input.progressKey },
+    state: {
+      status: "loading",
+      requestedProgressKey: input.progressKey,
+      requestObserved: false,
+    },
     shouldLoad: true,
   };
 }

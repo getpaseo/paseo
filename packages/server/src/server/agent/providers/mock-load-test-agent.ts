@@ -36,6 +36,8 @@ export const MOCK_LOAD_TEST_DEFAULT_MODEL_ID = "five-minute-stream";
 const MOCK_LOAD_TEST_MODE_ID = "load-test";
 const MOCK_LOAD_TEST_DURATION_MS = 5 * 60 * 1000;
 const MOCK_LOAD_TEST_INTERVAL_MS = 40;
+const ONE_PIXEL_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl4Kj8AAAAASUVORK5CYII=";
 
 const CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -1117,9 +1119,14 @@ export class MockLoadTestAgentSession implements AgentSession {
         }),
       );
     } else {
+      const imageBytes = Buffer.from(ONE_PIXEL_PNG_BASE64, "base64");
+      const imagePayload = Buffer.concat([
+        imageBytes,
+        Buffer.alloc(Math.max(0, largePayload.bytes - imageBytes.length)),
+      ]).toString("base64");
       this.emitTimeline(turn.turnId, {
         type: "assistant_message",
-        text: `data:image/png;base64,${payload}`,
+        text: `![Synthetic image](data:image/png;base64,${imagePayload})`,
         messageId: turn.assistantMessageId,
       });
     }

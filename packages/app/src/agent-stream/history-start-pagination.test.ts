@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   createHistoryStartPaginationState,
   evaluateHistoryStartPagination,
-  rearmHistoryStartPagination,
+  isHistoryStartLoadingOperation,
+  settleHistoryStartPagination,
+  type HistoryStartPaginationInput,
 } from "./history-start-pagination";
 
-const visibleHistoryStart = {
+const visibleHistoryStart: HistoryStartPaginationInput = {
   distanceFromHistoryStart: 0,
   hasOlderHistory: true,
   isLoadingOlderHistory: false,
@@ -14,47 +16,110 @@ const visibleHistoryStart = {
 };
 
 describe("history start pagination", () => {
-  it("loads once for each authoritative history cursor", () => {
-    const initial = createHistoryStartPaginationState();
-    const first = evaluateHistoryStartPagination(initial, visibleHistoryStart);
-    const duplicate = evaluateHistoryStartPagination(first.state, visibleHistoryStart);
-    const nextPage = evaluateHistoryStartPagination(first.state, {
+  it("waits for anchored page geometry before authorizing another page", () => {
+    const first = evaluateHistoryStartPagination(
+      createHistoryStartPaginationState(),
+      visibleHistoryStart,
+    );
+    const inFlight = evaluateHistoryStartPagination(first.state, {
+      ...visibleHistoryStart,
+      isLoadingOlderHistory: true,
+    });
+    const pageApplied = evaluateHistoryStartPagination(inFlight.state, {
+      ...visibleHistoryStart,
+      isLoadingOlderHistory: true,
+      progressKey: "epoch-1:10",
+    });
+
+    expect([first.shouldLoad, inFlight.shouldLoad, pageApplied.shouldLoad]).toEqual([
+      true,
+      false,
+      false,
+    ]);
+    expect(pageApplied.state).toEqual({ status: "settling", loadedProgressKey: "epoch-1:10" });
+  });
+
+  it("loads one page each time anchored geometry leaves and returns to history start", () => {
+    const first = evaluateHistoryStartPagination(
+      createHistoryStartPaginationState(),
+      visibleHistoryStart,
+    );
+    const pageApplied = evaluateHistoryStartPagination(first.state, {
+      ...visibleHistoryStart,
+      progressKey: "epoch-1:10",
+    });
+    const settledAway = settleHistoryStartPagination(pageApplied.state, {
+      ...visibleHistoryStart,
+      distanceFromHistoryStart: 300,
+      progressKey: "epoch-1:10",
+    });
+    const returned = evaluateHistoryStartPagination(settledAway.state, {
       ...visibleHistoryStart,
       progressKey: "epoch-1:10",
     });
 
-    expect([first.shouldLoad, duplicate.shouldLoad, nextPage.shouldLoad]).toEqual([
-      true,
-      false,
-      true,
-    ]);
+    expect([
+      first.shouldLoad,
+      pageApplied.shouldLoad,
+      settledAway.shouldLoad,
+      returned.shouldLoad,
+    ]).toEqual([true, false, false, true]);
   });
 
-  it("allows the same revision again after the user leaves the history edge", () => {
+  it("continues the same loading operation when anchored geometry remains at history start", () => {
     const first = evaluateHistoryStartPagination(
       createHistoryStartPaginationState(),
       visibleHistoryStart,
     );
-    const away = evaluateHistoryStartPagination(first.state, {
+    const pageApplied = evaluateHistoryStartPagination(first.state, {
       ...visibleHistoryStart,
-      distanceFromHistoryStart: 200,
+      progressKey: "epoch-1:10",
     });
-    const returned = evaluateHistoryStartPagination(away.state, visibleHistoryStart);
+    const continued = settleHistoryStartPagination(pageApplied.state, {
+      ...visibleHistoryStart,
+      progressKey: "epoch-1:10",
+    });
 
-    expect([first.shouldLoad, away.shouldLoad, returned.shouldLoad]).toEqual([true, false, true]);
+    expect(continued.shouldLoad).toBe(true);
+    expect(isHistoryStartLoadingOperation(first.state)).toBe(true);
+    expect(isHistoryStartLoadingOperation(pageApplied.state)).toBe(true);
+    expect(isHistoryStartLoadingOperation(continued.state)).toBe(true);
   });
 
-  it("re-arms the same cursor when the user makes another upward edge gesture", () => {
+  it("latches a request that finishes without cursor progress", () => {
     const first = evaluateHistoryStartPagination(
       createHistoryStartPaginationState(),
       visibleHistoryStart,
     );
-    const retried = evaluateHistoryStartPagination(
-      rearmHistoryStartPagination(first.state),
+    const inFlight = evaluateHistoryStartPagination(first.state, {
+      ...visibleHistoryStart,
+      isLoadingOlderHistory: true,
+    });
+    const finished = evaluateHistoryStartPagination(inFlight.state, visibleHistoryStart);
+    const duplicate = evaluateHistoryStartPagination(finished.state, visibleHistoryStart);
+    const away = evaluateHistoryStartPagination(duplicate.state, {
+      ...visibleHistoryStart,
+      distanceFromHistoryStart: 300,
+    });
+
+    expect(finished.state).toEqual({ status: "latched" });
+    expect([finished.shouldLoad, duplicate.shouldLoad, away.shouldLoad]).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    expect(away.state).toEqual({ status: "ready" });
+  });
+
+  it("does not mistake repeated edge observations for a finished request", () => {
+    const first = evaluateHistoryStartPagination(
+      createHistoryStartPaginationState(),
       visibleHistoryStart,
     );
+    const repeated = evaluateHistoryStartPagination(first.state, visibleHistoryStart);
 
-    expect([first.shouldLoad, retried.shouldLoad]).toEqual([true, true]);
+    expect(repeated.state).toBe(first.state);
+    expect(repeated.shouldLoad).toBe(false);
   });
 
   it("waits while history loading is unavailable or already active", () => {

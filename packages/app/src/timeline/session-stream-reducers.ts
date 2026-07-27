@@ -1,5 +1,5 @@
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
-import { useSessionStore } from "@/stores/session-store";
+import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
 import type { AssistantMessageItem, StreamItem } from "@/types/stream";
 import {
   applyStreamEvent,
@@ -255,7 +255,6 @@ function applyTimelineReplacePath(args: {
     acknowledgedClientMessageIds,
   };
 }
-
 interface IncrementalAcceptResult {
   acceptedUnits: TimelineUnit[];
   cursor: TimelineCursor | undefined;
@@ -575,6 +574,43 @@ function reconcileOverlappingProjectedReasoning(params: {
     : { tail: params.tail, head: params.head, reconciled: false };
 }
 
+function reconcileProjectedUserOverlay(params: {
+  tail: StreamItem[];
+  head: StreamItem[];
+  unit: TimelineUnit;
+}): { tail: StreamItem[]; head: StreamItem[]; reconciled: boolean } {
+  const { event } = params.unit;
+  if (event.type !== "timeline" || event.item.type !== "user_message") {
+    return { tail: params.tail, head: params.head, reconciled: false };
+  }
+  const userItem = event.item;
+  const overlayIndex = params.head.findIndex(
+    (item) =>
+      item.kind === "user_message" &&
+      matchesLocalUserMessageIdentity(
+        {
+          messageId: userItem.messageId,
+          clientMessageId: userItem.clientMessageId,
+          text: userItem.text,
+        },
+        item,
+      ),
+  );
+  const overlay = params.head[overlayIndex];
+  if (overlayIndex < 0 || !overlay || overlay.kind !== "user_message") {
+    return { tail: params.tail, head: params.head, reconciled: false };
+  }
+  const canonical = reduceStreamUpdate([], event, params.unit.timestamp, {
+    source: "canonical",
+  })[0];
+  if (!canonical || canonical.kind !== "user_message") {
+    return { tail: params.tail, head: params.head, reconciled: false };
+  }
+  const head = [...params.head];
+  head[overlayIndex] = mergeCanonicalUserWithLocalPresentation(canonical, overlay);
+  return { tail: params.tail, head, reconciled: true };
+}
+
 function reconcileOverlappingProjectedStreamItems(params: {
   tail: StreamItem[];
   head: StreamItem[];
@@ -588,13 +624,16 @@ function reconcileOverlappingProjectedStreamItems(params: {
   if (params.currentEndSeq === undefined) return { tail, head, reconciledUnits };
 
   for (const unit of params.units) {
-    let reconciled = reconcileOverlappingProjectedAssistant({
-      tail,
-      head,
-      unit,
-      epoch: params.epoch,
-      currentEndSeq: params.currentEndSeq,
-    });
+    let reconciled = reconcileProjectedUserOverlay({ tail, head, unit });
+    if (!reconciled.reconciled) {
+      reconciled = reconcileOverlappingProjectedAssistant({
+        tail,
+        head,
+        unit,
+        epoch: params.epoch,
+        currentEndSeq: params.currentEndSeq,
+      });
+    }
     if (!reconciled.reconciled) {
       reconciled = reconcileOverlappingProjectedReasoning({
         tail,
@@ -955,6 +994,7 @@ export interface ProcessAgentStreamEventInput {
   currentTail: StreamItem[];
   currentHead: StreamItem[];
   currentCursor: TimelineCursor | undefined;
+  hasAuthoritativeBaseline?: boolean;
   timestamp: Date;
 }
 
@@ -989,6 +1029,7 @@ export interface ProcessAgentStreamEventsInput {
   currentTail: StreamItem[];
   currentHead: StreamItem[];
   currentCursor: TimelineCursor | undefined;
+  hasAuthoritativeBaseline?: boolean;
 }
 
 export type AgentStreamReducerSnapshot = Omit<ProcessAgentStreamEventsInput, "events">;
@@ -1017,8 +1058,9 @@ function processTimelineSequencingGate(input: {
   seq: number | undefined;
   epoch: string | undefined;
   currentCursor: TimelineCursor | undefined;
+  hasAuthoritativeBaseline: boolean;
 }): TimelineSequencingGateResult {
-  const { event, seq, epoch, currentCursor } = input;
+  const { event, seq, epoch, currentCursor, hasAuthoritativeBaseline } = input;
   const base: TimelineSequencingGateResult = {
     shouldApplyStreamEvent: true,
     nextTimelineCursor: null,
@@ -1027,6 +1069,9 @@ function processTimelineSequencingGate(input: {
     sideEffects: [],
   };
   if (event.type !== "timeline" || typeof seq !== "number" || typeof epoch !== "string") {
+    return base;
+  }
+  if (!hasAuthoritativeBaseline) {
     return base;
   }
 
@@ -1085,9 +1130,24 @@ function processTimelineSequencingGate(input: {
 export function processAgentStreamEvent(
   input: ProcessAgentStreamEventInput,
 ): ProcessAgentStreamEventOutput {
-  const { event, seq, epoch, currentTail, currentHead, currentCursor, timestamp } = input;
+  const {
+    event,
+    seq,
+    epoch,
+    currentTail,
+    currentHead,
+    currentCursor,
+    timestamp,
+    hasAuthoritativeBaseline = true,
+  } = input;
 
-  const sequencing = processTimelineSequencingGate({ event, seq, epoch, currentCursor });
+  const sequencing = processTimelineSequencingGate({
+    event,
+    seq,
+    epoch,
+    currentCursor,
+    hasAuthoritativeBaseline,
+  });
   const timelineCursor =
     event.type === "timeline" && seq !== undefined && epoch !== undefined
       ? { epoch, seq }
@@ -1096,30 +1156,49 @@ export function processAgentStreamEvent(
   // ------------------------------------------------------------------
   // Apply stream event to tail/head
   // ------------------------------------------------------------------
-  const applied = sequencing.shouldApplyStreamEvent
-    ? applyStreamEvent({
-        tail: sequencing.resetLiveTimeline ? [] : currentTail,
-        head: sequencing.resetLiveTimeline ? [] : currentHead,
-        event,
-        timestamp,
-        source: "live",
-        timelineCursor,
-      })
-    : {
-        tail: currentTail,
-        head: currentHead,
-        changedTail: false,
-        changedHead: false,
-      };
+  let streamResult: ReturnType<typeof applyStreamEvent>;
+  if (!sequencing.shouldApplyStreamEvent) {
+    streamResult = {
+      tail: currentTail,
+      head: currentHead,
+      changedTail: false,
+      changedHead: false,
+    };
+  } else if (!hasAuthoritativeBaseline) {
+    const overlay = applyStreamEvent({
+      tail: currentHead,
+      head: [],
+      event,
+      timestamp,
+      source: "live",
+      timelineCursor,
+    });
+    streamResult = {
+      tail: currentTail,
+      head: [...overlay.tail, ...overlay.head],
+      changedTail: false,
+      changedHead: overlay.changedTail || overlay.changedHead,
+    };
+  } else {
+    streamResult = applyStreamEvent({
+      tail: sequencing.resetLiveTimeline ? [] : currentTail,
+      head: sequencing.resetLiveTimeline ? [] : currentHead,
+      event,
+      timestamp,
+      source: "live",
+      timelineCursor,
+    });
+  }
+  const { tail, head, changedTail, changedHead } = streamResult;
 
   return {
-    tail: applied.tail,
-    head: applied.head,
-    changedTail: applied.changedTail,
-    changedHead: applied.changedHead,
+    tail,
+    head,
+    changedTail,
+    changedHead,
     cursor: sequencing.nextTimelineCursor,
     cursorChanged: sequencing.cursorChanged,
-    acknowledgedClientMessageIds: applied.acknowledgedClientMessageIds ?? [],
+    acknowledgedClientMessageIds: streamResult.acknowledgedClientMessageIds ?? [],
     sideEffects: sequencing.sideEffects,
   };
 }
@@ -1144,6 +1223,7 @@ export function processAgentStreamEvents(
       currentTail: tail,
       currentHead: head,
       currentCursor: cursor,
+      hasAuthoritativeBaseline: input.hasAuthoritativeBaseline,
       timestamp: reducerEvent.timestamp,
     });
 
@@ -1281,10 +1361,12 @@ export function createSessionAgentStreamReducerQueue(
   return createAgentStreamReducerQueue({
     getSnapshot: (agentId) => {
       const session = useSessionStore.getState().sessions[serverId];
+      const timeline = selectAgentTimelineState(session, agentId);
       return {
-        currentTail: session?.agentStreamTail.get(agentId) ?? [],
+        currentTail: timeline.status === "cold" ? [] : timeline.items,
         currentHead: session?.agentStreamHead.get(agentId) ?? [],
-        currentCursor: session?.agentTimelineCursor.get(agentId),
+        currentCursor: timeline.status === "synced" ? (timeline.range ?? undefined) : undefined,
+        hasAuthoritativeBaseline: timeline.status === "synced",
       };
     },
     commit: (agentId, result, events) => {

@@ -5,9 +5,11 @@ import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 
 import {
   normalizeWorkspaceDescriptor,
+  selectAgentTimelineState,
   useSessionStore,
   type WorkspaceDescriptor,
 } from "./session-store";
+import type { StreamItem } from "../types/stream";
 import { patchWorkspaceScripts } from "../contexts/session-workspace-scripts";
 
 function createWorkspace(
@@ -52,6 +54,52 @@ function getTestSessionReferences() {
     emptyProjects: session.emptyProjects,
   };
 }
+
+describe("agent timeline state", () => {
+  it("commits canonical items, range, and older availability as one synced state", () => {
+    initializeTestSession();
+    const items: StreamItem[] = [
+      {
+        kind: "assistant_message",
+        id: "canonical-row",
+        text: "canonical",
+        timestamp: new Date("2026-07-27T10:00:00.000Z"),
+      },
+    ];
+
+    useSessionStore.getState().applyAgentTimelineResponseState("test-server", "agent-1", {
+      items,
+      head: [],
+      range: { epoch: "epoch-1", startSeq: 51, endSeq: 100 },
+      older: "available",
+      synchronized: true,
+    });
+
+    expect(
+      selectAgentTimelineState(useSessionStore.getState().sessions["test-server"], "agent-1"),
+    ).toEqual({
+      status: "synced",
+      items,
+      range: { epoch: "epoch-1", startSeq: 51, endSeq: 100 },
+      older: "available",
+    });
+  });
+
+  it("represents an empty authoritative timeline without inventing a range", () => {
+    initializeTestSession();
+    useSessionStore.getState().applyAgentTimelineResponseState("test-server", "agent-1", {
+      items: [],
+      head: [],
+      range: null,
+      older: "none",
+      synchronized: true,
+    });
+
+    expect(
+      selectAgentTimelineState(useSessionStore.getState().sessions["test-server"], "agent-1"),
+    ).toEqual({ status: "synced", items: [], range: null, older: "none" });
+  });
+});
 
 describe("normalizeWorkspaceDescriptor", () => {
   it("normalizes workspace scripts and invalid activity timestamps", () => {
