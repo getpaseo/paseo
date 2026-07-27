@@ -274,6 +274,38 @@ describe("EncryptedChannel", () => {
     transport.onclose?.(1000, "closed");
   });
 
+  it("reports rejected sends while flushing the handshake backlog", async () => {
+    const daemonKeyPair = generateKeyPair();
+    const daemonPubKeyB64 = exportPublicKey(daemonKeyPair.publicKey);
+    let sendAttempts = 0;
+    const transport: Transport = {
+      send: () => {
+        sendAttempts += 1;
+        return sendAttempts === 1 ? undefined : Promise.reject(new Error("backlog send failed"));
+      },
+      close: vi.fn(),
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+    };
+    const onerror = vi.fn();
+    const channel = await createClientChannel(transport, daemonPubKeyB64, { onerror });
+    await channel.send(new ArrayBuffer(8));
+
+    transport.onmessage?.({
+      data: JSON.stringify({
+        type: "e2ee_ready",
+        capabilities: { binaryCiphertext: true },
+      }),
+      isBinary: false,
+    });
+    await waitForAsyncDelivery();
+
+    expect(onerror).toHaveBeenCalledTimes(1);
+    expect((onerror.mock.calls[0][0] as Error).message).toBe("backlog send failed");
+    expect(transport.close).toHaveBeenCalledWith(1011, "backlog send failed");
+  });
+
   it("fails handshake on invalid hello", async () => {
     const [daemonTransport] = createMockTransportPair();
 

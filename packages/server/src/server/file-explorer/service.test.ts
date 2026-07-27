@@ -197,26 +197,21 @@ describe("file explorer service", () => {
     }
   });
 
-  it("streams exactly the advertised bytes when the file grows", async () => {
+  it("fails a stream when the file grows after its revision is advertised", async () => {
     const root = await createTempDir("paseo-file-stream-growth-");
 
     try {
       const filePath = path.join(root, "growing.log");
       const initial = Buffer.alloc(300 * 1024, 0x61);
       await writeFile(filePath, initial);
-      let advertisedSize = 0;
-      const chunks: Uint8Array[] = [];
-
-      await streamExplorerFile({ root, relativePath: "growing.log" }, async (file) => {
-        advertisedSize = file.size;
-        await appendFile(filePath, Buffer.alloc(300 * 1024, 0x62));
-        for await (const chunk of file.chunks) chunks.push(chunk);
-      });
-
-      const streamed = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
-      expect(advertisedSize).toBe(initial.byteLength);
-      expect(streamed.byteLength).toBe(advertisedSize);
-      expect(Buffer.compare(streamed, initial)).toBe(0);
+      await expect(
+        streamExplorerFile({ root, relativePath: "growing.log" }, async (file) => {
+          await appendFile(filePath, Buffer.alloc(300 * 1024, 0x62));
+          for await (const _chunk of file.chunks) {
+            // Consume through the advertised prefix before validating the revision.
+          }
+        }),
+      ).rejects.toThrow("File changed during transfer");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

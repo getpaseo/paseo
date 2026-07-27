@@ -337,7 +337,9 @@ async function isFileHandleBinary(handle: FileHandle, advertisedSize: number): P
   let position = 0;
   let suspiciousBytes = 0;
   while (position < advertisedSize) {
-    const block = Buffer.allocUnsafe(Math.min(FILE_TYPE_SAMPLE_BYTES, advertisedSize - position));
+    const block = Buffer.allocUnsafe(
+      Math.min(FILE_EXPLORER_STREAM_CHUNK_BYTES, advertisedSize - position),
+    );
     const { bytesRead } = await handle.read(block, 0, block.byteLength, position);
     if (bytesRead === 0) {
       throw new Error("File changed during transfer");
@@ -383,10 +385,7 @@ async function* readFileHandleChunks(
   }
 
   const finalStats = await handle.stat({ bigint: true });
-  if (
-    Number(finalStats.size) === advertisedSize &&
-    fileRevision(finalStats) !== advertisedRevision
-  ) {
+  if (fileRevision(finalStats) !== advertisedRevision) {
     throw new Error("File changed during transfer");
   }
 }

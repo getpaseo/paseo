@@ -357,7 +357,14 @@ export class EncryptedChannel {
           this.state = "open";
           this.events.onopen?.();
           for (const cb of this.onOpenCallbacks) cb();
-          await this.flushPendingSends();
+          try {
+            await this.flushPendingSends();
+          } catch (error) {
+            const err = error instanceof Error ? error : new Error(String(error));
+            this.events.onerror?.(err);
+            this.state = "closed";
+            this.transport.close(1011, err.message);
+          }
         }
       } catch {
         // ignore non-ready handshake traffic
