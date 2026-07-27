@@ -188,7 +188,7 @@ function buildStoredPersistenceHandle(
   if (!isStoredAgentProviderAvailable(record, validProviders)) {
     return null;
   }
-  return toAgentPersistenceHandle(validProviders, record.persistence);
+  return sanitizePersistenceHandle(toAgentPersistenceHandle(validProviders, record.persistence));
 }
 
 export function buildStoredAgentPayload(
@@ -406,7 +406,18 @@ function normalizeFeatures(features: AgentFeature[] | null | undefined): AgentFe
   return Array.isArray(features) ? features.map((feature) => ({ ...feature })) : [];
 }
 
-function sanitizeOptionalJson(value: unknown): JsonValue | undefined {
+const SENSITIVE_METADATA_KEYS = new Set([
+  "authorization",
+  "proxy-authorization",
+  "cookie",
+  "set-cookie",
+  "x-api-key",
+]);
+
+function sanitizeOptionalJson(value: unknown, key?: string): JsonValue | undefined {
+  if (key && SENSITIVE_METADATA_KEYS.has(key.toLowerCase())) {
+    return "[REDACTED]";
+  }
   if (value === undefined) {
     return undefined;
   }
@@ -424,10 +435,10 @@ function sanitizeOptionalJson(value: unknown): JsonValue | undefined {
   }
   if (typeof value === "object") {
     const result: { [key: string]: JsonValue } = {};
-    for (const [key, val] of Object.entries(value)) {
-      const sanitized = sanitizeOptionalJson(val);
+    for (const [entryKey, val] of Object.entries(value)) {
+      const sanitized = sanitizeOptionalJson(val, entryKey);
       if (sanitized !== undefined) {
-        result[key] = sanitized;
+        result[entryKey] = sanitized;
       }
     }
     return Object.keys(result).length ? result : undefined;
