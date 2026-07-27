@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.905 - 2026-07-27
+
+### Fixed
+
+- Restore upstream agent chat layout styles (undo fork-only centering overrides that made the column look wrong)
+- Includes the intrusive-attention webview/OS-window focus fix from 0.2.904 so in-Paseo guests (Code Server, Browser) get a banner instead of auto-navigation
+
 ## 0.2.904 - 2026-07-27
 
 ### Fixed
