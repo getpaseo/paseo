@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 // CommonJS on purpose: packages/app/app.config.js and the Expo config plugin both
 // require it, so the ABI table has exactly one definition across all three callers.
 import { getFdroidVersionCodes as defaultGetFdroidVersionCodes } from "../packages/app/android-version-codes.js";
-import { parseChangelogEntries, parseChangelogSections } from "./changelog-utils.mjs";
+import { parseChangelogBody, parseChangelogEntries } from "./changelog-utils.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
@@ -75,20 +75,45 @@ function parseArgs(argv) {
   return args;
 }
 
-// Greedily fits section headings and bullets into the character budget, always
-// leaving room for the footer that points at the unabridged notes.
-export function formatFdroidChangelog(bodyLines, options = {}) {
-  const limit = options.limit ?? CHANGELOG_CHARACTER_LIMIT;
-  const footer = options.footer ?? FULL_NOTES_FOOTER;
-  const sections = parseChangelogSections(bodyLines);
+function truncateText(text, maxLength) {
+  const ellipsis = "...";
+  if (maxLength <= ellipsis.length) {
+    return "";
+  }
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, maxLength - ellipsis.length).trimEnd()}${ellipsis}`;
+}
 
-  // The rendered file is `body` + "\n\n" + `footer` + "\n", so three newlines and
-  // the footer come out of the limit before any content does.
-  const budget = limit - footer.length - 3;
-  if (budget <= 0) {
-    throw new Error(`Changelog limit ${limit} is too small for the footer "${footer}".`);
+// Notes claim the budget before any bullet does. Releases use blockquotes for
+// action-required notices (0.1.109: "you must reinstall manually"), so bullets are
+// what gets cut. A note too long to fit is truncated rather than dropped — losing
+// half a warning is recoverable via the footer link, losing all of it is not.
+function fitNotes(notes, budget) {
+  let noteText = "";
+
+  for (const note of notes) {
+    const separator = noteText.length === 0 ? 0 : 2;
+    const remaining = budget - noteText.length - separator;
+    if (remaining <= 0) {
+      break;
+    }
+
+    const fitted = truncateText(note, remaining);
+    if (fitted.length === 0) {
+      break;
+    }
+
+    noteText += noteText.length === 0 ? fitted : `\n\n${fitted}`;
   }
 
+  return noteText;
+}
+
+// Greedily takes whole section headings and bullets, in order, until the budget runs
+// out. Returns the kept lines.
+function fitSections(sections, budget) {
   const candidates = [];
   for (const section of sections) {
     if (candidates.length > 0) {
@@ -124,16 +149,38 @@ export function formatFdroidChangelog(bodyLines, options = {}) {
     break;
   }
 
-  if (kept.length === 0) {
-    // Nothing fit whole. Salvage the first bullet so the entry is never just a link.
+  return kept;
+}
+
+// Fits blockquoted notices, section headings, and bullets into the character budget,
+// always leaving room for the footer that points at the unabridged notes.
+export function formatFdroidChangelog(bodyLines, options = {}) {
+  const limit = options.limit ?? CHANGELOG_CHARACTER_LIMIT;
+  const footer = options.footer ?? FULL_NOTES_FOOTER;
+  const { notes, sections } = parseChangelogBody(bodyLines);
+
+  // The rendered file is `body` + "\n\n" + `footer` + "\n", so three newlines and
+  // the footer come out of the limit before any content does.
+  const budget = limit - footer.length - 3;
+  if (budget <= 0) {
+    throw new Error(`Changelog limit ${limit} is too small for the footer "${footer}".`);
+  }
+
+  const noteText = fitNotes(notes, budget);
+  const sectionBudget = budget - noteText.length - (noteText.length > 0 ? 2 : 0);
+  const kept = fitSections(sections, sectionBudget);
+
+  if (kept.length === 0 && noteText.length === 0) {
+    // Nothing fit whole and there is no notice carrying the entry. Salvage the first
+    // bullet so the changelog is never just a bare link.
     const firstBullet = sections[0]?.bullets[0];
-    if (firstBullet) {
-      const ellipsis = "...";
-      kept.push(`- ${firstBullet.slice(0, Math.max(0, budget - 2 - ellipsis.length))}${ellipsis}`);
+    const salvaged = firstBullet ? truncateText(`- ${firstBullet}`, sectionBudget) : "";
+    if (salvaged.length > 0) {
+      kept.push(salvaged);
     }
   }
 
-  const body = kept.join("\n");
+  const body = [noteText, kept.join("\n")].filter((part) => part.length > 0).join("\n\n");
   return `${body ? `${body}\n\n` : ""}${footer}\n`;
 }
 
