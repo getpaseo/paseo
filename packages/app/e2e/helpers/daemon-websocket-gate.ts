@@ -52,15 +52,50 @@ function directoryForRequest(request: ClientRequest): keyof DirectoryBootstrapCo
   return null;
 }
 
+function stripAssistantMessageId(
+  message: string | Buffer,
+  enabled: boolean,
+  messageType: unknown,
+): string | Buffer {
+  if (!enabled || messageType !== "agent_stream" || typeof message !== "string") return message;
+  const envelope = JSON.parse(message) as {
+    message?: { payload?: { event?: { type?: unknown; item?: Record<string, unknown> } } };
+    payload?: { event?: { type?: unknown; item?: Record<string, unknown> } };
+  };
+  const event = (envelope.message?.payload ?? envelope.payload)?.event;
+  if (event?.type !== "timeline" || event.item?.type !== "assistant_message") return message;
+  delete event.item.messageId;
+  return JSON.stringify(envelope);
+}
+
+function forceTimelineReset(message: string | Buffer, enabled: boolean): string | Buffer {
+  if (!enabled || typeof message !== "string") return message;
+  const envelope = JSON.parse(message) as {
+    message?: { payload?: Record<string, unknown> };
+    payload?: Record<string, unknown>;
+  };
+  const payload = envelope.message?.payload ?? envelope.payload;
+  if (!payload) return message;
+  payload.epoch = `playwright-reset-${Date.now()}`;
+  payload.reset = true;
+  return JSON.stringify(envelope);
+}
+
 export async function installDaemonWebSocketGate(page: Page) {
   let acceptingConnections = true;
   let reconnectWithFreshClient = false;
   let suppressAgentStream = false;
   let forceTimelineEpochReset = false;
+  let stripAssistantMessageIds = false;
   let heldClientRequestType: string | null = null;
   let heldClientRequest: { server: WebSocketRoute; message: string | Buffer } | null = null;
   let resolveHeldClientRequest: (() => void) | null = null;
+  let heldServerMessageType: string | null = null;
+  let heldServerMessage: { browser: WebSocketRoute; message: string | Buffer } | null = null;
+  let resolveHeldServerMessage: (() => void) | null = null;
+  const suppressedServerMessageTypes = new Set<string>();
   const activeSockets = new Set<WebSocketRoute>();
+  let latestServer: WebSocketRoute | null = null;
   const directoryStarts: DirectoryRequestStartCounts = {
     subscribed: { agents: 0, workspaces: 0 },
     unsubscribed: { agents: 0, workspaces: 0 },
@@ -78,6 +113,7 @@ export async function installDaemonWebSocketGate(page: Page) {
 
     activeSockets.add(ws);
     const server = ws.connectToServer();
+    latestServer = server;
 
     ws.onMessage((message) => {
       if (!acceptingConnections) return;
@@ -117,24 +153,15 @@ export async function installDaemonWebSocketGate(page: Page) {
     server.onMessage((message) => {
       if (!acceptingConnections) return;
       const serverMessage = readSessionMessage(message);
-      let outboundMessage = message;
-      if (
-        forceTimelineEpochReset &&
-        serverMessage?.type === "fetch_agent_timeline_response" &&
-        typeof message === "string"
-      ) {
-        const envelope = JSON.parse(message) as {
-          message?: { payload?: Record<string, unknown> };
-          payload?: Record<string, unknown>;
-        };
-        const payload = envelope.message?.payload ?? envelope.payload;
-        if (payload) {
-          payload.epoch = `playwright-reset-${Date.now()}`;
-          payload.reset = true;
-          outboundMessage = JSON.stringify(envelope);
-          forceTimelineEpochReset = false;
-        }
-      }
+      let outboundMessage = stripAssistantMessageId(
+        message,
+        stripAssistantMessageIds,
+        serverMessage?.type,
+      );
+      const shouldForceTimelineReset =
+        forceTimelineEpochReset && serverMessage?.type === "fetch_agent_timeline_response";
+      outboundMessage = forceTimelineReset(outboundMessage, shouldForceTimelineReset);
+      if (shouldForceTimelineReset) forceTimelineEpochReset = false;
       if (typeof serverMessage?.type === "string") {
         serverMessageCounts.set(
           serverMessage.type,
@@ -142,6 +169,18 @@ export async function installDaemonWebSocketGate(page: Page) {
         );
         for (const resolve of serverMessageWaiters) resolve();
         serverMessageWaiters.clear();
+      }
+      if (serverMessage?.type === heldServerMessageType) {
+        heldServerMessage = { browser: ws, message: outboundMessage };
+        resolveHeldServerMessage?.();
+        resolveHeldServerMessage = null;
+        return;
+      }
+      if (
+        typeof serverMessage?.type === "string" &&
+        suppressedServerMessageTypes.has(serverMessage.type)
+      ) {
+        return;
       }
       if (suppressAgentStream && serverMessage?.type === "agent_stream") return;
       try {
@@ -185,6 +224,89 @@ export async function installDaemonWebSocketGate(page: Page) {
       heldClientRequest.server.send(heldClientRequest.message);
       heldClientRequest = null;
       heldClientRequestType = null;
+    },
+    holdNextServerMessage(type: string): void {
+      heldServerMessageType = type;
+      heldServerMessage = null;
+    },
+    waitForHeldServerMessage(): Promise<void> {
+      if (heldServerMessage) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        resolveHeldServerMessage = resolve;
+      });
+    },
+    releaseHeldServerMessage(): void {
+      if (!heldServerMessage) throw new Error("No held server message to release");
+      heldServerMessage.browser.send(heldServerMessage.message);
+      heldServerMessage = null;
+      heldServerMessageType = null;
+    },
+    requestTimelineTail(agentId: string): void {
+      if (!latestServer) throw new Error("No daemon WebSocket is connected");
+      latestServer.send(
+        JSON.stringify({
+          type: "session",
+          message: {
+            type: "fetch_agent_timeline_request",
+            agentId,
+            requestId: `playwright-timeline-${Date.now()}`,
+            direction: "tail",
+            limit: 0,
+            projection: "projected",
+          },
+        }),
+      );
+    },
+    getHeldTimelineLastItemType(): string | null {
+      if (!heldServerMessage) throw new Error("No held server message to inspect");
+      const response = readSessionMessage(heldServerMessage.message);
+      const payload = response?.payload;
+      if (!payload || typeof payload !== "object") return null;
+      const entries = (payload as { entries?: unknown }).entries;
+      if (!Array.isArray(entries)) return null;
+      const last = entries.at(-1) as { item?: { type?: unknown } } | undefined;
+      return typeof last?.item?.type === "string" ? last.item.type : null;
+    },
+    truncateHeldTimelineAfterLast(itemType: string): void {
+      if (!heldServerMessage || typeof heldServerMessage.message !== "string") {
+        throw new Error("No held text server message to truncate");
+      }
+      const envelope = JSON.parse(heldServerMessage.message) as {
+        message?: { payload?: Record<string, unknown> };
+        payload?: Record<string, unknown>;
+      };
+      const payload = envelope.message?.payload ?? envelope.payload;
+      if (!payload) throw new Error("Held message has no payload");
+      const entries = payload.entries;
+      if (!Array.isArray(entries)) throw new Error("Held message is not a timeline response");
+      const index = entries.findLastIndex(
+        (entry) =>
+          typeof entry === "object" &&
+          entry !== null &&
+          (entry as { item?: { type?: unknown } }).item?.type === itemType,
+      );
+      if (index < 0) throw new Error(`Timeline response has no ${itemType} item`);
+      const retained = entries.slice(0, index + 1) as Array<{ seqEnd?: unknown }>;
+      const lastSeq = retained.at(-1)?.seqEnd;
+      if (typeof lastSeq !== "number") throw new Error("Timeline entry has no sequence end");
+      payload.entries = retained;
+      payload.endCursor = { epoch: payload.epoch, seq: lastSeq };
+      payload.hasNewer = false;
+      if (payload.window && typeof payload.window === "object") {
+        (payload.window as Record<string, unknown>).maxSeq = lastSeq;
+        (payload.window as Record<string, unknown>).nextSeq = lastSeq + 1;
+      }
+      heldServerMessage.message = JSON.stringify(envelope);
+    },
+    setServerMessageSuppressed(type: string, suppressed: boolean): void {
+      if (suppressed) {
+        suppressedServerMessageTypes.add(type);
+      } else {
+        suppressedServerMessageTypes.delete(type);
+      }
+    },
+    setAssistantMessageIdsStripped(stripped: boolean): void {
+      stripAssistantMessageIds = stripped;
     },
     setAgentStreamSuppressed(suppressed: boolean): void {
       suppressAgentStream = suppressed;

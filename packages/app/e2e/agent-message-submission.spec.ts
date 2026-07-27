@@ -1,6 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
 import { expect, test as baseTest } from "./fixtures";
-import { expectAgentIdle } from "./helpers/agent-stream";
+import { awaitToolCall, expectAgentIdle } from "./helpers/agent-stream";
 import { gateNextAgentMessage } from "./helpers/agent-message-gate";
 import {
   attachImageFromMenu,
@@ -301,6 +301,111 @@ async function expectInterruptedTurnOrderAfterReconnect(
   }
 }
 
+async function expectCompletedSubmissionClearsAfterMissedRunningTransition(
+  page: Page,
+  testInfo: { workerIndex: number },
+): Promise<void> {
+  const gate = await installDaemonWebSocketGate(page);
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: `submission-missed-running-${testInfo.workerIndex}-`,
+    title: "Submission missed running transition",
+    model: "ten-second-stream",
+  });
+  const prompt = "Clear this submission from canonical history.";
+  try {
+    await openAgentRoute(page, { workspaceId: agent.workspaceId, agentId: agent.agentId });
+    await expectComposerVisible(page);
+    await expectAgentIdle(page);
+    gate.holdNextClientRequest("send_agent_message_request");
+    const userMessage = await submitMessageWithImage(page, prompt);
+    await gate.waitForHeldClientRequest();
+    gate.setServerMessageSuppressed("agent_status", true);
+    gate.setServerMessageSuppressed("agent_update", true);
+    gate.releaseHeldClientRequest();
+    await gate.waitForServerMessage("send_agent_message_response");
+    await expect(userMessage).toHaveAttribute("aria-busy", "false");
+    await gate.drop();
+    await agent.client.waitForFinish(agent.agentId, 30_000);
+    gate.setServerMessageSuppressed("agent_status", false);
+    gate.setServerMessageSuppressed("agent_update", false);
+    gate.restoreFresh();
+    await gate.waitForServerMessage("fetch_agent_timeline_response", 2);
+    await expect(page.getByText("(end of synthetic stream)", { exact: true }).last()).toBeVisible();
+    await expect(page.getByTestId("turn-working-indicator")).toHaveCount(0);
+    await expect(userMessage).toHaveAttribute("aria-busy", "false");
+  } finally {
+    gate.restore();
+    await agent.cleanup();
+  }
+}
+
+async function expectLegacyAssistantStartsAfterInterruptedPrompt(
+  page: Page,
+  testInfo: { workerIndex: number },
+): Promise<void> {
+  const gate = await installDaemonWebSocketGate(page);
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: `submission-legacy-assistant-${testInfo.workerIndex}-`,
+    title: "Legacy assistant interrupt boundary",
+    model: "ten-second-stream",
+  });
+  const prompt = "Start the replacement answer after this prompt.";
+  try {
+    await openAgentRoute(page, { workspaceId: agent.workspaceId, agentId: agent.agentId });
+    await expectComposerVisible(page);
+    await agent.client.sendAgentMessage(agent.agentId, "Start the interrupted answer.");
+    await expect(page.getByText("Cycle 1", { exact: true })).toBeVisible();
+    await queueMessage(page, prompt);
+    gate.setAssistantMessageIdsStripped(true);
+    await page.getByRole("button", { name: "Send queued message now" }).click();
+    const promptRow = page.getByTestId("user-message").filter({ hasText: prompt });
+    const replacementAnswer = page.getByText("(end of synthetic stream)", { exact: true }).last();
+    await expect(promptRow).toBeVisible();
+    await expect(replacementAnswer).toBeVisible({ timeout: 30_000 });
+    await expectRenderedBefore(promptRow, replacementAnswer);
+  } finally {
+    gate.setAssistantMessageIdsStripped(false);
+    await agent.cleanup();
+  }
+}
+
+async function expectStaleCanonicalPagePreservesNewerLiveOutput(
+  page: Page,
+  testInfo: { workerIndex: number },
+): Promise<void> {
+  const gate = await installDaemonWebSocketGate(page);
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: `submission-stale-canonical-${testInfo.workerIndex}-`,
+    title: "Stale canonical page race",
+    model: "one-minute-stream",
+  });
+  try {
+    await openAgentRoute(page, { workspaceId: agent.workspaceId, agentId: agent.agentId });
+    await expectComposerVisible(page);
+    await agent.client.sendAgentMessage(agent.agentId, "End the snapshot at a tool call.");
+    await awaitToolCall(page, "read");
+    await page
+      .getByRole("button", { name: /stop|cancel/i })
+      .first()
+      .click();
+    await expectAgentIdle(page);
+
+    gate.holdNextServerMessage("fetch_agent_timeline_response");
+    gate.requestTimelineTail(agent.agentId);
+    await gate.waitForHeldServerMessage();
+    gate.truncateHeldTimelineAfterLast("tool_call");
+    expect(gate.getHeldTimelineLastItemType()).toBe("tool_call");
+
+    await agent.client.sendAgentMessage(agent.agentId, "Stream after the stale snapshot.");
+    const cycleHeadings = page.getByText("Cycle 1", { exact: true });
+    await expect(cycleHeadings).toHaveCount(2);
+    gate.releaseHeldServerMessage();
+    await expect(cycleHeadings).toHaveCount(2);
+  } finally {
+    await agent.cleanup();
+  }
+}
+
 async function expectRenderedBefore(first: Locator, second: Locator): Promise<void> {
   const secondElement = await second.elementHandle();
   if (!secondElement) throw new Error("Expected the second timeline item to be rendered");
@@ -456,5 +561,26 @@ test.describe("Agent message submission", () => {
   }, testInfo) => {
     test.setTimeout(90_000);
     await expectInterruptedTurnOrderAfterReconnect(page, testInfo);
+  });
+
+  test("clears an accepted submission when canonical history arrives after a missed running transition", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(90_000);
+    await expectCompletedSubmissionClearsAfterMissedRunningTransition(page, testInfo);
+  });
+
+  test("keeps an old-daemon replacement answer after its interrupted prompt", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(90_000);
+    await expectLegacyAssistantStartsAfterInterruptedPrompt(page, testInfo);
+  });
+
+  test("preserves newer live output when a stale canonical page arrives", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(90_000);
+    await expectStaleCanonicalPagePreservesNewerLiveOutput(page, testInfo);
   });
 });
