@@ -900,6 +900,7 @@ export class OmpAgentSession implements AgentSession {
   private readonly noTurnScheduler: OmpNoTurnScheduler;
   private closed = false;
   private live: boolean;
+  private contextUsagePollTimer: NodeJS.Timeout | null = null;
   private readonly emittedUserMessageIds = new Set<string>();
 
   constructor(options: OmpAgentSessionOptions) {
@@ -976,6 +977,7 @@ export class OmpAgentSession implements AgentSession {
     this.activePromptRequestId = null;
     this.clearNoTurnBuffers();
     this.activeNoTurnPromptText = payload.text;
+    this.startContextUsagePolling();
 
     void (async () => {
       try {
@@ -1179,12 +1181,53 @@ export class OmpAgentSession implements AgentSession {
 
   private clearOmpSessionState(): void {
     this.subagentIndex.clear(this.runtimeSession);
+    this.stopContextUsagePolling();
     this.clearOmpTurnState();
   }
 
   private clearOmpTurnState(): void {
     clearOmpHostToolState(this.runtimeSession);
     this.subagentCardTracker.clear();
+  }
+
+  private readonly CONTEXT_USAGE_POLL_INTERVAL_MS = 3_000;
+
+  private startContextUsagePolling(): void {
+    if (this.contextUsagePollTimer !== null) {
+      return;
+    }
+    this.contextUsagePollTimer = setTimeout(() => {
+      void this.pollContextUsage();
+    }, this.CONTEXT_USAGE_POLL_INTERVAL_MS);
+  }
+
+  private stopContextUsagePolling(): void {
+    if (this.contextUsagePollTimer !== null) {
+      clearTimeout(this.contextUsagePollTimer);
+      this.contextUsagePollTimer = null;
+    }
+  }
+
+  private async pollContextUsage(): Promise<void> {
+    try {
+      const stats = await this.runtimeSession.getSessionStats();
+      const baseUsage = toAgentUsage(stats);
+      const usage = mapOmpUsage({ stats, state: this.state, baseUsage });
+      if (usage) {
+        this.emit({
+          type: "usage_updated",
+          provider: this.provider,
+          usage,
+        });
+      }
+    } catch (error) {
+      this.logger.debug({ err: error }, "OMP context usage poll failed");
+    } finally {
+      // Continue polling only if turn is still active and not closed.
+      if (!this.closed && this.activeTurnId != null) {
+        this.startContextUsagePolling();
+      }
+    }
   }
 
   private terminalizeActiveWork(): void {
