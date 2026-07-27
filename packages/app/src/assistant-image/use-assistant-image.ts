@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
-import { Image } from "react-native";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import type { ImageLoadEvent } from "react-native";
 import { useTranslation } from "react-i18next";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AttachmentMetadata } from "@/attachments/types";
+import { isWeb } from "@/constants/platform";
+import { useStableEvent } from "@/hooks/use-stable-event";
 import { retainAttachmentForGarbageCollection } from "@/attachments/gc-retention";
 import {
   persistAttachmentFromBytes,
@@ -36,8 +38,39 @@ import { runAssistantImageOperationWithRetry } from "./retry";
 
 interface AssistantImageRenderBinding {
   uri: string;
-  onLoad: () => void;
+  onRef: (instance: unknown) => void;
+  onLoad: (event: ImageLoadEvent) => void;
   onError: () => void;
+}
+
+function getImageLoadDimensions(
+  event: ImageLoadEvent,
+  renderedImage: unknown,
+): { width: number; height: number } | null {
+  const nativeEvent = event.nativeEvent as ImageLoadEvent["nativeEvent"] & {
+    target?: { naturalWidth?: unknown; naturalHeight?: unknown };
+  };
+  const source = nativeEvent.source;
+  if (source && source.width > 0 && source.height > 0) {
+    return source;
+  }
+  const { naturalWidth, naturalHeight } = nativeEvent.target ?? {};
+  if (
+    typeof naturalWidth === "number" &&
+    typeof naturalHeight === "number" &&
+    naturalWidth > 0 &&
+    naturalHeight > 0
+  ) {
+    return { width: naturalWidth, height: naturalHeight };
+  }
+
+  if (isWeb && renderedImage instanceof HTMLElement) {
+    const image = renderedImage.querySelector("img");
+    if (image && image.naturalWidth > 0 && image.naturalHeight > 0) {
+      return { width: image.naturalWidth, height: image.naturalHeight };
+    }
+  }
+  return null;
 }
 
 export type AssistantImageResult =
@@ -89,6 +122,45 @@ const attachmentAcquisitionCache = createAssistantImageAcquisitionCache<Attachme
   onRetain: (attachment) => retainAttachmentForGarbageCollection(attachment.id),
 });
 
+interface CachedPreviewUrl {
+  attachment: AttachmentMetadata;
+  uri: string;
+}
+
+const previewUrlCache = createAssistantImageAcquisitionCache<CachedPreviewUrl>({
+  capacity: 500,
+  onRetain:
+    ({ attachment, uri }) =>
+    () => {
+      void releaseAttachmentPreviewUrl({ attachment, url: uri });
+    },
+});
+
+const LOADED_IMAGE_CACHE_CAPACITY = 500;
+const loadedImageCache = new Map<string, number>();
+
+function getLoadedImageAspectRatio(uri: string): number | null {
+  const aspectRatio = loadedImageCache.get(uri);
+  if (aspectRatio === undefined) {
+    return null;
+  }
+  loadedImageCache.delete(uri);
+  loadedImageCache.set(uri, aspectRatio);
+  return aspectRatio;
+}
+
+function rememberLoadedImage(uri: string, aspectRatio: number): void {
+  loadedImageCache.delete(uri);
+  loadedImageCache.set(uri, aspectRatio);
+  if (loadedImageCache.size <= LOADED_IMAGE_CACHE_CAPACITY) {
+    return;
+  }
+  const leastRecentlyUsedUri = loadedImageCache.keys().next().value;
+  if (leastRecentlyUsedUri !== undefined) {
+    loadedImageCache.delete(leastRecentlyUsedUri);
+  }
+}
+
 function acquireAttachment(acquisition: AttachmentAcquisition): Promise<AttachmentMetadata> {
   return attachmentAcquisitionCache.acquire(acquisition.key, acquisition.locate);
 }
@@ -96,37 +168,72 @@ function acquireAttachment(acquisition: AttachmentAcquisition): Promise<Attachme
 function useAttachmentAcquisition(
   acquisition: AttachmentAcquisition | null,
 ): AttachmentAcquisitionState {
-  const [state, setState] = useState<AttachmentAcquisitionState>({ status: "waiting" });
+  const acquisitionKey = acquisition?.key ?? null;
+  const [entry, setEntry] = useState<{
+    key: string | null;
+    state: AttachmentAcquisitionState;
+  }>(() => {
+    const cached = acquisitionKey ? attachmentAcquisitionCache.peek(acquisitionKey) : undefined;
+    return {
+      key: acquisitionKey,
+      state: cached ? { status: "loaded", attachment: cached } : { status: "waiting" },
+    };
+  });
+  const acquireCurrent = useStableEvent(async () => {
+    if (!acquisition) {
+      return null;
+    }
+    return await acquireAttachment(acquisition);
+  });
 
   useEffect(() => {
     let disposed = false;
-    if (!acquisition) {
-      setState({ status: "waiting" });
+    if (!acquisitionKey) {
+      setEntry({ key: null, state: { status: "waiting" } });
       return;
     }
 
-    setState({ status: "loading" });
+    const cached = attachmentAcquisitionCache.peek(acquisitionKey);
+    if (cached) {
+      setEntry({ key: acquisitionKey, state: { status: "loaded", attachment: cached } });
+      return;
+    }
+
+    setEntry({ key: acquisitionKey, state: { status: "loading" } });
     void (async () => {
       try {
         const attachment = await runAssistantImageOperationWithRetry({
-          operation: async () => await acquireAttachment(acquisition),
+          operation: async () => {
+            const current = await acquireCurrent();
+            if (!current) {
+              throw new Error("Assistant image acquisition is unavailable.");
+            }
+            return current;
+          },
           shouldStop: () => disposed,
         });
         if (!disposed) {
-          setState({ status: "loaded", attachment });
+          setEntry({ key: acquisitionKey, state: { status: "loaded", attachment } });
         }
       } catch (error) {
         if (!disposed) {
-          setState({ status: "failed", error });
+          setEntry({ key: acquisitionKey, state: { status: "failed", error } });
         }
       }
     })();
     return () => {
       disposed = true;
     };
-  }, [acquisition]);
+  }, [acquireCurrent, acquisitionKey]);
 
-  return state;
+  if (!acquisitionKey) {
+    return { status: "waiting" };
+  }
+  const cached = attachmentAcquisitionCache.peek(acquisitionKey);
+  if (cached) {
+    return { status: "loaded", attachment: cached };
+  }
+  return entry.key === acquisitionKey ? entry.state : { status: "waiting" };
 }
 
 function createFileAcquisition(input: {
@@ -197,51 +304,72 @@ function createDataImageAcquisition(input: {
 }
 
 function usePreviewUrl(attachment: AttachmentMetadata | null | undefined): PreviewUrlState {
-  const [state, setState] = useState<PreviewUrlState>({ status: "waiting" });
   const id = attachment?.id;
   const storageType = attachment?.storageType;
   const storageKey = attachment?.storageKey;
   const mimeType = attachment?.mimeType;
+  const previewKey =
+    id && storageType && storageKey && mimeType
+      ? `${id}:${storageType}:${storageKey}:${mimeType}`
+      : null;
+  const [entry, setEntry] = useState<{ key: string | null; state: PreviewUrlState }>(() => {
+    const cached = previewKey ? previewUrlCache.peek(previewKey) : undefined;
+    return {
+      key: previewKey,
+      state: cached ? { status: "loaded", uri: cached.uri } : { status: "waiting" },
+    };
+  });
+  const getCurrentAttachment = useStableEvent(() => attachment ?? null);
 
   useEffect(() => {
     let disposed = false;
-    let previewUrl: string | null = null;
-    const current = attachment;
+    const current = getCurrentAttachment();
 
-    if (!current) {
-      setState({ status: "waiting" });
+    if (!current || !previewKey) {
+      setEntry({ key: null, state: { status: "waiting" } });
       return;
     }
 
-    setState({ status: "loading" });
+    const cached = previewUrlCache.peek(previewKey);
+    if (cached) {
+      setEntry({ key: previewKey, state: { status: "loaded", uri: cached.uri } });
+      return;
+    }
+
+    setEntry({ key: previewKey, state: { status: "loading" } });
     void (async () => {
       try {
-        const uri = await runAssistantImageOperationWithRetry({
-          operation: async () => await resolveAttachmentPreviewUrl(current),
+        const preview = await runAssistantImageOperationWithRetry({
+          operation: async () =>
+            await previewUrlCache.acquire(previewKey, async () => ({
+              attachment: current,
+              uri: await resolveAttachmentPreviewUrl(current),
+            })),
           shouldStop: () => disposed,
         });
-        if (disposed) {
-          await releaseAttachmentPreviewUrl({ attachment: current, url: uri });
-          return;
+        if (!disposed) {
+          setEntry({ key: previewKey, state: { status: "loaded", uri: preview.uri } });
         }
-        previewUrl = uri;
-        setState({ status: "loaded", uri });
       } catch (error) {
         if (!disposed) {
-          setState({ status: "failed", error });
+          setEntry({ key: previewKey, state: { status: "failed", error } });
         }
       }
     })();
 
     return () => {
       disposed = true;
-      if (previewUrl) {
-        void releaseAttachmentPreviewUrl({ attachment: current, url: previewUrl });
-      }
     };
-  }, [attachment, id, mimeType, storageKey, storageType]);
+  }, [getCurrentAttachment, previewKey]);
 
-  return state;
+  if (!previewKey) {
+    return { status: "waiting" };
+  }
+  const cached = previewUrlCache.peek(previewKey);
+  if (cached) {
+    return { status: "loaded", uri: cached.uri };
+  }
+  return entry.key === previewKey ? entry.state : { status: "waiting" };
 }
 
 function lifecycleReducer(
@@ -325,10 +453,6 @@ export function useAssistantImage({
   const dataImagePreview = usePreviewUrl(
     dataImageAttachment.status === "loaded" ? dataImageAttachment.attachment : null,
   );
-  const [lifecycle, dispatch] = useReducer(lifecycleReducer, undefined, () =>
-    createAssistantImageLifecycle(),
-  );
-
   const directUri = resolution?.kind === "direct" && !dataImage ? resolution.uri : null;
   const preview = dataImage ? dataImagePreview : filePreview;
   const previewUri = preview.status === "loaded" ? preview.uri : null;
@@ -337,6 +461,31 @@ export function useAssistantImage({
     () => getAssistantImageMetadata({ source, workspaceRoot, serverId }),
     [serverId, source, workspaceRoot],
   );
+  const [lifecycle, dispatchLifecycle] = useReducer(
+    lifecycleReducer,
+    uri,
+    (initialUri): AssistantImageLifecycle => {
+      if (initialUri) {
+        const aspectRatio = getLoadedImageAspectRatio(initialUri);
+        if (aspectRatio !== null) {
+          return { status: "loaded", uri: initialUri, aspectRatio };
+        }
+      }
+      return createAssistantImageLifecycle();
+    },
+  );
+  const dispatch = useCallback((event: AssistantImageLifecycleEvent) => {
+    if (event.type === "image_loaded") {
+      rememberLoadedImage(event.uri, event.aspectRatio);
+    } else if (event.type === "failed" && event.uri) {
+      loadedImageCache.delete(event.uri);
+    }
+    dispatchLifecycle(event);
+  }, []);
+  const renderedImageRef = useRef<unknown>(null);
+  const handleImageRef = useCallback((instance: unknown) => {
+    renderedImageRef.current = instance;
+  }, []);
 
   useEffect(() => {
     if (!uri) {
@@ -349,7 +498,7 @@ export function useAssistantImage({
       uri,
       aspectRatio: cachedMetadata?.aspectRatio ?? null,
     });
-  }, [cachedMetadata, uri]);
+  }, [cachedMetadata, dispatch, uri]);
 
   const handleImageError = useCallback(() => {
     if (uri) {
@@ -359,37 +508,29 @@ export function useAssistantImage({
         message: t("message.attachments.imageUnavailable"),
       });
     }
-  }, [t, uri]);
-  const handleImageLoad = useCallback(() => {
-    if (!uri) {
-      return;
-    }
-    Image.getSize(
-      uri,
-      (width, height) => {
-        const metadata = setAssistantImageMetadata(
-          { source, workspaceRoot, serverId },
-          { width, height },
-        );
-        if (!metadata) {
-          dispatch({
-            type: "failed",
-            uri,
-            message: t("message.attachments.imageUnavailable"),
-          });
-          return;
-        }
-        dispatch({ type: "image_loaded", uri, aspectRatio: metadata.aspectRatio });
-      },
-      () => {
+  }, [dispatch, t, uri]);
+  const handleImageLoad = useCallback(
+    (event: ImageLoadEvent) => {
+      if (!uri) {
+        return;
+      }
+      const dimensions = getImageLoadDimensions(event, renderedImageRef.current);
+      const metadata = dimensions
+        ? setAssistantImageMetadata({ source, workspaceRoot, serverId }, dimensions)
+        : null;
+      const aspectRatio = metadata?.aspectRatio ?? cachedMetadata?.aspectRatio ?? null;
+      if (!aspectRatio) {
         dispatch({
           type: "failed",
           uri,
           message: t("message.attachments.imageUnavailable"),
         });
-      },
-    );
-  }, [serverId, source, t, uri, workspaceRoot]);
+        return;
+      }
+      dispatch({ type: "image_loaded", uri, aspectRatio });
+    },
+    [cachedMetadata, dispatch, serverId, source, t, uri, workspaceRoot],
+  );
 
   const acquisitionFailure = getAcquisitionFailure({
     hasResolution: resolution !== null,
@@ -409,6 +550,7 @@ export function useAssistantImage({
   if (hasCurrentLifecycleUri && lifecycle.uri) {
     binding = {
       uri: lifecycle.uri,
+      onRef: handleImageRef,
       onLoad: handleImageLoad,
       onError: handleImageError,
     };
@@ -418,6 +560,7 @@ export function useAssistantImage({
       status: "loaded",
       binding: {
         uri: lifecycle.uri,
+        onRef: handleImageRef,
         onLoad: handleImageLoad,
         onError: handleImageError,
       },

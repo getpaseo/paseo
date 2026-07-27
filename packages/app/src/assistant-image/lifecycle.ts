@@ -34,6 +34,9 @@ export function transitionAssistantImageLifecycle(
     return { status: "failed", message: event.message };
   }
   if (event.type === "preview_created") {
+    if (state.status === "loaded" && state.uri === event.uri) {
+      return state;
+    }
     return { status: "loading", uri: event.uri, aspectRatio: event.aspectRatio };
   }
   if (event.type === "preview_released") {

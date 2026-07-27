@@ -9,12 +9,14 @@ export function createHistoryStartSettleScheduler(input: {
   cancelFrame: (id: number) => void;
   isSettling: () => boolean;
   isLoading: () => boolean;
+  onFrame?: () => void;
   onSettle: () => void;
 }): HistoryStartSettleScheduler {
   let frameId: number | null = null;
   let remainingFrames = 0;
 
   const tick = () => {
+    input.onFrame?.();
     if (!input.isSettling()) {
       frameId = null;
       remainingFrames = 0;

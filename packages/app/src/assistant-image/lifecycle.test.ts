@@ -47,6 +47,27 @@ describe("assistant image lifecycle", () => {
     });
   });
 
+  it("does not reset a loaded image when the same preview is reported again", () => {
+    const loading = transitionAssistantImageLifecycle(createAssistantImageLifecycle(), {
+      type: "preview_created",
+      uri: "blob:current",
+      aspectRatio: null,
+    });
+    const loaded = transitionAssistantImageLifecycle(loading, {
+      type: "image_loaded",
+      uri: "blob:current",
+      aspectRatio: 1.5,
+    });
+
+    const repeated = transitionAssistantImageLifecycle(loaded, {
+      type: "preview_created",
+      uri: "blob:current",
+      aspectRatio: 1.5,
+    });
+
+    expect(repeated).toBe(loaded);
+  });
+
   it("publishes failed for a terminal image failure on the current URI", () => {
     const loading = transitionAssistantImageLifecycle(createAssistantImageLifecycle(), {
       type: "preview_created",

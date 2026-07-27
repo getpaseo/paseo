@@ -1,4 +1,4 @@
-import { test } from "./fixtures";
+import { expect, test } from "./fixtures";
 import {
   expectSameOlderHistoryLoadingOperation,
   expectTimelineAtHistoryStart,
@@ -81,6 +81,51 @@ test.describe("Agent timeline pagination", () => {
       history.releasePage(1);
 
       await expectTimelinePromptPositionPreserved(page, position);
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
+  test("finishes loading an older page while live output continues", async ({ page }) => {
+    test.setTimeout(120_000);
+    const agent = await seedLongMockAgentTimeline({ turns: 40 });
+    try {
+      const history = await holdOlderHistoryPages(page, agent);
+      await openAgentTimeline(page, agent);
+      await userScrollsTimelineToHistoryStart(page);
+      await history.expectRequestedPages(1);
+
+      await agent.client.sendAgentMessage(agent.agentId, "keep streaming while history settles");
+      await agent.client.waitForAgentUpsert(
+        agent.agentId,
+        (snapshot) => snapshot.status === "running",
+      );
+      history.releasePage(1);
+
+      await expect(page.getByTestId("load-older-history-spinner")).toBeHidden({ timeout: 5_000 });
+      const running = await agent.client.fetchAgents({ scope: "active" });
+      expect(running.entries.find((entry) => entry.agent.id === agent.agentId)?.agent.status).toBe(
+        "running",
+      );
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
+  test("keeps the visible timeline anchored when the final page finishes", async ({ page }) => {
+    test.setTimeout(120_000);
+    const agent = await seedLongMockAgentTimeline({ turns: 40 });
+    try {
+      const history = await holdOlderHistoryPages(page, agent);
+      await openAgentTimeline(page, agent);
+      await userScrollsTimelineToHistoryStart(page);
+      await history.expectRequestedPages(1);
+      const position = await rememberTimelinePromptPosition(page, agent.initialTailOldestPrompt);
+
+      history.releasePage(1);
+
+      await expectTimelinePromptPositionPreserved(page, position);
+      await history.expectSettledWithRequestedPages(1);
     } finally {
       await agent.cleanup();
     }

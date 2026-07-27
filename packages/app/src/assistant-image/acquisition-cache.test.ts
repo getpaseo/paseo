@@ -63,6 +63,7 @@ describe("assistant image acquisition cache", () => {
       cached: "persisted attachment",
       unavailableCalls: 0,
     });
+    expect(cache.peek("message:image")).toBe("persisted attachment");
   });
 
   it("scopes file acquisitions to the rendered message occurrence", () => {

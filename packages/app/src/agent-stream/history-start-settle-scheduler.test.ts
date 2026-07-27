@@ -5,6 +5,7 @@ describe("history start settle scheduler", () => {
   it("does not restart its countdown when geometry keeps changing", () => {
     const frames = new Map<number, () => void>();
     let nextFrameId = 1;
+    const onFrame = vi.fn();
     const onSettle = vi.fn();
     const scheduler = createHistoryStartSettleScheduler({
       settleFrames: 2,
@@ -17,6 +18,7 @@ describe("history start settle scheduler", () => {
       cancelFrame: (id) => frames.delete(id),
       isSettling: () => true,
       isLoading: () => false,
+      onFrame,
       onSettle,
     });
     const runNextFrame = () => {
@@ -37,6 +39,7 @@ describe("history start settle scheduler", () => {
     runNextFrame();
 
     expect(onSettle).toHaveBeenCalledTimes(1);
+    expect(onFrame).toHaveBeenCalledTimes(3);
     expect(frames.size).toBe(0);
   });
 });

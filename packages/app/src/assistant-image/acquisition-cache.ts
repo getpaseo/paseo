@@ -2,6 +2,7 @@ import { createPreviewAttachmentId } from "@/attachments/utils";
 
 export interface AssistantImageAcquisitionCache<T> {
   acquire(key: string, locate: () => Promise<T>): Promise<T>;
+  peek(key: string): T | undefined;
   size(): number;
 }
 
@@ -49,6 +50,8 @@ export function createAssistantImageAcquisitionCache<T>(input: {
   }
   interface CacheEntry {
     pending: Promise<T>;
+    resolved: boolean;
+    value?: T;
     release: (() => void) | null;
   }
   const entries = new Map<string, CacheEntry>();
@@ -70,7 +73,7 @@ export function createAssistantImageAcquisitionCache<T>(input: {
         return cached.pending;
       }
       const pending = locate();
-      const entry: CacheEntry = { pending, release: null };
+      const entry: CacheEntry = { pending, resolved: false, release: null };
       entries.set(key, entry);
       if (entries.size > input.capacity) {
         const leastRecentlyUsedKey = entries.keys().next().value;
@@ -84,14 +87,28 @@ export function createAssistantImageAcquisitionCache<T>(input: {
       void (async () => {
         try {
           const value = await pending;
+          const release = input.onRetain?.(value) ?? null;
           if (entries.get(key) === entry) {
-            entry.release = input.onRetain?.(value) ?? null;
+            entry.value = value;
+            entry.resolved = true;
+            entry.release = release;
+          } else {
+            release?.();
           }
         } catch {
           evict(key, entry);
         }
       })();
       return pending;
+    },
+    peek(key) {
+      const entry = entries.get(key);
+      if (!entry?.resolved) {
+        return undefined;
+      }
+      entries.delete(key);
+      entries.set(key, entry);
+      return entry.value;
     },
     size() {
       return entries.size;

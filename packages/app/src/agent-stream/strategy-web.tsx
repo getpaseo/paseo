@@ -26,6 +26,10 @@ import {
   type HistoryStartPaginationInput,
   type HistoryStartPaginationTransition,
 } from "./history-start-pagination";
+import {
+  createHistoryStartSettleScheduler,
+  type HistoryStartSettleScheduler,
+} from "./history-start-settle-scheduler";
 
 interface CreateWebStreamStrategyInput {
   isMobileBreakpoint: boolean;
@@ -170,10 +174,11 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const [historyStartPaginationState, setHistoryStartPaginationState] = useState(
     createHistoryStartPaginationState,
   );
+  const [isHistoryStartSlotReserved, setIsHistoryStartSlotReserved] = useState(hasOlderHistory);
   const historyStartPaginationStateRef = useRef(historyStartPaginationState);
   const historyStartPrependAnchorRef = useRef<HistoryStartPrependAnchor | null>(null);
   const historyStartPrependAnchorActiveRef = useRef(false);
-  const historyStartSettleFrameRef = useRef<number | null>(null);
+  const historyStartSettleSchedulerRef = useRef<HistoryStartSettleScheduler | null>(null);
   const shouldUseVirtualizer = segments.historyVirtualized.length > 0;
   const {
     renderHistoryVirtualizedRow,
@@ -319,46 +324,41 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     lastKnownScrollTopRef.current = scrollContainer.scrollTop;
   });
   const scheduleHistoryStartPrependSettle = useStableEvent(() => {
-    const pendingFrame = historyStartSettleFrameRef.current;
-    if (pendingFrame !== null) {
-      window.cancelAnimationFrame(pendingFrame);
+    let scheduler = historyStartSettleSchedulerRef.current;
+    if (!scheduler) {
+      scheduler = createHistoryStartSettleScheduler({
+        settleFrames: HISTORY_START_SETTLE_FRAMES,
+        requestFrame: (callback) => window.requestAnimationFrame(callback),
+        cancelFrame: (frame) => window.cancelAnimationFrame(frame),
+        isSettling: () =>
+          historyStartPaginationStateRef.current.status === "settling" &&
+          historyStartPrependAnchorActiveRef.current,
+        isLoading: () => {
+          const input = getHistoryStartPaginationInput();
+          return (
+            !input ||
+            input.isLoadingOlderHistory ||
+            pendingVirtualRowMeasureFramesRef.current.size > 0
+          );
+        },
+        onFrame: applyHistoryStartPrependAnchor,
+        onSettle: () => {
+          const input = getHistoryStartPaginationInput();
+          if (!input) {
+            return;
+          }
+          historyStartPrependAnchorActiveRef.current = false;
+          const transition = settleHistoryStartPagination(
+            historyStartPaginationStateRef.current,
+            input,
+          );
+          historyStartPrependAnchorRef.current = null;
+          applyHistoryStartPaginationTransition(transition);
+        },
+      });
+      historyStartSettleSchedulerRef.current = scheduler;
     }
-    let stableFrames = 0;
-    let previousGeometry = "";
-    const sample = () => {
-      applyHistoryStartPrependAnchor();
-      const scrollContainer = scrollContainerRef.current;
-      const input = getHistoryStartPaginationInput();
-      if (!scrollContainer || !input || !historyStartPrependAnchorActiveRef.current) {
-        historyStartSettleFrameRef.current = null;
-        return;
-      }
-      const geometry = `${scrollContainer.scrollHeight}:${scrollContainer.scrollTop}`;
-      const hasPendingRowMeasurements = pendingVirtualRowMeasureFramesRef.current.size > 0;
-      if (
-        input.isLoadingOlderHistory ||
-        hasPendingRowMeasurements ||
-        geometry !== previousGeometry
-      ) {
-        stableFrames = 0;
-      } else {
-        stableFrames += 1;
-      }
-      previousGeometry = geometry;
-      if (stableFrames < HISTORY_START_SETTLE_FRAMES) {
-        historyStartSettleFrameRef.current = window.requestAnimationFrame(sample);
-        return;
-      }
-      historyStartSettleFrameRef.current = null;
-      historyStartPrependAnchorActiveRef.current = false;
-      const transition = settleHistoryStartPagination(
-        historyStartPaginationStateRef.current,
-        input,
-      );
-      historyStartPrependAnchorRef.current = null;
-      applyHistoryStartPaginationTransition(transition);
-    };
-    historyStartSettleFrameRef.current = window.requestAnimationFrame(sample);
+    scheduler.schedule();
   });
 
   useLayoutEffect(() => {
@@ -520,11 +520,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     return () => {
       window.cancelAnimationFrame(frame);
       historyStartReadyRef.current = false;
-      const settleFrame = historyStartSettleFrameRef.current;
-      if (settleFrame !== null) {
-        historyStartSettleFrameRef.current = null;
-        window.cancelAnimationFrame(settleFrame);
-      }
+      historyStartSettleSchedulerRef.current?.cancel();
+      historyStartSettleSchedulerRef.current = null;
     };
   }, [evaluateHistoryStart, props.agentId]);
 
@@ -776,9 +773,14 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const liveAuxiliary = useMemo(() => {
     return renderLiveAuxiliary();
   }, [renderLiveAuxiliary]);
+  useEffect(() => {
+    if (hasOlderHistory || isHistoryStartLoadingOperation(historyStartPaginationState)) {
+      setIsHistoryStartSlotReserved(true);
+    }
+  }, [hasOlderHistory, historyStartPaginationState]);
   const historyStartSlot = useMemo(() => {
     const isLoadingOperation = isHistoryStartLoadingOperation(historyStartPaginationState);
-    if (!hasOlderHistory && !isLoadingOperation) {
+    if (!isHistoryStartSlotReserved && !hasOlderHistory && !isLoadingOperation) {
       return null;
     }
     return (
@@ -791,7 +793,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         ) : null}
       </div>
     );
-  }, [hasOlderHistory, historyStartPaginationState]);
+  }, [hasOlderHistory, historyStartPaginationState, isHistoryStartSlotReserved]);
   const shouldRenderEmpty =
     !boundary.hasMountedHistory &&
     !boundary.hasVirtualizedHistory &&

@@ -860,12 +860,12 @@ function AssistantMarkdownImage({
 
   return (
     <View style={frameStyle}>
-      <View style={surfaceStyle}>
+      <View style={surfaceStyle} accessibilityRole="image" accessibilityLabel={alt}>
         <Image
+          ref={binding.onRef}
           source={imageSource}
           style={assistantMessageStylesheet.image}
           resizeMode="contain"
-          accessibilityLabel={alt}
           onLoad={binding.onLoad}
           onError={binding.onError}
         />
