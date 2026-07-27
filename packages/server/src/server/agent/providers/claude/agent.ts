@@ -42,6 +42,14 @@ import {
 } from "./model-manifest.js";
 import { parsePartialJsonObject } from "./partial-json.js";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
+import { ClaudeTaskProtocolSource } from "./subagents/live-source.js";
+import {
+  observeReplaySubagents,
+  parseClaudeSubagentMeta,
+  type ClaudeReplayParentFacts,
+  type ClaudeSubagentMeta,
+} from "./subagents/replay-source.js";
+import { foldSubagentObservations } from "./subagents/observation.js";
 import { buildClaudeFeatures, claudeModelSupportsFastMode } from "./feature-definitions.js";
 import {
   buildBinaryDiagnosticRows,
@@ -1983,8 +1991,13 @@ class ClaudeAgentSession implements AgentSession {
   private autonomousTurn: AutonomousTurnState | null = null;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly timelineAssembler = new TimelineAssembler();
+  private readonly taskProtocolSource = new ClaudeTaskProtocolSource();
   private readonly sidechainTracker = new ClaudeSidechainTracker({
     getToolInput: (toolUseId) => this.toolUseCache.get(toolUseId)?.input ?? null,
+    // Releases that predate the task protocol announce nothing, so the tracker keeps deriving
+    // identity and status from frames for them. Detecting the capability beats comparing version
+    // strings: it reacts to what this session actually does.
+    isDescriptorOwnedElsewhere: () => this.taskProtocolSource.isActive,
   });
   private persistedHistory: PersistedTimelineEntry[] = [];
   private persistedProviderSubagentEvents: Extract<
@@ -2469,6 +2482,7 @@ class ClaudeAgentSession implements AgentSession {
     this.cancelCurrentTurn = null;
     this.turnState = "idle";
     this.sidechainTracker.clear();
+    this.taskProtocolSource.reset();
     this.input?.end();
     this.query?.close?.();
     await this.awaitWithTimeout(this.query?.interrupt?.(), "close query interrupt");
@@ -3716,6 +3730,13 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     const events: AgentStreamEvent[] = [];
+
+    // Subagent identity and lifecycle are announced by Claude Code's task protocol, so they are
+    // read rather than inferred from sidechain frames. `task_started` precedes the child's first
+    // frame, so the descriptor exists before any timeline item lands on it.
+    for (const event of foldSubagentObservations(this.taskProtocolSource.observe(message))) {
+      events.push({ type: "provider_subagent", provider: "claude", event });
+    }
     if (message.type !== "system") {
       const sessionCapture = this.captureSessionIdFromMessage(message);
       if (sessionCapture.notice) {
@@ -4251,6 +4272,15 @@ class ClaudeAgentSession implements AgentSession {
     }
     this.toolUseCache.clear();
     this.sidechainTracker.clear();
+    // The task protocol's routing table is session-scoped, so it is deliberately NOT reset here:
+    // the turn ended, the session did not. Wiping it would strand every task id the session still
+    // holds — a backgrounded child that settles after the interrupt would find no descriptor to
+    // land on, and ownership would flip back to the legacy tracker mid-session.
+    for (const event of foldSubagentObservations(
+      this.taskProtocolSource.cancelRunningForegroundTasks(),
+    )) {
+      this.pushEvent({ type: "provider_subagent", provider: "claude", event });
+    }
   }
 
   private pushToolCall(
@@ -4341,19 +4371,39 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private ingestPersistedSidechains(parentContent: string, sidechainContents: string[]): void {
+  private ingestPersistedSidechains(
+    parentContent: string,
+    sidechains: ClaudeSidechainHistory,
+  ): void {
     const parentEntries = parseClaudeHistoryRecords(parentContent).filter(
       (entry) => entry.isSidechain !== true,
     );
-    const sidechainEntries = [parentContent, ...sidechainContents]
+    const sidechainEntries = [parentContent, ...sidechains.contents]
       .flatMap(parseClaudeHistoryRecords)
       .filter((entry) => entry.isSidechain === true && typeof entry.agentId === "string");
     if (sidechainEntries.length === 0) {
       return;
     }
+
+    // Replay produces the same observations the live task protocol produces, then folds them
+    // with the same function, so identity and status are derived once for both paths.
+    const observations = observeReplaySubagents({
+      subagents: [...groupClaudeSidechainEntries(sidechainEntries)].map(([agentId, entries]) => ({
+        agentId,
+        meta: sidechains.metaByAgentId.get(agentId) ?? null,
+        entries,
+      })),
+      parent: readClaudeReplayParentFacts(parentEntries),
+      convertEntry: (entry) => this.convertHistoryEntry(entry as ClaudeHistoryEntry),
+    });
+
     this.persistedProviderSubagentEvents.push(
-      ...buildClaudePersistedSidechainEvents(parentEntries, sidechainEntries, (entry) =>
-        this.convertHistoryEntry(entry),
+      ...foldSubagentObservations(observations).map(
+        (event): Extract<AgentStreamEvent, { type: "provider_subagent" }> => ({
+          type: "provider_subagent",
+          provider: "claude",
+          event,
+        }),
       ),
     );
     this.historyPending = true;
@@ -5132,15 +5182,58 @@ function parseClaudeHistoryRecords(content: string): ClaudeHistoryEntry[] {
   return entries;
 }
 
-function readClaudeSidechainHistory(historyPath: string): string[] {
+/**
+ * Collect what the parent transcript knows about its Task calls, in the shape the shared replay
+ * source consumes. The agentId scrape is kept only as a fallback for sessions recorded before
+ * Claude Code wrote the meta sidecar.
+ */
+function readClaudeReplayParentFacts(parentEntries: ClaudeHistoryEntry[]): ClaudeReplayParentFacts {
+  const toolCalls = new Map<string, { title?: string; description?: string }>();
+  for (const [id, call] of readClaudeHistoricalSubagentToolCalls(parentEntries)) {
+    toolCalls.set(id, {
+      ...((call.name ?? call.subagentType) ? { title: call.name ?? call.subagentType } : {}),
+      ...(call.description ? { description: call.description } : {}),
+    });
+  }
+
+  // Read outcomes straight off the tool_result blocks rather than reusing the agentId scrape,
+  // so a subagent linked through its meta sidecar still gets a status when the scrape missed it.
+  const outcomesByToolCallId = new Map<string, { failed: boolean }>();
+  for (const entry of parentEntries) {
+    const content = toObjectRecord(entry.message)?.content;
+    if (!Array.isArray(content)) continue;
+    for (const value of content) {
+      const block = toObjectRecord(value);
+      if (block?.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
+      if (!toolCalls.has(block.tool_use_id)) continue;
+      outcomesByToolCallId.set(block.tool_use_id, { failed: block.is_error === true });
+    }
+  }
+
+  return {
+    toolCalls,
+    linksByAgentId: readClaudeHistoricalSubagentToolResults(parentEntries),
+    outcomesByToolCallId,
+  };
+}
+
+interface ClaudeSidechainHistory {
+  contents: string[];
+  /** agentId -> sidecar metadata, when Claude Code wrote one next to the transcript. */
+  metaByAgentId: Map<string, ClaudeSubagentMeta>;
+}
+
+const CLAUDE_SUBAGENT_META_FILE = /^agent-(.+)\.meta\.json$/;
+
+function readClaudeSidechainHistory(historyPath: string): ClaudeSidechainHistory {
   const sessionDirectory = path.join(
     path.dirname(historyPath),
     path.basename(historyPath, ".jsonl"),
   );
   const sidechainDirectory = path.join(sessionDirectory, "subagents");
-  if (!fs.existsSync(sidechainDirectory)) return [];
+  const history: ClaudeSidechainHistory = { contents: [], metaByAgentId: new Map() };
+  if (!fs.existsSync(sidechainDirectory)) return history;
 
-  const contents: string[] = [];
   const directories = [sidechainDirectory];
   while (directories.length > 0) {
     const directory = directories.pop();
@@ -5149,12 +5242,26 @@ function readClaudeSidechainHistory(historyPath: string): string[] {
       const entryPath = path.join(directory, entry.name);
       if (entry.isDirectory()) {
         directories.push(entryPath);
-      } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
-        contents.push(fs.readFileSync(entryPath, "utf8"));
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (entry.name.endsWith(".jsonl")) {
+        history.contents.push(fs.readFileSync(entryPath, "utf8"));
+        continue;
+      }
+      // The sidecar carries the Task tool_use id, which is the same id the live stream keys on.
+      // Reading it is what lets replay and live agree instead of each deriving its own link.
+      const metaMatch = CLAUDE_SUBAGENT_META_FILE.exec(entry.name);
+      if (!metaMatch?.[1]) continue;
+      try {
+        const meta = parseClaudeSubagentMeta(fs.readFileSync(entryPath, "utf8"));
+        if (meta) history.metaByAgentId.set(metaMatch[1], meta);
+      } catch {
+        // Undocumented internals: a missing or unreadable sidecar must never fail ingestion.
       }
     }
   }
-  return contents;
+  return history;
 }
 
 interface ClaudeHistoricalSubagentToolCall {
@@ -5222,89 +5329,6 @@ function groupClaudeSidechainEntries(
     entriesByAgentId.set(entry.agentId, grouped);
   }
   return entriesByAgentId;
-}
-
-function buildClaudePersistedSidechainEvents(
-  parentEntries: ClaudeHistoryEntry[],
-  sidechainEntries: ClaudeHistoryEntry[],
-  convertEntry: (entry: ClaudeHistoryEntry) => AgentTimelineItem[],
-): Extract<AgentStreamEvent, { type: "provider_subagent" }>[] {
-  const events: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
-  const toolCalls = readClaudeHistoricalSubagentToolCalls(parentEntries);
-  const toolResults = readClaudeHistoricalSubagentToolResults(parentEntries);
-  for (const [agentId, entries] of groupClaudeSidechainEntries(sidechainEntries)) {
-    events.push(
-      ...buildClaudePersistedSidechainAgentEvents(
-        agentId,
-        entries,
-        toolCalls,
-        toolResults,
-        convertEntry,
-      ),
-    );
-  }
-  return events;
-}
-
-function resolveClaudeHistoricalSubagentTitle(
-  toolCall: ClaudeHistoricalSubagentToolCall | undefined,
-): string {
-  return toolCall?.name ?? toolCall?.subagentType ?? "Claude subagent";
-}
-
-function buildClaudePersistedSidechainAgentEvents(
-  agentId: string,
-  entries: ClaudeHistoryEntry[],
-  toolCalls: ReadonlyMap<string, ClaudeHistoricalSubagentToolCall>,
-  toolResults: ReadonlyMap<string, { toolCallId: string; failed: boolean }>,
-  convertEntry: (entry: ClaudeHistoryEntry) => AgentTimelineItem[],
-): Extract<AgentStreamEvent, { type: "provider_subagent" }>[] {
-  const result = toolResults.get(agentId);
-  const id = result?.toolCallId ?? agentId;
-  const toolCall = result ? toolCalls.get(result.toolCallId) : undefined;
-  const firstTimestamp = normalizeProviderReplayTimestamp(entries[0]?.timestamp);
-  const events: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [
-    {
-      type: "provider_subagent",
-      provider: "claude",
-      event: {
-        type: "upsert",
-        id,
-        title: resolveClaudeHistoricalSubagentTitle(toolCall),
-        description: toolCall?.description ?? null,
-        status: "running",
-        toolCallId: result?.toolCallId ?? null,
-        ...(firstTimestamp ? { timestamp: firstTimestamp } : {}),
-      },
-    },
-  ];
-  for (const entry of entries) {
-    const timestamp = normalizeProviderReplayTimestamp(entry.timestamp);
-    for (const item of convertEntry(entry)) {
-      events.push({
-        type: "provider_subagent",
-        provider: "claude",
-        event: {
-          type: "timeline",
-          id,
-          item,
-          ...(timestamp ? { timestamp } : {}),
-        },
-      });
-    }
-  }
-  const lastTimestamp = normalizeProviderReplayTimestamp(entries.at(-1)?.timestamp);
-  events.push({
-    type: "provider_subagent",
-    provider: "claude",
-    event: {
-      type: "upsert",
-      id,
-      status: result?.failed ? "failed" : "completed",
-      ...(lastTimestamp ? { timestamp: lastTimestamp } : {}),
-    },
-  });
-  return events;
 }
 
 interface ClaudeHistoryEntry {

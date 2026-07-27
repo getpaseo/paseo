@@ -1,0 +1,214 @@
+import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { describe, expect, it } from "vitest";
+
+import { ClaudeTaskProtocolSource } from "./live-source.js";
+
+// Shapes copied from real wire output (Claude Code 2.1.220) rather than the type declarations,
+// so the fixtures stay honest about what actually arrives.
+function taskStarted(overrides: Record<string, unknown> = {}): SDKMessage {
+  return {
+    type: "system",
+    subtype: "task_started",
+    task_id: "a1730a6215e1f5cf6",
+    tool_use_id: "toolu_01DgLoPMW9",
+    description: "Summarize hover and unistyles docs",
+    subagent_type: "general-purpose",
+    task_type: "local_agent",
+    ...overrides,
+  } as unknown as SDKMessage;
+}
+
+function taskUpdated(status: string, taskId = "a1730a6215e1f5cf6"): SDKMessage {
+  return {
+    type: "system",
+    subtype: "task_updated",
+    task_id: taskId,
+    patch: { status, end_time: 1785117455676 },
+  } as unknown as SDKMessage;
+}
+
+function taskNotification(status: string, taskId = "a1730a6215e1f5cf6"): SDKMessage {
+  return {
+    type: "system",
+    subtype: "task_notification",
+    task_id: taskId,
+    tool_use_id: "toolu_01DgLoPMW9",
+    status,
+    output_file: "/tmp/x.output",
+    summary: "done",
+  } as unknown as SDKMessage;
+}
+
+describe("ClaudeTaskProtocolSource", () => {
+  it("declares a subagent from its announcement, keyed by the Task tool_use id", () => {
+    const source = new ClaudeTaskProtocolSource();
+
+    expect(source.observe(taskStarted())).toEqual([
+      {
+        kind: "declared",
+        id: "toolu_01DgLoPMW9",
+        toolCallId: "toolu_01DgLoPMW9",
+        title: "general-purpose",
+        description: "Summarize hover and unistyles docs",
+      },
+    ]);
+  });
+
+  it("routes a status update through the task_id it learned at declaration", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted());
+
+    // task_updated carries no tool_use_id — the mapping is the only way to route it.
+    expect(source.observe(taskUpdated("completed"))).toEqual([
+      { kind: "status", id: "toolu_01DgLoPMW9", status: "completed" },
+    ]);
+  });
+
+  it("does not re-announce a status that already holds", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted());
+    source.observe(taskUpdated("completed"));
+
+    // task_updated and task_notification arrive in the same millisecond on the real wire.
+    expect(source.observe(taskNotification("completed"))).toEqual([]);
+  });
+
+  it("treats a killed or stopped task as canceled, not failed", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted());
+    expect(source.observe(taskUpdated("killed"))).toEqual([
+      { kind: "status", id: "toolu_01DgLoPMW9", status: "canceled" },
+    ]);
+  });
+
+  it("keeps a paused task running, since the descriptor has no paused state", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted());
+    source.observe(taskUpdated("completed"));
+    expect(source.observe(taskUpdated("paused"))).toEqual([
+      { kind: "status", id: "toolu_01DgLoPMW9", status: "running" },
+    ]);
+  });
+
+  it("ignores tasks that are not Task-tool subagents", () => {
+    const source = new ClaudeTaskProtocolSource();
+    // Workflows and background chores announce without a tool_use id.
+    expect(source.observe(taskStarted({ tool_use_id: undefined }))).toEqual([]);
+    expect(source.isActive).toBe(false);
+  });
+
+  it("ignores ambient housekeeping tasks", () => {
+    const source = new ClaudeTaskProtocolSource();
+    expect(source.observe(taskStarted({ skip_transcript: true }))).toEqual([]);
+    expect(source.isActive).toBe(false);
+  });
+
+  it("routes concurrent subagents independently", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted());
+    source.observe(
+      taskStarted({
+        task_id: "a88cdd22e38fd1dcf",
+        tool_use_id: "toolu_01GMd4ob4m",
+        description: "Summarize forms and design docs",
+      }),
+    );
+
+    expect(source.observe(taskUpdated("completed", "a88cdd22e38fd1dcf"))).toEqual([
+      { kind: "status", id: "toolu_01GMd4ob4m", status: "completed" },
+    ]);
+    expect(source.observe(taskUpdated("failed", "a1730a6215e1f5cf6"))).toEqual([
+      { kind: "status", id: "toolu_01DgLoPMW9", status: "failed" },
+    ]);
+  });
+
+  it("drops a status for a task it never saw declared", () => {
+    const source = new ClaudeTaskProtocolSource();
+    expect(source.observe(taskUpdated("completed", "unknown-task"))).toEqual([]);
+  });
+
+  it("still routes a notification for an undeclared task when it carries the tool_use id", () => {
+    const source = new ClaudeTaskProtocolSource();
+    expect(source.observe(taskNotification("failed", "unknown-task"))).toEqual([
+      { kind: "status", id: "toolu_01DgLoPMW9", status: "failed" },
+    ]);
+  });
+
+  it("reports inactivity until a task is announced, for older CLIs", () => {
+    const source = new ClaudeTaskProtocolSource();
+    expect(source.isActive).toBe(false);
+    source.observe(taskStarted());
+    expect(source.isActive).toBe(true);
+    source.reset();
+    expect(source.isActive).toBe(false);
+  });
+
+  it("cancels the foreground subagents a canceled turn was running", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted());
+
+    expect(source.cancelRunningForegroundTasks()).toEqual([
+      { kind: "status", id: "toolu_01DgLoPMW9", status: "canceled" },
+    ]);
+    // Idempotent: the child is no longer running, so a second cancellation says nothing.
+    expect(source.cancelRunningForegroundTasks()).toEqual([]);
+  });
+
+  it("leaves an already-settled subagent alone when the turn is canceled", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted());
+    source.observe(taskUpdated("completed"));
+
+    expect(source.cancelRunningForegroundTasks()).toEqual([]);
+  });
+
+  it("does not cancel a backgrounded subagent, which outlives the turn", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted());
+    source.observe({
+      type: "system",
+      subtype: "task_updated",
+      task_id: "a1730a6215e1f5cf6",
+      patch: { is_backgrounded: true },
+    } as unknown as SDKMessage);
+
+    expect(source.cancelRunningForegroundTasks()).toEqual([]);
+  });
+
+  it("still routes a backgrounded subagent that settles after the interrupt", () => {
+    // The headline case: interrupt, continue, and the child that was told to outlive the turn
+    // reports completion later. Wiping the routing table on cancel drops this on the floor and
+    // leaves the row spinning forever.
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted());
+    source.observe({
+      type: "system",
+      subtype: "task_updated",
+      task_id: "a1730a6215e1f5cf6",
+      patch: { is_backgrounded: true },
+    } as unknown as SDKMessage);
+    source.cancelRunningForegroundTasks();
+
+    expect(source.observe(taskNotification("completed"))).toEqual([
+      { kind: "status", id: "toolu_01DgLoPMW9", status: "completed" },
+    ]);
+    expect(source.isActive).toBe(true);
+  });
+
+  it("lets a late notification correct a cancellation it guessed wrong", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted());
+    source.cancelRunningForegroundTasks();
+
+    expect(source.observe(taskNotification("completed"))).toEqual([
+      { kind: "status", id: "toolu_01DgLoPMW9", status: "completed" },
+    ]);
+  });
+
+  it("ignores unrelated system messages", () => {
+    const source = new ClaudeTaskProtocolSource();
+    expect(
+      source.observe({ type: "system", subtype: "init", model: "opus" } as unknown as SDKMessage),
+    ).toEqual([]);
+  });
+});
