@@ -1365,6 +1365,8 @@ export const ru: TranslationResources = {
     retrying: "Повторная попытка...",
     noMatches: "Ни одна модель не соответствует вашему запросу",
     searchPlaceholder: "Поиск моделей...",
+    allModels: "Все модели",
+    searchAllModelsPlaceholder: "Поиск по всем провайдерам...",
     openProviderSettings: "Открыть настройки{{provider}}",
   },
   providerCatalog: {
@@ -1759,6 +1761,11 @@ export const ru: TranslationResources = {
         label: "Всегда разворачивать размышления",
         description:
           "По умолчанию показывать блоки размышлений и логики агента полностью развернутыми",
+      },
+      modelPickerAllModels: {
+        label: "Открывать выбор модели по всем моделям",
+        description:
+          "Открывать выбор модели сразу в едином списке с поиском по всем моделям всех провайдеров, вместо списка провайдеров",
       },
       toolCallDetail: {
         label: "Отображение вызовов инструментов",

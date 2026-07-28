@@ -232,7 +232,7 @@ export function CombinedModelSelector({
         desktopMinWidth={desktopMinWidth}
         desktopFixedHeight={browser.desktopFixedHeight}
         header={browser.header}
-        mobileChildrenScrollEnabled={!browser.isProviderView || !isNative}
+        mobileChildrenScrollEnabled={!browser.isModelListView || !isNative}
         mobileChildrenContentContainerStyle={styles.mobileBrowserContent}
       >
         {selectorBody}

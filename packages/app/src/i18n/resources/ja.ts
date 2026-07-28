@@ -1347,6 +1347,8 @@ export const ja: TranslationResources = {
     retrying: "再試行中...",
     noMatches: "検索に一致するモデルがありません",
     searchPlaceholder: "モデルを検索...",
+    allModels: "すべてのモデル",
+    searchAllModelsPlaceholder: "すべてのプロバイダーを検索...",
     openProviderSettings: "{{provider}}の設定を開く",
   },
   providerCatalog: {
@@ -1739,6 +1741,11 @@ export const ja: TranslationResources = {
       autoExpandReasoning: {
         label: "常に思考プロセスを展開",
         description: "デフォルトでAIのエージェント思考・推論ブロックを完全に展開して表示します",
+      },
+      modelPickerAllModels: {
+        label: "モデルセレクターをすべてのモデルで開く",
+        description:
+          "プロバイダー一覧を表示する代わりに、すべてのプロバイダーの全モデルを1つの検索可能なリストとしてモデルセレクターを開始します",
       },
       toolCallDetail: {
         label: "ツール呼び出しの表示",

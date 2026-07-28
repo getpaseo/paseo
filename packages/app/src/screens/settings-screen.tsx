@@ -76,6 +76,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { CommunityLinks } from "@/components/community-links";
 import { SegmentedControl } from "@/components/ui/segmented-control";
+import { Switch } from "@/components/ui/switch";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { DesktopPermissionsSection } from "@/desktop/components/desktop-permissions-section";
 import { BrowserDataSection } from "@/desktop/browser/settings/browser-data-section";
@@ -259,6 +260,7 @@ interface GeneralSectionProps {
   handleServiceUrlBehaviorChange: (behavior: ServiceUrlBehavior) => void;
   handleLanguageChange: (language: AppLanguage) => void;
   handleTerminalScrollbackLinesChange: (lines: number) => void;
+  handleModelPickerAllModelsChange: (startsWithAllModels: boolean) => void;
 }
 
 interface ServiceUrlBehaviorMenuItemProps {
@@ -315,6 +317,7 @@ function GeneralSection({
   handleServiceUrlBehaviorChange,
   handleLanguageChange,
   handleTerminalScrollbackLinesChange,
+  handleModelPickerAllModelsChange,
 }: GeneralSectionProps) {
   const { t, i18n } = useTranslation();
   const activeLocale = getActiveLocale(i18n.language);
@@ -446,6 +449,22 @@ function GeneralSection({
             selectTextOnFocus
             style={styles.terminalScrollbackInput}
             accessibilityLabel={t("settings.general.terminalScrollback.accessibilityLabel")}
+          />
+        </View>
+        <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>
+              {t("settings.general.modelPickerAllModels.label")}
+            </Text>
+            <Text style={settingsStyles.rowHint}>
+              {t("settings.general.modelPickerAllModels.description")}
+            </Text>
+          </View>
+          <Switch
+            value={settings.modelPickerStartsWithAllModels}
+            onValueChange={handleModelPickerAllModelsChange}
+            accessibilityLabel={t("settings.general.modelPickerAllModels.label")}
+            testID="model-picker-all-models-toggle"
           />
         </View>
       </View>
@@ -1189,6 +1208,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     [updateSettings],
   );
 
+<<<<<<< HEAD
   const handleUseLegacyTerminalRendererChange = useCallback(
     (useLegacyTerminalRenderer: boolean) => {
       void updateSettings({ useLegacyTerminalRenderer });
@@ -1196,6 +1216,12 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     [updateSettings],
   );
 
+  const handleModelPickerAllModelsChange = useCallback(
+    (modelPickerStartsWithAllModels: boolean) => {
+      void updateSettings({ modelPickerStartsWithAllModels });
+    },
+    [updateSettings],
+  );
   const handlePlaybackTest = useCallback(async () => {
     if (!voiceAudioEngine || isPlaybackTestRunning) {
       return;
@@ -1407,6 +1433,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
                 handleServiceUrlBehaviorChange={handleServiceUrlBehaviorChange}
                 handleLanguageChange={handleLanguageChange}
                 handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}
+                handleModelPickerAllModelsChange={handleModelPickerAllModelsChange}
               />
               {isDesktopApp ? <BrowserDataSection /> : null}
             </>

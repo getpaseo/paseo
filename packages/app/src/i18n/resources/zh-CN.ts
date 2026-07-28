@@ -1316,6 +1316,8 @@ export const zhCN: TranslationResources = {
     retrying: "正在重试...",
     noMatches: "没有匹配的模型",
     searchPlaceholder: "搜索模型...",
+    allModels: "所有模型",
+    searchAllModelsPlaceholder: "搜索所有 provider...",
     openProviderSettings: "打开 {{provider}} 设置",
   },
   providerCatalog: {
@@ -1703,6 +1705,11 @@ export const zhCN: TranslationResources = {
       autoExpandReasoning: {
         label: "始终展开推理过程",
         description: "默认情况下完全展开 AI 的思考和推理过程",
+      },
+      modelPickerAllModels: {
+        label: "在所有模型视图中打开模型选择器",
+        description:
+          "让模型选择器直接以一个可搜索的列表展示所有 provider 的全部模型，而不是先显示 provider 列表",
       },
       toolCallDetail: {
         label: "工具调用显示",

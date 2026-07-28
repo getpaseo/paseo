@@ -178,13 +178,13 @@ export function useSettings<TSelected>(
 
       if (isElectronRuntime()) {
         const desktopUpdates: Parameters<typeof desktopSettings.updateSettings>[0] = {};
-        if (updates.manageBuiltInDaemon !== undefined) {
+        if (manageBuiltInDaemon !== undefined) {
           desktopUpdates.daemon = {
-            manageBuiltInDaemon: updates.manageBuiltInDaemon,
+            manageBuiltInDaemon,
           };
         }
-        if (updates.releaseChannel !== undefined) {
-          desktopUpdates.releaseChannel = updates.releaseChannel;
+        if (releaseChannel !== undefined) {
+          desktopUpdates.releaseChannel = releaseChannel;
         }
         if (Object.keys(desktopUpdates).length > 0) {
           promises.push(desktopSettings.updateSettings(desktopUpdates));

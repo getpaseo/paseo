@@ -16,7 +16,15 @@ import {
 import { BottomSheetFlatList } from "@gorhom/bottom-sheet";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { AlertTriangle, Check, ChevronRight, Search, Settings, Star } from "lucide-react-native";
+import {
+  AlertTriangle,
+  Check,
+  ChevronRight,
+  Layers,
+  Search,
+  Settings,
+  Star,
+} from "lucide-react-native";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
@@ -24,15 +32,24 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { getProviderIcon } from "@/components/provider-icons";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
+import { useAppSettings } from "@/hooks/use-settings";
 import {
   buildSelectedTriggerLabel,
-  filterAndRankModelRows,
   getAllProviderModelRows,
   getProviderModelRows,
   resolveSelectedModelLabel,
   type ProviderSelectionModelRow,
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
+import {
+  buildAllModelsListItems,
+  buildModelRowDescription,
+  buildProviderModelListItems,
+  countAllModels,
+  normalizeModelSearchQuery,
+  type ModelBrowserHeadingStatus,
+  type ModelBrowserListItem,
+} from "@/components/model-browser-rows";
 import { useProviderSettingsStore } from "@/stores/provider-settings-store";
 import { useCurrentOverlayLayer } from "@/lib/overlay-root";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -49,6 +66,7 @@ const DESKTOP_MODEL_ROW_HEIGHT = 40;
 const ThemedAlertTriangle = withUnistyles(AlertTriangle);
 const ThemedCheck = withUnistyles(Check);
 const ThemedChevronRight = withUnistyles(ChevronRight);
+const ThemedLayers = withUnistyles(Layers);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedSearch = withUnistyles(Search);
 const ThemedSettings = withUnistyles(Settings);
@@ -92,6 +110,10 @@ const foregroundMutedMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
 
+const foregroundMapping = (theme: Theme) => ({
+  color: theme.colors.foreground,
+});
+
 const headerSettingsMapping = (disabled: boolean) => (theme: Theme) => ({
   color: disabled ? theme.colors.border : theme.colors.foregroundMuted,
 });
@@ -129,10 +151,11 @@ export interface ModelBrowserState {
   selectedModelLabel: string;
   triggerLabel: string;
   desktopFixedHeight: number | undefined;
-  isProviderView: boolean;
+  isModelListView: boolean;
   prepareToOpen: () => void;
   reset: () => void;
   drillDown: (providerId: string, providerLabel: string) => void;
+  showAllModels: () => void;
 }
 
 interface ModelBrowserProps {
@@ -152,6 +175,7 @@ interface ModelBrowserContentProps extends Omit<ModelBrowserProps, "state" | "sc
   searchQuery: string;
   favoriteKeys: Set<string>;
   onDrillDown: (providerId: string, providerLabel: string) => void;
+  onShowAllModels: () => void;
   scrolling: "sheet" | "independent";
 }
 
@@ -201,10 +225,23 @@ function iconButtonStyle({ hovered, pressed }: PressableStateCallbackType & { ho
   ];
 }
 
+function clampDesktopListHeight(rowCount: number): number {
+  return Math.min(
+    Math.max(
+      DESKTOP_PROVIDER_VIEW_MIN_HEIGHT,
+      DESKTOP_PROVIDER_VIEW_BASE_HEIGHT + rowCount * DESKTOP_MODEL_ROW_HEIGHT,
+    ),
+    DESKTOP_PROVIDER_VIEW_MAX_HEIGHT,
+  );
+}
+
 function resolveDesktopFixedHeight(
   view: ModelBrowserView,
   providers: ProviderSelectorProvider[],
 ): number | undefined {
+  if (view.kind === "allModels") {
+    return clampDesktopListHeight(countAllModels(providers) + providers.length);
+  }
   if (view.kind !== "provider") {
     return undefined;
   }
@@ -212,14 +249,7 @@ function resolveDesktopFixedHeight(
   if (!provider || provider.modelSelection.kind !== "models") {
     return DESKTOP_PROVIDER_VIEW_MIN_HEIGHT;
   }
-  const modelCount = getProviderModelRows(provider).length;
-  return Math.min(
-    Math.max(
-      DESKTOP_PROVIDER_VIEW_MIN_HEIGHT,
-      DESKTOP_PROVIDER_VIEW_BASE_HEIGHT + modelCount * DESKTOP_MODEL_ROW_HEIGHT,
-    ),
-    DESKTOP_PROVIDER_VIEW_MAX_HEIGHT,
-  );
+  return clampDesktopListHeight(getProviderModelRows(provider).length);
 }
 
 export function useModelBrowser({
@@ -231,6 +261,8 @@ export function useModelBrowser({
   serverId = null,
 }: ModelBrowserInput): ModelBrowserState {
   const { t } = useTranslation();
+  const { settings } = useAppSettings();
+  const startWithAllModels = settings.modelPickerStartsWithAllModels;
   const [view, setView] = useState<ModelBrowserView>({ kind: "all" });
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResetKey, bumpSearchResetKey] = useReducer((key: number) => key + 1, 0);
@@ -242,8 +274,9 @@ export function useModelBrowser({
         selectedProvider,
         selectedModel,
         favoriteKeys,
+        startWithAllModels,
       }),
-    [favoriteKeys, providers, selectedModel, selectedProvider],
+    [favoriteKeys, providers, selectedModel, selectedProvider, startWithAllModels],
   );
 
   const prepareToOpen = useCallback(() => {
@@ -260,9 +293,20 @@ export function useModelBrowser({
     reset();
   }, [reset]);
 
-  const drillDown = useCallback((providerId: string, providerLabel: string) => {
-    setView({ kind: "provider", providerId, providerLabel });
-  }, []);
+  // Every navigation clears the query: each view owns a differently scoped
+  // search, so carrying a stale one across would silently filter the new list.
+  const drillDown = useCallback(
+    (providerId: string, providerLabel: string) => {
+      setView({ kind: "provider", providerId, providerLabel });
+      reset();
+    },
+    [reset],
+  );
+
+  const showAllModels = useCallback(() => {
+    setView({ kind: "allModels" });
+    reset();
+  }, [reset]);
 
   const handleSearchQueryChange = useCallback((value: string) => {
     setSearchQuery(value);
@@ -272,6 +316,20 @@ export function useModelBrowser({
   const header = useMemo<SheetHeader>(() => {
     if (view.kind === "all") {
       return { title: t("modelSelector.title") };
+    }
+    if (view.kind === "allModels") {
+      return {
+        title: t("modelSelector.allModels"),
+        leading: <ThemedLayers size={ICON_SIZE.md} uniProps={foregroundMapping} />,
+        back: { onPress: handleBackToAll },
+        search: {
+          onChange: handleSearchQueryChange,
+          resetKey: `all-models:${searchResetKey}`,
+          placeholder: t("modelSelector.searchAllModelsPlaceholder"),
+          autoFocus: isWeb,
+          testID: "model-search-input",
+        },
+      };
     }
     return {
       title: view.providerLabel,
@@ -340,31 +398,12 @@ export function useModelBrowser({
     selectedModelLabel,
     triggerLabel,
     desktopFixedHeight,
-    isProviderView: view.kind === "provider",
+    isModelListView: view.kind !== "all",
     prepareToOpen,
     reset,
     drillDown,
+    showAllModels,
   };
-}
-
-function normalizeSearchQuery(value: string): string {
-  return value.trim().toLowerCase();
-}
-
-function sortFavoritesFirst(
-  rows: ProviderSelectionModelRow[],
-  favoriteKeys: Set<string>,
-): ProviderSelectionModelRow[] {
-  const favorites: ProviderSelectionModelRow[] = [];
-  const rest: ProviderSelectionModelRow[] = [];
-  for (const row of rows) {
-    if (favoriteKeys.has(row.favoriteKey)) {
-      favorites.push(row);
-    } else {
-      rest.push(row);
-    }
-  }
-  return [...favorites, ...rest];
 }
 
 interface ModelBrowserPressableProps {
@@ -463,6 +502,7 @@ function ModelBrowserRow({
   description,
   leadingSlot,
   trailingSlot,
+  accessory,
   selected = false,
   selectionIndicator = false,
   tone = "default",
@@ -474,6 +514,7 @@ function ModelBrowserRow({
   description?: string;
   leadingSlot: React.ReactNode;
   trailingSlot?: React.ReactNode;
+  accessory?: React.ReactNode;
   selected?: boolean;
   selectionIndicator?: boolean;
   tone?: ModelBrowserRowTone;
@@ -484,12 +525,13 @@ function ModelBrowserRow({
   const pressableStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.browserRow,
+      Boolean(accessory) && styles.browserRowWithAccessory,
       spacing === "model" && styles.browserModelRow,
       Boolean(hovered) &&
         (tone === "elevated" ? styles.browserRowHoveredElevated : styles.browserRowHovered),
       pressed && (tone === "default" ? styles.browserRowPressed : styles.browserRowPressedElevated),
     ],
-    [spacing, tone],
+    [accessory, spacing, tone],
   );
   const contentStyle = useMemo(
     () => [styles.browserRowText, description && styles.browserRowTextInline],
@@ -497,9 +539,11 @@ function ModelBrowserRow({
   );
   const hasTrailing = selected || trailingSlot;
 
-  return (
+  const row = (
     <ModelBrowserPressable onPress={onPress} style={pressableStyle} testID={testID}>
-      <View style={styles.browserRowContent}>
+      <View
+        style={[styles.browserRowContent, accessory ? styles.browserRowContentWithAccessory : null]}
+      >
         <View style={styles.browserRowLeading}>{leadingSlot}</View>
         <View style={contentStyle}>
           <Text numberOfLines={1} style={styles.browserRowLabel}>
@@ -526,6 +570,14 @@ function ModelBrowserRow({
       </View>
     </ModelBrowserPressable>
   );
+
+  if (!accessory) return row;
+  return (
+    <View style={styles.browserRowContainer}>
+      {row}
+      <View style={styles.browserRowAccessory}>{accessory}</View>
+    </View>
+  );
 }
 
 function ModelRow({
@@ -533,6 +585,7 @@ function ModelRow({
   isSelected,
   isFavorite,
   elevated = false,
+  showProvider = false,
   onPress,
   onToggleFavorite,
 }: {
@@ -540,6 +593,7 @@ function ModelRow({
   isSelected: boolean;
   isFavorite: boolean;
   elevated?: boolean;
+  showProvider?: boolean;
   onPress: () => void;
   onToggleFavorite?: (provider: string, modelId: string) => void;
 }) {
@@ -573,13 +627,13 @@ function ModelRow({
   return (
     <ModelBrowserRow
       label={row.modelLabel}
-      description={row.description}
+      description={buildModelRowDescription(row, showProvider)}
       selected={isSelected}
       selectionIndicator
       tone={elevated ? "elevated" : "default"}
       onPress={onPress}
       leadingSlot={leadingSlot}
-      trailingSlot={trailingSlot}
+      accessory={trailingSlot}
     />
   );
 }
@@ -589,6 +643,7 @@ function SelectableModelRow({
   isSelected,
   isFavorite,
   elevated,
+  showProvider,
   onSelect,
   onToggleFavorite,
 }: {
@@ -596,6 +651,7 @@ function SelectableModelRow({
   isSelected: boolean;
   isFavorite: boolean;
   elevated?: boolean;
+  showProvider?: boolean;
   onSelect: (provider: string, modelId: string) => void;
   onToggleFavorite?: (provider: string, modelId: string) => void;
 }) {
@@ -608,9 +664,32 @@ function SelectableModelRow({
       isSelected={isSelected}
       isFavorite={isFavorite}
       elevated={elevated}
+      showProvider={showProvider}
       onPress={handlePress}
       onToggleFavorite={onToggleFavorite}
     />
+  );
+}
+
+function ModelGroupHeading({
+  label,
+  status,
+}: {
+  label: string;
+  status?: ModelBrowserHeadingStatus;
+}) {
+  const { t } = useTranslation();
+  return (
+    <View style={styles.sectionHeading} accessibilityRole="header">
+      <Text style={styles.sectionHeadingText} numberOfLines={1}>
+        {label}
+      </Text>
+      {status ? (
+        <Text style={styles.sectionHeadingStatus}>
+          {t(status === "loading" ? "modelSelector.loadingShort" : "modelSelector.error")}
+        </Text>
+      ) : null}
+    </View>
   );
 }
 
@@ -648,6 +727,39 @@ function FavoritesSection({
         />
       ))}
     </View>
+  );
+}
+
+function AllModelsButton({ count, onPress }: { count: number; onPress: () => void }) {
+  const { t } = useTranslation();
+  const leadingSlot = useMemo(
+    () => <ThemedLayers size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />,
+    [],
+  );
+  const trailingSlot = useMemo(
+    () => (
+      <View style={styles.drillDownTrailing}>
+        <Text style={styles.drillDownCount}>
+          {t(count === 1 ? "modelSelector.modelCount" : "modelSelector.modelCountPlural", {
+            count,
+          })}
+        </Text>
+        <ThemedChevronRight size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />
+      </View>
+    ),
+    [count, t],
+  );
+
+  return (
+    <ModelBrowserRow
+      label={t("modelSelector.allModels")}
+      leadingSlot={leadingSlot}
+      trailingSlot={trailingSlot}
+      tone="drillDown"
+      spacing="provider"
+      onPress={onPress}
+      testID="model-all-models"
+    />
   );
 }
 
@@ -762,18 +874,18 @@ function IndependentScrollBoundary({ children }: { children: React.ReactElement 
 }
 
 function IndependentModelList({
-  rows,
+  items,
   renderItem,
 }: {
-  rows: ProviderSelectionModelRow[];
-  renderItem: ({ item }: { item: ProviderSelectionModelRow }) => React.ReactElement;
+  items: ModelBrowserListItem[];
+  renderItem: ({ item }: { item: ModelBrowserListItem }) => React.ReactElement;
 }) {
   return (
     <IndependentScrollBoundary>
       <FlatList
-        data={rows}
+        data={items}
         renderItem={renderItem}
-        keyExtractor={getModelRowKey}
+        keyExtractor={getModelListItemKey}
         style={styles.virtualizedModelList}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
@@ -785,8 +897,8 @@ function IndependentModelList({
   );
 }
 
-function getModelRowKey(row: ProviderSelectionModelRow): string {
-  return row.favoriteKey;
+function getModelListItemKey(item: ModelBrowserListItem): string {
+  return item.key;
 }
 
 function IndependentProviderList({ children }: { children: React.ReactNode }) {
@@ -809,54 +921,53 @@ function IndependentProviderList({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ProviderModelRows({
-  rows,
+function ModelListBody({
+  items,
   selectedProvider,
   selectedModel,
   favoriteKeys,
   onSelect,
   onToggleFavorite,
-  normalizedQuery,
   scrolling,
 }: {
-  rows: ProviderSelectionModelRow[];
+  items: ModelBrowserListItem[];
   selectedProvider: string;
   selectedModel: string;
   favoriteKeys: Set<string>;
   onSelect: (provider: string, modelId: string) => void;
   onToggleFavorite?: (provider: string, modelId: string) => void;
-  normalizedQuery: string;
   scrolling: "sheet" | "independent";
 }) {
   const isCompact = useIsCompactFormFactor();
-  const displayRows = useMemo(
-    () => (normalizedQuery ? rows : sortFavoritesFirst(rows, favoriteKeys)),
-    [favoriteKeys, normalizedQuery, rows],
-  );
   const renderItem = useCallback(
-    ({ item }: { item: ProviderSelectionModelRow }) => (
-      <SelectableModelRow
-        row={item}
-        isSelected={item.provider === selectedProvider && item.modelId === selectedModel}
-        isFavorite={favoriteKeys.has(item.favoriteKey)}
-        onSelect={onSelect}
-        onToggleFavorite={onToggleFavorite}
-      />
-    ),
+    ({ item }: { item: ModelBrowserListItem }) => {
+      if (item.kind === "heading") {
+        return <ModelGroupHeading label={item.label} status={item.status} />;
+      }
+      return (
+        <SelectableModelRow
+          row={item.row}
+          isSelected={item.row.provider === selectedProvider && item.row.modelId === selectedModel}
+          isFavorite={favoriteKeys.has(item.row.favoriteKey)}
+          showProvider={item.showProvider}
+          onSelect={onSelect}
+          onToggleFavorite={onToggleFavorite}
+        />
+      );
+    },
     [favoriteKeys, onSelect, onToggleFavorite, selectedModel, selectedProvider],
   );
-  const keyExtractor = useCallback((row: ProviderSelectionModelRow) => row.favoriteKey, []);
 
   if (scrolling === "independent") {
-    return <IndependentModelList rows={displayRows} renderItem={renderItem} />;
+    return <IndependentModelList items={items} renderItem={renderItem} />;
   }
 
   if (isCompact && isNative) {
     return (
       <BottomSheetFlatList
-        data={displayRows}
+        data={items}
         renderItem={renderItem}
-        keyExtractor={keyExtractor}
+        keyExtractor={getModelListItemKey}
         style={styles.virtualizedModelList}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
@@ -867,8 +978,8 @@ function ProviderModelRows({
 
   return (
     <View>
-      {displayRows.map((row) => (
-        <View key={row.favoriteKey}>{renderItem({ item: row })}</View>
+      {items.map((item) => (
+        <View key={item.key}>{renderItem({ item })}</View>
       ))}
     </View>
   );
@@ -912,12 +1023,13 @@ function ModelBrowserContent({
   onSelect,
   onToggleFavorite,
   onDrillDown,
+  onShowAllModels,
   onRetryProvider,
   isRetryingProvider = false,
   scrolling,
 }: ModelBrowserContentProps) {
   const { t } = useTranslation();
-  const normalizedQuery = useMemo(() => normalizeSearchQuery(searchQuery), [searchQuery]);
+  const normalizedQuery = useMemo(() => normalizeModelSearchQuery(searchQuery), [searchQuery]);
   const selectedViewProvider = useMemo(
     () =>
       view.kind === "provider"
@@ -925,12 +1037,24 @@ function ModelBrowserContent({
         : null,
     [providers, view],
   );
-  const visibleRows = useMemo(
+  const providerItems = useMemo(
     () =>
       selectedViewProvider
-        ? filterAndRankModelRows(getProviderModelRows(selectedViewProvider), normalizedQuery)
+        ? buildProviderModelListItems({
+            provider: selectedViewProvider,
+            favoriteKeys,
+            normalizedQuery,
+          })
         : [],
-    [normalizedQuery, selectedViewProvider],
+    [favoriteKeys, normalizedQuery, selectedViewProvider],
+  );
+  const favoritesLabel = t("modelSelector.favorites");
+  const allModelsItems = useMemo(
+    () =>
+      view.kind === "allModels"
+        ? buildAllModelsListItems({ providers, favoriteKeys, favoritesLabel, normalizedQuery })
+        : [],
+    [favoriteKeys, favoritesLabel, normalizedQuery, providers, view.kind],
   );
   const favoriteRows = useMemo(
     () => getAllProviderModelRows(providers).filter((row) => favoriteKeys.has(row.favoriteKey)),
@@ -943,6 +1067,21 @@ function ModelBrowserContent({
       <Text style={styles.emptyStateText}>{t("modelSelector.noMatches")}</Text>
     </View>
   );
+
+  if (view.kind === "allModels") {
+    if (allModelsItems.length === 0) return emptyState;
+    return (
+      <ModelListBody
+        items={allModelsItems}
+        selectedProvider={selectedProvider}
+        selectedModel={selectedModel}
+        favoriteKeys={favoriteKeys}
+        onSelect={onSelect}
+        onToggleFavorite={onToggleFavorite}
+        scrolling={scrolling}
+      />
+    );
+  }
 
   if (view.kind === "provider") {
     if (!selectedViewProvider) return emptyState;
@@ -967,16 +1106,15 @@ function ModelBrowserContent({
         />
       );
     }
-    if (visibleRows.length === 0) return emptyState;
+    if (providerItems.length === 0) return emptyState;
     return (
-      <ProviderModelRows
-        rows={visibleRows}
+      <ModelListBody
+        items={providerItems}
         selectedProvider={selectedProvider}
         selectedModel={selectedModel}
         favoriteKeys={favoriteKeys}
         onSelect={onSelect}
         onToggleFavorite={onToggleFavorite}
-        normalizedQuery={normalizedQuery}
         scrolling={scrolling}
       />
     );
@@ -992,6 +1130,12 @@ function ModelBrowserContent({
         onSelect={onSelect}
         onToggleFavorite={onToggleFavorite}
       />
+      {providers.length > 1 ? (
+        <>
+          <AllModelsButton count={countAllModels(providers)} onPress={onShowAllModels} />
+          <View style={styles.separator} />
+        </>
+      ) : null}
       {providers.length > 0 ? (
         <GroupedProviderRows providers={providers} onDrillDown={onDrillDown} />
       ) : null}
@@ -1025,6 +1169,7 @@ export function ModelBrowser({
       onSelect={onSelect}
       onToggleFavorite={onToggleFavorite}
       onDrillDown={state.drillDown}
+      onShowAllModels={state.showAllModels}
       onRetryProvider={onRetryProvider}
       isRetryingProvider={isRetryingProvider}
       scrolling={scrolling}
@@ -1054,11 +1199,23 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
+    flexShrink: 1,
+  },
+  sectionHeadingStatus: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+    marginLeft: "auto",
   },
   browserRow: {
     flexDirection: "row",
     paddingVertical: theme.spacing[2],
     minHeight: 36,
+  },
+  browserRowWithAccessory: {
+    flex: 1,
+  },
+  browserRowContainer: {
+    flexDirection: "row",
   },
   browserModelRow: isWeb ? {} : { marginBottom: theme.spacing[1] },
   browserRowHovered: {
@@ -1079,6 +1236,14 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
     paddingHorizontal: isWeb ? theme.spacing[3] : theme.spacing[6],
+  },
+  browserRowContentWithAccessory: {
+    paddingRight: 0,
+  },
+  browserRowAccessory: {
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: isWeb ? theme.spacing[3] : theme.spacing[6],
   },
   browserRowLeading: {
     width: 16,

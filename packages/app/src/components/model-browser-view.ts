@@ -2,6 +2,7 @@ import type { ProviderSelectorProvider } from "@/provider-selection/provider-sel
 
 export type ModelBrowserView =
   | { kind: "all" }
+  | { kind: "allModels" }
   | { kind: "provider"; providerId: string; providerLabel: string };
 
 export function resolveInitialModelBrowserView({
@@ -9,12 +10,17 @@ export function resolveInitialModelBrowserView({
   selectedProvider,
   selectedModel,
   favoriteKeys,
+  startWithAllModels = false,
 }: {
   providers: ProviderSelectorProvider[];
   selectedProvider: string;
   selectedModel: string;
   favoriteKeys: Set<string>;
+  startWithAllModels?: boolean;
 }): ModelBrowserView {
+  // A single provider's list already *is* the combined list, so the setting
+  // makes no difference and the extra hop through "All models" would only add
+  // a redundant back arrow.
   const singleProvider = providers.length === 1 ? providers[0] : undefined;
   if (singleProvider) {
     return {
@@ -22,6 +28,10 @@ export function resolveInitialModelBrowserView({
       providerId: singleProvider.id,
       providerLabel: singleProvider.label,
     };
+  }
+
+  if (startWithAllModels) {
+    return { kind: "allModels" };
   }
 
   const selectedFavoriteKey = `${selectedProvider}:${selectedModel}`;

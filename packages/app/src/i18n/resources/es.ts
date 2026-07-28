@@ -1374,6 +1374,8 @@ export const es: TranslationResources = {
     retrying: "Reintentando...",
     noMatches: "Ningún modelo coincide con tu búsqueda",
     searchPlaceholder: "Buscar modelos...",
+    allModels: "Todos los modelos",
+    searchAllModelsPlaceholder: "Buscar en todos los proveedores...",
     openProviderSettings: "Abrir configuración de{{provider}}",
   },
   providerCatalog: {
@@ -1771,6 +1773,11 @@ export const es: TranslationResources = {
         label: "Siempre expandir razonamiento",
         description:
           "Mostrar los bloques de pensamiento y razonamiento del agente totalmente expandidos de forma predeterminada",
+      },
+      modelPickerAllModels: {
+        label: "Abrir el selector de modelos en todos los modelos",
+        description:
+          "Iniciar el selector de modelos en una única lista con capacidad de búsqueda con todos los modelos de todos los proveedores, en lugar de la lista de proveedores",
       },
       toolCallDetail: {
         label: "Visualización de llamadas a herramientas",

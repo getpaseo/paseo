@@ -46,4 +46,28 @@ describe("model browser initial view", () => {
       }),
     ).toEqual({ kind: "all" });
   });
+
+  it("opens the cross-provider list when the setting wins over the selected provider", () => {
+    expect(
+      resolveInitialModelBrowserView({
+        providers: [codex, pi],
+        selectedProvider: "pi",
+        selectedModel: "pi-pro",
+        favoriteKeys: new Set(),
+        startWithAllModels: true,
+      }),
+    ).toEqual({ kind: "allModels" });
+  });
+
+  it("still opens a sole provider directly when the setting is on", () => {
+    expect(
+      resolveInitialModelBrowserView({
+        providers: [pi],
+        selectedProvider: "",
+        selectedModel: "",
+        favoriteKeys: new Set(),
+        startWithAllModels: true,
+      }),
+    ).toEqual({ kind: "provider", providerId: "pi", providerLabel: "Pi" });
+  });
 });

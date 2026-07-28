@@ -146,6 +146,26 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.workspaceTitleSource).toBe("title");
   });
 
+  it("loads the model picker start view preference and rejects non-boolean values", async () => {
+    const enabledDeps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ modelPickerStartsWithAllModels: true }),
+      }),
+    });
+    const invalidDeps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ modelPickerStartsWithAllModels: "yes" }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(enabledDeps)).modelPickerStartsWithAllModels).toBe(
+      true,
+    );
+    expect((await loadAppSettingsFromStorage(invalidDeps)).modelPickerStartsWithAllModels).toBe(
+      false,
+    );
+  });
+
   it("normalizes terminal scrollback lines from storage", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
