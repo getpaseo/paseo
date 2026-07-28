@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
-import { relative as relativePath } from "node:path";
+import { matchesGlob, relative as relativePath } from "node:path";
 import test from "node:test";
-import picomatch from "picomatch";
 
 const repoRoot = new URL("../", import.meta.url);
 const ciWorkflowPath = new URL(".github/workflows/ci.yml", repoRoot);
@@ -10,6 +9,7 @@ const dockerWorkflowPath = new URL(".github/workflows/docker.yml", repoRoot);
 const nixWorkflowPath = new URL(".github/workflows/nix.yml", repoRoot);
 const filtersPath = new URL(".github/ci-paths.yml", repoRoot);
 const serverTsconfigPath = new URL("packages/server/tsconfig.server.json", repoRoot);
+const desktopPackagePath = new URL("packages/desktop/package.json", repoRoot);
 
 const gatedCiJobs = new Map([
   ["format", { name: "format", contract: "format" }],
@@ -65,7 +65,17 @@ function loadFilters(path) {
 }
 
 function matchesFilter(filters, filterName, changedPath) {
-  return filters[filterName].some((pattern) => picomatch(pattern, { dot: true })(changedPath));
+  const visiblePath = exposeDotSegments(changedPath);
+  return filters[filterName].some((pattern) =>
+    matchesGlob(visiblePath, exposeDotSegments(pattern)),
+  );
+}
+
+// dorny/paths-filter uses picomatch with `dot: true`. Node's dependency-free
+// matcher hides dot-prefixed path segments by default, so make those segments
+// ordinary in both operands before matching.
+function exposeDotSegments(value) {
+  return value.replace(/(^|\/)\./g, "$1__dot__");
 }
 
 function filesUnder(relativeDirectory, predicate) {
@@ -244,6 +254,9 @@ test("browser and desktop tests have exclusive, directory-owned suites", () => {
   assert.ok(browserSpecs.every((path) => path.startsWith("packages/app/e2e/browser/")));
   assert.ok(desktopSpecs.every((path) => path.startsWith("packages/desktop/e2e/")));
   assert.ok(electronModules.every((path) => path.startsWith("packages/app/src/desktop/")));
+
+  const desktopPackage = JSON.parse(readFileSync(desktopPackagePath, "utf8"));
+  assert.match(desktopPackage.scripts.test, /--exclude ["']e2e\/\*\*["']/);
 
   for (const path of browserSpecs) {
     assert.equal(matchesFilter(filters, "browser", path), true, path);
