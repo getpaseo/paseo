@@ -126,6 +126,7 @@ describe("workspace-setup-store", () => {
       pendingWorkspaceSetup: null,
       snapshots: {},
       requestedKeys: new Set(),
+      requestedSetupRevealKeys: new Set(),
       surfacedFailedSetupKeys: new Set(),
     });
   });
@@ -162,6 +163,20 @@ describe("workspace-setup-store", () => {
     expect(useWorkspaceSetupStore.getState().pendingWorkspaceSetup).toBeNull();
   });
 
+  it("tracks and clears a requested setup reveal by workspace", () => {
+    const identity = { serverId: "server-1", workspaceId: "42" };
+
+    useWorkspaceSetupStore.getState().requestSetupReveal(identity);
+
+    expect(useWorkspaceSetupStore.getState().requestedSetupRevealKeys).toEqual(
+      new Set(["server-1:42"]),
+    );
+
+    useWorkspaceSetupStore.getState().clearSetupRevealRequest(identity);
+
+    expect(useWorkspaceSetupStore.getState().requestedSetupRevealKeys).toEqual(new Set());
+  });
+
   it("hides empty successful setup snapshots", () => {
     expect(
       shouldShowWorkspaceSetup({
@@ -178,6 +193,10 @@ describe("workspace-setup-store", () => {
         updatedAt: Date.now(),
       }),
     ).toBe(false);
+  });
+
+  it("keeps running setup available before command progress arrives", () => {
+    expect(shouldShowWorkspaceSetup(makeSnapshot("running"))).toBe(true);
   });
 
   it("shows setup snapshots with commands or errors", () => {
@@ -298,6 +317,55 @@ describe("workspace-setup-store", () => {
     expect(calls).toEqual([]);
   });
 
+  it("refreshes cached setup only for the reconnected server", async () => {
+    const store = useWorkspaceSetupStore.getState();
+    for (const serverId of ["server-1", "server-2"]) {
+      store.upsertProgress({
+        serverId,
+        payload: { workspaceId: "42", ...DEFAULT_SNAPSHOT },
+      });
+    }
+    const { client, calls } = makeClient((workspaceId) =>
+      Promise.resolve(setupResult(workspaceId, { ...DEFAULT_SNAPSHOT, status: "completed" })),
+    );
+
+    await store.refreshServer({ serverId: "server-1", client });
+
+    expect(calls).toEqual(["42"]);
+    expect(useWorkspaceSetupStore.getState().snapshots["server-1:42"]?.status).toBe("completed");
+    expect(useWorkspaceSetupStore.getState().snapshots["server-2:42"]?.status).toBe("running");
+  });
+
+  it("clears cached running setup when a restarted daemon has no setup snapshot", async () => {
+    const store = useWorkspaceSetupStore.getState();
+    store.upsertProgress({
+      serverId: "server-1",
+      payload: { workspaceId: "42", ...DEFAULT_SNAPSHOT },
+    });
+    const { client } = makeClient((workspaceId) => Promise.resolve(setupResult(workspaceId, null)));
+
+    await store.refreshServer({ serverId: "server-1", client });
+
+    expect(storedSnapshots()).toEqual([]);
+    expect(useWorkspaceSetupStore.getState().requestedKeys).toEqual(new Set());
+  });
+
+  it("keeps live completion when an older running status response arrives later", async () => {
+    const deferred = createDeferred<WorkspaceSetupStatusResult>();
+    const { client } = makeClient(() => deferred.promise);
+    const store = useWorkspaceSetupStore.getState();
+    const request = store.ensureSetupStatus({ serverId: "server-1", workspaceId: "42", client });
+
+    store.upsertProgress({
+      serverId: "server-1",
+      payload: { workspaceId: "42", ...DEFAULT_SNAPSHOT, status: "completed" },
+    });
+    deferred.resolve(setupResult("42"));
+    await request;
+
+    expect(useWorkspaceSetupStore.getState().snapshots["server-1:42"]?.status).toBe("completed");
+  });
+
   it("ensureSetupStatus ignores a response for a different workspace", async () => {
     const { client } = makeClient(() => Promise.resolve(setupResult("999")));
 
@@ -370,5 +438,14 @@ describe("workspace-setup-store", () => {
     await flush();
 
     expect(calls).toEqual(["42", "42"]);
+  });
+
+  it("clears a requested setup reveal when the workspace is removed", () => {
+    const identity = { serverId: "server-1", workspaceId: "42" };
+    useWorkspaceSetupStore.getState().requestSetupReveal(identity);
+
+    useWorkspaceSetupStore.getState().removeWorkspace(identity);
+
+    expect(useWorkspaceSetupStore.getState().requestedSetupRevealKeys).toEqual(new Set());
   });
 });

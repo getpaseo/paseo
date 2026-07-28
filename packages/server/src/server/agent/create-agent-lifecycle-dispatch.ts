@@ -130,6 +130,7 @@ export class CreateAgentLifecycleDispatch {
           {
             ...baseInput,
             worktreeSlug: target.newBranch,
+            branchName: target.newBranch,
             action: "branch-off",
             ...(target.base ? { refName: target.base } : {}),
           },

@@ -560,6 +560,7 @@ export const fr: TranslationResources = {
         run: "Lancer la configuration",
         runFailed: "Impossible de lancer la configuration de l’espace de travail",
       },
+      waitingForWorkspace: "En attente de la configuration de l'espace de travail",
       empty: {
         noCommands: "Aucune commande de configuration n’a été exécutée pour cet espace de travail.",
       },

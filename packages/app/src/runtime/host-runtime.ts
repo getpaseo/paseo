@@ -2382,8 +2382,9 @@ export class HostRuntimeStore {
     this.lastConnectionStatusByServer.set(serverId, snapshot.connectionStatus);
     const didTransitionOnline =
       snapshot.connectionStatus === "online" && previousStatus !== "online";
-    if (didTransitionOnline) {
+    if (didTransitionOnline && snapshot.client) {
       useSessionStore.getState().bumpHistorySyncGeneration(serverId);
+      void useWorkspaceSetupStore.getState().refreshServer({ serverId, client: snapshot.client });
       // Checkout git data is push-driven; pushes emitted while disconnected are gone for
       // good (the daemon dedupes by snapshot fingerprint). Mark the caches stale so active
       // queries refetch now and evicted ones on their next mount.

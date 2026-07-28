@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { useStoreWithEqualityFn } from "zustand/traditional";
+import { shallow } from "zustand/shallow";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceDirectoryServerIds } from "@/stores/session-store-hooks";
@@ -8,6 +9,7 @@ import { useHostProjects } from "@/projects/host-projects";
 import { getHostRuntimeStore, useHostRegistryLoaded, useHosts } from "@/runtime/host-runtime";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
+import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import {
   buildSidebarWorkspacePlacementModel,
   computeSidebarOrderUpdates,
@@ -18,6 +20,7 @@ import {
   type SidebarProjectEntry,
   type SidebarWorkspaceEntry,
   type SidebarWorkspacePlacement,
+  type WorkspaceSetupStatusByKey,
 } from "./sidebar-workspaces-view-model";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 
@@ -63,6 +66,23 @@ export function useSidebarProjectStatusBucket(input: {
     (state) => state.pendingByDraftId,
     workspaceEqualityFns.deep,
   );
+  const workspaceSetupKeys = useMemo(
+    () => workspaces.map((workspace) => `${workspace.serverId}:${workspace.workspaceId}`),
+    [workspaces],
+  );
+  const workspaceSetupStatuses = useStoreWithEqualityFn(
+    useWorkspaceSetupStore,
+    (state) => {
+      if (!enabled) return EMPTY_WORKSPACE_SETUP_STATUSES;
+      const statuses: Record<string, WorkspaceSetupStatusByKey[string]> = {};
+      for (const key of workspaceSetupKeys) {
+        const status = state.snapshots[key]?.status;
+        if (status) statuses[key] = status;
+      }
+      return statuses;
+    },
+    shallow,
+  );
 
   const selector = useCallback(
     (state: { sessions: Record<string, ProjectStatusSession | undefined> }) => {
@@ -71,9 +91,10 @@ export function useSidebarProjectStatusBucket(input: {
         workspaces,
         sessions: state.sessions,
         pendingCreateAttempts,
+        workspaceSetupStatuses,
       });
     },
-    [enabled, pendingCreateAttempts, workspaces],
+    [enabled, pendingCreateAttempts, workspaces, workspaceSetupStatuses],
   );
 
   return useStoreWithEqualityFn(useSessionStore, selector, Object.is);
@@ -82,6 +103,7 @@ export function useSidebarProjectStatusBucket(input: {
 const EMPTY_ORDER: string[] = [];
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
 const EMPTY_WORKSPACES: SidebarWorkspacePlacement[] = [];
+const EMPTY_WORKSPACE_SETUP_STATUSES: WorkspaceSetupStatusByKey = {};
 const EMPTY_PROJECT_NAMES = new Map<string, string>();
 
 export interface SidebarWorkspacesListResult {
