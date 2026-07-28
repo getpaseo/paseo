@@ -3843,31 +3843,31 @@ export class CodexAppServerAgentSession implements AgentSession {
       throw new Error("A foreground turn is already active");
     }
 
-    await this.connect();
-    if (!this.client) {
-      throw new Error("Codex client not initialized");
-    }
-
-    const slashCommand = await this.resolveSlashCommandInvocation(prompt);
-    const effectivePrompt = slashCommand
-      ? await this.buildCommandPromptInput(slashCommand.commandName, slashCommand.args)
-      : prompt;
-
-    if (this.currentThreadId) {
-      await this.ensureThreadLoaded();
-    } else {
-      await this.ensureThread();
-    }
-
-    const turnStart = await this.buildTurnStartParams(effectivePrompt, options);
-
-    const turnId = this.createTurnId();
-    this.activeForegroundTurnId = turnId;
-    this.activeClientMessageId = options?.clientMessageId ?? null;
-    this.currentTurnId = null;
     const dismissedPlanApprovals = this.dismissPendingPlanApprovals("Dismissed by a new prompt");
 
     try {
+      await this.connect();
+      if (!this.client) {
+        throw new Error("Codex client not initialized");
+      }
+
+      const slashCommand = await this.resolveSlashCommandInvocation(prompt);
+      const effectivePrompt = slashCommand
+        ? await this.buildCommandPromptInput(slashCommand.commandName, slashCommand.args)
+        : prompt;
+
+      if (this.currentThreadId) {
+        await this.ensureThreadLoaded();
+      } else {
+        await this.ensureThread();
+      }
+
+      const turnStart = await this.buildTurnStartParams(effectivePrompt, options);
+      const turnId = this.createTurnId();
+      this.activeForegroundTurnId = turnId;
+      this.activeClientMessageId = options?.clientMessageId ?? null;
+      this.currentTurnId = null;
+
       this.logTurnStartSummary({
         turnId,
         thinkingOptionId: turnStart.thinkingOptionId,
@@ -3878,14 +3878,13 @@ export class CodexAppServerAgentSession implements AgentSession {
         hasCodexConfig: turnStart.hasCodexConfig,
       });
       await this.client.request("turn/start", turnStart.params, TURN_START_TIMEOUT_MS);
+      return { turnId };
     } catch (error) {
       this.activeForegroundTurnId = null;
       this.activeClientMessageId = null;
       this.restoreDismissedPlanApprovals(dismissedPlanApprovals);
       throw error;
     }
-
-    return { turnId };
   }
 
   private rememberCodexUserMessageTurn(messageId: string | null | undefined): boolean {

@@ -4046,7 +4046,6 @@ describe("Codex app-server provider", () => {
     expect(events).toContainEqual({
       type: "permission_resolved",
       provider: "codex",
-      turnId: expect.any(String),
       requestId: pendingPlan!.id,
       resolution: {
         behavior: "deny",
@@ -4055,7 +4054,7 @@ describe("Codex app-server provider", () => {
     });
   });
 
-  test("makes the old plan non-actionable while a new prompt is being accepted", async () => {
+  test("makes the old plan non-actionable while a new prompt is being prepared", async () => {
     const session = createSession({
       featureValues: { plan_mode: true },
     });
@@ -4072,27 +4071,28 @@ describe("Codex app-server provider", () => {
     const pendingPlan = session.getPendingPermissions()[0];
     expect(pendingPlan).toBeDefined();
 
-    let acceptPrompt: (() => void) | undefined;
-    let markPromptRequested: (() => void) | undefined;
-    const promptRequested = new Promise<void>((resolve) => {
-      markPromptRequested = resolve;
+    let continuePromptSetup: (() => void) | undefined;
+    let markPromptSetupStarted: (() => void) | undefined;
+    const promptSetupStarted = new Promise<void>((resolve) => {
+      markPromptSetupStarted = resolve;
     });
     session.activeForegroundTurnId = null;
     session.client = createStub<CodexClientLike>({
       request: async (method) => {
-        if (method === "thread/loaded/list") return { data: ["test-thread"] };
-        if (method === "turn/start") {
-          markPromptRequested?.();
-          return await new Promise<void>((resolve) => {
-            acceptPrompt = resolve;
+        if (method === "thread/loaded/list") {
+          markPromptSetupStarted?.();
+          await new Promise<void>((resolve) => {
+            continuePromptSetup = resolve;
           });
+          return { data: ["test-thread"] };
         }
+        if (method === "turn/start") return {};
         throw new Error(`Unexpected request: ${method}`);
       },
     });
 
     const startTurn = session.startTurn("Revise the plan");
-    await promptRequested;
+    await promptSetupStarted;
 
     expect(session.getPendingPermissions()).toEqual([]);
     await expect(
@@ -4104,7 +4104,7 @@ describe("Codex app-server provider", () => {
       `No pending Codex app-server permission request with id '${pendingPlan!.id}'`,
     );
 
-    acceptPrompt?.();
+    continuePromptSetup?.();
     await startTurn;
   });
 
