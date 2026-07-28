@@ -14,7 +14,7 @@ export default defineConfig({
     environment: "node",
     setupFiles: [path.resolve(__dirname, "./src/test-utils/vitest-setup.ts")],
     pool: "forks",
-    fileParallelism: false,
+    fileParallelism: true,
     exclude: ["**/node_modules/**", "**/dist/**", "**/.claude/**", "**/.dev/**"],
   },
 });
