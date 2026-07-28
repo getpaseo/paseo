@@ -166,14 +166,14 @@ export async function readWorktreeIncludePlan(
   const materializations: WorktreeIncludeMaterialization[] = [];
 
   for (const entry of entries) {
-    if (candidateCollection.errorsByPattern.has(entry.relativePath)) {
-      skipped.push(
-        toSkippedEntry(entry, candidateCollection.errorsByPattern.get(entry.relativePath)),
-      );
-      continue;
-    }
-
     const matchedPaths = resolveEntryMatches({ entry, candidates: candidateCollection.candidates });
+    const candidateError = candidateCollection.errorsByPattern.get(entry.relativePath);
+    if (candidateError !== undefined) {
+      skipped.push(toSkippedEntry(entry, candidateError));
+      if (matchedPaths.length === 0) {
+        continue;
+      }
+    }
     if (matchedPaths.length === 0) {
       skipped.push(toSkippedEntry(entry, noMatchError(entry)));
       continue;
@@ -362,6 +362,13 @@ async function stageMaterialization(options: {
         sourcePath: options.resolved.sourcePath,
       });
       if (options.resolved.materialization.sourceKind === "directory") {
+        const stagedStats = await lstat(entryPath);
+        if (!stagedStats.isDirectory()) {
+          throw new WorktreeIncludeError(
+            "source_changed",
+            `.worktreeinclude entry '${options.resolved.materialization.raw}' changed type while it was staged`,
+          );
+        }
         await assertCopyDirectorySafe({
           entry: options.resolved.materialization,
           sourcePath: entryPath,
@@ -802,6 +809,15 @@ async function resolveSourceMaterialization(options: {
     entry: options.entry,
     sourcePath,
   });
+  if (
+    getRecursiveDirectoryPath(options.entry) === options.relativePath &&
+    sourceKind !== "directory"
+  ) {
+    throw new WorktreeIncludeError(
+      "unsupported_source",
+      `.worktreeinclude entry '${options.entry.raw}' on line ${options.entry.lineNumber} requires a directory`,
+    );
+  }
   if (sourceKind === "directory") {
     if (options.entry.mode === "copy") {
       await assertCopyDirectorySafe({

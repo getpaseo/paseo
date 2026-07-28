@@ -1172,6 +1172,7 @@ export async function deletePaseoWorktree({
 
 export interface RollbackCreatedPaseoWorktreeOptions extends DeletePaseoWorktreeOptions {
   createdBranchName?: string;
+  expectedOid?: string;
 }
 
 async function removeCreatedWorktreeBranch(options: {
@@ -1383,6 +1384,7 @@ export const createWorktree = async ({
         paseoHome,
         worktreesBaseRoot: worktreesRoot,
         createdBranchName: sourcePlan.createdBranchName,
+        expectedOid: sourcePlan.createdBranchOidBeforeWorktreeAdd,
       },
       error,
     );

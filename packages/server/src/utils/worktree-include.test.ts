@@ -119,6 +119,16 @@ describe("worktree include planning", () => {
     );
   });
 
+  it("requires the optimized trailing recursive form to resolve to a directory", async () => {
+    writeFileSync(join(sourceRoot, "cache"), "not-a-directory\n");
+    writeFileSync(join(sourceRoot, ".worktreeinclude"), "cache/**\n");
+
+    const plan = await readWorktreeIncludePlan({ sourceRoot });
+
+    expect(plan.materializations).toEqual([]);
+    expect(plan.skipped).toEqual([expect.objectContaining({ raw: "cache/**", reason: "unsafe" })]);
+  });
+
   it("skips directory copies that overlap protected worktree paths", async () => {
     const protectedWorktreeRoot = join(sourceRoot, ".dev", "paseo-home", "worktrees", "project");
     mkdirSync(protectedWorktreeRoot, { recursive: true });
@@ -275,6 +285,30 @@ describe("worktree include planning", () => {
         );
       } finally {
         chmodSync(inaccessibleDirectory, 0o700);
+      }
+    },
+  );
+
+  it.skipIf(isPlatform("win32") || process.getuid?.() === 0)(
+    "retains valid glob matches when a viable sibling is unreadable",
+    async () => {
+      mkdirSync(join(sourceRoot, "packages", "good"), { recursive: true });
+      mkdirSync(join(sourceRoot, "packages", "private"), { recursive: true });
+      writeFileSync(join(sourceRoot, "packages", "good", ".runtime.env"), "good\n");
+      writeFileSync(join(sourceRoot, "packages", "private", ".runtime.env"), "private\n");
+      writeFileSync(join(sourceRoot, ".worktreeinclude"), "packages/*/.runtime.env\n");
+      chmodSync(join(sourceRoot, "packages", "private"), 0o000);
+
+      try {
+        const plan = await readWorktreeIncludePlan({ sourceRoot });
+        expect(plan.materializations).toEqual([
+          expect.objectContaining({ relativePath: "packages/good/.runtime.env" }),
+        ]);
+        expect(plan.skipped).toEqual([
+          expect.objectContaining({ raw: "packages/*/.runtime.env", reason: "materialization" }),
+        ]);
+      } finally {
+        chmodSync(join(sourceRoot, "packages", "private"), 0o700);
       }
     },
   );
