@@ -315,6 +315,7 @@ configureLinuxSandbox({
   resourcesPath: process.resourcesPath,
   statSandbox: (sandboxPath) => statSync(sandboxPath),
   disableSandbox: () => app.commandLine.appendSwitch("no-sandbox"),
+  reportInspectionError: (error) => log.error("[linux-sandbox] failed to inspect helper", error),
 });
 
 // Allow users to pass Chromium flags via PASEO_ELECTRON_FLAGS for debugging

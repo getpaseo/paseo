@@ -13,6 +13,11 @@ interface LinuxSandboxConfiguration {
   resourcesPath: string;
   statSandbox: (sandboxPath: string) => SandboxMetadata;
   disableSandbox: () => void;
+  reportInspectionError: (error: unknown) => void;
+}
+
+function isMissingSandbox(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
 export function configureLinuxSandbox(input: LinuxSandboxConfiguration): void {
@@ -29,7 +34,12 @@ export function configureLinuxSandbox(input: LinuxSandboxConfiguration): void {
     if (!hasUsableSandbox) {
       input.disableSandbox();
     }
-  } catch {
-    input.disableSandbox();
+  } catch (error) {
+    if (isMissingSandbox(error)) {
+      input.disableSandbox();
+      return;
+    }
+
+    input.reportInspectionError(error);
   }
 }
