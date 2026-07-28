@@ -8,6 +8,7 @@ import type { AgentStorage } from "./agent/agent-storage.js";
 import { classifyDirectoryForProjectMembership } from "./workspace-registry-bootstrap-legacy.js";
 import { generateWorkspaceId } from "./workspace-registry-model.js";
 import { backfillWorkspaceIdForLegacyAgents } from "./migrations/backfill-workspace-id.migration.js";
+import { splitRemoteGroupedProjectClones } from "./migrations/split-remote-project-clones.migration.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import {
   createPersistedProjectRecord,
@@ -60,6 +61,7 @@ export async function bootstrapWorkspaceRegistries(options: {
   await Promise.all([options.projectRegistry.initialize(), options.workspaceRegistry.initialize()]);
 
   if (projectsExists && workspacesExists) {
+    await splitRemoteGroupedProjectClones(options);
     await backfillWorkspaceIdForLegacyAgents(options);
     return;
   }

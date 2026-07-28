@@ -14,6 +14,7 @@ import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js"
 let NON_GIT_PROJECT: string;
 let ARCHIVED_PROJECT: string;
 let GIT_PROJECT: string;
+let GIT_CLONE: string;
 let GIT_WORKTREE: string;
 
 describe("bootstrapWorkspaceRegistries", () => {
@@ -30,6 +31,7 @@ describe("bootstrapWorkspaceRegistries", () => {
     NON_GIT_PROJECT = path.join(tmpDir, "non-git-project");
     ARCHIVED_PROJECT = path.join(tmpDir, "archived-project");
     GIT_PROJECT = path.join(tmpDir, "legacy-git-project");
+    GIT_CLONE = path.join(tmpDir, "legacy-git-project-clone");
     GIT_WORKTREE = path.join(tmpDir, "legacy-git-project-feature");
     paseoHome = path.join(tmpDir, ".paseo");
     agentStorage = new AgentStorage(path.join(paseoHome, "agents"), logger);
@@ -42,7 +44,13 @@ describe("bootstrapWorkspaceRegistries", () => {
       logger,
     );
     workspaceGitService = createNoopWorkspaceGitService();
-    for (const directory of [NON_GIT_PROJECT, ARCHIVED_PROJECT, GIT_PROJECT, GIT_WORKTREE]) {
+    for (const directory of [
+      NON_GIT_PROJECT,
+      ARCHIVED_PROJECT,
+      GIT_PROJECT,
+      GIT_CLONE,
+      GIT_WORKTREE,
+    ]) {
       mkdirSync(directory, { recursive: true });
     }
   });
@@ -302,7 +310,118 @@ describe("bootstrapWorkspaceRegistries", () => {
     expect((await workspaceRegistry.list())[0]?.workspaceId).toBe("ws-existing");
   });
 
-  test("materializes legacy remote worktrees into one readable project", async () => {
+  test("repairs an existing remote-grouped project containing independent clones", async () => {
+    await projectRegistry.initialize();
+    await workspaceRegistry.initialize();
+    await projectRegistry.upsert({
+      projectId: "remote:github.com/acme/legacy-project",
+      rootPath: GIT_PROJECT,
+      kind: "git",
+      displayName: "acme/legacy-project",
+      customName: "My assistant",
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-02T00:00:00.000Z",
+      archivedAt: null,
+    });
+    for (const workspace of [
+      {
+        workspaceId: "ws-main",
+        cwd: GIT_PROJECT,
+        kind: "local_checkout" as const,
+        displayName: "main",
+        branch: "main",
+        worktreeRoot: GIT_PROJECT,
+        mainRepoRoot: null,
+      },
+      {
+        workspaceId: "ws-worktree",
+        cwd: GIT_WORKTREE,
+        kind: "worktree" as const,
+        displayName: "feature/plain",
+        branch: "feature/plain",
+        worktreeRoot: GIT_WORKTREE,
+        mainRepoRoot: GIT_PROJECT,
+      },
+      {
+        workspaceId: "ws-clone",
+        cwd: GIT_CLONE,
+        kind: "local_checkout" as const,
+        displayName: "customer/fifi",
+        branch: "customer/fifi",
+        worktreeRoot: GIT_CLONE,
+        mainRepoRoot: null,
+      },
+    ]) {
+      await workspaceRegistry.upsert({
+        ...workspace,
+        projectId: "remote:github.com/acme/legacy-project",
+        title: null,
+        baseBranch: null,
+        isPaseoOwnedWorktree: workspace.kind === "worktree",
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-02T00:00:00.000Z",
+        archivedAt: null,
+        pinnedAt: null,
+      });
+    }
+
+    await bootstrapWorkspaceRegistries({
+      paseoHome,
+      agentStorage,
+      projectRegistry,
+      workspaceRegistry,
+      workspaceGitService,
+      logger,
+    });
+
+    const projects = await projectRegistry.list();
+    expect(projects).toHaveLength(2);
+    expect(
+      projects.find((project) => project.projectId === "remote:github.com/acme/legacy-project"),
+    ).toMatchObject({
+      rootPath: GIT_PROJECT,
+      displayName: "legacy-git-project",
+      customName: "My assistant",
+    });
+    const cloneProject = projects.find((project) => project.rootPath === GIT_CLONE);
+    expect(cloneProject).toMatchObject({
+      projectId: expect.stringMatching(/^prj_[0-9a-f]{16}$/),
+      rootPath: GIT_CLONE,
+      displayName: "legacy-git-project-clone",
+    });
+
+    expect(
+      (await workspaceRegistry.list())
+        .map(({ workspaceId, projectId }) => ({ workspaceId, projectId }))
+        .sort((left, right) => left.workspaceId.localeCompare(right.workspaceId)),
+    ).toEqual([
+      { workspaceId: "ws-clone", projectId: cloneProject?.projectId },
+      { workspaceId: "ws-main", projectId: "remote:github.com/acme/legacy-project" },
+      { workspaceId: "ws-worktree", projectId: "remote:github.com/acme/legacy-project" },
+    ]);
+
+    await bootstrapWorkspaceRegistries({
+      paseoHome,
+      agentStorage,
+      projectRegistry,
+      workspaceRegistry,
+      workspaceGitService,
+      logger,
+    });
+
+    expect(await projectRegistry.list()).toEqual(projects);
+    expect(
+      (await workspaceRegistry.list())
+        .map(({ workspaceId, projectId }) => ({ workspaceId, projectId }))
+        .sort((left, right) => left.workspaceId.localeCompare(right.workspaceId)),
+    ).toEqual([
+      { workspaceId: "ws-clone", projectId: cloneProject?.projectId },
+      { workspaceId: "ws-main", projectId: "remote:github.com/acme/legacy-project" },
+      { workspaceId: "ws-worktree", projectId: "remote:github.com/acme/legacy-project" },
+    ]);
+  });
+
+  test("materializes a linked worktree under its source checkout project", async () => {
     workspaceGitService = createNoopWorkspaceGitService({
       getCheckout: async (cwd) => ({
         cwd,
@@ -350,10 +469,10 @@ describe("bootstrapWorkspaceRegistries", () => {
     const projects = await projectRegistry.list();
     expect(projects).toHaveLength(1);
     expect(projects[0]).toMatchObject({
-      projectId: "remote:github.com/acme/legacy-project",
+      projectId: GIT_PROJECT,
       rootPath: GIT_PROJECT,
       kind: "git",
-      displayName: "acme/legacy-project",
+      displayName: "legacy-git-project",
     });
 
     const workspaces = await workspaceRegistry.list();
@@ -363,17 +482,88 @@ describe("bootstrapWorkspaceRegistries", () => {
         .sort((left, right) => left.cwd.localeCompare(right.cwd)),
     ).toEqual([
       {
-        projectId: "remote:github.com/acme/legacy-project",
+        projectId: GIT_PROJECT,
         cwd: GIT_PROJECT,
         kind: "local_checkout",
         displayName: "main",
       },
       {
-        projectId: "remote:github.com/acme/legacy-project",
+        projectId: GIT_PROJECT,
         cwd: GIT_WORKTREE,
         kind: "worktree",
         displayName: "feature/plain",
       },
+    ]);
+  });
+
+  test("materializes independent clones with the same remote as separate projects", async () => {
+    workspaceGitService = createNoopWorkspaceGitService({
+      getCheckout: async (cwd) => ({
+        cwd,
+        isGit: true,
+        currentBranch: cwd === GIT_PROJECT ? "main" : "customer/fifi",
+        remoteUrl: "git@github.com:acme/legacy-project.git",
+        worktreeRoot: cwd,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: null,
+      }),
+    });
+    await agentStorage.initialize();
+    for (const [id, cwd] of [
+      ["main-agent", GIT_PROJECT],
+      ["clone-agent", GIT_CLONE],
+    ]) {
+      await agentStorage.upsert({
+        id,
+        provider: "codex",
+        cwd,
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-02T00:00:00.000Z",
+        lastActivityAt: "2026-03-02T00:00:00.000Z",
+        lastUserMessageAt: null,
+        title: null,
+        labels: {},
+        lastStatus: "idle",
+        lastModeId: null,
+        config: null,
+        runtimeInfo: { provider: "codex", sessionId: null },
+        persistence: null,
+        archivedAt: null,
+      });
+    }
+
+    await bootstrapWorkspaceRegistries({
+      paseoHome,
+      agentStorage,
+      projectRegistry,
+      workspaceRegistry,
+      workspaceGitService,
+      logger,
+    });
+
+    expect(
+      (await projectRegistry.list())
+        .map(({ projectId, rootPath, displayName }) => ({ projectId, rootPath, displayName }))
+        .sort((left, right) => left.rootPath.localeCompare(right.rootPath)),
+    ).toEqual([
+      {
+        projectId: GIT_PROJECT,
+        rootPath: GIT_PROJECT,
+        displayName: "legacy-git-project",
+      },
+      {
+        projectId: GIT_CLONE,
+        rootPath: GIT_CLONE,
+        displayName: "legacy-git-project-clone",
+      },
+    ]);
+    expect(
+      (await workspaceRegistry.list())
+        .map(({ projectId, cwd }) => ({ projectId, cwd }))
+        .sort((left, right) => left.cwd.localeCompare(right.cwd)),
+    ).toEqual([
+      { projectId: GIT_PROJECT, cwd: GIT_PROJECT },
+      { projectId: GIT_CLONE, cwd: GIT_CLONE },
     ]);
   });
 
