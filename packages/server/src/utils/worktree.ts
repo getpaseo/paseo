@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, realpathSync, rmSync, statSync } from "fs";
 import { copyFile, rm, stat } from "fs/promises";
 import { join, basename, dirname, isAbsolute, resolve, sep } from "path";
 import net from "node:net";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import stripAnsi from "strip-ansi";
 import {
   buildStringCommandShellInvocation,
@@ -36,6 +36,11 @@ import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 import { expandTilde, getRealpathAwareRelativePath, isPathInsideRoot } from "./path.js";
+import {
+  materializeWorktreeIncludePlan,
+  readWorktreeIncludePlan,
+  type WorktreeIncludeSummary,
+} from "./worktree-include.js";
 
 export { slugify, validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 
@@ -47,6 +52,10 @@ const READ_ONLY_GIT_ENV = {
 export interface WorktreeConfig {
   branchName: string;
   worktreePath: string;
+}
+
+export interface CreatedWorktreeConfig extends WorktreeConfig {
+  worktreeIncludeSummary: WorktreeIncludeSummary;
 }
 
 export interface WorktreeRuntimeEnv {
@@ -1161,13 +1170,67 @@ export async function deletePaseoWorktree({
   }
 }
 
+export interface RollbackCreatedPaseoWorktreeOptions extends DeletePaseoWorktreeOptions {
+  createdBranchName?: string;
+  expectedOid?: string;
+}
+
+async function removeCreatedWorktreeBranch(options: {
+  createdBranchName?: string;
+  expectedOid?: string;
+  cwd?: string | null;
+}): Promise<void> {
+  if (!options.createdBranchName || !options.cwd) {
+    return;
+  }
+  if (!(await localBranchExists(options.cwd, options.createdBranchName))) {
+    return;
+  }
+  if (options.expectedOid) {
+    await runGitCommand(
+      ["update-ref", "-d", `refs/heads/${options.createdBranchName}`, options.expectedOid],
+      { cwd: options.cwd },
+    );
+  } else {
+    await runGitCommand(["branch", "--delete", "--force", options.createdBranchName], {
+      cwd: options.cwd,
+    });
+  }
+}
+
+async function rollbackCreatedWorktreeBranch(
+  options: {
+    createdBranchName?: string;
+    expectedOid?: string;
+    cwd: string;
+  },
+  cause: unknown,
+): Promise<never> {
+  let cleanupError: unknown;
+  try {
+    await removeCreatedWorktreeBranch(options);
+  } catch (error) {
+    cleanupError = error;
+  }
+  if (cleanupError) {
+    const failure = new Error(
+      `${cause instanceof Error ? cause.message : "Worktree workflow failed"}; rollback also failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+      { cause },
+    );
+    Object.assign(failure, { cleanupError });
+    throw failure;
+  }
+  throw cause;
+}
+
 export async function rollbackCreatedPaseoWorktree(
-  options: DeletePaseoWorktreeOptions,
+  options: RollbackCreatedPaseoWorktreeOptions,
   cause: unknown,
 ): Promise<never> {
   let cleanupError: unknown;
   try {
     await deletePaseoWorktree(options);
+    await removeCreatedWorktreeBranch(options);
   } catch (error) {
     cleanupError = error;
   }
@@ -1233,49 +1296,99 @@ export const createWorktree = async ({
   runSetup,
   paseoHome,
   worktreesRoot,
-}: CreateWorktreeOptions): Promise<WorktreeConfig> => {
+}: CreateWorktreeOptions): Promise<CreatedWorktreeConfig> => {
   const sourcePlan = await resolveWorktreeSourcePlan({ cwd, source, desiredSlug: worktreeSlug });
-  let worktreePath = join(await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot), worktreeSlug);
-  mkdirSync(dirname(worktreePath), { recursive: true });
+  const { worktreeIncludePlan, worktreePath } = await (async () => {
+    try {
+      const paseoWorktreesBaseRoot = resolvePaseoWorktreesBaseRoot({ paseoHome, worktreesRoot });
+      const paseoWorktreesRoot = await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot);
+      const includePlan = await readWorktreeIncludePlan({
+        sourceRoot: cwd,
+        excludedSourceRoots: [paseoWorktreesBaseRoot],
+      });
+      const requestedWorktreePath = join(paseoWorktreesRoot, worktreeSlug);
+      mkdirSync(dirname(requestedWorktreePath), { recursive: true });
 
-  // Also handle worktree path collision
-  let finalWorktreePath = worktreePath;
-  let pathSuffix = 1;
-  while (existsSync(finalWorktreePath)) {
-    finalWorktreePath = `${worktreePath}-${pathSuffix}`;
-    pathSuffix++;
-  }
+      // Also handle worktree path collision
+      let finalWorktreePath = requestedWorktreePath;
+      let pathSuffix = 1;
+      while (existsSync(finalWorktreePath)) {
+        finalWorktreePath = `${requestedWorktreePath}-${pathSuffix}`;
+        pathSuffix++;
+      }
 
-  // Primitive owner for `git worktree add`; callers route through createWorktreeCore.
-  await runGitCommand(["worktree", "add", finalWorktreePath, ...sourcePlan.addArguments], {
-    cwd,
-    timeout: 120_000,
-  });
-  worktreePath = normalizePathForOwnership(finalWorktreePath);
+      // Primitive owner for `git worktree add`; callers route through createWorktreeCore.
+      await runGitCommand(["worktree", "add", finalWorktreePath, ...sourcePlan.addArguments], {
+        cwd,
+        timeout: 120_000,
+      });
 
-  if (sourcePlan.pushRemote) {
-    await configureWorktreePushRemote({
-      cwd,
-      branchName: sourcePlan.branchName,
-      remote: sourcePlan.pushRemote,
+      return {
+        worktreeIncludePlan: includePlan,
+        worktreePath: normalizePathForOwnership(finalWorktreePath),
+      };
+    } catch (error) {
+      return rollbackCreatedWorktreeBranch(
+        {
+          cwd,
+          createdBranchName: sourcePlan.createdBranchNameBeforeWorktreeAdd,
+          expectedOid: sourcePlan.createdBranchOidBeforeWorktreeAdd,
+        },
+        error,
+      );
+    }
+  })();
+
+  let worktreeIncludeSummary: WorktreeIncludeSummary = {
+    materialized: 0,
+    skipped: [...worktreeIncludePlan.skipped],
+  };
+  try {
+    if (sourcePlan.pushRemote) {
+      await configureWorktreePushRemote({
+        cwd,
+        branchName: sourcePlan.branchName,
+        remote: sourcePlan.pushRemote,
+      });
+    }
+    if (sourcePlan.trackingRemote) {
+      await configureWorktreeTrackingRemote({
+        cwd,
+        branchName: sourcePlan.branchName,
+        remote: sourcePlan.trackingRemote,
+      });
+    }
+
+    writePaseoWorktreeMetadata(worktreePath, {
+      baseRefName: sourcePlan.metadataBaseRefName,
+      ...(sourcePlan.changeRequestLookupTarget
+        ? { changeRequestLookupTarget: sourcePlan.changeRequestLookupTarget }
+        : {}),
     });
-  }
-  if (sourcePlan.trackingRemote) {
-    await configureWorktreeTrackingRemote({
-      cwd,
-      branchName: sourcePlan.branchName,
-      remote: sourcePlan.trackingRemote,
+
+    await seedPaseoConfigFile({ sourceCwd: cwd, targetCwd: worktreePath });
+    const materialization = await materializeWorktreeIncludePlan({
+      plan: worktreeIncludePlan,
+      worktreeRoot: worktreePath,
     });
+    worktreeIncludeSummary = {
+      materialized: materialization.materialized,
+      skipped: [...worktreeIncludePlan.skipped, ...materialization.skipped],
+    };
+  } catch (error) {
+    await rollbackCreatedPaseoWorktree(
+      {
+        cwd,
+        worktreePath,
+        teardownCwds: [],
+        paseoHome,
+        worktreesBaseRoot: worktreesRoot,
+        createdBranchName: sourcePlan.createdBranchName,
+        expectedOid: sourcePlan.createdBranchOidBeforeWorktreeAdd,
+      },
+      error,
+    );
   }
-
-  writePaseoWorktreeMetadata(worktreePath, {
-    baseRefName: sourcePlan.metadataBaseRefName,
-    ...(sourcePlan.changeRequestLookupTarget
-      ? { changeRequestLookupTarget: sourcePlan.changeRequestLookupTarget }
-      : {}),
-  });
-
-  await seedPaseoConfigFile({ sourceCwd: cwd, targetCwd: worktreePath });
 
   if (runSetup) {
     await runWorktreeSetupCommands({
@@ -1287,6 +1400,7 @@ export const createWorktree = async ({
 
   return {
     branchName: sourcePlan.branchName,
+    worktreeIncludeSummary,
     worktreePath,
   };
 };
@@ -1299,6 +1413,9 @@ interface ResolveWorktreeSourcePlanOptions {
 
 interface WorktreeSourcePlan {
   branchName: string;
+  createdBranchName?: string;
+  createdBranchNameBeforeWorktreeAdd?: string;
+  createdBranchOidBeforeWorktreeAdd?: string;
   metadataBaseRefName: string;
   changeRequestLookupTarget?: PaseoWorktreeChangeRequestLookupTarget;
   addArguments: string[];
@@ -1313,6 +1430,11 @@ interface WorktreeSourcePlan {
     headRef: string;
   };
 }
+
+type ChangeRequestWorktreeSource = Extract<
+  WorktreeSource,
+  { kind: "checkout-change-request" | "checkout-github-pr" }
+>;
 
 async function resolveWorktreeSourcePlan({
   cwd,
@@ -1332,93 +1454,143 @@ async function resolveWorktreeSourcePlan({
 
       return {
         branchName: newBranchName,
+        createdBranchName: newBranchName,
         metadataBaseRefName: normalizedBaseBranch,
         addArguments: ["-b", newBranchName, "--no-track", base],
       };
     }
-    case "checkout-branch": {
-      await validateExistingWorktreeBranchName(cwd, source.branchName);
-      if (!(await localBranchExists(cwd, source.branchName))) {
-        try {
-          await runGitCommand(["fetch", "origin", `${source.branchName}:${source.branchName}`], {
-            cwd,
-            timeout: 120_000,
-          });
-        } catch {
-          throw new UnknownBranchError({ branchName: source.branchName, cwd });
-        }
-      }
-      if (await isBranchCheckedOut(cwd, source.branchName)) {
-        throw new BranchAlreadyCheckedOutError(source.branchName);
-      }
-
-      return {
-        branchName: source.branchName,
-        metadataBaseRefName: source.branchName,
-        addArguments: [source.branchName],
-      };
-    }
+    case "checkout-branch":
+      return resolveCheckoutBranchWorktreeSourcePlan({ cwd, branchName: source.branchName });
     case "checkout-change-request":
-    case "checkout-github-pr": {
-      const localBranchCandidate = source.localBranchName ?? source.headRef;
-      await validateExistingWorktreeBranchName(cwd, localBranchCandidate);
-      const localBranchName = await resolveUniqueLocalBranchName(cwd, localBranchCandidate);
-      const normalizedBaseRefName = normalizeRequiredBaseBranch(source.baseRefName);
-      const changeRequestNumber =
-        source.kind === "checkout-github-pr" ? source.githubPrNumber : source.changeRequestNumber;
-      await fetchWorktreeCheckoutRefs({
-        cwd,
-        localBranchName,
-        checkoutRefs: source.checkoutRefs ?? [
-          { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
-        ],
-      });
-      const shouldTrackOriginHead = source.trackOriginHead === true;
-      const trackingRemote = shouldTrackOriginHead
-        ? await tryFetchWorktreeTrackingRemote({
-            cwd,
-            remoteName: "origin",
-            headRef: source.headRef,
-          })
-        : undefined;
-      const remotePlan: Pick<WorktreeSourcePlan, "pushRemote" | "trackingRemote"> = {};
-      if (source.pushRemoteUrl) {
-        const remoteName = `paseo-pr-${changeRequestNumber}`;
-        remotePlan.pushRemote = {
-          name: remoteName,
-          url: source.pushRemoteUrl,
-          headRef: source.headRef,
-          track: true,
-        };
-      } else if (shouldTrackOriginHead && localBranchName !== source.headRef) {
-        const originUrl = await getWorktreeRemotePushUrl(cwd, "origin");
-        if (originUrl) {
-          remotePlan.pushRemote = {
-            name: `paseo-pr-${changeRequestNumber}`,
-            url: originUrl,
-            headRef: source.headRef,
-            track: false,
-          };
-        }
-      }
-      if (trackingRemote) {
-        remotePlan.trackingRemote = trackingRemote;
-      }
+    case "checkout-github-pr":
+      return resolveChangeRequestWorktreeSourcePlan({ cwd, source });
+  }
+}
 
-      return {
-        branchName: localBranchName,
-        metadataBaseRefName: normalizedBaseRefName,
-        changeRequestLookupTarget: {
-          headRef: source.headRef,
-          ...(source.headRepositoryOwner
-            ? { headRepositoryOwner: source.headRepositoryOwner }
-            : {}),
-          changeRequestNumber,
-        },
-        addArguments: [localBranchName],
-        ...remotePlan,
-      };
+async function resolveCheckoutBranchWorktreeSourcePlan(options: {
+  branchName: string;
+  cwd: string;
+}): Promise<WorktreeSourcePlan> {
+  await validateExistingWorktreeBranchName(options.cwd, options.branchName);
+  const needsFetch = !(await localBranchExists(options.cwd, options.branchName));
+  let createdBranchOid: string | undefined;
+  if (needsFetch) {
+    try {
+      createdBranchOid = await fetchNewLocalBranchAtomically({
+        cwd: options.cwd,
+        localBranchName: options.branchName,
+        remoteName: "origin",
+        remoteRef: `refs/heads/${options.branchName}`,
+      });
+    } catch {
+      throw new UnknownBranchError({ branchName: options.branchName, cwd: options.cwd });
     }
+  }
+
+  try {
+    if (await isBranchCheckedOut(options.cwd, options.branchName)) {
+      throw new BranchAlreadyCheckedOutError(options.branchName);
+    }
+  } catch (error) {
+    if (!needsFetch) {
+      throw error;
+    }
+    return rollbackCreatedWorktreeBranch(
+      {
+        cwd: options.cwd,
+        createdBranchName: options.branchName,
+        expectedOid: createdBranchOid,
+      },
+      error,
+    );
+  }
+
+  return {
+    branchName: options.branchName,
+    ...(needsFetch
+      ? {
+          createdBranchName: options.branchName,
+          createdBranchNameBeforeWorktreeAdd: options.branchName,
+          createdBranchOidBeforeWorktreeAdd: createdBranchOid,
+        }
+      : {}),
+    metadataBaseRefName: options.branchName,
+    addArguments: [options.branchName],
+  };
+}
+
+async function resolveChangeRequestWorktreeSourcePlan(options: {
+  cwd: string;
+  source: ChangeRequestWorktreeSource;
+}): Promise<WorktreeSourcePlan> {
+  const { cwd, source } = options;
+  const localBranchCandidate = source.localBranchName ?? source.headRef;
+  await validateExistingWorktreeBranchName(cwd, localBranchCandidate);
+  const localBranchName = await resolveUniqueLocalBranchName(cwd, localBranchCandidate);
+  const normalizedBaseRefName = normalizeRequiredBaseBranch(source.baseRefName);
+  const changeRequestNumber =
+    source.kind === "checkout-github-pr" ? source.githubPrNumber : source.changeRequestNumber;
+
+  let createdBranchOid: string | undefined;
+  try {
+    createdBranchOid = await fetchWorktreeCheckoutRefs({
+      cwd,
+      localBranchName,
+      checkoutRefs: source.checkoutRefs ?? [
+        { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
+      ],
+    });
+    const shouldTrackOriginHead = source.trackOriginHead === true;
+    const trackingRemote = shouldTrackOriginHead
+      ? await tryFetchWorktreeTrackingRemote({
+          cwd,
+          remoteName: "origin",
+          headRef: source.headRef,
+        })
+      : undefined;
+    const remotePlan: Pick<WorktreeSourcePlan, "pushRemote" | "trackingRemote"> = {};
+    if (source.pushRemoteUrl) {
+      const remoteName = `paseo-pr-${changeRequestNumber}`;
+      remotePlan.pushRemote = {
+        name: remoteName,
+        url: source.pushRemoteUrl,
+        headRef: source.headRef,
+        track: true,
+      };
+    } else if (shouldTrackOriginHead && localBranchName !== source.headRef) {
+      const originUrl = await getWorktreeRemotePushUrl(cwd, "origin");
+      if (originUrl) {
+        remotePlan.pushRemote = {
+          name: `paseo-pr-${changeRequestNumber}`,
+          url: originUrl,
+          headRef: source.headRef,
+          track: false,
+        };
+      }
+    }
+    if (trackingRemote) {
+      remotePlan.trackingRemote = trackingRemote;
+    }
+
+    return {
+      branchName: localBranchName,
+      createdBranchName: localBranchName,
+      createdBranchNameBeforeWorktreeAdd: localBranchName,
+      createdBranchOidBeforeWorktreeAdd: createdBranchOid,
+      metadataBaseRefName: normalizedBaseRefName,
+      changeRequestLookupTarget: {
+        headRef: source.headRef,
+        ...(source.headRepositoryOwner ? { headRepositoryOwner: source.headRepositoryOwner } : {}),
+        changeRequestNumber,
+      },
+      addArguments: [localBranchName],
+      ...remotePlan,
+    };
+  } catch (error) {
+    return rollbackCreatedWorktreeBranch(
+      { cwd, createdBranchName: localBranchName, expectedOid: createdBranchOid },
+      error,
+    );
   }
 }
 
@@ -1471,27 +1643,22 @@ async function fetchWorktreeCheckoutRefs(options: {
   cwd: string;
   localBranchName: string;
   checkoutRefs: WorktreeCheckoutRef[];
-}): Promise<void> {
+}): Promise<string> {
   let lastResult:
     | Awaited<ReturnType<typeof runGitCommand>>
     | { stderr: string; stdout: string; exitCode: number | null }
     | null = null;
   for (const checkoutRef of options.checkoutRefs) {
-    lastResult = await runGitCommand(
-      [
-        "fetch",
-        checkoutRef.remoteName ?? "origin",
-        `+${checkoutRef.remoteRef}:refs/heads/${options.localBranchName}`,
-        "--force",
-      ],
-      {
+    try {
+      return await fetchNewLocalBranchAtomically({
         cwd: options.cwd,
-        timeout: 120_000,
-        acceptExitCodes: [0, 1, 128],
-      },
-    );
-    if (lastResult.exitCode === 0) {
-      return;
+        localBranchName: options.localBranchName,
+        remoteName: checkoutRef.remoteName ?? "origin",
+        remoteRef: checkoutRef.remoteRef,
+      });
+    } catch (error) {
+      lastResult =
+        error instanceof Error ? { stderr: error.message, stdout: "", exitCode: 1 } : null;
     }
   }
   const attemptedRefs = options.checkoutRefs
@@ -1500,6 +1667,35 @@ async function fetchWorktreeCheckoutRefs(options: {
   throw new Error(
     `Unable to fetch change request refs for worktree branch ${options.localBranchName}: ${attemptedRefs}${lastResult?.stderr ? `\n${lastResult.stderr}` : ""}`,
   );
+}
+
+async function fetchNewLocalBranchAtomically(options: {
+  cwd: string;
+  localBranchName: string;
+  remoteName: string;
+  remoteRef: string;
+}): Promise<string> {
+  const temporaryRef = `refs/paseo/worktree-fetch/${randomUUID()}`;
+  try {
+    await runGitCommand(
+      ["fetch", options.remoteName, `${options.remoteRef}:${temporaryRef}`, "--force"],
+      { cwd: options.cwd, timeout: 120_000 },
+    );
+    const { stdout } = await runGitCommand(["rev-parse", "--verify", temporaryRef], {
+      cwd: options.cwd,
+    });
+    const oid = stdout.trim();
+    const nullOid = "0".repeat(oid.length);
+    await runGitCommand(["update-ref", `refs/heads/${options.localBranchName}`, oid, nullOid], {
+      cwd: options.cwd,
+    });
+    return oid;
+  } finally {
+    await runGitCommand(["update-ref", "-d", temporaryRef], {
+      cwd: options.cwd,
+      acceptExitCodes: [0, 1, 128],
+    });
+  }
 }
 
 async function tryFetchWorktreeTrackingRemote(options: {

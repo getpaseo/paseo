@@ -930,6 +930,8 @@ export const ru: TranslationResources = {
         openSettings: "Открыть настройки проекта",
         openNewWindow: "Open in new window",
         openNewWindowFailed: "Couldn't open a new window",
+        openFolder: "Open in file manager",
+        openFolderFailed: "Couldn't open folder",
         remove: "Удалить проект",
         removing: "Удаление...",
       },
@@ -1869,6 +1871,7 @@ export const ru: TranslationResources = {
         sendMessage: "Отправить сообщение",
         queueMessage: "Сообщение в очереди",
         muteUnmuteVoiceMode: "Отключить голосовой режим /unmute",
+        switchProject: "Сменить проект",
       },
       helpNotes: {
         showKeyboardShortcuts: "Доступно, когда фокус находится не в текстовом поле или терминале.",

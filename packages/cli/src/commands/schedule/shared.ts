@@ -114,7 +114,7 @@ function resolveScheduleTarget(args: {
   if (hasExplicitNewAgentOption) {
     throw {
       code: "INVALID_TARGET",
-      message: "--provider/--mode can only be used with a new-agent target",
+      message: "--provider/--mode/--thinking can only be used with a new-agent target",
       details: "Use --target new-agent or omit --target to create a new agent schedule",
     } satisfies CommandError;
   }
@@ -144,6 +144,7 @@ export function parseScheduleCreateInput(options: {
   target?: string;
   provider?: string;
   mode?: string;
+  thinking?: string;
   cwd?: string;
   host?: string;
   maxRuns?: string;
@@ -179,7 +180,15 @@ export function parseScheduleCreateInput(options: {
 
   const targetValue = options.target?.trim();
   const modeId = options.mode?.trim();
-  const hasExplicitNewAgentOption = options.provider !== undefined || options.mode !== undefined;
+  const thinkingOptionId = options.thinking?.trim();
+  if (options.thinking !== undefined && !thinkingOptionId) {
+    throw {
+      code: "INVALID_THINKING_OPTION",
+      message: "--thinking cannot be empty",
+    } satisfies CommandError;
+  }
+  const hasExplicitNewAgentOption =
+    options.provider !== undefined || options.mode !== undefined || options.thinking !== undefined;
   const createNewAgentTarget = (): ScheduleTarget => {
     const resolvedProviderModel = resolveProviderAndModel({
       provider: options.provider,
@@ -191,6 +200,7 @@ export function parseScheduleCreateInput(options: {
         cwd: cwdInput ?? process.cwd(),
         ...(resolvedProviderModel.model ? { model: resolvedProviderModel.model } : {}),
         ...(modeId ? { modeId } : {}),
+        ...(thinkingOptionId ? { thinkingOptionId } : {}),
       },
     };
   };

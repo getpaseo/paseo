@@ -899,6 +899,8 @@ export const zhCN: TranslationResources = {
         openSettings: "打开 project 设置",
         openNewWindow: "在新窗口中打开",
         openNewWindowFailed: "无法打开新窗口",
+        openFolder: "Open in file manager",
+        openFolderFailed: "Couldn't open folder",
         remove: "移除 project",
         removing: "正在移除...",
       },
@@ -1810,6 +1812,7 @@ export const zhCN: TranslationResources = {
         sendMessage: "发送消息",
         queueMessage: "消息排队",
         muteUnmuteVoiceMode: "静音/取消静音语音模式",
+        switchProject: "切换项目",
       },
       helpNotes: {
         showKeyboardShortcuts: "焦点不在文本输入框或终端内时可用。",

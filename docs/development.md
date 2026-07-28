@@ -29,6 +29,7 @@ Root checkout dev is intentionally split across terminals:
 - **Repo dev scripts** default to `$ROOT/.dev/paseo-home`, where `$ROOT` is the current checkout or worktree root. This keeps all dev state scoped to the checkout instead of the packaged desktop app.
 - **`npm run cli -- ...`** runs through the same dev-home wrapper as the dev scripts, so the in-repo CLI automatically targets the current checkout's `.dev/paseo-home` and configured dev daemon endpoint.
 - **Paseo-created worktrees** seed `$PASEO_WORKTREE_PATH/.dev/paseo-home` from `$PASEO_SOURCE_CHECKOUT_PATH/.dev/paseo-home` by copying durable JSON metadata. Runtime files like pid files, sockets, and logs are not copied.
+- **Paseo-created worktrees** read `.worktreeinclude` from the live source checkout before creation. Bare paths and `copy <path>` copy a snapshot into the new worktree; `symlink <path>` creates a live source link. Missing paths, malformed entries, unsafe paths, incompatible include overlaps, destination conflicts, unavailable platform links, and ordinary read/write failures are skipped individually and reported in the daemon log, so the rest of the plan still runs. A source symlink is allowed only when its resolved target remains inside the active source checkout. If that checkout is itself Paseo-managed, its own paths remain eligible while other managed worktree paths stay protected; `copy` snapshots that resolved target, while `symlink` links directly to it. Hard links are ordinary files. Each include is staged before it is committed; Paseo aborts creation only if it cannot safely clean up partial materialization state (or Git/worktree setup itself fails). Materialization finishes before `worktree.setup` runs.
 - **This repo's worktree setup** also best-effort seeds `packages/app/ios` and the newest `.dev/ios-build` entry from the source checkout so iOS simulator services can reuse native project and Xcode cache state when it is safe enough to do so.
 
 Override knobs:
@@ -241,6 +242,14 @@ hook is unset. Daemon-run loop verify checks and ACP single-string terminal
 commands use the same non-login Bash behavior on macOS/Linux, but preserve their
 existing `cmd.exe /c` string semantics on Windows. Service scripts are separate:
 they launch in a terminal and receive the service environment described below.
+
+Because the shell differs per platform, a lifecycle command that must run
+everywhere cannot use POSIX-only syntax — `VAR=1 cmd` env prefixes, `$VAR`
+expansion, `cp`/`rm`, or a `./scripts/*.sh` entrypoint all fail under PowerShell,
+and `bash` is not guaranteed to exist on Windows. Put that logic in a Node script
+that reads what it needs from `process.env` and invoke it as
+`node ./scripts/<name>.mjs`. This repo's own setup does exactly that in
+`scripts/seed-worktree-dev-state.mjs` and `scripts/seed-ios-native-cache.mjs`.
 
 ```json
 {

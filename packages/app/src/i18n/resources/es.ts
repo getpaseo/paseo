@@ -939,6 +939,8 @@ export const es: TranslationResources = {
         openSettings: "Abrir la configuración del proyecto",
         openNewWindow: "Open in new window",
         openNewWindowFailed: "Couldn't open a new window",
+        openFolder: "Open in file manager",
+        openFolderFailed: "Couldn't open folder",
         remove: "Eliminar proyecto",
         removing: "Eliminando...",
       },
@@ -1879,6 +1881,7 @@ export const es: TranslationResources = {
         sendMessage: "enviar mensaje",
         queueMessage: "mensaje de cola",
         muteUnmuteVoiceMode: "Silenciar el modo de voz/unmute",
+        switchProject: "Cambiar proyecto",
       },
       helpNotes: {
         showKeyboardShortcuts: "Disponible cuando el foco no está en un campo de texto o terminal.",

@@ -32,21 +32,12 @@ export const CLAUDE_ULTRACODE_THINKING_OPTION_ID = "ultracode";
 
 export const CLAUDE_MODEL_MANIFEST = [
   {
-    id: "claude-opus-5[1m]",
-    label: "Opus 5 1M",
-    description: "Opus 5 with 1M context window",
+    id: "claude-opus-5",
+    label: "Opus 5",
+    description: "Opus 5 · Latest release",
     defaultPriority: 2,
     minimumClaudeCodeVersion: "2.1.219",
     contextWindowMaxTokens: 1_000_000,
-    effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
-    supportsThinkingDisabled: true,
-  },
-  {
-    id: "claude-opus-5",
-    label: "Opus 5",
-    description: "Opus 5 · 200K context window",
-    minimumClaudeCodeVersion: "2.1.219",
-    contextWindowMaxTokens: 200_000,
     effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
     supportsThinkingDisabled: true,
   },

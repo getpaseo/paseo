@@ -132,6 +132,7 @@ interface UserMessageProps {
   client?: DaemonClient | null;
   isFirstInGroup?: boolean;
   isLastInGroup?: boolean;
+  isPending?: boolean;
   disableOuterSpacing?: boolean;
 }
 
@@ -430,6 +431,7 @@ export const UserMessage = memo(function UserMessage({
   client,
   isFirstInGroup = true,
   isLastInGroup = true,
+  isPending = false,
   disableOuterSpacing,
 }: UserMessageProps) {
   const isCompact = useIsCompactFormFactor();
@@ -441,7 +443,7 @@ export const UserMessage = memo(function UserMessage({
   const hasText = message.trim().length > 0;
   const hasImages = images.length > 0;
   const hasAttachments = attachments.length > 0;
-  const showTrailingRow = hasText && (isCompact || isNative || isHovered);
+  const showTrailingRow = !isPending && hasText && (isCompact || isNative || isHovered);
   const formattedTimestamp = useMemo(
     () => formatMessageTimestamp(new Date(timestamp)),
     [timestamp],
@@ -494,7 +496,7 @@ export const UserMessage = memo(function UserMessage({
   );
 
   return (
-    <View style={containerStyle} testID="user-message">
+    <View style={containerStyle} testID="user-message" aria-busy={isPending}>
       <View
         style={userMessageStylesheet.content}
         onPointerEnter={handlePointerEnter}
@@ -538,9 +540,15 @@ export const UserMessage = memo(function UserMessage({
           ) : null}
         </View>
         {hasText ? (
-          <View style={trailingRowStyle} pointerEvents={showTrailingRow ? "auto" : "none"}>
-            <Text style={userMessageStylesheet.timestampText}>{formattedTimestamp}</Text>
-            {capabilities ? (
+          <View
+            style={trailingRowStyle}
+            pointerEvents={showTrailingRow ? "auto" : "none"}
+            testID="user-message-trailing-row"
+          >
+            <Text style={userMessageStylesheet.timestampText} testID="user-message-timestamp">
+              {formattedTimestamp}
+            </Text>
+            {capabilities && messageId ? (
               <RewindMenu
                 capabilities={capabilities}
                 isPending={rewindMutation.isPending}

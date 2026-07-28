@@ -479,7 +479,8 @@ export function WorkspaceDraftAgentTab({
   const {
     formErrorMessage,
     isSubmitting,
-    optimisticStreamItems,
+    submittedStreamItems,
+    pendingMessageSubmissions,
     draftAgent,
     handleCreateFromInput,
     continueCreateFromAttempt,
@@ -642,7 +643,8 @@ export function WorkspaceDraftAgentTab({
               agentId={tabId}
               serverId={serverId}
               context={draftAgent}
-              streamItems={optimisticStreamItems}
+              streamItems={submittedStreamItems}
+              pendingMessageSubmissions={pendingMessageSubmissions}
               pendingPermissions={EMPTY_PENDING_PERMISSIONS}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
             />
