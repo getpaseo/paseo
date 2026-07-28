@@ -79,6 +79,7 @@ vi.mock("lucide-react-native", () => {
     Archive: icon("Archive"),
     CircleCheck: icon("CircleCheck"),
     Copy: icon("Copy"),
+    FolderOpen: icon("FolderOpen"),
     MoreVertical: icon("MoreVertical"),
     Pencil: icon("Pencil"),
     Pin: icon("Pin"),
@@ -139,19 +140,28 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: mockT }),
 }));
 
-// Mock OpenInFileManagerMenuItem so we can assert on its props.
-const OpenInFileManagerMenuItemSpy = vi.fn((_props: Record<string, unknown>) =>
-  React.createElement(
-    "span",
-    { "data-testid": "open-in-file-manager-item" },
-    "Open in file manager",
-  ),
-);
-
-vi.mock("@/workspace/open-in-file-manager/menu-item", () => ({
-  OpenInFileManagerMenuItem: (props: Record<string, unknown>) =>
-    OpenInFileManagerMenuItemSpy(props),
+vi.mock("@/constants/platform", () => ({
+  isNative: false,
+  isWeb: true,
+  getIsElectron: vi.fn().mockReturnValue(true),
 }));
+
+vi.mock("@/hooks/use-is-local-daemon", () => ({
+  useIsLocalDaemon: vi.fn(),
+}));
+
+vi.mock("@/workspace/desktop-open-targets", () => ({
+  useDesktopOpenTargets: vi.fn(),
+  openDesktopTarget: vi.fn(),
+}));
+
+vi.mock("@/contexts/toast-context", () => ({
+  useToast: () => ({ error: vi.fn() }),
+}));
+
+import { getIsElectron } from "@/constants/platform";
+import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
+import { useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
 
 afterEach(() => {
   cleanup();
@@ -164,7 +174,56 @@ describe("SidebarWorkspaceMenu", () => {
     onArchive: vi.fn(),
   };
 
-  it("forwards serverId to OpenInFileManagerMenuItem", () => {
+  const fileManagerTargets = [
+    {
+      id: "explorer",
+      label: "Explorer",
+      kind: "file-manager" as const,
+      icon: { kind: "symbol" as const, name: "folder" as const },
+    },
+  ];
+
+  it("renders 'Open in file manager' when workspace is local", () => {
+    vi.mocked(getIsElectron).mockReturnValue(true);
+    vi.mocked(useIsLocalDaemon).mockReturnValue(true);
+    vi.mocked(useDesktopOpenTargets).mockReturnValue({
+      targets: fileManagerTargets,
+      isAvailable: true,
+    });
+
+    const { queryByTestId } = render(
+      <SidebarWorkspaceMenu
+        {...baseProps}
+        serverId="local-server"
+        openInFileManagerPath="/some/local/path"
+      />,
+    );
+
+    expect(queryByTestId("sidebar-workspace-menu-open-folder-test-workspace")).not.toBeNull();
+  });
+
+  it("hides 'Open in file manager' when workspace is on a remote host", () => {
+    vi.mocked(getIsElectron).mockReturnValue(true);
+    vi.mocked(useIsLocalDaemon).mockReturnValue(false);
+    vi.mocked(useDesktopOpenTargets).mockReturnValue({
+      targets: [],
+      isAvailable: false,
+    });
+
+    const { queryByTestId } = render(
+      <SidebarWorkspaceMenu
+        {...baseProps}
+        serverId="remote-server"
+        openInFileManagerPath="/home/user/project"
+      />,
+    );
+
+    expect(queryByTestId("sidebar-workspace-menu-open-folder-test-workspace")).toBeNull();
+  });
+
+  it("passes serverId to useIsLocalDaemon correctly", () => {
+    vi.mocked(getIsElectron).mockReturnValue(true);
+
     render(
       <SidebarWorkspaceMenu
         {...baseProps}
@@ -173,40 +232,6 @@ describe("SidebarWorkspaceMenu", () => {
       />,
     );
 
-    expect(OpenInFileManagerMenuItemSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        serverId: "server-abc",
-        path: "/some/path",
-      }),
-    );
-  });
-
-  it("forwards null serverId to OpenInFileManagerMenuItem", () => {
-    render(
-      <SidebarWorkspaceMenu {...baseProps} serverId={null} openInFileManagerPath="/some/path" />,
-    );
-
-    expect(OpenInFileManagerMenuItemSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ serverId: null }),
-    );
-  });
-
-  it("forwards undefined serverId when not provided", () => {
-    render(<SidebarWorkspaceMenu {...baseProps} openInFileManagerPath="/some/path" />);
-
-    expect(OpenInFileManagerMenuItemSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ serverId: undefined }),
-    );
-  });
-
-  it("forwards path as undefined when openInFileManagerPath is not set", () => {
-    render(<SidebarWorkspaceMenu {...baseProps} serverId="server-abc" />);
-
-    expect(OpenInFileManagerMenuItemSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        serverId: "server-abc",
-        path: undefined,
-      }),
-    );
+    expect(useIsLocalDaemon).toHaveBeenCalledWith("server-abc");
   });
 });

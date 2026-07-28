@@ -505,6 +505,10 @@ function ProjectRowTrailingActions({
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
   const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint;
+  const projectServerId =
+    project.hosts.find((host) => host.iconWorkingDir === project.iconWorkingDir)?.serverId ??
+    project.hosts[0]?.serverId;
+
   return (
     <View style={styles.projectTrailingActions}>
       {worktreeTarget ? (
@@ -524,7 +528,7 @@ function ProjectRowTrailingActions({
           <ProjectKebabMenu
             projectKey={project.projectKey}
             projectPath={project.iconWorkingDir}
-            serverId={project.hosts[0]?.serverId}
+            serverId={projectServerId}
             onRemoveProject={onRemoveProject}
             removeProjectStatus={removeProjectStatus}
           />
