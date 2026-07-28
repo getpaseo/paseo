@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.908 - 2026-07-28
+
+### Added
+
+- Sync the fork with official Paseo v0.2.3 (workspace scripts CLI/MCP, terminal ID copy, chat history load-on-top, encrypted traffic savings, and related fixes) while keeping fork-only features ([#27](https://github.com/iamriajul/paseo/pull/27) by [@iamriajul](https://github.com/iamriajul))
+
+### Improved
+
+- Preserve custom metadata endpoint, intrusive desktop attention, Browser localhost tunneling, Android push credentials, PDF preview, and related fork work on top of the official 0.2.3 line
+
 ## 0.2.907 - 2026-07-28
 
 ### Added
