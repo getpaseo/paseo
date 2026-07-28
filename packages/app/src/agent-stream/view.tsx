@@ -33,11 +33,11 @@ import {
   UserMessage,
   ActivityLog,
   ToolCall,
-  TodoListCard,
   CompactionMarker,
   MessageOuterSpacingProvider,
   type InlinePathTarget,
 } from "@/components/message";
+import { TaskListCard } from "@/components/task-list-card";
 import { PlanCard } from "@/components/plan-card";
 import type { StreamItem } from "@/types/stream";
 import type { PendingMessageSubmission } from "@/composer/submission/model";
@@ -794,7 +794,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             );
 
           case "todo_list":
-            return <TodoListCard items={item.items} />;
+            return <TaskListCard items={item.items} />;
 
           case "compaction":
             return (
