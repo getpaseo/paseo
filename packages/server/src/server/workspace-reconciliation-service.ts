@@ -345,6 +345,7 @@ export class WorkspaceReconciliationService {
     const projectGroupKey = deriveProjectGroupKey({
       rootPath: project.rootPath,
       remoteUrl: currentGit.remoteUrl,
+      worktreeRoot: currentGit.worktreeRoot,
       mainRepoRoot: currentGit.mainRepoRoot,
     });
 

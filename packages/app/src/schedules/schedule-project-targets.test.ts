@@ -21,6 +21,8 @@ function makeProject(overrides: Partial<ProjectSummary>): ProjectSummary {
 function makeHost(overrides: Partial<ProjectSummary["hosts"][number]>) {
   return {
     serverId: "host-1",
+    projectName: "Project",
+    projectCustomName: null,
     serverName: "Host 1",
     isOnline: true,
     repoRoot: "/tmp/project",

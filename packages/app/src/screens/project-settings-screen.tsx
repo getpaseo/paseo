@@ -242,7 +242,8 @@ function ProjectSettingsBody({
             projectKey={project.projectKey}
           />
           <ProjectNameEditor
-            project={project}
+            projectName={selectedHost.projectName}
+            projectCustomName={selectedHost.projectCustomName}
             projectId={selectedHost.projectId ?? project.projectKey}
             client={client}
           />
@@ -793,17 +794,23 @@ function ResolveSpinnerColor(): string {
 }
 
 interface ProjectNameEditorProps {
-  project: ProjectSummary;
+  projectName: string;
+  projectCustomName: string | null;
   projectId: string;
   client: DaemonClient;
 }
 
-function ProjectNameEditor({ project, projectId, client }: ProjectNameEditorProps) {
+function ProjectNameEditor({
+  projectName,
+  projectCustomName,
+  projectId,
+  client,
+}: ProjectNameEditorProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const toast = useToast();
   const [isEditing, setIsEditing] = useState(false);
-  const [value, setValue] = useState(project.projectCustomName ?? "");
+  const [value, setValue] = useState(projectCustomName ?? "");
 
   const renameMutation = useMutation({
     mutationFn: (customName: string | null) => client.renameProject(projectId, customName),
@@ -820,24 +827,24 @@ function ProjectNameEditor({ project, projectId, client }: ProjectNameEditorProp
   });
 
   const handleStartEdit = useCallback(() => {
-    setValue(project.projectCustomName ?? "");
+    setValue(projectCustomName ?? "");
     setIsEditing(true);
-  }, [project.projectCustomName]);
+  }, [projectCustomName]);
 
   const handleCancel = useCallback(() => {
     setIsEditing(false);
-    setValue(project.projectCustomName ?? "");
-  }, [project.projectCustomName]);
+    setValue(projectCustomName ?? "");
+  }, [projectCustomName]);
 
   const handleSave = useCallback(() => {
     const trimmed = value.trim();
     const next = trimmed.length === 0 ? null : trimmed;
-    if (next === (project.projectCustomName ?? null)) {
+    if (next === projectCustomName) {
       setIsEditing(false);
       return;
     }
     renameMutation.mutate(next);
-  }, [value, project.projectCustomName, renameMutation]);
+  }, [value, projectCustomName, renameMutation]);
 
   const handleReset = useCallback(() => {
     renameMutation.mutate(null);
@@ -847,7 +854,7 @@ function ProjectNameEditor({ project, projectId, client }: ProjectNameEditorProp
     return (
       <View style={styles.nameEditorRow}>
         <Text style={styles.projectTitle} numberOfLines={1}>
-          {project.projectName}
+          {projectName}
         </Text>
         <Pressable
           testID="project-name-edit-button"
@@ -858,7 +865,7 @@ function ProjectNameEditor({ project, projectId, client }: ProjectNameEditorProp
         >
           <Pencil size={ICON_SIZE} color={styles.iconColor.color} />
         </Pressable>
-        {project.projectCustomName ? (
+        {projectCustomName ? (
           <Pressable
             testID="project-name-reset-button"
             accessibilityLabel={t("settings.project.rename.resetLabel")}
@@ -881,7 +888,7 @@ function ProjectNameEditor({ project, projectId, client }: ProjectNameEditorProp
         accessibilityLabel={t("settings.project.rename.projectNameLabel")}
         value={value}
         onChangeText={setValue}
-        placeholder={project.projectName}
+        placeholder={projectName}
         placeholderTextColor={styles.placeholderColor.color}
         autoFocus
         style={styles.nameEditorInput}

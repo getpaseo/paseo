@@ -35,6 +35,7 @@ export function classifyDirectoryForProjectMembership(input: {
   const projectKey = deriveProjectGroupKey({
     rootPath: checkout.worktreeRoot ?? cwd,
     remoteUrl: checkout.remoteUrl,
+    worktreeRoot: checkout.worktreeRoot,
     mainRepoRoot: checkout.mainRepoRoot,
   });
 

@@ -121,6 +121,37 @@ describe("buildProjects", () => {
     ]);
   });
 
+  it("uses one ambiguity scope across every host", () => {
+    const projectGroupKey = "remote:github.com/acme/app";
+    const result = buildProjects({
+      hosts: [
+        {
+          serverId: "desktop",
+          serverName: "Desktop",
+          isOnline: true,
+          workspaces: [
+            workspace({ id: "clone-a", repoRoot: "/a", projectId: "prj_a", projectGroupKey }),
+            workspace({ id: "clone-b", repoRoot: "/b", projectId: "prj_b", projectGroupKey }),
+          ],
+        },
+        {
+          serverId: "laptop",
+          serverName: "Laptop",
+          isOnline: true,
+          workspaces: [
+            workspace({ id: "clone-c", repoRoot: "/c", projectId: "prj_c", projectGroupKey }),
+          ],
+        },
+      ],
+    });
+
+    expect(result.projects.map((project) => project.projectKey).sort()).toEqual([
+      "host:desktop:project:prj_a",
+      "host:desktop:project:prj_b",
+      "host:laptop:project:prj_c",
+    ]);
+  });
+
   it("keeps host-local metadata when the grouping key differs from the project ID", () => {
     const projectGroupKey = "remote:github.com/acme/app";
     const result = buildProjects({
@@ -150,6 +181,49 @@ describe("buildProjects", () => {
     });
   });
 
+  it("keeps custom-name state on the host that owns it", () => {
+    const projectGroupKey = "remote:github.com/acme/app";
+    const result = buildProjects({
+      hosts: [
+        {
+          serverId: "desktop",
+          serverName: "Desktop",
+          isOnline: true,
+          workspaces: [
+            workspace({
+              id: "desktop-main",
+              repoRoot: "/desktop/app",
+              projectId: "prj_desktop",
+              projectGroupKey,
+              projectName: "My App",
+              projectCustomName: "My App",
+            }),
+          ],
+        },
+        {
+          serverId: "laptop",
+          serverName: "Laptop",
+          isOnline: true,
+          workspaces: [
+            workspace({
+              id: "laptop-main",
+              repoRoot: "/laptop/app",
+              projectId: "prj_laptop",
+              projectGroupKey,
+              projectName: "acme/app",
+              projectCustomName: null,
+            }),
+          ],
+        },
+      ],
+    });
+
+    expect(result.projects[0]?.hosts).toMatchObject([
+      { serverId: "desktop", projectName: "My App", projectCustomName: "My App" },
+      { serverId: "laptop", projectName: "acme/app", projectCustomName: null },
+    ]);
+  });
+
   it("preserves the root of a grouped project without workspaces", () => {
     const result = buildProjects({
       hosts: [
@@ -162,8 +236,8 @@ describe("buildProjects", () => {
             {
               projectId: "prj_app",
               projectGroupKey: "remote:github.com/acme/app",
-              projectDisplayName: "acme/app",
-              projectCustomName: null,
+              projectDisplayName: "My Empty Project",
+              projectCustomName: "My Empty Project",
               projectRootPath: "/repo/app",
               projectKind: "git",
             },
@@ -174,6 +248,8 @@ describe("buildProjects", () => {
 
     expect(result.projects[0]?.hosts[0]).toMatchObject({
       projectId: "prj_app",
+      projectName: "My Empty Project",
+      projectCustomName: "My Empty Project",
       repoRoot: "/repo/app",
     });
   });

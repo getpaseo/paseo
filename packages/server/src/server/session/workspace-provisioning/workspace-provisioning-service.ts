@@ -166,6 +166,7 @@ export function createWorkspaceProvisioningService(deps: {
       projectGroupKey: deriveProjectGroupKey({
         rootPath,
         remoteUrl: checkout.remoteUrl,
+        worktreeRoot: checkout.worktreeRoot,
         mainRepoRoot: checkout.mainRepoRoot,
       }),
       timestamp,
@@ -270,6 +271,7 @@ export function createWorkspaceProvisioningService(deps: {
       projectGroupKey: deriveProjectGroupKey({
         rootPath: input.repoRoot,
         remoteUrl: checkout.remoteUrl,
+        worktreeRoot: checkout.worktreeRoot,
         mainRepoRoot: checkout.mainRepoRoot,
       }),
       timestamp: new Date().toISOString(),
@@ -346,8 +348,24 @@ export function createWorkspaceProvisioningService(deps: {
         ? checkout
         : await workspaceGitService.getCheckout(project.rootPath);
       const kind = projectCheckout.isGit ? "git" : "non_git";
-      if (project.archivedAt || project.kind !== kind) {
-        await projectRegistry.upsert({ ...project, kind, archivedAt: null, updatedAt: timestamp });
+      const projectGroupKey = deriveProjectGroupKey({
+        rootPath: project.rootPath,
+        remoteUrl: projectCheckout.remoteUrl,
+        worktreeRoot: projectCheckout.worktreeRoot,
+        mainRepoRoot: projectCheckout.mainRepoRoot,
+      });
+      if (
+        project.archivedAt ||
+        project.kind !== kind ||
+        project.projectGroupKey !== projectGroupKey
+      ) {
+        await projectRegistry.upsert({
+          ...project,
+          kind,
+          projectGroupKey,
+          archivedAt: null,
+          updatedAt: timestamp,
+        });
       }
     }
     if (!next) return workspace;
@@ -386,6 +404,7 @@ export function createWorkspaceProvisioningService(deps: {
     const projectGroupKey = deriveProjectGroupKey({
       rootPath: project.rootPath,
       remoteUrl: projectCheckout.remoteUrl,
+      worktreeRoot: projectCheckout.worktreeRoot,
       mainRepoRoot: projectCheckout.mainRepoRoot,
     });
     if (project.kind === kind && project.projectGroupKey === projectGroupKey) return project;

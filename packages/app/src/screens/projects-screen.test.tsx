@@ -221,6 +221,8 @@ function workspaceSummary(overrides: Partial<WorkspaceSummary> = {}): WorkspaceS
 function hostEntry(overrides: Partial<ProjectHostEntry> = {}): ProjectHostEntry {
   return {
     serverId: "host-a",
+    projectName: "Project",
+    projectCustomName: null,
     serverName: "alpha",
     isOnline: true,
     repoRoot: "/home/me/proj",

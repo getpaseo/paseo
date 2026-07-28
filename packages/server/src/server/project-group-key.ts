@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 
 /**
  * Derives the persisted, opaque equivalence key used to group projects across hosts.
@@ -7,11 +7,29 @@ import { resolve } from "node:path";
 export function deriveProjectGroupKey(input: {
   rootPath: string;
   remoteUrl: string | null;
+  worktreeRoot: string | null;
   mainRepoRoot: string | null;
 }): string {
-  return (
-    deriveRemoteProjectGroupKey(input.remoteUrl) ?? resolve(input.mainRepoRoot ?? input.rootPath)
-  );
+  const remoteKey = deriveRemoteProjectGroupKey(input.remoteUrl);
+  if (!remoteKey) return resolve(input.mainRepoRoot ?? input.rootPath);
+
+  const selectedPath = deriveSelectedPath(input.rootPath, input.worktreeRoot);
+  return selectedPath ? `${remoteKey}#subdir:${selectedPath}` : remoteKey;
+}
+
+function deriveSelectedPath(rootPath: string, worktreeRoot: string | null): string | null {
+  if (!worktreeRoot) return null;
+  const selectedPath = relative(resolve(worktreeRoot), resolve(rootPath));
+  if (
+    !selectedPath ||
+    selectedPath === "." ||
+    selectedPath === ".." ||
+    selectedPath.startsWith(`..${sep}`) ||
+    isAbsolute(selectedPath)
+  ) {
+    return null;
+  }
+  return selectedPath.split(sep).map(encodeURIComponent).join("/");
 }
 
 function deriveRemoteProjectGroupKey(remoteUrl: string | null): string | null {
@@ -27,7 +45,7 @@ function deriveRemoteProjectGroupKey(remoteUrl: string | null): string | null {
   } else if (trimmed.includes("://")) {
     try {
       const parsed = new URL(trimmed);
-      host = parsed.hostname || null;
+      host = parsed.host || null;
       remotePath = parsed.pathname ? parsed.pathname.replace(/^\/+/, "") : null;
     } catch {
       return null;
