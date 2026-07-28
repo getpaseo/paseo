@@ -715,7 +715,6 @@ async function startRelay(excludedPorts: Set<number>): Promise<RelayPorts> {
 
 function startMetro(input: {
   metroPort: number;
-  daemonPort: number;
   buffer: ReturnType<typeof createLineBuffer>;
 }): ChildProcess {
   const appDir = path.resolve(__dirname, "../..");
@@ -727,7 +726,6 @@ function startMetro(input: {
       ...(process.env.E2E_DESKTOP_RUNTIME === "1"
         ? {
             PASEO_WEB_PLATFORM: "electron",
-            EXPO_PUBLIC_LOCAL_DAEMON: `127.0.0.1:${input.daemonPort}`,
           }
         : {}),
     },
@@ -876,7 +874,6 @@ export default async function globalSetup() {
   try {
     metroProcess = startMetro({
       metroPort,
-      daemonPort: port,
       buffer: metroLineBuffer,
     });
     await waitForMetro(metroPort, {

@@ -1,10 +1,7 @@
 import { buildHostWorkspaceRoute } from "../../app/src/utils/host-routes";
 import { expect, test, type Page } from "../../app/e2e/support/fixtures";
 import { gotoAppShell } from "../../app/e2e/support/helpers/app";
-import {
-  createIdleAgent,
-  expectWorkspaceTabVisible,
-} from "../../app/e2e/support/helpers/archive-tab";
+import { expectWorkspaceTabVisible } from "../../app/e2e/support/helpers/archive-tab";
 import { getE2EDaemonPort } from "../../app/e2e/support/helpers/daemon-port";
 import { installDaemonWebSocketGate } from "../../app/e2e/support/helpers/daemon-websocket-gate";
 import { expectAppRoute } from "../../app/e2e/support/helpers/route-assertions";
@@ -84,7 +81,10 @@ test("refresh keeps one continuous splash before restoring the desktop workspace
   const workspace = await seedWorkspace({ repoPrefix: "workspace-refresh-route-" });
 
   try {
-    const agent = await createIdleAgent(workspace.client, {
+    const agent = await workspace.client.createAgent({
+      provider: "mock",
+      model: "ten-second-stream",
+      modeId: "load-test",
       cwd: workspace.repoPath,
       workspaceId: workspace.workspaceId,
       title: `workspace-refresh-route-${Date.now()}`,
