@@ -426,9 +426,19 @@ describe("bootstrapWorkspaceRegistries", () => {
       logger,
     });
 
-    expect((await projectRegistry.list()).map((project) => project.projectId).sort()).toEqual([
-      "remote:github.com/acme/legacy-project#subdir:packages/app",
-      "remote:github.com/acme/legacy-project#subdir:packages/server",
+    expect(
+      (await projectRegistry.list())
+        .map((project) => ({ projectId: project.projectId, displayName: project.displayName }))
+        .sort((left, right) => left.projectId.localeCompare(right.projectId)),
+    ).toEqual([
+      {
+        projectId: "remote:github.com/acme/legacy-project#subdir:packages/app",
+        displayName: "app",
+      },
+      {
+        projectId: "remote:github.com/acme/legacy-project#subdir:packages/server",
+        displayName: "server",
+      },
     ]);
     expect(
       new Set((await workspaceRegistry.list()).map((workspace) => workspace.projectId)),

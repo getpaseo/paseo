@@ -22,6 +22,7 @@ describe("selectActiveGitWorkspaceProject", () => {
   it("selects the active git workspace project from checkout metadata", () => {
     expect(selectActiveGitWorkspaceProject("server-1", gitWorkspace())).toEqual({
       serverId: "server-1",
+      projectId: "project-1",
       projectKey: "project-1",
       repoRoot: "/repo/main-project-1",
     });
@@ -35,8 +36,24 @@ describe("selectActiveGitWorkspaceProject", () => {
       ),
     ).toEqual({
       serverId: "server-1",
+      projectId: "project-1",
       projectKey: "project-1",
       repoRoot: "/repo/project-1",
+    });
+  });
+
+  it("uses the persisted project group key for the settings route", () => {
+    expect(
+      selectActiveGitWorkspaceProject(
+        "server-1",
+        gitWorkspace({
+          projectId: "prj_local",
+          projectGroupKey: "remote:github.com/acme/project",
+        }),
+      ),
+    ).toMatchObject({
+      projectId: "prj_local",
+      projectKey: "remote:github.com/acme/project",
     });
   });
 
@@ -85,6 +102,7 @@ describe("buildWorktreeSetupCalloutPolicy", () => {
     expect(
       buildWorktreeSetupCalloutPolicy({
         serverId: "server-1",
+        projectId: "project-1",
         projectKey: "project-1",
         repoRoot: "/repo/project-1",
       }),

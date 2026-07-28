@@ -55,6 +55,6 @@ function deriveRemoteProjectGroupKey(remoteUrl: string | null): string | null {
   if (!host || !remotePath) return null;
   let cleanedPath = remotePath.trim().replace(/^\/+/, "").replace(/\/+$/, "");
   if (cleanedPath.endsWith(".git")) cleanedPath = cleanedPath.slice(0, -4);
-  if (!cleanedPath.includes("/")) return null;
+  if (!cleanedPath) return null;
   return `remote:${host.toLowerCase()}/${cleanedPath}`;
 }

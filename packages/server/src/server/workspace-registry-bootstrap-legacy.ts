@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 
 import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 
@@ -46,7 +46,7 @@ export function classifyDirectoryForProjectMembership(input: {
     workspaceKind: deriveWorkspaceKind(checkout),
     workspaceDisplayName: deriveWorkspaceDisplayName({ cwd, checkout }),
     projectKey,
-    projectName: deriveProjectGroupingName(projectKey),
+    projectName: deriveProjectGroupingName(projectKey, cwd),
     projectRootPath: deriveProjectRootPath({ cwd, checkout }),
     projectKind: deriveProjectKind(checkout),
   };
@@ -58,7 +58,8 @@ function deriveWorkspaceDirectoryKey(cwd: string, checkout: ProjectCheckoutLiteP
   return worktreeRoot && resolve(worktreeRoot) === selectedRoot ? worktreeRoot : selectedRoot;
 }
 
-function deriveProjectGroupingName(projectKey: string): string {
+function deriveProjectGroupingName(projectKey: string, selectedRoot: string): string {
+  if (projectKey.includes("#subdir:")) return basename(selectedRoot);
   if (projectKey.startsWith("remote:")) {
     const pathSegments = projectKey.slice("remote:".length).split("/").filter(Boolean).slice(1);
     if (pathSegments.length >= 2) return pathSegments.slice(-2).join("/");

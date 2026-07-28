@@ -16,6 +16,19 @@ describe("deriveProjectGroupKey", () => {
     ).toBe("remote:git.example.com:8443/acme/app");
   });
 
+  test("accepts a root-level remote repository path", () => {
+    const rootPath = path.resolve("repo");
+
+    expect(
+      deriveProjectGroupKey({
+        rootPath,
+        remoteUrl: "https://git.example.com/repo.git",
+        worktreeRoot: rootPath,
+        mainRepoRoot: null,
+      }),
+    ).toBe("remote:git.example.com/repo");
+  });
+
   test("includes the selected path within a repository", () => {
     const worktreeRoot = path.resolve("repo");
     const rootPath = path.join(worktreeRoot, "packages", "app");
