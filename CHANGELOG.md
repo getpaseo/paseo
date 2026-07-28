@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.907 - 2026-07-28
+
+### Added
+
+- Optional daemon-scoped OpenAI-compatible endpoint for AI metadata (commit messages, PR title/body, workspace titles, branch names), configurable in Host settings → Agents
+- When enabled, the custom endpoint is tried first; failures fall back to the existing agent-provider chain
+- Model discovery via `/models`, with free-text model input when discovery fails
+
 ## 0.2.906 - 2026-07-27
 
 ### Fixed
