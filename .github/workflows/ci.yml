@@ -28,8 +28,11 @@ jobs:
       full: ${{ github.event_name != 'pull_request' || steps.filter.outputs.routing != 'false' || steps.filter.outputs.workspace != 'false' || steps.filter.outputs.ci != 'false' }}
       format: ${{ steps.filter.outputs.format }}
       quality: ${{ steps.filter.outputs.quality }}
+      daemon_launch: ${{ steps.filter.outputs.daemon_launch }}
+      hub_cli: ${{ steps.filter.outputs.hub_cli }}
       server: ${{ steps.filter.outputs.server }}
       desktop: ${{ steps.filter.outputs.desktop }}
+      desktop_bridge: ${{ steps.filter.outputs.desktop_bridge }}
       app: ${{ steps.filter.outputs.app }}
       sdk: ${{ steps.filter.outputs.sdk }}
       playwright: ${{ steps.filter.outputs.playwright }}
@@ -128,6 +131,45 @@ jobs:
           npm pack --dry-run --ignore-scripts --workspace=@getpaseo/client
           npm pack --dry-run --ignore-scripts --workspace=@getpaseo/server
 
+  daemon-launch-contract:
+    name: daemon-launch-contract
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.daemon_launch != 'false') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Verify daemon launch supervision
+        run: node --test scripts/daemon-launch-contract.test.mjs
+
+  hub-cli-contract:
+    name: hub-cli-contract
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.hub_cli != 'false') }}
+    runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: node scripts/npm-retry.mjs ci
+
+      - name: Build server dependencies
+        run: npm run build:server-deps
+
+      - name: Verify the Hub CLI/daemon boundary
+        run: npm run test:hub-cli-contract --workspace=@getpaseo/server
+
   server-tests-ubuntu:
     name: server-tests (ubuntu-latest)
     needs: changes
@@ -198,29 +240,6 @@ jobs:
       - name: Run desktop tests
         run: npm run test --workspace=@getpaseo/desktop
 
-      - name: Build app dependencies for desktop E2E
-        if: runner.os == 'Linux'
-        run: npm run build:app-deps
-
-      - name: Install virtual display
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y xvfb xauth
-
-      - name: Run real Electron browser tab bridge E2E
-        if: runner.os == 'Linux'
-        run: npm run test:e2e:browser-tab-bridge --workspace=@getpaseo/desktop
-        env:
-          PASEO_TAB_BRIDGE_E2E_ARTIFACT_DIR: ${{ runner.temp }}/browser-tab-bridge-e2e
-
-      - name: Upload browser tab bridge diagnostics
-        uses: actions/upload-artifact@v4
-        if: failure() && runner.os == 'Linux'
-        with:
-          name: browser-tab-bridge-e2e
-          path: ${{ runner.temp }}/browser-tab-bridge-e2e
-          if-no-files-found: ignore
-          retention-days: 7
-
       - name: Build and smoke unpacked desktop app
         if: runner.os == 'Linux'
         run: npm run build:desktop -- --publish never --linux --x64 --dir
@@ -247,6 +266,48 @@ jobs:
     permissions:
       contents: read
     steps: *desktop_test_steps
+
+  desktop-browser-bridge:
+    name: desktop-browser-bridge
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.desktop_bridge != 'false') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies with retry
+        run: node scripts/npm-retry.mjs ci
+
+      - name: Build server stack
+        run: npm run build:server
+
+      - name: Build app dependencies
+        run: npm run build:app-deps
+
+      - name: Install virtual display
+        run: sudo apt-get update && sudo apt-get install -y xvfb xauth
+
+      - name: Run real Electron browser tab bridge E2E
+        run: npm run test:e2e:browser-tab-bridge --workspace=@getpaseo/desktop
+        env:
+          PASEO_TAB_BRIDGE_E2E_ARTIFACT_DIR: ${{ runner.temp }}/browser-tab-bridge-e2e
+
+      - name: Upload browser tab bridge diagnostics
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-tab-bridge-e2e
+          path: ${{ runner.temp }}/browser-tab-bridge-e2e
+          if-no-files-found: ignore
+          retention-days: 7
 
   app-tests:
     name: app-tests

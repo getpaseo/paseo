@@ -20,14 +20,29 @@ ci:
   - ".github/workflows/ci.yml"
 
 format:
-  - ".github/**/*.yml"
-  - "docs/**/*.md"
-  - "packages/**/*.{cjs,css,html,js,json,jsonc,jsx,md,mjs,ts,tsx,yaml,yml}"
-  - "*.{cjs,css,html,js,json,jsonc,jsx,md,mjs,ts,tsx,yaml,yml}"
+  - ".agents/**/*.{cjs,css,html,js,json,jsonc,jsx,md,mjs,ts,tsx,yaml,yml}"
+  - ".github/**/*.{cjs,css,html,js,json,jsonc,jsx,md,mjs,ts,tsx,yaml,yml}"
+  - "**/*.{cjs,css,html,js,json,jsonc,jsx,md,mjs,ts,tsx,yaml,yml}"
 
 quality:
-  - "packages/**/*.{cjs,js,json,jsx,mjs,ts,tsx}"
-  - "*.{cjs,js,json,jsx,mjs,ts,tsx}"
+  - "**/*.{cjs,js,json,jsx,mjs,ts,tsx}"
+
+daemon_launch:
+  - "scripts/daemon-launch-contract.test.mjs"
+  - "packages/server/package.json"
+  - "packages/app/e2e/global-setup.ts"
+  - "packages/server/src/server/daemon-e2e/connection-offer.e2e.test.ts"
+  - "packages/desktop/src/daemon/runtime-paths.ts"
+  - "nix/package.nix"
+
+hub_cli:
+  - "packages/cli/src/commands/hub/**"
+  - "packages/cli/src/output/**"
+  - "packages/cli/src/utils/client.ts"
+  - "packages/cli/src/utils/command-options.ts"
+  - "packages/server/src/server/hub/hub-cli-contract.e2e.test.ts"
+  - "packages/server/src/server/hub/test-utils/relationship-harness.ts"
+  - "packages/server/src/server/test-utils/hub-cli-entry.ts"
 
 server:
   - "packages/server/**"
@@ -37,6 +52,23 @@ server:
 desktop:
   - "packages/desktop/**"
   - "vitest.config.ts"
+
+desktop_bridge:
+  - "packages/desktop/src/main.ts"
+  - "packages/desktop/src/preload.ts"
+  - "packages/desktop/src/features/browser-automation/**"
+  - "packages/desktop/src/features/browser-profile.ts"
+  - "packages/desktop/src/features/browser-profile.test.ts"
+  - "packages/desktop/src/features/browser-webviews/**"
+  - "packages/desktop/scripts/browser-tab-bridge.e2e.mjs"
+  - "packages/desktop/scripts/dev-runner.mjs"
+  - "packages/desktop/package.json"
+  - "packages/desktop/tsconfig.json"
+  - "packages/app/src/components/browser-pane.electron.tsx"
+  - "packages/app/src/panels/browser-panel.tsx"
+  - "packages/app/src/panels/register-panels.ts"
+  - "packages/app/metro.config.cjs"
+  - "packages/app/package.json"
 
 app:
   - "packages/app/**"
@@ -55,15 +87,16 @@ playwright:
   - "packages/app/index.ts"
   - "packages/app/*config.{cjs,js,ts}"
   - "packages/app/package.json"
-  - "packages/server/**"
 
 playwright_desktop:
-  - "packages/desktop/**"
   - "packages/app/src/**/*.electron.{ts,tsx}"
+  - "packages/app/e2e/fixtures.ts"
   - "packages/app/e2e/project-picker-desktop.spec.ts"
-  - "packages/app/e2e/helpers/desktop-updates.ts"
+  - "packages/app/e2e/helpers/**"
   - "packages/app/e2e/global-setup.ts"
+  - "packages/app/metro.config.cjs"
   - "packages/app/playwright.config.ts"
+  - "packages/app/package.json"
 
 relay:
   - "packages/relay/**"

@@ -9,14 +9,17 @@ const dockerWorkflowPath = new URL(".github/workflows/docker.yml", repoRoot);
 const nixWorkflowPath = new URL(".github/workflows/nix.yml", repoRoot);
 const filtersPath = new URL(".github/ci-paths.yml", repoRoot);
 
-const requiredCiJobs = new Map([
+const gatedCiJobs = new Map([
   ["format", { name: "format", contract: "format" }],
   ["lint", { name: "lint", contract: "quality" }],
   ["typecheck", { name: "typecheck", contract: "quality" }],
+  ["daemon-launch-contract", { name: "daemon-launch-contract", contract: "daemon_launch" }],
+  ["hub-cli-contract", { name: "hub-cli-contract", contract: "hub_cli" }],
   ["server-tests-ubuntu", { name: "server-tests (ubuntu-latest)", contract: "server" }],
   ["server-tests-windows", { name: "server-tests (windows-latest)", contract: "server" }],
   ["desktop-tests-ubuntu", { name: "desktop-tests (ubuntu-latest)", contract: "desktop" }],
   ["desktop-tests-windows", { name: "desktop-tests (windows-latest)", contract: "desktop" }],
+  ["desktop-browser-bridge", { name: "desktop-browser-bridge", contract: "desktop_bridge" }],
   ["app-tests", { name: "app-tests", contract: "app" }],
   ["sdk-tests", { name: "sdk-tests", contract: "sdk" }],
   ["playwright-1", { name: "playwright (shard 1/4)", contract: "playwright" }],
@@ -80,14 +83,14 @@ function affectedContracts(filters, changedPath) {
   return direct.filter((filterName) => !["routing", "workspace", "ci"].includes(filterName)).sort();
 }
 
-test("required checks are statically named jobs with real job-level gating", () => {
+test("gated checks are statically named jobs with real job-level gating", () => {
   const workflowSource = readFileSync(ciWorkflowPath, "utf8");
   const jobs = jobBlocks(workflowSource);
 
   assert.doesNotMatch(workflowSource, /strategy:\s*\n\s+matrix:/);
   assert.doesNotMatch(workflowSource, /RUN_TESTS|Skip unaffected|No .* changes detected/);
 
-  for (const [jobId, expected] of requiredCiJobs) {
+  for (const [jobId, expected] of gatedCiJobs) {
     const job = jobs.get(jobId)?.join("\n");
     assert.ok(job, `missing static job ${jobId}`);
     assert.match(job, new RegExp(`^    name: ${expected.name.replace(/[()]/g, "\\$&")}$`, "m"));
@@ -107,18 +110,67 @@ test("change gating allows superseded workflow runs to cancel", () => {
   }
 });
 
+test("cross-package contracts run focused checks instead of package builds", () => {
+  const jobs = jobBlocks(readFileSync(ciWorkflowPath, "utf8"));
+  const daemonLaunch = jobs.get("daemon-launch-contract")?.join("\n") ?? "";
+  const hubCli = jobs.get("hub-cli-contract")?.join("\n") ?? "";
+  const desktop = jobs.get("desktop-tests-ubuntu")?.join("\n") ?? "";
+  const desktopBridge = jobs.get("desktop-browser-bridge")?.join("\n") ?? "";
+
+  assert.match(daemonLaunch, /node --test scripts\/daemon-launch-contract\.test\.mjs/);
+  assert.doesNotMatch(daemonLaunch, /Install dependencies|npm run build/);
+
+  assert.match(hubCli, /test:hub-cli-contract/);
+  assert.doesNotMatch(hubCli, /npm run test --workspace=@getpaseo\/server/);
+
+  assert.doesNotMatch(desktop, /browser-tab-bridge/);
+  assert.match(desktopBridge, /test:e2e:browser-tab-bridge/);
+});
+
 test("PR routing follows test contracts instead of package consumers", () => {
   const filters = loadFilters(filtersPath);
   const cases = new Map([
     ["packages/app/src/components/message.tsx", ["app", "format", "playwright", "quality"]],
-    ["packages/server/src/server/bootstrap.ts", ["format", "playwright", "quality", "server"]],
+    ["packages/server/src/server/bootstrap.ts", ["format", "quality", "server"]],
     ["packages/cli/src/commands/agent/ls.ts", ["cli", "format", "quality"]],
-    ["packages/desktop/src/main.ts", ["desktop", "format", "playwright_desktop", "quality"]],
+    ["packages/desktop/src/main.ts", ["desktop", "desktop_bridge", "format", "quality"]],
+    [
+      "packages/app/src/components/browser-pane.electron.tsx",
+      ["app", "desktop_bridge", "format", "playwright", "playwright_desktop", "quality"],
+    ],
+    ["packages/cli/src/commands/hub/index.ts", ["cli", "format", "hub_cli", "quality"]],
     ["packages/protocol/src/messages.ts", ["format", "quality", "sdk"]],
     ["packages/client/src/client.ts", ["format", "quality", "sdk"]],
     ["packages/relay/src/index.ts", ["format", "quality", "relay"]],
     ["docker/base/Dockerfile", ["docker"]],
-    ["nix/package.nix", ["nix"]],
+    ["nix/package.nix", ["daemon_launch", "nix"]],
+  ]);
+
+  for (const [changedPath, expected] of cases) {
+    assert.deepEqual(affectedContracts(filters, changedPath), expected, changedPath);
+  }
+});
+
+test("tooling and narrow cross-package contracts follow their actual inputs", () => {
+  const filters = loadFilters(filtersPath);
+  const cases = new Map([
+    ["public-docs/cli.md", ["format"]],
+    ["skills/paseo/SKILL.md", ["format"]],
+    [".github/PULL_REQUEST_TEMPLATE.md", ["format"]],
+    [".agents/skills/release-beta/SKILL.md", ["format"]],
+    ["docker/docker-compose.example.yml", ["docker", "format"]],
+    [
+      "packages/app/e2e/helpers/project-picker-ui.ts",
+      ["app", "format", "playwright", "playwright_desktop", "quality"],
+    ],
+    [
+      "packages/app/e2e/global-setup.ts",
+      ["app", "daemon_launch", "format", "playwright", "playwright_desktop", "quality"],
+    ],
+    [
+      "packages/desktop/src/daemon/runtime-paths.ts",
+      ["daemon_launch", "desktop", "format", "quality"],
+    ],
   ]);
 
   for (const [changedPath, expected] of cases) {

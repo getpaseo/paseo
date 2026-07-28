@@ -128,7 +128,7 @@ npm run build:desktop -- --publish never --linux --x64 --dir
 
 The desktop browser tab bridge E2E launches an isolated real daemon, Metro, and Electron app. It forces workspace LRU eviction to reparent the original tab and replace its guest `WebContents`, then makes one MCP call each for tab listing, snapshot, and click against that original browser id. A final MCP wait proves the real target page received the click.
 
-Run it locally with the same command owned by the Ubuntu leg of the existing `desktop-tests` CI check:
+Run it locally with the same command owned by the `desktop-browser-bridge` CI contract:
 
 ```bash
 npm run test:e2e:browser-tab-bridge --workspace=@getpaseo/desktop
@@ -184,6 +184,8 @@ Test suites in this repo are heavy. Running them in bulk freezes the machine, es
 PR checks are routed by the behavior each suite proves, using `.github/ci-paths.yml`. A package does not inherit every test suite of its runtime consumers: app changes do not run CLI or Electron-wrapper tests, and protocol changes do not run every package that imports the protocol. Cross-package static compatibility belongs to `typecheck`; full integration coverage runs on main, merge queue, and manual CI runs.
 
 Required matrix legs are declared as statically named jobs. Their shared steps use YAML anchors, while job-level `if` conditions let GitHub report an unaffected leg as genuinely skipped without allocating a runner or losing the exact required-check name.
+
+The smallest meaningful contract wins over package ownership. For example, daemon launch supervision is a source-level assertion across app, server, desktop, and Nix entrypoints; its CI job reads those entrypoints without building any product. The Hub CLI/daemon boundary and the Electron browser bridge likewise run focused integration checks instead of widening the full server or desktop suites.
 
 ## Agent authentication in tests
 
