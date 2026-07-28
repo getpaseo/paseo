@@ -4596,6 +4596,28 @@ export class DaemonClient {
     });
   }
 
+  async listMetadataCustomEndpointModels(
+    input: { baseUrl?: string; apiKey?: string } = {},
+    requestId?: string,
+  ): Promise<{
+    models: Array<{ id: string; name?: string }>;
+    error: null | { code: string; message: string };
+  }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "metadataGeneration.customEndpoint.listModels.request",
+        ...(input.baseUrl !== undefined ? { baseUrl: input.baseUrl } : {}),
+        ...(input.apiKey !== undefined ? { apiKey: input.apiKey } : {}),
+      },
+      responseType: "metadataGeneration.customEndpoint.listModels.response",
+    });
+    return {
+      models: payload.models,
+      error: payload.error,
+    };
+  }
+
   sendBrowserAutomationExecuteResponse(response: BrowserAutomationExecuteResponse): void {
     this.sendSessionMessageStrict(response);
   }

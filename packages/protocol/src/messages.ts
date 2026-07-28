@@ -1218,6 +1218,13 @@ export const SetDaemonConfigRequestMessageSchema = z.object({
   config: MutableDaemonConfigPatchSchema,
 });
 
+export const MetadataCustomEndpointListModelsRequestSchema = z.object({
+  type: z.literal("metadataGeneration.customEndpoint.listModels.request"),
+  requestId: z.string(),
+  baseUrl: z.string().optional(),
+  apiKey: z.string().optional(),
+});
+
 export const ReadProjectConfigRequestMessageSchema = z.object({
   type: z.literal("read_project_config_request"),
   requestId: z.string(),
@@ -2491,6 +2498,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   DiagnosticsRequestSchema,
   GetDaemonConfigRequestMessageSchema,
   SetDaemonConfigRequestMessageSchema,
+  MetadataCustomEndpointListModelsRequestSchema,
   ReadProjectConfigRequestMessageSchema,
   WriteProjectConfigRequestMessageSchema,
   DictationStreamStartMessageSchema,
@@ -2877,7 +2885,7 @@ export const ServerInfoStatusPayloadSchema = z
         selectiveAgentTimeline: z.boolean().optional(),
         // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
         stableProjectIdentity: z.boolean().optional(),
-        // COMPAT(metadataCustomEndpoint): added 2026-07-28, remove after 2027-01-28.
+        // COMPAT(metadataCustomEndpoint): added 2026-07-28, remove after 2027-01-28 once daemon floor advertises it.
         metadataCustomEndpoint: z.boolean().optional(),
       })
       .optional(),
@@ -3753,6 +3761,27 @@ export const GetDaemonConfigResponseMessageSchema = z.object({
     .object({
       requestId: z.string(),
       config: MutableDaemonConfigSchema,
+    })
+    .passthrough(),
+});
+
+export const MetadataCustomEndpointListModelsResponseSchema = z.object({
+  type: z.literal("metadataGeneration.customEndpoint.listModels.response"),
+  payload: z
+    .object({
+      requestId: z.string(),
+      models: z.array(
+        z.object({
+          id: z.string(),
+          name: z.string().optional(),
+        }),
+      ),
+      error: z
+        .object({
+          code: z.string(),
+          message: z.string(),
+        })
+        .nullable(),
     })
     .passthrough(),
 });
@@ -5253,6 +5282,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   DiagnosticsResponseSchema,
   GetDaemonConfigResponseMessageSchema,
   SetDaemonConfigResponseMessageSchema,
+  MetadataCustomEndpointListModelsResponseSchema,
   ReadProjectConfigResponseMessageSchema,
   WriteProjectConfigResponseMessageSchema,
   SetAgentModeResponseMessageSchema,
