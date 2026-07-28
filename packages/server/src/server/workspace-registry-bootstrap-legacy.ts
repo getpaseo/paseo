@@ -1,8 +1,9 @@
-import { basename, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, resolve } from "node:path";
 
 import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 
 import { parseGitRevParsePath } from "../utils/git-rev-parse-path.js";
+import { getRealpathAwareRelativePath } from "../utils/path.js";
 import { deriveProjectGroupKey } from "./project-group-key.js";
 import {
   deriveProjectKind,
@@ -80,15 +81,8 @@ function deriveProjectRootPath(input: {
     ? parseGitRevParsePath(input.checkout.worktreeRoot)
     : null;
   if (!worktreeRoot) return input.checkout.mainRepoRoot;
-  const selectedPath = relative(resolve(worktreeRoot), resolve(input.cwd));
-  if (
-    !selectedPath ||
-    selectedPath === "." ||
-    selectedPath === ".." ||
-    selectedPath.startsWith(`..${sep}`) ||
-    isAbsolute(selectedPath)
-  ) {
-    return input.checkout.mainRepoRoot;
-  }
-  return resolve(input.checkout.mainRepoRoot, selectedPath);
+  const selectedPath = getRealpathAwareRelativePath(worktreeRoot, input.cwd);
+  return selectedPath
+    ? resolve(input.checkout.mainRepoRoot, selectedPath)
+    : input.checkout.mainRepoRoot;
 }
