@@ -1061,22 +1061,7 @@ function normalizeMaterializations(
         ? left.relativePath.localeCompare(right.relativePath)
         : depthDifference;
     });
-  const normalized: WorktreeIncludeMaterialization[] = [];
-
-  for (const materialization of sorted) {
-    const ancestor = normalized.find((candidate) =>
-      isRelativePathAncestor(candidate.relativePath, materialization.relativePath),
-    );
-    if (ancestor === undefined) {
-      normalized.push(materialization);
-      continue;
-    }
-    if (ancestor.mode === "copy" && materialization.mode === "copy") {
-      continue;
-    }
-  }
-
-  return { materializations: normalized, skipped };
+  return { materializations: sorted, skipped };
 }
 
 function isRelativePathAncestor(ancestor: string, candidate: string): boolean {

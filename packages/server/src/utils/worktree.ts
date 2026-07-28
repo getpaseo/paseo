@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, realpathSync, rmSync, statSync } from "fs";
 import { copyFile, rm, stat } from "fs/promises";
 import { join, basename, dirname, isAbsolute, resolve, sep } from "path";
 import net from "node:net";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import stripAnsi from "strip-ansi";
 import {
   buildStringCommandShellInvocation,
@@ -1176,6 +1176,7 @@ export interface RollbackCreatedPaseoWorktreeOptions extends DeletePaseoWorktree
 
 async function removeCreatedWorktreeBranch(options: {
   createdBranchName?: string;
+  expectedOid?: string;
   cwd?: string | null;
 }): Promise<void> {
   if (!options.createdBranchName || !options.cwd) {
@@ -1184,14 +1185,22 @@ async function removeCreatedWorktreeBranch(options: {
   if (!(await localBranchExists(options.cwd, options.createdBranchName))) {
     return;
   }
-  await runGitCommand(["branch", "--delete", "--force", options.createdBranchName], {
-    cwd: options.cwd,
-  });
+  if (options.expectedOid) {
+    await runGitCommand(
+      ["update-ref", "-d", `refs/heads/${options.createdBranchName}`, options.expectedOid],
+      { cwd: options.cwd },
+    );
+  } else {
+    await runGitCommand(["branch", "--delete", "--force", options.createdBranchName], {
+      cwd: options.cwd,
+    });
+  }
 }
 
 async function rollbackCreatedWorktreeBranch(
   options: {
     createdBranchName?: string;
+    expectedOid?: string;
     cwd: string;
   },
   cause: unknown,
@@ -1290,10 +1299,11 @@ export const createWorktree = async ({
   const sourcePlan = await resolveWorktreeSourcePlan({ cwd, source, desiredSlug: worktreeSlug });
   const { worktreeIncludePlan, worktreePath } = await (async () => {
     try {
+      const paseoWorktreesBaseRoot = resolvePaseoWorktreesBaseRoot({ paseoHome, worktreesRoot });
       const paseoWorktreesRoot = await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot);
       const includePlan = await readWorktreeIncludePlan({
         sourceRoot: cwd,
-        excludedSourceRoots: [paseoWorktreesRoot],
+        excludedSourceRoots: [paseoWorktreesBaseRoot],
       });
       const requestedWorktreePath = join(paseoWorktreesRoot, worktreeSlug);
       mkdirSync(dirname(requestedWorktreePath), { recursive: true });
@@ -1318,7 +1328,11 @@ export const createWorktree = async ({
       };
     } catch (error) {
       return rollbackCreatedWorktreeBranch(
-        { cwd, createdBranchName: sourcePlan.createdBranchNameBeforeWorktreeAdd },
+        {
+          cwd,
+          createdBranchName: sourcePlan.createdBranchNameBeforeWorktreeAdd,
+          expectedOid: sourcePlan.createdBranchOidBeforeWorktreeAdd,
+        },
         error,
       );
     }
@@ -1399,6 +1413,7 @@ interface WorktreeSourcePlan {
   branchName: string;
   createdBranchName?: string;
   createdBranchNameBeforeWorktreeAdd?: string;
+  createdBranchOidBeforeWorktreeAdd?: string;
   metadataBaseRefName: string;
   changeRequestLookupTarget?: PaseoWorktreeChangeRequestLookupTarget;
   addArguments: string[];
@@ -1456,17 +1471,17 @@ async function resolveCheckoutBranchWorktreeSourcePlan(options: {
 }): Promise<WorktreeSourcePlan> {
   await validateExistingWorktreeBranchName(options.cwd, options.branchName);
   const needsFetch = !(await localBranchExists(options.cwd, options.branchName));
+  let createdBranchOid: string | undefined;
   if (needsFetch) {
     try {
-      await runGitCommand(["fetch", "origin", `${options.branchName}:${options.branchName}`], {
+      createdBranchOid = await fetchNewLocalBranchAtomically({
         cwd: options.cwd,
-        timeout: 120_000,
+        localBranchName: options.branchName,
+        remoteName: "origin",
+        remoteRef: `refs/heads/${options.branchName}`,
       });
     } catch {
-      return rollbackCreatedWorktreeBranch(
-        { cwd: options.cwd, createdBranchName: options.branchName },
-        new UnknownBranchError({ branchName: options.branchName, cwd: options.cwd }),
-      );
+      throw new UnknownBranchError({ branchName: options.branchName, cwd: options.cwd });
     }
   }
 
@@ -1479,7 +1494,11 @@ async function resolveCheckoutBranchWorktreeSourcePlan(options: {
       throw error;
     }
     return rollbackCreatedWorktreeBranch(
-      { cwd: options.cwd, createdBranchName: options.branchName },
+      {
+        cwd: options.cwd,
+        createdBranchName: options.branchName,
+        expectedOid: createdBranchOid,
+      },
       error,
     );
   }
@@ -1490,6 +1509,7 @@ async function resolveCheckoutBranchWorktreeSourcePlan(options: {
       ? {
           createdBranchName: options.branchName,
           createdBranchNameBeforeWorktreeAdd: options.branchName,
+          createdBranchOidBeforeWorktreeAdd: createdBranchOid,
         }
       : {}),
     metadataBaseRefName: options.branchName,
@@ -1509,8 +1529,9 @@ async function resolveChangeRequestWorktreeSourcePlan(options: {
   const changeRequestNumber =
     source.kind === "checkout-github-pr" ? source.githubPrNumber : source.changeRequestNumber;
 
+  let createdBranchOid: string | undefined;
   try {
-    await fetchWorktreeCheckoutRefs({
+    createdBranchOid = await fetchWorktreeCheckoutRefs({
       cwd,
       localBranchName,
       checkoutRefs: source.checkoutRefs ?? [
@@ -1553,6 +1574,7 @@ async function resolveChangeRequestWorktreeSourcePlan(options: {
       branchName: localBranchName,
       createdBranchName: localBranchName,
       createdBranchNameBeforeWorktreeAdd: localBranchName,
+      createdBranchOidBeforeWorktreeAdd: createdBranchOid,
       metadataBaseRefName: normalizedBaseRefName,
       changeRequestLookupTarget: {
         headRef: source.headRef,
@@ -1563,7 +1585,10 @@ async function resolveChangeRequestWorktreeSourcePlan(options: {
       ...remotePlan,
     };
   } catch (error) {
-    return rollbackCreatedWorktreeBranch({ cwd, createdBranchName: localBranchName }, error);
+    return rollbackCreatedWorktreeBranch(
+      { cwd, createdBranchName: localBranchName, expectedOid: createdBranchOid },
+      error,
+    );
   }
 }
 
@@ -1616,27 +1641,22 @@ async function fetchWorktreeCheckoutRefs(options: {
   cwd: string;
   localBranchName: string;
   checkoutRefs: WorktreeCheckoutRef[];
-}): Promise<void> {
+}): Promise<string> {
   let lastResult:
     | Awaited<ReturnType<typeof runGitCommand>>
     | { stderr: string; stdout: string; exitCode: number | null }
     | null = null;
   for (const checkoutRef of options.checkoutRefs) {
-    lastResult = await runGitCommand(
-      [
-        "fetch",
-        checkoutRef.remoteName ?? "origin",
-        `+${checkoutRef.remoteRef}:refs/heads/${options.localBranchName}`,
-        "--force",
-      ],
-      {
+    try {
+      return await fetchNewLocalBranchAtomically({
         cwd: options.cwd,
-        timeout: 120_000,
-        acceptExitCodes: [0, 1, 128],
-      },
-    );
-    if (lastResult.exitCode === 0) {
-      return;
+        localBranchName: options.localBranchName,
+        remoteName: checkoutRef.remoteName ?? "origin",
+        remoteRef: checkoutRef.remoteRef,
+      });
+    } catch (error) {
+      lastResult =
+        error instanceof Error ? { stderr: error.message, stdout: "", exitCode: 1 } : null;
     }
   }
   const attemptedRefs = options.checkoutRefs
@@ -1645,6 +1665,40 @@ async function fetchWorktreeCheckoutRefs(options: {
   throw new Error(
     `Unable to fetch change request refs for worktree branch ${options.localBranchName}: ${attemptedRefs}${lastResult?.stderr ? `\n${lastResult.stderr}` : ""}`,
   );
+}
+
+async function fetchNewLocalBranchAtomically(options: {
+  cwd: string;
+  localBranchName: string;
+  remoteName: string;
+  remoteRef: string;
+}): Promise<string> {
+  const temporaryRef = `refs/paseo/worktree-fetch/${randomUUID()}`;
+  try {
+    await runGitCommand(
+      ["fetch", options.remoteName, `${options.remoteRef}:${temporaryRef}`, "--force"],
+      { cwd: options.cwd, timeout: 120_000 },
+    );
+    const { stdout } = await runGitCommand(["rev-parse", "--verify", temporaryRef], {
+      cwd: options.cwd,
+    });
+    const oid = stdout.trim();
+    await runGitCommand(
+      [
+        "update-ref",
+        `refs/heads/${options.localBranchName}`,
+        oid,
+        "0000000000000000000000000000000000000000",
+      ],
+      { cwd: options.cwd },
+    );
+    return oid;
+  } finally {
+    await runGitCommand(["update-ref", "-d", temporaryRef], {
+      cwd: options.cwd,
+      acceptExitCodes: [0, 1, 128],
+    });
+  }
 }
 
 async function tryFetchWorktreeTrackingRemote(options: {

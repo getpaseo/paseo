@@ -133,6 +133,25 @@ describe("worktree include planning", () => {
     expect(plan.skipped).toEqual([expect.objectContaining({ raw: ".dev/**", reason: "unsafe" })]);
   });
 
+  it("protects every managed project beneath checkout-local worktree storage", async () => {
+    const managedWorktreesRoot = join(sourceRoot, ".dev", "paseo-home", "worktrees");
+    const siblingWorktree = join(managedWorktreesRoot, "other-project", "sibling");
+    mkdirSync(siblingWorktree, { recursive: true });
+    writeFileSync(join(siblingWorktree, ".env"), "secret\n");
+    writeFileSync(
+      join(sourceRoot, ".worktreeinclude"),
+      ".dev/paseo-home/worktrees/other-project/sibling/.env\n",
+    );
+
+    const plan = await readWorktreeIncludePlan({
+      sourceRoot,
+      excludedSourceRoots: [managedWorktreesRoot],
+    });
+
+    expect(plan.materializations).toEqual([]);
+    expect(plan.skipped).toEqual([expect.objectContaining({ reason: "unsafe" })]);
+  });
+
   it("allows includes from a source worktree inside the protected worktree root", async () => {
     const managedWorktreesRoot = join(tempDir, "paseo-home", "worktrees", "project");
     sourceRoot = join(managedWorktreesRoot, "source-worktree");
@@ -328,6 +347,24 @@ describe.skipIf(isPlatform("win32"))("worktree include materialization", () => {
     expect(result).toMatchObject({ materialized: 1, skipped: [] });
     expect(readFileSync(join(worktreeRoot, "cache", "current.txt"), "utf8")).toBe("current\n");
     expect(existsSync(join(worktreeRoot, "cache", "stale.txt"))).toBe(false);
+  });
+
+  it("retains an explicit descendant when an overlapping directory copy is skipped", async () => {
+    mkdirSync(join(sourceRoot, "config", "nested"), { recursive: true });
+    writeFileSync(join(sourceRoot, "config", "local.env"), "local\n");
+    writeFileSync(join(sourceRoot, "config", "nested", "state.txt"), "state\n");
+    writeFileSync(join(sourceRoot, ".worktreeinclude"), "config/**\nconfig/local.env\n");
+    mkdirSync(join(worktreeRoot, "config"));
+    writeFileSync(join(worktreeRoot, "config", "nested"), "conflict\n");
+
+    const plan = await readWorktreeIncludePlan({ sourceRoot });
+    const result = await materializeWorktreeIncludePlan({ plan, worktreeRoot });
+
+    expect(result).toMatchObject({ materialized: 1 });
+    expect(result.skipped).toEqual([
+      expect.objectContaining({ raw: "config/**", reason: "conflict" }),
+    ]);
+    expect(readFileSync(join(worktreeRoot, "config", "local.env"), "utf8")).toBe("local\n");
   });
 
   it("skips a destination parent symlink without writing through it", async () => {
