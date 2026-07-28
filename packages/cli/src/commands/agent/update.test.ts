@@ -33,10 +33,17 @@ describe("applyAgentChanges", () => {
   it("updates an agent's thinking without issuing an empty metadata update", async () => {
     const client = new RecordingAgentUpdateClient();
 
-    await applyAgentChanges(client, "agent-1", { type: "thinking", thinkingOptionId: "high" });
+    const result = await applyAgentChanges(client, "agent-1", {
+      type: "thinking",
+      thinkingOptionId: "high",
+    });
 
     expect(client.metadataUpdates).toEqual([]);
     expect(client.thinkingUpdates).toEqual([{ agentId: "agent-1", thinkingOptionId: "high" }]);
+    expect(result).toEqual({
+      thinkingOptionId: "high",
+      notice: null,
+    });
   });
 
   it("requires a daemon that advertises thinking updates", async () => {
@@ -65,8 +72,11 @@ describe("applyAgentChanges", () => {
     });
 
     expect(notice).toEqual({
-      type: "warning",
-      message: "Thinking changes apply to the next turn.",
+      thinkingOptionId: "high",
+      notice: {
+        type: "warning",
+        message: "Thinking changes apply to the next turn.",
+      },
     });
   });
 });

@@ -13,6 +13,7 @@ export interface AgentUpdateResult {
   agentId: string;
   name: string | null;
   labels: string;
+  thinkingOptionId: string | null;
   noticeType: AgentProviderNotice["type"] | null;
   notice: string | null;
 }
@@ -24,6 +25,7 @@ export const updateSchema: OutputSchema<AgentUpdateResult> = {
     { header: "AGENT ID", field: "agentId" },
     { header: "NAME", field: "name" },
     { header: "LABELS", field: "labels" },
+    { header: "THINKING", field: "thinkingOptionId" },
     { header: "NOTICE", field: "notice" },
   ],
 };
@@ -59,11 +61,16 @@ export type AgentChanges =
   | { type: "metadata"; updates: AgentMetadataChanges }
   | { type: "thinking"; thinkingOptionId: string };
 
+export interface AppliedAgentChanges {
+  thinkingOptionId: string | null;
+  notice: AgentProviderNotice | null;
+}
+
 export async function applyAgentChanges(
   client: AgentUpdateClient,
   agentId: string,
   changes: AgentChanges,
-): Promise<AgentProviderNotice | null> {
+): Promise<AppliedAgentChanges> {
   if (changes.type === "thinking") {
     // COMPAT(agentThinkingUpdate): added in v0.2.4, remove gate after 2027-01-28.
     if (client.getLastServerInfoMessage()?.features?.agentThinkingUpdate !== true) {
@@ -72,10 +79,11 @@ export async function applyAgentChanges(
         message: "Update the host to use agent thinking updates.",
       } satisfies CommandError;
     }
-    return client.setAgentThinkingOption(agentId, changes.thinkingOptionId);
+    const notice = await client.setAgentThinkingOption(agentId, changes.thinkingOptionId);
+    return { thinkingOptionId: changes.thinkingOptionId, notice };
   }
   await client.updateAgent(agentId, changes.updates);
-  return null;
+  return { thinkingOptionId: null, notice: null };
 }
 
 function parseLabelOptions(labels: string[] | undefined): Record<string, string> {
@@ -220,7 +228,7 @@ export async function runUpdateCommand(
     }
     const agentId = fetchResult.agent.id;
 
-    const notice = await applyAgentChanges(client, agentId, changes);
+    const appliedChanges = await applyAgentChanges(client, agentId, changes);
 
     const updatedResult = await client.fetchAgent({ agentId });
     if (!updatedResult) {
@@ -235,8 +243,9 @@ export async function runUpdateCommand(
         agentId,
         name: updatedResult.agent.title,
         labels: formatLabels(updatedResult.agent.labels),
-        noticeType: notice?.type ?? null,
-        notice: notice?.message ?? null,
+        thinkingOptionId: appliedChanges.thinkingOptionId,
+        noticeType: appliedChanges.notice?.type ?? null,
+        notice: appliedChanges.notice?.message ?? null,
       },
       schema: updateSchema,
     };
