@@ -963,8 +963,8 @@ function buildPlanPermissionActions(options?: {
 }): AgentPermissionAction[] {
   const actions: AgentPermissionAction[] = [
     {
-      id: "reject",
-      label: "Reject",
+      id: "dismiss",
+      label: "Dismiss",
       behavior: "deny",
       variant: "danger",
       intent: "dismiss",
@@ -3430,6 +3430,8 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private emitSyntheticPlanApprovalRequest(planText: string): void {
+    this.dismissPendingPlanApprovals("Superseded by a newer plan");
+
     const requestId = `permission-${randomUUID()}`;
     const request: AgentPermissionRequest = {
       id: requestId,
@@ -3871,6 +3873,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         hasCodexConfig: turnStart.hasCodexConfig,
       });
       await this.client.request("turn/start", turnStart.params, TURN_START_TIMEOUT_MS);
+      this.dismissPendingPlanApprovals("Dismissed by a new prompt");
     } catch (error) {
       this.activeForegroundTurnId = null;
       this.activeClientMessageId = null;
@@ -4144,6 +4147,23 @@ export class CodexAppServerAgentSession implements AgentSession {
       });
     }
 
+    this.resolvePlanPermission(requestId, response);
+    if (followUpPrompt) {
+      return { followUpPrompt };
+    }
+  }
+
+  private dismissPendingPlanApprovals(message: string): void {
+    const requestIds = Array.from(this.pendingPermissionHandlers)
+      .filter(([, pending]) => pending.kind === "plan")
+      .map(([requestId]) => requestId);
+
+    for (const requestId of requestIds) {
+      this.resolvePlanPermission(requestId, { behavior: "deny", message });
+    }
+  }
+
+  private resolvePlanPermission(requestId: string, resolution: AgentPermissionResponse): void {
     this.pendingPermissionHandlers.delete(requestId);
     this.pendingPermissions.delete(requestId);
     this.resolvedPermissionRequests.add(requestId);
@@ -4151,11 +4171,8 @@ export class CodexAppServerAgentSession implements AgentSession {
       type: "permission_resolved",
       provider: CODEX_PROVIDER,
       requestId,
-      resolution: response,
+      resolution,
     });
-    if (followUpPrompt) {
-      return { followUpPrompt };
-    }
   }
 
   private emitDeniedToolCallTimelineEvent(params: {
