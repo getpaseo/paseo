@@ -114,6 +114,20 @@ try {
     assert(!output.includes("Nothing to update"), "should treat --thinking as an update field");
     console.log("✓ agent update accepts thinking as an update field\n");
   }
+
+  // Test 8: thinking cannot be combined with metadata updates
+  {
+    console.log("Test 8: thinking cannot be combined with metadata updates");
+    const result =
+      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo agent update abc123 --name renamed --thinking high`.nothrow();
+    assert.notStrictEqual(result.exitCode, 0, "should reject a combined update");
+    const output = result.stdout + result.stderr;
+    assert(
+      output.includes("--thinking cannot be combined with --name or --label"),
+      "should explain that thinking and metadata updates are separate operations",
+    );
+    console.log("✓ thinking cannot be combined with metadata updates\n");
+  }
 } finally {
   // Clean up temp directory
   await rm(paseoHome, { recursive: true, force: true });

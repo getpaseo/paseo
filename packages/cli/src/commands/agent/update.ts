@@ -1,4 +1,5 @@
 import type { Command } from "commander";
+import type { AgentProviderNotice } from "@getpaseo/protocol/agent-types";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type {
   CommandOptions,
@@ -12,6 +13,8 @@ export interface AgentUpdateResult {
   agentId: string;
   name: string | null;
   labels: string;
+  noticeType: AgentProviderNotice["type"] | null;
+  notice: string | null;
 }
 
 /** Schema for update command output */
@@ -21,6 +24,7 @@ export const updateSchema: OutputSchema<AgentUpdateResult> = {
     { header: "AGENT ID", field: "agentId" },
     { header: "NAME", field: "name" },
     { header: "LABELS", field: "labels" },
+    { header: "NOTICE", field: "notice" },
   ],
 };
 
@@ -38,30 +42,40 @@ export interface AgentMetadataChanges {
   labels?: Record<string, string>;
 }
 
-export interface AgentUpdateClient {
-  updateAgent(agentId: string, updates: AgentMetadataChanges): Promise<void>;
-  setAgentThinkingOption(agentId: string, thinkingOptionId: string): Promise<unknown>;
+interface AgentUpdateServerInfo {
+  features?: { agentThinkingUpdate?: boolean };
 }
 
-export interface AgentChanges extends AgentMetadataChanges {
-  thinkingOptionId?: string;
+export interface AgentUpdateClient {
+  getLastServerInfoMessage(): AgentUpdateServerInfo | null;
+  updateAgent(agentId: string, updates: AgentMetadataChanges): Promise<void>;
+  setAgentThinkingOption(
+    agentId: string,
+    thinkingOptionId: string,
+  ): Promise<AgentProviderNotice | null>;
 }
+
+export type AgentChanges =
+  | { type: "metadata"; updates: AgentMetadataChanges }
+  | { type: "thinking"; thinkingOptionId: string };
 
 export async function applyAgentChanges(
   client: AgentUpdateClient,
   agentId: string,
   changes: AgentChanges,
-): Promise<void> {
-  const hasLabels = changes.labels && Object.keys(changes.labels).length > 0;
-  if (changes.name || hasLabels) {
-    await client.updateAgent(agentId, {
-      ...(changes.name ? { name: changes.name } : {}),
-      ...(hasLabels ? { labels: changes.labels } : {}),
-    });
+): Promise<AgentProviderNotice | null> {
+  if (changes.type === "thinking") {
+    // COMPAT(agentThinkingUpdate): added in v0.2.4, remove gate after 2027-01-28.
+    if (client.getLastServerInfoMessage()?.features?.agentThinkingUpdate !== true) {
+      throw {
+        code: "DAEMON_UPDATE_REQUIRED",
+        message: "Update the host to use agent thinking updates.",
+      } satisfies CommandError;
+    }
+    return client.setAgentThinkingOption(agentId, changes.thinkingOptionId);
   }
-  if (changes.thinkingOptionId) {
-    await client.setAgentThinkingOption(agentId, changes.thinkingOptionId);
-  }
+  await client.updateAgent(agentId, changes.updates);
+  return null;
 }
 
 function parseLabelOptions(labels: string[] | undefined): Record<string, string> {
@@ -135,6 +149,13 @@ function parseAgentChanges(options: AgentUpdateOptions): AgentChanges {
   }
 
   const hasMetadataUpdates = Boolean(name) || Object.keys(labels).length > 0;
+  if (hasMetadataUpdates && thinkingOptionId) {
+    throw {
+      code: "INVALID_OPTIONS",
+      message: "--thinking cannot be combined with --name or --label",
+      details: "Run separate agent update commands for runtime settings and metadata.",
+    } satisfies CommandError;
+  }
   if (!hasMetadataUpdates && !thinkingOptionId) {
     throw {
       code: "NO_CHANGES_PROVIDED",
@@ -143,10 +164,15 @@ function parseAgentChanges(options: AgentUpdateOptions): AgentChanges {
     } satisfies CommandError;
   }
 
+  if (thinkingOptionId) {
+    return { type: "thinking", thinkingOptionId };
+  }
   return {
-    ...(name ? { name } : {}),
-    ...(Object.keys(labels).length > 0 ? { labels } : {}),
-    ...(thinkingOptionId ? { thinkingOptionId } : {}),
+    type: "metadata",
+    updates: {
+      ...(name ? { name } : {}),
+      ...(Object.keys(labels).length > 0 ? { labels } : {}),
+    },
   };
 }
 
@@ -194,7 +220,7 @@ export async function runUpdateCommand(
     }
     const agentId = fetchResult.agent.id;
 
-    await applyAgentChanges(client, agentId, changes);
+    const notice = await applyAgentChanges(client, agentId, changes);
 
     const updatedResult = await client.fetchAgent({ agentId });
     if (!updatedResult) {
@@ -209,6 +235,8 @@ export async function runUpdateCommand(
         agentId,
         name: updatedResult.agent.title,
         labels: formatLabels(updatedResult.agent.labels),
+        noticeType: notice?.type ?? null,
+        notice: notice?.message ?? null,
       },
       schema: updateSchema,
     };

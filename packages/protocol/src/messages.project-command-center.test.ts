@@ -168,4 +168,14 @@ describe("project command-center protocol", () => {
     expect(parsed.features?.projectGithubClone).toBeUndefined();
     expect(parsed.features?.projectCreateDirectory).toBeUndefined();
   });
+
+  it("parses the agent thinking update capability", () => {
+    const parsed = parseServerInfoStatusPayload({
+      status: "server_info",
+      serverId: "server-new",
+      features: { agentThinkingUpdate: true },
+    });
+
+    expect(parsed.features?.agentThinkingUpdate).toBe(true);
+  });
 });
