@@ -400,8 +400,22 @@ export class ProviderSnapshotManager {
       this.baseProviderOverrides,
       mutableProviders,
     );
+    const wasEnabled: Partial<Record<AgentProvider, boolean>> = {};
+    for (const provider of this.getProviderIds()) {
+      wasEnabled[provider] = this.providerRegistry[provider]?.enabled ?? false;
+    }
     this.providerRegistry = this.buildRegistry();
     this.providerClients = { ...this.extraClients } as Record<AgentProvider, AgentClient>;
+
+    // Only providers this update actually switched on need a probe. Warming every
+    // unresolved entry instead would launch provider binaries and catalog requests
+    // for providers the update never touched.
+    const newlyEnabled: Partial<Record<AgentProvider, true>> = {};
+    for (const provider of this.getProviderIds()) {
+      if ((this.providerRegistry[provider]?.enabled ?? false) && !wasEnabled[provider]) {
+        newlyEnabled[provider] = true;
+      }
+    }
 
     const awaitingProbe: Array<{ cwd: string; providers: AgentProvider[] }> = [];
     for (const cwd of this.snapshots.keys()) {
@@ -409,7 +423,7 @@ export class ProviderSnapshotManager {
       const reconciled = this.reconcileSnapshotForRegistry(cwd);
       this.snapshots.set(cwd, reconciled);
       const providers = Array.from(reconciled.values())
-        .filter((entry) => entry.enabled && entry.status === "loading")
+        .filter((entry) => newlyEnabled[entry.provider] === true && entry.status === "loading")
         .map((entry) => entry.provider);
       if (providers.length > 0) {
         awaitingProbe.push({ cwd, providers });
@@ -418,9 +432,8 @@ export class ProviderSnapshotManager {
     }
 
     // Enabling a provider is the moment it becomes usable again, so it has to be
-    // the moment it gets probed. Without this the reconciled entry sits at
-    // `loading` until something else happens to force a refresh, which is what
-    // left working providers reading as unavailable for the CLI (#2456).
+    // the moment it gets probed. Otherwise the reconciled entry sits at `loading`
+    // until a later read happens to warm it (#2456).
     for (const { cwd, providers } of awaitingProbe) {
       const target = isGlobalProviderSnapshotKey(cwd)
         ? createGlobalSnapshotTarget()

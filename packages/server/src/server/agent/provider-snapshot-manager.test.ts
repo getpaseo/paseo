@@ -989,18 +989,12 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
       manager.destroy();
     }
   });
+
   test("re-enabling a provider clears the disabled entry's unavailable verdict", async () => {
     const cwd = "/tmp/project";
-    const isAvailable = vi.fn(async () => true);
-    const fetchCatalog = vi.fn(async () => ({
-      models: [
-        { provider: "codex", id: "gpt-5.4-mini", label: "GPT 5.4 Mini" },
-      ] as AgentModelDefinition[],
-      modes: [] as AgentMode[],
-    }));
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
-      extraClients: { codex: createExtraClient("codex", { isAvailable, fetchCatalog }) },
+      extraClients: { codex: createExtraClient("codex", { isAvailable: async () => true }) },
     });
     try {
       const [warm] = await manager.listProviders({ cwd, providers: ["codex"], wait: true });
@@ -1014,16 +1008,69 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
 
       manager.applyMutableProviderConfig({ codex: { enabled: true } });
 
-      // The disabled entry's `unavailable` must not survive re-enabling: the
-      // provider has no verdict under the new configuration, so it reads as
-      // `loading` until a probe produces one.
+      // Read synchronously, before the probe scheduled by the re-enable resolves:
+      // the disabled entry's `unavailable` must not have survived the transition.
       expect(manager.getSnapshot(cwd).find((entry) => entry.provider === "codex")).toMatchObject({
         status: "loading",
         enabled: true,
       });
+    } finally {
+      manager.destroy();
+    }
+  });
 
-      const [reprobed] = await manager.listProviders({ cwd, providers: ["codex"], wait: true });
-      expect(reprobed).toMatchObject({ provider: "codex", status: "ready", enabled: true });
+  test("re-enabling a provider probes it without waiting for a snapshot read", async () => {
+    const cwd = "/tmp/project";
+    const isAvailable = vi.fn(async () => true);
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: { codex: createExtraClient("codex", { isAvailable }) },
+    });
+    try {
+      await manager.listProviders({ cwd, providers: ["codex"], wait: true });
+      expect(isAvailable).toHaveBeenCalledTimes(1);
+
+      manager.applyMutableProviderConfig({ codex: { enabled: false } });
+      manager.applyMutableProviderConfig({ codex: { enabled: true } });
+
+      // No read in between: the probe has to come from applyMutableProviderConfig
+      // itself, otherwise the entry would sit at `loading` until something else
+      // happened to warm it.
+      await vi.waitFor(() => {
+        expect(isAvailable).toHaveBeenCalledTimes(2);
+      });
+      expect(manager.getSnapshot(cwd).find((entry) => entry.provider === "codex")).toMatchObject({
+        status: "ready",
+        enabled: true,
+      });
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("a configuration change does not probe providers it did not enable", async () => {
+    const cwd = "/tmp/project";
+    const codexAvailable = vi.fn(async () => true);
+    const claudeAvailable = vi.fn(async () => true);
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: {
+        codex: createExtraClient("codex", { isAvailable: codexAvailable }),
+        claude: createExtraClient("claude", { isAvailable: claudeAvailable }),
+      },
+    });
+    try {
+      await manager.listProviders({ cwd, providers: ["codex"], wait: true });
+      expect(codexAvailable).toHaveBeenCalledTimes(1);
+      const claudeCallsBefore = claudeAvailable.mock.calls.length;
+
+      manager.applyMutableProviderConfig({ codex: { enabled: false } });
+      manager.applyMutableProviderConfig({ codex: { enabled: true } });
+
+      await vi.waitFor(() => {
+        expect(codexAvailable).toHaveBeenCalledTimes(2);
+      });
+      expect(claudeAvailable).toHaveBeenCalledTimes(claudeCallsBefore);
     } finally {
       manager.destroy();
     }
