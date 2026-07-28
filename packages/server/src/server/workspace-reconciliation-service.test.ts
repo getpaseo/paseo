@@ -1409,7 +1409,7 @@ describe("WorkspaceReconciliationService", () => {
         kind: "project_updated",
         projectId: "p1",
         directory: rootPath,
-        fields: { projectGroupKey: "/tmp/main-repo" },
+        fields: { projectGroupKey: path.resolve("/tmp/main-repo") },
       },
       {
         kind: "workspace_updated",

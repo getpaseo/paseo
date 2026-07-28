@@ -17,6 +17,7 @@ import {
   encodeWorkspaceIdForPathSegment,
   isSettingsSectionSlug,
   normalizeHostSectionSlug,
+  normalizeProjectSettingsRouteKey,
   parseHostAgentRouteFromPathname,
   parseHostWorkspaceOpenIntentFromPathname,
   parseHostWorkspaceRouteFromPathname,
@@ -213,6 +214,11 @@ describe("projects settings routes", () => {
     const route = buildProjectSettingsRoute(projectKey);
     const segment = route.slice("/settings/projects/".length);
     expect(decodeURIComponent(segment)).toBe(projectKey);
+  });
+
+  it("keeps an already-decoded opaque project key unchanged", () => {
+    const projectKey = "remote:github.com/acme/app#subdir:packages/my%20app";
+    expect(normalizeProjectSettingsRouteKey(projectKey)).toBe(projectKey);
   });
 });
 

@@ -119,12 +119,6 @@ function deriveGithubUrl(projectKey: string): string | undefined {
 }
 
 function resolveHostRepoRoot(group: HostGroup): string {
-  for (const workspace of group.workspaces) {
-    const mainRepoRoot = workspace.project?.checkout.mainRepoRoot;
-    if (mainRepoRoot) {
-      return mainRepoRoot;
-    }
-  }
   return group.workspaces[0]?.projectRootPath ?? group.fallbackRepoRoot;
 }
 

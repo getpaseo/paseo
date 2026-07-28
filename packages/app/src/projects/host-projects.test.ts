@@ -254,6 +254,38 @@ describe("host project list", () => {
     ).toEqual(selectedHostProject);
   });
 
+  it("hydrates a route project by its host-local project id", () => {
+    const hydratedDirectory = hostProject({
+      projectKey: "host:host-a:project:project-a",
+      projectName: "Notes",
+      projectKind: "directory",
+      hosts: [
+        {
+          serverId: "host-a",
+          projectId: "project-a",
+          iconWorkingDir: "/notes",
+          canCreateWorktree: false,
+        },
+      ],
+    });
+    const routeDirectory = hostProjectFromRoute({
+      serverId: "host-a",
+      projectId: "project-a",
+      displayName: "Notes",
+      sourceDirectory: "/notes",
+    });
+
+    expect(
+      resolveInitialWorkspaceProject({
+        routeProject: routeDirectory,
+        lastActiveProject: null,
+        projects: [hydratedDirectory],
+        serverId: "host-a",
+        allowAllProjects: true,
+      }),
+    ).toEqual(hydratedDirectory);
+  });
+
   it("resolves the selected host project source directory", () => {
     const project = hostProject({
       hosts: [

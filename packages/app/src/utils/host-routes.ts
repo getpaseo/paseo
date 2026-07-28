@@ -573,3 +573,8 @@ export function buildProjectSettingsRoute(projectKey: string) {
   }
   return `/settings/projects/${encodeSegment(normalized)}` as const;
 }
+
+export function normalizeProjectSettingsRouteKey(value: string | string[] | undefined): string {
+  const projectKey = Array.isArray(value) ? value[0] : value;
+  return typeof projectKey === "string" ? projectKey : "";
+}

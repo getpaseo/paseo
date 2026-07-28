@@ -11,10 +11,14 @@ export function deriveProjectGroupKey(input: {
   mainRepoRoot: string | null;
 }): string {
   const remoteKey = deriveRemoteProjectGroupKey(input.remoteUrl);
-  if (!remoteKey) return resolve(input.mainRepoRoot ?? input.rootPath);
-
   const selectedPath = deriveSelectedPath(input.rootPath, input.worktreeRoot);
-  return selectedPath ? `${remoteKey}#subdir:${selectedPath}` : remoteKey;
+  if (!remoteKey) {
+    return selectedPath && input.mainRepoRoot
+      ? resolve(input.mainRepoRoot, selectedPath)
+      : resolve(input.mainRepoRoot ?? input.rootPath);
+  }
+
+  return selectedPath ? `${remoteKey}#subdir:${encodeSelectedPath(selectedPath)}` : remoteKey;
 }
 
 function deriveSelectedPath(rootPath: string, worktreeRoot: string | null): string | null {
@@ -29,6 +33,10 @@ function deriveSelectedPath(rootPath: string, worktreeRoot: string | null): stri
   ) {
     return null;
   }
+  return selectedPath;
+}
+
+function encodeSelectedPath(selectedPath: string): string {
   return selectedPath.split(sep).map(encodeURIComponent).join("/");
 }
 

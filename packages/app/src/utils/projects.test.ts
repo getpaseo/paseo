@@ -415,7 +415,7 @@ describe("buildProjects", () => {
     expect(result.projects[0]?.hostCount).toBe(1);
   });
 
-  it("prefers placement mainRepoRoot for the host repoRoot and falls back to projectRootPath when placement is absent", () => {
+  it("uses the persisted selected project root instead of the checkout root", () => {
     const result = buildProjects({
       hosts: [
         {
@@ -425,11 +425,11 @@ describe("buildProjects", () => {
           workspaces: [
             workspace({
               id: "main",
-              repoRoot: "/worktrees/app/main",
+              repoRoot: "/worktrees/app/main/packages/client",
               project: placement({
-                projectKey: "remote:github.com/acme/app",
-                projectName: "acme/app",
-                cwd: "/worktrees/app/main",
+                projectKey: "remote:github.com/acme/app#subdir:packages/client",
+                projectName: "client",
+                cwd: "/worktrees/app/main/packages/client",
                 remoteUrl: "https://github.com/acme/app.git",
                 mainRepoRoot: "/repo/app",
               }),
@@ -453,11 +453,11 @@ describe("buildProjects", () => {
     });
 
     const acme = result.projects.find(
-      (project) => project.projectKey === "remote:github.com/acme/app",
+      (project) => project.projectKey === "remote:github.com/acme/app#subdir:packages/client",
     );
     const legacy = result.projects.find((project) => project.projectKey === "legacy-project");
 
-    expect(acme?.hosts[0]?.repoRoot).toBe("/repo/app");
+    expect(acme?.hosts[0]?.repoRoot).toBe("/worktrees/app/main/packages/client");
     expect(legacy?.hosts[0]?.repoRoot).toBe("/repo/legacy");
   });
 

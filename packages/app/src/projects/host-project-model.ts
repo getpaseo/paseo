@@ -155,8 +155,20 @@ export function resolveInitialWorkspaceProject(input: {
     if (!candidate) {
       continue;
     }
+    const candidatePlacement = candidate.hosts.find(
+      (host) => host.serverId === input.serverId && host.projectId,
+    );
     const hydratedProject =
-      input.projects.find((project) => project.projectKey === candidate.projectKey) ?? candidate;
+      (candidatePlacement
+        ? input.projects.find((project) =>
+            project.hosts.some(
+              (host) =>
+                host.serverId === input.serverId && host.projectId === candidatePlacement.projectId,
+            ),
+          )
+        : undefined) ??
+      input.projects.find((project) => project.projectKey === candidate.projectKey) ??
+      candidate;
     if (
       canCreateWorkspaceForHostProject({
         project: hydratedProject,

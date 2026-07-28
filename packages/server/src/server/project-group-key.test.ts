@@ -68,4 +68,18 @@ describe("deriveProjectGroupKey", () => {
       }),
     ).toBe("remote:github.com/getpaseo/paseo");
   });
+
+  test("preserves the selected path for a checkout without a remote", () => {
+    const worktreeRoot = path.resolve("worktree");
+    const mainRepoRoot = path.resolve("main");
+
+    expect(
+      deriveProjectGroupKey({
+        rootPath: path.join(worktreeRoot, "packages", "app"),
+        remoteUrl: null,
+        worktreeRoot,
+        mainRepoRoot,
+      }),
+    ).toBe(path.join(mainRepoRoot, "packages", "app"));
+  });
 });
