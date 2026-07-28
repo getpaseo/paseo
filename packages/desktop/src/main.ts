@@ -8,7 +8,7 @@ import { inheritLoginShellEnv } from "./login-shell-env.js";
 
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { existsSync, statSync, constants } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import {
   app,
@@ -40,6 +40,7 @@ import {
   buildStandardContextMenuItems,
 } from "./window/window-manager.js";
 import { setupDarwinCompositorWatchdog } from "./window/compositor-watchdog/index.js";
+import { configureLinuxSandbox } from "./system/linux-sandbox.js";
 import { registerDialogHandlers } from "./features/dialogs.js";
 import {
   registerNotificationHandlers,
@@ -309,20 +310,12 @@ if (forcedUserDataDir) {
   }
 }
 
-// chrome-sandbox only works with the SUID bit set. AppImage FUSE mounts
-// strip SUID; .deb/.rpm preserve it. Check the file directly instead of
-// relying on environment variables that get stripped by systemd launchers.
-if (process.platform === "linux") {
-  try {
-    const sandboxPath = path.join(process.resourcesPath, "..", "chrome-sandbox");
-    const st = statSync(sandboxPath);
-    if (!(st.mode & constants.S_ISUID)) {
-      app.commandLine.appendSwitch("no-sandbox");
-    }
-  } catch {
-    app.commandLine.appendSwitch("no-sandbox");
-  }
-}
+configureLinuxSandbox({
+  platform: process.platform,
+  resourcesPath: process.resourcesPath,
+  statSandbox: (sandboxPath) => statSync(sandboxPath),
+  disableSandbox: () => app.commandLine.appendSwitch("no-sandbox"),
+});
 
 // Allow users to pass Chromium flags via PASEO_ELECTRON_FLAGS for debugging
 // rendering issues (e.g. "--disable-gpu --ozone-platform=x11").
