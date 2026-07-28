@@ -5,7 +5,6 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  merge_group:
   workflow_dispatch:
 
 concurrency:
@@ -28,8 +27,7 @@ jobs:
       full: ${{ github.event_name != 'pull_request' || steps.filter.outputs.routing != 'false' || steps.filter.outputs.workspace != 'false' || steps.filter.outputs.ci != 'false' }}
       format: ${{ steps.filter.outputs.format }}
       quality: ${{ steps.filter.outputs.quality }}
-      daemon_launch: ${{ steps.filter.outputs.daemon_launch }}
-      hub_cli: ${{ steps.filter.outputs.hub_cli }}
+      hub: ${{ steps.filter.outputs.hub }}
       server: ${{ steps.filter.outputs.server }}
       desktop: ${{ steps.filter.outputs.desktop }}
       desktop_bridge: ${{ steps.filter.outputs.desktop_bridge }}
@@ -44,14 +42,18 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Detect affected CI contracts
         id: filter
         uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3.0.3
         with:
           filters: .github/ci-paths.yml
 
-      - name: Validate CI workflow
-        run: node --test scripts/ci-workflow.test.mjs
+      - name: Validate CI contracts
+        run: node --test scripts/ci-workflow.test.mjs scripts/daemon-launch-contract.test.mjs
 
   format:
     name: format
@@ -131,49 +133,10 @@ jobs:
           npm pack --dry-run --ignore-scripts --workspace=@getpaseo/client
           npm pack --dry-run --ignore-scripts --workspace=@getpaseo/server
 
-  daemon-launch-contract:
-    name: daemon-launch-contract
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.daemon_launch != 'false') }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Verify daemon launch supervision
-        run: node --test scripts/daemon-launch-contract.test.mjs
-
-  hub-cli-contract:
-    name: hub-cli-contract
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.hub_cli != 'false') }}
-    runs-on: ubuntu-latest
-    env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: node scripts/npm-retry.mjs ci
-
-      - name: Build server dependencies
-        run: npm run build:server-deps
-
-      - name: Verify the Hub CLI/daemon boundary
-        run: npm run test:hub-cli-contract --workspace=@getpaseo/server
-
   server-tests-ubuntu:
     name: server-tests (ubuntu-latest)
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' || needs.changes.outputs.hub != 'false') }}
     runs-on: ubuntu-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
@@ -188,28 +151,35 @@ jobs:
           cache: "npm"
 
       - name: Fetch origin/main (worktree tests)
+        if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
         run: git fetch --no-tags origin main:refs/remotes/origin/main
 
       - name: Install dependencies
         run: node scripts/npm-retry.mjs ci
 
       - name: Install agent CLIs for provider tests
+        if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
         run: node scripts/npm-retry.mjs install -g @anthropic-ai/claude-code opencode-ai
 
       - name: Build server dependencies
         run: npm run build:server-deps
 
       - name: Run server tests
+        if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
         run: npm run test --workspace=@getpaseo/server
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 
+      - name: Run Hub CLI/daemon contract
+        if: ${{ needs.changes.outputs.full == 'false' && needs.changes.outputs.server == 'false' && needs.changes.outputs.hub != 'false' }}
+        run: npm run test:hub-cli-contract --workspace=@getpaseo/server
+
   server-tests-windows:
     name: server-tests (windows-latest)
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' || needs.changes.outputs.hub != 'false') }}
     runs-on: windows-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
@@ -218,7 +188,7 @@ jobs:
   desktop-tests-ubuntu:
     name: desktop-tests (ubuntu-latest)
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.desktop != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.desktop != 'false' || needs.changes.outputs.desktop_bridge != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -238,10 +208,34 @@ jobs:
         run: npm run build:server
 
       - name: Run desktop tests
+        if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.desktop != 'false' }}
         run: npm run test --workspace=@getpaseo/desktop
 
+      - name: Build app dependencies for desktop E2E
+        if: ${{ runner.os == 'Linux' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.desktop_bridge != 'false') }}
+        run: npm run build:app-deps
+
+      - name: Install virtual display
+        if: ${{ runner.os == 'Linux' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.desktop_bridge != 'false') }}
+        run: sudo apt-get update && sudo apt-get install -y xvfb xauth
+
+      - name: Run real Electron browser tab bridge E2E
+        if: ${{ runner.os == 'Linux' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.desktop_bridge != 'false') }}
+        run: npm run test:e2e:browser-tab-bridge --workspace=@getpaseo/desktop
+        env:
+          PASEO_TAB_BRIDGE_E2E_ARTIFACT_DIR: ${{ runner.temp }}/browser-tab-bridge-e2e
+
+      - name: Upload browser tab bridge diagnostics
+        uses: actions/upload-artifact@v4
+        if: ${{ failure() && runner.os == 'Linux' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.desktop_bridge != 'false') }}
+        with:
+          name: browser-tab-bridge-e2e
+          path: ${{ runner.temp }}/browser-tab-bridge-e2e
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Build and smoke unpacked desktop app
-        if: runner.os == 'Linux'
+        if: ${{ runner.os == 'Linux' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.desktop != 'false') }}
         run: npm run build:desktop -- --publish never --linux --x64 --dir
         env:
           EP_GH_IGNORE_TIME: true
@@ -250,7 +244,7 @@ jobs:
 
       - name: Upload packaged smoke diagnostics
         uses: actions/upload-artifact@v4
-        if: failure() && runner.os == 'Linux'
+        if: ${{ failure() && runner.os == 'Linux' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.desktop != 'false') }}
         with:
           name: desktop-packaged-smoke-linux-x64
           path: ${{ runner.temp }}/desktop-smoke
@@ -266,48 +260,6 @@ jobs:
     permissions:
       contents: read
     steps: *desktop_test_steps
-
-  desktop-browser-bridge:
-    name: desktop-browser-bridge
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.desktop_bridge != 'false') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies with retry
-        run: node scripts/npm-retry.mjs ci
-
-      - name: Build server stack
-        run: npm run build:server
-
-      - name: Build app dependencies
-        run: npm run build:app-deps
-
-      - name: Install virtual display
-        run: sudo apt-get update && sudo apt-get install -y xvfb xauth
-
-      - name: Run real Electron browser tab bridge E2E
-        run: npm run test:e2e:browser-tab-bridge --workspace=@getpaseo/desktop
-        env:
-          PASEO_TAB_BRIDGE_E2E_ARTIFACT_DIR: ${{ runner.temp }}/browser-tab-bridge-e2e
-
-      - name: Upload browser tab bridge diagnostics
-        uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: browser-tab-bridge-e2e
-          path: ${{ runner.temp }}/browser-tab-bridge-e2e
-          if-no-files-found: ignore
-          retention-days: 7
 
   app-tests:
     name: app-tests
@@ -363,6 +315,9 @@ jobs:
 
       - name: Run client tests
         run: npm run test --workspace=@getpaseo/client
+
+      - name: Run highlight tests
+        run: npm run test --workspace=@getpaseo/highlight
 
       - name: Typecheck client examples
         run: npm run typecheck:examples --workspace=@getpaseo/client

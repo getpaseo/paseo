@@ -13,13 +13,13 @@ const gatedCiJobs = new Map([
   ["format", { name: "format", contract: "format" }],
   ["lint", { name: "lint", contract: "quality" }],
   ["typecheck", { name: "typecheck", contract: "quality" }],
-  ["daemon-launch-contract", { name: "daemon-launch-contract", contract: "daemon_launch" }],
-  ["hub-cli-contract", { name: "hub-cli-contract", contract: "hub_cli" }],
-  ["server-tests-ubuntu", { name: "server-tests (ubuntu-latest)", contract: "server" }],
-  ["server-tests-windows", { name: "server-tests (windows-latest)", contract: "server" }],
-  ["desktop-tests-ubuntu", { name: "desktop-tests (ubuntu-latest)", contract: "desktop" }],
+  ["server-tests-ubuntu", { name: "server-tests (ubuntu-latest)", contracts: ["server", "hub"] }],
+  ["server-tests-windows", { name: "server-tests (windows-latest)", contracts: ["server", "hub"] }],
+  [
+    "desktop-tests-ubuntu",
+    { name: "desktop-tests (ubuntu-latest)", contracts: ["desktop", "desktop_bridge"] },
+  ],
   ["desktop-tests-windows", { name: "desktop-tests (windows-latest)", contract: "desktop" }],
-  ["desktop-browser-bridge", { name: "desktop-browser-bridge", contract: "desktop_bridge" }],
   ["app-tests", { name: "app-tests", contract: "app" }],
   ["sdk-tests", { name: "sdk-tests", contract: "sdk" }],
   ["playwright-1", { name: "playwright (shard 1/4)", contract: "playwright" }],
@@ -95,7 +95,9 @@ test("gated checks are statically named jobs with real job-level gating", () => 
     assert.ok(job, `missing static job ${jobId}`);
     assert.match(job, new RegExp(`^    name: ${expected.name.replace(/[()]/g, "\\$&")}$`, "m"));
     assert.match(job, /needs\.changes\.outputs\.full != 'false'/);
-    assert.match(job, new RegExp(`needs\\.changes\\.outputs\\.${expected.contract} != 'false'`));
+    for (const contract of expected.contracts ?? [expected.contract]) {
+      assert.match(job, new RegExp(`needs\\.changes\\.outputs\\.${contract} != 'false'`));
+    }
   }
 });
 
@@ -110,21 +112,22 @@ test("change gating allows superseded workflow runs to cancel", () => {
   }
 });
 
-test("cross-package contracts run focused checks instead of package builds", () => {
+test("focused contracts stay inside existing required checks", () => {
   const jobs = jobBlocks(readFileSync(ciWorkflowPath, "utf8"));
-  const daemonLaunch = jobs.get("daemon-launch-contract")?.join("\n") ?? "";
-  const hubCli = jobs.get("hub-cli-contract")?.join("\n") ?? "";
+  const changes = jobs.get("changes")?.join("\n") ?? "";
+  const server = jobs.get("server-tests-ubuntu")?.join("\n") ?? "";
   const desktop = jobs.get("desktop-tests-ubuntu")?.join("\n") ?? "";
-  const desktopBridge = jobs.get("desktop-browser-bridge")?.join("\n") ?? "";
 
-  assert.match(daemonLaunch, /node --test scripts\/daemon-launch-contract\.test\.mjs/);
-  assert.doesNotMatch(daemonLaunch, /Install dependencies|npm run build/);
+  assert.match(changes, /scripts\/daemon-launch-contract\.test\.mjs/);
+  assert.doesNotMatch(changes, /Install dependencies|npm run build/);
 
-  assert.match(hubCli, /test:hub-cli-contract/);
-  assert.doesNotMatch(hubCli, /npm run test --workspace=@getpaseo\/server/);
+  assert.match(server, /test:hub-cli-contract/);
+  assert.match(server, /npm run test --workspace=@getpaseo\/server/);
+  assert.ok(!jobs.has("hub-cli-contract"));
 
-  assert.doesNotMatch(desktop, /browser-tab-bridge/);
-  assert.match(desktopBridge, /test:e2e:browser-tab-bridge/);
+  assert.match(desktop, /test:e2e:browser-tab-bridge/);
+  assert.match(desktop, /npm run test --workspace=@getpaseo\/desktop/);
+  assert.ok(!jobs.has("desktop-browser-bridge"));
 });
 
 test("PR routing follows test contracts instead of package consumers", () => {
@@ -138,12 +141,17 @@ test("PR routing follows test contracts instead of package consumers", () => {
       "packages/app/src/components/browser-pane.electron.tsx",
       ["app", "desktop_bridge", "format", "playwright", "playwright_desktop", "quality"],
     ],
-    ["packages/cli/src/commands/hub/index.ts", ["cli", "format", "hub_cli", "quality"]],
+    ["packages/cli/src/commands/hub/index.ts", ["cli", "format", "hub", "quality"]],
+    [
+      "packages/server/src/server/hub/relationship-controller.ts",
+      ["format", "hub", "quality", "server"],
+    ],
     ["packages/protocol/src/messages.ts", ["format", "quality", "sdk"]],
     ["packages/client/src/client.ts", ["format", "quality", "sdk"]],
+    ["packages/highlight/src/index.ts", ["format", "quality", "sdk"]],
     ["packages/relay/src/index.ts", ["format", "quality", "relay"]],
-    ["docker/base/Dockerfile", ["docker"]],
-    ["nix/package.nix", ["daemon_launch", "nix"]],
+    ["docker/base/Dockerfile", []],
+    ["nix/package.nix", []],
   ]);
 
   for (const [changedPath, expected] of cases) {
@@ -151,25 +159,30 @@ test("PR routing follows test contracts instead of package consumers", () => {
   }
 });
 
-test("tooling and narrow cross-package contracts follow their actual inputs", () => {
+test("tooling and domain contracts use stable ownership boundaries", () => {
   const filters = loadFilters(filtersPath);
   const cases = new Map([
     ["public-docs/cli.md", ["format"]],
     ["skills/paseo/SKILL.md", ["format"]],
     [".github/PULL_REQUEST_TEMPLATE.md", ["format"]],
     [".agents/skills/release-beta/SKILL.md", ["format"]],
-    ["docker/docker-compose.example.yml", ["docker", "format"]],
+    ["docker/docker-compose.example.yml", ["format"]],
     [
       "packages/app/e2e/helpers/project-picker-ui.ts",
       ["app", "format", "playwright", "playwright_desktop", "quality"],
     ],
     [
       "packages/app/e2e/global-setup.ts",
-      ["app", "daemon_launch", "format", "playwright", "playwright_desktop", "quality"],
+      ["app", "format", "playwright", "playwright_desktop", "quality"],
+    ],
+    ["packages/desktop/src/daemon/runtime-paths.ts", ["desktop", "format", "quality"]],
+    [
+      "packages/desktop/src/features/browser-profile.ts",
+      ["desktop", "desktop_bridge", "format", "quality"],
     ],
     [
-      "packages/desktop/src/daemon/runtime-paths.ts",
-      ["daemon_launch", "desktop", "format", "quality"],
+      "packages/app/src/components/browser-webview-resident.ts",
+      ["app", "desktop_bridge", "format", "playwright", "quality"],
     ],
   ]);
 
@@ -190,20 +203,18 @@ test("root dependency and CI infrastructure changes run every contract", () => {
     ".github/ci-paths.yml",
     "scripts/npm-retry.mjs",
     "scripts/postinstall-patches.mjs",
+    "scripts/clean-package-dist.mjs",
+    "vitest.config.ts",
   ]) {
     assert.deepEqual(affectedContracts(filters, changedPath), allContracts, changedPath);
   }
 });
 
-test("Docker and Nix required jobs use job-level gates instead of workflow path filters", () => {
-  for (const [workflowPath, jobId, output] of [
-    [dockerWorkflowPath, "build", "docker"],
-    [nixWorkflowPath, "build", "nix"],
-  ]) {
+test("non-required Docker and Nix workflows avoid runners with workflow path filters", () => {
+  for (const workflowPath of [dockerWorkflowPath, nixWorkflowPath]) {
     const source = readFileSync(workflowPath, "utf8");
     const trigger = source.split("jobs:", 1)[0];
-    const job = jobBlocks(source).get(jobId)?.join("\n");
-    assert.doesNotMatch(trigger, /^\s+paths:\s*$/m);
-    assert.match(job, new RegExp(`outputs\\.${output} != 'false'`));
+    assert.match(trigger, /^\s+paths:\s*$/m);
+    assert.doesNotMatch(source, /dorny\/paths-filter/);
   }
 });

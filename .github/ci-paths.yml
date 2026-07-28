@@ -1,6 +1,6 @@
 # Pull-request checks are routed by the behavior they prove. Package consumers
-# do not inherit their dependencies' test suites; main, merge queue, and manual
-# runs execute every contract regardless of these paths.
+# do not inherit their dependencies' test suites; main and manual runs execute
+# every contract regardless of these paths.
 routing:
   - ".github/ci-paths.yml"
 
@@ -10,10 +10,10 @@ workspace:
   - "package.json"
   - "package-lock.json"
   - "patches/**"
-  - "scripts/npm-retry.mjs"
-  - "scripts/postinstall-patches.mjs"
+  - "scripts/**"
   - "tsconfig.json"
   - "tsconfig.base.json"
+  - "vitest.config.ts"
 
 ci:
   - ".github/actions/**"
@@ -27,57 +27,33 @@ format:
 quality:
   - "**/*.{cjs,js,json,jsx,mjs,ts,tsx}"
 
-daemon_launch:
-  - "scripts/daemon-launch-contract.test.mjs"
-  - "packages/server/package.json"
-  - "packages/app/e2e/global-setup.ts"
-  - "packages/server/src/server/daemon-e2e/connection-offer.e2e.test.ts"
-  - "packages/desktop/src/daemon/runtime-paths.ts"
-  - "nix/package.nix"
-
-hub_cli:
+hub:
   - "packages/cli/src/commands/hub/**"
-  - "packages/cli/src/output/**"
-  - "packages/cli/src/utils/client.ts"
-  - "packages/cli/src/utils/command-options.ts"
-  - "packages/server/src/server/hub/hub-cli-contract.e2e.test.ts"
-  - "packages/server/src/server/hub/test-utils/relationship-harness.ts"
-  - "packages/server/src/server/test-utils/hub-cli-entry.ts"
+  - "packages/server/src/server/hub/**"
 
 server:
   - "packages/server/**"
   - "packages/app/e2e/fixtures/recording.*"
-  - "vitest.config.ts"
 
 desktop:
   - "packages/desktop/**"
-  - "vitest.config.ts"
 
 desktop_bridge:
-  - "packages/desktop/src/main.ts"
-  - "packages/desktop/src/preload.ts"
-  - "packages/desktop/src/features/browser-automation/**"
-  - "packages/desktop/src/features/browser-profile.ts"
-  - "packages/desktop/src/features/browser-profile.test.ts"
-  - "packages/desktop/src/features/browser-webviews/**"
-  - "packages/desktop/scripts/browser-tab-bridge.e2e.mjs"
-  - "packages/desktop/scripts/dev-runner.mjs"
-  - "packages/desktop/package.json"
-  - "packages/desktop/tsconfig.json"
-  - "packages/app/src/components/browser-pane.electron.tsx"
-  - "packages/app/src/panels/browser-panel.tsx"
-  - "packages/app/src/panels/register-panels.ts"
-  - "packages/app/metro.config.cjs"
-  - "packages/app/package.json"
+  - "packages/desktop/src/*.{ts,tsx}"
+  - "packages/desktop/src/features/browser-*.{ts,tsx}"
+  - "packages/desktop/src/features/browser-*/**"
+  - "packages/desktop/scripts/browser-*.mjs"
+  - "packages/desktop/*.{json,yml}"
+  - "packages/app/src/**/browser-*.{ts,tsx}"
+  - "packages/app/*.{cjs,js,json,ts}"
 
 app:
   - "packages/app/**"
-  - "vitest.config.ts"
 
 sdk:
   - "packages/client/**"
+  - "packages/highlight/**"
   - "packages/protocol/**"
-  - "vitest.config.ts"
 
 playwright:
   - "packages/app/src/**"
@@ -90,34 +66,12 @@ playwright:
 
 playwright_desktop:
   - "packages/app/src/**/*.electron.{ts,tsx}"
-  - "packages/app/e2e/fixtures.ts"
-  - "packages/app/e2e/project-picker-desktop.spec.ts"
-  - "packages/app/e2e/helpers/**"
-  - "packages/app/e2e/global-setup.ts"
-  - "packages/app/metro.config.cjs"
-  - "packages/app/playwright.config.ts"
+  - "packages/app/e2e/**"
+  - "packages/app/*config.{cjs,js,ts}"
   - "packages/app/package.json"
 
 relay:
   - "packages/relay/**"
-  - "vitest.config.ts"
 
 cli:
   - "packages/cli/**"
-  - "vitest.config.ts"
-
-docker:
-  - ".dockerignore"
-  - ".github/workflows/docker.yml"
-  - "docker/**"
-  - "scripts/build-daemon-web-ui.mjs"
-
-nix:
-  - ".github/workflows/nix.yml"
-  - "flake.lock"
-  - "flake.nix"
-  - "nix/**"
-  - "scripts/build-daemon-web-ui.mjs"
-  - "scripts/fix-lockfile.mjs"
-  - "scripts/trace-daemon.mjs"
-  - "scripts/update-nix.sh"

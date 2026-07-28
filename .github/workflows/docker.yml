@@ -3,6 +3,24 @@ name: Docker
 on:
   pull_request:
     branches: [main]
+    paths:
+      - "docker/**"
+      - ".dockerignore"
+      - ".github/workflows/docker.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "patches/**"
+      - "scripts/**"
+      - "tsconfig.json"
+      - "tsconfig.base.json"
+      - "packages/app/**"
+      - "packages/cli/**"
+      - "packages/client/**"
+      - "packages/expo-two-way-audio/**"
+      - "packages/highlight/**"
+      - "packages/protocol/**"
+      - "packages/relay/**"
+      - "packages/server/**"
   push:
     branches: [main]
     tags:
@@ -40,14 +58,8 @@ env:
 
 jobs:
   setup:
-    name: setup
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
     outputs:
-      full: ${{ github.event_name != 'pull_request' || steps.filter.outputs.routing != 'false' || steps.filter.outputs.workspace != 'false' }}
-      docker: ${{ steps.filter.outputs.docker }}
       image: ${{ steps.values.outputs.image }}
       install_version: ${{ steps.values.outputs.install_version }}
       publish: ${{ steps.values.outputs.publish }}
@@ -55,12 +67,6 @@ jobs:
       publish_tags: ${{ steps.values.outputs.publish_tags }}
     steps:
       - uses: actions/checkout@v6
-
-      - name: Detect Docker contract changes
-        id: filter
-        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3.0.3
-        with:
-          filters: .github/ci-paths.yml
 
       - id: values
         env:
@@ -125,9 +131,8 @@ jobs:
           echo "Resolved image=${image} install_version=${install_version} publish=${publish}"
 
   build:
-    name: build
     needs: setup
-    if: ${{ !cancelled() && needs.setup.outputs.publish != 'true' && (needs.setup.outputs.full != 'false' || needs.setup.outputs.docker != 'false') }}
+    if: needs.setup.outputs.publish != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -151,9 +156,8 @@ jobs:
           cache-to: type=gha,scope=paseo,mode=max
 
   publish:
-    name: publish
     needs: setup
-    if: ${{ !cancelled() && needs.setup.outputs.publish == 'true' && (needs.setup.outputs.full != 'false' || needs.setup.outputs.docker != 'false') }}
+    if: needs.setup.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
