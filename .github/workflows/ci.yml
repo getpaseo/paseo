@@ -18,6 +18,103 @@ env:
   ONNXRUNTIME_NODE_INSTALL: skip
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      quality: ${{ steps.filter.outputs.shared != 'false' || steps.filter.outputs.quality != 'false' }}
+      server: ${{ steps.filter.outputs.shared != 'false' || steps.filter.outputs.server != 'false' }}
+      desktop: ${{ steps.filter.outputs.shared != 'false' || steps.filter.outputs.desktop != 'false' }}
+      desktop_package: ${{ steps.filter.outputs.shared != 'false' || steps.filter.outputs.desktop_package != 'false' }}
+      app: ${{ steps.filter.outputs.shared != 'false' || steps.filter.outputs.app != 'false' }}
+      sdk: ${{ steps.filter.outputs.shared != 'false' || steps.filter.outputs.sdk != 'false' }}
+      playwright: ${{ steps.filter.outputs.shared != 'false' || steps.filter.outputs.playwright != 'false' }}
+      relay: ${{ steps.filter.outputs.shared != 'false' || steps.filter.outputs.relay != 'false' }}
+      cli: ${{ steps.filter.outputs.shared != 'false' || steps.filter.outputs.cli != 'false' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Detect affected CI jobs
+        id: filter
+        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3.0.3
+        with:
+          filters: |
+            shared:
+              - '.github/workflows/ci.yml'
+              - '.github/actions/**'
+              - '.mise.toml'
+              - '.tool-versions'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'patches/**'
+              - 'scripts/**'
+              - 'tsconfig.json'
+              - 'tsconfig.base.json'
+              - 'vitest.config.ts'
+            quality:
+              - 'packages/**'
+              - '*.cjs'
+              - '*.js'
+              - '*.json'
+              - '*.mjs'
+              - '*.ts'
+            server:
+              - 'packages/app/e2e/fixtures/recording.*'
+              - 'packages/client/**'
+              - 'packages/cli/src/**'
+              - 'packages/highlight/**'
+              - 'packages/protocol/**'
+              - 'packages/relay/**'
+              - 'packages/server/**'
+            desktop:
+              - 'packages/app/**'
+              - 'packages/cli/**'
+              - 'packages/client/**'
+              - 'packages/desktop/**'
+              - 'packages/expo-two-way-audio/**'
+              - 'packages/highlight/**'
+              - 'packages/protocol/**'
+              - 'packages/relay/**'
+              - 'packages/server/**'
+            desktop_package:
+              - '.github/workflows/ci.yml'
+              - 'packages/desktop/**'
+            app:
+              - 'packages/app/**'
+              - 'packages/client/**'
+              - 'packages/expo-two-way-audio/**'
+              - 'packages/highlight/**'
+              - 'packages/protocol/**'
+              - 'packages/relay/**'
+            sdk:
+              - 'packages/client/**'
+              - 'packages/protocol/**'
+              - 'packages/relay/**'
+            playwright:
+              - 'packages/app/**'
+              - 'packages/client/**'
+              - 'packages/expo-two-way-audio/**'
+              - 'packages/highlight/**'
+              - 'packages/protocol/**'
+              - 'packages/relay/**'
+              - 'packages/server/**'
+            relay:
+              - 'packages/relay/**'
+            cli:
+              - 'nix/**'
+              - 'packages/app/e2e/global-setup.ts'
+              - 'packages/cli/**'
+              - 'packages/client/**'
+              - 'packages/desktop/src/daemon/runtime-paths.ts'
+              - 'packages/highlight/**'
+              - 'packages/protocol/**'
+              - 'packages/relay/**'
+              - 'packages/server/**'
+
   format:
     runs-on: ubuntu-latest
     env:
@@ -39,6 +136,12 @@ jobs:
         run: npx oxfmt --check .
 
   lint:
+    needs: changes
+    if: >-
+      ${{ always() &&
+          (github.event_name == 'workflow_dispatch' ||
+           needs.changes.result != 'success' ||
+           needs.changes.outputs.quality != 'false') }}
     runs-on: ubuntu-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
@@ -63,6 +166,12 @@ jobs:
         run: npm run lint
 
   typecheck:
+    needs: changes
+    if: >-
+      ${{ always() &&
+          (github.event_name == 'workflow_dispatch' ||
+           needs.changes.result != 'success' ||
+           needs.changes.outputs.quality != 'false') }}
     runs-on: ubuntu-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
@@ -89,6 +198,12 @@ jobs:
           npm pack --dry-run --ignore-scripts --workspace=@getpaseo/server
 
   server-tests:
+    needs: changes
+    if: >-
+      ${{ always() &&
+          (github.event_name == 'workflow_dispatch' ||
+           needs.changes.result != 'success' ||
+           needs.changes.outputs.server != 'false') }}
     strategy:
       fail-fast: false
       matrix:
@@ -126,6 +241,12 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 
   desktop-tests:
+    needs: changes
+    if: >-
+      ${{ always() &&
+          (github.event_name == 'workflow_dispatch' ||
+           needs.changes.result != 'success' ||
+           needs.changes.outputs.desktop != 'false') }}
     strategy:
       fail-fast: false
       matrix:
@@ -134,18 +255,8 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      pull-requests: read
     steps:
       - uses: actions/checkout@v4
-
-      - name: Detect desktop changes
-        if: matrix.os == 'ubuntu-latest'
-        id: desktop_changes
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            desktop:
-              - 'packages/desktop/**'
 
       - uses: actions/setup-node@v4
         with:
@@ -184,7 +295,11 @@ jobs:
           retention-days: 7
 
       - name: Build and smoke unpacked desktop app
-        if: matrix.os == 'ubuntu-latest' && steps.desktop_changes.outputs.desktop == 'true'
+        if: >-
+          matrix.os == 'ubuntu-latest' &&
+          (github.event_name == 'workflow_dispatch' ||
+           needs.changes.result != 'success' ||
+           needs.changes.outputs.desktop_package != 'false')
         run: npm run build:desktop -- --publish never --linux --x64 --dir
         env:
           EP_GH_IGNORE_TIME: true
@@ -192,7 +307,11 @@ jobs:
           PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke
 
       - name: Upload packaged smoke diagnostics
-        if: failure() && matrix.os == 'ubuntu-latest' && steps.desktop_changes.outputs.desktop == 'true'
+        if: >-
+          failure() && matrix.os == 'ubuntu-latest' &&
+          (github.event_name == 'workflow_dispatch' ||
+           needs.changes.result != 'success' ||
+           needs.changes.outputs.desktop_package != 'false')
         uses: actions/upload-artifact@v4
         with:
           name: desktop-packaged-smoke-linux-x64
@@ -201,6 +320,12 @@ jobs:
           retention-days: 7
 
   app-tests:
+    needs: changes
+    if: >-
+      ${{ always() &&
+          (github.event_name == 'workflow_dispatch' ||
+           needs.changes.result != 'success' ||
+           needs.changes.outputs.app != 'false') }}
     runs-on: ubuntu-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
@@ -225,6 +350,12 @@ jobs:
         run: npm run test --workspace=@getpaseo/app
 
   sdk-tests:
+    needs: changes
+    if: >-
+      ${{ always() &&
+          (github.event_name == 'workflow_dispatch' ||
+           needs.changes.result != 'success' ||
+           needs.changes.outputs.sdk != 'false') }}
     runs-on: ubuntu-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
@@ -251,6 +382,12 @@ jobs:
         run: npm run typecheck:examples --workspace=@getpaseo/client
 
   playwright:
+    needs: changes
+    if: >-
+      ${{ always() &&
+          (github.event_name == 'workflow_dispatch' ||
+           needs.changes.result != 'success' ||
+           needs.changes.outputs.playwright != 'false') }}
     strategy:
       fail-fast: false
       matrix:
@@ -309,6 +446,12 @@ jobs:
           retention-days: 7
 
   relay-tests:
+    needs: changes
+    if: >-
+      ${{ always() &&
+          (github.event_name == 'workflow_dispatch' ||
+           needs.changes.result != 'success' ||
+           needs.changes.outputs.relay != 'false') }}
     runs-on: ubuntu-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
@@ -330,6 +473,12 @@ jobs:
         run: npm run test --workspace=@getpaseo/relay
 
   cli-tests:
+    needs: changes
+    if: >-
+      ${{ always() &&
+          (github.event_name == 'workflow_dispatch' ||
+           needs.changes.result != 'success' ||
+           needs.changes.outputs.cli != 'false') }}
     strategy:
       fail-fast: false
       matrix:
