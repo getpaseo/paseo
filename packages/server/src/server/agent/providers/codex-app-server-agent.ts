@@ -3099,11 +3099,6 @@ interface CodexPendingPermissionHandler {
   planText?: string;
 }
 
-interface DismissedCodexPlanApproval {
-  request: AgentPermissionRequest;
-  handler: CodexPendingPermissionHandler;
-}
-
 export class CodexAppServerAgentSession implements AgentSession {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
@@ -3843,7 +3838,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       throw new Error("A foreground turn is already active");
     }
 
-    const dismissedPlanApprovals = this.dismissPendingPlanApprovals("Dismissed by a new prompt");
+    this.dismissPendingPlanApprovals("Dismissed by a new prompt");
 
     try {
       await this.connect();
@@ -3882,7 +3877,6 @@ export class CodexAppServerAgentSession implements AgentSession {
     } catch (error) {
       this.activeForegroundTurnId = null;
       this.activeClientMessageId = null;
-      this.restoreDismissedPlanApprovals(dismissedPlanApprovals);
       throw error;
     }
   }
@@ -4152,32 +4146,13 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
-  private dismissPendingPlanApprovals(message: string): DismissedCodexPlanApproval[] {
-    const approvals = Array.from(this.pendingPermissionHandlers)
+  private dismissPendingPlanApprovals(message: string): void {
+    const requestIds = Array.from(this.pendingPermissionHandlers)
       .filter(([, pending]) => pending.kind === "plan")
-      .flatMap(([requestId, handler]) => {
-        const request = this.pendingPermissions.get(requestId);
-        return request ? [{ request, handler }] : [];
-      });
+      .map(([requestId]) => requestId);
 
-    for (const { request } of approvals) {
-      this.resolvePlanPermission(request.id, { behavior: "deny", message });
-    }
-
-    return approvals;
-  }
-
-  private restoreDismissedPlanApprovals(approvals: DismissedCodexPlanApproval[]): void {
-    const hasNewerPlanApproval = Array.from(this.pendingPermissionHandlers.values()).some(
-      (pending) => pending.kind === "plan",
-    );
-    if (hasNewerPlanApproval) return;
-
-    for (const { request, handler } of approvals) {
-      this.resolvedPermissionRequests.delete(request.id);
-      this.pendingPermissions.set(request.id, request);
-      this.pendingPermissionHandlers.set(request.id, handler);
-      this.emitEvent({ type: "permission_requested", provider: CODEX_PROVIDER, request });
+    for (const requestId of requestIds) {
+      this.resolvePlanPermission(requestId, { behavior: "deny", message });
     }
   }
 

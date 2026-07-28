@@ -4158,7 +4158,7 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
-  test("keeps a pending synthetic plan approval when a new prompt is rejected", async () => {
+  test("keeps a synthetic plan dismissed when a new prompt is rejected", async () => {
     const session = createSession({
       featureValues: { plan_mode: true },
     });
@@ -4186,7 +4186,7 @@ describe("Codex app-server provider", () => {
 
     await expect(session.startTurn("Revise the plan")).rejects.toThrow("Prompt rejected");
 
-    expect(session.getPendingPermissions()).toEqual([pendingPlan]);
+    expect(session.getPendingPermissions()).toEqual([]);
   });
 
   test("emits imageView paths with spaces as valid assistant markdown images", () => {
