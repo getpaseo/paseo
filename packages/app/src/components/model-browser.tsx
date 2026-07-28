@@ -1,4 +1,13 @@
-import { createContext, useCallback, useContext, useMemo, useReducer, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import {
   FlatList,
@@ -26,7 +35,7 @@ import {
   Star,
 } from "lucide-react-native";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
-import type { SheetHeader } from "@/components/adaptive-modal-sheet";
+import type { SheetHeader, SheetSearchKeyPressEvent } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { getProviderIcon } from "@/components/provider-icons";
@@ -50,6 +59,12 @@ import {
   type ModelBrowserHeadingStatus,
   type ModelBrowserListItem,
 } from "@/components/model-browser-rows";
+import { moveModelHighlight, resolveModelSubmitRow } from "@/components/model-browser-keyboard";
+import {
+  LIST_SEARCH_SELECTOR,
+  resolveListSearchKeyAction,
+  type ListSearchKeyEvent,
+} from "@/keyboard/list-search-keys";
 import { useProviderSettingsStore } from "@/stores/provider-settings-store";
 import { useCurrentOverlayLayer } from "@/lib/overlay-root";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -57,6 +72,8 @@ import {
   resolveInitialModelBrowserView,
   type ModelBrowserView,
 } from "@/components/model-browser-view";
+
+const EMPTY_LIST_ITEMS: ModelBrowserListItem[] = [];
 
 const DESKTOP_PROVIDER_VIEW_MIN_HEIGHT = 220;
 const DESKTOP_PROVIDER_VIEW_MAX_HEIGHT = 400;
@@ -137,6 +154,7 @@ interface ModelBrowserInput {
   selectedModel: string;
   isLoading: boolean;
   favoriteKeys: Set<string>;
+  onSelect: (provider: string, modelId: string) => void;
   serverId?: string | null;
 }
 
@@ -146,21 +164,25 @@ export interface ModelBrowserState {
   selectedModel: string;
   favoriteKeys: Set<string>;
   view: ModelBrowserView;
-  searchQuery: string;
+  /** Rows of the current model list view; empty in the provider-group view. */
+  items: ModelBrowserListItem[];
+  highlightedKey: string | null;
   header: SheetHeader;
   selectedModelLabel: string;
   triggerLabel: string;
   desktopFixedHeight: number | undefined;
   isModelListView: boolean;
+  onSelect: (provider: string, modelId: string) => void;
   prepareToOpen: () => void;
   reset: () => void;
   drillDown: (providerId: string, providerLabel: string) => void;
   showAllModels: () => void;
+  /** Web: keyboard navigation for whichever overlay hosts the browser. */
+  handleOverlayKeyDown: (event: KeyboardEvent) => boolean;
 }
 
 interface ModelBrowserProps {
   state: ModelBrowserState;
-  onSelect: (provider: string, modelId: string) => void;
   onToggleFavorite?: (provider: string, modelId: string) => void;
   onRetryProvider?: (provider: AgentProvider) => void;
   isRetryingProvider?: boolean;
@@ -172,8 +194,10 @@ interface ModelBrowserContentProps extends Omit<ModelBrowserProps, "state" | "sc
   providers: ProviderSelectorProvider[];
   selectedProvider: string;
   selectedModel: string;
-  searchQuery: string;
+  items: ModelBrowserListItem[];
+  highlightedKey: string | null;
   favoriteKeys: Set<string>;
+  onSelect: (provider: string, modelId: string) => void;
   onDrillDown: (providerId: string, providerLabel: string) => void;
   onShowAllModels: () => void;
   scrolling: "sheet" | "independent";
@@ -258,6 +282,7 @@ export function useModelBrowser({
   selectedModel,
   isLoading,
   favoriteKeys,
+  onSelect,
   serverId = null,
 }: ModelBrowserInput): ModelBrowserState {
   const { t } = useTranslation();
@@ -265,6 +290,7 @@ export function useModelBrowser({
   const startWithAllModels = settings.modelPickerStartsWithAllModels;
   const [view, setView] = useState<ModelBrowserView>({ kind: "all" });
   const [searchQuery, setSearchQuery] = useState("");
+  const [highlightedKey, setHighlightedKey] = useState<string | null>(null);
   const [searchResetKey, bumpSearchResetKey] = useReducer((key: number) => key + 1, 0);
 
   const initialView = useMemo(
@@ -285,6 +311,7 @@ export function useModelBrowser({
 
   const reset = useCallback(() => {
     setSearchQuery("");
+    setHighlightedKey(null);
     bumpSearchResetKey();
   }, []);
 
@@ -308,9 +335,69 @@ export function useModelBrowser({
     reset();
   }, [reset]);
 
+  // Retyping re-ranks the list, so the highlight starts over: Enter then commits
+  // the top result until the user moves the highlight again.
   const handleSearchQueryChange = useCallback((value: string) => {
     setSearchQuery(value);
+    setHighlightedKey(null);
   }, []);
+
+  const normalizedQuery = useMemo(() => normalizeModelSearchQuery(searchQuery), [searchQuery]);
+  const favoritesLabel = t("modelSelector.favorites");
+  const items = useMemo<ModelBrowserListItem[]>(() => {
+    if (view.kind === "allModels") {
+      return buildAllModelsListItems({ providers, favoriteKeys, favoritesLabel, normalizedQuery });
+    }
+    if (view.kind !== "provider") return EMPTY_LIST_ITEMS;
+    const provider = providers.find((entry) => entry.id === view.providerId);
+    if (!provider) return EMPTY_LIST_ITEMS;
+    return buildProviderModelListItems({ provider, favoriteKeys, normalizedQuery });
+  }, [favoriteKeys, favoritesLabel, normalizedQuery, providers, view]);
+
+  const handleListSearchKey = useCallback(
+    (event: ListSearchKeyEvent): boolean => {
+      const action = resolveListSearchKeyAction(event);
+      if (!action) return false;
+      if (action === "submit") {
+        const row = resolveModelSubmitRow(items, highlightedKey);
+        if (!row) return false;
+        onSelect(row.provider, row.modelId);
+        return true;
+      }
+      const nextKey = moveModelHighlight({ items, highlightedKey, direction: action });
+      if (!nextKey) return false;
+      setHighlightedKey(nextKey);
+      return true;
+    },
+    [highlightedKey, items, onSelect],
+  );
+
+  // The overlay hears every key in the sheet, and the composer's sheet also
+  // hosts the agent controls below the list — only claim keys typed into the
+  // search field itself.
+  const handleOverlayKeyDown = useCallback(
+    (event: KeyboardEvent): boolean => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement) || !target.closest(LIST_SEARCH_SELECTOR)) return false;
+      if (!handleListSearchKey(event)) return false;
+      event.preventDefault();
+      return true;
+    },
+    [handleListSearchKey],
+  );
+
+  // Fallback for hosts without a web overlay registration (the compact-width
+  // sheet). On native only Enter arrives, and it arrives via onSubmitEditing.
+  const handleSearchKeyPress = useCallback(
+    (event: SheetSearchKeyPressEvent) => {
+      if (handleListSearchKey(event.nativeEvent)) event.preventDefault();
+    },
+    [handleListSearchKey],
+  );
+
+  const handleSearchSubmit = useCallback(() => {
+    handleListSearchKey({ key: "Enter" });
+  }, [handleListSearchKey]);
 
   const singleProviderView = providers.length === 1;
   const header = useMemo<SheetHeader>(() => {
@@ -328,6 +415,9 @@ export function useModelBrowser({
           placeholder: t("modelSelector.searchAllModelsPlaceholder"),
           autoFocus: isWeb,
           testID: "model-search-input",
+          onKeyPress: handleSearchKeyPress,
+          onSubmit: handleSearchSubmit,
+          ownsListNavigation: true,
         },
       };
     }
@@ -352,11 +442,16 @@ export function useModelBrowser({
         placeholder: t("modelSelector.searchPlaceholder"),
         autoFocus: isWeb,
         testID: "model-search-input",
+        onKeyPress: handleSearchKeyPress,
+        onSubmit: handleSearchSubmit,
+        ownsListNavigation: true,
       },
     };
   }, [
     handleBackToAll,
+    handleSearchKeyPress,
     handleSearchQueryChange,
+    handleSearchSubmit,
     searchResetKey,
     serverId,
     singleProviderView,
@@ -393,16 +488,19 @@ export function useModelBrowser({
     selectedModel,
     favoriteKeys,
     view,
-    searchQuery,
+    items,
+    highlightedKey,
     header,
     selectedModelLabel,
     triggerLabel,
     desktopFixedHeight,
     isModelListView: view.kind !== "all",
+    onSelect,
     prepareToOpen,
     reset,
     drillDown,
     showAllModels,
+    handleOverlayKeyDown,
   };
 }
 
@@ -497,6 +595,24 @@ function ModelBrowserPressable({
 
 type ModelBrowserRowTone = "default" | "elevated" | "drillDown";
 
+/**
+ * Keeps the keyboard-highlighted row visible. Highlight moves are clamped to
+ * neighbouring rows (see model-browser-keyboard.ts), so the target row is always
+ * mounted and `block: "nearest"` scrolls the smallest amount that reveals it.
+ * Web-only: the keys that drive the highlight need a hardware keyboard.
+ */
+function useScrollHighlightIntoView(highlighted: boolean | undefined) {
+  const ref = useRef<View>(null);
+  useEffect(() => {
+    if (!isWeb || !highlighted) return;
+    const node = ref.current as unknown as {
+      scrollIntoView?: (options?: ScrollIntoViewOptions) => void;
+    } | null;
+    node?.scrollIntoView?.({ block: "nearest" });
+  }, [highlighted]);
+  return ref;
+}
+
 function ModelBrowserRow({
   label,
   description,
@@ -505,6 +621,7 @@ function ModelBrowserRow({
   accessory,
   selected = false,
   selectionIndicator = false,
+  highlighted,
   tone = "default",
   spacing = "model",
   onPress,
@@ -517,11 +634,14 @@ function ModelBrowserRow({
   accessory?: React.ReactNode;
   selected?: boolean;
   selectionIndicator?: boolean;
+  /** Undefined for rows the keyboard never highlights (provider drill-downs). */
+  highlighted?: boolean;
   tone?: ModelBrowserRowTone;
   spacing?: "model" | "provider";
   onPress: () => void;
   testID?: string;
 }) {
+  const highlightRef = useScrollHighlightIntoView(highlighted);
   const pressableStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.browserRow,
@@ -529,9 +649,12 @@ function ModelBrowserRow({
       spacing === "model" && styles.browserModelRow,
       Boolean(hovered) &&
         (tone === "elevated" ? styles.browserRowHoveredElevated : styles.browserRowHovered),
+      // Painted after hover so the keyboard highlight wins when the pointer
+      // happens to rest on a different row than the one being navigated.
+      highlighted && styles.browserRowHighlighted,
       pressed && (tone === "default" ? styles.browserRowPressed : styles.browserRowPressedElevated),
     ],
-    [accessory, spacing, tone],
+    [accessory, highlighted, spacing, tone],
   );
   const contentStyle = useMemo(
     () => [styles.browserRowText, description && styles.browserRowTextInline],
@@ -571,11 +694,21 @@ function ModelBrowserRow({
     </ModelBrowserPressable>
   );
 
-  if (!accessory) return row;
-  return (
+  const rowWithAccessory = accessory ? (
     <View style={styles.browserRowContainer}>
       {row}
       <View style={styles.browserRowAccessory}>{accessory}</View>
+    </View>
+  ) : (
+    row
+  );
+
+  if (highlighted === undefined) return rowWithAccessory;
+  // Anchor for scroll-into-view: ModelBrowserPressable renders a Pressable or a
+  // GestureDetector depending on platform, neither of which forwards a ref.
+  return (
+    <View ref={highlightRef} collapsable={false}>
+      {rowWithAccessory}
     </View>
   );
 }
@@ -583,6 +716,7 @@ function ModelBrowserRow({
 function ModelRow({
   row,
   isSelected,
+  isHighlighted = false,
   isFavorite,
   elevated = false,
   showProvider = false,
@@ -591,6 +725,7 @@ function ModelRow({
 }: {
   row: ProviderSelectionModelRow;
   isSelected: boolean;
+  isHighlighted?: boolean;
   isFavorite: boolean;
   elevated?: boolean;
   showProvider?: boolean;
@@ -630,6 +765,7 @@ function ModelRow({
       description={buildModelRowDescription(row, showProvider)}
       selected={isSelected}
       selectionIndicator
+      highlighted={isHighlighted}
       tone={elevated ? "elevated" : "default"}
       onPress={onPress}
       leadingSlot={leadingSlot}
@@ -641,6 +777,7 @@ function ModelRow({
 function SelectableModelRow({
   row,
   isSelected,
+  isHighlighted,
   isFavorite,
   elevated,
   showProvider,
@@ -649,6 +786,7 @@ function SelectableModelRow({
 }: {
   row: ProviderSelectionModelRow;
   isSelected: boolean;
+  isHighlighted?: boolean;
   isFavorite: boolean;
   elevated?: boolean;
   showProvider?: boolean;
@@ -662,6 +800,7 @@ function SelectableModelRow({
     <ModelRow
       row={row}
       isSelected={isSelected}
+      isHighlighted={isHighlighted}
       isFavorite={isFavorite}
       elevated={elevated}
       showProvider={showProvider}
@@ -964,6 +1103,7 @@ function ModelListBody({
   items,
   selectedProvider,
   selectedModel,
+  highlightedKey,
   favoriteKeys,
   onSelect,
   onToggleFavorite,
@@ -973,6 +1113,7 @@ function ModelListBody({
   items: ModelBrowserListItem[];
   selectedProvider: string;
   selectedModel: string;
+  highlightedKey: string | null;
   favoriteKeys: Set<string>;
   onSelect: (provider: string, modelId: string) => void;
   onToggleFavorite?: (provider: string, modelId: string) => void;
@@ -996,6 +1137,7 @@ function ModelListBody({
         <SelectableModelRow
           row={item.row}
           isSelected={item.row.provider === selectedProvider && item.row.modelId === selectedModel}
+          isHighlighted={item.key === highlightedKey}
           isFavorite={favoriteKeys.has(item.row.favoriteKey)}
           showProvider={item.showProvider}
           onSelect={onSelect}
@@ -1003,7 +1145,15 @@ function ModelListBody({
         />
       );
     },
-    [favoriteKeys, onDrillDown, onSelect, onToggleFavorite, selectedModel, selectedProvider],
+    [
+      favoriteKeys,
+      highlightedKey,
+      onDrillDown,
+      onSelect,
+      onToggleFavorite,
+      selectedModel,
+      selectedProvider,
+    ],
   );
 
   if (scrolling === "independent") {
@@ -1066,7 +1216,8 @@ function ModelBrowserContent({
   providers,
   selectedProvider,
   selectedModel,
-  searchQuery,
+  items,
+  highlightedKey,
   favoriteKeys,
   onSelect,
   onToggleFavorite,
@@ -1077,32 +1228,12 @@ function ModelBrowserContent({
   scrolling,
 }: ModelBrowserContentProps) {
   const { t } = useTranslation();
-  const normalizedQuery = useMemo(() => normalizeModelSearchQuery(searchQuery), [searchQuery]);
   const selectedViewProvider = useMemo(
     () =>
       view.kind === "provider"
         ? providers.find((provider) => provider.id === view.providerId)
         : null,
     [providers, view],
-  );
-  const providerItems = useMemo(
-    () =>
-      selectedViewProvider
-        ? buildProviderModelListItems({
-            provider: selectedViewProvider,
-            favoriteKeys,
-            normalizedQuery,
-          })
-        : [],
-    [favoriteKeys, normalizedQuery, selectedViewProvider],
-  );
-  const favoritesLabel = t("modelSelector.favorites");
-  const allModelsItems = useMemo(
-    () =>
-      view.kind === "allModels"
-        ? buildAllModelsListItems({ providers, favoriteKeys, favoritesLabel, normalizedQuery })
-        : [],
-    [favoriteKeys, favoritesLabel, normalizedQuery, providers, view.kind],
   );
   const favoriteRows = useMemo(
     () => getAllProviderModelRows(providers).filter((row) => favoriteKeys.has(row.favoriteKey)),
@@ -1117,12 +1248,13 @@ function ModelBrowserContent({
   );
 
   if (view.kind === "allModels") {
-    if (allModelsItems.length === 0) return emptyState;
+    if (items.length === 0) return emptyState;
     return (
       <ModelListBody
-        items={allModelsItems}
+        items={items}
         selectedProvider={selectedProvider}
         selectedModel={selectedModel}
+        highlightedKey={highlightedKey}
         favoriteKeys={favoriteKeys}
         onSelect={onSelect}
         onToggleFavorite={onToggleFavorite}
@@ -1155,12 +1287,13 @@ function ModelBrowserContent({
         />
       );
     }
-    if (providerItems.length === 0) return emptyState;
+    if (items.length === 0) return emptyState;
     return (
       <ModelListBody
-        items={providerItems}
+        items={items}
         selectedProvider={selectedProvider}
         selectedModel={selectedModel}
+        highlightedKey={highlightedKey}
         favoriteKeys={favoriteKeys}
         onSelect={onSelect}
         onToggleFavorite={onToggleFavorite}
@@ -1202,7 +1335,6 @@ function ModelBrowserContent({
 
 export function ModelBrowser({
   state,
-  onSelect,
   onToggleFavorite,
   onRetryProvider,
   isRetryingProvider = false,
@@ -1214,9 +1346,10 @@ export function ModelBrowser({
       providers={state.providers}
       selectedProvider={state.selectedProvider}
       selectedModel={state.selectedModel}
-      searchQuery={state.searchQuery}
+      items={state.items}
+      highlightedKey={state.highlightedKey}
       favoriteKeys={state.favoriteKeys}
-      onSelect={onSelect}
+      onSelect={state.onSelect}
       onToggleFavorite={onToggleFavorite}
       onDrillDown={state.drillDown}
       onShowAllModels={state.showAllModels}
@@ -1273,6 +1406,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   browserRowHoveredElevated: {
     backgroundColor: theme.colors.surface2,
+  },
+  browserRowHighlighted: {
+    backgroundColor: theme.colors.surface3,
   },
   browserRowPressed: {
     backgroundColor: theme.colors.surface1,

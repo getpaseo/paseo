@@ -84,12 +84,23 @@ export function CombinedModelSelector({
   const anchorRef = useRef<View>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [isContentReady, setIsContentReady] = useState(isWeb);
+  // useModelBrowser needs the select handler up front, while closing the picker
+  // needs the browser's reset(). A ref breaks that cycle.
+  const openChangeRef = useRef<(open: boolean) => void>(noop);
+  const handleSelect = useCallback(
+    (provider: string, modelId: string) => {
+      onSelect(provider, modelId);
+      openChangeRef.current(false);
+    },
+    [onSelect],
+  );
   const browser = useModelBrowser({
     providers,
     selectedProvider,
     selectedModel,
     isLoading,
     favoriteKeys,
+    onSelect: handleSelect,
     serverId,
   });
   const { prepareToOpen, reset } = browser;
@@ -108,13 +119,9 @@ export function CombinedModelSelector({
     [onClose, onOpen, prepareToOpen, reset],
   );
 
-  const handleSelect = useCallback(
-    (provider: string, modelId: string) => {
-      onSelect(provider, modelId);
-      handleOpenChange(false);
-    },
-    [handleOpenChange, onSelect],
-  );
+  useEffect(() => {
+    openChangeRef.current = handleOpenChange;
+  }, [handleOpenChange]);
 
   useEffect(() => {
     if (isWeb) return () => {};
@@ -156,7 +163,6 @@ export function CombinedModelSelector({
   const selectorBody = isContentReady ? (
     <ModelBrowser
       state={browser}
-      onSelect={handleSelect}
       onToggleFavorite={onToggleFavorite}
       onRetryProvider={onRetryProvider}
       isRetryingProvider={isRetryingProvider}
@@ -232,6 +238,7 @@ export function CombinedModelSelector({
         desktopMinWidth={desktopMinWidth}
         desktopFixedHeight={browser.desktopFixedHeight}
         header={browser.header}
+        onOverlayKeyDown={browser.handleOverlayKeyDown}
         mobileChildrenScrollEnabled={!browser.isModelListView || !isNative}
         mobileChildrenContentContainerStyle={styles.mobileBrowserContent}
       >

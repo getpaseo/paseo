@@ -9,7 +9,7 @@ import {
   type DraftCommandConfig,
 } from "./use-agent-commands-query";
 import { orderAutocompleteOptions } from "@/components/ui/autocomplete-utils";
-import { useAutocomplete } from "./use-autocomplete";
+import { useAutocomplete, type AutocompleteKeyEvent } from "./use-autocomplete";
 import { useSessionStore } from "@/stores/session-store";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { CLIENT_SLASH_COMMANDS, type ClientSlashCommand } from "@/client-slash-commands";
@@ -56,7 +56,7 @@ interface AgentAutocompleteResult {
   loadingText: string;
   emptyText: string;
   onSelectOption: (option: AutocompleteOption) => void;
-  onKeyPress: (event: { key: string; preventDefault: () => void }) => boolean;
+  onKeyPress: (event: AutocompleteKeyEvent) => boolean;
 }
 
 interface DirectorySuggestionEntry {

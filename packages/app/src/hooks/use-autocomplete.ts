@@ -4,6 +4,9 @@ import {
   getAutocompleteNextIndex,
   type AutocompleteOptionsPosition,
 } from "@/components/ui/autocomplete-utils";
+import { resolveListSearchKeyAction, type ListSearchKeyEvent } from "@/keyboard/list-search-keys";
+
+export type AutocompleteKeyEvent = ListSearchKeyEvent & { preventDefault: () => void };
 
 interface UseAutocompleteInput<TOption> {
   isVisible: boolean;
@@ -16,7 +19,7 @@ interface UseAutocompleteInput<TOption> {
 
 interface UseAutocompleteResult {
   selectedIndex: number;
-  onKeyPress: (event: { key: string; preventDefault: () => void }) => boolean;
+  onKeyPress: (event: AutocompleteKeyEvent) => boolean;
 }
 
 export function useAutocomplete<TOption>(
@@ -56,30 +59,20 @@ export function useAutocomplete<TOption>(
   }, [input.isVisible, input.options.length, input.query, input.optionsPosition]);
 
   const onKeyPress = useCallback(
-    (event: { key: string; preventDefault: () => void }) => {
+    (event: AutocompleteKeyEvent) => {
       if (!input.isVisible || input.options.length === 0) {
         return false;
       }
 
-      if (event.key === "ArrowUp") {
+      // Ctrl+N/Ctrl+P move the selection like the arrow keys do.
+      const movement = resolveListSearchKeyAction(event);
+      if (movement === "next" || movement === "previous") {
         event.preventDefault();
         setSelectedIndex((current) =>
           getAutocompleteNextIndex({
             currentIndex: current,
             itemCount: input.options.length,
-            key: "ArrowUp",
-          }),
-        );
-        return true;
-      }
-
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        setSelectedIndex((current) =>
-          getAutocompleteNextIndex({
-            currentIndex: current,
-            itemCount: input.options.length,
-            key: "ArrowDown",
+            key: movement === "next" ? "ArrowDown" : "ArrowUp",
           }),
         );
         return true;

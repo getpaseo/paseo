@@ -31,7 +31,9 @@ const VALID_SIDEBAR_WORKSPACE_TRAILINGS = new Set<SidebarWorkspaceTrailing>([
 ]);
 const VALID_TOOL_CALL_DETAIL_LEVELS = new Set<ToolCallDetailLevel>(["overview", "detailed"]);
 const BOOLEAN_APP_SETTING_KEYS = [
+  "useLegacyTerminalRenderer",
   "vimKeybindings",
+  "chatOutlineEnabled",
   "autoExpandReasoning",
   "modelPickerStartsWithAllModels",
 ] as const satisfies readonly (keyof AppSettings)[];
@@ -217,14 +219,11 @@ function parseToolCallDetailLevel(stored: StoredAppSettings): ToolCallDetailLeve
 
 function pickBooleanAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   const result: Partial<AppSettings> = {};
-  if (typeof stored.useLegacyTerminalRenderer === "boolean") {
-    result.useLegacyTerminalRenderer = stored.useLegacyTerminalRenderer;
-  }
-  if (typeof stored.vimKeybindings === "boolean") {
-    result.vimKeybindings = stored.vimKeybindings;
-  }
-  if (typeof stored.chatOutlineEnabled === "boolean") {
-    result.chatOutlineEnabled = stored.chatOutlineEnabled;
+  for (const key of BOOLEAN_APP_SETTING_KEYS) {
+    const value = stored[key];
+    if (typeof value === "boolean") {
+      Object.assign(result, { [key]: value });
+    }
   }
   return result;
 }

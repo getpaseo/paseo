@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactElement } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -16,11 +16,14 @@ import { StyleSheet } from "react-native-unistyles";
 import { FloatingScrollView, FloatingSurface } from "@/components/ui/floating";
 import { isWeb } from "@/constants/platform";
 import {
+  getFocusableElements,
   getOverlayRoot,
   OverlayLayerProvider,
   useOverlayLayer,
   useWebOverlayRegistration,
 } from "@/lib/overlay-root";
+import { getNextActiveIndex } from "@/components/ui/combobox-keyboard";
+import { LIST_SEARCH_DATASET, resolveListSearchKeyAction } from "@/keyboard/list-search-keys";
 import {
   computePosition,
   getTransformOrigin,
@@ -32,6 +35,7 @@ import {
 } from "./menu-anchor";
 
 const SCROLL_CONTENT_STYLE = { flexGrow: 1 } as const;
+const MENU_SURFACE_DATASET = { menuSurface: "true" } as const;
 const CONTENT_ENTERING_DURATION_MS = 150;
 
 const contentEntering = new Keyframe({
@@ -342,6 +346,7 @@ export function AnchoredSurface({
       ) : null}
       <FloatingSurface
         collapsable={false}
+        dataSet={MENU_SURFACE_DATASET}
         tabIndex={-1}
         nativeID={surfaceNativeID}
         testID={testID}
@@ -391,22 +396,58 @@ export function MenuOverlay({
   children: ReactElement | null;
 }): ReactElement | null {
   const floatingLayer = useOverlayLayer("floating");
+  const scopeRef = useRef<HTMLElement | null>(null);
 
   const handleWebOverlayKeyDown = useCallback(
     (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return false;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+        return true;
+      }
+
+      const action = resolveListSearchKeyAction(event);
+      if (!action || !scopeRef.current) return false;
+      const surfaces = Array.from(
+        scopeRef.current.querySelectorAll<HTMLElement>("[data-menu-surface='true']"),
+      );
+      const activeElement = document.activeElement;
+      const activeSurface =
+        surfaces.find((surface) => surface.contains(activeElement)) ??
+        surfaces[surfaces.length - 1];
+      const items = activeSurface ? getFocusableElements(activeSurface) : [];
+      if (items.length === 0) return false;
+
       event.preventDefault();
-      event.stopPropagation();
-      onClose();
+      const currentIndex = items.indexOf(activeElement as HTMLElement);
+      if (action === "submit") {
+        (currentIndex === -1 ? items[0] : items[currentIndex])?.click();
+        return true;
+      }
+      const nextIndex = getNextActiveIndex({
+        currentIndex,
+        itemCount: items.length,
+        key: action === "next" ? "ArrowDown" : "ArrowUp",
+      });
+      items[nextIndex]?.focus();
       return true;
     },
     [onClose],
   );
-  const setWebOverlayScope = useWebOverlayRegistration({
+  const registerWebOverlayScope = useWebOverlayRegistration({
     active: isWeb && visible,
     layer: floatingLayer,
     onKeyDown: handleWebOverlayKeyDown,
   });
+  const setWebOverlayScope = useCallback(
+    (node: unknown) => {
+      scopeRef.current =
+        typeof HTMLElement !== "undefined" && node instanceof HTMLElement ? node : null;
+      registerWebOverlayScope(node);
+    },
+    [registerWebOverlayScope],
+  );
 
   if (!visible) return null;
 
@@ -415,6 +456,7 @@ export function MenuOverlay({
       <View
         ref={setWebOverlayScope}
         collapsable={false}
+        dataSet={LIST_SEARCH_DATASET}
         style={[
           styles.overlay,
           isWeb ? styles.overlayWeb : null,

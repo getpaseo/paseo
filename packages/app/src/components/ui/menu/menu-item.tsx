@@ -1,6 +1,7 @@
 import {
   useCallback,
   useMemo,
+  useState,
   type PropsWithChildren,
   type ReactElement,
   type ReactNode,
@@ -217,16 +218,25 @@ export function MenuItem({
     selectItem(onSelect, closeOnSelect);
   }, [isDisabled, selectItem, onSelect, closeOnSelect]);
 
+  // Web keyboard navigation is DOM focus. Mirror hover so Ctrl+N/Ctrl+P and
+  // arrow-key movement always have a visible highlight.
+  const [isFocused, setIsFocused] = useState(false);
+  const handleFocus = useCallback(() => setIsFocused(true), []);
+  const handleBlur = useCallback(() => setIsFocused(false), []);
+
   const itemPressableStyle = useCallback(
-    ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.item,
-      active ? styles.itemActive : null,
-      isDisabled ? styles.itemDisabled : null,
-      muted && !isDisabled ? styles.itemMuted : null,
-      hovered && !pressed && !isDisabled ? styles.itemHovered : null,
-      pressed && !isDisabled ? styles.itemPressed : null,
-    ],
-    [active, isDisabled, muted],
+    ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => {
+      const highlighted = hovered || isFocused;
+      return [
+        styles.item,
+        active ? styles.itemActive : null,
+        isDisabled ? styles.itemDisabled : null,
+        muted && !isDisabled ? styles.itemMuted : null,
+        highlighted && !pressed && !isDisabled ? styles.itemHovered : null,
+        pressed && !isDisabled ? styles.itemPressed : null,
+      ];
+    },
+    [active, isDisabled, isFocused, muted],
   );
 
   const itemTextStyle = useMemo(
@@ -245,6 +255,8 @@ export function MenuItem({
       accessibilityRole="button"
       disabled={isDisabled}
       onPress={handleItemPress}
+      onFocus={handleFocus}
+      onBlur={handleBlur}
       style={itemPressableStyle}
     >
       {showSelectedCheck ? (

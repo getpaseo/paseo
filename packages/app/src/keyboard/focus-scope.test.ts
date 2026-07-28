@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { resolveKeyboardFocusScope } from "./focus-scope";
+import { ownsListNavigationKeys, resolveKeyboardFocusScope } from "./focus-scope";
 
 class FakeNode {
   parentElement: FakeElement | null = null;
@@ -66,6 +66,27 @@ describe("resolveKeyboardFocusScope", () => {
       commandCenterOpen: false,
     });
     expect(scope).toBe("terminal");
+  });
+
+  it("keeps the composer's scope while an open menu owns the list-navigation keys", () => {
+    const menu = new FakeElement({ selectors: ["[data-keyboard-scope='list-search']"] });
+    const composer = new FakeElement({ selectors: ["[data-testid='message-input-root']"] });
+    menu.parentElement = composer;
+    const target = new FakeElement({ tagName: "textarea" });
+    target.parentElement = menu;
+
+    expect(ownsListNavigationKeys(target as unknown as EventTarget)).toBe(true);
+    expect(
+      resolveKeyboardFocusScope({
+        target: target as unknown as EventTarget,
+        commandCenterOpen: false,
+      }),
+    ).toBe("message-input");
+  });
+
+  it("reports no list-navigation ownership for an ordinary field", () => {
+    const target = new FakeElement({ tagName: "input" });
+    expect(ownsListNavigationKeys(target as unknown as EventTarget)).toBe(false);
   });
 
   it("detects editable scope from activeElement fallback", () => {

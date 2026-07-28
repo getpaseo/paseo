@@ -1,4 +1,5 @@
 import type { KeyboardFocusScope } from "@/keyboard/actions";
+import { LIST_SEARCH_SELECTOR } from "@/keyboard/list-search-keys";
 
 function isElement(value: unknown): value is Element {
   return typeof Element !== "undefined" && value instanceof Element;
@@ -26,6 +27,18 @@ function getFocusCandidateElements(target: EventTarget | null): Element[] {
   }
 
   return candidates;
+}
+
+/**
+ * Whether the key is being typed into a menu or field that navigates its own
+ * result list (see list-search-keys.ts). This is deliberately separate from the
+ * focus scope: an open autocomplete inside the composer owns Ctrl+N/Ctrl+P
+ * without ceasing to be the message input for every other shortcut.
+ */
+export function ownsListNavigationKeys(target: EventTarget | null): boolean {
+  return getFocusCandidateElements(target).some((element) =>
+    Boolean(element.closest(LIST_SEARCH_SELECTOR)),
+  );
 }
 
 export function resolveKeyboardFocusScope(input: {
