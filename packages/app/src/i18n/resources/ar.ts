@@ -549,6 +549,7 @@ export const ar: TranslationResources = {
         run: "تشغيل الإعداد",
         runFailed: "فشل تشغيل إعداد مساحة العمل",
       },
+      waitingForWorkspace: "في انتظار اكتمال إعداد مساحة العمل",
       empty: {
         noCommands: "لم يتم تشغيل أي أوامر إعداد لمساحة العمل هذه.",
       },

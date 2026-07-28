@@ -39,6 +39,10 @@ interface ScheduleContext {
   currentSelection?: CurrentSelection;
 }
 
+interface GenerateContext {
+  currentSelection?: CurrentSelection;
+}
+
 export class WorkspaceAutoName {
   private readonly agentManager: AgentManager;
   private readonly workspaceRegistry: Pick<WorkspaceRegistry, "update">;
@@ -63,6 +67,19 @@ export class WorkspaceAutoName {
     this.logger = options.logger;
     this.generateWorkspaceName =
       options.generateWorkspaceName ?? generateBranchNameFromFirstAgentContext;
+  }
+
+  generateForWorktreeCreation(
+    input: {
+      cwd: string;
+      firstAgentContext: FirstAgentContext;
+    },
+    context: GenerateContext = {},
+  ): Promise<GeneratedWorkspaceName | null> {
+    return this.generateFromContext({
+      ...input,
+      currentSelection: context.currentSelection ?? null,
+    });
   }
 
   scheduleForWorktree(

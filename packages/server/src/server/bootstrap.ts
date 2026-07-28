@@ -118,12 +118,12 @@ export async function fanOutReconciledWorkspaceUpdates(input: {
 }
 
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
-import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
 import { createWorkspaceLabelService } from "./workspace-labels/index.js";
 import { createGitHubService } from "../services/github-service.js";
 import { createPaseoWorktree as createRegisteredPaseoWorktree } from "./paseo-worktree-service.js";
 import { createWorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
 import { createPaseoWorktreeWorkflow } from "./worktree-session.js";
+import { WorkspaceSetupReadiness } from "./workspace-setup-readiness.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import type { OpenAiSpeechProviderConfig } from "./speech/providers/openai/config.js";
 import type { LocalSpeechProviderConfig } from "./speech/providers/local/config.js";
@@ -565,6 +565,39 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
   return initialConfig;
 }
 
+interface RestoreWorkspaceSetupReadinessInput {
+  workspaceRegistry: FileBackedWorkspaceRegistry;
+  workspaceSetupReadiness: WorkspaceSetupReadiness;
+  markInterrupted: (workspaceId: string, error: string) => Promise<void>;
+}
+
+async function restoreWorkspaceSetupReadiness({
+  workspaceRegistry,
+  workspaceSetupReadiness,
+  markInterrupted,
+}: RestoreWorkspaceSetupReadinessInput): Promise<void> {
+  for (const workspace of await workspaceRegistry.list()) {
+    if (workspace.archivedAt || !workspace.worktreeRoot) continue;
+    if (workspace.setupStatus === "pending") {
+      const interruptionError = "Workspace setup was interrupted by a daemon restart";
+      await markInterrupted(workspace.workspaceId, interruptionError);
+      workspaceSetupReadiness.restoreInterrupted(
+        workspace.workspaceId,
+        workspace.worktreeRoot,
+        workspace.branch,
+        interruptionError,
+      );
+    } else if (workspace.setupStatus === "failed") {
+      workspaceSetupReadiness.restoreInterrupted(
+        workspace.workspaceId,
+        workspace.worktreeRoot,
+        workspace.branch,
+        workspace.setupError ?? "Workspace setup failed",
+      );
+    }
+  }
+}
+
 export async function createPaseoDaemon(
   config: PaseoDaemonConfig,
   rootLogger: Logger,
@@ -660,7 +693,6 @@ export async function createPaseoDaemon(
     publicBaseUrl: serviceProxyPublicBaseUrl,
   });
   const scriptRuntimeStore = new WorkspaceScriptRuntimeStore();
-  const workspaceSetupRuntime = new WorkspaceSetupRuntime();
   let configuredHostnames = config.hostnames ?? config.allowedHosts;
   let appBaseUrl = config.appBaseUrl ?? "https://app.paseo.sh";
   daemonConfigStore.onFieldChange("hostnames", (value) => {
@@ -869,6 +901,23 @@ export async function createPaseoDaemon(
     paseoHome: config.paseoHome,
     workspaceRegistry,
   });
+  const updateWorkspaceSetupStatus = async (
+    workspaceId: string,
+    setupStatus: "pending" | "completed" | "failed",
+    setupError: string | null,
+  ): Promise<void> => {
+    await workspaceRegistry.update(workspaceId, (workspace) => ({
+      ...workspace,
+      setupStatus,
+      setupError,
+      updatedAt: new Date().toISOString(),
+    }));
+  };
+  const workspaceSetupReadiness = new WorkspaceSetupReadiness({
+    markPending: (workspaceId) => updateWorkspaceSetupStatus(workspaceId, "pending", null),
+    markCompleted: (workspaceId) => updateWorkspaceSetupStatus(workspaceId, "completed", null),
+    markFailed: (workspaceId, error) => updateWorkspaceSetupStatus(workspaceId, "failed", error),
+  });
   const github = createGitHubService();
   const workspaceGitService = new WorkspaceGitServiceImpl({
     logger,
@@ -931,6 +980,7 @@ export async function createPaseoDaemon(
     mcpAuthToken: agentMcpAuthToken,
     resolvePaseoToolPolicy: (provider) =>
       resolvePaseoToolPolicy(provider, daemonConfigStore.get().providers),
+    workspaceSetupReadiness,
     logger,
   });
   const syncPluginProviders = () => {
@@ -958,10 +1008,17 @@ export async function createPaseoDaemon(
     logger,
   });
   await workspaceLabelService.initialize();
+  await restoreWorkspaceSetupReadiness({
+    workspaceRegistry,
+    workspaceSetupReadiness,
+    markInterrupted: (workspaceId, error) =>
+      updateWorkspaceSetupStatus(workspaceId, "failed", error),
+  });
   logger.info({ elapsed: elapsed() }, "Workspace registries bootstrapped");
   const teardownArchivedWorkspaceRuntime = (workspaceId: string): void => {
     scriptRuntimeStore.removeForWorkspace(workspaceId);
     releaseWorkspaceServicePortPlan(workspaceId);
+    workspaceSetupReadiness.forget(workspaceId);
   };
   const workspaceReconciliation = new WorkspaceReconciliationService({
     serverId,
@@ -1136,12 +1193,15 @@ export async function createPaseoDaemon(
         },
         autoNameWorkspaceBranchForFirstAgent: (autoNameInput) =>
           workspaceAutoName.scheduleForWorktree(autoNameInput),
+        generateWorkspaceNameForFirstAgent: (nameInput) =>
+          workspaceAutoName.generateForWorktreeCreation(nameInput),
+        workspaceSetupReadiness,
         emitWorkspaceUpdateForWorkspaceId: async (workspaceId) => {
           await emitWorkspaceUpdatesExternal([workspaceId]);
         },
-        cacheWorkspaceSetupSnapshot: () => {},
-        startWorkspaceSetup: (workspaceId, operation) =>
-          workspaceSetupRuntime.start(workspaceId, operation),
+        cacheWorkspaceSetupSnapshot: (workspaceId, snapshot) => {
+          return workspaceSetupReadiness.setSnapshot(workspaceId, snapshot);
+        },
         assertWorkspaceAutomationAllowed: (guardedWorkspaceId) =>
           assertWorkspaceAutomationAllowedForWorkspace(workspaceRegistry, guardedWorkspaceId),
         emit: emitExternalSessionMessage,
@@ -1168,6 +1228,7 @@ export async function createPaseoDaemon(
     worktreesRoot: config.worktreesRoot,
     terminalManager,
     providerSnapshotManager,
+    workspaceSetupReadiness,
     createPaseoWorktree: createPaseoWorktreeForTools,
     ensureWorkspaceForCreate: ensureWorkspaceForCreateAndBroadcastExternal,
   };
@@ -1191,7 +1252,7 @@ export async function createPaseoDaemon(
         clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
         killTerminalsForWorkspace: (workspaceIdToKill) =>
           killTerminalsForWorkspace({ terminalManager, sessionLogger: logger }, workspaceIdToKill),
-        stopWorkspaceSetup: (workspaceIdToStop) => workspaceSetupRuntime.stop(workspaceIdToStop),
+        stopWorkspaceSetup: (workspaceIdToStop) => workspaceSetupReadiness.stop(workspaceIdToStop),
         assertWorkspaceAutomationAllowed: (guardedWorkspaceId) =>
           assertWorkspaceAutomationAllowedForWorkspace(workspaceRegistry, guardedWorkspaceId),
         sessionLogger: logger,
@@ -1318,7 +1379,7 @@ export async function createPaseoDaemon(
             },
             workspaceIdToKill,
           ),
-        stopWorkspaceSetup: (workspaceIdToStop) => workspaceSetupRuntime.stop(workspaceIdToStop),
+        stopWorkspaceSetup: (workspaceIdToStop) => workspaceSetupReadiness.stop(workspaceIdToStop),
         assertWorkspaceAutomationAllowed: (guardedWorkspaceId) =>
           assertWorkspaceAutomationAllowedForWorkspace(workspaceRegistry, guardedWorkspaceId),
         sessionLogger: logger,
@@ -1369,6 +1430,7 @@ export async function createPaseoDaemon(
     scheduleService,
     providerSnapshotManager,
     daemonConfigStore,
+    workspaceSetupReadiness,
     github,
     workspaceGitService,
     findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
@@ -1713,7 +1775,7 @@ export async function createPaseoDaemon(
               serviceProxyPublicBaseUrl,
               browserToolsBroker,
               hubRelationships,
-              workspaceSetupRuntime,
+              workspaceSetupReadiness,
               pluginRuntime,
               orchestrationSkills,
               workspaceLabelService,
@@ -1784,6 +1846,7 @@ export async function createPaseoDaemon(
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();
     agentManager.prepareForShutdown();
+    await workspaceSetupReadiness.stopAll();
     await closeAllAgents(logger, agentManager);
     await agentManager.flushForShutdown().catch(() => undefined);
     detachAgentStoragePersistence();

@@ -14,12 +14,12 @@ import {
 import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import {
-  runAsyncWorktreeBootstrap,
   runWorktreeAutoTerminals,
   applyWorktreeSetupProgressEvent,
   buildWorktreeSetupDetail,
   createWorktreeSetupProgressAccumulator,
   getWorktreeSetupProgressResults,
+  runWorktreeTerminalsAfterSetup,
 } from "./worktree-bootstrap.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
@@ -48,13 +48,27 @@ import {
   createPaseoWorktreeCommand,
   listPaseoWorktreesCommand,
 } from "./worktree/commands.js";
-import type { WorkspaceSetupOperation } from "./workspace-setup-runtime.js";
 import {
   formatWorkspaceAutomationBlockedMessage,
   WorkspaceAutomationBlockedError,
 } from "./workspace-automation-gate.js";
+import type { WorkspaceSetupReadiness } from "./workspace-setup-readiness.js";
+import { buildAgentBranchNameSeed } from "./agent/prompt-attachments.js";
+import type { GeneratedWorkspaceName } from "./worktree-branch-name-generator.js";
 
 const SAFE_GIT_REF_PATTERN = /^[A-Za-z0-9._/-]+$/;
+const SETUP_PROGRESS_EMIT_INTERVAL_MS = 100;
+
+export class WorkspaceSetupExecutionError extends Error {
+  constructor(
+    readonly setupStarted: boolean,
+    readonly setupError: unknown,
+  ) {
+    const detail = setupError instanceof Error ? setupError.message : String(setupError);
+    super(detail, { cause: setupError });
+    this.name = "WorkspaceSetupExecutionError";
+  }
+}
 
 export interface NormalizedGitOptions {
   baseBranch?: string;
@@ -71,7 +85,7 @@ export interface NormalizedGitOptions {
 
 type EmitSessionMessage = (message: SessionOutboundMessage) => void;
 type AgentWorktreeSetupTimelineItem = Parameters<
-  typeof runAsyncWorktreeBootstrap
+  typeof runWorktreeTerminalsAfterSetup
 >[0]["appendTimelineItem"] extends (item: infer Item) => unknown
   ? Item
   : never;
@@ -104,7 +118,10 @@ interface CreatePaseoWorktreeInBackgroundDependencies {
   paseoHome?: string;
   worktreesRoot?: string;
   emitWorkspaceUpdateForWorkspaceId: (workspaceId: string) => Promise<void>;
-  cacheWorkspaceSetupSnapshot: (workspaceId: string, snapshot: WorkspaceSetupSnapshot) => void;
+  cacheWorkspaceSetupSnapshot: (
+    workspaceId: string,
+    snapshot: WorkspaceSetupSnapshot,
+  ) => readonly string[] | void;
   emit: EmitSessionMessage;
   sessionLogger: Logger;
   terminalManager: TerminalManager | null;
@@ -129,8 +146,12 @@ interface CreatePaseoWorktreeWorkflowDependencies extends CreatePaseoWorktreeInB
     workspace: PersistedWorkspaceRecord;
     firstAgentContext: FirstAgentContext;
   }) => void;
-  startWorkspaceSetup?: (workspaceId: string, operation: WorkspaceSetupOperation) => void;
   assertWorkspaceAutomationAllowed?: (workspaceId: string) => Promise<void>;
+  generateWorkspaceNameForFirstAgent: (input: {
+    cwd: string;
+    firstAgentContext: FirstAgentContext;
+  }) => Promise<GeneratedWorkspaceName | null>;
+  workspaceSetupReadiness: Pick<WorkspaceSetupReadiness, "start" | "waitUntilReady">;
 }
 
 interface AgentWorktreeSetupContinuationInput {
@@ -164,14 +185,14 @@ export type CreatePaseoWorktreeWorkflowFn = (
 
 interface HandleWorkspaceSetupStatusRequestDependencies {
   emit: EmitSessionMessage;
-  workspaceSetupSnapshots: ReadonlyMap<string, WorkspaceSetupSnapshot>;
+  workspaceSetupReadiness: Pick<WorkspaceSetupReadiness, "getSnapshot">;
   getWorkspace: (workspaceId: string) => Promise<PersistedWorkspaceRecord | null>;
 }
 
 interface HandleWorkspaceSetupRunRequestDependencies extends CreatePaseoWorktreeInBackgroundDependencies {
   getWorkspace: (workspaceId: string) => Promise<PersistedWorkspaceRecord | null>;
   clearAutomationBlock: (workspaceId: string) => Promise<boolean>;
-  startWorkspaceSetup: (workspaceId: string, operation: WorkspaceSetupOperation) => void;
+  workspaceSetupReadiness: Pick<WorkspaceSetupReadiness, "start">;
 }
 
 interface HandleCreatePaseoWorktreeRequestDependencies {
@@ -214,11 +235,13 @@ export async function buildAgentSessionConfig(
   sessionConfig: AgentSessionConfig;
   setupContinuation?: AgentWorktreeSetupContinuation;
   createdWorkspaceId?: string;
+  createdWorktree?: CreatePaseoWorktreeWorkflowResult;
 }> {
   let cwd = expandTilde(config.cwd);
   const normalized = normalizeGitOptions(gitOptions, legacyWorktreeName);
   let setupContinuation: AgentWorktreeSetupContinuation | undefined;
   let createdWorkspaceId: string | undefined;
+  let createdWorktreeResult: CreatePaseoWorktreeWorkflowResult | undefined;
 
   if (!normalized) {
     return {
@@ -244,6 +267,7 @@ export async function buildAgentSessionConfig(
         checkoutSource: normalized.checkoutSource,
         githubPrNumber: normalized.githubPrNumber,
         firstAgentContext,
+        title: config.title?.trim() || undefined,
         runSetup: false,
         paseoHome: dependencies.paseoHome,
         worktreesRoot: dependencies.worktreesRoot,
@@ -262,6 +286,7 @@ export async function buildAgentSessionConfig(
     cwd = createdWorktree.workspace.cwd;
     setupContinuation = createdWorktree.setupContinuation;
     createdWorkspaceId = createdWorktree.workspace.workspaceId;
+    createdWorktreeResult = createdWorktree;
   } else if (normalized.createNewBranch) {
     const baseBranch =
       normalized.baseBranch ??
@@ -288,6 +313,7 @@ export async function buildAgentSessionConfig(
     },
     setupContinuation,
     createdWorkspaceId,
+    createdWorktree: createdWorktreeResult,
   };
 }
 
@@ -613,9 +639,10 @@ export async function createPaseoWorktreeWorkflow(
     setupContinuation?: CreatePaseoWorktreeSetupContinuationInput;
   },
 ): Promise<CreatePaseoWorktreeWorkflowResult> {
+  const prepared = await prepareFirstAgentWorktreeName(dependencies, input);
   const createdWorktree = await dependencies.createPaseoWorktree(
     {
-      ...input,
+      ...prepared.input,
       runSetup: false,
       paseoHome: input.paseoHome ?? dependencies.paseoHome,
       worktreesRoot: input.worktreesRoot ?? dependencies.worktreesRoot,
@@ -655,41 +682,46 @@ export async function createPaseoWorktreeWorkflow(
     return createdWorktree;
   }
 
-  setTimeout(() => {
-    if (input.firstAgentContext) {
+  await dependencies.workspaceSetupReadiness.start(
+    workspace.workspaceId,
+    createdWorktree.worktree.worktreePath,
+    (signal) =>
+      runWorktreeSetupInBackground(dependencies, {
+        requestCwd: input.cwd,
+        repoRoot: createdWorktree.repoRoot,
+        workspaceId: workspace.workspaceId,
+        worktree: createdWorktree.worktree,
+        shouldBootstrap: createdWorktree.created,
+        archiveOnFailure: setupContinuation.kind !== "agent",
+        slug,
+        worktreePath: createdWorktree.worktree.worktreePath,
+        workspaceCwd: workspace.cwd,
+        signal,
+      }),
+  );
+
+  const firstAgentContext = prepared.input.firstAgentContext;
+  if (firstAgentContext && !prepared.generatedBeforeCreate) {
+    try {
       dependencies.autoNameWorkspaceBranchForFirstAgent({
         workspace,
-        firstAgentContext: input.firstAgentContext,
+        firstAgentContext,
       });
+    } catch (error) {
+      dependencies.sessionLogger.warn(
+        { err: error, workspaceId: workspace.workspaceId },
+        "Failed to schedule workspace auto-name",
+      );
     }
+  }
+
+  setTimeout(() => {
     void dependencies.warmWorkspaceGitData(workspace).catch((error) => {
       dependencies.sessionLogger.warn(
         { err: error, workspaceId: workspace.workspaceId },
         "Failed to warm workspace git data after creating worktree",
       );
     });
-    if (setupContinuation.kind === "workspace") {
-      const runSetup = (signal: AbortSignal) =>
-        runWorktreeSetupInBackground(
-          dependencies,
-          {
-            requestCwd: input.cwd,
-            repoRoot: createdWorktree.repoRoot,
-            workspaceId: workspace.workspaceId,
-            worktree: createdWorktree.worktree,
-            shouldBootstrap: createdWorktree.created,
-            slug,
-            worktreePath: createdWorktree.worktree.worktreePath,
-            workspaceCwd: workspace.cwd,
-          },
-          signal,
-        );
-      if (dependencies.startWorkspaceSetup) {
-        dependencies.startWorkspaceSetup(workspace.workspaceId, runSetup);
-      } else {
-        void runSetup(new AbortController().signal);
-      }
-    }
   }, 0);
 
   if (setupContinuation.kind === "agent") {
@@ -698,18 +730,29 @@ export async function createPaseoWorktreeWorkflow(
       setupContinuation: {
         kind: "agent",
         startAfterAgentCreate: ({ agentId }) => {
-          void runAsyncWorktreeBootstrap({
-            agentId,
-            workspaceId: workspace.workspaceId,
-            worktree: createdWorktree.worktree,
-            workspaceCwd: workspace.cwd,
-            shouldBootstrap: createdWorktree.created,
-            terminalManager: setupContinuation.terminalManager,
-            appendTimelineItem: (item) => setupContinuation.appendTimelineItem({ agentId, item }),
-            emitLiveTimelineItem: (item) =>
-              setupContinuation.emitLiveTimelineItem({ agentId, item }),
-            logger: setupContinuation.logger,
-          });
+          void dependencies.workspaceSetupReadiness
+            .waitUntilReady(workspace.workspaceId)
+            .then(() =>
+              runWorktreeTerminalsAfterSetup({
+                agentId,
+                workspaceId: workspace.workspaceId,
+                worktree: createdWorktree.worktree,
+                workspaceCwd: workspace.cwd,
+                shouldBootstrap: createdWorktree.created,
+                terminalManager: setupContinuation.terminalManager,
+                appendTimelineItem: (item) =>
+                  setupContinuation.appendTimelineItem({ agentId, item }),
+                emitLiveTimelineItem: (item) =>
+                  setupContinuation.emitLiveTimelineItem({ agentId, item }),
+                logger: setupContinuation.logger,
+              }),
+            )
+            .catch((error) => {
+              setupContinuation.logger.warn(
+                { err: error, workspaceId: workspace.workspaceId, agentId },
+                "Failed to start worktree terminals after setup",
+              );
+            });
         },
       },
     };
@@ -718,12 +761,52 @@ export async function createPaseoWorktreeWorkflow(
   return createdWorktree;
 }
 
+async function prepareFirstAgentWorktreeName(
+  dependencies: Pick<CreatePaseoWorktreeWorkflowDependencies, "generateWorkspaceNameForFirstAgent">,
+  input: CreatePaseoWorktreeInput,
+): Promise<{ input: CreatePaseoWorktreeInput; generatedBeforeCreate: boolean }> {
+  const firstAgentContext = input.firstAgentContext;
+  const createsNewBranch =
+    input.action !== "checkout" &&
+    input.checkoutSource === undefined &&
+    input.githubPrNumber === undefined;
+  if (
+    !createsNewBranch ||
+    input.branchName?.trim() ||
+    !firstAgentContext ||
+    !buildAgentBranchNameSeed(firstAgentContext)
+  ) {
+    return { input, generatedBeforeCreate: false };
+  }
+
+  const generated = await dependencies.generateWorkspaceNameForFirstAgent({
+    cwd: input.cwd,
+    firstAgentContext,
+  });
+  const branchName = generated?.branch?.trim();
+  const title = generated?.title?.trim();
+  if (!branchName || !title || slugify(branchName) !== branchName) {
+    throw new Error("Couldn't generate a valid name for this workspace. Retry workspace creation.");
+  }
+
+  return {
+    input: {
+      ...input,
+      branchName,
+      worktreeSlug: branchName,
+      title: input.title?.trim() || title,
+      nameSource: "first-agent",
+    },
+    generatedBeforeCreate: true,
+  };
+}
+
 export async function handleWorkspaceSetupStatusRequest(
   dependencies: HandleWorkspaceSetupStatusRequestDependencies,
   request: Extract<SessionInboundMessage, { type: "workspace_setup_status_request" }>,
 ): Promise<void> {
   const workspaceId = request.workspaceId;
-  let snapshot = dependencies.workspaceSetupSnapshots.get(workspaceId) ?? null;
+  let snapshot = dependencies.workspaceSetupReadiness.getSnapshot(workspaceId);
   if (!snapshot) {
     const workspace = await dependencies.getWorkspace(workspaceId);
     if (workspace?.untrustedSource) {
@@ -767,10 +850,11 @@ export async function handleWorkspaceSetupRunRequest(
         worktreePath: workspace.worktreeRoot ?? workspace.cwd,
         branchName: workspace.branch ?? "",
       };
-      dependencies.startWorkspaceSetup(request.workspaceId, (signal) =>
-        runWorktreeSetupInBackground(
-          dependencies,
-          {
+      await dependencies.workspaceSetupReadiness.start(
+        request.workspaceId,
+        worktree.worktreePath,
+        (signal) =>
+          runWorktreeSetupInBackground(dependencies, {
             requestCwd: workspace.cwd,
             repoRoot: workspace.mainRepoRoot ?? workspace.cwd,
             workspaceId: workspace.workspaceId,
@@ -780,9 +864,8 @@ export async function handleWorkspaceSetupRunRequest(
             worktreePath: worktree.worktreePath,
             workspaceCwd: workspace.cwd,
             runAutoTerminals: true,
-          },
-          signal,
-        ),
+            signal,
+          }),
       );
       await dependencies.emitWorkspaceUpdateForWorkspaceId(request.workspaceId);
     }
@@ -816,20 +899,30 @@ export async function runWorktreeSetupInBackground(
     workspaceId: string;
     worktree: WorktreeConfig;
     shouldBootstrap: boolean;
+    archiveOnFailure?: boolean;
     slug: string;
     worktreePath: string;
     workspaceCwd?: string;
     runAutoTerminals?: boolean;
+    signal?: AbortSignal;
   },
-  signal?: AbortSignal,
 ): Promise<void> {
   let worktree: WorktreeConfig = options.worktree;
   let setupResults: WorktreeSetupCommandResult[] = [];
   let setupStarted = false;
   const progressAccumulator = createWorktreeSetupProgressAccumulator();
   const workspaceId = options.workspaceId;
+  let pendingProgressTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastProgressEmittedAt = 0;
 
-  const emitSetupProgress = (status: "running" | "completed" | "failed", error: string | null) => {
+  const emitSetupProgressNow = (
+    status: "running" | "completed" | "failed",
+    error: string | null,
+  ) => {
+    if (pendingProgressTimer) {
+      clearTimeout(pendingProgressTimer);
+      pendingProgressTimer = null;
+    }
     const snapshot: WorkspaceSetupSnapshot = {
       status,
       detail: buildWorktreeSetupDetail({
@@ -842,28 +935,49 @@ export async function runWorktreeSetupInBackground(
       }),
       error,
     };
-    dependencies.cacheWorkspaceSetupSnapshot(workspaceId, snapshot);
-    dependencies.emit({
-      type: "workspace_setup_progress",
-      payload: {
-        workspaceId,
-        ...snapshot,
-      },
-    });
+    const cachedWorkspaceIds = dependencies.cacheWorkspaceSetupSnapshot(workspaceId, snapshot);
+    const relatedWorkspaceIds = Array.isArray(cachedWorkspaceIds)
+      ? cachedWorkspaceIds
+      : [workspaceId];
+    for (const relatedWorkspaceId of relatedWorkspaceIds) {
+      dependencies.emit({
+        type: "workspace_setup_progress",
+        payload: {
+          workspaceId: relatedWorkspaceId,
+          ...snapshot,
+        },
+      });
+    }
+    lastProgressEmittedAt = Date.now();
+  };
+
+  const emitRunningSetupProgress = () => {
+    const elapsed = Date.now() - lastProgressEmittedAt;
+    if (lastProgressEmittedAt === 0 || elapsed >= SETUP_PROGRESS_EMIT_INTERVAL_MS) {
+      emitSetupProgressNow("running", null);
+      return;
+    }
+    if (pendingProgressTimer) {
+      return;
+    }
+    pendingProgressTimer = setTimeout(() => {
+      pendingProgressTimer = null;
+      emitSetupProgressNow("running", null);
+    }, SETUP_PROGRESS_EMIT_INTERVAL_MS - elapsed);
   };
 
   try {
     try {
-      emitSetupProgress("running", null);
+      emitRunningSetupProgress();
 
       if (!options.shouldBootstrap) {
-        emitSetupProgress("completed", null);
+        emitSetupProgressNow("completed", null);
       } else {
         const workspaceCwd = options.workspaceCwd ?? worktree.worktreePath;
         const setupCommands = getWorktreeSetupCommands(workspaceCwd);
         if (setupCommands.length === 0) {
           setupStarted = true;
-          emitSetupProgress("completed", null);
+          emitSetupProgressNow("completed", null);
         } else {
           const runtimeEnv = await resolveWorktreeRuntimeEnv({
             worktreePath: worktree.worktreePath,
@@ -881,13 +995,13 @@ export async function runWorktreeSetupInBackground(
             cleanupOnFailure: false,
             repoRootPath: options.repoRoot,
             runtimeEnv,
-            signal,
+            signal: options.signal,
             onEvent: (event) => {
               applyWorktreeSetupProgressEvent(progressAccumulator, event);
-              emitSetupProgress("running", null);
+              emitRunningSetupProgress();
             },
           });
-          emitSetupProgress("completed", null);
+          emitSetupProgressNow("completed", null);
         }
         if (options.runAutoTerminals) {
           await runWorktreeAutoTerminals({
@@ -904,9 +1018,9 @@ export async function runWorktreeSetupInBackground(
         setupResults = error.results;
       }
       const message = error instanceof Error ? error.message : String(error);
-      emitSetupProgress("failed", message);
+      emitSetupProgressNow("failed", message);
 
-      if (!setupStarted) {
+      if (!setupStarted && options.archiveOnFailure !== false) {
         await dependencies.archiveWorkspaceRecord(options.workspaceId);
       }
 
@@ -921,7 +1035,7 @@ export async function runWorktreeSetupInBackground(
         },
         "Background worktree setup failed",
       );
-      return;
+      throw new WorkspaceSetupExecutionError(setupStarted, error);
     }
   } finally {
     await dependencies.emitWorkspaceUpdateForWorkspaceId(options.workspaceId);

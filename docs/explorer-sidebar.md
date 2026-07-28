@@ -78,6 +78,10 @@ Placement intent still controls existing tabs:
 Explicit **Open to Side** uses `pane`. Implicit opens use `prefer`, so a preference affects only a
 new target and never yanks an existing tab out of a user-selected pane.
 
+Creating a managed worktree reveals its running Setup tab while the initial agent waits for
+readiness. A failed setup discovered outside creation adds a background tab to the main pane.
+Returning to another running setup or a successful setup does not seed a tab.
+
 ## Routing preferences
 
 Desktop **Settings → Layout → Open location** has independent Main panel or On the side choices for

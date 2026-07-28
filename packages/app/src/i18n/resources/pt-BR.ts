@@ -554,6 +554,7 @@ export const ptBR: TranslationResources = {
         run: "Executar configuração",
         runFailed: "Falha ao executar a configuração do workspace",
       },
+      waitingForWorkspace: "Aguardando a configuração do workspace",
       empty: {
         noCommands: "Nenhum comando de configuração foi executado para este workspace.",
       },

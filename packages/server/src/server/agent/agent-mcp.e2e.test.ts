@@ -2,8 +2,8 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { describe, expect, test } from "vitest";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { describe, expect, test, vi } from "vitest";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import pino from "pino";
@@ -15,6 +15,7 @@ import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import type {
   AgentClient,
   AgentPersistenceHandle,
+  AgentPromptInput,
   AgentRunResult,
   AgentSession,
   AgentSessionConfig,
@@ -48,6 +49,24 @@ async function waitForPathExists(options: {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`Timed out after ${options.timeoutMs}ms waiting for path: ${options.targetPath}`);
+}
+
+async function waitForManagedWorktree(options: {
+  worktreesRoot: string;
+  slug: string;
+  timeoutMs: number;
+}): Promise<string> {
+  const start = Date.now();
+  while (Date.now() - start < options.timeoutMs) {
+    const groups = await readdir(options.worktreesRoot, { withFileTypes: true }).catch(() => []);
+    for (const group of groups) {
+      if (!group.isDirectory()) continue;
+      const candidate = path.join(options.worktreesRoot, group.name, options.slug);
+      if (existsSync(candidate)) return candidate;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Timed out waiting for managed worktree: ${options.slug}`);
 }
 
 async function getAvailablePort(): Promise<number> {
@@ -133,8 +152,11 @@ class RecordingAgentClient implements AgentClient {
   }
 }
 
-function createMcpRecordingAgentClients(recorder: LaunchRecorder) {
-  const clients = createTestAgentClients();
+function createMcpRecordingAgentClients(
+  recorder: LaunchRecorder,
+  options?: { onStartTurn?: (prompt: AgentPromptInput) => void },
+) {
+  const clients = createTestAgentClients(options);
   const claude = clients.claude;
   if (!claude) {
     throw new Error("Fake Claude client is not configured");
@@ -369,7 +391,10 @@ describe("agent MCP end-to-end (offline)", () => {
       agentId = typeof payload?.agentId === "string" ? payload.agentId : null;
       expect(agentId).toBeTruthy();
 
-      expect(recorder.recordedLaunches.at(-1)?.mcpServers).toMatchObject({
+      const agentLaunch = recorder.recordedLaunches.find((launch) =>
+        launch.mcpServers?.paseo?.url.includes(`callerAgentId=${agentId!}`),
+      );
+      expect(agentLaunch?.mcpServers).toMatchObject({
         paseo: {
           type: "http",
           url: `http://127.0.0.1:${port}/mcp/agents?callerAgentId=${agentId!}`,
@@ -458,7 +483,10 @@ describe("agent MCP end-to-end (offline)", () => {
       agentId = typeof payload?.agentId === "string" ? payload.agentId : null;
       expect(agentId).toBeTruthy();
 
-      expect(recorder.recordedLaunches.at(-1)?.mcpServers).toMatchObject({
+      const agentLaunch = recorder.recordedLaunches.find((launch) =>
+        launch.mcpServers?.paseo?.url.includes(`callerAgentId=${agentId!}`),
+      );
+      expect(agentLaunch?.mcpServers).toMatchObject({
         paseo: {
           type: "http",
           url: `http://127.0.0.1:${port}/mcp/agents?callerAgentId=${agentId!}`,
@@ -723,12 +751,14 @@ describe("agent MCP end-to-end (offline)", () => {
     }
   }, 30_000);
 
-  test("create_agent with worktree is async and boots terminals only after setup success", async () => {
+  test("create_agent returns immediately but queues its turn until worktree setup completes", async () => {
     const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
     const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-worktree-repo-"));
     const port = await getAvailablePort();
 
+    const recorder: LaunchRecorder = { recordedLaunches: [] };
+    const startedPrompts: AgentPromptInput[] = [];
     const daemonConfig: PaseoDaemonConfig = {
       listen: `127.0.0.1:${port}`,
       paseoHome,
@@ -737,7 +767,9 @@ describe("agent MCP end-to-end (offline)", () => {
       mcpEnabled: true,
       staticDir,
       mcpDebug: false,
-      agentClients: createTestAgentClients(),
+      agentClients: createMcpRecordingAgentClients(recorder, {
+        onStartTurn: (prompt) => startedPrompts.push(prompt),
+      }),
       agentStoragePath: path.join(paseoHome, "agents"),
     };
 
@@ -793,17 +825,25 @@ describe("agent MCP end-to-end (offline)", () => {
             background: true,
           },
         }),
-        timeoutMs: 2500,
-        label: "create_agent should not block on setup",
+        timeoutMs: 2_500,
+        label: "create_agent should return while setup is pending",
       });
-
       const payload = getStructuredContent(result);
       agentId = typeof payload?.agentId === "string" ? payload.agentId : null;
       expect(agentId).toBeTruthy();
-      const worktreePath = typeof payload?.cwd === "string" ? payload.cwd : "";
-      expect(worktreePath).toContain(`${path.sep}worktrees${path.sep}`);
+
+      const worktreePath = await waitForManagedWorktree({
+        worktreesRoot: path.join(paseoHome, "worktrees"),
+        slug: "mcp-worktree-setup-test",
+        timeoutMs: 15_000,
+      });
+      expect(payload?.cwd).toBe(worktreePath);
       expect(existsSync(path.join(worktreePath, "setup-done.txt"))).toBe(false);
       expect(existsSync(path.join(worktreePath, "dev-terminal.txt"))).toBe(false);
+      expect(
+        recorder.recordedLaunches.filter((launch) => launch.cwd === worktreePath),
+      ).toHaveLength(1);
+      expect(startedPrompts).toEqual([]);
 
       await writeFile(path.join(worktreePath, "allow-setup"), "ok\n", "utf8");
 
@@ -815,6 +855,88 @@ describe("agent MCP end-to-end (offline)", () => {
         targetPath: path.join(worktreePath, "dev-terminal.txt"),
         timeoutMs: 30000,
       });
+      await vi.waitFor(() => expect(startedPrompts).toContain("say done and stop"));
+      expect(startedPrompts.filter((prompt) => prompt === "say done and stop")).toHaveLength(1);
+    } finally {
+      if (agentId) {
+        await client.callTool({ name: "kill_agent", args: { agentId } });
+      }
+      await client.close();
+      await daemon.stop();
+      await rm(paseoHome, { recursive: true, force: true });
+      await rm(staticDir, { recursive: true, force: true });
+      await rm(repoRoot, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  test("create_agent keeps a visible failed agent when worktree setup fails", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
+    const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-worktree-repo-"));
+    const port = await getAvailablePort();
+    const recorder: LaunchRecorder = { recordedLaunches: [] };
+    const daemon = await createPaseoDaemon(
+      {
+        listen: `127.0.0.1:${port}`,
+        paseoHome,
+        corsAllowedOrigins: [],
+        hostnames: true,
+        mcpEnabled: true,
+        staticDir,
+        mcpDebug: false,
+        agentClients: createMcpRecordingAgentClients(recorder),
+        agentStoragePath: path.join(paseoHome, "agents"),
+      },
+      pino({ level: "silent" }),
+    );
+    await daemon.start();
+    const client = await createMcpClient(`http://127.0.0.1:${port}/mcp/agents`);
+
+    let agentId: string | null = null;
+    try {
+      const { execSync } = await import("node:child_process");
+      execSync("git init -b main", { cwd: repoRoot, stdio: "pipe" });
+      execSync("git config user.email 'test@test.com'", { cwd: repoRoot, stdio: "pipe" });
+      execSync("git config user.name 'Test'", { cwd: repoRoot, stdio: "pipe" });
+      await writeFile(path.join(repoRoot, "paseo.json"), "{ invalid json\n");
+      execSync("git add .", { cwd: repoRoot, stdio: "pipe" });
+      execSync("git -c commit.gpgsign=false commit -m 'initial'", {
+        cwd: repoRoot,
+        stdio: "pipe",
+      });
+
+      const result = await client.callTool({
+        name: "create_agent",
+        args: {
+          cwd: repoRoot,
+          title: "MCP failed worktree setup",
+          provider: "claude/claude-test-model",
+          mode: "bypassPermissions",
+          initialPrompt: "never runs",
+          worktreeName: "mcp-worktree-setup-failure",
+          baseBranch: "main",
+          background: true,
+        },
+      });
+
+      expect(result.isError).not.toBe(true);
+      const payload = getStructuredContent(result);
+      agentId = typeof payload?.agentId === "string" ? payload.agentId : null;
+      expect(agentId).toBeTruthy();
+      await vi.waitFor(
+        () => expect(daemon.agentManager.getAgent(agentId!)?.lifecycle).toBe("error"),
+        { timeout: 5_000 },
+      );
+      expect(daemon.agentManager.getAgent(agentId!)?.lastError).toContain("paseo.json");
+      expect(recorder.recordedLaunches.filter((launch) => launch.cwd !== repoRoot)).toHaveLength(1);
+      const persisted = JSON.parse(
+        await readFile(path.join(paseoHome, "projects", "workspaces.json"), "utf8"),
+      ) as Array<{ worktreeRoot: string | null; archivedAt: string | null }>;
+      const failedWorkspace = persisted.find((workspace) =>
+        workspace.worktreeRoot?.endsWith("mcp-worktree-setup-failure"),
+      );
+      expect(failedWorkspace?.archivedAt).toBeNull();
+      expect(existsSync(failedWorkspace?.worktreeRoot ?? "")).toBe(true);
     } finally {
       if (agentId) {
         await client.callTool({ name: "kill_agent", args: { agentId } });

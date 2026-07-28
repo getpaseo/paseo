@@ -59,6 +59,7 @@ test("ordinary Hub create and message retries do not duplicate agents or prompts
   const create = {
     type: "create_agent_request",
     idempotencyKey: "ordinary-create",
+    clientMessageId: "ordinary-client-message",
     config: { provider: "codex", cwd: hub.repoRoot() },
   };
   const responses = await Promise.all([
@@ -94,6 +95,13 @@ test("ordinary Hub create and message retries do not duplicate agents or prompts
       agent: first.payload.agent,
     },
   });
+  expect(
+    await hub.requestOrdinary({
+      ...create,
+      requestId: "create-conflict",
+      config: { ...create.config, title: "Different request" },
+    }),
+  ).toMatchObject({ type: "status", payload: { status: "agent_create_failed" } });
   expect(
     await hub.requestOrdinary({
       type: "fetch_agents_request",
@@ -370,6 +378,7 @@ test("Hub archives a running execution's Paseo-created worktree", async () => {
     payload: { success: true, agent: { cwd: worktreeCwd } },
   });
   expect(worktreeCwd).not.toBe(hub.repoRoot());
+  expect(worktreeCwd).toMatch(/[/\\]hub-created-worktree$/u);
   expect(duringRun).toEqual({ exists: true, listed: true });
   expect(response).toMatchObject({ success: true, error: null, action: "archive" });
   expect(afterArchive).toEqual({ exists: false, listed: false });

@@ -555,6 +555,7 @@ export const es: TranslationResources = {
         run: "Ejecutar configuración",
         runFailed: "No se pudo ejecutar la configuración",
       },
+      waitingForWorkspace: "Esperando a que finalice la configuración del espacio de trabajo",
       empty: {
         noCommands: "No se ejecutó ningún comando de configuración para este espacio de trabajo.",
       },

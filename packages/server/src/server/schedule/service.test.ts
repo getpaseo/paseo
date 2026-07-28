@@ -168,6 +168,7 @@ function createScheduleService(options: TestScheduleServiceOptions): ScheduleSer
             agentStorage: options.agentStorage,
             logger: options.logger,
             providerSnapshotManager: options.providerSnapshotManager as ProviderSnapshotManager,
+            workspaceSetupReadiness: { waitUntilReady: async () => {} },
           },
           input,
         )),

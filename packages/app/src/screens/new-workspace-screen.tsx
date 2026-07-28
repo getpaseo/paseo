@@ -68,6 +68,7 @@ import {
   useWorkspaceDraftSubmissionStore,
   type PendingWorkspaceDraftSetup,
 } from "@/stores/workspace-draft-submission-store";
+import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionId } from "@/keyboard/keyboard-action-dispatcher";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
@@ -849,6 +850,12 @@ async function createMultiplicityWorkspace(input: {
     throw new Error(payload.error ?? input.createFailedMessage);
   }
   const normalizedWorkspace = normalizeWorkspaceDescriptor(payload.workspace);
+  if (isWorktree) {
+    useWorkspaceSetupStore.getState().requestSetupReveal({
+      serverId: input.serverId,
+      workspaceId: normalizedWorkspace.id,
+    });
+  }
   const workspaceForInitialMerge = input.withInitialAgent
     ? { ...normalizedWorkspace, status: "running" as const, statusEnteredAt: new Date() }
     : normalizedWorkspace;
