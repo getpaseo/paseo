@@ -57,6 +57,8 @@ import {
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { useHostFeatureMap } from "@/runtime/host-features";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
+import { resolveProjectFileManagerPlacement } from "@/components/sidebar/sidebar-project-host-selection";
 import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
 import {
   buildNewWorkspaceRoute,
@@ -505,6 +507,12 @@ function ProjectRowTrailingActions({
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
   const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint;
+  const localServerId = useLocalDaemonServerId();
+  const { projectPath, projectServerId } = resolveProjectFileManagerPlacement(
+    project,
+    localServerId,
+  );
+
   return (
     <View style={styles.projectTrailingActions}>
       {worktreeTarget ? (
@@ -523,7 +531,8 @@ function ProjectRowTrailingActions({
         >
           <ProjectKebabMenu
             projectKey={project.projectKey}
-            projectPath={project.iconWorkingDir}
+            projectPath={projectPath}
+            serverId={projectServerId}
             onRemoveProject={onRemoveProject}
             removeProjectStatus={removeProjectStatus}
           />
@@ -551,11 +560,13 @@ function renderKebabTriggerIcon({ hovered }: { hovered?: boolean }) {
 function ProjectKebabMenu({
   projectKey,
   projectPath,
+  serverId,
   onRemoveProject,
   removeProjectStatus,
 }: {
   projectKey: string;
   projectPath: string;
+  serverId?: string | null;
   onRemoveProject: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
@@ -612,6 +623,7 @@ function ProjectKebabMenu({
         ) : null}
         <OpenInFileManagerMenuItem
           path={projectPath}
+          serverId={serverId}
           testID={`sidebar-project-menu-open-folder-${projectKey}`}
         />
         <DropdownMenuItem
@@ -693,6 +705,7 @@ function WorkspaceRowRightGroup({
             {onArchive ? (
               <SidebarWorkspaceMenu
                 workspaceKey={workspace.workspaceKey}
+                serverId={workspace.serverId}
                 onCopyPath={onCopyPath}
                 onCopyBranchName={onCopyBranchName}
                 onRename={onRename}

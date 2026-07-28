@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import React, { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -48,6 +48,7 @@ function renderTriggerIcon({ hovered }: { hovered?: boolean }) {
 
 interface SidebarWorkspaceMenuProps {
   workspaceKey: string;
+  serverId?: string | null;
   onCopyPath?: () => void;
   onCopyBranchName?: () => void;
   onRename?: () => void;
@@ -64,6 +65,7 @@ interface SidebarWorkspaceMenuProps {
 
 export function SidebarWorkspaceMenu({
   workspaceKey,
+  serverId,
   onCopyPath,
   onCopyBranchName,
   onRename,
@@ -142,6 +144,7 @@ export function SidebarWorkspaceMenu({
         ) : null}
         <OpenInFileManagerMenuItem
           path={openInFileManagerPath}
+          serverId={serverId}
           testID={`sidebar-workspace-menu-open-folder-${workspaceKey}`}
         />
         <DropdownMenuItem
