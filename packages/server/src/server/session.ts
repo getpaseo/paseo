@@ -102,6 +102,7 @@ import {
 import { buildAgentForkContextAttachment } from "./agent/activity-curator.js";
 import { buildAgentPrompt } from "./agent/prompt-attachments.js";
 import type { StructuredGenerationDaemonConfig } from "./agent/structured-generation-providers.js";
+import { listMetadataOpenAIModels } from "./agent/metadata-openai-client.js";
 import {
   getAgentStreamEventTurnId,
   type AgentPersistenceHandle,
@@ -1275,6 +1276,45 @@ export class Session {
     };
   }
 
+  private async handleMetadataCustomEndpointListModelsRequest(
+    msg: Extract<
+      SessionInboundMessage,
+      { type: "metadataGeneration.customEndpoint.listModels.request" }
+    >,
+  ): Promise<void> {
+    const saved = this.daemonConfigStore.get().metadataGeneration.customEndpoint;
+    const baseUrl = (msg.baseUrl ?? saved?.baseUrl ?? "").trim();
+    const apiKey = (msg.apiKey ?? saved?.apiKey ?? "").trim();
+    if (!baseUrl) {
+      this.emit({
+        type: "metadataGeneration.customEndpoint.listModels.response",
+        payload: {
+          requestId: msg.requestId,
+          models: [],
+          error: {
+            code: "missing_base_url",
+            message: "Base URL is required",
+          },
+        },
+      });
+      return;
+    }
+
+    const result = await listMetadataOpenAIModels({
+      baseUrl,
+      ...(apiKey ? { apiKey } : {}),
+    });
+
+    this.emit({
+      type: "metadataGeneration.customEndpoint.listModels.response",
+      payload: {
+        requestId: msg.requestId,
+        models: result.models,
+        error: result.error,
+      },
+    });
+  }
+
   public getRuntimeMetrics(): SessionRuntimeMetrics {
     const terminalMetrics = this.terminalController.getMetrics();
     const workspaceGitMetrics = this.workspaceGitObserver.getMetrics();
@@ -1999,6 +2039,8 @@ export class Session {
           },
         });
         return undefined;
+      case "metadataGeneration.customEndpoint.listModels.request":
+        return this.handleMetadataCustomEndpointListModelsRequest(msg);
       case "read_project_config_request":
         return this.projectConfigSession.handleReadProjectConfigRequest(msg);
       case "write_project_config_request":

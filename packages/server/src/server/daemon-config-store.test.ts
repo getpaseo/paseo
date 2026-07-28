@@ -550,6 +550,171 @@ describe("DaemonConfigStore", () => {
     expect(persisted.agents?.metadataGeneration).toEqual({ providers: [] });
   });
 
+  test("patch persists metadata custom endpoint into config.json", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+    );
+
+    expect(store.get().metadataGeneration.customEndpoint).toEqual({
+      enabled: false,
+      baseUrl: "",
+      apiKey: "",
+      model: "",
+    });
+
+    store.patch({
+      metadataGeneration: {
+        customEndpoint: {
+          enabled: true,
+          baseUrl: "http://127.0.0.1:11434/v1",
+          apiKey: "sk-test",
+          model: "llama3",
+        },
+      },
+    });
+
+    const next = store.get();
+    expect(next.metadataGeneration.customEndpoint).toEqual({
+      enabled: true,
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "sk-test",
+      model: "llama3",
+    });
+
+    const persisted = loadPersistedConfig(paseoHome);
+    expect(persisted.agents?.metadataGeneration).toEqual({
+      providers: [],
+      customEndpoint: {
+        enabled: true,
+        baseUrl: "http://127.0.0.1:11434/v1",
+        apiKey: "sk-test",
+        model: "llama3",
+      },
+    });
+  });
+
+  test("patching providers does not wipe custom endpoint", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: {
+          providers: [],
+          customEndpoint: {
+            enabled: true,
+            baseUrl: "http://127.0.0.1:11434/v1",
+            apiKey: "sk-test",
+            model: "llama3",
+          },
+        },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+    );
+
+    store.patch({
+      metadataGeneration: {
+        providers: [{ provider: "claude", model: "haiku" }],
+      },
+    });
+
+    expect(store.get().metadataGeneration).toEqual({
+      providers: [{ provider: "claude", model: "haiku" }],
+      customEndpoint: {
+        enabled: true,
+        baseUrl: "http://127.0.0.1:11434/v1",
+        apiKey: "sk-test",
+        model: "llama3",
+      },
+    });
+    expect(loadPersistedConfig(paseoHome).agents?.metadataGeneration).toEqual({
+      providers: [{ provider: "claude", model: "haiku" }],
+      customEndpoint: {
+        enabled: true,
+        baseUrl: "http://127.0.0.1:11434/v1",
+        apiKey: "sk-test",
+        model: "llama3",
+      },
+    });
+  });
+
+  test("patching custom endpoint does not wipe providers", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: {
+          providers: [{ provider: "claude", model: "haiku" }],
+          customEndpoint: {
+            enabled: false,
+            baseUrl: "",
+            apiKey: "",
+            model: "",
+          },
+        },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+    );
+
+    store.patch({
+      metadataGeneration: {
+        customEndpoint: {
+          enabled: true,
+          baseUrl: "https://api.openai.com/v1",
+          apiKey: "sk-live",
+          model: "gpt-4o-mini",
+        },
+      },
+    });
+
+    expect(store.get().metadataGeneration).toEqual({
+      providers: [{ provider: "claude", model: "haiku" }],
+      customEndpoint: {
+        enabled: true,
+        baseUrl: "https://api.openai.com/v1",
+        apiKey: "sk-live",
+        model: "gpt-4o-mini",
+      },
+    });
+    expect(loadPersistedConfig(paseoHome).agents?.metadataGeneration).toEqual({
+      providers: [{ provider: "claude", model: "haiku" }],
+      customEndpoint: {
+        enabled: true,
+        baseUrl: "https://api.openai.com/v1",
+        apiKey: "sk-live",
+        model: "gpt-4o-mini",
+      },
+    });
+  });
+
   test("patch persists custom ACP provider overrides into config.json", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);

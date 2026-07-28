@@ -12,7 +12,10 @@ function makeConfig(browserToolsEnabled = false): MutableDaemonConfig {
     mcp: { injectIntoAgents: false },
     browserTools: { enabled: browserToolsEnabled },
     providers: {},
-    metadataGeneration: { providers: [] },
+    metadataGeneration: {
+      providers: [],
+      customEndpoint: { enabled: false, baseUrl: "", apiKey: "", model: "" },
+    },
     autoArchiveAfterMerge: false,
     enableTerminalAgentHooks: false,
     appendSystemPrompt: "",

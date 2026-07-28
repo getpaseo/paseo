@@ -251,6 +251,46 @@ describe("PersistedConfigSchema agent provider runtime settings", () => {
       ],
     });
   });
+
+  test("accepts metadata generation custom endpoint", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        metadataGeneration: {
+          providers: [{ provider: "claude", model: "haiku" }],
+          customEndpoint: {
+            enabled: true,
+            baseUrl: "http://127.0.0.1:11434/v1",
+            apiKey: "sk-test",
+            model: "llama3",
+          },
+        },
+      },
+    });
+
+    expect(parsed.agents?.metadataGeneration).toEqual({
+      providers: [{ provider: "claude", model: "haiku" }],
+      customEndpoint: {
+        enabled: true,
+        baseUrl: "http://127.0.0.1:11434/v1",
+        apiKey: "sk-test",
+        model: "llama3",
+      },
+    });
+  });
+
+  test("still accepts metadata generation without custom endpoint", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        metadataGeneration: {
+          providers: [{ provider: "claude", model: "haiku" }],
+        },
+      },
+    });
+
+    expect(parsed.agents?.metadataGeneration).toEqual({
+      providers: [{ provider: "claude", model: "haiku" }],
+    });
+  });
 });
 
 describe("provider overrides (new format)", () => {

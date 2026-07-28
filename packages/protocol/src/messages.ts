@@ -131,9 +131,24 @@ const MutableStructuredGenerationProviderSchema = z
   })
   .passthrough();
 
+const MetadataCustomEndpointSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    baseUrl: z.string().default(""),
+    apiKey: z.string().default(""),
+    model: z.string().default(""),
+  })
+  .passthrough();
+
 const MutableMetadataGenerationConfigSchema = z
   .object({
     providers: z.array(MutableStructuredGenerationProviderSchema).default([]),
+    customEndpoint: MetadataCustomEndpointSchema.default({
+      enabled: false,
+      baseUrl: "",
+      apiKey: "",
+      model: "",
+    }),
   })
   .passthrough();
 
@@ -163,11 +178,37 @@ export const MutableDaemonConfigSchema = z
       .passthrough(),
     browserTools: MutableBrowserToolsConfigSchema.default({ enabled: false }),
     providers: z.record(z.string(), MutableDaemonProviderConfigSchema).default({}),
-    metadataGeneration: MutableMetadataGenerationConfigSchema.default({ providers: [] }),
+    metadataGeneration: MutableMetadataGenerationConfigSchema.default({
+      providers: [],
+      customEndpoint: {
+        enabled: false,
+        baseUrl: "",
+        apiKey: "",
+        model: "",
+      },
+    }),
     autoArchiveAfterMerge: z.boolean().default(false),
     enableTerminalAgentHooks: z.boolean().default(false),
     appendSystemPrompt: z.string().default(""),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
+  })
+  .passthrough();
+
+// Patch schemas must not re-apply .default() for omitted keys — otherwise
+// deepMerge would overwrite live config with empty defaults on partial patches.
+const MetadataCustomEndpointPatchSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    baseUrl: z.string().optional(),
+    apiKey: z.string().optional(),
+    model: z.string().optional(),
+  })
+  .passthrough();
+
+const MutableMetadataGenerationConfigPatchSchema = z
+  .object({
+    providers: z.array(MutableStructuredGenerationProviderSchema).optional(),
+    customEndpoint: MetadataCustomEndpointPatchSchema.optional(),
   })
   .passthrough();
 
@@ -179,7 +220,7 @@ export const MutableDaemonConfigPatchSchema = z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
       .optional(),
     removeProviders: z.array(z.string().min(1)).optional(),
-    metadataGeneration: MutableMetadataGenerationConfigSchema.partial().optional(),
+    metadataGeneration: MutableMetadataGenerationConfigPatchSchema.optional(),
     autoArchiveAfterMerge: z.boolean().optional(),
     enableTerminalAgentHooks: z.boolean().optional(),
     appendSystemPrompt: z.string().optional(),
@@ -1175,6 +1216,13 @@ export const SetDaemonConfigRequestMessageSchema = z.object({
   type: z.literal("set_daemon_config_request"),
   requestId: z.string(),
   config: MutableDaemonConfigPatchSchema,
+});
+
+export const MetadataCustomEndpointListModelsRequestSchema = z.object({
+  type: z.literal("metadataGeneration.customEndpoint.listModels.request"),
+  requestId: z.string(),
+  baseUrl: z.string().optional(),
+  apiKey: z.string().optional(),
 });
 
 export const ReadProjectConfigRequestMessageSchema = z.object({
@@ -2450,6 +2498,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   DiagnosticsRequestSchema,
   GetDaemonConfigRequestMessageSchema,
   SetDaemonConfigRequestMessageSchema,
+  MetadataCustomEndpointListModelsRequestSchema,
   ReadProjectConfigRequestMessageSchema,
   WriteProjectConfigRequestMessageSchema,
   DictationStreamStartMessageSchema,
@@ -2836,6 +2885,8 @@ export const ServerInfoStatusPayloadSchema = z
         selectiveAgentTimeline: z.boolean().optional(),
         // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
         stableProjectIdentity: z.boolean().optional(),
+        // COMPAT(metadataCustomEndpoint): added 2026-07-28, remove after 2027-01-28 once daemon floor advertises it.
+        metadataCustomEndpoint: z.boolean().optional(),
       })
       .optional(),
   })
@@ -3710,6 +3761,27 @@ export const GetDaemonConfigResponseMessageSchema = z.object({
     .object({
       requestId: z.string(),
       config: MutableDaemonConfigSchema,
+    })
+    .passthrough(),
+});
+
+export const MetadataCustomEndpointListModelsResponseSchema = z.object({
+  type: z.literal("metadataGeneration.customEndpoint.listModels.response"),
+  payload: z
+    .object({
+      requestId: z.string(),
+      models: z.array(
+        z.object({
+          id: z.string(),
+          name: z.string().optional(),
+        }),
+      ),
+      error: z
+        .object({
+          code: z.string(),
+          message: z.string(),
+        })
+        .nullable(),
     })
     .passthrough(),
 });
@@ -5210,6 +5282,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   DiagnosticsResponseSchema,
   GetDaemonConfigResponseMessageSchema,
   SetDaemonConfigResponseMessageSchema,
+  MetadataCustomEndpointListModelsResponseSchema,
   ReadProjectConfigResponseMessageSchema,
   WriteProjectConfigResponseMessageSchema,
   SetAgentModeResponseMessageSchema,

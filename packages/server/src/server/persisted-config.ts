@@ -165,9 +165,19 @@ const StructuredGenerationProviderConfigSchema = z
   })
   .strict();
 
+const MetadataCustomEndpointPersistedSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    baseUrl: z.string().optional(),
+    apiKey: z.string().optional(),
+    model: z.string().optional(),
+  })
+  .strict();
+
 const AgentMetadataGenerationSchema = z
   .object({
     providers: z.array(StructuredGenerationProviderConfigSchema).optional(),
+    customEndpoint: MetadataCustomEndpointPersistedSchema.optional(),
   })
   .strict();
 

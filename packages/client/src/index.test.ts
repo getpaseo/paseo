@@ -692,7 +692,10 @@ test("config actions delegate to existing daemon config RPCs", async () => {
       mcp: { injectIntoAgents: true },
       providers: {},
       browserTools: { enabled: false },
-      metadataGeneration: { providers: [] },
+      metadataGeneration: {
+        providers: [],
+        customEndpoint: { enabled: false, baseUrl: "", apiKey: "", model: "" },
+      },
       autoArchiveAfterMerge: false,
       enableTerminalAgentHooks: false,
       appendSystemPrompt: "",
@@ -747,7 +750,10 @@ test("config actions delegate to existing daemon config RPCs", async () => {
         },
       },
       browserTools: { enabled: false },
-      metadataGeneration: { providers: [] },
+      metadataGeneration: {
+        providers: [],
+        customEndpoint: { enabled: false, baseUrl: "", apiKey: "", model: "" },
+      },
       autoArchiveAfterMerge: false,
       enableTerminalAgentHooks: false,
       appendSystemPrompt: "",
