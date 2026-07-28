@@ -3,7 +3,7 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Logger } from "pino";
 import type { AgentManager } from "../agent/agent-manager.js";
-import type { AgentSessionConfig } from "../agent/agent-sdk-types.js";
+import type { AgentRunResult, AgentSessionConfig } from "../agent/agent-sdk-types.js";
 import type { AgentStorage } from "../agent/agent-storage.js";
 import { curateAgentActivity } from "../agent/activity-curator.js";
 import { ensureAgentLoaded } from "../agent/agent-loading.js";
@@ -131,6 +131,21 @@ function shouldArchiveScheduleRunWorkspace(input: {
   archiveOnFinish?: boolean;
 }): boolean {
   return input.agentId === null || (input.archiveOnFinish ?? true);
+}
+
+function assertScheduledAgentActivity(input: {
+  agentId: string;
+  result: AgentRunResult;
+  lastMessage: string | null;
+}): void {
+  if (
+    input.result.timeline.length === 0 &&
+    input.result.finalText.trim() === "" &&
+    (input.lastMessage?.trim() ?? "") === "" &&
+    !input.result.usage
+  ) {
+    throw new Error(`Scheduled agent ${input.agentId} completed without activity`);
+  }
 }
 
 function shouldCompleteSchedule(schedule: StoredSchedule, now: Date): boolean {
@@ -874,6 +889,7 @@ export class ScheduleService {
     await this.assertNewAgentCwdDirectory(config.cwd);
     let workspace: PersistedWorkspaceRecord | null = null;
     let agentId: string | null = null;
+    let completed = false;
     try {
       workspace = await this.createScheduleRunWorkspace(config, schedule.prompt);
       await this.recordRunWorkspace({
@@ -926,7 +942,13 @@ export class ScheduleService {
       if (waitResult.status === "error") {
         throw new Error(waitResult.lastMessage ?? `Scheduled agent ${agent.id} failed`);
       }
+      assertScheduledAgentActivity({
+        agentId: agent.id,
+        result,
+        lastMessage: waitResult.lastMessage,
+      });
       const timelineText = curateAgentActivity(result.timeline);
+      completed = true;
       return {
         agentId: agent.id,
         output: buildRunOutput({
@@ -936,10 +958,7 @@ export class ScheduleService {
         }),
       };
     } finally {
-      if (
-        workspace &&
-        shouldArchiveScheduleRunWorkspace({ agentId, archiveOnFinish: config.archiveOnFinish })
-      ) {
+      if (workspace && completed && (config.archiveOnFinish ?? true)) {
         try {
           await this.archiveWorkspace(workspace.workspaceId);
         } catch (error) {
