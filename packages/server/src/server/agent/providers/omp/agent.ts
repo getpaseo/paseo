@@ -1197,6 +1197,7 @@ export class OmpAgentSession implements AgentSession {
       return;
     }
     this.contextUsagePollTimer = setTimeout(() => {
+      this.contextUsagePollTimer = null;
       void this.pollContextUsage();
     }, this.CONTEXT_USAGE_POLL_INTERVAL_MS);
   }
