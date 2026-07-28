@@ -34,13 +34,16 @@ export function OpenInFileManagerMenuItem({
   const workspacePath = path?.trim() ?? "";
   const isLocalDaemon = useIsLocalDaemon(serverId?.trim() ?? "");
   const hasServerId = serverId != null && serverId.trim().length > 0;
+  const canOpenLocally = isElectron && workspacePath.length > 0 && (!hasServerId || isLocalDaemon);
   const { targets } = useDesktopOpenTargets({
-    isLocalExecution: isElectron && workspacePath.length > 0 && (!hasServerId || isLocalDaemon),
+    isLocalExecution: canOpenLocally,
   });
-  const fileManagerTarget = targets.find((target) => target.kind === "file-manager");
+  const fileManagerTarget = canOpenLocally
+    ? targets.find((target) => target.kind === "file-manager")
+    : undefined;
 
   const openInFileManager = useCallback(() => {
-    if (!fileManagerTarget || workspacePath.length === 0) return;
+    if (!canOpenLocally || !fileManagerTarget || workspacePath.length === 0) return;
     void openDesktopTarget({
       editorId: fileManagerTarget.id,
       workspacePath,
@@ -48,9 +51,9 @@ export function OpenInFileManagerMenuItem({
       console.warn("[open-in-file-manager] open failed", error);
       toast.error(t("sidebar.project.actions.openFolderFailed"));
     });
-  }, [fileManagerTarget, t, toast, workspacePath]);
+  }, [canOpenLocally, fileManagerTarget, t, toast, workspacePath]);
 
-  if (!isElectron || !fileManagerTarget || workspacePath.length === 0) {
+  if (!canOpenLocally || !fileManagerTarget) {
     return null;
   }
 

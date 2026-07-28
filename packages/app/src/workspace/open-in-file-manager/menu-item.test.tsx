@@ -197,6 +197,24 @@ describe("OpenInFileManagerMenuItem", () => {
   });
 
   describe("serverId prop - remote host detection", () => {
+    it("does not render for a remote daemon even when stale targets exist", () => {
+      vi.mocked(getIsElectron).mockReturnValue(true);
+      vi.mocked(useIsLocalDaemon).mockReturnValue(false);
+      vi.mocked(useDesktopOpenTargets).mockReturnValue({
+        targets: createFileManagerTargets(),
+        isAvailable: false,
+      });
+
+      const { container } = render(
+        <OpenInFileManagerMenuItem
+          path="/home/user/project"
+          serverId="remote-host-123"
+          testID="test-menu"
+        />,
+      );
+      expect(container.innerHTML).toBe("");
+    });
+
     it("renders null when serverId is provided and daemon is remote", () => {
       vi.mocked(getIsElectron).mockReturnValue(true);
       vi.mocked(useIsLocalDaemon).mockReturnValue(false);

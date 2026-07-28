@@ -57,6 +57,8 @@ import {
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { useHostFeatureMap } from "@/runtime/host-features";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
+import { resolveProjectFileManagerPlacement } from "@/components/sidebar/sidebar-project-host-selection";
 import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
 import {
   buildNewWorkspaceRoute,
@@ -505,9 +507,11 @@ function ProjectRowTrailingActions({
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
   const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint;
-  const projectServerId =
-    project.hosts.find((host) => host.iconWorkingDir === project.iconWorkingDir)?.serverId ??
-    project.hosts[0]?.serverId;
+  const localServerId = useLocalDaemonServerId();
+  const { projectPath, projectServerId } = resolveProjectFileManagerPlacement(
+    project,
+    localServerId,
+  );
 
   return (
     <View style={styles.projectTrailingActions}>
@@ -527,7 +531,7 @@ function ProjectRowTrailingActions({
         >
           <ProjectKebabMenu
             projectKey={project.projectKey}
-            projectPath={project.iconWorkingDir}
+            projectPath={projectPath}
             serverId={projectServerId}
             onRemoveProject={onRemoveProject}
             removeProjectStatus={removeProjectStatus}
