@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { AgentProviderNotice } from "@getpaseo/protocol/agent-types";
-import { applyAgentChanges, type AgentMetadataChanges, type AgentUpdateClient } from "./update.js";
+import {
+  applyAgentChanges,
+  toAgentUpdateResult,
+  type AgentMetadataChanges,
+  type AgentUpdateClient,
+} from "./update.js";
 
 class RecordingAgentUpdateClient implements AgentUpdateClient {
   readonly metadataUpdates: Array<{
@@ -41,7 +46,6 @@ describe("applyAgentChanges", () => {
     expect(client.metadataUpdates).toEqual([]);
     expect(client.thinkingUpdates).toEqual([{ agentId: "agent-1", thinkingOptionId: "high" }]);
     expect(result).toEqual({
-      thinkingOptionId: "high",
       notice: null,
     });
   });
@@ -72,11 +76,33 @@ describe("applyAgentChanges", () => {
     });
 
     expect(notice).toEqual({
-      thinkingOptionId: "high",
       notice: {
         type: "warning",
         message: "Thinking changes apply to the next turn.",
       },
+    });
+  });
+});
+
+describe("toAgentUpdateResult", () => {
+  it("reports the current thinking option after a metadata update", () => {
+    const result = toAgentUpdateResult(
+      {
+        id: "agent-1",
+        title: "Renamed agent",
+        labels: { team: "platform" },
+        effectiveThinkingOptionId: "high",
+      },
+      { notice: null },
+    );
+
+    expect(result).toEqual({
+      agentId: "agent-1",
+      name: "Renamed agent",
+      labels: "team=platform",
+      thinkingOptionId: "high",
+      noticeType: null,
+      notice: null,
     });
   });
 });

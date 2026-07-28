@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import type { AgentProviderNotice } from "@getpaseo/protocol/agent-types";
+import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type {
   CommandOptions,
@@ -62,8 +63,21 @@ export type AgentChanges =
   | { type: "thinking"; thinkingOptionId: string };
 
 export interface AppliedAgentChanges {
-  thinkingOptionId: string | null;
   notice: AgentProviderNotice | null;
+}
+
+export function toAgentUpdateResult(
+  agent: Pick<AgentSnapshotPayload, "id" | "title" | "labels" | "effectiveThinkingOptionId">,
+  appliedChanges: AppliedAgentChanges,
+): AgentUpdateResult {
+  return {
+    agentId: agent.id,
+    name: agent.title,
+    labels: formatLabels(agent.labels),
+    thinkingOptionId: agent.effectiveThinkingOptionId ?? null,
+    noticeType: appliedChanges.notice?.type ?? null,
+    notice: appliedChanges.notice?.message ?? null,
+  };
 }
 
 export async function applyAgentChanges(
@@ -80,10 +94,10 @@ export async function applyAgentChanges(
       } satisfies CommandError;
     }
     const notice = await client.setAgentThinkingOption(agentId, changes.thinkingOptionId);
-    return { thinkingOptionId: changes.thinkingOptionId, notice };
+    return { notice };
   }
   await client.updateAgent(agentId, changes.updates);
-  return { thinkingOptionId: null, notice: null };
+  return { notice: null };
 }
 
 function parseLabelOptions(labels: string[] | undefined): Record<string, string> {
@@ -239,14 +253,7 @@ export async function runUpdateCommand(
 
     return {
       type: "single",
-      data: {
-        agentId,
-        name: updatedResult.agent.title,
-        labels: formatLabels(updatedResult.agent.labels),
-        thinkingOptionId: appliedChanges.thinkingOptionId,
-        noticeType: appliedChanges.notice?.type ?? null,
-        notice: appliedChanges.notice?.message ?? null,
-      },
+      data: toAgentUpdateResult(updatedResult.agent, appliedChanges),
       schema: updateSchema,
     };
   } catch (err) {
