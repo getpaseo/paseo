@@ -131,9 +131,24 @@ const MutableStructuredGenerationProviderSchema = z
   })
   .passthrough();
 
+const MetadataCustomEndpointSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    baseUrl: z.string().default(""),
+    apiKey: z.string().default(""),
+    model: z.string().default(""),
+  })
+  .passthrough();
+
 const MutableMetadataGenerationConfigSchema = z
   .object({
     providers: z.array(MutableStructuredGenerationProviderSchema).default([]),
+    customEndpoint: MetadataCustomEndpointSchema.default({
+      enabled: false,
+      baseUrl: "",
+      apiKey: "",
+      model: "",
+    }),
   })
   .passthrough();
 
@@ -163,7 +178,15 @@ export const MutableDaemonConfigSchema = z
       .passthrough(),
     browserTools: MutableBrowserToolsConfigSchema.default({ enabled: false }),
     providers: z.record(z.string(), MutableDaemonProviderConfigSchema).default({}),
-    metadataGeneration: MutableMetadataGenerationConfigSchema.default({ providers: [] }),
+    metadataGeneration: MutableMetadataGenerationConfigSchema.default({
+      providers: [],
+      customEndpoint: {
+        enabled: false,
+        baseUrl: "",
+        apiKey: "",
+        model: "",
+      },
+    }),
     autoArchiveAfterMerge: z.boolean().default(false),
     enableTerminalAgentHooks: z.boolean().default(false),
     appendSystemPrompt: z.string().default(""),
@@ -2836,6 +2859,8 @@ export const ServerInfoStatusPayloadSchema = z
         selectiveAgentTimeline: z.boolean().optional(),
         // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
         stableProjectIdentity: z.boolean().optional(),
+        // COMPAT(metadataCustomEndpoint): added 2026-07-28, remove after 2027-01-28.
+        metadataCustomEndpoint: z.boolean().optional(),
       })
       .optional(),
   })
