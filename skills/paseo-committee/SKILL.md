@@ -16,14 +16,16 @@ The purpose is to step back, not double down. The committee may propose a comple
 
 Read the **paseo** skill. Before choosing committee members, read `~/.paseo/orchestration-preferences.json` unless the user explicitly named providers in this request. Do not create committee agents until you have read it.
 
-Contrast is the point of a committee, so pick across providers deliberately using the configured preferences rather than hardcoded defaults.
+The Claude seat is pinned to `claude/claude-opus-5` with `xhigh` thinking unless the user explicitly overrides it. Verify that exact model is available before creating the committee. If it is unavailable, stop and ask the user; never substitute Opus 4.8.
+
+Contrast is the point of a committee, so use the configured preferences to select the other provider.
 
 ## Composition
 
-Two members with different reasoning styles, selected from orchestration preferences:
+Two members with different reasoning styles:
 
-- one planning/research-strength provider
-- one contrasting high-reasoning provider
+- Claude `claude/claude-opus-5` with `xhigh` thinking
+- one contrasting high-reasoning provider selected from orchestration preferences
 
 Override only when the user explicitly asks for different members.
 
