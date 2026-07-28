@@ -2178,11 +2178,6 @@ export class AgentManager {
     if (!this.hasInFlightRun(agentId)) {
       return false;
     }
-    // Slash commands must keep the prompt-RPC path (local commands, skills);
-    // runtimes reject "/" messages on the steer channel outright.
-    if (typeof prompt === "string" && prompt.trimStart().startsWith("/")) {
-      return false;
-    }
     const session = this.agents.get(agentId)?.session;
     if (!session?.steerActiveTurn) {
       return false;

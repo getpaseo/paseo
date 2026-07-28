@@ -534,6 +534,7 @@ class HeldTurnSession extends TestAgentSession {
 class SteerableSession extends HeldTurnSession {
   readonly steerCalls: Array<{ prompt: AgentPromptInput; clientMessageId?: string }> = [];
   steerError: Error | null = null;
+  steerResult = true;
   interruptCount = 0;
 
   async steerActiveTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<boolean> {
@@ -541,7 +542,7 @@ class SteerableSession extends HeldTurnSession {
       throw this.steerError;
     }
     this.steerCalls.push({ prompt, clientMessageId: options?.clientMessageId });
-    return true;
+    return this.steerResult;
   }
 
   override async interrupt(): Promise<void> {
@@ -615,19 +616,19 @@ test("trySteerActiveTurn delivers a plain prompt into the in-flight run", async 
   }
 });
 
-test("trySteerActiveTurn refuses slash commands so they keep the prompt path", async () => {
-  const fixture = await createHeldTurnFixture(
-    "steer-slash",
-    new SteerableSession({
-      provider: "codex",
-      cwd: "/tmp",
-    }),
-  );
+test("trySteerActiveTurn delegates slash commands to the session's own gate", async () => {
+  const session = new SteerableSession({ provider: "codex", cwd: "/tmp" });
+  session.steerResult = false;
+  const fixture = await createHeldTurnFixture("steer-slash", session);
   try {
+    // The manager does not pre-filter prompts; the provider session refuses
+    // slash commands after flattening (structured prompts included).
     const steered = await fixture.manager.trySteerActiveTurn(fixture.agentId, "/compact");
 
     expect(steered).toBe(false);
-    expect(fixture.session.steerCalls).toEqual([]);
+    expect(fixture.session.steerCalls).toEqual([
+      { prompt: "/compact", clientMessageId: undefined },
+    ]);
   } finally {
     fixture.cleanup();
   }

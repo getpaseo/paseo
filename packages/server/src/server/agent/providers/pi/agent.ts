@@ -798,6 +798,16 @@ function isPiRequestAbortError(error: unknown): boolean {
   return /\brequest was aborted\b|\babort(ed)?\b/i.test(toDiagnosticErrorMessage(error));
 }
 
+/**
+ * OMP rejects a `prompt` RPC while a turn is streaming with AgentBusyError
+ * ("Agent is already processing. Use steer() or followUp()…"). Reachable
+ * when the runtime started a turn on its own — e.g. an interrupted steer's
+ * post-abort drain — and the daemon hadn't observed it yet.
+ */
+function isPiAgentBusyError(error: unknown): boolean {
+  return /\bagent is already processing\b/i.test(toDiagnosticErrorMessage(error));
+}
+
 function resolveThinkingOptionId(
   cachedThinkingOptionId: string | null,
   sessionThinkingLevel: PiThinkingLevel,
@@ -1336,6 +1346,35 @@ export class PiRpcAgentSession implements AgentSession {
         if (this.activeTurnId !== turnId) {
           return;
         }
+        if (isPiAgentBusyError(error) && this.state.steeringMode != null) {
+          // The runtime started a turn of its own first (e.g. an interrupted
+          // steer's post-abort drain). Deliver into that turn instead of
+          // failing: keep the submitted entry queued — its marker arrives in
+          // the busy turn — and close this turn out as canceled.
+          const steered = await this.runtimeSession.steer(payload.text, payload.images).then(
+            () => true,
+            () => false,
+          );
+          if (steered) {
+            if (this.activeTurnId !== turnId) {
+              return;
+            }
+            this.activeTurnId = null;
+            this.activeClientMessageId = null;
+            this.activeTurnStarted = false;
+            this.activeAssistantMessageId = null;
+            this.activeTurnSubmittedEntry = null;
+            this.clearNoTurnBuffers();
+            this.emit({
+              type: "turn_canceled",
+              provider: this.provider,
+              turnId,
+              reason: "Runtime was already streaming; message steered into the active turn",
+            });
+            return;
+          }
+          // Steer delivery failed too; fall through to the failure path.
+        }
         this.removePendingSubmittedUserMessage(submittedEntry);
         this.activeTurnSubmittedEntry = null;
         this.activeTurnId = null;
@@ -1382,11 +1421,24 @@ export class PiRpcAgentSession implements AgentSession {
       return false;
     }
     const payload = convertPromptInput(prompt, { model: this.state.model });
-    await this.runtimeSession.steer(payload.text, payload.images);
-    this.pendingSubmittedUserMessages.push({
-      text: payload.text,
-      clientMessageId: options?.clientMessageId ?? null,
-    });
+    // Slash commands must keep the prompt RPC path: the steer channel only
+    // rejects extension commands — builtins would be injected as literal
+    // text and never execute. Gate on the flattened payload so structured
+    // prompts (attachments) can't smuggle a command past the manager.
+    if (payload.text.trimStart().startsWith("/")) {
+      return false;
+    }
+    const entry = { text: payload.text, clientMessageId: options?.clientMessageId ?? null };
+    // Push before awaiting: the steer response and the submitted-entry
+    // marker can arrive in the same stdout chunk, and buffered frames are
+    // dispatched before the awaiting continuation runs.
+    this.pendingSubmittedUserMessages.push(entry);
+    try {
+      await this.runtimeSession.steer(payload.text, payload.images);
+    } catch (error) {
+      this.removePendingSubmittedUserMessage(entry);
+      throw error;
+    }
     return true;
   }
 

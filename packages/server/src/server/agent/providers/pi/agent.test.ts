@@ -700,7 +700,7 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
-  test("correlates a steer drained into a later turn behind that turn's prompt", async () => {
+  test("correlates a leftover steer that auto-drains after an interrupt", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
 
@@ -710,15 +710,16 @@ describe("PiRpcAgentSession", () => {
     await session.steerActiveTurn("queued steer", { clientMessageId: "client-steer" });
     await session.interrupt();
 
-    // The next turn drains the queued steer behind its own prompt, so the
-    // runtime reports the new prompt's entry first.
-    await session.startTurn("second", { clientMessageId: "client-second" });
-    fakeSession.finishSubmittedUserMessage({ id: "entry-second", parentId: null, text: "second" });
+    // OMP drains the stranded steer into its own turn right after the
+    // abort — its marker arrives with no daemon turn active.
     fakeSession.finishSubmittedUserMessage({
       id: "entry-steer",
-      parentId: "entry-second",
+      parentId: "entry-first",
       text: "queued steer",
     });
+
+    await session.startTurn("second", { clientMessageId: "client-second" });
+    fakeSession.finishSubmittedUserMessage({ id: "entry-second", parentId: null, text: "second" });
 
     expect(events.timelineItems()).toEqual([
       {
@@ -729,15 +730,15 @@ describe("PiRpcAgentSession", () => {
       },
       {
         type: "user_message",
-        text: "second",
-        messageId: "entry-second",
-        clientMessageId: "client-second",
-      },
-      {
-        type: "user_message",
         text: "queued steer",
         messageId: "entry-steer",
         clientMessageId: "client-steer",
+      },
+      {
+        type: "user_message",
+        text: "second",
+        messageId: "entry-second",
+        clientMessageId: "client-second",
       },
     ]);
   });
@@ -751,18 +752,19 @@ describe("PiRpcAgentSession", () => {
     await session.steerActiveTurn("same text", { clientMessageId: "client-steer" });
     await session.interrupt();
 
-    // The user resends the identical message; the runtime persists the new
-    // prompt before draining the queued steer, so its marker arrives first
-    // and must keep the new submission's client message id.
+    // The stranded steer auto-drains after the abort; its marker arrives
+    // first and must keep the steered submission's client message id.
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-steer",
+      parentId: "entry-first",
+      text: "same text",
+    });
+
+    // The user resends the identical message.
     await session.startTurn("same text", { clientMessageId: "client-resent" });
     fakeSession.finishSubmittedUserMessage({
       id: "entry-resent",
-      parentId: null,
-      text: "same text",
-    });
-    fakeSession.finishSubmittedUserMessage({
-      id: "entry-steer",
-      parentId: "entry-resent",
+      parentId: "entry-steer",
       text: "same text",
     });
 
@@ -776,16 +778,63 @@ describe("PiRpcAgentSession", () => {
       {
         type: "user_message",
         text: "same text",
-        messageId: "entry-resent",
-        clientMessageId: "client-resent",
+        messageId: "entry-steer",
+        clientMessageId: "client-steer",
       },
       {
         type: "user_message",
         text: "same text",
-        messageId: "entry-steer",
-        clientMessageId: "client-steer",
+        messageId: "entry-resent",
+        clientMessageId: "client-resent",
       },
     ]);
+  });
+
+  test("converts a busy prompt rejection into a steer delivery", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.holdNextPrompt();
+    const { turnId } = await session.startTurn("deliver this", {
+      clientMessageId: "client-busy",
+    });
+    await fakeSession.failHeldPrompt(
+      new Error(
+        "prompt: Agent is already processing. Use steer() or followUp() to queue messages, or wait for completion.",
+      ),
+    );
+
+    expect(fakeSession.steerRequests).toEqual([{ message: "deliver this", imageCount: 0 }]);
+    const cancellation = await events.nextTurnCancellation();
+    expect(cancellation).toMatchObject({ type: "turn_canceled", turnId });
+
+    // The submitted entry stays queued: its marker arrives in the busy turn
+    // with no daemon turn active and still correlates.
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-busy",
+      parentId: null,
+      text: "deliver this",
+    });
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "user_message",
+        text: "deliver this",
+        messageId: "entry-busy",
+        clientMessageId: "client-busy",
+      },
+    ]);
+  });
+
+  test("refuses to steer slash commands arriving as structured prompts", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("first");
+
+    await expect(session.steerActiveTurn([{ type: "text", text: "/compact" }])).resolves.toBe(
+      false,
+    );
+    expect(fakeSession.steerRequests).toEqual([]);
   });
 
   test("refuses to steer when no turn is active", async () => {
