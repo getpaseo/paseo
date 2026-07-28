@@ -76,12 +76,24 @@ export interface FileExplorerFileBytes {
   revision: string;
 }
 
+export interface FileExplorerFileStream {
+  path: string;
+  kind: ExplorerFileKind;
+  encoding: "utf-8" | "binary";
+  mimeType: string;
+  size: number;
+  modifiedAt: string;
+  revision: string;
+  chunks: AsyncIterable<Uint8Array>;
+}
+
 const TEXT_MIME_TYPES: Record<string, string> = {
   ".json": "application/json",
 };
 
 const DEFAULT_TEXT_MIME_TYPE = "text/plain";
 const FILE_TYPE_SAMPLE_BYTES = 8192;
+export const FILE_EXPLORER_STREAM_CHUNK_BYTES = 256 * 1024;
 export const MAX_EDITABLE_FILE_BYTES = 1024 * 1024;
 const READ_FILE_OPEN_FLAGS =
   process.platform === "win32" ? constants.O_RDONLY : constants.O_RDONLY | constants.O_NOFOLLOW;
@@ -286,6 +298,109 @@ export async function readExplorerFileBytes({
     };
   } finally {
     await handle.close();
+  }
+}
+
+export async function streamExplorerFile(
+  { root, relativePath }: ReadFileParams,
+  consume: (file: FileExplorerFileStream) => Promise<void>,
+): Promise<void> {
+  const filePath = await resolveScopedPath({ root, relativePath });
+  const handle = await openFileForRead(filePath.resolvedPath);
+
+  try {
+    const stats = await handle.stat({ bigint: true });
+    if (!stats.isFile()) {
+      throw new Error("Requested path is not a file");
+    }
+
+    const advertisedSize = Number(stats.size);
+    const advertisedRevision = fileRevision(stats);
+    const ext = path.extname(filePath.resolvedPath).toLowerCase();
+    const isImage = ext in IMAGE_MIME_TYPES;
+    const isBinary = isImage || (await isFileHandleBinary(handle, advertisedSize));
+    let kind: ExplorerFileKind = "text";
+    let mimeType = textMimeTypeForExtension(ext);
+    if (isImage) {
+      kind = "image";
+      mimeType = IMAGE_MIME_TYPES[ext];
+    } else if (isBinary) {
+      kind = "binary";
+      mimeType = "application/octet-stream";
+    }
+
+    await consume({
+      path: normalizeRelativePath({ root, targetPath: filePath.requestedPath }),
+      kind,
+      encoding: isBinary ? "binary" : "utf-8",
+      mimeType,
+      size: advertisedSize,
+      modifiedAt: stats.mtime.toISOString(),
+      revision: advertisedRevision,
+      chunks: readFileHandleChunks(handle, advertisedSize, advertisedRevision),
+    });
+  } finally {
+    await handle.close();
+  }
+}
+
+async function isFileHandleBinary(handle: FileHandle, advertisedSize: number): Promise<boolean> {
+  if (advertisedSize === 0) return false;
+
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let position = 0;
+  let suspiciousBytes = 0;
+  while (position < advertisedSize) {
+    const block = Buffer.allocUnsafe(
+      Math.min(FILE_EXPLORER_STREAM_CHUNK_BYTES, advertisedSize - position),
+    );
+    const { bytesRead } = await handle.read(block, 0, block.byteLength, position);
+    if (bytesRead === 0) {
+      throw new Error("File changed during transfer");
+    }
+    const bytes = block.subarray(0, bytesRead);
+    for (const byte of bytes) {
+      if (byte === 0) return true;
+      const isControl = byte < 32 && byte !== 9 && byte !== 10 && byte !== 13;
+      if (isControl || byte === 127) suspiciousBytes += 1;
+    }
+    try {
+      decoder.decode(bytes, { stream: true });
+    } catch {
+      return true;
+    }
+    position += bytesRead;
+  }
+
+  try {
+    decoder.decode();
+  } catch {
+    return true;
+  }
+  return suspiciousBytes / advertisedSize > 0.3;
+}
+
+async function* readFileHandleChunks(
+  handle: FileHandle,
+  advertisedSize: number,
+  advertisedRevision: string,
+): AsyncIterable<Uint8Array> {
+  let position = 0;
+  while (position < advertisedSize) {
+    const chunk = Buffer.allocUnsafe(
+      Math.min(FILE_EXPLORER_STREAM_CHUNK_BYTES, advertisedSize - position),
+    );
+    const { bytesRead } = await handle.read(chunk, 0, chunk.byteLength, position);
+    if (bytesRead === 0) {
+      throw new Error("File changed during transfer");
+    }
+    position += bytesRead;
+    yield chunk.subarray(0, bytesRead);
+  }
+
+  const finalStats = await handle.stat({ bigint: true });
+  if (fileRevision(finalStats) !== advertisedRevision) {
+    throw new Error("File changed during transfer");
   }
 }
 

@@ -1,3 +1,4 @@
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { TFunction } from "i18next";
 import { SquarePen } from "lucide-react-native";
@@ -11,7 +12,7 @@ import React, {
   useSyncExternalStore,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { ActivityIndicator, StyleSheet as RNStyleSheet, Text, View } from "react-native";
+import { StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import type { TextInput } from "react-native";
 import ReanimatedAnimated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -226,7 +227,7 @@ function renderChatAgentNonReadyView(args: {
     return (
       <View style={styles.container} testID="agent-loading">
         <View style={styles.errorContainer}>
-          <ThemedActivityIndicator size="large" uniProps={foregroundMutedColorMapping} />
+          <ThemedLoadingSpinner size="large" uniProps={foregroundMutedColorMapping} />
         </View>
       </View>
     );
@@ -734,7 +735,7 @@ function AgentPanelBody({
     return (
       <View style={styles.container} testID="agent-loading">
         <View style={styles.errorContainer}>
-          <ThemedActivityIndicator size="large" uniProps={foregroundMutedColorMapping} />
+          <ThemedLoadingSpinner size="large" uniProps={foregroundMutedColorMapping} />
         </View>
       </View>
     );
@@ -1409,7 +1410,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
 
           {showHistorySyncOverlay ? (
             <View style={styles.historySyncOverlay} testID="agent-history-overlay">
-              <ThemedActivityIndicator size="large" uniProps={foregroundMutedColorMapping} />
+              <ThemedLoadingSpinner size="large" uniProps={foregroundMutedColorMapping} />
             </View>
           ) : null}
 
@@ -1418,7 +1419,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
 
         {isArchivingCurrentAgent ? (
           <View style={styles.archivingOverlay} testID="agent-archiving-overlay">
-            <ThemedActivityIndicator size="large" uniProps={foregroundColorMapping} />
+            <ThemedLoadingSpinner size="large" uniProps={foregroundColorMapping} />
             <Text style={styles.archivingTitle}>{t("agentPanel.states.archivingTitle")}</Text>
             <Text style={styles.archivingSubtitle}>{t("agentPanel.states.archivingSubtitle")}</Text>
           </View>
@@ -1767,7 +1768,7 @@ function AgentSessionUnavailableState({
       <View style={styles.centerState}>
         {isConnecting || isPreparingSession ? (
           <>
-            <ActivityIndicator size="large" />
+            <ThemedLoadingSpinner size="large" uniProps={foregroundMutedColorMapping} />
             <Text style={styles.loadingText}>
               {isPreparingSession
                 ? t("agentPanel.unavailable.preparingSession", { serverLabel })
@@ -1795,7 +1796,7 @@ function AgentSessionUnavailableState({
   );
 }
 
-const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 
 const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,

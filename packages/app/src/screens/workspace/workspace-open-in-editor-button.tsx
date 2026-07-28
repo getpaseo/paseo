@@ -1,12 +1,7 @@
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { type ReactElement, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  ActivityIndicator,
-  Pressable,
-  Text,
-  View,
-  type PressableStateCallbackType,
-} from "react-native";
+import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { useMutation } from "@tanstack/react-query";
 import { Check, ChevronDown } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -47,7 +42,7 @@ interface OpenTarget {
   onOpen: () => Promise<void> | void;
 }
 
-const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedEditorTargetIcon = withUnistyles(EditorTargetIcon);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedCheckIcon = withUnistyles(Check);
@@ -235,7 +230,7 @@ export function WorkspaceOpenInEditorButton({
           }
         >
           {openMutation.isPending ? (
-            <ThemedActivityIndicator
+            <ThemedLoadingSpinner
               size="small"
               uniProps={foregroundColorMapping}
               style={styles.splitButtonSpinnerOnly}

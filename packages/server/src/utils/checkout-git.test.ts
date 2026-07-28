@@ -3002,6 +3002,20 @@ const x = 1;
     expect(baseDiff.diff).not.toContain("file.txt");
   });
 
+  it("names both refs when a requested base ref does not match the stored one", async () => {
+    const worktree = await createLegacyWorktreeForTest({
+      branchName: "mismatch-feature",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "mismatch-feature",
+      paseoHome,
+    });
+
+    await expect(
+      getCheckoutDiff(worktree.worktreePath, { mode: "base", baseRef: "other" }, { paseoHome }),
+    ).rejects.toThrow("Base ref mismatch: stored main, requested other");
+  });
+
   it("excludes dirty working tree changes from Paseo worktree base diffs", async () => {
     const worktree = await createLegacyWorktreeForTest({
       branchName: "feature",

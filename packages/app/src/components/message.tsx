@@ -1,9 +1,9 @@
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   View,
   Text,
   Image,
   Pressable,
-  ActivityIndicator,
   type GestureResponderEvent,
   type LayoutChangeEvent,
   StyleProp,
@@ -172,6 +172,7 @@ const ThemedTodoCheckIcon = withUnistyles(Check);
 const ThemedFileSymlinkIcon = withUnistyles(FileSymlink);
 const ThemedTriangleAlertIcon = withUnistyles(TriangleAlertIcon);
 const ThemedChevronRightIcon = withUnistyles(ChevronRight);
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -866,7 +867,9 @@ const AssistantMarkdownResolvedImage = memo(function AssistantMarkdownResolvedIm
     return (
       <View style={frameStyle}>
         <View style={stateSurfaceStyle}>
-          {loadState.status === "loading" ? <ActivityIndicator size="small" /> : null}
+          {loadState.status === "loading" ? (
+            <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
+          ) : null}
           {loadState.status === "error" ? (
             <Text style={assistantMessageStylesheet.imageErrorText}>
               {t("message.attachments.imageUnavailable")}
@@ -1005,7 +1008,7 @@ function AssistantMarkdownImage({
   if (query.isLoading || dataImageQuery.isLoading) {
     return (
       <View style={stateFrameStyle}>
-        <ActivityIndicator size="small" />
+        <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
       </View>
     );
   }
@@ -2249,7 +2252,7 @@ export const CompactionMarker = memo(function CompactionMarker({
       <View style={compactionStylesheet.line} />
       <View style={compactionStylesheet.label}>
         {status === "loading" ? (
-          <ActivityIndicator size="small" color="#a1a1aa" />
+          <LoadingSpinner size="small" color="#a1a1aa" />
         ) : (
           <Scissors size={12} color="#a1a1aa" />
         )}

@@ -93,7 +93,7 @@ export async function pickAndPersistImages(input: {
   return await Promise.all(
     result.map(async (picked) => {
       const fileName = picked.fileName ?? null;
-      const mimeType = picked.mimeType || "image/jpeg";
+      const mimeType = picked.mimeType;
       if (picked.source.kind === "blob") {
         return await input.persister.persistFromBlob({
           blob: picked.source.blob,

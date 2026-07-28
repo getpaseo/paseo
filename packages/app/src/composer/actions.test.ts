@@ -321,7 +321,11 @@ describe("pickAndPersistImages", () => {
     const persister = createFakePersister();
     const result = await pickAndPersistImages({
       pickImages: async () => [
-        { source: { kind: "file_uri", uri: "/tmp/x.jpg" }, mimeType: null, fileName: null },
+        {
+          source: { kind: "file_uri", uri: "/tmp/x.jpg" },
+          mimeType: "image/jpeg",
+          fileName: null,
+        },
       ],
       persister,
     });

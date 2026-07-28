@@ -1,5 +1,9 @@
 import { expect, type Page } from "@playwright/test";
 import { buildAgentRoute, seedMockAgentWorkspace, type MockAgentWorkspace } from "./mock-agent";
+import {
+  delayAgentOlderTimelineResponse,
+  type AgentTimelineResponseGate,
+} from "./agent-timeline-gate";
 
 interface LongTimelineAgentOptions {
   turns: number;
@@ -51,6 +55,39 @@ export async function expectTimelinePromptVisible(page: Page, prompt: string): P
 
 export async function expectTimelinePromptNotMounted(page: Page, prompt: string): Promise<void> {
   await expect(page.getByText(prompt, { exact: true })).toHaveCount(0);
+}
+
+export async function makeLoadedTimelineFitViewport(page: Page): Promise<void> {
+  await page.setViewportSize({ width: 1280, height: 8_000 });
+}
+
+export async function expectLoadedTimelineDoesNotScroll(page: Page): Promise<void> {
+  const scroll = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+  await expect
+    .poll(async () =>
+      scroll.evaluate((element) => {
+        if (!(element instanceof HTMLElement)) {
+          throw new Error("Agent chat scroll element is not an HTMLElement");
+        }
+        return element.scrollHeight <= element.clientHeight;
+      }),
+    )
+    .toBe(true);
+}
+
+export async function holdNextOlderTimelinePage(
+  page: Page,
+  agent: LongTimelineAgent,
+): Promise<AgentTimelineResponseGate & { expectLoading(): Promise<void> }> {
+  const gate = await delayAgentOlderTimelineResponse(page, agent.agentId);
+  return {
+    ...gate,
+    async expectLoading() {
+      await gate.waitForDelayedResponse();
+      await expect(page.getByTestId("load-older-history-spinner")).toBeVisible();
+      await expectTimelinePromptNotMounted(page, agent.oldestPrompt);
+    },
+  };
 }
 
 export async function scrollTimelineToOldestLoadedEdge(page: Page): Promise<void> {

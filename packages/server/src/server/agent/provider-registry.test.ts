@@ -541,7 +541,7 @@ test("OMP is a disabled built-in backed by the real OMP adapter", async () => {
     expect.objectContaining({
       cwd: "/tmp/registry-omp",
       protocolMode: "rpc-ui",
-      argv: ["omp", "--mode", "rpc-ui", "--approval-mode", "yolo", "--thinking", "medium"],
+      argv: ["omp", "--mode", "rpc-ui", "--approval-mode", "yolo"],
     }),
   ]);
   await session.close();
@@ -598,8 +598,6 @@ test("built-in OMP override keeps the real OMP adapter enabled and launchable", 
     "rpc-ui",
     "--approval-mode",
     "yolo",
-    "--thinking",
-    "medium",
   ]);
   await session.close();
 });

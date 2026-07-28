@@ -45,8 +45,22 @@ replays the original prompt. A duplicate create returns the existing agent witho
 turn.
 
 Hub creates use the same agent creation path as trusted clients. They may select any existing
-worktree target shape and may request `autoArchive`. Worktree creation and terminal auto-archive use
-the shared workspace-aware lifecycle policy; Hub does not have a second launch or cleanup path.
+worktree target shape. Execution completion policy remains outside the daemon: a completed agent
+turn does not imply that the Hub execution is terminal.
+
+The Hub ends an execution by sending `hub.execution.control.request` with the durable execution ID
+and either `interrupt` or `archive`. The daemon resolves the agent from the authenticated daemon
+relationship plus that execution ID; callers cannot supply an agent ID or workspace path. Both
+actions are idempotent and continue to resolve from stored ownership after daemon restart.
+If no execution exists for that authenticated daemon and execution ID, interrupt and archive return
+success because the requested stopped or archived state already holds. An execution owned by another
+daemon is indistinguishable from a missing execution and is never exposed or affected.
+
+Interrupt uses the ordinary agent cancellation lifecycle. Archive first archives the owned agent.
+When that agent belongs to an active Paseo-owned worktree workspace, the daemon also archives the
+workspace through the shared workspace archive service, so the backing directory is removed only
+after its final active workspace reference disappears. Local and shared checkouts archive only the
+execution-owned agent.
 
 ## Disconnect and revocation
 

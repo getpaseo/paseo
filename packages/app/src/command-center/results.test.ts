@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { CommandCenterContribution } from "./contributions";
 import {
   buildContributionSections,
+  joinSubtitleParts,
   moveActiveResultId,
   preserveActiveResultId,
   projectCommandCenterRows,
@@ -101,5 +102,37 @@ describe("Command Center result projection", () => {
     expect(activeId).toBe(targetId);
     expect(projection.rowIndexByResultId.get(targetId)).toBe(151);
     expect(projection.offsets[151]).toBe(32 + 150 * 56);
+  });
+});
+
+describe("joinSubtitleParts", () => {
+  it("joins all present parts with a middle dot", () => {
+    expect(joinSubtitleParts(["a", "b", "c"])).toBe("a · b · c");
+  });
+
+  it("drops null and undefined parts", () => {
+    expect(joinSubtitleParts(["host", null, "master"])).toBe("host · master");
+    expect(joinSubtitleParts(["host", undefined, "master"])).toBe("host · master");
+  });
+
+  it("drops empty strings (Boolean parity — agents subtitle refactor guard)", () => {
+    expect(joinSubtitleParts(["", "paseo", "master"])).toBe("paseo · master");
+  });
+
+  it("returns an empty string when every part is null or empty", () => {
+    expect(joinSubtitleParts([null, undefined, ""])).toBe("");
+  });
+
+  it("returns a single part unchanged, with no separator", () => {
+    expect(joinSubtitleParts([null, "paseo", null])).toBe("paseo");
+  });
+
+  it("builds the workspace subtitle in host · project · branch order", () => {
+    // Single-host: host gated away, project leads.
+    expect(joinSubtitleParts([null, "paseo", "master"])).toBe("paseo · master");
+    // Multi-host: host first, then project, then branch.
+    expect(joinSubtitleParts(["host", "paseo", "master"])).toBe("host · paseo · master");
+    // No branch: degrades to project (or host · project).
+    expect(joinSubtitleParts([null, "paseo", null])).toBe("paseo");
   });
 });

@@ -6,7 +6,12 @@ import { Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from "r
 import type { StyleProp, TextInputProps, ViewStyle } from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { getOverlayRoot, OVERLAY_Z } from "../lib/overlay-root";
+import {
+  getOverlayRoot,
+  OverlayLayerProvider,
+  useGlobalWebOverlayLayer,
+  useWebOverlayRegistration,
+} from "../lib/overlay-root";
 import {
   BottomSheetBackdrop,
   BottomSheetScrollView,
@@ -54,35 +59,7 @@ export interface SheetHeader {
   search?: SheetHeaderSearch;
 }
 
-type EscHandler = () => void;
-const escStack: EscHandler[] = [];
-let escListenerAttached = false;
 const ABSOLUTE_FILL_STYLE = { ...StyleSheet.absoluteFillObject };
-
-function handleEscKeyDown(event: KeyboardEvent) {
-  if (event.key !== "Escape") return;
-  const top = escStack[escStack.length - 1];
-  if (!top) return;
-  event.stopPropagation();
-  event.preventDefault();
-  top();
-}
-
-function pushEscHandler(handler: EscHandler): () => void {
-  escStack.push(handler);
-  if (!escListenerAttached && typeof window !== "undefined") {
-    window.addEventListener("keydown", handleEscKeyDown, true);
-    escListenerAttached = true;
-  }
-  return () => {
-    const index = escStack.lastIndexOf(handler);
-    if (index !== -1) escStack.splice(index, 1);
-    if (escStack.length === 0 && escListenerAttached && typeof window !== "undefined") {
-      window.removeEventListener("keydown", handleEscKeyDown, true);
-      escListenerAttached = false;
-    }
-  };
-}
 
 const styles = StyleSheet.create((theme) => ({
   desktopOverlay: {
@@ -91,7 +68,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     alignItems: "center",
     padding: theme.spacing[6],
-    zIndex: OVERLAY_Z.modal,
     pointerEvents: "auto" as const,
   },
   desktopCard: {
@@ -582,6 +558,7 @@ export function AdaptiveModalSheet({
   });
   const [shouldRenderWeb, setShouldRenderWeb] = useState(visible);
   const [isWebClosing, setIsWebClosing] = useState(false);
+  const modalLayer = useGlobalWebOverlayLayer("modal", isWeb && !isMobile && shouldRenderWeb);
   const nativeModalDismissNotifiedRef = useRef(!visible);
   const handleDismiss = useCallback(() => {
     handleSheetDismiss();
@@ -610,19 +587,31 @@ export function AdaptiveModalSheet({
     () => [
       styles.desktopOverlay,
       isWeb && {
+        zIndex: modalLayer,
         opacity: isWebClosing ? 0 : 1,
         transitionDuration: `${WEB_EXIT_DURATION_MS}ms`,
         transitionProperty: "opacity",
         transitionTimingFunction: "ease",
       },
     ],
-    [isWebClosing],
+    [isWebClosing, modalLayer],
   );
 
-  useEffect(() => {
-    if (!isWeb || isMobile || !visible) return;
-    return pushEscHandler(onClose);
-  }, [visible, isMobile, onClose]);
+  const handleWebOverlayKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return false;
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
+      return true;
+    },
+    [onClose],
+  );
+  const setWebOverlayScope = useWebOverlayRegistration({
+    active: isWeb && !isMobile && visible,
+    layer: modalLayer,
+    onKeyDown: handleWebOverlayKeyDown,
+  });
 
   useEffect(() => {
     if (visible) {
@@ -700,7 +689,7 @@ export function AdaptiveModalSheet({
   }
 
   const cardInner = (
-    <>
+    <OverlayLayerProvider layer={modalLayer}>
       <SheetHeaderView header={header} onClose={onClose} />
       {scrollable ? (
         <View style={styles.desktopScrollContainer}>
@@ -717,7 +706,7 @@ export function AdaptiveModalSheet({
         <View style={[styles.desktopStaticContent, contentContainerStyle]}>{children}</View>
       )}
       {footer ? <View style={footerStyle}>{footer}</View> : null}
-    </>
+    </OverlayLayerProvider>
   );
 
   const desktopContent = (
@@ -727,7 +716,15 @@ export function AdaptiveModalSheet({
         style={ABSOLUTE_FILL_STYLE}
         onPress={onClose}
       />
-      <View style={desktopCardStyle}>{cardInner}</View>
+      <View
+        ref={setWebOverlayScope}
+        style={desktopCardStyle}
+        role="dialog"
+        aria-modal
+        tabIndex={-1}
+      >
+        {cardInner}
+      </View>
     </View>
   );
 
