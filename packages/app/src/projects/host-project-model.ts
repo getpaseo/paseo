@@ -3,6 +3,7 @@ import type {
   WorkspaceStructureHostPlacement,
   WorkspaceStructureProject,
 } from "@/projects/workspace-structure";
+import { resolveProjectGroupKey } from "@/projects/project-group-key";
 
 export interface HostProjectListItem {
   projectKey: string;
@@ -58,6 +59,7 @@ export function hostProjectFromRoute(route: HostProjectRouteContext): HostProjec
     hosts: [
       {
         serverId: route.serverId,
+        projectId: projectKey,
         iconWorkingDir,
         canCreateWorktree: true,
       },
@@ -73,7 +75,11 @@ export function hostProjectFromWorkspace(input: {
   if (!input.workspace) {
     return null;
   }
-  const projectKey = input.workspace.projectId.trim();
+  const projectKey = resolveProjectGroupKey({
+    serverId: input.serverId,
+    projectId: input.workspace.projectId.trim(),
+    projectGroupKey: input.workspace.projectGroupKey,
+  });
   const iconWorkingDir = input.workspace.projectRootPath.trim();
   if (!projectKey || !iconWorkingDir) {
     return null;
@@ -87,6 +93,7 @@ export function hostProjectFromWorkspace(input: {
     hosts: [
       {
         serverId: input.serverId,
+        projectId: input.workspace.projectId,
         iconWorkingDir,
         canCreateWorktree: canCreate,
       },
@@ -104,6 +111,10 @@ export function getHostProjectSourceDirectory(
   serverId: string,
 ): string | null {
   return project.hosts.find((host) => host.serverId === serverId)?.iconWorkingDir ?? null;
+}
+
+export function getHostProjectId(project: HostProjectListItem, serverId: string): string | null {
+  return project.hosts.find((host) => host.serverId === serverId)?.projectId ?? project.projectKey;
 }
 
 export function canCreateWorkspaceForHostProject(input: {

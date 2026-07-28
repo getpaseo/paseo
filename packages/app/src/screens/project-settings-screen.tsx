@@ -241,7 +241,11 @@ function ProjectSettingsBody({
             projectName={project.projectName}
             projectKey={project.projectKey}
           />
-          <ProjectNameEditor project={project} client={client} />
+          <ProjectNameEditor
+            project={project}
+            projectId={selectedHost.projectId ?? project.projectKey}
+            client={client}
+          />
         </View>
         <HostContext hosts={hosts} selectedHost={selectedHost} onSelectHost={onSelectHost} />
       </View>
@@ -790,10 +794,11 @@ function ResolveSpinnerColor(): string {
 
 interface ProjectNameEditorProps {
   project: ProjectSummary;
+  projectId: string;
   client: DaemonClient;
 }
 
-function ProjectNameEditor({ project, client }: ProjectNameEditorProps) {
+function ProjectNameEditor({ project, projectId, client }: ProjectNameEditorProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -801,7 +806,7 @@ function ProjectNameEditor({ project, client }: ProjectNameEditorProps) {
   const [value, setValue] = useState(project.projectCustomName ?? "");
 
   const renameMutation = useMutation({
-    mutationFn: (customName: string | null) => client.renameProject(project.projectKey, customName),
+    mutationFn: (customName: string | null) => client.renameProject(projectId, customName),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       setIsEditing(false);

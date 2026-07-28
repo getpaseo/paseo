@@ -1,8 +1,10 @@
 import type { EmptyProjectDescriptor, WorkspaceDescriptor } from "@/stores/session-store";
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
+import { resolveProjectGroupKey } from "@/projects/project-group-key";
 
 export interface WorkspaceStructureHostPlacement {
   serverId: string;
+  projectId?: string;
   iconWorkingDir: string;
   canCreateWorktree: boolean;
 }
@@ -74,9 +76,14 @@ export function buildWorkspaceStructureProjects(input: {
 
   for (const session of input.sessions) {
     for (const emptyProject of session.emptyProjects ?? []) {
-      const projectKey = emptyProject.projectId;
+      const projectKey = resolveProjectGroupKey({
+        serverId: session.serverId,
+        projectId: emptyProject.projectId,
+        projectGroupKey: emptyProject.projectGroupKey,
+      });
       const placement = {
         serverId: session.serverId,
+        projectId: emptyProject.projectId,
         iconWorkingDir: emptyProject.projectRootPath,
         canCreateWorktree: canCreateWorktreeForProjectKind(emptyProject.projectKind),
       };
@@ -101,7 +108,11 @@ export function buildWorkspaceStructureProjects(input: {
     }
 
     for (const workspace of session.workspaces) {
-      const projectKey = workspace.project?.projectKey ?? workspace.projectId;
+      const projectKey = resolveProjectGroupKey({
+        serverId: session.serverId,
+        projectId: workspace.projectId,
+        projectGroupKey: workspace.projectGroupKey,
+      });
       const existing = byProject.get(projectKey);
 
       if (!existing) {
@@ -118,6 +129,7 @@ export function buildWorkspaceStructureProjects(input: {
               session.serverId,
               {
                 serverId: session.serverId,
+                projectId: workspace.projectId,
                 iconWorkingDir: workspace.projectRootPath,
                 canCreateWorktree: canCreateWorktreeForProjectKind(workspace.projectKind),
               },
@@ -136,6 +148,7 @@ export function buildWorkspaceStructureProjects(input: {
 
       existing.hosts.set(session.serverId, {
         serverId: session.serverId,
+        projectId: workspace.projectId,
         iconWorkingDir: workspace.projectRootPath,
         canCreateWorktree: canCreateWorktreeForProjectKind(workspace.projectKind),
       });

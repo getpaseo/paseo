@@ -1,6 +1,7 @@
 import type { EmptyProjectDescriptor, WorkspaceDescriptor } from "@/stores/session-store";
 import { buildHostProjectList, type HostProjectListItem } from "@/projects/host-project-model";
 import { buildWorkspaceStructureProjects } from "@/projects/workspace-structure";
+import { resolveProjectGroupKey } from "@/projects/project-group-key";
 
 export interface WorkspaceSummary {
   id: string;
@@ -14,6 +15,7 @@ export interface WorkspaceSummary {
 
 export interface ProjectHostEntry {
   serverId: string;
+  projectId?: string;
   serverName: string;
   isOnline: boolean;
   repoRoot: string;
@@ -55,6 +57,7 @@ const GITHUB_PROJECT_KEY_PATTERN = /^remote:github\.com\/([^/]+)\/([^/]+)$/;
 
 interface HostGroup {
   serverId: string;
+  projectId: string;
   serverName: string;
   isOnline: boolean;
   workspaces: WorkspaceDescriptor[];
@@ -137,6 +140,7 @@ function toHostEntry(group: HostGroup): ProjectHostEntry {
     group.workspaces[0];
   return {
     serverId: group.serverId,
+    projectId: group.projectId,
     serverName: group.serverName,
     isOnline: group.isOnline,
     repoRoot,
@@ -198,8 +202,11 @@ export function buildProjects(input: BuildProjectsInput): BuildProjectsResult {
       }
 
       if (!group.hostsByServerId.has(host.serverId)) {
+        const placement = hostProject.hosts.find((entry) => entry.serverId === host.serverId);
+        if (!placement) continue;
         group.hostsByServerId.set(host.serverId, {
           serverId: host.serverId,
+          projectId: placement.projectId ?? hostProject.projectKey,
           serverName: host.serverName,
           isOnline: host.isOnline,
           workspaces: [],
@@ -209,7 +216,12 @@ export function buildProjects(input: BuildProjectsInput): BuildProjectsResult {
     }
 
     for (const workspace of host.workspaces) {
-      const group = groups.get(workspace.projectId);
+      const key = resolveProjectGroupKey({
+        serverId: host.serverId,
+        projectId: workspace.projectId,
+        projectGroupKey: workspace.projectGroupKey,
+      });
+      const group = groups.get(key);
       const hostGroup = group?.hostsByServerId.get(host.serverId);
       if (!hostGroup) continue;
       hostGroup.workspaces.push(workspace);

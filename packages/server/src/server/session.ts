@@ -1690,6 +1690,7 @@ export class Session {
     });
     return {
       projectKey: project.projectId,
+      ...(project.projectGroupKey ? { projectGroupKey: project.projectGroupKey } : {}),
       projectName: resolveProjectDisplayName(project),
       workspaceName: resolveWorkspaceDisplayName(workspace),
       checkout,
@@ -4460,6 +4461,7 @@ export class Session {
   ): WorkspaceProjectDescriptorPayload {
     return {
       projectId: project.projectId,
+      ...(project.projectGroupKey ? { projectGroupKey: project.projectGroupKey } : {}),
       projectDisplayName: resolveProjectDisplayName(project),
       projectCustomName: project.customName ?? null,
       projectRootPath: project.rootPath,

@@ -30,6 +30,7 @@ function workspace(input: {
   repoRoot: string;
   project?: ProjectPlacementPayload;
   projectId?: string;
+  projectGroupKey?: string;
   projectName?: string;
   remoteUrl?: string | null;
   currentBranch?: string;
@@ -38,6 +39,7 @@ function workspace(input: {
   return {
     id: input.id,
     projectId: input.projectId ?? input.project?.projectKey ?? input.repoRoot,
+    projectGroupKey: input.projectGroupKey,
     projectDisplayName: input.projectName ?? input.project?.projectName ?? "Project",
     projectRootPath: input.repoRoot,
     workspaceDirectory: input.repoRoot,
@@ -64,6 +66,36 @@ function workspace(input: {
 }
 
 describe("buildProjects", () => {
+  it("groups distinct host-local project IDs by their persisted group key", () => {
+    const projectGroupKey = "remote:github.com/acme/app";
+    const result = buildProjects({
+      hosts: [
+        {
+          serverId: "desktop",
+          serverName: "Desktop",
+          isOnline: true,
+          workspaces: [
+            workspace({ id: "main-a", repoRoot: "/a", projectId: "prj_a", projectGroupKey }),
+          ],
+        },
+        {
+          serverId: "laptop",
+          serverName: "Laptop",
+          isOnline: true,
+          workspaces: [
+            workspace({ id: "main-b", repoRoot: "/b", projectId: "prj_b", projectGroupKey }),
+          ],
+        },
+      ],
+    });
+
+    expect(result.projects).toHaveLength(1);
+    expect(result.projects[0]?.hosts).toMatchObject([
+      { serverId: "desktop", projectId: "prj_a" },
+      { serverId: "laptop", projectId: "prj_b" },
+    ]);
+  });
+
   it("normalizes detached and blank branches out of workspace summaries", () => {
     const result = buildProjects({
       hosts: [

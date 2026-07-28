@@ -260,6 +260,7 @@ function createNoopProjectRegistry(): ProjectRegistry {
       rootPath: input.rootPath,
       kind: input.kind,
       displayName: input.displayName,
+      projectGroupKey: input.projectGroupKey ?? null,
       customName: null,
       createdAt: input.timestamp,
       updatedAt: input.timestamp,

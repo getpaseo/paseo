@@ -859,7 +859,7 @@ export async function createPaseoDaemon(
     },
   });
   await workspaceReconciliation.start();
-  void workspaceReconciliation.runOnce().catch((error) => {
+  void workspaceReconciliation.reconcileNow().catch((error) => {
     logger.warn({ err: error }, "Initial workspace reconciliation failed");
   });
   await chatService.initialize();

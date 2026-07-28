@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 
 import { parseGitRevParsePath } from "../utils/git-rev-parse-path.js";
+import { deriveProjectGroupKey } from "./project-group-key.js";
 import {
   deriveProjectKind,
   deriveWorkspaceDisplayName,
@@ -31,8 +32,8 @@ export function classifyDirectoryForProjectMembership(input: {
 }): DirectoryProjectMembership {
   const cwd = resolve(input.cwd);
   const checkout: ProjectCheckoutLitePayload = { ...input.checkout, cwd };
-  const projectKey = deriveProjectGroupingKey({
-    cwd: checkout.worktreeRoot ?? cwd,
+  const projectKey = deriveProjectGroupKey({
+    rootPath: checkout.worktreeRoot ?? cwd,
     remoteUrl: checkout.remoteUrl,
     mainRepoRoot: checkout.mainRepoRoot,
   });
@@ -53,49 +54,6 @@ export function classifyDirectoryForProjectMembership(input: {
 function deriveWorkspaceDirectoryKey(cwd: string, checkout: ProjectCheckoutLitePayload): string {
   const worktreeRoot = checkout.worktreeRoot ? parseGitRevParsePath(checkout.worktreeRoot) : null;
   return worktreeRoot ?? resolve(cwd);
-}
-
-function deriveRemoteProjectKey(remoteUrl: string | null): string | null {
-  if (!remoteUrl) return null;
-
-  const trimmed = remoteUrl.trim();
-  if (!trimmed) return null;
-
-  let host: string | null = null;
-  let remotePath: string | null = null;
-  const scpLike = trimmed.match(/^[^@]+@([^:]+):(.+)$/);
-  if (scpLike) {
-    host = scpLike[1] ?? null;
-    remotePath = scpLike[2] ?? null;
-  } else if (trimmed.includes("://")) {
-    try {
-      const parsed = new URL(trimmed);
-      host = parsed.hostname || null;
-      remotePath = parsed.pathname ? parsed.pathname.replace(/^\/+/, "") : null;
-    } catch {
-      return null;
-    }
-  }
-
-  if (!host || !remotePath) return null;
-
-  let cleanedPath = remotePath.trim().replace(/^\/+/, "").replace(/\/+$/, "");
-  if (cleanedPath.endsWith(".git")) cleanedPath = cleanedPath.slice(0, -4);
-  if (!cleanedPath.includes("/")) return null;
-
-  return `remote:${host.toLowerCase()}/${cleanedPath}`;
-}
-
-function deriveProjectGroupingKey(options: {
-  cwd: string;
-  remoteUrl: string | null;
-  mainRepoRoot: string | null;
-}): string {
-  const remoteKey = deriveRemoteProjectKey(options.remoteUrl);
-  if (remoteKey) return remoteKey;
-
-  const mainRepoRoot = options.mainRepoRoot?.trim();
-  return mainRepoRoot || options.cwd;
 }
 
 function deriveProjectGroupingName(projectKey: string): string {

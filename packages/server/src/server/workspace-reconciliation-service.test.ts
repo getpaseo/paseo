@@ -777,6 +777,8 @@ describe("WorkspaceReconciliationService", () => {
     const result = await service.runOnce();
 
     expect(result.changesApplied.map((change) => change.kind).sort()).toEqual([
+      "project_updated",
+      "project_updated",
       "workspace_updated",
       "workspace_updated",
     ]);
@@ -785,6 +787,7 @@ describe("WorkspaceReconciliationService", () => {
       rootPath: repoDir,
       displayName: "blank-dot-page/editor",
       customName: null,
+      projectGroupKey: "remote:github.com/blank-dot-page/editor",
       archivedAt: null,
     });
     expect(projects.get(repoDir)).toMatchObject({
@@ -792,6 +795,7 @@ describe("WorkspaceReconciliationService", () => {
       rootPath: repoDir,
       displayName: "editor",
       customName: "Editor",
+      projectGroupKey: "remote:github.com/blank-dot-page/editor",
       archivedAt: null,
     });
     expect(workspaces.get("focused-bat")).toMatchObject({
@@ -804,7 +808,7 @@ describe("WorkspaceReconciliationService", () => {
     });
   });
 
-  test("keeps project display name stable when git remote changes", async () => {
+  test("updates the group key while keeping the project display name stable", async () => {
     const dir = createTempGitRepo("reconcile-remote-");
     tempDirs.push(dir);
 
@@ -856,8 +860,11 @@ describe("WorkspaceReconciliationService", () => {
 
     const result = await service.runOnce();
 
-    expect(result.changesApplied.find((c) => c.kind === "project_updated")).toBeUndefined();
+    expect(result.changesApplied.find((c) => c.kind === "project_updated")).toMatchObject({
+      fields: { projectGroupKey: "remote:github.com/new-owner/new-repo" },
+    });
     expect(projects.get("p1")!.displayName).toBe("old-owner/old-repo");
+    expect(projects.get("p1")!.projectGroupKey).toBe("remote:github.com/new-owner/new-repo");
   });
 
   test("keeps custom and default names stable when the remote changes", async () => {

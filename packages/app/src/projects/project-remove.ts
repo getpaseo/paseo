@@ -4,6 +4,7 @@ import { selectHostFeature } from "@/runtime/host-features";
 
 interface ProjectRemoveHost {
   serverId: string;
+  projectId?: string;
 }
 
 export interface ProjectRemoveProject {
@@ -13,6 +14,7 @@ export interface ProjectRemoveProject {
 
 export interface ProjectRemoveTarget {
   serverId: string;
+  projectId?: string;
 }
 
 export type ProjectRemoveReadiness =
@@ -38,7 +40,10 @@ export function getProjectRemoveReadiness(input: {
       unsupportedServerIds.push(host.serverId);
       continue;
     }
-    targets.push({ serverId: host.serverId });
+    targets.push({
+      serverId: host.serverId,
+      projectId: host.projectId ?? input.project.projectKey,
+    });
   }
 
   if (unsupportedServerIds.length > 0) {
@@ -59,11 +64,11 @@ export function getCurrentProjectRemoveReadiness(
 }
 
 export async function removeProjectFromHosts(input: {
-  projectKey: string;
+  projectKey?: string;
   targets: readonly ProjectRemoveTarget[];
   getClient: (serverId: string) => ProjectRemoveClient | null;
 }): Promise<ProjectRemoveOutcome> {
-  const clients: Array<{ serverId: string; client: ProjectRemoveClient }> = [];
+  const clients: Array<{ serverId: string; projectId: string; client: ProjectRemoveClient }> = [];
   const disconnectedServerIds: string[] = [];
 
   for (const target of input.targets) {
@@ -72,7 +77,11 @@ export async function removeProjectFromHosts(input: {
       disconnectedServerIds.push(target.serverId);
       continue;
     }
-    clients.push({ serverId: target.serverId, client });
+    const projectId = target.projectId ?? input.projectKey;
+    if (!projectId) {
+      return { kind: "failed", serverIds: [target.serverId] };
+    }
+    clients.push({ serverId: target.serverId, projectId, client });
   }
 
   if (disconnectedServerIds.length > 0) {
@@ -80,8 +89,8 @@ export async function removeProjectFromHosts(input: {
   }
 
   const results = await Promise.allSettled(
-    clients.map(async ({ client }) => {
-      await client.removeProject(input.projectKey);
+    clients.map(async ({ client, projectId }) => {
+      await client.removeProject(projectId);
     }),
   );
   const failedServerIds: string[] = [];

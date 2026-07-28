@@ -14,6 +14,7 @@ import {
 } from "../../workspace-registry.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
+import { deriveProjectGroupKey } from "../../project-group-key.js";
 import { areEquivalentPaths, createRealpathAwarePathMatcher } from "../../../utils/path.js";
 
 export interface ResolveOrCreateWorkspaceIdInput {
@@ -162,6 +163,11 @@ export function createWorkspaceProvisioningService(deps: {
       rootPath,
       kind: checkout.isGit ? "git" : "non_git",
       displayName: basename(rootPath) || rootPath,
+      projectGroupKey: deriveProjectGroupKey({
+        rootPath,
+        remoteUrl: checkout.remoteUrl,
+        mainRepoRoot: checkout.mainRepoRoot,
+      }),
       timestamp,
     });
   }
@@ -256,10 +262,16 @@ export function createWorkspaceProvisioningService(deps: {
       // Orphaned legacy workspace FKs fall through to exact-root allocation.
     }
 
+    const checkout = await workspaceGitService.getCheckout(input.repoRoot);
     const project = await projectRegistry.getOrCreateActiveByRoot({
       rootPath: input.repoRoot,
       kind: "git",
       displayName: basename(input.repoRoot) || input.repoRoot,
+      projectGroupKey: deriveProjectGroupKey({
+        rootPath: input.repoRoot,
+        remoteUrl: checkout.remoteUrl,
+        mainRepoRoot: checkout.mainRepoRoot,
+      }),
       timestamp: new Date().toISOString(),
     });
     return refreshProjectKind(project);
@@ -371,8 +383,18 @@ export function createWorkspaceProvisioningService(deps: {
         ? workspaceCheckout
         : await workspaceGitService.getCheckout(project.rootPath);
     const kind: PersistedProjectRecord["kind"] = projectCheckout.isGit ? "git" : "non_git";
-    if (project.kind === kind) return project;
-    const refreshed = { ...project, kind, updatedAt: new Date().toISOString() };
+    const projectGroupKey = deriveProjectGroupKey({
+      rootPath: project.rootPath,
+      remoteUrl: projectCheckout.remoteUrl,
+      mainRepoRoot: projectCheckout.mainRepoRoot,
+    });
+    if (project.kind === kind && project.projectGroupKey === projectGroupKey) return project;
+    const refreshed = {
+      ...project,
+      kind,
+      projectGroupKey,
+      updatedAt: new Date().toISOString(),
+    };
     await projectRegistry.upsert(refreshed);
     return refreshed;
   }

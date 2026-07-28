@@ -8,6 +8,7 @@ import type {
   WorkspaceStructureProject,
 } from "@/projects/workspace-structure";
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
+import { resolveProjectGroupKey } from "@/projects/project-group-key";
 import type { WorkspaceAgentActivity } from "@/utils/workspace-agent-activity";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 
@@ -144,7 +145,11 @@ export function createSidebarWorkspaceEntry(input: {
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
   workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
 }): SidebarWorkspaceEntry {
-  const projectKey = input.workspace.project?.projectKey ?? input.workspace.projectId;
+  const projectKey = resolveProjectGroupKey({
+    serverId: input.serverId,
+    projectId: input.workspace.projectId,
+    projectGroupKey: input.workspace.projectGroupKey,
+  });
   const effectiveStatus = deriveEffectiveWorkspaceStatus(input);
   return {
     workspaceKey: `${input.serverId}:${input.workspace.id}`,

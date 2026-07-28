@@ -66,6 +66,7 @@ import { toErrorMessage } from "@/utils/error-messages";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import {
   getHostProjectSourceDirectory,
+  getHostProjectId,
   hostProjectFromRoute,
   hostProjectFromWorkspace,
   useHostProjects,
@@ -823,6 +824,8 @@ async function createMultiplicityWorkspace(input: {
   serverId: string;
   createFailedMessage: string;
 }): Promise<ReturnType<typeof normalizeWorkspaceDescriptor>> {
+  const projectId = getHostProjectId(input.project, input.serverId);
+  if (!projectId) throw new Error("Project is not available on the selected host");
   const isWorktree = input.isolation === "worktree";
   const checkoutRequest = isWorktree
     ? resolveCheckoutRequest(input.selectedItem, input.currentBranch)
@@ -836,14 +839,14 @@ async function createMultiplicityWorkspace(input: {
       ? {
           kind: "worktree",
           cwd: input.sourceDirectory,
-          projectId: input.project.projectKey,
+          projectId,
           worktreeSlug: createNameId(),
           ...checkoutRequest,
         }
       : {
           kind: "directory",
           path: input.sourceDirectory,
-          projectId: input.project.projectKey,
+          projectId,
         },
     ...(firstAgentContext ? { firstAgentContext } : {}),
   });
@@ -1889,16 +1892,20 @@ export function NewWorkspaceScreen({
       }
       const checkoutRequest = resolveCheckoutRequest(selectedItem, currentBranch);
       const firstAgentContext = buildFirstAgentContext(input);
+      const hostProjectId = getHostProjectId(selectedProject, selectedServerId);
+      if (!hostProjectId) {
+        throw new Error("Project is not available on the selected host");
+      }
 
       return {
         cwd: selectedSourceDirectory,
-        projectId: selectedProject.projectKey,
+        projectId: hostProjectId,
         worktreeSlug: createNameId(),
         ...(firstAgentContext ? { firstAgentContext } : {}),
         ...checkoutRequest,
       };
     },
-    [currentBranch, selectedItem, selectedProject, selectedSourceDirectory],
+    [currentBranch, selectedItem, selectedProject, selectedServerId, selectedSourceDirectory],
   );
 
   const ensureWorkspace = useCallback(

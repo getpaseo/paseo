@@ -189,7 +189,14 @@ describe("host project list", () => {
   it("filters new-workspace projects to the selected host", () => {
     const hostAOnly = hostProject({
       projectKey: "host-a-project",
-      hosts: [{ serverId: "host-a", iconWorkingDir: "/repo/a", canCreateWorktree: true }],
+      hosts: [
+        {
+          serverId: "host-a",
+          projectId: "project-a",
+          iconWorkingDir: "/repo/a",
+          canCreateWorktree: true,
+        },
+      ],
     });
     const hostBOnly = hostProject({
       projectKey: "host-b-project",
@@ -283,7 +290,14 @@ describe("host project list", () => {
       projectName: "Project A",
       projectKind: "git",
       iconWorkingDir: "/repo/a",
-      hosts: [{ serverId: "host-a", iconWorkingDir: "/repo/a", canCreateWorktree: true }],
+      hosts: [
+        {
+          serverId: "host-a",
+          projectId: "project-a",
+          iconWorkingDir: "/repo/a",
+          canCreateWorktree: true,
+        },
+      ],
       workspaceKeys: [],
     });
     expect(hostProjectFromRoute({ serverId: "host-a", projectId: "project-a" })).toBeNull();
@@ -295,7 +309,14 @@ describe("host project list", () => {
       projectName: "Project A",
       projectKind: "git",
       iconWorkingDir: "/repo/a",
-      hosts: [{ serverId: "host-a", iconWorkingDir: "/repo/a", canCreateWorktree: true }],
+      hosts: [
+        {
+          serverId: "host-a",
+          projectId: "project-a",
+          iconWorkingDir: "/repo/a",
+          canCreateWorktree: true,
+        },
+      ],
       workspaceKeys: ["host-a:workspace-a"],
     });
 

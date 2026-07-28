@@ -15,6 +15,7 @@ import {
   type MutableWorkspacePlacement,
 } from "./workspace-registry-model.js";
 import { workspaceIdsForProjects } from "./workspace-directory.js";
+import { deriveProjectGroupKey } from "./project-group-key.js";
 
 const DEFAULT_RESCAN_INTERVAL_MS = 5 * 60_000;
 const DEFAULT_DEBOUNCE_MS = 100;
@@ -66,7 +67,7 @@ export type ReconciliationChange =
       kind: "project_updated";
       projectId: string;
       directory: string;
-      fields: Partial<Pick<PersistedProjectRecord, "kind">>;
+      fields: Partial<Pick<PersistedProjectRecord, "kind" | "projectGroupKey">>;
     }
   | {
       kind: "workspace_updated";
@@ -280,6 +281,11 @@ export class WorkspaceReconciliationService {
     return result;
   }
 
+  /** Runs the boot-time convergence path and publishes every affected workspace. */
+  async reconcileNow(): Promise<void> {
+    await this.reconcileObservedGitMetadata("full");
+  }
+
   private async reconcileGitMetadataForProjects(
     projectsToReconcile: PersistedProjectRecord[],
     workspacesByProject: Map<string, PersistedWorkspaceRecord[]>,
@@ -334,11 +340,21 @@ export class WorkspaceReconciliationService {
         checkout: await readCheckout(workspace.cwd),
       })),
     );
-    const projectUpdates: Partial<Pick<PersistedProjectRecord, "kind">> = {};
+    const projectUpdates: Partial<Pick<PersistedProjectRecord, "kind" | "projectGroupKey">> = {};
     const mappedKind = deriveProjectKind(currentGit);
+    const projectGroupKey = currentGit.remoteUrl
+      ? deriveProjectGroupKey({
+          rootPath: project.rootPath,
+          remoteUrl: currentGit.remoteUrl,
+          mainRepoRoot: currentGit.mainRepoRoot,
+        })
+      : null;
 
     if (project.kind !== mappedKind) {
       projectUpdates.kind = mappedKind;
+    }
+    if (projectGroupKey && project.projectGroupKey !== projectGroupKey) {
+      projectUpdates.projectGroupKey = projectGroupKey;
     }
 
     if (Object.keys(projectUpdates).length > 0) {

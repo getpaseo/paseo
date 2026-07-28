@@ -138,6 +138,7 @@ export interface Agent {
 export interface WorkspaceDescriptor {
   id: string;
   projectId: string;
+  projectGroupKey?: string | null;
   projectDisplayName: string;
   projectCustomName?: string | null;
   projectRootPath: string;
@@ -169,6 +170,7 @@ export function normalizeWorkspaceDescriptor(
   return {
     id: normalizeWorkspaceOpaqueId(payload.id) ?? payload.id,
     projectId: payload.projectId,
+    projectGroupKey: payload.projectGroupKey ?? payload.project?.projectGroupKey ?? null,
     projectDisplayName: payload.projectDisplayName,
     projectCustomName: payload.projectCustomName ?? null,
     projectRootPath: payload.projectRootPath,
@@ -195,6 +197,7 @@ export function normalizeWorkspaceDescriptor(
 
 export interface EmptyProjectDescriptor {
   projectId: string;
+  projectGroupKey?: string | null;
   projectDisplayName: string;
   projectCustomName: string | null;
   projectRootPath: string;
@@ -206,6 +209,7 @@ export function normalizeEmptyProjectDescriptor(
 ): EmptyProjectDescriptor {
   return {
     projectId: payload.projectId,
+    projectGroupKey: payload.projectGroupKey ?? null,
     projectDisplayName: payload.projectDisplayName,
     projectCustomName: payload.projectCustomName ?? null,
     projectRootPath: payload.projectRootPath,
@@ -253,6 +257,7 @@ function emptyProjectDescriptorFromWorkspace(
 ): EmptyProjectDescriptor {
   return {
     projectId: workspace.projectId,
+    ...(workspace.projectGroupKey ? { projectGroupKey: workspace.projectGroupKey } : {}),
     projectDisplayName: workspace.projectDisplayName,
     projectCustomName: workspace.projectCustomName ?? null,
     projectRootPath: workspace.projectRootPath,

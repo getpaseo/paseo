@@ -908,7 +908,7 @@ function NewWorkspaceGhostRow({
         serverId: worktreeTarget.serverId,
         sourceDirectory: worktreeTarget.iconWorkingDir,
         displayName,
-        projectId: project.projectKey,
+        projectId: worktreeTarget.projectId ?? project.projectKey,
       }) as Href,
     );
   }, [displayName, onWorkspacePress, project.projectKey, worktreeTarget]);
@@ -988,7 +988,7 @@ function ProjectHeaderRow({
         serverId: worktreeTarget.serverId,
         sourceDirectory: worktreeTarget.iconWorkingDir,
         displayName,
-        projectId: project.projectKey,
+        projectId: worktreeTarget.projectId ?? project.projectKey,
       }) as Href,
     );
   }, [displayName, onWorkspacePress, project.projectKey, worktreeTarget]);
@@ -1755,7 +1755,6 @@ function ProjectBlock({
       }
 
       void removeProjectFromHosts({
-        projectKey: project.projectKey,
         targets: readiness.targets,
         getClient: (serverId) => getHostRuntimeStore().getClient(serverId),
       })
