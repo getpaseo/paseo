@@ -38,7 +38,10 @@ function deriveRemoteProjectGroupKey(remoteUrl: string | null): string | null {
 
   let host: string | null = null;
   let remotePath: string | null = null;
-  const scpLike = trimmed.match(/^[^@]+@([^:]+):(.+)$/);
+  const scpLike =
+    !trimmed.includes("://") && !/^[A-Za-z]:[\\/]/.test(trimmed)
+      ? trimmed.match(/^(?:[^@/:]+@)?([^/:]+):(.+)$/)
+      : null;
   if (scpLike) {
     host = scpLike[1] ?? null;
     remotePath = scpLike[2] ?? null;

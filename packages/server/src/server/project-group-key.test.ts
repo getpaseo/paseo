@@ -29,6 +29,19 @@ describe("deriveProjectGroupKey", () => {
     ).toBe("remote:git.example.com/repo");
   });
 
+  test("accepts an SCP-style remote without a username", () => {
+    const rootPath = path.resolve("repo");
+
+    expect(
+      deriveProjectGroupKey({
+        rootPath,
+        remoteUrl: "github.com:getpaseo/paseo.git",
+        worktreeRoot: rootPath,
+        mainRepoRoot: null,
+      }),
+    ).toBe("remote:github.com/getpaseo/paseo");
+  });
+
   test("includes the selected path within a repository", () => {
     const worktreeRoot = path.resolve("repo");
     const rootPath = path.join(worktreeRoot, "packages", "app");

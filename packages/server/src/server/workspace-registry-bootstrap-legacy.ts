@@ -1,4 +1,4 @@
-import { basename, resolve } from "node:path";
+import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 
 import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 
@@ -75,7 +75,20 @@ function deriveProjectRootPath(input: {
   cwd: string;
   checkout: ProjectCheckoutLitePayload;
 }): string {
-  return input.checkout.isGit && input.checkout.mainRepoRoot
-    ? input.checkout.mainRepoRoot
-    : input.cwd;
+  if (!input.checkout.isGit || !input.checkout.mainRepoRoot) return input.cwd;
+  const worktreeRoot = input.checkout.worktreeRoot
+    ? parseGitRevParsePath(input.checkout.worktreeRoot)
+    : null;
+  if (!worktreeRoot) return input.checkout.mainRepoRoot;
+  const selectedPath = relative(resolve(worktreeRoot), resolve(input.cwd));
+  if (
+    !selectedPath ||
+    selectedPath === "." ||
+    selectedPath === ".." ||
+    selectedPath.startsWith(`..${sep}`) ||
+    isAbsolute(selectedPath)
+  ) {
+    return input.checkout.mainRepoRoot;
+  }
+  return resolve(input.checkout.mainRepoRoot, selectedPath);
 }

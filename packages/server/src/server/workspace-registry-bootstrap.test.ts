@@ -378,8 +378,8 @@ describe("bootstrapWorkspaceRegistries", () => {
   });
 
   test("keeps legacy agents in different monorepo subprojects separate", async () => {
-    const appProject = path.join(GIT_PROJECT, "packages", "app");
-    const serverProject = path.join(GIT_PROJECT, "packages", "server");
+    const appProject = path.join(GIT_WORKTREE, "packages", "app");
+    const serverProject = path.join(GIT_WORKTREE, "packages", "server");
     mkdirSync(appProject, { recursive: true });
     mkdirSync(serverProject, { recursive: true });
     workspaceGitService = createNoopWorkspaceGitService({
@@ -388,9 +388,9 @@ describe("bootstrapWorkspaceRegistries", () => {
         isGit: true,
         currentBranch: "main",
         remoteUrl: "git@github.com:acme/legacy-project.git",
-        worktreeRoot: GIT_PROJECT,
+        worktreeRoot: GIT_WORKTREE,
         isPaseoOwnedWorktree: false,
-        mainRepoRoot: null,
+        mainRepoRoot: GIT_PROJECT,
       }),
     });
     await agentStorage.initialize();
@@ -428,16 +428,22 @@ describe("bootstrapWorkspaceRegistries", () => {
 
     expect(
       (await projectRegistry.list())
-        .map((project) => ({ projectId: project.projectId, displayName: project.displayName }))
+        .map((project) => ({
+          projectId: project.projectId,
+          displayName: project.displayName,
+          rootPath: project.rootPath,
+        }))
         .sort((left, right) => left.projectId.localeCompare(right.projectId)),
     ).toEqual([
       {
         projectId: "remote:github.com/acme/legacy-project#subdir:packages/app",
         displayName: "app",
+        rootPath: path.join(GIT_PROJECT, "packages", "app"),
       },
       {
         projectId: "remote:github.com/acme/legacy-project#subdir:packages/server",
         displayName: "server",
+        rootPath: path.join(GIT_PROJECT, "packages", "server"),
       },
     ]);
     expect(
