@@ -123,6 +123,7 @@ export function buildWorkspaceStructureProjects(input: {
     {
       projectKey: string;
       projectName: string;
+      hasCustomName: boolean;
       projectKind: WorkspaceDescriptor["projectKind"];
       iconWorkingDir: string;
       hosts: Map<string, WorkspaceStructureHostPlacement>;
@@ -153,6 +154,7 @@ export function buildWorkspaceStructureProjects(input: {
             emptyProject.projectCustomName ??
             emptyProject.projectDisplayName ??
             projectDisplayNameFromProjectId(projectKey),
+          hasCustomName: Boolean(emptyProject.projectCustomName),
           projectKind: emptyProject.projectKind,
           iconWorkingDir: emptyProject.projectRootPath,
           hosts: new Map([[session.serverId, placement]]),
@@ -161,6 +163,10 @@ export function buildWorkspaceStructureProjects(input: {
         continue;
       }
 
+      if (emptyProject.projectCustomName && !existing.hasCustomName) {
+        existing.projectName = emptyProject.projectCustomName;
+        existing.hasCustomName = true;
+      }
       existing.hosts.set(session.serverId, placement);
     }
 
@@ -180,6 +186,7 @@ export function buildWorkspaceStructureProjects(input: {
             workspace.projectCustomName ??
             workspace.projectDisplayName ??
             projectDisplayNameFromProjectId(projectKey),
+          hasCustomName: Boolean(workspace.projectCustomName),
           projectKind: workspace.projectKind,
           iconWorkingDir: workspace.projectRootPath,
           hosts: new Map([
@@ -204,6 +211,10 @@ export function buildWorkspaceStructureProjects(input: {
         continue;
       }
 
+      if (workspace.projectCustomName && !existing.hasCustomName) {
+        existing.projectName = workspace.projectCustomName;
+        existing.hasCustomName = true;
+      }
       existing.hosts.set(session.serverId, {
         serverId: session.serverId,
         projectId: workspace.projectId,
