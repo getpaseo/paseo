@@ -8,6 +8,7 @@ const ciWorkflowPath = new URL(".github/workflows/ci.yml", repoRoot);
 const dockerWorkflowPath = new URL(".github/workflows/docker.yml", repoRoot);
 const nixWorkflowPath = new URL(".github/workflows/nix.yml", repoRoot);
 const filtersPath = new URL(".github/ci-paths.yml", repoRoot);
+const serverTsconfigPath = new URL("packages/server/tsconfig.server.json", repoRoot);
 
 const gatedCiJobs = new Map([
   ["format", { name: "format", contract: "format" }],
@@ -128,6 +129,12 @@ test("focused contracts stay inside existing required checks", () => {
   assert.match(desktop, /test:e2e:browser-tab-bridge/);
   assert.match(desktop, /npm run test --workspace=@getpaseo\/desktop/);
   assert.ok(!jobs.has("desktop-browser-bridge"));
+});
+
+test("server builds exclude test utilities at every domain depth", () => {
+  const tsconfig = JSON.parse(readFileSync(serverTsconfigPath, "utf8"));
+  assert.ok(tsconfig.exclude.includes("src/server/**/test-utils/**"));
+  assert.ok(!tsconfig.exclude.includes("src/server/test-utils/**"));
 });
 
 test("PR routing follows test contracts instead of package consumers", () => {
