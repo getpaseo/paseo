@@ -35,6 +35,7 @@ import type {
   AgentStreamEvent,
   AgentTimelineItem,
   ImportProviderSessionInput,
+  ImportProviderSessionContext,
   ResolveAgentDefaultModeInput,
 } from "./agent-sdk-types.js";
 import type { PaseoToolCatalog } from "./tools/types.js";
@@ -1706,6 +1707,7 @@ test("createAgent passes daemon launch env through the provider launch context",
     agentId: snapshot.id,
     env: {
       PASEO_AGENT_ID: snapshot.id,
+      PASEO_AGENT_CWD: workdir,
     },
   });
 });
@@ -2511,6 +2513,7 @@ test("resumeAgentFromPersistence keeps metadata config, applies overrides, and p
     agentId: resumed.id,
     env: {
       PASEO_AGENT_ID: resumed.id,
+      PASEO_AGENT_CWD: workdir,
     },
   });
 });
@@ -2525,14 +2528,16 @@ test("importProviderSession imports the selected session without listing and pub
   class ImportClient extends TestAgentClient {
     listCalls = 0;
     importInput: unknown = null;
+    importLaunchContext: AgentLaunchContext | undefined;
 
     async listImportableSessions() {
       this.listCalls += 1;
       return [];
     }
 
-    async importSession(input: ImportProviderSessionInput) {
+    async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
       this.importInput = input;
+      this.importLaunchContext = context.launchContext;
       return {
         session,
         config: { provider: "codex" as const, cwd: workdir },
@@ -2612,6 +2617,13 @@ test("importProviderSession imports the selected session without listing and pub
 
   expect(client.listCalls).toBe(0);
   expect(client.importInput).toEqual({ providerHandleId: "thread-selected", cwd: workdir });
+  expect(client.importLaunchContext).toEqual({
+    agentId: imported.id,
+    env: {
+      PASEO_AGENT_ID: imported.id,
+      PASEO_AGENT_CWD: workdir,
+    },
+  });
   expect(imported.lifecycle).toBe("idle");
   expect(imported.historyPrimed).toBe(true);
   expect(manager.getTimeline(imported.id)).toEqual([
@@ -2712,6 +2724,7 @@ test("reloadAgentSession passes daemon launch env through the provider launch co
     agentId: snapshot.id,
     env: {
       PASEO_AGENT_ID: snapshot.id,
+      PASEO_AGENT_CWD: workdir,
     },
   });
 
@@ -2723,6 +2736,7 @@ test("reloadAgentSession passes daemon launch env through the provider launch co
     agentId: snapshot.id,
     env: {
       PASEO_AGENT_ID: snapshot.id,
+      PASEO_AGENT_CWD: workdir,
     },
   });
 });
