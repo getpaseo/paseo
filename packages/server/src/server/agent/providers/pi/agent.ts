@@ -1224,11 +1224,11 @@ export class PiRpcAgentSession implements AgentSession {
   private activeTurnId: string | null = null;
   private activeClientMessageId: string | null = null;
   /**
-   * FIFO of user messages submitted to the native process (turn prompts and
+   * User messages submitted to the native process (turn prompts and
    * mid-turn steers) awaiting their PASEO_SUBMITTED_USER_ENTRY marker. The
-   * marker carries no client identity, so correlation rides on this queue:
-   * exact text match first, oldest entry otherwise. Entries outlive turn
-   * boundaries on purpose — a steer queued but not yet drained when the turn
+   * marker carries no client identity, so correlation rides on submission
+   * order — see takePendingSubmittedUserMessage. Entries outlive turn
+   * boundaries on purpose: a steer queued but not yet drained when the turn
    * is interrupted still produces its marker when a later turn drains it.
    */
   private readonly pendingSubmittedUserMessages: Array<{
@@ -1400,20 +1400,29 @@ export class PiRpcAgentSession implements AgentSession {
     }
   }
 
-  private takePendingSubmittedUserMessage(
-    text: string,
-  ): { text: string; clientMessageId: string | null } | undefined {
-    if (this.pendingSubmittedUserMessages.length === 0) {
-      return undefined;
+  private takePendingSubmittedUserMessage():
+    | {
+        text: string;
+        clientMessageId: string | null;
+      }
+    | undefined {
+    // Markers arrive in the order entries enter the native session tree. A
+    // turn's first marker always belongs to the prompt that started it: the
+    // runtime persists the prompt before draining any queued steer, even a
+    // steer left over from an interrupted turn. Later markers map to pending
+    // steers in submission order (leftover steers drain before steers queued
+    // in this turn). Matching by text instead would swap correlations when a
+    // resent message repeats the interrupted steer's text verbatim.
+    const turnEntry = this.activeTurnSubmittedEntry;
+    if (turnEntry) {
+      const index = this.pendingSubmittedUserMessages.indexOf(turnEntry);
+      if (index >= 0) {
+        this.pendingSubmittedUserMessages.splice(index, 1);
+        this.activeTurnSubmittedEntry = null;
+        return turnEntry;
+      }
     }
-    // Prefer an exact text match: a steer queued behind an interrupt can
-    // drain into a later turn, breaking FIFO order. Fall back to the oldest
-    // pending entry when texts don't line up (e.g. prompt-template expansion
-    // on the runtime side rewrote the message).
-    const byText = this.pendingSubmittedUserMessages.findIndex((entry) => entry.text === text);
-    const index = byText >= 0 ? byText : 0;
-    const [entry] = this.pendingSubmittedUserMessages.splice(index, 1);
-    return entry;
+    return this.pendingSubmittedUserMessages.shift();
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -1907,7 +1916,7 @@ export class PiRpcAgentSession implements AgentSession {
     if (!entry) {
       return true;
     }
-    const submitted = this.takePendingSubmittedUserMessage(entry.text);
+    const submitted = this.takePendingSubmittedUserMessage();
     const clientMessageId = submitted ? submitted.clientMessageId : this.activeClientMessageId;
     this.emit({
       type: "timeline",

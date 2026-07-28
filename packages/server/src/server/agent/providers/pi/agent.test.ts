@@ -700,7 +700,7 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
-  test("correlates a steer drained into a later turn by text", async () => {
+  test("correlates a steer drained into a later turn behind that turn's prompt", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
 
@@ -736,6 +736,52 @@ describe("PiRpcAgentSession", () => {
       {
         type: "user_message",
         text: "queued steer",
+        messageId: "entry-steer",
+        clientMessageId: "client-steer",
+      },
+    ]);
+  });
+
+  test("keeps correlations when an interrupted steer is resent verbatim", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("first", { clientMessageId: "client-first" });
+    fakeSession.finishSubmittedUserMessage({ id: "entry-first", parentId: null, text: "first" });
+    await session.steerActiveTurn("same text", { clientMessageId: "client-steer" });
+    await session.interrupt();
+
+    // The user resends the identical message; the runtime persists the new
+    // prompt before draining the queued steer, so its marker arrives first
+    // and must keep the new submission's client message id.
+    await session.startTurn("same text", { clientMessageId: "client-resent" });
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-resent",
+      parentId: null,
+      text: "same text",
+    });
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-steer",
+      parentId: "entry-resent",
+      text: "same text",
+    });
+
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "user_message",
+        text: "first",
+        messageId: "entry-first",
+        clientMessageId: "client-first",
+      },
+      {
+        type: "user_message",
+        text: "same text",
+        messageId: "entry-resent",
+        clientMessageId: "client-resent",
+      },
+      {
+        type: "user_message",
+        text: "same text",
         messageId: "entry-steer",
         clientMessageId: "client-steer",
       },
