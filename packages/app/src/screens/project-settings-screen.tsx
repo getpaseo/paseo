@@ -242,6 +242,7 @@ function ProjectSettingsBody({
             projectKey={project.projectKey}
           />
           <ProjectNameEditor
+            key={selectedHost.projectId ?? project.projectKey}
             projectName={selectedHost.projectName}
             projectCustomName={selectedHost.projectCustomName}
             projectId={selectedHost.projectId ?? project.projectKey}

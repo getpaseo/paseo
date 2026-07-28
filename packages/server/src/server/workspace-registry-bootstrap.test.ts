@@ -377,6 +377,69 @@ describe("bootstrapWorkspaceRegistries", () => {
     ]);
   });
 
+  test("keeps legacy agents in different monorepo subprojects separate", async () => {
+    const appProject = path.join(GIT_PROJECT, "packages", "app");
+    const serverProject = path.join(GIT_PROJECT, "packages", "server");
+    mkdirSync(appProject, { recursive: true });
+    mkdirSync(serverProject, { recursive: true });
+    workspaceGitService = createNoopWorkspaceGitService({
+      getCheckout: async (cwd) => ({
+        cwd,
+        isGit: true,
+        currentBranch: "main",
+        remoteUrl: "git@github.com:acme/legacy-project.git",
+        worktreeRoot: GIT_PROJECT,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: null,
+      }),
+    });
+    await agentStorage.initialize();
+    for (const [id, cwd] of [
+      ["app-agent", appProject],
+      ["server-agent", serverProject],
+    ]) {
+      await agentStorage.upsert({
+        id,
+        provider: "codex",
+        cwd,
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-02T00:00:00.000Z",
+        lastActivityAt: "2026-03-02T00:00:00.000Z",
+        lastUserMessageAt: null,
+        title: null,
+        labels: {},
+        lastStatus: "idle",
+        lastModeId: null,
+        config: null,
+        runtimeInfo: { provider: "codex", sessionId: null },
+        persistence: null,
+        archivedAt: null,
+      });
+    }
+
+    await bootstrapWorkspaceRegistries({
+      paseoHome,
+      agentStorage,
+      projectRegistry,
+      workspaceRegistry,
+      workspaceGitService,
+      logger,
+    });
+
+    expect((await projectRegistry.list()).map((project) => project.projectId).sort()).toEqual([
+      "remote:github.com/acme/legacy-project#subdir:packages/app",
+      "remote:github.com/acme/legacy-project#subdir:packages/server",
+    ]);
+    expect(
+      new Set((await workspaceRegistry.list()).map((workspace) => workspace.projectId)),
+    ).toEqual(
+      new Set([
+        "remote:github.com/acme/legacy-project#subdir:packages/app",
+        "remote:github.com/acme/legacy-project#subdir:packages/server",
+      ]),
+    );
+  });
+
   test("migrates cwd-only agents to the oldest existing same-cwd workspace", async () => {
     await projectRegistry.initialize();
     await workspaceRegistry.initialize();

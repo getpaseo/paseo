@@ -33,7 +33,7 @@ export function classifyDirectoryForProjectMembership(input: {
   const cwd = resolve(input.cwd);
   const checkout: ProjectCheckoutLitePayload = { ...input.checkout, cwd };
   const projectKey = deriveProjectGroupKey({
-    rootPath: checkout.worktreeRoot ?? cwd,
+    rootPath: cwd,
     remoteUrl: checkout.remoteUrl,
     worktreeRoot: checkout.worktreeRoot,
     mainRepoRoot: checkout.mainRepoRoot,
@@ -54,7 +54,8 @@ export function classifyDirectoryForProjectMembership(input: {
 
 function deriveWorkspaceDirectoryKey(cwd: string, checkout: ProjectCheckoutLitePayload): string {
   const worktreeRoot = checkout.worktreeRoot ? parseGitRevParsePath(checkout.worktreeRoot) : null;
-  return worktreeRoot ?? resolve(cwd);
+  const selectedRoot = resolve(cwd);
+  return worktreeRoot && resolve(worktreeRoot) === selectedRoot ? worktreeRoot : selectedRoot;
 }
 
 function deriveProjectGroupingName(projectKey: string): string {

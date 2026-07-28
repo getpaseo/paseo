@@ -66,6 +66,17 @@ async function expectOneProjectContainsBothWorkspaces(
   await expect(page.locator('[data-testid^="sidebar-project-row-"]')).toHaveCount(1);
 }
 
+async function openGroupedProjectSettings(page: Page): Promise<void> {
+  const projectRow = page.locator('[data-testid^="sidebar-project-row-"]').first();
+  const testId = await projectRow.getAttribute("data-testid");
+  if (!testId) throw new Error("Grouped project row has no test ID");
+  const projectKey = testId.slice("sidebar-project-row-".length);
+  await projectRow.hover();
+  await page.getByTestId(`sidebar-project-kebab-${projectKey}`).click();
+  await page.getByTestId(`sidebar-project-menu-open-settings-${projectKey}`).click();
+  await expect(page.getByTestId("host-picker")).toBeVisible({ timeout: 30_000 });
+}
+
 async function readPersistedProjectGroupKey(host: IsolatedHostDaemon): Promise<unknown> {
   const projectsPath = path.join(host.paseoHome, "projects", "projects.json");
   const projects = JSON.parse(await readFile(projectsPath, "utf8")) as Array<
@@ -230,5 +241,34 @@ test.describe("Sidebar project grouping", () => {
     await expect
       .poll(() => readPersistedProjectGroupKey(reconciledCrossHostProject.secondaryHost))
       .toBe("remote:github.com/paseo-e2e/grouped-project");
+  });
+
+  test("resets a rename draft when switching grouped-project hosts", async ({
+    page,
+    crossHostProject,
+  }) => {
+    await gotoAppShell(page);
+    await addConnectedHostAndReload(page, {
+      serverId: crossHostProject.secondaryHost.serverId,
+      label: SECONDARY_HOST_LABEL,
+      port: crossHostProject.secondaryHost.port,
+    });
+    await waitForConnectedHost(page, {
+      serverId: crossHostProject.secondaryHost.serverId,
+      endpoint: `localhost:${crossHostProject.secondaryHost.port}`,
+    });
+    await expectOneProjectContainsBothWorkspaces(page, crossHostProject);
+    await openGroupedProjectSettings(page);
+
+    await page.getByTestId("project-name-edit-button").click();
+    const nameInput = page.getByTestId("project-name-input");
+    await nameInput.fill("Draft from the first host");
+
+    await page.getByTestId("host-picker").click();
+    await page.getByTestId(`host-picker-item-${crossHostProject.secondary.serverId}`).click();
+
+    await expect(nameInput).not.toBeVisible();
+    await page.getByTestId("project-name-edit-button").click();
+    await expect(page.getByTestId("project-name-input")).toHaveValue("");
   });
 });
