@@ -671,24 +671,63 @@ function SelectableModelRow({
   );
 }
 
+function headingPressableStyle({
+  hovered,
+  pressed,
+}: PressableStateCallbackType & { hovered?: boolean }) {
+  return [
+    styles.sectionHeading,
+    Boolean(hovered) && styles.browserRowHovered,
+    pressed && styles.browserRowPressed,
+  ];
+}
+
 function ModelGroupHeading({
   label,
   status,
+  providerId,
+  onDrillDown,
 }: {
   label: string;
   status?: ModelBrowserHeadingStatus;
+  providerId?: string;
+  onDrillDown: (providerId: string, providerLabel: string) => void;
 }) {
   const { t } = useTranslation();
+  const handlePress = useCallback(() => {
+    if (providerId) onDrillDown(providerId, label);
+  }, [label, onDrillDown, providerId]);
+  const statusNode = status ? (
+    <Text style={styles.sectionHeadingStatus}>
+      {t(status === "loading" ? "modelSelector.loadingShort" : "modelSelector.error")}
+    </Text>
+  ) : null;
+
+  // A failed provider's retry lives in its own view, so the flat catalog would
+  // otherwise dead-end on "Error" with no way to act on it.
+  if (status === "error" && providerId) {
+    return (
+      <ModelBrowserPressable
+        onPress={handlePress}
+        style={headingPressableStyle}
+        accessibilityLabel={`${label} — ${t("modelSelector.error")}`}
+        testID={`model-group-heading-${label}`}
+      >
+        <Text style={styles.sectionHeadingText} numberOfLines={1}>
+          {label}
+        </Text>
+        {statusNode}
+        <ThemedChevronRight size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />
+      </ModelBrowserPressable>
+    );
+  }
+
   return (
     <View style={styles.sectionHeading} accessibilityRole="header">
       <Text style={styles.sectionHeadingText} numberOfLines={1}>
         {label}
       </Text>
-      {status ? (
-        <Text style={styles.sectionHeadingStatus}>
-          {t(status === "loading" ? "modelSelector.loadingShort" : "modelSelector.error")}
-        </Text>
-      ) : null}
+      {statusNode}
     </View>
   );
 }
@@ -928,6 +967,7 @@ function ModelListBody({
   favoriteKeys,
   onSelect,
   onToggleFavorite,
+  onDrillDown,
   scrolling,
 }: {
   items: ModelBrowserListItem[];
@@ -936,13 +976,21 @@ function ModelListBody({
   favoriteKeys: Set<string>;
   onSelect: (provider: string, modelId: string) => void;
   onToggleFavorite?: (provider: string, modelId: string) => void;
+  onDrillDown: (providerId: string, providerLabel: string) => void;
   scrolling: "sheet" | "independent";
 }) {
   const isCompact = useIsCompactFormFactor();
   const renderItem = useCallback(
     ({ item }: { item: ModelBrowserListItem }) => {
       if (item.kind === "heading") {
-        return <ModelGroupHeading label={item.label} status={item.status} />;
+        return (
+          <ModelGroupHeading
+            label={item.label}
+            status={item.status}
+            providerId={item.providerId}
+            onDrillDown={onDrillDown}
+          />
+        );
       }
       return (
         <SelectableModelRow
@@ -955,7 +1003,7 @@ function ModelListBody({
         />
       );
     },
-    [favoriteKeys, onSelect, onToggleFavorite, selectedModel, selectedProvider],
+    [favoriteKeys, onDrillDown, onSelect, onToggleFavorite, selectedModel, selectedProvider],
   );
 
   if (scrolling === "independent") {
@@ -1078,6 +1126,7 @@ function ModelBrowserContent({
         favoriteKeys={favoriteKeys}
         onSelect={onSelect}
         onToggleFavorite={onToggleFavorite}
+        onDrillDown={onDrillDown}
         scrolling={scrolling}
       />
     );
@@ -1115,6 +1164,7 @@ function ModelBrowserContent({
         favoriteKeys={favoriteKeys}
         onSelect={onSelect}
         onToggleFavorite={onToggleFavorite}
+        onDrillDown={onDrillDown}
         scrolling={scrolling}
       />
     );

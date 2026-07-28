@@ -128,12 +128,34 @@ describe("buildAllModelsListItems", () => {
       kind: "heading",
       key: "heading:provider:pi",
       label: "Pi",
+      providerId: "pi",
       status: "loading",
     });
     expect(items).toContainEqual({
       kind: "heading",
       key: "heading:provider:opencode",
       label: "OpenCode",
+      providerId: "opencode",
+      status: "error",
+    });
+  });
+
+  it("carries providerId on group headings so a failed provider can be opened to retry", () => {
+    const items = buildAllModelsListItems({
+      providers: [
+        codex,
+        { id: "pi", label: "Pi", modelSelection: { kind: "error", message: "x" } },
+      ],
+      favoriteKeys: new Set(["codex:gpt-5.4"]),
+      favoritesLabel: "Favorites",
+      normalizedQuery: "",
+    });
+
+    const headings = items.filter((item) => item.kind === "heading");
+    // The favorites heading spans providers, so it must stay non-navigable.
+    expect(headings.find((item) => item.key === "heading:favorites")?.providerId).toBeUndefined();
+    expect(headings.find((item) => item.key === "heading:provider:pi")).toMatchObject({
+      providerId: "pi",
       status: "error",
     });
   });

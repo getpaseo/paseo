@@ -9,7 +9,14 @@ import {
 export type ModelBrowserHeadingStatus = "loading" | "error";
 
 export type ModelBrowserListItem =
-  | { kind: "heading"; key: string; label: string; status?: ModelBrowserHeadingStatus }
+  | {
+      kind: "heading";
+      key: string;
+      label: string;
+      status?: ModelBrowserHeadingStatus;
+      /** Set on provider group headings so a failed one can drill in to retry. */
+      providerId?: string;
+    }
   | {
       kind: "model";
       key: string;
@@ -122,6 +129,7 @@ export function buildAllModelsListItems({
       kind: "heading",
       key: `heading:provider:${provider.id}`,
       label: provider.label,
+      providerId: provider.id,
       ...(status ? { status } : {}),
     });
     for (const row of rows) {
