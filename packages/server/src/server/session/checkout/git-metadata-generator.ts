@@ -2,7 +2,6 @@ import { z } from "zod";
 import {
   StructuredAgentFallbackError,
   StructuredAgentResponseError,
-  generateStructuredAgentResponseWithFallback,
 } from "../../agent/agent-response-loop.js";
 import type { AgentManager } from "../../agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "../../agent/provider-snapshot-manager.js";
@@ -11,6 +10,7 @@ import {
   type ResolveStructuredGenerationProvidersOptions,
   type StructuredGenerationDaemonConfig,
 } from "../../agent/structured-generation-providers.js";
+import { generateStructuredMetadataResponse } from "../../agent/generate-structured-metadata.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
 import {
   buildMetadataPrompt,
@@ -183,13 +183,15 @@ export function createAgentStructuredTextGeneration(deps: {
 }): StructuredTextGeneration {
   return {
     async generate({ cwd, prompt, schema, schemaName, agentTitle }) {
+      const daemonConfig = deps.readDaemonConfig();
       const providers = await resolveStructuredGenerationProviders({
         cwd,
         providerSnapshotManager: deps.providerSnapshotManager,
-        daemonConfig: deps.readDaemonConfig(),
+        daemonConfig,
         currentSelection: deps.getFocusedSelection(cwd),
       });
-      return generateStructuredAgentResponseWithFallback({
+      return generateStructuredMetadataResponse({
+        daemonConfig,
         manager: deps.agentManager,
         cwd,
         prompt,

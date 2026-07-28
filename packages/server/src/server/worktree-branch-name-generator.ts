@@ -10,6 +10,7 @@ import {
   resolveStructuredGenerationProviders,
   type StructuredGenerationDaemonConfig,
 } from "./agent/structured-generation-providers.js";
+import { generateStructuredMetadataResponse } from "./agent/generate-structured-metadata.js";
 import { buildAgentBranchNameSeed } from "./agent/prompt-attachments.js";
 import { buildMetadataPrompt } from "../utils/build-metadata-prompt.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
@@ -98,7 +99,7 @@ export async function generateBranchNameFromFirstAgentContext(
     return null;
   }
 
-  const generator =
+  const generateWithAgents =
     options.deps?.generateStructuredAgentResponseWithFallback ??
     generateStructuredAgentResponseWithFallback;
 
@@ -111,7 +112,8 @@ export async function generateBranchNameFromFirstAgentContext(
           currentSelection: options.currentSelection,
         })
       : [];
-    const result = await generator({
+    const result = await generateStructuredMetadataResponse({
+      daemonConfig: options.daemonConfig,
       manager: options.agentManager,
       cwd: options.cwd,
       prompt: await buildPrompt(seed, {
@@ -128,6 +130,7 @@ export async function generateBranchNameFromFirstAgentContext(
         title: "Branch name generator",
         internal: true,
       },
+      generateWithAgents,
     });
     return {
       title: result.title.trim() || null,
