@@ -115,12 +115,14 @@ function workspace(input: {
   name: string;
   projectId: string;
   projectDisplayName: string;
+  projectGroupKey?: string;
   status?: WorkspaceDescriptor["status"];
   statusEnteredAt?: Date | null;
 }): WorkspaceDescriptor {
   return {
     id: input.id,
     projectId: input.projectId,
+    projectGroupKey: input.projectGroupKey,
     projectDisplayName: input.projectDisplayName,
     projectRootPath: `/repo/${input.projectId}`,
     workspaceDirectory: `/repo/${input.projectId}/${input.id}`,
@@ -400,6 +402,36 @@ describe("shared sidebar workspace model", () => {
 
     expect(nextEntries.get("srv:one")).toBe(previousEntries.get("srv:one"));
     expect(nextEntries.get("srv:two")).not.toBe(previousEntries.get("srv:two"));
+  });
+
+  it("keeps a structurally disambiguated project key in status entries", () => {
+    const projectKey = "host:srv:project:prj_a";
+    const model = buildSidebarWorkspacePlacementModel({
+      projects: [project({ projectKey, projectName: "Clone A", workspaceKeys: ["srv:clone-a"] })],
+    });
+    const entries = buildSidebarWorkspaceEntries({
+      placements: model.workspaces,
+      sessions: [
+        {
+          serverId: "srv",
+          workspaceAgentActivity: new Map(),
+          workspaces: new Map([
+            [
+              "clone-a",
+              workspace({
+                id: "clone-a",
+                name: "main",
+                projectId: "prj_a",
+                projectGroupKey: "remote:github.com/acme/app",
+                projectDisplayName: "acme/app",
+              }),
+            ],
+          ]),
+        },
+      ],
+    });
+
+    expect(entries.get("srv:clone-a")?.projectKey).toBe(projectKey);
   });
 });
 

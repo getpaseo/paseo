@@ -342,18 +342,16 @@ export class WorkspaceReconciliationService {
     );
     const projectUpdates: Partial<Pick<PersistedProjectRecord, "kind" | "projectGroupKey">> = {};
     const mappedKind = deriveProjectKind(currentGit);
-    const projectGroupKey = currentGit.remoteUrl
-      ? deriveProjectGroupKey({
-          rootPath: project.rootPath,
-          remoteUrl: currentGit.remoteUrl,
-          mainRepoRoot: currentGit.mainRepoRoot,
-        })
-      : null;
+    const projectGroupKey = deriveProjectGroupKey({
+      rootPath: project.rootPath,
+      remoteUrl: currentGit.remoteUrl,
+      mainRepoRoot: currentGit.mainRepoRoot,
+    });
 
     if (project.kind !== mappedKind) {
       projectUpdates.kind = mappedKind;
     }
-    if (projectGroupKey && project.projectGroupKey !== projectGroupKey) {
+    if (project.projectGroupKey !== projectGroupKey) {
       projectUpdates.projectGroupKey = projectGroupKey;
     }
 

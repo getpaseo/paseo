@@ -31,6 +31,7 @@ function workspace(input: {
   project?: ProjectPlacementPayload;
   projectId?: string;
   projectGroupKey?: string;
+  projectCustomName?: string | null;
   projectName?: string;
   remoteUrl?: string | null;
   currentBranch?: string;
@@ -41,6 +42,7 @@ function workspace(input: {
     projectId: input.projectId ?? input.project?.projectKey ?? input.repoRoot,
     projectGroupKey: input.projectGroupKey,
     projectDisplayName: input.projectName ?? input.project?.projectName ?? "Project",
+    projectCustomName: input.projectCustomName,
     projectRootPath: input.repoRoot,
     workspaceDirectory: input.repoRoot,
     projectKind: "git",
@@ -117,6 +119,63 @@ describe("buildProjects", () => {
       "prj_a",
       "prj_b",
     ]);
+  });
+
+  it("keeps host-local metadata when the grouping key differs from the project ID", () => {
+    const projectGroupKey = "remote:github.com/acme/app";
+    const result = buildProjects({
+      hosts: [
+        {
+          serverId: "desktop",
+          serverName: "Desktop",
+          isOnline: true,
+          workspaces: [
+            workspace({
+              id: "main",
+              repoRoot: "/repo/app",
+              projectId: "prj_app",
+              projectGroupKey,
+              projectName: "acme/app",
+              projectCustomName: "My App",
+            }),
+          ],
+        },
+      ],
+    });
+
+    expect(result.projects[0]).toMatchObject({
+      projectKey: projectGroupKey,
+      projectName: "acme/app",
+      projectCustomName: "My App",
+    });
+  });
+
+  it("preserves the root of a grouped project without workspaces", () => {
+    const result = buildProjects({
+      hosts: [
+        {
+          serverId: "desktop",
+          serverName: "Desktop",
+          isOnline: true,
+          workspaces: [],
+          emptyProjects: [
+            {
+              projectId: "prj_app",
+              projectGroupKey: "remote:github.com/acme/app",
+              projectDisplayName: "acme/app",
+              projectCustomName: null,
+              projectRootPath: "/repo/app",
+              projectKind: "git",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(result.projects[0]?.hosts[0]).toMatchObject({
+      projectId: "prj_app",
+      repoRoot: "/repo/app",
+    });
   });
 
   it("normalizes detached and blank branches out of workspace summaries", () => {

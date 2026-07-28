@@ -42,6 +42,7 @@ function applyProjectDelta(
     hasAttachedWorkspace = true;
     snapshot.workspaces.set(workspaceId, {
       ...workspace,
+      projectGroupKey: project.projectGroupKey,
       projectDisplayName: project.projectDisplayName,
       projectCustomName: project.projectCustomName,
       projectRootPath: project.projectRootPath,

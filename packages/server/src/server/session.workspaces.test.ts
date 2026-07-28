@@ -3699,6 +3699,7 @@ test("create paseo worktree response preserves an explicit non-Git project", asy
   expect(response?.payload.error).toBeNull();
   expect(response?.payload.workspace).toMatchObject({
     projectId: explicitProject.projectId,
+    projectGroupKey: explicitProject.rootPath,
     projectDisplayName: explicitProject.displayName,
     projectRootPath: explicitProject.rootPath,
     projectKind: "non_git",
@@ -3710,7 +3711,10 @@ test("create paseo worktree response preserves an explicit non-Git project", asy
   expect(response?.payload.workspace?.id).toMatch(/^wks_[0-9a-f]{16}$/);
   expect(response?.payload.workspace?.workspaceDirectory).toContain(path.join("worktree-123"));
   expect(workspaces.has(response?.payload.workspace?.id ?? "")).toBe(true);
-  expect(projects.get(explicitProject.projectId)).toEqual(explicitProject);
+  expect(projects.get(explicitProject.projectId)).toEqual({
+    ...explicitProject,
+    projectGroupKey: explicitProject.rootPath,
+  });
 });
 
 test("workspace updates stay scoped to the matching cwd", async () => {

@@ -142,14 +142,17 @@ function normalizeCurrentBranch(currentBranch: string | null | undefined): strin
 export function createSidebarWorkspaceEntry(input: {
   serverId: string;
   workspace: WorkspaceDescriptor;
+  projectKey?: string;
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
   workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
 }): SidebarWorkspaceEntry {
-  const projectKey = resolveProjectGroupKey({
-    serverId: input.serverId,
-    projectId: input.workspace.projectId,
-    projectGroupKey: input.workspace.projectGroupKey,
-  });
+  const projectKey =
+    input.projectKey ??
+    resolveProjectGroupKey({
+      serverId: input.serverId,
+      projectId: input.workspace.projectId,
+      projectGroupKey: input.workspace.projectGroupKey,
+    });
   const effectiveStatus = deriveEffectiveWorkspaceStatus(input);
   return {
     workspaceKey: `${input.serverId}:${input.workspace.id}`,
@@ -328,6 +331,7 @@ export function buildSidebarWorkspaceEntries(input: {
     const entry = createSidebarWorkspaceEntry({
       serverId: placement.serverId,
       workspace,
+      projectKey: placement.projectKey,
       pendingCreateAttempts: input.pendingCreateAttempts,
       workspaceAgentActivity: session.workspaceAgentActivity,
     });

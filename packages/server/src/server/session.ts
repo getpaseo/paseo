@@ -4289,6 +4289,7 @@ export class Session {
     return {
       id: result.workspace.workspaceId,
       projectId: result.workspace.projectId,
+      ...(projectRecord?.projectGroupKey ? { projectGroupKey: projectRecord.projectGroupKey } : {}),
       projectDisplayName: projectRecord
         ? resolveProjectDisplayName(projectRecord)
         : result.workspace.projectId,

@@ -193,7 +193,10 @@ export function buildProjects(input: BuildProjectsInput): BuildProjectsResult {
       ),
     );
     for (const hostProject of hostProjects) {
-      const customName = findProjectCustomName(host.workspaces, hostProject.projectKey);
+      const placement = hostProject.hosts.find((entry) => entry.serverId === host.serverId);
+      if (!placement) continue;
+      const projectId = placement.projectId ?? hostProject.projectKey;
+      const customName = findProjectCustomName(host.workspaces, projectId);
       let group = groups.get(hostProject.projectKey);
       if (!group) {
         group = {
@@ -209,15 +212,13 @@ export function buildProjects(input: BuildProjectsInput): BuildProjectsResult {
       }
 
       if (!group.hostsByServerId.has(host.serverId)) {
-        const placement = hostProject.hosts.find((entry) => entry.serverId === host.serverId);
-        if (!placement) continue;
         group.hostsByServerId.set(host.serverId, {
           serverId: host.serverId,
-          projectId: placement.projectId ?? hostProject.projectKey,
+          projectId,
           serverName: host.serverName,
           isOnline: host.isOnline,
           workspaces: [],
-          fallbackRepoRoot: emptyRepoRootByProjectKey.get(hostProject.projectKey) ?? "",
+          fallbackRepoRoot: emptyRepoRootByProjectKey.get(projectId) ?? "",
         });
       }
     }

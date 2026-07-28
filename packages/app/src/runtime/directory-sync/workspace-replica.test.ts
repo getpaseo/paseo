@@ -103,6 +103,7 @@ it("commits the authoritative snapshot before buffered project updates", () => {
         kind: "upsert",
         project: {
           projectId: "attached",
+          projectGroupKey: "remote:github.com/acme/attached",
           projectDisplayName: "Renamed attached project",
           projectCustomName: "Personal name",
           projectRootPath: "/moved/attached",
@@ -124,12 +125,14 @@ it("commits the authoritative snapshot before buffered project updates", () => {
 
   const session = useSessionStore.getState().sessions[serverId];
   expect(session?.workspaces.get(attachedMain.id)).toMatchObject({
+    projectGroupKey: "remote:github.com/acme/attached",
     projectDisplayName: "Renamed attached project",
     projectCustomName: "Personal name",
     projectRootPath: "/moved/attached",
     projectKind: "directory",
   });
   expect(session?.workspaces.get(attachedFeature.id)).toMatchObject({
+    projectGroupKey: "remote:github.com/acme/attached",
     projectDisplayName: "Renamed attached project",
     projectRootPath: "/moved/attached",
   });
