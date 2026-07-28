@@ -989,6 +989,45 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
       manager.destroy();
     }
   });
+  test("re-enabling a provider clears the disabled entry's unavailable verdict", async () => {
+    const cwd = "/tmp/project";
+    const isAvailable = vi.fn(async () => true);
+    const fetchCatalog = vi.fn(async () => ({
+      models: [
+        { provider: "codex", id: "gpt-5.4-mini", label: "GPT 5.4 Mini" },
+      ] as AgentModelDefinition[],
+      modes: [] as AgentMode[],
+    }));
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: { codex: createExtraClient("codex", { isAvailable, fetchCatalog }) },
+    });
+    try {
+      const [warm] = await manager.listProviders({ cwd, providers: ["codex"], wait: true });
+      expect(warm).toMatchObject({ provider: "codex", status: "ready", enabled: true });
+
+      manager.applyMutableProviderConfig({ codex: { enabled: false } });
+      expect(manager.getSnapshot(cwd).find((entry) => entry.provider === "codex")).toMatchObject({
+        status: "unavailable",
+        enabled: false,
+      });
+
+      manager.applyMutableProviderConfig({ codex: { enabled: true } });
+
+      // The disabled entry's `unavailable` must not survive re-enabling: the
+      // provider has no verdict under the new configuration, so it reads as
+      // `loading` until a probe produces one.
+      expect(manager.getSnapshot(cwd).find((entry) => entry.provider === "codex")).toMatchObject({
+        status: "loading",
+        enabled: true,
+      });
+
+      const [reprobed] = await manager.listProviders({ cwd, providers: ["codex"], wait: true });
+      expect(reprobed).toMatchObject({ provider: "codex", status: "ready", enabled: true });
+    } finally {
+      manager.destroy();
+    }
+  });
 
   test("removes startup provider overrides from the live registry", () => {
     const manager = new ProviderSnapshotManager({

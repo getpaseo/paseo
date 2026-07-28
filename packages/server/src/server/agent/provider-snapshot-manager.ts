@@ -403,10 +403,34 @@ export class ProviderSnapshotManager {
     this.providerRegistry = this.buildRegistry();
     this.providerClients = { ...this.extraClients } as Record<AgentProvider, AgentClient>;
 
+    const awaitingProbe: Array<{ cwd: string; providers: AgentProvider[] }> = [];
     for (const cwd of this.snapshots.keys()) {
       this.providerLoads.delete(cwd);
-      this.snapshots.set(cwd, this.reconcileSnapshotForRegistry(cwd));
+      const reconciled = this.reconcileSnapshotForRegistry(cwd);
+      this.snapshots.set(cwd, reconciled);
+      const providers = Array.from(reconciled.values())
+        .filter((entry) => entry.enabled && entry.status === "loading")
+        .map((entry) => entry.provider);
+      if (providers.length > 0) {
+        awaitingProbe.push({ cwd, providers });
+      }
       this.emitChange(cwd);
+    }
+
+    // Enabling a provider is the moment it becomes usable again, so it has to be
+    // the moment it gets probed. Without this the reconciled entry sits at
+    // `loading` until something else happens to force a refresh, which is what
+    // left working providers reading as unavailable for the CLI (#2456).
+    for (const { cwd, providers } of awaitingProbe) {
+      const target = isGlobalProviderSnapshotKey(cwd)
+        ? createGlobalSnapshotTarget()
+        : createWorkspaceSnapshotTarget(cwd);
+      void this.warmUp(target, providers).catch((error: unknown) => {
+        this.logger.warn(
+          { err: error, cwd, providers },
+          "Failed to probe providers after a configuration change",
+        );
+      });
     }
 
     return this.getAgentManagerProviderState();
@@ -601,12 +625,17 @@ export class ProviderSnapshotManager {
         defaultModeId: definition?.defaultModeId ?? null,
       };
 
-      if (!definition?.enabled || !current || current.status === "loading") {
-        entries.set(provider, {
-          ...metadata,
-          status: "unavailable",
-          enabled: definition?.enabled ?? true,
-        });
+      if (!definition?.enabled) {
+        entries.set(provider, { ...metadata, status: "unavailable", enabled: false });
+        continue;
+      }
+
+      // An enabled provider carries a verdict only once it has been probed under
+      // the current configuration. Inheriting the previous entry's `unavailable`
+      // across a disable → enable cycle reported a working provider as broken;
+      // "not probed yet" is `loading` (#2456).
+      if (!current || current.status === "loading" || !current.enabled) {
+        entries.set(provider, { ...metadata, status: "loading" });
         continue;
       }
 
