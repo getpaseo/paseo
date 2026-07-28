@@ -17,7 +17,7 @@ Work out of the box once the underlying CLI is installed and authenticated.
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Anthropic's coding agent with MCP support, streaming, and deep reasoning.
 - [Codex](/docs/codex). OpenAI's workspace agent with sandbox controls and optional network access.
 - [OpenCode](https://opencode.ai/). Open-source coding assistant with multi-provider model support.
-- [pi](https://github.com/svkozak/pi-acp). Minimal terminal-based coding agent with multi-provider LLM support.
+- [Pi](https://pi.dev). Minimal terminal-based coding agent with multi-provider LLM support.
 
 ## ACP catalog
 

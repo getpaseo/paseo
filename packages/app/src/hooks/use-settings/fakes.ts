@@ -31,7 +31,7 @@ const DEFAULT_DESKTOP: DesktopSettings = {
   releaseChannel: "stable",
   daemon: {
     manageBuiltInDaemon: true,
-    keepRunningAfterQuit: true,
+    keepRunningAfterQuit: false,
   },
 };
 

@@ -2391,6 +2391,26 @@ export const StartWorkspaceScriptRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const WorkspaceScriptListRequestSchema = z.object({
+  type: z.literal("workspace.script.list.request"),
+  workspaceId: z.string(),
+  requestId: z.string(),
+});
+
+export const WorkspaceScriptStartRequestSchema = z.object({
+  type: z.literal("workspace.script.start.request"),
+  workspaceId: z.string(),
+  scriptName: z.string(),
+  requestId: z.string(),
+});
+
+export const WorkspaceScriptStopRequestSchema = z.object({
+  type: z.literal("workspace.script.stop.request"),
+  workspaceId: z.string(),
+  scriptName: z.string(),
+  requestId: z.string(),
+});
+
 export const SubscribeTerminalRequestSchema = z.object({
   type: z.literal("subscribe_terminal_request"),
   terminalId: z.string(),
@@ -2461,13 +2481,25 @@ export const HubExecutionAgentCreateRequestSchema = z.object({
   featureValues: z.record(z.string(), z.unknown()).optional(),
   env: z.record(z.string(), z.string()).optional(),
   worktree: CreateAgentWorktreeTargetSchema.optional(),
-  autoArchive: z.boolean().optional(),
 });
 
 export type HubExecutionAgentCreateRequest = z.infer<typeof HubExecutionAgentCreateRequestSchema>;
 
+export const HubExecutionControlActionSchema = z.enum(["interrupt", "archive"]);
+export type HubExecutionControlAction = z.infer<typeof HubExecutionControlActionSchema>;
+
+export const HubExecutionControlRequestSchema = z.object({
+  type: z.literal("hub.execution.control.request"),
+  requestId: z.string(),
+  executionId: z.string(),
+  action: HubExecutionControlActionSchema,
+});
+
+export type HubExecutionControlRequest = z.infer<typeof HubExecutionControlRequestSchema>;
+
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionAgentCreateRequestSchema,
+  HubExecutionControlRequestSchema,
   BrowserAutomationExecuteResponseSchema,
   VoiceAudioChunkMessageSchema,
   AbortRequestMessageSchema,
@@ -2595,6 +2627,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CreateTerminalRequestSchema,
   RenameTerminalRequestSchema,
   StartWorkspaceScriptRequestSchema,
+  WorkspaceScriptListRequestSchema,
+  WorkspaceScriptStartRequestSchema,
+  WorkspaceScriptStopRequestSchema,
   SubscribeTerminalRequestSchema,
   UnsubscribeTerminalRequestSchema,
   TerminalInputSchema,
@@ -2885,6 +2920,8 @@ export const ServerInfoStatusPayloadSchema = z
         selectiveAgentTimeline: z.boolean().optional(),
         // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
         stableProjectIdentity: z.boolean().optional(),
+        // COMPAT(workspaceScriptManagement): added in v0.1.105, remove gate after 2027-01-10.
+        workspaceScriptManagement: z.boolean().optional(),
         // COMPAT(metadataCustomEndpoint): added 2026-07-28, remove after 2027-01-28 once daemon floor advertises it.
         metadataCustomEndpoint: z.boolean().optional(),
       })
@@ -3474,6 +3511,30 @@ export const StartWorkspaceScriptResponseMessageSchema = z.object({
     terminalId: z.string().nullable(),
     error: z.string().nullable(),
   }),
+});
+
+const WorkspaceScriptOperationPayloadSchema = z.object({
+  requestId: z.string(),
+  workspaceId: z.string(),
+  scriptName: z.string().optional(),
+  script: WorkspaceScriptPayloadSchema.nullable().optional(),
+  scripts: z.array(WorkspaceScriptPayloadSchema).optional(),
+  error: z.string().nullable(),
+});
+
+export const WorkspaceScriptListResponseMessageSchema = z.object({
+  type: z.literal("workspace.script.list.response"),
+  payload: WorkspaceScriptOperationPayloadSchema,
+});
+
+export const WorkspaceScriptStartResponseMessageSchema = z.object({
+  type: z.literal("workspace.script.start.response"),
+  payload: WorkspaceScriptOperationPayloadSchema,
+});
+
+export const WorkspaceScriptStopResponseMessageSchema = z.object({
+  type: z.literal("workspace.script.stop.response"),
+  payload: WorkspaceScriptOperationPayloadSchema,
 });
 
 // COMPAT(desktopEditorBridge): added in v0.1.88, remove after 2026-12-03 once old clients no longer parse daemon editor RPC responses.
@@ -5166,6 +5227,17 @@ export const HubExecutionAgentCreateResponseSchema = z.object({
   }),
 });
 
+export const HubExecutionControlResponseSchema = z.object({
+  type: z.literal("hub.execution.control.response"),
+  payload: z.object({
+    requestId: z.string(),
+    executionId: z.string(),
+    action: HubExecutionControlActionSchema,
+    success: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
 export const HubExecutionAgentUpdateSchema = z.object({
   type: z.literal("hub.execution.agent.update"),
   payload: z.object({
@@ -5185,11 +5257,13 @@ export const HubExecutionAgentStreamSchema = z.object({
 });
 
 export type HubExecutionAgentCreateResponse = z.infer<typeof HubExecutionAgentCreateResponseSchema>;
+export type HubExecutionControlResponse = z.infer<typeof HubExecutionControlResponseSchema>;
 export type HubExecutionAgentUpdate = z.infer<typeof HubExecutionAgentUpdateSchema>;
 export type HubExecutionAgentStream = z.infer<typeof HubExecutionAgentStreamSchema>;
 
 export const HubExecutionOutboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionAgentCreateResponseSchema,
+  HubExecutionControlResponseSchema,
   HubExecutionAgentUpdateSchema,
   HubExecutionAgentStreamSchema,
 ]);
@@ -5222,6 +5296,7 @@ export type DaemonUpdateProgressMessage = z.infer<typeof DaemonUpdateProgressMes
 
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionAgentCreateResponseSchema,
+  HubExecutionControlResponseSchema,
   HubExecutionAgentUpdateSchema,
   HubExecutionAgentStreamSchema,
   BrowserAutomationExecuteRequestSchema,
@@ -5257,6 +5332,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceGithubSearchRepositoriesResponseSchema,
   ProjectGithubCloneResponseSchema,
   StartWorkspaceScriptResponseMessageSchema,
+  WorkspaceScriptListResponseMessageSchema,
+  WorkspaceScriptStartResponseMessageSchema,
+  WorkspaceScriptStopResponseMessageSchema,
   LegacyListAvailableEditorsResponseMessageSchema,
   LegacyOpenInEditorResponseMessageSchema,
   ArchiveWorkspaceResponseMessageSchema,
@@ -5447,6 +5525,18 @@ export type GithubRepository = z.infer<typeof GithubRepositorySchema>;
 export type ProjectGithubCloneResponse = z.infer<typeof ProjectGithubCloneResponseSchema>;
 export type StartWorkspaceScriptResponseMessage = z.infer<
   typeof StartWorkspaceScriptResponseMessageSchema
+>;
+export type WorkspaceScriptListRequest = z.infer<typeof WorkspaceScriptListRequestSchema>;
+export type WorkspaceScriptStartRequest = z.infer<typeof WorkspaceScriptStartRequestSchema>;
+export type WorkspaceScriptStopRequest = z.infer<typeof WorkspaceScriptStopRequestSchema>;
+export type WorkspaceScriptListResponseMessage = z.infer<
+  typeof WorkspaceScriptListResponseMessageSchema
+>;
+export type WorkspaceScriptStartResponseMessage = z.infer<
+  typeof WorkspaceScriptStartResponseMessageSchema
+>;
+export type WorkspaceScriptStopResponseMessage = z.infer<
+  typeof WorkspaceScriptStopResponseMessageSchema
 >;
 export type LegacyListAvailableEditorsResponseMessage = z.infer<
   typeof LegacyListAvailableEditorsResponseMessageSchema

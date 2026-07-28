@@ -107,9 +107,9 @@ import {
   buildOmpRpcUiPermissionResponse,
   mapOmpRpcUiPermissionRequest,
 } from "./rpc-ui-permission-mapper.js";
+import { DEFAULT_OMP_THINKING_LEVEL, mapOmpModel } from "./map-omp-model.js";
 
 const OMP_PROVIDER = "omp";
-const DEFAULT_OMP_THINKING_LEVEL: OmpThinkingLevel = "medium";
 const OMP_CATALOG_REQUEST_TIMEOUT_MS = 120_000;
 const QUESTION_RESPONSE_HEADER = "Response";
 const QUESTION_COMMENT_HEADER = "Comment";
@@ -128,21 +128,6 @@ const OMP_CORE_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindFiles: false,
   supportsRewindBoth: false,
 };
-
-const OMP_THINKING_OPTIONS: ReadonlyArray<{
-  id: OmpThinkingLevel;
-  label: string;
-  description: string;
-  isDefault?: boolean;
-}> = [
-  { id: "off", label: "Off", description: "No extra reasoning" },
-  { id: "minimal", label: "Minimal", description: "Light reasoning" },
-  { id: "low", label: "Low", description: "Faster reasoning" },
-  { id: "medium", label: "Medium", description: "Balanced reasoning", isDefault: true },
-  { id: "high", label: "High", description: "Deeper reasoning" },
-  { id: "xhigh", label: "XHigh", description: "Extra-high reasoning" },
-  { id: "max", label: "Max", description: "Maximum reasoning" },
-] as const;
 
 export interface OmpAgentClientOptions {
   logger: Logger;
@@ -318,21 +303,6 @@ function parseAutoCompactMode(value: string | undefined): AutoCompactMode {
     return "toggle";
   }
   return "unknown";
-}
-
-function mapThinkingOption(option: (typeof OMP_THINKING_OPTIONS)[number]) {
-  const mappedOption = {
-    id: option.id,
-    label: option.label,
-    description: option.description,
-  };
-  if (option.isDefault) {
-    return {
-      ...mappedOption,
-      isDefault: true,
-    };
-  }
-  return mappedOption;
 }
 
 function toAgentUsage(stats: OmpSessionStats): AgentUsage | undefined {
@@ -881,21 +851,6 @@ function buildExtensionUiResponse(
     return { confirmed: /^yes$/i.test(answer.trim()) };
   }
   return { value: answer };
-}
-
-function mapOmpModel(model: OmpModel, provider: AgentProvider): AgentModelDefinition {
-  return {
-    provider,
-    id: `${model.provider}/${model.id}`,
-    label: `${model.provider}/${model.name ?? model.id}`,
-    description: `${model.provider}/${model.id}`,
-    metadata: {
-      provider: model.provider,
-      modelId: model.id,
-    },
-    thinkingOptions: model.reasoning ? OMP_THINKING_OPTIONS.map(mapThinkingOption) : undefined,
-    defaultThinkingOptionId: model.reasoning ? DEFAULT_OMP_THINKING_LEVEL : undefined,
-  };
 }
 
 function createRuntime(
@@ -2301,8 +2256,7 @@ export class OmpAgentClient implements AgentClient {
       cwd: config.cwd,
       protocolMode: "rpc-ui",
       model: config.model,
-      thinkingOptionId:
-        normalizeOmpThinkingOption(config.thinkingOptionId) ?? DEFAULT_OMP_THINKING_LEVEL,
+      thinkingOptionId: normalizeOmpThinkingOption(config.thinkingOptionId) ?? undefined,
       noSession: config.internal === true,
       modeId: launchMode.modeId,
       extraArgs: launchMode.extraArgs,

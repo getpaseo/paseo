@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import {
   normalizePickedImageAssets,
-  openImagePathsWithDesktopDialog,
+  pickImagesWithDesktopDialog,
   type PickedImageAttachmentInput,
 } from "@/hooks/image-attachment-picker";
 import { isWeb } from "@/constants/platform";
@@ -51,15 +51,11 @@ export function useImageAttachmentPicker(): UseImageAttachmentPickerResult {
 
     try {
       if (isWeb && isElectronRuntime()) {
-        const selectedPaths = await openImagePathsWithDesktopDialog(getDesktopHost()?.dialog);
-        if (selectedPaths.length === 0) {
+        const selectedImages = await pickImagesWithDesktopDialog(getDesktopHost()?.dialog);
+        if (selectedImages.length === 0) {
           return null;
         }
-        return selectedPaths.map((path) => ({
-          source: { kind: "file_uri" as const, uri: path },
-          mimeType: null,
-          fileName: null,
-        }));
+        return selectedImages;
       }
 
       const hasPermission = await ensurePermission();

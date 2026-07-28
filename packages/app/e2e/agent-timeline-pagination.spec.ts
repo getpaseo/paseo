@@ -1,7 +1,10 @@
 import { test } from "./fixtures";
 import {
+  expectLoadedTimelineDoesNotScroll,
   expectTimelinePromptNotMounted,
   expectTimelinePromptVisible,
+  holdNextOlderTimelinePage,
+  makeLoadedTimelineFitViewport,
   openAgentTimeline,
   scrollTimelineUntilOlderHistoryIsReachable,
   seedLongMockAgentTimeline,
@@ -20,6 +23,23 @@ test.describe("Agent timeline pagination", () => {
 
       await scrollTimelineUntilOlderHistoryIsReachable(page);
 
+      await expectTimelinePromptVisible(page, agent.oldestPrompt);
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
+  test("loads older history when the initial page does not fill the viewport", async ({ page }) => {
+    test.setTimeout(120_000);
+    const agent = await seedLongMockAgentTimeline({ turns: 30 });
+    try {
+      await makeLoadedTimelineFitViewport(page);
+      const olderPage = await holdNextOlderTimelinePage(page, agent);
+      await openAgentTimeline(page, agent);
+      await expectTimelinePromptVisible(page, agent.newestPrompt);
+      await expectLoadedTimelineDoesNotScroll(page);
+      await olderPage.expectLoading();
+      olderPage.release();
       await expectTimelinePromptVisible(page, agent.oldestPrompt);
     } finally {
       await agent.cleanup();
