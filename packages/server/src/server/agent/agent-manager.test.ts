@@ -517,6 +517,168 @@ async function createControlledInterruptFixture(options: {
   };
 }
 
+class HeldTurnSession extends TestAgentSession {
+  readonly heldTurnId = "held-turn";
+
+  override async startTurn(): Promise<{ turnId: string }> {
+    // Same deferred emission as TestAgentSession: events must arrive after
+    // the caller sets up the foreground waiter. Unlike the base class the
+    // turn never completes, keeping the run in flight for steer tests.
+    setTimeout(() => {
+      this.pushEvent({ type: "turn_started", provider: this.provider, turnId: this.heldTurnId });
+    }, 0);
+    return { turnId: this.heldTurnId };
+  }
+}
+
+class SteerableSession extends HeldTurnSession {
+  readonly steerCalls: Array<{ prompt: AgentPromptInput; clientMessageId?: string }> = [];
+  steerError: Error | null = null;
+  interruptCount = 0;
+
+  async steerActiveTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<boolean> {
+    if (this.steerError) {
+      throw this.steerError;
+    }
+    this.steerCalls.push({ prompt, clientMessageId: options?.clientMessageId });
+    return true;
+  }
+
+  override async interrupt(): Promise<void> {
+    this.interruptCount += 1;
+  }
+}
+
+interface HeldTurnFixture<TSession extends TestAgentSession> {
+  agentId: string;
+  manager: AgentManager;
+  session: TSession;
+  cleanup(): void;
+}
+
+async function createHeldTurnFixture<TSession extends TestAgentSession>(
+  name: string,
+  session: TSession,
+  options?: { startRun?: boolean },
+): Promise<HeldTurnFixture<TSession>> {
+  const workdir = mkdtempSync(join(tmpdir(), `agent-manager-${name}-`));
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  if (options?.startRun !== false) {
+    const run = manager.streamAgent(agent.id, "hold the turn");
+    void (async () => {
+      for await (const _event of run) {
+        // Keep the foreground stream subscribed so the turn stays in flight.
+      }
+    })();
+    await manager.waitForAgentRunStart(agent.id);
+  }
+  return {
+    agentId: agent.id,
+    manager,
+    session,
+    cleanup: () => rmSync(workdir, { recursive: true, force: true }),
+  };
+}
+
+test("trySteerActiveTurn delivers a plain prompt into the in-flight run", async () => {
+  const fixture = await createHeldTurnFixture(
+    "steer-deliver",
+    new SteerableSession({
+      provider: "codex",
+      cwd: "/tmp",
+    }),
+  );
+  try {
+    const steered = await fixture.manager.trySteerActiveTurn(fixture.agentId, "also do this", {
+      clientMessageId: "client-steer",
+    });
+
+    expect(steered).toBe(true);
+    expect(fixture.session.steerCalls).toEqual([
+      { prompt: "also do this", clientMessageId: "client-steer" },
+    ]);
+    expect(fixture.session.interruptCount).toBe(0);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("trySteerActiveTurn refuses slash commands so they keep the prompt path", async () => {
+  const fixture = await createHeldTurnFixture(
+    "steer-slash",
+    new SteerableSession({
+      provider: "codex",
+      cwd: "/tmp",
+    }),
+  );
+  try {
+    const steered = await fixture.manager.trySteerActiveTurn(fixture.agentId, "/compact");
+
+    expect(steered).toBe(false);
+    expect(fixture.session.steerCalls).toEqual([]);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("trySteerActiveTurn falls back when the session has no steer support", async () => {
+  const fixture = await createHeldTurnFixture(
+    "steer-unsupported",
+    new HeldTurnSession({
+      provider: "codex",
+      cwd: "/tmp",
+    }),
+  );
+  try {
+    const steered = await fixture.manager.trySteerActiveTurn(fixture.agentId, "also do this");
+
+    expect(steered).toBe(false);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("trySteerActiveTurn falls back when no run is in flight", async () => {
+  const fixture = await createHeldTurnFixture(
+    "steer-idle",
+    new SteerableSession({ provider: "codex", cwd: "/tmp" }),
+    { startRun: false },
+  );
+  try {
+    const steered = await fixture.manager.trySteerActiveTurn(fixture.agentId, "also do this");
+
+    expect(steered).toBe(false);
+    expect(fixture.session.steerCalls).toEqual([]);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("trySteerActiveTurn swallows session steer failures for the replace fallback", async () => {
+  const session = new SteerableSession({ provider: "codex", cwd: "/tmp" });
+  session.steerError = new Error("steer RPC failed");
+  const fixture = await createHeldTurnFixture("steer-error", session);
+  try {
+    const steered = await fixture.manager.trySteerActiveTurn(fixture.agentId, "also do this");
+
+    expect(steered).toBe(false);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 class HeldRuntimeInfoSession extends TestAgentSession {
   private readonly runtimeInfoRequested = deferred<void>();
   private readonly runtimeInfoAllowed = deferred<void>();

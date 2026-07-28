@@ -94,6 +94,8 @@ export class FakePi implements PiRuntime {
 
 export class FakePiSession implements PiRuntimeSession {
   readonly prompts: Array<{ message: string; imageCount: number }> = [];
+  readonly steerRequests: Array<{ message: string; imageCount: number }> = [];
+  steerError: Error | null = null;
   readonly compactRequests: Array<{ customInstructions?: string }> = [];
   readonly setAutoCompactionRequests: boolean[] = [];
   readonly subagentSubscriptionRequests: FakePiSubagentSubscriptionLevel[] = [];
@@ -142,6 +144,8 @@ export class FakePiSession implements PiRuntimeSession {
       thinkingLevel: "medium",
       isStreaming: false,
       isCompacting: false,
+      steeringMode: "one-at-a-time",
+      followUpMode: "one-at-a-time",
       autoCompactionEnabled: true,
       sessionFile: launch.session ?? "/tmp/pi-session",
       sessionId: "pi-session-1",
@@ -216,6 +220,16 @@ export class FakePiSession implements PiRuntimeSession {
       ...this.state,
       autoCompactionEnabled: enabled,
     };
+  }
+
+  async steer(
+    message: string,
+    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+  ): Promise<void> {
+    if (this.steerError) {
+      throw this.steerError;
+    }
+    this.steerRequests.push({ message, imageCount: images?.length ?? 0 });
   }
 
   async abort(): Promise<void> {

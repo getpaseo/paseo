@@ -1,4 +1,4 @@
-import { expect, it, test, vi } from "vitest";
+import { expect, it, test, vi, type Mock } from "vitest";
 import pino, { type Logger } from "pino";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
@@ -89,6 +89,7 @@ function createFinishNotificationScenario(
   });
   Reflect.set(agentManager, "tryRunOutOfBand", () => false);
   Reflect.set(agentManager, "hasInFlightRun", () => Boolean(options?.parentPromptError));
+  Reflect.set(agentManager, "trySteerActiveTurn", async () => false);
   Reflect.set(agentManager, "streamAgent", (_agentId: string, prompt: string) => {
     parentPrompted = true;
     resolveParentPrompt?.(prompt);
@@ -192,6 +193,82 @@ test("sendPromptToAgent forwards the client message id as run options", async ()
     outputSchema: { type: "object" },
     clientMessageId: "msg-client-1",
   });
+});
+
+function createBusyPromptHarness(input: { steer: boolean }): {
+  agentManager: AgentManager;
+  agentStorage: AgentStorage;
+  trySteerSpy: Mock;
+  replaceAgentRunSpy: Mock;
+  streamAgentSpy: Mock;
+} {
+  const agent: ManagedAgent = Object.create(null);
+  Reflect.set(agent, "id", "agent-1");
+  Reflect.set(agent, "provider", "pi");
+
+  const trySteerSpy = vi.fn(async () => input.steer);
+  const replaceAgentRunSpy = vi.fn(() => (async function* noop() {})());
+  const streamAgentSpy = vi.fn(() => (async function* noop() {})());
+  const agentManager: AgentManager = Object.create(AgentManager.prototype);
+  Reflect.set(
+    agentManager,
+    "getAgent",
+    vi.fn(() => agent),
+  );
+  Reflect.set(agentManager, "tryRunOutOfBand", vi.fn().mockReturnValue(false));
+  Reflect.set(agentManager, "hasInFlightRun", vi.fn().mockReturnValue(true));
+  Reflect.set(agentManager, "trySteerActiveTurn", trySteerSpy);
+  Reflect.set(agentManager, "replaceAgentRun", replaceAgentRunSpy);
+  Reflect.set(agentManager, "streamAgent", streamAgentSpy);
+
+  const agentStorage: AgentStorage = Object.create(AgentStorage.prototype);
+  Reflect.set(
+    agentStorage,
+    "get",
+    vi.fn(async () => null),
+  );
+
+  return { agentManager, agentStorage, trySteerSpy, replaceAgentRunSpy, streamAgentSpy };
+}
+
+test("sendPromptToAgent steers into the in-flight run instead of replacing it", async () => {
+  const { agentManager, agentStorage, trySteerSpy, replaceAgentRunSpy, streamAgentSpy } =
+    createBusyPromptHarness({ steer: true });
+
+  await sendPromptToAgent({
+    agentManager,
+    agentStorage,
+    agentId: "agent-1",
+    prompt: "also do this",
+    messageId: "msg-client-steer",
+    logger: createTestLogger(),
+  });
+
+  expect(trySteerSpy).toHaveBeenCalledWith("agent-1", "also do this", {
+    clientMessageId: "msg-client-steer",
+  });
+  expect(replaceAgentRunSpy).not.toHaveBeenCalled();
+  expect(streamAgentSpy).not.toHaveBeenCalled();
+});
+
+test("sendPromptToAgent falls back to replacing the run when steering is unavailable", async () => {
+  const { agentManager, agentStorage, trySteerSpy, replaceAgentRunSpy, streamAgentSpy } =
+    createBusyPromptHarness({ steer: false });
+
+  await sendPromptToAgent({
+    agentManager,
+    agentStorage,
+    agentId: "agent-1",
+    prompt: "replace with this",
+    messageId: "msg-client-replace",
+    logger: createTestLogger(),
+  });
+
+  expect(trySteerSpy).toHaveBeenCalled();
+  expect(replaceAgentRunSpy).toHaveBeenCalledWith("agent-1", "replace with this", {
+    clientMessageId: "msg-client-replace",
+  });
+  expect(streamAgentSpy).not.toHaveBeenCalled();
 });
 
 test("finish notifications tell the parent the child's last assistant message", async () => {

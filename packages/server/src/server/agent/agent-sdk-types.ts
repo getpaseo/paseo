@@ -623,6 +623,13 @@ export interface AgentSession {
   readonly features?: AgentFeature[];
   run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
   startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
+  /**
+   * Deliver a user message into the in-flight turn without interrupting it
+   * (e.g. OMP's `steer` RPC). Optional: providers without mid-turn injection
+   * leave it undefined and callers keep interrupt-and-replace semantics.
+   * Returns false when no turn is active so the caller can fall back.
+   */
+  steerActiveTurn?(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<boolean>;
   subscribe(callback: (event: AgentStreamEvent) => void): () => void;
   streamHistory(): AsyncGenerator<AgentStreamEvent>;
   getRuntimeInfo(): Promise<AgentRuntimeInfo>;

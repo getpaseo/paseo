@@ -621,6 +621,171 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("steers a message into the active turn and correlates its submitted entry", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("first", { clientMessageId: "client-first" });
+    fakeSession.finishSubmittedUserMessage({ id: "entry-first", parentId: null, text: "first" });
+
+    const steered = await session.steerActiveTurn("also do this", {
+      clientMessageId: "client-steer",
+    });
+
+    expect(steered).toBe(true);
+    expect(fakeSession.steerRequests).toEqual([{ message: "also do this", imageCount: 0 }]);
+
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-steer",
+      parentId: "entry-first",
+      text: "also do this",
+    });
+
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "user_message",
+        text: "first",
+        messageId: "entry-first",
+        clientMessageId: "client-first",
+      },
+      {
+        type: "user_message",
+        text: "also do this",
+        messageId: "entry-steer",
+        clientMessageId: "client-steer",
+      },
+    ]);
+  });
+
+  test("keeps client message ids aligned across multiple steers in one turn", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("first", { clientMessageId: "client-first" });
+    fakeSession.finishSubmittedUserMessage({ id: "entry-first", parentId: null, text: "first" });
+
+    await session.steerActiveTurn("steer one", { clientMessageId: "client-steer-1" });
+    await session.steerActiveTurn("steer two", { clientMessageId: "client-steer-2" });
+
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-steer-1",
+      parentId: "entry-first",
+      text: "steer one",
+    });
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-steer-2",
+      parentId: "entry-steer-1",
+      text: "steer two",
+    });
+
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "user_message",
+        text: "first",
+        messageId: "entry-first",
+        clientMessageId: "client-first",
+      },
+      {
+        type: "user_message",
+        text: "steer one",
+        messageId: "entry-steer-1",
+        clientMessageId: "client-steer-1",
+      },
+      {
+        type: "user_message",
+        text: "steer two",
+        messageId: "entry-steer-2",
+        clientMessageId: "client-steer-2",
+      },
+    ]);
+  });
+
+  test("correlates a steer drained into a later turn by text", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("first", { clientMessageId: "client-first" });
+    fakeSession.finishSubmittedUserMessage({ id: "entry-first", parentId: null, text: "first" });
+    // The steer is queued but not yet drained when the turn is interrupted.
+    await session.steerActiveTurn("queued steer", { clientMessageId: "client-steer" });
+    await session.interrupt();
+
+    // The next turn drains the queued steer behind its own prompt, so the
+    // runtime reports the new prompt's entry first.
+    await session.startTurn("second", { clientMessageId: "client-second" });
+    fakeSession.finishSubmittedUserMessage({ id: "entry-second", parentId: null, text: "second" });
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-steer",
+      parentId: "entry-second",
+      text: "queued steer",
+    });
+
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "user_message",
+        text: "first",
+        messageId: "entry-first",
+        clientMessageId: "client-first",
+      },
+      {
+        type: "user_message",
+        text: "second",
+        messageId: "entry-second",
+        clientMessageId: "client-second",
+      },
+      {
+        type: "user_message",
+        text: "queued steer",
+        messageId: "entry-steer",
+        clientMessageId: "client-steer",
+      },
+    ]);
+  });
+
+  test("refuses to steer when no turn is active", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await expect(session.steerActiveTurn("hello")).resolves.toBe(false);
+
+    expect(fakeSession.steerRequests).toEqual([]);
+  });
+
+  test("refuses to steer against runtimes without steering queues", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    delete fakeSession.state.steeringMode;
+
+    await session.startTurn("first");
+
+    await expect(session.steerActiveTurn("also do this")).resolves.toBe(false);
+    expect(fakeSession.steerRequests).toEqual([]);
+  });
+
+  test("does not queue a submitted entry when the steer RPC fails", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.steerError = new Error("steer unsupported");
+
+    await session.startTurn("first", { clientMessageId: "client-first" });
+    await expect(
+      session.steerActiveTurn("nope", { clientMessageId: "client-nope" }),
+    ).rejects.toThrow("steer unsupported");
+
+    // The failed steer left no pending entry: the turn-start marker still
+    // correlates to the turn's own client message id.
+    fakeSession.finishSubmittedUserMessage({ id: "entry-first", parentId: null, text: "first" });
+
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "user_message",
+        text: "first",
+        messageId: "entry-first",
+        clientMessageId: "client-first",
+      },
+    ]);
+  });
+
   test("uses the Pi entry attached to a submitted prompt after resuming old history", async () => {
     const pi = new FakePi();
     const client = createClient(pi);

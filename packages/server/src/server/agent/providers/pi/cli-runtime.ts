@@ -123,6 +123,17 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     return { requestId };
   }
 
+  async steer(
+    message: string,
+    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+  ): Promise<void> {
+    await this.request({
+      type: "steer",
+      message,
+      ...(images?.length ? { images } : {}),
+    });
+  }
+
   async compact(customInstructions?: string): Promise<void> {
     // Compact is a blocking LLM summarization job; Pi only returns the RPC
     // response after the summary is written. A control-plane 30s timeout falsely
