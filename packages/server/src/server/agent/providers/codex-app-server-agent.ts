@@ -3092,6 +3092,18 @@ interface CodexSubAgentCallState {
   childThreadIds: Set<string>;
 }
 
+interface CodexPendingPermissionHandler {
+  resolve: (value: unknown) => void;
+  kind: "command" | "file" | "question" | "mcp_elicitation" | "plan";
+  questions?: CodexQuestionPrompt[];
+  planText?: string;
+}
+
+interface DismissedCodexPlanApproval {
+  request: AgentPermissionRequest;
+  handler: CodexPendingPermissionHandler;
+}
+
 export class CodexAppServerAgentSession implements AgentSession {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
@@ -3115,15 +3127,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private persistedProviderSubagentEvents: AgentStreamEvent[] = [];
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
   private mcpElicitationPermissionIds = new Map<number, string>();
-  private pendingPermissionHandlers = new Map<
-    string,
-    {
-      resolve: (value: unknown) => void;
-      kind: "command" | "file" | "question" | "mcp_elicitation" | "plan";
-      questions?: CodexQuestionPrompt[];
-      planText?: string;
-    }
-  >();
+  private pendingPermissionHandlers = new Map<string, CodexPendingPermissionHandler>();
   private resolvedPermissionRequests = new Set<string>();
   private pendingAgentMessages = new Map<string, string>();
   private pendingReasoning = new Map<string, string[]>();
@@ -3861,6 +3865,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.activeForegroundTurnId = turnId;
     this.activeClientMessageId = options?.clientMessageId ?? null;
     this.currentTurnId = null;
+    const dismissedPlanApprovals = this.dismissPendingPlanApprovals("Dismissed by a new prompt");
 
     try {
       this.logTurnStartSummary({
@@ -3873,10 +3878,10 @@ export class CodexAppServerAgentSession implements AgentSession {
         hasCodexConfig: turnStart.hasCodexConfig,
       });
       await this.client.request("turn/start", turnStart.params, TURN_START_TIMEOUT_MS);
-      this.dismissPendingPlanApprovals("Dismissed by a new prompt");
     } catch (error) {
       this.activeForegroundTurnId = null;
       this.activeClientMessageId = null;
+      this.restoreDismissedPlanApprovals(dismissedPlanApprovals);
       throw error;
     }
 
@@ -4131,12 +4136,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private handlePlanPermissionResponse(params: {
     requestId: string;
     response: AgentPermissionResponse;
-    pending: {
-      resolve: (value: unknown) => void;
-      kind: "command" | "file" | "question" | "mcp_elicitation" | "plan";
-      questions?: CodexQuestionPrompt[];
-      planText?: string;
-    };
+    pending: CodexPendingPermissionHandler;
     pendingRequest: AgentPermissionRequest | null;
   }): AgentPermissionResult | void {
     const { requestId, response, pending, pendingRequest } = params;
@@ -4153,13 +4153,32 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
-  private dismissPendingPlanApprovals(message: string): void {
-    const requestIds = Array.from(this.pendingPermissionHandlers)
+  private dismissPendingPlanApprovals(message: string): DismissedCodexPlanApproval[] {
+    const approvals = Array.from(this.pendingPermissionHandlers)
       .filter(([, pending]) => pending.kind === "plan")
-      .map(([requestId]) => requestId);
+      .flatMap(([requestId, handler]) => {
+        const request = this.pendingPermissions.get(requestId);
+        return request ? [{ request, handler }] : [];
+      });
 
-    for (const requestId of requestIds) {
-      this.resolvePlanPermission(requestId, { behavior: "deny", message });
+    for (const { request } of approvals) {
+      this.resolvePlanPermission(request.id, { behavior: "deny", message });
+    }
+
+    return approvals;
+  }
+
+  private restoreDismissedPlanApprovals(approvals: DismissedCodexPlanApproval[]): void {
+    const hasNewerPlanApproval = Array.from(this.pendingPermissionHandlers.values()).some(
+      (pending) => pending.kind === "plan",
+    );
+    if (hasNewerPlanApproval) return;
+
+    for (const { request, handler } of approvals) {
+      this.resolvedPermissionRequests.delete(request.id);
+      this.pendingPermissions.set(request.id, request);
+      this.pendingPermissionHandlers.set(request.id, handler);
+      this.emitEvent({ type: "permission_requested", provider: CODEX_PROVIDER, request });
     }
   }
 
