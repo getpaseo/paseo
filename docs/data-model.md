@@ -215,7 +215,13 @@ Single file, validated with `PersistedConfigSchema`.
     // `extends` (one of the built-ins or `"acp"`) and `label`. See `provider-launch-config.ts`.
     providers: Record<providerId, ProviderOverride>,
     metadataGeneration: {
-      providers: [{ provider, model?, thinkingOptionId? }]
+      providers: [{ provider, model?, thinkingOptionId? }],
+      customEndpoint?: {
+        enabled: boolean,      // default false
+        baseUrl: string,       // OpenAI-compatible root, e.g. http://127.0.0.1:11434/v1
+        apiKey?: string,       // optional Bearer token
+        model: string          // required when enabled
+      }
     }
   },
   features: {
@@ -233,6 +239,8 @@ Single file, validated with `PersistedConfigSchema`.
 All fields are optional with sensible defaults.
 
 `agents.metadataGeneration.providers` controls the preferred structured-generation fallback order for daemon-side metadata tasks such as commit messages, PR text, branch names, and generated agent titles. Entries are tried first in the configured order, then Paseo falls through to dynamically discovered defaults and finally the current selection when available.
+
+`agents.metadataGeneration.customEndpoint` is an optional OpenAI-compatible chat endpoint for those same metadata tasks. It is **off by default**. When enabled with a non-empty `baseUrl` and `model`, Paseo tries that endpoint first (`/chat/completions`) and falls back to the agent-provider chain above on failure. Incomplete enabled config is skipped with a warning. Configure it from Host settings → Agents → Metadata generation endpoint (daemon-scoped, not project `paseo.json`). Style instructions still come from project `paseo.json` `metadataGeneration.*.instructions`.
 
 Local speech model ids are intentionally narrow: STT uses `parakeet-tdt-0.6b-v2-int8`, TTS uses `kokoro-en-v0_19`, and turn detection uses the bundled Silero VAD model.
 
