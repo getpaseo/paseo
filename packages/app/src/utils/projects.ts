@@ -185,6 +185,13 @@ export function buildProjects(input: BuildProjectsInput): BuildProjectsResult {
     }
 
     const hostProjects = buildHostProjectEntries(host);
+    const projectKeyByProjectId = new Map(
+      hostProjects.flatMap((project) =>
+        project.hosts
+          .filter((placement) => placement.serverId === host.serverId && placement.projectId)
+          .map((placement) => [placement.projectId!, project.projectKey] as const),
+      ),
+    );
     for (const hostProject of hostProjects) {
       const customName = findProjectCustomName(host.workspaces, hostProject.projectKey);
       let group = groups.get(hostProject.projectKey);
@@ -216,11 +223,13 @@ export function buildProjects(input: BuildProjectsInput): BuildProjectsResult {
     }
 
     for (const workspace of host.workspaces) {
-      const key = resolveProjectGroupKey({
-        serverId: host.serverId,
-        projectId: workspace.projectId,
-        projectGroupKey: workspace.projectGroupKey,
-      });
+      const key =
+        projectKeyByProjectId.get(workspace.projectId) ??
+        resolveProjectGroupKey({
+          serverId: host.serverId,
+          projectId: workspace.projectId,
+          projectGroupKey: workspace.projectGroupKey,
+        });
       const group = groups.get(key);
       const hostGroup = group?.hostsByServerId.get(host.serverId);
       if (!hostGroup) continue;

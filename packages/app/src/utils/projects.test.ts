@@ -96,6 +96,29 @@ describe("buildProjects", () => {
     ]);
   });
 
+  it("keeps independent same-host clones separate when their group key is ambiguous", () => {
+    const projectGroupKey = "remote:github.com/acme/app";
+    const result = buildProjects({
+      hosts: [
+        {
+          serverId: "desktop",
+          serverName: "Desktop",
+          isOnline: true,
+          workspaces: [
+            workspace({ id: "clone-a", repoRoot: "/a", projectId: "prj_a", projectGroupKey }),
+            workspace({ id: "clone-b", repoRoot: "/b", projectId: "prj_b", projectGroupKey }),
+          ],
+        },
+      ],
+    });
+
+    expect(result.projects).toHaveLength(2);
+    expect(result.projects.map((project) => project.hosts[0]?.projectId).sort()).toEqual([
+      "prj_a",
+      "prj_b",
+    ]);
+  });
+
   it("normalizes detached and blank branches out of workspace summaries", () => {
     const result = buildProjects({
       hosts: [

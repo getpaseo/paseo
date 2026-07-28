@@ -59,9 +59,65 @@ interface WorkspaceStructureSession {
   emptyProjects?: Iterable<EmptyProjectDescriptor>;
 }
 
+interface MaterializedWorkspaceStructureSession {
+  serverId: string;
+  workspaces: WorkspaceDescriptor[];
+  emptyProjects: EmptyProjectDescriptor[];
+}
+
+function findAmbiguousProjectGroupKeys(
+  sessions: MaterializedWorkspaceStructureSession[],
+): Set<string> {
+  const projectIdsByHostByGroupKey = new Map<string, Map<string, Set<string>>>();
+  for (const session of sessions) {
+    const projects = [
+      ...session.emptyProjects.map((project) => ({
+        projectId: project.projectId,
+        projectGroupKey: project.projectGroupKey,
+      })),
+      ...session.workspaces.map((workspace) => ({
+        projectId: workspace.projectId,
+        projectGroupKey: workspace.projectGroupKey,
+      })),
+    ];
+    for (const project of projects) {
+      const groupKey = resolveProjectGroupKey({ serverId: session.serverId, ...project });
+      const byHost = projectIdsByHostByGroupKey.get(groupKey) ?? new Map();
+      const projectIds = byHost.get(session.serverId) ?? new Set();
+      projectIds.add(project.projectId);
+      byHost.set(session.serverId, projectIds);
+      projectIdsByHostByGroupKey.set(groupKey, byHost);
+    }
+  }
+
+  return new Set(
+    [...projectIdsByHostByGroupKey].flatMap(([groupKey, byHost]) =>
+      [...byHost.values()].some((projectIds) => projectIds.size > 1) ? [groupKey] : [],
+    ),
+  );
+}
+
+function resolveUnambiguousProjectGroupKey(input: {
+  serverId: string;
+  projectId: string;
+  projectGroupKey?: string | null;
+  ambiguousGroupKeys: ReadonlySet<string>;
+}): string {
+  const groupKey = resolveProjectGroupKey(input);
+  return input.ambiguousGroupKeys.has(groupKey)
+    ? `host:${input.serverId}:project:${input.projectId}`
+    : groupKey;
+}
+
 export function buildWorkspaceStructureProjects(input: {
   sessions: WorkspaceStructureSession[];
 }): WorkspaceStructureProject[] {
+  const sessions = input.sessions.map((session) => ({
+    serverId: session.serverId,
+    workspaces: [...session.workspaces],
+    emptyProjects: [...(session.emptyProjects ?? [])],
+  }));
+  const ambiguousGroupKeys = findAmbiguousProjectGroupKeys(sessions);
   const byProject = new Map<
     string,
     {
@@ -74,12 +130,13 @@ export function buildWorkspaceStructureProjects(input: {
     }
   >();
 
-  for (const session of input.sessions) {
-    for (const emptyProject of session.emptyProjects ?? []) {
-      const projectKey = resolveProjectGroupKey({
+  for (const session of sessions) {
+    for (const emptyProject of session.emptyProjects) {
+      const projectKey = resolveUnambiguousProjectGroupKey({
         serverId: session.serverId,
         projectId: emptyProject.projectId,
         projectGroupKey: emptyProject.projectGroupKey,
+        ambiguousGroupKeys,
       });
       const placement = {
         serverId: session.serverId,
@@ -108,10 +165,11 @@ export function buildWorkspaceStructureProjects(input: {
     }
 
     for (const workspace of session.workspaces) {
-      const projectKey = resolveProjectGroupKey({
+      const projectKey = resolveUnambiguousProjectGroupKey({
         serverId: session.serverId,
         projectId: workspace.projectId,
         projectGroupKey: workspace.projectGroupKey,
+        ambiguousGroupKeys,
       });
       const existing = byProject.get(projectKey);
 
