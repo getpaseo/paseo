@@ -329,6 +329,9 @@ export async function materializeWorktreeIncludePlan(
       staged = null;
       materialized++;
     } catch (error) {
+      if (error instanceof WorktreeIncludeCleanupError) {
+        throw error;
+      }
       if (staged !== null) {
         await cleanupStagingDirectory(staged.directoryPath);
       }
@@ -358,6 +361,12 @@ async function stageMaterialization(options: {
         sourceKind: options.resolved.materialization.sourceKind,
         sourcePath: options.resolved.sourcePath,
       });
+      if (options.resolved.materialization.sourceKind === "directory") {
+        await assertCopyDirectorySafe({
+          entry: options.resolved.materialization,
+          sourcePath: entryPath,
+        });
+      }
     } else {
       await createMaterializationSymlink({
         destinationPath: entryPath,

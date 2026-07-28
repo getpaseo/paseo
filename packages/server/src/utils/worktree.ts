@@ -1683,15 +1683,10 @@ async function fetchNewLocalBranchAtomically(options: {
       cwd: options.cwd,
     });
     const oid = stdout.trim();
-    await runGitCommand(
-      [
-        "update-ref",
-        `refs/heads/${options.localBranchName}`,
-        oid,
-        "0000000000000000000000000000000000000000",
-      ],
-      { cwd: options.cwd },
-    );
+    const nullOid = "0".repeat(oid.length);
+    await runGitCommand(["update-ref", `refs/heads/${options.localBranchName}`, oid, nullOid], {
+      cwd: options.cwd,
+    });
     return oid;
   } finally {
     await runGitCommand(["update-ref", "-d", temporaryRef], {
