@@ -137,6 +137,7 @@ test("root dependency and CI infrastructure changes run every contract", () => {
     "package-lock.json",
     ".github/ci-paths.yml",
     "scripts/npm-retry.mjs",
+    "scripts/postinstall-patches.mjs",
   ]) {
     assert.deepEqual(affectedContracts(filters, changedPath), allContracts, changedPath);
   }

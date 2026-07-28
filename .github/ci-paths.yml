@@ -11,6 +11,7 @@ workspace:
   - "package-lock.json"
   - "patches/**"
   - "scripts/npm-retry.mjs"
+  - "scripts/postinstall-patches.mjs"
   - "tsconfig.json"
   - "tsconfig.base.json"
 
