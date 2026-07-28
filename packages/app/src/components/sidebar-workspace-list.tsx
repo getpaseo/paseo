@@ -524,6 +524,7 @@ function ProjectRowTrailingActions({
           <ProjectKebabMenu
             projectKey={project.projectKey}
             projectPath={project.iconWorkingDir}
+            serverId={project.hosts[0]?.serverId}
             onRemoveProject={onRemoveProject}
             removeProjectStatus={removeProjectStatus}
           />
@@ -551,11 +552,13 @@ function renderKebabTriggerIcon({ hovered }: { hovered?: boolean }) {
 function ProjectKebabMenu({
   projectKey,
   projectPath,
+  serverId,
   onRemoveProject,
   removeProjectStatus,
 }: {
   projectKey: string;
   projectPath: string;
+  serverId?: string | null;
   onRemoveProject: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
@@ -612,6 +615,7 @@ function ProjectKebabMenu({
         ) : null}
         <OpenInFileManagerMenuItem
           path={projectPath}
+          serverId={serverId}
           testID={`sidebar-project-menu-open-folder-${projectKey}`}
         />
         <DropdownMenuItem
@@ -693,6 +697,7 @@ function WorkspaceRowRightGroup({
             {onArchive ? (
               <SidebarWorkspaceMenu
                 workspaceKey={workspace.workspaceKey}
+                serverId={workspace.serverId}
                 onCopyPath={onCopyPath}
                 onCopyBranchName={onCopyBranchName}
                 onRename={onRename}
