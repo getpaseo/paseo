@@ -5,7 +5,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from "react-native";
-import { useKeyboardShift } from "@/hooks/use-keyboard-shift-style";
+import { useKeyboardShift } from "@/hooks/keyboard-shift-context";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import {
   beginDrag,
