@@ -179,6 +179,12 @@ Test suites in this repo are heavy. Running them in bulk freezes the machine, es
 - CI can shard app Playwright across multiple jobs; each shard still owns a full isolated daemon/relay/Metro stack from global setup. Helpers that restart the daemon must preserve the global setup environment, including disabled speech/local-model settings, so a restart does not change the tested surface or start background downloads.
 - Global setup starts Metro before Wrangler, assigns Wrangler explicit distinct relay and inspector ports, and accepts Metro as ready only when `/status` returns `packager-status:running`. A generic TCP listener is not sufficient readiness evidence.
 
+## Pull-request test routing
+
+PR checks are routed by the behavior each suite proves, using `.github/ci-paths.yml`. A package does not inherit every test suite of its runtime consumers: app changes do not run CLI or Electron-wrapper tests, and protocol changes do not run every package that imports the protocol. Cross-package static compatibility belongs to `typecheck`; full integration coverage runs on main, merge queue, and manual CI runs.
+
+Required matrix legs are declared as statically named jobs. Their shared steps use YAML anchors, while job-level `if` conditions let GitHub report an unaffected leg as genuinely skipped without allocating a runner or losing the exact required-check name.
+
 ## Agent authentication in tests
 
 Agent providers handle their own auth. Do not add auth checks, environment variable gates, or conditional skips to tests. If auth fails, report it.

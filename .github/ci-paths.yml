@@ -1,0 +1,89 @@
+# Pull-request checks are routed by the behavior they prove. Package consumers
+# do not inherit their dependencies' test suites; main, merge queue, and manual
+# runs execute every contract regardless of these paths.
+routing:
+  - ".github/ci-paths.yml"
+
+workspace:
+  - ".mise.toml"
+  - ".tool-versions"
+  - "package.json"
+  - "package-lock.json"
+  - "patches/**"
+  - "scripts/npm-retry.mjs"
+  - "tsconfig.json"
+  - "tsconfig.base.json"
+
+ci:
+  - ".github/actions/**"
+  - ".github/workflows/ci.yml"
+
+format:
+  - ".github/**/*.yml"
+  - "docs/**/*.md"
+  - "packages/**/*.{cjs,css,html,js,json,jsonc,jsx,md,mjs,ts,tsx,yaml,yml}"
+  - "*.{cjs,css,html,js,json,jsonc,jsx,md,mjs,ts,tsx,yaml,yml}"
+
+quality:
+  - "packages/**/*.{cjs,js,json,jsx,mjs,ts,tsx}"
+  - "*.{cjs,js,json,jsx,mjs,ts,tsx}"
+
+server:
+  - "packages/server/**"
+  - "packages/app/e2e/fixtures/recording.*"
+  - "vitest.config.ts"
+
+desktop:
+  - "packages/desktop/**"
+  - "vitest.config.ts"
+
+app:
+  - "packages/app/**"
+  - "vitest.config.ts"
+
+sdk:
+  - "packages/client/**"
+  - "packages/protocol/**"
+  - "vitest.config.ts"
+
+playwright:
+  - "packages/app/src/**"
+  - "packages/app/e2e/**"
+  - "packages/app/assets/**"
+  - "packages/app/public/**"
+  - "packages/app/index.ts"
+  - "packages/app/*config.{cjs,js,ts}"
+  - "packages/app/package.json"
+  - "packages/server/**"
+
+playwright_desktop:
+  - "packages/desktop/**"
+  - "packages/app/src/**/*.electron.{ts,tsx}"
+  - "packages/app/e2e/project-picker-desktop.spec.ts"
+  - "packages/app/e2e/helpers/desktop-updates.ts"
+  - "packages/app/e2e/global-setup.ts"
+  - "packages/app/playwright.config.ts"
+
+relay:
+  - "packages/relay/**"
+  - "vitest.config.ts"
+
+cli:
+  - "packages/cli/**"
+  - "vitest.config.ts"
+
+docker:
+  - ".dockerignore"
+  - ".github/workflows/docker.yml"
+  - "docker/**"
+  - "scripts/build-daemon-web-ui.mjs"
+
+nix:
+  - ".github/workflows/nix.yml"
+  - "flake.lock"
+  - "flake.nix"
+  - "nix/**"
+  - "scripts/build-daemon-web-ui.mjs"
+  - "scripts/fix-lockfile.mjs"
+  - "scripts/trace-daemon.mjs"
+  - "scripts/update-nix.sh"

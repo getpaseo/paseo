@@ -3,35 +3,43 @@ name: Nix
 on:
   pull_request:
     branches: [main]
-    paths:
-      - "nix/**"
-      - "flake.nix"
-      - "flake.lock"
-      - "package.json"
-      - "package-lock.json"
-      - "packages/app/**"
-      - "packages/expo-two-way-audio/**"
-      - "packages/highlight/**"
-      - "packages/protocol/**"
-      - "packages/client/**"
-      - "packages/server/**"
-      - "packages/relay/**"
-      - "packages/cli/**"
-      - "scripts/build-daemon-web-ui.mjs"
-      - "scripts/update-nix.sh"
-      - "scripts/fix-lockfile.mjs"
-      - ".github/workflows/nix.yml"
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      full: ${{ github.event_name != 'pull_request' || steps.filter.outputs.routing != 'false' || steps.filter.outputs.workspace != 'false' }}
+      nix: ${{ steps.filter.outputs.nix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect Nix contract changes
+        id: filter
+        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3.0.3
+        with:
+          filters: .github/ci-paths.yml
+
   build:
+    name: build
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.nix != 'false') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
 
       - uses: actions/setup-node@v4
         with:
@@ -58,6 +66,7 @@ jobs:
 
           WRAPPER_LOG="$PASEO_HOME/paseo-server-wrapper.log"
 
+          # shellcheck disable=SC2329 # Invoked indirectly by the EXIT trap.
           cleanup() {
             if [[ -n "${DAEMON_PID:-}" ]] && kill -0 "$DAEMON_PID" 2>/dev/null; then
               kill "$DAEMON_PID"
