@@ -71,6 +71,28 @@ async function waitForTimelineToolCall(
   );
 }
 
+async function waitForWorkspaceSetupProgress(
+  messages: SessionOutboundMessage[],
+  workspaceId: string,
+  status: "running" | "completed" | "failed",
+  timeoutMs = 10000,
+): Promise<Extract<SessionOutboundMessage, { type: "workspace_setup_progress" }>["payload"]> {
+  const startTime = Date.now();
+  while (Date.now() - startTime < timeoutMs) {
+    const message = messages.findLast(
+      (
+        candidate,
+      ): candidate is Extract<SessionOutboundMessage, { type: "workspace_setup_progress" }> =>
+        candidate.type === "workspace_setup_progress" &&
+        candidate.payload.workspaceId === workspaceId &&
+        candidate.payload.status === status,
+    );
+    if (message) return message.payload;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Timed out waiting for workspace ${workspaceId} setup status ${status}`);
+}
+
 async function waitForPathExists(options: {
   targetPath: string;
   timeoutMs: number;
@@ -342,7 +364,7 @@ test("returns isGit false for non-git directory", async () => {
   rmSync(cwd, { recursive: true, force: true });
 }, 60000); // 1 minute timeout
 
-test("runs paseo.json setup asynchronously and reports status via timeline tool_call", async () => {
+test("runs paseo.json setup asynchronously and reports workspace status", async () => {
   const repoRoot = tmpCwd();
 
   const { execSync } = await import("child_process");
@@ -393,18 +415,30 @@ test("runs paseo.json setup asynchronously and reports status via timeline tool_
   });
 
   expect(agent.cwd).toContain(path.join(".paseo", "worktrees"));
+  expect(agent.workspaceId).toBeTruthy();
   expect(existsSync(path.join(agent.cwd, "setup-done.txt"))).toBe(false);
+
+  const workspaces = await ctx.client.fetchWorkspaces();
+  expect(
+    workspaces.entries.filter((workspace) => workspace.workspaceDirectory === repoRoot),
+  ).toEqual([]);
+  expect(workspaces.entries).toContainEqual(
+    expect.objectContaining({
+      id: agent.workspaceId,
+      name: "Async Worktree Setup Test",
+      workspaceDirectory: agent.cwd,
+    }),
+  );
 
   writeFileSync(path.join(agent.cwd, "allow-setup"), "ok\n");
 
-  const completed = await waitForTimelineToolCall(
+  const completed = await waitForWorkspaceSetupProgress(
     collector.messages,
-    agent.id,
-    (item) => item.name === "paseo_worktree_setup" && item.status === "completed",
+    agent.workspaceId!,
+    "completed",
     20000,
   );
 
-  expect(completed.callId).toBeTruthy();
   expect(completed.detail.type).toBe("worktree_setup");
   if (completed.detail.type === "worktree_setup") {
     expect(completed.detail.commands.length).toBeGreaterThan(0);
@@ -487,12 +521,8 @@ test("bootstraps configured worktree terminals after setup succeeds", async () =
 
     writeFileSync(path.join(agent.cwd, "allow-setup"), "ok\n");
 
-    await waitForTimelineToolCall(
-      collector.messages,
-      agent.id,
-      (item) => item.name === "paseo_worktree_setup" && item.status === "completed",
-      20000,
-    );
+    expect(agent.workspaceId).toBeTruthy();
+    await waitForWorkspaceSetupProgress(collector.messages, agent.workspaceId!, "completed", 20000);
     const terminalsBootstrapToolCall = await waitForTimelineToolCall(
       collector.messages,
       agent.id,
@@ -558,7 +588,7 @@ test("bootstraps configured worktree terminals after setup succeeds", async () =
   });
 }, 60000);
 
-test("reports failures via timeline tool_call without deleting the created worktree", async () => {
+test("reports workspace setup failures without deleting the created worktree", async () => {
   const repoRoot = tmpCwd();
 
   const { execSync } = await import("child_process");
@@ -621,20 +651,13 @@ test("reports failures via timeline tool_call without deleting the created workt
   expect(agent.cwd).toContain(path.join(".paseo", "worktrees"));
   expect(existsSync(agent.cwd)).toBe(true);
 
-  const started = await waitForTimelineToolCall(
-    collector.messages,
-    agent.id,
-    (item) => item.name === "paseo_worktree_setup" && item.status === "running",
-    10000,
-  );
+  expect(agent.workspaceId).toBeTruthy();
+  await waitForWorkspaceSetupProgress(collector.messages, agent.workspaceId!, "running", 10000);
 
-  const failed = await waitForTimelineToolCall(
+  const failed = await waitForWorkspaceSetupProgress(
     collector.messages,
-    agent.id,
-    (item) =>
-      item.name === "paseo_worktree_setup" &&
-      item.callId === started.callId &&
-      item.status === "failed",
+    agent.workspaceId!,
+    "failed",
     20000,
   );
 

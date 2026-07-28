@@ -503,6 +503,7 @@ export const ja: TranslationResources = {
         waiting: "セットアップ出力を待機中",
       },
       waiting: "ワークスペースをセットアップ中...",
+      waitingForWorkspace: "ワークスペースのセットアップ完了を待機中",
       empty: {
         noCommands: "このワークスペースでセットアップコマンドは実行されませんでした。",
       },

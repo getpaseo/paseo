@@ -265,6 +265,7 @@ export interface AgentStreamViewProps {
   /** Bottom offset required for controls floating above that overlay. */
   bottomOverlayControlClearance?: number;
   toast?: ToastApi | null;
+  runningStatusLabel?: string;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
   readOnly?: boolean;
   historyPagination?: {
@@ -319,6 +320,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       bottomOverlayTailClearance = 0,
       bottomOverlayControlClearance,
       toast,
+      runningStatusLabel,
       onOpenWorkspaceFile,
       readOnly = false,
       historyPagination,
@@ -917,30 +919,31 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         }),
       [client, pendingPermissionItems],
     );
-    const turnFooterNode = useMemo(
-      () =>
-        isTurnActive || bottomTurnFooterHost ? (
-          <TurnFooter
-            isRunning={isTurnActive}
-            inFlightTurnStartedAt={baseRenderModel.turnTiming.runningStartedAt}
-            host={bottomTurnFooterHost}
-            strategy={streamRenderStrategy}
-            supportsTimelineCursor={supportsAgentForkContextCursor}
-            onForkAssistantTurn={readOnly ? undefined : handleForkAssistantTurn}
-            onForkInFlightTurn={readOnly ? undefined : handleForkInFlightTurn}
-          />
-        ) : null,
-      [
-        handleForkAssistantTurn,
-        handleForkInFlightTurn,
-        readOnly,
-        isTurnActive,
-        baseRenderModel.turnTiming.runningStartedAt,
-        bottomTurnFooterHost,
-        streamRenderStrategy,
-        supportsAgentForkContextCursor,
-      ],
-    );
+    const turnFooterNode = useMemo(() => {
+      const isWorking = isTurnActive || Boolean(runningStatusLabel);
+      return isWorking || bottomTurnFooterHost ? (
+        <TurnFooter
+          isRunning={isWorking}
+          runningStatusLabel={runningStatusLabel}
+          inFlightTurnStartedAt={baseRenderModel.turnTiming.runningStartedAt}
+          host={bottomTurnFooterHost}
+          strategy={streamRenderStrategy}
+          supportsTimelineCursor={supportsAgentForkContextCursor}
+          onForkAssistantTurn={readOnly ? undefined : handleForkAssistantTurn}
+          onForkInFlightTurn={readOnly || !isTurnActive ? undefined : handleForkInFlightTurn}
+        />
+      ) : null;
+    }, [
+      handleForkAssistantTurn,
+      handleForkInFlightTurn,
+      readOnly,
+      isTurnActive,
+      runningStatusLabel,
+      baseRenderModel.turnTiming.runningStartedAt,
+      bottomTurnFooterHost,
+      streamRenderStrategy,
+      supportsAgentForkContextCursor,
+    ]);
     const renderModel = useMemo<AgentStreamRenderModel>(() => {
       return {
         ...baseRenderModel,
@@ -1222,6 +1225,7 @@ function agentStreamViewPropsEqual(
     reasons.push("isAuthoritativeHistoryReady");
   }
   if (left.toast !== right.toast) reasons.push("toast");
+  if (left.runningStatusLabel !== right.runningStatusLabel) reasons.push("runningStatusLabel");
   if (left.onOpenWorkspaceFile !== right.onOpenWorkspaceFile) reasons.push("onOpenWorkspaceFile");
   if (left.readOnly !== right.readOnly) reasons.push("readOnly");
   if (!historyPaginationPropsEqual(left.historyPagination, right.historyPagination)) {

@@ -499,6 +499,7 @@ export const zhCN: TranslationResources = {
         waiting: "正在等待 setup 输出",
       },
       waiting: "正在 setup workspace...",
+      waitingForWorkspace: "正在等待 workspace setup 完成",
       empty: {
         noCommands: "此 workspace 没有运行 setup 命令。",
       },

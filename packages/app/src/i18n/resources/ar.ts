@@ -499,6 +499,7 @@ export const ar: TranslationResources = {
         waiting: "في انتظار إخراج الإعداد",
       },
       waiting: "جارٍ إعداد مساحة العمل...",
+      waitingForWorkspace: "في انتظار اكتمال إعداد مساحة العمل",
       empty: {
         noCommands: "لم يتم تشغيل أي أوامر إعداد لمساحة العمل هذه.",
       },

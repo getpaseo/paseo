@@ -4,7 +4,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it, vi } from "vitest";
 import { realpathSync, rmSync } from "node:fs";
 import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { join, resolve as resolvePath } from "node:path";
+import { basename, join, resolve as resolvePath } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
 
@@ -58,6 +58,7 @@ import type { BrowserToolsBroker, BrowserToolsExecuteInput } from "../browser-to
 import type { BrowserToolsResponsePayload } from "../browser-tools/errors.js";
 import { readPaseoWorktreeMetadata } from "../../utils/worktree-metadata.js";
 import { createWorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";
+import { WorkspaceSetupReadiness } from "../workspace-setup-readiness.js";
 
 const REPO_CWD = resolvePath("/tmp/repo");
 const TARGET_CWD = resolvePath("/tmp/target");
@@ -778,6 +779,9 @@ function createPaseoWorktreeForMcpTest(options: {
         warmWorkspaceGitData: async () => {},
         autoNameWorkspaceBranchForFirstAgent: (autoNameInput) =>
           workspaceAutoName.scheduleForWorktree(autoNameInput),
+        generateWorkspaceNameForFirstAgent: (nameInput) =>
+          workspaceAutoName.generateForWorktreeCreation(nameInput),
+        workspaceSetupReadiness: new WorkspaceSetupReadiness(),
         emitWorkspaceUpdateForWorkspaceId: async (workspaceId) => {
           options.broadcasts.push(workspaceId);
         },
@@ -1766,9 +1770,9 @@ describe("create_agent MCP tool", () => {
         background: true,
       });
 
-      expect(broadcasts).toHaveLength(1);
+      expect(broadcasts).toHaveLength(2);
       expect(createdWorkspaceIds).toHaveLength(1);
-      expect(broadcasts[0]).toBe(createdWorkspaceIds[0]);
+      expect(broadcasts).toEqual([createdWorkspaceIds[0], createdWorkspaceIds[0]]);
       expect(setupContinuations).toEqual(["agent"]);
       expect(startedAgentSetupIds).toEqual(["agent-with-worktree"]);
       const agentCwd = z.string().parse(spies.agentManager.createAgent.mock.calls[0]?.[0].cwd);
@@ -1835,7 +1839,14 @@ describe("create_agent MCP tool", () => {
         agentStorage,
         providerSnapshotManager: createOpenCodeManager().manager,
         paseoHome,
-        createPaseoWorktree: createPaseoWorktreeForMcpTest({ paseoHome, broadcasts }),
+        createPaseoWorktree: createPaseoWorktreeForMcpTest({
+          paseoHome,
+          broadcasts,
+          generateWorkspaceName: async () => ({
+            title: "Fix workspace creation naming",
+            branch: "fix-workspace-creation-naming",
+          }),
+        }),
         workspaceGitService: workspaceGitService as unknown as Pick<
           WorkspaceGitService,
           "getSnapshot" | "listWorktrees"
@@ -1861,11 +1872,12 @@ describe("create_agent MCP tool", () => {
       })
         .toString()
         .trim();
-      expect(initialBranch).not.toBe("");
-      expect(initialBranch).not.toBe("main");
+      expect(initialBranch).toBe("fix-workspace-creation-naming");
+      expect(basename(agentCwd)).toBe("fix-workspace-creation-naming");
       await waitForUnexpectedWorkspaceNamingSideEffects();
       expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
-      expect(broadcasts).toHaveLength(1);
+      expect(broadcasts).toHaveLength(2);
+      expect(broadcasts[1]).toBe(broadcasts[0]);
     } finally {
       await removeTempDir(tempDir);
     }
@@ -2363,7 +2375,7 @@ describe("create_agent MCP tool", () => {
       });
       expect(generateCalls).toBe(1);
       expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
-      expect(broadcasts).toEqual([workspaceId, workspaceId]);
+      expect(broadcasts).toEqual([workspaceId, workspaceId, workspaceId]);
     } finally {
       await removeTempDir(tempDir);
     }
@@ -2526,7 +2538,8 @@ describe("create_agent MCP tool", () => {
       expect(response.structuredContent.workspaceId).toBe(broadcasts[0]);
       expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
       expect(setupContinuations).toEqual([undefined]);
-      expect(broadcasts).toHaveLength(1);
+      expect(broadcasts).toHaveLength(2);
+      expect(broadcasts[1]).toBe(broadcasts[0]);
       expect(broadcasts[0]).toMatch(/^wks_[0-9a-f]{16}$/);
     } finally {
       await removeTempDir(tempDir);

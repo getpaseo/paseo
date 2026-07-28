@@ -500,6 +500,7 @@ export const ko: TranslationResources = {
         waiting: "설정 출력을 기다리는 중",
       },
       waiting: "워크스페이스 설정 중...",
+      waitingForWorkspace: "워크스페이스 설정을 기다리는 중",
       empty: {
         noCommands: "이 워크스페이스에서 실행된 설정 명령이 없습니다.",
       },

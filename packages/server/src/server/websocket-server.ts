@@ -17,7 +17,6 @@ import type { DaemonConfigStore, MutableDaemonConfig } from "./daemon-config-sto
 import {
   type ServerInfoStatusPayload,
   type SessionOutboundMessage,
-  type WorkspaceSetupSnapshot,
   type WSHelloMessage,
   type WSInboundMessage,
   WSInboundMessageSchema,
@@ -37,7 +36,6 @@ import {
   type SessionRuntimeMetrics,
 } from "./session.js";
 import type { HubRelationshipManagement } from "./hub/relationship-controller.js";
-import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
 import type { HubExecutionAgents } from "./hub/daemon-executions.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
@@ -61,6 +59,7 @@ import type { ServiceProxySubsystem } from "./service-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import type { SpeechReadinessSnapshot, SpeechService } from "./speech/speech-runtime.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
+import { WorkspaceSetupReadiness } from "./workspace-setup-readiness.js";
 import {
   computeNotificationPlan,
   isPushEligibleAttentionReason,
@@ -583,8 +582,7 @@ export class VoiceAssistantWebSocketServer {
   } | null;
   private readonly voiceSpeakHandlers = new Map<string, VoiceSpeakHandler>();
   private readonly voiceCallerContexts = new Map<string, VoiceCallerContext>();
-  private readonly workspaceSetupSnapshots = new Map<string, WorkspaceSetupSnapshot>();
-  private readonly workspaceSetupRuntime: WorkspaceSetupRuntime;
+  private readonly workspaceSetupReadiness: WorkspaceSetupReadiness;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private onLifecycleIntent!: ((intent: SessionLifecycleIntent) => void) | null;
   private onBranchChanged!:
@@ -653,13 +651,12 @@ export class VoiceAssistantWebSocketServer {
     serviceProxyPublicBaseUrl?: string | null,
     browserToolsBroker?: BrowserToolsBroker | null,
     hubRelationships?: HubRelationshipManagement | null,
-    workspaceSetupRuntime: WorkspaceSetupRuntime = new WorkspaceSetupRuntime(),
+    workspaceSetupReadiness?: WorkspaceSetupReadiness,
     pluginRuntime?: SessionOptions["pluginRuntime"],
     orchestrationSkills?: SessionOptions["orchestrationSkills"],
     workspaceLabelService?: WorkspaceLabelService,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
-    this.workspaceSetupRuntime = workspaceSetupRuntime;
     this.advertiseDaemonStatusRpc = wsConfig.daemonStatusRpc !== false;
     this.advertiseRelayConfig = wsConfig.relayConfig !== false;
     this.connectionLifecycle = wsConfig.startPaused === true ? "starting" : "accepting";
@@ -673,6 +670,7 @@ export class VoiceAssistantWebSocketServer {
     this.hubRelationships = hubRelationships ?? null;
     this.pluginRuntime = pluginRuntime;
     this.orchestrationSkills = orchestrationSkills;
+    this.workspaceSetupReadiness = workspaceSetupReadiness ?? new WorkspaceSetupReadiness();
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
@@ -1458,8 +1456,7 @@ export class VoiceAssistantWebSocketServer {
       hubRelationships: options.hubRelationships,
       serviceProxy: this.serviceProxy ?? undefined,
       scriptRuntimeStore: this.scriptRuntimeStore ?? undefined,
-      workspaceSetupSnapshots: this.workspaceSetupSnapshots,
-      workspaceSetupRuntime: this.workspaceSetupRuntime,
+      workspaceSetupReadiness: this.workspaceSetupReadiness,
       onBranchChanged: this.onBranchChanged ?? undefined,
       getDaemonTcpPort: this.getDaemonTcpPort ?? undefined,
       getDaemonTcpHost: this.getDaemonTcpHost ?? undefined,

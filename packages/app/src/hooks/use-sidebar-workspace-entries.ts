@@ -1,7 +1,9 @@
 import { useMemo, useRef } from "react";
+import { shallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { useSessionStore } from "@/stores/session-store";
+import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import {
   areSidebarWorkspaceSessionsEqual,
   buildSidebarWorkspaceEntries,
@@ -9,11 +11,13 @@ import {
   type SidebarWorkspaceEntry,
   type SidebarWorkspacePlacement,
   type SidebarWorkspaceSession,
+  type WorkspaceSetupStatusByKey,
 } from "./sidebar-workspaces-view-model";
 
 const EMPTY_ENTRIES = new Map<string, SidebarWorkspaceEntry>();
 const EMPTY_SESSIONS: SidebarWorkspaceSession[] = [];
 const EMPTY_PENDING_CREATE_ATTEMPTS: Record<string, never> = {};
+const EMPTY_WORKSPACE_SETUP_STATUSES: WorkspaceSetupStatusByKey = {};
 
 export function useSidebarWorkspaceEntries(
   placements: readonly SidebarWorkspacePlacement[],
@@ -32,6 +36,23 @@ export function useSidebarWorkspaceEntries(
   const pendingCreateAttempts = useCreateFlowStore((state) =>
     enabled ? state.pendingByDraftId : EMPTY_PENDING_CREATE_ATTEMPTS,
   );
+  const workspaceSetupKeys = useMemo(
+    () => placements.map((placement) => `${placement.serverId}:${placement.workspaceId}`),
+    [placements],
+  );
+  const workspaceSetupStatuses = useStoreWithEqualityFn(
+    useWorkspaceSetupStore,
+    (state) => {
+      if (!enabled) return EMPTY_WORKSPACE_SETUP_STATUSES;
+      const statuses: Record<string, WorkspaceSetupStatusByKey[string]> = {};
+      for (const key of workspaceSetupKeys) {
+        const status = state.snapshots[key]?.status;
+        if (status) statuses[key] = status;
+      }
+      return statuses;
+    },
+    shallow,
+  );
   const previousEntriesRef = useRef<ReadonlyMap<string, SidebarWorkspaceEntry>>(EMPTY_ENTRIES);
 
   // Collection ownership is intentional: retained sidebars have one cheap
@@ -49,9 +70,10 @@ export function useSidebarWorkspaceEntries(
       placements,
       sessions,
       pendingCreateAttempts,
+      workspaceSetupStatuses,
       previousEntries: previousEntriesRef.current,
     });
     previousEntriesRef.current = entries;
     return entries;
-  }, [enabled, pendingCreateAttempts, placements, sessions]);
+  }, [enabled, pendingCreateAttempts, placements, sessions, workspaceSetupStatuses]);
 }

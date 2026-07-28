@@ -126,6 +126,7 @@ describe("workspace-setup-store", () => {
       pendingWorkspaceSetup: null,
       snapshots: {},
       requestedKeys: new Set(),
+      requestedSetupRevealKeys: new Set(),
       surfacedFailedSetupKeys: new Set(),
     });
   });
@@ -158,6 +159,20 @@ describe("workspace-setup-store", () => {
     useWorkspaceSetupStore.getState().clearWorkspaceSetup();
 
     expect(useWorkspaceSetupStore.getState().pendingWorkspaceSetup).toBeNull();
+  });
+
+  it("tracks and clears a requested setup reveal by workspace", () => {
+    const identity = { serverId: "server-1", workspaceId: "42" };
+
+    useWorkspaceSetupStore.getState().requestSetupReveal(identity);
+
+    expect(useWorkspaceSetupStore.getState().requestedSetupRevealKeys).toEqual(
+      new Set(["server-1:42"]),
+    );
+
+    useWorkspaceSetupStore.getState().clearSetupRevealRequest(identity);
+
+    expect(useWorkspaceSetupStore.getState().requestedSetupRevealKeys).toEqual(new Set());
   });
 
   it("hides empty successful setup snapshots", () => {
@@ -367,5 +382,14 @@ describe("workspace-setup-store", () => {
     await flush();
 
     expect(calls).toEqual(["42", "42"]);
+  });
+
+  it("clears a requested setup reveal when the workspace is removed", () => {
+    const identity = { serverId: "server-1", workspaceId: "42" };
+    useWorkspaceSetupStore.getState().requestSetupReveal(identity);
+
+    useWorkspaceSetupStore.getState().removeWorkspace(identity);
+
+    expect(useWorkspaceSetupStore.getState().requestedSetupRevealKeys).toEqual(new Set());
   });
 });

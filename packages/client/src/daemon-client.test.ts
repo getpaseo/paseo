@@ -2497,6 +2497,58 @@ test("sends create_agent_request with workspace and caller identity", async () =
   await expect(createPromise).rejects.toThrow("compat test sentinel");
 });
 
+test("keeps create_agent_request pending beyond the default session RPC timeout", async () => {
+  useHeartbeatClock();
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const createPromise = client.createAgent({
+    provider: "codex",
+    cwd: "/tmp/project/.paseo/worktrees/slow-setup",
+    workspaceId: "ws-slow-setup",
+  });
+  let settled = false;
+  void createPromise.then(
+    () => {
+      settled = true;
+      return undefined;
+    },
+    () => {
+      settled = true;
+      return undefined;
+    },
+  );
+
+  const request = parseSentFrame(mock.sent[0]);
+  await vi.advanceTimersByTimeAsync(60_001);
+  expect(settled).toBe(false);
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "status",
+      payload: {
+        status: "agent_create_failed",
+        requestId: request.requestId,
+        error: "slow setup sentinel",
+      },
+    }),
+  );
+  await expect(createPromise).rejects.toThrow("slow setup sentinel");
+});
+
 test("sends worktree target and autoArchive in create_agent_request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

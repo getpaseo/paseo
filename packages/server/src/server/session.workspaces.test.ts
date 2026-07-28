@@ -511,11 +511,14 @@ class CreateAgentTestClient implements AgentClient {
   readonly provider = "codex";
   readonly capabilities = CREATE_AGENT_TEST_CAPABILITIES;
 
+  constructor(private readonly onCreateSession?: () => void) {}
+
   async createSession(
     config: AgentSessionConfig,
     _launchContext?: AgentLaunchContext,
     _options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
+    this.onCreateSession?.();
     return new CreateAgentTestSession(config);
   }
 
@@ -922,7 +925,7 @@ test("client heartbeat clears attention for the focused terminal", async () => {
   });
 });
 
-test("create_agent_request keeps requested child cwd when grouped under an existing parent workspace", async () => {
+test("create_agent_request deduplicates client message retries and keeps the requested child cwd", async () => {
   const workdir = mkdtempSync(path.join(tmpdir(), "paseo-create-agent-cwd-"));
   try {
     const parent = path.join(workdir, "parent");
@@ -938,8 +941,9 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
       error: vi.fn(),
     };
     const agentStorage = new AgentStorage(path.join(workdir, "agents"), asSessionLogger(logger));
+    const createSession = vi.fn();
     const agentManager = new AgentManager({
-      clients: { codex: new CreateAgentTestClient() },
+      clients: { codex: new CreateAgentTestClient(createSession) },
       registry: agentStorage,
       logger: asSessionLogger(logger),
       idFactory: () => "00000000-0000-4000-8000-000000000551",
@@ -1031,14 +1035,21 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
         terminalManager: null,
       }),
     );
-    await session.handleMessage({
+    const request = {
       type: "create_agent_request",
       requestId: "req-create-child",
       config: { provider: "codex", cwd: child },
       attachments: [],
-    });
+      clientMessageId: "msg-create-child",
+    } as const;
+    await Promise.all([
+      session.handleMessage(request),
+      session.handleMessage({ ...request, requestId: "req-create-child-retry" }),
+    ]);
 
     const [createdAgent] = agentManager.listAgents();
+    expect(agentManager.listAgents()).toHaveLength(1);
+    expect(createSession).toHaveBeenCalledTimes(1);
     expect(createdAgent?.cwd).toBe(child);
     const createdWorkspace = await workspaceRegistry.get(createdAgent!.workspaceId!);
     expect(createdWorkspace).not.toBeNull();
@@ -1057,10 +1068,20 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
       projectKey: createdWorkspace!.projectId,
       checkout: { cwd: child },
     });
-    expect(findByType(emitted, "status")?.payload).toMatchObject({
-      status: "agent_created",
-      agent: { cwd: child },
-    });
+    expect(filterByType(emitted, "status").map((message) => message.payload)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "agent_created",
+          requestId: "req-create-child",
+          agent: expect.objectContaining({ cwd: child }),
+        }),
+        expect.objectContaining({
+          status: "agent_created",
+          requestId: "req-create-child-retry",
+          agent: expect.objectContaining({ cwd: child }),
+        }),
+      ]),
+    );
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }
@@ -8974,17 +8995,30 @@ test("failed local create_agent_request does not schedule workspace title genera
     await session.handleMessage({
       type: "create_agent_request",
       requestId: "req-failed-local-title",
-      workspaceId: "ws-repo-running",
+      workspaceId: "ws-missing",
       config: { provider: "codex", cwd: REPO_CWD },
       initialPrompt: "This create will fail before an agent exists",
       attachments: [],
+      clientMessageId: "msg-retry-failed-create",
+    });
+    await session.handleMessage({
+      type: "create_agent_request",
+      requestId: "req-retried-local-title",
+      workspaceId: "ws-repo-running",
+      config: { provider: "codex", cwd: REPO_CWD },
+      initialPrompt: "Retry the failed create",
+      attachments: [],
+      clientMessageId: "msg-retry-failed-create",
     });
     await vi.runAllTimersAsync();
 
-    expect(findByType(emitted, "status")?.payload).toMatchObject({
-      status: "agent_create_failed",
-      requestId: "req-failed-local-title",
-    });
+    const failures = filterByType(emitted, "status").filter(
+      (message) => message.payload.status === "agent_create_failed",
+    );
+    expect(failures).toHaveLength(2);
+    expect(failures[0]?.payload).toMatchObject({ requestId: "req-failed-local-title" });
+    expect(failures[1]?.payload).toMatchObject({ requestId: "req-retried-local-title" });
+    expect(failures[1]?.payload.error).not.toBe(failures[0]?.payload.error);
     expect(generateCalls).toBe(0);
   } finally {
     vi.useRealTimers();

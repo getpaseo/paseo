@@ -267,6 +267,16 @@ status once at the directory boundary rather than maintaining a second activity 
 - Voice/dictation streaming events (`dictation_stream_*`, `assistant_chunk`, `audio_output`, `transcription_result`)
 - Request/response pairs for fetch, list, create, etc., correlated by `requestId`; failures use `rpc_error`
 
+Managed-worktree setup is workspace-owned readiness, not agent work. Worktree creation registers and
+returns the workspace while setup continues with `workspace_setup_progress`. Agent creation also
+returns its persisted identity and idle provider session immediately. Every provider turn waits inside
+the daemon on the `workspaceId`-keyed readiness barrier, so prompt RPCs can acknowledge queued work
+without starting it early or remaining open for the duration of setup. Setup failure is sticky for the
+daemon lifetime: a queued turn fails on the visible agent without reaching the provider. Configured
+worktree terminals and generated workspace metadata also wait for setup. Pending/completed/failed
+readiness is persisted on the workspace record. A daemon restart restores interrupted pending setup
+as failed rather than allowing an agent into a checkout whose setup did not finish.
+
 `directory_suggestions_request` is one daemon-owned filesystem search capability. The daemon
 configures the same `searchDirectoryEntries` engine with a root, output format, path-query policy,
 entry-kind filters, match mode, blank-query behavior, and hidden-directory traversal policy. A
