@@ -35,6 +35,16 @@ describe("canonical CLI surface", () => {
     expect(run?.helpInformation()).not.toContain("--detach");
   });
 
+  it("offers thinking configuration when creating and updating agents", () => {
+    const cli = createCli();
+    const run = cli.commands.find((command) => command.name() === "run");
+    const agent = cli.commands.find((command) => command.name() === "agent");
+    const update = agent?.commands.find((command) => command.name() === "update");
+
+    expect(run?.helpInformation()).toContain("--thinking <id>");
+    expect(update?.helpInformation()).toContain("--thinking <id>");
+  });
+
   it("offers opening an existing agent in the desktop app", () => {
     const agent = createCli().commands.find((command) => command.name() === "agent");
     const open = agent?.commands.find((command) => command.name() === "open");
