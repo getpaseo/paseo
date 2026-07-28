@@ -265,6 +265,12 @@ function mergeMutableConfigIntoPersistedConfig(params: {
   const { persisted, mutable, removeProviders } = params;
   const browserToolsEnabled = readBrowserToolsEnabled(mutable);
   const metadataGenerationProviders = readMetadataGenerationProviders(mutable);
+  const metadataCustomEndpoint = readMetadataCustomEndpoint(mutable);
+  const hasCustomEndpointConfig =
+    metadataCustomEndpoint.enabled ||
+    metadataCustomEndpoint.baseUrl.length > 0 ||
+    metadataCustomEndpoint.apiKey.length > 0 ||
+    metadataCustomEndpoint.model.length > 0;
   const persistedProviderOverrides = omitProvidersFromOverrides(
     persisted.agents?.providers as Record<string, ProviderOverride> | undefined,
     removeProviders,
@@ -276,9 +282,12 @@ function mergeMutableConfigIntoPersistedConfig(params: {
   const persistedAgents = omitProvidersFromPersistedAgents(persisted.agents);
   const persistedMetadataGeneration = {
     providers: metadataGenerationProviders,
+    ...(hasCustomEndpointConfig ? { customEndpoint: metadataCustomEndpoint } : {}),
   };
   const shouldPersistMetadataGeneration =
-    metadataGenerationProviders.length > 0 || persisted.agents?.metadataGeneration !== undefined;
+    metadataGenerationProviders.length > 0 ||
+    hasCustomEndpointConfig ||
+    persisted.agents?.metadataGeneration !== undefined;
 
   let nextAgents = persistedAgents as PersistedConfig["agents"];
   if (providerOverrides && Object.keys(providerOverrides).length > 0) {
@@ -352,4 +361,26 @@ function readMetadataGenerationProviders(
       },
     ];
   });
+}
+
+function readMetadataCustomEndpoint(mutable: MutableDaemonConfig): {
+  enabled: boolean;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+} {
+  const metadataGeneration = mutable.metadataGeneration;
+  if (!isRecord(metadataGeneration)) {
+    return { enabled: false, baseUrl: "", apiKey: "", model: "" };
+  }
+  const customEndpoint = metadataGeneration["customEndpoint"];
+  if (!isRecord(customEndpoint)) {
+    return { enabled: false, baseUrl: "", apiKey: "", model: "" };
+  }
+  return {
+    enabled: customEndpoint["enabled"] === true,
+    baseUrl: typeof customEndpoint["baseUrl"] === "string" ? customEndpoint["baseUrl"] : "",
+    apiKey: typeof customEndpoint["apiKey"] === "string" ? customEndpoint["apiKey"] : "",
+    model: typeof customEndpoint["model"] === "string" ? customEndpoint["model"] : "",
+  };
 }

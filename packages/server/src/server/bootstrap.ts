@@ -423,6 +423,12 @@ export interface PaseoDaemonConfig {
       model?: string;
       thinkingOptionId?: string;
     }>;
+    customEndpoint?: {
+      enabled?: boolean;
+      baseUrl?: string;
+      apiKey?: string;
+      model?: string;
+    };
   };
   providerOverrides?: Record<string, ProviderOverride>;
   log?: PersistedConfig["log"];
@@ -492,6 +498,18 @@ function resolveExpressTrustProxySetting(config: PaseoDaemonConfig): true | stri
   return config.trustedProxies ?? ["loopback"];
 }
 
+function resolveInitialMetadataCustomEndpoint(
+  config: PaseoDaemonConfig["metadataGeneration"],
+): NonNullable<MutableDaemonConfig["metadataGeneration"]["customEndpoint"]> {
+  const customEndpoint = config?.customEndpoint;
+  return {
+    enabled: customEndpoint?.enabled ?? false,
+    baseUrl: customEndpoint?.baseUrl ?? "",
+    apiKey: customEndpoint?.apiKey ?? "",
+    model: customEndpoint?.model ?? "",
+  };
+}
+
 function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDaemonConfig {
   const providers: MutableDaemonConfig["providers"] = Object.fromEntries(
     Object.entries(config.providerOverrides ?? {}).map(([providerId, override]) => {
@@ -512,6 +530,7 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
     providers,
     metadataGeneration: {
       providers: config.metadataGeneration?.providers ?? [],
+      customEndpoint: resolveInitialMetadataCustomEndpoint(config.metadataGeneration),
     },
     autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
     enableTerminalAgentHooks: config.enableTerminalAgentHooks ?? false,
