@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import { afterEach, expect, test } from "vitest";
 
-import { waitForMetro } from "../e2e/global-setup";
+import { waitForMetro } from "../e2e/support/global-setup";
 
 class MetroPort {
   private response = { status: 500, body: "fallback" };

@@ -35,20 +35,15 @@ hub:
 
 server:
   - "packages/server/**"
-  - "packages/app/e2e/fixtures/recording.*"
+  - "packages/app/e2e/support/fixtures/recording.*"
 
 desktop:
   - "packages/desktop/**"
-
-desktop_bridge:
-  - "packages/desktop/src/*.{ts,tsx}"
-  - "packages/desktop/src/features/browser-*.{ts,tsx}"
-  - "packages/desktop/src/features/browser-*/**"
-  - "packages/desktop/scripts/browser-*.mjs"
-  - "packages/desktop/*.{json,yml}"
-  - "packages/app/src/**/browser-*.{ts,tsx}"
-  - "packages/app/src/**/browser-*/**"
-  - "packages/app/*.{cjs,js,json,ts}"
+  - "packages/app/src/desktop/**"
+  - "packages/server/src/server/browser-tools/**"
+  - "packages/app/e2e/support/**"
+  - "packages/app/*config.{cjs,js,ts}"
+  - "packages/app/package.json"
 
 app:
   - "packages/app/**"
@@ -59,18 +54,13 @@ sdk:
   - "packages/highlight/**"
   - "packages/protocol/**"
 
-playwright:
-  - "packages/app/src/**"
-  - "packages/app/e2e/**"
+browser:
+  - "packages/app/src/!(desktop)/**"
+  - "packages/app/e2e/browser/**"
+  - "packages/app/e2e/support/**"
   - "packages/app/assets/**"
   - "packages/app/public/**"
   - "packages/app/index.ts"
-  - "packages/app/*config.{cjs,js,ts}"
-  - "packages/app/package.json"
-
-playwright_desktop:
-  - "packages/app/src/**/*.electron.{ts,tsx}"
-  - "packages/app/e2e/**"
   - "packages/app/*config.{cjs,js,ts}"
   - "packages/app/package.json"
 

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { matchesGlob } from "node:path";
+import { readFileSync, readdirSync } from "node:fs";
+import { relative as relativePath } from "node:path";
 import test from "node:test";
+import picomatch from "picomatch";
 
 const repoRoot = new URL("../", import.meta.url);
 const ciWorkflowPath = new URL(".github/workflows/ci.yml", repoRoot);
@@ -16,18 +17,14 @@ const gatedCiJobs = new Map([
   ["typecheck", { name: "typecheck", contract: "quality" }],
   ["server-tests-ubuntu", { name: "server-tests (ubuntu-latest)", contracts: ["server", "hub"] }],
   ["server-tests-windows", { name: "server-tests (windows-latest)", contracts: ["server", "hub"] }],
-  [
-    "desktop-tests-ubuntu",
-    { name: "desktop-tests (ubuntu-latest)", contracts: ["desktop", "desktop_bridge"] },
-  ],
+  ["desktop-tests-ubuntu", { name: "desktop-tests (ubuntu-latest)", contract: "desktop" }],
   ["desktop-tests-windows", { name: "desktop-tests (windows-latest)", contract: "desktop" }],
   ["app-tests", { name: "app-tests", contract: "app" }],
   ["sdk-tests", { name: "sdk-tests", contract: "sdk" }],
-  ["playwright-1", { name: "playwright (shard 1/4)", contract: "playwright" }],
-  ["playwright-2", { name: "playwright (shard 2/4)", contract: "playwright" }],
-  ["playwright-3", { name: "playwright (shard 3/4)", contract: "playwright" }],
-  ["playwright-4", { name: "playwright (shard 4/4)", contract: "playwright" }],
-  ["playwright-desktop", { name: "playwright (desktop overlay)", contract: "playwright_desktop" }],
+  ["playwright-1", { name: "playwright (shard 1/4)", contract: "browser" }],
+  ["playwright-2", { name: "playwright (shard 2/4)", contract: "browser" }],
+  ["playwright-3", { name: "playwright (shard 3/4)", contract: "browser" }],
+  ["playwright-4", { name: "playwright (shard 4/4)", contract: "browser" }],
   ["relay-tests", { name: "relay-tests", contract: "relay" }],
   ["cli-tests-1", { name: "cli-tests (shard 1/3)", contract: "cli" }],
   ["cli-tests-2", { name: "cli-tests (shard 2/3)", contract: "cli" }],
@@ -68,7 +65,21 @@ function loadFilters(path) {
 }
 
 function matchesFilter(filters, filterName, changedPath) {
-  return filters[filterName].some((pattern) => matchesGlob(changedPath, pattern));
+  return filters[filterName].some((pattern) => picomatch(pattern, { dot: true })(changedPath));
+}
+
+function filesUnder(relativeDirectory, predicate) {
+  const directory = new URL(`${relativeDirectory}/`, repoRoot);
+  return readdirSync(directory, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) =>
+      [relativeDirectory, relativePath(directory.pathname, entry.parentPath), entry.name]
+        .filter(Boolean)
+        .join("/")
+        .replaceAll("\\", "/"),
+    )
+    .filter(predicate)
+    .sort();
 }
 
 function affectedContracts(filters, changedPath) {
@@ -126,9 +137,11 @@ test("focused contracts stay inside existing required checks", () => {
   assert.match(server, /npm run test --workspace=@getpaseo\/server/);
   assert.ok(!jobs.has("hub-cli-contract"));
 
-  assert.match(desktop, /test:e2e:browser-tab-bridge/);
+  assert.match(desktop, /test:e2e:renderer/);
+  assert.match(desktop, /test:e2e:browser-tabs/);
   assert.match(desktop, /npm run test --workspace=@getpaseo\/desktop/);
   assert.ok(!jobs.has("desktop-browser-bridge"));
+  assert.ok(!jobs.has("playwright-desktop"));
 });
 
 test("server builds exclude test utilities at every domain depth", () => {
@@ -140,13 +153,13 @@ test("server builds exclude test utilities at every domain depth", () => {
 test("PR routing follows test contracts instead of package consumers", () => {
   const filters = loadFilters(filtersPath);
   const cases = new Map([
-    ["packages/app/src/components/message.tsx", ["app", "format", "playwright", "quality"]],
+    ["packages/app/src/components/message.tsx", ["app", "browser", "format", "quality"]],
     ["packages/server/src/server/bootstrap.ts", ["format", "quality", "server"]],
     ["packages/cli/src/commands/agent/ls.ts", ["cli", "format", "quality"]],
-    ["packages/desktop/src/main.ts", ["desktop", "desktop_bridge", "format", "quality"]],
+    ["packages/desktop/src/main.ts", ["desktop", "format", "quality"]],
     [
-      "packages/app/src/components/browser-pane.electron.tsx",
-      ["app", "desktop_bridge", "format", "playwright", "playwright_desktop", "quality"],
+      "packages/app/src/desktop/browser/pane/index.electron.tsx",
+      ["app", "desktop", "format", "quality"],
     ],
     ["packages/cli/src/commands/hub/index.ts", ["cli", "format", "hub", "quality"]],
     [
@@ -176,31 +189,95 @@ test("tooling and domain contracts use stable ownership boundaries", () => {
     [".agents/skills/release-beta/SKILL.md", ["format"]],
     ["docker/docker-compose.example.yml", ["format"]],
     [
-      "packages/app/e2e/helpers/project-picker-ui.ts",
-      ["app", "format", "playwright", "playwright_desktop", "quality"],
+      "packages/app/e2e/support/helpers/project-picker-ui.ts",
+      ["app", "browser", "desktop", "format", "quality"],
     ],
     [
-      "packages/app/e2e/global-setup.ts",
-      ["app", "format", "playwright", "playwright_desktop", "quality"],
+      "packages/app/e2e/support/global-setup.ts",
+      ["app", "browser", "desktop", "format", "quality"],
     ],
     ["packages/desktop/src/daemon/runtime-paths.ts", ["desktop", "format", "quality"]],
+    ["packages/desktop/src/features/browser-profile.ts", ["desktop", "format", "quality"]],
     [
-      "packages/desktop/src/features/browser-profile.ts",
-      ["desktop", "desktop_bridge", "format", "quality"],
+      "packages/server/src/server/browser-tools/broker.ts",
+      ["desktop", "format", "quality", "server"],
     ],
     [
-      "packages/app/src/components/browser-webview-resident.ts",
-      ["app", "desktop_bridge", "format", "playwright", "quality"],
+      "packages/app/src/desktop/browser/resident-webviews.ts",
+      ["app", "desktop", "format", "quality"],
     ],
-    [
-      "packages/app/src/browser-automation/handler.ts",
-      ["app", "desktop_bridge", "format", "playwright", "quality"],
-    ],
+    ["packages/app/e2e/browser/startup-loading.spec.ts", ["app", "browser", "format", "quality"]],
+    ["packages/desktop/e2e/startup.spec.ts", ["desktop", "format", "quality"]],
   ]);
 
   for (const [changedPath, expected] of cases) {
     assert.deepEqual(affectedContracts(filters, changedPath), expected, changedPath);
   }
+});
+
+test("cross-package invariants live in the suite that owns them", () => {
+  const cliTests = filesUnder("packages/cli", (path) => path.endsWith(".test.ts"));
+  assert.ok(cliTests.length > 0);
+  for (const path of cliTests) {
+    assert.doesNotMatch(
+      readFileSync(new URL(path, repoRoot), "utf8"),
+      /server\/src\/server\/test-utils/,
+      path,
+    );
+  }
+
+  const protocolWireCompatibility = new URL(
+    "packages/protocol/src/messages.wire-compat.test.ts",
+    repoRoot,
+  );
+  assert.match(readFileSync(protocolWireCompatibility, "utf8"), /wire schema compatibility/);
+});
+
+test("browser and desktop tests have exclusive, directory-owned suites", () => {
+  const filters = loadFilters(filtersPath);
+  const browserSpecs = filesUnder("packages/app/e2e", (path) => path.endsWith(".spec.ts"));
+  const desktopSpecs = filesUnder("packages/desktop/e2e", (path) => path.endsWith(".spec.ts"));
+  const electronModules = filesUnder("packages/app/src", (path) => /\.electron\.tsx?$/.test(path));
+
+  assert.ok(browserSpecs.length > 0);
+  assert.ok(desktopSpecs.length > 0);
+  assert.ok(browserSpecs.every((path) => path.startsWith("packages/app/e2e/browser/")));
+  assert.ok(desktopSpecs.every((path) => path.startsWith("packages/desktop/e2e/")));
+  assert.ok(electronModules.every((path) => path.startsWith("packages/app/src/desktop/")));
+
+  for (const path of browserSpecs) {
+    assert.equal(matchesFilter(filters, "browser", path), true, path);
+    assert.equal(matchesFilter(filters, "desktop", path), false, path);
+    assert.doesNotMatch(
+      readFileSync(new URL(path, repoRoot), "utf8"),
+      /paseoDesktop|injectDesktopBridge/,
+    );
+  }
+  for (const path of desktopSpecs) {
+    assert.equal(matchesFilter(filters, "desktop", path), true, path);
+    assert.equal(matchesFilter(filters, "browser", path), false, path);
+  }
+
+  const routingSource = readFileSync(filtersPath, "utf8");
+  assert.doesNotMatch(routingSource, /desktop_bridge|playwright_desktop|browser-\*|browser-\*\//);
+  assert.deepEqual(filters.desktop, [
+    "packages/desktop/**",
+    "packages/app/src/desktop/**",
+    "packages/server/src/server/browser-tools/**",
+    "packages/app/e2e/support/**",
+    "packages/app/*config.{cjs,js,ts}",
+    "packages/app/package.json",
+  ]);
+  assert.deepEqual(filters.browser, [
+    "packages/app/src/!(desktop)/**",
+    "packages/app/e2e/browser/**",
+    "packages/app/e2e/support/**",
+    "packages/app/assets/**",
+    "packages/app/public/**",
+    "packages/app/index.ts",
+    "packages/app/*config.{cjs,js,ts}",
+    "packages/app/package.json",
+  ]);
 });
 
 test("root dependency and CI infrastructure changes run every contract", () => {

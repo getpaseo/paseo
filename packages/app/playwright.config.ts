@@ -6,8 +6,8 @@ const baseURL =
   process.env.E2E_BASE_URL ?? `http://localhost:${process.env.E2E_METRO_PORT ?? "8081"}`;
 
 export default defineConfig({
-  testDir: "./e2e",
-  globalSetup: "./e2e/global-setup.ts",
+  testDir: "./e2e/browser",
+  globalSetup: "./e2e/support/global-setup.ts",
   timeout: 60_000,
   expect: {
     timeout: 10_000,
@@ -26,7 +26,7 @@ export default defineConfig({
   },
   projects: [
     {
-      name: "Desktop Chrome",
+      name: "browser",
       testIgnore: ["**/*.real.spec.ts"],
       use: { ...devices["Desktop Chrome"] },
     },

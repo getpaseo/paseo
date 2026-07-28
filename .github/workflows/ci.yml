@@ -30,11 +30,9 @@ jobs:
       hub: ${{ steps.filter.outputs.hub }}
       server: ${{ steps.filter.outputs.server }}
       desktop: ${{ steps.filter.outputs.desktop }}
-      desktop_bridge: ${{ steps.filter.outputs.desktop_bridge }}
       app: ${{ steps.filter.outputs.app }}
       sdk: ${{ steps.filter.outputs.sdk }}
-      playwright: ${{ steps.filter.outputs.playwright }}
-      playwright_desktop: ${{ steps.filter.outputs.playwright_desktop }}
+      browser: ${{ steps.filter.outputs.browser }}
       relay: ${{ steps.filter.outputs.relay }}
       cli: ${{ steps.filter.outputs.cli }}
     steps:
@@ -188,7 +186,7 @@ jobs:
   desktop-tests-ubuntu:
     name: desktop-tests (ubuntu-latest)
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.desktop != 'false' || needs.changes.outputs.desktop_bridge != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.desktop != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -208,34 +206,37 @@ jobs:
         run: npm run build:server
 
       - name: Run desktop tests
-        if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.desktop != 'false' }}
         run: npm run test --workspace=@getpaseo/desktop
 
-      - name: Build app dependencies for desktop E2E
-        if: ${{ runner.os == 'Linux' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.desktop_bridge != 'false') }}
-        run: npm run build:app-deps
-
       - name: Install virtual display
-        if: ${{ runner.os == 'Linux' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.desktop_bridge != 'false') }}
+        if: ${{ runner.os == 'Linux' }}
         run: sudo apt-get update && sudo apt-get install -y xvfb xauth
 
-      - name: Run real Electron browser tab bridge E2E
-        if: ${{ runner.os == 'Linux' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.desktop_bridge != 'false') }}
-        run: npm run test:e2e:browser-tab-bridge --workspace=@getpaseo/desktop
-        env:
-          PASEO_TAB_BRIDGE_E2E_ARTIFACT_DIR: ${{ runner.temp }}/browser-tab-bridge-e2e
+      - name: Install Playwright browser
+        if: ${{ runner.os == 'Linux' }}
+        run: npx playwright install chromium
 
-      - name: Upload browser tab bridge diagnostics
+      - name: Run desktop renderer E2E
+        if: ${{ runner.os == 'Linux' }}
+        run: npm run test:e2e:renderer --workspace=@getpaseo/desktop
+
+      - name: Run desktop browser E2E
+        if: ${{ runner.os == 'Linux' }}
+        run: npm run test:e2e:browser-tabs --workspace=@getpaseo/desktop
+        env:
+          PASEO_DESKTOP_BROWSER_E2E_ARTIFACT_DIR: ${{ runner.temp }}/desktop-browser-e2e
+
+      - name: Upload desktop browser diagnostics
         uses: actions/upload-artifact@v4
-        if: ${{ failure() && runner.os == 'Linux' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.desktop_bridge != 'false') }}
+        if: ${{ failure() && runner.os == 'Linux' }}
         with:
-          name: browser-tab-bridge-e2e
-          path: ${{ runner.temp }}/browser-tab-bridge-e2e
+          name: desktop-browser-e2e
+          path: ${{ runner.temp }}/desktop-browser-e2e
           if-no-files-found: ignore
           retention-days: 7
 
       - name: Build and smoke unpacked desktop app
-        if: ${{ runner.os == 'Linux' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.desktop != 'false') }}
+        if: ${{ runner.os == 'Linux' }}
         run: npm run build:desktop -- --publish never --linux --x64 --dir
         env:
           EP_GH_IGNORE_TIME: true
@@ -244,7 +245,7 @@ jobs:
 
       - name: Upload packaged smoke diagnostics
         uses: actions/upload-artifact@v4
-        if: ${{ failure() && runner.os == 'Linux' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.desktop != 'false') }}
+        if: ${{ failure() && runner.os == 'Linux' }}
         with:
           name: desktop-packaged-smoke-linux-x64
           path: ${{ runner.temp }}/desktop-smoke
@@ -325,7 +326,7 @@ jobs:
   playwright-1:
     name: playwright (shard 1/4)
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.playwright != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.browser != 'false') }}
     runs-on: ubuntu-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
@@ -373,7 +374,7 @@ jobs:
   playwright-2:
     name: playwright (shard 2/4)
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.playwright != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.browser != 'false') }}
     runs-on: ubuntu-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
@@ -384,7 +385,7 @@ jobs:
   playwright-3:
     name: playwright (shard 3/4)
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.playwright != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.browser != 'false') }}
     runs-on: ubuntu-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
@@ -395,54 +396,13 @@ jobs:
   playwright-4:
     name: playwright (shard 4/4)
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.playwright != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.browser != 'false') }}
     runs-on: ubuntu-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       PLAYWRIGHT_SHARD: "4/4"
       PLAYWRIGHT_ARTIFACT: "4"
     steps: *playwright_test_steps
-
-  playwright-desktop:
-    name: playwright (desktop overlay)
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.playwright_desktop != 'false') }}
-    runs-on: ubuntu-latest
-    env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies with retry
-        run: node scripts/npm-retry.mjs ci
-
-      - name: Install Playwright browsers
-        timeout-minutes: 10
-        run: npx playwright install chromium
-
-      - name: Build app dependencies
-        run: npm run build:app-deps
-
-      - name: Build server stack
-        run: npm run build:server
-
-      - name: Run desktop-overlay Playwright tests
-        run: npm run test:e2e:desktop --workspace=@getpaseo/app
-
-      - name: Upload test artifacts
-        uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: playwright-results-desktop
-          path: |
-            packages/app/test-results/
-            packages/app/playwright-report/
-          retention-days: 7
 
   relay-tests:
     name: relay-tests
