@@ -528,9 +528,7 @@ function preserveReplacementHead(
     tail,
     retainedHead,
   );
-  const liveAssistantIndex = unreconciledHead.findLastIndex(
-    (item) => item.kind === "assistant_message",
-  );
+  const liveAssistantIndex = unreconciledHead[0]?.kind === "assistant_message" ? 0 : -1;
   if (liveAssistantIndex < 0) {
     return { tail: reconciledTail, head: unreconciledHead, acknowledgedClientMessageIds: [] };
   }

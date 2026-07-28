@@ -586,6 +586,67 @@ describe("processTimelineResponse", () => {
     expect(assistants[0]?.timelineCursor).toEqual({ epoch: "epoch-1", seq: 101 });
   });
 
+  it("keeps assistant segments separate when a live tool sits between them", () => {
+    const messageId = "assistant-with-tool";
+    const liveTool = hydrateStreamState(
+      [
+        {
+          event: {
+            type: "timeline",
+            provider: "claude",
+            item: makeToolCallTimelineEntry(101, "tool-between-segments", "completed", {
+              type: "read",
+              filePath: "/tmp/example.ts",
+            }).item,
+          } as AgentStreamEventPayload,
+          timestamp: new Date(2101),
+          timelineCursor: { epoch: "epoch-1", seq: 101 },
+        },
+        {
+          event: makeAssistantTimelineEvent("after tool", messageId),
+          timestamp: new Date(2102),
+          timelineCursor: { epoch: "epoch-1", seq: 102 },
+        },
+      ],
+      { source: "canonical" },
+    );
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [makeAssistantItem("painted replica")],
+      currentHead: liveTool,
+      isInitializing: true,
+      hasActiveInitDeferred: true,
+      hasAuthoritativeBaseline: false,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "tail",
+        startCursor: { seq: 61 },
+        endCursor: { seq: 100 },
+        entries: [
+          {
+            ...makeTimelineEntry(100, "before tool"),
+            item: {
+              type: "assistant_message",
+              text: "before tool",
+              messageId,
+            },
+          },
+        ],
+      },
+    });
+
+    expect([...result.tail, ...result.head].map((item) => item.kind)).toEqual([
+      "assistant_message",
+      "tool_call",
+      "assistant_message",
+    ]);
+    expect(getAssistantTexts([...result.tail, ...result.head])).toEqual([
+      "before tool",
+      "after tool",
+    ]);
+  });
+
   it("keeps a newer live assistant continuation without a provider message ID", () => {
     const result = processTimelineResponse({
       ...baseTimelineInput,
