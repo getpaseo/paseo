@@ -75,7 +75,7 @@ test("creates a worktree and registers it in the source workspace project withou
   expect(deps.workspaceGitService.getSnapshot).not.toHaveBeenCalled();
   expect(deps.projects.get(sourceProject.projectId)).toEqual({
     ...sourceProject,
-    projectGroupKey: result.repoRoot,
+    projectGroupKey: path.resolve(result.repoRoot),
     updatedAt: expect.any(String),
   });
   expect(events).toEqual([`workspace:${result.workspace.workspaceId}`]);

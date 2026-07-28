@@ -68,6 +68,10 @@ export function buildWorktreeSetupCalloutPolicy(
   project: ActiveGitWorkspaceProject,
 ): WorktreeSetupCalloutPolicy {
   const calloutKey = `worktree-setup-missing:${project.projectKey}`;
+  const projectSettingsKey = resolveProjectGroupKey({
+    serverId: project.serverId,
+    projectId: project.projectId,
+  });
 
   return {
     id: calloutKey,
@@ -76,7 +80,7 @@ export function buildWorktreeSetupCalloutPolicy(
     title: i18n.t("sidebar.worktreeSetup.title"),
     description: i18n.t("sidebar.worktreeSetup.description"),
     actionLabel: i18n.t("sidebar.worktreeSetup.openProjectSettings"),
-    projectSettingsRoute: buildProjectSettingsRoute(project.projectKey),
+    projectSettingsRoute: buildProjectSettingsRoute(projectSettingsKey),
     testID: `worktree-setup-callout-${project.projectKey}`,
   };
 }

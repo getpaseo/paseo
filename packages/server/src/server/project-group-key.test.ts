@@ -85,6 +85,17 @@ describe("deriveProjectGroupKey", () => {
     ).toBe(path.join(mainRepoRoot, "packages", "app"));
   });
 
+  test("preserves selected-path casing across Windows and POSIX hosts", () => {
+    expect(
+      deriveProjectGroupKey({
+        rootPath: "c:\\repo\\Packages\\App",
+        remoteUrl: "git@github.com:getpaseo/paseo.git",
+        worktreeRoot: "C:\\Repo",
+        mainRepoRoot: "C:\\Repo",
+      }),
+    ).toBe("remote:github.com/getpaseo/paseo#subdir:Packages/App");
+  });
+
   test.skipIf(process.platform === "win32")(
     "preserves a selected subproject reached through a symlink",
     () => {

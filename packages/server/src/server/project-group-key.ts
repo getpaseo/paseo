@@ -1,4 +1,4 @@
-import { resolve, sep } from "node:path";
+import { resolve } from "node:path";
 import { getRealpathAwareRelativePath } from "../utils/path.js";
 
 /**
@@ -28,7 +28,7 @@ function deriveSelectedPath(rootPath: string, worktreeRoot: string | null): stri
 }
 
 function encodeSelectedPath(selectedPath: string): string {
-  return selectedPath.split(sep).map(encodeURIComponent).join("/");
+  return selectedPath.split(/[\\/]/u).map(encodeURIComponent).join("/");
 }
 
 function deriveRemoteProjectGroupKey(remoteUrl: string | null): string | null {

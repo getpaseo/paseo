@@ -58,6 +58,7 @@ import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sec
 import { useHostFeatureMap } from "@/runtime/host-features";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
+import { resolveProjectSettingsRouteKey } from "@/projects/project-settings-target";
 import {
   buildNewWorkspaceRoute,
   buildProjectSettingsRoute,
@@ -523,6 +524,7 @@ function ProjectRowTrailingActions({
         >
           <ProjectKebabMenu
             projectKey={project.projectKey}
+            projectSettingsKey={resolveProjectSettingsRouteKey(project)}
             projectPath={project.iconWorkingDir}
             onRemoveProject={onRemoveProject}
             removeProjectStatus={removeProjectStatus}
@@ -550,11 +552,13 @@ function renderKebabTriggerIcon({ hovered }: { hovered?: boolean }) {
 
 function ProjectKebabMenu({
   projectKey,
+  projectSettingsKey,
   projectPath,
   onRemoveProject,
   removeProjectStatus,
 }: {
   projectKey: string;
+  projectSettingsKey: string;
   projectPath: string;
   onRemoveProject: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
@@ -562,10 +566,10 @@ function ProjectKebabMenu({
   const { t } = useTranslation();
   const toast = useToast();
   const handleOpenProjectSettings = useCallback(() => {
-    if (projectKey.trim().length === 0) return;
-    router.navigate(buildProjectSettingsRoute(projectKey));
-  }, [projectKey]);
-  const canOpenProjectSettings = projectKey.trim().length > 0;
+    if (projectSettingsKey.trim().length === 0) return;
+    router.navigate(buildProjectSettingsRoute(projectSettingsKey));
+  }, [projectSettingsKey]);
+  const canOpenProjectSettings = projectSettingsKey.trim().length > 0;
   // Desktop-only: open a second window that lands on this project via the same
   // open-project flow as a CLI launch. The project stays visible here too — no
   // ownership, no move.

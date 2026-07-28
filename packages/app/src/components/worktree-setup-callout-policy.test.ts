@@ -118,4 +118,15 @@ describe("buildWorktreeSetupCalloutPolicy", () => {
       testID: "worktree-setup-callout-project-1",
     });
   });
+
+  it("keeps the action route stable when the structural group key changes", () => {
+    expect(
+      buildWorktreeSetupCalloutPolicy({
+        serverId: "server-1",
+        projectId: "prj_local",
+        projectKey: "remote:github.com/acme/project",
+        repoRoot: "/repo/project",
+      }).projectSettingsRoute,
+    ).toBe("/settings/projects/host%3Aserver-1%3Aproject%3Aprj_local");
+  });
 });

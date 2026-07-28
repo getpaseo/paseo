@@ -31,6 +31,7 @@ import { SettingsGroup } from "@/screens/settings/settings-group";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { useProjects } from "@/hooks/use-projects";
+import { findProjectSettingsTarget } from "@/projects/project-settings-target";
 import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
 import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
 import { useToast } from "@/contexts/toast-context";
@@ -90,7 +91,7 @@ export interface ProjectSettingsScreenProps {
 export default function ProjectSettingsScreen({ projectKey }: ProjectSettingsScreenProps) {
   const { projects } = useProjects();
   const project = useMemo(
-    () => projects.find((entry) => entry.projectKey === projectKey),
+    () => findProjectSettingsTarget(projects, projectKey),
     [projects, projectKey],
   );
   const editableHosts = useMemo(() => filterEditableHosts(project), [project]);
