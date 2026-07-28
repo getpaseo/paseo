@@ -28,7 +28,7 @@ import type {
 const DEFAULT_PI_COMMAND: [string, ...string[]] = [
   process.env.PI_COMMAND ?? process.env.PI_ACP_PI_COMMAND ?? "pi",
 ];
-const DEFAULT_COMMANDS_RPC_NAME = "get_commands";
+const DEFAULT_COMMANDS_RPC_NAME = "get_available_commands";
 
 /**
  * Pi RPC timeout policy:

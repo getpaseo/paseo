@@ -1208,7 +1208,7 @@ function createRuntime(logger: Logger, runtimeSettings?: ProviderRuntimeSettings
     logger,
     runtimeSettings,
     command: [PI_BINARY_COMMAND],
-    commandsRpcName: "get_commands",
+    commandsRpcName: "get_available_commands",
   });
 }
 

@@ -242,7 +242,7 @@ describe("PiCliRuntime", () => {
     expect(events).toEqual([{ type: "turn_start" }]);
   });
 
-  test("lists commands through the default Pi get_commands RPC", async () => {
+  test("lists commands through the default Pi get_available_commands RPC", async () => {
     const child = createPiChild();
     const commandTypes: string[] = [];
     replyToCommands(child, (command) => {
@@ -256,7 +256,7 @@ describe("PiCliRuntime", () => {
     await expect(session.getCommands()).resolves.toEqual([
       { name: "review", description: "Review changes", source: "extension" },
     ]);
-    expect(commandTypes).toEqual(["get_commands"]);
+    expect(commandTypes).toEqual(["get_available_commands"]);
   });
 
   test("keeps unicode line separators inside one JSONL record", async () => {
