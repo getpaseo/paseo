@@ -158,6 +158,13 @@ function shouldEmitTurnFailure(prompt: AgentPromptInput): boolean {
   return /emit\s+(?:a\s+)?synthetic\s+turn\s+failure/i.test(promptToText(prompt));
 }
 
+function parseSettledAssistantImageMarkdown(prompt: AgentPromptInput): string | null {
+  const match = /^emit settled assistant image markdown:\s*(!\[[^\]\r\n]*\]\(.+\))\s*$/i.exec(
+    promptToText(prompt),
+  );
+  return match?.[1] ?? null;
+}
+
 function parseMockQuestionPrompt(prompt: AgentPromptInput): MockQuestionPromptRequest | null {
   const text = promptToText(prompt);
   if (!/emit\s+(?:a\s+)?synthetic\s+questions?/i.test(text)) {
@@ -671,10 +678,13 @@ export class MockLoadTestAgentSession implements AgentSession {
     const stress = parseAgentStreamStressPrompt(prompt);
     const questionPrompt = parseMockQuestionPrompt(prompt);
     const structuredBranchName = parseStructuredBranchNamePrompt(prompt);
+    const settledAssistantImageMarkdown = parseSettledAssistantImageMarkdown(prompt);
     if (shouldEmitTurnFailure(prompt)) {
       this.scheduleFailedTurn(turn);
     } else if (structuredBranchName) {
-      this.scheduleStructuredJsonTurn(turn, structuredBranchName);
+      this.scheduleSettledAssistantTurn(turn, JSON.stringify(structuredBranchName));
+    } else if (settledAssistantImageMarkdown) {
+      this.scheduleSettledAssistantTurn(turn, settledAssistantImageMarkdown);
     } else if (shouldEmitPlanApprovalPrompt(prompt)) {
       this.schedulePlanApprovalTurn(turn);
     } else if (questionPrompt) {
@@ -889,14 +899,14 @@ export class MockLoadTestAgentSession implements AgentSession {
     turn.timer.unref?.();
   }
 
-  private scheduleStructuredJsonTurn(turn: ActiveTurn, result: Record<string, string>): void {
+  private scheduleSettledAssistantTurn(turn: ActiveTurn, finalText: string): void {
     turn.timer = setTimeout(() => {
-      this.emitStructuredJsonTurn(turn, result);
+      this.emitSettledAssistantTurn(turn, finalText);
     }, 0);
     turn.timer.unref?.();
   }
 
-  private emitStructuredJsonTurn(turn: ActiveTurn, result: Record<string, string>): void {
+  private emitSettledAssistantTurn(turn: ActiveTurn, finalText: string): void {
     if (this.activeTurn !== turn) {
       return;
     }
@@ -908,7 +918,6 @@ export class MockLoadTestAgentSession implements AgentSession {
       turnId: turn.turnId,
     });
 
-    const finalText = JSON.stringify(result);
     this.emitTimeline(turn.turnId, {
       type: "assistant_message",
       text: finalText,
