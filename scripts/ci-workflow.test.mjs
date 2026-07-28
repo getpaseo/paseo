@@ -156,6 +156,7 @@ test("PR routing follows test contracts instead of package consumers", () => {
     ["packages/protocol/src/messages.ts", ["format", "quality", "sdk"]],
     ["packages/client/src/client.ts", ["format", "quality", "sdk"]],
     ["packages/highlight/src/index.ts", ["format", "quality", "sdk"]],
+    ["packages/expo-two-way-audio/ios/AudioEngine.swift", ["app", "format", "quality"]],
     ["packages/relay/src/index.ts", ["format", "quality", "relay"]],
     ["docker/base/Dockerfile", []],
     ["nix/package.nix", []],
@@ -189,6 +190,10 @@ test("tooling and domain contracts use stable ownership boundaries", () => {
     ],
     [
       "packages/app/src/components/browser-webview-resident.ts",
+      ["app", "desktop_bridge", "format", "playwright", "quality"],
+    ],
+    [
+      "packages/app/src/browser-automation/handler.ts",
       ["app", "desktop_bridge", "format", "playwright", "quality"],
     ],
   ]);

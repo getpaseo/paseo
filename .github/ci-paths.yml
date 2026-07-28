@@ -23,9 +23,11 @@ format:
   - ".agents/**/*.{cjs,css,html,js,json,jsonc,jsx,md,mjs,ts,tsx,yaml,yml}"
   - ".github/**/*.{cjs,css,html,js,json,jsonc,jsx,md,mjs,ts,tsx,yaml,yml}"
   - "**/*.{cjs,css,html,js,json,jsonc,jsx,md,mjs,ts,tsx,yaml,yml}"
+  - "packages/expo-two-way-audio/**"
 
 quality:
   - "**/*.{cjs,js,json,jsx,mjs,ts,tsx}"
+  - "packages/expo-two-way-audio/**"
 
 hub:
   - "packages/cli/src/commands/hub/**"
@@ -45,10 +47,12 @@ desktop_bridge:
   - "packages/desktop/scripts/browser-*.mjs"
   - "packages/desktop/*.{json,yml}"
   - "packages/app/src/**/browser-*.{ts,tsx}"
+  - "packages/app/src/**/browser-*/**"
   - "packages/app/*.{cjs,js,json,ts}"
 
 app:
   - "packages/app/**"
+  - "packages/expo-two-way-audio/**"
 
 sdk:
   - "packages/client/**"
