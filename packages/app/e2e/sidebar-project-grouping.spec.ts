@@ -17,6 +17,7 @@ const SECONDARY_HOST_LABEL = "Secondary Host";
 const LEGACY_PRIMARY_HOST_ID = "project-grouping-legacy-primary";
 const LEGACY_SECONDARY_HOST_ID = "project-grouping-legacy-secondary";
 const SHARED_REMOTE_URL = "https://github.com/paseo-e2e/grouped-project.git";
+const SHARED_LEGACY_PROJECT_ID = "remote:github.com/paseo-e2e/grouped-project";
 
 interface HostProject {
   serverId: string;
@@ -100,7 +101,33 @@ async function removePersistedProjectGroupKeys(host: IsolatedHostDaemon): Promis
   expect(persisted.every((project) => !("projectGroupKey" in project))).toBe(true);
 }
 
-async function createReconciliationFixture(): Promise<{
+async function rewritePersistedProjectId(
+  host: IsolatedHostDaemon,
+  previousProjectId: string,
+  nextProjectId: string,
+): Promise<void> {
+  const projectsDirectory = path.join(host.paseoHome, "projects");
+  const projectsPath = path.join(projectsDirectory, "projects.json");
+  const workspacesPath = path.join(projectsDirectory, "workspaces.json");
+  const projects = JSON.parse(await readFile(projectsPath, "utf8")) as Array<
+    Record<string, unknown>
+  >;
+  const workspaces = JSON.parse(await readFile(workspacesPath, "utf8")) as Array<
+    Record<string, unknown>
+  >;
+  for (const project of projects) {
+    if (project.projectId === previousProjectId) project.projectId = nextProjectId;
+  }
+  for (const workspace of workspaces) {
+    if (workspace.projectId === previousProjectId) workspace.projectId = nextProjectId;
+  }
+  await Promise.all([
+    writeFile(projectsPath, JSON.stringify(projects)),
+    writeFile(workspacesPath, JSON.stringify(workspaces)),
+  ]);
+}
+
+async function createReconciliationFixture(options?: { sharedLegacyProjectId?: string }): Promise<{
   fixture: ReconciledCrossHostProject;
   cleanup: () => Promise<void>;
 }> {
@@ -116,12 +143,24 @@ async function createReconciliationFixture(): Promise<{
   const secondaryClient = await connectSeedClient({ port: secondaryHost.port });
 
   try {
-    const primary = await createProject(primaryClient, primaryRepo, primaryHost.serverId);
-    const secondary = await createProject(secondaryClient, secondaryRepo, secondaryHost.serverId);
+    let primary = await createProject(primaryClient, primaryRepo, primaryHost.serverId);
+    let secondary = await createProject(secondaryClient, secondaryRepo, secondaryHost.serverId);
     await primaryClient.close();
     await secondaryClient.close();
     await removePersistedProjectGroupKeys(primaryHost);
     await removePersistedProjectGroupKeys(secondaryHost);
+    if (options?.sharedLegacyProjectId) {
+      await Promise.all([
+        rewritePersistedProjectId(primaryHost, primary.projectId, options.sharedLegacyProjectId),
+        rewritePersistedProjectId(
+          secondaryHost,
+          secondary.projectId,
+          options.sharedLegacyProjectId,
+        ),
+      ]);
+      primary = { ...primary, projectId: options.sharedLegacyProjectId };
+      secondary = { ...secondary, projectId: options.sharedLegacyProjectId };
+    }
     await Promise.all([primaryHost.restart(), secondaryHost.restart()]);
     return {
       fixture: { primaryHost, secondaryHost, primary, secondary },
@@ -146,6 +185,7 @@ async function createReconciliationFixture(): Promise<{
 const test = base.extend<{
   crossHostProject: CrossHostProject;
   reconciledCrossHostProject: ReconciledCrossHostProject;
+  sharedLegacyIdCrossHostProject: ReconciledCrossHostProject;
 }>({
   crossHostProject: async ({ page: _page }, provide) => {
     const secondaryHost = await startIsolatedHostDaemon(SECONDARY_HOST_ID);
@@ -177,6 +217,16 @@ const test = base.extend<{
   },
   reconciledCrossHostProject: async ({ page: _page }, provide) => {
     const resource = await createReconciliationFixture();
+    try {
+      await provide(resource.fixture);
+    } finally {
+      await resource.cleanup();
+    }
+  },
+  sharedLegacyIdCrossHostProject: async ({ page: _page }, provide) => {
+    const resource = await createReconciliationFixture({
+      sharedLegacyProjectId: SHARED_LEGACY_PROJECT_ID,
+    });
     try {
       await provide(resource.fixture);
     } finally {
@@ -245,19 +295,33 @@ test.describe("Sidebar project grouping", () => {
 
   test("resets a rename draft when switching grouped-project hosts", async ({
     page,
-    crossHostProject,
+    sharedLegacyIdCrossHostProject,
   }) => {
+    expect(sharedLegacyIdCrossHostProject.primary.projectId).toBe(
+      sharedLegacyIdCrossHostProject.secondary.projectId,
+    );
     await gotoAppShell(page);
-    await addConnectedHostAndReload(page, {
-      serverId: crossHostProject.secondaryHost.serverId,
-      label: SECONDARY_HOST_LABEL,
-      port: crossHostProject.secondaryHost.port,
+    await addConnectedHostsAndReload(page, [
+      {
+        serverId: sharedLegacyIdCrossHostProject.primaryHost.serverId,
+        label: "Legacy Primary Host",
+        port: sharedLegacyIdCrossHostProject.primaryHost.port,
+      },
+      {
+        serverId: sharedLegacyIdCrossHostProject.secondaryHost.serverId,
+        label: "Legacy Secondary Host",
+        port: sharedLegacyIdCrossHostProject.secondaryHost.port,
+      },
+    ]);
+    await waitForConnectedHost(page, {
+      serverId: sharedLegacyIdCrossHostProject.primaryHost.serverId,
+      endpoint: `localhost:${sharedLegacyIdCrossHostProject.primaryHost.port}`,
     });
     await waitForConnectedHost(page, {
-      serverId: crossHostProject.secondaryHost.serverId,
-      endpoint: `localhost:${crossHostProject.secondaryHost.port}`,
+      serverId: sharedLegacyIdCrossHostProject.secondaryHost.serverId,
+      endpoint: `localhost:${sharedLegacyIdCrossHostProject.secondaryHost.port}`,
     });
-    await expectOneProjectContainsBothWorkspaces(page, crossHostProject);
+    await expectOneProjectContainsBothWorkspaces(page, sharedLegacyIdCrossHostProject);
     await openGroupedProjectSettings(page);
 
     await page.getByTestId("project-name-edit-button").click();
@@ -265,7 +329,9 @@ test.describe("Sidebar project grouping", () => {
     await nameInput.fill("Draft from the first host");
 
     await page.getByTestId("host-picker").click();
-    await page.getByTestId(`host-picker-item-${crossHostProject.secondary.serverId}`).click();
+    await page
+      .getByTestId(`host-picker-item-${sharedLegacyIdCrossHostProject.secondary.serverId}`)
+      .click();
 
     await expect(nameInput).not.toBeVisible();
     await page.getByTestId("project-name-edit-button").click();

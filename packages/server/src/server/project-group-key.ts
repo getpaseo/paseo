@@ -1,4 +1,5 @@
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { resolve, sep } from "node:path";
+import { getRealpathAwareRelativePath } from "../utils/path.js";
 
 /**
  * Derives the persisted, opaque equivalence key used to group projects across hosts.
@@ -23,17 +24,7 @@ export function deriveProjectGroupKey(input: {
 
 function deriveSelectedPath(rootPath: string, worktreeRoot: string | null): string | null {
   if (!worktreeRoot) return null;
-  const selectedPath = relative(resolve(worktreeRoot), resolve(rootPath));
-  if (
-    !selectedPath ||
-    selectedPath === "." ||
-    selectedPath === ".." ||
-    selectedPath.startsWith(`..${sep}`) ||
-    isAbsolute(selectedPath)
-  ) {
-    return null;
-  }
-  return selectedPath;
+  return getRealpathAwareRelativePath(worktreeRoot, rootPath) || null;
 }
 
 function encodeSelectedPath(selectedPath: string): string {

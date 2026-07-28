@@ -1,3 +1,5 @@
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 import { deriveProjectGroupKey } from "./project-group-key.js";
@@ -82,4 +84,29 @@ describe("deriveProjectGroupKey", () => {
       }),
     ).toBe(path.join(mainRepoRoot, "packages", "app"));
   });
+
+  test.skipIf(process.platform === "win32")(
+    "preserves a selected subproject reached through a symlink",
+    () => {
+      const tempDir = mkdtempSync(path.join(tmpdir(), "project-group-key-"));
+      try {
+        const worktreeRoot = path.join(tempDir, "repo");
+        const selectedRoot = path.join(worktreeRoot, "packages", "app");
+        const linkedRoot = path.join(tempDir, "app-link");
+        mkdirSync(selectedRoot, { recursive: true });
+        symlinkSync(selectedRoot, linkedRoot, "dir");
+
+        expect(
+          deriveProjectGroupKey({
+            rootPath: linkedRoot,
+            remoteUrl: "git@github.com:getpaseo/paseo.git",
+            worktreeRoot,
+            mainRepoRoot: worktreeRoot,
+          }),
+        ).toBe("remote:github.com/getpaseo/paseo#subdir:packages/app");
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+  );
 });
