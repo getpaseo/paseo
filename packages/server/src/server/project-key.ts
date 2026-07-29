@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { resolve, win32 } from "node:path";
 import { FORGE_DEFINITIONS } from "@getpaseo/protocol/forge-manifest";
 import { getRealpathAwareRelativePath } from "../utils/path.js";
 
@@ -33,10 +33,11 @@ export function deriveProjectKey(input: {
   const remoteKey = deriveRemoteProjectKey(input.remoteUrl);
   const selectedPath = deriveSelectedPath(input.rootPath, input.worktreeRoot);
   if (!remoteKey) {
-    const localPath =
+    const localPathParts =
       selectedPath && input.mainRepoRoot
-        ? resolve(input.mainRepoRoot, selectedPath)
-        : resolve(input.mainRepoRoot ?? input.rootPath);
+        ? [input.mainRepoRoot, selectedPath]
+        : [input.mainRepoRoot ?? input.rootPath];
+    const localPath = resolveLocalProjectPath(...localPathParts);
     return input.serverId
       ? `host:${input.serverId.length}:${input.serverId}:path:${localPath}`
       : localPath;
@@ -45,6 +46,12 @@ export function deriveProjectKey(input: {
   return selectedPath
     ? `${remoteKey}#subdir:${encodeSelectedPath(selectedPath, input.worktreeRoot ?? input.rootPath)}`
     : remoteKey;
+}
+
+function resolveLocalProjectPath(...parts: string[]): string {
+  return parts.some(looksLikeWindowsPath)
+    ? win32.resolve(...parts).toLowerCase()
+    : resolve(...parts);
 }
 
 function deriveSelectedPath(rootPath: string, worktreeRoot: string | null): string | null {
@@ -105,7 +112,7 @@ function parseScpRemote(remoteUrl: string): RemoteLocation | null {
     host: normalizedHost,
     path: remotePath,
     transport: null,
-    user: user && user !== "git" ? user : null,
+    user: user && (user !== "git" || !CLOUD_FORGE_HOSTS.has(host.toLowerCase())) ? user : null,
     preserveLeadingSlash,
     decodePercentEncoding: false,
     stripDotGitSuffix: CLOUD_FORGE_HOSTS.has(host.toLowerCase()),
@@ -128,10 +135,7 @@ function parseUrlRemote(remoteUrl: string): RemoteLocation | null {
       host,
       path: remotePath,
       transport: forgeHost || isSsh ? null : parsed.protocol.toLowerCase(),
-      user:
-        isSsh && !forgeHost && parsed.username && parsed.username !== "git"
-          ? decodeUrlComponent(parsed.username)
-          : null,
+      user: isSsh && !forgeHost && parsed.username ? decodeUrlComponent(parsed.username) : null,
       preserveLeadingSlash,
       decodePercentEncoding: true,
       stripDotGitSuffix: forgeHost !== null,

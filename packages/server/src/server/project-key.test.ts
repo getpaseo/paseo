@@ -219,6 +219,20 @@ describe("deriveProjectKey", () => {
     );
   });
 
+  test("preserves an explicit git user on generic SSH hosts", () => {
+    const rootPath = path.resolve("repo");
+    const derive = (remoteUrl: string) =>
+      deriveProjectKey({
+        rootPath,
+        remoteUrl,
+        worktreeRoot: rootPath,
+        mainRepoRoot: null,
+      });
+
+    expect(derive("git@example.com:repo.git")).not.toBe(derive("example.com:repo.git"));
+    expect(derive("ssh://git@example.com/repo.git")).not.toBe(derive("ssh://example.com/repo.git"));
+  });
+
   test("normalizes equivalent absolute SSH remote forms", () => {
     const rootPath = path.resolve("repo");
     const derive = (remoteUrl: string) =>
@@ -317,7 +331,7 @@ describe("deriveProjectKey", () => {
         worktreeRoot: rootPath,
         mainRepoRoot: null,
       }),
-    ).toBe("remote:[2001:db8::1]/getpaseo/paseo.git");
+    ).toBe("remote:git@[2001:db8::1]/getpaseo/paseo.git");
   });
 
   test("includes the selected path within a repository", () => {
@@ -420,6 +434,19 @@ describe("deriveProjectKey", () => {
         mainRepoRoot: "C:\\Repo",
       }),
     ).toBe("remote:github.com/getpaseo/paseo#subdir:Packages/App");
+  });
+
+  test("stabilizes host-local Windows paths across equivalent spellings", () => {
+    const derive = (rootPath: string) =>
+      deriveProjectKey({
+        rootPath,
+        remoteUrl: null,
+        worktreeRoot: null,
+        mainRepoRoot: null,
+        serverId: "host-a",
+      });
+
+    expect(derive("C:\\Users\\Paseo\\Repo")).toBe(derive("c:/users/paseo/repo/."));
   });
 
   test.skipIf(process.platform === "win32")(

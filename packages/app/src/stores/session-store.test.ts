@@ -263,6 +263,41 @@ describe("normalizeWorkspaceDescriptor", () => {
         mainRepoRoot: null,
       },
     });
+    expect(workspace.projectKey).toBe("remote:github.com/acme/app");
+  });
+
+  it("leaves legacy path-shaped placement keys host-local", () => {
+    const workspace = normalizeWorkspaceDescriptor({
+      id: "1",
+      projectId: "/repo/app",
+      projectDisplayName: "app",
+      projectRootPath: "/repo/app",
+      workspaceDirectory: "/repo/app",
+      projectKind: "git",
+      workspaceKind: "local_checkout",
+      name: "main",
+      archivingAt: null,
+      status: "done",
+      statusEnteredAt: null,
+      activityAt: null,
+      diffStat: null,
+      scripts: [],
+      project: {
+        projectKey: "/repo/app",
+        projectName: "app",
+        checkout: {
+          cwd: "/repo/app",
+          isGit: false,
+          currentBranch: null,
+          remoteUrl: null,
+          worktreeRoot: null,
+          isPaseoOwnedWorktree: false,
+          mainRepoRoot: null,
+        },
+      },
+    });
+
+    expect(workspace.projectKey).toBeNull();
   });
 });
 

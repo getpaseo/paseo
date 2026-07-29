@@ -170,8 +170,7 @@ export function normalizeWorkspaceDescriptor(
   return {
     id: normalizeWorkspaceOpaqueId(payload.id) ?? payload.id,
     projectId: payload.projectId,
-    // COMPAT(projectKey): added in v0.2.4 on 2026-07-29; remove after 2027-01-29.
-    projectKey: payload.projectKey ?? payload.project?.projectKey ?? null,
+    projectKey: normalizeWorkspaceProjectKey(payload),
     projectDisplayName: payload.projectDisplayName,
     projectCustomName: payload.projectCustomName ?? null,
     projectRootPath: payload.projectRootPath,
@@ -194,6 +193,15 @@ export function normalizeWorkspaceDescriptor(
     forge: payload.forge,
     project: payload.project,
   };
+}
+
+function normalizeWorkspaceProjectKey(payload: WorkspaceDescriptorPayload): string | null {
+  if (payload.projectKey !== undefined) return payload.projectKey;
+  // COMPAT(projectKey): added in v0.2.4 on 2026-07-29; remove after 2027-01-29.
+  // Older daemons used remote-shaped placement keys for cross-host identity. Their path-shaped
+  // placement keys remain absent here so resolveProjectKey can scope them to the host.
+  const legacyProjectKey = payload.project?.projectKey;
+  return legacyProjectKey?.startsWith("remote:") ? legacyProjectKey : null;
 }
 
 export interface EmptyProjectDescriptor {
