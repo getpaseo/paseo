@@ -4757,7 +4757,7 @@ test("replaceAgentRun stays running when a stale old terminal arrives before the
   unsubscribe();
 });
 
-test("applies live autonomous events while no foreground run is active", async () => {
+test("applies live autonomous events and preserves usage omitted from completion", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-live-events-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -4817,6 +4817,16 @@ test("applies live autonomous events while no foreground run is active", async (
     turnId: autonomousTurnId,
   });
   capturedSession!.pushEvent({
+    type: "usage_updated",
+    provider: "codex",
+    usage: {
+      inputTokens: 10,
+      contextWindowMaxTokens: 200_000,
+      contextWindowUsedTokens: 175,
+    },
+    turnId: autonomousTurnId,
+  });
+  capturedSession!.pushEvent({
     type: "timeline",
     provider: "codex",
     item: { type: "assistant_message", text: "AUTONOMOUS_PUMP_MESSAGE" },
@@ -4831,6 +4841,11 @@ test("applies live autonomous events while no foreground run is active", async (
 
   const updated = manager.getAgent(snapshot.id);
   expect(updated?.lifecycle).toBe("idle");
+  expect(updated?.lastUsage).toEqual({
+    inputTokens: 10,
+    contextWindowMaxTokens: 200_000,
+    contextWindowUsedTokens: 175,
+  });
   expect(manager.getTimeline(snapshot.id)).toContainEqual({
     type: "assistant_message",
     text: "AUTONOMOUS_PUMP_MESSAGE",
