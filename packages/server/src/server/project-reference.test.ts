@@ -62,6 +62,23 @@ describe("resolveProjectReference", () => {
     );
   });
 
+  test("preserves an archived opaque project when its path hint differs", async () => {
+    const archivedProject = project({
+      projectId: "archived-project-id",
+      projectKey: "remote:github.com/acme/app",
+      rootPath: "/old/app",
+      archivedAt: "2026-02-01T00:00:00.000Z",
+    });
+    const registry = {
+      get: async () => archivedProject,
+      list: async () => [archivedProject],
+    };
+
+    await expect(
+      resolveProjectReference(archivedProject.projectId, registry, ["/different/app"]),
+    ).resolves.toEqual(archivedProject);
+  });
+
   test("rejects a legacy alias when its path hint contradicts the remaining clone", async () => {
     const reference = "remote:github.com/acme/app";
     const remainingClone = project({

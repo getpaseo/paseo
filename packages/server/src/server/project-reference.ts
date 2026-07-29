@@ -21,6 +21,7 @@ export async function resolveProjectReference(
     if (matches.length === 1) return matches[0] ?? null;
   }
   if (pathHints.length > 0) {
+    if (direct && direct.projectId !== direct.projectKey) return direct;
     if (
       direct &&
       pathHints.some((pathHint) => createRealpathAwarePathMatcher(direct.rootPath)(pathHint))
