@@ -48,6 +48,13 @@ const historyStartSlotStyle: CSSProperties = {
   paddingBottom: 8,
 };
 
+// Keep the measurable history anchor in the DOM without breaking the item's
+// centered flex layout inside the conversation column.
+const mountedHistoryRowStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+};
+
 function isScrollContainerNearBottom(
   scrollContainer: Pick<HTMLElement, "scrollTop" | "clientHeight" | "scrollHeight">,
   thresholdPx = AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
@@ -580,9 +587,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   );
   const mountedHistoryRows = useMemo(() => {
     return segments.historyMounted.map((item, index) => (
-      <Fragment key={item.id}>
+      <div key={item.id} data-history-row-id={item.id} style={mountedHistoryRowStyle}>
         {renderHistoryMountedRow(item, index, segments.historyMounted)}
-      </Fragment>
+      </div>
     ));
   }, [renderHistoryMountedRow, segments.historyMounted]);
   const liveHeadRows = useMemo(() => {
