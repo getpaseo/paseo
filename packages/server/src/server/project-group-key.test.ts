@@ -57,6 +57,19 @@ describe("deriveProjectGroupKey", () => {
     ).toBe("remote:github.com/getpaseo/paseo");
   });
 
+  test("accepts an SCP-style remote with a bracketed IPv6 host", () => {
+    const rootPath = path.resolve("repo");
+
+    expect(
+      deriveProjectGroupKey({
+        rootPath,
+        remoteUrl: "git@[2001:db8::1]:getpaseo/paseo.git",
+        worktreeRoot: rootPath,
+        mainRepoRoot: null,
+      }),
+    ).toBe("remote:[2001:db8::1]/getpaseo/paseo");
+  });
+
   test("includes the selected path within a repository", () => {
     const worktreeRoot = path.resolve("repo");
     const rootPath = path.join(worktreeRoot, "packages", "app");

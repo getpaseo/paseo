@@ -1,5 +1,3 @@
-import { resolveProjectGroupKey } from "./project-group-key";
-
 interface ProjectSettingsTarget {
   projectKey: string;
   hosts: ReadonlyArray<{ serverId: string; projectId?: string }>;
@@ -8,7 +6,7 @@ interface ProjectSettingsTarget {
 function resolveHostLocalProjectKey(host: { serverId: string; projectId?: string }): string | null {
   const projectId = host.projectId?.trim();
   if (!projectId) return null;
-  return resolveProjectGroupKey({ serverId: host.serverId, projectId });
+  return `host:${host.serverId}:project:${projectId}`;
 }
 
 export function resolveProjectSettingsRouteKey(project: ProjectSettingsTarget): string {
