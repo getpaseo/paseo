@@ -3417,7 +3417,7 @@ describe("session workspace descriptors", () => {
     const messages: unknown[] = [];
     const workspace = {
       workspaceId: "ws-gh",
-      projectId: "remote:github.com/acme/app",
+      projectId: "prj_app",
       cwd: "/repo/app",
       kind: "local_checkout" as const,
       displayName: "app",
@@ -3425,7 +3425,8 @@ describe("session workspace descriptors", () => {
       archivedAt: null,
     };
     const project = {
-      projectId: "remote:github.com/acme/app",
+      projectId: "prj_app",
+      projectKey: "remote:github.com/acme/app",
       rootPath: "/repo/app",
       kind: "git" as const,
       displayName: "acme/app",
@@ -3436,7 +3437,10 @@ describe("session workspace descriptors", () => {
     const session = createSessionForTest({
       messages,
       workspaceRegistry: { get: vi.fn(), list: vi.fn().mockResolvedValue([workspace]) },
-      projectRegistry: { list: vi.fn().mockResolvedValue([project]), get: vi.fn() },
+      projectRegistry: {
+        list: vi.fn().mockResolvedValue([project]),
+        get: vi.fn().mockResolvedValue(project),
+      },
       workspaceGitService: {
         getSnapshot: vi.fn(),
         peekSnapshot: vi.fn(() =>
@@ -3465,8 +3469,10 @@ describe("session workspace descriptors", () => {
         entries: [
           expect.objectContaining({
             id: "ws-gh",
+            projectId: "prj_app",
+            projectKey: "remote:github.com/acme/app",
             project: expect.objectContaining({
-              projectKey: "remote:github.com/acme/app",
+              projectKey: "prj_app",
               projectName: "acme/app",
               workspaceName: "app",
               checkout: expect.objectContaining({

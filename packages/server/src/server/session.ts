@@ -1691,7 +1691,7 @@ export class Session {
       fallbackWorktreeRoot: snapshot?.git.repoRoot,
     });
     return {
-      projectKey: project.projectKey ?? project.projectId,
+      projectKey: project.projectId,
       projectName: resolveProjectDisplayName(project),
       workspaceName: resolveWorkspaceDisplayName(workspace),
       checkout,
@@ -4206,6 +4206,9 @@ export class Session {
     return {
       id: workspace.workspaceId,
       projectId: workspace.projectId,
+      ...(resolvedProjectRecord?.projectKey
+        ? { projectKey: resolvedProjectRecord.projectKey }
+        : {}),
       projectDisplayName: resolvedProjectRecord
         ? resolveProjectDisplayName(resolvedProjectRecord)
         : workspace.projectId,

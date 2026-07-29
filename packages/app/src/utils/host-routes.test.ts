@@ -216,6 +216,14 @@ describe("projects settings routes", () => {
     expect(decodeURIComponent(segment)).toBe(projectKey);
   });
 
+  it("preserves whitespace in opaque project keys", () => {
+    const projectKey = "host:6:host-a:project:10:/repo/foo ";
+    const route = buildProjectSettingsRoute(projectKey);
+    const segment = route.slice("/settings/projects/".length);
+
+    expect(decodeURIComponent(segment)).toBe(projectKey);
+  });
+
   it("keeps an already-decoded opaque project key unchanged", () => {
     const projectKey = "remote:github.com/acme/app#subdir:packages/my%20app";
     expect(normalizeProjectSettingsRouteKey(projectKey)).toBe(projectKey);

@@ -567,11 +567,10 @@ export function buildProjectsSettingsRoute() {
 }
 
 export function buildProjectSettingsRoute(projectKey: string) {
-  const normalized = trimNonEmpty(projectKey);
-  if (!normalized) {
+  if (!projectKey.trim()) {
     throw new Error("buildProjectSettingsRoute requires a non-empty projectKey");
   }
-  return `/settings/projects/${encodeSegment(normalized)}` as const;
+  return `/settings/projects/${encodeSegment(projectKey)}` as const;
 }
 
 export function normalizeProjectSettingsRouteKey(value: string | string[] | undefined): string {
