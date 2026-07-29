@@ -41,43 +41,14 @@ function makeAgent(overrides: Partial<Agent> & Pick<Agent, "id">): Agent {
   } as Agent;
 }
 
+// `selectPaseoAgentNodes` reads only `agents`, so the fixture supplies only
+// that. Spelling out every `SessionState` field made this test break whenever
+// an unrelated field was added to or removed from the store.
 function makeSession(agents: Agent[]): { sessions: Record<string, SessionState | undefined> } {
   const agentMap = new Map(agents.map((a) => [a.id, a]));
   return {
     sessions: {
-      [SERVER_ID]: {
-        serverId: SERVER_ID,
-        client: null,
-        clientGeneration: 0,
-        viewedTimelineSync: null,
-        serverInfo: null,
-        hasHydratedAgents: true,
-        hasHydratedWorkspaces: true,
-        isPlayingAudio: false,
-        focusedAgentId: null,
-        focusedTerminalId: null,
-        messages: [],
-        currentAssistantMessage: "",
-        agentStreamTail: new Map(),
-        agentStreamHead: new Map(),
-        agentTimelineCursor: new Map(),
-        agentTimelineHasOlder: new Map(),
-        agentTimelineOlderFetchInFlight: new Map(),
-        historySyncGeneration: 0,
-        agentHistorySyncGeneration: new Map(),
-        agentAuthoritativeHistoryApplied: new Map(),
-        initializingAgents: new Map(),
-        agents: agentMap,
-        workspaceAgentActivity: new Map(),
-        agentDetails: new Map(),
-        workspaces: new Map(),
-        emptyProjects: new Map(),
-        restoringWorkspaces: new Map(),
-        pendingPermissions: new Map(),
-        fileExplorer: new Map(),
-        queuedMessages: new Map(),
-        messageSubmissions: new Map(),
-      },
+      [SERVER_ID]: { agents: agentMap } as unknown as SessionState,
     },
   };
 }
