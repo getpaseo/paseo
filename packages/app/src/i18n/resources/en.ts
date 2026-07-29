@@ -1007,6 +1007,7 @@ export const en = {
     refPicker: {
       startingRef: "Starting ref",
       chooseStart: "Choose where to start from",
+      defaultBranch: "Default branch",
       intoBase: "into {{baseRef}}",
       searching: "Searching...",
       noMatchingRefs: "No matching refs.",

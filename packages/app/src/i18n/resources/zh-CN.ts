@@ -986,6 +986,7 @@ export const zhCN: TranslationResources = {
     refPicker: {
       startingRef: "起始 ref",
       chooseStart: "选择起始位置",
+      defaultBranch: "默认分支",
       intoBase: "进入 {{baseRef}}",
       searching: "正在搜索...",
       noMatchingRefs: "没有匹配的 refs。",
