@@ -34,39 +34,78 @@ function encodeSelectedPath(selectedPath: string): string {
 function deriveRemoteProjectGroupKey(remoteUrl: string | null): string | null {
   const trimmed = remoteUrl?.trim();
   if (!trimmed) return null;
-
-  let host: string | null = null;
-  let remotePath: string | null = null;
-  let preserveLeadingSlash = false;
-  const scpLike =
-    !trimmed.includes("://") && !/^[A-Za-z]:[\\/]/.test(trimmed)
-      ? trimmed.match(/^(?:[^@/:]+@)?(\[[^\]]+\]|[^/:]+):(.+)$/)
-      : null;
-  if (scpLike) {
-    host = scpLike[1] ?? null;
-    remotePath = scpLike[2] ?? null;
-    preserveLeadingSlash = remotePath?.startsWith("/") ?? false;
-  } else if (trimmed.includes("://")) {
-    try {
-      const parsed = new URL(trimmed);
-      host = deriveRemoteHost(parsed);
-      remotePath = parsed.pathname ? parsed.pathname.replace(/^\/+/, "") : null;
-    } catch {
-      return null;
-    }
-  }
-
-  if (!host || !remotePath) return null;
-  const cleanedPath = normalizeRemotePath(remotePath, preserveLeadingSlash);
+  const remote = parseRemoteLocation(trimmed);
+  if (!remote) return null;
+  const cleanedPath = normalizeRemotePath(
+    remote.path,
+    remote.preserveLeadingSlash,
+    remote.decodePercentEncoding,
+  );
   if (!cleanedPath) return null;
-  return `remote:${host.toLowerCase()}/${cleanedPath}`;
+  const userPrefix = remote.relativePathUser
+    ? `${encodeURIComponent(remote.relativePathUser)}@`
+    : "";
+  return `remote:${userPrefix}${remote.host.toLowerCase()}/${cleanedPath}`;
 }
 
-function normalizeRemotePath(remotePath: string, preserveLeadingSlash: boolean): string {
+interface RemoteLocation {
+  host: string;
+  path: string;
+  relativePathUser: string | null;
+  preserveLeadingSlash: boolean;
+  decodePercentEncoding: boolean;
+}
+
+function parseRemoteLocation(remoteUrl: string): RemoteLocation | null {
+  return remoteUrl.includes("://") ? parseUrlRemote(remoteUrl) : parseScpRemote(remoteUrl);
+}
+
+function parseScpRemote(remoteUrl: string): RemoteLocation | null {
+  if (/^[A-Za-z]:/.test(remoteUrl)) return null;
+  const match = remoteUrl.match(/^(?:(?<user>[^@/:]+)@)?(?<host>\[[^\]]+\]|[^/:]+):(?<path>.+)$/);
+  const host = match?.groups?.host;
+  const remotePath = match?.groups?.path;
+  if (!host || !remotePath) return null;
+
+  const preserveLeadingSlash = remotePath.startsWith("/");
+  const user = match.groups?.user;
+  return {
+    host,
+    path: remotePath,
+    relativePathUser: user && user !== "git" && !preserveLeadingSlash ? user : null,
+    preserveLeadingSlash,
+    decodePercentEncoding: false,
+  };
+}
+
+function parseUrlRemote(remoteUrl: string): RemoteLocation | null {
+  try {
+    const parsed = new URL(remoteUrl);
+    const host = deriveRemoteHost(parsed);
+    const remotePath = parsed.pathname ? parsed.pathname.replace(/^\/+/, "") : null;
+    if (!host || !remotePath) return null;
+    return {
+      host,
+      path: remotePath,
+      relativePathUser: null,
+      preserveLeadingSlash: false,
+      decodePercentEncoding: true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeRemotePath(
+  remotePath: string,
+  preserveLeadingSlash: boolean,
+  decodePercentEncoding: boolean,
+): string {
   const trimmedPath = remotePath.trim().replace(/\/+$/, "");
   const pathForEncoding = preserveLeadingSlash ? trimmedPath : trimmedPath.replace(/^\/+/, "");
   const segments = pathForEncoding.split("/");
   const decodedSegments = segments.map((segment) => {
+    if (!decodePercentEncoding) return segment;
     try {
       return decodeURIComponent(segment);
     } catch {

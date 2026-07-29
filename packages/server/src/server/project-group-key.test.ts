@@ -70,6 +70,49 @@ describe("deriveProjectGroupKey", () => {
     expect(derive("example.com:srv/repo.git")).not.toBe(derive("example.com:/srv/repo.git"));
   });
 
+  test("distinguishes SSH users for home-relative SCP paths", () => {
+    const rootPath = path.resolve("repo");
+    const derive = (remoteUrl: string) =>
+      deriveProjectGroupKey({
+        rootPath,
+        remoteUrl,
+        worktreeRoot: rootPath,
+        mainRepoRoot: null,
+      });
+
+    expect(derive("alice@git.example.com:repo.git")).not.toBe(
+      derive("bob@git.example.com:repo.git"),
+    );
+  });
+
+  test("keeps percent sequences literal in SCP paths", () => {
+    const rootPath = path.resolve("repo");
+    const derive = (remoteUrl: string) =>
+      deriveProjectGroupKey({
+        rootPath,
+        remoteUrl,
+        worktreeRoot: rootPath,
+        mainRepoRoot: null,
+      });
+
+    expect(derive("git.example.com:acme/repo%41.git")).not.toBe(
+      derive("git.example.com:acme/repoA.git"),
+    );
+  });
+
+  test("does not parse drive-relative Windows paths as SCP remotes", () => {
+    const rootPath = path.resolve("repo");
+
+    expect(
+      deriveProjectGroupKey({
+        rootPath,
+        remoteUrl: "C:repo",
+        worktreeRoot: rootPath,
+        mainRepoRoot: null,
+      }),
+    ).toBe(rootPath);
+  });
+
   test.each(["git+ssh:", "ssh+git:"])("normalizes SSH alias default ports for %s", (scheme) => {
     const rootPath = path.resolve("repo");
 
