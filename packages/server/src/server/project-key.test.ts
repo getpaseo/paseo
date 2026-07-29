@@ -27,6 +27,12 @@ describe("deriveProjectKey", () => {
     );
   });
 
+  test("groups an SSH remote whether or not its default port is spelled out", () => {
+    expect(derive("ssh://git@github.com:22/getpaseo/paseo.git")).toBe(
+      derive("ssh://git@github.com/getpaseo/paseo.git"),
+    );
+  });
+
   test("keeps projects without a remote host-local", () => {
     const hostA = deriveProjectKey({
       rootPath,
