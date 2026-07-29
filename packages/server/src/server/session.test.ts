@@ -4906,7 +4906,7 @@ describe("agent config setters", () => {
   } {
     return {
       waitForAgentClose: vi.fn().mockResolvedValue(undefined),
-      touchAgentActivity: vi.fn(() => ({ id: "agent-1" })),
+      getAgent: vi.fn(() => ({ id: "agent-1" })),
       ...overrides,
     };
   }

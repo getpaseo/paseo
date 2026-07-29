@@ -64,6 +64,7 @@ import {
   sendQueuedComposerMessageNow,
   toggleGithubAttachmentFromPicker,
   uploadFileAttachments,
+  type AgentStreamWriter,
   type QueueWriter,
   type QueuedComposerMessage,
 } from "@/composer/actions";
@@ -90,7 +91,6 @@ import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import { submitAgentInput } from "@/composer/submit";
-import { createMessageSubmissionWriter } from "@/composer/submission/writer";
 import { ComposerKeyboardScopeProvider } from "@/composer/keyboard-scope";
 import { useAppSettings } from "@/hooks/use-settings";
 import { isWeb, isNative } from "@/constants/platform";
@@ -1079,6 +1079,8 @@ export function Composer({
   const queuedMessages = queuedMessagesRaw ?? EMPTY_ARRAY;
 
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
+  const setAgentStreamTail = useSessionStore((state) => state.setAgentStreamTail);
+  const setAgentStreamHead = useSessionStore((state) => state.setAgentStreamHead);
 
   const isCompactFormFactor = useIsCompactFormFactor();
   const isCompactLayout = resolveCompactLayout(isCompactLayoutOverride, isCompactFormFactor);
@@ -1281,6 +1283,12 @@ export function Composer({
       if (!client) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
+      const stream: AgentStreamWriter = {
+        getTail: (id) => useSessionStore.getState().sessions[serverId]?.agentStreamTail?.get(id),
+        getHead: (id) => useSessionStore.getState().sessions[serverId]?.agentStreamHead?.get(id),
+        setHead: (updater) => setAgentStreamHead(serverId, updater),
+        setTail: (updater) => setAgentStreamTail(serverId, updater),
+      };
       await dispatchComposerAgentMessage({
         client,
         agentId: targetAgentId,
@@ -1290,11 +1298,19 @@ export function Composer({
           supportsForgeAttachments: supportsForgeSearch,
         }),
         encodeImages,
-        submission: createMessageSubmissionWriter(serverId),
+        stream,
       });
       onAttentionPromptSend?.();
     };
-  }, [client, onAttentionPromptSend, serverId, supportsForgeSearch, t]);
+  }, [
+    client,
+    onAttentionPromptSend,
+    serverId,
+    setAgentStreamTail,
+    setAgentStreamHead,
+    supportsForgeSearch,
+    t,
+  ]);
 
   useEffect(() => {
     onSubmitMessageRef.current = onSubmitMessage;

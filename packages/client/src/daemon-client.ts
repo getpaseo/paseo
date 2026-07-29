@@ -324,11 +324,6 @@ export interface SendMessageOptions {
   attachments?: SendAgentMessageRequest["attachments"];
 }
 
-export interface SendMessageResult {
-  /** Undefined when connected to a daemon predating message submission disposition. */
-  outOfBand?: boolean;
-}
-
 export interface AgentAttentionRequiredNotification {
   agentId: string;
   reason: "finished" | "error" | "permission";
@@ -2864,7 +2859,7 @@ export class DaemonClient {
     agentId: string,
     text: string,
     options?: SendMessageOptions,
-  ): Promise<SendMessageResult> {
+  ): Promise<void> {
     const requestId = this.createRequestId();
     const messageId = options?.messageId ?? crypto.randomUUID();
     const message = SessionInboundMessageSchema.parse({
@@ -2893,7 +2888,6 @@ export class DaemonClient {
     if (!payload.accepted) {
       throw new Error(payload.error ?? "sendAgentMessage rejected");
     }
-    return payload.outOfBand === undefined ? {} : { outOfBand: payload.outOfBand };
   }
 
   async sendMessage(agentId: string, text: string, options?: SendMessageOptions): Promise<void> {

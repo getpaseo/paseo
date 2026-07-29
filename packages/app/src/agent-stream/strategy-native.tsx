@@ -24,6 +24,7 @@ import type { StreamItem } from "@/types/stream";
 import type { Theme } from "@/styles/theme";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useBottomAnchorController } from "./bottom-anchor-controller";
+import { useScrollKeyboardDismiss } from "./scroll-keyboard-dismiss/use-scroll-keyboard-dismiss";
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./strategy";
 import {
   createStreamStrategy,
@@ -52,7 +53,6 @@ const historyStartSlotStyle: ViewStyle = {
   paddingTop: 4,
   paddingBottom: 8,
 };
-
 interface HistoryRowDisplayVariants {
   regular?: StreamItem;
   compact?: StreamItem;
@@ -110,6 +110,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   });
   const scrollOffsetYRef = useRef(0);
   const isUserScrollActiveRef = useRef(false);
+  const scrollKeyboardDismiss = useScrollKeyboardDismiss();
   const userScrollEndFrameIdRef = useRef<number | null>(null);
   const programmaticScrollEventBudgetRef = useRef(0);
   const [isNativeViewportSettling, setIsNativeViewportSettling] = useState(false);
@@ -335,6 +336,8 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
     const previousOffsetY = scrollOffsetYRef.current;
     scrollOffsetYRef.current = contentOffset.y;
+    scrollKeyboardDismiss.onScroll(event);
+
     streamViewportMetricsRef.current = {
       contentHeight: Math.max(0, contentSize.height),
       viewportWidth: Math.max(0, layoutMeasurement.width),
@@ -365,7 +368,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     }
   });
 
-  const handleScrollBeginDrag = useStableEvent(() => {
+  const handleScrollBeginDrag = useStableEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     if (!isLoadingOlderHistory) {
       historyStartPaginationStateRef.current = rearmHistoryStartPagination(
         historyStartPaginationStateRef.current,
@@ -373,6 +376,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     }
     clearPendingUserScrollEnd();
     isUserScrollActiveRef.current = true;
+    scrollKeyboardDismiss.onScrollBeginDrag(event);
     bottomAnchorController.beginUserScroll();
     evaluateHistoryStart();
   });
@@ -381,6 +385,8 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   // gesture position now because layout may move the viewport in the meantime.
   const handleScrollEndDrag = useStableEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const isNearBottom = isScrollEventNearBottom(event);
+    scrollKeyboardDismiss.onScrollEndDrag(event);
+
     clearPendingUserScrollEnd();
     userScrollEndFrameIdRef.current = requestAnimationFrame(() => {
       userScrollEndFrameIdRef.current = null;

@@ -583,7 +583,6 @@ export class MockLoadTestAgentSession implements AgentSession {
   private modeId: string | null;
   private modelId: string | null;
   private readonly rewindError: string | null;
-  private remainingPromptRejections: number;
 
   constructor(options: { config: AgentSessionConfig; sessionId: string; logger?: Logger }) {
     this.id = options.sessionId;
@@ -594,13 +593,6 @@ export class MockLoadTestAgentSession implements AgentSession {
       typeof options.config.featureValues?.mockRewindError === "string"
         ? options.config.featureValues.mockRewindError
         : null;
-    const requestedPromptRejections = options.config.featureValues?.mockPromptRejections;
-    this.remainingPromptRejections =
-      typeof requestedPromptRejections === "number" &&
-      Number.isSafeInteger(requestedPromptRejections) &&
-      requestedPromptRejections > 0
-        ? requestedPromptRejections
-        : 0;
   }
 
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
@@ -618,10 +610,6 @@ export class MockLoadTestAgentSession implements AgentSession {
   ): Promise<{ turnId: string }> {
     if (this.activeTurn) {
       throw new Error("Mock load-test provider already has an active turn");
-    }
-    if (this.remainingPromptRejections > 0) {
-      this.remainingPromptRejections -= 1;
-      throw new Error("Requested mock prompt rejection");
     }
 
     const profile = resolveModelProfile(this.modelId);

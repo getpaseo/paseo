@@ -19,10 +19,9 @@ import {
 } from "@/stores/session-store";
 import type { StreamItem } from "@/types/stream";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
-import { getSendingClientMessageIds } from "@/composer/submission/model";
 
 const STORAGE_KEY = "@paseo:replica-cache";
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 1;
 const PERSIST_DELAY_MS = 750;
 const MAX_TIMELINE_ITEMS = 50;
 const MAX_CACHE_BYTES = 1024 * 1024;
@@ -371,22 +370,7 @@ export class ReplicaCache {
             (workspace) => workspace.workspaceDirectory === focusedAgent.cwd,
           ))
         : undefined;
-      const localSubmissionIds = new Set(
-        getSendingClientMessageIds(
-          focusedAgentId ? session.messageSubmissions.get(focusedAgentId) : undefined,
-        ),
-      );
-      const items = focusedAgentId
-        ? session.agentStreamTail
-            .get(focusedAgentId)
-            ?.filter(
-              (item) =>
-                item.kind !== "user_message" ||
-                item.messageId !== undefined ||
-                !item.clientMessageId ||
-                !localSubmissionIds.has(item.clientMessageId),
-            )
-        : undefined;
+      const items = focusedAgentId ? session.agentStreamTail.get(focusedAgentId) : undefined;
       const timeline =
         focusedAgent && items
           ? {
