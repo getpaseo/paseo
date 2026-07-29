@@ -985,8 +985,6 @@ export const ja: TranslationResources = {
       },
     },
     tree: {
-      empty: "エージェントもターミナルもありません",
-      loading: "読み込み中…",
       expandWorkspace: "ワークスペースツリーを展開",
       collapseWorkspace: "ワークスペースツリーを折りたたむ",
       expandAgent: "{{label}}を展開",

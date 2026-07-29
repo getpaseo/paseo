@@ -32,12 +32,16 @@ interface SidebarWorkspaceTreeItemProps {
  * Wraps a sidebar workspace row with a leading expand/collapse chevron and,
  * when expanded, the agent/terminal subtree.
  *
- * The chevron column is always present, on every workspace row, for two
- * reasons. It keeps every workspace title on the same left edge — deriving
- * "is this expandable?" from content made rows jump sideways the moment their
- * first agent appeared. And it means the terminals list, which costs an RPC to
- * read, only has to be fetched once a workspace is actually expanded rather
- * than for every row in the sidebar just to decide whether to draw a chevron.
+ * The chevron column is always *reserved*, on every workspace row, so titles
+ * share one left edge whether or not a workspace can expand. The chevron itself
+ * is only drawn when there is something to show, so an empty workspace is not
+ * expandable and never opens onto a blank subtree.
+ *
+ * Agents come from the session store, so they cost nothing. Terminals are read
+ * from the shared query cache, and probed once when the answer is not yet known
+ * (see `useSidebarWorkspaceTerminals`) — replica queries never expire, so that
+ * is at most one request per workspace per session and the chevron is accurate
+ * for terminal-only workspaces too.
  */
 export const SidebarWorkspaceTreeItem = memo(function SidebarWorkspaceTreeItem({
   workspaceKey,
@@ -57,13 +61,14 @@ export const SidebarWorkspaceTreeItem = memo(function SidebarWorkspaceTreeItem({
   );
 
   const agentTree = useWorkspaceAgentTree({ serverId, workspaceId });
-  const { terminals, isLoading: terminalsLoading } = useSidebarWorkspaceTerminals({
+  const { terminals } = useSidebarWorkspaceTerminals({
     serverId,
     workspaceId,
     workspaceDirectory,
-    enabled: expanded,
+    expanded,
   });
   const activeTab = useActiveTreeTab(serverId);
+  const hasContent = agentTree.length > 0 || terminals.length > 0;
 
   // Pre-existing provider subagents live only in the daemon's list until asked
   // for; live ones push themselves in. Hydrate on expand so both show up.
@@ -77,28 +82,32 @@ export const SidebarWorkspaceTreeItem = memo(function SidebarWorkspaceTreeItem({
   return (
     <View>
       <View style={styles.row}>
-        <Pressable
-          onPress={handleToggle}
-          accessibilityRole="button"
-          accessibilityLabel={
-            expanded ? t("sidebar.tree.collapseWorkspace") : t("sidebar.tree.expandWorkspace")
-          }
-          style={styles.chevronSlot}
-          hitSlop={8}
-        >
-          {expanded ? (
-            <ThemedChevronDown size={14} uniProps={chevronColorMapping} />
-          ) : (
-            <ThemedChevronRight size={14} uniProps={chevronColorMapping} />
-          )}
-        </Pressable>
+        {hasContent ? (
+          <Pressable
+            onPress={handleToggle}
+            accessibilityRole="button"
+            accessibilityLabel={
+              expanded ? t("sidebar.tree.collapseWorkspace") : t("sidebar.tree.expandWorkspace")
+            }
+            style={styles.chevronSlot}
+            hitSlop={8}
+          >
+            {expanded ? (
+              <ThemedChevronDown size={14} uniProps={chevronColorMapping} />
+            ) : (
+              <ThemedChevronRight size={14} uniProps={chevronColorMapping} />
+            )}
+          </Pressable>
+        ) : (
+          // Reserved but empty, so an empty workspace's title stays in column.
+          <View style={styles.chevronSlot} />
+        )}
         <View style={styles.rowContent}>{children}</View>
       </View>
-      {expanded ? (
+      {expanded && hasContent ? (
         <WorkspaceTreeNode
           agentTree={agentTree}
           terminals={terminals}
-          terminalsLoading={terminalsLoading}
           serverId={serverId}
           workspaceId={workspaceId}
           activeTab={activeTab}

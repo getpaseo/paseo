@@ -963,8 +963,6 @@ export const zhCN: TranslationResources = {
       },
     },
     tree: {
-      empty: "没有智能体或终端",
-      loading: "加载中…",
       expandWorkspace: "展开工作区树",
       collapseWorkspace: "折叠工作区树",
       expandAgent: "展开 {{label}}",

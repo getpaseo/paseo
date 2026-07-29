@@ -996,8 +996,6 @@ export const ru: TranslationResources = {
       },
     },
     tree: {
-      empty: "Нет агентов или терминалов",
-      loading: "Загрузка…",
       expandWorkspace: "Развернуть дерево рабочей области",
       collapseWorkspace: "Свернуть дерево рабочей области",
       expandAgent: "Развернуть {{label}}",

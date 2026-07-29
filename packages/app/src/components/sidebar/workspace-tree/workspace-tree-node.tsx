@@ -1,6 +1,5 @@
-import { memo, type ReactNode } from "react";
-import { Text, View } from "react-native";
-import { useTranslation } from "react-i18next";
+import { memo } from "react";
+import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import type { AgentTreeNode } from "./agent-tree";
@@ -19,7 +18,6 @@ export interface WorkspaceTreeTerminal {
 interface WorkspaceTreeNodeProps {
   agentTree: AgentTreeNode[];
   terminals: WorkspaceTreeTerminal[];
-  terminalsLoading: boolean;
   serverId: string;
   workspaceId: string;
   /** The tab currently being viewed on this server, or null. */
@@ -30,28 +28,16 @@ interface WorkspaceTreeNodeProps {
 export const WorkspaceTreeNode = memo(function WorkspaceTreeNode({
   agentTree,
   terminals,
-  terminalsLoading,
   serverId,
   workspaceId,
   activeTab,
   onWorkspacePress,
 }: WorkspaceTreeNodeProps) {
-  const { t } = useTranslation();
-
-  const hasAgents = agentTree.length > 0;
-  const hasTerminals = terminals.length > 0;
-
-  let content: ReactNode;
-  if (!hasAgents && !hasTerminals) {
-    content = (
-      <Text style={styles.emptyState}>
-        {terminalsLoading ? t("sidebar.tree.loading") : t("sidebar.tree.empty")}
-      </Text>
-    );
-  } else {
-    // Top-level agents and terminals are siblings at the same depth, so their
-    // icons and titles line up in one column.
-    content = (
+  // Top-level agents and terminals are siblings at the same depth, so their
+  // icons and titles line up in one column. The caller only renders this when
+  // there is something to show, so there is no empty case to handle.
+  return (
+    <View style={styles.subtree}>
       <View>
         {agentTree.map((node) => (
           <AgentTreeRow
@@ -79,10 +65,8 @@ export const WorkspaceTreeNode = memo(function WorkspaceTreeNode({
           />
         ))}
       </View>
-    );
-  }
-
-  return <View style={styles.subtree}>{content}</View>;
+    </View>
+  );
 });
 
 const styles = StyleSheet.create((theme) => ({
@@ -90,11 +74,5 @@ const styles = StyleSheet.create((theme) => ({
     // Line the subtree's chevron column up under the workspace row's label.
     paddingLeft: TREE_CHEVRON_SLOT_WIDTH,
     paddingBottom: theme.spacing[1],
-  },
-  emptyState: {
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foregroundMuted,
-    paddingLeft: TREE_CHEVRON_SLOT_WIDTH,
-    paddingVertical: theme.spacing[1],
   },
 }));

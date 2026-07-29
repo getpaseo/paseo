@@ -974,8 +974,6 @@ export const ar: TranslationResources = {
       },
     },
     tree: {
-      empty: "لا توجد وكلاء أو طرفيات",
-      loading: "جارٍ التحميل…",
       expandWorkspace: "توسيع شجرة مساحة العمل",
       collapseWorkspace: "طي شجرة مساحة العمل",
       expandAgent: "توسيع {{label}}",
