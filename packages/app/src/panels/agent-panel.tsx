@@ -72,7 +72,7 @@ import { WorkspaceDraftAgentTab } from "@/composer/draft/workspace-tab";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { buildDraftStoreKey, generateDraftId } from "@/stores/draft-keys";
 import { usePanelStore } from "@/stores/panel-store";
-import { selectAgentTimelineState, type Agent, useSessionStore } from "@/stores/session-store";
+import { type Agent, useSessionStore } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import type { Theme } from "@/styles/theme";
@@ -792,12 +792,11 @@ function ChatAgentContent({
   const historySyncGeneration = useSessionStore(
     (state) => state.sessions[serverId]?.historySyncGeneration ?? 0,
   );
-  const replicaTimelineStatus = useSessionStore((state) =>
+  const hasAppliedAuthoritativeHistory = useSessionStore((state) =>
     agentId
-      ? selectAgentTimelineState(state.sessions[serverId], agentId).status
-      : ("cold" as const),
+      ? state.sessions[serverId]?.agentAuthoritativeHistoryApplied?.get(agentId) === true
+      : false,
   );
-  const hasAppliedAuthoritativeHistory = replicaTimelineStatus === "synced";
   const agentHistorySyncGeneration = useSessionStore((state) =>
     agentId ? (state.sessions[serverId]?.agentHistorySyncGeneration?.get(agentId) ?? -1) : -1,
   );
@@ -833,8 +832,7 @@ function ChatAgentContent({
     kind: "idle",
   });
 
-  const hasHydratedHistoryBefore =
-    hasAppliedAuthoritativeHistory || replicaTimelineStatus === "painted";
+  const hasHydratedHistoryBefore = hasAppliedAuthoritativeHistory;
 
   const attentionController = useAgentAttentionClear({
     agentId,

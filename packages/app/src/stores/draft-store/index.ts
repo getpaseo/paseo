@@ -8,7 +8,6 @@ import {
   persistAttachmentFromDataUrl,
   persistAttachmentFromFileUri,
 } from "@/attachments/service";
-import { collectRetainedAttachmentIds } from "@/attachments/gc-retention";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { useSessionStore, type SessionState } from "@/stores/session-store";
 import { useWorkspaceAttachmentsStore } from "@/attachments/workspace-attachments-store";
@@ -137,9 +136,6 @@ async function runAttachmentGc(): Promise<void> {
 
   const referencedIds = new Set<string>();
   for (const id of useDraftStore.getState().collectActiveAttachmentIds()) {
-    referencedIds.add(id);
-  }
-  for (const id of collectRetainedAttachmentIds()) {
     referencedIds.add(id);
   }
 

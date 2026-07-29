@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   createImageSourceCacheKey,
-  createPreviewAttachmentId,
   fileUriToPath,
   localFileSourceToPath,
   parseDataUrl,
@@ -86,30 +85,5 @@ describe("parseImageDataUrl", () => {
 
   it("ignores SVG data URLs", () => {
     expect(parseImageDataUrl("data:image/svg+xml;base64,PHN2ZyAvPg==")).toBeNull();
-  });
-
-  it("distinguishes image data that differs only in the middle", () => {
-    const prefix = "a".repeat(64);
-    const suffix = "z".repeat(64);
-    const first = `data:image/png;base64,${prefix}${"b".repeat(256)}${suffix}`;
-    const second = `data:image/png;base64,${prefix}${"c".repeat(256)}${suffix}`;
-
-    expect(createImageSourceCacheKey(first)).not.toBe(createImageSourceCacheKey(second));
-  });
-
-  it("gives equal-length preview content distinct attachment identities", () => {
-    expect(
-      createPreviewAttachmentId({
-        mimeType: "image/png",
-        contentLength: 512,
-        contentKey: "first-content",
-      }),
-    ).not.toBe(
-      createPreviewAttachmentId({
-        mimeType: "image/png",
-        contentLength: 512,
-        contentKey: "second-content",
-      }),
-    );
   });
 });

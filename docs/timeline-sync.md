@@ -37,12 +37,6 @@ Initialization timeouts guard lack of catch-up progress, not the full multi-page
 
 The first load of an agent without a local cursor is different: it fetches a bounded latest tail page. Older history remains user-driven by scrolling upward.
 
-Reaching the history-start threshold loads one older page and preserves the visible content anchor.
-Cursor progress does not trigger another page. The user must leave and return to the threshold unless
-the anchored page still leaves the viewport at history start, as with short or compacted content; in
-that case pagination continues as one loading operation until the page fills the viewport or history
-is exhausted.
-
 ## Durable item anchors
 
 Provider message IDs are not guaranteed for every displayed item. Paseo-generated system errors are one example. Rendered item indices are not durable either because pagination and projection can merge source rows.
@@ -66,22 +60,6 @@ recomposition while the runtime still owns the same directory snapshot and timel
 
 Removing the host from the registry is the destructive boundary: it stops the runtime and clears the
 session and host-scoped setup state together.
-
-The durable replica cache is a display cache, not a synchronization checkpoint. Its timeline record
-contains only the focused `agentId` and a truncated item tail. It never persists a cursor, epoch,
-older-history availability, authority status, or sync generation because those facts would describe
-the complete source dataset rather than the truncated display dataset.
-
-Restoring that cache produces a painted timeline: the items may render immediately, but the first
-daemon timeline request is still `tail`. A successful tail response atomically establishes canonical
-items, range, and older-history availability. Live rows received between cache paint and that tail
-response stay in the separate live head, do not advance a cursor or trigger gap recovery, and are
-reconciled with the authoritative tail and subsequent catch-up.
-
-Every daemon-derived live item carries its timeline epoch and sequence position. Bootstrap
-replacement keeps only positioned rows newer than the page it installs, while unresolved local
-submissions remain governed by the submission registry. This prevents a page from duplicating rows
-it already covers without making the display replica authoritative.
 
 ## Selective and legacy delivery
 

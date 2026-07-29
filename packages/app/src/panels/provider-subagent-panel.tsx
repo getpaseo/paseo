@@ -104,12 +104,10 @@ function ProviderSubagentPanel() {
       .catch(() => undefined);
   }, [client, serverId, supported, target.parentAgentId, target.subagentId]);
 
-  const loadOlder = useCallback((): boolean => {
-    if (!client || !supported || isLoadingOlder || !timeline?.hasOlder || !timeline.epoch) {
-      return false;
-    }
+  const loadOlder = useCallback(() => {
+    if (!client || !supported || isLoadingOlder || !timeline?.hasOlder || !timeline.epoch) return;
     const firstSeq = timeline.rows.size ? Math.min(...timeline.rows.keys()) : null;
-    if (firstSeq === null) return false;
+    if (firstSeq === null) return;
     setIsLoadingOlder(true);
     void client
       .fetchProviderSubagentTimeline(target.parentAgentId, target.subagentId, {
@@ -123,7 +121,6 @@ function ProviderSubagentPanel() {
       })
       .catch(() => undefined)
       .finally(() => setIsLoadingOlder(false));
-    return true;
   }, [
     client,
     isLoadingOlder,

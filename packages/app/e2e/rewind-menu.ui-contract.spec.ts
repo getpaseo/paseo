@@ -2,7 +2,6 @@ import type { Locator } from "@playwright/test";
 import { expect, test, type Page } from "./fixtures";
 import { openAgentRoute, seedMockAgentWorkspace } from "./helpers/mock-agent";
 import { installDaemonWebSocketGate } from "./helpers/daemon-websocket-gate";
-import { scrollChatAwayFromBottom } from "./helpers/agent-bottom-anchor";
 import {
   composerLocator,
   expectComposerDraft,
@@ -192,10 +191,6 @@ test.describe("Rewind sheet", () => {
       await expect(page.getByText("Cycle 1", { exact: true })).toBeVisible();
       await expectUserMessageCount(page, 2);
 
-      await scrollChatAwayFromBottom(page, {
-        deltaY: -900,
-        minDistanceFromBottom: 300,
-      });
       await userMessage(page, firstPrompt).hover();
       await page.getByTestId("rewind-menu-trigger").first().click();
       const rewindSheet = page.getByTestId("rewind-menu-content");

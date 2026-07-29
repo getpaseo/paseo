@@ -336,6 +336,8 @@ export interface AgentTimelineCursorState {
 export interface SessionReplicaTimeline {
   agentId: string;
   items: StreamItem[];
+  cursor: AgentTimelineCursorState | null;
+  hasOlder: boolean;
 }
 
 export interface SessionReplica {
@@ -343,33 +345,6 @@ export interface SessionReplica {
   workspaces: Map<string, WorkspaceDescriptor>;
   emptyProjects: Map<string, EmptyProjectDescriptor>;
   timeline: SessionReplicaTimeline | null;
-}
-
-export type AgentTimelineState =
-  | { status: "cold" }
-  | { status: "painted"; items: StreamItem[] }
-  | {
-      status: "synced";
-      items: StreamItem[];
-      range: AgentTimelineCursorState | null;
-      older: "available" | "none";
-    };
-
-export function selectAgentTimelineState(
-  session: SessionState | undefined,
-  agentId: string,
-): AgentTimelineState {
-  if (!session) return { status: "cold" };
-  const items = session.agentStreamTail.get(agentId) ?? [];
-  if (session.agentAuthoritativeHistoryApplied.get(agentId) === true) {
-    return {
-      status: "synced",
-      items,
-      range: session.agentTimelineCursor.get(agentId) ?? null,
-      older: session.agentTimelineHasOlder.get(agentId) === true ? "available" : "none",
-    };
-  }
-  return items.length > 0 ? { status: "painted", items } : { status: "cold" };
 }
 
 export type WorkspaceRestoreStatus = "restoring" | "failed" | "needs-host-upgrade";
@@ -544,18 +519,6 @@ interface SessionStoreActions {
     serverId: string,
     agentId: string,
     applied: boolean,
-  ) => void;
-  applyAgentTimelineResponseState: (
-    serverId: string,
-    agentId: string,
-    state: {
-      items: StreamItem[];
-      head: StreamItem[];
-      range: AgentTimelineCursorState | null;
-      older: "available" | "none";
-      synchronized: boolean;
-      acknowledgedClientMessageIds: string[];
-    },
   ) => void;
 
   // Initializing agents
@@ -795,8 +758,16 @@ export const useSessionStore = create<SessionStore>()(
           const session = createInitialSessionState(serverId, null);
           const timeline = replica.timeline;
           const agentStreamTail = new Map<string, StreamItem[]>();
+          const agentTimelineCursor = new Map<string, AgentTimelineCursorState>();
+          const agentTimelineHasOlder = new Map<string, boolean>();
+          const agentAuthoritativeHistoryApplied = new Map<string, boolean>();
+          const agentHistorySyncGeneration = new Map<string, number>();
           if (timeline) {
             agentStreamTail.set(timeline.agentId, timeline.items);
+            agentTimelineHasOlder.set(timeline.agentId, timeline.hasOlder);
+            agentAuthoritativeHistoryApplied.set(timeline.agentId, true);
+            agentHistorySyncGeneration.set(timeline.agentId, session.historySyncGeneration);
+            if (timeline.cursor) agentTimelineCursor.set(timeline.agentId, timeline.cursor);
           }
           const agentLastActivity = new Map(prev.agentLastActivity);
           for (const agent of replica.agents.values()) {
@@ -813,6 +784,10 @@ export const useSessionStore = create<SessionStore>()(
                 workspaces: replica.workspaces,
                 emptyProjects: replica.emptyProjects,
                 agentStreamTail,
+                agentTimelineCursor,
+                agentTimelineHasOlder,
+                agentAuthoritativeHistoryApplied,
+                agentHistorySyncGeneration,
               },
             },
             agentLastActivity,
@@ -1476,61 +1451,6 @@ export const useSessionStore = create<SessionStore>()(
               [serverId]: {
                 ...session,
                 agentAuthoritativeHistoryApplied: nextApplied,
-              },
-            },
-          };
-        });
-      },
-
-      applyAgentTimelineResponseState: (serverId, agentId, state) => {
-        set((prev) => {
-          const session = prev.sessions[serverId];
-          if (!session) return prev;
-
-          const nextTail = new Map(session.agentStreamTail);
-          nextTail.set(agentId, state.items);
-          const nextHead = new Map(session.agentStreamHead);
-          if (state.head.length > 0) nextHead.set(agentId, state.head);
-          else nextHead.delete(agentId);
-          const nextCursor = new Map(session.agentTimelineCursor);
-          if (state.range) nextCursor.set(agentId, state.range);
-          else nextCursor.delete(agentId);
-          const nextHasOlder = new Map(session.agentTimelineHasOlder);
-          nextHasOlder.set(agentId, state.older === "available");
-          const nextAuthoritative = new Map(session.agentAuthoritativeHistoryApplied);
-          const nextSyncGeneration = new Map(session.agentHistorySyncGeneration);
-          const currentSubmissions = session.messageSubmissions.get(agentId) ?? [];
-          const observedSubmissions = observeMessageSubmissionCanonical(
-            currentSubmissions,
-            state.acknowledgedClientMessageIds,
-          );
-          let messageSubmissions = session.messageSubmissions;
-          if (observedSubmissions !== currentSubmissions) {
-            messageSubmissions = new Map(session.messageSubmissions);
-            if (observedSubmissions.length > 0) {
-              messageSubmissions.set(agentId, observedSubmissions);
-            } else {
-              messageSubmissions.delete(agentId);
-            }
-          }
-          if (state.synchronized) {
-            nextAuthoritative.set(agentId, true);
-            nextSyncGeneration.set(agentId, session.historySyncGeneration);
-          }
-
-          return {
-            ...prev,
-            sessions: {
-              ...prev.sessions,
-              [serverId]: {
-                ...session,
-                agentStreamTail: nextTail,
-                agentStreamHead: nextHead,
-                agentTimelineCursor: nextCursor,
-                agentTimelineHasOlder: nextHasOlder,
-                agentAuthoritativeHistoryApplied: nextAuthoritative,
-                agentHistorySyncGeneration: nextSyncGeneration,
-                messageSubmissions,
               },
             },
           };

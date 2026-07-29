@@ -4,7 +4,6 @@ import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import {
   normalizeEmptyProjectDescriptor,
   normalizeWorkspaceDescriptor,
-  selectAgentTimelineState,
   useSessionStore,
 } from "@/stores/session-store";
 import type { StreamItem } from "@/types/stream";
@@ -167,14 +166,13 @@ describe("ReplicaCache", () => {
     expect(session?.agents.get("agent-1")?.updatedAt).toBeInstanceOf(Date);
     expect(session?.workspaces.get("workspace-1")?.statusEnteredAt).toBeInstanceOf(Date);
     expect(session?.agentStreamTail.get("agent-1")).toEqual([message("message-1", "Cached")]);
-    expect(session?.agentAuthoritativeHistoryApplied).toEqual(new Map());
-    expect(session?.agentTimelineCursor).toEqual(new Map());
-    expect(session?.agentTimelineHasOlder).toEqual(new Map());
-    expect(session?.agentHistorySyncGeneration).toEqual(new Map());
-    expect(selectAgentTimelineState(session, "agent-1")).toEqual({
-      status: "painted",
-      items: [message("message-1", "Cached")],
+    expect(session?.agentAuthoritativeHistoryApplied.get("agent-1")).toBe(true);
+    expect(session?.agentTimelineCursor.get("agent-1")).toEqual({
+      epoch: "epoch-1",
+      startSeq: 1,
+      endSeq: 12,
     });
+    expect(session?.agentTimelineHasOlder.get("agent-1")).toBe(true);
   });
 
   it("persists only the focused agent view with a short timeline tail", async () => {
@@ -218,13 +216,6 @@ describe("ReplicaCache", () => {
     expect(Array.from(session?.emptyProjects.keys() ?? [])).toEqual([]);
     expect(Array.from(timelines?.keys() ?? [])).toEqual(["agent-2"]);
     expect(timelines?.get("agent-2")).toEqual(secondTimeline.slice(-50));
-
-    const persisted = JSON.parse(storage.values.get("@paseo:replica-cache") ?? "null") as {
-      version: number;
-      hosts: Array<{ timeline: Record<string, unknown> | null }>;
-    };
-    expect(persisted.version).toBe(2);
-    expect(Object.keys(persisted.hosts[0]?.timeline ?? {}).sort()).toEqual(["agentId", "items"]);
   });
 
   it("evicts the least recently written host when the cache exceeds its byte budget", async () => {
@@ -252,38 +243,14 @@ describe("ReplicaCache", () => {
     expect(Object.keys(useSessionStore.getState().sessions).sort()).toEqual(["host-a", "host-c"]);
   });
 
-  it("rejects version 1 cache data and overwrites it on flush", async () => {
+  it("drops malformed or unknown cache versions", async () => {
     const storage = new MemoryStorage();
-    storage.values.set(
-      "@paseo:replica-cache",
-      JSON.stringify({
-        version: 1,
-        hosts: [
-          {
-            serverId: SERVER_ID,
-            agents: [],
-            workspaces: [],
-            emptyProjects: [],
-            timeline: {
-              agentId: "agent-1",
-              items: [],
-              cursor: { epoch: "poisoned", startSeq: 1, endSeq: 100 },
-              hasOlder: false,
-            },
-          },
-        ],
-      }),
-    );
+    storage.values.set("@paseo:replica-cache", JSON.stringify({ version: 999, hosts: [] }));
     const cache = new ReplicaCache(storage);
     cache.setHosts([SERVER_ID]);
 
     await cache.restore();
-    await cache.flush();
 
     expect(useSessionStore.getState().sessions[SERVER_ID]).toBeUndefined();
-    expect(JSON.parse(storage.values.get("@paseo:replica-cache") ?? "null")).toEqual({
-      version: 2,
-      hosts: [],
-    });
   });
 });
