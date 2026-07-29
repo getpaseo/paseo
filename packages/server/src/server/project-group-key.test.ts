@@ -20,15 +20,17 @@ describe("deriveProjectGroupKey", () => {
 
   test("normalizes the default SSH port", () => {
     const rootPath = path.resolve("repo");
-
-    expect(
+    const derive = (remoteUrl: string) =>
       deriveProjectGroupKey({
         rootPath,
-        remoteUrl: "ssh://git@github.com:22/getpaseo/paseo.git",
+        remoteUrl,
         worktreeRoot: rootPath,
         mainRepoRoot: null,
-      }),
-    ).toBe("remote:github.com/getpaseo/paseo");
+      });
+
+    expect(derive("ssh://git@github.com:22/getpaseo/paseo.git")).toBe(
+      derive("ssh://git@github.com/getpaseo/paseo.git"),
+    );
   });
 
   test("accepts a root-level remote repository path", () => {
@@ -68,6 +70,21 @@ describe("deriveProjectGroupKey", () => {
       });
 
     expect(derive("example.com:srv/repo.git")).not.toBe(derive("example.com:/srv/repo.git"));
+  });
+
+  test("distinguishes absolute SSH URL paths from home-relative SCP paths", () => {
+    const rootPath = path.resolve("repo");
+    const derive = (remoteUrl: string) =>
+      deriveProjectGroupKey({
+        rootPath,
+        remoteUrl,
+        worktreeRoot: rootPath,
+        mainRepoRoot: null,
+      });
+
+    expect(derive("ssh://git@example.com/srv/repo.git")).not.toBe(
+      derive("git@example.com:srv/repo.git"),
+    );
   });
 
   test("distinguishes SSH users for home-relative SCP paths", () => {
@@ -115,15 +132,17 @@ describe("deriveProjectGroupKey", () => {
 
   test.each(["git+ssh:", "ssh+git:"])("normalizes SSH alias default ports for %s", (scheme) => {
     const rootPath = path.resolve("repo");
-
-    expect(
+    const derive = (remoteUrl: string) =>
       deriveProjectGroupKey({
         rootPath,
-        remoteUrl: `${scheme}//git@github.com:22/getpaseo/paseo.git`,
+        remoteUrl,
         worktreeRoot: rootPath,
         mainRepoRoot: null,
-      }),
-    ).toBe("remote:github.com/getpaseo/paseo");
+      });
+
+    expect(derive(`${scheme}//git@github.com:22/getpaseo/paseo.git`)).toBe(
+      derive("ssh://git@github.com/getpaseo/paseo.git"),
+    );
   });
 
   test("accepts an SCP-style remote with a bracketed IPv6 host", () => {

@@ -82,13 +82,15 @@ function parseUrlRemote(remoteUrl: string): RemoteLocation | null {
   try {
     const parsed = new URL(remoteUrl);
     const host = deriveRemoteHost(parsed);
-    const remotePath = parsed.pathname ? parsed.pathname.replace(/^\/+/, "") : null;
+    const preserveLeadingSlash = ["git+ssh:", "ssh:", "ssh+git:"].includes(parsed.protocol);
+    let remotePath = parsed.pathname || null;
+    if (remotePath && !preserveLeadingSlash) remotePath = remotePath.replace(/^\/+/, "");
     if (!host || !remotePath) return null;
     return {
       host,
       path: remotePath,
       relativePathUser: null,
-      preserveLeadingSlash: false,
+      preserveLeadingSlash,
       decodePercentEncoding: true,
     };
   } catch {
