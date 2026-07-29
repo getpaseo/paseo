@@ -72,6 +72,22 @@ describe("deriveProjectGroupKey", () => {
     expect(derive("git@github.com:acme/foo.git")).toBe(derive("https://github.com/acme/foo"));
   });
 
+  test.each(["ssh://git@github.com/acme/foo.git", "ssh://git@ssh.github.com:443/acme/foo.git"])(
+    "normalizes known forge SSH URLs across remote forms: %s",
+    (remoteUrl) => {
+      const rootPath = path.resolve("repo");
+      const derive = (value: string) =>
+        deriveProjectGroupKey({
+          rootPath,
+          remoteUrl: value,
+          worktreeRoot: rootPath,
+          mainRepoRoot: null,
+        });
+
+      expect(derive(remoteUrl)).toBe(derive("git@github.com:acme/foo.git"));
+    },
+  );
+
   test("accepts an SCP-style remote without a username", () => {
     const rootPath = path.resolve("repo");
 

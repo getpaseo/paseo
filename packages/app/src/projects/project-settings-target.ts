@@ -1,6 +1,6 @@
 interface ProjectSettingsTarget {
   projectKey: string;
-  hosts: ReadonlyArray<{ serverId: string; projectId?: string }>;
+  hosts: ReadonlyArray<{ serverId: string; projectId?: string; isOnline?: boolean }>;
 }
 
 export function resolveHostProjectSettingsRouteKey(host: {
@@ -9,10 +9,15 @@ export function resolveHostProjectSettingsRouteKey(host: {
 }): string | null {
   const projectId = host.projectId?.trim();
   if (!projectId) return null;
-  return `host:${host.serverId}:project:${projectId}`;
+  return `host:${encodeURIComponent(host.serverId)}:project:${encodeURIComponent(projectId)}`;
 }
 
 export function resolveProjectSettingsRouteKey(project: ProjectSettingsTarget): string {
+  for (const host of project.hosts) {
+    if (!host.isOnline) continue;
+    const hostLocalKey = resolveHostProjectSettingsRouteKey(host);
+    if (hostLocalKey) return hostLocalKey;
+  }
   for (const host of project.hosts) {
     const hostLocalKey = resolveHostProjectSettingsRouteKey(host);
     if (hostLocalKey) return hostLocalKey;

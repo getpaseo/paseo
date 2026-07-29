@@ -33,9 +33,36 @@ describe("project settings target", () => {
     };
 
     const routeKey = resolveProjectSettingsRouteKey(changedProject);
-    expect(routeKey).toBe(`host:host-b:project:${legacyKey}`);
+    expect(routeKey).toBe(`host:host-b:project:${encodeURIComponent(legacyKey)}`);
     expect(findProjectSettingsTarget([unchangedProject, changedProject], routeKey)).toBe(
       changedProject,
+    );
+  });
+
+  it("frames opaque host and project IDs without collisions", () => {
+    const first = resolveHostProjectSettingsRouteKey({
+      serverId: "a",
+      projectId: "b:project:c",
+    });
+    const second = resolveHostProjectSettingsRouteKey({
+      serverId: "a:project:b",
+      projectId: "c",
+    });
+
+    expect(first).not.toBe(second);
+  });
+
+  it("prefers an online host for a generic grouped settings route", () => {
+    const groupedProject = {
+      projectKey: "remote:github.com/acme/app",
+      hosts: [
+        { serverId: "host-a", projectId: "project-a", isOnline: false },
+        { serverId: "host-b", projectId: "project-b", isOnline: true },
+      ],
+    };
+
+    expect(resolveProjectSettingsRouteKey(groupedProject)).toBe(
+      resolveHostProjectSettingsRouteKey(groupedProject.hosts[1]),
     );
   });
 

@@ -5,6 +5,13 @@ import { getRealpathAwareRelativePath } from "../utils/path.js";
 const CLOUD_FORGE_HOSTS = new Set(
   FORGE_DEFINITIONS.flatMap((forge) => forge.cloudHosts ?? []).map((host) => host.toLowerCase()),
 );
+const CANONICAL_CLOUD_FORGE_HOSTS = new Map(
+  FORGE_DEFINITIONS.flatMap((forge) => {
+    const hosts = forge.cloudHosts ?? [];
+    const canonicalHost = hosts[0]?.toLowerCase();
+    return canonicalHost ? hosts.map((host) => [host.toLowerCase(), canonicalHost] as const) : [];
+  }),
+);
 const DEFAULT_REMOTE_PORTS: Partial<Record<string, string>> = {
   "git:": "9418",
   "git+ssh:": "22",
@@ -82,8 +89,9 @@ function parseScpRemote(remoteUrl: string): RemoteLocation | null {
 
   const preserveLeadingSlash = remotePath.startsWith("/");
   const user = match.groups?.user;
+  const normalizedHost = normalizeCloudForgeHost(host);
   return {
-    host,
+    host: normalizedHost,
     path: remotePath,
     relativePathUser: user && user !== "git" && !preserveLeadingSlash ? user : null,
     preserveLeadingSlash,
@@ -95,8 +103,10 @@ function parseScpRemote(remoteUrl: string): RemoteLocation | null {
 function parseUrlRemote(remoteUrl: string): RemoteLocation | null {
   try {
     const parsed = new URL(remoteUrl);
-    const host = deriveRemoteHost(parsed);
-    const preserveLeadingSlash = ["git+ssh:", "ssh:", "ssh+git:"].includes(parsed.protocol);
+    const isSsh = ["git+ssh:", "ssh:", "ssh+git:"].includes(parsed.protocol);
+    const forgeHost = deriveCanonicalUrlForgeHost(parsed, isSsh);
+    const host = forgeHost ?? deriveRemoteHost(parsed);
+    const preserveLeadingSlash = isSsh && !forgeHost;
     let remotePath = parsed.pathname || null;
     if (remotePath && !preserveLeadingSlash) remotePath = remotePath.replace(/^\/+/, "");
     if (!host || !remotePath) return null;
@@ -106,13 +116,25 @@ function parseUrlRemote(remoteUrl: string): RemoteLocation | null {
       relativePathUser: null,
       preserveLeadingSlash,
       decodePercentEncoding: true,
-      stripDotGitSuffix:
-        (!parsed.port || parsed.port === DEFAULT_REMOTE_PORTS[parsed.protocol]) &&
-        CLOUD_FORGE_HOSTS.has(parsed.hostname.toLowerCase()),
+      stripDotGitSuffix: forgeHost !== null,
     };
   } catch {
     return null;
   }
+}
+
+function normalizeCloudForgeHost(host: string): string {
+  return CANONICAL_CLOUD_FORGE_HOSTS.get(host.toLowerCase()) ?? host;
+}
+
+function deriveCanonicalUrlForgeHost(remoteUrl: URL, isSsh: boolean): string | null {
+  const hostname = remoteUrl.hostname.toLowerCase();
+  const canonicalHost = CANONICAL_CLOUD_FORGE_HOSTS.get(hostname);
+  if (!canonicalHost) return null;
+  const usesDefaultPort =
+    !remoteUrl.port || remoteUrl.port === DEFAULT_REMOTE_PORTS[remoteUrl.protocol];
+  const usesGithubSshAliasPort = isSsh && hostname === "ssh.github.com" && remoteUrl.port === "443";
+  return usesDefaultPort || usesGithubSshAliasPort ? canonicalHost : null;
 }
 
 function normalizeRemotePath(
