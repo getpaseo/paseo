@@ -51,7 +51,7 @@ describe("selectActiveGitWorkspaceProject", () => {
 
     expect(project?.projectId).toBe("/repo/project ");
     expect(project && buildWorktreeSetupCalloutPolicy(project).projectSettingsRoute).toBe(
-      "/settings/projects/host%3A8%3Aserver-1%3Aproject%3A14%3A%2Frepo%2Fproject%20",
+      "/settings/projects/host%3A8%3Aserver-1%3Aproject%3A20%3A%252Frepo%252Fproject%2520",
     );
   });
 
@@ -151,7 +151,7 @@ describe("buildWorktreeSetupCalloutPolicy", () => {
         repoRoot: "/repo/project",
       }).projectSettingsRoute,
     ).toBe(
-      "/settings/projects/host%3A8%3Aserver-2%3Aproject%3A30%3Aremote%3Agithub.com%2Facme%2Fproject",
+      "/settings/projects/host%3A8%3Aserver-2%3Aproject%3A36%3Aremote%253Agithub.com%252Facme%252Fproject",
     );
   });
 });

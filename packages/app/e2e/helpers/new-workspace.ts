@@ -29,6 +29,7 @@ type WorkspaceDescriptor = NonNullable<CreateWorkspacePayload["workspace"]>;
 
 export interface OpenedProject {
   workspaceId: string;
+  projectId: string;
   projectKey: string;
   projectDisplayName: string;
   workspaceName: string;
@@ -52,6 +53,7 @@ function openedProjectFromWorkspace(workspace: WorkspaceDescriptor): OpenedProje
   }
   return {
     workspaceId: workspace.id,
+    projectId: workspace.projectId,
     projectKey,
     projectDisplayName: workspace.projectDisplayName,
     workspaceName: workspace.name,
