@@ -23,6 +23,12 @@ interface RestoreExpandedDirectoriesInput {
   requestDirectoryListing: (path: string) => Promise<ExplorerDirectory | null>;
 }
 
+interface ReconcileRestoredExpandedPathsInput {
+  persistedExpandedPaths: ReadonlySet<string>;
+  currentExpandedPaths: ReadonlySet<string>;
+  restoredExpandedPaths: string[];
+}
+
 export function flattenExplorerTree({
   directories,
   expandedPaths,
@@ -102,6 +108,27 @@ export async function restoreExpandedDirectories({
   }
 
   return restoredPaths;
+}
+
+export function reconcileRestoredExpandedPaths({
+  persistedExpandedPaths,
+  currentExpandedPaths,
+  restoredExpandedPaths,
+}: ReconcileRestoredExpandedPathsInput): string[] {
+  const reconciledPaths = new Set(restoredExpandedPaths);
+
+  for (const path of persistedExpandedPaths) {
+    if (!currentExpandedPaths.has(path)) {
+      reconciledPaths.delete(path);
+    }
+  }
+  for (const path of currentExpandedPaths) {
+    if (!persistedExpandedPaths.has(path)) {
+      reconciledPaths.add(path);
+    }
+  }
+
+  return Array.from(reconciledPaths);
 }
 
 function rowsForDirectory(

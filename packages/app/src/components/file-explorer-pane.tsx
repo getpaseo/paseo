@@ -34,12 +34,13 @@ import { FileActionsMenu } from "@/components/file-actions-menu";
 import { useFileDownload } from "@/hooks/use-file-download";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-actions";
-import { usePanelStore, type SortOption } from "@/stores/panel-store";
+import { usePanelStore, type ExpandedPathsUpdate, type SortOption } from "@/stores/panel-store";
 import { formatTimeAgo } from "@/utils/time";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
 import { isHiddenExplorerPath } from "@/file-explorer/visibility";
 import {
   flattenExplorerTree,
+  reconcileRestoredExpandedPaths,
   restoreExpandedDirectories,
   type ExplorerTreeRow,
 } from "@/file-explorer/tree";
@@ -384,7 +385,13 @@ export function FileExplorerPane({
           setCurrentPath: false,
         }),
     }).then((restoredPaths) => {
-      setExpandedPathsForWorkspace(workspaceStateKey, restoredPaths);
+      setExpandedPathsForWorkspace(workspaceStateKey, (currentPaths) =>
+        reconcileRestoredExpandedPaths({
+          persistedExpandedPaths: expandedPaths,
+          currentExpandedPaths: new Set(currentPaths),
+          restoredExpandedPaths: restoredPaths,
+        }),
+      );
       toggleExplorerShowHiddenFiles();
       return null;
     });
@@ -742,7 +749,7 @@ function toggleDirectory({
     path: string,
     opts?: { recordHistory?: boolean; setCurrentPath?: boolean },
   ) => Promise<ExplorerDirectory | null>;
-  setExpandedPathsForWorkspace: (workspaceStateKey: string, paths: string[]) => void;
+  setExpandedPathsForWorkspace: (workspaceStateKey: string, paths: ExpandedPathsUpdate) => void;
 }): void {
   if (!workspaceStateKey) {
     return;
@@ -830,7 +837,7 @@ async function initializeExplorer({
     path: string,
     opts?: { recordHistory?: boolean; setCurrentPath?: boolean },
   ) => Promise<ExplorerDirectory | null>;
-  setExpandedPathsForWorkspace: (workspaceStateKey: string, paths: string[]) => void;
+  setExpandedPathsForWorkspace: (workspaceStateKey: string, paths: ExpandedPathsUpdate) => void;
 }): Promise<void> {
   if (!hasWorkspaceScope || hasInitializedRef.current) {
     return;
@@ -861,7 +868,14 @@ async function initializeExplorer({
   const hiddenPersistedPaths = showHiddenFiles
     ? []
     : Array.from(persistedExpandedPaths).filter(isHiddenExplorerPath);
-  setExpandedPathsForWorkspace(workspaceStateKey, [...restoredPaths, ...hiddenPersistedPaths]);
+  const restoredPathsWithHidden = [...restoredPaths, ...hiddenPersistedPaths];
+  setExpandedPathsForWorkspace(workspaceStateKey, (currentPaths) =>
+    reconcileRestoredExpandedPaths({
+      persistedExpandedPaths,
+      currentExpandedPaths: new Set(currentPaths),
+      restoredExpandedPaths: restoredPathsWithHidden,
+    }),
+  );
 }
 
 async function refreshExplorerDirectories({

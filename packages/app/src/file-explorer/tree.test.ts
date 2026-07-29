@@ -3,6 +3,7 @@ import type { ExplorerEntry } from "@/stores/session-store";
 import {
   MAX_AUTO_EXPANDED_DIRECTORY_DEPTH,
   flattenExplorerTree,
+  reconcileRestoredExpandedPaths,
   restoreExpandedDirectories,
 } from "./tree";
 
@@ -139,5 +140,15 @@ describe("file explorer tree", () => {
 
     expect(requestedPaths).toEqual([]);
     expect(expandedPaths).toEqual(["."]);
+  });
+
+  it("preserves expansion changes made while persisted directories are restoring", () => {
+    const paths = reconcileRestoredExpandedPaths({
+      persistedExpandedPaths: new Set([".", "parent", "parent/child"]),
+      currentExpandedPaths: new Set([".", "parent/child", "manual"]),
+      restoredExpandedPaths: [".", "parent"],
+    });
+
+    expect(paths).toEqual([".", "manual"]);
   });
 });
