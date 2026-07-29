@@ -7257,108 +7257,57 @@ test("closeAgent persists one final closed snapshot", async () => {
   }
 });
 
-test("collectIdleAgents releases an idle runtime and resumes the same agent and timeline", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-collection-"));
-  const storage = new AgentStorage(join(workdir, "agents"), logger);
-  let activeSession: TestAgentSession | null = null;
-  const client = new (class extends NativeArchiveRecordingClient {
+test("idle agents remain resident until an explicit lifecycle action closes them", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-residency-"));
+  let closeCount = 0;
+  let resumeCount = 0;
+  const client = new (class extends TestAgentClient {
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-      activeSession = new TestAgentSession(config);
-      return activeSession;
+      const recordClose = () => {
+        closeCount += 1;
+      };
+      return new (class extends TestAgentSession {
+        override async close(): Promise<void> {
+          recordClose();
+        }
+      })(config);
+    }
+
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      resumeCount += 1;
+      return super.resumeSession(handle, config, launchContext);
     }
   })();
-  const manager = new AgentManager({
-    clients: { codex: client },
-    registry: storage,
-    logger,
-    idFactory: () => "00000000-0000-4000-8000-000000000210",
-  });
+  const manager = new AgentManager({ clients: { codex: client }, logger });
 
   try {
-    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-      workspaceId: "workspace-idle-collection",
-    });
-    await manager.appendTimelineItem(created.id, {
-      type: "user_message",
-      text: "Keep this timeline",
-    });
-    activeSession?.pushEvent({
-      type: "provider_subagent",
-      provider: "codex",
-      event: {
-        type: "upsert",
-        id: "retained-provider-child",
-        title: "Retained provider child",
-        status: "completed",
-      },
-    });
-    await manager.flush();
-    const timelineBeforeCollection = manager.getTimeline(created.id);
-
-    const collection = await manager.collectIdleAgents({
-      cutoff: new Date(Date.now() + 1_000),
-      protectedAgentIds: new Set(),
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
     });
 
-    expect(collection).toEqual({
-      collected: [
-        {
-          agentId: created.id,
-          provider: "codex",
-          sessionId: created.persistence?.sessionId,
-        },
-      ],
-      failures: [],
-    });
-    expect(manager.getAgent(created.id)).toBeNull();
-    expect(client.archivedHandles).toEqual([]);
-    const stored = await storage.get(created.id);
-    expect(stored).toMatchObject({
-      id: created.id,
-      lastStatus: "closed",
-      workspaceId: "workspace-idle-collection",
-    });
-    expect(stored?.archivedAt).toBeFalsy();
+    await new Promise((resolve) => setTimeout(resolve, 25));
 
-    const resumed = await ensureAgentLoaded(created.id, {
-      agentManager: manager,
-      agentStorage: storage,
-      logger,
-    });
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+    expect(closeCount).toBe(0);
 
-    expect(resumed.id).toBe(created.id);
-    expect(resumed.persistence).toEqual(created.persistence);
-    expect(manager.getTimeline(created.id)).toEqual(timelineBeforeCollection);
-    expect(manager.listProviderSubagents(created.id)).toEqual([
-      expect.objectContaining({
-        id: "retained-provider-child",
-        title: "Retained provider child",
-        status: "completed",
-      }),
-    ]);
-    const idleBeforeOpen = resumed.updatedAt;
-    await ensureAgentLoaded(created.id, {
-      agentManager: manager,
-      agentStorage: storage,
-      logger,
-    });
-    await expect(
-      manager.collectIdleAgents({ cutoff: idleBeforeOpen, protectedAgentIds: new Set() }),
-    ).resolves.toMatchObject({ collected: [] });
-    await expect(manager.runAgent(created.id, "Continue the same agent")).resolves.toMatchObject({
-      finalText: "",
-      canceled: false,
-    });
-    expect(manager.getAgent(created.id)?.id).toBe(created.id);
+    await manager.runAgent(agent.id, "Continue on the resident runtime");
+
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+    expect(resumeCount).toBe(0);
   } finally {
-    await manager.flush().catch(() => undefined);
-    await storage.flush().catch(() => undefined);
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
     rmSync(workdir, { recursive: true, force: true });
   }
 });
 
-test("archiving an idle-collected parent still cascades to its managed children", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-collected-parent-archive-"));
+test("archiving a closed parent still cascades to its managed children", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-closed-parent-archive-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
   const manager = new AgentManager({
     clients: { codex: new TestAgentClient() },
@@ -7368,7 +7317,7 @@ test("archiving an idle-collected parent still cascades to its managed children"
 
   try {
     const parent = await manager.createAgent(
-      { provider: "codex", cwd: workdir, title: "Collected parent" },
+      { provider: "codex", cwd: workdir, title: "Closed parent" },
       undefined,
       { workspaceId: undefined },
     );
@@ -7381,10 +7330,7 @@ test("archiving an idle-collected parent still cascades to its managed children"
       },
     );
 
-    await manager.collectIdleAgents({
-      cutoff: new Date(Date.now() + 1_000),
-      protectedAgentIds: new Set([child.id]),
-    });
+    await manager.closeAgent(parent.id);
     await manager.archiveSnapshot(parent.id, new Date().toISOString());
 
     expect((await storage.get(parent.id))?.archivedAt).toEqual(expect.any(String));
@@ -7410,10 +7356,7 @@ test("ensureUnarchivedAgentLoaded does not resume an archived agent", async () =
     const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
       workspaceId: undefined,
     });
-    await manager.collectIdleAgents({
-      cutoff: new Date(Date.now() + 1_000),
-      protectedAgentIds: new Set(),
-    });
+    await manager.closeAgent(agent.id);
     await manager.archiveSnapshot(agent.id, new Date().toISOString());
 
     await expect(
@@ -7452,10 +7395,7 @@ test("ensureUnarchivedAgentLoaded closes a runtime archived while it resumes", a
     const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
       workspaceId: undefined,
     });
-    await manager.collectIdleAgents({
-      cutoff: new Date(Date.now() + 1_000),
-      protectedAgentIds: new Set(),
-    });
+    await manager.closeAgent(agent.id);
 
     const load = ensureUnarchivedAgentLoaded(agent.id, {
       agentManager: manager,
@@ -7498,10 +7438,7 @@ test("ensureUnarchivedAgentLoaded fences an archived agent after joining a share
     const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
       workspaceId: undefined,
     });
-    await manager.collectIdleAgents({
-      cutoff: new Date(Date.now() + 1_000),
-      protectedAgentIds: new Set(),
-    });
+    await manager.closeAgent(agent.id);
 
     const sharedLoad = ensureAgentLoaded(agent.id, {
       agentManager: manager,
@@ -7557,10 +7494,7 @@ test("a shared agent load upgrades provider history hydration to broadcast", asy
     const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
       workspaceId: undefined,
     });
-    await manager.collectIdleAgents({
-      cutoff: new Date(Date.now() + 1_000),
-      protectedAgentIds: new Set(),
-    });
+    await manager.closeAgent(agent.id);
     await manager.deleteAgentState(agent.id);
     const events: AgentManagerEvent[] = [];
     manager.subscribe((event) => events.push(event), { agentId: agent.id, replayState: false });
@@ -7598,166 +7532,7 @@ test("a shared agent load upgrades provider history hydration to broadcast", asy
   }
 });
 
-test("collectIdleAgents leaves recent, protected, internal, running, and error agents resident", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-eligibility-"));
-  const client = new SessionRecordingAgentClient();
-  const ids = [
-    "00000000-0000-4000-8000-000000000211",
-    "00000000-0000-4000-8000-000000000212",
-    "00000000-0000-4000-8000-000000000213",
-    "00000000-0000-4000-8000-000000000214",
-    "00000000-0000-4000-8000-000000000215",
-  ];
-  const manager = new AgentManager({
-    clients: { codex: client },
-    logger,
-    idFactory: () => ids.shift()!,
-  });
-
-  try {
-    const recent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-      workspaceId: undefined,
-    });
-    const protectedAgent = await manager.createAgent(
-      { provider: "codex", cwd: workdir },
-      undefined,
-      { workspaceId: undefined },
-    );
-    const internal = await manager.createAgent(
-      { provider: "codex", cwd: workdir, internal: true },
-      undefined,
-      { workspaceId: undefined },
-    );
-    const running = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-      workspaceId: undefined,
-    });
-    const failed = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-      workspaceId: undefined,
-    });
-    client.sessions[3]!.pushEvent({
-      type: "turn_started",
-      provider: "codex",
-      turnId: "autonomous-running",
-    });
-    client.sessions[4]!.pushEvent({
-      type: "turn_failed",
-      provider: "codex",
-      turnId: "autonomous-failed",
-      error: "provider failed",
-    });
-    await manager.flush();
-
-    const recentSweep = await manager.collectIdleAgents({
-      cutoff: new Date(recent.updatedAt.getTime() - 1),
-      protectedAgentIds: new Set(),
-    });
-    const protectedSweep = await manager.collectIdleAgents({
-      cutoff: new Date(Date.now() + 1_000),
-      protectedAgentIds: new Set([protectedAgent.id, recent.id]),
-    });
-
-    expect(recentSweep.collected).toEqual([]);
-    expect(protectedSweep.collected).toEqual([]);
-    expect(manager.getAgent(recent.id)?.lifecycle).toBe("idle");
-    expect(manager.getAgent(protectedAgent.id)?.lifecycle).toBe("idle");
-    expect(manager.getAgent(internal.id)?.lifecycle).toBe("idle");
-    expect(manager.getAgent(running.id)?.lifecycle).toBe("running");
-    expect(manager.getAgent(failed.id)?.lifecycle).toBe("error");
-  } finally {
-    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
-      () => undefined,
-    );
-    rmSync(workdir, { recursive: true, force: true });
-  }
-});
-
-test("collectIdleAgents protects an idle parent with a running managed child", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-running-child-"));
-  const client = new SessionRecordingAgentClient();
-  const manager = new AgentManager({ clients: { codex: client }, logger });
-
-  try {
-    const parent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-      workspaceId: undefined,
-    });
-    const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-      labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
-      workspaceId: undefined,
-    });
-    const independent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-      workspaceId: undefined,
-    });
-    client.sessions[1]!.pushEvent({
-      type: "turn_started",
-      provider: "codex",
-      turnId: "managed-child-running",
-    });
-    await manager.flush();
-
-    const collection = await manager.collectIdleAgents({
-      cutoff: new Date(Date.now() + 1_000),
-      protectedAgentIds: new Set(),
-    });
-
-    expect(collection).toEqual({
-      collected: [expect.objectContaining({ agentId: independent.id })],
-      failures: [],
-    });
-    expect(manager.getAgent(parent.id)?.lifecycle).toBe("idle");
-    expect(manager.getAgent(child.id)?.lifecycle).toBe("running");
-    expect(manager.getAgent(independent.id)).toBeNull();
-  } finally {
-    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
-      () => undefined,
-    );
-    rmSync(workdir, { recursive: true, force: true });
-  }
-});
-
-test("collectIdleAgents protects an idle parent with a running provider subagent", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-running-provider-child-"));
-  const client = new SessionRecordingAgentClient();
-  const manager = new AgentManager({ clients: { codex: client }, logger });
-
-  try {
-    const parent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-      workspaceId: undefined,
-    });
-    const independent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-      workspaceId: undefined,
-    });
-    client.sessions[0]!.pushEvent({
-      type: "provider_subagent",
-      provider: "codex",
-      event: {
-        type: "upsert",
-        id: "provider-child-running",
-        title: "Provider child",
-        status: "running",
-      },
-    });
-    await manager.flush();
-
-    const collection = await manager.collectIdleAgents({
-      cutoff: new Date(Date.now() + 1_000),
-      protectedAgentIds: new Set(),
-    });
-
-    expect(collection).toEqual({
-      collected: [expect.objectContaining({ agentId: independent.id })],
-      failures: [],
-    });
-    expect(manager.getAgent(parent.id)?.lifecycle).toBe("idle");
-    expect(manager.getAgent(independent.id)).toBeNull();
-  } finally {
-    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
-      () => undefined,
-    );
-    rmSync(workdir, { recursive: true, force: true });
-  }
-});
-
-test("closed provider subagents do not block collection after resume", async () => {
+test("explicit close cancels running provider subagents before resume", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-closed-provider-child-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
   const client = new SessionRecordingAgentClient();
@@ -7811,73 +7586,10 @@ test("closed provider subagents do not block collection after resume", async () 
     expect(manager.getProviderSubagent(parent.id, "provider-child-finishing")?.status).toBe(
       "completed",
     );
-    const collection = await manager.collectIdleAgents({
-      cutoff: new Date(Date.now() + 1_000),
-      protectedAgentIds: new Set(),
-    });
-    expect(collection.collected).toEqual([expect.objectContaining({ agentId: parent.id })]);
   } finally {
     await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
       () => undefined,
     );
-    await storage.flush().catch(() => undefined);
-    rmSync(workdir, { recursive: true, force: true });
-  }
-});
-
-test("load waits for an in-flight collection close and creates only one resumed runtime", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-close-race-"));
-  const storage = new AgentStorage(join(workdir, "agents"), logger);
-  const closeStarted = deferred<void>();
-  const closeAllowed = deferred<void>();
-  const client = new (class extends TestAgentClient {
-    resumeCount = 0;
-
-    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-      return new (class extends TestAgentSession {
-        override async close(): Promise<void> {
-          closeStarted.resolve();
-          await closeAllowed.promise;
-        }
-      })(config);
-    }
-
-    override async resumeSession(
-      handle: AgentPersistenceHandle,
-      config?: Partial<AgentSessionConfig>,
-    ): Promise<AgentSession> {
-      this.resumeCount += 1;
-      return super.resumeSession(handle, config);
-    }
-  })();
-  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
-
-  try {
-    const created = await manager.createAgent(
-      { provider: "codex", cwd: workdir },
-      "00000000-0000-4000-8000-000000000216",
-      { workspaceId: undefined },
-    );
-    const collection = manager.collectIdleAgents({
-      cutoff: new Date(Date.now() + 1_000),
-      protectedAgentIds: new Set(),
-    });
-    await closeStarted.promise;
-    const loads = Promise.all([
-      ensureAgentLoaded(created.id, { agentManager: manager, agentStorage: storage, logger }),
-      ensureAgentLoaded(created.id, { agentManager: manager, agentStorage: storage, logger }),
-    ]);
-
-    expect(client.resumeCount).toBe(0);
-    closeAllowed.resolve();
-    const [first, second] = await loads;
-    await collection;
-
-    expect(first.id).toBe(created.id);
-    expect(second.id).toBe(created.id);
-    expect(client.resumeCount).toBe(1);
-  } finally {
-    await manager.closeAgent("00000000-0000-4000-8000-000000000216").catch(() => undefined);
     await storage.flush().catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
   }
@@ -7905,18 +7617,8 @@ test("provider close failure still persists and emits a resumable closed agent",
     );
     const closed = waitForAgentLifecycle(manager, created.id, "closed");
 
-    const collection = await manager.collectIdleAgents({
-      cutoff: new Date(Date.now() + 1_000),
-      protectedAgentIds: new Set(),
-    });
+    await expect(manager.closeAgent(created.id)).rejects.toThrow("provider cleanup failed");
     await closed;
-    expect(collection.collected).toEqual([]);
-    expect(collection.failures).toHaveLength(1);
-    expect(collection.failures[0]).toMatchObject({
-      agentId: created.id,
-      provider: "codex",
-      error: expect.objectContaining({ message: "provider cleanup failed" }),
-    });
     const stored = await storage.get(created.id);
     expect(stored).toMatchObject({ lastStatus: "closed" });
     expect(stored?.archivedAt).toBeFalsy();

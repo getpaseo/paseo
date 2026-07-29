@@ -394,21 +394,6 @@ export interface AgentMetricsSnapshot {
   };
 }
 
-export interface IdleAgentCollectionEntry {
-  agentId: string;
-  provider: AgentProvider;
-  sessionId?: string;
-}
-
-export interface IdleAgentCollectionFailure extends IdleAgentCollectionEntry {
-  error: unknown;
-}
-
-export interface IdleAgentCollectionResult {
-  collected: IdleAgentCollectionEntry[];
-  failures: IdleAgentCollectionFailure[];
-}
-
 type ActiveManagedAgent =
   | ManagedAgentInitializing
   | ManagedAgentIdle
@@ -586,7 +571,6 @@ export class AgentManager {
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
-  private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
@@ -969,19 +953,6 @@ export class AgentManager {
     return agent ? { ...agent } : null;
   }
 
-  touchAgentActivity(id: string): ManagedAgent | null {
-    const agent = this.agents?.get(id);
-    if (!agent) {
-      return null;
-    }
-    this.touchUpdatedAt(agent);
-    return { ...agent };
-  }
-
-  async waitForAgentClose(agentId: string): Promise<void> {
-    await this.inFlightAgentCloses?.get(agentId)?.catch(() => undefined);
-  }
-
   getTimeline(id: string): AgentTimelineItem[] {
     this.requireAgent(id);
     return this.timelineStore.getItems(id);
@@ -1357,24 +1328,7 @@ export class AgentManager {
     }
   }
 
-  closeAgent(agentId: string): Promise<void> {
-    const existing = this.inFlightAgentCloses.get(agentId);
-    if (existing) {
-      return existing;
-    }
-
-    const close = this.closeAgentRuntime(agentId);
-    this.inFlightAgentCloses.set(agentId, close);
-    const clearClose = () => {
-      if (this.inFlightAgentCloses.get(agentId) === close) {
-        this.inFlightAgentCloses.delete(agentId);
-      }
-    };
-    void close.then(clearClose, clearClose);
-    return close;
-  }
-
-  private async closeAgentRuntime(agentId: string): Promise<void> {
+  async closeAgent(agentId: string): Promise<void> {
     const agent = this.requireAgent(agentId);
     this.logger.trace(
       {
@@ -1434,66 +1388,6 @@ export class AgentManager {
       });
       this.dispatch({ type: "provider_subagent", event });
     }
-  }
-
-  async collectIdleAgents(options: {
-    cutoff: Date;
-    protectedAgentIds: ReadonlySet<string>;
-  }): Promise<IdleAgentCollectionResult> {
-    const result: IdleAgentCollectionResult = { collected: [], failures: [] };
-
-    for (const agent of Array.from(this.agents.values())) {
-      const current = this.agents.get(agent.id);
-      if (!current || !this.isIdleAgentCollectable(current, options)) {
-        continue;
-      }
-
-      const entry: IdleAgentCollectionEntry = {
-        agentId: current.id,
-        provider: current.provider,
-        ...(current.persistence?.sessionId ? { sessionId: current.persistence.sessionId } : {}),
-      };
-      try {
-        await this.closeAgent(current.id);
-        result.collected.push(entry);
-      } catch (error) {
-        result.failures.push({ ...entry, error });
-      }
-    }
-
-    return result;
-  }
-
-  private isIdleAgentCollectable(
-    agent: LiveManagedAgent,
-    options: { cutoff: Date; protectedAgentIds: ReadonlySet<string> },
-  ): agent is ManagedAgentIdle {
-    return (
-      agent.lifecycle === "idle" &&
-      agent.updatedAt.getTime() <= options.cutoff.getTime() &&
-      !agent.internal &&
-      !options.protectedAgentIds.has(agent.id) &&
-      agent.activeForegroundTurnId === null &&
-      !this.runs.hasRun(agent.id) &&
-      !agent.pendingReplacement &&
-      agent.pendingPermissions.size === 0 &&
-      agent.inFlightPermissionResponses.size === 0 &&
-      !this.hasRunningChild(agent.id)
-    );
-  }
-
-  private hasRunningChild(parentAgentId: string): boolean {
-    for (const agent of this.agents.values()) {
-      if (
-        agent.lifecycle === "running" &&
-        getParentAgentIdFromLabels(agent.labels) === parentAgentId
-      ) {
-        return true;
-      }
-    }
-    return this.providerSubagents
-      .list(parentAgentId)
-      .some((subagent) => subagent.status === "running");
   }
 
   async archiveAgent(agentId: string): Promise<{ archivedAt: string }> {

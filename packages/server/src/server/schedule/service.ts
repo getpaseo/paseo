@@ -204,9 +204,7 @@ type ScheduleAgentManager = Pick<
   | "hydrateTimelineFromProvider"
   | "resumeAgentFromPersistence"
   | "runAgent"
-  | "touchAgentActivity"
   | "waitForAgentEvent"
-  | "waitForAgentClose"
 >;
 
 interface ScheduleWorkspaceCreateInput {
@@ -368,17 +366,6 @@ export class ScheduleService {
 
   async list(): Promise<StoredSchedule[]> {
     return this.store.list();
-  }
-
-  async listActiveAgentTargetIds(): Promise<Set<string>> {
-    const schedules = await this.store.list();
-    const agentIds = new Set<string>();
-    for (const schedule of schedules) {
-      if (schedule.status === "active" && schedule.target.type === "agent") {
-        agentIds.add(schedule.target.agentId);
-      }
-    }
-    return agentIds;
   }
 
   async inspect(id: string): Promise<StoredSchedule> {

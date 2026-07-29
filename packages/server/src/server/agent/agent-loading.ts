@@ -25,8 +25,7 @@ export type AgentLoaderManager = Pick<
   | "getRegisteredProviderIds"
   | "hydrateTimelineFromProvider"
   | "resumeAgentFromPersistence"
-> &
-  Partial<Pick<AgentManager, "touchAgentActivity" | "waitForAgentClose">>;
+>;
 
 export interface EnsureAgentLoadedDeps {
   agentManager: AgentLoaderManager;
@@ -63,24 +62,16 @@ export async function ensureAgentLoaded(
   agentId: string,
   deps: EnsureAgentLoadedDeps,
 ): Promise<ManagedAgent> {
-  await deps.agentManager.waitForAgentClose?.(agentId);
-
   const inflight = pendingAgentInitializations.get(agentId);
   if (inflight) {
     inflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
     return inflight.promise;
   }
 
-  const existing =
-    deps.agentManager.touchAgentActivity?.(agentId) ?? deps.agentManager.getAgent(agentId);
+  const existing = deps.agentManager.getAgent(agentId);
   if (existing) {
     return existing;
   }
-
-  // A close may have started after the first barrier observed no in-flight
-  // work. Once the live lookup is empty, this second barrier closes that gap
-  // before storage-backed resume begins.
-  await deps.agentManager.waitForAgentClose?.(agentId);
 
   const laterInflight = pendingAgentInitializations.get(agentId);
   if (laterInflight) {
