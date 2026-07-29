@@ -30,6 +30,7 @@ class FakeDaemonClient {
   private latencyMeasurementFailure: Error | null = null;
   private latencyMeasurementsRequested: Array<{ timeoutMs?: number }> = [];
   public connectCalls = 0;
+  public reconnectIfStaleCalls = 0;
   public fetchAgentsCalls: FetchAgentsOptions[] = [];
   public fetchAgentsResponses: Array<
     Awaited<ReturnType<DaemonClient["fetchAgents"]>> | ReturnType<DaemonClient["fetchAgents"]>
@@ -74,6 +75,10 @@ class FakeDaemonClient {
   async connect(): Promise<void> {
     this.connectCalls += 1;
     this.setConnectionState({ status: "connected" });
+  }
+
+  reconnectIfStale(): void {
+    this.reconnectIfStaleCalls += 1;
   }
 
   async close(): Promise<void> {
@@ -2724,6 +2729,42 @@ describe("HostRuntimeStore", () => {
     const renamed = store.getHosts().find((h) => h.serverId === "srv_rename");
     expect(renamed?.label).toBe("new name");
 
+    store.syncHosts([]);
+  });
+
+  it("reconnectStaleConnections pokes every live client", async () => {
+    const fakeClient = new FakeDaemonClient();
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async ({ host }) => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: host.label ?? null,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    await store.upsertDirectConnection({
+      serverId: "srv_stale",
+      endpoint: "lan:6767",
+      label: "stale host",
+    });
+    const fakeClientAsDaemon = fakeClient as unknown as DaemonClient;
+    await new Promise<void>((resolve) => {
+      if (store.getSnapshot("srv_stale")?.client === fakeClientAsDaemon) return resolve();
+      const unsubscribe = store.subscribe("srv_stale", () => {
+        if (store.getSnapshot("srv_stale")?.client === fakeClientAsDaemon) {
+          unsubscribe();
+          resolve();
+        }
+      });
+    });
+
+    store.reconnectStaleConnections();
+
+    expect(fakeClient.reconnectIfStaleCalls).toBe(1);
     store.syncHosts([]);
   });
 
