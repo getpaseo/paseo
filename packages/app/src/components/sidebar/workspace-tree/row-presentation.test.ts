@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
+import { buildDeterministicWorkspaceTabId } from "@/workspace-tabs/identity";
 import type { WorkspaceAgentNode } from "./agent-tree";
 import {
   buildAgentRowPresentation,
+  buildAgentRowTarget,
   buildTerminalRowPresentation,
+  buildTerminalRowTarget,
   resolveTreeAgentLabel,
 } from "./row-presentation";
 
@@ -77,6 +80,44 @@ describe("buildAgentRowPresentation", () => {
       "provider_subagent",
     );
     expect(buildAgentRowPresentation(agent({ kind: "paseo" }), "Root").kind).toBe("agent");
+  });
+});
+
+describe("row tab targets", () => {
+  // A row highlights when its target's tab id matches the focused tab. If the
+  // target it navigates to ever diverged from the one it compares against, the
+  // row would open one tab and highlight another.
+  it("opens and highlights the same tab for a Paseo agent", () => {
+    const target = buildAgentRowTarget(agent({ id: "agent-1" }));
+    expect(target).toEqual({ kind: "agent", agentId: "agent-1" });
+    expect(buildDeterministicWorkspaceTabId(target)).toBe("agent_agent-1");
+  });
+
+  it("opens and highlights the same tab for a provider subagent", () => {
+    const target = buildAgentRowTarget(
+      agent({ id: "sub-1", kind: "provider", parentAgentId: "parent-1" }),
+    );
+    expect(target).toEqual({
+      kind: "provider_subagent",
+      parentAgentId: "parent-1",
+      subagentId: "sub-1",
+    });
+    // Provider subagent ids are length-prefixed, so two different parent/child
+    // splits can never collide into the same tab id.
+    expect(buildDeterministicWorkspaceTabId(target)).toBe("provider_subagent_8_parent-1_5_sub-1");
+  });
+
+  it("opens and highlights the same tab for a terminal", () => {
+    const target = buildTerminalRowTarget("term-1");
+    expect(target).toEqual({ kind: "terminal", terminalId: "term-1" });
+    expect(buildDeterministicWorkspaceTabId(target)).toBe("terminal_term-1");
+  });
+
+  it("keeps agent and terminal tab ids in separate namespaces", () => {
+    const sameId = "collide";
+    expect(buildDeterministicWorkspaceTabId(buildAgentRowTarget(agent({ id: sameId })))).not.toBe(
+      buildDeterministicWorkspaceTabId(buildTerminalRowTarget(sameId)),
+    );
   });
 });
 

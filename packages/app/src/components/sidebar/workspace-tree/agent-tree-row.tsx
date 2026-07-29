@@ -3,8 +3,13 @@ import { View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { useSidebarTreeExpansionStore } from "@/stores/sidebar-tree-expansion-store";
+import { buildDeterministicWorkspaceTabId } from "@/workspace-tabs/identity";
 import type { AgentTreeNode } from "./agent-tree";
-import { buildAgentRowPresentation, resolveTreeAgentLabel } from "./row-presentation";
+import {
+  buildAgentRowPresentation,
+  buildAgentRowTarget,
+  resolveTreeAgentLabel,
+} from "./row-presentation";
 import { WorkspaceTreeRow } from "./tree-row";
 
 interface AgentTreeRowProps {
@@ -12,6 +17,8 @@ interface AgentTreeRowProps {
   depth: number;
   serverId: string;
   workspaceId: string;
+  /** Tab id currently being viewed in this workspace, or null. */
+  activeTabId: string | null;
   onWorkspacePress?: () => void;
 }
 
@@ -24,6 +31,7 @@ export const AgentTreeRow = memo(function AgentTreeRow({
   depth,
   serverId,
   workspaceId,
+  activeTabId,
   onWorkspacePress,
 }: AgentTreeRowProps) {
   const { t } = useTranslation();
@@ -33,36 +41,16 @@ export const AgentTreeRow = memo(function AgentTreeRow({
   const toggleAgentExpanded = useSidebarTreeExpansionStore((state) => state.toggleAgentExpanded);
 
   const hasChildren = node.children.length > 0;
-  const isProvider = node.agent.kind === "provider";
   const label = resolveTreeAgentLabel(node.agent.title, t("workspace.tabs.loading"));
+
+  // One target drives both navigation and the active-row check.
+  const target = useMemo(() => buildAgentRowTarget(node.agent), [node.agent]);
+  const selected = activeTabId !== null && buildDeterministicWorkspaceTabId(target) === activeTabId;
 
   const handleNavigate = useCallback(() => {
     onWorkspacePress?.();
-    if (isProvider) {
-      navigateToWorkspace({
-        serverId,
-        workspaceId,
-        target: {
-          kind: "provider_subagent",
-          parentAgentId: node.agent.parentAgentId ?? "",
-          subagentId: node.agent.id,
-        },
-      });
-    } else {
-      navigateToWorkspace({
-        serverId,
-        workspaceId,
-        target: { kind: "agent", agentId: node.agent.id },
-      });
-    }
-  }, [
-    isProvider,
-    onWorkspacePress,
-    serverId,
-    workspaceId,
-    node.agent.id,
-    node.agent.parentAgentId,
-  ]);
+    navigateToWorkspace({ serverId, workspaceId, target });
+  }, [onWorkspacePress, serverId, workspaceId, target]);
 
   const handleToggle = useCallback(() => {
     toggleAgentExpanded(agentKey);
@@ -87,6 +75,7 @@ export const AgentTreeRow = memo(function AgentTreeRow({
         presentation={presentation}
         label={label}
         onPress={handleNavigate}
+        selected={selected}
         onToggle={hasChildren ? handleToggle : undefined}
         expanded={expanded}
         toggleAccessibilityLabel={toggleAccessibilityLabel}
@@ -99,6 +88,7 @@ export const AgentTreeRow = memo(function AgentTreeRow({
               depth={depth + 1}
               serverId={serverId}
               workspaceId={workspaceId}
+              activeTabId={activeTabId}
               onWorkspacePress={onWorkspacePress}
             />
           ))

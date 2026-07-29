@@ -47,6 +47,29 @@ const EMPTY_TREE: AgentTreeNode[] = [];
  * dropping it from the sidebar. Cycle members are promoted to roots instead, so
  * the agents stay visible and the recursive sort still terminates.
  */
+/**
+ * Ids of every Paseo-managed agent in the tree, at any depth.
+ *
+ * Only Paseo agents can own provider subagents, and a nested Paseo subagent can
+ * own them too — so this is the full set of parents worth hydrating, not just
+ * the roots. Provider nodes are themselves leaves and are skipped.
+ */
+export function collectPaseoAgentIds(nodes: readonly AgentTreeNode[]): string[] {
+  const ids: string[] = [];
+  const visit = (current: readonly AgentTreeNode[]): void => {
+    for (const node of current) {
+      if (node.agent.kind === "paseo") {
+        ids.push(node.agent.id);
+      }
+      if (node.children.length > 0) {
+        visit(node.children);
+      }
+    }
+  };
+  visit(nodes);
+  return ids;
+}
+
 export function buildWorkspaceAgentTree(nodes: readonly WorkspaceAgentNode[]): AgentTreeNode[] {
   if (nodes.length === 0) {
     return EMPTY_TREE;

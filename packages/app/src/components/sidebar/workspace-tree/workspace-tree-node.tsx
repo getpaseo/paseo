@@ -21,6 +21,8 @@ interface WorkspaceTreeNodeProps {
   terminalsLoading: boolean;
   serverId: string;
   workspaceId: string;
+  /** Tab id currently being viewed in this workspace, or null. */
+  activeTabId: string | null;
   onWorkspacePress?: () => void;
 }
 
@@ -30,6 +32,7 @@ export const WorkspaceTreeNode = memo(function WorkspaceTreeNode({
   terminalsLoading,
   serverId,
   workspaceId,
+  activeTabId,
   onWorkspacePress,
 }: WorkspaceTreeNodeProps) {
   const { t } = useTranslation();
@@ -56,6 +59,7 @@ export const WorkspaceTreeNode = memo(function WorkspaceTreeNode({
             depth={TREE_ROOT_DEPTH}
             serverId={serverId}
             workspaceId={workspaceId}
+            activeTabId={activeTabId}
             onWorkspacePress={onWorkspacePress}
           />
         ))}
@@ -69,6 +73,7 @@ export const WorkspaceTreeNode = memo(function WorkspaceTreeNode({
             depth={TREE_ROOT_DEPTH}
             serverId={serverId}
             workspaceId={workspaceId}
+            activeTabId={activeTabId}
             onWorkspacePress={onWorkspacePress}
           />
         ))}

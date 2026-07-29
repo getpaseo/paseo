@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildWorkspaceAgentTree, type WorkspaceAgentNode } from "./agent-tree";
+import {
+  buildWorkspaceAgentTree,
+  collectPaseoAgentIds,
+  type WorkspaceAgentNode,
+} from "./agent-tree";
 
 function node(
   overrides: Partial<WorkspaceAgentNode> & Pick<WorkspaceAgentNode, "id">,
@@ -86,5 +90,36 @@ describe("buildWorkspaceAgentTree", () => {
     // a root. Neither disappears, and neither nests under the other.
     expect(roots.map((r) => r.agent.id)).toEqual(["a", "b"]);
     expect(roots.every((r) => r.children.length === 0)).toBe(true);
+  });
+});
+
+describe("collectPaseoAgentIds", () => {
+  it("returns nothing for an empty tree", () => {
+    expect(collectPaseoAgentIds([])).toEqual([]);
+  });
+
+  it("collects Paseo agents at every depth", () => {
+    const roots = buildWorkspaceAgentTree([
+      node({ id: "root", createdAt: 1 }),
+      node({ id: "child", parentAgentId: "root", createdAt: 2 }),
+      node({ id: "grandchild", parentAgentId: "child", createdAt: 3 }),
+      node({ id: "second-root", createdAt: 4 }),
+    ]);
+    // A nested Paseo subagent can own provider subagents too, so it is a
+    // hydration target just like a root.
+    expect(collectPaseoAgentIds(roots).sort()).toEqual([
+      "child",
+      "grandchild",
+      "root",
+      "second-root",
+    ]);
+  });
+
+  it("skips provider subagents, which cannot own children of their own", () => {
+    const roots = buildWorkspaceAgentTree([
+      node({ id: "parent", createdAt: 1 }),
+      node({ id: "prov", kind: "provider", parentAgentId: "parent", createdAt: 2 }),
+    ]);
+    expect(collectPaseoAgentIds(roots)).toEqual(["parent"]);
   });
 });

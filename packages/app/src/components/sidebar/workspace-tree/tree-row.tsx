@@ -14,12 +14,22 @@ const ThemedChevronRight = withUnistyles(ChevronRight);
 
 const chevronColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
+// Stable object identities so the Pressable's props don't change every render.
+const SELECTED_STATE = { selected: true } as const;
+const UNSELECTED_STATE = { selected: false } as const;
+
+function selectedAccessibilityState(selected: boolean) {
+  return selected ? SELECTED_STATE : UNSELECTED_STATE;
+}
+
 interface WorkspaceTreeRowProps {
   /** `TREE_ROOT_DEPTH` for a workspace's direct children; +1 per nesting level. */
   depth: number;
   presentation: WorkspaceTabPresentation;
   label: string;
   onPress: () => void;
+  /** True when this row is the tab currently being viewed. */
+  selected?: boolean;
   /** Omitted for leaf rows, which render an empty chevron slot instead. */
   onToggle?: () => void;
   expanded?: boolean;
@@ -43,6 +53,7 @@ export const WorkspaceTreeRow = memo(function WorkspaceTreeRow({
   presentation,
   label,
   onPress,
+  selected = false,
   onToggle,
   expanded = false,
   toggleAccessibilityLabel,
@@ -52,8 +63,13 @@ export const WorkspaceTreeRow = memo(function WorkspaceTreeRow({
   const handlePointerLeave = useCallback(() => setHovered(false), []);
 
   const rowStyle = useMemo(
-    () => [styles.row, { paddingLeft: resolveTreeRowIndent(depth) }, hovered && styles.rowHovered],
-    [depth, hovered],
+    () => [
+      styles.row,
+      { paddingLeft: resolveTreeRowIndent(depth) },
+      selected && styles.rowSelected,
+      hovered && styles.rowHovered,
+    ],
+    [depth, hovered, selected],
   );
 
   return (
@@ -79,6 +95,7 @@ export const WorkspaceTreeRow = memo(function WorkspaceTreeRow({
         onPress={onPress}
         accessibilityRole="button"
         accessibilityLabel={label}
+        accessibilityState={selectedAccessibilityState(selected)}
         style={styles.labelArea}
       >
         <View style={styles.iconSlot}>
@@ -107,6 +124,11 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 28,
   },
   rowHovered: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  // Same token the workspace row uses for its selected state, so an active
+  // agent or terminal reads the same as an active workspace.
+  rowSelected: {
     backgroundColor: theme.colors.surfaceSidebarHover,
   },
   chevronSlot: {

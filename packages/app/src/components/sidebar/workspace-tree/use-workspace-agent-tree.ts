@@ -161,7 +161,11 @@ export function selectPaseoAgentNodes(
 /**
  * Read the nested agent tree for a workspace. Rebuilds when either the session
  * store (Paseo agents) or the provider subagent store (OMP task children, etc.)
- * changes — so provider subagents appear on-the-fly as they are created.
+ * changes, so provider subagents created while connected appear on the fly.
+ *
+ * Subagents that already existed before this connection are not in that store
+ * until something asks the daemon for them; `useHydrateProviderSubagents` does
+ * that when a workspace subtree is expanded.
  */
 export function useWorkspaceAgentTree(input: {
   serverId: string;

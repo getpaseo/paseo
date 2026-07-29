@@ -2,7 +2,8 @@ import { memo, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
-import { buildTerminalRowPresentation } from "./row-presentation";
+import { buildDeterministicWorkspaceTabId } from "@/workspace-tabs/identity";
+import { buildTerminalRowPresentation, buildTerminalRowTarget } from "./row-presentation";
 import { WorkspaceTreeRow } from "./tree-row";
 
 interface TerminalTreeRowProps {
@@ -14,6 +15,8 @@ interface TerminalTreeRowProps {
   depth: number;
   serverId: string;
   workspaceId: string;
+  /** Tab id currently being viewed in this workspace, or null. */
+  activeTabId: string | null;
   onWorkspacePress?: () => void;
 }
 
@@ -25,19 +28,20 @@ export const TerminalTreeRow = memo(function TerminalTreeRow({
   depth,
   serverId,
   workspaceId,
+  activeTabId,
   onWorkspacePress,
 }: TerminalTreeRowProps) {
   const { t } = useTranslation();
   const label = title?.trim() || name.trim() || t("workspace.tabs.fallback.terminal");
 
+  // One target drives both navigation and the active-row check.
+  const target = useMemo(() => buildTerminalRowTarget(terminalId), [terminalId]);
+  const selected = activeTabId !== null && buildDeterministicWorkspaceTabId(target) === activeTabId;
+
   const handleNavigate = useCallback(() => {
     onWorkspacePress?.();
-    navigateToWorkspace({
-      serverId,
-      workspaceId,
-      target: { kind: "terminal", terminalId },
-    });
-  }, [onWorkspacePress, serverId, workspaceId, terminalId]);
+    navigateToWorkspace({ serverId, workspaceId, target });
+  }, [onWorkspacePress, serverId, workspaceId, target]);
 
   const presentation = useMemo(
     () => buildTerminalRowPresentation({ terminalId, label, activity }),
@@ -50,6 +54,7 @@ export const TerminalTreeRow = memo(function TerminalTreeRow({
       presentation={presentation}
       label={label}
       onPress={handleNavigate}
+      selected={selected}
     />
   );
 });

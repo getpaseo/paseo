@@ -1,10 +1,13 @@
-import { memo, useCallback, type ReactNode } from "react";
+import { memo, useCallback, useMemo, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
 import { ChevronDown, ChevronRight } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useSidebarTreeExpansionStore } from "@/stores/sidebar-tree-expansion-store";
 import type { Theme } from "@/styles/theme";
+import { collectPaseoAgentIds } from "./agent-tree";
+import { useActiveTreeTabId } from "./use-active-tree-tab";
+import { useHydrateProviderSubagents } from "./use-hydrate-provider-subagents";
 import { useWorkspaceAgentTree } from "./use-workspace-agent-tree";
 import { useSidebarWorkspaceTerminals } from "./use-sidebar-workspace-terminals";
 import { TREE_CHEVRON_SLOT_WIDTH } from "./tree-layout";
@@ -60,6 +63,12 @@ export const SidebarWorkspaceTreeItem = memo(function SidebarWorkspaceTreeItem({
     workspaceDirectory,
     enabled: expanded,
   });
+  const activeTabId = useActiveTreeTabId({ serverId, workspaceId });
+
+  // Pre-existing provider subagents live only in the daemon's list until asked
+  // for; live ones push themselves in. Hydrate on expand so both show up.
+  const paseoAgentIds = useMemo(() => collectPaseoAgentIds(agentTree), [agentTree]);
+  useHydrateProviderSubagents({ serverId, agentIds: paseoAgentIds, enabled: expanded });
 
   const handleToggle = useCallback(() => {
     toggleWorkspaceExpanded(workspaceKey);
@@ -92,6 +101,7 @@ export const SidebarWorkspaceTreeItem = memo(function SidebarWorkspaceTreeItem({
           terminalsLoading={terminalsLoading}
           serverId={serverId}
           workspaceId={workspaceId}
+          activeTabId={activeTabId}
           onWorkspacePress={onWorkspacePress}
         />
       ) : null}

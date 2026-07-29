@@ -4,6 +4,7 @@ import { deriveTerminalActivityStatusBucket } from "@getpaseo/protocol/terminal-
 import { getProviderIcon } from "@/components/provider-icons";
 import type { WorkspaceTabPresentation } from "@/screens/workspace/workspace-tab-presentation";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
+import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import type { WorkspaceAgentNode } from "./agent-tree";
 
 /**
@@ -16,6 +17,26 @@ import type { WorkspaceAgentNode } from "./agent-tree";
  * same status bucket derivation — so the two surfaces cannot drift apart
  * silently.
  */
+
+/**
+ * The tab a row opens. Rows use this for both navigation and for deciding
+ * whether they are the active tab, so the row can never highlight one tab while
+ * opening another.
+ */
+export function buildAgentRowTarget(agent: WorkspaceAgentNode): WorkspaceTabTarget {
+  if (agent.kind === "provider") {
+    return {
+      kind: "provider_subagent",
+      parentAgentId: agent.parentAgentId ?? "",
+      subagentId: agent.id,
+    };
+  }
+  return { kind: "agent", agentId: agent.id };
+}
+
+export function buildTerminalRowTarget(terminalId: string): WorkspaceTabTarget {
+  return { kind: "terminal", terminalId };
+}
 
 /**
  * Agent tab label rule: a missing title, or the placeholder "New agent", reads
