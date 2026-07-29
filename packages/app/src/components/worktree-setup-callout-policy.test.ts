@@ -51,7 +51,7 @@ describe("selectActiveGitWorkspaceProject", () => {
 
     expect(project?.projectId).toBe("/repo/project ");
     expect(project && buildWorktreeSetupCalloutPolicy(project).projectSettingsRoute).toBe(
-      "/settings/projects/host%3A8%3Aserver-1%3Aproject%3A20%3A%252Frepo%252Fproject%2520",
+      "/settings/projects/project-1",
     );
   });
 
@@ -109,12 +109,12 @@ describe("buildWorktreeSetupCalloutPolicy", () => {
       description:
         "Add setup commands so new worktrees can install dependencies and prepare themselves automatically.",
       actionLabel: "Open project settings",
-      projectSettingsRoute: "/settings/projects/host%3A8%3Aserver-1%3Aproject%3A9%3Aproject-1",
+      projectSettingsRoute: "/settings/projects/project-1",
       testID: "worktree-setup-callout-project-1",
     });
   });
 
-  it("keeps the action route stable when the structural project key changes", () => {
+  it("routes to the cross-host project key", () => {
     expect(
       buildWorktreeSetupCalloutPolicy({
         serverId: "server-1",
@@ -122,7 +122,7 @@ describe("buildWorktreeSetupCalloutPolicy", () => {
         projectKey: "remote:github.com/acme/project",
         repoRoot: "/repo/project",
       }).projectSettingsRoute,
-    ).toBe("/settings/projects/host%3A8%3Aserver-1%3Aproject%3A9%3Aprj_local");
+    ).toBe("/settings/projects/remote%3Agithub.com%2Facme%2Fproject");
   });
 
   it("keeps dismissals scoped to the host placement", () => {
@@ -142,7 +142,7 @@ describe("buildWorktreeSetupCalloutPolicy", () => {
     expect(hostA.dismissalKey).not.toBe(hostB.dismissalKey);
   });
 
-  it("scopes retained legacy project IDs to the active host", () => {
+  it("does not substitute a retained legacy project ID for the project key", () => {
     expect(
       buildWorktreeSetupCalloutPolicy({
         serverId: "server-2",
@@ -150,8 +150,6 @@ describe("buildWorktreeSetupCalloutPolicy", () => {
         projectKey: "remote:github.com/acme/project-fork",
         repoRoot: "/repo/project",
       }).projectSettingsRoute,
-    ).toBe(
-      "/settings/projects/host%3A8%3Aserver-2%3Aproject%3A36%3Aremote%253Agithub.com%252Facme%252Fproject",
-    );
+    ).toBe("/settings/projects/remote%3Agithub.com%2Facme%2Fproject-fork");
   });
 });

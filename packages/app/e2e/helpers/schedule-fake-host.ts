@@ -16,6 +16,7 @@ type SessionRequest = Record<string, unknown> & { type?: string; requestId?: str
 export interface FakeScheduleHostWorkspace {
   serverId: string;
   projectId: string;
+  projectKey: string;
   projectDisplayName: string;
   workspace: Record<string, unknown>;
 }
@@ -120,6 +121,7 @@ export async function buildFakeScheduleHostWorkspace(
   return {
     serverId: "schedule-fake-host",
     projectId,
+    projectKey: workspace.projectKey,
     projectDisplayName: FAKE_HOST_PROJECT_DISPLAY_NAME,
     workspace: {
       ...baseWorkspace,

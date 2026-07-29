@@ -48,11 +48,7 @@ import {
 import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import { DraggableList, type DraggableRenderItemInfo } from "./draggable-list";
 import type { DraggableListDragHandleProps } from "./draggable-list.types";
-import {
-  getHostRuntimeStore,
-  useHostRuntimeConnectionStatuses,
-  useHosts,
-} from "@/runtime/host-runtime";
+import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
 import type { PinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
 import {
   useSidebarWorkspacePinController,
@@ -62,7 +58,6 @@ import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sec
 import { useHostFeatureMap } from "@/runtime/host-features";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
-import { resolveProjectSettingsRouteKey } from "@/projects/project-settings-target";
 import {
   buildNewWorkspaceRoute,
   buildProjectSettingsRoute,
@@ -265,7 +260,6 @@ interface ProjectHeaderRowProps {
   chevron: "expand" | "collapse" | null;
   onPress: () => void;
   worktreeTarget: SidebarProjectHostTarget | null;
-  onlineServerIds: ReadonlySet<string>;
   isProjectActive?: boolean;
   onWorkspacePress?: () => void;
   onWorktreeCreated?: (workspaceId: string) => void;
@@ -495,7 +489,6 @@ function ProjectRowTrailingActions({
   project,
   displayName,
   worktreeTarget,
-  onlineServerIds,
   isHovered,
   isMobileBreakpoint,
   isProjectActive,
@@ -506,7 +499,6 @@ function ProjectRowTrailingActions({
   project: SidebarProjectEntry;
   displayName: string;
   worktreeTarget: SidebarProjectHostTarget | null;
-  onlineServerIds: ReadonlySet<string>;
   isHovered: boolean;
   isMobileBreakpoint: boolean;
   isProjectActive: boolean;
@@ -535,13 +527,6 @@ function ProjectRowTrailingActions({
         >
           <ProjectKebabMenu
             projectKey={project.projectKey}
-            projectSettingsKey={resolveProjectSettingsRouteKey({
-              ...project,
-              hosts: project.hosts.map((host) => ({
-                ...host,
-                isOnline: onlineServerIds.has(host.serverId),
-              })),
-            })}
             projectPath={localProjectPath}
             onRemoveProject={onRemoveProject}
             removeProjectStatus={removeProjectStatus}
@@ -569,13 +554,11 @@ function renderKebabTriggerIcon({ hovered }: { hovered?: boolean }) {
 
 function ProjectKebabMenu({
   projectKey,
-  projectSettingsKey,
   projectPath,
   onRemoveProject,
   removeProjectStatus,
 }: {
   projectKey: string;
-  projectSettingsKey: string;
   projectPath: string;
   onRemoveProject: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
@@ -583,10 +566,10 @@ function ProjectKebabMenu({
   const { t } = useTranslation();
   const toast = useToast();
   const handleOpenProjectSettings = useCallback(() => {
-    if (projectSettingsKey.trim().length === 0) return;
-    router.navigate(buildProjectSettingsRoute(projectSettingsKey));
-  }, [projectSettingsKey]);
-  const canOpenProjectSettings = projectSettingsKey.trim().length > 0;
+    if (projectKey.trim().length === 0) return;
+    router.navigate(buildProjectSettingsRoute(projectKey));
+  }, [projectKey]);
+  const canOpenProjectSettings = projectKey.trim().length > 0;
   // Desktop-only: open a second window that lands on this project via the same
   // open-project flow as a CLI launch. The project stays visible here too — no
   // ownership, no move.
@@ -984,7 +967,6 @@ function ProjectHeaderRow({
   chevron,
   onPress,
   worktreeTarget,
-  onlineServerIds,
   isProjectActive = false,
   onWorkspacePress,
   onWorktreeCreated: _onWorktreeCreated,
@@ -1070,7 +1052,6 @@ function ProjectHeaderRow({
         project={project}
         displayName={displayName}
         worktreeTarget={worktreeTarget}
-        onlineServerIds={onlineServerIds}
         isHovered={isHovered}
         isMobileBreakpoint={isMobileBreakpoint}
         isProjectActive={isProjectActive}
@@ -1625,7 +1606,6 @@ function ProjectBlock({
   hostLabelByServerId,
   showHostLabels,
   supportsMultiplicityByServerId,
-  onlineServerIds,
   supportsPinningByServerId,
   onToggleWorkspacePin,
 }: {
@@ -1651,7 +1631,6 @@ function ProjectBlock({
   hostLabelByServerId: ReadonlyMap<string, string>;
   showHostLabels: boolean;
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>;
-  onlineServerIds: ReadonlySet<string>;
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
 }) {
@@ -1667,9 +1646,8 @@ function ProjectBlock({
         project,
         collapsed,
         supportsMultiplicityByServerId,
-        onlineServerIds,
       }),
-    [collapsed, onlineServerIds, project, supportsMultiplicityByServerId],
+    [collapsed, project, supportsMultiplicityByServerId],
   );
 
   const active = isProjectSelectedByRoute({
@@ -1861,7 +1839,6 @@ function ProjectBlock({
         worktreeTarget={
           rowModel.trailingAction.kind === "new_workspace" ? rowModel.trailingAction.target : null
         }
-        onlineServerIds={onlineServerIds}
         isProjectActive={active}
         onWorkspacePress={onWorkspacePress}
         onWorktreeCreated={onWorktreeCreated}
@@ -1895,7 +1872,6 @@ function areProjectBlockPropsEqual(previous: ProjectBlockProps, next: ProjectBlo
     previous.hostLabelByServerId === next.hostLabelByServerId &&
     previous.showHostLabels === next.showHostLabels &&
     previous.supportsMultiplicityByServerId === next.supportsMultiplicityByServerId &&
-    previous.onlineServerIds === next.onlineServerIds &&
     previous.supportsPinningByServerId === next.supportsPinningByServerId &&
     previous.onToggleWorkspacePin === next.onToggleWorkspacePin &&
     previous.parentGestureRef === next.parentGestureRef &&
@@ -1969,14 +1945,6 @@ export function SidebarWorkspaceList({
   }, [hosts]);
   const serverIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const supportsMultiplicityByServerId = useHostFeatureMap(serverIds, "workspaceMultiplicity");
-  const connectionStatusByServerId = useHostRuntimeConnectionStatuses(serverIds);
-  const onlineServerIds = useMemo(
-    () =>
-      new Set(
-        serverIds.filter((serverId) => connectionStatusByServerId.get(serverId) === "online"),
-      ),
-    [connectionStatusByServerId, serverIds],
-  );
   const supportsPinningByServerId = useHostFeatureMap(serverIds, "workspacePinning");
   const onToggleWorkspacePin = useSidebarWorkspacePinController();
   const showHostLabels = useMemo(() => shouldShowSidebarHostLabels(projects), [projects]);
@@ -2013,7 +1981,6 @@ export function SidebarWorkspaceList({
         hostLabelByServerId={hostLabelByServerId}
         showHostLabels={showHostLabels}
         supportsMultiplicityByServerId={supportsMultiplicityByServerId}
-        onlineServerIds={onlineServerIds}
         supportsPinningByServerId={supportsPinningByServerId}
         onToggleWorkspacePin={onToggleWorkspacePin}
       />
@@ -2085,7 +2052,6 @@ function ProjectModeList({
   hostLabelByServerId,
   showHostLabels,
   supportsMultiplicityByServerId,
-  onlineServerIds,
   supportsPinningByServerId,
   onToggleWorkspacePin,
 }: Omit<
@@ -2096,7 +2062,6 @@ function ProjectModeList({
   hostLabelByServerId: ReadonlyMap<string, string>;
   showHostLabels: boolean;
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>;
-  onlineServerIds: ReadonlySet<string>;
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
 }) {
@@ -2309,7 +2274,6 @@ function ProjectModeList({
           hostLabelByServerId={hostLabelByServerId}
           showHostLabels={showHostLabels}
           supportsMultiplicityByServerId={supportsMultiplicityByServerId}
-          onlineServerIds={onlineServerIds}
           supportsPinningByServerId={supportsPinningByServerId}
           onToggleWorkspacePin={onToggleWorkspacePin}
         />
@@ -2323,7 +2287,6 @@ function ProjectModeList({
       hostLabelByServerId,
       showHostLabels,
       supportsMultiplicityByServerId,
-      onlineServerIds,
       supportsPinningByServerId,
       onToggleWorkspacePin,
       onWorkspacePress,

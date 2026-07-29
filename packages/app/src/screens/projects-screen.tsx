@@ -8,10 +8,7 @@ import { ProjectIconView } from "@/components/project-icon-view";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useProjects, type ProjectHostError } from "@/hooks/use-projects";
 import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
-import {
-  findProjectSettingsTarget,
-  resolveProjectSettingsRouteKey,
-} from "@/projects/project-settings-target";
+import { findProjectSettingsTarget } from "@/projects/project-settings-target";
 import { settingsStyles } from "@/styles/settings";
 import { buildProjectSettingsRoute } from "@/utils/host-routes";
 import type { ProjectSummary } from "@/utils/projects";
@@ -107,11 +104,9 @@ function ProjectRow({ project, isFirst, isSelected, iconDataUri }: ProjectRowPro
   const { t } = useTranslation();
   const { theme } = useUnistyles();
   const { projectKey, projectName } = project;
-  const settingsRouteKey = resolveProjectSettingsRouteKey(project);
-
   const handleNavigate = useCallback(() => {
-    router.navigate(buildProjectSettingsRoute(settingsRouteKey));
-  }, [settingsRouteKey]);
+    router.navigate(buildProjectSettingsRoute(projectKey));
+  }, [projectKey]);
 
   const rowStyle = useCallback(
     ({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) => [

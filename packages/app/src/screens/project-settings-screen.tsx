@@ -31,10 +31,7 @@ import { SettingsGroup } from "@/screens/settings/settings-group";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { useProjects } from "@/hooks/use-projects";
-import {
-  findProjectSettingsRouteTarget,
-  resolveProjectSettingsServerId,
-} from "@/projects/project-settings-target";
+import { findProjectSettingsTarget } from "@/projects/project-settings-target";
 import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
 import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
 import { useToast } from "@/contexts/toast-context";
@@ -93,19 +90,16 @@ export interface ProjectSettingsScreenProps {
 
 export default function ProjectSettingsScreen({ projectKey }: ProjectSettingsScreenProps) {
   const { projects } = useProjects();
-  const routeTarget = useMemo(
-    () => findProjectSettingsRouteTarget(projects, projectKey),
+  const project = useMemo(
+    () => findProjectSettingsTarget(projects, projectKey),
     [projects, projectKey],
   );
-  const project = routeTarget?.project;
   const editableHosts = useMemo(() => filterEditableHosts(project), [project]);
   const [hostSelection, setHostSelection] = useState({ routeKey: "", serverId: "" });
-  const selectedServerId = resolveProjectSettingsServerId({
-    projectKey,
-    editableServerIds: editableHosts.map((host) => host.serverId),
-    routedServerId: routeTarget?.serverId ?? null,
-    hostSelection,
-  });
+  const selectedServerId =
+    hostSelection.routeKey === projectKey
+      ? hostSelection.serverId
+      : (editableHosts[0]?.serverId ?? "");
   const setSelectedServerId = useCallback(
     (serverId: string) => setHostSelection({ routeKey: projectKey, serverId }),
     [projectKey],
