@@ -88,6 +88,49 @@ describe("useDraftAgentCreateFlow", () => {
     expect(onCreateSuccess).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects a concurrent submit before React can render the creating state", async () => {
+    let resolveCreate: ((value: { agentId: string; result: { id: string } }) => void) | undefined;
+    const createRequest = vi.fn(
+      () =>
+        new Promise<{ agentId: string; result: { id: string } }>((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    const onCreateSuccess = vi.fn();
+
+    const { result } = renderHook(() =>
+      useDraftAgentCreateFlow({
+        draftId: "draft-1",
+        getPendingServerId: () => "server-1",
+        buildDraftAgent: (currentAttempt) => ({ currentAttempt }),
+        createRequest,
+        onCreateSuccess,
+      }),
+    );
+
+    const submit = {
+      text: "build this",
+      attachments: [],
+      cwd: "/repo",
+    };
+    let firstSubmission: Promise<void>;
+    let duplicateSubmission: Promise<void>;
+    act(() => {
+      firstSubmission = result.current.handleCreateFromInput(submit);
+      duplicateSubmission = result.current.handleCreateFromInput(submit);
+    });
+
+    await expect(duplicateSubmission!).rejects.toThrow();
+    expect(createRequest).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveCreate?.({ agentId: "agent-1", result: { id: "agent-1" } });
+      await firstSubmission!;
+    });
+
+    expect(onCreateSuccess).toHaveBeenCalledTimes(1);
+  });
+
   it("allows retrying an empty prompt when the draft still has context attachments", async () => {
     const attachment = {
       kind: "chat_history",
