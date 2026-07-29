@@ -7,6 +7,7 @@ import { useSidebarTreeExpansionStore } from "@/stores/sidebar-tree-expansion-st
 import type { Theme } from "@/styles/theme";
 import { useWorkspaceAgentTree } from "./use-workspace-agent-tree";
 import { useSidebarWorkspaceTerminals } from "./use-sidebar-workspace-terminals";
+import { TREE_CHEVRON_SLOT_WIDTH } from "./tree-layout";
 import { WorkspaceTreeNode } from "./workspace-tree-node";
 
 const ThemedChevronDown = withUnistyles(ChevronDown);
@@ -26,9 +27,14 @@ interface SidebarWorkspaceTreeItemProps {
 
 /**
  * Wraps a sidebar workspace row with a leading expand/collapse chevron and,
- * when expanded, the agent/terminal subtree. The chevron only appears when the
- * workspace has agents or terminals to show — empty workspaces are not
- * expandable.
+ * when expanded, the agent/terminal subtree.
+ *
+ * The chevron column is always present, on every workspace row, for two
+ * reasons. It keeps every workspace title on the same left edge — deriving
+ * "is this expandable?" from content made rows jump sideways the moment their
+ * first agent appeared. And it means the terminals list, which costs an RPC to
+ * read, only has to be fetched once a workspace is actually expanded rather
+ * than for every row in the sidebar just to decide whether to draw a chevron.
  */
 export const SidebarWorkspaceTreeItem = memo(function SidebarWorkspaceTreeItem({
   workspaceKey,
@@ -39,15 +45,6 @@ export const SidebarWorkspaceTreeItem = memo(function SidebarWorkspaceTreeItem({
   children,
 }: SidebarWorkspaceTreeItemProps) {
   const { t } = useTranslation();
-  const agentTree = useWorkspaceAgentTree({ serverId, workspaceId });
-  const { terminals, isLoading: terminalsLoading } = useSidebarWorkspaceTerminals({
-    serverId,
-    workspaceId,
-    workspaceDirectory,
-    enabled: true,
-  });
-
-  const hasContent = agentTree.length > 0 || terminals.length > 0 || terminalsLoading;
 
   const expanded = useSidebarTreeExpansionStore((state) =>
     state.expandedWorkspaceKeys.has(workspaceKey),
@@ -56,13 +53,17 @@ export const SidebarWorkspaceTreeItem = memo(function SidebarWorkspaceTreeItem({
     (state) => state.toggleWorkspaceExpanded,
   );
 
+  const agentTree = useWorkspaceAgentTree({ serverId, workspaceId });
+  const { terminals, isLoading: terminalsLoading } = useSidebarWorkspaceTerminals({
+    serverId,
+    workspaceId,
+    workspaceDirectory,
+    enabled: expanded,
+  });
+
   const handleToggle = useCallback(() => {
     toggleWorkspaceExpanded(workspaceKey);
   }, [toggleWorkspaceExpanded, workspaceKey]);
-
-  if (!hasContent) {
-    return <View style={styles.rowContent}>{children}</View>;
-  }
 
   return (
     <View>
@@ -104,7 +105,7 @@ const styles = StyleSheet.create(() => ({
     alignItems: "stretch",
   },
   chevronSlot: {
-    width: 20,
+    width: TREE_CHEVRON_SLOT_WIDTH,
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,

@@ -41,6 +41,11 @@ const EMPTY_TREE: AgentTreeNode[] = [];
  * workspace" is equivalent to "parent is present in the input set".
  *
  * Nesting is unbounded — subagents of subagents resolve to arbitrary depth.
+ *
+ * Parentage that forms a cycle (only reachable through corrupt data) would
+ * otherwise leave every node in the cycle unreachable from any root, silently
+ * dropping it from the sidebar. Cycle members are promoted to roots instead, so
+ * the agents stay visible and the recursive sort still terminates.
  */
 export function buildWorkspaceAgentTree(nodes: readonly WorkspaceAgentNode[]): AgentTreeNode[] {
   if (nodes.length === 0) {
@@ -58,19 +63,41 @@ export function buildWorkspaceAgentTree(nodes: readonly WorkspaceAgentNode[]): A
     if (!treeNode) {
       continue;
     }
-    const parentInWorkspace = node.parentAgentId ? treeNodes.has(node.parentAgentId) : false;
-    if (node.parentAgentId && parentInWorkspace) {
-      const parent = treeNodes.get(node.parentAgentId);
-      if (parent) {
-        parent.children.push(treeNode);
-        continue;
-      }
+    const parent = node.parentAgentId ? treeNodes.get(node.parentAgentId) : undefined;
+    if (parent && parent !== treeNode && !isAncestorOf(treeNode, parent, treeNodes)) {
+      parent.children.push(treeNode);
+      continue;
     }
     roots.push(treeNode);
   }
 
   sortTreeNodes(roots);
   return roots;
+}
+
+/**
+ * True when `candidate` is `node` itself or reachable from it by walking
+ * parents — i.e. attaching `node` under `candidate` would close a cycle.
+ */
+function isAncestorOf(
+  node: AgentTreeNode,
+  candidate: AgentTreeNode,
+  treeNodes: Map<string, AgentTreeNode>,
+): boolean {
+  let current: AgentTreeNode | undefined = candidate;
+  const seen = new Set<AgentTreeNode>();
+  while (current) {
+    if (current === node) {
+      return true;
+    }
+    if (seen.has(current)) {
+      return true;
+    }
+    seen.add(current);
+    const parentId: string | null = current.agent.parentAgentId;
+    current = parentId ? treeNodes.get(parentId) : undefined;
+  }
+  return false;
 }
 
 function sortTreeNodes(nodes: AgentTreeNode[]): void {

@@ -2,13 +2,22 @@ import { memo, type ReactNode } from "react";
 import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
+import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import type { AgentTreeNode } from "./agent-tree";
 import { AgentTreeRow } from "./agent-tree-row";
 import { TerminalTreeRow } from "./terminal-tree-row";
+import { TREE_CHEVRON_SLOT_WIDTH, TREE_ROOT_DEPTH } from "./tree-layout";
+
+export interface WorkspaceTreeTerminal {
+  id: string;
+  name: string;
+  title?: string | null;
+  activity?: TerminalActivity | null;
+}
 
 interface WorkspaceTreeNodeProps {
   agentTree: AgentTreeNode[];
-  terminals: { id: string; name: string; title?: string | null }[];
+  terminals: WorkspaceTreeTerminal[];
   terminalsLoading: boolean;
   serverId: string;
   workspaceId: string;
@@ -36,31 +45,33 @@ export const WorkspaceTreeNode = memo(function WorkspaceTreeNode({
       </Text>
     );
   } else {
+    // Top-level agents and terminals are siblings at the same depth, so their
+    // icons and titles line up in one column.
     content = (
       <View>
         {agentTree.map((node) => (
           <AgentTreeRow
             key={node.agent.id}
             node={node}
-            depth={0}
+            depth={TREE_ROOT_DEPTH}
             serverId={serverId}
             workspaceId={workspaceId}
             onWorkspacePress={onWorkspacePress}
           />
         ))}
-        {hasTerminals
-          ? terminals.map((terminal) => (
-              <TerminalTreeRow
-                key={terminal.id}
-                terminalId={terminal.id}
-                name={terminal.name}
-                title={terminal.title ?? null}
-                serverId={serverId}
-                workspaceId={workspaceId}
-                onWorkspacePress={onWorkspacePress}
-              />
-            ))
-          : null}
+        {terminals.map((terminal) => (
+          <TerminalTreeRow
+            key={terminal.id}
+            terminalId={terminal.id}
+            name={terminal.name}
+            title={terminal.title ?? null}
+            activity={terminal.activity ?? null}
+            depth={TREE_ROOT_DEPTH}
+            serverId={serverId}
+            workspaceId={workspaceId}
+            onWorkspacePress={onWorkspacePress}
+          />
+        ))}
       </View>
     );
   }
@@ -70,14 +81,14 @@ export const WorkspaceTreeNode = memo(function WorkspaceTreeNode({
 
 const styles = StyleSheet.create((theme) => ({
   subtree: {
-    paddingLeft: 20,
-    paddingVertical: theme.spacing[1],
+    // Line the subtree's chevron column up under the workspace row's label.
+    paddingLeft: TREE_CHEVRON_SLOT_WIDTH,
+    paddingBottom: theme.spacing[1],
   },
   emptyState: {
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
-    paddingLeft: theme.spacing[1],
+    paddingLeft: TREE_CHEVRON_SLOT_WIDTH,
     paddingVertical: theme.spacing[1],
-    opacity: 0.7,
   },
 }));

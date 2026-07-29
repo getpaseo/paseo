@@ -166,6 +166,28 @@ describe("selectPaseoAgentNodes", () => {
     const nodes = selectPaseoAgentNodes(state.sessions, "unknown", WORKSPACE_ID);
     expect(nodes).toEqual([]);
   });
+
+  it("degrades an unparseable createdAt to 0 rather than NaN", () => {
+    // NaN here would silently randomize sibling ordering in the tree sort.
+    const state = makeSession([
+      makeAgent({ id: "bad-date", workspaceId: WORKSPACE_ID, createdAt: new Date("nope") }),
+    ]);
+    const nodes = callPaseo(state);
+    expect(nodes.map((n) => n.createdAt)).toEqual([0]);
+  });
+
+  it("collects a deep subagent chain in one pass", () => {
+    const state = makeSession([
+      makeAgent({ id: "root", workspaceId: WORKSPACE_ID }),
+      makeAgent({ id: "d1", workspaceId: undefined, parentAgentId: "root" }),
+      makeAgent({ id: "d2", workspaceId: undefined, parentAgentId: "d1" }),
+      makeAgent({ id: "d3", workspaceId: undefined, parentAgentId: "d2" }),
+      makeAgent({ id: "d4", workspaceId: undefined, parentAgentId: "d3" }),
+      makeAgent({ id: "unrelated", workspaceId: "wks_other" }),
+    ]);
+    const nodes = callPaseo(state);
+    expect(nodes.map((n) => n.id).sort()).toEqual(["d1", "d2", "d3", "d4", "root"]);
+  });
 });
 
 describe("selectProviderSubagentNodesForWorkspace", () => {

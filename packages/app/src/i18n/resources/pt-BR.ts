@@ -998,7 +998,6 @@ export const ptBR: TranslationResources = {
     tree: {
       empty: "Sem agentes ou terminais",
       loading: "Carregando…",
-      untitledAgent: "Agente sem título",
       expandWorkspace: "Expandir árvore do workspace",
       collapseWorkspace: "Recolher árvore do workspace",
       expandAgent: "Expandir {{label}}",

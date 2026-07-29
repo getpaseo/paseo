@@ -1006,7 +1006,6 @@ export const fr: TranslationResources = {
     tree: {
       empty: "Aucun agent ni terminal",
       loading: "Chargement…",
-      untitledAgent: "Agent sans titre",
       expandWorkspace: "Développer l'arbre de l'espace de travail",
       collapseWorkspace: "Réduire l'arbre de l'espace de travail",
       expandAgent: "Développer {{label}}",

@@ -2322,22 +2322,35 @@ function ProjectModeList({
       const hostLabel = showHostLabels
         ? (hostLabelByServerId.get(workspace.serverId) ?? workspace.serverId)
         : null;
+      // Pinned chats sit directly above the project-grouped rows, so they take
+      // the same tree wrapper — otherwise they would lack the chevron column and
+      // their titles would sit one column left of every row below them.
       return (
-        <MemoWorkspaceRowItem
+        <SidebarWorkspaceTreeItem
           key={workspace.workspaceKey}
-          workspace={workspace}
-          workspaceEntry={workspaceEntriesByKey.get(workspace.workspaceKey) ?? null}
-          subtitle={hostLabel ? `${workspace.projectName} · ${hostLabel}` : workspace.projectName}
-          shortcutNumber={shortcutIndexByWorkspaceKey.get(workspace.workspaceKey) ?? null}
-          showShortcutBadge={showShortcutBadges}
-          canCopyBranchName={workspace.projectKind === "git"}
-          canPin={supportsPinningByServerId.get(workspace.serverId) === true}
-          onToggleWorkspacePin={onToggleWorkspacePin}
-          isCreating={creatingWorkspaceIds.has(workspace.workspaceId)}
-          selectionEnabled={selectionEnabled}
-          activeWorkspaceSelection={activeWorkspaceSelection}
+          workspaceKey={workspace.workspaceKey}
+          serverId={workspace.serverId}
+          workspaceId={workspace.workspaceId}
+          workspaceDirectory={
+            workspaceEntriesByKey.get(workspace.workspaceKey)?.workspaceDirectory ?? undefined
+          }
           onWorkspacePress={onWorkspacePress}
-        />
+        >
+          <MemoWorkspaceRowItem
+            workspace={workspace}
+            workspaceEntry={workspaceEntriesByKey.get(workspace.workspaceKey) ?? null}
+            subtitle={hostLabel ? `${workspace.projectName} · ${hostLabel}` : workspace.projectName}
+            shortcutNumber={shortcutIndexByWorkspaceKey.get(workspace.workspaceKey) ?? null}
+            showShortcutBadge={showShortcutBadges}
+            canCopyBranchName={workspace.projectKind === "git"}
+            canPin={supportsPinningByServerId.get(workspace.serverId) === true}
+            onToggleWorkspacePin={onToggleWorkspacePin}
+            isCreating={creatingWorkspaceIds.has(workspace.workspaceId)}
+            selectionEnabled={selectionEnabled}
+            activeWorkspaceSelection={activeWorkspaceSelection}
+            onWorkspacePress={onWorkspacePress}
+          />
+        </SidebarWorkspaceTreeItem>
       );
     },
     [

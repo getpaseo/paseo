@@ -70,4 +70,21 @@ describe("buildWorkspaceAgentTree", () => {
     expect(roots.map((r) => r.agent.id)).toEqual(["parent"]);
     expect(roots[0].children.map((c) => c.agent.id)).toEqual(["first", "second", "third"]);
   });
+
+  it("keeps a self-parented agent visible as a root", () => {
+    const roots = buildWorkspaceAgentTree([node({ id: "loop", parentAgentId: "loop" })]);
+    expect(roots.map((r) => r.agent.id)).toEqual(["loop"]);
+    expect(roots[0].children).toEqual([]);
+  });
+
+  it("keeps agents in a parentage cycle visible instead of dropping them", () => {
+    const roots = buildWorkspaceAgentTree([
+      node({ id: "a", parentAgentId: "b", createdAt: 1 }),
+      node({ id: "b", parentAgentId: "a", createdAt: 2 }),
+    ]);
+    // Every edge in the cycle would close a loop, so each member is promoted to
+    // a root. Neither disappears, and neither nests under the other.
+    expect(roots.map((r) => r.agent.id)).toEqual(["a", "b"]);
+    expect(roots.every((r) => r.children.length === 0)).toBe(true);
+  });
 });

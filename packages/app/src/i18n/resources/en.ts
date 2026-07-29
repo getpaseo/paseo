@@ -986,7 +986,6 @@ export const en = {
     tree: {
       empty: "No agents or terminals",
       loading: "Loading…",
-      untitledAgent: "Untitled agent",
       expandWorkspace: "Expand workspace tree",
       collapseWorkspace: "Collapse workspace tree",
       expandAgent: "Expand {{label}}",
