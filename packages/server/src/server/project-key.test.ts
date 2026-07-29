@@ -189,6 +189,21 @@ describe("deriveProjectKey", () => {
     );
   });
 
+  test("distinguishes SSH users for absolute SCP paths", () => {
+    const rootPath = path.resolve("repo");
+    const derive = (remoteUrl: string) =>
+      deriveProjectKey({
+        rootPath,
+        remoteUrl,
+        worktreeRoot: rootPath,
+        mainRepoRoot: null,
+      });
+
+    expect(derive("alice@git.example.com:/srv/repo.git")).not.toBe(
+      derive("bob@git.example.com:/srv/repo.git"),
+    );
+  });
+
   test("distinguishes SSH users for generic URL remotes", () => {
     const rootPath = path.resolve("repo");
     const derive = (remoteUrl: string) =>

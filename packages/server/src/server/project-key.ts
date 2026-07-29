@@ -70,9 +70,7 @@ function deriveRemoteProjectKey(remoteUrl: string | null): string | null {
     remote.stripDotGitSuffix,
   );
   if (!cleanedPath) return null;
-  const userPrefix = remote.relativePathUser
-    ? `${encodeURIComponent(remote.relativePathUser)}@`
-    : "";
+  const userPrefix = remote.user ? `${encodeURIComponent(remote.user)}@` : "";
   const normalizedHost = remote.host.toLowerCase();
   const normalizedPath = normalizedHost === "github.com" ? cleanedPath.toLowerCase() : cleanedPath;
   const transportPrefix = remote.transport ? `${remote.transport}//` : "";
@@ -83,7 +81,7 @@ interface RemoteLocation {
   host: string;
   path: string;
   transport: string | null;
-  relativePathUser: string | null;
+  user: string | null;
   preserveLeadingSlash: boolean;
   decodePercentEncoding: boolean;
   stripDotGitSuffix: boolean;
@@ -107,7 +105,7 @@ function parseScpRemote(remoteUrl: string): RemoteLocation | null {
     host: normalizedHost,
     path: remotePath,
     transport: null,
-    relativePathUser: user && user !== "git" && !preserveLeadingSlash ? user : null,
+    user: user && user !== "git" ? user : null,
     preserveLeadingSlash,
     decodePercentEncoding: false,
     stripDotGitSuffix: CLOUD_FORGE_HOSTS.has(host.toLowerCase()),
@@ -130,7 +128,7 @@ function parseUrlRemote(remoteUrl: string): RemoteLocation | null {
       host,
       path: remotePath,
       transport: forgeHost || isSsh ? null : parsed.protocol.toLowerCase(),
-      relativePathUser:
+      user:
         isSsh && !forgeHost && parsed.username && parsed.username !== "git"
           ? decodeUrlComponent(parsed.username)
           : null,
