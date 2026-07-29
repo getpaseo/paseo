@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectPlacementPayload } from "@getpaseo/protocol/messages";
+import { frameHostProjectKey } from "@/projects/project-key";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { buildProjects } from "./projects";
 
@@ -451,7 +452,11 @@ describe("buildProjects", () => {
     const acme = result.projects.find(
       (project) => project.projectKey === "remote:github.com/acme/app#subdir:packages/client",
     );
-    const legacy = result.projects.find((project) => project.projectKey === "legacy-project");
+    const legacy = result.projects.find(
+      (project) =>
+        project.projectKey ===
+        frameHostProjectKey({ serverId: "legacy", projectId: "legacy-project" }),
+    );
 
     expect(acme?.hosts[0]?.repoRoot).toBe("/worktrees/app/main/packages/client");
     expect(legacy?.hosts[0]?.repoRoot).toBe("/repo/legacy");
@@ -584,8 +589,8 @@ describe("buildProjects", () => {
     });
 
     expect(result.projects.map((project) => project.projectKey)).toEqual([
-      "/repo/one",
-      "/repo/two",
+      frameHostProjectKey({ serverId: "local", projectId: "/repo/one" }),
+      frameHostProjectKey({ serverId: "local", projectId: "/repo/two" }),
     ]);
   });
 
@@ -646,7 +651,7 @@ describe("buildProjects", () => {
       "remote:gitlab.com/acme/api",
       "remote:bitbucket.org/acme/cli",
       "remote:github.com/acme/web",
-      "/repo/local",
+      frameHostProjectKey({ serverId: "local", projectId: "/repo/local" }),
     ]);
   });
 
@@ -739,7 +744,9 @@ describe("buildProjects", () => {
 
     expect(result.projects).toHaveLength(1);
     const summary = result.projects[0];
-    expect(summary?.projectKey).toBe("legacy-project");
+    expect(summary?.projectKey).toBe(
+      frameHostProjectKey({ serverId: "old-daemon", projectId: "legacy-project" }),
+    );
     expect(summary?.projectName).toBe("Legacy");
     expect(summary?.githubUrl).toBeUndefined();
     expect(summary?.hosts).toHaveLength(1);
@@ -770,7 +777,9 @@ describe("buildProjects", () => {
 
     expect(result.projects).toHaveLength(1);
     const summary = result.projects[0];
-    expect(summary?.projectKey).toBe("/repo/fresh");
+    expect(summary?.projectKey).toBe(
+      frameHostProjectKey({ serverId: "local", projectId: "/repo/fresh" }),
+    );
     expect(summary?.totalWorkspaceCount).toBe(0);
     expect(summary?.hosts).toHaveLength(1);
     // repoRoot must be non-empty or the project settings screen treats the host

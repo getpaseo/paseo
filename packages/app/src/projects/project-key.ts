@@ -5,9 +5,9 @@ export function resolveProjectKey(input: {
 }): string {
   if (input.projectKey) return input.projectKey;
   // COMPAT(projectKey): added in v0.2.4 on 2026-07-28; remove after 2027-01-28.
-  // Older daemons used remote/path-shaped project IDs as their grouping key. New opaque IDs
-  // must remain host-local when the new field is absent.
-  return input.projectId.startsWith("prj_") ? frameHostProjectKey(input) : input.projectId;
+  // Older daemons used recognized remote-shaped project IDs as their grouping key. Their
+  // path-shaped and opaque IDs are host-local when the new field is absent.
+  return input.projectId.startsWith("remote:") ? input.projectId : frameHostProjectKey(input);
 }
 
 export function frameHostProjectKey(input: { serverId: string; projectId: string }): string {
