@@ -37,6 +37,7 @@ function deriveRemoteProjectGroupKey(remoteUrl: string | null): string | null {
 
   let host: string | null = null;
   let remotePath: string | null = null;
+  let preserveLeadingSlash = false;
   const scpLike =
     !trimmed.includes("://") && !/^[A-Za-z]:[\\/]/.test(trimmed)
       ? trimmed.match(/^(?:[^@/:]+@)?(\[[^\]]+\]|[^/:]+):(.+)$/)
@@ -44,6 +45,7 @@ function deriveRemoteProjectGroupKey(remoteUrl: string | null): string | null {
   if (scpLike) {
     host = scpLike[1] ?? null;
     remotePath = scpLike[2] ?? null;
+    preserveLeadingSlash = remotePath?.startsWith("/") ?? false;
   } else if (trimmed.includes("://")) {
     try {
       const parsed = new URL(trimmed);
@@ -55,13 +57,15 @@ function deriveRemoteProjectGroupKey(remoteUrl: string | null): string | null {
   }
 
   if (!host || !remotePath) return null;
-  const cleanedPath = normalizeRemotePath(remotePath);
+  const cleanedPath = normalizeRemotePath(remotePath, preserveLeadingSlash);
   if (!cleanedPath) return null;
   return `remote:${host.toLowerCase()}/${cleanedPath}`;
 }
 
-function normalizeRemotePath(remotePath: string): string {
-  const segments = remotePath.trim().replace(/^\/+/, "").replace(/\/+$/, "").split("/");
+function normalizeRemotePath(remotePath: string, preserveLeadingSlash: boolean): string {
+  const trimmedPath = remotePath.trim().replace(/\/+$/, "");
+  const pathForEncoding = preserveLeadingSlash ? trimmedPath : trimmedPath.replace(/^\/+/, "");
+  const segments = pathForEncoding.split("/");
   const decodedSegments = segments.map((segment) => {
     try {
       return decodeURIComponent(segment);
@@ -78,7 +82,9 @@ function normalizeRemotePath(remotePath: string): string {
 function deriveRemoteHost(remoteUrl: URL): string | null {
   const defaultPorts: Partial<Record<string, string>> = {
     "git:": "9418",
+    "git+ssh:": "22",
     "ssh:": "22",
+    "ssh+git:": "22",
   };
   if (remoteUrl.port === defaultPorts[remoteUrl.protocol]) return remoteUrl.hostname || null;
   return remoteUrl.host || null;

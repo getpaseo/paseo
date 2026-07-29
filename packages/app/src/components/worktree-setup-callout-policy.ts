@@ -68,11 +68,11 @@ export function shouldShowWorktreeSetupCallout(readResult: ReadProjectConfigResu
 export function buildWorktreeSetupCalloutPolicy(
   project: ActiveGitWorkspaceProject,
 ): WorktreeSetupCalloutPolicy {
-  const calloutKey = `worktree-setup-missing:${project.projectKey}`;
   const projectSettingsKey = resolveHostProjectSettingsRouteKey({
     serverId: project.serverId,
     projectId: project.projectId,
   });
+  const calloutKey = `worktree-setup-missing:${projectSettingsKey ?? project.projectKey}`;
 
   return {
     id: calloutKey,

@@ -107,8 +107,8 @@ describe("buildWorktreeSetupCalloutPolicy", () => {
         repoRoot: "/repo/project-1",
       }),
     ).toEqual({
-      id: "worktree-setup-missing:project-1",
-      dismissalKey: "worktree-setup-missing:project-1",
+      id: "worktree-setup-missing:host:server-1:project:project-1",
+      dismissalKey: "worktree-setup-missing:host:server-1:project:project-1",
       priority: 100,
       title: "Set up worktree scripts",
       description:
@@ -128,6 +128,23 @@ describe("buildWorktreeSetupCalloutPolicy", () => {
         repoRoot: "/repo/project",
       }).projectSettingsRoute,
     ).toBe("/settings/projects/host%3Aserver-1%3Aproject%3Aprj_local");
+  });
+
+  it("keeps dismissals scoped to the host placement", () => {
+    const hostA = buildWorktreeSetupCalloutPolicy({
+      serverId: "host-a",
+      projectId: "project-a",
+      projectKey: "remote:github.com/acme/project",
+      repoRoot: "/host-a/project",
+    });
+    const hostB = buildWorktreeSetupCalloutPolicy({
+      serverId: "host-b",
+      projectId: "project-b",
+      projectKey: "remote:github.com/acme/project",
+      repoRoot: "/host-b/project",
+    });
+
+    expect(hostA.dismissalKey).not.toBe(hostB.dismissalKey);
   });
 
   it("scopes retained legacy project IDs to the active host", () => {

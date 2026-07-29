@@ -57,6 +57,32 @@ describe("deriveProjectGroupKey", () => {
     ).toBe("remote:github.com/getpaseo/paseo");
   });
 
+  test("distinguishes absolute and home-relative SCP paths", () => {
+    const rootPath = path.resolve("repo");
+    const derive = (remoteUrl: string) =>
+      deriveProjectGroupKey({
+        rootPath,
+        remoteUrl,
+        worktreeRoot: rootPath,
+        mainRepoRoot: null,
+      });
+
+    expect(derive("example.com:srv/repo.git")).not.toBe(derive("example.com:/srv/repo.git"));
+  });
+
+  test.each(["git+ssh:", "ssh+git:"])("normalizes SSH alias default ports for %s", (scheme) => {
+    const rootPath = path.resolve("repo");
+
+    expect(
+      deriveProjectGroupKey({
+        rootPath,
+        remoteUrl: `${scheme}//git@github.com:22/getpaseo/paseo.git`,
+        worktreeRoot: rootPath,
+        mainRepoRoot: null,
+      }),
+    ).toBe("remote:github.com/getpaseo/paseo");
+  });
+
   test("accepts an SCP-style remote with a bracketed IPv6 host", () => {
     const rootPath = path.resolve("repo");
 
