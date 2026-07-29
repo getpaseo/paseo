@@ -6,7 +6,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useSidebarTreeExpansionStore } from "@/stores/sidebar-tree-expansion-store";
 import type { Theme } from "@/styles/theme";
 import { collectPaseoAgentIds } from "./agent-tree";
-import { useActiveTreeTabId } from "./use-active-tree-tab";
+import { useActiveTreeTab } from "./use-active-tree-tab";
 import { useHydrateProviderSubagents } from "./use-hydrate-provider-subagents";
 import { useWorkspaceAgentTree } from "./use-workspace-agent-tree";
 import { useSidebarWorkspaceTerminals } from "./use-sidebar-workspace-terminals";
@@ -63,7 +63,7 @@ export const SidebarWorkspaceTreeItem = memo(function SidebarWorkspaceTreeItem({
     workspaceDirectory,
     enabled: expanded,
   });
-  const activeTabId = useActiveTreeTabId({ serverId, workspaceId });
+  const activeTab = useActiveTreeTab(serverId);
 
   // Pre-existing provider subagents live only in the daemon's list until asked
   // for; live ones push themselves in. Hydrate on expand so both show up.
@@ -101,7 +101,7 @@ export const SidebarWorkspaceTreeItem = memo(function SidebarWorkspaceTreeItem({
           terminalsLoading={terminalsLoading}
           serverId={serverId}
           workspaceId={workspaceId}
-          activeTabId={activeTabId}
+          activeTab={activeTab}
           onWorkspacePress={onWorkspacePress}
         />
       ) : null}

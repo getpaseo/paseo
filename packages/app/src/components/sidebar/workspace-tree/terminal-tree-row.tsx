@@ -4,6 +4,7 @@ import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { buildDeterministicWorkspaceTabId } from "@/workspace-tabs/identity";
 import { buildTerminalRowPresentation, buildTerminalRowTarget } from "./row-presentation";
+import type { ActiveTreeTab } from "./use-active-tree-tab";
 import { WorkspaceTreeRow } from "./tree-row";
 
 interface TerminalTreeRowProps {
@@ -15,8 +16,8 @@ interface TerminalTreeRowProps {
   depth: number;
   serverId: string;
   workspaceId: string;
-  /** Tab id currently being viewed in this workspace, or null. */
-  activeTabId: string | null;
+  /** The tab currently being viewed on this server, or null. */
+  activeTab: ActiveTreeTab | null;
   onWorkspacePress?: () => void;
 }
 
@@ -28,7 +29,7 @@ export const TerminalTreeRow = memo(function TerminalTreeRow({
   depth,
   serverId,
   workspaceId,
-  activeTabId,
+  activeTab,
   onWorkspacePress,
 }: TerminalTreeRowProps) {
   const { t } = useTranslation();
@@ -36,7 +37,11 @@ export const TerminalTreeRow = memo(function TerminalTreeRow({
 
   // One target drives both navigation and the active-row check.
   const target = useMemo(() => buildTerminalRowTarget(terminalId), [terminalId]);
-  const selected = activeTabId !== null && buildDeterministicWorkspaceTabId(target) === activeTabId;
+  // Terminals belong to the workspace that created them, so no fallback here.
+  const selected =
+    activeTab !== null &&
+    activeTab.workspaceId === workspaceId &&
+    activeTab.tabId === buildDeterministicWorkspaceTabId(target);
 
   const handleNavigate = useCallback(() => {
     onWorkspacePress?.();

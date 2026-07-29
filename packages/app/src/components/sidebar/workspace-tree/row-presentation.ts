@@ -39,6 +39,23 @@ export function buildTerminalRowTarget(terminalId: string): WorkspaceTabTarget {
 }
 
 /**
+ * The workspace a row's tab belongs to.
+ *
+ * The tree pulls subagents in by parentage regardless of their own workspace, so
+ * a row can be displayed under one workspace while belonging to another. The
+ * agent's own workspace wins; the containing workspace is only a fallback for
+ * agents with no workspace of their own — which matches how the subagent
+ * navigation resolver picks a destination. Provider subagents always carry an
+ * empty workspace and are scoped to their parent, so they take the fallback.
+ */
+export function resolveRowWorkspaceId(
+  agent: WorkspaceAgentNode,
+  containingWorkspaceId: string,
+): string {
+  return agent.workspaceId.trim() || containingWorkspaceId;
+}
+
+/**
  * Agent tab label rule: a missing title, or the placeholder "New agent", reads
  * as still-loading rather than as a name.
  */

@@ -7,6 +7,7 @@ import {
   buildAgentRowTarget,
   buildTerminalRowPresentation,
   buildTerminalRowTarget,
+  resolveRowWorkspaceId,
   resolveTreeAgentLabel,
 } from "./row-presentation";
 
@@ -111,6 +112,29 @@ describe("row tab targets", () => {
     const target = buildTerminalRowTarget("term-1");
     expect(target).toEqual({ kind: "terminal", terminalId: "term-1" });
     expect(buildDeterministicWorkspaceTabId(target)).toBe("terminal_term-1");
+  });
+
+  it("opens a cross-workspace subagent in its own workspace, not the one it is shown under", () => {
+    // The tree pulls subagents in by parentage regardless of workspace, so a row
+    // can be displayed under one workspace while belonging to another. Opening
+    // it in the containing workspace would put the tab in the wrong layout.
+    const child = agent({ id: "child", parentAgentId: "parent", workspaceId: "wks_other" });
+    expect(resolveRowWorkspaceId(child, "wks_containing")).toBe("wks_other");
+  });
+
+  it("falls back to the containing workspace when the agent has none", () => {
+    expect(resolveRowWorkspaceId(agent({ workspaceId: "" }), "wks_containing")).toBe(
+      "wks_containing",
+    );
+    expect(resolveRowWorkspaceId(agent({ workspaceId: "   " }), "wks_containing")).toBe(
+      "wks_containing",
+    );
+  });
+
+  it("scopes provider subagents to their parent's workspace", () => {
+    // Provider subagents carry no workspace of their own and are parent-scoped.
+    const sub = agent({ id: "sub", kind: "provider", parentAgentId: "parent", workspaceId: "" });
+    expect(resolveRowWorkspaceId(sub, "wks_containing")).toBe("wks_containing");
   });
 
   it("keeps agent and terminal tab ids in separate namespaces", () => {

@@ -8,17 +8,20 @@ import type { AgentTreeNode } from "./agent-tree";
 import {
   buildAgentRowPresentation,
   buildAgentRowTarget,
+  resolveRowWorkspaceId,
   resolveTreeAgentLabel,
 } from "./row-presentation";
+import type { ActiveTreeTab } from "./use-active-tree-tab";
 import { WorkspaceTreeRow } from "./tree-row";
 
 interface AgentTreeRowProps {
   node: AgentTreeNode;
   depth: number;
   serverId: string;
+  /** The workspace whose subtree this row is displayed under. */
   workspaceId: string;
-  /** Tab id currently being viewed in this workspace, or null. */
-  activeTabId: string | null;
+  /** The tab currently being viewed on this server, or null. */
+  activeTab: ActiveTreeTab | null;
   onWorkspacePress?: () => void;
 }
 
@@ -31,7 +34,7 @@ export const AgentTreeRow = memo(function AgentTreeRow({
   depth,
   serverId,
   workspaceId,
-  activeTabId,
+  activeTab,
   onWorkspacePress,
 }: AgentTreeRowProps) {
   const { t } = useTranslation();
@@ -45,12 +48,18 @@ export const AgentTreeRow = memo(function AgentTreeRow({
 
   // One target drives both navigation and the active-row check.
   const target = useMemo(() => buildAgentRowTarget(node.agent), [node.agent]);
-  const selected = activeTabId !== null && buildDeterministicWorkspaceTabId(target) === activeTabId;
+  // A cross-workspace subagent is displayed here but belongs elsewhere, so its
+  // own workspace decides where it opens and where it counts as active.
+  const rowWorkspaceId = resolveRowWorkspaceId(node.agent, workspaceId);
+  const selected =
+    activeTab !== null &&
+    activeTab.workspaceId === rowWorkspaceId &&
+    activeTab.tabId === buildDeterministicWorkspaceTabId(target);
 
   const handleNavigate = useCallback(() => {
     onWorkspacePress?.();
-    navigateToWorkspace({ serverId, workspaceId, target });
-  }, [onWorkspacePress, serverId, workspaceId, target]);
+    navigateToWorkspace({ serverId, workspaceId: rowWorkspaceId, target });
+  }, [onWorkspacePress, serverId, rowWorkspaceId, target]);
 
   const handleToggle = useCallback(() => {
     toggleAgentExpanded(agentKey);
@@ -88,7 +97,7 @@ export const AgentTreeRow = memo(function AgentTreeRow({
               depth={depth + 1}
               serverId={serverId}
               workspaceId={workspaceId}
-              activeTabId={activeTabId}
+              activeTab={activeTab}
               onWorkspacePress={onWorkspacePress}
             />
           ))

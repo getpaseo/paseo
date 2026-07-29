@@ -6,6 +6,7 @@ import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import type { AgentTreeNode } from "./agent-tree";
 import { AgentTreeRow } from "./agent-tree-row";
 import { TerminalTreeRow } from "./terminal-tree-row";
+import type { ActiveTreeTab } from "./use-active-tree-tab";
 import { TREE_CHEVRON_SLOT_WIDTH, TREE_ROOT_DEPTH } from "./tree-layout";
 
 export interface WorkspaceTreeTerminal {
@@ -21,8 +22,8 @@ interface WorkspaceTreeNodeProps {
   terminalsLoading: boolean;
   serverId: string;
   workspaceId: string;
-  /** Tab id currently being viewed in this workspace, or null. */
-  activeTabId: string | null;
+  /** The tab currently being viewed on this server, or null. */
+  activeTab: ActiveTreeTab | null;
   onWorkspacePress?: () => void;
 }
 
@@ -32,7 +33,7 @@ export const WorkspaceTreeNode = memo(function WorkspaceTreeNode({
   terminalsLoading,
   serverId,
   workspaceId,
-  activeTabId,
+  activeTab,
   onWorkspacePress,
 }: WorkspaceTreeNodeProps) {
   const { t } = useTranslation();
@@ -59,7 +60,7 @@ export const WorkspaceTreeNode = memo(function WorkspaceTreeNode({
             depth={TREE_ROOT_DEPTH}
             serverId={serverId}
             workspaceId={workspaceId}
-            activeTabId={activeTabId}
+            activeTab={activeTab}
             onWorkspacePress={onWorkspacePress}
           />
         ))}
@@ -73,7 +74,7 @@ export const WorkspaceTreeNode = memo(function WorkspaceTreeNode({
             depth={TREE_ROOT_DEPTH}
             serverId={serverId}
             workspaceId={workspaceId}
-            activeTabId={activeTabId}
+            activeTab={activeTab}
             onWorkspacePress={onWorkspacePress}
           />
         ))}

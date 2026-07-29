@@ -76,6 +76,7 @@ function makeSession(agents: Agent[]): { sessions: Record<string, SessionState |
         pendingPermissions: new Map(),
         fileExplorer: new Map(),
         queuedMessages: new Map(),
+        messageSubmissions: new Map(),
       },
     },
   };
