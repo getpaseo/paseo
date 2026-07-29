@@ -141,6 +141,46 @@ describe("buildSidebarProjectRowModel", () => {
     });
   });
 
+  it("prefers an online host when a grouped project's first host is offline", () => {
+    const result = buildSidebarProjectRowModel({
+      project: project({
+        hosts: [
+          { serverId: "host-a", iconWorkingDir: "/repo/a", canCreateWorktree: true },
+          { serverId: "host-b", iconWorkingDir: "/repo/b", canCreateWorktree: true },
+        ],
+      }),
+      collapsed: false,
+      onlineServerIds: new Set(["host-b"]),
+    });
+
+    expect(result).toMatchObject({
+      trailingAction: {
+        kind: "new_workspace",
+        target: { serverId: "host-b", iconWorkingDir: "/repo/b" },
+      },
+    });
+  });
+
+  it("falls back to the first capable host when every grouped host is offline", () => {
+    const result = buildSidebarProjectRowModel({
+      project: project({
+        hosts: [
+          { serverId: "host-a", iconWorkingDir: "/repo/a", canCreateWorktree: true },
+          { serverId: "host-b", iconWorkingDir: "/repo/b", canCreateWorktree: true },
+        ],
+      }),
+      collapsed: false,
+      onlineServerIds: new Set(),
+    });
+
+    expect(result).toMatchObject({
+      trailingAction: {
+        kind: "new_workspace",
+        target: { serverId: "host-a", iconWorkingDir: "/repo/a" },
+      },
+    });
+  });
+
   it("targets the first multiplicity-capable host for a non-git project", () => {
     const result = buildSidebarProjectRowModel({
       project: project({

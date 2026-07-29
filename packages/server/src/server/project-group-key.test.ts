@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import { deriveProjectGroupKey } from "./project-group-key.js";
+import { deriveProjectGroupKey, deriveProjectGroupingDisplayName } from "./project-group-key.js";
 
 describe("deriveProjectGroupKey", () => {
   test("preserves an explicit remote port", () => {
@@ -15,7 +15,7 @@ describe("deriveProjectGroupKey", () => {
         worktreeRoot: rootPath,
         mainRepoRoot: null,
       }),
-    ).toBe("remote:git.example.com:8443/acme/app");
+    ).toBe("remote:git.example.com:8443/acme/app.git");
   });
 
   test("normalizes the default SSH port", () => {
@@ -43,7 +43,33 @@ describe("deriveProjectGroupKey", () => {
         worktreeRoot: rootPath,
         mainRepoRoot: null,
       }),
-    ).toBe("remote:git.example.com/repo");
+    ).toBe("remote:git.example.com/repo.git");
+  });
+
+  test("preserves meaningful dot-git suffixes on unknown Git servers", () => {
+    const rootPath = path.resolve("repo");
+    const derive = (remoteUrl: string) =>
+      deriveProjectGroupKey({
+        rootPath,
+        remoteUrl,
+        worktreeRoot: rootPath,
+        mainRepoRoot: null,
+      });
+
+    expect(derive("git@example.com:repos/foo.git")).not.toBe(derive("git@example.com:repos/foo"));
+  });
+
+  test("normalizes dot-git suffixes on known cloud forges", () => {
+    const rootPath = path.resolve("repo");
+    const derive = (remoteUrl: string) =>
+      deriveProjectGroupKey({
+        rootPath,
+        remoteUrl,
+        worktreeRoot: rootPath,
+        mainRepoRoot: null,
+      });
+
+    expect(derive("git@github.com:acme/foo.git")).toBe(derive("https://github.com/acme/foo"));
   });
 
   test("accepts an SCP-style remote without a username", () => {
@@ -155,7 +181,7 @@ describe("deriveProjectGroupKey", () => {
         worktreeRoot: rootPath,
         mainRepoRoot: null,
       }),
-    ).toBe("remote:[2001:db8::1]/getpaseo/paseo");
+    ).toBe("remote:[2001:db8::1]/getpaseo/paseo.git");
   });
 
   test("includes the selected path within a repository", () => {
@@ -252,4 +278,19 @@ describe("deriveProjectGroupKey", () => {
       }
     },
   );
+});
+
+describe("deriveProjectGroupingDisplayName", () => {
+  test.each([
+    ["https://example.com/acme/my%20repo.git", "acme/my repo"],
+    ["git@example.com:acme/my repo.git", "acme/my repo"],
+    ["git@example.com:acme/my#repo.git", "acme/my#repo"],
+    ["git@example.com:acme/my%repo.git", "acme/my%repo"],
+  ])("derives a decoded display name from %s", (remoteUrl, expected) => {
+    const rootPath = path.resolve("repo");
+
+    expect(deriveProjectGroupingDisplayName({ rootPath, remoteUrl, worktreeRoot: rootPath })).toBe(
+      expected,
+    );
+  });
 });

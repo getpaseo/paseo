@@ -48,7 +48,11 @@ import {
 import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import { DraggableList, type DraggableRenderItemInfo } from "./draggable-list";
 import type { DraggableListDragHandleProps } from "./draggable-list.types";
-import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
+import {
+  getHostRuntimeStore,
+  useHostRuntimeConnectionStatuses,
+  useHosts,
+} from "@/runtime/host-runtime";
 import type { PinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
 import {
   useSidebarWorkspacePinController,
@@ -1610,6 +1614,7 @@ function ProjectBlock({
   hostLabelByServerId,
   showHostLabels,
   supportsMultiplicityByServerId,
+  onlineServerIds,
   supportsPinningByServerId,
   onToggleWorkspacePin,
 }: {
@@ -1635,6 +1640,7 @@ function ProjectBlock({
   hostLabelByServerId: ReadonlyMap<string, string>;
   showHostLabels: boolean;
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>;
+  onlineServerIds: ReadonlySet<string>;
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
 }) {
@@ -1650,8 +1656,9 @@ function ProjectBlock({
         project,
         collapsed,
         supportsMultiplicityByServerId,
+        onlineServerIds,
       }),
-    [collapsed, project, supportsMultiplicityByServerId],
+    [collapsed, onlineServerIds, project, supportsMultiplicityByServerId],
   );
 
   const active = isProjectSelectedByRoute({
@@ -1876,6 +1883,7 @@ function areProjectBlockPropsEqual(previous: ProjectBlockProps, next: ProjectBlo
     previous.hostLabelByServerId === next.hostLabelByServerId &&
     previous.showHostLabels === next.showHostLabels &&
     previous.supportsMultiplicityByServerId === next.supportsMultiplicityByServerId &&
+    previous.onlineServerIds === next.onlineServerIds &&
     previous.supportsPinningByServerId === next.supportsPinningByServerId &&
     previous.onToggleWorkspacePin === next.onToggleWorkspacePin &&
     previous.parentGestureRef === next.parentGestureRef &&
@@ -1949,6 +1957,14 @@ export function SidebarWorkspaceList({
   }, [hosts]);
   const serverIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const supportsMultiplicityByServerId = useHostFeatureMap(serverIds, "workspaceMultiplicity");
+  const connectionStatusByServerId = useHostRuntimeConnectionStatuses(serverIds);
+  const onlineServerIds = useMemo(
+    () =>
+      new Set(
+        serverIds.filter((serverId) => connectionStatusByServerId.get(serverId) === "online"),
+      ),
+    [connectionStatusByServerId, serverIds],
+  );
   const supportsPinningByServerId = useHostFeatureMap(serverIds, "workspacePinning");
   const onToggleWorkspacePin = useSidebarWorkspacePinController();
   const showHostLabels = useMemo(() => shouldShowSidebarHostLabels(projects), [projects]);
@@ -1985,6 +2001,7 @@ export function SidebarWorkspaceList({
         hostLabelByServerId={hostLabelByServerId}
         showHostLabels={showHostLabels}
         supportsMultiplicityByServerId={supportsMultiplicityByServerId}
+        onlineServerIds={onlineServerIds}
         supportsPinningByServerId={supportsPinningByServerId}
         onToggleWorkspacePin={onToggleWorkspacePin}
       />
@@ -2056,6 +2073,7 @@ function ProjectModeList({
   hostLabelByServerId,
   showHostLabels,
   supportsMultiplicityByServerId,
+  onlineServerIds,
   supportsPinningByServerId,
   onToggleWorkspacePin,
 }: Omit<
@@ -2066,6 +2084,7 @@ function ProjectModeList({
   hostLabelByServerId: ReadonlyMap<string, string>;
   showHostLabels: boolean;
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>;
+  onlineServerIds: ReadonlySet<string>;
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
 }) {
@@ -2278,6 +2297,7 @@ function ProjectModeList({
           hostLabelByServerId={hostLabelByServerId}
           showHostLabels={showHostLabels}
           supportsMultiplicityByServerId={supportsMultiplicityByServerId}
+          onlineServerIds={onlineServerIds}
           supportsPinningByServerId={supportsPinningByServerId}
           onToggleWorkspacePin={onToggleWorkspacePin}
         />
@@ -2291,6 +2311,7 @@ function ProjectModeList({
       hostLabelByServerId,
       showHostLabels,
       supportsMultiplicityByServerId,
+      onlineServerIds,
       supportsPinningByServerId,
       onToggleWorkspacePin,
       onWorkspacePress,
