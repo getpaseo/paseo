@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 import type { PersistedProjectRecord } from "./workspace-registry.js";
 import { resolveProjectReference } from "./project-reference.js";
 
@@ -36,12 +36,29 @@ describe("resolveProjectReference", () => {
       rootPath: "/new/app",
     });
     const registry = {
-      get: vi.fn().mockResolvedValue(archivedLegacyProject),
-      list: vi.fn().mockResolvedValue([archivedLegacyProject, activeProject]),
+      get: async () => archivedLegacyProject,
+      list: async () => [archivedLegacyProject, activeProject],
     };
 
     await expect(resolveProjectReference(reference, registry, ["/new/app"])).resolves.toEqual(
       activeProject,
+    );
+  });
+
+  test("preserves an archived direct project when there is no active replacement", async () => {
+    const archivedProject = project({
+      projectId: "archived-project-id",
+      projectKey: "remote:github.com/acme/app",
+      rootPath: "/old/app",
+      archivedAt: "2026-02-01T00:00:00.000Z",
+    });
+    const registry = {
+      get: async () => archivedProject,
+      list: async () => [archivedProject],
+    };
+
+    await expect(resolveProjectReference(archivedProject.projectId, registry)).resolves.toEqual(
+      archivedProject,
     );
   });
 });

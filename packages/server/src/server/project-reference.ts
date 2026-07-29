@@ -20,5 +20,5 @@ export async function resolveProjectReference(
     );
     if (matches.length === 1) return matches[0] ?? null;
   }
-  return candidates.length === 1 ? (candidates[0] ?? null) : null;
+  return candidates.length === 1 ? (candidates[0] ?? null) : direct;
 }
