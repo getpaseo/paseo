@@ -234,7 +234,9 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
 
   const handleCreateFromInput = useCallback(
     async ({ text, attachments, cwd }: SubmitContext) => {
-      if (isSubmitting) {
+      const activePendingAttempt =
+        useCreateFlowStore.getState().pendingByDraftId[draftId]?.lifecycle === "active";
+      if (isSubmitting || activePendingAttempt) {
         throw new Error(t("composer.errors.alreadyLoading"));
       }
 
