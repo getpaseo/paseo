@@ -42,6 +42,7 @@ import {
   flattenExplorerTree,
   reconcileRestoredExpandedPaths,
   restoreExpandedDirectories,
+  showHiddenFilesAndRestoreExpandedDirectories,
   type ExplorerTreeRow,
 } from "@/file-explorer/tree";
 import { useWorkspaceFileDragSource } from "@/attachments/use-workspace-file-drag-source";
@@ -375,10 +376,10 @@ export function FileExplorerPane({
       toggleExplorerShowHiddenFiles();
       return;
     }
-    void restoreExpandedDirectories({
+    void showHiddenFilesAndRestoreExpandedDirectories({
       rootDirectory,
       persistedExpandedPaths: expandedPaths,
-      showHiddenFiles: true,
+      showHiddenFiles: toggleExplorerShowHiddenFiles,
       requestDirectoryListing: (path) =>
         requestDirectoryListing(path, {
           recordHistory: false,
@@ -392,7 +393,6 @@ export function FileExplorerPane({
           restoredExpandedPaths: restoredPaths,
         }),
       );
-      toggleExplorerShowHiddenFiles();
       return null;
     });
   }, [

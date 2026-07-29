@@ -23,6 +23,13 @@ interface RestoreExpandedDirectoriesInput {
   requestDirectoryListing: (path: string) => Promise<ExplorerDirectory | null>;
 }
 
+interface ShowHiddenFilesAndRestoreExpandedDirectoriesInput extends Omit<
+  RestoreExpandedDirectoriesInput,
+  "showHiddenFiles"
+> {
+  showHiddenFiles: () => void;
+}
+
 interface ReconcileRestoredExpandedPathsInput {
   persistedExpandedPaths: ReadonlySet<string>;
   currentExpandedPaths: ReadonlySet<string>;
@@ -108,6 +115,21 @@ export async function restoreExpandedDirectories({
   }
 
   return restoredPaths;
+}
+
+export function showHiddenFilesAndRestoreExpandedDirectories({
+  rootDirectory,
+  persistedExpandedPaths,
+  showHiddenFiles,
+  requestDirectoryListing,
+}: ShowHiddenFilesAndRestoreExpandedDirectoriesInput): Promise<string[]> {
+  showHiddenFiles();
+  return restoreExpandedDirectories({
+    rootDirectory,
+    persistedExpandedPaths,
+    showHiddenFiles: true,
+    requestDirectoryListing,
+  });
 }
 
 export function reconcileRestoredExpandedPaths({

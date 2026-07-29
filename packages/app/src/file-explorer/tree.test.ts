@@ -5,6 +5,7 @@ import {
   flattenExplorerTree,
   reconcileRestoredExpandedPaths,
   restoreExpandedDirectories,
+  showHiddenFilesAndRestoreExpandedDirectories,
 } from "./tree";
 
 function makeDirectoryEntry(name: string, path: string): ExplorerEntry {
@@ -150,5 +151,30 @@ describe("file explorer tree", () => {
     });
 
     expect(paths).toEqual([".", "manual"]);
+  });
+
+  it("shows hidden files before waiting for expanded directories to restore", async () => {
+    const rootDirectory = {
+      path: ".",
+      entries: [makeDirectoryEntry(".hidden", ".hidden")],
+    };
+    let resolveDirectory!: (directory: { path: string; entries: ExplorerEntry[] }) => void;
+    const directoryListing = new Promise<{ path: string; entries: ExplorerEntry[] }>((resolve) => {
+      resolveDirectory = resolve;
+    });
+    let hiddenFilesAreShown = false;
+
+    const restoration = showHiddenFilesAndRestoreExpandedDirectories({
+      rootDirectory,
+      persistedExpandedPaths: new Set([".hidden"]),
+      showHiddenFiles: () => {
+        hiddenFilesAreShown = true;
+      },
+      requestDirectoryListing: () => directoryListing,
+    });
+
+    expect(hiddenFilesAreShown).toBe(true);
+    resolveDirectory({ path: ".hidden", entries: [] });
+    await expect(restoration).resolves.toEqual([".", ".hidden"]);
   });
 });
