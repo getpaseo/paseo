@@ -31,6 +31,7 @@ function createWorkspace(
   return {
     id: input.id,
     projectId: input.projectId ?? "project-1",
+    projectKey: input.projectKey ?? input.projectId ?? "project-1",
     projectDisplayName: input.projectDisplayName ?? "Project 1",
     projectRootPath: input.projectRootPath ?? "/repo",
     workspaceDirectory: input.workspaceDirectory ?? "/repo",
@@ -297,6 +298,7 @@ describe("workspace structure composition", () => {
     });
     const emptyProject: EmptyProjectDescriptor = {
       projectId: "project-a",
+      projectKey: "project-a",
       projectDisplayName: "Project A",
       projectCustomName: null,
       projectRootPath: "/repo/a",
@@ -351,6 +353,7 @@ describe("workspace structure composition", () => {
     useSessionStore.getState().setEmptyProjects(SERVER_ID, [
       {
         projectId: "empty-project",
+        projectKey: "empty-project",
         projectDisplayName: "Empty Project",
         projectCustomName: null,
         projectRootPath: "/repo/empty",

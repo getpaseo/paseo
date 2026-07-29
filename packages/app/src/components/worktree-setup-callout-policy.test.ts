@@ -11,6 +11,7 @@ function gitWorkspace(
 ): WorktreeSetupWorkspaceInput {
   return {
     projectId: "project-1",
+    projectKey: "project-1",
     projectKind: "git",
     projectRootPath: "/repo/project-1",
     ...overrides,

@@ -83,6 +83,7 @@ function workspace(input: {
   return {
     id: input.id,
     projectId: input.projectId,
+    projectKey: input.projectId,
     projectDisplayName: input.projectDisplayName,
     projectRootPath: `/repo/${input.projectId}`,
     workspaceDirectory: `/repo/${input.projectId}/${input.id}`,

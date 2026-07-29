@@ -53,6 +53,7 @@ function workspace(input: Partial<WorkspaceDescriptor>): WorkspaceDescriptor {
   return {
     id: input.id ?? "workspace-a",
     projectId: input.projectId ?? "project-a",
+    projectKey: input.projectKey ?? input.projectId ?? "project-a",
     projectDisplayName: input.projectDisplayName ?? "Project A",
     projectRootPath: input.projectRootPath ?? "/repo/a",
     workspaceDirectory: input.workspaceDirectory ?? "/repo/a",
