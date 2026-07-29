@@ -5,21 +5,10 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ViewedTimelineUiBridge } from "@/timeline/viewed-timeline-sync";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import {
-  appendSubmittedUserMessage,
   handoffCreatedAgentUserMessageToStream,
-  removeSubmittedUserMessage,
   type StreamItem,
   type UserMessageItem,
 } from "@/types/stream";
-import {
-  acceptMessageSubmission,
-  beginMessageSubmission,
-  observeAcceptedMessageSubmissionsRunning,
-  observeMessageSubmissionCanonical,
-  rejectMessageSubmission,
-  type MessageSubmissionRecord,
-  type MessageSubmissionRejectionOutcome,
-} from "@/composer/submission/model";
 import type { PendingPermission } from "@/types/shared";
 import type { ComposerAttachment } from "@/attachments/types";
 import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
@@ -379,7 +368,6 @@ export interface SessionState {
   // Stream state (head/tail model)
   agentStreamTail: Map<string, StreamItem[]>;
   agentStreamHead: Map<string, StreamItem[]>;
-  messageSubmissions: Map<string, MessageSubmissionRecord[]>;
   agentTimelineCursor: Map<string, AgentTimelineCursorState>;
   agentTimelineHasOlder: Map<string, boolean>;
   agentTimelineOlderFetchInFlight: Map<string, boolean>;
@@ -471,28 +459,8 @@ interface SessionStoreActions {
   setAgentStreamState: (
     serverId: string,
     agentId: string,
-    state: {
-      tail?: StreamItem[];
-      head?: StreamItem[];
-      acknowledgedClientMessageIds?: readonly string[];
-    },
+    state: { tail?: StreamItem[]; head?: StreamItem[] },
   ) => void;
-  beginAgentMessageSubmission: (
-    serverId: string,
-    agentId: string,
-    message: UserMessageItem,
-  ) => void;
-  acceptAgentMessageSubmission: (
-    serverId: string,
-    agentId: string,
-    clientMessageId: string,
-    outOfBand: boolean | undefined,
-  ) => void;
-  rejectAgentMessageSubmission: (
-    serverId: string,
-    agentId: string,
-    clientMessageId: string,
-  ) => MessageSubmissionRejectionOutcome;
   handoffCreatedAgentUserMessage: (
     serverId: string,
     agentId: string,
@@ -599,27 +567,6 @@ type SessionStore = SessionStoreState & SessionStoreActions;
 
 const agentLastActivityCoalescer = createAgentLastActivityCoalescer();
 
-function applyRunningAgentsToAcceptedSubmissions(input: {
-  previousAgents: Map<string, Agent>;
-  nextAgents: Map<string, Agent>;
-  submissions: Map<string, MessageSubmissionRecord[]>;
-}): Map<string, MessageSubmissionRecord[]> {
-  let nextSubmissions = input.submissions;
-  for (const [agentId, submissions] of input.submissions) {
-    const previousAgent = input.previousAgents.get(agentId);
-    const nextAgent = input.nextAgents.get(agentId);
-    if (!nextAgent || previousAgent?.status === "running" || nextAgent.status !== "running") {
-      continue;
-    }
-    const remaining = observeAcceptedMessageSubmissionsRunning(submissions);
-    if (remaining === submissions) continue;
-    if (nextSubmissions === input.submissions) nextSubmissions = new Map(input.submissions);
-    if (remaining.length > 0) nextSubmissions.set(agentId, remaining);
-    else nextSubmissions.delete(agentId);
-  }
-  return nextSubmissions;
-}
-
 // Helper to create initial session state
 function createInitialSessionState(
   serverId: string,
@@ -641,7 +588,6 @@ function createInitialSessionState(
     currentAssistantMessage: "",
     agentStreamTail: new Map(),
     agentStreamHead: new Map(),
-    messageSubmissions: new Map(),
     agentTimelineCursor: new Map(),
     agentTimelineHasOlder: new Map(),
     agentTimelineOlderFetchInFlight: new Map(),
@@ -1101,25 +1047,8 @@ export const useSessionStore = create<SessionStore>()(
             }
           }
 
-          const currentSubmissions = session.messageSubmissions.get(agentId) ?? [];
-          const observedSubmissions = observeMessageSubmissionCanonical(
-            currentSubmissions,
-            state.acknowledgedClientMessageIds ?? [],
-          );
-          const changedSubmissions = observedSubmissions !== currentSubmissions;
-
-          if (!changedTail && !changedHead && !changedSubmissions) {
+          if (!changedTail && !changedHead) {
             return prev;
-          }
-
-          let messageSubmissions = session.messageSubmissions;
-          if (changedSubmissions) {
-            messageSubmissions = new Map(session.messageSubmissions);
-            if (observedSubmissions.length > 0) {
-              messageSubmissions.set(agentId, observedSubmissions);
-            } else {
-              messageSubmissions.delete(agentId);
-            }
           }
 
           return {
@@ -1130,127 +1059,10 @@ export const useSessionStore = create<SessionStore>()(
                 ...session,
                 agentStreamTail: nextTail,
                 agentStreamHead: nextHead,
-                messageSubmissions,
               },
             },
           };
         });
-      },
-
-      beginAgentMessageSubmission: (serverId, agentId, message) => {
-        set((prev) => {
-          const session = prev.sessions[serverId];
-          if (!session) return prev;
-          if (!message.clientMessageId) {
-            throw new Error("Beginning a message submission requires client identity");
-          }
-          const currentTail = session.agentStreamTail.get(agentId) ?? [];
-          const currentHead = session.agentStreamHead.get(agentId) ?? [];
-          const stream = appendSubmittedUserMessage({
-            tail: currentTail,
-            head: currentHead,
-            message,
-          });
-          const submissions = beginMessageSubmission(
-            session.messageSubmissions.get(agentId) ?? [],
-            { clientMessageId: message.clientMessageId, submittedAt: message.timestamp },
-          );
-          const messageSubmissions = new Map(session.messageSubmissions);
-          messageSubmissions.set(agentId, submissions);
-          return {
-            ...prev,
-            sessions: {
-              ...prev.sessions,
-              [serverId]: {
-                ...session,
-                agentStreamTail:
-                  stream.tail === currentTail
-                    ? session.agentStreamTail
-                    : new Map(session.agentStreamTail).set(agentId, stream.tail),
-                agentStreamHead:
-                  stream.head === currentHead
-                    ? session.agentStreamHead
-                    : new Map(session.agentStreamHead).set(agentId, stream.head),
-                messageSubmissions,
-              },
-            },
-          };
-        });
-      },
-
-      acceptAgentMessageSubmission: (serverId, agentId, clientMessageId, outOfBand) => {
-        set((prev) => {
-          const session = prev.sessions[serverId];
-          if (!session) return prev;
-          const currentSubmissions = session.messageSubmissions.get(agentId) ?? [];
-          const submissions = acceptMessageSubmission(
-            currentSubmissions,
-            clientMessageId,
-            session.agents.get(agentId)?.status === "running",
-            outOfBand,
-          );
-          if (submissions === currentSubmissions) return prev;
-          const messageSubmissions = new Map(session.messageSubmissions);
-          if (submissions.length > 0) {
-            messageSubmissions.set(agentId, submissions);
-          } else {
-            messageSubmissions.delete(agentId);
-          }
-          return {
-            ...prev,
-            sessions: {
-              ...prev.sessions,
-              [serverId]: { ...session, messageSubmissions },
-            },
-          };
-        });
-      },
-
-      rejectAgentMessageSubmission: (serverId, agentId, clientMessageId) => {
-        let outcome: MessageSubmissionRejectionOutcome = "unknown";
-        set((prev) => {
-          const session = prev.sessions[serverId];
-          if (!session) return prev;
-          const currentTail = session.agentStreamTail.get(agentId) ?? [];
-          const currentHead = session.agentStreamHead.get(agentId) ?? [];
-          const currentSubmissions = session.messageSubmissions.get(agentId) ?? [];
-          const result = rejectMessageSubmission(currentSubmissions, clientMessageId);
-          outcome = result.outcome;
-          if (outcome === "unknown") return prev;
-          const stream =
-            outcome === "rejected"
-              ? removeSubmittedUserMessage({
-                  tail: currentTail,
-                  head: currentHead,
-                  clientMessageId,
-                })
-              : { tail: currentTail, head: currentHead };
-          const messageSubmissions = new Map(session.messageSubmissions);
-          if (result.submissions.length > 0) {
-            messageSubmissions.set(agentId, result.submissions);
-          } else {
-            messageSubmissions.delete(agentId);
-          }
-          return {
-            ...prev,
-            sessions: {
-              ...prev.sessions,
-              [serverId]: {
-                ...session,
-                agentStreamTail:
-                  stream.tail === currentTail
-                    ? session.agentStreamTail
-                    : new Map(session.agentStreamTail).set(agentId, stream.tail),
-                agentStreamHead:
-                  stream.head === currentHead
-                    ? session.agentStreamHead
-                    : new Map(session.agentStreamHead).set(agentId, stream.head),
-                messageSubmissions,
-              },
-            },
-          };
-        });
-        return outcome;
       },
 
       handoffCreatedAgentUserMessage: (serverId, agentId, message) => {
@@ -1486,12 +1298,7 @@ export const useSessionStore = create<SessionStore>()(
             return prev;
           }
           const nextAgents = typeof agents === "function" ? agents(session.agents) : agents;
-          const messageSubmissions = applyRunningAgentsToAcceptedSubmissions({
-            previousAgents: session.agents,
-            nextAgents,
-            submissions: session.messageSubmissions,
-          });
-          if (session.agents === nextAgents && session.messageSubmissions === messageSubmissions) {
+          if (session.agents === nextAgents) {
             return prev;
           }
           return {
@@ -1501,11 +1308,10 @@ export const useSessionStore = create<SessionStore>()(
               [serverId]: {
                 ...session,
                 agents: nextAgents,
-                messageSubmissions,
-                workspaceAgentActivity:
-                  nextAgents === session.agents
-                    ? session.workspaceAgentActivity
-                    : buildWorkspaceAgentActivityIndex(nextAgents, session.workspaceAgentActivity),
+                workspaceAgentActivity: buildWorkspaceAgentActivityIndex(
+                  nextAgents,
+                  session.workspaceAgentActivity,
+                ),
               },
             },
           };
