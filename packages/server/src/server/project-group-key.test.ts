@@ -18,6 +18,19 @@ describe("deriveProjectGroupKey", () => {
     ).toBe("remote:git.example.com:8443/acme/app");
   });
 
+  test("normalizes the default SSH port", () => {
+    const rootPath = path.resolve("repo");
+
+    expect(
+      deriveProjectGroupKey({
+        rootPath,
+        remoteUrl: "ssh://git@github.com:22/getpaseo/paseo.git",
+        worktreeRoot: rootPath,
+        mainRepoRoot: null,
+      }),
+    ).toBe("remote:github.com/getpaseo/paseo");
+  });
+
   test("accepts a root-level remote repository path", () => {
     const rootPath = path.resolve("repo");
 

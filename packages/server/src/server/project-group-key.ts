@@ -47,7 +47,7 @@ function deriveRemoteProjectGroupKey(remoteUrl: string | null): string | null {
   } else if (trimmed.includes("://")) {
     try {
       const parsed = new URL(trimmed);
-      host = parsed.host || null;
+      host = deriveRemoteHost(parsed);
       remotePath = parsed.pathname ? parsed.pathname.replace(/^\/+/, "") : null;
     } catch {
       return null;
@@ -59,4 +59,13 @@ function deriveRemoteProjectGroupKey(remoteUrl: string | null): string | null {
   if (cleanedPath.endsWith(".git")) cleanedPath = cleanedPath.slice(0, -4);
   if (!cleanedPath) return null;
   return `remote:${host.toLowerCase()}/${cleanedPath}`;
+}
+
+function deriveRemoteHost(remoteUrl: URL): string | null {
+  const defaultPorts: Partial<Record<string, string>> = {
+    "git:": "9418",
+    "ssh:": "22",
+  };
+  if (remoteUrl.port === defaultPorts[remoteUrl.protocol]) return remoteUrl.hostname || null;
+  return remoteUrl.host || null;
 }
