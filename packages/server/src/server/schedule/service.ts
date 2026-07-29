@@ -205,6 +205,7 @@ type ScheduleAgentManager = Pick<
   | "resumeAgentFromPersistence"
   | "runAgent"
   | "waitForAgentEvent"
+  | "waitForAgentClose"
 >;
 
 interface ScheduleWorkspaceCreateInput {

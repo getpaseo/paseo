@@ -571,6 +571,7 @@ export class AgentManager {
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
+  private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
@@ -953,6 +954,10 @@ export class AgentManager {
     return agent ? { ...agent } : null;
   }
 
+  async waitForAgentClose(agentId: string): Promise<void> {
+    await this.inFlightAgentCloses.get(agentId)?.catch(() => undefined);
+  }
+
   getTimeline(id: string): AgentTimelineItem[] {
     this.requireAgent(id);
     return this.timelineStore.getItems(id);
@@ -1328,7 +1333,24 @@ export class AgentManager {
     }
   }
 
-  async closeAgent(agentId: string): Promise<void> {
+  closeAgent(agentId: string): Promise<void> {
+    const existing = this.inFlightAgentCloses.get(agentId);
+    if (existing) {
+      return existing;
+    }
+
+    const close = this.closeAgentRuntime(agentId);
+    this.inFlightAgentCloses.set(agentId, close);
+    const clearClose = () => {
+      if (this.inFlightAgentCloses.get(agentId) === close) {
+        this.inFlightAgentCloses.delete(agentId);
+      }
+    };
+    void close.then(clearClose, clearClose);
+    return close;
+  }
+
+  private async closeAgentRuntime(agentId: string): Promise<void> {
     const agent = this.requireAgent(agentId);
     this.logger.trace(
       {
