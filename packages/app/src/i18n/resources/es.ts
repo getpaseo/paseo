@@ -795,6 +795,8 @@ export const es: TranslationResources = {
         closeChangesTab: "Cerrar la pestaña Cambios",
         binaryFile: "archivo binario",
         tooLarge: "La diferencia es demasiado grande para mostrarse",
+        previewTooLargeTitle: "Este diff es demasiado grande para previsualizarlo",
+        previewTooLargeDescription: "Reduce la comparación para previsualizarla aquí",
         unified: "Diferencia unificada",
         split: "Diferencia de lado a lado",
         switchToUnified: "Cambiar a diferencia unificada",
