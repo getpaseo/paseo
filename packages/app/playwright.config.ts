@@ -12,9 +12,9 @@ export default defineConfig({
   expect: {
     timeout: 10_000,
   },
-  // Every worker owns its daemon state, so independent tests can run concurrently
-  // even when they live in the same behavior-focused spec file.
-  fullyParallel: true,
+  // Files run concurrently, while each worker owns its daemon state. Keeping a
+  // spec on one worker avoids repeating its file-level setup across daemons.
+  fullyParallel: false,
   workers: Number(process.env.E2E_WORKERS ?? (process.env.CI ? "2" : "1")),
   retries: process.env.CI ? 1 : 0,
   reporter: [["list"]],
