@@ -208,7 +208,7 @@ test("reopening archived exact-root records restores the fresh Git project", asy
   });
   await projectRegistry.upsert({
     ...project,
-    projectGroupKey: "remote:github.com/acme/old-repo",
+    projectKey: "remote:github.com/acme/old-repo",
   });
   const workspace = createPersistedWorkspaceRecord({
     workspaceId: "ws-archived-root",
@@ -248,7 +248,7 @@ test("reopening archived exact-root records restores the fresh Git project", asy
   });
   expect(await projectRegistry.get(project.projectId)).toMatchObject({
     kind: "git",
-    projectGroupKey: "remote:github.com/acme/new-repo",
+    projectKey: "remote:github.com/acme/new-repo",
     archivedAt: null,
   });
 });

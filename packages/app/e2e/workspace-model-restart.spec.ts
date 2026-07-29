@@ -32,8 +32,8 @@ interface RestartDaemonClient {
       name: string;
       status: string;
       workspaceDirectory: string;
-      projectGroupKey?: string;
-      project?: { projectGroupKey?: string };
+      projectKey?: string;
+      project?: { projectKey?: string };
     }>;
   }>;
   fetchAgents(options?: { scope?: "active" }): Promise<{
@@ -467,7 +467,7 @@ test.describe("Workspace model restart regressions", () => {
         (workspace) => workspace.id === seeded.workspaceA,
       );
       const reconciledProjectKey =
-        reconciledWorkspace?.projectGroupKey ?? reconciledWorkspace?.project?.projectGroupKey;
+        reconciledWorkspace?.projectKey ?? reconciledWorkspace?.project?.projectKey;
       if (!reconciledProjectKey) {
         throw new Error(`Workspace ${seeded.workspaceA} was not reconciled with a project key`);
       }

@@ -14,7 +14,7 @@ import {
 } from "../../workspace-registry.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
-import { deriveProjectGroupKey } from "../../project-group-key.js";
+import { deriveProjectKey } from "../../project-key.js";
 import { areEquivalentPaths, createRealpathAwarePathMatcher } from "../../../utils/path.js";
 
 export interface ResolveOrCreateWorkspaceIdInput {
@@ -164,7 +164,7 @@ export function createWorkspaceProvisioningService(deps: {
       rootPath,
       kind: checkout.isGit ? "git" : "non_git",
       displayName: basename(rootPath) || rootPath,
-      projectGroupKey: deriveProjectGroupKey({
+      projectKey: deriveProjectKey({
         rootPath,
         remoteUrl: checkout.remoteUrl,
         worktreeRoot: checkout.worktreeRoot,
@@ -270,7 +270,7 @@ export function createWorkspaceProvisioningService(deps: {
       rootPath: input.repoRoot,
       kind: "git",
       displayName: basename(input.repoRoot) || input.repoRoot,
-      projectGroupKey: deriveProjectGroupKey({
+      projectKey: deriveProjectKey({
         rootPath: input.repoRoot,
         remoteUrl: checkout.remoteUrl,
         worktreeRoot: checkout.worktreeRoot,
@@ -351,22 +351,18 @@ export function createWorkspaceProvisioningService(deps: {
         ? checkout
         : await workspaceGitService.getCheckout(project.rootPath);
       const kind = projectCheckout.isGit ? "git" : "non_git";
-      const projectGroupKey = deriveProjectGroupKey({
+      const projectKey = deriveProjectKey({
         rootPath: project.rootPath,
         remoteUrl: projectCheckout.remoteUrl,
         worktreeRoot: projectCheckout.worktreeRoot,
         mainRepoRoot: projectCheckout.mainRepoRoot,
         serverId,
       });
-      if (
-        project.archivedAt ||
-        project.kind !== kind ||
-        project.projectGroupKey !== projectGroupKey
-      ) {
+      if (project.archivedAt || project.kind !== kind || project.projectKey !== projectKey) {
         await projectRegistry.upsert({
           ...project,
           kind,
-          projectGroupKey,
+          projectKey,
           archivedAt: null,
           updatedAt: timestamp,
         });
@@ -405,18 +401,18 @@ export function createWorkspaceProvisioningService(deps: {
         ? workspaceCheckout
         : await workspaceGitService.getCheckout(project.rootPath);
     const kind: PersistedProjectRecord["kind"] = projectCheckout.isGit ? "git" : "non_git";
-    const projectGroupKey = deriveProjectGroupKey({
+    const projectKey = deriveProjectKey({
       rootPath: project.rootPath,
       remoteUrl: projectCheckout.remoteUrl,
       worktreeRoot: projectCheckout.worktreeRoot,
       mainRepoRoot: projectCheckout.mainRepoRoot,
       serverId,
     });
-    if (project.kind === kind && project.projectGroupKey === projectGroupKey) return project;
+    if (project.kind === kind && project.projectKey === projectKey) return project;
     const refreshed = {
       ...project,
       kind,
-      projectGroupKey,
+      projectKey,
       updatedAt: new Date().toISOString(),
     };
     await projectRegistry.upsert(refreshed);

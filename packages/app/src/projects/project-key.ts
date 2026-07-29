@@ -1,10 +1,10 @@
-export function resolveProjectGroupKey(input: {
+export function resolveProjectKey(input: {
   serverId: string;
   projectId: string;
-  projectGroupKey?: string | null;
+  projectKey?: string | null;
 }): string {
-  if (input.projectGroupKey) return input.projectGroupKey;
-  // COMPAT(projectGroupKey): added in v0.2.4 on 2026-07-28; remove after 2027-01-28.
+  if (input.projectKey) return input.projectKey;
+  // COMPAT(projectKey): added in v0.2.4 on 2026-07-28; remove after 2027-01-28.
   // Older daemons used remote/path-shaped project IDs as their grouping key. New opaque IDs
   // must remain host-local when the new field is absent.
   return input.projectId.startsWith("prj_") ? frameHostProjectKey(input) : input.projectId;

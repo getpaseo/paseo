@@ -1,4 +1,4 @@
-import { frameHostProjectKey } from "./project-group-key";
+import { frameHostProjectKey } from "./project-key";
 
 interface ProjectSettingsTarget {
   projectKey: string;

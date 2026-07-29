@@ -46,9 +46,9 @@ function requireWorkspace(payload: WorkspacePayload) {
 }
 
 function openedProjectFromWorkspace(workspace: WorkspaceDescriptor): OpenedProject {
-  const projectKey = workspace.projectGroupKey ?? workspace.project?.projectGroupKey;
+  const projectKey = workspace.projectKey ?? workspace.project?.projectKey;
   if (!projectKey) {
-    throw new Error(`Workspace ${workspace.id} has no project group key`);
+    throw new Error(`Workspace ${workspace.id} has no project key`);
   }
   return {
     workspaceId: workspace.id,

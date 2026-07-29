@@ -16,8 +16,8 @@ const PersistedProjectRecordSchema = z.object({
   rootPath: z.string(),
   kind: z.enum(["git", "non_git"]),
   displayName: z.string(),
-  // COMPAT(projectGroupKey): added in v0.2.4 on 2026-07-28; remove optional after 2027-01-28.
-  projectGroupKey: z
+  // COMPAT(projectKey): added in v0.2.4 on 2026-07-28; remove optional after 2027-01-28.
+  projectKey: z
     .string()
     .nullable()
     .optional()
@@ -110,7 +110,7 @@ export interface ProjectRegistry {
     rootPath: string;
     kind: PersistedProjectKind;
     displayName: string;
-    projectGroupKey?: string;
+    projectKey?: string;
     timestamp: string;
   }): Promise<PersistedProjectRecord>;
   upsert(record: PersistedProjectRecord): Promise<void>;
@@ -315,7 +315,7 @@ export class FileBackedProjectRegistry
     rootPath: string;
     kind: PersistedProjectKind;
     displayName: string;
-    projectGroupKey?: string;
+    projectKey?: string;
     timestamp: string;
   }): Promise<PersistedProjectRecord> {
     const previous = this.allocationQueue;
@@ -333,15 +333,12 @@ export class FileBackedProjectRegistry
             left.projectId.localeCompare(right.projectId),
         )[0];
       if (active) {
-        if (
-          active.kind === input.kind &&
-          active.projectGroupKey === (input.projectGroupKey ?? null)
-        )
+        if (active.kind === input.kind && active.projectKey === (input.projectKey ?? null))
           return active;
         const refreshed = {
           ...active,
           kind: input.kind,
-          projectGroupKey: input.projectGroupKey ?? null,
+          projectKey: input.projectKey ?? null,
           updatedAt: input.timestamp,
         };
         await this.upsert(refreshed);
@@ -356,7 +353,7 @@ export class FileBackedProjectRegistry
           rootPath: input.rootPath,
           kind: input.kind,
           displayName: input.displayName,
-          projectGroupKey: input.projectGroupKey ?? null,
+          projectKey: input.projectKey ?? null,
           createdAt: input.timestamp,
           updatedAt: input.timestamp,
         });
@@ -477,7 +474,7 @@ export function createPersistedProjectRecord(input: {
   kind: PersistedProjectKind;
   displayName: string;
   customName?: string | null;
-  projectGroupKey?: string | null;
+  projectKey?: string | null;
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
@@ -485,7 +482,7 @@ export function createPersistedProjectRecord(input: {
   return PersistedProjectRecordSchema.parse({
     ...input,
     customName: input.customName ?? null,
-    projectGroupKey: input.projectGroupKey ?? null,
+    projectKey: input.projectKey ?? null,
     archivedAt: input.archivedAt ?? null,
   });
 }

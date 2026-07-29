@@ -27,13 +27,13 @@ describe("selectActiveGitWorkspaceProject", () => {
     });
   });
 
-  it("uses the persisted project group key for the settings route", () => {
+  it("uses the persisted project key for the settings route", () => {
     expect(
       selectActiveGitWorkspaceProject(
         "server-1",
         gitWorkspace({
           projectId: "prj_local",
-          projectGroupKey: "remote:github.com/acme/project",
+          projectKey: "remote:github.com/acme/project",
         }),
       ),
     ).toMatchObject({
@@ -101,7 +101,7 @@ describe("buildWorktreeSetupCalloutPolicy", () => {
     });
   });
 
-  it("keeps the action route stable when the structural group key changes", () => {
+  it("keeps the action route stable when the structural project key changes", () => {
     expect(
       buildWorktreeSetupCalloutPolicy({
         serverId: "server-1",

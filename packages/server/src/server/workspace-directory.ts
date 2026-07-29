@@ -502,7 +502,7 @@ export class WorkspaceDirectory {
       )
       .map((project) => ({
         projectId: project.projectId,
-        projectGroupKey: project.projectGroupKey ?? undefined,
+        projectKey: project.projectKey ?? undefined,
         projectDisplayName: resolveProjectDisplayName(project),
         projectCustomName: project.customName ?? null,
         projectRootPath: project.rootPath,

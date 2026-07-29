@@ -11,7 +11,7 @@ function workspace(input: {
   return {
     id: input.id,
     projectId: input.projectId ?? `project-${input.id}`,
-    projectGroupKey: "remote:github.com/acme/app",
+    projectKey: "remote:github.com/acme/app",
     projectDisplayName: input.projectName,
     projectCustomName: input.projectCustomName,
     projectRootPath: `/repo/${input.id}`,

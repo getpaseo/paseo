@@ -1690,8 +1690,7 @@ export class Session {
       fallbackWorktreeRoot: snapshot?.git.repoRoot,
     });
     return {
-      projectKey: project.projectId,
-      ...(project.projectGroupKey ? { projectGroupKey: project.projectGroupKey } : {}),
+      projectKey: project.projectKey ?? project.projectId,
       projectName: resolveProjectDisplayName(project),
       workspaceName: resolveWorkspaceDisplayName(workspace),
       checkout,
@@ -4290,7 +4289,7 @@ export class Session {
     return {
       id: result.workspace.workspaceId,
       projectId: result.workspace.projectId,
-      ...(projectRecord?.projectGroupKey ? { projectGroupKey: projectRecord.projectGroupKey } : {}),
+      ...(projectRecord?.projectKey ? { projectKey: projectRecord.projectKey } : {}),
       projectDisplayName: projectRecord
         ? resolveProjectDisplayName(projectRecord)
         : result.workspace.projectId,
@@ -4463,7 +4462,7 @@ export class Session {
   ): WorkspaceProjectDescriptorPayload {
     return {
       projectId: project.projectId,
-      ...(project.projectGroupKey ? { projectGroupKey: project.projectGroupKey } : {}),
+      ...(project.projectKey ? { projectKey: project.projectKey } : {}),
       projectDisplayName: resolveProjectDisplayName(project),
       projectCustomName: project.customName ?? null,
       projectRootPath: project.rootPath,

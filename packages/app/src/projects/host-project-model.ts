@@ -3,7 +3,7 @@ import type {
   WorkspaceStructureHostPlacement,
   WorkspaceStructureProject,
 } from "@/projects/workspace-structure";
-import { resolveProjectGroupKey } from "@/projects/project-group-key";
+import { resolveProjectKey } from "@/projects/project-key";
 
 export interface HostProjectListItem {
   projectKey: string;
@@ -75,10 +75,10 @@ export function hostProjectFromWorkspace(input: {
   if (!input.workspace) {
     return null;
   }
-  const projectKey = resolveProjectGroupKey({
+  const projectKey = resolveProjectKey({
     serverId: input.serverId,
     projectId: input.workspace.projectId.trim(),
-    projectGroupKey: input.workspace.projectGroupKey,
+    projectKey: input.workspace.projectKey,
   });
   const iconWorkingDir = input.workspace.projectRootPath.trim();
   if (!projectKey || !iconWorkingDir) {

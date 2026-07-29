@@ -115,14 +115,14 @@ function workspace(input: {
   name: string;
   projectId: string;
   projectDisplayName: string;
-  projectGroupKey?: string;
+  projectKey?: string;
   status?: WorkspaceDescriptor["status"];
   statusEnteredAt?: Date | null;
 }): WorkspaceDescriptor {
   return {
     id: input.id,
     projectId: input.projectId,
-    projectGroupKey: input.projectGroupKey,
+    projectKey: input.projectKey,
     projectDisplayName: input.projectDisplayName,
     projectRootPath: `/repo/${input.projectId}`,
     workspaceDirectory: `/repo/${input.projectId}/${input.id}`,
@@ -422,7 +422,7 @@ describe("shared sidebar workspace model", () => {
                 id: "clone-a",
                 name: "main",
                 projectId: "prj_a",
-                projectGroupKey: "remote:github.com/acme/app",
+                projectKey: "remote:github.com/acme/app",
                 projectDisplayName: "acme/app",
               }),
             ],

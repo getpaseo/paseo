@@ -222,9 +222,9 @@ test.describe("Project remove", () => {
       expect(readded.error).toBeNull();
       expect(readded.project).not.toBeNull();
       readdedProjectId = readded.project?.projectId ?? "";
-      const readdedProjectGroupKey = readded.project?.projectGroupKey ?? "";
+      const readdedProjectKey = readded.project?.projectKey ?? "";
       expect(readdedProjectId).not.toBe(workspace.projectId);
-      expect(readdedProjectGroupKey).toBe(workspace.projectKey);
+      expect(readdedProjectKey).toBe(workspace.projectKey);
       expect(readded.project?.projectDisplayName).toBe(workspace.projectDisplayName);
 
       await page.reload();
@@ -233,7 +233,7 @@ test.describe("Project remove", () => {
       await expect(projectRow).toContainText(workspace.projectDisplayName);
       await expect(projectRow).not.toContainText(workspace.repoPath);
       await expect(
-        page.getByTestId(`sidebar-project-new-workspace-row-${readdedProjectGroupKey}`),
+        page.getByTestId(`sidebar-project-new-workspace-row-${readdedProjectKey}`),
       ).toBeVisible({ timeout: 30_000 });
     } finally {
       if (readdedProjectId) {

@@ -3699,7 +3699,7 @@ test("create paseo worktree response preserves an explicit non-Git project", asy
   expect(response?.payload.error).toBeNull();
   expect(response?.payload.workspace).toMatchObject({
     projectId: explicitProject.projectId,
-    projectGroupKey: explicitProject.rootPath,
+    projectKey: explicitProject.rootPath,
     projectDisplayName: explicitProject.displayName,
     projectRootPath: explicitProject.rootPath,
     projectKind: "non_git",
@@ -3713,7 +3713,7 @@ test("create paseo worktree response preserves an explicit non-Git project", asy
   expect(workspaces.has(response?.payload.workspace?.id ?? "")).toBe(true);
   expect(projects.get(explicitProject.projectId)).toEqual({
     ...explicitProject,
-    projectGroupKey: explicitProject.rootPath,
+    projectKey: explicitProject.rootPath,
   });
 });
 

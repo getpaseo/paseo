@@ -1,12 +1,12 @@
 import type { PaseoConfigRaw } from "@getpaseo/protocol/messages";
 import { i18n } from "@/i18n/i18next";
-import { resolveProjectGroupKey } from "@/projects/project-group-key";
+import { resolveProjectKey } from "@/projects/project-key";
 import { resolveHostProjectSettingsRouteKey } from "@/projects/project-settings-target";
 import { buildProjectSettingsRoute } from "@/utils/host-routes";
 
 export interface WorktreeSetupWorkspaceInput {
   projectId: string;
-  projectGroupKey?: string | null;
+  projectKey?: string | null;
   projectKind: string;
   projectRootPath: string;
 }
@@ -43,10 +43,10 @@ export function selectActiveGitWorkspaceProject(
   }
 
   const projectId = workspace.projectId.trim();
-  const projectKey = resolveProjectGroupKey({
+  const projectKey = resolveProjectKey({
     serverId,
     projectId,
-    projectGroupKey: workspace.projectGroupKey,
+    projectKey: workspace.projectKey,
   });
   const repoRoot = workspace.projectRootPath.trim();
   if (!projectId || !repoRoot) {

@@ -15,7 +15,7 @@ import {
   type MutableWorkspacePlacement,
 } from "./workspace-registry-model.js";
 import { workspaceIdsForProjects } from "./workspace-directory.js";
-import { deriveProjectGroupKey } from "./project-group-key.js";
+import { deriveProjectKey } from "./project-key.js";
 
 const DEFAULT_RESCAN_INTERVAL_MS = 5 * 60_000;
 const DEFAULT_DEBOUNCE_MS = 100;
@@ -67,7 +67,7 @@ export type ReconciliationChange =
       kind: "project_updated";
       projectId: string;
       directory: string;
-      fields: Partial<Pick<PersistedProjectRecord, "kind" | "projectGroupKey">>;
+      fields: Partial<Pick<PersistedProjectRecord, "kind" | "projectKey">>;
     }
   | {
       kind: "workspace_updated";
@@ -343,9 +343,9 @@ export class WorkspaceReconciliationService {
         checkout: await readCheckout(workspace.cwd),
       })),
     );
-    const projectUpdates: Partial<Pick<PersistedProjectRecord, "kind" | "projectGroupKey">> = {};
+    const projectUpdates: Partial<Pick<PersistedProjectRecord, "kind" | "projectKey">> = {};
     const mappedKind = deriveProjectKind(currentGit);
-    const projectGroupKey = deriveProjectGroupKey({
+    const projectKey = deriveProjectKey({
       rootPath: project.rootPath,
       remoteUrl: currentGit.remoteUrl,
       worktreeRoot: currentGit.worktreeRoot,
@@ -356,8 +356,8 @@ export class WorkspaceReconciliationService {
     if (project.kind !== mappedKind) {
       projectUpdates.kind = mappedKind;
     }
-    if (project.projectGroupKey !== projectGroupKey) {
-      projectUpdates.projectGroupKey = projectGroupKey;
+    if (project.projectKey !== projectKey) {
+      projectUpdates.projectKey = projectKey;
     }
 
     if (Object.keys(projectUpdates).length > 0) {

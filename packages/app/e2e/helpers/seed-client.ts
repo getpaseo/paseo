@@ -8,8 +8,8 @@ export interface SeedWorkspaceDescriptor {
   id: string;
   name: string;
   projectId: string;
-  projectGroupKey?: string;
-  project?: { projectGroupKey?: string };
+  projectKey?: string;
+  project?: { projectKey?: string };
   projectDisplayName: string;
   projectRootPath: string;
   workspaceDirectory: string;
@@ -27,7 +27,7 @@ export interface SeedDaemonClient {
   addProject(cwd: string): Promise<{
     project: {
       projectId: string;
-      projectGroupKey?: string;
+      projectKey?: string;
       projectDisplayName: string;
       projectRootPath: string;
     } | null;
@@ -213,9 +213,9 @@ export async function seedWorkspace(options: {
       throw new Error(created.error ?? `Failed to create workspace ${project.path}`);
     }
     const workspace = created.workspace;
-    const projectKey = workspace.projectGroupKey ?? workspace.project?.projectGroupKey;
+    const projectKey = workspace.projectKey ?? workspace.project?.projectKey;
     if (!projectKey) {
-      throw new Error(`Created workspace ${workspace.id} has no project group key`);
+      throw new Error(`Created workspace ${workspace.id} has no project key`);
     }
     return {
       client,

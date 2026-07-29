@@ -649,7 +649,7 @@ describe("project command-center RPCs", () => {
         rootPath: directoryPath,
         kind: "non_git",
         displayName: "new-project",
-        projectGroupKey: directoryPath,
+        projectKey: directoryPath,
         timestamp: expect.any(String),
       });
       expect(messages).toEqual([

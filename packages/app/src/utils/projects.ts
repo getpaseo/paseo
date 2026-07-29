@@ -1,7 +1,7 @@
 import type { EmptyProjectDescriptor, WorkspaceDescriptor } from "@/stores/session-store";
 import { buildHostProjectList, type HostProjectListItem } from "@/projects/host-project-model";
 import { buildWorkspaceStructureProjects } from "@/projects/workspace-structure";
-import { resolveProjectGroupKey } from "@/projects/project-group-key";
+import { resolveProjectKey } from "@/projects/project-key";
 
 export interface WorkspaceSummary {
   id: string;
@@ -238,10 +238,10 @@ function attachHostWorkspaces(
   for (const workspace of host.workspaces) {
     const key =
       projectKeyByProjectId.get(workspace.projectId) ??
-      resolveProjectGroupKey({
+      resolveProjectKey({
         serverId: host.serverId,
         projectId: workspace.projectId,
-        projectGroupKey: workspace.projectGroupKey,
+        projectKey: workspace.projectKey,
       });
     groups.get(key)?.hostsByServerId.get(host.serverId)?.workspaces.push(workspace);
   }

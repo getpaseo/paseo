@@ -4,7 +4,7 @@ import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 
 import { parseGitRevParsePath } from "../utils/git-rev-parse-path.js";
 import { getRealpathAwareRelativePath } from "../utils/path.js";
-import { deriveProjectGroupKey, deriveProjectGroupingDisplayName } from "./project-group-key.js";
+import { deriveProjectKey, deriveProjectGroupingDisplayName } from "./project-key.js";
 import {
   deriveProjectKind,
   deriveWorkspaceDisplayName,
@@ -34,7 +34,7 @@ export function classifyDirectoryForProjectMembership(input: {
 }): DirectoryProjectMembership {
   const cwd = resolve(input.cwd);
   const checkout: ProjectCheckoutLitePayload = { ...input.checkout, cwd };
-  const projectKey = deriveProjectGroupKey({
+  const projectKey = deriveProjectKey({
     rootPath: cwd,
     remoteUrl: checkout.remoteUrl,
     worktreeRoot: checkout.worktreeRoot,

@@ -4,13 +4,13 @@
 
 Projects are allocated for the exact root selected by the caller, normalized lexically with `path.resolve` (never `realpath`). New project IDs are opaque `prj_<16 hex>` values. Existing remote-shaped or path-shaped IDs are retained as readable compatibility records and are never rekeyed. An active exact root is idempotent; archived-only matches do not resurrect an old project. Workspace `projectId` is stable membership: reconciliation may update git-derived kind and branch metadata, but never rehomes a workspace or changes a project's root, ID, or default name.
 
-`projectGroupKey` is a persisted, opaque equivalence key used only to group the same logical project
+`projectKey` is a persisted, opaque equivalence key used only to group the same logical project
 across hosts. It is separate from the host-local `projectId`; today's producer prefers a normalized
 Git remote and otherwise uses the local project root. Consumers never derive it from live Git.
 Creation persists it with the project, and normal boot reconciliation fills or refreshes it for
 older records where the field is absent—there is no migration.
 
-`kind` and `projectGroupKey` are mutable metadata, not identity. Workspace reconciliation watches active project roots and
+`kind` and `projectKey` are mutable metadata, not identity. Workspace reconciliation watches active project roots and
 updates those fields and `updatedAt` when Git facts change, preserving the project's ID, root path,
 names, and workspace foreign keys. Attached workspaces are independently refreshed
 from their own cwd, so an explicit project root never implies a workspace checkout. Empty projects
@@ -454,17 +454,17 @@ Single file containing an array of all loop records. Writes are direct (not atom
 
 Array of project records.
 
-| Field             | Type                        | Description                                                                      |
-| ----------------- | --------------------------- | -------------------------------------------------------------------------------- |
-| `projectId`       | `string`                    | Host-local primary key; new records use opaque `prj_<16 hex>` IDs                |
-| `projectGroupKey` | `string \| null`            | Persisted opaque cross-host grouping key; reconciliation backfills absent values |
-| `rootPath`        | `string`                    | Exact lexically normalized selected root; never realpathed                       |
-| `kind`            | `"git" \| "non_git"`        | Mutable Git observation about `rootPath`, never a membership key                 |
-| `displayName`     | `string`                    | Selected-root basename, stable across remote and Git changes                     |
-| `customName`      | `string \| null`            | User-set override layered over `displayName`. Null means "use the derived name". |
-| `createdAt`       | `string` (ISO 8601)         |                                                                                  |
-| `updatedAt`       | `string` (ISO 8601)         |                                                                                  |
-| `archivedAt`      | `string \| null` (ISO 8601) | Soft-delete timestamp; required nullable                                         |
+| Field         | Type                        | Description                                                                      |
+| ------------- | --------------------------- | -------------------------------------------------------------------------------- |
+| `projectId`   | `string`                    | Host-local primary key; new records use opaque `prj_<16 hex>` IDs                |
+| `projectKey`  | `string \| null`            | Persisted opaque cross-host grouping key; reconciliation backfills absent values |
+| `rootPath`    | `string`                    | Exact lexically normalized selected root; never realpathed                       |
+| `kind`        | `"git" \| "non_git"`        | Mutable Git observation about `rootPath`, never a membership key                 |
+| `displayName` | `string`                    | Selected-root basename, stable across remote and Git changes                     |
+| `customName`  | `string \| null`            | User-set override layered over `displayName`. Null means "use the derived name". |
+| `createdAt`   | `string` (ISO 8601)         |                                                                                  |
+| `updatedAt`   | `string` (ISO 8601)         |                                                                                  |
+| `archivedAt`  | `string \| null` (ISO 8601) | Soft-delete timestamp; required nullable                                         |
 
 Active exact roots are idempotent using lexical platform-equivalence semantics. Existing legacy
 remote-shaped and path-shaped IDs remain readable, including duplicate roots; reconciliation never

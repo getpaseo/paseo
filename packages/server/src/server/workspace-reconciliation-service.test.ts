@@ -258,7 +258,7 @@ describe("WorkspaceReconciliationService", () => {
         kind: "project_updated",
         projectId: "p1",
         directory: projectRoot,
-        fields: { projectGroupKey: projectRoot },
+        fields: { projectKey: projectRoot },
       },
     ]);
     expect(workspaces.get("w1")?.archivedAt).toBeNull();
@@ -316,7 +316,7 @@ describe("WorkspaceReconciliationService", () => {
         kind: "project_updated",
         projectId: "p1",
         directory: projectRoot,
-        fields: { projectGroupKey: projectRoot },
+        fields: { projectKey: projectRoot },
       },
     ]);
     expect(afterGitInit.changesApplied).toEqual([
@@ -405,13 +405,13 @@ describe("WorkspaceReconciliationService", () => {
         kind: "project_updated",
         projectId: "p1",
         directory: projectRoot,
-        fields: { projectGroupKey: projectRoot },
+        fields: { projectKey: projectRoot },
       },
       {
         kind: "project_updated",
         projectId: "p2",
         directory: equivalentProjectRoot,
-        fields: { projectGroupKey: projectRoot },
+        fields: { projectKey: projectRoot },
       },
     ]);
     expect(git.reads).toEqual([projectRoot, workspaceRoot]);
@@ -472,7 +472,7 @@ describe("WorkspaceReconciliationService", () => {
           kind: "project_updated",
           projectId: "p1",
           directory: projectRoot,
-          fields: { kind: "git", projectGroupKey: projectRoot },
+          fields: { kind: "git", projectKey: projectRoot },
         },
         {
           kind: "workspace_updated",
@@ -489,7 +489,7 @@ describe("WorkspaceReconciliationService", () => {
     expect(projects.get("p1")).toEqual({
       ...originalProject,
       kind: "git",
-      projectGroupKey: projectRoot,
+      projectKey: projectRoot,
       updatedAt: expect.any(String),
     });
     expect(workspaces.get("w1")).toEqual({
@@ -815,7 +815,7 @@ describe("WorkspaceReconciliationService", () => {
       rootPath: repoDir,
       displayName: "blank-dot-page/editor",
       customName: null,
-      projectGroupKey: "remote:github.com/blank-dot-page/editor",
+      projectKey: "remote:github.com/blank-dot-page/editor",
       archivedAt: null,
     });
     expect(projects.get(repoDir)).toMatchObject({
@@ -823,7 +823,7 @@ describe("WorkspaceReconciliationService", () => {
       rootPath: repoDir,
       displayName: "editor",
       customName: "Editor",
-      projectGroupKey: "remote:github.com/blank-dot-page/editor",
+      projectKey: "remote:github.com/blank-dot-page/editor",
       archivedAt: null,
     });
     expect(workspaces.get("focused-bat")).toMatchObject({
@@ -836,7 +836,7 @@ describe("WorkspaceReconciliationService", () => {
     });
   });
 
-  test("updates the group key while keeping the project display name stable", async () => {
+  test("updates the project key while keeping the project display name stable", async () => {
     const dir = createTempGitRepo("reconcile-remote-");
     tempDirs.push(dir);
 
@@ -889,10 +889,10 @@ describe("WorkspaceReconciliationService", () => {
     const result = await service.runOnce();
 
     expect(result.changesApplied.find((c) => c.kind === "project_updated")).toMatchObject({
-      fields: { projectGroupKey: "remote:github.com/new-owner/new-repo" },
+      fields: { projectKey: "remote:github.com/new-owner/new-repo" },
     });
     expect(projects.get("p1")!.displayName).toBe("old-owner/old-repo");
-    expect(projects.get("p1")!.projectGroupKey).toBe("remote:github.com/new-owner/new-repo");
+    expect(projects.get("p1")!.projectKey).toBe("remote:github.com/new-owner/new-repo");
   });
 
   test("falls back to the persisted root when a Git remote disappears", async () => {
@@ -904,7 +904,7 @@ describe("WorkspaceReconciliationService", () => {
       "p1",
       createPersistedProjectRecord({
         projectId: "p1",
-        projectGroupKey: "remote:github.com/acme/old-repo",
+        projectKey: "remote:github.com/acme/old-repo",
         rootPath: dir,
         kind: "git",
         displayName: "acme/old-repo",
@@ -941,7 +941,7 @@ describe("WorkspaceReconciliationService", () => {
 
     await service.runOnce();
 
-    expect(projects.get("p1")?.projectGroupKey).toBe(path.resolve(dir));
+    expect(projects.get("p1")?.projectKey).toBe(path.resolve(dir));
   });
 
   test("keeps custom and default names stable when the remote changes", async () => {
@@ -1121,7 +1121,7 @@ describe("WorkspaceReconciliationService", () => {
         kind: "project_updated",
         projectId: "p1",
         directory: projectRoot,
-        fields: { kind: "git", projectGroupKey: projectRoot },
+        fields: { kind: "git", projectKey: projectRoot },
       },
       {
         kind: "workspace_updated",
@@ -1409,7 +1409,7 @@ describe("WorkspaceReconciliationService", () => {
         kind: "project_updated",
         projectId: "p1",
         directory: rootPath,
-        fields: { projectGroupKey: path.resolve("/tmp/main-repo") },
+        fields: { projectKey: path.resolve("/tmp/main-repo") },
       },
       {
         kind: "workspace_updated",

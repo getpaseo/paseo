@@ -78,27 +78,27 @@ async function openGroupedProjectSettings(page: Page): Promise<void> {
   await expect(page.getByTestId("host-picker")).toBeVisible({ timeout: 30_000 });
 }
 
-async function readPersistedProjectGroupKey(host: IsolatedHostDaemon): Promise<unknown> {
+async function readPersistedProjectKey(host: IsolatedHostDaemon): Promise<unknown> {
   const projectsPath = path.join(host.paseoHome, "projects", "projects.json");
   const projects = JSON.parse(await readFile(projectsPath, "utf8")) as Array<
     Record<string, unknown>
   >;
-  return projects[0]?.projectGroupKey;
+  return projects[0]?.projectKey;
 }
 
-async function removePersistedProjectGroupKeys(host: IsolatedHostDaemon): Promise<void> {
+async function removePersistedProjectKeys(host: IsolatedHostDaemon): Promise<void> {
   const projectsPath = path.join(host.paseoHome, "projects", "projects.json");
   const projects = JSON.parse(await readFile(projectsPath, "utf8")) as Array<
     Record<string, unknown>
   >;
   for (const project of projects) {
-    delete project.projectGroupKey;
+    delete project.projectKey;
   }
   await writeFile(projectsPath, JSON.stringify(projects));
   const persisted = JSON.parse(await readFile(projectsPath, "utf8")) as Array<
     Record<string, unknown>
   >;
-  expect(persisted.every((project) => !("projectGroupKey" in project))).toBe(true);
+  expect(persisted.every((project) => !("projectKey" in project))).toBe(true);
 }
 
 async function rewritePersistedProjectId(
@@ -147,8 +147,8 @@ async function createReconciliationFixture(options?: { sharedLegacyProjectId?: s
     let secondary = await createProject(secondaryClient, secondaryRepo, secondaryHost.serverId);
     await primaryClient.close();
     await secondaryClient.close();
-    await removePersistedProjectGroupKeys(primaryHost);
-    await removePersistedProjectGroupKeys(secondaryHost);
+    await removePersistedProjectKeys(primaryHost);
+    await removePersistedProjectKeys(secondaryHost);
     if (options?.sharedLegacyProjectId) {
       await Promise.all([
         rewritePersistedProjectId(primaryHost, primary.projectId, options.sharedLegacyProjectId),
@@ -256,7 +256,7 @@ test.describe("Sidebar project grouping", () => {
     await expectOneProjectContainsBothWorkspaces(page, crossHostProject);
   });
 
-  test("groups persisted projects missing group keys after app boot", async ({
+  test("groups persisted projects missing project keys after app boot", async ({
     page,
     reconciledCrossHostProject,
   }) => {
@@ -286,10 +286,10 @@ test.describe("Sidebar project grouping", () => {
     });
     await expectOneProjectContainsBothWorkspaces(page, reconciledCrossHostProject);
     await expect
-      .poll(() => readPersistedProjectGroupKey(reconciledCrossHostProject.primaryHost))
+      .poll(() => readPersistedProjectKey(reconciledCrossHostProject.primaryHost))
       .toBe("remote:github.com/paseo-e2e/grouped-project");
     await expect
-      .poll(() => readPersistedProjectGroupKey(reconciledCrossHostProject.secondaryHost))
+      .poll(() => readPersistedProjectKey(reconciledCrossHostProject.secondaryHost))
       .toBe("remote:github.com/paseo-e2e/grouped-project");
   });
 

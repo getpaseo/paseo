@@ -193,7 +193,7 @@ function serializeWorkspace(workspace: WorkspaceDescriptor): WorkspaceDescriptor
   return {
     id: workspace.id,
     projectId: workspace.projectId,
-    ...(workspace.projectGroupKey ? { projectGroupKey: workspace.projectGroupKey } : {}),
+    ...(workspace.projectKey ? { projectKey: workspace.projectKey } : {}),
     projectDisplayName: workspace.projectDisplayName,
     projectCustomName: workspace.projectCustomName ?? null,
     projectRootPath: workspace.projectRootPath,

@@ -3001,8 +3001,6 @@ export const ProjectCheckoutLitePayloadSchema = z.union([
 
 export const ProjectPlacementPayloadSchema = z.object({
   projectKey: z.string(),
-  // COMPAT(projectGroupKey): added in v0.2.4 on 2026-07-28; remove optional after 2027-01-28.
-  projectGroupKey: z.string().optional(),
   projectName: z.string(),
   workspaceName: z.string().nullable().optional(),
   checkout: ProjectCheckoutLitePayloadSchema,
@@ -3092,8 +3090,8 @@ export const WorkspaceDescriptorPayloadSchema = z
   .object({
     id: z.string(),
     projectId: z.string(),
-    // COMPAT(projectGroupKey): added in v0.2.4 on 2026-07-28; remove optional after 2027-01-28.
-    projectGroupKey: z.string().optional(),
+    // COMPAT(projectKey): added in v0.2.4 on 2026-07-28; remove optional after 2027-01-28.
+    projectKey: z.string().optional(),
     projectDisplayName: z.string(),
     // COMPAT(projectCustomName): added in v0.1.76, drop the optional gate when floor >= v0.1.76.
     // When the user has renamed a project, projectDisplayName carries the resolved
@@ -3234,8 +3232,8 @@ export const FetchRecentProviderSessionsResponseMessageSchema = z.object({
 // workspace is archived.
 export const WorkspaceProjectDescriptorPayloadSchema = z.object({
   projectId: z.string(),
-  // COMPAT(projectGroupKey): added in v0.2.4 on 2026-07-28; remove optional after 2027-01-28.
-  projectGroupKey: z.string().optional(),
+  // COMPAT(projectKey): added in v0.2.4 on 2026-07-28; remove optional after 2027-01-28.
+  projectKey: z.string().optional(),
   projectDisplayName: z.string(),
   projectCustomName: z.string().nullable().optional(),
   projectRootPath: z.string(),

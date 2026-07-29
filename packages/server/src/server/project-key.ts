@@ -23,14 +23,14 @@ const DEFAULT_REMOTE_PORTS: Partial<Record<string, string>> = {
  * Derives the persisted, opaque equivalence key used to group projects across hosts.
  * A Git remote is today's strongest shared fact, but callers treat the result as opaque.
  */
-export function deriveProjectGroupKey(input: {
+export function deriveProjectKey(input: {
   rootPath: string;
   remoteUrl: string | null;
   worktreeRoot: string | null;
   mainRepoRoot: string | null;
   serverId?: string;
 }): string {
-  const remoteKey = deriveRemoteProjectGroupKey(input.remoteUrl);
+  const remoteKey = deriveRemoteProjectKey(input.remoteUrl);
   const selectedPath = deriveSelectedPath(input.rootPath, input.worktreeRoot);
   if (!remoteKey) {
     const localPath =
@@ -54,7 +54,7 @@ function encodeSelectedPath(selectedPath: string): string {
   return selectedPath.split(/[\\/]/u).map(encodeURIComponent).join("/");
 }
 
-function deriveRemoteProjectGroupKey(remoteUrl: string | null): string | null {
+function deriveRemoteProjectKey(remoteUrl: string | null): string | null {
   if (!remoteUrl?.trim()) return null;
   const remote = parseRemoteLocation(remoteUrl);
   if (!remote) return null;

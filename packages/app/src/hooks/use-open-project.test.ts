@@ -93,7 +93,7 @@ describe("openProjectDirectly", () => {
         serverId: SERVER_ID,
         project: {
           projectId: "project-1",
-          projectGroupKey: null,
+          projectKey: null,
           projectDisplayName: "project",
           projectCustomName: null,
           projectKind: "git",
@@ -192,7 +192,7 @@ describe("cloneGithubProjectDirectly", () => {
         project: {
           ...projectPayload,
           projectCustomName: null,
-          projectGroupKey: null,
+          projectKey: null,
         },
       },
     ]);

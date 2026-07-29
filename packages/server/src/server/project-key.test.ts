@@ -2,14 +2,14 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import { deriveProjectGroupKey, deriveProjectGroupingDisplayName } from "./project-group-key.js";
+import { deriveProjectKey, deriveProjectGroupingDisplayName } from "./project-key.js";
 
-describe("deriveProjectGroupKey", () => {
+describe("deriveProjectKey", () => {
   test("preserves an explicit remote port", () => {
     const rootPath = path.resolve("repo");
 
     expect(
-      deriveProjectGroupKey({
+      deriveProjectKey({
         rootPath,
         remoteUrl: "https://git.example.com:8443/acme/app.git",
         worktreeRoot: rootPath,
@@ -21,7 +21,7 @@ describe("deriveProjectGroupKey", () => {
   test("normalizes the default SSH port", () => {
     const rootPath = path.resolve("repo");
     const derive = (remoteUrl: string) =>
-      deriveProjectGroupKey({
+      deriveProjectKey({
         rootPath,
         remoteUrl,
         worktreeRoot: rootPath,
@@ -37,7 +37,7 @@ describe("deriveProjectGroupKey", () => {
     const rootPath = path.resolve("repo");
 
     expect(
-      deriveProjectGroupKey({
+      deriveProjectKey({
         rootPath,
         remoteUrl: "https://git.example.com/repo.git",
         worktreeRoot: rootPath,
@@ -49,7 +49,7 @@ describe("deriveProjectGroupKey", () => {
   test("preserves meaningful dot-git suffixes on unknown Git servers", () => {
     const rootPath = path.resolve("repo");
     const derive = (remoteUrl: string) =>
-      deriveProjectGroupKey({
+      deriveProjectKey({
         rootPath,
         remoteUrl,
         worktreeRoot: rootPath,
@@ -62,7 +62,7 @@ describe("deriveProjectGroupKey", () => {
   test("normalizes dot-git suffixes on known cloud forges", () => {
     const rootPath = path.resolve("repo");
     const derive = (remoteUrl: string) =>
-      deriveProjectGroupKey({
+      deriveProjectKey({
         rootPath,
         remoteUrl,
         worktreeRoot: rootPath,
@@ -75,7 +75,7 @@ describe("deriveProjectGroupKey", () => {
   test("normalizes GitHub owner and repository casing", () => {
     const rootPath = path.resolve("repo");
     const derive = (remoteUrl: string) =>
-      deriveProjectGroupKey({
+      deriveProjectKey({
         rootPath,
         remoteUrl,
         worktreeRoot: rootPath,
@@ -92,7 +92,7 @@ describe("deriveProjectGroupKey", () => {
     (remoteUrl) => {
       const rootPath = path.resolve("repo");
       const derive = (value: string) =>
-        deriveProjectGroupKey({
+        deriveProjectKey({
           rootPath,
           remoteUrl: value,
           worktreeRoot: rootPath,
@@ -107,7 +107,7 @@ describe("deriveProjectGroupKey", () => {
     const rootPath = path.resolve("repo");
 
     expect(
-      deriveProjectGroupKey({
+      deriveProjectKey({
         rootPath,
         remoteUrl: "github.com:getpaseo/paseo.git",
         worktreeRoot: rootPath,
@@ -119,7 +119,7 @@ describe("deriveProjectGroupKey", () => {
   test("distinguishes absolute and home-relative SCP paths", () => {
     const rootPath = path.resolve("repo");
     const derive = (remoteUrl: string) =>
-      deriveProjectGroupKey({
+      deriveProjectKey({
         rootPath,
         remoteUrl,
         worktreeRoot: rootPath,
@@ -132,7 +132,7 @@ describe("deriveProjectGroupKey", () => {
   test("distinguishes absolute SSH URL paths from home-relative SCP paths", () => {
     const rootPath = path.resolve("repo");
     const derive = (remoteUrl: string) =>
-      deriveProjectGroupKey({
+      deriveProjectKey({
         rootPath,
         remoteUrl,
         worktreeRoot: rootPath,
@@ -147,7 +147,7 @@ describe("deriveProjectGroupKey", () => {
   test("distinguishes SSH users for home-relative SCP paths", () => {
     const rootPath = path.resolve("repo");
     const derive = (remoteUrl: string) =>
-      deriveProjectGroupKey({
+      deriveProjectKey({
         rootPath,
         remoteUrl,
         worktreeRoot: rootPath,
@@ -162,7 +162,7 @@ describe("deriveProjectGroupKey", () => {
   test("keeps percent sequences literal in SCP paths", () => {
     const rootPath = path.resolve("repo");
     const derive = (remoteUrl: string) =>
-      deriveProjectGroupKey({
+      deriveProjectKey({
         rootPath,
         remoteUrl,
         worktreeRoot: rootPath,
@@ -177,7 +177,7 @@ describe("deriveProjectGroupKey", () => {
   test("preserves leading whitespace in SCP repository paths", () => {
     const rootPath = path.resolve("repo");
     const derive = (remoteUrl: string) =>
-      deriveProjectGroupKey({
+      deriveProjectKey({
         rootPath,
         remoteUrl,
         worktreeRoot: rootPath,
@@ -193,7 +193,7 @@ describe("deriveProjectGroupKey", () => {
     const rootPath = path.resolve("repo");
 
     expect(
-      deriveProjectGroupKey({
+      deriveProjectKey({
         rootPath,
         remoteUrl: "C:repo",
         worktreeRoot: rootPath,
@@ -205,7 +205,7 @@ describe("deriveProjectGroupKey", () => {
   test.each(["git+ssh:", "ssh+git:"])("normalizes SSH alias default ports for %s", (scheme) => {
     const rootPath = path.resolve("repo");
     const derive = (remoteUrl: string) =>
-      deriveProjectGroupKey({
+      deriveProjectKey({
         rootPath,
         remoteUrl,
         worktreeRoot: rootPath,
@@ -221,7 +221,7 @@ describe("deriveProjectGroupKey", () => {
     const rootPath = path.resolve("repo");
 
     expect(
-      deriveProjectGroupKey({
+      deriveProjectKey({
         rootPath,
         remoteUrl: "git@[2001:db8::1]:getpaseo/paseo.git",
         worktreeRoot: rootPath,
@@ -235,7 +235,7 @@ describe("deriveProjectGroupKey", () => {
     const rootPath = path.join(worktreeRoot, "packages", "app");
 
     expect(
-      deriveProjectGroupKey({
+      deriveProjectKey({
         rootPath,
         remoteUrl: "git@github.com:getpaseo/paseo.git",
         worktreeRoot,
@@ -246,13 +246,13 @@ describe("deriveProjectGroupKey", () => {
 
   test("keeps a selected path distinct from remote path syntax", () => {
     const worktreeRoot = path.resolve("repo");
-    const selectedKey = deriveProjectGroupKey({
+    const selectedKey = deriveProjectKey({
       rootPath: path.join(worktreeRoot, "packages", "app"),
       remoteUrl: "example.com:acme/repo.git",
       worktreeRoot,
       mainRepoRoot: null,
     });
-    const remoteSyntaxKey = deriveProjectGroupKey({
+    const remoteSyntaxKey = deriveProjectKey({
       rootPath: worktreeRoot,
       remoteUrl: "example.com:acme/repo#subdir:packages/app.git",
       worktreeRoot,
@@ -266,7 +266,7 @@ describe("deriveProjectGroupKey", () => {
     const rootPath = path.resolve("repo");
 
     expect(
-      deriveProjectGroupKey({
+      deriveProjectKey({
         rootPath,
         remoteUrl: "git@github.com:getpaseo/paseo.git",
         worktreeRoot: rootPath,
@@ -280,7 +280,7 @@ describe("deriveProjectGroupKey", () => {
     const mainRepoRoot = path.resolve("main");
 
     expect(
-      deriveProjectGroupKey({
+      deriveProjectKey({
         rootPath: path.join(worktreeRoot, "packages", "app"),
         remoteUrl: null,
         worktreeRoot,
@@ -292,7 +292,7 @@ describe("deriveProjectGroupKey", () => {
   test("keeps path-only project identities scoped to their host", () => {
     const rootPath = path.resolve("repo");
     const derive = (serverId: string) =>
-      deriveProjectGroupKey({
+      deriveProjectKey({
         rootPath,
         remoteUrl: null,
         worktreeRoot: null,
@@ -306,7 +306,7 @@ describe("deriveProjectGroupKey", () => {
 
   test("preserves selected-path casing across Windows and POSIX hosts", () => {
     expect(
-      deriveProjectGroupKey({
+      deriveProjectKey({
         rootPath: "c:\\repo\\Packages\\App",
         remoteUrl: "git@github.com:getpaseo/paseo.git",
         worktreeRoot: "C:\\Repo",
@@ -318,7 +318,7 @@ describe("deriveProjectGroupKey", () => {
   test.skipIf(process.platform === "win32")(
     "preserves a selected subproject reached through a symlink",
     () => {
-      const tempDir = mkdtempSync(path.join(tmpdir(), "project-group-key-"));
+      const tempDir = mkdtempSync(path.join(tmpdir(), "project-key-"));
       try {
         const worktreeRoot = path.join(tempDir, "repo");
         const selectedRoot = path.join(worktreeRoot, "packages", "app");
@@ -327,7 +327,7 @@ describe("deriveProjectGroupKey", () => {
         symlinkSync(selectedRoot, linkedRoot, "dir");
 
         expect(
-          deriveProjectGroupKey({
+          deriveProjectKey({
             rootPath: linkedRoot,
             remoteUrl: "git@github.com:getpaseo/paseo.git",
             worktreeRoot,

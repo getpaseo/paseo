@@ -30,7 +30,7 @@ function workspace(input: {
   repoRoot: string;
   project?: ProjectPlacementPayload;
   projectId?: string;
-  projectGroupKey?: string;
+  projectKey?: string;
   projectCustomName?: string | null;
   projectName?: string;
   remoteUrl?: string | null;
@@ -40,7 +40,7 @@ function workspace(input: {
   return {
     id: input.id,
     projectId: input.projectId ?? input.project?.projectKey ?? input.repoRoot,
-    projectGroupKey: input.projectGroupKey,
+    projectKey: input.projectKey,
     projectDisplayName: input.projectName ?? input.project?.projectName ?? "Project",
     projectCustomName: input.projectCustomName,
     projectRootPath: input.repoRoot,
@@ -68,25 +68,21 @@ function workspace(input: {
 }
 
 describe("buildProjects", () => {
-  it("groups distinct host-local project IDs by their persisted group key", () => {
-    const projectGroupKey = "remote:github.com/acme/app";
+  it("groups distinct host-local project IDs by their persisted project key", () => {
+    const projectKey = "remote:github.com/acme/app";
     const result = buildProjects({
       hosts: [
         {
           serverId: "desktop",
           serverName: "Desktop",
           isOnline: true,
-          workspaces: [
-            workspace({ id: "main-a", repoRoot: "/a", projectId: "prj_a", projectGroupKey }),
-          ],
+          workspaces: [workspace({ id: "main-a", repoRoot: "/a", projectId: "prj_a", projectKey })],
         },
         {
           serverId: "laptop",
           serverName: "Laptop",
           isOnline: true,
-          workspaces: [
-            workspace({ id: "main-b", repoRoot: "/b", projectId: "prj_b", projectGroupKey }),
-          ],
+          workspaces: [workspace({ id: "main-b", repoRoot: "/b", projectId: "prj_b", projectKey })],
         },
       ],
     });
@@ -98,8 +94,8 @@ describe("buildProjects", () => {
     ]);
   });
 
-  it("keeps independent same-host clones separate when their group key is ambiguous", () => {
-    const projectGroupKey = "remote:github.com/acme/app";
+  it("keeps independent same-host clones separate when their project key is ambiguous", () => {
+    const projectKey = "remote:github.com/acme/app";
     const result = buildProjects({
       hosts: [
         {
@@ -107,8 +103,8 @@ describe("buildProjects", () => {
           serverName: "Desktop",
           isOnline: true,
           workspaces: [
-            workspace({ id: "clone-a", repoRoot: "/a", projectId: "prj_a", projectGroupKey }),
-            workspace({ id: "clone-b", repoRoot: "/b", projectId: "prj_b", projectGroupKey }),
+            workspace({ id: "clone-a", repoRoot: "/a", projectId: "prj_a", projectKey }),
+            workspace({ id: "clone-b", repoRoot: "/b", projectId: "prj_b", projectKey }),
           ],
         },
       ],
@@ -122,7 +118,7 @@ describe("buildProjects", () => {
   });
 
   it("uses one ambiguity scope across every host", () => {
-    const projectGroupKey = "remote:github.com/acme/app";
+    const projectKey = "remote:github.com/acme/app";
     const result = buildProjects({
       hosts: [
         {
@@ -130,8 +126,8 @@ describe("buildProjects", () => {
           serverName: "Desktop",
           isOnline: true,
           workspaces: [
-            workspace({ id: "clone-a", repoRoot: "/a", projectId: "prj_a", projectGroupKey }),
-            workspace({ id: "clone-b", repoRoot: "/b", projectId: "prj_b", projectGroupKey }),
+            workspace({ id: "clone-a", repoRoot: "/a", projectId: "prj_a", projectKey }),
+            workspace({ id: "clone-b", repoRoot: "/b", projectId: "prj_b", projectKey }),
           ],
         },
         {
@@ -139,21 +135,21 @@ describe("buildProjects", () => {
           serverName: "Laptop",
           isOnline: true,
           workspaces: [
-            workspace({ id: "clone-c", repoRoot: "/c", projectId: "prj_c", projectGroupKey }),
+            workspace({ id: "clone-c", repoRoot: "/c", projectId: "prj_c", projectKey }),
           ],
         },
       ],
     });
 
     expect(result.projects.map((project) => project.projectKey).sort()).toEqual([
-      "host:desktop:project:prj_a",
-      "host:desktop:project:prj_b",
-      "host:laptop:project:prj_c",
+      "host:6:laptop:project:5:prj_c",
+      "host:7:desktop:project:5:prj_a",
+      "host:7:desktop:project:5:prj_b",
     ]);
   });
 
   it("keeps host-local metadata when the grouping key differs from the project ID", () => {
-    const projectGroupKey = "remote:github.com/acme/app";
+    const projectKey = "remote:github.com/acme/app";
     const result = buildProjects({
       hosts: [
         {
@@ -165,7 +161,7 @@ describe("buildProjects", () => {
               id: "main",
               repoRoot: "/repo/app",
               projectId: "prj_app",
-              projectGroupKey,
+              projectKey,
               projectName: "acme/app",
               projectCustomName: "My App",
             }),
@@ -175,14 +171,14 @@ describe("buildProjects", () => {
     });
 
     expect(result.projects[0]).toMatchObject({
-      projectKey: projectGroupKey,
+      projectKey: projectKey,
       projectName: "acme/app",
       projectCustomName: "My App",
     });
   });
 
   it("keeps custom-name state on the host that owns it", () => {
-    const projectGroupKey = "remote:github.com/acme/app";
+    const projectKey = "remote:github.com/acme/app";
     const result = buildProjects({
       hosts: [
         {
@@ -194,7 +190,7 @@ describe("buildProjects", () => {
               id: "desktop-main",
               repoRoot: "/desktop/app",
               projectId: "prj_desktop",
-              projectGroupKey,
+              projectKey,
               projectName: "My App",
               projectCustomName: "My App",
             }),
@@ -209,7 +205,7 @@ describe("buildProjects", () => {
               id: "laptop-main",
               repoRoot: "/laptop/app",
               projectId: "prj_laptop",
-              projectGroupKey,
+              projectKey,
               projectName: "acme/app",
               projectCustomName: null,
             }),
@@ -235,7 +231,7 @@ describe("buildProjects", () => {
           emptyProjects: [
             {
               projectId: "prj_app",
-              projectGroupKey: "remote:github.com/acme/app",
+              projectKey: "remote:github.com/acme/app",
               projectDisplayName: "My Empty Project",
               projectCustomName: "My Empty Project",
               projectRootPath: "/repo/app",
