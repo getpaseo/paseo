@@ -3,6 +3,18 @@ import { isWeb } from "@/constants/platform";
 
 const webSelectableTextStyle = isWeb ? { userSelect: "text" as const } : {};
 
+// On native, a paragraph is a flex-row wrapping <View> whose children are
+// sibling <Text> spans (see markdown-text.android.tsx / .ios.tsx), so an inline
+// code span is a flex item, not an inline run inside a line box. Any extra
+// vertical padding or a lineHeight taller than the prose line makes that item
+// taller than its neighbours: with `alignItems: "flex-start"` the chip's
+// background floats above the surrounding text baseline and the wrapped rows it
+// sits on grow unevenly. Web keeps the padded chip because there it really is
+// an inline run.
+const inlineCodeSurfaceStyle = isWeb ? { paddingVertical: 2 } : { paddingVertical: 0 };
+const inlineCodeLineHeight = (theme: Theme) =>
+  isWeb ? Math.round(theme.fontSize.code * 1.45) : Math.round(theme.fontSize.base * 1.4);
+
 /**
  * Creates comprehensive markdown styles for react-native-markdown-display.
  *
@@ -167,12 +179,12 @@ export function createMarkdownStyles(theme: Theme) {
       backgroundColor: theme.colors.surface2,
       color: theme.colors.foreground,
       paddingHorizontal: theme.spacing[1],
-      paddingVertical: 2,
+      ...inlineCodeSurfaceStyle,
       borderRadius: theme.borderRadius.md,
       borderWidth: 0,
       fontFamily: theme.fontFamily.mono,
       fontSize: theme.fontSize.code,
-      lineHeight: Math.round(theme.fontSize.code * 1.45),
+      lineHeight: inlineCodeLineHeight(theme),
     },
 
     code_block: {
