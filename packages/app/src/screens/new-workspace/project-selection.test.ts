@@ -184,6 +184,17 @@ describe("reconcileProjectSelection", () => {
     expect(reconcileProjectSelection(current, afterRememberedHydration)).toEqual(current);
   });
 
+  it("preserves an opaque project key ending in whitespace", () => {
+    const selected = project("host:project ");
+    const current = createProjectSelection(
+      context({ initialProject: selected, projects: [selected] }),
+    );
+    const currentContext = context({ initialProject: selected, projects: [selected] });
+
+    expect(resolveProjectSelection(current, currentContext)).toEqual(selected);
+    expect(reconcileProjectSelection(current, currentContext)).toEqual(current);
+  });
+
   it("resets fallback selection when host project capability changes", () => {
     const fallback = project("git-fallback");
     const remembered = project("remembered-directory");

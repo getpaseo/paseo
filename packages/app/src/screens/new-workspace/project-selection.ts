@@ -67,8 +67,8 @@ export function resolveInitialProjectSelectionSource(input: {
 }
 
 function resolveProjectSelectionKey(selection: ProjectSelection): string | null {
-  const projectKey = selection.projectKey?.trim() ?? "";
-  return projectKey || null;
+  const projectKey = selection.projectKey ?? "";
+  return projectKey.trim() ? projectKey : null;
 }
 
 function resolveSelectedProjectFromInitialInputs(
