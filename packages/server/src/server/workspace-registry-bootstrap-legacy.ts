@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 
 import { parseGitRevParsePath } from "../utils/git-rev-parse-path.js";
-import { getRealpathAwareRelativePath } from "../utils/path.js";
+import { createRealpathAwarePathMatcher, getRealpathAwareRelativePath } from "../utils/path.js";
 import { deriveProjectKey, deriveProjectGroupingDisplayName } from "./project-key.js";
 import {
   deriveProjectKind,
@@ -62,7 +62,9 @@ export function classifyDirectoryForProjectMembership(input: {
 function deriveWorkspaceDirectoryKey(cwd: string, checkout: ProjectCheckoutLitePayload): string {
   const worktreeRoot = checkout.worktreeRoot ? parseGitRevParsePath(checkout.worktreeRoot) : null;
   const selectedRoot = resolve(cwd);
-  return worktreeRoot && resolve(worktreeRoot) === selectedRoot ? worktreeRoot : selectedRoot;
+  return worktreeRoot && createRealpathAwarePathMatcher(worktreeRoot)(selectedRoot)
+    ? worktreeRoot
+    : selectedRoot;
 }
 
 function deriveProjectRootPath(input: {

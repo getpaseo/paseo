@@ -10,6 +10,7 @@ import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-servic
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import { FileBackedProjectRegistry, FileBackedWorkspaceRegistry } from "./workspace-registry.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
+import { classifyDirectoryForProjectMembership } from "./workspace-registry-bootstrap-legacy.js";
 
 let NON_GIT_PROJECT: string;
 let ARCHIVED_PROJECT: string;
@@ -508,6 +509,28 @@ describe("bootstrapWorkspaceRegistries", () => {
           rootPath: path.join(GIT_PROJECT, "packages", "app"),
         }),
       ]);
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "uses one directory key for symlink-equivalent checkout roots",
+    () => {
+      const linkedProject = path.join(tmpDir, "legacy-project-link");
+      symlinkSync(GIT_PROJECT, linkedProject, "dir");
+      const checkout = {
+        cwd: linkedProject,
+        isGit: true as const,
+        currentBranch: "main",
+        remoteUrl: "git@github.com:acme/legacy-project.git",
+        worktreeRoot: GIT_PROJECT,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: GIT_PROJECT,
+      };
+
+      expect(
+        classifyDirectoryForProjectMembership({ cwd: linkedProject, checkout })
+          .workspaceDirectoryKey,
+      ).toBe(GIT_PROJECT);
     },
   );
 

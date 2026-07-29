@@ -15,7 +15,22 @@ describe("deriveProjectKey", () => {
         worktreeRoot: rootPath,
         mainRepoRoot: null,
       }),
-    ).toBe("remote:git.example.com:8443/acme/app.git");
+    ).toBe("remote:https://git.example.com:8443/acme/app.git");
+  });
+
+  test("distinguishes transports for generic URL remotes", () => {
+    const rootPath = path.resolve("repo");
+    const derive = (remoteUrl: string) =>
+      deriveProjectKey({
+        rootPath,
+        remoteUrl,
+        worktreeRoot: rootPath,
+        mainRepoRoot: null,
+      });
+
+    expect(derive("http://git.example.com:80/acme/app.git")).not.toBe(
+      derive("https://git.example.com:443/acme/app.git"),
+    );
   });
 
   test("normalizes the default SSH port", () => {
@@ -43,7 +58,7 @@ describe("deriveProjectKey", () => {
         worktreeRoot: rootPath,
         mainRepoRoot: null,
       }),
-    ).toBe("remote:git.example.com/repo.git");
+    ).toBe("remote:https://git.example.com/repo.git");
   });
 
   test("preserves meaningful dot-git suffixes on unknown Git servers", () => {
@@ -243,6 +258,23 @@ describe("deriveProjectKey", () => {
       }),
     ).toBe("remote:github.com/getpaseo/paseo#subdir:packages/app");
   });
+
+  test.skipIf(process.platform === "win32")(
+    "preserves backslashes in POSIX selected path segments",
+    () => {
+      const worktreeRoot = "/repo";
+      const derive = (rootPath: string) =>
+        deriveProjectKey({
+          rootPath,
+          remoteUrl: "git@github.com:getpaseo/paseo.git",
+          worktreeRoot,
+          mainRepoRoot: null,
+        });
+
+      expect(derive("/repo/foo\\bar")).toBe("remote:github.com/getpaseo/paseo#subdir:foo%5Cbar");
+      expect(derive("/repo/foo\\bar")).not.toBe(derive("/repo/foo/bar"));
+    },
+  );
 
   test("keeps a selected path distinct from remote path syntax", () => {
     const worktreeRoot = path.resolve("repo");

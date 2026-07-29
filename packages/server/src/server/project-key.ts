@@ -42,7 +42,9 @@ export function deriveProjectKey(input: {
       : localPath;
   }
 
-  return selectedPath ? `${remoteKey}#subdir:${encodeSelectedPath(selectedPath)}` : remoteKey;
+  return selectedPath
+    ? `${remoteKey}#subdir:${encodeSelectedPath(selectedPath, input.worktreeRoot ?? input.rootPath)}`
+    : remoteKey;
 }
 
 function deriveSelectedPath(rootPath: string, worktreeRoot: string | null): string | null {
@@ -50,8 +52,11 @@ function deriveSelectedPath(rootPath: string, worktreeRoot: string | null): stri
   return getRealpathAwareRelativePath(worktreeRoot, rootPath) || null;
 }
 
-function encodeSelectedPath(selectedPath: string): string {
-  return selectedPath.split(/[\\/]/u).map(encodeURIComponent).join("/");
+function encodeSelectedPath(selectedPath: string, sourcePath: string): string {
+  const segments = looksLikeWindowsPath(sourcePath)
+    ? selectedPath.split(/[\\/]/u)
+    : selectedPath.split("/");
+  return segments.map(encodeURIComponent).join("/");
 }
 
 function deriveRemoteProjectKey(remoteUrl: string | null): string | null {
@@ -70,12 +75,14 @@ function deriveRemoteProjectKey(remoteUrl: string | null): string | null {
     : "";
   const normalizedHost = remote.host.toLowerCase();
   const normalizedPath = normalizedHost === "github.com" ? cleanedPath.toLowerCase() : cleanedPath;
-  return `remote:${userPrefix}${normalizedHost}/${normalizedPath}`;
+  const transportPrefix = remote.transport ? `${remote.transport}//` : "";
+  return `remote:${transportPrefix}${userPrefix}${normalizedHost}/${normalizedPath}`;
 }
 
 interface RemoteLocation {
   host: string;
   path: string;
+  transport: string | null;
   relativePathUser: string | null;
   preserveLeadingSlash: boolean;
   decodePercentEncoding: boolean;
@@ -99,6 +106,7 @@ function parseScpRemote(remoteUrl: string): RemoteLocation | null {
   return {
     host: normalizedHost,
     path: remotePath,
+    transport: null,
     relativePathUser: user && user !== "git" && !preserveLeadingSlash ? user : null,
     preserveLeadingSlash,
     decodePercentEncoding: false,
@@ -119,6 +127,7 @@ function parseUrlRemote(remoteUrl: string): RemoteLocation | null {
     return {
       host,
       path: remotePath,
+      transport: forgeHost ? null : parsed.protocol.toLowerCase(),
       relativePathUser: null,
       preserveLeadingSlash,
       decodePercentEncoding: true,
@@ -211,4 +220,8 @@ function deriveRemoteHost(remoteUrl: URL): string | null {
   if (remoteUrl.port === DEFAULT_REMOTE_PORTS[remoteUrl.protocol])
     return remoteUrl.hostname || null;
   return remoteUrl.host || null;
+}
+
+function looksLikeWindowsPath(value: string): boolean {
+  return /^[a-zA-Z]:[\\/]/u.test(value) || /^\\{2}[^\\/]+[\\/][^\\/]+/u.test(value);
 }
