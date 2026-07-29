@@ -46,6 +46,7 @@ import type { GeneratedWorkspaceName } from "./worktree-branch-name-generator.js
 import { WorkspaceAutoName } from "./workspace-auto-name.js";
 import type { ForgeService } from "../services/forge-service.js";
 import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
+import { deriveProjectKey } from "./project-key.js";
 import {
   asSessionLogger,
   asAgentManager,
@@ -874,7 +875,13 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
     const createdWorkspace = await workspaceRegistry.get(createdAgent!.workspaceId!);
     expect(createdWorkspace).not.toBeNull();
     await expect(projectRegistry.get(createdWorkspace!.projectId)).resolves.toMatchObject({
-      projectKey: `host:11:test-server:path:${child}`,
+      projectKey: deriveProjectKey({
+        rootPath: child,
+        remoteUrl: null,
+        worktreeRoot: null,
+        mainRepoRoot: null,
+        serverId: "test-server",
+      }),
     });
     await expect(
       session.buildProjectPlacementForWorkspaceId(createdAgent!.workspaceId!),
@@ -3706,7 +3713,12 @@ test("create paseo worktree response preserves an explicit non-Git project", asy
   expect(response?.payload.error).toBeNull();
   expect(response?.payload.workspace).toMatchObject({
     projectId: explicitProject.projectId,
-    projectKey: explicitProject.rootPath,
+    projectKey: deriveProjectKey({
+      rootPath: explicitProject.rootPath,
+      remoteUrl: null,
+      worktreeRoot: null,
+      mainRepoRoot: null,
+    }),
     projectDisplayName: explicitProject.displayName,
     projectRootPath: explicitProject.rootPath,
     projectKind: "non_git",
@@ -3720,7 +3732,12 @@ test("create paseo worktree response preserves an explicit non-Git project", asy
   expect(workspaces.has(response?.payload.workspace?.id ?? "")).toBe(true);
   expect(projects.get(explicitProject.projectId)).toEqual({
     ...explicitProject,
-    projectKey: explicitProject.rootPath,
+    projectKey: deriveProjectKey({
+      rootPath: explicitProject.rootPath,
+      remoteUrl: null,
+      worktreeRoot: null,
+      mainRepoRoot: null,
+    }),
   });
 });
 

@@ -23,6 +23,7 @@ import { readPaseoWorktreeMetadata } from "../utils/worktree-metadata.js";
 import { createWorktree, getPaseoWorktreesRoot } from "../utils/worktree.js";
 import { isPlatform } from "../test-utils/platform.js";
 import { areEquivalentPaths, createRealpathAwarePathMatcher } from "../utils/path.js";
+import { deriveProjectKey } from "./project-key.js";
 
 const cleanupPaths: string[] = [];
 
@@ -75,7 +76,12 @@ test("creates a worktree and registers it in the source workspace project withou
   expect(deps.workspaceGitService.getSnapshot).not.toHaveBeenCalled();
   expect(deps.projects.get(sourceProject.projectId)).toEqual({
     ...sourceProject,
-    projectKey: path.resolve(result.repoRoot),
+    projectKey: deriveProjectKey({
+      rootPath: result.repoRoot,
+      remoteUrl: null,
+      worktreeRoot: null,
+      mainRepoRoot: null,
+    }),
     updatedAt: expect.any(String),
   });
   expect(events).toEqual([`workspace:${result.workspace.workspaceId}`]);
@@ -442,7 +448,12 @@ test("an explicit project FK remains unchanged when its worktree comes from anot
   expect(result.workspace.projectId).toBe(project.projectId);
   expect(deps.projects.get(project.projectId)).toEqual({
     ...project,
-    projectKey: path.resolve(project.rootPath),
+    projectKey: deriveProjectKey({
+      rootPath: project.rootPath,
+      remoteUrl: null,
+      worktreeRoot: null,
+      mainRepoRoot: null,
+    }),
     updatedAt: expect.any(String),
   });
 });

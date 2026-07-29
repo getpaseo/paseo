@@ -19,6 +19,7 @@ import {
   type ReconciliationChange,
   WorkspaceReconciliationService,
 } from "./workspace-reconciliation-service.js";
+import { deriveProjectKey } from "./project-key.js";
 
 function createTestRegistries() {
   const projects = new Map<string, PersistedProjectRecord>();
@@ -252,13 +253,19 @@ describe("WorkspaceReconciliationService", () => {
     });
 
     const metadataResult = await service.reconcileGitMetadata();
+    const projectKey = deriveProjectKey({
+      rootPath: projectRoot,
+      remoteUrl: null,
+      worktreeRoot: null,
+      mainRepoRoot: null,
+    });
 
     expect(metadataResult.changesApplied).toEqual([
       {
         kind: "project_updated",
         projectId: "p1",
         directory: projectRoot,
-        fields: { projectKey: projectRoot },
+        fields: { projectKey },
       },
     ]);
     expect(workspaces.get("w1")?.archivedAt).toBeNull();
@@ -310,13 +317,19 @@ describe("WorkspaceReconciliationService", () => {
       }),
     );
     const afterGitInit = await service.reconcileGitMetadata();
+    const projectKey = deriveProjectKey({
+      rootPath: projectRoot,
+      remoteUrl: null,
+      worktreeRoot: null,
+      mainRepoRoot: null,
+    });
 
     expect(beforeGitInit.changesApplied).toEqual([
       {
         kind: "project_updated",
         projectId: "p1",
         directory: projectRoot,
-        fields: { projectKey: projectRoot },
+        fields: { projectKey },
       },
     ]);
     expect(afterGitInit.changesApplied).toEqual([

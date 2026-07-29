@@ -4,6 +4,10 @@ import path from "node:path";
 import { describe, expect, test } from "vitest";
 import { deriveProjectKey, deriveProjectGroupingDisplayName } from "./project-key.js";
 
+function canonicalPlatformPath(input: string): string {
+  return process.platform === "win32" ? input.toLowerCase() : input;
+}
+
 describe("deriveProjectKey", () => {
   test("preserves an explicit remote port", () => {
     const rootPath = path.resolve("repo");
@@ -303,7 +307,7 @@ describe("deriveProjectKey", () => {
         worktreeRoot: rootPath,
         mainRepoRoot: null,
       }),
-    ).toBe(rootPath);
+    ).toBe(canonicalPlatformPath(rootPath));
   });
 
   test.each(["git+ssh:", "ssh+git:"])("normalizes SSH alias default ports for %s", (scheme) => {
@@ -407,7 +411,7 @@ describe("deriveProjectKey", () => {
         worktreeRoot,
         mainRepoRoot,
       }),
-    ).toBe(path.join(mainRepoRoot, "packages", "app"));
+    ).toBe(canonicalPlatformPath(path.join(mainRepoRoot, "packages", "app")));
   });
 
   test("keeps path-only project identities scoped to their host", () => {
@@ -422,7 +426,7 @@ describe("deriveProjectKey", () => {
       });
 
     expect(derive("host-a")).not.toBe(derive("host-b"));
-    expect(derive("host-a")).toBe(`host:6:host-a:path:${rootPath}`);
+    expect(derive("host-a")).toBe(`host:6:host-a:path:${canonicalPlatformPath(rootPath)}`);
   });
 
   test("preserves selected-path casing across Windows and POSIX hosts", () => {
