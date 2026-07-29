@@ -159,6 +159,21 @@ describe("deriveProjectGroupKey", () => {
     );
   });
 
+  test("preserves leading whitespace in SCP repository paths", () => {
+    const rootPath = path.resolve("repo");
+    const derive = (remoteUrl: string) =>
+      deriveProjectGroupKey({
+        rootPath,
+        remoteUrl,
+        worktreeRoot: rootPath,
+        mainRepoRoot: null,
+      });
+
+    expect(derive("git@example.com: acme/repo.git")).not.toBe(
+      derive("git@example.com:acme/repo.git"),
+    );
+  });
+
   test("does not parse drive-relative Windows paths as SCP remotes", () => {
     const rootPath = path.resolve("repo");
 

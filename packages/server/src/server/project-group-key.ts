@@ -50,9 +50,8 @@ function encodeSelectedPath(selectedPath: string): string {
 }
 
 function deriveRemoteProjectGroupKey(remoteUrl: string | null): string | null {
-  const trimmed = remoteUrl?.trim();
-  if (!trimmed) return null;
-  const remote = parseRemoteLocation(trimmed);
+  if (!remoteUrl?.trim()) return null;
+  const remote = parseRemoteLocation(remoteUrl);
   if (!remote) return null;
   const cleanedPath = normalizeRemotePath(
     remote.path,
@@ -143,7 +142,7 @@ function normalizeRemotePath(
   decodePercentEncoding: boolean,
   stripDotGitSuffix: boolean,
 ): string {
-  const trimmedPath = remotePath.trim().replace(/\/+$/, "");
+  const trimmedPath = remotePath.replace(/\/+$/, "");
   const pathForEncoding = preserveLeadingSlash ? trimmedPath : trimmedPath.replace(/^\/+/, "");
   const segments = pathForEncoding.split("/");
   const decodedSegments = segments.map((segment) => {

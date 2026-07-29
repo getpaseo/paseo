@@ -1,3 +1,5 @@
+import { frameHostProjectKey } from "./project-group-key";
+
 interface ProjectSettingsTarget {
   projectKey: string;
   hosts: ReadonlyArray<{ serverId: string; projectId?: string; isOnline?: boolean }>;
@@ -9,7 +11,7 @@ export function resolveHostProjectSettingsRouteKey(host: {
 }): string | null {
   const projectId = host.projectId?.trim();
   if (!projectId) return null;
-  return `host:${encodeURIComponent(host.serverId)}:project:${encodeURIComponent(projectId)}`;
+  return frameHostProjectKey({ serverId: host.serverId, projectId });
 }
 
 export function resolveProjectSettingsRouteKey(project: ProjectSettingsTarget): string {

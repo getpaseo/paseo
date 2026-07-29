@@ -9,11 +9,6 @@ export interface WorktreeSetupWorkspaceInput {
   projectGroupKey?: string | null;
   projectKind: string;
   projectRootPath: string;
-  project?: {
-    checkout?: {
-      mainRepoRoot?: string | null;
-    } | null;
-  } | null;
 }
 
 export interface ActiveGitWorkspaceProject {
@@ -53,7 +48,7 @@ export function selectActiveGitWorkspaceProject(
     projectId,
     projectGroupKey: workspace.projectGroupKey,
   });
-  const repoRoot = (workspace.project?.checkout?.mainRepoRoot ?? workspace.projectRootPath).trim();
+  const repoRoot = workspace.projectRootPath.trim();
   if (!projectId || !repoRoot) {
     return null;
   }

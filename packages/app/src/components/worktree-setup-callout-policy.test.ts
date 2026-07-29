@@ -13,28 +13,13 @@ function gitWorkspace(
     projectId: "project-1",
     projectKind: "git",
     projectRootPath: "/repo/project-1",
-    project: { checkout: { mainRepoRoot: "/repo/main-project-1" } },
     ...overrides,
   };
 }
 
 describe("selectActiveGitWorkspaceProject", () => {
-  it("selects the active git workspace project from checkout metadata", () => {
+  it("selects the exact active git workspace project root", () => {
     expect(selectActiveGitWorkspaceProject("server-1", gitWorkspace())).toEqual({
-      serverId: "server-1",
-      projectId: "project-1",
-      projectKey: "project-1",
-      repoRoot: "/repo/main-project-1",
-    });
-  });
-
-  it("falls back to the workspace project root when checkout metadata has no main root", () => {
-    expect(
-      selectActiveGitWorkspaceProject(
-        "server-1",
-        gitWorkspace({ project: { checkout: { mainRepoRoot: null } } }),
-      ),
-    ).toEqual({
       serverId: "server-1",
       projectId: "project-1",
       projectKey: "project-1",
@@ -65,10 +50,7 @@ describe("selectActiveGitWorkspaceProject", () => {
       null,
     );
     expect(
-      selectActiveGitWorkspaceProject(
-        "server-1",
-        gitWorkspace({ projectRootPath: " ", project: null }),
-      ),
+      selectActiveGitWorkspaceProject("server-1", gitWorkspace({ projectRootPath: " " })),
     ).toBe(null);
   });
 });

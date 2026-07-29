@@ -1,6 +1,6 @@
 import type { EmptyProjectDescriptor, WorkspaceDescriptor } from "@/stores/session-store";
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
-import { resolveProjectGroupKey } from "@/projects/project-group-key";
+import { frameHostProjectKey, resolveProjectGroupKey } from "@/projects/project-group-key";
 
 export interface WorkspaceStructureHostPlacement {
   serverId: string;
@@ -104,9 +104,7 @@ function resolveUnambiguousProjectGroupKey(input: {
   ambiguousGroupKeys: ReadonlySet<string>;
 }): string {
   const groupKey = resolveProjectGroupKey(input);
-  return input.ambiguousGroupKeys.has(groupKey)
-    ? `host:${input.serverId}:project:${input.projectId}`
-    : groupKey;
+  return input.ambiguousGroupKeys.has(groupKey) ? frameHostProjectKey(input) : groupKey;
 }
 
 export function buildWorkspaceStructureProjects(input: {
