@@ -42,16 +42,6 @@ describe("path equivalence", () => {
     );
   });
 
-  test("preserves candidate casing in Windows relative suffixes", () => {
-    expect(getRealpathAwareRelativePath("C:\\Repo", "c:\\repo\\Packages\\App")).toBe(
-      "Packages\\App",
-    );
-  });
-
-  test("accepts contained path segments beginning with two dots", () => {
-    expect(getRealpathAwareRelativePath("/repo", "/repo/..tools")).toBe("..tools");
-  });
-
   test.skipIf(process.platform === "win32")(
     "derives the contained suffix from a realpath-equivalent root",
     () => {

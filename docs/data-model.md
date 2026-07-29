@@ -7,7 +7,7 @@ Projects are allocated for the exact root selected by the caller, normalized lex
 `projectKey` is a persisted, opaque equivalence key used only to group the same logical project
 across hosts. It is separate from the host-local `projectId`; today's producer prefers a normalized
 Git remote and otherwise uses the local project root. Consumers never derive it from live Git.
-Creation persists it with the project, and normal boot reconciliation fills or refreshes it for
+Creation persists it with the project, and normal boot reconciliation fills it for
 older records where the field is absent—there is no migration.
 
 `kind` and `projectKey` are mutable metadata, not identity. Workspace reconciliation watches active project roots and

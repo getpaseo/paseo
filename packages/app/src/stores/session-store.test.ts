@@ -49,7 +49,6 @@ function getTestSessionReferences() {
     sessions: state.sessions,
     session,
     workspaces: session.workspaces,
-    emptyProjects: session.emptyProjects,
   };
 }
 
@@ -263,41 +262,6 @@ describe("normalizeWorkspaceDescriptor", () => {
         mainRepoRoot: null,
       },
     });
-    expect(workspace.projectKey).toBe("remote:github.com/acme/app");
-  });
-
-  it("leaves legacy path-shaped placement keys host-local", () => {
-    const workspace = normalizeWorkspaceDescriptor({
-      id: "1",
-      projectId: "/repo/app",
-      projectDisplayName: "app",
-      projectRootPath: "/repo/app",
-      workspaceDirectory: "/repo/app",
-      projectKind: "git",
-      workspaceKind: "local_checkout",
-      name: "main",
-      archivingAt: null,
-      status: "done",
-      statusEnteredAt: null,
-      activityAt: null,
-      diffStat: null,
-      scripts: [],
-      project: {
-        projectKey: "/repo/app",
-        projectName: "app",
-        checkout: {
-          cwd: "/repo/app",
-          isGit: false,
-          currentBranch: null,
-          remoteUrl: null,
-          worktreeRoot: null,
-          isPaseoOwnedWorktree: false,
-          mainRepoRoot: null,
-        },
-      },
-    });
-
-    expect(workspace.projectKey).toBeNull();
   });
 });
 
@@ -437,48 +401,6 @@ describe("removeWorkspace", () => {
     expect(after.sessions).toBe(before.sessions);
     expect(after.session).toBe(before.session);
     expect(after.workspaces).toBe(before.workspaces);
-  });
-});
-
-describe("removeEmptyProject", () => {
-  it("removes an empty project by project id", () => {
-    const store = useSessionStore.getState();
-    initializeTestSession();
-    store.setEmptyProjects("test-server", [
-      {
-        projectId: "project-empty",
-        projectDisplayName: "Empty",
-        projectCustomName: null,
-        projectRootPath: "/repo/empty",
-        projectKind: "git",
-      },
-    ]);
-
-    store.removeEmptyProject("test-server", "project-empty");
-
-    expect(getTestSessionReferences().emptyProjects.has("project-empty")).toBe(false);
-  });
-
-  it("preserves identity when removing a missing empty project", () => {
-    const store = useSessionStore.getState();
-    initializeTestSession();
-    store.setEmptyProjects("test-server", [
-      {
-        projectId: "project-empty",
-        projectDisplayName: "Empty",
-        projectCustomName: null,
-        projectRootPath: "/repo/empty",
-        projectKind: "git",
-      },
-    ]);
-    const before = getTestSessionReferences();
-
-    store.removeEmptyProject("test-server", "project-missing");
-    const after = getTestSessionReferences();
-
-    expect(after.sessions).toBe(before.sessions);
-    expect(after.session).toBe(before.session);
-    expect(after.emptyProjects).toBe(before.emptyProjects);
   });
 });
 

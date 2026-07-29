@@ -356,7 +356,7 @@ export class WorkspaceReconciliationService {
     if (project.kind !== mappedKind) {
       projectUpdates.kind = mappedKind;
     }
-    if (project.projectKey !== projectKey) {
+    if (!project.projectKey) {
       projectUpdates.projectKey = projectKey;
     }
 

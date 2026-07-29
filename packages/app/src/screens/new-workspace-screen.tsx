@@ -1414,6 +1414,8 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
       >
         <Pressable
           ref={host.anchorRef}
+          accessibilityRole="button"
+          accessibilityLabel="Host"
           onPress={host.open}
           disabled={isPending || host.allHosts.length === 0}
           style={badgePressableStyle}

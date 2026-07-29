@@ -8,13 +8,12 @@ import { ProjectIconView } from "@/components/project-icon-view";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useProjects, type ProjectHostError } from "@/hooks/use-projects";
 import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
-import { findProjectSettingsTarget } from "@/projects/project-settings-target";
 import { settingsStyles } from "@/styles/settings";
 import { buildProjectSettingsRoute } from "@/utils/host-routes";
-import type { ProjectSummary } from "@/utils/projects";
+import { getProjectSummaryForHostProject, type ProjectSummary } from "@/utils/projects";
 
 interface ProjectsScreenProps {
-  view: { kind: "projects" } | { kind: "project"; projectKey: string };
+  view: { kind: "projects" } | { kind: "project"; serverId: string; projectId: string };
 }
 
 export default function ProjectsScreen({ view }: ProjectsScreenProps) {
@@ -22,7 +21,8 @@ export default function ProjectsScreen({ view }: ProjectsScreenProps) {
   const { projects, hostErrors, isLoading } = useProjects();
   const selectedProjectKey =
     view.kind === "project"
-      ? (findProjectSettingsTarget(projects, view.projectKey)?.projectKey ?? null)
+      ? (getProjectSummaryForHostProject(projects, view.serverId, view.projectId)?.projectKey ??
+        null)
       : null;
   const iconTargets = useMemo(
     () =>
@@ -104,9 +104,10 @@ function ProjectRow({ project, isFirst, isSelected, iconDataUri }: ProjectRowPro
   const { t } = useTranslation();
   const { theme } = useUnistyles();
   const { projectKey, projectName } = project;
+  const target = project.hosts[0];
   const handleNavigate = useCallback(() => {
-    router.navigate(buildProjectSettingsRoute(projectKey));
-  }, [projectKey]);
+    if (target) router.navigate(buildProjectSettingsRoute(target.serverId, target.projectId));
+  }, [target]);
 
   const rowStyle = useCallback(
     ({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) => [

@@ -125,7 +125,6 @@ import {
   deriveWorkspaceDisplayName,
 } from "./workspace-registry-model.js";
 import { resolveWorkspaceIdForPath } from "./resolve-workspace-id-for-path.js";
-import { resolveProjectReference } from "./project-reference.js";
 import {
   resolveProjectDisplayName,
   resolveWorkspaceDisplayName,
@@ -2075,6 +2074,8 @@ export class Session {
     switch (msg.type) {
       case "fetch_workspaces_request":
         return this.handleFetchWorkspacesRequest(msg);
+      case "project.list.request":
+        return this.handleProjectListRequest(msg.requestId);
       case "paseo_worktree_list_request":
         return this.handlePaseoWorktreeListRequest(msg);
       case "paseo_worktree_archive_request":
@@ -2589,7 +2590,7 @@ export class Session {
     );
 
     try {
-      const existing = await resolveProjectReference(projectId, this.projectRegistry);
+      const existing = await this.projectRegistry.get(projectId);
       if (!existing) {
         this.emit({
           type: "project.rename.response",
@@ -2672,7 +2673,7 @@ export class Session {
     this.sessionLogger.info({ projectId, requestId }, "session: project.remove.request");
 
     try {
-      const project = await resolveProjectReference(projectId, this.projectRegistry);
+      const project = await this.projectRegistry.get(projectId);
       const resolvedProjectId = project?.projectId ?? projectId;
       const projectWorkspaces = (await this.workspaceRegistry.list()).filter(
         (workspace) => workspace.projectId === resolvedProjectId,
@@ -4206,9 +4207,6 @@ export class Session {
     return {
       id: workspace.workspaceId,
       projectId: workspace.projectId,
-      ...(resolvedProjectRecord?.projectKey
-        ? { projectKey: resolvedProjectRecord.projectKey }
-        : {}),
       projectDisplayName: resolvedProjectRecord
         ? resolveProjectDisplayName(resolvedProjectRecord)
         : workspace.projectId,
@@ -4295,7 +4293,6 @@ export class Session {
     return {
       id: result.workspace.workspaceId,
       projectId: result.workspace.projectId,
-      ...(projectRecord?.projectKey ? { projectKey: projectRecord.projectKey } : {}),
       projectDisplayName: projectRecord
         ? resolveProjectDisplayName(projectRecord)
         : result.workspace.projectId,
@@ -4938,6 +4935,29 @@ export class Session {
           requestType: request.type,
           error: message,
           code,
+        },
+      });
+    }
+  }
+
+  private async handleProjectListRequest(requestId: string): Promise<void> {
+    try {
+      const projects = (await this.projectRegistry.list())
+        .filter((project) => !project.archivedAt)
+        .map((project) => this.buildProjectDescriptor(project));
+      this.emit({
+        type: "project.list.response",
+        payload: { requestId, projects },
+      });
+    } catch (error) {
+      this.sessionLogger.error({ err: error }, "Failed to handle project.list.request");
+      this.emit({
+        type: "rpc_error",
+        payload: {
+          requestId,
+          requestType: "project.list.request",
+          error: error instanceof Error ? error.message : "Failed to list projects",
+          code: "project_list_failed",
         },
       });
     }

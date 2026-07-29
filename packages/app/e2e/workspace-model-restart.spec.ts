@@ -32,9 +32,11 @@ interface RestartDaemonClient {
       name: string;
       status: string;
       workspaceDirectory: string;
-      projectKey?: string;
-      project?: { projectKey?: string };
+      projectId: string;
     }>;
+  }>;
+  listProjects(): Promise<{
+    projects: Array<{ projectId: string; projectKey?: string }>;
   }>;
   fetchAgents(options?: { scope?: "active" }): Promise<{
     entries: Array<{
@@ -463,18 +465,16 @@ test.describe("Workspace model restart regressions", () => {
         .poll(() => getVisibleWorkspaceAgentTabIds(page), { timeout: 30_000 })
         .toContain(`workspace-tab-agent_${LEGACY_AGENT_ID}`);
 
-      const reconciledWorkspace = (await client.fetchWorkspaces()).entries.find(
-        (workspace) => workspace.id === seeded.workspaceA,
+      const reconciledProjectKey = (await client.listProjects()).projects.find(
+        (project) => project.projectId === seeded.projectId,
       );
-      const reconciledProjectKey =
-        reconciledWorkspace?.projectKey ?? reconciledWorkspace?.project?.projectKey;
-      if (!reconciledProjectKey) {
+      if (!reconciledProjectKey?.projectKey) {
         throw new Error(`Workspace ${seeded.workspaceA} was not reconciled with a project key`);
       }
 
       await openGlobalNewWorkspaceComposer(page);
       await selectNewWorkspaceProject(page, {
-        projectKey: reconciledProjectKey,
+        projectKey: reconciledProjectKey.projectKey,
         projectDisplayName: seeded.projectDisplayName,
       });
       await expectNewWorkspaceProjectSelected(page, seeded.projectDisplayName);

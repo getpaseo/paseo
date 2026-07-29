@@ -64,8 +64,10 @@ async function seedPaseoWorkspaceWithOpenCodeSession(): Promise<OpenCodeImportSc
     if (!createdWorkspace.workspace) {
       throw new Error(createdWorkspace.error ?? `Failed to create workspace ${PASEO_REPO_PATH}`);
     }
-    const projectKey =
-      createdWorkspace.workspace.projectKey ?? createdWorkspace.workspace.project?.projectKey;
+    const descriptor = (await client.listProjects()).projects.find(
+      (project) => project.projectId === createdWorkspace.workspace?.projectId,
+    );
+    const projectKey = descriptor?.projectKey;
     if (!projectKey) {
       throw new Error(`Created workspace ${createdWorkspace.workspace.id} has no project key`);
     }

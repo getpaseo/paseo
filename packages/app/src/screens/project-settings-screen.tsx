@@ -31,7 +31,6 @@ import { SettingsGroup } from "@/screens/settings/settings-group";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { useProjects } from "@/hooks/use-projects";
-import { findProjectSettingsTarget } from "@/projects/project-settings-target";
 import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
 import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
 import { useToast } from "@/contexts/toast-context";
@@ -47,6 +46,9 @@ import {
 } from "@/utils/project-config-form";
 import { buildProjectsSettingsRoute } from "@/utils/host-routes";
 import type { ProjectHostEntry, ProjectSummary } from "@/utils/projects";
+import { getProjectHostEntry, getProjectSummaryForHostProject } from "@/utils/projects";
+import { useSessionStore } from "@/stores/session-store";
+import { selectProjectIdForServer } from "@/stores/session-store-hooks/selectors";
 
 const SCRIPT_SERVICE_TYPE = "service";
 
@@ -85,24 +87,41 @@ const WORKTREE_DOCS_URL = "https://paseo.sh/docs/worktrees";
 type ReadProjectConfigData = Awaited<ReturnType<DaemonClient["readProjectConfig"]>>;
 
 export interface ProjectSettingsScreenProps {
-  projectKey: string;
+  serverId: string;
+  projectId: string;
 }
 
-export default function ProjectSettingsScreen({ projectKey }: ProjectSettingsScreenProps) {
+export default function ProjectSettingsScreen({ serverId, projectId }: ProjectSettingsScreenProps) {
   const { projects } = useProjects();
   const project = useMemo(
-    () => findProjectSettingsTarget(projects, projectKey),
-    [projects, projectKey],
+    () => getProjectSummaryForHostProject(projects, serverId, projectId),
+    [projectId, projects, serverId],
   );
   const editableHosts = useMemo(() => filterEditableHosts(project), [project]);
-  const [hostSelection, setHostSelection] = useState({ routeKey: "", serverId: "" });
+  const routeKey = `${serverId}:${projectId}`;
+  const routeHost = getProjectHostEntry(project, serverId, projectId);
+  const defaultHost = routeHost?.isOnline ? routeHost : editableHosts[0];
+  const [hostSelection, setHostSelection] = useState({
+    routeKey: "",
+    serverId: "",
+    projectId: "",
+  });
   const selectedServerId =
-    hostSelection.routeKey === projectKey
-      ? hostSelection.serverId
-      : (editableHosts[0]?.serverId ?? "");
+    hostSelection.routeKey === routeKey ? hostSelection.serverId : (defaultHost?.serverId ?? "");
+  const selectedProjectId =
+    hostSelection.routeKey === routeKey ? hostSelection.projectId : (defaultHost?.projectId ?? "");
   const setSelectedServerId = useCallback(
-    (serverId: string) => setHostSelection({ routeKey: projectKey, serverId }),
-    [projectKey],
+    (targetServerId: string) => {
+      const targetProjectId = selectProjectIdForServer(useSessionStore.getState(), {
+        sourceServerId: serverId,
+        projectId,
+        targetServerId,
+      });
+      if (targetProjectId) {
+        setHostSelection({ routeKey, serverId: targetServerId, projectId: targetProjectId });
+      }
+    },
+    [projectId, routeKey, serverId],
   );
 
   const selectedSnapshot = useHostRuntimeSnapshot(selectedServerId);
@@ -111,7 +130,7 @@ export default function ProjectSettingsScreen({ projectKey }: ProjectSettingsScr
     (selectedSnapshot?.connectionStatus === "offline" ||
       selectedSnapshot?.connectionStatus === "error");
 
-  const selectedHost = editableHosts.find((host) => host.serverId === selectedServerId);
+  const selectedHost = getProjectHostEntry(project, selectedServerId, selectedProjectId);
   const client = useHostRuntimeClient(selectedHost?.serverId ?? "");
 
   if (!project || editableHosts.length === 0 || !selectedHost || !client) {
@@ -230,7 +249,7 @@ function ProjectSettingsBody({
   const hasMultipleHosts = hosts.length > 1;
 
   return (
-    <View style={styles.body}>
+    <View role="main" style={styles.body}>
       <BackToProjectsButton />
 
       <View style={styles.headerBlock}>
@@ -241,10 +260,10 @@ function ProjectSettingsBody({
             projectKey={project.projectKey}
           />
           <ProjectNameEditor
-            key={`${selectedHost.serverId}:${selectedHost.projectId ?? project.projectKey}`}
+            key={`${selectedHost.serverId}:${selectedHost.projectId}`}
             projectName={selectedHost.projectName}
             projectCustomName={selectedHost.projectCustomName}
-            projectId={selectedHost.projectId ?? project.projectKey}
+            projectId={selectedHost.projectId}
             client={client}
           />
         </View>
@@ -852,12 +871,17 @@ function ProjectNameEditor({
 
   if (!isEditing) {
     return (
-      <View style={styles.nameEditorRow}>
+      <View
+        role="group"
+        accessibilityLabel={t("settings.project.rename.projectNameLabel")}
+        style={styles.nameEditorRow}
+      >
         <Text style={styles.projectTitle} numberOfLines={1}>
           {projectName}
         </Text>
         <Pressable
           testID="project-name-edit-button"
+          accessibilityRole="button"
           accessibilityLabel={t("settings.project.rename.renameLabel")}
           onPress={handleStartEdit}
           hitSlop={8}
@@ -868,6 +892,7 @@ function ProjectNameEditor({
         {projectCustomName ? (
           <Pressable
             testID="project-name-reset-button"
+            accessibilityRole="button"
             accessibilityLabel={t("settings.project.rename.resetLabel")}
             onPress={handleReset}
             disabled={renameMutation.isPending}
@@ -882,7 +907,11 @@ function ProjectNameEditor({
   }
 
   return (
-    <View style={styles.nameEditorRow}>
+    <View
+      role="group"
+      accessibilityLabel={t("settings.project.rename.projectNameLabel")}
+      style={styles.nameEditorRow}
+    >
       <TextInput
         testID="project-name-input"
         accessibilityLabel={t("settings.project.rename.projectNameLabel")}
@@ -898,6 +927,7 @@ function ProjectNameEditor({
       />
       <Pressable
         testID="project-name-save-button"
+        accessibilityRole="button"
         accessibilityLabel={t("settings.project.rename.saveLabel")}
         onPress={handleSave}
         disabled={renameMutation.isPending}
@@ -908,6 +938,7 @@ function ProjectNameEditor({
       </Pressable>
       <Pressable
         testID="project-name-cancel-button"
+        accessibilityRole="button"
         accessibilityLabel={t("settings.project.rename.cancelLabel")}
         onPress={handleCancel}
         disabled={renameMutation.isPending}
@@ -994,6 +1025,7 @@ function HostPicker({ hosts, selectedHost, onSelectHost }: HostPickerProps) {
     >
       <Pressable
         ref={triggerRef}
+        accessibilityRole="button"
         accessibilityLabel={t("settings.project.switchHost")}
         testID="host-picker"
         style={styles.hostIndicator}

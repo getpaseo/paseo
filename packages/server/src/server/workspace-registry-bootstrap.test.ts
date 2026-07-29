@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
@@ -10,7 +10,6 @@ import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-servic
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import { FileBackedProjectRegistry, FileBackedWorkspaceRegistry } from "./workspace-registry.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
-import { classifyDirectoryForProjectMembership } from "./workspace-registry-bootstrap-legacy.js";
 import { deriveProjectKey } from "./project-key.js";
 
 let NON_GIT_PROJECT: string;
@@ -387,165 +386,6 @@ describe("bootstrapWorkspaceRegistries", () => {
       },
     ]);
   });
-
-  test("keeps legacy agents in different monorepo subprojects separate", async () => {
-    const appProject = path.join(GIT_WORKTREE, "packages", "app");
-    const serverProject = path.join(GIT_WORKTREE, "packages", "server");
-    mkdirSync(appProject, { recursive: true });
-    mkdirSync(serverProject, { recursive: true });
-    workspaceGitService = createNoopWorkspaceGitService({
-      getCheckout: async (cwd) => ({
-        cwd,
-        isGit: true,
-        currentBranch: "main",
-        remoteUrl: "git@github.com:acme/legacy-project.git",
-        worktreeRoot: GIT_WORKTREE,
-        isPaseoOwnedWorktree: false,
-        mainRepoRoot: GIT_PROJECT,
-      }),
-    });
-    await agentStorage.initialize();
-    for (const [id, cwd] of [
-      ["app-agent", appProject],
-      ["server-agent", serverProject],
-    ]) {
-      await agentStorage.upsert({
-        id,
-        provider: "codex",
-        cwd,
-        createdAt: "2026-03-01T00:00:00.000Z",
-        updatedAt: "2026-03-02T00:00:00.000Z",
-        lastActivityAt: "2026-03-02T00:00:00.000Z",
-        lastUserMessageAt: null,
-        title: null,
-        labels: {},
-        lastStatus: "idle",
-        lastModeId: null,
-        config: null,
-        runtimeInfo: { provider: "codex", sessionId: null },
-        persistence: null,
-        archivedAt: null,
-      });
-    }
-
-    await bootstrapWorkspaceRegistries({
-      paseoHome,
-      agentStorage,
-      projectRegistry,
-      workspaceRegistry,
-      workspaceGitService,
-      logger,
-    });
-
-    expect(
-      (await projectRegistry.list())
-        .map((project) => ({
-          projectId: project.projectId,
-          projectKey: project.projectKey,
-          displayName: project.displayName,
-          rootPath: project.rootPath,
-        }))
-        .sort((left, right) => left.projectId.localeCompare(right.projectId)),
-    ).toEqual([
-      {
-        projectId: "remote:github.com/acme/legacy-project#subdir:packages/app",
-        projectKey: "remote:github.com/acme/legacy-project#subdir:packages/app",
-        displayName: "app",
-        rootPath: path.join(GIT_PROJECT, "packages", "app"),
-      },
-      {
-        projectId: "remote:github.com/acme/legacy-project#subdir:packages/server",
-        projectKey: "remote:github.com/acme/legacy-project#subdir:packages/server",
-        displayName: "server",
-        rootPath: path.join(GIT_PROJECT, "packages", "server"),
-      },
-    ]);
-    expect(
-      new Set((await workspaceRegistry.list()).map((workspace) => workspace.projectId)),
-    ).toEqual(
-      new Set([
-        "remote:github.com/acme/legacy-project#subdir:packages/app",
-        "remote:github.com/acme/legacy-project#subdir:packages/server",
-      ]),
-    );
-  });
-
-  test.skipIf(process.platform === "win32")(
-    "maps a symlinked legacy subproject onto the main checkout",
-    async () => {
-      const physicalProject = path.join(GIT_WORKTREE, "packages", "app");
-      const linkedProject = path.join(tmpDir, "app-link");
-      mkdirSync(physicalProject, { recursive: true });
-      symlinkSync(physicalProject, linkedProject, "dir");
-      workspaceGitService = createNoopWorkspaceGitService({
-        getCheckout: async (cwd) => ({
-          cwd,
-          isGit: true,
-          currentBranch: "main",
-          remoteUrl: "git@github.com:acme/legacy-project.git",
-          worktreeRoot: GIT_WORKTREE,
-          isPaseoOwnedWorktree: false,
-          mainRepoRoot: GIT_PROJECT,
-        }),
-      });
-      await agentStorage.initialize();
-      await agentStorage.upsert({
-        id: "linked-app-agent",
-        provider: "codex",
-        cwd: linkedProject,
-        createdAt: "2026-03-01T00:00:00.000Z",
-        updatedAt: "2026-03-02T00:00:00.000Z",
-        lastActivityAt: "2026-03-02T00:00:00.000Z",
-        lastUserMessageAt: null,
-        title: null,
-        labels: {},
-        lastStatus: "idle",
-        lastModeId: null,
-        config: null,
-        runtimeInfo: { provider: "codex", sessionId: null },
-        persistence: null,
-        archivedAt: null,
-      });
-
-      await bootstrapWorkspaceRegistries({
-        paseoHome,
-        agentStorage,
-        projectRegistry,
-        workspaceRegistry,
-        workspaceGitService,
-        logger,
-      });
-
-      expect(await projectRegistry.list()).toEqual([
-        expect.objectContaining({
-          projectId: "remote:github.com/acme/legacy-project#subdir:packages/app",
-          rootPath: path.join(GIT_PROJECT, "packages", "app"),
-        }),
-      ]);
-    },
-  );
-
-  test.skipIf(process.platform === "win32")(
-    "uses one directory key for symlink-equivalent checkout roots",
-    () => {
-      const linkedProject = path.join(tmpDir, "legacy-project-link");
-      symlinkSync(GIT_PROJECT, linkedProject, "dir");
-      const checkout = {
-        cwd: linkedProject,
-        isGit: true as const,
-        currentBranch: "main",
-        remoteUrl: "git@github.com:acme/legacy-project.git",
-        worktreeRoot: GIT_PROJECT,
-        isPaseoOwnedWorktree: false,
-        mainRepoRoot: GIT_PROJECT,
-      };
-
-      expect(
-        classifyDirectoryForProjectMembership({ cwd: linkedProject, checkout })
-          .workspaceDirectoryKey,
-      ).toBe(GIT_PROJECT);
-    },
-  );
 
   test("migrates cwd-only agents to the oldest existing same-cwd workspace", async () => {
     await projectRegistry.initialize();

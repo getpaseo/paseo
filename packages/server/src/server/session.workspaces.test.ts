@@ -3483,7 +3483,7 @@ test("project.remove.request archives active workspaces and removes the project 
 
   await session.handleMessage({
     type: "project.remove.request",
-    projectId: project.projectKey,
+    projectId: project.projectId,
     requestId: "req-remove-project",
   });
 
@@ -3495,7 +3495,7 @@ test("project.remove.request archives active workspaces and removes the project 
   });
   expect(findByType(emitted, "project.remove.response")?.payload).toEqual({
     requestId: "req-remove-project",
-    projectId: project.projectKey,
+    projectId: project.projectId,
     accepted: true,
     removedWorkspaceIds: [workspace.workspaceId],
     error: null,
@@ -3504,7 +3504,7 @@ test("project.remove.request archives active workspaces and removes the project 
   expect(workspaceUpdates.at(-1)?.payload).toEqual({
     kind: "remove",
     id: workspace.workspaceId,
-    removedProjectId: project.projectKey,
+    removedProjectId: project.projectId,
   });
 });
 
@@ -3713,12 +3713,6 @@ test("create paseo worktree response preserves an explicit non-Git project", asy
   expect(response?.payload.error).toBeNull();
   expect(response?.payload.workspace).toMatchObject({
     projectId: explicitProject.projectId,
-    projectKey: deriveProjectKey({
-      rootPath: explicitProject.rootPath,
-      remoteUrl: null,
-      worktreeRoot: null,
-      mainRepoRoot: null,
-    }),
     projectDisplayName: explicitProject.displayName,
     projectRootPath: explicitProject.rootPath,
     projectKind: "non_git",
@@ -7454,7 +7448,7 @@ test("project.rename.request stores customName and emits an updated workspace de
 
   await session.handleMessage({
     type: "project.rename.request",
-    projectId: project.projectKey,
+    projectId: project.projectId,
     customName: "  My Fork  ",
     requestId: "req-rename-1",
   });
@@ -7462,7 +7456,7 @@ test("project.rename.request stores customName and emits an updated workspace de
   const response = findByType(emitted, "project.rename.response");
   expect(response?.payload).toEqual({
     requestId: "req-rename-1",
-    projectId: project.projectKey,
+    projectId: project.projectId,
     accepted: true,
     customName: "My Fork",
     error: null,

@@ -18,6 +18,7 @@ type NewWorkspaceDaemonClient = Pick<
   | "getPaseoWorktreeList"
   | "getDaemonConfig"
   | "inspectWorkspaceRecovery"
+  | "listProjects"
   | "on"
   | "patchDaemonConfig"
   | "removeProject"
@@ -46,15 +47,19 @@ function requireWorkspace(payload: WorkspacePayload) {
   return payload.workspace;
 }
 
-function openedProjectFromWorkspace(workspace: WorkspaceDescriptor): OpenedProject {
-  const projectKey = workspace.projectKey ?? workspace.project?.projectKey;
-  if (!projectKey) {
-    throw new Error(`Workspace ${workspace.id} has no project key`);
+async function openedProjectFromWorkspace(
+  client: NewWorkspaceDaemonClient,
+  workspace: WorkspaceDescriptor,
+): Promise<OpenedProject> {
+  const payload = await client.listProjects();
+  const project = payload.projects.find((candidate) => candidate.projectId === workspace.projectId);
+  if (!project?.projectKey) {
+    throw new Error(`Project ${workspace.projectId} has no project key`);
   }
   return {
     workspaceId: workspace.id,
     projectId: workspace.projectId,
-    projectKey,
+    projectKey: project.projectKey,
     projectDisplayName: workspace.projectDisplayName,
     workspaceName: workspace.name,
     workspaceDirectory: workspace.workspaceDirectory,
@@ -113,7 +118,7 @@ export async function openProjectViaDaemon(
       source: { kind: "directory", path: repoPath },
     }),
   );
-  return openedProjectFromWorkspace(workspace);
+  return openedProjectFromWorkspace(client, workspace);
 }
 
 export async function archiveWorkspaceFromDaemon(
@@ -155,7 +160,7 @@ export async function createWorktreeViaDaemon(
     worktreeSlug: input.slug,
   });
   const workspace = requireWorkspace(payload);
-  return openedProjectFromWorkspace(workspace);
+  return openedProjectFromWorkspace(client, workspace);
 }
 
 export async function openNewWorkspaceComposer(

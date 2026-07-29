@@ -1,11 +1,9 @@
 import type { PaseoConfigRaw } from "@getpaseo/protocol/messages";
 import { i18n } from "@/i18n/i18next";
-import { frameHostProjectKey, resolveProjectKey } from "@/projects/project-key";
 import { buildProjectSettingsRoute } from "@/utils/host-routes";
 
 export interface WorktreeSetupWorkspaceInput {
   projectId: string;
-  projectKey?: string | null;
   projectKind: string;
   projectRootPath: string;
 }
@@ -13,7 +11,6 @@ export interface WorktreeSetupWorkspaceInput {
 export interface ActiveGitWorkspaceProject {
   serverId: string;
   projectId: string;
-  projectKey: string;
   repoRoot: string;
 }
 
@@ -42,17 +39,12 @@ export function selectActiveGitWorkspaceProject(
   }
 
   const projectId = workspace.projectId;
-  const projectKey = resolveProjectKey({
-    serverId,
-    projectId,
-    projectKey: workspace.projectKey,
-  });
   const repoRoot = workspace.projectRootPath.trim();
   if (!projectId.trim() || !repoRoot) {
     return null;
   }
 
-  return { serverId, projectId, projectKey, repoRoot };
+  return { serverId, projectId, repoRoot };
 }
 
 export function shouldShowWorktreeSetupCallout(readResult: ReadProjectConfigResult | undefined) {
@@ -62,11 +54,7 @@ export function shouldShowWorktreeSetupCallout(readResult: ReadProjectConfigResu
 export function buildWorktreeSetupCalloutPolicy(
   project: ActiveGitWorkspaceProject,
 ): WorktreeSetupCalloutPolicy {
-  const hostPlacementKey = frameHostProjectKey({
-    serverId: project.serverId,
-    projectId: project.projectId,
-  });
-  const calloutKey = `worktree-setup-missing:${hostPlacementKey}`;
+  const calloutKey = `worktree-setup-missing:${project.serverId}:${project.projectId}`;
 
   return {
     id: calloutKey,
@@ -75,8 +63,8 @@ export function buildWorktreeSetupCalloutPolicy(
     title: i18n.t("sidebar.worktreeSetup.title"),
     description: i18n.t("sidebar.worktreeSetup.description"),
     actionLabel: i18n.t("sidebar.worktreeSetup.openProjectSettings"),
-    projectSettingsRoute: buildProjectSettingsRoute(project.projectKey),
-    testID: `worktree-setup-callout-${project.projectKey}`,
+    projectSettingsRoute: buildProjectSettingsRoute(project.serverId, project.projectId),
+    testID: `worktree-setup-callout-${project.projectId}`,
   };
 }
 

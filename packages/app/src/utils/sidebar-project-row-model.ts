@@ -2,7 +2,7 @@ import type { SidebarProjectEntry } from "@/hooks/use-sidebar-workspaces-list";
 
 export interface SidebarProjectHostTarget {
   serverId: string;
-  projectId?: string;
+  projectId: string;
   iconWorkingDir: string;
 }
 
@@ -19,11 +19,9 @@ export interface SidebarProjectSectionRowModel {
 export type SidebarProjectRowModel = SidebarProjectSectionRowModel;
 
 const EMPTY_MULTIPLICITY_MAP: ReadonlyMap<string, boolean> = new Map();
-const EMPTY_SERVER_SET: ReadonlySet<string> = new Set();
-
 function hostTarget(input: {
   serverId: string;
-  projectId?: string;
+  projectId: string;
   iconWorkingDir: string;
 }): SidebarProjectHostTarget | null {
   const iconWorkingDir = input.iconWorkingDir.trim();
@@ -62,32 +60,22 @@ export function resolveSidebarProjectLocalPath(
 function resolveNewWorkspaceTarget(
   project: SidebarProjectEntry,
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>,
-  onlineServerIds: ReadonlySet<string>,
 ): SidebarProjectHostTarget | null {
-  let firstEligibleTarget: SidebarProjectHostTarget | null = null;
   for (const host of project.hosts) {
     if (!host.canCreateWorktree && !supportsMultiplicityByServerId.get(host.serverId)) {
       continue;
     }
     const target = hostTarget(host);
-    if (target && onlineServerIds.has(host.serverId)) {
-      return target;
-    }
-    firstEligibleTarget ??= target;
+    if (target) return target;
   }
-  return firstEligibleTarget;
+  return null;
 }
 
 function projectTrailingAction(
   project: SidebarProjectEntry,
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>,
-  onlineServerIds: ReadonlySet<string>,
 ): SidebarProjectTrailingAction {
-  const target = resolveNewWorkspaceTarget(
-    project,
-    supportsMultiplicityByServerId,
-    onlineServerIds,
-  );
+  const target = resolveNewWorkspaceTarget(project, supportsMultiplicityByServerId);
   return target ? { kind: "new_workspace", target } : { kind: "none" };
 }
 
@@ -95,7 +83,6 @@ export function buildSidebarProjectRowModel(input: {
   project: SidebarProjectEntry;
   collapsed: boolean;
   supportsMultiplicityByServerId?: ReadonlyMap<string, boolean>;
-  onlineServerIds?: ReadonlySet<string>;
 }): SidebarProjectRowModel {
   return {
     kind: "project_section",
@@ -103,7 +90,6 @@ export function buildSidebarProjectRowModel(input: {
     trailingAction: projectTrailingAction(
       input.project,
       input.supportsMultiplicityByServerId ?? EMPTY_MULTIPLICITY_MAP,
-      input.onlineServerIds ?? EMPTY_SERVER_SET,
     ),
   };
 }

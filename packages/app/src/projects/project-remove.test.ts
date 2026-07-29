@@ -73,7 +73,6 @@ describe("project remove policy", () => {
     const hostA = createProjectRemoveClient();
 
     const outcome = await removeProjectFromHosts({
-      projectKey: project.projectKey,
       targets: [
         { serverId: "host-a", projectId: "prj_host_a" },
         { serverId: "host-b", projectId: "prj_host_b" },

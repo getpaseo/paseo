@@ -43,6 +43,7 @@ function makeProject(workspaces: SidebarWorkspacePlacement[]): SidebarProjectEnt
     hosts: [
       {
         serverId: "srv",
+        projectId: "project",
         iconWorkingDir: "/repo",
         canCreateWorktree: true,
       },

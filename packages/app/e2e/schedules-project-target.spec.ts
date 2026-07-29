@@ -245,6 +245,7 @@ test.describe("Schedules project target", () => {
       port: fakePort,
       serverId: fakeHost.serverId,
       workspace: fakeHost.workspace,
+      project: fakeHost,
     });
     await addFakeScheduleHostAndReload({
       page,
@@ -277,6 +278,7 @@ test.describe("Schedules project target", () => {
       port: fakePort,
       serverId: fakeHost.serverId,
       workspace: fakeHost.workspace,
+      project: fakeHost,
     });
 
     await gotoAppShell(page);

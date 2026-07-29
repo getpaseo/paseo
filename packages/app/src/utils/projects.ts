@@ -1,7 +1,6 @@
-import type { EmptyProjectDescriptor, WorkspaceDescriptor } from "@/stores/session-store";
-import { buildHostProjectList, type HostProjectListItem } from "@/projects/host-project-model";
+import type { ProjectDescriptor, WorkspaceDescriptor } from "@/stores/session-store";
+import type { HostProjectListItem } from "@/projects/host-project-model";
 import { buildWorkspaceStructureProjects } from "@/projects/workspace-structure";
-import { resolveProjectKey } from "@/projects/project-key";
 
 export interface WorkspaceSummary {
   id: string;
@@ -15,7 +14,7 @@ export interface WorkspaceSummary {
 
 export interface ProjectHostEntry {
   serverId: string;
-  projectId?: string;
+  projectId: string;
   projectName: string;
   projectCustomName: string | null;
   serverName: string;
@@ -43,8 +42,7 @@ export interface ProjectHost {
   serverName: string;
   isOnline: boolean;
   workspaces: WorkspaceDescriptor[];
-  /** Project parents with no active workspaces, so they still surface as projects. */
-  emptyProjects?: EmptyProjectDescriptor[];
+  projects: ProjectDescriptor[];
 }
 
 export interface BuildProjectsInput {
@@ -55,7 +53,29 @@ export interface BuildProjectsResult {
   projects: ProjectSummary[];
 }
 
-const GITHUB_PROJECT_KEY_PATTERN = /^remote:github\.com\/([^/]+)\/([^/]+)$/;
+export function getProjectSummaryForHostProject(
+  projects: readonly ProjectSummary[],
+  serverId: string,
+  projectId: string,
+): ProjectSummary | undefined {
+  for (const project of projects) {
+    for (const host of project.hosts) {
+      if (host.serverId === serverId && host.projectId === projectId) return project;
+    }
+  }
+  return undefined;
+}
+
+export function getProjectHostEntry(
+  project: ProjectSummary | undefined,
+  serverId: string,
+  projectId?: string,
+): ProjectHostEntry | undefined {
+  for (const host of project?.hosts ?? []) {
+    if (host.serverId === serverId && (!projectId || host.projectId === projectId)) return host;
+  }
+  return undefined;
+}
 
 interface HostGroup {
   serverId: string;
@@ -81,41 +101,25 @@ function findProjectMetadata(
   host: ProjectHost,
   projectKey: string,
 ): { customName: string | null; displayName: string } | null {
-  for (const workspace of host.workspaces) {
-    if (workspace.projectId === projectKey) {
+  for (const project of host.projects) {
+    if (project.projectId === projectKey) {
       return {
-        customName: workspace.projectCustomName ?? null,
-        displayName: workspace.projectDisplayName,
+        customName: project.projectCustomName ?? null,
+        displayName: project.projectDisplayName,
       };
     }
   }
-  const emptyProject = host.emptyProjects?.find((project) => project.projectId === projectKey);
-  return emptyProject
-    ? {
-        customName: emptyProject.projectCustomName ?? null,
-        displayName: emptyProject.projectDisplayName,
-      }
-    : null;
+  return null;
 }
 
 function buildHostProjectEntries(hosts: ProjectHost[]): HostProjectListItem[] {
-  return buildHostProjectList({
-    projects: buildWorkspaceStructureProjects({
-      sessions: hosts.map((host) => ({
-        serverId: host.serverId,
-        workspaces: host.workspaces,
-        emptyProjects: host.emptyProjects,
-      })),
-    }),
+  return buildWorkspaceStructureProjects({
+    sessions: hosts.map((host) => ({
+      serverId: host.serverId,
+      projects: host.projects,
+      workspaces: host.workspaces,
+    })),
   });
-}
-
-function deriveGithubUrl(projectKey: string): string | undefined {
-  const match = projectKey.match(GITHUB_PROJECT_KEY_PATTERN);
-  if (!match) {
-    return undefined;
-  }
-  return `https://github.com/${match[1]}/${match[2]}`;
 }
 
 function resolveHostRepoRoot(group: HostGroup): string {
@@ -175,7 +179,6 @@ function toProjectSummary(draft: ProjectGroup): ProjectSummary {
     totalWorkspaceCount,
     hostCount: hosts.length,
     onlineHostCount,
-    githubUrl: deriveGithubUrl(draft.projectKey),
   };
 }
 
@@ -184,14 +187,14 @@ function addHostProjects(
   host: ProjectHost,
   hostProjects: HostProjectListItem[],
 ): void {
-  const emptyRepoRootByProjectId = new Map(
-    (host.emptyProjects ?? []).map((project) => [project.projectId, project.projectRootPath]),
+  const repoRootByProjectId = new Map(
+    host.projects.map((project) => [project.projectId, project.projectRootPath]),
   );
 
   for (const hostProject of hostProjects) {
     const placement = hostProject.hosts.find((entry) => entry.serverId === host.serverId);
     if (!placement) continue;
-    const projectId = placement.projectId ?? hostProject.projectKey;
+    const projectId = placement.projectId;
     const customName = findProjectMetadata(host, projectId);
     let group = groups.get(hostProject.projectKey);
     if (!group) {
@@ -216,7 +219,7 @@ function addHostProjects(
         serverName: host.serverName,
         isOnline: host.isOnline,
         workspaces: [],
-        fallbackRepoRoot: emptyRepoRootByProjectId.get(projectId) ?? "",
+        fallbackRepoRoot: repoRootByProjectId.get(projectId) ?? "",
       });
     }
   }
@@ -236,14 +239,8 @@ function attachHostWorkspaces(
   );
 
   for (const workspace of host.workspaces) {
-    const key =
-      projectKeyByProjectId.get(workspace.projectId) ??
-      resolveProjectKey({
-        serverId: host.serverId,
-        projectId: workspace.projectId,
-        projectKey: workspace.projectKey,
-      });
-    groups.get(key)?.hostsByServerId.get(host.serverId)?.workspaces.push(workspace);
+    const key = projectKeyByProjectId.get(workspace.projectId);
+    if (key) groups.get(key)?.hostsByServerId.get(host.serverId)?.workspaces.push(workspace);
   }
 }
 

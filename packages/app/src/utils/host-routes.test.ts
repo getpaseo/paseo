@@ -17,7 +17,7 @@ import {
   encodeWorkspaceIdForPathSegment,
   isSettingsSectionSlug,
   normalizeHostSectionSlug,
-  normalizeProjectSettingsRouteKey,
+  normalizeProjectSettingsRouteId,
   parseHostAgentRouteFromPathname,
   parseHostWorkspaceOpenIntentFromPathname,
   parseHostWorkspaceRouteFromPathname,
@@ -197,36 +197,14 @@ describe("projects settings routes", () => {
     expect(buildProjectsSettingsRoute()).toBe("/settings/projects");
   });
 
-  it("buildProjectSettingsRoute encodes a remote project key as a single segment", () => {
-    expect(buildProjectSettingsRoute("remote:github.com/acme/app")).toBe(
-      "/settings/projects/remote%3Agithub.com%2Facme%2Fapp",
+  it("buildProjectSettingsRoute addresses a host-local project id", () => {
+    expect(buildProjectSettingsRoute("host a", "project/1")).toBe(
+      "/settings/projects/host%20a/project%2F1",
     );
   });
 
-  it("buildProjectSettingsRoute encodes a local repo-root key", () => {
-    expect(buildProjectSettingsRoute("/Users/me/dev/paseo")).toBe(
-      "/settings/projects/%2FUsers%2Fme%2Fdev%2Fpaseo",
-    );
-  });
-
-  it("project keys round-trip through decodeURIComponent", () => {
-    const projectKey = "remote:github.com/acme/app";
-    const route = buildProjectSettingsRoute(projectKey);
-    const segment = route.slice("/settings/projects/".length);
-    expect(decodeURIComponent(segment)).toBe(projectKey);
-  });
-
-  it("preserves whitespace in opaque project keys", () => {
-    const projectKey = "host:6:host-a:project:10:/repo/foo ";
-    const route = buildProjectSettingsRoute(projectKey);
-    const segment = route.slice("/settings/projects/".length);
-
-    expect(decodeURIComponent(segment)).toBe(projectKey);
-  });
-
-  it("keeps an already-decoded opaque project key unchanged", () => {
-    const projectKey = "remote:github.com/acme/app#subdir:packages/my%20app";
-    expect(normalizeProjectSettingsRouteKey(projectKey)).toBe(projectKey);
+  it("keeps route ids opaque", () => {
+    expect(normalizeProjectSettingsRouteId("project%2F1")).toBe("project%2F1");
   });
 });
 

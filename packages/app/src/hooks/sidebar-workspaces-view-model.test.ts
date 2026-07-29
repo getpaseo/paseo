@@ -78,20 +78,25 @@ function project(input: {
   projectKind?: WorkspaceStructureProject["projectKind"];
   iconWorkingDir?: string;
   workspaceKeys: string[];
-  hosts?: WorkspaceStructureProject["hosts"];
+  hosts?: Array<
+    Omit<WorkspaceStructureProject["hosts"][number], "projectId"> & { projectId?: string }
+  >;
 }): WorkspaceStructureProject {
   return {
     projectKey: input.projectKey,
     projectName: input.projectName ?? input.projectKey,
     projectKind: input.projectKind ?? "git",
     iconWorkingDir: input.iconWorkingDir ?? input.projectKey,
-    hosts: input.hosts ?? [
-      {
-        serverId: "srv",
-        iconWorkingDir: input.iconWorkingDir ?? input.projectKey,
-        canCreateWorktree: true,
-      },
-    ],
+    hosts: Array.from(
+      input.hosts ?? [
+        {
+          serverId: "srv",
+          iconWorkingDir: input.iconWorkingDir ?? input.projectKey,
+          canCreateWorktree: true,
+        },
+      ],
+      (host) => Object.assign({}, host, { projectId: host.projectId ?? input.projectKey }),
+    ),
     workspaceKeys: input.workspaceKeys,
   };
 }
@@ -115,14 +120,12 @@ function workspace(input: {
   name: string;
   projectId: string;
   projectDisplayName: string;
-  projectKey?: string;
   status?: WorkspaceDescriptor["status"];
   statusEnteredAt?: Date | null;
 }): WorkspaceDescriptor {
   return {
     id: input.id,
     projectId: input.projectId,
-    projectKey: input.projectKey,
     projectDisplayName: input.projectDisplayName,
     projectRootPath: `/repo/${input.projectId}`,
     workspaceDirectory: `/repo/${input.projectId}/${input.id}`,
@@ -326,8 +329,18 @@ describe("shared sidebar workspace model", () => {
       expect.objectContaining({
         projectKey: "getpaseo/paseo",
         hosts: [
-          { serverId: "host-a", iconWorkingDir: "/repo/getpaseo/paseo", canCreateWorktree: true },
-          { serverId: "host-b", iconWorkingDir: "/repo/getpaseo/paseo", canCreateWorktree: true },
+          {
+            serverId: "host-a",
+            projectId: "getpaseo/paseo",
+            iconWorkingDir: "/repo/getpaseo/paseo",
+            canCreateWorktree: true,
+          },
+          {
+            serverId: "host-b",
+            projectId: "getpaseo/paseo",
+            iconWorkingDir: "/repo/getpaseo/paseo",
+            canCreateWorktree: true,
+          },
         ],
         workspaces: [
           expect.objectContaining({
@@ -422,7 +435,6 @@ describe("shared sidebar workspace model", () => {
                 id: "clone-a",
                 name: "main",
                 projectId: "prj_a",
-                projectKey: "remote:github.com/acme/app",
                 projectDisplayName: "acme/app",
               }),
             ],

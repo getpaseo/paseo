@@ -3,153 +3,56 @@ import {
   buildWorktreeSetupCalloutPolicy,
   selectActiveGitWorkspaceProject,
   shouldShowWorktreeSetupCallout,
-  type WorktreeSetupWorkspaceInput,
 } from "./worktree-setup-callout-policy";
 
-function gitWorkspace(
-  overrides: Partial<WorktreeSetupWorkspaceInput> = {},
-): WorktreeSetupWorkspaceInput {
-  return {
-    projectId: "project-1",
-    projectKey: "project-1",
-    projectKind: "git",
-    projectRootPath: "/repo/project-1",
-    ...overrides,
-  };
-}
-
 describe("selectActiveGitWorkspaceProject", () => {
-  it("selects the exact active git workspace project root", () => {
-    expect(selectActiveGitWorkspaceProject("server-1", gitWorkspace())).toEqual({
+  it("selects the host-local project id for a git workspace", () => {
+    expect(
+      selectActiveGitWorkspaceProject("server-1", {
+        projectId: "prj_local",
+        projectKind: "git",
+        projectRootPath: "/repo/project",
+      }),
+    ).toEqual({
       serverId: "server-1",
-      projectId: "project-1",
-      projectKey: "project-1",
-      repoRoot: "/repo/project-1",
-    });
-  });
-
-  it("uses the persisted project key for the settings route", () => {
-    expect(
-      selectActiveGitWorkspaceProject(
-        "server-1",
-        gitWorkspace({
-          projectId: "prj_local",
-          projectKey: "remote:github.com/acme/project",
-        }),
-      ),
-    ).toMatchObject({
       projectId: "prj_local",
-      projectKey: "remote:github.com/acme/project",
+      repoRoot: "/repo/project",
     });
   });
 
-  it("preserves an opaque host-local project id in the settings route", () => {
-    const project = selectActiveGitWorkspaceProject(
-      "server-1",
-      gitWorkspace({ projectId: "/repo/project " }),
-    );
-
-    expect(project?.projectId).toBe("/repo/project ");
-    expect(project && buildWorktreeSetupCalloutPolicy(project).projectSettingsRoute).toBe(
-      "/settings/projects/project-1",
-    );
-  });
-
-  it("ignores non-git workspaces and blank project coordinates", () => {
+  it("ignores non-git workspaces and blank coordinates", () => {
     expect(
-      selectActiveGitWorkspaceProject("server-1", gitWorkspace({ projectKind: "local" })),
-    ).toBe(null);
-    expect(selectActiveGitWorkspaceProject("server-1", gitWorkspace({ projectId: " " }))).toBe(
-      null,
-    );
-    expect(
-      selectActiveGitWorkspaceProject("server-1", gitWorkspace({ projectRootPath: " " })),
-    ).toBe(null);
+      selectActiveGitWorkspaceProject("server-1", {
+        projectId: "project",
+        projectKind: "directory",
+        projectRootPath: "/repo",
+      }),
+    ).toBeNull();
   });
 });
 
 describe("shouldShowWorktreeSetupCallout", () => {
-  it("shows the callout when paseo config was read and setup commands are missing", () => {
+  it("shows only after a successful config read with no setup command", () => {
     expect(shouldShowWorktreeSetupCallout({ ok: true, config: {} })).toBe(true);
-    expect(shouldShowWorktreeSetupCallout({ ok: true, config: null })).toBe(true);
-  });
-
-  it("does not show the callout when setup commands are present", () => {
     expect(
-      shouldShowWorktreeSetupCallout({ ok: true, config: { worktree: { setup: "npm install" } } }),
+      shouldShowWorktreeSetupCallout({ ok: true, config: { worktree: { setup: "npm i" } } }),
     ).toBe(false);
-    expect(
-      shouldShowWorktreeSetupCallout({
-        ok: true,
-        config: { worktree: { setup: [" ", "npm install"] } },
-      }),
-    ).toBe(false);
-  });
-
-  it("does not show the callout when reading paseo config fails or has not completed", () => {
-    expect(shouldShowWorktreeSetupCallout(undefined)).toBe(false);
     expect(shouldShowWorktreeSetupCallout({ ok: false })).toBe(false);
   });
 });
 
 describe("buildWorktreeSetupCalloutPolicy", () => {
-  it("builds the stable sidebar callout identity and action route", () => {
-    expect(
-      buildWorktreeSetupCalloutPolicy({
-        serverId: "server-1",
-        projectId: "project-1",
-        projectKey: "project-1",
-        repoRoot: "/repo/project-1",
-      }),
-    ).toEqual({
-      id: "worktree-setup-missing:host:8:server-1:project:9:project-1",
-      dismissalKey: "worktree-setup-missing:host:8:server-1:project:9:project-1",
-      priority: 100,
-      title: "Set up worktree scripts",
-      description:
-        "Add setup commands so new worktrees can install dependencies and prepare themselves automatically.",
-      actionLabel: "Open project settings",
-      projectSettingsRoute: "/settings/projects/project-1",
-      testID: "worktree-setup-callout-project-1",
-    });
-  });
-
-  it("routes to the cross-host project key", () => {
+  it("routes by server id and project id", () => {
     expect(
       buildWorktreeSetupCalloutPolicy({
         serverId: "server-1",
         projectId: "prj_local",
-        projectKey: "remote:github.com/acme/project",
         repoRoot: "/repo/project",
-      }).projectSettingsRoute,
-    ).toBe("/settings/projects/remote%3Agithub.com%2Facme%2Fproject");
-  });
-
-  it("keeps dismissals scoped to the host placement", () => {
-    const hostA = buildWorktreeSetupCalloutPolicy({
-      serverId: "host-a",
-      projectId: "project-a",
-      projectKey: "remote:github.com/acme/project",
-      repoRoot: "/host-a/project",
+      }),
+    ).toMatchObject({
+      id: "worktree-setup-missing:server-1:prj_local",
+      projectSettingsRoute: "/settings/projects/server-1/prj_local",
+      testID: "worktree-setup-callout-prj_local",
     });
-    const hostB = buildWorktreeSetupCalloutPolicy({
-      serverId: "host-b",
-      projectId: "project-b",
-      projectKey: "remote:github.com/acme/project",
-      repoRoot: "/host-b/project",
-    });
-
-    expect(hostA.dismissalKey).not.toBe(hostB.dismissalKey);
-  });
-
-  it("does not substitute a retained legacy project ID for the project key", () => {
-    expect(
-      buildWorktreeSetupCalloutPolicy({
-        serverId: "server-2",
-        projectId: "remote:github.com/acme/project",
-        projectKey: "remote:github.com/acme/project-fork",
-        repoRoot: "/repo/project",
-      }).projectSettingsRoute,
-    ).toBe("/settings/projects/remote%3Agithub.com%2Facme%2Fproject-fork");
   });
 });

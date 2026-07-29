@@ -17,7 +17,14 @@ function project(projectKey: string, serverId = "host"): HostProjectListItem {
     projectName: projectKey,
     projectKind: "git",
     iconWorkingDir: `/work/${projectKey}`,
-    hosts: [{ serverId, iconWorkingDir: `/work/${projectKey}`, canCreateWorktree: true }],
+    hosts: [
+      {
+        serverId,
+        projectId: projectKey,
+        iconWorkingDir: `/work/${projectKey}`,
+        canCreateWorktree: true,
+      },
+    ],
     workspaceKeys: [],
   };
 }

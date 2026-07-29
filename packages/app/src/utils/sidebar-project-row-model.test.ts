@@ -35,18 +35,26 @@ function workspace(overrides: Partial<SidebarWorkspaceEntry> = {}): SidebarWorks
   };
 }
 
-function project(overrides: Partial<SidebarProjectEntry> = {}): SidebarProjectEntry {
+type ProjectOverrides = Omit<Partial<SidebarProjectEntry>, "hosts"> & {
+  hosts?: Array<Omit<SidebarProjectEntry["hosts"][number], "projectId"> & { projectId?: string }>;
+};
+
+function project(overrides: ProjectOverrides = {}): SidebarProjectEntry {
   const projectKind = overrides.projectKind ?? "git";
+  const hosts = Array.from(
+    overrides.hosts ?? [
+      { serverId: "srv", iconWorkingDir: "/repo", canCreateWorktree: projectKind === "git" },
+    ],
+    (host) => Object.assign({}, host, { projectId: host.projectId ?? `project-${host.serverId}` }),
+  );
   return {
     projectKey: "project-1",
     projectName: "paseo",
     projectKind,
     iconWorkingDir: "/repo",
-    hosts: overrides.hosts ?? [
-      { serverId: "srv", iconWorkingDir: "/repo", canCreateWorktree: projectKind === "git" },
-    ],
     workspaces: [workspace()],
     ...overrides,
+    hosts,
   };
 }
 
@@ -81,7 +89,7 @@ describe("buildSidebarProjectRowModel", () => {
       chevron: "expand",
       trailingAction: {
         kind: "new_workspace",
-        target: { serverId: "srv", iconWorkingDir: "/repo" },
+        target: { serverId: "srv", projectId: "project-srv", iconWorkingDir: "/repo" },
       },
     });
   });
@@ -95,7 +103,7 @@ describe("buildSidebarProjectRowModel", () => {
 
     expect(result.trailingAction).toEqual({
       kind: "new_workspace",
-      target: { serverId: "srv", iconWorkingDir: "/repo" },
+      target: { serverId: "srv", projectId: "project-srv", iconWorkingDir: "/repo" },
     });
   });
 
@@ -118,7 +126,7 @@ describe("buildSidebarProjectRowModel", () => {
 
     expect(result.trailingAction).toEqual({
       kind: "new_workspace",
-      target: { serverId: "srv", iconWorkingDir: "/repo" },
+      target: { serverId: "srv", projectId: "project-srv", iconWorkingDir: "/repo" },
     });
   });
 
@@ -137,46 +145,6 @@ describe("buildSidebarProjectRowModel", () => {
       trailingAction: {
         kind: "new_workspace",
         target: { serverId: "host-b", iconWorkingDir: "/repo/b" },
-      },
-    });
-  });
-
-  it("prefers an online host when a grouped project's first host is offline", () => {
-    const result = buildSidebarProjectRowModel({
-      project: project({
-        hosts: [
-          { serverId: "host-a", iconWorkingDir: "/repo/a", canCreateWorktree: true },
-          { serverId: "host-b", iconWorkingDir: "/repo/b", canCreateWorktree: true },
-        ],
-      }),
-      collapsed: false,
-      onlineServerIds: new Set(["host-b"]),
-    });
-
-    expect(result).toMatchObject({
-      trailingAction: {
-        kind: "new_workspace",
-        target: { serverId: "host-b", iconWorkingDir: "/repo/b" },
-      },
-    });
-  });
-
-  it("falls back to the first capable host when every grouped host is offline", () => {
-    const result = buildSidebarProjectRowModel({
-      project: project({
-        hosts: [
-          { serverId: "host-a", iconWorkingDir: "/repo/a", canCreateWorktree: true },
-          { serverId: "host-b", iconWorkingDir: "/repo/b", canCreateWorktree: true },
-        ],
-      }),
-      collapsed: false,
-      onlineServerIds: new Set(),
-    });
-
-    expect(result).toMatchObject({
-      trailingAction: {
-        kind: "new_workspace",
-        target: { serverId: "host-a", iconWorkingDir: "/repo/a" },
       },
     });
   });
@@ -219,7 +187,7 @@ describe("buildSidebarProjectRowModel", () => {
       chevron: "expand",
       trailingAction: {
         kind: "new_workspace",
-        target: { serverId: "srv", iconWorkingDir: "/repo" },
+        target: { serverId: "srv", projectId: "project-srv", iconWorkingDir: "/repo" },
       },
     });
   });
@@ -234,7 +202,11 @@ describe("buildSidebarProjectRowModel", () => {
       }),
     );
 
-    expect(iconTarget).toEqual({ serverId: "host-b", iconWorkingDir: "/repo/b" });
+    expect(iconTarget).toEqual({
+      serverId: "host-b",
+      projectId: "project-host-b",
+      iconWorkingDir: "/repo/b",
+    });
   });
 
   it("resolves desktop file actions from the local project placement", () => {
@@ -261,7 +233,7 @@ describe("buildSidebarProjectRowModel", () => {
       chevron: "collapse",
       trailingAction: {
         kind: "new_workspace",
-        target: { serverId: "srv", iconWorkingDir: "/repo" },
+        target: { serverId: "srv", projectId: "project-srv", iconWorkingDir: "/repo" },
       },
     });
   });

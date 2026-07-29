@@ -7,7 +7,12 @@ import {
   deriveAgentStateBucket,
   getWorkspaceStateBucketPriority,
 } from "@getpaseo/protocol/agent-state-bucket";
-import type { Agent, DaemonServerInfo, WorkspaceDescriptor } from "@/stores/session-store";
+import type {
+  Agent,
+  DaemonServerInfo,
+  ProjectDescriptor,
+  WorkspaceDescriptor,
+} from "@/stores/session-store";
 import { useSessionStore } from "@/stores/session-store";
 import {
   buildAgentDirectoryState,
@@ -33,7 +38,7 @@ interface LegacyDaemonWorkspaceBackfillInput {
   client: Pick<DaemonClient, "fetchAgents">;
   serverId: string;
   workspaces: ReadonlyMap<unknown, unknown>;
-  emptyProjects: ReadonlyMap<unknown, unknown>;
+  projects: ReadonlyMap<unknown, unknown>;
   isCancelled?: () => boolean;
 }
 
@@ -97,7 +102,7 @@ export async function fetchLegacyDaemonWorkspaceDirectory(input: {
 export async function backfillLegacyDaemonWorkspaceDirectoryIfEmpty(
   input: LegacyDaemonWorkspaceBackfillInput,
 ): Promise<boolean> {
-  if (input.workspaces.size > 0 || input.emptyProjects.size > 0) {
+  if (input.workspaces.size > 0 || input.projects.size > 0) {
     return false;
   }
   const serverInfo = useSessionStore.getState().sessions[input.serverId]?.serverInfo;
@@ -205,9 +210,23 @@ export function replaceLegacyDaemonWorkspaceDirectory(input: {
   const workspaces = buildLegacyWorkspaces(entries);
   const store = useSessionStore.getState();
   store.setWorkspaces(input.serverId, workspaces);
-  store.setEmptyProjects(input.serverId, []);
+  store.setProjects(
+    input.serverId,
+    Array.from(workspaces.values(), legacyProjectDescriptorFromWorkspace),
+  );
   store.setHasHydratedWorkspaces(input.serverId, true);
   return { agents, workspaces };
+}
+
+function legacyProjectDescriptorFromWorkspace(workspace: WorkspaceDescriptor): ProjectDescriptor {
+  return {
+    projectId: workspace.projectId,
+    projectKey: null,
+    projectDisplayName: workspace.projectDisplayName,
+    projectCustomName: workspace.projectCustomName ?? null,
+    projectRootPath: workspace.projectRootPath,
+    projectKind: workspace.projectKind,
+  };
 }
 
 function readFetchAgentsHasMore(
@@ -299,10 +318,6 @@ function createLegacyWorkspace(
   return {
     id: workspaceDirectory,
     projectId: entry.project.projectKey,
-    // COMPAT(projectKey): added in v0.2.4 on 2026-07-29; remove after 2027-01-29.
-    // Legacy path-shaped IDs are host-local. Keep the new field absent so the
-    // project-key boundary can distinguish them from recognized remote IDs.
-    projectKey: null,
     projectDisplayName: entry.project.projectName,
     projectCustomName: null,
     projectRootPath,

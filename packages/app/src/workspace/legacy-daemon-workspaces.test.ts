@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { DaemonClient, FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
-import { useSessionStore, type Agent } from "@/stores/session-store";
+import { useSessionStore, type Agent, type WorkspaceDescriptor } from "@/stores/session-store";
 import { deriveWorkspaceAgentVisibility } from "@/workspace-tabs/agent-visibility";
 import { buildWorkspaceStructureProjects } from "@/projects/workspace-structure";
 import {
@@ -10,6 +10,17 @@ import {
 } from "./legacy-daemon-workspaces";
 
 const SERVER_ID = "srv_legacy";
+
+function legacyProjectFromWorkspace(workspace: WorkspaceDescriptor) {
+  return {
+    projectId: workspace.projectId,
+    projectKey: null,
+    projectDisplayName: workspace.projectDisplayName,
+    projectCustomName: workspace.projectCustomName ?? null,
+    projectRootPath: workspace.projectRootPath,
+    projectKind: workspace.projectKind,
+  };
+}
 
 function legacyAgent(input: {
   id: string;
@@ -86,7 +97,6 @@ describe("buildLegacyDaemonWorkspaceSnapshot", () => {
       expect.objectContaining({
         id: "/repo/app",
         projectId: "/repo",
-        projectKey: null,
         projectDisplayName: "repo",
         projectRootPath: "/repo",
         workspaceDirectory: "/repo/app",
@@ -132,8 +142,16 @@ describe("buildLegacyDaemonWorkspaceSnapshot", () => {
 
     const projects = buildWorkspaceStructureProjects({
       sessions: [
-        { serverId: "host-a", workspaces: first.workspaces.values() },
-        { serverId: "host-b", workspaces: second.workspaces.values() },
+        {
+          serverId: "host-a",
+          projects: Array.from(first.workspaces.values(), legacyProjectFromWorkspace),
+          workspaces: first.workspaces.values(),
+        },
+        {
+          serverId: "host-b",
+          projects: Array.from(second.workspaces.values(), legacyProjectFromWorkspace),
+          workspaces: second.workspaces.values(),
+        },
       ],
     });
 
@@ -211,7 +229,7 @@ describe("buildLegacyDaemonWorkspaceSnapshot", () => {
       client,
       serverId: SERVER_ID,
       workspaces: new Map(),
-      emptyProjects: new Map(),
+      projects: new Map(),
       isCancelled: () => cancelled,
     });
 

@@ -221,6 +221,7 @@ function workspaceSummary(overrides: Partial<WorkspaceSummary> = {}): WorkspaceS
 function hostEntry(overrides: Partial<ProjectHostEntry> = {}): ProjectHostEntry {
   return {
     serverId: "host-a",
+    projectId: "project-a",
     projectName: "Project",
     projectCustomName: null,
     serverName: "alpha",
@@ -292,7 +293,9 @@ describe("ProjectsScreen", () => {
     vi.unstubAllGlobals();
   });
 
-  function render(view: { kind: "projects" } | { kind: "project"; projectKey: string }) {
+  function render(
+    view: { kind: "projects" } | { kind: "project"; serverId: string; projectId: string },
+  ) {
     act(() => {
       root?.render(<ProjectsScreen view={view} />);
     });
@@ -394,7 +397,7 @@ describe("ProjectsScreen", () => {
       ],
     });
 
-    render({ kind: "project", projectKey: "remote:github.com/acme/app" });
+    render({ kind: "project", serverId: "host-a", projectId: "project-a" });
 
     const selected = findRow(container!, "remote:github.com/acme/app");
     const other = findRow(container!, "remote:github.com/acme/other");

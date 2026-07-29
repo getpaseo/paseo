@@ -858,7 +858,7 @@ describe("WorkspaceReconciliationService", () => {
     });
   });
 
-  test("updates the project key while keeping the project display name stable", async () => {
+  test("backfills a missing project key while keeping the project display name stable", async () => {
     const dir = createTempGitRepo("reconcile-remote-");
     tempDirs.push(dir);
 
@@ -917,7 +917,7 @@ describe("WorkspaceReconciliationService", () => {
     expect(projects.get("p1")!.projectKey).toBe("remote:github.com/new-owner/new-repo");
   });
 
-  test("falls back to the persisted root when a Git remote disappears", async () => {
+  test("preserves a persisted project key when a Git remote disappears", async () => {
     const dir = createTempGitRepo("reconcile-removed-remote-");
     tempDirs.push(dir);
     const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
@@ -963,7 +963,7 @@ describe("WorkspaceReconciliationService", () => {
 
     await service.runOnce();
 
-    expect(projects.get("p1")?.projectKey).toBe(canonicalLocalProjectKey(dir));
+    expect(projects.get("p1")?.projectKey).toBe("remote:github.com/acme/old-repo");
   });
 
   test("keeps custom and default names stable when the remote changes", async () => {
@@ -1431,7 +1431,7 @@ describe("WorkspaceReconciliationService", () => {
         kind: "project_updated",
         projectId: "p1",
         directory: rootPath,
-        fields: { projectKey: canonicalLocalProjectKey("/tmp/main-repo") },
+        fields: { projectKey: canonicalLocalProjectKey(rootPath) },
       },
       {
         kind: "workspace_updated",

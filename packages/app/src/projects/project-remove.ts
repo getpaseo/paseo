@@ -4,7 +4,7 @@ import { selectHostFeature } from "@/runtime/host-features";
 
 interface ProjectRemoveHost {
   serverId: string;
-  projectId?: string;
+  projectId: string;
 }
 
 export interface ProjectRemoveProject {
@@ -14,7 +14,7 @@ export interface ProjectRemoveProject {
 
 export interface ProjectRemoveTarget {
   serverId: string;
-  projectId?: string;
+  projectId: string;
 }
 
 export type ProjectRemoveReadiness =
@@ -42,7 +42,7 @@ export function getProjectRemoveReadiness(input: {
     }
     targets.push({
       serverId: host.serverId,
-      projectId: host.projectId ?? input.project.projectKey,
+      projectId: host.projectId,
     });
   }
 
@@ -64,7 +64,6 @@ export function getCurrentProjectRemoveReadiness(
 }
 
 export async function removeProjectFromHosts(input: {
-  projectKey?: string;
   targets: readonly ProjectRemoveTarget[];
   getClient: (serverId: string) => ProjectRemoveClient | null;
 }): Promise<ProjectRemoveOutcome> {
@@ -77,11 +76,7 @@ export async function removeProjectFromHosts(input: {
       disconnectedServerIds.push(target.serverId);
       continue;
     }
-    const projectId = target.projectId ?? input.projectKey;
-    if (!projectId) {
-      return { kind: "failed", serverIds: [target.serverId] };
-    }
-    clients.push({ serverId: target.serverId, projectId, client });
+    clients.push({ serverId: target.serverId, projectId: target.projectId, client });
   }
 
   if (disconnectedServerIds.length > 0) {

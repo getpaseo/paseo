@@ -3476,7 +3476,6 @@ describe("session workspace descriptors", () => {
           expect.objectContaining({
             id: "ws-gh",
             projectId: "prj_app",
-            projectKey: "remote:github.com/acme/app",
             project: expect.objectContaining({
               projectKey: "prj_app",
               projectName: "acme/app",
@@ -4909,6 +4908,53 @@ test("sends project updates only to capable sockets in a retained session", () =
         type: "project.update",
         payload: expect.objectContaining({ kind: "upsert" }),
       }),
+    },
+  ]);
+});
+
+test("project.list returns every active project descriptor", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const active = createPersistedProjectRecord({
+    projectId: "project-active",
+    projectKey: "remote:github.com/acme/app",
+    rootPath: "/tmp/project-active",
+    kind: "git",
+    displayName: "acme/app",
+    createdAt: "2026-07-17T00:00:00.000Z",
+    updatedAt: "2026-07-17T00:00:00.000Z",
+  });
+  const archived = createPersistedProjectRecord({
+    projectId: "project-archived",
+    rootPath: "/tmp/project-archived",
+    kind: "non_git",
+    displayName: "archived",
+    createdAt: "2026-07-17T00:00:00.000Z",
+    updatedAt: "2026-07-17T00:00:00.000Z",
+    archivedAt: "2026-07-18T00:00:00.000Z",
+  });
+  const session = createSessionForTest({
+    messages,
+    projectRegistry: { list: vi.fn().mockResolvedValue([active, archived]) },
+  });
+
+  await session.handleMessage({ type: "project.list.request", requestId: "projects-1" });
+
+  expect(messages).toEqual([
+    {
+      type: "project.list.response",
+      payload: {
+        requestId: "projects-1",
+        projects: [
+          {
+            projectId: "project-active",
+            projectKey: "remote:github.com/acme/app",
+            projectDisplayName: "acme/app",
+            projectCustomName: null,
+            projectRootPath: "/tmp/project-active",
+            projectKind: "git",
+          },
+        ],
+      },
     },
   ]);
 });

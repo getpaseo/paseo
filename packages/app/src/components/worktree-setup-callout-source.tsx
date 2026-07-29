@@ -3,7 +3,6 @@ import { useRouter } from "expo-router";
 import { useEffect, useMemo } from "react";
 import { useSidebarCallouts } from "@/contexts/sidebar-callout-context";
 import { useStableEvent } from "@/hooks/use-stable-event";
-import { useProjects } from "@/hooks/use-projects";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
@@ -20,20 +19,7 @@ export function WorktreeSetupCalloutSource() {
     selection?.workspaceId ?? null,
     (workspace) => selectActiveGitWorkspaceProject(selection?.serverId ?? "", workspace),
   );
-  const { projects } = useProjects();
-  const activeProject = useMemo(() => {
-    if (!selectedWorkspaceProject) return null;
-    const structuralProject = projects.find((project) =>
-      project.hosts.some(
-        (host) =>
-          host.serverId === selectedWorkspaceProject.serverId &&
-          host.projectId === selectedWorkspaceProject.projectId,
-      ),
-    );
-    return structuralProject
-      ? { ...selectedWorkspaceProject, projectKey: structuralProject.projectKey }
-      : selectedWorkspaceProject;
-  }, [projects, selectedWorkspaceProject]);
+  const activeProject = selectedWorkspaceProject;
   const client = useHostRuntimeClient(activeProject?.serverId ?? "");
   const callouts = useSidebarCallouts();
   const router = useRouter();
