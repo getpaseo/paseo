@@ -5,6 +5,7 @@ import {
   flattenExplorerTree,
   reconcileRestoredExpandedPaths,
   restoreExpandedDirectories,
+  setExpandedDirectoryPath,
   showHiddenFilesAndRestoreExpandedDirectories,
 } from "./tree";
 
@@ -151,6 +152,22 @@ describe("file explorer tree", () => {
     });
 
     expect(paths).toEqual([".", "manual"]);
+  });
+
+  it("applies a directory click to the latest restored expansion paths", () => {
+    const expanded = setExpandedDirectoryPath({
+      currentExpandedPaths: [".", "restored"],
+      directoryPath: "manual",
+      expanded: true,
+    });
+    const collapsed = setExpandedDirectoryPath({
+      currentExpandedPaths: expanded,
+      directoryPath: "manual",
+      expanded: false,
+    });
+
+    expect(expanded).toEqual([".", "restored", "manual"]);
+    expect(collapsed).toEqual([".", "restored"]);
   });
 
   it("shows hidden files before waiting for expanded directories to restore", async () => {

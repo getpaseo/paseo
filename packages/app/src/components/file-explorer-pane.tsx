@@ -42,6 +42,7 @@ import {
   flattenExplorerTree,
   reconcileRestoredExpandedPaths,
   restoreExpandedDirectories,
+  setExpandedDirectoryPath,
   showHiddenFilesAndRestoreExpandedDirectories,
   type ExplorerTreeRow,
 } from "@/file-explorer/tree";
@@ -755,15 +756,14 @@ function toggleDirectory({
     return;
   }
   const isExpanded = expandedPaths.has(entry.path);
-  if (isExpanded) {
-    setExpandedPathsForWorkspace(
-      workspaceStateKey,
-      Array.from(expandedPaths).filter((path) => path !== entry.path),
-    );
-    return;
-  }
-  setExpandedPathsForWorkspace(workspaceStateKey, [...Array.from(expandedPaths), entry.path]);
-  if (!directories.has(entry.path)) {
+  setExpandedPathsForWorkspace(workspaceStateKey, (currentPaths) =>
+    setExpandedDirectoryPath({
+      currentExpandedPaths: currentPaths,
+      directoryPath: entry.path,
+      expanded: !isExpanded,
+    }),
+  );
+  if (!isExpanded && !directories.has(entry.path)) {
     void requestDirectoryListing(entry.path, {
       recordHistory: false,
       setCurrentPath: false,

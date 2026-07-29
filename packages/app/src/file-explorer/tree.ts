@@ -36,6 +36,12 @@ interface ReconcileRestoredExpandedPathsInput {
   restoredExpandedPaths: string[];
 }
 
+interface SetExpandedDirectoryPathInput {
+  currentExpandedPaths: readonly string[];
+  directoryPath: string;
+  expanded: boolean;
+}
+
 export function flattenExplorerTree({
   directories,
   expandedPaths,
@@ -151,6 +157,20 @@ export function reconcileRestoredExpandedPaths({
   }
 
   return Array.from(reconciledPaths);
+}
+
+export function setExpandedDirectoryPath({
+  currentExpandedPaths,
+  directoryPath,
+  expanded,
+}: SetExpandedDirectoryPathInput): string[] {
+  const nextPaths = new Set(currentExpandedPaths);
+  if (expanded) {
+    nextPaths.add(directoryPath);
+  } else {
+    nextPaths.delete(directoryPath);
+  }
+  return Array.from(nextPaths);
 }
 
 function rowsForDirectory(
