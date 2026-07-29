@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   createGitHubService,
-  GitHubCommandError,
   type GitHubCommandRunner,
   type GitHubCommandRunnerOptions,
 } from "./github-service.js";
@@ -31,6 +30,7 @@ describe("GitHub repository search", () => {
           name: " paseo ",
           nameWithOwner: " getpaseo/paseo ",
           description: null,
+          isPrivate: false,
           updatedAt: "2026-07-15T12:00:00Z",
           sshUrl: " git@github.com:getpaseo/paseo.git ",
           url: "https://github.com/getpaseo/paseo",
@@ -51,6 +51,7 @@ describe("GitHub repository search", () => {
         name: "paseo",
         nameWithOwner: "getpaseo/paseo",
         description: null,
+        visibility: "public",
         updatedAt: "2026-07-15T12:00:00Z",
         cloneUrl: "git@github.com:getpaseo/paseo.git",
       },
@@ -61,7 +62,7 @@ describe("GitHub repository search", () => {
           "repo",
           "list",
           "--json",
-          "id,name,nameWithOwner,description,updatedAt,sshUrl,url",
+          "id,name,nameWithOwner,description,isPrivate,updatedAt,sshUrl,url",
           "--limit",
           "8",
         ],
@@ -74,57 +75,6 @@ describe("GitHub repository search", () => {
     ]);
   });
 
-  it("lists repositories with GitHub CLI versions that predate the visibility JSON field", async () => {
-    const calls: RunnerCall[] = [];
-    const runner: GitHubCommandRunner = async (args, options) => {
-      calls.push({ args, options });
-      if (args[0] === "config") {
-        return { stdout: "https\n", stderr: "" };
-      }
-      if (args.some((arg) => arg.split(",").includes("visibility"))) {
-        throw new GitHubCommandError({
-          args,
-          cwd: options.cwd,
-          stderr: 'Unknown JSON field: "visibility"',
-        });
-      }
-      return {
-        stdout: JSON.stringify([
-          {
-            id: "R_private",
-            name: "private-repo",
-            nameWithOwner: "octo/private-repo",
-            description: null,
-            updatedAt: "2026-07-15T12:00:00Z",
-            sshUrl: "git@github.com:octo/private-repo.git",
-            url: "https://github.com/octo/private-repo",
-          },
-        ]),
-        stderr: "",
-      };
-    };
-    const service = createGitHubService({
-      runner,
-      resolveGhPath: async () => "/usr/bin/gh",
-    });
-
-    await expect(service.searchRepositories({ cwd: "/tmp", query: "" })).resolves.toEqual([
-      {
-        id: "R_private",
-        name: "private-repo",
-        nameWithOwner: "octo/private-repo",
-        description: null,
-        updatedAt: "2026-07-15T12:00:00Z",
-        cloneUrl: "https://github.com/octo/private-repo",
-      },
-    ]);
-    const repositoryListCalls = calls.filter((call) => call.args[0] === "repo");
-    expect(repositoryListCalls).toHaveLength(1);
-    expect(repositoryListCalls[0]?.args.some((arg) => arg.split(",").includes("visibility"))).toBe(
-      false,
-    );
-  });
-
   it("searches accessible repositories for a typed query", async () => {
     const runner = createRunner([
       JSON.stringify([
@@ -133,6 +83,7 @@ describe("GitHub repository search", () => {
           name: "private-repo",
           fullName: "octo/private-repo",
           description: "Private project",
+          isPrivate: true,
           updatedAt: "2026-07-14T08:00:00Z",
           url: "https://github.com/octo/private-repo",
         },
@@ -152,6 +103,7 @@ describe("GitHub repository search", () => {
         name: "private-repo",
         nameWithOwner: "octo/private-repo",
         description: "Private project",
+        visibility: "private",
         updatedAt: "2026-07-14T08:00:00Z",
         cloneUrl: "https://github.com/octo/private-repo",
       },
@@ -163,7 +115,7 @@ describe("GitHub repository search", () => {
           "repos",
           "private project",
           "--json",
-          "id,name,fullName,description,updatedAt,url",
+          "id,name,fullName,description,isPrivate,updatedAt,url",
           "--sort",
           "updated",
           "--order",

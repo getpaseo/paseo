@@ -147,6 +147,7 @@ const GitHubRepositoryListItemSchema = z.object({
   name: z.string(),
   nameWithOwner: z.string(),
   description: z.string().nullable().optional(),
+  isPrivate: z.boolean(),
   updatedAt: z.string(),
   sshUrl: z.string(),
   url: z.string(),
@@ -157,6 +158,7 @@ const GitHubRepositorySearchItemSchema = z.object({
   name: z.string(),
   fullName: z.string(),
   description: z.string().nullable().optional(),
+  isPrivate: z.boolean(),
   updatedAt: z.string(),
   url: z.string(),
 });
@@ -639,6 +641,7 @@ export interface GitHubRepositorySummary {
   name: string;
   nameWithOwner: string;
   description: string | null;
+  visibility: "public" | "private" | "internal";
   updatedAt: string;
   cloneUrl: string;
 }
@@ -1284,7 +1287,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
               "repo",
               "list",
               "--json",
-              "id,name,nameWithOwner,description,updatedAt,sshUrl,url",
+              "id,name,nameWithOwner,description,isPrivate,updatedAt,sshUrl,url",
               "--limit",
               String(limit),
             ],
@@ -1302,7 +1305,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
             "repos",
             query,
             "--json",
-            "id,name,fullName,description,updatedAt,url",
+            "id,name,fullName,description,isPrivate,updatedAt,url",
             "--sort",
             "updated",
             "--order",
@@ -2312,6 +2315,7 @@ function normalizeRepositorySummary(repository: {
   name: string;
   nameWithOwner: string;
   description?: string | null;
+  isPrivate: boolean;
   updatedAt: string;
   cloneUrl: string;
 }): GitHubRepositorySummary {
@@ -2324,6 +2328,10 @@ function normalizeRepositorySummary(repository: {
     name: repository.name.trim(),
     nameWithOwner,
     description: repository.description ?? null,
+    // We query isPrivate, not visibility: `gh repo list --json visibility` is unsupported before
+    // gh 2.28 (Debian Bookworm ships 2.23), while isPrivate works on every version. The wire schema
+    // requires the visibility enum, so old clients still get a value they can parse.
+    visibility: repository.isPrivate ? "private" : "public",
     updatedAt: repository.updatedAt,
     cloneUrl: repository.cloneUrl.trim(),
   };

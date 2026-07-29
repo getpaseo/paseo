@@ -2017,7 +2017,7 @@ export const GithubRepositorySchema = z.object({
   name: z.string().min(1),
   nameWithOwner: z.string().min(MIN_REPOSITORY_PATH_LENGTH),
   description: z.string().nullable(),
-  visibility: z.enum(["public", "private", "internal"]).optional(),
+  visibility: z.enum(["public", "private", "internal"]),
   updatedAt: z.string(),
   cloneUrl: z.string().min(MIN_REPOSITORY_PATH_LENGTH),
 });
