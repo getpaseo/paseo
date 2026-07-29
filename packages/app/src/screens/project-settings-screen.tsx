@@ -31,7 +31,10 @@ import { SettingsGroup } from "@/screens/settings/settings-group";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { useProjects } from "@/hooks/use-projects";
-import { findProjectSettingsRouteTarget } from "@/projects/project-settings-target";
+import {
+  findProjectSettingsRouteTarget,
+  resolveProjectSettingsServerId,
+} from "@/projects/project-settings-target";
 import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
 import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
 import { useToast } from "@/contexts/toast-context";
@@ -97,9 +100,9 @@ export default function ProjectSettingsScreen({ projectKey }: ProjectSettingsScr
   const project = routeTarget?.project;
   const editableHosts = useMemo(() => filterEditableHosts(project), [project]);
   const [hostSelection, setHostSelection] = useState({ routeKey: "", serverId: "" });
-  const selectedServerId = resolveSelectedSettingsServerId({
+  const selectedServerId = resolveProjectSettingsServerId({
     projectKey,
-    editableHosts,
+    editableServerIds: editableHosts.map((host) => host.serverId),
     routedServerId: routeTarget?.serverId ?? null,
     hostSelection,
   });
@@ -131,25 +134,6 @@ export default function ProjectSettingsScreen({ projectKey }: ProjectSettingsScr
       isHostGone={isHostGone}
     />
   );
-}
-
-function resolveSelectedSettingsServerId(input: {
-  projectKey: string;
-  editableHosts: ProjectHostEntry[];
-  routedServerId: string | null;
-  hostSelection: { routeKey: string; serverId: string };
-}): string {
-  const availableServerIds = new Set(input.editableHosts.map((host) => host.serverId));
-  if (
-    input.hostSelection.routeKey === input.projectKey &&
-    availableServerIds.has(input.hostSelection.serverId)
-  ) {
-    return input.hostSelection.serverId;
-  }
-  if (input.routedServerId && availableServerIds.has(input.routedServerId)) {
-    return input.routedServerId;
-  }
-  return input.editableHosts[0]?.serverId ?? "";
 }
 
 function filterEditableHosts(project: ProjectSummary | undefined): ProjectHostEntry[] {

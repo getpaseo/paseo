@@ -3,6 +3,7 @@ import {
   findProjectSettingsRouteTarget,
   findProjectSettingsTarget,
   resolveHostProjectSettingsRouteKey,
+  resolveProjectSettingsServerId,
   resolveProjectSettingsRouteKey,
 } from "./project-settings-target";
 
@@ -53,5 +54,16 @@ describe("project settings target", () => {
       project: groupedProject,
       serverId: "host-b",
     });
+  });
+
+  it("does not retarget an unavailable routed host", () => {
+    expect(
+      resolveProjectSettingsServerId({
+        projectKey: "remote:github.com/acme/app",
+        editableServerIds: ["host-a"],
+        routedServerId: "host-b",
+        hostSelection: { routeKey: "", serverId: "" },
+      }),
+    ).toBe("host-b");
   });
 });

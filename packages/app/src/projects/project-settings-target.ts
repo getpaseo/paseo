@@ -42,3 +42,20 @@ export function findProjectSettingsRouteTarget<T extends ProjectSettingsTarget>(
   }
   return undefined;
 }
+
+export function resolveProjectSettingsServerId(input: {
+  projectKey: string;
+  editableServerIds: readonly string[];
+  routedServerId: string | null;
+  hostSelection: { routeKey: string; serverId: string };
+}): string {
+  const editableServerIds = new Set(input.editableServerIds);
+  if (
+    input.hostSelection.routeKey === input.projectKey &&
+    editableServerIds.has(input.hostSelection.serverId)
+  ) {
+    return input.hostSelection.serverId;
+  }
+  if (input.routedServerId) return input.routedServerId;
+  return input.editableServerIds[0] ?? "";
+}
