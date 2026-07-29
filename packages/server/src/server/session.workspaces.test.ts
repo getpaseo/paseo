@@ -871,10 +871,15 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
 
     const [createdAgent] = agentManager.listAgents();
     expect(createdAgent?.cwd).toBe(child);
+    const createdWorkspace = await workspaceRegistry.get(createdAgent!.workspaceId!);
+    expect(createdWorkspace).not.toBeNull();
+    await expect(projectRegistry.get(createdWorkspace!.projectId)).resolves.toMatchObject({
+      projectKey: `host:11:test-server:path:${child}`,
+    });
     await expect(
       session.buildProjectPlacementForWorkspaceId(createdAgent!.workspaceId!),
     ).resolves.toMatchObject({
-      projectKey: `host:11:test-server:path:${child}`,
+      projectKey: createdWorkspace!.projectId,
       checkout: { cwd: child },
     });
     expect(findByType(emitted, "status")?.payload).toMatchObject({
