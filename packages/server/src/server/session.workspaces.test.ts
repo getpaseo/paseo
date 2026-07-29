@@ -819,6 +819,7 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
     const session = asTestSession(
       new Session({
         clientId: "test-client",
+        serverId: "test-server",
         scopes: ["*"],
         appVersion: null,
         onMessage: (message) => emitted.push(message),
@@ -873,7 +874,7 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
     await expect(
       session.buildProjectPlacementForWorkspaceId(createdAgent!.workspaceId!),
     ).resolves.toMatchObject({
-      projectKey: expect.stringMatching(/^prj_[0-9a-f]{16}$/),
+      projectKey: `host:11:test-server:path:${child}`,
       checkout: { cwd: child },
     });
     expect(findByType(emitted, "status")?.payload).toMatchObject({
