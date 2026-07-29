@@ -20,5 +20,14 @@ export async function resolveProjectReference(
     );
     if (matches.length === 1) return matches[0] ?? null;
   }
+  if (pathHints.length > 0) {
+    if (
+      direct &&
+      pathHints.some((pathHint) => createRealpathAwarePathMatcher(direct.rootPath)(pathHint))
+    ) {
+      return direct;
+    }
+    return null;
+  }
   return candidates.length === 1 ? (candidates[0] ?? null) : direct;
 }

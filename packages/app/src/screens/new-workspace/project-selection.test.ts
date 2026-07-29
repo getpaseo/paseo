@@ -111,6 +111,46 @@ describe("reconcileProjectSelection", () => {
     });
   });
 
+  it("adopts a routed project's hydrated cross-host key", () => {
+    const routedProject = {
+      ...project("local-project-id"),
+      hosts: [
+        {
+          serverId: "host",
+          projectId: "local-project-id",
+          iconWorkingDir: "/work/project",
+          canCreateWorktree: true,
+        },
+      ],
+    };
+    const hydratedProject = {
+      ...project("remote:github.com/acme/project"),
+      hosts: [
+        {
+          serverId: "host",
+          projectId: "local-project-id",
+          iconWorkingDir: "/work/project",
+          canCreateWorktree: false,
+        },
+      ],
+    };
+    const current = createProjectSelection(
+      context({ initialProject: routedProject, projects: [], routeProject: routedProject }),
+    );
+    const hydratedContext = context({
+      initialProject: hydratedProject,
+      projects: [hydratedProject],
+      routeProject: routedProject,
+    });
+
+    expect(reconcileProjectSelection(current, hydratedContext)).toEqual({
+      contextKey: "host:",
+      projectKey: hydratedProject.projectKey,
+      project: hydratedProject,
+      source: "initial",
+    });
+  });
+
   it("stores hydrated project snapshots before archive gaps", () => {
     const routeProject = project("route-project");
     const hydratedProject: HostProjectListItem = {

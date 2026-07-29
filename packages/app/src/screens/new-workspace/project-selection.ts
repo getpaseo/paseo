@@ -57,7 +57,17 @@ export function resolveInitialProjectSelectionSource(input: {
   if (!input.initialProject) {
     return null;
   }
-  if (input.routeProject?.projectKey === input.initialProject.projectKey) {
+  if (
+    input.routeProject?.projectKey === input.initialProject.projectKey ||
+    input.routeProject?.hosts.some((routeHost) =>
+      input.initialProject?.hosts.some(
+        (host) =>
+          host.serverId === routeHost.serverId &&
+          Boolean(host.projectId) &&
+          host.projectId === routeHost.projectId,
+      ),
+    )
+  ) {
     return "route";
   }
   if (input.lastActiveProject?.projectKey === input.initialProject.projectKey) {
@@ -95,14 +105,14 @@ function refreshSelectionProject(
   };
 }
 
-function shouldResetInitialFallbackSelection(
+function shouldResetHydratedInitialSelection(
   selection: ProjectSelection,
   context: ProjectSelectionContext,
 ): boolean {
   if (
     selection.source !== "initial" ||
     !context.initialProject ||
-    context.initialProjectSource !== "lastActive"
+    (context.initialProjectSource !== "route" && context.initialProjectSource !== "lastActive")
   ) {
     return false;
   }
@@ -149,7 +159,7 @@ export function reconcileProjectSelection(
     return initialSelection;
   }
 
-  if (shouldResetInitialFallbackSelection(current, context)) {
+  if (shouldResetHydratedInitialSelection(current, context)) {
     return initialSelection;
   }
 

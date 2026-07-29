@@ -61,4 +61,21 @@ describe("resolveProjectReference", () => {
       archivedProject,
     );
   });
+
+  test("rejects a legacy alias when its path hint contradicts the remaining clone", async () => {
+    const reference = "remote:github.com/acme/app";
+    const remainingClone = project({
+      projectId: "opaque-project-id",
+      projectKey: reference,
+      rootPath: "/repos/remaining-clone",
+    });
+    const registry = {
+      get: async () => null,
+      list: async () => [remainingClone],
+    };
+
+    await expect(
+      resolveProjectReference(reference, registry, ["/repos/removed-clone"]),
+    ).resolves.toBeNull();
+  });
 });
