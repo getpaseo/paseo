@@ -140,7 +140,7 @@ function looksLikeDefiniteWindowsPath(value: string): boolean {
   return (
     /^[a-zA-Z]:[\\/]/u.test(value) ||
     /^[/\\]{2}\?[/\\]/u.test(value) ||
-    /^\\{2}[^/\\]+[/\\][^/\\]+/u.test(value)
+    /^[/\\]{2}[^/\\]+[/\\][^/\\]+/u.test(value)
   );
 }
 

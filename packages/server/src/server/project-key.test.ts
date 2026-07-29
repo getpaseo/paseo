@@ -449,6 +449,17 @@ describe("deriveProjectKey", () => {
     ).toBe("remote:github.com/getpaseo/paseo#subdir:packages/app");
   });
 
+  test("stabilizes selected paths within forward-slash Windows UNC roots", () => {
+    expect(
+      deriveProjectKey({
+        rootPath: "//server/share/repo/packages/app",
+        remoteUrl: "git@github.com:getpaseo/paseo.git",
+        worktreeRoot: "//Server/Share/Repo",
+        mainRepoRoot: "//Server/Share/Repo",
+      }),
+    ).toBe("remote:github.com/getpaseo/paseo#subdir:packages/app");
+  });
+
   test("stabilizes host-local Windows paths across equivalent spellings", () => {
     const derive = (rootPath: string) =>
       deriveProjectKey({
