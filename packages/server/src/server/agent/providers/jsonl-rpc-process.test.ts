@@ -41,8 +41,11 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on("line
     respond(command, false, null, "child rejected the request");
     return;
   }
+  if (command.type === "writeStderr") {
+    process.stderr.write(command.value, () => respond(command, true, null));
+    return;
+  }
   if (command.type === "hang") {
-    process.stderr.write("still waiting");
     return;
   }
   if (command.type === "exit") {
@@ -130,7 +133,8 @@ describe("JsonlRpcProcess", () => {
     const transport = startProcess();
 
     try {
-      await transport.request({ type: "echo", value: "ready" });
+      await transport.request({ type: "writeStderr", value: "still waiting" });
+      await transport.request({ type: "echo", value: "stderr flushed" });
 
       await expect(transport.request({ type: "hang" }, 50)).rejects.toThrow(
         "JSONL RPC request timed out for hang\nstill waiting",
