@@ -1,6 +1,6 @@
 import { createReadStream, readFileSync, statSync } from "node:fs";
 import path from "node:path";
-import type { RequestHandler, Response } from "express";
+import type { Request, RequestHandler, Response } from "express";
 import type { Logger } from "pino";
 
 const EXCLUDED_PATH_PREFIXES = ["/api/", "/mcp/", "/public/"];
@@ -250,15 +250,82 @@ function serializeInlineScriptJson(value: unknown): string {
     .replace(/&/g, "\\u0026");
 }
 
+// The function that resolves the listen value requires an explicit port to be present.
+// When using a standard port (80, 443), the port number is usually omitted from the
+// Host and X-Forwarded-Host headers. This function adds it back if possible.
+export function resolveConnectionHintListen(authority: string, protocol: string): string {
+  if (hasExplicitPort(authority)) {
+    return authority;
+  }
+
+  if (protocol === "https") {
+    return `${authority}:443`;
+  }
+  if (protocol === "http") {
+    return `${authority}:80`;
+  }
+  return authority;
+}
+
+// Ported over from Express.js v5's implementation of the getter for req.host.
+// Can be replaced with req.host if we upgrade.
+function getRequestHost(req: Request): string | undefined {
+  const trust = req.app.get("trust proxy fn") as (
+    address: string | undefined,
+    index: number,
+  ) => boolean;
+  let host = req.get("X-Forwarded-Host");
+
+  if (!host || !trust(req.socket.remoteAddress, 0)) {
+    host = req.get("Host");
+  } else if (host.indexOf(",") !== -1) {
+    host = host.substring(0, host.indexOf(",")).trimEnd();
+  }
+
+  return host || undefined;
+}
+
+// Adapted from Go's net.SplitHostPort.
+function hasExplicitPort(hostport: string): boolean {
+  const colon = hostport.lastIndexOf(":");
+  if (colon < 0 || colon === hostport.length - 1) {
+    return false;
+  }
+
+  let openBracketSearchStart = 0;
+  let closeBracketSearchStart = 0;
+
+  if (hostport[0] === "[") {
+    const closeBracket = hostport.indexOf("]");
+    if (closeBracket < 0 || closeBracket + 1 !== colon) {
+      return false;
+    }
+    openBracketSearchStart = 1;
+    closeBracketSearchStart = closeBracket + 1;
+  } else if (hostport.slice(0, colon).includes(":")) {
+    return false;
+  }
+
+  if (hostport.indexOf("[", openBracketSearchStart) >= 0) {
+    return false;
+  }
+  if (hostport.indexOf("]", closeBracketSearchStart) >= 0) {
+    return false;
+  }
+
+  return true;
+}
+
 function injectConnectionHint(
   html: string,
   req: Parameters<RequestHandler>[0],
   label: string,
 ): string {
-  const host = typeof req.headers.host === "string" ? req.headers.host : "";
+  const host = getRequestHost(req) ?? "";
+  const listen = resolveConnectionHintListen(host, req.protocol);
   const useTls = req.protocol === "https";
   const hint = {
-    listen: host,
+    listen,
     useTls,
     label,
   };
