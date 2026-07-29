@@ -58,6 +58,7 @@ export function classifyDirectoryForProjectMembership(input: {
     projectName: deriveProjectGroupingDisplayName({
       rootPath: cwd,
       remoteUrl: checkout.remoteUrl,
+      worktreeRoot: checkout.worktreeRoot,
     }),
     projectRootPath,
     projectKind: deriveProjectKind(checkout),

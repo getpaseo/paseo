@@ -49,6 +49,7 @@ import type { ProjectHostEntry, ProjectSummary } from "@/utils/projects";
 import { getProjectHostEntry, getProjectSummaryForHostProject } from "@/utils/projects";
 import { useSessionStore } from "@/stores/session-store";
 import { selectProjectIdForServer } from "@/stores/session-store-hooks/selectors";
+import { resolveProjectSettingsHostTarget } from "@/screens/project-settings-host-selection";
 
 const SCRIPT_SERVICE_TYPE = "service";
 
@@ -106,10 +107,14 @@ export default function ProjectSettingsScreen({ serverId, projectId }: ProjectSe
     serverId: "",
     projectId: "",
   });
-  const selectedServerId =
-    hostSelection.routeKey === routeKey ? hostSelection.serverId : (defaultHost?.serverId ?? "");
-  const selectedProjectId =
-    hostSelection.routeKey === routeKey ? hostSelection.projectId : (defaultHost?.projectId ?? "");
+  const selectedTarget = resolveProjectSettingsHostTarget({
+    routeKey,
+    editableHosts,
+    defaultHost,
+    selection: hostSelection,
+  });
+  const selectedServerId = selectedTarget?.serverId ?? "";
+  const selectedProjectId = selectedTarget?.projectId ?? "";
   const setSelectedServerId = useCallback(
     (targetServerId: string) => {
       const targetProjectId = selectProjectIdForServer(useSessionStore.getState(), {

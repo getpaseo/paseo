@@ -917,7 +917,50 @@ describe("WorkspaceReconciliationService", () => {
     expect(projects.get("p1")!.projectKey).toBe("remote:github.com/new-owner/new-repo");
   });
 
-  test("preserves a persisted project key when a Git remote disappears", async () => {
+  test("refreshes an empty project's persisted key when its Git remote changes", async () => {
+    const dir = createTempGitRepo("reconcile-empty-remote-change-");
+    tempDirs.push(dir);
+    const { projects, projectRegistry, workspaceRegistry } = createTestRegistries();
+
+    projects.set(
+      "p1",
+      createPersistedProjectRecord({
+        projectId: "p1",
+        projectKey: "remote:github.com/old-owner/old-repo",
+        rootPath: dir,
+        kind: "git",
+        displayName: "old-owner/old-repo",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+
+    const service = new WorkspaceReconciliationService({
+      projectRegistry,
+      workspaceRegistry,
+      logger: createTestLogger(),
+      workspaceGitService: createWorkspaceGitServiceStub({
+        [dir]: {
+          projectKind: "git",
+          projectDisplayName: "new-owner/new-repo",
+          workspaceDisplayName: "main",
+          gitRemote: "git@github.com:new-owner/new-repo.git",
+        },
+      }),
+    });
+
+    const result = await service.runOnce();
+
+    expect(result.changesApplied).toEqual([
+      expect.objectContaining({
+        kind: "project_updated",
+        fields: { projectKey: "remote:github.com/new-owner/new-repo" },
+      }),
+    ]);
+    expect(projects.get("p1")?.projectKey).toBe("remote:github.com/new-owner/new-repo");
+  });
+
+  test("refreshes a persisted project key when a Git remote disappears", async () => {
     const dir = createTempGitRepo("reconcile-removed-remote-");
     tempDirs.push(dir);
     const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
@@ -963,7 +1006,7 @@ describe("WorkspaceReconciliationService", () => {
 
     await service.runOnce();
 
-    expect(projects.get("p1")?.projectKey).toBe("remote:github.com/acme/old-repo");
+    expect(projects.get("p1")?.projectKey).toBe(canonicalLocalProjectKey(dir));
   });
 
   test("keeps custom and default names stable when the remote changes", async () => {
