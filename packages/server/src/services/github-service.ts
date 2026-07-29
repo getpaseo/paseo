@@ -153,6 +153,12 @@ const GitHubRepositoryListItemSchema = z.object({
   url: z.string(),
 });
 
+const LegacyGitHubRepositoryListItemSchema = GitHubRepositoryListItemSchema.omit({
+  visibility: true,
+}).extend({
+  isPrivate: z.boolean(),
+});
+
 const GitHubRepositorySearchItemSchema = z.object({
   id: z.union([z.string(), z.number()]),
   name: z.string(),
@@ -1281,21 +1287,11 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       const limit = input.limit ?? 20;
       const query = input.query.trim();
       if (query.length === 0) {
-        const [stdout, cloneProtocol] = await Promise.all([
-          run(
-            [
-              "repo",
-              "list",
-              "--json",
-              "id,name,nameWithOwner,description,visibility,updatedAt,sshUrl,url",
-              "--limit",
-              String(limit),
-            ],
-            { cwd: input.cwd },
-          ),
+        const [repositoryList, cloneProtocol] = await Promise.all([
+          listGitHubRepositories({ cwd: input.cwd, limit, run }),
           resolveConfiguredCloneProtocol(input.cwd, run),
         ]);
-        return parseRepositoryList(stdout, cloneProtocol);
+        return parseRepositoryList(repositoryList, cloneProtocol);
       }
 
       const [stdout, cloneProtocol] = await Promise.all([
@@ -2260,6 +2256,50 @@ function getPullRequestStateRank(status: CurrentPullRequestStatus): number {
 
 type GitHubCloneProtocol = "https" | "ssh";
 
+interface GitHubRepositoryListCommandOptions {
+  cwd: string;
+  limit: number;
+  run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
+}
+
+type GitHubRepositoryListOutput =
+  | { kind: "visibility"; stdout: string }
+  | { kind: "isPrivate"; stdout: string };
+
+async function listGitHubRepositories(
+  options: GitHubRepositoryListCommandOptions,
+): Promise<GitHubRepositoryListOutput> {
+  const fields = "id,name,nameWithOwner,description,visibility,updatedAt,sshUrl,url";
+  try {
+    const stdout = await options.run(
+      ["repo", "list", "--json", fields, "--limit", String(options.limit)],
+      { cwd: options.cwd },
+    );
+    return { kind: "visibility", stdout };
+  } catch (error) {
+    if (!isUnsupportedRepositoryVisibilityFieldError(error)) {
+      throw error;
+    }
+  }
+
+  // COMPAT(githubCliVisibility): added in v0.2.3 on 2026-07-29; remove after
+  // 2027-01-29 when gh >= 2.28 is the supported floor.
+  const legacyFields = "id,name,nameWithOwner,description,isPrivate,updatedAt,sshUrl,url";
+  const stdout = await options.run(
+    ["repo", "list", "--json", legacyFields, "--limit", String(options.limit)],
+    { cwd: options.cwd },
+  );
+  return { kind: "isPrivate", stdout };
+}
+
+function isUnsupportedRepositoryVisibilityFieldError(error: unknown): boolean {
+  if (!(error instanceof GitHubCommandError)) {
+    return false;
+  }
+  const stderr = error.stderr.toLowerCase();
+  return stderr.includes("unknown json field") && stderr.includes('"visibility"');
+}
+
 async function resolveConfiguredCloneProtocol(
   cwd: string,
   run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>,
@@ -2282,10 +2322,24 @@ async function resolveConfiguredCloneProtocol(
 }
 
 function parseRepositoryList(
-  stdout: string,
+  output: GitHubRepositoryListOutput,
   cloneProtocol: GitHubCloneProtocol,
 ): GitHubRepositorySummary[] {
-  const parsed = z.array(GitHubRepositoryListItemSchema).parse(JSON.parse(stdout || "[]"));
+  if (output.kind === "isPrivate") {
+    const parsed = z
+      .array(LegacyGitHubRepositoryListItemSchema)
+      .parse(JSON.parse(output.stdout || "[]"));
+    return parsed.map((repository) =>
+      normalizeRepositorySummary({
+        ...repository,
+        nameWithOwner: repository.nameWithOwner,
+        visibility: repository.isPrivate ? "private" : "public",
+        cloneUrl: cloneProtocol === "ssh" ? repository.sshUrl : repository.url,
+      }),
+    );
+  }
+
+  const parsed = z.array(GitHubRepositoryListItemSchema).parse(JSON.parse(output.stdout || "[]"));
   return parsed.map((repository) =>
     normalizeRepositorySummary({
       ...repository,
