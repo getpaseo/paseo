@@ -21,6 +21,7 @@ interface DirectoryProjectMembership {
   workspaceDirectoryKey: string;
   workspaceKind: PersistedWorkspaceKind;
   workspaceDisplayName: string;
+  projectId: string;
   projectKey: string;
   projectName: string;
   projectRootPath: string;
@@ -41,6 +42,7 @@ export function classifyDirectoryForProjectMembership(input: {
     mainRepoRoot: checkout.mainRepoRoot,
     serverId: input.serverId,
   });
+  const projectRootPath = deriveProjectRootPath({ cwd, checkout });
 
   return {
     cwd,
@@ -48,13 +50,17 @@ export function classifyDirectoryForProjectMembership(input: {
     workspaceDirectoryKey: deriveWorkspaceDirectoryKey(cwd, checkout),
     workspaceKind: deriveWorkspaceKind(checkout),
     workspaceDisplayName: deriveWorkspaceDisplayName({ cwd, checkout }),
+    // Legacy registry bootstrap historically used the grouping identity as the
+    // host-local project ID. Preserve that ID shape while keeping the new,
+    // canonical cross-host identity in projectKey.
+    projectId: projectKey.startsWith("remote:") ? projectKey : projectRootPath,
     projectKey,
     projectName: deriveProjectGroupingDisplayName({
       rootPath: cwd,
       remoteUrl: checkout.remoteUrl,
       worktreeRoot: checkout.worktreeRoot,
     }),
-    projectRootPath: deriveProjectRootPath({ cwd, checkout }),
+    projectRootPath,
     projectKind: deriveProjectKind(checkout),
   };
 }

@@ -21,6 +21,15 @@ import {
 } from "./workspace-reconciliation-service.js";
 import { deriveProjectKey } from "./project-key.js";
 
+function canonicalLocalProjectKey(rootPath: string): string {
+  return deriveProjectKey({
+    rootPath,
+    remoteUrl: null,
+    worktreeRoot: null,
+    mainRepoRoot: null,
+  });
+}
+
 function createTestRegistries() {
   const projects = new Map<string, PersistedProjectRecord>();
   const workspaces = new Map<string, PersistedWorkspaceRecord>();
@@ -418,13 +427,13 @@ describe("WorkspaceReconciliationService", () => {
         kind: "project_updated",
         projectId: "p1",
         directory: projectRoot,
-        fields: { projectKey: projectRoot },
+        fields: { projectKey: canonicalLocalProjectKey(projectRoot) },
       },
       {
         kind: "project_updated",
         projectId: "p2",
         directory: equivalentProjectRoot,
-        fields: { projectKey: projectRoot },
+        fields: { projectKey: canonicalLocalProjectKey(projectRoot) },
       },
     ]);
     expect(git.reads).toEqual([projectRoot, workspaceRoot]);
@@ -485,7 +494,7 @@ describe("WorkspaceReconciliationService", () => {
           kind: "project_updated",
           projectId: "p1",
           directory: projectRoot,
-          fields: { kind: "git", projectKey: projectRoot },
+          fields: { kind: "git", projectKey: canonicalLocalProjectKey(projectRoot) },
         },
         {
           kind: "workspace_updated",
@@ -502,7 +511,7 @@ describe("WorkspaceReconciliationService", () => {
     expect(projects.get("p1")).toEqual({
       ...originalProject,
       kind: "git",
-      projectKey: projectRoot,
+      projectKey: canonicalLocalProjectKey(projectRoot),
       updatedAt: expect.any(String),
     });
     expect(workspaces.get("w1")).toEqual({
@@ -954,7 +963,7 @@ describe("WorkspaceReconciliationService", () => {
 
     await service.runOnce();
 
-    expect(projects.get("p1")?.projectKey).toBe(path.resolve(dir));
+    expect(projects.get("p1")?.projectKey).toBe(canonicalLocalProjectKey(dir));
   });
 
   test("keeps custom and default names stable when the remote changes", async () => {
@@ -1134,7 +1143,7 @@ describe("WorkspaceReconciliationService", () => {
         kind: "project_updated",
         projectId: "p1",
         directory: projectRoot,
-        fields: { kind: "git", projectKey: projectRoot },
+        fields: { kind: "git", projectKey: canonicalLocalProjectKey(projectRoot) },
       },
       {
         kind: "workspace_updated",
@@ -1422,7 +1431,7 @@ describe("WorkspaceReconciliationService", () => {
         kind: "project_updated",
         projectId: "p1",
         directory: rootPath,
-        fields: { projectKey: path.resolve("/tmp/main-repo") },
+        fields: { projectKey: canonicalLocalProjectKey("/tmp/main-repo") },
       },
       {
         kind: "workspace_updated",
