@@ -33,6 +33,21 @@ describe("deriveProjectKey", () => {
     );
   });
 
+  test("preserves queries that distinguish generic HTTP remotes", () => {
+    const rootPath = path.resolve("repo");
+    const derive = (remoteUrl: string) =>
+      deriveProjectKey({
+        rootPath,
+        remoteUrl,
+        worktreeRoot: rootPath,
+        mainRepoRoot: null,
+      });
+
+    expect(derive("https://git.example.com/acme/app.git?tenant=a")).not.toBe(
+      derive("https://git.example.com/acme/app.git?tenant=b"),
+    );
+  });
+
   test("normalizes the default SSH port", () => {
     const rootPath = path.resolve("repo");
     const derive = (remoteUrl: string) =>

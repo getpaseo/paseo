@@ -7,7 +7,7 @@ export async function resolveProjectReference(
   pathHints: readonly string[] = [],
 ): Promise<PersistedProjectRecord | null> {
   const direct = await projectRegistry.get(reference);
-  if (direct) return direct;
+  if (direct && !direct.archivedAt) return direct;
 
   // COMPAT(projectKeyAsProjectId): added in v0.2.4 on 2026-07-29; remove after 2027-01-29.
   // Older clients return ProjectPlacementPayload.projectKey in workspace source.projectId.

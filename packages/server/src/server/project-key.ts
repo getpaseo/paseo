@@ -123,6 +123,7 @@ function parseUrlRemote(remoteUrl: string): RemoteLocation | null {
     const preserveLeadingSlash = isSsh && !forgeHost;
     let remotePath = parsed.pathname || null;
     if (remotePath && isSsh) remotePath += `${parsed.search}${parsed.hash}`;
+    if (remotePath && !isSsh && !forgeHost) remotePath += parsed.search;
     if (remotePath && !preserveLeadingSlash) remotePath = remotePath.replace(/^\/+/, "");
     if (!host || !remotePath) return null;
     return {
