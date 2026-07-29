@@ -9,8 +9,8 @@ export function resolveHostProjectSettingsRouteKey(host: {
   serverId: string;
   projectId?: string;
 }): string | null {
-  const projectId = host.projectId?.trim();
-  if (!projectId) return null;
+  const projectId = host.projectId;
+  if (!projectId?.trim()) return null;
   return frameHostProjectKey({ serverId: host.serverId, projectId });
 }
 

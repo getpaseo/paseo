@@ -125,6 +125,7 @@ import {
   deriveWorkspaceDisplayName,
 } from "./workspace-registry-model.js";
 import { resolveWorkspaceIdForPath } from "./resolve-workspace-id-for-path.js";
+import { resolveProjectReference } from "./project-reference.js";
 import {
   resolveProjectDisplayName,
   resolveWorkspaceDisplayName,
@@ -2588,7 +2589,7 @@ export class Session {
     );
 
     try {
-      const existing = await this.projectRegistry.get(projectId);
+      const existing = await resolveProjectReference(projectId, this.projectRegistry);
       if (!existing) {
         this.emit({
           type: "project.rename.response",
@@ -2632,7 +2633,7 @@ export class Session {
       // resolved name lands in the UI immediately.
       const workspaces = await this.workspaceRegistry.list();
       const affectedWorkspaceIds = workspaces
-        .filter((workspace) => workspace.projectId === projectId)
+        .filter((workspace) => workspace.projectId === existing.projectId)
         .map((workspace) => workspace.workspaceId);
       if (affectedWorkspaceIds.length > 0) {
         await this.emitWorkspaceUpdatesForWorkspaceIds(affectedWorkspaceIds);
@@ -2671,8 +2672,10 @@ export class Session {
     this.sessionLogger.info({ projectId, requestId }, "session: project.remove.request");
 
     try {
+      const project = await resolveProjectReference(projectId, this.projectRegistry);
+      const resolvedProjectId = project?.projectId ?? projectId;
       const projectWorkspaces = (await this.workspaceRegistry.list()).filter(
-        (workspace) => workspace.projectId === projectId,
+        (workspace) => workspace.projectId === resolvedProjectId,
       );
       const activeWorkspaceIds = projectWorkspaces
         .filter((workspace) => !workspace.archivedAt)
@@ -2700,7 +2703,7 @@ export class Session {
           removedWorkspaceIds.push(workspaceId);
         }
 
-        await this.projectRegistry.remove(projectId);
+        await this.projectRegistry.remove(resolvedProjectId);
       } finally {
         if (activeWorkspaceIds.length > 0) {
           this.clearWorkspaceArchiving(activeWorkspaceIds);

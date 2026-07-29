@@ -52,6 +52,19 @@ describe("project settings target", () => {
     expect(first).not.toBe(second);
   });
 
+  it("preserves whitespace in opaque project IDs", () => {
+    const withoutTrailingSpace = resolveHostProjectSettingsRouteKey({
+      serverId: "host-a",
+      projectId: "/repo/foo",
+    });
+    const withTrailingSpace = resolveHostProjectSettingsRouteKey({
+      serverId: "host-a",
+      projectId: "/repo/foo ",
+    });
+
+    expect(withTrailingSpace).not.toBe(withoutTrailingSpace);
+  });
+
   it("prefers an online host for a generic grouped settings route", () => {
     const groupedProject = {
       projectKey: "remote:github.com/acme/app",

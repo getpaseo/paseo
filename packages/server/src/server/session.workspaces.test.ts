@@ -3406,6 +3406,7 @@ test("project.remove.request archives active workspaces and removes the project 
   });
   const project = createPersistedProjectRecord({
     projectId: "proj-remove-with-workspace",
+    projectKey: "remote:github.com/acme/remove-with-workspace",
     rootPath: REPO_CWD,
     kind: "git",
     displayName: "repo",
@@ -3470,7 +3471,7 @@ test("project.remove.request archives active workspaces and removes the project 
 
   await session.handleMessage({
     type: "project.remove.request",
-    projectId: project.projectId,
+    projectId: project.projectKey,
     requestId: "req-remove-project",
   });
 
@@ -3482,7 +3483,7 @@ test("project.remove.request archives active workspaces and removes the project 
   });
   expect(findByType(emitted, "project.remove.response")?.payload).toEqual({
     requestId: "req-remove-project",
-    projectId: project.projectId,
+    projectId: project.projectKey,
     accepted: true,
     removedWorkspaceIds: [workspace.workspaceId],
     error: null,
@@ -3491,7 +3492,7 @@ test("project.remove.request archives active workspaces and removes the project 
   expect(workspaceUpdates.at(-1)?.payload).toEqual({
     kind: "remove",
     id: workspace.workspaceId,
-    removedProjectId: project.projectId,
+    removedProjectId: project.projectKey,
   });
 });
 
@@ -7392,7 +7393,8 @@ test("project.rename.request stores customName and emits an updated workspace de
   );
 
   const project = createPersistedProjectRecord({
-    projectId: "remote:github.com/acme/repo",
+    projectId: "prj_rename",
+    projectKey: "remote:github.com/acme/repo",
     rootPath: REPO_CWD,
     kind: "git",
     displayName: "acme/repo",
@@ -7430,7 +7432,7 @@ test("project.rename.request stores customName and emits an updated workspace de
 
   await session.handleMessage({
     type: "project.rename.request",
-    projectId: project.projectId,
+    projectId: project.projectKey,
     customName: "  My Fork  ",
     requestId: "req-rename-1",
   });
@@ -7438,7 +7440,7 @@ test("project.rename.request stores customName and emits an updated workspace de
   const response = findByType(emitted, "project.rename.response");
   expect(response?.payload).toEqual({
     requestId: "req-rename-1",
-    projectId: project.projectId,
+    projectId: project.projectKey,
     accepted: true,
     customName: "My Fork",
     error: null,

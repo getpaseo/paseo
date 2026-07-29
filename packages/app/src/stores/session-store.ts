@@ -170,6 +170,7 @@ export function normalizeWorkspaceDescriptor(
   return {
     id: normalizeWorkspaceOpaqueId(payload.id) ?? payload.id,
     projectId: payload.projectId,
+    // COMPAT(projectKey): added in v0.2.4 on 2026-07-29; remove after 2027-01-29.
     projectKey: payload.projectKey ?? payload.project?.projectKey ?? null,
     projectDisplayName: payload.projectDisplayName,
     projectCustomName: payload.projectCustomName ?? null,
