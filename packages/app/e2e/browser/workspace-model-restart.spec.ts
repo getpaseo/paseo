@@ -5,8 +5,9 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import net from "node:net";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import { buildHostWorkspaceRoute, decodeWorkspaceIdFromPathSegment } from "@/utils/host-routes";
+import { metroTest as test } from "../support/fixtures";
 import { buildSeededHost } from "../support/helpers/daemon-registry";
 import { loadDaemonClientConstructor } from "../support/helpers/daemon-client-loader";
 import {

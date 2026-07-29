@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
+import { metroTest as test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import {
   createIdleAgent,

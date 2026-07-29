@@ -22,7 +22,17 @@ interface TrackedProjectPickerFixture extends ProjectPickerFixture {
 // across spec-file boundaries — Playwright sometimes skips it for the first test of a
 // subsequent spec when multiple specs run in the same worker. Auto fixtures run
 // reliably for every test that uses this `test` object.
-const test = base.extend<
+const metroTest = base.extend({
+  baseURL: async ({}, provide) => {
+    const metroPort = process.env.E2E_METRO_PORT;
+    if (!metroPort) {
+      throw new Error("E2E_METRO_PORT not set - globalSetup must run first");
+    }
+    await provide(`http://localhost:${metroPort}`);
+  },
+});
+
+const test = metroTest.extend<
   {
     paseoE2ESetup: void;
     projectOwnership: void;
@@ -81,13 +91,6 @@ const test = base.extend<
     },
     { auto: true },
   ],
-  baseURL: async ({}, provide) => {
-    const metroPort = process.env.E2E_METRO_PORT;
-    if (!metroPort) {
-      throw new Error("E2E_METRO_PORT not set - globalSetup must run first");
-    }
-    await provide(`http://localhost:${metroPort}`);
-  },
   paseoE2ESetup: [
     async ({ page }, provide, testInfo) => {
       const daemonPort = getE2EDaemonPort();
@@ -221,4 +224,4 @@ const test = base.extend<
   },
 });
 
-export { test, expect, type Page };
+export { test, metroTest, expect, type Page };
