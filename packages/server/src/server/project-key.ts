@@ -267,5 +267,5 @@ function deriveRemoteHost(remoteUrl: URL): string | null {
 }
 
 function looksLikeWindowsPath(value: string): boolean {
-  return /^[a-zA-Z]:[\\/]/u.test(value) || /^\\{2}[^\\/]+[\\/][^\\/]+/u.test(value);
+  return /^[a-zA-Z]:[\\/]/u.test(value) || /^(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+/u.test(value);
 }

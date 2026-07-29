@@ -42,14 +42,14 @@ export function selectActiveGitWorkspaceProject(
     return null;
   }
 
-  const projectId = workspace.projectId.trim();
+  const projectId = workspace.projectId;
   const projectKey = resolveProjectKey({
     serverId,
     projectId,
     projectKey: workspace.projectKey,
   });
   const repoRoot = workspace.projectRootPath.trim();
-  if (!projectId || !repoRoot) {
+  if (!projectId.trim() || !repoRoot) {
     return null;
   }
 

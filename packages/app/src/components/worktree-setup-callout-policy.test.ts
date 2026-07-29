@@ -43,6 +43,18 @@ describe("selectActiveGitWorkspaceProject", () => {
     });
   });
 
+  it("preserves an opaque host-local project id in the settings route", () => {
+    const project = selectActiveGitWorkspaceProject(
+      "server-1",
+      gitWorkspace({ projectId: "/repo/project " }),
+    );
+
+    expect(project?.projectId).toBe("/repo/project ");
+    expect(project && buildWorktreeSetupCalloutPolicy(project).projectSettingsRoute).toBe(
+      "/settings/projects/host%3A8%3Aserver-1%3Aproject%3A14%3A%2Frepo%2Fproject%20",
+    );
+  });
+
   it("ignores non-git workspaces and blank project coordinates", () => {
     expect(
       selectActiveGitWorkspaceProject("server-1", gitWorkspace({ projectKind: "local" })),

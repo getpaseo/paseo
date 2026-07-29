@@ -429,7 +429,7 @@ describe("deriveProjectKey", () => {
     expect(derive("host-a")).toBe(`host:6:host-a:path:${canonicalPlatformPath(rootPath)}`);
   });
 
-  test("preserves selected-path casing across Windows and POSIX hosts", () => {
+  test("stabilizes selected-path casing across Windows spellings", () => {
     expect(
       deriveProjectKey({
         rootPath: "c:\\repo\\Packages\\App",
@@ -460,6 +460,7 @@ describe("deriveProjectKey", () => {
       });
 
     expect(derive("C:\\Users\\Paseo\\Repo")).toBe(derive("c:/users/paseo/repo/."));
+    expect(derive("//Server/Share/Repo")).toBe(derive("\\\\server\\share\\repo"));
   });
 
   test.skipIf(process.platform === "win32")(
