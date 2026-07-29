@@ -426,7 +426,23 @@ describe("deriveProjectKey", () => {
       });
 
     expect(derive("host-a")).not.toBe(derive("host-b"));
-    expect(derive("host-a")).toBe(`host:6:host-a:path:${canonicalPlatformPath(rootPath)}`);
+    expect(derive("host-a")).toBe(
+      `host:6:host-a:path:${encodeURIComponent(canonicalPlatformPath(rootPath))}`,
+    );
+  });
+
+  test("frames path bytes in host-scoped project keys", () => {
+    const derive = (rootPath: string) =>
+      deriveProjectKey({
+        rootPath,
+        remoteUrl: null,
+        worktreeRoot: null,
+        mainRepoRoot: null,
+        serverId: "host-a",
+      });
+
+    expect(derive("/repo/app ")).toContain("%20");
+    expect(derive("/repo/app ")).not.toBe(derive("/repo/app"));
   });
 
   test("stabilizes selected-path casing across Windows spellings", () => {

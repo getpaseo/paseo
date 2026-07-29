@@ -39,7 +39,7 @@ export function deriveProjectKey(input: {
         : [input.mainRepoRoot ?? input.rootPath];
     const localPath = resolveLocalProjectPath(...localPathParts);
     return input.serverId
-      ? `host:${input.serverId.length}:${input.serverId}:path:${localPath}`
+      ? `host:${input.serverId.length}:${input.serverId}:path:${encodeURIComponent(localPath)}`
       : localPath;
   }
 
