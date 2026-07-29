@@ -26,6 +26,10 @@ function trimOptional(value: string | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function preserveOpaqueOptional(value: string | undefined): string | undefined {
+  return value?.trim() ? value : undefined;
+}
+
 export function canCreateWorktreeForProjectKind(
   projectKind: WorkspaceDescriptor["projectKind"],
 ): boolean {
@@ -46,7 +50,7 @@ export function buildHostProjectList(input: {
 }
 
 export function hostProjectFromRoute(route: HostProjectRouteContext): HostProjectListItem | null {
-  const projectKey = trimOptional(route.projectId);
+  const projectKey = preserveOpaqueOptional(route.projectId);
   const iconWorkingDir = trimOptional(route.sourceDirectory);
   if (!projectKey || !iconWorkingDir) {
     return null;
@@ -75,9 +79,13 @@ export function hostProjectFromWorkspace(input: {
   if (!input.workspace) {
     return null;
   }
+  const projectId = preserveOpaqueOptional(input.workspace.projectId);
+  if (!projectId) {
+    return null;
+  }
   const projectKey = resolveProjectKey({
     serverId: input.serverId,
-    projectId: input.workspace.projectId.trim(),
+    projectId,
     projectKey: input.workspace.projectKey,
   });
   const iconWorkingDir = input.workspace.projectRootPath.trim();

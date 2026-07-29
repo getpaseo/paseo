@@ -437,7 +437,16 @@ describe("deriveProjectKey", () => {
         worktreeRoot: "C:\\Repo",
         mainRepoRoot: "C:\\Repo",
       }),
-    ).toBe("remote:github.com/getpaseo/paseo#subdir:Packages/App");
+    ).toBe("remote:github.com/getpaseo/paseo#subdir:packages/app");
+
+    expect(
+      deriveProjectKey({
+        rootPath: "c:\\repo\\packages\\app",
+        remoteUrl: "git@github.com:getpaseo/paseo.git",
+        worktreeRoot: "c:\\repo",
+        mainRepoRoot: "c:\\repo",
+      }),
+    ).toBe("remote:github.com/getpaseo/paseo#subdir:packages/app");
   });
 
   test("stabilizes host-local Windows paths across equivalent spellings", () => {
@@ -491,5 +500,15 @@ describe("deriveProjectGroupingDisplayName", () => {
     expect(deriveProjectGroupingDisplayName({ rootPath, remoteUrl, worktreeRoot: rootPath })).toBe(
       expected,
     );
+  });
+
+  test("excludes a generic HTTP query from the display name", () => {
+    expect(
+      deriveProjectGroupingDisplayName({
+        rootPath: path.resolve("repo"),
+        remoteUrl: "https://git.example.com/acme/app.git?token=secret",
+        worktreeRoot: path.resolve("repo"),
+      }),
+    ).toBe("acme/app");
   });
 });

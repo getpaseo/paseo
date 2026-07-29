@@ -287,6 +287,21 @@ describe("host project list", () => {
     ).toEqual(hydratedDirectory);
   });
 
+  it("preserves an opaque host-local project id from the route", () => {
+    const projectId = "/repo/project ";
+
+    expect(
+      hostProjectFromRoute({
+        serverId: "host-a",
+        projectId,
+        sourceDirectory: "/repo/project ",
+      }),
+    ).toMatchObject({
+      projectKey: projectId,
+      hosts: [{ serverId: "host-a", projectId }],
+    });
+  });
+
   it("resolves the selected host project source directory", () => {
     const project = hostProject({
       hosts: [

@@ -60,9 +60,11 @@ function deriveSelectedPath(rootPath: string, worktreeRoot: string | null): stri
 }
 
 function encodeSelectedPath(selectedPath: string, sourcePath: string): string {
-  const segments = looksLikeWindowsPath(sourcePath)
-    ? selectedPath.split(/[\\/]/u)
-    : selectedPath.split("/");
+  const isWindowsPath = looksLikeWindowsPath(sourcePath);
+  const stableSelectedPath = isWindowsPath ? selectedPath.toLowerCase() : selectedPath;
+  const segments = isWindowsPath
+    ? stableSelectedPath.split(/[\\/]/u)
+    : stableSelectedPath.split("/");
   return segments.map(encodeURIComponent).join("/");
 }
 
@@ -87,6 +89,7 @@ function deriveRemoteProjectKey(remoteUrl: string | null): string | null {
 interface RemoteLocation {
   host: string;
   path: string;
+  displayPath: string;
   transport: string | null;
   user: string | null;
   preserveLeadingSlash: boolean;
@@ -111,6 +114,7 @@ function parseScpRemote(remoteUrl: string): RemoteLocation | null {
   return {
     host: normalizedHost,
     path: remotePath,
+    displayPath: remotePath,
     transport: null,
     user: user && (user !== "git" || !CLOUD_FORGE_HOSTS.has(host.toLowerCase())) ? user : null,
     preserveLeadingSlash,
@@ -126,14 +130,16 @@ function parseUrlRemote(remoteUrl: string): RemoteLocation | null {
     const forgeHost = deriveCanonicalUrlForgeHost(parsed, isSsh);
     const host = forgeHost ?? deriveRemoteHost(parsed);
     const preserveLeadingSlash = isSsh && !forgeHost;
-    let remotePath = parsed.pathname || null;
-    if (remotePath && isSsh) remotePath += `${parsed.search}${parsed.hash}`;
-    if (remotePath && !isSsh && !forgeHost) remotePath += parsed.search;
-    if (remotePath && !preserveLeadingSlash) remotePath = remotePath.replace(/^\/+/, "");
-    if (!host || !remotePath) return null;
+    const paths = deriveUrlRemotePaths(parsed, {
+      isSsh,
+      isForge: forgeHost !== null,
+      preserveLeadingSlash,
+    });
+    if (!host || !paths) return null;
     return {
       host,
-      path: remotePath,
+      path: paths.identity,
+      displayPath: paths.display,
       transport: forgeHost || isSsh ? null : parsed.protocol.toLowerCase(),
       user: isSsh && !forgeHost && parsed.username ? decodeUrlComponent(parsed.username) : null,
       preserveLeadingSlash,
@@ -143,6 +149,29 @@ function parseUrlRemote(remoteUrl: string): RemoteLocation | null {
   } catch {
     return null;
   }
+}
+
+function deriveUrlRemotePaths(
+  remoteUrl: URL,
+  input: { isSsh: boolean; isForge: boolean; preserveLeadingSlash: boolean },
+): { identity: string; display: string } | null {
+  if (!remoteUrl.pathname) return null;
+  const identitySuffix = deriveUrlIdentitySuffix(remoteUrl, input);
+  const normalize = (value: string) =>
+    input.preserveLeadingSlash ? value : value.replace(/^\/+/, "");
+  return {
+    identity: normalize(`${remoteUrl.pathname}${identitySuffix}`),
+    display: normalize(remoteUrl.pathname),
+  };
+}
+
+function deriveUrlIdentitySuffix(
+  remoteUrl: URL,
+  input: { isSsh: boolean; isForge: boolean },
+): string {
+  if (input.isSsh) return `${remoteUrl.search}${remoteUrl.hash}`;
+  if (input.isForge) return "";
+  return remoteUrl.search;
 }
 
 function decodeUrlComponent(value: string): string {
@@ -207,7 +236,7 @@ export function deriveProjectGroupingDisplayName(input: {
     return lastPathSegment(input.rootPath);
   }
 
-  const segments = remote.path
+  const segments = remote.displayPath
     .trim()
     .replace(/^\/+|\/+$/gu, "")
     .split("/")
