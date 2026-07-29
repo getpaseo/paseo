@@ -42,7 +42,7 @@ const CursorUsageResponseSchema = z.object({
       includedSpend: ApiNullableNumberSchema,
       bonusSpend: ApiNullableNumberSchema,
       // Present on older API responses; current dashboard responses omit it.
-      remaining: ApiNullableNumberSchema,
+      remaining: ApiNullableNumberSchema.optional(),
       limit: ApiNullableNumberSchema,
       autoPercentUsed: ApiNumberSchema.optional(),
       apiPercentUsed: ApiNumberSchema.optional(),

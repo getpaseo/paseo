@@ -737,6 +737,8 @@ describe("real provider usage fetchers", () => {
     let authorization: string | null = null;
     fetchApi = (async (_url: RequestInfo | URL, init?: RequestInit) => {
       authorization = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+      // Live dashboard responses omit planUsage.remaining — schema must accept that
+      // and the fetcher must derive remaining from includedSpend/limit.
       return jsonResponse({
         planUsage: {
           totalSpend: 2379,
@@ -831,6 +833,57 @@ describe("real provider usage fetchers", () => {
     expect(
       extractCursorPlanLabel([{ key: "cursorAuth/stripeMembershipType", value: "ultra" }]),
     ).toBe("Ultra");
+  });
+
+  it("parses live Cursor planUsage when remaining is omitted and derives remaining", async () => {
+    process.env["CURSOR_ACCESS_TOKEN"] = "cursor_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+          () =>
+            jsonResponse({
+              // Exact live shape observed 2026-07-29: no remaining field.
+              planUsage: {
+                totalSpend: 500,
+                includedSpend: 400,
+                bonusSpend: 100,
+                limit: 1000,
+                autoPercentUsed: 1.2,
+                apiPercentUsed: 10,
+                totalPercentUsed: 4,
+              },
+              billingCycleStart: 1_783_103_281_000,
+              billingCycleEnd: 1_785_781_681_000,
+            }),
+        ],
+      ]),
+    );
+
+    const cursor = findProvider(await service().listUsage(), "cursor");
+
+    expect(cursor).toEqual(
+      expect.objectContaining({
+        status: "available",
+        error: null,
+        balances: [
+          expect.objectContaining({
+            id: "plan_usage",
+            used: 4,
+            // (limit - includedSpend) / 100 = (1000 - 400) / 100
+            remaining: 6,
+            limit: 10,
+            unit: "usd",
+            resetsAt: "2026-08-03T18:28:01.000Z",
+          }),
+        ],
+        windows: [
+          expect.objectContaining({ id: "included", usedPct: 4 }),
+          expect.objectContaining({ id: "api", usedPct: 10 }),
+          expect.objectContaining({ id: "auto", usedPct: 1.2 }),
+        ],
+      }),
+    );
   });
 
   it("fetches Z.ai usage from ZAI_API_KEY", async () => {
