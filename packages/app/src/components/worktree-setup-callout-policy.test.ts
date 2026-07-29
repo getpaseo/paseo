@@ -89,14 +89,14 @@ describe("buildWorktreeSetupCalloutPolicy", () => {
         repoRoot: "/repo/project-1",
       }),
     ).toEqual({
-      id: "worktree-setup-missing:host:server-1:project:project-1",
-      dismissalKey: "worktree-setup-missing:host:server-1:project:project-1",
+      id: "worktree-setup-missing:host:8:server-1:project:9:project-1",
+      dismissalKey: "worktree-setup-missing:host:8:server-1:project:9:project-1",
       priority: 100,
       title: "Set up worktree scripts",
       description:
         "Add setup commands so new worktrees can install dependencies and prepare themselves automatically.",
       actionLabel: "Open project settings",
-      projectSettingsRoute: "/settings/projects/host%3Aserver-1%3Aproject%3Aproject-1",
+      projectSettingsRoute: "/settings/projects/host%3A8%3Aserver-1%3Aproject%3A9%3Aproject-1",
       testID: "worktree-setup-callout-project-1",
     });
   });
@@ -109,7 +109,7 @@ describe("buildWorktreeSetupCalloutPolicy", () => {
         projectKey: "remote:github.com/acme/project",
         repoRoot: "/repo/project",
       }).projectSettingsRoute,
-    ).toBe("/settings/projects/host%3Aserver-1%3Aproject%3Aprj_local");
+    ).toBe("/settings/projects/host%3A8%3Aserver-1%3Aproject%3A9%3Aprj_local");
   });
 
   it("keeps dismissals scoped to the host placement", () => {
@@ -138,7 +138,7 @@ describe("buildWorktreeSetupCalloutPolicy", () => {
         repoRoot: "/repo/project",
       }).projectSettingsRoute,
     ).toBe(
-      "/settings/projects/host%3Aserver-2%3Aproject%3Aremote%253Agithub.com%252Facme%252Fproject",
+      "/settings/projects/host%3A8%3Aserver-2%3Aproject%3A30%3Aremote%3Agithub.com%2Facme%2Fproject",
     );
   });
 });

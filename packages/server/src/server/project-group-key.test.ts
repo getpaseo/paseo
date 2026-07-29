@@ -72,6 +72,21 @@ describe("deriveProjectGroupKey", () => {
     expect(derive("git@github.com:acme/foo.git")).toBe(derive("https://github.com/acme/foo"));
   });
 
+  test("normalizes GitHub owner and repository casing", () => {
+    const rootPath = path.resolve("repo");
+    const derive = (remoteUrl: string) =>
+      deriveProjectGroupKey({
+        rootPath,
+        remoteUrl,
+        worktreeRoot: rootPath,
+        mainRepoRoot: null,
+      });
+
+    expect(derive("git@github.com:GetPaseo/Paseo.git")).toBe(
+      derive("https://github.com/getpaseo/paseo.git"),
+    );
+  });
+
   test.each(["ssh://git@github.com/acme/foo.git", "ssh://git@ssh.github.com:443/acme/foo.git"])(
     "normalizes known forge SSH URLs across remote forms: %s",
     (remoteUrl) => {
@@ -272,6 +287,21 @@ describe("deriveProjectGroupKey", () => {
         mainRepoRoot,
       }),
     ).toBe(path.join(mainRepoRoot, "packages", "app"));
+  });
+
+  test("keeps path-only project identities scoped to their host", () => {
+    const rootPath = path.resolve("repo");
+    const derive = (serverId: string) =>
+      deriveProjectGroupKey({
+        rootPath,
+        remoteUrl: null,
+        worktreeRoot: null,
+        mainRepoRoot: null,
+        serverId,
+      });
+
+    expect(derive("host-a")).not.toBe(derive("host-b"));
+    expect(derive("host-a")).toBe(`host:6:host-a:path:${rootPath}`);
   });
 
   test("preserves selected-path casing across Windows and POSIX hosts", () => {

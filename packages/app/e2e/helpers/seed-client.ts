@@ -27,6 +27,7 @@ export interface SeedDaemonClient {
   addProject(cwd: string): Promise<{
     project: {
       projectId: string;
+      projectGroupKey?: string;
       projectDisplayName: string;
       projectRootPath: string;
     } | null;

@@ -30,6 +30,7 @@ interface DirectoryProjectMembership {
 export function classifyDirectoryForProjectMembership(input: {
   cwd: string;
   checkout: ProjectCheckoutLitePayload;
+  serverId?: string;
 }): DirectoryProjectMembership {
   const cwd = resolve(input.cwd);
   const checkout: ProjectCheckoutLitePayload = { ...input.checkout, cwd };
@@ -38,6 +39,7 @@ export function classifyDirectoryForProjectMembership(input: {
     remoteUrl: checkout.remoteUrl,
     worktreeRoot: checkout.worktreeRoot,
     mainRepoRoot: checkout.mainRepoRoot,
+    serverId: input.serverId,
   });
 
   return {

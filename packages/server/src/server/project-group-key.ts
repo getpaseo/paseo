@@ -28,13 +28,18 @@ export function deriveProjectGroupKey(input: {
   remoteUrl: string | null;
   worktreeRoot: string | null;
   mainRepoRoot: string | null;
+  serverId?: string;
 }): string {
   const remoteKey = deriveRemoteProjectGroupKey(input.remoteUrl);
   const selectedPath = deriveSelectedPath(input.rootPath, input.worktreeRoot);
   if (!remoteKey) {
-    return selectedPath && input.mainRepoRoot
-      ? resolve(input.mainRepoRoot, selectedPath)
-      : resolve(input.mainRepoRoot ?? input.rootPath);
+    const localPath =
+      selectedPath && input.mainRepoRoot
+        ? resolve(input.mainRepoRoot, selectedPath)
+        : resolve(input.mainRepoRoot ?? input.rootPath);
+    return input.serverId
+      ? `host:${input.serverId.length}:${input.serverId}:path:${localPath}`
+      : localPath;
   }
 
   return selectedPath ? `${remoteKey}#subdir:${encodeSelectedPath(selectedPath)}` : remoteKey;
@@ -63,7 +68,9 @@ function deriveRemoteProjectGroupKey(remoteUrl: string | null): string | null {
   const userPrefix = remote.relativePathUser
     ? `${encodeURIComponent(remote.relativePathUser)}@`
     : "";
-  return `remote:${userPrefix}${remote.host.toLowerCase()}/${cleanedPath}`;
+  const normalizedHost = remote.host.toLowerCase();
+  const normalizedPath = normalizedHost === "github.com" ? cleanedPath.toLowerCase() : cleanedPath;
+  return `remote:${userPrefix}${normalizedHost}/${normalizedPath}`;
 }
 
 interface RemoteLocation {

@@ -265,6 +265,7 @@ interface ProjectHeaderRowProps {
   chevron: "expand" | "collapse" | null;
   onPress: () => void;
   worktreeTarget: SidebarProjectHostTarget | null;
+  onlineServerIds: ReadonlySet<string>;
   isProjectActive?: boolean;
   onWorkspacePress?: () => void;
   onWorktreeCreated?: (workspaceId: string) => void;
@@ -494,6 +495,7 @@ function ProjectRowTrailingActions({
   project,
   displayName,
   worktreeTarget,
+  onlineServerIds,
   isHovered,
   isMobileBreakpoint,
   isProjectActive,
@@ -504,6 +506,7 @@ function ProjectRowTrailingActions({
   project: SidebarProjectEntry;
   displayName: string;
   worktreeTarget: SidebarProjectHostTarget | null;
+  onlineServerIds: ReadonlySet<string>;
   isHovered: boolean;
   isMobileBreakpoint: boolean;
   isProjectActive: boolean;
@@ -532,7 +535,13 @@ function ProjectRowTrailingActions({
         >
           <ProjectKebabMenu
             projectKey={project.projectKey}
-            projectSettingsKey={resolveProjectSettingsRouteKey(project)}
+            projectSettingsKey={resolveProjectSettingsRouteKey({
+              ...project,
+              hosts: project.hosts.map((host) => ({
+                ...host,
+                isOnline: onlineServerIds.has(host.serverId),
+              })),
+            })}
             projectPath={localProjectPath}
             onRemoveProject={onRemoveProject}
             removeProjectStatus={removeProjectStatus}
@@ -975,6 +984,7 @@ function ProjectHeaderRow({
   chevron,
   onPress,
   worktreeTarget,
+  onlineServerIds,
   isProjectActive = false,
   onWorkspacePress,
   onWorktreeCreated: _onWorktreeCreated,
@@ -1060,6 +1070,7 @@ function ProjectHeaderRow({
         project={project}
         displayName={displayName}
         worktreeTarget={worktreeTarget}
+        onlineServerIds={onlineServerIds}
         isHovered={isHovered}
         isMobileBreakpoint={isMobileBreakpoint}
         isProjectActive={isProjectActive}
@@ -1850,6 +1861,7 @@ function ProjectBlock({
         worktreeTarget={
           rowModel.trailingAction.kind === "new_workspace" ? rowModel.trailingAction.target : null
         }
+        onlineServerIds={onlineServerIds}
         isProjectActive={active}
         onWorkspacePress={onWorkspacePress}
         onWorktreeCreated={onWorktreeCreated}

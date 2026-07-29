@@ -795,6 +795,7 @@ export async function createPaseoDaemon(
     },
   });
   const workspaceProvisioning = createWorkspaceProvisioningService({
+    serverId,
     projectRegistry,
     workspaceRegistry,
     workspaceGitService,
@@ -831,6 +832,7 @@ export async function createPaseoDaemon(
   await agentStorage.initialize();
   logger.info({ elapsed: elapsed() }, "Agent storage initialized");
   await bootstrapWorkspaceRegistries({
+    serverId,
     paseoHome: config.paseoHome,
     agentStorage,
     projectRegistry,
@@ -844,6 +846,7 @@ export async function createPaseoDaemon(
     releaseWorkspaceServicePortPlan(workspaceId);
   };
   const workspaceReconciliation = new WorkspaceReconciliationService({
+    serverId,
     projectRegistry,
     workspaceRegistry,
     logger,

@@ -82,6 +82,7 @@ export interface ReconciliationResult {
 }
 
 export interface WorkspaceReconciliationServiceOptions {
+  serverId?: string;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
   logger: pino.Logger;
@@ -112,6 +113,7 @@ interface CachedCheckoutRead {
 type DirectoryState = "directory" | "missing" | "unreadable";
 
 export class WorkspaceReconciliationService {
+  private readonly serverId: string | undefined;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
   private readonly logger: pino.Logger;
@@ -134,6 +136,7 @@ export class WorkspaceReconciliationService {
   private reconcileQueuedMode: "metadata" | "full" | null = null;
 
   constructor(options: WorkspaceReconciliationServiceOptions) {
+    this.serverId = options.serverId;
     this.projectRegistry = options.projectRegistry;
     this.workspaceRegistry = options.workspaceRegistry;
     this.logger = options.logger.child({ module: "workspace-reconciliation" });
@@ -347,6 +350,7 @@ export class WorkspaceReconciliationService {
       remoteUrl: currentGit.remoteUrl,
       worktreeRoot: currentGit.worktreeRoot,
       mainRepoRoot: currentGit.mainRepoRoot,
+      serverId: this.serverId,
     });
 
     if (project.kind !== mappedKind) {

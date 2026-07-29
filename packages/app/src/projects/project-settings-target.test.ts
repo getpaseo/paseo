@@ -14,11 +14,11 @@ describe("project settings target", () => {
   };
 
   it("builds settings routes from stable host-local identity", () => {
-    expect(resolveProjectSettingsRouteKey(project)).toBe("host:host-a:project:prj_1234");
+    expect(resolveProjectSettingsRouteKey(project)).toBe("host:6:host-a:project:8:prj_1234");
   });
 
   it("keeps a host-local route valid after the structural key changes", () => {
-    expect(findProjectSettingsTarget([project], "host:host-a:project:prj_1234")).toBe(project);
+    expect(findProjectSettingsTarget([project], "host:6:host-a:project:8:prj_1234")).toBe(project);
   });
 
   it("keeps legacy project IDs scoped to their host", () => {
@@ -33,7 +33,7 @@ describe("project settings target", () => {
     };
 
     const routeKey = resolveProjectSettingsRouteKey(changedProject);
-    expect(routeKey).toBe(`host:host-b:project:${encodeURIComponent(legacyKey)}`);
+    expect(routeKey).toBe(`host:6:host-b:project:${legacyKey.length}:${legacyKey}`);
     expect(findProjectSettingsTarget([unchangedProject, changedProject], routeKey)).toBe(
       changedProject,
     );

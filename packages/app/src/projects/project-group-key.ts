@@ -11,5 +11,5 @@ export function resolveProjectGroupKey(input: {
 }
 
 export function frameHostProjectKey(input: { serverId: string; projectId: string }): string {
-  return `host:${encodeURIComponent(input.serverId)}:project:${encodeURIComponent(input.projectId)}`;
+  return `host:${input.serverId.length}:${input.serverId}:project:${input.projectId.length}:${input.projectId}`;
 }

@@ -45,6 +45,7 @@ function resolveAgentUpdatedAt(record: StoredAgentRecord): string {
 }
 
 export async function bootstrapWorkspaceRegistries(options: {
+  serverId?: string;
   paseoHome: string;
   agentStorage: AgentStorage;
   projectRegistry: ProjectRegistry;
@@ -96,6 +97,7 @@ export async function bootstrapWorkspaceRegistries(options: {
       const membership = classifyDirectoryForProjectMembership({
         cwd: normalizedCwd,
         checkout,
+        serverId: options.serverId,
       });
       return { record, membership, directoryKey: membership.workspaceDirectoryKey };
     }),

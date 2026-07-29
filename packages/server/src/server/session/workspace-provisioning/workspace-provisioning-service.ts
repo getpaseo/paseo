@@ -85,12 +85,13 @@ export class WorkspaceProvisioningError extends Error {
 }
 
 export function createWorkspaceProvisioningService(deps: {
+  serverId?: string;
   workspaceRegistry: WorkspaceRegistry;
   projectRegistry: ProjectRegistry;
   workspaceGitService: Pick<WorkspaceGitService, "getCheckout" | "peekSnapshot">;
   logger: Logger;
 }): WorkspaceProvisioningService {
-  const { workspaceRegistry, projectRegistry, workspaceGitService, logger } = deps;
+  const { serverId, workspaceRegistry, projectRegistry, workspaceGitService, logger } = deps;
 
   async function runInImportWorkspace<T>(
     input: ImportWorkspaceInput,
@@ -168,6 +169,7 @@ export function createWorkspaceProvisioningService(deps: {
         remoteUrl: checkout.remoteUrl,
         worktreeRoot: checkout.worktreeRoot,
         mainRepoRoot: checkout.mainRepoRoot,
+        serverId,
       }),
       timestamp,
     });
@@ -273,6 +275,7 @@ export function createWorkspaceProvisioningService(deps: {
         remoteUrl: checkout.remoteUrl,
         worktreeRoot: checkout.worktreeRoot,
         mainRepoRoot: checkout.mainRepoRoot,
+        serverId,
       }),
       timestamp: new Date().toISOString(),
     });
@@ -353,6 +356,7 @@ export function createWorkspaceProvisioningService(deps: {
         remoteUrl: projectCheckout.remoteUrl,
         worktreeRoot: projectCheckout.worktreeRoot,
         mainRepoRoot: projectCheckout.mainRepoRoot,
+        serverId,
       });
       if (
         project.archivedAt ||
@@ -406,6 +410,7 @@ export function createWorkspaceProvisioningService(deps: {
       remoteUrl: projectCheckout.remoteUrl,
       worktreeRoot: projectCheckout.worktreeRoot,
       mainRepoRoot: projectCheckout.mainRepoRoot,
+      serverId,
     });
     if (project.kind === kind && project.projectGroupKey === projectGroupKey) return project;
     const refreshed = {
