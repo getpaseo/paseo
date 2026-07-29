@@ -34,7 +34,7 @@ test.describe("New workspace composer draft", () => {
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
       await openNewWorkspaceComposer(page, {
-        projectKey: firstProject.projectId,
+        projectKey: firstProject.projectKey,
         projectDisplayName: firstProject.projectDisplayName,
       });
       await expectNewWorkspaceProjectSelected(page, firstProject.projectDisplayName);
@@ -42,7 +42,7 @@ test.describe("New workspace composer draft", () => {
       await fillNewWorkspaceDraft(page, DRAFT);
 
       await selectNewWorkspaceProject(page, {
-        projectKey: secondProject.projectId,
+        projectKey: secondProject.projectKey,
         projectDisplayName: secondProject.projectDisplayName,
       });
 

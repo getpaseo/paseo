@@ -32,12 +32,12 @@ async function archiveWorkspaceFromSidebar(page: Page, workspaceId: string): Pro
   await archiveItem.click();
 }
 
-async function removeProjectFromSidebar(page: Page, projectId: string): Promise<void> {
-  const projectRow = page.getByTestId(`sidebar-project-row-${projectId}`);
+async function removeProjectFromSidebar(page: Page, projectKey: string): Promise<void> {
+  const projectRow = page.getByTestId(`sidebar-project-row-${projectKey}`);
   await expect(projectRow).toBeVisible({ timeout: 30_000 });
   await projectRow.hover();
 
-  const kebab = page.getByTestId(`sidebar-project-kebab-${projectId}`);
+  const kebab = page.getByTestId(`sidebar-project-kebab-${projectKey}`);
   await expect(kebab).toBeVisible({ timeout: 10_000 });
   await kebab.click();
 
@@ -45,7 +45,7 @@ async function removeProjectFromSidebar(page: Page, projectId: string): Promise<
   // user-confirmed removal proceeds deterministically.
   page.once("dialog", (dialog) => void dialog.accept());
 
-  const removeItem = page.getByTestId(`sidebar-project-menu-remove-${projectId}`);
+  const removeItem = page.getByTestId(`sidebar-project-menu-remove-${projectKey}`);
   await expect(removeItem).toBeVisible({ timeout: 10_000 });
   await removeItem.click();
 }
@@ -152,9 +152,9 @@ test.describe("Project with no workspaces persists", () => {
     const workspace = await seedWorkspace({ repoPrefix: "empty-project-persists-" });
 
     try {
-      const projectRow = page.getByTestId(`sidebar-project-row-${workspace.projectId}`);
+      const projectRow = page.getByTestId(`sidebar-project-row-${workspace.projectKey}`);
       const newWorkspaceRow = page.getByTestId(
-        `sidebar-project-new-workspace-row-${workspace.projectId}`,
+        `sidebar-project-new-workspace-row-${workspace.projectKey}`,
       );
       const globalNewWorkspace = page.getByTestId("sidebar-global-new-workspace");
 
@@ -197,7 +197,7 @@ test.describe("Project remove", () => {
     const workspace = await seedWorkspace({ repoPrefix: "project-remove-sidebar-" });
 
     try {
-      const projectRow = page.getByTestId(`sidebar-project-row-${workspace.projectId}`);
+      const projectRow = page.getByTestId(`sidebar-project-row-${workspace.projectKey}`);
 
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
@@ -206,7 +206,7 @@ test.describe("Project remove", () => {
         timeout: 30_000,
       });
 
-      await removeProjectFromSidebar(page, workspace.projectId);
+      await removeProjectFromSidebar(page, workspace.projectKey);
 
       await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toHaveCount(0, {
         timeout: 30_000,

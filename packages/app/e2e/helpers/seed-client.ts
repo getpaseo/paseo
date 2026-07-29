@@ -8,6 +8,8 @@ export interface SeedWorkspaceDescriptor {
   id: string;
   name: string;
   projectId: string;
+  projectGroupKey?: string;
+  project?: { projectGroupKey?: string };
   projectDisplayName: string;
   projectRootPath: string;
   workspaceDirectory: string;
@@ -179,8 +181,10 @@ export interface SeededWorkspace {
   workspaceId: string;
   workspaceName: string;
   workspaceDirectory: string;
-  /** Stable project identity the daemon groups workspaces under. */
+  /** Host-local identity used by daemon project operations. */
   projectId: string;
+  /** Opaque cross-host key used by grouped project UI and routes. */
+  projectKey: string;
   /** Project label the UI shows (owner/repo for known remotes, else basename). */
   projectDisplayName: string;
   cleanup(): Promise<void>;
@@ -208,6 +212,10 @@ export async function seedWorkspace(options: {
       throw new Error(created.error ?? `Failed to create workspace ${project.path}`);
     }
     const workspace = created.workspace;
+    const projectKey = workspace.projectGroupKey ?? workspace.project?.projectGroupKey;
+    if (!projectKey) {
+      throw new Error(`Created workspace ${workspace.id} has no project group key`);
+    }
     return {
       client,
       repoPath: project.path,
@@ -215,6 +223,7 @@ export async function seedWorkspace(options: {
       workspaceName: workspace.name,
       workspaceDirectory: workspace.workspaceDirectory,
       projectId: workspace.projectId,
+      projectKey,
       projectDisplayName: workspace.projectDisplayName,
       cleanup: async () => {
         await client.removeProject(workspace.projectId).catch(() => undefined);
