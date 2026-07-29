@@ -334,7 +334,7 @@ describe("ProjectsScreen", () => {
     });
 
     expect(navigate).toHaveBeenCalledTimes(1);
-    expect(navigate).toHaveBeenCalledWith("/settings/projects/remote%3Agithub.com%2Facme%2Fapp");
+    expect(navigate).toHaveBeenCalledWith("/settings/projects/host-a/project-a");
   });
 
   it("does not render a kebab menu on the row", () => {
