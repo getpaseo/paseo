@@ -1,6 +1,6 @@
 import { resolve, win32 } from "node:path";
 import { FORGE_DEFINITIONS } from "@getpaseo/protocol/forge-manifest";
-import { getRealpathAwareRelativePath } from "../utils/path.js";
+import { getRealpathAwareRelativePath, normalizePathForIdentity } from "../utils/path.js";
 
 const CLOUD_FORGE_HOSTS = new Set(
   FORGE_DEFINITIONS.flatMap((forge) => forge.cloudHosts ?? []).map((host) => host.toLowerCase()),
@@ -49,9 +49,10 @@ export function deriveProjectKey(input: {
 }
 
 function resolveLocalProjectPath(...parts: string[]): string {
-  return parts.some(looksLikeWindowsPath)
-    ? win32.resolve(...parts).toLowerCase()
+  const resolvedPath = parts.some(looksLikeWindowsPath)
+    ? win32.resolve(...parts)
     : resolve(...parts);
+  return normalizePathForIdentity(resolvedPath);
 }
 
 function deriveSelectedPath(rootPath: string, worktreeRoot: string | null): string | null {

@@ -62,6 +62,11 @@ export function isPathInsideRoot(root: string, candidate: string): boolean {
   return getRelativePathInsideRoot(root, candidate) !== null;
 }
 
+export function normalizePathForIdentity(value: string): string {
+  const compareAsWindows = looksLikeDefiniteWindowsPath(value);
+  return normalizePathForComparison(value, compareAsWindows);
+}
+
 /**
  * Returns the candidate's relative suffix when it is inside root.
  *

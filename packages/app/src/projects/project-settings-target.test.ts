@@ -33,7 +33,8 @@ describe("project settings target", () => {
     };
 
     const routeKey = resolveProjectSettingsRouteKey(changedProject);
-    expect(routeKey).toBe(`host:6:host-b:project:${legacyKey.length}:${legacyKey}`);
+    const encodedLegacyKey = encodeURIComponent(legacyKey);
+    expect(routeKey).toBe(`host:6:host-b:project:${encodedLegacyKey.length}:${encodedLegacyKey}`);
     expect(findProjectSettingsTarget([unchangedProject, changedProject], routeKey)).toBe(
       changedProject,
     );

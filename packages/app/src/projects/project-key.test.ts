@@ -15,4 +15,14 @@ describe("resolveProjectKey", () => {
 
     expect(resolve("host-a")).toBe(resolve("host-b"));
   });
+
+  test("frames opaque legacy project ID bytes", () => {
+    const key = resolveProjectKey({
+      serverId: "host-a",
+      projectId: "/workspace/app ",
+    });
+
+    expect(key).toContain("%20");
+    expect(key.endsWith(" ")).toBe(false);
+  });
 });

@@ -488,6 +488,8 @@ describe("deriveProjectKey", () => {
 
     expect(derive("C:\\Users\\Paseo\\Repo")).toBe(derive("c:/users/paseo/repo/."));
     expect(derive("//Server/Share/Repo")).toBe(derive("\\\\server\\share\\repo"));
+    expect(derive("C:\\Repo")).toBe(derive("\\\\?\\C:\\Repo"));
+    expect(derive("\\\\server\\share\\repo")).toBe(derive("\\\\?\\UNC\\server\\share\\repo"));
   });
 
   test.skipIf(process.platform === "win32")(
