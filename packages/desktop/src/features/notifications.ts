@@ -99,7 +99,7 @@ export function registerNotificationHandlers(): void {
       title,
       ...(body ? { body } : {}),
       ...(icon ? { icon } : {}),
-      silent: true,
+      silent: false,
     });
 
     activeNotifications.add(notification);
