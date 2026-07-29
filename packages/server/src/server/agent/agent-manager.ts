@@ -955,7 +955,7 @@ export class AgentManager {
   }
 
   async waitForAgentClose(agentId: string): Promise<void> {
-    await this.inFlightAgentCloses.get(agentId)?.catch(() => undefined);
+    await this.inFlightAgentCloses?.get(agentId)?.catch(() => undefined);
   }
 
   getTimeline(id: string): AgentTimelineItem[] {
