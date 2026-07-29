@@ -33,17 +33,13 @@ try {
 # Set EXPO_DEV_URL in the environment so Electron inherits it
 $env:EXPO_DEV_URL = "http://localhost:$($env:EXPO_PORT)"
 
-$RemoteDebuggingPort = if ($env:PASEO_ELECTRON_REMOTE_DEBUGGING_PORT) {
-    $env:PASEO_ELECTRON_REMOTE_DEBUGGING_PORT
-} else {
-    "9223"
-}
-$ExistingElectronFlags = if ($env:PASEO_ELECTRON_FLAGS) {
-    "$($env:PASEO_ELECTRON_FLAGS) "
-} else {
-    ""
-}
-$env:PASEO_ELECTRON_FLAGS = "$($ExistingElectronFlags)--remote-debugging-port=$RemoteDebuggingPort"
+$env:PASEO_DEV_ROOT = $RootDir
+$env:PASEO_DEV_RUNTIME_FALLBACK_ROOT = $RootDir
+$DevRuntime = node "$ScriptDir\dev-runtime.mjs" | ConvertFrom-Json
+$RemoteDebuggingPort = $DevRuntime.remoteDebuggingPort
+$env:PASEO_ELECTRON_FLAGS = $DevRuntime.electronFlags
+$env:PASEO_ELECTRON_USER_DATA_DIR = $DevRuntime.userDataDir
+Remove-Item Env:\PASEO_DEV_RUNTIME_FALLBACK_ROOT -ErrorAction SilentlyContinue
 
 # Allow any origin in dev so Electron on random ports works.
 # SECURITY: wildcard CORS is unsafe in production — only acceptable here because
@@ -64,7 +60,6 @@ if (-not $env:PASEO_HOME) {
 } else {
     $PaseoHomeManaged = $false
 }
-if (-not $env:PASEO_ELECTRON_USER_DATA_DIR) { $env:PASEO_ELECTRON_USER_DATA_DIR = "$DevStateDir\user-data" }
 New-Item -ItemType Directory -Force -Path $env:PASEO_HOME, $env:PASEO_ELECTRON_USER_DATA_DIR | Out-Null
 
 $DevDaemonPort = if ($env:PASEO_DEV_DAEMON_PORT) { $env:PASEO_DEV_DAEMON_PORT } else { "6788" }

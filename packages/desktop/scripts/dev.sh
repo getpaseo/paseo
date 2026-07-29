@@ -12,7 +12,13 @@ export PASEO_LISTEN="${PASEO_LISTEN:-127.0.0.1:6768}"
 configure_dev_paseo_home
 
 DEV_ROOT="${PASEO_DEV_ROOT:-$(default_dev_paseo_root)}"
-export PASEO_ELECTRON_USER_DATA_DIR="${PASEO_ELECTRON_USER_DATA_DIR:-$DEV_ROOT/.dev/user-data}"
+export PASEO_DEV_ROOT="$DEV_ROOT"
+export PASEO_DEV_RUNTIME_FALLBACK_ROOT="$DEV_ROOT"
+DEV_RUNTIME="$(node "$SCRIPT_DIR/dev-runtime.mjs")"
+REMOTE_DEBUGGING_PORT="$(node -e 'process.stdout.write(String(JSON.parse(process.argv[1]).remoteDebuggingPort))' "$DEV_RUNTIME")"
+export PASEO_ELECTRON_FLAGS="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).electronFlags)' "$DEV_RUNTIME")"
+export PASEO_ELECTRON_USER_DATA_DIR="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).userDataDir)' "$DEV_RUNTIME")"
+unset PASEO_DEV_RUNTIME_FALLBACK_ROOT
 mkdir -p "$PASEO_ELECTRON_USER_DATA_DIR"
 
 if [ -z "${EXPO_PORT:-}" ]; then
@@ -24,8 +30,6 @@ export EXPO_DEV_URL="http://localhost:${EXPO_PORT}"
 DAEMON_ENDPOINT="$(resolve_dev_daemon_endpoint)"
 export PASEO_DAEMON_ENDPOINT="$DAEMON_ENDPOINT"
 
-REMOTE_DEBUGGING_PORT="${PASEO_ELECTRON_REMOTE_DEBUGGING_PORT:-9223}"
-export PASEO_ELECTRON_FLAGS="${PASEO_ELECTRON_FLAGS:+$PASEO_ELECTRON_FLAGS }--remote-debugging-port=$REMOTE_DEBUGGING_PORT"
 export PASEO_CORS_ORIGINS="${PASEO_CORS_ORIGINS:-*}"
 
 npm run build:main
