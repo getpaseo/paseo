@@ -174,6 +174,51 @@ describe("deriveProjectKey", () => {
     );
   });
 
+  test("distinguishes SSH users for generic URL remotes", () => {
+    const rootPath = path.resolve("repo");
+    const derive = (remoteUrl: string) =>
+      deriveProjectKey({
+        rootPath,
+        remoteUrl,
+        worktreeRoot: rootPath,
+        mainRepoRoot: null,
+      });
+
+    expect(derive("ssh://alice@git.example.com/srv/repo.git")).not.toBe(
+      derive("ssh://bob@git.example.com/srv/repo.git"),
+    );
+  });
+
+  test("normalizes equivalent absolute SSH remote forms", () => {
+    const rootPath = path.resolve("repo");
+    const derive = (remoteUrl: string) =>
+      deriveProjectKey({
+        rootPath,
+        remoteUrl,
+        worktreeRoot: rootPath,
+        mainRepoRoot: null,
+      });
+
+    expect(derive("git@example.com:/srv/repo.git")).toBe(
+      derive("ssh://git@example.com/srv/repo.git"),
+    );
+  });
+
+  test("preserves query and fragment text in SSH repository paths", () => {
+    const rootPath = path.resolve("repo");
+    const derive = (remoteUrl: string) =>
+      deriveProjectKey({
+        rootPath,
+        remoteUrl,
+        worktreeRoot: rootPath,
+        mainRepoRoot: null,
+      });
+
+    expect(derive("ssh://git@example.com/repo.git?x=1#one")).not.toBe(
+      derive("ssh://git@example.com/repo.git?x=2#two"),
+    );
+  });
+
   test("keeps percent sequences literal in SCP paths", () => {
     const rootPath = path.resolve("repo");
     const derive = (remoteUrl: string) =>

@@ -15,6 +15,7 @@ import {
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
 import { deriveProjectKey } from "../../project-key.js";
+import { resolveProjectReference } from "../../project-reference.js";
 import { areEquivalentPaths, createRealpathAwarePathMatcher } from "../../../utils/path.js";
 
 export interface ResolveOrCreateWorkspaceIdInput {
@@ -175,8 +176,11 @@ export function createWorkspaceProvisioningService(deps: {
     });
   }
 
-  async function requireActiveProject(projectId: string): Promise<PersistedProjectRecord> {
-    const project = await projectRegistry.get(projectId);
+  async function requireActiveProject(
+    projectId: string,
+    pathHints: readonly string[] = [],
+  ): Promise<PersistedProjectRecord> {
+    const project = await resolveProjectReference(projectId, projectRegistry, pathHints);
     if (!project) throw new WorkspaceProvisioningError("unknown_project", projectId);
     if (project.archivedAt) throw new WorkspaceProvisioningError("archived_project", projectId);
     return project;
@@ -191,7 +195,11 @@ export function createWorkspaceProvisioningService(deps: {
     const normalizedCwd = resolve(cwd);
     const checkout = await workspaceGitService.getCheckout(normalizedCwd);
     const project = projectId
-      ? await refreshProjectKind(await requireActiveProject(projectId), normalizedCwd, checkout)
+      ? await refreshProjectKind(
+          await requireActiveProject(projectId, [normalizedCwd]),
+          normalizedCwd,
+          checkout,
+        )
       : // COMPAT(workspaceCreateMissingProjectId): added in v0.1.107, remove after 2027-01-15.
         await findOrCreateProjectForDirectory(normalizedCwd);
     const timestamp = new Date().toISOString();
@@ -247,7 +255,9 @@ export function createWorkspaceProvisioningService(deps: {
     repoRoot: string;
   }): Promise<PersistedProjectRecord> {
     if (input.projectId) {
-      return refreshProjectKind(await requireActiveProject(input.projectId));
+      return refreshProjectKind(
+        await requireActiveProject(input.projectId, [input.sourceCwd, input.repoRoot]),
+      );
     }
 
     const workspaces = await workspaceRegistry.list();

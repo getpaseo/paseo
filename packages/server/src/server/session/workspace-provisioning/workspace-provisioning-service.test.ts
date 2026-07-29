@@ -457,6 +457,26 @@ test("createWorkspaceForDirectory refreshes an explicit project's stale Git kind
   });
 });
 
+test("createWorkspaceForDirectory accepts a legacy project-key reference", async () => {
+  const rootPath = path.join(tmpDir, "repo");
+  gitRoots.add(rootPath);
+  const project = await projectRegistry.getOrCreateActiveByRoot({
+    rootPath,
+    kind: "git",
+    displayName: "repo",
+    projectKey: "remote:github.com/acme/repo",
+    timestamp: ARCHIVED_AT,
+  });
+
+  const workspace = await provisioning.createWorkspaceForDirectory(
+    rootPath,
+    null,
+    "remote:github.com/acme/repo",
+  );
+
+  expect(workspace.projectId).toBe(project.projectId);
+});
+
 test("createWorkspaceForDirectory classifies unknown and archived explicit projects", async () => {
   await expect(
     provisioning.createWorkspaceForDirectory(path.join(tmpDir, "directory"), null, "missing"),

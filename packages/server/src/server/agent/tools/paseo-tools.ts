@@ -108,7 +108,7 @@ export interface PaseoToolHostDependencies {
   archiveWorkspaceRecord?: ArchiveDependencies["archiveWorkspaceRecord"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchiveDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
   workspaceRegistry?: Pick<WorkspaceRegistry, "get" | "list" | "upsert">;
-  projectRegistry?: Pick<ProjectRegistry, "get">;
+  projectRegistry?: Pick<ProjectRegistry, "get" | "list">;
   createDirectoryWorkspace?: (
     cwd: string,
     title?: string | null,

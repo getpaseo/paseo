@@ -122,19 +122,31 @@ function parseUrlRemote(remoteUrl: string): RemoteLocation | null {
     const host = forgeHost ?? deriveRemoteHost(parsed);
     const preserveLeadingSlash = isSsh && !forgeHost;
     let remotePath = parsed.pathname || null;
+    if (remotePath && isSsh) remotePath += `${parsed.search}${parsed.hash}`;
     if (remotePath && !preserveLeadingSlash) remotePath = remotePath.replace(/^\/+/, "");
     if (!host || !remotePath) return null;
     return {
       host,
       path: remotePath,
-      transport: forgeHost ? null : parsed.protocol.toLowerCase(),
-      relativePathUser: null,
+      transport: forgeHost || isSsh ? null : parsed.protocol.toLowerCase(),
+      relativePathUser:
+        isSsh && !forgeHost && parsed.username && parsed.username !== "git"
+          ? decodeUrlComponent(parsed.username)
+          : null,
       preserveLeadingSlash,
       decodePercentEncoding: true,
       stripDotGitSuffix: forgeHost !== null,
     };
   } catch {
     return null;
+  }
+}
+
+function decodeUrlComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
   }
 }
 
