@@ -4,13 +4,8 @@ import { FileWarning } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 
-const DIFF_TOO_LARGE_ERROR_MESSAGE = "Diff too large to display";
 const ThemedFileWarning = withUnistyles(FileWarning);
 const foregroundMutedIconColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-
-export function isDiffTooLargeError(message: string | null): boolean {
-  return message === DIFF_TOO_LARGE_ERROR_MESSAGE;
-}
 
 export function DiffTooLargeState() {
   const { t } = useTranslation();

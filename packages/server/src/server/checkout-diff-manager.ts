@@ -5,7 +5,6 @@ import { expandTilde } from "../utils/path.js";
 import { toCheckoutError } from "./checkout-git-utils.js";
 
 const CHECKOUT_DIFF_WATCH_DEBOUNCE_MS = 150;
-const CHECKOUT_DIFF_MAX_PAYLOAD_BYTES = 1024 * 1024;
 
 type CheckoutDiffWorkspace = Pick<
   WorkspaceGitService,
@@ -209,18 +208,19 @@ export class CheckoutDiffManager {
           ? { force: true, reason: options.reason ?? "checkout-diff-refresh" }
           : undefined,
       );
+      if (diffResult.diffTooLarge) {
+        return {
+          cwd,
+          files: [],
+          diffTooLarge: true,
+          error: toCheckoutError(new Error("Diff too large to display")),
+        };
+      }
       const files = [...(diffResult.structured ?? [])];
       files.sort((a, b) => {
         if (a.path === b.path) return 0;
         return a.path < b.path ? -1 : 1;
       });
-      if (Buffer.byteLength(JSON.stringify(files), "utf8") > CHECKOUT_DIFF_MAX_PAYLOAD_BYTES) {
-        return {
-          cwd,
-          files: [],
-          error: toCheckoutError(new Error("Diff too large to display")),
-        };
-      }
       return {
         cwd,
         files,

@@ -219,43 +219,6 @@ describe("CheckoutDiffManager", () => {
     );
   });
 
-  test("replaces an oversized serialized diff with an error", async () => {
-    const { manager } = createManager({
-      getCheckoutDiffImplementation: vi.fn(async () => ({
-        diff: "",
-        structured: [
-          {
-            path: "large.ts",
-            isNew: false,
-            isDeleted: false,
-            additions: 1,
-            deletions: 0,
-            hunks: [
-              {
-                oldStart: 1,
-                oldCount: 0,
-                newStart: 1,
-                newCount: 1,
-                lines: [{ type: "add", content: "x".repeat(1024 * 1024) }],
-              },
-            ],
-          },
-        ],
-      })),
-    });
-
-    const subscription = await manager.subscribe(
-      { cwd: "/tmp/repo", compare: { mode: "base" } },
-      () => {},
-    );
-
-    expect(subscription.initial).toEqual({
-      cwd: "/tmp/repo",
-      files: [],
-      error: { message: "Diff too large to display" },
-    });
-  });
-
   test("diff refresh is triggered when the working tree watch callback fires", async () => {
     const getCheckoutDiff = vi
       .fn()
