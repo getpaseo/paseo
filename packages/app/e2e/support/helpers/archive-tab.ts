@@ -254,7 +254,8 @@ export async function clickSessionRow(page: Page, title: string): Promise<void> 
 }
 
 export async function expectSessionsEmptyState(page: Page): Promise<void> {
-  // Guard: if session rows appear, a prior spec polluted the shared daemon — see 00-sessions-empty.spec.ts.
+  // Guard: the sessions-empty spec owns a pristine daemon, so this helper only
+  // needs to distinguish an empty result from the expected seeded rows.
   await expect(page.locator(AGENT_ROW_SELECTOR)).toHaveCount(0, { timeout: 5_000 });
   await expect(page.getByText("No sessions yet")).toBeVisible({ timeout: 30_000 });
 }

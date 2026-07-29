@@ -13,7 +13,7 @@ import { escapeRegex } from "./regex";
 export function getE2EDaemonPort(): string {
   const port = process.env.E2E_DAEMON_PORT;
   if (!port) {
-    throw new Error("E2E_DAEMON_PORT is not set (expected from Playwright globalSetup).");
+    throw new Error("E2E_DAEMON_PORT is not set (expected from the Playwright worker fixture).");
   }
   if (port === "6767") {
     throw new Error("E2E_DAEMON_PORT must not point at the developer daemon (6767).");

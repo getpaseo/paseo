@@ -200,6 +200,7 @@ export interface SeededWorkspace {
 export async function seedWorkspace(options: {
   repoPrefix: string;
   title?: string;
+  port?: number;
   /** Repo fixture options; only applies to git projects (the default). */
   repo?: Parameters<typeof createTempGitRepo>[1];
   /** Set to false to seed a plain non-git directory instead of a git repo. */
@@ -209,7 +210,7 @@ export async function seedWorkspace(options: {
     options.git === false
       ? await createTempDirectory(options.repoPrefix)
       : await createTempGitRepo(options.repoPrefix, options.repo);
-  const client = await connectSeedClient();
+  const client = await connectSeedClient({ port: options.port });
   try {
     const created = await client.createWorkspace({
       source: { kind: "directory", path: project.path },

@@ -7,7 +7,7 @@
 export function getServerId(): string {
   const serverId = process.env.E2E_SERVER_ID;
   if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set (expected from Playwright globalSetup).");
+    throw new Error("E2E_SERVER_ID is not set (expected from the Playwright worker fixture).");
   }
   return serverId;
 }

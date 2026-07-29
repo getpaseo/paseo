@@ -5,6 +5,7 @@ import { connectDaemonClient } from "./daemon-client-loader";
 import { daemonWsRoutePattern } from "./daemon-port";
 import { projectEquivalenceViewKey } from "./project-view-key";
 import { expectWorkspaceHeader } from "./workspace-ui";
+import { withProjectOwnership } from "./project-ownership";
 
 type NewWorkspaceDaemonClient = Pick<
   InternalDaemonClient,
@@ -103,11 +104,15 @@ function parseWorkspaceIdFromPageUrl(page: Page, serverId: string): string | nul
 
 export async function connectNewWorkspaceDaemonClient(options?: {
   port?: number;
+  ownProjects?: boolean;
 }): Promise<NewWorkspaceDaemonClient> {
-  return connectDaemonClient<NewWorkspaceDaemonClient>({
+  const client = await connectDaemonClient<NewWorkspaceDaemonClient>({
     clientIdPrefix: "app-e2e-new-workspace",
     port: options?.port,
   });
+  if (options?.ownProjects === false) return client;
+
+  return withProjectOwnership(client);
 }
 
 export async function openProjectViaDaemon(

@@ -15,11 +15,14 @@ export interface IsolatedHostDaemon {
   close(): Promise<void>;
 }
 
-interface IsolatedHostDaemonOptions {
+export interface IsolatedHostDaemonOptions {
+  environment?: NodeJS.ProcessEnv;
   mutableRelay?: {
     enabled: boolean;
     endpoint?: string;
   };
+  paseoHome?: string;
+  preserveHome?: boolean;
 }
 
 async function getAvailablePort(): Promise<number> {
@@ -95,7 +98,8 @@ export async function startIsolatedHostDaemon(
   const metroPort = process.env.E2E_METRO_PORT;
   if (!metroPort) throw new Error("E2E_METRO_PORT is required to start an isolated host daemon");
 
-  const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-e2e-secondary-host-"));
+  const paseoHome =
+    options.paseoHome ?? (await mkdtemp(path.join(tmpdir(), "paseo-e2e-secondary-host-")));
   if (options.mutableRelay) {
     const endpoint =
       options.mutableRelay.endpoint ??
@@ -123,6 +127,7 @@ export async function startIsolatedHostDaemon(
       cwd: serverDir,
       env: withDisabledE2ESpeechEnv({
         ...process.env,
+        ...options.environment,
         PASEO_HOME: paseoHome,
         PASEO_SERVER_ID: serverId,
         PASEO_LISTEN: `127.0.0.1:${port}`,
@@ -157,7 +162,9 @@ export async function startIsolatedHostDaemon(
   try {
     child = await spawnDaemon();
   } catch (error) {
-    await rm(paseoHome, { recursive: true, force: true });
+    if (!options.preserveHome) {
+      await rm(paseoHome, { recursive: true, force: true });
+    }
     throw error;
   }
   let closed = false;
@@ -176,7 +183,9 @@ export async function startIsolatedHostDaemon(
       if (closed) return;
       closed = true;
       await stopProcess(child);
-      await rm(paseoHome, { recursive: true, force: true });
+      if (!options.preserveHome) {
+        await rm(paseoHome, { recursive: true, force: true });
+      }
     },
   };
 }

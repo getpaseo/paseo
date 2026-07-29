@@ -1,10 +1,11 @@
 import { createServer, type Server } from "node:http";
 import { afterEach, expect, test } from "vitest";
 
-import { waitForMetro } from "../e2e/support/global-setup";
+import { waitForMetro, warmMetro } from "../e2e/support/global-setup";
 
 class MetroPort {
-  private response = { status: 500, body: "fallback" };
+  private readonly responses = new Map<string, { status: number; body: string }>();
+  readonly requests: string[] = [];
 
   private constructor(
     readonly port: number,
@@ -13,9 +14,12 @@ class MetroPort {
 
   static async listen(): Promise<MetroPort> {
     let endpoint!: MetroPort;
-    const server = createServer((_request, response) => {
-      response.writeHead(endpoint.response.status, { "content-type": "text/plain" });
-      response.end(endpoint.response.body);
+    const server = createServer((request, response) => {
+      const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+      endpoint.requests.push(pathname);
+      const served = endpoint.responses.get(pathname) ?? { status: 500, body: "fallback" };
+      response.writeHead(served.status, { "content-type": "text/plain" });
+      response.end(served.body);
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
@@ -28,7 +32,15 @@ class MetroPort {
   }
 
   serveMetro(): void {
-    this.response = { status: 200, body: "packager-status:running" };
+    this.responses.set("/status", { status: 200, body: "packager-status:running" });
+  }
+
+  serveWarmableDocument(): void {
+    this.responses.set("/", {
+      status: 200,
+      body: '<html><script src="/index.bundle?platform=web"></script></html>',
+    });
+    this.responses.set("/index.bundle", { status: 200, body: "compiled bundle" });
   }
 
   async close(): Promise<void> {
@@ -62,4 +74,13 @@ test("Metro readiness rejects another HTTP listener on the selected port", async
   await expect(waitForMetro(endpoint.port, { label: "Metro", timeoutMs: 150 })).resolves.toBe(
     undefined,
   );
+});
+
+test("Metro warmup compiles the document's same-origin scripts before tests start", async () => {
+  endpoint = await MetroPort.listen();
+  endpoint.serveWarmableDocument();
+
+  await warmMetro(endpoint.port);
+
+  expect(endpoint.requests).toEqual(["/", "/index.bundle"]);
 });

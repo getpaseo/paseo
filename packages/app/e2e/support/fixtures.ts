@@ -1,5 +1,6 @@
 import { test as base, expect, type Page } from "@playwright/test";
 import { startOutdatedDaemon, type OutdatedDaemon } from "./helpers/daemon-update";
+import { startE2EWorker } from "./helpers/e2e-worker";
 import { getE2EDaemonPort } from "./helpers/daemon-port";
 import { buildCreateAgentPreferences, buildSeededHost } from "./helpers/daemon-registry";
 import {
@@ -7,7 +8,7 @@ import {
   removeProjectPickerFixture,
   type ProjectPickerFixture,
 } from "./helpers/project-picker-fixture";
-import { connectSeedClient } from "./helpers/seed-client";
+import { connectSeedClient, type SeedDaemonClient } from "./helpers/seed-client";
 import { createWithWorkspace, type WithWorkspace } from "./helpers/with-workspace";
 
 const EXTRA_HOSTS_KEY = "@paseo:e2e-extra-hosts";
@@ -21,14 +22,65 @@ interface TrackedProjectPickerFixture extends ProjectPickerFixture {
 // across spec-file boundaries — Playwright sometimes skips it for the first test of a
 // subsequent spec when multiple specs run in the same worker. Auto fixtures run
 // reliably for every test that uses this `test` object.
-const test = base.extend<{
-  paseoE2ESetup: void;
-  outdatedDaemon: OutdatedDaemon;
-  desktopManagedOutdatedDaemon: OutdatedDaemon;
-  relayConfigOutdatedDaemon: OutdatedDaemon;
-  projectPickerFixture: TrackedProjectPickerFixture;
-  withWorkspace: WithWorkspace;
-}>({
+const test = base.extend<
+  {
+    paseoE2ESetup: void;
+    projectOwnership: void;
+    outdatedDaemon: OutdatedDaemon;
+    desktopManagedOutdatedDaemon: OutdatedDaemon;
+    relayConfigOutdatedDaemon: OutdatedDaemon;
+    projectPickerFixture: TrackedProjectPickerFixture;
+    withWorkspace: WithWorkspace;
+  },
+  { e2eWorker: void; e2eWorkerClient: SeedDaemonClient }
+>({
+  e2eWorker: [
+    async ({}, provide, workerInfo) => {
+      const worker = await startE2EWorker(workerInfo.workerIndex);
+      try {
+        await provide();
+      } finally {
+        await worker.close();
+      }
+    },
+    { scope: "worker", auto: true },
+  ],
+  e2eWorkerClient: [
+    async ({ e2eWorker }, provide) => {
+      void e2eWorker;
+      const client = await connectSeedClient();
+      try {
+        await provide(client);
+      } finally {
+        await client.close().catch(() => undefined);
+      }
+    },
+    { scope: "worker" },
+  ],
+  projectOwnership: [
+    async ({ e2eWorkerClient }, provide, testInfo) => {
+      const before = new Set(
+        (await e2eWorkerClient.fetchWorkspaces()).entries.map((workspace) => workspace.projectId),
+      );
+
+      await provide();
+
+      const leaked = [
+        ...new Set(
+          (await e2eWorkerClient.fetchWorkspaces()).entries.map((workspace) => workspace.projectId),
+        ),
+      ].filter((projectId) => !before.has(projectId));
+      for (const projectId of leaked) {
+        await e2eWorkerClient.removeProject(projectId).catch(() => undefined);
+      }
+      if (leaked.length > 0) {
+        const message = `Test leaked daemon project records: ${leaked.join(", ")}`;
+        if (testInfo.status === testInfo.expectedStatus) throw new Error(message);
+        await testInfo.attach("project-leaks", { body: message, contentType: "text/plain" });
+      }
+    },
+    { auto: true },
+  ],
   baseURL: async ({}, provide) => {
     const metroPort = process.env.E2E_METRO_PORT;
     if (!metroPort) {
@@ -67,7 +119,7 @@ const test = base.extend<{
       const seedNonce = Math.random().toString(36).slice(2);
       const serverId = process.env.E2E_SERVER_ID;
       if (!serverId) {
-        throw new Error("E2E_SERVER_ID is not set - expected from Playwright globalSetup.");
+        throw new Error("E2E_SERVER_ID is not set - expected from the Playwright worker fixture.");
       }
       const testDaemon = buildSeededHost({
         serverId,

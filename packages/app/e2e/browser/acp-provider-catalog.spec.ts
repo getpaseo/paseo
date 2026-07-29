@@ -1,5 +1,6 @@
 import { test } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
+import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
 import { getServerId } from "../support/helpers/server-id";
 import {
   expectProviderInstalledInSettings,
@@ -14,16 +15,29 @@ const ACP_PROVIDER = {
   name: "Hermes",
 };
 
+interface ProviderCatalogDaemonClient {
+  connect(): Promise<void>;
+  close(): Promise<void>;
+  patchDaemonConfig(config: { removeProviders?: string[] }): Promise<unknown>;
+}
+
 test.describe("ACP provider catalog", () => {
   test("adds a catalog provider from settings", async ({ page }) => {
-    await gotoAppShell(page);
-    await openSettings(page);
-    await openSettingsHost(page, getServerId());
-    // Providers moved to their own host section; add-provider lives there now.
-    await openSettingsHostSection(page, getServerId(), "providers");
-    await openAddProviderArea(page);
+    const client = await connectDaemonClient<ProviderCatalogDaemonClient>({
+      clientIdPrefix: "provider-catalog-e2e",
+    });
+    try {
+      await gotoAppShell(page);
+      await openSettings(page);
+      await openSettingsHost(page, getServerId());
+      await openSettingsHostSection(page, getServerId(), "providers");
+      await openAddProviderArea(page);
 
-    await installAcpCatalogProvider(page, ACP_PROVIDER.name);
-    await expectProviderInstalledInSettings(page, ACP_PROVIDER.name);
+      await installAcpCatalogProvider(page, ACP_PROVIDER.name);
+      await expectProviderInstalledInSettings(page, ACP_PROVIDER.name);
+    } finally {
+      await client.patchDaemonConfig({ removeProviders: [ACP_PROVIDER.id] }).catch(() => undefined);
+      await client.close().catch(() => undefined);
+    }
   });
 });

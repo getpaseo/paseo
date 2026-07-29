@@ -5,6 +5,7 @@ import { parseHostWorkspaceRouteFromPathname } from "../../../src/utils/host-rou
 import { gotoAppShell } from "./app";
 import { connectDaemonClient } from "./daemon-client-loader";
 import { getServerId } from "./server-id";
+import { withProjectOwnership } from "./project-ownership";
 import { switchWorkspaceViaSidebar } from "./workspace-ui";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 
@@ -31,7 +32,10 @@ export type WorkspaceSetupProgressPayload = Extract<
 export type { WorkspaceSetupDaemonClient };
 
 export async function connectWorkspaceSetupClient(): Promise<WorkspaceSetupDaemonClient> {
-  return connectDaemonClient<WorkspaceSetupDaemonClient>({ clientIdPrefix: "workspace-setup" });
+  const client = await connectDaemonClient<WorkspaceSetupDaemonClient>({
+    clientIdPrefix: "workspace-setup",
+  });
+  return withProjectOwnership(client);
 }
 
 export async function openProjectViaDaemon(

@@ -36,7 +36,10 @@ test.describe("Worktree restore after daemon restart", () => {
   test.beforeEach(async () => {
     daemon = await startIsolatedHostDaemon(serverId);
     client = await connectSeedClient({ port: daemon.port });
-    worktreeClient = await connectNewWorkspaceDaemonClient({ port: daemon.port });
+    worktreeClient = await connectNewWorkspaceDaemonClient({
+      port: daemon.port,
+      ownProjects: false,
+    });
     tempRepo = await createTempGitRepo("wt-restart-");
   });
 
@@ -113,7 +116,10 @@ test.describe("Worktree restore after daemon restart", () => {
     await worktreeClient.close().catch(() => undefined);
     await daemon.restart();
     client = await connectSeedClient({ port: daemon.port });
-    worktreeClient = await connectNewWorkspaceDaemonClient({ port: daemon.port });
+    worktreeClient = await connectNewWorkspaceDaemonClient({
+      port: daemon.port,
+      ownProjects: false,
+    });
 
     await seedBrowser(page);
     await gotoAppShell(page);
