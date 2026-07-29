@@ -12,9 +12,9 @@ export default defineConfig({
   expect: {
     timeout: 10_000,
   },
-  // Files run concurrently, while each worker owns its daemon state. Tests within
-  // a file remain serial so describe-level setup is still paid only once.
-  fullyParallel: false,
+  // Every worker owns its daemon state, so independent tests can run concurrently
+  // even when they live in the same behavior-focused spec file.
+  fullyParallel: true,
   workers: Number(process.env.E2E_WORKERS ?? (process.env.CI ? "2" : "1")),
   retries: process.env.CI ? 1 : 0,
   reporter: [["list"]],
