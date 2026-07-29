@@ -155,6 +155,8 @@ describe("buildWorktreeSetupCalloutPolicy", () => {
         projectKey: "remote:github.com/acme/project-fork",
         repoRoot: "/repo/project",
       }).projectSettingsRoute,
-    ).toBe("/settings/projects/host%3Aserver-2%3Aproject%3Aremote%3Agithub.com%2Facme%2Fproject");
+    ).toBe(
+      "/settings/projects/host%3Aserver-2%3Aproject%3Aremote%253Agithub.com%252Facme%252Fproject",
+    );
   });
 });
