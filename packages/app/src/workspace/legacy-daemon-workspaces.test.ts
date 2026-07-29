@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { DaemonClient, FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 import { deriveWorkspaceAgentVisibility } from "@/workspace-tabs/agent-visibility";
+import { buildWorkspaceStructureProjects } from "@/projects/workspace-structure";
 import {
   applyLegacyDaemonWorkspaceOwnership,
   backfillLegacyDaemonWorkspaceDirectoryIfEmpty,
@@ -85,6 +86,7 @@ describe("buildLegacyDaemonWorkspaceSnapshot", () => {
       expect.objectContaining({
         id: "/repo/app",
         projectId: "/repo",
+        projectKey: null,
         projectDisplayName: "repo",
         projectRootPath: "/repo",
         workspaceDirectory: "/repo/app",
@@ -115,6 +117,30 @@ describe("buildLegacyDaemonWorkspaceSnapshot", () => {
         cwd: "/repo/app",
         workspaceId: "/repo/app",
       },
+    ]);
+  });
+
+  it("keeps matching legacy path projects separate across hosts", () => {
+    const first = buildLegacyDaemonWorkspaceSnapshot({
+      serverId: "host-a",
+      entries: [legacyAgent({ id: "agent-a", cwd: "/repo/app" })],
+    });
+    const second = buildLegacyDaemonWorkspaceSnapshot({
+      serverId: "host-b",
+      entries: [legacyAgent({ id: "agent-b", cwd: "/repo/app" })],
+    });
+
+    const projects = buildWorkspaceStructureProjects({
+      sessions: [
+        { serverId: "host-a", workspaces: first.workspaces.values() },
+        { serverId: "host-b", workspaces: second.workspaces.values() },
+      ],
+    });
+
+    expect(projects).toHaveLength(2);
+    expect(projects.map((project) => project.hosts[0]?.serverId).sort()).toEqual([
+      "host-a",
+      "host-b",
     ]);
   });
 

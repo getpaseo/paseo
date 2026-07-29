@@ -299,7 +299,10 @@ function createLegacyWorkspace(
   return {
     id: workspaceDirectory,
     projectId: entry.project.projectKey,
-    projectKey: entry.project.projectKey ?? null,
+    // COMPAT(projectKey): added in v0.2.4 on 2026-07-29; remove after 2027-01-29.
+    // Legacy path-shaped IDs are host-local. Keep the new field absent so the
+    // project-key boundary can distinguish them from recognized remote IDs.
+    projectKey: null,
     projectDisplayName: entry.project.projectName,
     projectCustomName: null,
     projectRootPath,
