@@ -644,7 +644,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         title: repository.cloneProtocol
           ? `${repository.nameWithOwner} via ${repository.cloneProtocol.toUpperCase()}`
           : repository.nameWithOwner,
-        subtitle: repository.description ?? repository.visibility,
+        subtitle: repository.description,
         icon: Github,
         testID: `add-project-flow-repository-${repository.id}`,
         select: () =>

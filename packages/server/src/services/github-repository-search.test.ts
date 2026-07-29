@@ -31,7 +31,6 @@ describe("GitHub repository search", () => {
           name: " paseo ",
           nameWithOwner: " getpaseo/paseo ",
           description: null,
-          visibility: "PUBLIC",
           updatedAt: "2026-07-15T12:00:00Z",
           sshUrl: " git@github.com:getpaseo/paseo.git ",
           url: "https://github.com/getpaseo/paseo",
@@ -52,7 +51,6 @@ describe("GitHub repository search", () => {
         name: "paseo",
         nameWithOwner: "getpaseo/paseo",
         description: null,
-        visibility: "public",
         updatedAt: "2026-07-15T12:00:00Z",
         cloneUrl: "git@github.com:getpaseo/paseo.git",
       },
@@ -63,7 +61,7 @@ describe("GitHub repository search", () => {
           "repo",
           "list",
           "--json",
-          "id,name,nameWithOwner,description,visibility,updatedAt,sshUrl,url",
+          "id,name,nameWithOwner,description,updatedAt,sshUrl,url",
           "--limit",
           "8",
         ],
@@ -97,7 +95,6 @@ describe("GitHub repository search", () => {
             name: "private-repo",
             nameWithOwner: "octo/private-repo",
             description: null,
-            isPrivate: true,
             updatedAt: "2026-07-15T12:00:00Z",
             sshUrl: "git@github.com:octo/private-repo.git",
             url: "https://github.com/octo/private-repo",
@@ -117,15 +114,14 @@ describe("GitHub repository search", () => {
         name: "private-repo",
         nameWithOwner: "octo/private-repo",
         description: null,
-        visibility: "private",
         updatedAt: "2026-07-15T12:00:00Z",
         cloneUrl: "https://github.com/octo/private-repo",
       },
     ]);
     const repositoryListCalls = calls.filter((call) => call.args[0] === "repo");
-    expect(repositoryListCalls).toHaveLength(2);
-    expect(repositoryListCalls[1]?.args.some((arg) => arg.split(",").includes("isPrivate"))).toBe(
-      true,
+    expect(repositoryListCalls).toHaveLength(1);
+    expect(repositoryListCalls[0]?.args.some((arg) => arg.split(",").includes("visibility"))).toBe(
+      false,
     );
   });
 
@@ -137,7 +133,6 @@ describe("GitHub repository search", () => {
           name: "private-repo",
           fullName: "octo/private-repo",
           description: "Private project",
-          visibility: "PRIVATE",
           updatedAt: "2026-07-14T08:00:00Z",
           url: "https://github.com/octo/private-repo",
         },
@@ -157,7 +152,6 @@ describe("GitHub repository search", () => {
         name: "private-repo",
         nameWithOwner: "octo/private-repo",
         description: "Private project",
-        visibility: "private",
         updatedAt: "2026-07-14T08:00:00Z",
         cloneUrl: "https://github.com/octo/private-repo",
       },
@@ -169,7 +163,7 @@ describe("GitHub repository search", () => {
           "repos",
           "private project",
           "--json",
-          "id,name,fullName,description,visibility,updatedAt,url",
+          "id,name,fullName,description,updatedAt,url",
           "--sort",
           "updated",
           "--order",
