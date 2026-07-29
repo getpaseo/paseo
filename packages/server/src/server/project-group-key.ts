@@ -55,10 +55,24 @@ function deriveRemoteProjectGroupKey(remoteUrl: string | null): string | null {
   }
 
   if (!host || !remotePath) return null;
-  let cleanedPath = remotePath.trim().replace(/^\/+/, "").replace(/\/+$/, "");
-  if (cleanedPath.endsWith(".git")) cleanedPath = cleanedPath.slice(0, -4);
+  const cleanedPath = normalizeRemotePath(remotePath);
   if (!cleanedPath) return null;
   return `remote:${host.toLowerCase()}/${cleanedPath}`;
+}
+
+function normalizeRemotePath(remotePath: string): string {
+  const segments = remotePath.trim().replace(/^\/+/, "").replace(/\/+$/, "").split("/");
+  const decodedSegments = segments.map((segment) => {
+    try {
+      return decodeURIComponent(segment);
+    } catch {
+      return segment;
+    }
+  });
+  const lastIndex = decodedSegments.length - 1;
+  const lastSegment = decodedSegments[lastIndex];
+  if (lastSegment?.endsWith(".git")) decodedSegments[lastIndex] = lastSegment.slice(0, -4);
+  return decodedSegments.map(encodeURIComponent).join("/");
 }
 
 function deriveRemoteHost(remoteUrl: URL): string | null {

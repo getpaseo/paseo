@@ -1,6 +1,7 @@
 import type { PaseoConfigRaw } from "@getpaseo/protocol/messages";
 import { i18n } from "@/i18n/i18next";
 import { resolveProjectGroupKey } from "@/projects/project-group-key";
+import { resolveHostProjectSettingsRouteKey } from "@/projects/project-settings-target";
 import { buildProjectSettingsRoute } from "@/utils/host-routes";
 
 export interface WorktreeSetupWorkspaceInput {
@@ -68,7 +69,7 @@ export function buildWorktreeSetupCalloutPolicy(
   project: ActiveGitWorkspaceProject,
 ): WorktreeSetupCalloutPolicy {
   const calloutKey = `worktree-setup-missing:${project.projectKey}`;
-  const projectSettingsKey = resolveProjectGroupKey({
+  const projectSettingsKey = resolveHostProjectSettingsRouteKey({
     serverId: project.serverId,
     projectId: project.projectId,
   });
@@ -80,7 +81,7 @@ export function buildWorktreeSetupCalloutPolicy(
     title: i18n.t("sidebar.worktreeSetup.title"),
     description: i18n.t("sidebar.worktreeSetup.description"),
     actionLabel: i18n.t("sidebar.worktreeSetup.openProjectSettings"),
-    projectSettingsRoute: buildProjectSettingsRoute(projectSettingsKey),
+    projectSettingsRoute: buildProjectSettingsRoute(projectSettingsKey ?? project.projectKey),
     testID: `worktree-setup-callout-${project.projectKey}`,
   };
 }

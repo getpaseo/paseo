@@ -114,7 +114,7 @@ describe("buildWorktreeSetupCalloutPolicy", () => {
       description:
         "Add setup commands so new worktrees can install dependencies and prepare themselves automatically.",
       actionLabel: "Open project settings",
-      projectSettingsRoute: "/settings/projects/project-1",
+      projectSettingsRoute: "/settings/projects/host%3Aserver-1%3Aproject%3Aproject-1",
       testID: "worktree-setup-callout-project-1",
     });
   });
@@ -128,5 +128,16 @@ describe("buildWorktreeSetupCalloutPolicy", () => {
         repoRoot: "/repo/project",
       }).projectSettingsRoute,
     ).toBe("/settings/projects/host%3Aserver-1%3Aproject%3Aprj_local");
+  });
+
+  it("scopes retained legacy project IDs to the active host", () => {
+    expect(
+      buildWorktreeSetupCalloutPolicy({
+        serverId: "server-2",
+        projectId: "remote:github.com/acme/project",
+        projectKey: "remote:github.com/acme/project-fork",
+        repoRoot: "/repo/project",
+      }).projectSettingsRoute,
+    ).toBe("/settings/projects/host%3Aserver-2%3Aproject%3Aremote%3Agithub.com%2Facme%2Fproject");
   });
 });

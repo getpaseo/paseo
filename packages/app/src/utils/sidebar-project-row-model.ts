@@ -44,6 +44,14 @@ export function resolveSidebarProjectIconTarget(
   return null;
 }
 
+export function resolveSidebarProjectLocalPath(
+  project: SidebarProjectEntry,
+  localServerId: string | null,
+): string {
+  if (!localServerId) return "";
+  return project.hosts.find((host) => host.serverId === localServerId)?.iconWorkingDir.trim() ?? "";
+}
+
 // A project can host a brand-new workspace on a host when that host can create a
 // git worktree (git projects) OR the host supports running multiple independent
 // workspaces per directory (`workspaceMultiplicity`), which is what lets non-git

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  findProjectSettingsRouteTarget,
   findProjectSettingsTarget,
+  resolveHostProjectSettingsRouteKey,
   resolveProjectSettingsRouteKey,
 } from "./project-settings-target";
 
@@ -34,5 +36,22 @@ describe("project settings target", () => {
     expect(findProjectSettingsTarget([unchangedProject, changedProject], routeKey)).toBe(
       changedProject,
     );
+  });
+
+  it("preserves the host identified by a grouped settings route", () => {
+    const groupedProject = {
+      projectKey: "remote:github.com/acme/app",
+      hosts: [
+        { serverId: "host-a", projectId: "project-a" },
+        { serverId: "host-b", projectId: "project-b" },
+      ],
+    };
+    const routeKey = resolveHostProjectSettingsRouteKey(groupedProject.hosts[1]);
+
+    expect(routeKey).not.toBeNull();
+    expect(findProjectSettingsRouteTarget([groupedProject], routeKey ?? "")).toEqual({
+      project: groupedProject,
+      serverId: "host-b",
+    });
   });
 });

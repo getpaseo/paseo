@@ -84,6 +84,24 @@ describe("deriveProjectGroupKey", () => {
     ).toBe("remote:github.com/getpaseo/paseo#subdir:packages/app");
   });
 
+  test("keeps a selected path distinct from remote path syntax", () => {
+    const worktreeRoot = path.resolve("repo");
+    const selectedKey = deriveProjectGroupKey({
+      rootPath: path.join(worktreeRoot, "packages", "app"),
+      remoteUrl: "example.com:acme/repo.git",
+      worktreeRoot,
+      mainRepoRoot: null,
+    });
+    const remoteSyntaxKey = deriveProjectGroupKey({
+      rootPath: worktreeRoot,
+      remoteUrl: "example.com:acme/repo#subdir:packages/app.git",
+      worktreeRoot,
+      mainRepoRoot: null,
+    });
+
+    expect(selectedKey).not.toBe(remoteSyntaxKey);
+  });
+
   test("keeps repository-root keys stable", () => {
     const rootPath = path.resolve("repo");
 

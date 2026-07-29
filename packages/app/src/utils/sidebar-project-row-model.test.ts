@@ -6,6 +6,7 @@ import type {
 import {
   buildSidebarProjectRowModel,
   resolveSidebarProjectIconTarget,
+  resolveSidebarProjectLocalPath,
 } from "./sidebar-project-row-model";
 
 function workspace(overrides: Partial<SidebarWorkspaceEntry> = {}): SidebarWorkspaceEntry {
@@ -194,6 +195,19 @@ describe("buildSidebarProjectRowModel", () => {
     );
 
     expect(iconTarget).toEqual({ serverId: "host-b", iconWorkingDir: "/repo/b" });
+  });
+
+  it("resolves desktop file actions from the local project placement", () => {
+    const groupedProject = project({
+      iconWorkingDir: "/remote/repo",
+      hosts: [
+        { serverId: "remote", iconWorkingDir: "/remote/repo", canCreateWorktree: true },
+        { serverId: "local", iconWorkingDir: "/local/repo", canCreateWorktree: true },
+      ],
+    });
+
+    expect(resolveSidebarProjectLocalPath(groupedProject, "local")).toBe("/local/repo");
+    expect(resolveSidebarProjectLocalPath(groupedProject, "missing")).toBe("");
   });
 
   it("renders an empty project as an expandable section", () => {

@@ -116,6 +116,7 @@ import type { PrHint } from "@/git/use-pr-status-query";
 import {
   buildSidebarProjectRowModel,
   resolveSidebarProjectIconTarget,
+  resolveSidebarProjectLocalPath,
   type SidebarProjectHostTarget,
 } from "@/utils/sidebar-project-row-model";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
@@ -133,6 +134,7 @@ import {
 } from "@/constants/platform";
 import { getDesktopHost } from "@/desktop/host";
 import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
+import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 
 const workspaceKeyExtractor = (workspace: SidebarWorkspacePlacement) => workspace.workspaceKey;
 
@@ -506,6 +508,8 @@ function ProjectRowTrailingActions({
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
   const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint;
+  const localDaemonServerId = useLocalDaemonServerId();
+  const localProjectPath = resolveSidebarProjectLocalPath(project, localDaemonServerId);
   return (
     <View style={styles.projectTrailingActions}>
       {worktreeTarget ? (
@@ -525,7 +529,7 @@ function ProjectRowTrailingActions({
           <ProjectKebabMenu
             projectKey={project.projectKey}
             projectSettingsKey={resolveProjectSettingsRouteKey(project)}
-            projectPath={project.iconWorkingDir}
+            projectPath={localProjectPath}
             onRemoveProject={onRemoveProject}
             removeProjectStatus={removeProjectStatus}
           />
