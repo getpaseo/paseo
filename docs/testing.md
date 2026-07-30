@@ -158,14 +158,6 @@ App-level Playwright browser E2E lives in `packages/app/e2e/*.spec.ts` and runs 
 
 Live provider smoke tests belong in `*.real.e2e.test.ts`, not `*.test.ts`, even when guarded by environment variables. Default unit suites must use deterministic provider adapters/fakes so missing credits, auth outages, and upstream model drift do not block normal CI.
 
-The OpenCode + oh-my-openagent autonomous-wake drift check installs both runtimes into a disposable isolated home and makes paid model calls when `OPENROUTER_API_KEY` is set:
-
-```bash
-npm run test:e2e:opencode-omo-real --workspace=@getpaseo/server
-```
-
-Pinned package defaults can be overridden with `PASEO_REAL_OPENCODE_VERSION` and `PASEO_REAL_OMO_VERSION` (use `latest` for a floating drift run). Model selection is `PASEO_REAL_OPENCODE_MODEL`, then the OpenRouter test model when `OPENROUTER_API_KEY` is explicitly present, then `opencode/big-pickle` after a live prerequisite probe. Installation, network, model, and auth failures fail the invoked script and retain a sanitized artifact directory; the test never reads the developer's OpenCode config.
-
 Codex MultiAgentV2 real tests use local Codex authentication rather than the OpenRouter-compatible test provider. OpenRouter does not accept Codex collaboration-history items on the parent follow-up request, so it cannot verify a complete native sub-agent turn.
 
 ### Test setup
