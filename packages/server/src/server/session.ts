@@ -102,6 +102,7 @@ import {
 } from "./agent/timeline-append.js";
 import {
   projectTimelineRows,
+  type ProjectedTimelinePageSelection,
   selectProjectedTimelinePage,
   type TimelineProjectionEntry,
   type TimelineProjectionMode,
@@ -248,6 +249,8 @@ import {
 } from "./project-directory-service.js";
 import { runGitCommand } from "../utils/run-git-command.js";
 import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
+import { largestFittingProjectedLimit } from "./agent/timeline-page-bounds.js";
+import { outboundFrameByteLength, TIMELINE_PAGE_BYTE_BUDGET } from "./websocket/physical-socket.js";
 import { resolveWorktreeSourceCwd } from "./workspace-source.js";
 
 type ProviderSubagentManagerEvent = Extract<
@@ -6214,13 +6217,47 @@ export class Session {
       ? (input.fullTimeline ??
         this.agentManager.fetchTimeline(input.agentId, { direction: "tail", limit: 0 }))
       : input.controlTimeline;
-    const page = selectProjectedTimelinePage({
-      rows: selectedTimeline.rows,
-      bounds: selectedTimeline.window,
-      direction: input.controlTimeline.reset ? "tail" : input.direction,
-      ...(input.cursor ? { cursorSeq: input.cursor.seq } : {}),
-      limit: input.pageLimit,
-    });
+    // A reset response is re-anchored to the tail regardless of the requested
+    // direction, so bounding must use the same effective direction the page was
+    // selected with.
+    const effectiveDirection = input.controlTimeline.reset ? "tail" : input.direction;
+    const cursorSeq = input.cursor?.seq;
+    const pageCache = new Map<number, ProjectedTimelinePageSelection>();
+    const selectPage = (limit: number): ProjectedTimelinePageSelection => {
+      const cached = pageCache.get(limit);
+      if (cached) {
+        return cached;
+      }
+      const selected = selectProjectedTimelinePage({
+        rows: selectedTimeline.rows,
+        bounds: selectedTimeline.window,
+        direction: effectiveDirection,
+        ...(cursorSeq !== undefined ? { cursorSeq } : {}),
+        limit,
+      });
+      pageCache.set(limit, selected);
+      return selected;
+    };
+
+    // Keep the response frame under the outbound byte bound. Projection can expand
+    // a reduced limit back over a wide/merged tool entry's source span, so the
+    // budget is enforced on the *selected* page (largestFittingProjectedLimit
+    // measures each candidate) and the winning limit is re-selected so its cursors
+    // stay contiguity-aware — never recomputed from a trimmed slice, which would
+    // skip rows a wide entry spans (non-monotonic seqEnd).
+    let page = selectPage(input.pageLimit);
+    if (
+      page.entries.length > 1 &&
+      outboundFrameByteLength(JSON.stringify(page.entries)) > TIMELINE_PAGE_BYTE_BUDGET
+    ) {
+      const fitLimit = largestFittingProjectedLimit({
+        maxLimit: input.pageLimit === 0 ? page.entries.length : input.pageLimit,
+        budgetBytes: TIMELINE_PAGE_BYTE_BUDGET,
+        measurePageBytes: (limit) =>
+          outboundFrameByteLength(JSON.stringify(selectPage(limit).entries)),
+      });
+      page = selectPage(fitLimit);
+    }
 
     return {
       timeline: selectedTimeline,

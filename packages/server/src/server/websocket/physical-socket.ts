@@ -2,6 +2,12 @@
 // 1-10 physical sockets (tens at the outside), so 64 MiB bounds abandoned queues
 // without treating ordinary large frames as a protocol or frame-size violation.
 export const MAX_PHYSICAL_SOCKET_BUFFERED_BYTES = 64 * 1024 * 1024;
+// Target size for a single projected timeline fetch page. This is a low-latency /
+// relay-friendly budget (relay clients cap well below the 64 MiB socket backstop),
+// not a hard limit: the smallest selectable page is still sent even when it exceeds
+// this budget (see largestFittingProjectedLimit) so pagination always makes forward
+// progress.
+export const TIMELINE_PAGE_BYTE_BUDGET = 4 * 1024 * 1024;
 // Current clients ping every 10 seconds. Four delayed cycles fit inside the
 // lease without making an abandoned application socket linger for minutes.
 export const APPLICATION_SOCKET_LEASE_MS = 45_000;
