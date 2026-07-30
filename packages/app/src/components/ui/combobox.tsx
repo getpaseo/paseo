@@ -299,7 +299,14 @@ export function ComboboxItem({
   );
 
   return (
-    <Pressable testID={testID} disabled={disabled} onPress={onPress} style={itemPressableStyle}>
+    <Pressable
+      testID={testID}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      disabled={disabled}
+      onPress={onPress}
+      style={itemPressableStyle}
+    >
       {leadingContent}
       <View style={itemContentStyle}>
         <Text numberOfLines={1} style={styles.comboboxItemLabel}>

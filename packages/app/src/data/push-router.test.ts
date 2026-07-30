@@ -204,25 +204,34 @@ describe("server data push router", () => {
 
     fake.emit({
       type: "subscribe_checkout_diff_response",
-      payload: { subscriptionId, cwd, files: [], error: null, requestId: "diff-1" },
+      payload: {
+        subscriptionId,
+        cwd,
+        files: [],
+        error: null,
+        diffTooLarge: true,
+        requestId: "diff-1",
+      },
     });
 
     expect(queryClient.getQueryData(queryKey)).toEqual({
       cwd,
       files: [],
       error: null,
+      diffTooLarge: true,
       requestId: "diff-1",
     });
 
     fake.emit({
       type: "checkout_diff_update",
-      payload: { subscriptionId, cwd, files: [], error: null },
+      payload: { subscriptionId, cwd, files: [], error: null, diffTooLarge: true },
     });
 
     expect(queryClient.getQueryData(queryKey)).toEqual({
       cwd,
       files: [],
       error: null,
+      diffTooLarge: true,
       requestId: `subscription:${subscriptionId}`,
     });
 

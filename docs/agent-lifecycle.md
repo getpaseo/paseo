@@ -21,16 +21,8 @@ the agent runs through `ensureAgentLoaded()`, which resumes the durable provider
 same Paseo agent ID. Provider history is not appended again when the canonical timeline is already
 primed.
 
-The daemon collects an eligible idle runtime after 30 minutes and sweeps every minute. Only
-unarchived, non-internal agents that are exactly `idle`, have no active or pending run, replacement,
-or permission, and have not been activated during the idle window are eligible. `running`,
-`initializing`, and `error` agents stay resident. An idle parent also stays resident while current
-in-memory state shows a running managed child or provider subagent. Otherwise agents are evaluated
-independently; collection does not cascade or change parentage.
-
-Active schedules targeting an existing agent protect that agent from collection. Paused, completed,
-and new-agent schedules do not. A pane may remain open after collection; its next prompt resumes the
-runtime.
+Idle agents remain resident indefinitely. Runtime closure happens only through an explicit lifecycle
+action such as archive, replacement, reload, workspace teardown, or daemon shutdown.
 
 ### Cancellation
 
@@ -59,9 +51,8 @@ The provider still owns the underlying runtime. Paseo keeps an agent record so t
 
 Archive is a **soft delete**: the agent record stays on disk with `archivedAt` set, the runtime is closed, and the agent disappears from active lists. Archive is **global** — it lives on the server and propagates to every connected client.
 
-Archive is distinct from runtime collection. Archive sets `archivedAt`, invokes the provider's native
-archive hook, and cascades to managed children. Runtime collection does none of those things; it only
-releases the live runtime and writes `lastStatus: closed` on the still-active record.
+Archive sets `archivedAt`, invokes the provider's native archive hook, and cascades to managed
+children.
 
 `create_agent_request` can opt an agent into `autoArchive`. In that mode the daemon archives the agent after the first terminal turn event (`turn_completed`, `turn_failed`, or `turn_canceled`). When the agent owns an isolated workspace, auto-archive archives that workspace too; the managed worktree is removed when its final workspace reference is gone.
 

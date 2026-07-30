@@ -13,7 +13,7 @@ describe("useDraftAgentCreateFlow", () => {
     useCreateFlowStore.setState({ pendingByDraftId: {} });
   });
 
-  it("renders a prepared new-workspace submission before continuing it", async () => {
+  it("renders a prepared new-workspace create attempt as optimistic chat before continuing it", async () => {
     const image: UserMessageImageAttachment = {
       id: "image-1",
       mimeType: "image/png",
@@ -60,13 +60,13 @@ describe("useDraftAgentCreateFlow", () => {
 
     expect(result.current.isSubmitting).toBe(true);
     expect(result.current.draftAgent).toEqual({ currentAttempt: attempt });
-    expect(result.current.submittedStreamItems).toEqual([
+    expect(result.current.optimisticStreamItems).toEqual([
       {
         kind: "user_message",
         id: "msg-prepared",
-        clientMessageId: "msg-prepared",
         text: "build this",
         timestamp: attempt.timestamp,
+        optimistic: true,
         images: [image],
         attachments: [attachment],
       },

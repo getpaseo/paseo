@@ -774,6 +774,8 @@ export const en = {
         closeChangesTab: "Close Changes tab",
         binaryFile: "Binary file",
         tooLarge: "Diff too large to display",
+        previewTooLargeTitle: "This diff is too large to preview",
+        previewTooLargeDescription: "Narrow the comparison to preview it here",
         unified: "Unified diff",
         split: "Side-by-side diff",
         switchToUnified: "Switch to unified diff",

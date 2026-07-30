@@ -1,6 +1,7 @@
-// Terminal streams begin snapshot catch-up at 4 MiB. The physical socket gets
-// another 4 MiB to recover before the daemon enforces the hard memory bound.
-export const MAX_PHYSICAL_SOCKET_BUFFERED_BYTES = 8 * 1024 * 1024;
+// OOM backstop for a socket whose client stopped draining. A daemon normally has
+// 1-10 physical sockets (tens at the outside), so 64 MiB bounds abandoned queues
+// without treating ordinary large frames as a protocol or frame-size violation.
+export const MAX_PHYSICAL_SOCKET_BUFFERED_BYTES = 64 * 1024 * 1024;
 // Current clients ping every 10 seconds. Four delayed cycles fit inside the
 // lease without making an abandoned application socket linger for minutes.
 export const APPLICATION_SOCKET_LEASE_MS = 45_000;

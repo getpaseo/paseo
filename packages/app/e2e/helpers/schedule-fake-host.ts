@@ -16,6 +16,7 @@ type SessionRequest = Record<string, unknown> & { type?: string; requestId?: str
 export interface FakeScheduleHostWorkspace {
   serverId: string;
   projectId: string;
+  projectKey: string;
   projectDisplayName: string;
   workspace: Record<string, unknown>;
 }
@@ -120,6 +121,7 @@ export async function buildFakeScheduleHostWorkspace(
   return {
     serverId: "schedule-fake-host",
     projectId,
+    projectKey: workspace.projectKey,
     projectDisplayName: FAKE_HOST_PROJECT_DISPLAY_NAME,
     workspace: {
       ...baseWorkspace,
@@ -139,6 +141,7 @@ export async function installFakeScheduleHost(input: {
   port: string;
   serverId: string;
   workspace: Record<string, unknown>;
+  project: Pick<FakeScheduleHostWorkspace, "projectId" | "projectKey" | "projectDisplayName">;
   schedules?: FakeScheduleSummary[];
 }): Promise<void> {
   await input.page.routeWebSocket(wsRoutePatternForPort(input.port), (ws) => {
@@ -154,6 +157,7 @@ export async function installFakeScheduleHost(input: {
             features: {
               providersSnapshot: true,
               workspaceMultiplicity: true,
+              projectList: true,
               projectAdd: true,
               projectRemove: true,
               workspaceRecovery: true,
@@ -194,6 +198,22 @@ export async function installFakeScheduleHost(input: {
               entries: [input.workspace],
               emptyProjects: [],
               pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
+            }),
+          );
+          return;
+        case "project.list.request":
+          ws.send(
+            buildSessionMessage("project.list.response", {
+              requestId,
+              projects: [
+                {
+                  projectId: input.project.projectId,
+                  projectKey: input.project.projectKey,
+                  projectDisplayName: input.project.projectDisplayName,
+                  projectRootPath: String(input.workspace.projectRootPath),
+                  projectKind: "git",
+                },
+              ],
             }),
           );
           return;

@@ -49,9 +49,11 @@ import {
 } from "@/data/push-router";
 import { mountBrowserAutomationDaemonClientHandler } from "@/browser-automation/handler";
 import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
-import { dispatchComposerAgentMessage, sendQueuedComposerMessageNow } from "@/composer/actions";
-import { createMessageSubmissionWriter } from "@/composer/submission/writer";
-import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
+import { sendQueuedComposerMessageNow } from "@/composer/actions";
+import {
+  resolveComposerAttachmentSubmitFormat,
+  splitComposerAttachmentsForSubmit,
+} from "@/composer/attachments/submit";
 import { encodeImages } from "@/utils/encode-images";
 import { DirectorySync, type RefreshAgentDirectoryResult } from "@/runtime/directory-sync";
 import { ReplicaCache } from "@/runtime/replica-cache";
@@ -2069,16 +2071,14 @@ export class HostRuntimeStore {
       submitMessage: async ({ text, attachments }) => {
         const supportsForgeAttachments =
           useSessionStore.getState().sessions[serverId]?.serverInfo?.features?.forgeSearch === true;
-        await dispatchComposerAgentMessage({
-          client,
-          agentId,
-          text,
-          attachments,
-          attachmentSubmitFormat: resolveComposerAttachmentSubmitFormat({
-            supportsForgeAttachments,
-          }),
-          encodeImages,
-          submission: createMessageSubmissionWriter(serverId),
+        const wirePayload = splitComposerAttachmentsForSubmit(attachments, {
+          format: resolveComposerAttachmentSubmitFormat({ supportsForgeAttachments }),
+        });
+        const images = await encodeImages(wirePayload.images);
+        await client.sendAgentMessage(agentId, text, {
+          messageId: next.id,
+          ...(images && images.length > 0 ? { images } : {}),
+          attachments: wirePayload.attachments,
         });
       },
     })

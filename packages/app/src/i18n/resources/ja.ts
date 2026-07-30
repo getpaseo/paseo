@@ -775,6 +775,8 @@ export const ja: TranslationResources = {
         closeChangesTab: "変更タブを閉じる",
         binaryFile: "バイナリファイル",
         tooLarge: "差分が大きすぎて表示できません",
+        previewTooLargeTitle: "この差分は大きすぎるためプレビューできません",
+        previewTooLargeDescription: "比較範囲を狭めると、ここでプレビューできます",
         unified: "ユニファイド差分",
         split: "左右比較",
         switchToUnified: "ユニファイド差分に切り替え",
