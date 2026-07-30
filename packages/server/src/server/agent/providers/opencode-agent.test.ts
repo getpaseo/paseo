@@ -2489,23 +2489,25 @@ describe("OpenCode adapter startTurn error handling", () => {
                   await firstStreamEnd.promise;
                   return;
                 }
-                const wakeEvents = [
-                  ...userMessageEvents({
-                    sessionId: "ses_stream_reconnect",
-                    messageId: "msg_reconnect_wake",
-                    text: "Autonomous wake during reconnect",
-                  }),
-                  ...assistantTurnEvents({
-                    sessionId: "ses_stream_reconnect",
-                    text: "Reconnect wake completed.",
-                  }),
-                ];
-                for (const event of wakeEvents.slice(0, -1)) {
+                for (const event of userMessageEvents({
+                  sessionId: "ses_stream_reconnect",
+                  messageId: "msg_reconnect_wake",
+                  text: "Autonomous wake during reconnect",
+                })) {
                   yield event;
                 }
                 wakeEventsSent.resolve();
+                yield {
+                  type: "session.idle",
+                  properties: { sessionID: "ses_stream_reconnect" },
+                };
                 await releaseWakeTerminal.promise;
-                yield wakeEvents.at(-1);
+                for (const event of assistantTurnEvents({
+                  sessionId: "ses_stream_reconnect",
+                  text: "Reconnect wake completed.",
+                })) {
+                  yield event;
+                }
                 await waitForAbort(signal);
               },
             },
@@ -2673,7 +2675,7 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   }, 15_000);
 
-  test("discards an adopted reconnect busy marker reconciled as idle", async () => {
+  test("discards adopted reconnect busy and late output reconciled as idle", async () => {
     const firstStreamEnd = createTestDeferred<void>();
     const busyMarkerSent = createTestDeferred<void>();
     const statusReturnedIdle = createTestDeferred<void>();
@@ -2697,6 +2699,12 @@ describe("OpenCode adapter startTurn error handling", () => {
                 status: { type: "busy" },
               },
             };
+            for (const event of assistantTurnEvents({
+              sessionId: "ses_adopted_stale_busy",
+              text: "Late canceled output.",
+            }).slice(0, -1)) {
+              yield event;
+            }
             busyMarkerSent.resolve();
             await waitForAbort(signal);
           },
@@ -2732,6 +2740,12 @@ describe("OpenCode adapter startTurn error handling", () => {
       await new Promise<void>((resolve) => setImmediate(resolve));
 
       expect(events.filter((event) => event.type === "turn_started")).toHaveLength(1);
+      expect(events).not.toContainEqual(
+        expect.objectContaining({
+          type: "timeline",
+          item: expect.objectContaining({ text: "Late canceled output." }),
+        }),
+      );
       await session.startTurn("replacement");
       expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
     } finally {

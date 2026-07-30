@@ -3142,18 +3142,15 @@ class OpenCodeAgentSession implements AgentSession {
       const status = readOpenCodeRecord(statuses[this.sessionId]);
       const statusType = readNonEmptyString(status?.type);
       if (!status || statusType === "idle") {
-        if (
-          this.externallyDriven &&
-          stopping.deferredEvents.length > 0 &&
-          stopping.deferredEvents.every(({ rawEvent }) => {
+        if (this.externallyDriven && stopping.deferredEvents.length > 0) {
+          const wakeStart = stopping.deferredEvents.findIndex(({ rawEvent }) => {
             const deferredEvent = unwrapOpenCodeGlobalEvent(rawEvent);
-            return (
-              deferredEvent?.type === "session.status" &&
-              deferredEvent.properties.status.type === "busy"
-            );
-          })
-        ) {
-          stopping.deferredEvents.length = 0;
+            return deferredEvent ? this.isUnseenUserWakeBoundary(deferredEvent) : false;
+          });
+          stopping.deferredEvents.splice(
+            0,
+            wakeStart < 0 ? stopping.deferredEvents.length : wakeStart,
+          );
         }
         this.finishStoppingTurn(stopping);
         return;
@@ -3720,7 +3717,20 @@ class OpenCodeAgentSession implements AgentSession {
         }));
     const retainEvent = stopping.providerIdleObserved || retainReconciledWake;
     if (isOpenCodeTerminalEvent(event, this.sessionId) && !stopping.providerIdleObserved) {
-      if (retainEvent) {
+      const userWakeIndex = stopping.deferredEvents.findIndex(({ rawEvent }) => {
+        const deferredEvent = unwrapOpenCodeGlobalEvent(rawEvent);
+        return deferredEvent ? this.isUnseenUserWakeBoundary(deferredEvent) : false;
+      });
+      const hasWakeOutput = stopping.deferredEvents
+        .slice(userWakeIndex + 1)
+        .some(({ rawEvent }) => {
+          const deferredEvent = unwrapOpenCodeGlobalEvent(rawEvent);
+          return (
+            deferredEvent?.type === "message.updated" &&
+            deferredEvent.properties.info.role === "assistant"
+          );
+        });
+      if (retainEvent && userWakeIndex >= 0 && hasWakeOutput) {
         stopping.deferredEvents.push(params);
       }
       this.finishStoppingTurn(stopping);
@@ -3770,12 +3780,18 @@ class OpenCodeAgentSession implements AgentSession {
 
   private isAutonomousWakeBoundary(event: OpenCodeEvent): boolean {
     return (
-      (event.type === "message.updated" &&
-        event.properties.info.role === "user" &&
-        !this.emittedUserMessageIds.has(event.properties.info.id)) ||
+      this.isUnseenUserWakeBoundary(event) ||
       (this.externallyDriven &&
         event.type === "session.status" &&
         event.properties.status.type === "busy")
+    );
+  }
+
+  private isUnseenUserWakeBoundary(event: OpenCodeEvent): boolean {
+    return (
+      event.type === "message.updated" &&
+      event.properties.info.role === "user" &&
+      !this.emittedUserMessageIds.has(event.properties.info.id)
     );
   }
 
