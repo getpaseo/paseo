@@ -4,7 +4,12 @@ import {
   type PaseoMetadataGeneration,
 } from "@getpaseo/protocol/paseo-config-schema";
 
-export type MetadataConfigKey = "title" | "branchName" | "commitMessage" | "pullRequest";
+export type MetadataConfigKey =
+  | "title"
+  | "branchName"
+  | "commitMessage"
+  | "pullRequest"
+  | "agentSummary";
 
 export interface RepoRootResolver {
   resolveRepoRoot: (cwd: string) => Promise<string>;

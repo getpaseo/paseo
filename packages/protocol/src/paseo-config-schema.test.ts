@@ -91,6 +91,7 @@ describe("paseo config schema", () => {
           branchName: { instructions: "Prefix branches with feat/." },
           commitMessage: { instructions: "Use imperative mood." },
           pullRequest: { instructions: "Include risk notes." },
+          agentSummary: { instructions: "Describe the current goal in one sentence." },
         },
       }),
     ).toEqual({
@@ -99,6 +100,7 @@ describe("paseo config schema", () => {
         branchName: { instructions: "Prefix branches with feat/." },
         commitMessage: { instructions: "Use imperative mood." },
         pullRequest: { instructions: "Include risk notes." },
+        agentSummary: { instructions: "Describe the current goal in one sentence." },
       },
     });
   });
@@ -115,6 +117,7 @@ describe("paseo config schema", () => {
     });
     expect(parsed.metadataGeneration?.commitMessage).toBeUndefined();
     expect(parsed.metadataGeneration?.pullRequest).toBeUndefined();
+    expect(parsed.metadataGeneration?.agentSummary).toBeUndefined();
   });
 
   it("preserves legacy agentTitle metadata instructions as passthrough", () => {

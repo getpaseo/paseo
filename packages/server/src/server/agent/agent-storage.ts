@@ -52,6 +52,14 @@ const STORED_AGENT_SCHEMA = z.object({
   lastActivityAt: z.string().optional(),
   lastUserMessageAt: z.string().nullable().optional(),
   title: z.string().nullable().optional(),
+  summary: z.string().nullable().optional(),
+  summaryUpdatedAt: z.string().optional(),
+  summaryCursor: z
+    .object({
+      epoch: z.string(),
+      seq: z.number().int().nonnegative(),
+    })
+    .optional(),
   labels: z.record(z.string(), z.string()).default({}),
   lastStatus: AgentStatusSchema.default("closed"),
   lastModeId: z.string().nullable().optional(),
@@ -92,6 +100,24 @@ export type SerializableAgentConfig = Pick<
 export type StoredAgentRecord = z.infer<typeof STORED_AGENT_SCHEMA>;
 export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
   return STORED_AGENT_SCHEMA.parse(value);
+}
+
+function resolveSummarySnapshot(
+  agent: Pick<ManagedAgent, "summary" | "summaryUpdatedAt" | "summaryCursor">,
+  existing: StoredAgentRecord | null,
+): Pick<StoredAgentRecord, "summary" | "summaryUpdatedAt" | "summaryCursor"> {
+  if (agent.summary === undefined) {
+    return {
+      summary: existing?.summary,
+      summaryUpdatedAt: existing?.summaryUpdatedAt,
+      summaryCursor: existing?.summaryCursor,
+    };
+  }
+  return {
+    summary: agent.summary,
+    summaryUpdatedAt: agent.summaryUpdatedAt?.toISOString(),
+    summaryCursor: agent.summaryCursor,
+  };
 }
 
 export class AgentStorage {
@@ -251,6 +277,7 @@ export class AgentStorage {
         title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
         createdAt: existing?.createdAt,
         internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
+        ...resolveSummarySnapshot(agent, existing),
       });
 
       // Preserve soft-delete/archive status across snapshot flushes. The

@@ -110,7 +110,7 @@ function createCache(storage: MemoryStorage, maxBytes?: number): ReplicaCache {
   return cache;
 }
 
-function agent(id = "agent-1"): Agent {
+function agent(id = "agent-1", summary: string | null = null): Agent {
   return {
     ...normalizeAgentSnapshot(
       {
@@ -136,6 +136,7 @@ function agent(id = "agent-1"): Agent {
         pendingPermissions: [],
         persistence: null,
         title: "Cached agent",
+        summary,
         labels: {},
       },
       SERVER_ID,
@@ -399,6 +400,21 @@ describe("ReplicaCache", () => {
     expect(storage.changes[0]?.upserts.map(({ kind, id }) => ({ kind, id }))).toEqual([
       { kind: "timeline", id: "agent-1" },
     ]);
+  });
+
+  it("preserves an agent purpose summary across a cache round-trip", async () => {
+    const storage = new MemoryStorage();
+    const summarized = agent("agent-1", "Reviewing state projections");
+    const writer = createCache(storage);
+    writer.commitDirectoryMutations(SERVER_ID, [
+      { kind: "agent", type: "upsert", id: summarized.id, value: summarized },
+    ]);
+    await writer.flush();
+
+    const reader = createCache(storage);
+    expect((await reader.readAgent(SERVER_ID, "agent-1"))?.summary).toBe(
+      "Reviewing state projections",
+    );
   });
 
   it("never reads directory rows older than an accepted deferred deletion", async () => {

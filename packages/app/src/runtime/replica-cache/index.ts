@@ -246,6 +246,7 @@ const StoredAgentSnapshotSchema = z.strictObject({
   persistence: z.null(),
   lastError: z.string().optional(),
   title: z.string().nullable(),
+  summary: z.string().nullable().optional(),
   labels: z.record(z.string(), z.string()),
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
@@ -617,9 +618,7 @@ function serializeAgent(agent: Agent): StoredAgent {
     capabilities: {
       supportsStreaming: agent.capabilities.supportsStreaming,
       supportsSessionPersistence: agent.capabilities.supportsSessionPersistence,
-      ...(agent.capabilities.supportsSessionListing !== undefined
-        ? { supportsSessionListing: agent.capabilities.supportsSessionListing }
-        : {}),
+      supportsSessionListing: agent.capabilities.supportsSessionListing,
       supportsDynamicModes: agent.capabilities.supportsDynamicModes,
       supportsMcpServers: agent.capabilities.supportsMcpServers,
       supportsReasoningStream: agent.capabilities.supportsReasoningStream,
@@ -640,6 +639,7 @@ function serializeAgent(agent: Agent): StoredAgent {
     persistence: null,
     ...(agent.lastError ? { lastError: agent.lastError } : {}),
     title: agent.title,
+    summary: agent.summary ?? null,
     labels: agent.labels,
     requiresAttention: agent.requiresAttention ?? false,
     attentionReason: agent.attentionReason ?? null,

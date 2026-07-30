@@ -2,7 +2,8 @@ import { useEffect, useMemo } from "react";
 import { usePendingArchiveAgentIds } from "@/hooks/use-archive-agent";
 import equal from "fast-deep-equal";
 import { useStoreWithEqualityFn } from "zustand/traditional";
-import { useSessionStore, type Agent } from "@/stores/session-store";
+import { useSessionStore, type Agent, type DaemonServerInfo } from "@/stores/session-store";
+import { resolveAgentPurposeSummary } from "@/agents/purpose-summary";
 import { refreshProviderSubagents, useProviderSubagentStore } from "./provider-store";
 import type { ProviderSubagentDescriptorPayload } from "@getpaseo/protocol/messages";
 
@@ -11,9 +12,7 @@ export interface PaseoSubagentRow {
   id: Agent["id"];
   provider: Agent["provider"];
   title: Agent["title"];
-  /** Managed agents have a real title, so the union's task line is always absent for them. */
-  description: null;
-  subtitle: null;
+  summary: string | null;
   status: Agent["status"];
   turn: Agent["turn"];
   requiresAttention: Agent["requiresAttention"];
@@ -49,17 +48,19 @@ interface SelectSubagentsParams {
   providerParentSubagentId?: string;
 }
 
-const EMPTY_SUBAGENT_ROWS: SubagentRow[] = [];
+const EMPTY_SUBAGENT_ROWS: PaseoSubagentRow[] = [];
 const EMPTY_PROVIDER_SUBAGENT_ROWS: ProviderSubagentRow[] = [];
 
-function toSubagentRow(agent: Agent): SubagentRow {
+function toSubagentRow(
+  agent: Agent,
+  serverInfo: DaemonServerInfo | null | undefined,
+): PaseoSubagentRow {
   return {
     kind: "paseo",
     id: agent.id,
     provider: agent.provider,
     title: agent.title,
-    description: null,
-    subtitle: null,
+    summary: resolveAgentPurposeSummary({ summary: agent.summary, serverInfo }),
     status: agent.status,
     turn: agent.turn,
     requiresAttention: agent.requiresAttention,
@@ -71,13 +72,14 @@ export function selectSubagentsForParent(
   state: SessionStoreSnapshot,
   params: SelectSubagentsParams,
   pendingArchiveIds: ReadonlySet<string>,
-): SubagentRow[] {
+): PaseoSubagentRow[] {
   const agents = state.sessions[params.serverId]?.agents;
+  const serverInfo = state.sessions[params.serverId]?.serverInfo;
   if (!agents || agents.size === 0) {
     return EMPTY_SUBAGENT_ROWS;
   }
 
-  const rows: SubagentRow[] = [];
+  const rows: PaseoSubagentRow[] = [];
   for (const agent of agents.values()) {
     if (
       agent.archivedAt ||
@@ -86,7 +88,7 @@ export function selectSubagentsForParent(
     ) {
       continue;
     }
-    rows.push(toSubagentRow(agent));
+    rows.push(toSubagentRow(agent, serverInfo));
   }
 
   if (rows.length === 0) {
