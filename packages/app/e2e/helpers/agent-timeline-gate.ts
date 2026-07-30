@@ -17,6 +17,7 @@ export interface AgentTimelineResponseGate {
 
 export interface OlderTimelinePagesGate {
   getRequestCount(): number;
+  getRepeatedAssistantEntryCount(): number;
   releasePage(pageNumber: number): void;
   waitForRequestCount(count: number): Promise<void>;
 }
@@ -178,6 +179,8 @@ export async function holdAgentOlderTimelinePages(
 ): Promise<OlderTimelinePagesGate> {
   let requestCount = 0;
   let responseCount = 0;
+  let repeatedAssistantEntryCount = 0;
+  const assistantEntryKeys = new Set<string>();
   const releasedPages = new Set<number>();
   const delayedForwards = new Map<number, Array<() => void>>();
   const requestWaiters = new Map<number, Array<() => void>>();
@@ -213,6 +216,26 @@ export async function holdAgentOlderTimelinePages(
         payload.direction === "before"
       ) {
         responseCount += 1;
+        const entries = Array.isArray(payload.entries) ? payload.entries : [];
+        for (const entry of entries) {
+          if (!entry || typeof entry !== "object") continue;
+          const projectedEntry = entry as {
+            seqStart?: unknown;
+            seqEnd?: unknown;
+            item?: { type?: unknown };
+          };
+          if (
+            typeof projectedEntry.seqStart !== "number" ||
+            typeof projectedEntry.seqEnd !== "number" ||
+            typeof projectedEntry.item?.type !== "string"
+          ) {
+            continue;
+          }
+          if (projectedEntry.item.type !== "assistant_message") continue;
+          const key = `${projectedEntry.seqStart}:${projectedEntry.seqEnd}:${projectedEntry.item.type}`;
+          if (assistantEntryKeys.has(key)) repeatedAssistantEntryCount += 1;
+          else assistantEntryKeys.add(key);
+        }
         const pageNumber = responseCount;
         if (releasedPages.has(pageNumber)) {
           ws.send(message);
@@ -229,6 +252,7 @@ export async function holdAgentOlderTimelinePages(
 
   return {
     getRequestCount: () => requestCount,
+    getRepeatedAssistantEntryCount: () => repeatedAssistantEntryCount,
     releasePage(pageNumber) {
       releasedPages.add(pageNumber);
       for (const forward of delayedForwards.get(pageNumber) ?? []) forward();

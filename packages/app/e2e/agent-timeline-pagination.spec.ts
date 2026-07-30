@@ -19,6 +19,8 @@ import {
   scrollTimelineToOldestLoadedEdge,
   scrollTimelineToNewestLoadedEdge,
   seedLongMockAgentTimeline,
+  scrollThroughOlderHistoryPages,
+  seedRealisticOlderTimeline,
   sendLiveTurnBeforeHydration,
   expectTimelineViewportAnchoredAfterPrepend,
   userScrollsTimelineToHistoryStart,
@@ -43,6 +45,21 @@ test.describe("Agent timeline pagination", () => {
 
       await userScrollsTimelineToHistoryStart(page);
       await history.expectRequestedPages(2);
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
+  test("does not repeat an assistant block that spans older history pages", async ({ page }) => {
+    test.setTimeout(120_000);
+    const agent = await seedRealisticOlderTimeline();
+    try {
+      const history = await holdOlderHistoryPages(page, agent);
+      await openAgentTimeline(page, agent);
+      await expectTimelinePromptVisible(page, agent.newestPrompt);
+
+      await scrollThroughOlderHistoryPages(page, 3, history);
+      history.expectNoRepeatedAssistantEntries();
     } finally {
       await agent.cleanup();
     }

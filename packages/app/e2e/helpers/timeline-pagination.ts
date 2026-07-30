@@ -23,6 +23,10 @@ interface LongTimelineAgent extends MockAgentWorkspace {
   newestPrompt: string;
 }
 
+interface RealisticOlderTimelineAgent extends MockAgentWorkspace {
+  newestPrompt: string;
+}
+
 const PROMPT_PREFIX = "timeline-pagination-turn";
 const LIVE_BEFORE_HYDRATION_PROMPT = "timeline live before authoritative hydration";
 const HISTORY_START_THRESHOLD_PX = 96;
@@ -45,6 +49,7 @@ interface OlderHistoryLoadingOperation {
 interface OlderHistoryPages {
   expectRequestedPages(count: number): Promise<void>;
   expectSettledWithRequestedPages(count: number): Promise<void>;
+  expectNoRepeatedAssistantEntries(): void;
   releasePage(pageNumber: number): void;
 }
 
@@ -73,6 +78,50 @@ export async function seedLongMockAgentTimeline(
     oldestPrompt: promptForTurn(0),
     newestPrompt: promptForTurn(options.turns - 1),
   };
+}
+
+export async function seedRealisticOlderTimeline(): Promise<RealisticOlderTimelineAgent> {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "timeline-realistic-older-history-",
+    title: "Realistic older timeline pagination regression",
+    model: "ten-second-stream",
+  });
+
+  const olderTurnCount = 40;
+  for (let index = 0; index < olderTurnCount; index += 1) {
+    await agent.client.sendAgentMessage(
+      agent.agentId,
+      `timeline-pagination-older-turn-${index}: emit 1 coalesced agent stream updates`,
+    );
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+  }
+
+  await agent.client.sendAgentMessage(agent.agentId, "build a realistic long mock timeline");
+  await agent.client.waitForFinish(agent.agentId, 20_000);
+
+  const newerTurnCount = 20;
+  for (let index = 0; index < newerTurnCount; index += 1) {
+    await agent.client.sendAgentMessage(agent.agentId, promptForTurn(index));
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+  }
+
+  return {
+    ...agent,
+    newestPrompt: promptForTurn(newerTurnCount - 1),
+  };
+}
+
+export async function scrollThroughOlderHistoryPages(
+  page: Page,
+  pageCount: number,
+  history: OlderHistoryPages,
+): Promise<void> {
+  for (let pageNumber = 0; pageNumber < pageCount; pageNumber += 1) {
+    await userScrollsTimelineToHistoryStart(page);
+    await history.expectRequestedPages(pageNumber + 1);
+    history.releasePage(pageNumber + 1);
+    await history.expectSettledWithRequestedPages(pageNumber + 1);
+  }
 }
 
 export async function rememberTimelinePromptPosition(
@@ -104,7 +153,7 @@ export async function expectTimelinePromptPositionPreserved(
     .toBeLessThanOrEqual(2);
 }
 
-export async function openAgentTimeline(page: Page, agent: LongTimelineAgent): Promise<void> {
+export async function openAgentTimeline(page: Page, agent: MockAgentWorkspace): Promise<void> {
   await page.goto(buildAgentRoute(agent.workspaceId, agent.agentId));
   await page.waitForURL(
     (url) => url.pathname.includes("/workspace/") && !url.searchParams.has("open"),
@@ -204,7 +253,7 @@ export async function holdNextOlderTimelinePage(
 
 export async function holdOlderHistoryPages(
   page: Page,
-  agent: LongTimelineAgent,
+  agent: MockAgentWorkspace,
 ): Promise<OlderHistoryPages> {
   const gate: OlderTimelinePagesGate = await holdAgentOlderTimelinePages(page, agent.agentId);
   return {
@@ -215,6 +264,9 @@ export async function holdOlderHistoryPages(
     async expectSettledWithRequestedPages(count) {
       await waitForTimelineGeometryToSettle(page);
       expect(gate.getRequestCount()).toBe(count);
+    },
+    expectNoRepeatedAssistantEntries() {
+      expect(gate.getRepeatedAssistantEntryCount()).toBe(0);
     },
     releasePage(pageNumber) {
       gate.releasePage(pageNumber);
