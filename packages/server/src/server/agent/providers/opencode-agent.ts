@@ -2773,8 +2773,8 @@ type OpenCodeTurnState =
 type OpenCodeRunnerStatus = "idle" | "busy" | "retry";
 
 interface OpenCodeStop {
-  /** Foreground turn awaiting a cancellation acknowledgement, if any. */
-  readonly turnId: string | null;
+  /** Foreground turn still owed a cancellation acknowledgement; cleared once emitted. */
+  pendingCancellationTurnId: string | null;
   /** Resolves when the canceled run publishes its authoritative terminal. */
   readonly terminal: Deferred<void>;
   /** Resolves when the owned abort settles; rejects when it and its retry fail. */
@@ -3032,8 +3032,9 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   async interrupt(): Promise<void> {
+    const turnId = this.activeForegroundTurnId;
     this.abortController?.abort();
-    const stop = this.beginStop(this.activeForegroundTurnId);
+    const stop = this.beginStop(turnId);
     // COMPAT(opencodeSlowAbort): OpenCode 1.14.42+ blocks session.abort until
     // the running tool actually stops, which can be tens of seconds for
     // long-running tools. Cap the wait so the user-visible cancel lands
@@ -3049,7 +3050,7 @@ class OpenCodeAgentSession implements AgentSession {
     const abortFailure = await withTimeout(settledAbort, 2_000, "OpenCode session.abort").catch(
       (error) => {
         this.logger.warn(
-          { err: error, sessionId: this.sessionId, turnId: stop.turnId },
+          { err: error, sessionId: this.sessionId, turnId },
           "OpenCode session.abort did not settle within the cancel cap",
         );
         return undefined;
@@ -3151,7 +3152,7 @@ class OpenCodeAgentSession implements AgentSession {
       }
     } catch (error) {
       this.logger.warn(
-        { err: error, sessionId: this.sessionId, turnId: stop.turnId },
+        { err: error, sessionId: this.sessionId, turnId: stop.pendingCancellationTurnId },
         "Failed to reconcile the OpenCode stop with provider session status",
       );
     }
@@ -3812,23 +3813,31 @@ class OpenCodeAgentSession implements AgentSession {
     this.pendingUserMessageText = null;
     this.pendingClientMessageId = null;
     this.abortController = null;
-    const stop: OpenCodeStop = { turnId, terminal, abort };
+    const stop: OpenCodeStop = { pendingCancellationTurnId: turnId, terminal, abort };
     if (turnId) {
       // An idle session has no run to observe, so only abort settlement gates
       // reuse there. A running one also owes the canceled run's terminal.
       this.turnState = { status: "stopping", stop };
       // Cancellation is acknowledged only once the stop is proven: either the
       // owned abort succeeded, or the provider published the run's terminal.
-      void Promise.any([abort, terminal.promise]).then(
-        () =>
-          this.notifySubscribers(
-            { type: "turn_canceled", provider: "opencode", reason: "interrupted" },
-            turnId,
-          ),
+      void abort.then(
+        () => this.acknowledgeCancellation(stop),
         () => undefined,
       );
     }
     return stop;
+  }
+
+  private acknowledgeCancellation(stop: OpenCodeStop): void {
+    const turnId = stop.pendingCancellationTurnId;
+    if (!turnId) {
+      return;
+    }
+    stop.pendingCancellationTurnId = null;
+    this.notifySubscribers(
+      { type: "turn_canceled", provider: "opencode", reason: "interrupted" },
+      turnId,
+    );
   }
 
   /**
@@ -3852,6 +3861,9 @@ class OpenCodeAgentSession implements AgentSession {
     if (!this.isStopping(stop)) {
       return;
     }
+    // Acknowledge before leaving the stopping state so a successor run adopted
+    // from the very next event cannot start ahead of the cancellation.
+    this.acknowledgeCancellation(stop);
     resetOpenCodeTurnTrackingState(this.createTranslationState());
     const contextWindowMaxTokens = this.resolveSelectedModelContextWindowMaxTokens();
     this.accumulatedUsage = contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
