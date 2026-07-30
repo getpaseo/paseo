@@ -2280,6 +2280,7 @@ export const ja: TranslationResources = {
         sendMessage: "メッセージを送信",
         queueMessage: "メッセージをキューに追加",
         muteUnmuteVoiceMode: "音声モードのミュートを切り替え",
+        muteUnmuteLiveVoice: "ライブ音声のミュートを切り替え",
         switchProject: "プロジェクトを切り替え",
       },
       helpNotes: {

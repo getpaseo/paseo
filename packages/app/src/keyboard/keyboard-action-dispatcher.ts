@@ -54,7 +54,8 @@ export type KeyboardActionId =
   | "workspace.pin"
   // Command-center only: no keybind, so these are absent from route-shortcut.ts.
   | "workspace.rename"
-  | "workspace.setup.show";
+  | "workspace.setup.show"
+  | "live-voice.mute-toggle";
 
 export type KeyboardActionDefinition =
   | { id: "agent.interrupt"; scope: KeyboardActionScope }
@@ -111,7 +112,8 @@ export type KeyboardActionDefinition =
   | { id: "workspace.archive"; scope: KeyboardActionScope }
   | { id: "workspace.pin"; scope: KeyboardActionScope }
   | { id: "workspace.rename"; scope: KeyboardActionScope }
-  | { id: "workspace.setup.show"; scope: KeyboardActionScope };
+  | { id: "workspace.setup.show"; scope: KeyboardActionScope }
+  | { id: "live-voice.mute-toggle"; scope: KeyboardActionScope };
 
 export interface KeyboardActionHandler {
   handlerId: string;

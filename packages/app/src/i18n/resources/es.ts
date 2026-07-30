@@ -2314,6 +2314,7 @@ export const es: TranslationResources = {
         sendMessage: "enviar mensaje",
         queueMessage: "mensaje de cola",
         muteUnmuteVoiceMode: "Silenciar el modo de voz/unmute",
+        muteUnmuteLiveVoice: "Silenciar/activar la voz en directo",
         switchProject: "Cambiar proyecto",
       },
       helpNotes: {

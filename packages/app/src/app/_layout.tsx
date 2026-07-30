@@ -66,6 +66,7 @@ import { ToastProvider } from "@/contexts/toast-context";
 import { VoiceProvider } from "@/contexts/voice-context";
 import { LiveVoiceProvider } from "@/contexts/live-voice-context";
 import { LiveVoiceStrip } from "@/live-voice/live-voice-strip";
+import { LiveVoiceMuteShortcut } from "@/live-voice/live-voice-mute-shortcut";
 import {
   resolveStartupBlocker,
   resolveStartupNavigationReady,
@@ -589,6 +590,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
       {/* In normal flow below the content row: a live call belongs to no screen,
           so its surface docks at the app's edge instead of floating over one. */}
       <LiveVoiceStrip />
+      <LiveVoiceMuteShortcut />
       <AppearanceStyleBoundary>
         {!isCompactLayout && appChromeLayout.sidebarToggleOwner === "window" ? (
           <WindowChromeRegion corners="top-left">

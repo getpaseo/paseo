@@ -2300,6 +2300,7 @@ export const ru: TranslationResources = {
         sendMessage: "Отправить сообщение",
         queueMessage: "Поставить сообщение в очередь",
         muteUnmuteVoiceMode: "Выключить/включить звук в голосовом режиме",
+        muteUnmuteLiveVoice: "Выключить/включить микрофон живого голоса",
         switchProject: "Сменить проект",
       },
       helpNotes: {

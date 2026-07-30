@@ -2236,6 +2236,7 @@ export const zhCN: TranslationResources = {
         sendMessage: "发送消息",
         queueMessage: "消息排队",
         muteUnmuteVoiceMode: "静音/取消静音语音模式",
+        muteUnmuteLiveVoice: "静音/取消静音实时语音",
         switchProject: "切换项目",
       },
       helpNotes: {
