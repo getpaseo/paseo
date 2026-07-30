@@ -2,6 +2,7 @@ export type LiveVoiceSessionFailureCode =
   | "unsupported"
   | "mic_denied"
   | "mic_unavailable"
+  | "background_unavailable"
   | "ice_timeout"
   | "webrtc_failed";
 

@@ -19,6 +19,7 @@ const ERROR_MESSAGE_KEYS: Record<string, string> = {
   // Local transport failures (LiveVoiceSessionError).
   mic_denied: "liveVoice.errors.micDenied",
   mic_unavailable: "liveVoice.errors.micUnavailable",
+  background_unavailable: "liveVoice.errors.backgroundUnavailable",
   ice_timeout: "liveVoice.errors.iceTimeout",
   webrtc_failed: "liveVoice.errors.connectionLost",
 };

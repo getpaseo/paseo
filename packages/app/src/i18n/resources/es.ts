@@ -1796,6 +1796,7 @@ export const es: TranslationResources = {
       stopping: "La llamada de voz en directo anterior aún se está deteniendo.",
       micDenied: "Se denegó el acceso al micrófono.",
       micUnavailable: "No se pudo abrir el micrófono.",
+      backgroundUnavailable: "No se pudo iniciar el audio en segundo plano.",
       iceTimeout: "No se pudo negociar la conexión a tiempo.",
       connectionLost: "Se perdió la conexión de voz en directo.",
     },

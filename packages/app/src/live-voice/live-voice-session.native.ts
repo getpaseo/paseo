@@ -13,6 +13,10 @@ import {
   type MediaStreamTrack,
 } from "react-native-webrtc";
 import {
+  beginLiveVoiceBackgroundCall,
+  endLiveVoiceBackgroundCall,
+} from "./background-call-lifetime";
+import {
   LiveVoiceSessionError,
   type LiveVoiceSession,
   type StartLiveVoiceSessionOptions,
@@ -44,6 +48,7 @@ export async function startLiveVoiceSession(
   let pc: RTCPeerConnection | null = null;
   let channel: ReturnType<RTCPeerConnection["createDataChannel"]> | null = null;
   let disconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let backgroundCallActive = false;
   let closed = false;
   let terminalReported = false;
 
@@ -97,6 +102,16 @@ export async function startLiveVoiceSession(
     }
     stream?.release();
     stream = null;
+
+    // WebRTC must release the shared iOS audio session before the lifetime
+    // module deactivates it. Android likewise no longer needs its foreground
+    // microphone service once capture has stopped.
+    if (backgroundCallActive) {
+      backgroundCallActive = false;
+      void endLiveVoiceBackgroundCall().catch((error) => {
+        console.warn("[LiveVoice] Failed to end background call lifetime", error);
+      });
+    }
   }
 
   function reportTerminal(code: string, message: string): void {
@@ -133,6 +148,17 @@ export async function startLiveVoiceSession(
     micTrack = stream.getAudioTracks()[0] ?? null;
     if (!micTrack) {
       throw new LiveVoiceSessionError("mic_unavailable", "No microphone track was produced.");
+    }
+
+    try {
+      await beginLiveVoiceBackgroundCall();
+      backgroundCallActive = true;
+    } catch (error) {
+      throw new LiveVoiceSessionError(
+        "background_unavailable",
+        "Live Voice could not establish background audio support.",
+        { cause: error },
+      );
     }
 
     pc = new RTCPeerConnection();

@@ -1,0 +1,9 @@
+{
+  "platforms": ["ios", "android"],
+  "ios": {
+    "modules": ["PaseoBackgroundCallModule"]
+  },
+  "android": {
+    "modules": ["sh.paseo.backgroundcall.PaseoBackgroundCallModule"]
+  }
+}

@@ -1729,6 +1729,7 @@ export const zhCN: TranslationResources = {
       stopping: "上一次实时语音通话仍在停止中。",
       micDenied: "麦克风访问被拒绝。",
       micUnavailable: "无法打开麦克风。",
+      backgroundUnavailable: "无法启动后台音频。",
       iceTimeout: "未能及时协商连接。",
       connectionLost: "实时语音连接已断开。",
     },

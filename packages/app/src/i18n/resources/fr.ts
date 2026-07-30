@@ -1800,6 +1800,7 @@ export const fr: TranslationResources = {
       stopping: "L'appel vocal en direct précédent est encore en cours d'arrêt.",
       micDenied: "L'accès au micro a été refusé.",
       micUnavailable: "Le micro n'a pas pu être ouvert.",
+      backgroundUnavailable: "L'audio en arrière-plan n'a pas pu démarrer.",
       iceTimeout: "La connexion n'a pas pu être négociée à temps.",
       connectionLost: "La connexion vocale en direct a été perdue.",
     },

@@ -12,7 +12,11 @@ const isProfileBuild = process.env.PASEO_PROFILE_BUILD === "1";
 const liveVoiceAndroidPermissions = [
   "android.permission.ACCESS_NETWORK_STATE",
   "android.permission.CHANGE_NETWORK_STATE",
+  "android.permission.FOREGROUND_SERVICE",
+  "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+  "android.permission.FOREGROUND_SERVICE_MICROPHONE",
   "android.permission.INTERNET",
+  "android.permission.POST_NOTIFICATIONS",
   "android.permission.WAKE_LOCK",
   "android.permission.BLUETOOTH",
 ];
@@ -118,6 +122,7 @@ export default {
       infoPlist: {
         NSMicrophoneUsageDescription: "This app needs access to the microphone for voice commands.",
         ITSAppUsesNonExemptEncryption: false,
+        UIBackgroundModes: ["audio"],
       },
       bundleIdentifier: variant.packageId,
       ...(variant.googleServiceInfoPlist

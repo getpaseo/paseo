@@ -1750,6 +1750,7 @@ export const ar: TranslationResources = {
       stopping: "مكالمة الصوت المباشر السابقة لا تزال تتوقف.",
       micDenied: "تم رفض الوصول إلى الميكروفون.",
       micUnavailable: "تعذّر فتح الميكروفون.",
+      backgroundUnavailable: "تعذّر تشغيل الصوت في الخلفية.",
       iceTimeout: "تعذّر التفاوض على الاتصال في الوقت المناسب.",
       connectionLost: "انقطع اتصال الصوت المباشر.",
     },

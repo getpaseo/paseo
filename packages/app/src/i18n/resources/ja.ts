@@ -1767,6 +1767,7 @@ export const ja: TranslationResources = {
       stopping: "前回のライブ音声通話がまだ停止中です。",
       micDenied: "マイクへのアクセスが拒否されました。",
       micUnavailable: "マイクを開けませんでした。",
+      backgroundUnavailable: "バックグラウンド音声を開始できませんでした。",
       iceTimeout: "時間内に接続を確立できませんでした。",
       connectionLost: "ライブ音声の接続が切断されました。",
     },

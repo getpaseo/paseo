@@ -1760,6 +1760,7 @@ export const en = {
       stopping: "The previous live voice call is still stopping.",
       micDenied: "Microphone access was denied.",
       micUnavailable: "The microphone could not be opened.",
+      backgroundUnavailable: "Background audio could not be started.",
       iceTimeout: "The connection could not be negotiated in time.",
       connectionLost: "The live voice connection dropped.",
     },

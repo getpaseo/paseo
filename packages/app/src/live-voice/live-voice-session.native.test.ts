@@ -126,9 +126,23 @@ const nativeRtc = vi.hoisted(() => {
   };
 });
 
+const backgroundCallLifetime = vi.hoisted(() => ({
+  begin: vi.fn(async () => {
+    nativeRtc.trace.push("beginBackgroundCall");
+  }),
+  end: vi.fn(async () => {
+    nativeRtc.trace.push("endBackgroundCall");
+  }),
+}));
+
 vi.mock("react-native-webrtc", () => ({
   mediaDevices: nativeRtc.mediaDevices,
   RTCPeerConnection: nativeRtc.FakePeerConnection,
+}));
+
+vi.mock("./background-call-lifetime", () => ({
+  beginLiveVoiceBackgroundCall: backgroundCallLifetime.begin,
+  endLiveVoiceBackgroundCall: backgroundCallLifetime.end,
 }));
 
 import { LiveVoiceSessionError, startLiveVoiceSession } from "./live-voice-session.native";
@@ -136,6 +150,8 @@ import { LiveVoiceSessionError, startLiveVoiceSession } from "./live-voice-sessi
 describe("native live voice session", () => {
   beforeEach(() => {
     nativeRtc.reset();
+    backgroundCallLifetime.begin.mockClear();
+    backgroundCallLifetime.end.mockClear();
   });
 
   it("negotiates the required WebRTC offer and owns native audio cleanup", async () => {
@@ -153,6 +169,7 @@ describe("native live voice session", () => {
 
     expect(nativeRtc.trace).toEqual([
       "getUserMedia",
+      "beginBackgroundCall",
       "addTrack",
       "createDataChannel:oai-events",
       "createOffer",
@@ -178,6 +195,8 @@ describe("native live voice session", () => {
     expect(peer?.channel.closed).toBe(true);
     expect(nativeRtc.stream().track.stopped).toBe(true);
     expect(nativeRtc.stream().released).toBe(true);
+    expect(nativeRtc.trace.at(-1)).toBe("endBackgroundCall");
+    expect(backgroundCallLifetime.end).toHaveBeenCalledOnce();
   });
 
   it("reports a terminal peer failure once and tears down the microphone", async () => {
@@ -207,6 +226,7 @@ describe("native live voice session", () => {
     });
     expect(peer.closed).toBe(true);
     expect(nativeRtc.stream().released).toBe(true);
+    expect(backgroundCallLifetime.end).toHaveBeenCalledOnce();
   });
 
   it("classifies a denied native microphone permission", async () => {
@@ -226,5 +246,28 @@ describe("native live voice session", () => {
         code: "mic_denied",
       }),
     );
+    expect(backgroundCallLifetime.begin).not.toHaveBeenCalled();
+    expect(backgroundCallLifetime.end).not.toHaveBeenCalled();
+  });
+
+  it("closes microphone capture when background-call activation fails", async () => {
+    backgroundCallLifetime.begin.mockRejectedValueOnce(new Error("foreground service refused"));
+
+    await expect(
+      startLiveVoiceSession({
+        negotiate: vi.fn(),
+        onAudioBlocked: vi.fn(),
+        onAudioResumed: vi.fn(),
+        onTerminal: vi.fn(),
+      }),
+    ).rejects.toEqual(
+      expect.objectContaining<Partial<LiveVoiceSessionError>>({
+        code: "background_unavailable",
+      }),
+    );
+
+    expect(nativeRtc.stream().track.stopped).toBe(true);
+    expect(nativeRtc.stream().released).toBe(true);
+    expect(backgroundCallLifetime.end).not.toHaveBeenCalled();
   });
 });

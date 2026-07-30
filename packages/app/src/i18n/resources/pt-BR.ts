@@ -1782,6 +1782,7 @@ export const ptBR: TranslationResources = {
       stopping: "A chamada de voz ao vivo anterior ainda está sendo encerrada.",
       micDenied: "O acesso ao microfone foi negado.",
       micUnavailable: "Não foi possível abrir o microfone.",
+      backgroundUnavailable: "Não foi possível iniciar o áudio em segundo plano.",
       iceTimeout: "Não foi possível negociar a conexão em tempo.",
       connectionLost: "A conexão de voz ao vivo caiu.",
     },
