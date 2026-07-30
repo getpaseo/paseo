@@ -20,6 +20,16 @@ Existing direct providers: `claude` (in `providers/claude/agent.ts`), `codex` (`
 
 Claude first-party model metadata lives in `packages/server/src/server/agent/providers/claude/model-manifest.ts`. When adding or updating a Claude model, update that manifest only; the model picker thinking options and Claude-specific feature gates are derived from the manifest. Do not add model-specific Claude capability lists in feature code.
 
+For every Claude catalog entry, set the full capability surface Claude Code exposes for that model:
+
+- `contextWindowMaxTokens` and a separate `[1m]` row when 200k/1M are distinct launch IDs
+- `effortLevels` (CC TUI: low/medium/high/xhigh/max)
+- `supportsThinkingDisabled` when Off is allowed
+- `supportsFastMode` for Opus models that support Fast in Claude Code
+- `minimumClaudeCodeVersion` when the model needs a newer CLI
+
+Keep the capability matrix test in `models.test.ts` in sync. Until `fetchCatalog` consumes Claude Agent SDK `supportedModels()`, this table is the source of truth and will lag the TUI if left incomplete.
+
 Paseo tools are not implemented as MCP tools internally. They live in a shared tool catalog under `packages/server/src/server/agent/tools/`; MCP is only the fallback adapter. A provider that can register runtime tools directly should set `supportsNativePaseoTools: true` and consume `launchContext.paseoTools` in `createSession`/`resumeSession`. When native tools are present, `AgentManager` strips the internal Paseo MCP server from the provider launch config so the provider does not receive the same tools twice. Providers that only know MCP should keep `supportsMcpServers: true` and let the daemon inject `/mcp/agents`.
 
 Pi is a process-backed provider. Paseo requires the user to have the `pi` binary installed and talks to it through `pi --mode rpc`; the server package does not embed Pi's SDK/runtime packages.

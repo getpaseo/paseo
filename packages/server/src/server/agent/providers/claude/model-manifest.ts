@@ -34,6 +34,18 @@ const CLAUDE_EFFORT_LABELS = {
 export const CLAUDE_DISABLED_THINKING_OPTION_ID = "off";
 export const CLAUDE_ULTRACODE_THINKING_OPTION_ID = "ultracode";
 
+/**
+ * Claude Code capability checklist for every first-party catalog entry:
+ * - contextWindowMaxTokens (200k vs 1M variant)
+ * - effortLevels (CC TUI: low/medium/high/xhigh/max)
+ * - supportsThinkingDisabled (Off) when CC allows it
+ * - supportsFastMode for Opus family when CC allows Fast
+ * - minimumClaudeCodeVersion when a model needs a newer CLI
+ *
+ * Prefer aligning with Claude Agent SDK `supportedModels()` fields when updating.
+ * Until live discovery is wired into fetchCatalog, keep this table complete so
+ * Paseo does not lag the TUI model-by-model.
+ */
 export const CLAUDE_MODEL_MANIFEST = [
   {
     id: "claude-opus-5[1m]",
@@ -44,6 +56,7 @@ export const CLAUDE_MODEL_MANIFEST = [
     contextWindowMaxTokens: 1_000_000,
     effortLevels: CLAUDE_EFFORT_LEVELS,
     supportsThinkingDisabled: true,
+    supportsFastMode: true,
   },
   {
     id: "claude-opus-5",
@@ -53,6 +66,7 @@ export const CLAUDE_MODEL_MANIFEST = [
     contextWindowMaxTokens: 200_000,
     effortLevels: CLAUDE_EFFORT_LEVELS,
     supportsThinkingDisabled: true,
+    supportsFastMode: true,
   },
   {
     id: "claude-fable-5[1m]",

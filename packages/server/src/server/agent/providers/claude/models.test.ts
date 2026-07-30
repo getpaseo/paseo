@@ -414,6 +414,133 @@ describe("findClaudeModel", () => {
   });
 });
 
+describe("Claude model capability matrix", () => {
+  /**
+   * Full first-party surface Paseo exposes. Update this table whenever Claude Code
+   * gains/loses a capability so the catalog does not lag the TUI one flag at a time.
+   */
+  const FULL_EFFORT = [
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+    CLAUDE_ULTRACODE_THINKING_OPTION_ID,
+  ];
+  const FULL_EFFORT_WITH_OFF = [CLAUDE_DISABLED_THINKING_OPTION_ID, ...FULL_EFFORT];
+
+  const EXPECTED = [
+    {
+      id: "claude-opus-5[1m]",
+      contextWindowMaxTokens: 1_000_000,
+      thinkingIds: FULL_EFFORT_WITH_OFF,
+      supportsFastMode: true,
+    },
+    {
+      id: "claude-opus-5",
+      contextWindowMaxTokens: 200_000,
+      thinkingIds: FULL_EFFORT_WITH_OFF,
+      supportsFastMode: true,
+    },
+    {
+      id: "claude-fable-5[1m]",
+      contextWindowMaxTokens: 1_000_000,
+      thinkingIds: FULL_EFFORT,
+      supportsFastMode: false,
+    },
+    {
+      id: "claude-fable-5",
+      contextWindowMaxTokens: 200_000,
+      thinkingIds: FULL_EFFORT,
+      supportsFastMode: false,
+    },
+    {
+      id: "claude-opus-4-8[1m]",
+      contextWindowMaxTokens: 1_000_000,
+      thinkingIds: FULL_EFFORT_WITH_OFF,
+      supportsFastMode: true,
+    },
+    {
+      id: "claude-opus-4-8",
+      contextWindowMaxTokens: 200_000,
+      thinkingIds: FULL_EFFORT_WITH_OFF,
+      supportsFastMode: true,
+    },
+    {
+      id: "claude-sonnet-5",
+      contextWindowMaxTokens: 200_000,
+      thinkingIds: FULL_EFFORT_WITH_OFF,
+      supportsFastMode: false,
+    },
+    {
+      id: "claude-sonnet-5[1m]",
+      contextWindowMaxTokens: 1_000_000,
+      thinkingIds: FULL_EFFORT_WITH_OFF,
+      supportsFastMode: false,
+    },
+    {
+      id: "claude-opus-4-7[1m]",
+      contextWindowMaxTokens: 1_000_000,
+      thinkingIds: FULL_EFFORT_WITH_OFF,
+      supportsFastMode: true,
+    },
+    {
+      id: "claude-opus-4-7",
+      contextWindowMaxTokens: 200_000,
+      thinkingIds: FULL_EFFORT_WITH_OFF,
+      supportsFastMode: true,
+    },
+    {
+      id: "claude-opus-4-6[1m]",
+      contextWindowMaxTokens: 1_000_000,
+      thinkingIds: FULL_EFFORT_WITH_OFF,
+      supportsFastMode: true,
+    },
+    {
+      id: "claude-opus-4-6",
+      contextWindowMaxTokens: 200_000,
+      thinkingIds: FULL_EFFORT_WITH_OFF,
+      supportsFastMode: true,
+    },
+    {
+      id: "claude-sonnet-4-6[1m]",
+      contextWindowMaxTokens: 1_000_000,
+      thinkingIds: FULL_EFFORT_WITH_OFF,
+      supportsFastMode: false,
+    },
+    {
+      id: "claude-sonnet-4-6",
+      contextWindowMaxTokens: 200_000,
+      thinkingIds: FULL_EFFORT_WITH_OFF,
+      supportsFastMode: false,
+    },
+    {
+      id: "claude-haiku-4-5",
+      contextWindowMaxTokens: 200_000,
+      thinkingIds: FULL_EFFORT,
+      supportsFastMode: false,
+    },
+  ] as const;
+
+  it("locks effort, context, thinking-off, and fast-mode flags for every catalog model", () => {
+    const models = new Map(getClaudeModels().map((model) => [model.id, model]));
+    expect([...models.keys()].sort()).toEqual(EXPECTED.map((entry) => entry.id).sort());
+
+    for (const expected of EXPECTED) {
+      const model = models.get(expected.id);
+      expect(model, expected.id).toBeDefined();
+      expect(model?.contextWindowMaxTokens, expected.id).toBe(expected.contextWindowMaxTokens);
+      expect(
+        model?.thinkingOptions?.map((option) => option.id),
+        expected.id,
+      ).toEqual(expected.thinkingIds);
+      expect(claudeManifestModelSupportsFastMode(expected.id), expected.id).toBe(
+        expected.supportsFastMode,
+      );
+    }
+  });
+});
+
 describe("Claude Opus 5 catalog", () => {
   it("exposes explicit 200K and 1M Opus 5 variants", () => {
     const opus5Models = getClaudeModels()

@@ -639,29 +639,24 @@ describe("ClaudeAgentSession features", () => {
   test("lists fast mode only for supported Opus models", async () => {
     const client = new ClaudeAgentClient({ logger, resolveBinary: async () => "/test/claude/bin" });
 
-    await expect(
-      client.listFeatures({
-        provider: "claude",
-        cwd: process.cwd(),
-        model: "claude-opus-4-8",
-      }),
-    ).resolves.toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
-
-    await expect(
-      client.listFeatures({
-        provider: "claude",
-        cwd: process.cwd(),
-        model: "claude-opus-4-8[1m]",
-      }),
-    ).resolves.toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
-
-    await expect(
-      client.listFeatures({
-        provider: "claude",
-        cwd: process.cwd(),
-        model: "claude-opus-4-8-20260101",
-      }),
-    ).resolves.toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
+    for (const model of [
+      "claude-opus-5",
+      "claude-opus-5[1m]",
+      "claude-opus-5-20260724",
+      "claude-opus-4-8",
+      "claude-opus-4-8[1m]",
+      "claude-opus-4-8-20260101",
+      "claude-opus-4-7",
+      "claude-opus-4-6",
+    ]) {
+      await expect(
+        client.listFeatures({
+          provider: "claude",
+          cwd: process.cwd(),
+          model,
+        }),
+      ).resolves.toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
+    }
 
     await expect(
       client.listFeatures({
@@ -675,7 +670,31 @@ describe("ClaudeAgentSession features", () => {
       client.listFeatures({
         provider: "claude",
         cwd: process.cwd(),
+        model: "claude-sonnet-5",
+      }),
+    ).resolves.toEqual([]);
+
+    await expect(
+      client.listFeatures({
+        provider: "claude",
+        cwd: process.cwd(),
         model: "claude-sonnet-4-6",
+      }),
+    ).resolves.toEqual([]);
+
+    await expect(
+      client.listFeatures({
+        provider: "claude",
+        cwd: process.cwd(),
+        model: "claude-haiku-4-5",
+      }),
+    ).resolves.toEqual([]);
+
+    await expect(
+      client.listFeatures({
+        provider: "claude",
+        cwd: process.cwd(),
+        model: "grok-4.5",
       }),
     ).resolves.toEqual([]);
   });
