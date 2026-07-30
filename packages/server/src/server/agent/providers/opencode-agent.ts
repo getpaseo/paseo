@@ -2760,7 +2760,7 @@ function createDeferred<T>(): Deferred<T> {
 type OpenCodeTurnState =
   | { status: "idle" }
   | { status: "running"; turnId: string }
-  | { status: "stopping"; idle: Deferred<void> };
+  | { status: "stopping"; idle: Deferred<void>; abort: Promise<void> };
 
 function unwrapOpenCodeGlobalEvent(event: unknown): OpenCodeEvent | null {
   const record = readOpenCodeRecord(event);
@@ -3009,20 +3009,17 @@ class OpenCodeAgentSession implements AgentSession {
   async interrupt(): Promise<void> {
     const turnId = this.activeForegroundTurnId;
     this.abortController?.abort();
-    if (turnId) {
-      this.beginStoppingTurn(turnId);
-    }
+    const stopping = this.beginStoppingTurn(turnId);
     // COMPAT(opencodeSlowAbort): OpenCode 1.14.42+ blocks session.abort until
     // the running tool actually stops, which can be tens of seconds for
     // long-running tools. Cap the wait so the user-visible cancel lands
     // quickly while still giving OpenCode a chance to confirm the abort
     // cleanly. Drop the timeout once upstream returns abort acknowledgement
     // before tool teardown.
-    const abortPromise = this.abortSession(turnId, "interrupt");
-    await withTimeout(abortPromise, 2_000, "OpenCode session.abort").catch((error) => {
+    await withTimeout(stopping.abort, 2_000, "OpenCode session.abort").catch((error) => {
       this.logger.warn(
         { err: error, sessionId: this.sessionId, turnId },
-        "OpenCode session.abort exceeded the cancel cap; proceeding with local cancel",
+        "OpenCode session.abort did not settle within the cancel cap",
       );
     });
   }
@@ -3048,6 +3045,7 @@ class OpenCodeAgentSession implements AgentSession {
           { err: error, sessionId: this.sessionId, turnId, reason },
           "OpenCode session.abort rejected",
         );
+        throw error;
       });
   }
 
@@ -3057,21 +3055,31 @@ class OpenCodeAgentSession implements AgentSession {
     }
 
     const stopping = this.turnState;
-    // OpenCode creates prompts before joining its single session runner. Sending
-    // while that runner is stopping can strand the new prompt behind the old
-    // run, so only provider-confirmed idle makes the session reusable.
+    // OpenCode creates prompts before joining its single session runner, and
+    // abort is session-scoped. Reuse requires both provider-confirmed idle and
+    // the earlier abort to settle so it cannot cancel the replacement run.
     await withTimeout(
-      this.observeProviderStopBoundary(stopping),
+      Promise.all([this.settleStopAbort(stopping), this.observeProviderStopBoundary(stopping)]),
       OPENCODE_PENDING_ABORT_START_TIMEOUT_MS,
       "OpenCode previous turn to stop",
     );
+  }
+
+  private async settleStopAbort(
+    stopping: Extract<OpenCodeTurnState, { status: "stopping" }>,
+  ): Promise<void> {
+    try {
+      await stopping.abort;
+    } catch {
+      stopping.abort = this.abortSession(null, "turn_start_boundary");
+      await stopping.abort;
+    }
   }
 
   private async observeProviderStopBoundary(
     stopping: Extract<OpenCodeTurnState, { status: "stopping" }>,
   ): Promise<void> {
     while (this.turnState === stopping) {
-      void this.abortSession(null, "turn_start_boundary");
       const eventStreamTask = this.eventStreamTask;
       const boundary = await (eventStreamTask
         ? Promise.race([
@@ -3720,19 +3728,32 @@ class OpenCodeAgentSession implements AgentSession {
     this.notifySubscribers(event, turnId);
   }
 
-  private beginStoppingTurn(turnId: string): void {
-    if (this.turnState.status !== "running" || this.turnState.turnId !== turnId) {
-      return;
+  private beginStoppingTurn(
+    turnId: string | null,
+  ): Extract<OpenCodeTurnState, { status: "stopping" }> {
+    if (this.turnState.status === "stopping") {
+      return this.turnState;
     }
-    this.synthesizeInterruptedToolCalls(turnId);
+
+    const idle = createDeferred<void>();
+    if (turnId) {
+      this.synthesizeInterruptedToolCalls(turnId);
+    } else {
+      idle.resolve();
+    }
     this.pendingUserMessageText = null;
     this.pendingClientMessageId = null;
     this.abortController = null;
-    this.turnState = { status: "stopping", idle: createDeferred<void>() };
-    this.notifySubscribers(
-      { type: "turn_canceled", provider: "opencode", reason: "interrupted" },
-      turnId,
-    );
+    const stopping = { status: "stopping" as const, idle, abort: Promise.resolve() };
+    this.turnState = stopping;
+    stopping.abort = this.abortSession(turnId, "interrupt");
+    if (turnId) {
+      this.notifySubscribers(
+        { type: "turn_canceled", provider: "opencode", reason: "interrupted" },
+        turnId,
+      );
+    }
+    return stopping;
   }
 
   private finishStoppingTurn(): void {

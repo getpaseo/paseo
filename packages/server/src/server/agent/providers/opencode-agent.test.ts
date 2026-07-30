@@ -1901,28 +1901,82 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
-  test("retries abort and waits for provider idle before starting the next prompt", async () => {
+  test("waits for the stop abort and provider idle before starting the next prompt", async () => {
     const { parent: session, openCode } = await createParentSession("ses_unit_test");
+    const retryStarted = createTestDeferred<void>();
+    const settleRetry = createTestDeferred<void>();
+    const oldIdleConsumed = createTestDeferred<void>();
+    const replacementCompleted = createTestDeferred<void>();
+    const events: AgentStreamEvent[] = [];
     openCode.sessionPromptAsyncEvents = [];
     openCode.sessionAbortImplementation = async () => {
       if (openCode.calls.sessionAbort.length === 1) {
         throw new Error("abort transport failed");
       }
-      openCode.emitEvent({
-        type: "session.idle",
-        properties: { sessionID: "ses_unit_test" },
-      });
+      retryStarted.resolve();
+      await settleRetry.promise;
       return { data: true };
     };
+    session.subscribe((event) => {
+      events.push(event);
+      if (event.type === "provider_subagent") {
+        oldIdleConsumed.resolve();
+      }
+      if (event.type === "turn_completed") {
+        replacementCompleted.resolve();
+      }
+    });
     try {
       await session.startTurn("first");
       await session.interrupt();
       expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
 
-      await session.startTurn("second");
+      const replacement = session.startTurn("second");
+      await retryStarted.promise;
+      openCode.emitEvent({
+        type: "session.idle",
+        properties: { sessionID: "ses_unit_test" },
+      });
+      openCode.emitEvent({
+        type: "session.created",
+        properties: {
+          info: {
+            id: "ses_child_after_old_idle",
+            parentID: "ses_unit_test",
+            title: "Old idle drain marker",
+            directory: "/workspace/repo",
+          },
+        },
+      });
+      await oldIdleConsumed.promise;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
       expect(openCode.calls.sessionAbort).toHaveLength(2);
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
+
+      settleRetry.resolve();
+      await replacement;
       expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
+
+      for (const event of assistantTurnEvents({
+        sessionId: "ses_unit_test",
+        text: "Replacement completed safely.",
+      })) {
+        openCode.emitEvent(event);
+      }
+      await replacementCompleted.promise;
+
+      expect(
+        turnEventSignatures(events.filter((event) => event.type !== "provider_subagent")),
+      ).toEqual([
+        ["turn_started", "opencode-turn-0"],
+        ["turn_canceled", "opencode-turn-0"],
+        ["turn_started", "opencode-turn-1"],
+        ["timeline", "opencode-turn-1"],
+        ["turn_completed", "opencode-turn-1"],
+      ]);
     } finally {
+      settleRetry.resolve();
       await session.close();
     }
   });
