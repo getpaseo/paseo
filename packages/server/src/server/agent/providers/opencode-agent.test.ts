@@ -2138,6 +2138,10 @@ describe("OpenCode adapter startTurn error handling", () => {
         },
       });
       openCode.emitEvent({
+        type: "session.status",
+        properties: { sessionID: "ses_deferred_autonomous", status: { type: "busy" } },
+      });
+      openCode.emitEvent({
         type: "message.part.updated",
         properties: {
           part: {
