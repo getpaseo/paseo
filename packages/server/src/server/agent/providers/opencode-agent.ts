@@ -2762,6 +2762,8 @@ type OpenCodeTurnState =
   | { status: "running"; turnId: string }
   | { status: "stopping"; stop: OpenCodeStop };
 
+type OpenCodeRunnerStatus = "idle" | "busy" | "retry";
+
 /**
  * One in-flight stop of the OpenCode session runner.
  *
@@ -2770,8 +2772,6 @@ type OpenCodeTurnState =
  * the canceled run's terminal. The runner is reusable only once both settle —
  * an abort still in flight would otherwise land on the replacement run.
  */
-type OpenCodeRunnerStatus = "idle" | "busy" | "retry";
-
 interface OpenCodeStop {
   /** Foreground turn still owed a cancellation acknowledgement; cleared once emitted. */
   pendingCancellationTurnId: string | null;
