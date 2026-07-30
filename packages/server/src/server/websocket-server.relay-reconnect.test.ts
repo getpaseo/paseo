@@ -54,6 +54,7 @@ const sessionMock = vi.hoisted(() => {
       this.args.clientCapabilities = capabilities;
     });
     clearAgentTimelineSubscription = vi.fn();
+    releaseLiveVoiceForSource = vi.fn();
     getClientActivity = vi.fn(() => null);
     getSessionId = vi.fn(() => "mock-session-id");
     getPermissions = vi.fn(() => this.args.permissions as string[]);
@@ -242,6 +243,7 @@ function createServer(options?: {
     createStub<AgentManager>({
       subscribe: vi.fn(() => () => {}),
       setAgentAttentionCallback: vi.fn(),
+      onAgentClosing: vi.fn(() => () => {}),
       getAgent: vi.fn(() => null),
       getMetricsSnapshot: vi.fn(() => ({
         totalAgents: 0,

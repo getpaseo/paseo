@@ -723,6 +723,7 @@ export class AgentManager {
   private appendSystemPrompt: string;
   private onAgentAttention?: AgentAttentionCallback;
   private onAgentArchived?: AgentArchivedCallback;
+  private readonly agentClosingListeners = new Set<(agentId: string) => void>();
   private onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
@@ -803,6 +804,28 @@ export class AgentManager {
 
   setAgentArchivedCallback(callback: AgentArchivedCallback): void {
     this.onAgentArchived = callback;
+  }
+
+  /**
+   * Fires just before an agent's provider session is torn down (close, archive,
+   * kill). Listeners get to release ephemeral resources attached to the live
+   * session — e.g. a Live Voice call — while the session is still usable.
+   */
+  onAgentClosing(callback: (agentId: string) => void): () => void {
+    this.agentClosingListeners.add(callback);
+    return () => {
+      this.agentClosingListeners.delete(callback);
+    };
+  }
+
+  private notifyAgentClosing(agentId: string): void {
+    for (const listener of Array.from(this.agentClosingListeners)) {
+      try {
+        listener(agentId);
+      } catch (error) {
+        this.logger.warn({ err: error, agentId }, "onAgentClosing listener failed");
+      }
+    }
   }
 
   setMcpBaseUrl(url: string | null): void {
@@ -1634,6 +1657,7 @@ export class AgentManager {
       },
       "agent.manager.close.start",
     );
+    this.notifyAgentClosing(agentId);
     await this.drainSessionEvents(agentId);
     this.cancelRunningProviderSubagents(agentId);
     const closedAgent = this.prepareAgentForClosure(agent, "agent closed");

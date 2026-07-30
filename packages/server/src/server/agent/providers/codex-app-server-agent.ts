@@ -38,6 +38,11 @@ import {
   type ProviderRefreshContext,
   type ResolveAgentDefaultModeInput,
 } from "../agent-sdk-types.js";
+import type {
+  AgentRealtimeVoiceEvent,
+  AgentRealtimeVoiceSession,
+  AgentRealtimeVoiceStartParams,
+} from "../agent-realtime-voice.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import { runProviderRefreshActivity } from "../provider-refresh-deadline.js";
 import type { Logger } from "pino";
@@ -168,6 +173,9 @@ const CODEX_PLAN_IMPLEMENTATION_PROMPT_PREFIX =
 // (and the /goal slash command) when the binary is too old.
 const CODEX_GOALS_MIN_VERSION: readonly [number, number, number] = [0, 128, 0];
 const CODEX_AUTO_REVIEW_MIN_VERSION: readonly [number, number, number] = [0, 115, 0];
+// `--enable realtime_conversation` plus the `version: "v3"` WebRTC transport
+// only exist in 0.145.0+. Older binaries reject the flag at launch, so gate it.
+const CODEX_LIVE_VOICE_MIN_VERSION: readonly [number, number, number] = [0, 145, 0];
 
 function parseCodexVersion(versionOutput: string): [number, number, number] | null {
   const match = versionOutput.match(/(\d+)\.(\d+)\.(\d+)/);
@@ -2112,6 +2120,52 @@ const TurnStartedNotificationSchema = z
   })
   .passthrough();
 
+// Codex realtime (`--enable realtime_conversation`) notifications. Every payload
+// carries only `threadId`; the realtime session id is echoed on `started` from
+// the value we passed to `thread/realtime/start`.
+const RealtimeStartedNotificationSchema = z
+  .object({
+    threadId: z.string().optional(),
+    realtimeSessionId: z.string().optional(),
+    version: z.string().optional(),
+  })
+  .passthrough();
+
+const RealtimeSdpNotificationSchema = z
+  .object({
+    threadId: z.string().optional(),
+    sdp: z.string(),
+  })
+  .passthrough();
+
+const RealtimeTranscriptDoneNotificationSchema = z
+  .object({
+    threadId: z.string().optional(),
+    role: z.enum(["user", "assistant"]),
+    text: z.string(),
+  })
+  .passthrough();
+
+const RealtimeErrorNotificationSchema = z
+  .object({
+    threadId: z.string().optional(),
+    message: z.string(),
+  })
+  .passthrough();
+
+const RealtimeClosedNotificationSchema = z
+  .object({
+    threadId: z.string().optional(),
+    reason: z.string().optional(),
+  })
+  .passthrough();
+
+const RealtimeIgnoredNotificationSchema = z
+  .object({
+    threadId: z.string().optional(),
+  })
+  .passthrough();
+
 const TurnCompletedNotificationSchema = z
   .object({
     threadId: z.string().optional(),
@@ -2492,6 +2546,24 @@ type ParsedCodexNotification =
     }
   | { kind: "thread_rolled_back"; numTurns: number; threadId: string | null }
   | { kind: "context_compacted"; threadId: string; turnId: string | null }
+  | {
+      kind: "realtime_started";
+      threadId: string | null;
+      realtimeSessionId: string | null;
+      version: string | null;
+    }
+  | { kind: "realtime_sdp"; threadId: string | null; sdp: string }
+  | {
+      kind: "realtime_transcript_done";
+      threadId: string | null;
+      role: "user" | "assistant";
+      text: string;
+    }
+  // Parsed so it does not fall into `unknown_method` noise, then dropped:
+  // phase 1 surfaces finalized transcripts only.
+  | { kind: "realtime_ignored"; threadId: string | null; method: string }
+  | { kind: "realtime_error"; threadId: string | null; message: string }
+  | { kind: "realtime_closed"; threadId: string | null; reason: string | null }
   | { kind: "invalid_payload"; method: string; params: unknown }
   | { kind: "unknown_method"; method: string; params: unknown };
 
@@ -3037,6 +3109,123 @@ const CodexNotificationSchema = z.union([
     }),
   ),
   z
+    .object({
+      method: z.literal("thread/realtime/started"),
+      params: RealtimeStartedNotificationSchema,
+    })
+    .transform(
+      ({ params }): ParsedCodexNotification => ({
+        kind: "realtime_started",
+        threadId: params.threadId ?? null,
+        realtimeSessionId: params.realtimeSessionId ?? null,
+        version: params.version ?? null,
+      }),
+    ),
+  z.object({ method: z.literal("thread/realtime/started"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({
+      kind: "invalid_payload",
+      method,
+      params,
+    }),
+  ),
+  z
+    .object({ method: z.literal("thread/realtime/sdp"), params: RealtimeSdpNotificationSchema })
+    .transform(
+      ({ params }): ParsedCodexNotification => ({
+        kind: "realtime_sdp",
+        threadId: params.threadId ?? null,
+        sdp: params.sdp,
+      }),
+    ),
+  z.object({ method: z.literal("thread/realtime/sdp"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({
+      kind: "invalid_payload",
+      method,
+      params,
+    }),
+  ),
+  z
+    .object({
+      method: z.literal("thread/realtime/transcript/done"),
+      params: RealtimeTranscriptDoneNotificationSchema,
+    })
+    .transform(
+      ({ params }): ParsedCodexNotification => ({
+        kind: "realtime_transcript_done",
+        threadId: params.threadId ?? null,
+        role: params.role,
+        text: params.text,
+      }),
+    ),
+  z.object({ method: z.literal("thread/realtime/transcript/done"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({
+      kind: "invalid_payload",
+      method,
+      params,
+    }),
+  ),
+  z
+    .object({
+      method: z.enum(["thread/realtime/transcript/delta", "thread/realtime/itemAdded"]),
+      params: RealtimeIgnoredNotificationSchema,
+    })
+    .transform(
+      ({ method, params }): ParsedCodexNotification => ({
+        kind: "realtime_ignored",
+        threadId: params.threadId ?? null,
+        method,
+      }),
+    ),
+  z
+    .object({
+      method: z.enum(["thread/realtime/transcript/delta", "thread/realtime/itemAdded"]),
+      params: z.unknown(),
+    })
+    .transform(
+      ({ method }): ParsedCodexNotification => ({
+        kind: "realtime_ignored",
+        threadId: null,
+        method,
+      }),
+    ),
+  z
+    .object({ method: z.literal("thread/realtime/error"), params: RealtimeErrorNotificationSchema })
+    .transform(
+      ({ params }): ParsedCodexNotification => ({
+        kind: "realtime_error",
+        threadId: params.threadId ?? null,
+        message: params.message,
+      }),
+    ),
+  z.object({ method: z.literal("thread/realtime/error"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({
+      kind: "invalid_payload",
+      method,
+      params,
+    }),
+  ),
+  z
+    .object({
+      method: z.literal("thread/realtime/closed"),
+      params: RealtimeClosedNotificationSchema,
+    })
+    .transform(
+      ({ params }): ParsedCodexNotification => ({
+        kind: "realtime_closed",
+        threadId: params.threadId ?? null,
+        reason: params.reason ?? null,
+      }),
+    ),
+  // A malformed `closed` payload must still close the call, so it degrades to a
+  // reason-less close rather than `invalid_payload`.
+  z.object({ method: z.literal("thread/realtime/closed"), params: z.unknown() }).transform(
+    (): ParsedCodexNotification => ({
+      kind: "realtime_closed",
+      threadId: null,
+      reason: null,
+    }),
+  ),
+  z
     .object({ method: z.string(), params: z.unknown() })
     .transform(
       ({ method, params }): ParsedCodexNotification => ({ kind: "unknown_method", method, params }),
@@ -3287,9 +3476,11 @@ interface ConsumedRootCompaction {
   itemId?: string;
 }
 
-export class CodexAppServerAgentSession implements AgentSession {
+export class CodexAppServerAgentSession implements AgentSession, AgentRealtimeVoiceSession {
   readonly provider = CODEX_PROVIDER;
-  readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
+  // Assigned in the constructor body: `supportsLiveVoice` depends on whether
+  // this session's app-server was launched with `--enable realtime_conversation`.
+  readonly capabilities: AgentCapabilityFlags;
 
   private readonly logger: Logger;
   private readonly config: AgentSessionConfig;
@@ -3380,6 +3571,10 @@ export class CodexAppServerAgentSession implements AgentSession {
     name: string;
   } | null = null;
   private cachedSkills: Array<{ name: string; description: string; path: string }> | null = null;
+  // Realtime voice rides a dedicated channel, not `subscribers`: it is ephemeral
+  // call state, never part of the durable timeline.
+  private readonly realtimeSubscribers = new Set<(event: AgentRealtimeVoiceEvent) => void>();
+  private unsubscribeTransportClose: (() => void) | null = null;
 
   constructor(
     config: AgentSessionConfig,
@@ -3392,7 +3587,12 @@ export class CodexAppServerAgentSession implements AgentSession {
     private readonly autoReviewEnabled: boolean = false,
     private readonly agentId?: string,
     private readonly initialResumePurpose: "interactive" | "history" = "interactive",
+    liveVoiceEnabled: boolean = false,
   ) {
+    this.capabilities = {
+      ...CODEX_APP_SERVER_CAPABILITIES,
+      supportsLiveVoice: liveVoiceEnabled,
+    };
     this.logger = logger.child({
       module: "agent",
       provider: CODEX_PROVIDER,
@@ -3471,6 +3671,10 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.handleUnexpectedTermination(error);
     });
     client.setNotificationHandler((method, params) => this.handleNotification(method, params));
+    this.unsubscribeTransportClose?.();
+    this.unsubscribeTransportClose = this.client.onClose((reason) => {
+      this.notifyRealtimeSubscribers({ kind: "transport_closed", reason });
+    });
     this.registerRequestHandlers();
 
     try {
@@ -4822,6 +5026,103 @@ export class CodexAppServerAgentSession implements AgentSession {
       await client.dispose();
     }
     this.client = null;
+    this.unsubscribeTransportClose?.();
+    this.unsubscribeTransportClose = null;
+    this.realtimeSubscribers.clear();
+  }
+
+  subscribeRealtimeEvents(callback: (event: AgentRealtimeVoiceEvent) => void): () => void {
+    this.realtimeSubscribers.add(callback);
+    return () => {
+      this.realtimeSubscribers.delete(callback);
+    };
+  }
+
+  async realtimeStart(params: AgentRealtimeVoiceStartParams): Promise<void> {
+    const { client, threadId } = await this.requireRealtimeThread();
+    // The response is an empty `{}`; the answer SDP arrives asynchronously as a
+    // `thread/realtime/sdp` notification, possibly before this resolves.
+    await client.request("thread/realtime/start", {
+      threadId,
+      outputModality: "audio",
+      version: "v3",
+      transport: { type: "webrtc", sdp: params.sdp },
+      realtimeSessionId: params.realtimeSessionId,
+      ...(params.voice ? { voice: params.voice } : {}),
+    });
+  }
+
+  async realtimeStop(): Promise<void> {
+    const { client, threadId } = await this.requireRealtimeThread();
+    await client.request("thread/realtime/stop", { threadId });
+  }
+
+  private async requireRealtimeThread(): Promise<{
+    client: CodexAppServerClient;
+    threadId: string;
+  }> {
+    await this.connect();
+    if (this.currentThreadId) {
+      await this.ensureThreadLoaded();
+    } else {
+      await this.ensureThread();
+    }
+    if (!this.client || !this.currentThreadId) {
+      throw new Error("Codex thread is not available");
+    }
+    return { client: this.client, threadId: this.currentThreadId };
+  }
+
+  private notifyRealtimeSubscribers(event: AgentRealtimeVoiceEvent): void {
+    this.logger.trace(
+      {
+        agentId: this.agentId,
+        provider: CODEX_PROVIDER,
+        sessionId: this.currentThreadId,
+        event,
+      },
+      "provider.codex.realtime.event",
+    );
+    for (const callback of Array.from(this.realtimeSubscribers)) {
+      try {
+        callback(event);
+      } catch (error) {
+        this.logger.warn({ err: error }, "Realtime voice subscriber callback threw");
+      }
+    }
+  }
+
+  /** Returns true when the notification was a realtime-voice one and is handled. */
+  private dispatchRealtimeNotification(parsed: ParsedCodexNotification): boolean {
+    switch (parsed.kind) {
+      case "realtime_started":
+        this.notifyRealtimeSubscribers({
+          kind: "started",
+          realtimeSessionId: parsed.realtimeSessionId,
+          version: parsed.version,
+        });
+        return true;
+      case "realtime_sdp":
+        this.notifyRealtimeSubscribers({ kind: "sdp", sdp: parsed.sdp });
+        return true;
+      case "realtime_transcript_done":
+        this.notifyRealtimeSubscribers({
+          kind: "transcript",
+          role: parsed.role,
+          text: parsed.text,
+        });
+        return true;
+      case "realtime_error":
+        this.notifyRealtimeSubscribers({ kind: "error", message: parsed.message });
+        return true;
+      case "realtime_closed":
+        this.notifyRealtimeSubscribers({ kind: "closed", reason: parsed.reason });
+        return true;
+      case "realtime_ignored":
+        return true;
+      default:
+        return false;
+    }
   }
 
   async listCommands(): Promise<AgentSlashCommand[]> {
@@ -5176,6 +5477,12 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
     const parsed = CodexNotificationSchema.parse({ method, params });
     this.traceParsedNotification(method, params, parsed);
+    // Realtime voice bypasses thread routing: a call only ever attaches to the
+    // root thread, and its events belong to the live-voice channel, not the
+    // timeline.
+    if (this.dispatchRealtimeNotification(parsed)) {
+      return;
+    }
     const route = this.resolveCodexThreadRoute(getCodexNotificationThreadId(parsed));
     if (route.kind === "pending_sub_agent") {
       this.bufferPendingSubAgentNotification(route.threadId, parsed);
@@ -6862,6 +7169,7 @@ export class CodexAppServerAgentClient implements AgentClient {
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
   private goalsEnabledPromise: Promise<boolean> | null = null;
   private autoReviewEnabledPromise: Promise<boolean> | null = null;
+  private liveVoiceEnabledPromise: Promise<boolean> | null = null;
 
   constructor(
     private readonly logger: Logger,
@@ -6931,14 +7239,42 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
   }
 
+  private resolveLiveVoiceEnabled(): Promise<boolean> {
+    if (!this.liveVoiceEnabledPromise) {
+      this.liveVoiceEnabledPromise = (async () => {
+        try {
+          const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
+          const versionOutput = await resolveBinaryVersion(launchPrefix.command);
+          const enabled = codexVersionAtLeast(versionOutput, CODEX_LIVE_VOICE_MIN_VERSION);
+          this.logger.trace(
+            {
+              provider: CODEX_PROVIDER,
+              versionOutput,
+              enabled,
+            },
+            "provider.codex.config.live_voice_resolved",
+          );
+          return enabled;
+        } catch (error) {
+          this.logger.warn({ err: error }, "Failed to probe codex version for live-voice gate");
+          return false;
+        }
+      })();
+    }
+    return this.liveVoiceEnabledPromise;
+  }
+
   private async spawnAppServer(
     launchEnv?: Record<string, string>,
-    options?: { goalsEnabled?: boolean; agentId?: string },
+    options?: { goalsEnabled?: boolean; liveVoiceEnabled?: boolean; agentId?: string },
   ): Promise<ChildProcessWithoutNullStreams> {
     const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
     const args = [...launchPrefix.args, "app-server"];
     if (options?.goalsEnabled) {
       args.push("--enable", "goals");
+    }
+    if (options?.liveVoiceEnabled) {
+      args.push("--enable", "realtime_conversation");
     }
     this.logger.trace(
       {
@@ -6946,6 +7282,7 @@ export class CodexAppServerAgentClient implements AgentClient {
         provider: CODEX_PROVIDER,
         launchPrefix,
         goalsEnabled: options?.goalsEnabled === true,
+        liveVoiceEnabled: options?.liveVoiceEnabled === true,
       },
       "provider.codex.spawn",
     );
@@ -6976,17 +7313,24 @@ export class CodexAppServerAgentClient implements AgentClient {
     const sessionConfig: AgentSessionConfig = { ...config, provider: CODEX_PROVIDER };
     const goalsEnabled = await this.resolveGoalsEnabled();
     const autoReviewEnabled = await this.resolveAutoReviewEnabled();
+    const liveVoiceEnabled = await this.resolveLiveVoiceEnabled();
     const session = new CodexAppServerAgentSession(
       sessionConfig,
       null,
       this.logger,
       () =>
-        this.spawnAppServer(launchContext?.env, { goalsEnabled, agentId: launchContext?.agentId }),
+        this.spawnAppServer(launchContext?.env, {
+          goalsEnabled,
+          liveVoiceEnabled,
+          agentId: launchContext?.agentId,
+        }),
       this.sessionDeps(),
       options?.persistSession === false,
       goalsEnabled,
       autoReviewEnabled,
       launchContext?.agentId,
+      undefined,
+      liveVoiceEnabled,
     );
     await session.connect();
     return session;
@@ -7007,18 +7351,24 @@ export class CodexAppServerAgentClient implements AgentClient {
     };
     const goalsEnabled = await this.resolveGoalsEnabled();
     const autoReviewEnabled = await this.resolveAutoReviewEnabled();
+    const liveVoiceEnabled = await this.resolveLiveVoiceEnabled();
     const session = new CodexAppServerAgentSession(
       merged,
       handle,
       this.logger,
       () =>
-        this.spawnAppServer(launchContext?.env, { goalsEnabled, agentId: launchContext?.agentId }),
+        this.spawnAppServer(launchContext?.env, {
+          goalsEnabled,
+          liveVoiceEnabled,
+          agentId: launchContext?.agentId,
+        }),
       this.sessionDeps(),
       false,
       goalsEnabled,
       autoReviewEnabled,
       launchContext?.agentId,
       options?.purpose ?? "interactive",
+      liveVoiceEnabled,
     );
     await session.connect();
     return session;

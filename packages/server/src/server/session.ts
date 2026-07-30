@@ -53,6 +53,7 @@ import {
 } from "./agent/create-agent-title.js";
 import { respondToAgentPermission } from "./agent/permission-response.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
+import type { LiveVoiceCoordinator } from "./live-voice/live-voice-coordinator.js";
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import { spawnWorkspaceScript } from "./worktree-bootstrap.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
@@ -433,6 +434,11 @@ export interface SessionFileSystem {
   isDirectory(path: string): Promise<boolean>;
 }
 
+type VoiceLiveStartResponsePayload = Extract<
+  SessionOutboundMessage,
+  { type: "voice.live.start.response" }
+>["payload"];
+
 const nodeSessionFileSystem: SessionFileSystem = {
   async isDirectory(path) {
     const stats = await stat(path).catch(() => null);
@@ -534,6 +540,8 @@ export interface SessionOptions {
   voice?: {
     turnDetection?: Resolvable<TurnDetectionProvider | null>;
   };
+  /** Daemon-global; shared by every session so one call per agent is enforced. */
+  liveVoiceCoordinator?: LiveVoiceCoordinator;
   voiceBridge?: {
     registerVoiceSpeakHandler?: (agentId: string, handler: VoiceSpeakHandler) => void;
     unregisterVoiceSpeakHandler?: (agentId: string) => void;
@@ -741,6 +749,7 @@ export class Session {
   private readonly workspaceGitObserver: WorkspaceGitObserverService;
   private readonly workspaceDirectory: WorkspaceDirectory;
   private readonly voiceSession: VoiceSession;
+  private readonly liveVoice: LiveVoiceCoordinator | undefined;
   private readonly checkoutSession: CheckoutSession;
   private readonly scheduleSession: ScheduleSession;
   private readonly providerCatalogSession: ProviderCatalogSession;
@@ -804,6 +813,7 @@ export class Session {
       resolveScriptHealth,
       voice,
       voiceBridge,
+      liveVoiceCoordinator,
       dictation,
       serverId,
       daemonVersion,
@@ -1119,6 +1129,7 @@ export class Session {
       voiceBridge,
       dictation,
     });
+    this.liveVoice = liveVoiceCoordinator;
 
     this.subscribeToAgentEvents();
     this.subscribeToRegistryMutations();
@@ -1997,6 +2008,7 @@ export class Session {
   private async dispatchInboundMessage(msg: SessionInboundMessage, source?: object): Promise<void> {
     const promise =
       this.dispatchVoiceAndControlMessage(msg) ??
+      this.dispatchLiveVoiceMessage(msg, source) ??
       this.dispatchAgentRewindMessage(msg, source) ??
       this.dispatchAgentRelationshipMessage(msg) ??
       this.dispatchAgentTimelineMessage(msg, source) ??
@@ -2295,6 +2307,88 @@ export class Session {
       default:
         return undefined;
     }
+  }
+
+  private dispatchLiveVoiceMessage(
+    msg: SessionInboundMessage,
+    source?: object,
+  ): Promise<void> | undefined {
+    switch (msg.type) {
+      case "voice.live.start.request":
+        return this.handleLiveVoiceStartRequest(msg, source);
+      case "voice.live.stop.request":
+        this.handleLiveVoiceStopRequest(msg, source);
+        return undefined;
+      default:
+        return undefined;
+    }
+  }
+
+  private async handleLiveVoiceStartRequest(
+    msg: Extract<SessionInboundMessage, { type: "voice.live.start.request" }>,
+    source?: object,
+  ): Promise<void> {
+    const respond = (payload: VoiceLiveStartResponsePayload): void => {
+      this.emitForSource({ type: "voice.live.start.response", payload }, source);
+    };
+    const coordinator = this.liveVoice;
+    if (!coordinator) {
+      respond({
+        requestId: msg.requestId,
+        agentId: msg.agentId,
+        accepted: false,
+        errorCode: "unsupported",
+        errorMessage: "This daemon does not support live voice.",
+      });
+      return;
+    }
+    // The source socket owns the call: updates go only to it, and its detach
+    // tears the call down immediately.
+    const ownerSourceKey = source ?? this;
+    const result = await coordinator.start({
+      agentId: msg.agentId,
+      offerSdp: msg.offerSdp,
+      ...(msg.voice ? { voice: msg.voice } : {}),
+      owner: { sessionKey: this, sourceKey: ownerSourceKey },
+      emit: (update) => {
+        this.emitForSource({ type: "voice.live.update", payload: update }, source);
+      },
+    });
+    if (result.accepted) {
+      respond({
+        requestId: msg.requestId,
+        agentId: msg.agentId,
+        accepted: true,
+        liveSessionId: result.liveSessionId,
+        answerSdp: result.answerSdp,
+      });
+      return;
+    }
+    respond({
+      requestId: msg.requestId,
+      agentId: msg.agentId,
+      accepted: false,
+      errorCode: result.errorCode,
+      errorMessage: result.errorMessage,
+    });
+  }
+
+  private handleLiveVoiceStopRequest(
+    msg: Extract<SessionInboundMessage, { type: "voice.live.stop.request" }>,
+    source?: object,
+  ): void {
+    // Stop is idempotent: a stale or unknown liveSessionId is a no-op that still
+    // gets a response.
+    this.liveVoice?.stop({ agentId: msg.agentId, liveSessionId: msg.liveSessionId });
+    this.emitForSource(
+      { type: "voice.live.stop.response", payload: { requestId: msg.requestId } },
+      source,
+    );
+  }
+
+  /** Called at socket detach: a live voice call must not outlive its owner. */
+  public releaseLiveVoiceForSource(source: object): void {
+    this.liveVoice?.closeForSource(source);
   }
 
   private dispatchAgentRewindMessage(
@@ -7789,6 +7883,7 @@ export class Session {
   public async cleanup(): Promise<void> {
     this.sessionLogger.trace({}, "agent.session.lifecycle.cleanup");
     this.isCleanedUp = true;
+    this.liveVoice?.closeForSession(this);
 
     if (this.unsubscribeAgentEvents) {
       this.unsubscribeAgentEvents();
