@@ -59,6 +59,8 @@ linux:
     - deb
     - rpm
     - tar.gz
+deb:
+  afterInstall: scripts/deb-after-install.sh
 appImage:
   # Keep the AppImage filename stable across versions (no ${version}) so
   # electron-updater overwrites the file in place instead of renaming it to a new
