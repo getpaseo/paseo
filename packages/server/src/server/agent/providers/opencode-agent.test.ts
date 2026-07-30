@@ -3286,6 +3286,22 @@ describe("OpenCode provider subagent contract", () => {
         openCode.emitEvent(event);
       }
       openCode.emitEvent({
+        type: "session.created",
+        properties: {
+          info: {
+            id: "ses_plugin_wake_drain_marker",
+            parentID: "ses_parent_plugin_wake",
+            title: "Pre-busy drain marker",
+          },
+        },
+      });
+      await vi.waitFor(() => {
+        expect(events).toContainEqual(expect.objectContaining({ type: "provider_subagent" }));
+      });
+      expect(events.filter((event) => event.type !== "provider_subagent")).toEqual([]);
+      events.length = 0;
+
+      openCode.emitEvent({
         type: "session.status",
         properties: { sessionID: "ses_parent_plugin_wake", status: { type: "busy" } },
       });
@@ -3313,6 +3329,35 @@ describe("OpenCode provider subagent contract", () => {
           }),
         }),
       );
+    } finally {
+      await parent.close();
+    }
+  });
+
+  test("starts autonomous activity from busy without requiring an initiating message", async () => {
+    const { parent, openCode } = await createParentSession("ses_parent_busy_only");
+    const events: AgentStreamEvent[] = [];
+    parent.subscribe((event) => events.push(event));
+
+    try {
+      openCode.emitEvent({
+        type: "session.status",
+        properties: { sessionID: "ses_parent_busy_only", status: { type: "busy" } },
+      });
+      for (const event of assistantTurnEvents({
+        sessionId: "ses_parent_busy_only",
+        text: "Autonomous response after busy.",
+      })) {
+        openCode.emitEvent(event);
+      }
+
+      await vi.waitFor(() => {
+        expect(turnEventSignatures(events)).toEqual([
+          ["turn_started", "opencode-turn-0"],
+          ["timeline", "opencode-turn-0"],
+          ["turn_completed", "opencode-turn-0"],
+        ]);
+      });
     } finally {
       await parent.close();
     }
@@ -3378,6 +3423,10 @@ describe("OpenCode provider subagent contract", () => {
           text: "Autonomous wake",
         })[0],
       );
+      openCode.emitEvent({
+        type: "session.status",
+        properties: { sessionID: "ses_parent_active_wake", status: { type: "busy" } },
+      });
       await vi.waitFor(() => {
         expect(events).toEqual([
           { type: "turn_started", provider: "opencode", turnId: "opencode-turn-0" },
@@ -3519,6 +3568,10 @@ describe("OpenCode provider subagent contract", () => {
       }
     });
 
+    childClient.emitEvent({
+      type: "session.status",
+      properties: { sessionID: "ses_child_external", status: { type: "busy" } },
+    });
     childClient.emitEvent({
       type: "permission.asked",
       properties: {

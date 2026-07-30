@@ -103,6 +103,7 @@ const OPENCODE_LEGACY_FULL_ACCESS_MODE_ID = "full-access";
 const OPENCODE_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
 const OPENCODE_PERSISTED_SESSION_LIMIT = 200;
 const OPENCODE_PENDING_ABORT_START_TIMEOUT_MS = 10_000;
+const OPENCODE_PENDING_AUTONOMOUS_EVENT_LIMIT = 64;
 const OPENCODE_CHILD_SESSION_HYDRATION_LIMIT = 100;
 const OPENCODE_CHILD_SESSION_SERVER_REGISTRY_LIMIT = 500;
 const OPENCODE_PERMISSION_ACTION_ALLOW_ONCE = "allow_once";
@@ -1379,7 +1380,6 @@ export class OpenCodeAgentClient implements AgentClient {
         undefined,
         launchContext?.agentId,
         url,
-        registeredAcquisition !== null,
       );
     } catch (error) {
       await acquisition.release();
@@ -2937,6 +2937,8 @@ class OpenCodeAgentSession implements AgentSession {
    * run, and a rejection means we never proved the runner stopped.
    */
   private abortSettlement: Promise<void> = Promise.resolve();
+  /** Exact-session content OpenCode persists immediately before its runner reports busy. */
+  private readonly pendingAutonomousEvents: AgentStreamEvent[] = [];
   private readonly runningToolCalls = new Map<string, ToolCallTimelineItem>();
   private subAgentsByCallId = new Map<string, OpenCodeSubAgentActivityState>();
   private subAgentCallIdByChildSessionId = new Map<string, string>();
@@ -2965,7 +2967,6 @@ class OpenCodeAgentSession implements AgentSession {
     persistSession = true,
     private readonly agentId?: string,
     private readonly serverUrl?: string,
-    private readonly externallyDriven = false,
   ) {
     this.config = config;
     this.client = client;
@@ -3199,6 +3200,7 @@ class OpenCodeAgentSession implements AgentSession {
       throw new Error("OpenCode is still stopping the previous turn");
     }
 
+    this.clearPendingAutonomousEvents();
     this.runningToolCalls.clear();
     this.subAgentsByCallId.clear();
     this.subAgentCallIdByChildSessionId.clear();
@@ -3683,10 +3685,16 @@ class OpenCodeAgentSession implements AgentSession {
         foregroundEvents.push(translatedEvent);
       }
     }
-    if (!turnId && this.shouldStartAutonomousTurn(event, foregroundEvents)) {
+    if (!turnId && this.shouldStartAutonomousTurn(event)) {
       turnId = this.startAutonomousTurn();
+      foregroundEvents.unshift(...this.takePendingAutonomousEvents());
     }
     if (!turnId) {
+      if (isOpenCodeTerminalEvent(event, this.sessionId)) {
+        this.clearPendingAutonomousEvents();
+      } else if (getOpenCodeEventSessionId(event) === this.sessionId) {
+        this.stagePendingAutonomousEvents(foregroundEvents);
+      }
       this.emitBackgroundPermissionRequests(foregroundEvents);
       this.traceOpenCode("provider.opencode.event.skip", {
         n: eventCount,
@@ -3732,41 +3740,44 @@ class OpenCodeAgentSession implements AgentSession {
     }
   }
 
-  private shouldStartAutonomousTurn(
-    event: OpenCodeEvent,
-    foregroundEvents: readonly AgentStreamEvent[],
-  ): boolean {
+  private shouldStartAutonomousTurn(event: OpenCodeEvent): boolean {
     if (this.turnState.status !== "idle") {
       return false;
     }
     if (getOpenCodeEventSessionId(event) !== this.sessionId) {
       return false;
     }
-    // OpenCode publishes the persisted user message before it marks the runner
-    // busy. That message is the earliest unambiguous boundary for a plugin-
-    // initiated parent turn; session metadata and assistant echoes are not.
-    if (
-      event.type === "message.updated" &&
-      event.properties.info.role === "user" &&
-      !event.properties.info.summary?.diffs
-    ) {
-      if (this.emittedUserMessageIds.has(event.properties.info.id)) {
-        return false;
-      }
-      return true;
-    }
-    if (!this.externallyDriven) {
-      return false;
-    }
-    if (
-      foregroundEvents.some(
-        (foregroundEvent) =>
-          foregroundEvent.type !== "thread_started" && !toTerminalTurnEvent(foregroundEvent),
-      )
-    ) {
-      return true;
-    }
+    return this.isAutonomousWakeBoundary(event);
+  }
+
+  private isAutonomousWakeBoundary(event: OpenCodeEvent): boolean {
+    // Message records are mutable and can be patched after the runner stops.
+    // Only OpenCode's execution status is authoritative for autonomous activity.
     return event.type === "session.status" && event.properties.status.type === "busy";
+  }
+
+  private stagePendingAutonomousEvents(events: readonly AgentStreamEvent[]): void {
+    for (const event of events) {
+      if (
+        event.type === "thread_started" ||
+        event.type === "permission_requested" ||
+        toTerminalTurnEvent(event)
+      ) {
+        continue;
+      }
+      if (this.pendingAutonomousEvents.length === OPENCODE_PENDING_AUTONOMOUS_EVENT_LIMIT) {
+        this.pendingAutonomousEvents.shift();
+      }
+      this.pendingAutonomousEvents.push(event);
+    }
+  }
+
+  private takePendingAutonomousEvents(): AgentStreamEvent[] {
+    return this.pendingAutonomousEvents.splice(0);
+  }
+
+  private clearPendingAutonomousEvents(): void {
+    this.pendingAutonomousEvents.length = 0;
   }
 
   private startAutonomousTurn(): string {
@@ -3803,6 +3814,7 @@ class OpenCodeAgentSession implements AgentSession {
     }
     this.pendingUserMessageText = null;
     this.pendingClientMessageId = null;
+    this.clearPendingAutonomousEvents();
     this.turnState = { status: "idle" };
     this.abortController = null;
     this.notifySubscribers(event, turnId);
@@ -3834,6 +3846,7 @@ class OpenCodeAgentSession implements AgentSession {
     }
     this.pendingUserMessageText = null;
     this.pendingClientMessageId = null;
+    this.clearPendingAutonomousEvents();
     this.abortController = null;
     return abort;
   }
@@ -3896,6 +3909,7 @@ class OpenCodeAgentSession implements AgentSession {
     resetOpenCodeTurnTrackingState(this.createTranslationState());
     const contextWindowMaxTokens = this.resolveSelectedModelContextWindowMaxTokens();
     this.accumulatedUsage = contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
+    this.clearPendingAutonomousEvents();
     this.turnState = { status: "idle" };
     stop.terminal.resolve();
   }
@@ -4146,6 +4160,7 @@ class OpenCodeAgentSession implements AgentSession {
         logger: this.logger,
       });
       await this.deleteProviderSessionIfEphemeral();
+      this.clearPendingAutonomousEvents();
       this.turnState = { status: "idle" };
     } finally {
       await this.releaseServer?.();
