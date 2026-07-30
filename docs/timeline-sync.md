@@ -37,12 +37,6 @@ Initialization timeouts guard lack of catch-up progress, not the full multi-page
 
 The first load of an agent without a local cursor is different: it fetches a bounded latest tail page. Older history remains user-driven by scrolling upward.
 
-Reaching the history-start threshold loads one older page and preserves the visible content anchor.
-Cursor progress does not trigger another page. The user must leave and return to the threshold unless
-the anchored page still leaves the viewport at history start, as with short or compacted content; in
-that case pagination continues as one loading operation until the page fills the viewport or history
-is exhausted.
-
 ## Durable item anchors
 
 Provider message IDs are not guaranteed for every displayed item. Paseo-generated system errors are one example. Rendered item indices are not durable either because pagination and projection can merge source rows.
@@ -66,22 +60,6 @@ recomposition while the runtime still owns the same directory snapshot and timel
 
 Removing the host from the registry is the destructive boundary: it stops the runtime and clears the
 session and host-scoped setup state together.
-
-The durable replica cache is a display cache, not a synchronization checkpoint. Its timeline record
-contains only the focused `agentId` and a truncated item tail. It never persists a cursor, epoch,
-older-history availability, authority status, or sync generation because those facts would describe
-the complete source dataset rather than the truncated display dataset.
-
-Restoring that cache produces a painted timeline: the items may render immediately, but the first
-daemon timeline request is still `tail`. A successful tail response atomically establishes canonical
-items, range, and older-history availability. Live rows received between cache paint and that tail
-response stay in the separate live head, do not advance a cursor or trigger gap recovery, and are
-reconciled with the authoritative tail and subsequent catch-up.
-
-Every daemon-derived live item carries its timeline epoch and sequence position. Bootstrap
-replacement keeps only positioned rows newer than the page it installs, while unresolved local
-submissions remain governed by the submission registry. This prevents a page from duplicating rows
-it already covers without making the display replica authoritative.
 
 ## Selective and legacy delivery
 
@@ -109,42 +87,14 @@ its completion advances `seqEnd`, followed by a merged assistant message. The ap
 remaining page through the existing stream reducer. It must not append full projected text to a
 live prefix.
 
-Every path that sends a message to an agent — composer send, dictation accept-and-send, queued
-send-now, and the automatic queue drain in `HostRuntime` — goes through
-`dispatchComposerAgentMessage` with a submission writer. There is no second transport for the same
-product action: calling `client.sendAgentMessage` directly skips the submitted row and the pending
-footer, and permanently drops attachments because the daemon does not echo them back.
-
-A submitted prompt is one `UserMessageItem` row. That row is the authoritative local presentation:
-its stable identity, text, timestamp, images, and attachments do not change when the provider
-acknowledges it. Submission lifecycle is a separate record keyed by agent, not another row shape or
-a property inferred from message identity. The transaction registry holds every unresolved send and
-records RPC acceptance and provider acknowledgement independently. Provider acknowledgement exists
-solely so a later transport error cannot roll back a prompt already observed canonically.
-
-The daemon's accepted response already waits for the correlated run start, but its response and the
-directory update reach client state separately. An accepted transaction remains active until the
-directory observes that run or canonical ingestion acknowledges the prompt, bridging those ordered
-authorities without inspecting timeline snapshots. Either signal clears only an RPC-accepted
-transaction, regardless of which arrived first; it cannot settle a fresh send.
-Overlapping sends settle independently rather than collapsing to one newest pending message.
+Optimistic user prompts occupy stable timeline slots. Catch-up never extracts, delays, or reinserts
+them. A canonical user row replaces its matching slot in place; an unmatched prompt stays exactly
+where the user submitted it. Other canonical rows are applied after the already-present timeline
+instead of relocating visible user messages around newly fetched history.
 
 Canonical submitted user rows carry the provider's `messageId` and Paseo's optional
-`clientMessageId`. The user-message producer reconciles them by `clientMessageId`, adds provider
-identity to the existing row, and keeps the local presentation in its original timeline slot.
-Content matching is limited to the dated compatibility path for daemon timelines created before
-that field existed. Canonical ingestion may match only an explicit unreconciled local candidate;
-the draft-create handoff is the one boundary that also permits the legacy canonical twin to have
-arrived first. Generic reducers and consumers do not reimplement message identity matching.
-
-Ordinary bootstrap, same-epoch reset, and catch-up replacement preserve unmatched locally submitted
-rows because a provider may never echo them. A known epoch change or rewind replaces history and
-drops acknowledged local rows omitted by the new canonical epoch; every transaction not yet
-acknowledged by the provider, and no other local row, crosses that destructive boundary.
-
-Canonical replacement owns both timeline lanes. A matching local row keeps its presentation ID and
-payload while taking the canonical row's ordered position. If a live assistant head is the
-canonical assistant prefix, it stays in the head lane. No row may be returned in both lanes.
+`clientMessageId`. Clients reconcile optimistic prompts by `clientMessageId`. Content matching is
+limited to the dated compatibility path for daemon timelines created before that field existed.
 
 ## Relevant code
 

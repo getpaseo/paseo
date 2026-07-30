@@ -49,25 +49,6 @@ describe("MockLoadTestAgentClient", () => {
     });
   });
 
-  test("rejects the configured number of prompts before starting a retry", async () => {
-    const client = new MockLoadTestAgentClient();
-    const session = await client.createSession({
-      provider: "mock",
-      cwd: process.cwd(),
-      model: "ten-second-stream",
-      featureValues: { mockPromptRejections: 1 },
-    });
-
-    await expect(session.startTurn("Reject this prompt.")).rejects.toThrow(
-      "Requested mock prompt rejection",
-    );
-
-    await expect(session.startTurn("Accept this retry.")).resolves.toEqual({
-      turnId: expect.any(String),
-    });
-    await session.interrupt();
-  });
-
   test("returns schema-shaped JSON for structured branch-name generation", async () => {
     vi.useFakeTimers();
     const client = new MockLoadTestAgentClient();
@@ -279,39 +260,6 @@ describe("MockLoadTestAgentClient", () => {
     await expect(resultPromise).resolves.toMatchObject({
       sessionId: session.id,
       finalText: "Synthetic questions resolved",
-      canceled: false,
-    });
-    unsubscribe();
-  });
-
-  test("emits a settled assistant Markdown image path selected by prompt", async () => {
-    vi.useFakeTimers();
-    const client = new MockLoadTestAgentClient();
-    const session = await client.createSession({
-      provider: "mock",
-      cwd: process.cwd(),
-      model: "ten-second-stream",
-    });
-    const events: AgentStreamEvent[] = [];
-    const unsubscribe = session.subscribe((event) => events.push(event));
-    const markdown = "![Fixture image](screenshots/fixture.png)";
-
-    const resultPromise = session.run(`Emit settled assistant image Markdown: ${markdown}`);
-    await vi.advanceTimersByTimeAsync(0);
-
-    expect(
-      events.flatMap((event): AgentTimelineItem[] =>
-        event.type === "timeline" && event.item.type === "assistant_message" ? [event.item] : [],
-      ),
-    ).toEqual([
-      expect.objectContaining({
-        type: "assistant_message",
-        text: markdown,
-      }),
-    ]);
-    await expect(resultPromise).resolves.toMatchObject({
-      sessionId: session.id,
-      finalText: markdown,
       canceled: false,
     });
     unsubscribe();

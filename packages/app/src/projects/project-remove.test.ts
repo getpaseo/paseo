@@ -7,7 +7,10 @@ import {
 
 const project: ProjectRemoveProject = {
   projectKey: "remote:github.com/acme/app",
-  hosts: [{ serverId: "host-a" }, { serverId: "host-b" }],
+  hosts: [
+    { serverId: "host-a", projectId: "prj_host_a" },
+    { serverId: "host-b", projectId: "prj_host_b" },
+  ],
 };
 
 function createProjectRemoveClient() {
@@ -46,12 +49,14 @@ describe("project remove policy", () => {
 
     expect(readiness).toEqual({
       kind: "ready",
-      targets: [{ serverId: "host-a" }, { serverId: "host-b" }],
+      targets: [
+        { serverId: "host-a", projectId: "prj_host_a" },
+        { serverId: "host-b", projectId: "prj_host_b" },
+      ],
     });
 
     const outcome = await removeProjectFromHosts({
-      projectKey: project.projectKey,
-      targets: [{ serverId: "host-a" }, { serverId: "host-b" }],
+      targets: readiness.kind === "ready" ? readiness.targets : [],
       getClient: (serverId) => {
         if (serverId === "host-a") return hostA.client;
         if (serverId === "host-b") return hostB.client;
@@ -60,16 +65,18 @@ describe("project remove policy", () => {
     });
 
     expect(outcome).toEqual({ kind: "removed", serverIds: ["host-a", "host-b"] });
-    expect(hostA.removedProjectKeys).toEqual([project.projectKey]);
-    expect(hostB.removedProjectKeys).toEqual([project.projectKey]);
+    expect(hostA.removedProjectKeys).toEqual(["prj_host_a"]);
+    expect(hostB.removedProjectKeys).toEqual(["prj_host_b"]);
   });
 
   it("reports disconnected hosts before sending any remove request", async () => {
     const hostA = createProjectRemoveClient();
 
     const outcome = await removeProjectFromHosts({
-      projectKey: project.projectKey,
-      targets: [{ serverId: "host-a" }, { serverId: "host-b" }],
+      targets: [
+        { serverId: "host-a", projectId: "prj_host_a" },
+        { serverId: "host-b", projectId: "prj_host_b" },
+      ],
       getClient: (serverId) => (serverId === "host-a" ? hostA.client : null),
     });
 

@@ -29,6 +29,7 @@ import {
 } from "react";
 import type { ComponentType, ReactNode } from "react";
 import { MarkdownIt, type ASTNode, type RenderRules } from "react-native-markdown-display";
+import { useQuery } from "@tanstack/react-query";
 import MaskedView from "@react-native-masked-view/masked-view";
 import {
   Circle,
@@ -74,7 +75,19 @@ import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
 import { formatDuration, formatMessageTimestamp } from "@/utils/time";
 import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
 import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
+import {
+  getAssistantImageLoadStateFromMetadata,
+  getAssistantImageMetadata,
+  setAssistantImageMetadata,
+  type AssistantImageLoadState,
+} from "@/utils/assistant-image-metadata";
 import { setAssistantMarkdownBlockHeight } from "@/utils/assistant-message-height-estimate";
+import { resolveAssistantImageSource } from "@/utils/assistant-image-source";
+import {
+  createPreviewAttachmentId,
+  getFileNameFromPath,
+  parseImageDataUrl,
+} from "@/attachments/utils";
 import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
 import { PlanCard } from "./plan-card";
 import { useToolCallSheet } from "./tool-call-sheet";
@@ -89,7 +102,8 @@ import {
   useAssistantLinkPress,
 } from "@/assistant-file-links";
 import { getCompactionMarkerLabel } from "./message-compaction-label";
-import { useAssistantImage } from "@/assistant-image/use-assistant-image";
+import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
+import { persistAttachmentFromBytes, persistAttachmentFromDataUrl } from "@/attachments/service";
 import {
   AttachmentFrame,
   AttachmentLabel,
@@ -118,7 +132,6 @@ interface UserMessageProps {
   client?: DaemonClient | null;
   isFirstInGroup?: boolean;
   isLastInGroup?: boolean;
-  isPending?: boolean;
   disableOuterSpacing?: boolean;
 }
 
@@ -417,7 +430,6 @@ export const UserMessage = memo(function UserMessage({
   client,
   isFirstInGroup = true,
   isLastInGroup = true,
-  isPending = false,
   disableOuterSpacing,
 }: UserMessageProps) {
   const isCompact = useIsCompactFormFactor();
@@ -429,7 +441,7 @@ export const UserMessage = memo(function UserMessage({
   const hasText = message.trim().length > 0;
   const hasImages = images.length > 0;
   const hasAttachments = attachments.length > 0;
-  const showTrailingRow = !isPending && hasText && (isCompact || isNative || isHovered);
+  const showTrailingRow = hasText && (isCompact || isNative || isHovered);
   const formattedTimestamp = useMemo(
     () => formatMessageTimestamp(new Date(timestamp)),
     [timestamp],
@@ -482,7 +494,7 @@ export const UserMessage = memo(function UserMessage({
   );
 
   return (
-    <View style={containerStyle} testID="user-message" aria-busy={isPending}>
+    <View style={containerStyle} testID="user-message">
       <View
         style={userMessageStylesheet.content}
         onPointerEnter={handlePointerEnter}
@@ -526,15 +538,9 @@ export const UserMessage = memo(function UserMessage({
           ) : null}
         </View>
         {hasText ? (
-          <View
-            style={trailingRowStyle}
-            pointerEvents={showTrailingRow ? "auto" : "none"}
-            testID="user-message-trailing-row"
-          >
-            <Text style={userMessageStylesheet.timestampText} testID="user-message-timestamp">
-              {formattedTimestamp}
-            </Text>
-            {capabilities && messageId ? (
+          <View style={trailingRowStyle} pointerEvents={showTrailingRow ? "auto" : "none"}>
+            <Text style={userMessageStylesheet.timestampText}>{formattedTimestamp}</Text>
+            {capabilities ? (
               <RewindMenu
                 capabilities={capabilities}
                 isPending={rewindMutation.isPending}
@@ -723,7 +729,6 @@ export const LiveElapsed = memo(function LiveElapsed({
 });
 
 interface AssistantMessageProps {
-  occurrenceKey: string;
   message: string;
   timestamp: number;
   workspaceRoot?: string;
@@ -751,20 +756,10 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   imageSurface: {
     width: "100%",
     overflow: "hidden",
-    position: "relative",
   },
   image: {
     width: "100%",
     height: "100%",
-  },
-  imageLoadingOverlay: {
-    position: "absolute",
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    alignItems: "center",
-    justifyContent: "center",
   },
   imageState: {
     alignItems: "center",
@@ -782,9 +777,125 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
 
 const ASSISTANT_IMAGE_MIN_HEIGHT = 160;
 
+const AssistantMarkdownResolvedImage = memo(function AssistantMarkdownResolvedImage({
+  uri,
+  alt,
+  containerStyle,
+  source,
+  workspaceRoot,
+  serverId,
+}: {
+  uri: string;
+  alt?: string;
+  containerStyle?: StyleProp<ViewStyle>;
+  source: string;
+  workspaceRoot?: string;
+  serverId?: string;
+}) {
+  const cachedMetadata = useMemo(
+    () => getAssistantImageMetadata({ source, workspaceRoot, serverId }),
+    [serverId, source, workspaceRoot],
+  );
+  const [loadState, setLoadState] = useState<AssistantImageLoadState>(() =>
+    getAssistantImageLoadStateFromMetadata(cachedMetadata),
+  );
+
+  useEffect(() => {
+    if (cachedMetadata) {
+      setLoadState(getAssistantImageLoadStateFromMetadata(cachedMetadata));
+      return () => {};
+    }
+
+    setLoadState({ status: "loading" });
+    let cancelled = false;
+
+    Image.getSize(
+      uri,
+      (width, height) => {
+        if (cancelled) {
+          return;
+        }
+        if (width > 0 && height > 0) {
+          const metadata = setAssistantImageMetadata(
+            { source, workspaceRoot, serverId },
+            { width, height },
+          );
+          setLoadState({
+            status: "ready",
+            aspectRatio: metadata?.aspectRatio ?? width / height,
+          });
+        }
+      },
+      () => {
+        if (cancelled) {
+          return;
+        }
+        setLoadState({ status: "error" });
+      },
+    );
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cachedMetadata, serverId, source, uri, workspaceRoot]);
+
+  const handleImageError = useCallback(() => {
+    setLoadState({ status: "error" });
+  }, []);
+  const { t } = useTranslation();
+  const surfaceStyle = useMemo<StyleProp<ViewStyle>>(
+    () => [
+      assistantMessageStylesheet.imageSurface,
+      loadState.status === "ready"
+        ? { aspectRatio: loadState.aspectRatio }
+        : { height: ASSISTANT_IMAGE_MIN_HEIGHT },
+    ],
+    [loadState],
+  );
+  const frameStyle = useMemo<StyleProp<ViewStyle>>(
+    () => [assistantMessageStylesheet.imageFrame, containerStyle],
+    [containerStyle],
+  );
+  const stateSurfaceStyle = useMemo<StyleProp<ViewStyle>>(
+    () => [surfaceStyle, assistantMessageStylesheet.imageState],
+    [surfaceStyle],
+  );
+  const imageSource = useMemo(() => ({ uri }), [uri]);
+
+  if (loadState.status !== "ready") {
+    return (
+      <View style={frameStyle}>
+        <View style={stateSurfaceStyle}>
+          {loadState.status === "loading" ? (
+            <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
+          ) : null}
+          {loadState.status === "error" ? (
+            <Text style={assistantMessageStylesheet.imageErrorText}>
+              {t("message.attachments.imageUnavailable")}
+            </Text>
+          ) : null}
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={frameStyle}>
+      <View style={surfaceStyle}>
+        <Image
+          source={imageSource}
+          style={assistantMessageStylesheet.image}
+          resizeMode="contain"
+          accessibilityLabel={alt}
+          onError={handleImageError}
+        />
+      </View>
+    </View>
+  );
+});
+
 function AssistantMarkdownImage({
   source,
-  occurrenceKey,
   alt,
   hasLeadingContent,
   client,
@@ -792,13 +903,18 @@ function AssistantMarkdownImage({
   serverId,
 }: {
   source: string;
-  occurrenceKey: string;
   alt?: string;
   hasLeadingContent: boolean;
   client?: DaemonClient | null;
   workspaceRoot?: string;
   serverId?: string;
 }) {
+  const { t } = useTranslation();
+  const resolution = useMemo(
+    () => resolveAssistantImageSource({ source, workspaceRoot }),
+    [source, workspaceRoot],
+  );
+  const dataImage = useMemo(() => parseImageDataUrl(source), [source]);
   const containerStyle = useMemo<StyleProp<ViewStyle>>(
     () => ({
       marginTop: hasLeadingContent ? 16 : 0,
@@ -806,31 +922,64 @@ function AssistantMarkdownImage({
     }),
     [hasLeadingContent],
   );
-  const image = useAssistantImage({
-    source,
-    occurrenceKey,
-    client,
-    workspaceRoot,
-    serverId,
+
+  const query = useQuery({
+    queryKey: [
+      "assistantMarkdownImage",
+      serverId ?? "unknown-server",
+      resolution?.kind === "file_rpc" ? resolution.cwd : null,
+      resolution?.kind === "file_rpc" ? resolution.path : null,
+    ],
+    enabled: Boolean(client && resolution?.kind === "file_rpc"),
+    staleTime: 30_000,
+    queryFn: async () => {
+      if (!client || !resolution || resolution.kind !== "file_rpc") {
+        return null;
+      }
+
+      const file = await client.readFile(resolution.cwd, resolution.path);
+      if (file.kind !== "image") {
+        throw new Error(t("message.attachments.imagePreviewUnavailable"));
+      }
+
+      return await persistAttachmentFromBytes({
+        id: createPreviewAttachmentId({
+          mimeType: file.mime,
+          path: file.path || resolution.path,
+          size: file.size,
+          modifiedAt: file.modifiedAt,
+          contentLength: file.bytes.byteLength,
+        }),
+        bytes: file.bytes,
+        mimeType: file.mime,
+        fileName: getFileNameFromPath(file.path || resolution.path),
+      });
+    },
   });
-  const binding = image.status === "failed" ? null : image.binding;
-  const aspectRatio = image.status === "failed" ? null : image.aspectRatio;
-  const imageUri = binding?.uri ?? "";
-  const imageSource = useMemo(() => ({ uri: imageUri }), [imageUri]);
-  const frameStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [assistantMessageStylesheet.imageFrame, containerStyle],
-    [containerStyle],
-  );
-  const imageSizeStyle = useMemo<ViewStyle>(() => {
-    if (aspectRatio) {
-      return { aspectRatio };
-    }
-    return { height: ASSISTANT_IMAGE_MIN_HEIGHT };
-  }, [aspectRatio]);
-  const surfaceStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [assistantMessageStylesheet.imageSurface, imageSizeStyle],
-    [imageSizeStyle],
-  );
+  const dataImageQuery = useQuery({
+    queryKey: ["assistantMarkdownDataImage", dataImage?.cacheKey ?? null],
+    enabled: dataImage !== null,
+    staleTime: 30_000,
+    queryFn: async () => {
+      if (!dataImage) {
+        return null;
+      }
+
+      return await persistAttachmentFromDataUrl({
+        id: createPreviewAttachmentId({
+          mimeType: dataImage.mimeType,
+          contentLength: dataImage.base64.length,
+        }),
+        dataUrl: source,
+        mimeType: dataImage.mimeType,
+      });
+    },
+  });
+
+  const fileAssetUri = useAttachmentPreviewUrl(query.data);
+  const dataImageAssetUri = useAttachmentPreviewUrl(dataImageQuery.data);
+  const directUri = resolution?.kind === "direct" && !dataImage ? resolution.uri : null;
+  const resolvedUri = directUri ?? dataImageAssetUri ?? fileAssetUri ?? null;
 
   const stateFrameStyle = useMemo<StyleProp<ViewStyle>>(
     () => [
@@ -842,15 +991,20 @@ function AssistantMarkdownImage({
     [containerStyle],
   );
 
-  if (image.status === "failed") {
+  if (resolvedUri) {
     return (
-      <View style={stateFrameStyle}>
-        <Text style={assistantMessageStylesheet.imageErrorText}>{image.message}</Text>
-      </View>
+      <AssistantMarkdownResolvedImage
+        uri={resolvedUri}
+        alt={alt}
+        containerStyle={containerStyle}
+        source={source}
+        workspaceRoot={workspaceRoot}
+        serverId={serverId}
+      />
     );
   }
 
-  if (!binding) {
+  if (query.isLoading || dataImageQuery.isLoading) {
     return (
       <View style={stateFrameStyle}>
         <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
@@ -858,25 +1012,27 @@ function AssistantMarkdownImage({
     );
   }
 
+  const errorText = resolveAssistantImageErrorText(
+    query.error,
+    dataImageQuery.error,
+    t("message.attachments.imagePreviewLoadFailed"),
+  );
+
   return (
-    <View style={frameStyle}>
-      <View style={surfaceStyle} accessibilityRole="image" accessibilityLabel={alt}>
-        <Image
-          ref={binding.onRef}
-          source={imageSource}
-          style={assistantMessageStylesheet.image}
-          resizeMode="contain"
-          onLoad={binding.onLoad}
-          onError={binding.onError}
-        />
-        {image.status === "loading" ? (
-          <View pointerEvents="none" style={assistantMessageStylesheet.imageLoadingOverlay}>
-            <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
-          </View>
-        ) : null}
-      </View>
+    <View style={stateFrameStyle}>
+      <Text style={assistantMessageStylesheet.imageErrorText}>{errorText}</Text>
     </View>
   );
+}
+
+function resolveAssistantImageErrorText(
+  fileError: unknown,
+  dataError: unknown,
+  fallbackText: string,
+): string {
+  if (fileError instanceof Error) return fileError.message;
+  if (dataError instanceof Error) return dataError.message;
+  return fallbackText;
 }
 
 function getInlineCodeAutoLinkUrl(
@@ -1419,7 +1575,6 @@ function MarkdownListView({ baseStyle, spacing, children }: MarkdownListViewProp
 }
 
 export const AssistantMessage = memo(function AssistantMessage({
-  occurrenceKey,
   message,
   timestamp: _timestamp,
   workspaceRoot,
@@ -1754,7 +1909,6 @@ export const AssistantMessage = memo(function AssistantMessage({
           <AssistantMarkdownImage
             key={node.key}
             source={String(node.attributes?.src ?? "")}
-            occurrenceKey={`${occurrenceKey}:${node.key}`}
             alt={typeof node.attributes?.alt === "string" ? node.attributes.alt : undefined}
             hasLeadingContent={hasLeadingContent}
             client={client}
@@ -1764,7 +1918,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         );
       },
     };
-  }, [client, fileLinkActions, markdownParser, occurrenceKey, serverId, workspaceRoot]);
+  }, [client, fileLinkActions, markdownParser, serverId, workspaceRoot]);
 
   const blocks = useMemo(() => splitMarkdownBlocks(message), [message]);
   const keyedBlocks = useMemo(

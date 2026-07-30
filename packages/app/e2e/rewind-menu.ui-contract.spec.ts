@@ -1,8 +1,6 @@
 import type { Locator } from "@playwright/test";
 import { expect, test, type Page } from "./fixtures";
 import { openAgentRoute, seedMockAgentWorkspace } from "./helpers/mock-agent";
-import { installDaemonWebSocketGate } from "./helpers/daemon-websocket-gate";
-import { scrollChatAwayFromBottom } from "./helpers/agent-bottom-anchor";
 import {
   composerLocator,
   expectComposerDraft,
@@ -25,152 +23,7 @@ async function expectUserMessageVisible(page: Page, text: string): Promise<void>
   await expect(userMessage(page, text)).toBeVisible();
 }
 
-async function rewriteCachedMessageAsLegacyRow(page: Page, prompt: string): Promise<void> {
-  await expect
-    .poll(() =>
-      page.evaluate((messageText) => {
-        const raw = localStorage.getItem("@paseo:replica-cache");
-        if (!raw) return false;
-        const cache = JSON.parse(raw) as {
-          hosts?: Array<{ timeline?: { items?: Array<Record<string, unknown>> } | null }>;
-        };
-        for (const host of cache.hosts ?? []) {
-          for (const item of host.timeline?.items ?? []) {
-            if (item.kind === "user_message" && item.text === messageText && item.messageId) {
-              return true;
-            }
-          }
-        }
-        return false;
-      }, prompt),
-    )
-    .toBe(true);
-
-  await page.evaluate((messageText) => {
-    const key = "@paseo:replica-cache";
-    const raw = localStorage.getItem(key);
-    if (!raw) throw new Error("Replica cache was not persisted");
-    const cache = JSON.parse(raw) as {
-      hosts?: Array<{ timeline?: { items?: Array<Record<string, unknown>> } | null }>;
-    };
-    const cachedMessage = cache.hosts
-      ?.flatMap((host) => host.timeline?.items ?? [])
-      .find((item) => item.kind === "user_message" && item.text === messageText);
-    if (!cachedMessage) throw new Error("Cached user message was not found");
-    delete cachedMessage.messageId;
-    localStorage.setItem(key, JSON.stringify(cache));
-  }, prompt);
-}
-
-async function waitForCurrentSubmissionExcludedFromCache(
-  page: Page,
-  prompt: string,
-): Promise<void> {
-  await expect
-    .poll(() =>
-      page.evaluate((messageText) => {
-        const raw = localStorage.getItem("@paseo:replica-cache");
-        if (!raw) return false;
-        const cache = JSON.parse(raw) as {
-          hosts?: Array<{ timeline?: { items?: Array<Record<string, unknown>> } | null }>;
-        };
-        return !cache.hosts
-          ?.flatMap((host) => host.timeline?.items ?? [])
-          .some(
-            (item) =>
-              item.kind === "user_message" &&
-              item.text === messageText &&
-              typeof item.clientMessageId === "string" &&
-              item.messageId === undefined,
-          );
-      }, prompt),
-    )
-    .toBe(true);
-}
-
-async function waitForCachedMessageWithoutProviderId(page: Page, prompt: string): Promise<void> {
-  await expect
-    .poll(() =>
-      page.evaluate((messageText) => {
-        const raw = localStorage.getItem("@paseo:replica-cache");
-        if (!raw) return false;
-        const cache = JSON.parse(raw) as {
-          hosts?: Array<{ timeline?: { items?: Array<Record<string, unknown>> } | null }>;
-        };
-        return cache.hosts
-          ?.flatMap((host) => host.timeline?.items ?? [])
-          .some(
-            (item) =>
-              item.kind === "user_message" &&
-              item.text === messageText &&
-              item.messageId === undefined,
-          );
-      }, prompt),
-    )
-    .toBe(true);
-}
-
-async function expectPendingSubmissionNotRestoredAfterReload(page: Page): Promise<void> {
-  const prompt = "Keep this cached submission pending.";
-  const gate = await installDaemonWebSocketGate(page);
-  const session = await seedMockAgentWorkspace({
-    repoPrefix: "rewind-current-cache-e2e-",
-    title: "Current cache submission e2e",
-  });
-
-  try {
-    await openAgentRoute(page, session);
-    await expectComposerVisible(page);
-    gate.holdNextClientRequest("send_agent_message_request");
-    await submitMessage(page, prompt);
-    await gate.waitForHeldClientRequest();
-    await waitForCurrentSubmissionExcludedFromCache(page, prompt);
-    await gate.drop();
-    await page.reload();
-
-    await expect(userMessage(page, prompt)).toHaveCount(0);
-  } finally {
-    gate.restore();
-    await session.cleanup();
-  }
-}
-
 test.describe("Rewind sheet", () => {
-  test("does not restore a local-only submission from the display cache", async ({ page }) => {
-    await expectPendingSubmissionNotRestoredAfterReload(page);
-  });
-
-  test("does not invent rewind identity for an ID-less cached message", async ({ page }) => {
-    const prompt = "Restore this rewind identity from the legacy cache.";
-    const gate = await installDaemonWebSocketGate(page);
-    const session = await seedMockAgentWorkspace({
-      repoPrefix: "rewind-cache-upgrade-e2e-",
-      title: "Rewind cache upgrade e2e",
-      initialPrompt: prompt,
-    });
-    let heldTimelineRequest = false;
-
-    try {
-      await openAgentRoute(page, session);
-      await expectUserMessageVisible(page, prompt);
-      await rewriteCachedMessageAsLegacyRow(page, prompt);
-      gate.holdNextClientRequest("fetch_agent_timeline_request");
-      await page.reload();
-      await gate.waitForHeldClientRequest();
-      heldTimelineRequest = true;
-
-      const restoredMessage = userMessage(page, prompt);
-      await expect(restoredMessage).toBeVisible();
-      await restoredMessage.hover();
-      await expect(restoredMessage.getByTestId("rewind-menu-trigger")).toHaveCount(0);
-      await waitForCachedMessageWithoutProviderId(page, prompt);
-    } finally {
-      if (heldTimelineRequest) gate.releaseHeldClientRequest();
-      gate.restore();
-      await session.cleanup();
-    }
-  });
-
   test("rewinds from a user message sheet option", async ({ page }) => {
     const firstPrompt = "emit 1 coalesced agent stream updates for first rewind turn.";
     const secondPrompt = "Prepare deleted rewind turn assistant content.";
@@ -192,10 +45,6 @@ test.describe("Rewind sheet", () => {
       await expect(page.getByText("Cycle 1", { exact: true })).toBeVisible();
       await expectUserMessageCount(page, 2);
 
-      await scrollChatAwayFromBottom(page, {
-        deltaY: -900,
-        minDistanceFromBottom: 300,
-      });
       await userMessage(page, firstPrompt).hover();
       await page.getByTestId("rewind-menu-trigger").first().click();
       const rewindSheet = page.getByTestId("rewind-menu-content");

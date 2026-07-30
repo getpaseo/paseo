@@ -56,7 +56,7 @@ export function parseImageDataUrl(
     if (!isRasterImageMimeType(parsed.mimeType)) {
       return null;
     }
-    const fingerprint = `${parsed.mimeType}\0${parsed.base64}`;
+    const fingerprint = `${parsed.mimeType}\0${parsed.base64.length}\0${parsed.base64.slice(0, 64)}\0${parsed.base64.slice(-64)}`;
     return {
       ...parsed,
       cacheKey: `data-image:${parsed.mimeType}:${parsed.base64.length}:${hashString(fingerprint)}`,
@@ -87,15 +87,12 @@ export function createPreviewAttachmentId(input: {
   size?: number | null;
   modifiedAt?: string | null;
   contentLength?: number | null;
-  contentKey?: string | null;
 }): string {
   const path = input.path?.trim() ?? "";
   const size = Number.isFinite(input.size) ? String(input.size) : "";
   const modifiedAt = input.modifiedAt?.trim() ?? "";
   const contentLength = Number.isFinite(input.contentLength) ? String(input.contentLength) : "";
-  const contentKey = input.contentKey?.trim() ?? "";
-  const identity = `${input.mimeType}\0${path}\0${size}\0${modifiedAt}\0${contentLength}`;
-  const hash = hashString(contentKey ? `${identity}\0${contentKey}` : identity);
+  const hash = hashString(`${input.mimeType}\0${path}\0${size}\0${modifiedAt}\0${contentLength}`);
   return `preview_${size || contentLength || "unknown"}_${hash}`;
 }
 

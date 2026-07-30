@@ -5,11 +5,9 @@ import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 
 import {
   normalizeWorkspaceDescriptor,
-  selectAgentTimelineState,
   useSessionStore,
   type WorkspaceDescriptor,
 } from "./session-store";
-import type { StreamItem } from "../types/stream";
 import { patchWorkspaceScripts } from "../contexts/session-workspace-scripts";
 
 function createWorkspace(
@@ -51,57 +49,8 @@ function getTestSessionReferences() {
     sessions: state.sessions,
     session,
     workspaces: session.workspaces,
-    emptyProjects: session.emptyProjects,
   };
 }
-
-describe("agent timeline state", () => {
-  it("commits canonical items, range, and older availability as one synced state", () => {
-    initializeTestSession();
-    const items: StreamItem[] = [
-      {
-        kind: "assistant_message",
-        id: "canonical-row",
-        text: "canonical",
-        timestamp: new Date("2026-07-27T10:00:00.000Z"),
-      },
-    ];
-
-    useSessionStore.getState().applyAgentTimelineResponseState("test-server", "agent-1", {
-      items,
-      head: [],
-      range: { epoch: "epoch-1", startSeq: 51, endSeq: 100 },
-      older: "available",
-      synchronized: true,
-      acknowledgedClientMessageIds: [],
-    });
-
-    expect(
-      selectAgentTimelineState(useSessionStore.getState().sessions["test-server"], "agent-1"),
-    ).toEqual({
-      status: "synced",
-      items,
-      range: { epoch: "epoch-1", startSeq: 51, endSeq: 100 },
-      older: "available",
-    });
-  });
-
-  it("represents an empty authoritative timeline without inventing a range", () => {
-    initializeTestSession();
-    useSessionStore.getState().applyAgentTimelineResponseState("test-server", "agent-1", {
-      items: [],
-      head: [],
-      range: null,
-      older: "none",
-      synchronized: true,
-      acknowledgedClientMessageIds: [],
-    });
-
-    expect(
-      selectAgentTimelineState(useSessionStore.getState().sessions["test-server"], "agent-1"),
-    ).toEqual({ status: "synced", items: [], range: null, older: "none" });
-  });
-});
 
 describe("normalizeWorkspaceDescriptor", () => {
   it("normalizes workspace scripts and invalid activity timestamps", () => {
@@ -452,48 +401,6 @@ describe("removeWorkspace", () => {
     expect(after.sessions).toBe(before.sessions);
     expect(after.session).toBe(before.session);
     expect(after.workspaces).toBe(before.workspaces);
-  });
-});
-
-describe("removeEmptyProject", () => {
-  it("removes an empty project by project id", () => {
-    const store = useSessionStore.getState();
-    initializeTestSession();
-    store.setEmptyProjects("test-server", [
-      {
-        projectId: "project-empty",
-        projectDisplayName: "Empty",
-        projectCustomName: null,
-        projectRootPath: "/repo/empty",
-        projectKind: "git",
-      },
-    ]);
-
-    store.removeEmptyProject("test-server", "project-empty");
-
-    expect(getTestSessionReferences().emptyProjects.has("project-empty")).toBe(false);
-  });
-
-  it("preserves identity when removing a missing empty project", () => {
-    const store = useSessionStore.getState();
-    initializeTestSession();
-    store.setEmptyProjects("test-server", [
-      {
-        projectId: "project-empty",
-        projectDisplayName: "Empty",
-        projectCustomName: null,
-        projectRootPath: "/repo/empty",
-        projectKind: "git",
-      },
-    ]);
-    const before = getTestSessionReferences();
-
-    store.removeEmptyProject("test-server", "project-missing");
-    const after = getTestSessionReferences();
-
-    expect(after.sessions).toBe(before.sessions);
-    expect(after.session).toBe(before.session);
-    expect(after.emptyProjects).toBe(before.emptyProjects);
   });
 });
 

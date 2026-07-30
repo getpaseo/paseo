@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.2.4 - 2026-07-30
+
+### Added
+
+- Set an agent's thinking level from the CLI ([#2533](https://github.com/getpaseo/paseo/pull/2533))
+- Switch projects while creating a workspace with ⌘P / Ctrl+P ([#2110](https://github.com/getpaseo/paseo/pull/2110) by [@turtleDev](https://github.com/turtleDev))
+- Open a project or workspace folder from the sidebar ([#2491](https://github.com/getpaseo/paseo/pull/2491) by [@PTK030](https://github.com/PTK030))
+- Flick up on the chat to dismiss the keyboard ([#2417](https://github.com/getpaseo/paseo/pull/2417) by [@nllptrx](https://github.com/nllptrx))
+- Custom providers can read the agent's working directory ([#2563](https://github.com/getpaseo/paseo/pull/2563))
+
+### Fixed
+
+- The same repository added on more than one machine appears as one project in the sidebar ([#2565](https://github.com/getpaseo/paseo/pull/2565))
+- Idle agents keep their background work instead of shutting down when unused ([#2590](https://github.com/getpaseo/paseo/pull/2590))
+- Desktop no longer crashes at startup while restoring your file tree ([#2595](https://github.com/getpaseo/paseo/pull/2595))
+- Plan approval only shows the latest proposal ([#2534](https://github.com/getpaseo/paseo/pull/2534))
+- Opus 5 appears once in the model list, with its full 1M context ([#2497](https://github.com/getpaseo/paseo/pull/2497))
+- The context meter no longer blanks out partway through a conversation ([#2494](https://github.com/getpaseo/paseo/pull/2494) by [@theslava](https://github.com/theslava))
+- A very large working diff no longer drops your session ([#2488](https://github.com/getpaseo/paseo/pull/2488) by [@nikuscs](https://github.com/nikuscs))
+- Interrupting Pi no longer surfaces a stream error ([#2311](https://github.com/getpaseo/paseo/pull/2311) by [@mcowger](https://github.com/mcowger))
+- Grok usage shows again in Settings ([#2353](https://github.com/getpaseo/paseo/pull/2353) by [@jasonhnd](https://github.com/jasonhnd))
+- OMP models that report no context window now load ([#2406](https://github.com/getpaseo/paseo/pull/2406) by [@astartsky](https://github.com/astartsky))
+- Paseo's own tools are available directly in OMP ([#2418](https://github.com/getpaseo/paseo/pull/2418) by [@perezd](https://github.com/perezd))
+- Codex finds the skills defined in your project ([#2423](https://github.com/getpaseo/paseo/pull/2423) by [@dwyanewang](https://github.com/dwyanewang))
+- Pull request comments containing HTML render correctly ([#2432](https://github.com/getpaseo/paseo/pull/2432) by [@mcowger](https://github.com/mcowger))
+- Self-hosted forge links keep their port ([#2478](https://github.com/getpaseo/paseo/pull/2478) by [@muzhi1991](https://github.com/muzhi1991))
+- The Linux AppImage launches when opened from your desktop ([#2439](https://github.com/getpaseo/paseo/pull/2439) by [@stonegray](https://github.com/stonegray))
+- Repository search works with older versions of the GitHub CLI ([#2611](https://github.com/getpaseo/paseo/pull/2611))
+
 ## 0.2.3 - 2026-07-27
 
 ### Added

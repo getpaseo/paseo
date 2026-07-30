@@ -12,7 +12,7 @@ function projectFor(serverId: string, key = "project"): HostProjectListItem {
     projectName: key,
     projectKind: "git",
     iconWorkingDir: `/work/${key}`,
-    hosts: [{ serverId, iconWorkingDir: `/work/${key}`, canCreateWorktree: true }],
+    hosts: [{ serverId, projectId: key, iconWorkingDir: `/work/${key}`, canCreateWorktree: true }],
     workspaceKeys: [],
   };
 }

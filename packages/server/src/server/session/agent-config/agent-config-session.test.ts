@@ -117,7 +117,7 @@ describe("AgentConfigSession", () => {
     });
   });
 
-  test("set mode: a failed load rejects without mutating the collected agent", async () => {
+  test("set mode: a failed load rejects without mutating the closed agent", async () => {
     const { subsystem, emitted, operations } = makeSubsystem();
     operations.loadFailure = new Error("agent is archived");
 

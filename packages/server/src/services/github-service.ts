@@ -147,7 +147,7 @@ const GitHubRepositoryListItemSchema = z.object({
   name: z.string(),
   nameWithOwner: z.string(),
   description: z.string().nullable().optional(),
-  visibility: z.string(),
+  isPrivate: z.boolean(),
   updatedAt: z.string(),
   sshUrl: z.string(),
   url: z.string(),
@@ -158,7 +158,7 @@ const GitHubRepositorySearchItemSchema = z.object({
   name: z.string(),
   fullName: z.string(),
   description: z.string().nullable().optional(),
-  visibility: z.string(),
+  isPrivate: z.boolean(),
   updatedAt: z.string(),
   url: z.string(),
 });
@@ -1287,7 +1287,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
               "repo",
               "list",
               "--json",
-              "id,name,nameWithOwner,description,visibility,updatedAt,sshUrl,url",
+              "id,name,nameWithOwner,description,isPrivate,updatedAt,sshUrl,url",
               "--limit",
               String(limit),
             ],
@@ -1305,7 +1305,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
             "repos",
             query,
             "--json",
-            "id,name,fullName,description,visibility,updatedAt,url",
+            "id,name,fullName,description,isPrivate,updatedAt,url",
             "--sort",
             "updated",
             "--order",
@@ -2315,7 +2315,7 @@ function normalizeRepositorySummary(repository: {
   name: string;
   nameWithOwner: string;
   description?: string | null;
-  visibility: string;
+  isPrivate: boolean;
   updatedAt: string;
   cloneUrl: string;
 }): GitHubRepositorySummary {
@@ -2328,18 +2328,13 @@ function normalizeRepositorySummary(repository: {
     name: repository.name.trim(),
     nameWithOwner,
     description: repository.description ?? null,
-    visibility: normalizeRepositoryVisibility(repository.visibility),
+    // We query isPrivate, not visibility: `gh repo list --json visibility` is unsupported before
+    // gh 2.28 (Debian Bookworm ships 2.23), while isPrivate works on every version. The wire schema
+    // requires the visibility enum, so old clients still get a value they can parse.
+    visibility: repository.isPrivate ? "private" : "public",
     updatedAt: repository.updatedAt,
     cloneUrl: repository.cloneUrl.trim(),
   };
-}
-
-function normalizeRepositoryVisibility(visibility: string): GitHubRepositorySummary["visibility"] {
-  const normalized = visibility.toLowerCase();
-  if (normalized === "public" || normalized === "private" || normalized === "internal") {
-    return normalized;
-  }
-  throw new Error(`Unknown GitHub repository visibility: ${visibility}`);
 }
 
 function toPullRequestCheckoutTarget(

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { DaemonClient, FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
-import { useSessionStore, type Agent } from "@/stores/session-store";
+import { useSessionStore, type Agent, type WorkspaceDescriptor } from "@/stores/session-store";
 import { deriveWorkspaceAgentVisibility } from "@/workspace-tabs/agent-visibility";
+import { buildWorkspaceStructureProjects } from "@/projects/workspace-structure";
 import {
   applyLegacyDaemonWorkspaceOwnership,
   backfillLegacyDaemonWorkspaceDirectoryIfEmpty,
@@ -9,6 +10,17 @@ import {
 } from "./legacy-daemon-workspaces";
 
 const SERVER_ID = "srv_legacy";
+
+function legacyProjectFromWorkspace(workspace: WorkspaceDescriptor) {
+  return {
+    projectId: workspace.projectId,
+    projectKey: null,
+    projectDisplayName: workspace.projectDisplayName,
+    projectCustomName: workspace.projectCustomName ?? null,
+    projectRootPath: workspace.projectRootPath,
+    projectKind: workspace.projectKind,
+  };
+}
 
 function legacyAgent(input: {
   id: string;
@@ -118,6 +130,38 @@ describe("buildLegacyDaemonWorkspaceSnapshot", () => {
     ]);
   });
 
+  it("keeps matching legacy path projects separate across hosts", () => {
+    const first = buildLegacyDaemonWorkspaceSnapshot({
+      serverId: "host-a",
+      entries: [legacyAgent({ id: "agent-a", cwd: "/repo/app" })],
+    });
+    const second = buildLegacyDaemonWorkspaceSnapshot({
+      serverId: "host-b",
+      entries: [legacyAgent({ id: "agent-b", cwd: "/repo/app" })],
+    });
+
+    const projects = buildWorkspaceStructureProjects({
+      sessions: [
+        {
+          serverId: "host-a",
+          projects: Array.from(first.workspaces.values(), legacyProjectFromWorkspace),
+          workspaces: first.workspaces.values(),
+        },
+        {
+          serverId: "host-b",
+          projects: Array.from(second.workspaces.values(), legacyProjectFromWorkspace),
+          workspaces: second.workspaces.values(),
+        },
+      ],
+    });
+
+    expect(projects).toHaveLength(2);
+    expect(projects.map((project) => project.hosts[0]?.serverId).sort()).toEqual([
+      "host-a",
+      "host-b",
+    ]);
+  });
+
   it("keeps old-daemon agent updates attached to the path-backed workspace", () => {
     const snapshot = buildLegacyDaemonWorkspaceSnapshot({
       serverId: SERVER_ID,
@@ -185,7 +229,7 @@ describe("buildLegacyDaemonWorkspaceSnapshot", () => {
       client,
       serverId: SERVER_ID,
       workspaces: new Map(),
-      emptyProjects: new Map(),
+      projects: new Map(),
       isCancelled: () => cancelled,
     });
 

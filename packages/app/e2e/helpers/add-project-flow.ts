@@ -37,17 +37,6 @@ export function addProjectFlowMethod(page: Page, method: AddProjectMethod): Loca
   return page.getByTestId(`add-project-flow-method-${method}`);
 }
 
-export async function waitForConnectedHost(
-  page: Page,
-  input: { serverId: string; endpoint: string },
-): Promise<void> {
-  await page.getByTestId("sidebar-hosts-trigger").click();
-  const host = page.getByTestId(`sidebar-host-row-${input.serverId}`);
-  await expect(host).toContainText(input.endpoint, { timeout: 30_000 });
-  await page.keyboard.press("Escape");
-  await expect(host).not.toBeVisible();
-}
-
 export async function expectAddProjectPage(page: Page, kind: AddProjectFlowPage): Promise<Locator> {
   const currentPage = page.getByTestId(`add-project-flow-page-${kind}`);
   await expect(currentPage).toBeVisible({ timeout: 30_000 });

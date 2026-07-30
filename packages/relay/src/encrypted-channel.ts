@@ -118,6 +118,15 @@ function buildInvalidHelloError(rawText: string, parsed?: unknown): Error {
 const HANDSHAKE_RETRY_MS = 1000;
 const MAX_PENDING_SENDS = 200;
 const REHANDSHAKE_KEY_MISMATCH_CLOSE_CODE = 1008;
+const ENCRYPTED_PAYLOAD_OVERHEAD_BYTES = 40;
+
+export function base64EncryptedWireByteLength(plaintextBytes: number): number {
+  return 4 * Math.ceil((plaintextBytes + ENCRYPTED_PAYLOAD_OVERHEAD_BYTES) / 3);
+}
+
+export function maxBase64EncryptedPlaintextByteLength(wireBytes: number): number {
+  return Math.floor(wireBytes / 4) * 3 - ENCRYPTED_PAYLOAD_OVERHEAD_BYTES;
+}
 const REHANDSHAKE_KEY_MISMATCH_CLOSE_REASON = "E2EE re-handshake key mismatch";
 
 interface TimeoutWithUnref {
@@ -474,11 +483,12 @@ export class EncryptedChannel {
   }
 
   outboundWireByteLength(data: string | ArrayBuffer): number {
-    const encryptedBytes = utf8ByteLength(data) + 40;
+    const plaintextBytes = utf8ByteLength(data);
+    const encryptedBytes = plaintextBytes + ENCRYPTED_PAYLOAD_OVERHEAD_BYTES;
     if (this.options.binaryCiphertext && data instanceof ArrayBuffer) {
       return encryptedBytes;
     }
-    return 4 * Math.ceil(encryptedBytes / 3);
+    return base64EncryptedWireByteLength(plaintextBytes);
   }
 
   private async flushPendingSends(): Promise<void> {

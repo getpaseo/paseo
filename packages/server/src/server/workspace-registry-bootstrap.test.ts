@@ -10,6 +10,7 @@ import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-servic
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import { FileBackedProjectRegistry, FileBackedWorkspaceRegistry } from "./workspace-registry.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
+import { deriveProjectKey } from "./project-key.js";
 
 let NON_GIT_PROJECT: string;
 let ARCHIVED_PROJECT: string;
@@ -242,6 +243,14 @@ describe("bootstrapWorkspaceRegistries", () => {
     const projects = await projectRegistry.list();
     expect(projects).toHaveLength(1);
     expect(projects[0]?.projectId).toBe(NON_GIT_PROJECT);
+    expect(projects[0]?.projectKey).toBe(
+      deriveProjectKey({
+        rootPath: NON_GIT_PROJECT,
+        remoteUrl: null,
+        worktreeRoot: null,
+        mainRepoRoot: null,
+      }),
+    );
     expect(projects[0]?.createdAt).toBe("2026-03-01T00:00:00.000Z");
     expect(projects[0]?.updatedAt).toBe("2026-03-03T00:00:00.000Z");
   });
@@ -351,6 +360,7 @@ describe("bootstrapWorkspaceRegistries", () => {
     expect(projects).toHaveLength(1);
     expect(projects[0]).toMatchObject({
       projectId: "remote:github.com/acme/legacy-project",
+      projectKey: "remote:github.com/acme/legacy-project",
       rootPath: GIT_PROJECT,
       kind: "git",
       displayName: "acme/legacy-project",
