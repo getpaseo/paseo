@@ -22,6 +22,8 @@ export interface QueuedComposerMessage {
   id: string;
   text: string;
   attachments: ComposerAttachment[];
+  /** False when a daemon wire attachment cannot be safely reconstructed for editing. */
+  canEdit?: boolean;
 }
 
 export interface AttachmentPersister {
@@ -255,11 +257,26 @@ export interface EditQueuedComposerMessageResult {
   attachments: UserComposerAttachment[];
 }
 
+export function getQueuedComposerMessageEditDraft(input: {
+  messages: readonly QueuedComposerMessage[];
+  messageId: string;
+}): EditQueuedComposerMessageResult | null {
+  const item = input.messages.find((q) => q.id === input.messageId);
+  if (!item || item.canEdit === false) return null;
+  return {
+    text: item.text,
+    attachments: userAttachmentsOnly(item.attachments),
+  };
+}
+
 export function editQueuedComposerMessage(
   input: EditQueuedComposerMessageInput,
 ): EditQueuedComposerMessageResult | null {
-  const item = input.queue.read(input.agentId).find((q) => q.id === input.messageId);
-  if (!item) return null;
+  const result = getQueuedComposerMessageEditDraft({
+    messages: input.queue.read(input.agentId),
+    messageId: input.messageId,
+  });
+  if (!result) return null;
   input.queue.write((prev) => {
     const next = new Map(prev);
     next.set(
@@ -268,10 +285,7 @@ export function editQueuedComposerMessage(
     );
     return next;
   });
-  return {
-    text: item.text,
-    attachments: userAttachmentsOnly(item.attachments),
-  };
+  return result;
 }
 
 export interface SendQueuedComposerMessageNowInput {
