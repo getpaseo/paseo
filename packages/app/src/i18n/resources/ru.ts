@@ -1753,6 +1753,9 @@ export const ru: TranslationResources = {
       mute: "Отключить микрофон",
       unmute: "Включить микрофон",
       enableAudio: "Нажмите, чтобы включить звук",
+      showTranscript: "Показать расшифровку",
+      hideTranscript: "Скрыть расшифровку",
+      dismiss: "Закрыть",
     },
     status: {
       connecting: "Подключение...",

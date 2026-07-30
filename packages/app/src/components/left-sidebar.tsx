@@ -45,6 +45,7 @@ import { type SidebarGroupMode, useSidebarViewStore } from "@/stores/sidebar-vie
 import { useHosts } from "@/runtime/host-runtime";
 import { usePanelStore } from "@/stores/panel-store";
 import { useOwnsWindowChromeCorner, WindowChromeSafeArea } from "@/utils/desktop-window";
+import { SidebarLiveVoiceSlot } from "@/live-voice/live-voice-sidebar-card";
 import { useCloseAgentListGesture } from "@/mobile-panels/gestures";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
 import { buildSettingsAddHostRoute, buildSettingsRoute } from "@/utils/host-routes";
@@ -778,6 +779,8 @@ function DesktopSidebar({
         )}
 
         <SidebarCalloutSlot />
+
+        <SidebarLiveVoiceSlot active={active} />
 
         <SidebarFooter
           theme={theme}

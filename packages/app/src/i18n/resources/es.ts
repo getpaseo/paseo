@@ -1769,6 +1769,9 @@ export const es: TranslationResources = {
       mute: "Silenciar micrófono",
       unmute: "Activar micrófono",
       enableAudio: "Toca para activar el audio",
+      showTranscript: "Mostrar transcripción",
+      hideTranscript: "Ocultar transcripción",
+      dismiss: "Descartar",
     },
     status: {
       connecting: "Conectando...",

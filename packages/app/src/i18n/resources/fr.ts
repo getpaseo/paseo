@@ -1773,6 +1773,9 @@ export const fr: TranslationResources = {
       mute: "Couper le micro",
       unmute: "Réactiver le micro",
       enableAudio: "Touchez pour activer l'audio",
+      showTranscript: "Afficher la transcription",
+      hideTranscript: "Masquer la transcription",
+      dismiss: "Ignorer",
     },
     status: {
       connecting: "Connexion...",

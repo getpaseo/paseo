@@ -1702,6 +1702,9 @@ export const zhCN: TranslationResources = {
       mute: "静音麦克风",
       unmute: "取消静音",
       enableAudio: "点按以启用音频",
+      showTranscript: "显示转录",
+      hideTranscript: "隐藏转录",
+      dismiss: "关闭",
     },
     status: {
       connecting: "正在连接...",

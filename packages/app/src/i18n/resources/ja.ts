@@ -1740,6 +1740,9 @@ export const ja: TranslationResources = {
       mute: "マイクをミュート",
       unmute: "マイクのミュートを解除",
       enableAudio: "タップして音声を有効化",
+      showTranscript: "文字起こしを表示",
+      hideTranscript: "文字起こしを非表示",
+      dismiss: "閉じる",
     },
     status: {
       connecting: "接続中...",
