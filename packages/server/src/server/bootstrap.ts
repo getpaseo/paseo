@@ -5,6 +5,7 @@ import { open } from "fs/promises";
 import { randomUUID } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { Logger } from "pino";
 import { z } from "zod";
@@ -143,6 +144,9 @@ import { FileBackedChatService } from "./chat/chat-service.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
+import { PaseoWorkflowRuntimeAdapter } from "./workflow/paseo-runtime-adapter.js";
+import { WorkflowService } from "./workflow/service.js";
+import { WorkflowStorage } from "./workflow/storage.js";
 import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-store.js";
 import { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { DaemonConfigBrowserToolsPolicy } from "./browser-tools/policy.js";
@@ -1212,6 +1216,21 @@ export async function createPaseoDaemon(
   logger.info(
     "Voice mode configured for agent-scoped resume flow (no dedicated voice assistant provider)",
   );
+  const workflowService = new WorkflowService({
+    storage: new WorkflowStorage({
+      paseoHome: config.paseoHome,
+      builtInDirectory: fileURLToPath(new URL("./workflow/templates", import.meta.url)),
+    }),
+    adapter: new PaseoWorkflowRuntimeAdapter({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager,
+      workspaceRegistry,
+      createAgent,
+      createPaseoWorktree: createPaseoWorktreeForTools,
+      logger,
+    }),
+  });
   logger.info({ elapsed: elapsed() }, "Preparing voice and MCP runtime");
 
   const createAgentToolHostDependencies = (
@@ -1222,6 +1241,7 @@ export async function createPaseoDaemon(
     terminalManager,
     getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
     scheduleService,
+    workflowService,
     providerSnapshotManager,
     github,
     workspaceGitService,
@@ -1276,7 +1296,14 @@ export async function createPaseoDaemon(
   const createAgentToolCatalog = (runtime: PaseoToolRuntimeContext) =>
     createPaseoToolCatalog(createAgentToolHostDependencies(runtime));
   agentManager.setPaseoToolCatalogFactory(createAgentToolCatalog);
-  agentManager.setPaseoToolsEnabled(config.mcpInjectIntoAgents !== false);
+  // Native provider adapters consume this catalog directly. MCP injection only
+  // controls the optional transport configured below.
+  agentManager.setPaseoToolsEnabled(true);
+  // Persisted workflow reconciliation may resume an agent turn immediately.
+  // Install native tools before initialization so the restored provider session
+  // receives the same catalog as a newly created session.
+  await workflowService.initialize();
+  logger.info({ elapsed: elapsed() }, "Workflow service initialized");
 
   const mcpEnabled = config.mcpEnabled ?? true;
   let agentMcpBaseUrl: string | null = null;
@@ -1440,10 +1467,8 @@ export async function createPaseoDaemon(
             const mcpBaseUrl = mcpEnabled ? createAgentMcpBaseUrl(boundListenTarget) : null;
             agentMcpBaseUrl = config.mcpInjectIntoAgents === false ? null : mcpBaseUrl;
             agentManager.setMcpBaseUrl(agentMcpBaseUrl);
-            agentManager.setPaseoToolsEnabled(config.mcpInjectIntoAgents !== false);
             daemonConfigStore.onFieldChange("mcp.injectIntoAgents", (value) => {
               agentManager.setMcpBaseUrl(value ? mcpBaseUrl : null);
-              agentManager.setPaseoToolsEnabled(value !== false);
             });
             daemonConfigStore.onFieldChange("appendSystemPrompt", (value) => {
               agentManager.setAppendSystemPrompt(typeof value === "string" ? value : "");
@@ -1537,6 +1562,7 @@ export async function createPaseoDaemon(
               serviceProxyPublicBaseUrl,
               browserToolsBroker,
               hubRelationships,
+              workflowService,
             );
             await hubRelationships.start();
 
@@ -1599,6 +1625,7 @@ export async function createPaseoDaemon(
   };
 
   const stop = async () => {
+    workflowService.dispose();
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
     scriptHealthMonitor.stop();

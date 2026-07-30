@@ -196,6 +196,8 @@ import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";
 import type pino from "pino";
 import { FileBackedChatService } from "./chat/chat-service.js";
 import { LoopService } from "./loop-service.js";
+import type { WorkflowService } from "./workflow/service.js";
+import { WorkflowSession } from "./workflow/session.js";
 import { ScheduleService } from "./schedule/service.js";
 import {
   createGitHubService,
@@ -422,6 +424,7 @@ export interface SessionOptions {
   chatService: FileBackedChatService;
   scheduleService: ScheduleService;
   loopService: LoopService;
+  workflowService?: WorkflowService;
   checkoutDiffManager: CheckoutDiffManager;
   github?: ForgeService;
   createAgentMcpTransport?: AgentMcpTransportFactory;
@@ -553,6 +556,14 @@ function describeRegistryTransition(record: ArchivedRecordSnapshot | null): Regi
   return record.archivedAt ? "unarchived" : "existing";
 }
 
+function createOptionalWorkflowSession(
+  service: WorkflowService | undefined,
+  emit: (message: SessionOutboundMessage) => void,
+): WorkflowSession | null {
+  if (!service) return null;
+  return new WorkflowSession({ emit }, service);
+}
+
 /**
  * Session represents a single connected client session.
  * It owns all state management, orchestration logic, and message processing.
@@ -632,6 +643,7 @@ export class Session {
   private readonly voiceSession: VoiceSession;
   private readonly checkoutSession: CheckoutSession;
   private readonly chatScheduleLoopSession: ChatScheduleLoopSession;
+  private readonly workflowSession: WorkflowSession | null;
   private readonly providerCatalogSession: ProviderCatalogSession;
   private readonly workspaceFilesSession: WorkspaceFilesSession;
   private readonly agentConfigSession: AgentConfigSession;
@@ -667,6 +679,7 @@ export class Session {
       chatService,
       scheduleService,
       loopService,
+      workflowService,
       checkoutDiffManager,
       github,
       renameCurrentBranch,
@@ -814,6 +827,9 @@ export class Session {
       clientId: this.clientId,
       logger: this.sessionLogger,
     });
+    this.workflowSession = createOptionalWorkflowSession(workflowService, (message) =>
+      this.emit(message),
+    );
     this.providerCatalogSession = new ProviderCatalogSession({
       host: {
         emit: (msg) => this.emit(msg),
@@ -1796,6 +1812,7 @@ export class Session {
       this.dispatchWorkspaceFileMessage(msg, source) ??
       this.dispatchProviderMessage(msg) ??
       this.dispatchTerminalMessage(msg) ??
+      this.workflowSession?.dispatch(msg) ??
       this.dispatchChatScheduleLoopMessage(msg) ??
       this.dispatchMiscMessage(msg);
     if (promise) await promise;

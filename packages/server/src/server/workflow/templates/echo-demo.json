@@ -1,0 +1,150 @@
+{
+  "schemaVersion": "paseo.workflows.v0.2",
+  "name": "echo-demo",
+  "description": "Demo workflow that routes from a worker to a reviewer and back in the current Paseo workspace.",
+  "parameters": {
+    "workspaceRef": {
+      "type": "string",
+      "required": true,
+      "defaultFrom": "current.workspace",
+      "title": "Workspace",
+      "description": "Paseo workspace to reuse."
+    },
+    "worktreeRef": {
+      "type": "path",
+      "required": true,
+      "defaultFrom": "current.worktree",
+      "title": "Worktree",
+      "description": "Current workspace directory."
+    }
+  },
+  "bindings": {
+    "workspace": "{{ parameters.workspaceRef }}",
+    "worktree": "{{ parameters.worktreeRef }}"
+  },
+  "workspace": {
+    "createWorktree": {
+      "cwd": "{{ parameters.worktreeRef }}",
+      "target": {
+        "mode": "branch-off"
+      }
+    }
+  },
+  "agents": {
+    "worker": {
+      "persistence": "reuse-agent",
+      "createAgent": {
+        "title": "workflow echo worker",
+        "provider": "codex",
+        "model": "gpt-5.4-mini",
+        "settings": {
+          "modeId": "auto-review",
+          "thinkingOptionId": "low"
+        }
+      }
+    },
+    "reviewer": {
+      "persistence": "fresh-agent",
+      "createAgent": {
+        "title": "workflow echo reviewer",
+        "provider": "codex",
+        "model": "gpt-5.4-mini",
+        "settings": {
+          "modeId": "auto-review",
+          "thinkingOptionId": "low"
+        }
+      }
+    }
+  },
+  "protocol": {
+    "maxAttempts": 2
+  },
+  "entry": "main",
+  "flows": {
+    "main": {
+      "initial": "work",
+      "states": {
+        "work": {
+          "turn": {
+            "agent": "worker",
+            "prompt": "worker_initial",
+            "emits": {
+              "review": {
+                "description": "The sentence is ready for the reviewer."
+              }
+            }
+          },
+          "on": {
+            "review": "review",
+            "error.agent": "worker_failed",
+            "error.protocol": "protocol_failed"
+          }
+        },
+        "review": {
+          "turn": {
+            "agent": "reviewer",
+            "prompt": "reviewer",
+            "emits": {
+              "continue": {
+                "description": "Return the review to the worker."
+              }
+            }
+          },
+          "on": {
+            "continue": "resume",
+            "error.agent": "reviewer_failed",
+            "error.protocol": "protocol_failed"
+          }
+        },
+        "resume": {
+          "turn": {
+            "agent": "worker",
+            "prompt": "worker_continuation",
+            "emits": {
+              "complete": {
+                "description": "The routing demo is complete."
+              }
+            }
+          },
+          "on": {
+            "complete": "finish",
+            "error.agent": "worker_failed",
+            "error.protocol": "protocol_failed"
+          }
+        },
+        "finish": {
+          "stop": {
+            "reason": "complete"
+          }
+        },
+        "worker_failed": {
+          "stop": {
+            "reason": "worker_failed"
+          }
+        },
+        "reviewer_failed": {
+          "stop": {
+            "reason": "reviewer_failed"
+          }
+        },
+        "protocol_failed": {
+          "stop": {
+            "reason": "protocol_failed"
+          }
+        }
+      }
+    }
+  },
+  "limits": {
+    "maxIterations": 5,
+    "maxRuntime": "30m"
+  },
+  "inputs": {
+    "user_demo": "Fake task: explain why a fictional observatory would keep a brass teapot on the moon. This is only a routing demonstration; do not edit files."
+  },
+  "prompts": {
+    "worker_initial": "This is a Paseo workflow routing demo. Do not edit files.\n\nUser demo request:\n{{ inputs.user_demo }}\n\nWrite one short sentence that explains why the demo should ask for review.\n",
+    "reviewer": "Review this worker sentence from the Paseo workflow routing demo.\n\nWorker latest line:\n{{ event.message }}\n\nReply with one short sentence confirming that the route reached the reviewer.\n",
+    "worker_continuation": "The reviewer replied:\n{{ event.message }}\n\nNow finish the Paseo workflow routing demo. Write one short sentence explaining that the worker resumed after reviewer feedback.\n"
+  }
+}

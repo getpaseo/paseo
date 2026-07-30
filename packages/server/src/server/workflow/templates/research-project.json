@@ -1,0 +1,398 @@
+{
+  "schemaVersion": "paseo.workflows.v0.2",
+  "name": "research-project",
+  "description": "Dynamic research fan-out, per-branch review, aggressive distillation, and a final evidence report.",
+  "parameters": {
+    "repoCwd": {
+      "type": "path",
+      "required": true,
+      "defaultFrom": "current.worktree",
+      "title": "Repository",
+      "description": "Repository cwd used to create the root Paseo worktree."
+    },
+    "branchName": {
+      "type": "string",
+      "required": true,
+      "title": "Branch name",
+      "description": "Lowercase root branch/worktree name."
+    },
+    "baseBranch": {
+      "type": "string",
+      "default": "main",
+      "title": "Base branch",
+      "description": "Committed ref from which to create the root worktree."
+    },
+    "objective": {
+      "type": "string",
+      "required": true,
+      "title": "Research objective",
+      "description": "Concrete question or project objective with measurable success evidence."
+    },
+    "provider": {
+      "type": "string",
+      "default": "codex",
+      "title": "Provider",
+      "description": "Paseo provider used by all roles."
+    },
+    "model": {
+      "type": "string",
+      "default": "gpt-5.6-sol",
+      "title": "Model",
+      "description": "Provider model used by all roles."
+    },
+    "concurrency": {
+      "type": "integer",
+      "default": 3,
+      "title": "Parallel branches",
+      "description": "Maximum research branches active at once."
+    },
+    "maxIterations": {
+      "type": "integer",
+      "default": 60,
+      "title": "Turn budget",
+      "description": "Global turn limit across root and child flows."
+    },
+    "maxRuntime": {
+      "type": "string",
+      "default": "24h",
+      "title": "Time budget",
+      "description": "Maximum wall-clock runtime."
+    }
+  },
+  "workspace": {
+    "createWorktree": {
+      "cwd": "{{ parameters.repoCwd }}",
+      "target": {
+        "mode": "branch-off",
+        "newBranch": "{{ parameters.branchName }}",
+        "base": "{{ parameters.baseBranch }}"
+      }
+    }
+  },
+  "agents": {
+    "lead": {
+      "persistence": "reuse-agent",
+      "createAgent": {
+        "title": "research lead",
+        "provider": "{{ parameters.provider }}",
+        "model": "{{ parameters.model }}",
+        "settings": {
+          "modeId": "auto-review",
+          "thinkingOptionId": "high"
+        }
+      }
+    },
+    "researcher": {
+      "persistence": "reuse-agent",
+      "createAgent": {
+        "title": "research branch worker",
+        "provider": "{{ parameters.provider }}",
+        "model": "{{ parameters.model }}",
+        "settings": {
+          "modeId": "auto-review",
+          "thinkingOptionId": "high"
+        }
+      }
+    },
+    "reviewer": {
+      "persistence": "reuse-agent",
+      "createAgent": {
+        "title": "research branch reviewer",
+        "provider": "{{ parameters.provider }}",
+        "model": "{{ parameters.model }}",
+        "settings": {
+          "modeId": "auto-review",
+          "thinkingOptionId": "high"
+        }
+      }
+    },
+    "reporter": {
+      "persistence": "fresh-agent",
+      "createAgent": {
+        "title": "research report writer",
+        "provider": "{{ parameters.provider }}",
+        "model": "{{ parameters.model }}",
+        "settings": {
+          "modeId": "auto-review",
+          "thinkingOptionId": "high"
+        }
+      }
+    }
+  },
+  "protocol": {
+    "maxAttempts": 3
+  },
+  "entry": "main",
+  "flows": {
+    "main": {
+      "initial": "discover",
+      "states": {
+        "discover": {
+          "turn": {
+            "agent": "lead",
+            "prompt": "discover",
+            "emits": {
+              "explore": {
+                "description": "Launch the proposed coherent research branches in parallel.",
+                "dataSchema": {
+                  "type": "object",
+                  "properties": {
+                    "branches": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "question": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "instructions": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": ["question", "instructions"],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": ["branches"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "on": {
+            "explore": "fanout",
+            "error.agent": "failed",
+            "error.protocol": "failed"
+          }
+        },
+        "fanout": {
+          "map": {
+            "group": "candidates",
+            "items": "{{ event.data.branches }}",
+            "as": "branch",
+            "call": {
+              "flow": "candidate",
+              "with": {
+                "branch": "{{ branch }}"
+              },
+              "workspace": {
+                "createWorktree": {
+                  "cwd": "{{ workspace.cwd }}",
+                  "target": {
+                    "mode": "branch-off",
+                    "newBranch": "{{ inputs.branchName }}-candidate-{{ loop.iteration }}-{{ task.index }}",
+                    "base": "{{ workspace.branch }}"
+                  }
+                }
+              }
+            },
+            "join": "all",
+            "concurrency": "{{ parameters.concurrency }}"
+          },
+          "on": {
+            "joined": "integrate",
+            "error.agent": "failed",
+            "error.timeout": "failed"
+          }
+        },
+        "integrate": {
+          "turn": {
+            "agent": "lead",
+            "prompt": "integrate",
+            "emits": {
+              "iterate": {
+                "description": "The evidence is still inadequate; launch a new targeted branch set.",
+                "dataSchema": {
+                  "type": "object",
+                  "properties": {
+                    "branches": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "question": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "instructions": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": ["question", "instructions"],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": ["branches"],
+                  "additionalProperties": false
+                }
+              },
+              "distilled": {
+                "description": "A robust complex solution is proven and ready to be reduced to its essential form."
+              }
+            }
+          },
+          "on": {
+            "iterate": "fanout",
+            "distilled": "simplify",
+            "error.agent": "failed",
+            "error.protocol": "failed"
+          }
+        },
+        "simplify": {
+          "turn": {
+            "agent": "lead",
+            "prompt": "simplify",
+            "emits": {
+              "iterate": {
+                "description": "Simplification exposed a real gap; launch only the targeted branches needed to resolve it.",
+                "dataSchema": {
+                  "type": "object",
+                  "properties": {
+                    "branches": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "question": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "instructions": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": ["question", "instructions"],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": ["branches"],
+                  "additionalProperties": false
+                }
+              },
+              "report": {
+                "description": "The minimal robust deliverable is implemented and verified; write the final report."
+              }
+            }
+          },
+          "on": {
+            "iterate": "fanout",
+            "report": "report",
+            "error.agent": "failed",
+            "error.protocol": "failed"
+          }
+        },
+        "report": {
+          "turn": {
+            "agent": "reporter",
+            "prompt": "report",
+            "emits": {
+              "complete": {
+                "description": "The plain-language evidence report and final deliverable are complete."
+              }
+            }
+          },
+          "on": {
+            "complete": "complete",
+            "error.agent": "failed",
+            "error.protocol": "failed"
+          }
+        },
+        "complete": {
+          "stop": {
+            "reason": "complete"
+          }
+        },
+        "failed": {
+          "stop": {
+            "reason": "agent_or_protocol_failed"
+          }
+        }
+      }
+    },
+    "candidate": {
+      "initial": "work",
+      "states": {
+        "work": {
+          "turn": {
+            "agent": "researcher",
+            "prompt": "candidate_work",
+            "emits": {
+              "review": {
+                "description": "Submit this branch's implementation, results, and evidence for review."
+              }
+            }
+          },
+          "on": {
+            "review": "review",
+            "error.agent": "return_failed",
+            "error.protocol": "return_failed"
+          }
+        },
+        "review": {
+          "turn": {
+            "agent": "reviewer",
+            "prompt": "candidate_review",
+            "emits": {
+              "revise": {
+                "description": "The branch has a correctable gap; the message contains concrete revision instructions."
+              },
+              "accept": {
+                "description": "The branch's claims are supported by reproducible evidence."
+              }
+            }
+          },
+          "on": {
+            "revise": "work",
+            "accept": "return",
+            "error.agent": "return_failed",
+            "error.protocol": "return_failed"
+          }
+        },
+        "return": {
+          "return": {
+            "output": {
+              "question": "{{ inputs.branch.question }}",
+              "verdict": "accepted",
+              "review": "{{ event.message }}"
+            }
+          }
+        },
+        "return_failed": {
+          "return": {
+            "output": {
+              "question": "{{ inputs.branch.question }}",
+              "verdict": "failed",
+              "review": "{{ event.message }}"
+            }
+          }
+        }
+      }
+    }
+  },
+  "limits": {
+    "maxIterations": "{{ parameters.maxIterations }}",
+    "maxRuntime": "{{ parameters.maxRuntime }}"
+  },
+  "inputs": {
+    "objective": "{{ parameters.objective }}",
+    "branchName": "{{ parameters.branchName }}"
+  },
+  "prompts": {
+    "discover": "Lead this research project in the root worktree:\n<objective>\n{{ inputs.objective }}\n</objective>\nWork through simple+bad -> complex+bad -> complex+good -> simple+good.\nFirst build or test the simplest plausible approach and make its failures\nconcrete. Then propose as many independent, coherent branches as the current\nuncertainty requires. Each branch must have a distinct question and precise\nimplementation or experiment instructions. Commit any shared setup that the\nchild worktrees must inherit before launching branches.\n",
+    "candidate_work": "Pursue this branch of the research objective in its own worktree.\n<objective>{{ inputs.objective }}</objective>\n<branch>{{ inputs.branch }}</branch>\n{% if event.event == \"revise\" %}<review>{{ event.message }}</review>{% endif %}\nImplement or run the smallest decisive test, preserve reproducibility, and\nreport exact evidence and limitations. Commit useful branch changes so the\nroot lead can inspect or integrate them.\n",
+    "candidate_review": "Review this research branch without implementing changes.\n<objective>{{ inputs.objective }}</objective>\n<branch>{{ inputs.branch }}</branch>\n<worker_handoff>{{ event.message }}</worker_handoff>\nInspect current artifacts and code. Accept only claims supported by robust,\nreproducible evidence; otherwise return one concrete revision memo.\n",
+    "integrate": "Integrate this completed research round in the root worktree.\n<objective>{{ inputs.objective }}</objective>\n<branch_results>{{ event.data.results }}</branch_results>\nCompare evidence, inspect the listed branch workspaces, and manually integrate\nonly the strongest necessary changes. Do not merge every branch. Continue\niterating while the approach is complex+bad or the evidence is weak. Move on\nonly when a robust complex+good solution is demonstrated.\n",
+    "simplify": "Distill the proven solution into simple+good. Aggressively remove unnecessary\ncomponents, duplicated paths, speculative options, and incidental changes.\nPrefer the smallest understandable diff from the starting point that keeps\nthe robust result. Re-run the decisive tests after simplification. Launch a\ntargeted new research round if simplification invalidates the evidence.\nObjective: {{ inputs.objective }}\n",
+    "report": "Write the final report in the root worktree for a reader who knows nothing\nabout this workflow. Explain the original question, what was tried, what\nfailed, what evidence changed the approach, the final simple solution, and\nhow to reproduce the result. Pull exact current data and add useful tables or\nvisualizations where they support claims. Keep the report plain-language and\nensure every claim matches the final code and artifacts.\n"
+  }
+}

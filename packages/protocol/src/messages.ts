@@ -54,6 +54,28 @@ import {
   LoopStopResponseSchema,
 } from "./loop/rpc-schemas.js";
 import {
+  WorkflowRunInspectRequestSchema,
+  WorkflowRunInspectResponseSchema,
+  WorkflowRunListRequestSchema,
+  WorkflowRunListResponseSchema,
+  WorkflowRunLogsRequestSchema,
+  WorkflowRunLogsResponseSchema,
+  WorkflowRunResumeRequestSchema,
+  WorkflowRunResumeResponseSchema,
+  WorkflowRunStartRequestSchema,
+  WorkflowRunStartResponseSchema,
+  WorkflowRunStopRequestSchema,
+  WorkflowRunStopResponseSchema,
+  WorkflowSpecGetRequestSchema,
+  WorkflowSpecGetResponseSchema,
+  WorkflowSpecListRequestSchema,
+  WorkflowSpecListResponseSchema,
+  WorkflowSpecSaveRequestSchema,
+  WorkflowSpecSaveResponseSchema,
+  WorkflowSpecValidateRequestSchema,
+  WorkflowSpecValidateResponseSchema,
+} from "./workflow/rpc-schemas.js";
+import {
   BrowserAutomationExecuteRequestSchema,
   BrowserAutomationExecuteResponseSchema,
 } from "./browser-automation/rpc-schemas.js";
@@ -2597,6 +2619,16 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   LoopInspectRequestSchema,
   LoopLogsRequestSchema,
   LoopStopRequestSchema,
+  WorkflowSpecListRequestSchema,
+  WorkflowSpecGetRequestSchema,
+  WorkflowSpecSaveRequestSchema,
+  WorkflowSpecValidateRequestSchema,
+  WorkflowRunStartRequestSchema,
+  WorkflowRunListRequestSchema,
+  WorkflowRunInspectRequestSchema,
+  WorkflowRunLogsRequestSchema,
+  WorkflowRunStopRequestSchema,
+  WorkflowRunResumeRequestSchema,
 ]);
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
@@ -2840,6 +2872,8 @@ export const ServerInfoStatusPayloadSchema = z
         stableProjectIdentity: z.boolean().optional(),
         // COMPAT(workspaceScriptManagement): added in v0.1.105, remove gate after 2027-01-10.
         workspaceScriptManagement: z.boolean().optional(),
+        // COMPAT(workflows): added in v0.3.0, remove gate after 2027-01-30.
+        workflows: z.boolean().optional(),
       })
       .optional(),
   })
@@ -5349,6 +5383,16 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   LoopInspectResponseSchema,
   LoopLogsResponseSchema,
   LoopStopResponseSchema,
+  WorkflowSpecListResponseSchema,
+  WorkflowSpecGetResponseSchema,
+  WorkflowSpecSaveResponseSchema,
+  WorkflowSpecValidateResponseSchema,
+  WorkflowRunStartResponseSchema,
+  WorkflowRunListResponseSchema,
+  WorkflowRunInspectResponseSchema,
+  WorkflowRunLogsResponseSchema,
+  WorkflowRunStopResponseSchema,
+  WorkflowRunResumeResponseSchema,
   DaemonUpdateProgressMessageSchema,
   DaemonUpdateResponseSchema,
 ]);

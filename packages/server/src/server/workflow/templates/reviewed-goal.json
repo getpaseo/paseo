@@ -1,0 +1,291 @@
+{
+  "schemaVersion": "paseo.workflows.v0.2",
+  "name": "reviewed-goal",
+  "description": "Persistent worker and reviewer workflow that preserves coherent exploration, consolidates at meaningful boundaries, and finishes with a slim deliverable and zero-context report.",
+  "parameters": {
+    "repoCwd": {
+      "type": "path",
+      "required": true,
+      "defaultFrom": "current.worktree",
+      "title": "Repository",
+      "description": "Repository cwd used when creating the Paseo worktree."
+    },
+    "prefix": {
+      "type": "string",
+      "default": "workflow",
+      "title": "Worktree prefix",
+      "description": "Shared prefix for Paseo-generated branch and workspace names."
+    },
+    "baseBranch": {
+      "type": "string",
+      "default": "main",
+      "title": "Base branch",
+      "description": "Branch or ref to branch from."
+    },
+    "workerTitle": {
+      "type": "string",
+      "default": "reviewed goal worker",
+      "title": "Worker title",
+      "description": "Paseo agent title for the persistent worker."
+    },
+    "workerProvider": {
+      "type": "string",
+      "default": "codex",
+      "title": "Worker provider",
+      "description": "Paseo provider alias for the worker."
+    },
+    "workerModel": {
+      "type": "string",
+      "default": "gpt-5.6-sol",
+      "title": "Worker model",
+      "description": "Provider model ID for the worker."
+    },
+    "workerMode": {
+      "type": "string",
+      "default": "auto-review",
+      "title": "Worker mode",
+      "description": "Provider-specific permission/review mode."
+    },
+    "workerThinking": {
+      "type": "string",
+      "default": "high",
+      "title": "Worker effort",
+      "description": "Thinking option ID for the worker."
+    },
+    "reviewerTitle": {
+      "type": "string",
+      "default": "reviewed goal reviewer",
+      "title": "Reviewer title",
+      "description": "Paseo agent title for the persistent reviewer."
+    },
+    "reviewerProvider": {
+      "type": "string",
+      "default": "codex",
+      "title": "Reviewer provider",
+      "description": "Paseo provider alias for the reviewer."
+    },
+    "reviewerModel": {
+      "type": "string",
+      "default": "gpt-5.6-sol",
+      "title": "Reviewer model",
+      "description": "Provider model ID for the reviewer."
+    },
+    "reviewerMode": {
+      "type": "string",
+      "default": "auto-review",
+      "title": "Reviewer mode",
+      "description": "Provider-specific permission/review mode."
+    },
+    "reviewerThinking": {
+      "type": "string",
+      "default": "max",
+      "title": "Reviewer effort",
+      "description": "Thinking option ID for the reviewer."
+    },
+    "maxRuntime": {
+      "type": "string",
+      "default": "24h",
+      "title": "Time budget",
+      "description": "Maximum wall-clock runtime before the workflow stops."
+    },
+    "objective": {
+      "type": "string",
+      "required": true,
+      "title": "Goal objective",
+      "description": "Worker-facing goal text rendered into every worker turn and shown to the reviewer. Keep it concrete and verifiable, specify measurable evidence and stage acceptance checks, rely on the repository for discoverable details, and stay under 4000 characters."
+    },
+    "reviewerDirective": {
+      "type": "string",
+      "default": "",
+      "title": "Reviewer directive",
+      "description": "Optional task-specific guidance rendered into every review turn. Explain motivation, invalid shortcuts, methodology, and staged judgment without repeating the objective."
+    }
+  },
+  "workspace": {
+    "createWorktree": {
+      "cwd": "{{ parameters.repoCwd }}",
+      "prefix": "{{ parameters.prefix }}",
+      "target": {
+        "mode": "branch-off",
+        "base": "{{ parameters.baseBranch }}"
+      }
+    }
+  },
+  "agents": {
+    "worker": {
+      "persistence": "reuse-agent",
+      "createAgent": {
+        "title": "{{ parameters.workerTitle }}",
+        "provider": "{{ parameters.workerProvider }}",
+        "model": "{{ parameters.workerModel }}",
+        "settings": {
+          "modeId": "{{ parameters.workerMode }}",
+          "thinkingOptionId": "{{ parameters.workerThinking }}"
+        }
+      }
+    },
+    "reviewer": {
+      "persistence": "reuse-agent",
+      "createAgent": {
+        "title": "{{ parameters.reviewerTitle }}",
+        "provider": "{{ parameters.reviewerProvider }}",
+        "model": "{{ parameters.reviewerModel }}",
+        "settings": {
+          "modeId": "{{ parameters.reviewerMode }}",
+          "thinkingOptionId": "{{ parameters.reviewerThinking }}"
+        }
+      }
+    }
+  },
+  "protocol": {
+    "maxAttempts": 3
+  },
+  "entry": "main",
+  "flows": {
+    "main": {
+      "initial": "initial_work",
+      "states": {
+        "initial_work": {
+          "turn": {
+            "agent": "worker",
+            "prompt": "worker_initial",
+            "emits": {
+              "review": {
+                "description": "Submit the current result and evidence for independent review."
+              }
+            }
+          },
+          "on": {
+            "review": "review",
+            "error.agent": "worker_failed",
+            "error.protocol": "protocol_failed"
+          }
+        },
+        "review": {
+          "turn": {
+            "agent": "reviewer",
+            "prompt": "reviewer_review",
+            "emits": {
+              "continue": {
+                "description": "More work is needed; the message is the worker's next steering memo."
+              },
+              "ready_to_finalize": {
+                "description": "The objective is substantively achieved and ready to be distilled into the final deliverable."
+              },
+              "blocked": {
+                "description": "A verified external operational dependency is unavailable and no in-scope workaround exists."
+              }
+            }
+          },
+          "on": {
+            "continue": "continuation_work",
+            "ready_to_finalize": "finalize_work",
+            "blocked": "blocked",
+            "error.agent": "reviewer_failed",
+            "error.protocol": "protocol_failed"
+          }
+        },
+        "continuation_work": {
+          "turn": {
+            "agent": "worker",
+            "prompt": "worker_continuation",
+            "emits": {
+              "review": {
+                "description": "Submit the current result and evidence for independent review."
+              }
+            }
+          },
+          "on": {
+            "review": "review",
+            "error.agent": "worker_failed",
+            "error.protocol": "protocol_failed"
+          }
+        },
+        "finalize_work": {
+          "turn": {
+            "agent": "worker",
+            "prompt": "worker_finalize",
+            "emits": {
+              "review": {
+                "description": "Submit the slim final deliverable and its report for final review."
+              }
+            }
+          },
+          "on": {
+            "review": "final_review",
+            "error.agent": "worker_failed",
+            "error.protocol": "protocol_failed"
+          }
+        },
+        "final_review": {
+          "turn": {
+            "agent": "reviewer",
+            "prompt": "reviewer_final",
+            "emits": {
+              "revise": {
+                "description": "The proof remains sound, but the final deliverable or report needs specific revision."
+              },
+              "reopen": {
+                "description": "Finalization exposed a substantive objective or evidence gap that requires more research work."
+              },
+              "complete": {
+                "description": "The slim final deliverable and zero-context report satisfy the full objective."
+              },
+              "blocked": {
+                "description": "A verified external operational dependency is unavailable and no in-scope workaround exists."
+              }
+            }
+          },
+          "on": {
+            "revise": "finalize_work",
+            "reopen": "continuation_work",
+            "complete": "complete",
+            "blocked": "blocked",
+            "error.agent": "reviewer_failed",
+            "error.protocol": "protocol_failed"
+          }
+        },
+        "complete": {
+          "stop": {
+            "reason": "complete"
+          }
+        },
+        "blocked": {
+          "stop": {
+            "reason": "blocked"
+          }
+        },
+        "worker_failed": {
+          "stop": {
+            "reason": "worker_failed"
+          }
+        },
+        "reviewer_failed": {
+          "stop": {
+            "reason": "reviewer_failed"
+          }
+        },
+        "protocol_failed": {
+          "stop": {
+            "reason": "protocol_failed"
+          }
+        }
+      }
+    }
+  },
+  "limits": {
+    "maxRuntime": "{{ parameters.maxRuntime }}"
+  },
+  "inputs": {
+    "objective": "{{ parameters.objective }}",
+    "reviewerDirective": "{{ parameters.reviewerDirective }}",
+    "baseBranch": "{{ parameters.baseBranch }}"
+  },
+  "prompts": {
+    "worker_initial": "Read the objective in full, then begin the work.\n\n<objective>\n{{ inputs.objective }}\n</objective>\n",
+    "reviewer_review": "You are the persistent reviewer for this workflow. Review the worker's latest\nresult against the full objective. Do not implement changes, edit files, or\nlaunch long-running work. Inspect current state and evidence when needed, and\nuse the Paseo CLI to inspect the worker transcript when useful. Identify gaps,\nabstract low-level findings into the next highest-value direction, and keep\nthe work aligned and moving until the full objective is achieved. You own the\nfinalization decision; the worker never does, and only the later final review\ncan complete the workflow.\n\n<objective>\n{{ inputs.objective }}\n</objective>\n\n<reviewer_directive>\n{{ inputs.reviewerDirective }}\n</reviewer_directive>\n\nWorker latest result:\n<worker_last_message>\n{{ event.message }}\n</worker_last_message>\n\nTreat the objective and its acceptance conditions as fixed. Do not weaken,\nreplace, or terminate the objective because progress is difficult, uncertain,\nunexpectedly large, or unsuccessful so far. Distinguish an unsuccessful\nattempt, a direction that is no longer useful, and the overall objective. Use\nsetbacks as information for choosing what to do next. A blocked outcome is\nreserved for extraordinary circumstances; never use it merely because the\nwork is hard, slow, uncertain, incomplete, or would benefit from clarification.\n\nWhen progress stalls, actively expand the search before concluding that the\ncurrent options are exhausted. Revisit assumptions, brainstorm substantially\ndifferent approaches, inspect relevant history and surrounding context, and\nlook for existing successful ideas or implementations that can be reused or\nadapted. Think outside the current framing when that may reveal a better path.\nConvert this exploration into concrete next instructions rather than handing\nthe worker an unranked menu of possibilities.\n\nLet coherent directions span multiple turns when another bounded iteration\ncould resolve the current gap. When a direction is genuinely exhausted or\nsuperseded, preserve its useful conclusions and steer the worker toward the\nnext highest-value in-scope direction without lowering the target. A negative\nor partial result is progress, not completion, unless the objective itself\nasks for that result.\n\nRequest consolidation only at a meaningful boundary: a direction is\nconvincingly exhausted or superseded, a result is ready to become the\naccepted base, the work is changing phase, accumulated state obstructs\nprogress, or finalization is being considered. Use a dedicated continuation\nturn before changing direction or finalizing. Ask the worker to record the\nconclusion and decisive evidence, retain the accepted result and what is\nneeded to reproduce or extend it, remove workflow-created dead ends from the\ndurable result, and rerun decisive checks. Failed attempts need not be\ncommitted solely for history. If the work is badly entangled, restart from\nthe last accepted checkpoint. Do not combine consolidation with broad new\nexploration.\n\nDecide the outcome of this turn:\n- If concrete current-state evidence shows that the full objective is\n  substantively achieved without an invalidating shortcut, send it to\n  finalization. State what is proven, the decisive evidence, and what the\n  final deliverable must preserve. Do not require it to be fully slim or\n  reported yet; that is the purpose of the mandatory finalization loop.\n- Report a blocked outcome only when a verified external operational\n  dependency required by the objective is unavailable and no in-scope\n  workaround exists, such as inaccessible required data, repository state,\n  artifacts, credentials, tools, or compute. Judgments about feasibility,\n  likely success, complexity, ambiguity, available approaches, or the need to\n  rethink the direction are not blockers. If the operational bar is met,\n  identify the exact unavailable dependency and the evidence that established\n  the blocker.\n- Otherwise, write a concise steering memo for the worker. Always steer; do\n  not reply with only an acknowledgement. The entire memo is delivered to the\n  worker as its next instructions, so make it concrete and self-contained.\n  Include the current stage or state of progress, what is proven so far, your\n  verdict on the latest result, the highest-priority missing evidence or flaw,\n  the next concrete worker action, and the acceptance evidence needed before\n  moving on. The worker sees the full objective again on each continuation\n  turn, so you may refer to parts of it directly, for example \"continue\n  pursuing subgoal 1,\" without restating the whole objective.\n",
+    "worker_continuation": "Continue working toward the active objective.\n\n<objective>\n{{ inputs.objective }}\n</objective>\n\nThe reviewer inspected your last turn and produced the steering below. Treat\nit as your concrete instructions for this turn.\n<reviewer_steering>\n{{ event.message }}\n</reviewer_steering>\n\nPreserve intermediate experimental state while the reviewer is continuing a\ncoherent research line. When the reviewer instead requests consolidation,\ntreat that as a dedicated boundary turn: retain the accepted result and its\ndecisive evidence, remove or leave uncommitted workflow-created dead ends,\nand rerun the checks the reviewer named before returning for review.\n",
+    "worker_finalize": "Produce the final deliverable for the objective. The reviewer has determined\nthat the result is ready for finalization and supplied the direction below.\n\n<objective>\n{{ inputs.objective }}\n</objective>\n\n<starting_base>\n{{ inputs.baseBranch }}\n</starting_base>\n\n<reviewer_steering>\n{{ event.message }}\n</reviewer_steering>\n\nFirst slim the durable result. Compare the current work with the workflow's\nstarting base and preserve the actual implementation or result that satisfies\nthe original objective, not merely its reports, evaluators, or diagnostics.\nKeep one canonical implementation, configuration, and reproduction path.\nRemove workflow-created dead experiments, superseded alternatives, unused\noptions, duplicate helpers, temporary scripts, and redundant documentation.\nAvoid unrelated refactoring and speculative extensibility. Every retained\nnontrivial component must be needed for the result or its reproduction. Do\nnot remove pre-existing or user-owned work.\n\nRerun the decisive evidence after slimming. If a removal breaks the result or\nits proof, restore only what is necessary. The final state must still contain\nthe accepted mechanism and satisfy the full objective rather than a narrower\nsubstitute.\n\nOnly after the code, configuration, and evidence are settled, write or update\none authoritative final report using the repository's existing conventions.\nAssume the reader has not read the code and knows nothing about this workflow,\nits transcript, experiments, or branch history. Explain the necessary\nstarting context, then the original question, starting behavior, and\nmotivating observation. Only then explain the final mechanism in ordinary\nlanguage, with enough math or pseudocode for technical clarity.\n\nUse established industry terms or terms already present in the starting\nrepository. Do not carry forward names coined during exploration. If a new\nterm is truly unavoidable, define it plainly before using it and explain why\nan established term is insufficient. Explain retained source identifiers in\nplain language as well.\n\nGroup failed directions by what they established rather than narrating every\niteration. Clearly separate proven results, diagnostic findings, failed\napproaches, limitations, and any labels or supervision used only for\nevaluation. Use a small set of decisive measurements and only visualizations\nthat make a claim easier to audit. Include exact reproduction commands and\nrelevant configuration, artifact, and report locations. Do not duplicate the\nfull analysis into additional permanent documents when a pointer suffices.\n\nReturn a concise inventory of the final diff, what was removed, why each\nretained component remains necessary, the checks rerun, and the report path.\n",
+    "reviewer_final": "You are the persistent reviewer and sole completion owner. Review the final\ndeliverable against the full objective. Do not implement changes or edit\nfiles. You may inspect current state and run bounded checks, but do not launch\nlong-running work.\n\n<objective>\n{{ inputs.objective }}\n</objective>\n\n<starting_base>\n{{ inputs.baseBranch }}\n</starting_base>\n\n<reviewer_directive>\n{{ inputs.reviewerDirective }}\n</reviewer_directive>\n\n<worker_last_message>\n{{ event.message }}\n</worker_last_message>\n\nBefore reviewing presentation or slimming, perform a fresh goal-fidelity\nreview. Compare the retained result directly with the original objective,\nacceptance conditions, and reviewer directive. Do not accept a narrower\nsubstitute, weakened success criteria, or an unmet requirement documented as\na limitation.\n\nReview in two passes.\n\nFirst, read the final report from beginning to end as a zero-context reader.\nJudge only what the report itself explains; do not give it credit for facts\nyou know from earlier turns. Flag assumed history, missing setup or\nmotivation, undefined or coined terms, unclear figures, excessive auxiliary\nmetrics, unexplained claims, and missing reproduction details. Check that its\nvocabulary uses established industry terms or terms present in the starting\nrepository, with any unavoidable new term defined before use.\n\nSecond, inspect the diff from the starting base, the retained implementation\nand configurations, current artifacts, and decisive evidence. Verify that the\nactual accepted mechanism is present, the original objective is satisfied\nrather than replaced by a narrower result, and the report describes the final\nslim state rather than historical exploration artifacts. Challenge every\nretained surface, but do not impose an arbitrary line limit. Require one\nunderstandable path, no dispensable experimental residue or redundant\npermanent reports, current reproduction evidence after slimming, bounded\nclaims, and explicit limitations.\n\nDecide the outcome:\n- Revise when the substantive result remains sound but the deliverable can be\n  made smaller, clearer, or easier to reproduce, or the report fails the\n  zero-context review. Give concrete, self-contained revision instructions.\n- Reopen research when finalization exposes that the objective is not actually\n  achieved, decisive evidence no longer holds, or the retained result is an\n  invalid narrower substitute. State the exact gap and evidence needed.\n- Complete only when both the smallest understandable deliverable that\n  preserves the result and its zero-context report satisfy the full objective.\n  Explain the acceptance using concrete current-state evidence.\n- Report a blocked outcome only when a verified external operational\n  dependency required by the objective is unavailable and no in-scope\n  workaround exists. Difficulty, uncertainty, or an unmet objective requires\n  revision or reopened work, not a blocked outcome.\n"
+  }
+}

@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import type { Logger } from "pino";
 import type {
   AgentCapabilityFlags,
@@ -28,6 +30,7 @@ import type {
   ToolCallDetail,
   ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
+import type { PaseoToolCatalog } from "../tools/types.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 
@@ -45,6 +48,7 @@ const CAPABILITIES: AgentCapabilityFlags = {
   supportsMcpServers: false,
   supportsReasoningStream: true,
   supportsToolInvocations: true,
+  supportsNativePaseoTools: true,
   supportsRewindConversation: true,
   supportsRewindFiles: true,
   supportsRewindBoth: true,
@@ -128,6 +132,27 @@ interface AgentStreamStressRequest {
   coalesced: boolean;
 }
 
+interface MockWorkflowEvent {
+  event: string;
+  message: string;
+  data?: unknown;
+}
+
+interface MockWorkflowScript {
+  delayMs: number;
+  rules: Record<string, MockWorkflowEvent[]>;
+}
+
+interface PersistedMockWorkflowTurn {
+  turnId: string;
+  assistantMessageId: string;
+  prompt: string;
+  clientMessageId?: string;
+  userMessageId: string;
+  startedAt: number;
+  script: MockWorkflowScript;
+}
+
 interface MockQuestionOption {
   label: string;
   description?: string;
@@ -154,6 +179,55 @@ function shouldEmitPlanApprovalPrompt(prompt: AgentPromptInput): boolean {
 
 function shouldEmitTurnFailure(prompt: AgentPromptInput): boolean {
   return /emit\s+(?:a\s+)?synthetic\s+turn\s+failure/i.test(promptToText(prompt));
+}
+
+function parseMockWorkflowScript(prompt: AgentPromptInput): MockWorkflowScript | null {
+  const text = promptToText(prompt);
+  const marker = text.match(/^PASEO_WORKFLOW_TEST_SCRIPT:\s*(\{.*\})\s*$/m);
+  if (!marker?.[1]) return null;
+
+  try {
+    const parsed = JSON.parse(marker[1]) as {
+      delayMs?: unknown;
+      rules?: Record<string, unknown>;
+    };
+    if (!parsed.rules || typeof parsed.rules !== "object" || Array.isArray(parsed.rules)) {
+      return null;
+    }
+    const rules: Record<string, MockWorkflowEvent[]> = {};
+    for (const [trigger, rawEvents] of Object.entries(parsed.rules)) {
+      if (!Array.isArray(rawEvents)) continue;
+      const events = rawEvents.flatMap((rawEvent): MockWorkflowEvent[] => {
+        if (typeof rawEvent === "string") {
+          return [{ event: rawEvent, message: `Deterministic mock event: ${rawEvent}` }];
+        }
+        if (!rawEvent || typeof rawEvent !== "object" || Array.isArray(rawEvent)) return [];
+        const event = (rawEvent as { event?: unknown }).event;
+        const message = (rawEvent as { message?: unknown }).message;
+        if (typeof event !== "string" || event.length === 0) return [];
+        return [
+          {
+            event,
+            message: typeof message === "string" ? message : `Deterministic mock event: ${event}`,
+            ...("data" in rawEvent ? { data: (rawEvent as { data?: unknown }).data } : {}),
+          },
+        ];
+      });
+      if (events.length > 0) rules[trigger] = events;
+    }
+    if (Object.keys(rules).length === 0) return null;
+    const delayMs =
+      typeof parsed.delayMs === "number" && Number.isFinite(parsed.delayMs)
+        ? Math.max(0, Math.min(parsed.delayMs, 30_000))
+        : 50;
+    return { delayMs, rules };
+  } catch {
+    return null;
+  }
+}
+
+function parseAllowedWorkflowEvents(prompt: AgentPromptInput): string[] {
+  return Array.from(promptToText(prompt).matchAll(/^- `([^`]+)`: /gm), (match) => match[1] ?? "");
 }
 
 function parseMockQuestionPrompt(prompt: AgentPromptInput): MockQuestionPromptRequest | null {
@@ -512,22 +586,23 @@ export class MockLoadTestAgentClient implements AgentClient {
 
   async createSession(
     config: AgentSessionConfig,
-    _launchContext?: AgentLaunchContext,
+    launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     return new MockLoadTestAgentSession({
       config,
       sessionId: randomUUID(),
       logger: this.logger,
+      paseoTools: launchContext?.paseoTools,
     });
   }
 
   async resumeSession(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
-    _launchContext?: AgentLaunchContext,
+    launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
-    return new MockLoadTestAgentSession({
+    const session = new MockLoadTestAgentSession({
       config: {
         cwd: metadata.cwd ?? overrides?.cwd ?? process.cwd(),
         ...metadata,
@@ -536,7 +611,10 @@ export class MockLoadTestAgentClient implements AgentClient {
       },
       sessionId: handle.sessionId,
       logger: this.logger,
+      paseoTools: launchContext?.paseoTools,
     });
+    await session.resumePersistedWorkflowTurn();
+    return session;
   }
 
   async fetchCatalog(_options: FetchCatalogOptions): Promise<ProviderCatalog> {
@@ -578,17 +656,26 @@ export class MockLoadTestAgentSession implements AgentSession {
   private readonly listeners = new Set<(event: AgentStreamEvent) => void>();
   private readonly history: AgentStreamEvent[] = [];
   private readonly logger?: Logger;
+  private readonly paseoTools?: PaseoToolCatalog;
+  private readonly workflowScriptCursors = new Map<string, number>();
   private activeTurn: ActiveTurn | null = null;
+  private pendingWorkflowRecovery: PersistedMockWorkflowTurn | null = null;
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
   private modeId: string | null;
   private modelId: string | null;
   private readonly rewindError: string | null;
 
-  constructor(options: { config: AgentSessionConfig; sessionId: string; logger?: Logger }) {
+  constructor(options: {
+    config: AgentSessionConfig;
+    sessionId: string;
+    logger?: Logger;
+    paseoTools?: PaseoToolCatalog;
+  }) {
     this.id = options.sessionId;
     this.logger = options.logger;
     this.modeId = options.config.modeId ?? MOCK_LOAD_TEST_MODE_ID;
     this.modelId = options.config.model ?? MOCK_LOAD_TEST_DEFAULT_MODEL_ID;
+    this.paseoTools = options.paseoTools;
     this.rewindError =
       typeof options.config.featureValues?.mockRewindError === "string"
         ? options.config.featureValues.mockRewindError
@@ -657,7 +744,19 @@ export class MockLoadTestAgentSession implements AgentSession {
     const stress = parseAgentStreamStressPrompt(prompt);
     const questionPrompt = parseMockQuestionPrompt(prompt);
     const structuredBranchName = parseStructuredBranchNamePrompt(prompt);
-    if (shouldEmitTurnFailure(prompt)) {
+    const workflowScript = parseMockWorkflowScript(prompt);
+    if (workflowScript && this.paseoTools) {
+      await this.persistWorkflowTurn({
+        turnId,
+        assistantMessageId,
+        prompt: promptToText(prompt),
+        ...(options?.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
+        userMessageId,
+        startedAt: turn.startedAt,
+        script: workflowScript,
+      });
+      this.scheduleWorkflowEventTurn(turn, workflowScript);
+    } else if (shouldEmitTurnFailure(prompt)) {
       this.scheduleFailedTurn(turn);
     } else if (structuredBranchName) {
       this.scheduleStructuredJsonTurn(turn, structuredBranchName);
@@ -677,6 +776,12 @@ export class MockLoadTestAgentSession implements AgentSession {
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
     this.listeners.add(callback);
+    if (this.pendingWorkflowRecovery && this.activeTurn) {
+      const recovered = this.pendingWorkflowRecovery;
+      const turn = this.activeTurn;
+      this.pendingWorkflowRecovery = null;
+      this.schedulePersistedWorkflowTurn(turn, recovered);
+    }
     return () => {
       this.listeners.delete(callback);
     };
@@ -819,7 +924,7 @@ export class MockLoadTestAgentSession implements AgentSession {
   ): void {
     turn.timer = setTimeout(() => {
       this.emitLargePayloadTurn(turn, largePayload);
-    }, 0);
+    }, 50);
     turn.timer.unref?.();
   }
 
@@ -849,6 +954,67 @@ export class MockLoadTestAgentSession implements AgentSession {
       });
     }, 0);
     turn.timer.unref?.();
+  }
+
+  private scheduleWorkflowEventTurn(turn: ActiveTurn, script: MockWorkflowScript): void {
+    turn.timer = setTimeout(() => {
+      void this.emitWorkflowEventTurn(turn, script);
+    }, script.delayMs);
+    turn.timer.unref?.();
+  }
+
+  private async emitWorkflowEventTurn(turn: ActiveTurn, script: MockWorkflowScript): Promise<void> {
+    if (this.activeTurn !== turn || !this.paseoTools) return;
+    this.clearTurnTimer(turn);
+    if (!turn.turnStarted) {
+      turn.turnStarted = true;
+      this.emit({
+        type: "turn_started",
+        provider: this.provider,
+        turnId: turn.turnId,
+      });
+    }
+
+    const allowed = new Set(parseAllowedWorkflowEvents(turn.prompt));
+    const rule = Object.entries(script.rules).find(
+      ([trigger, events]) =>
+        allowed.has(trigger) && (this.workflowScriptCursors.get(trigger) ?? 0) < events.length,
+    );
+    if (!rule) {
+      this.finishTurnWithText(turn, "No deterministic workflow event matched this turn.");
+      return;
+    }
+    const [trigger, events] = rule;
+    const cursor = this.workflowScriptCursors.get(trigger) ?? 0;
+    const event = events[cursor];
+    if (!event || !allowed.has(event.event)) {
+      this.finishTurnWithText(turn, "The deterministic workflow event is not allowed.");
+      return;
+    }
+
+    const callId = `${turn.turnId}:emit_event`;
+    const detail: ToolCallDetail = { type: "unknown", input: event, output: null };
+    this.emitTimeline(
+      turn.turnId,
+      createToolCall({ callId, name: "emit_event", status: "running", detail }),
+    );
+    const result = await this.paseoTools.executeTool("emit_event", event);
+    this.emitTimeline(
+      turn.turnId,
+      createToolCall({
+        callId,
+        name: "emit_event",
+        status: "completed",
+        detail: { ...detail, output: result.structuredContent ?? result.content },
+      }),
+    );
+    if (!result.isError) this.workflowScriptCursors.set(trigger, cursor + 1);
+    this.finishTurnWithText(
+      turn,
+      result.isError
+        ? "Deterministic workflow event was rejected."
+        : `Emitted deterministic workflow event: ${event.event}`,
+    );
   }
 
   private scheduleStressTurn(turn: ActiveTurn, stress: AgentStreamStressRequest): void {
@@ -1228,6 +1394,7 @@ export class MockLoadTestAgentSession implements AgentSession {
 
   private finishTurnWithText(turn: ActiveTurn, finalText: string): void {
     this.activeTurn = null;
+    void this.removePersistedWorkflowTurn();
     const usage = {
       inputTokens: turn.cycle * 32,
       outputTokens: turn.emittedTokens,
@@ -1291,5 +1458,109 @@ export class MockLoadTestAgentSession implements AgentSession {
     }
     clearTimeout(turn.timer);
     turn.timer = null;
+  }
+
+  async resumePersistedWorkflowTurn(): Promise<void> {
+    const recovered = await this.readPersistedWorkflowTurn();
+    if (!recovered || !this.paseoTools || this.activeTurn) return;
+    let resolve!: (result: AgentRunResult) => void;
+    const completed = new Promise<AgentRunResult>((promiseResolve) => {
+      resolve = promiseResolve;
+    });
+    const profile = resolveModelProfile(this.modelId);
+    const turn: ActiveTurn = {
+      turnId: recovered.turnId,
+      assistantMessageId: recovered.assistantMessageId,
+      prompt: recovered.prompt,
+      startedAt: recovered.startedAt,
+      cycle: 0,
+      durationMs: profile.durationMs,
+      intervalMs: profile.intervalMs,
+      timer: null,
+      resolve,
+      completed,
+      queue: [],
+      emittedTokens: 0,
+      turnStarted: true,
+    };
+    this.activeTurn = turn;
+    this.pendingWorkflowRecovery = recovered;
+  }
+
+  private schedulePersistedWorkflowTurn(
+    turn: ActiveTurn,
+    recovered: PersistedMockWorkflowTurn,
+  ): void {
+    turn.timer = setTimeout(() => {
+      if (this.activeTurn !== turn) return;
+      this.emit({
+        type: "timeline",
+        provider: this.provider,
+        turnId: turn.turnId,
+        item: {
+          type: "user_message",
+          text: recovered.prompt,
+          messageId: recovered.userMessageId,
+          ...(recovered.clientMessageId ? { clientMessageId: recovered.clientMessageId } : {}),
+        },
+      });
+      this.emit({
+        type: "turn_started",
+        provider: this.provider,
+        turnId: turn.turnId,
+      });
+      const remaining = Math.max(0, recovered.startedAt + recovered.script.delayMs - Date.now());
+      turn.timer = setTimeout(() => {
+        void this.emitWorkflowEventTurn(turn, recovered.script);
+      }, remaining);
+      turn.timer.unref?.();
+    }, 0);
+    turn.timer.unref?.();
+  }
+
+  private async persistWorkflowTurn(turn: PersistedMockWorkflowTurn): Promise<void> {
+    const filePath = this.workflowRecoveryFile();
+    if (!filePath) return;
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, `${JSON.stringify(turn)}\n`, "utf8");
+  }
+
+  private async readPersistedWorkflowTurn(): Promise<PersistedMockWorkflowTurn | null> {
+    const filePath = this.workflowRecoveryFile();
+    if (!filePath) return null;
+    try {
+      const value = JSON.parse(await fs.readFile(filePath, "utf8")) as PersistedMockWorkflowTurn;
+      if (
+        !value ||
+        typeof value.turnId !== "string" ||
+        typeof value.prompt !== "string" ||
+        typeof value.startedAt !== "number" ||
+        !value.script
+      ) {
+        return null;
+      }
+      return value;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
+  }
+
+  private async removePersistedWorkflowTurn(): Promise<void> {
+    const filePath = this.workflowRecoveryFile();
+    if (!filePath) return;
+    await fs.rm(filePath, { force: true });
+  }
+
+  private workflowRecoveryFile(): string | null {
+    if (process.env.PASEO_MOCK_WORKFLOW_RECOVERY !== "1") return null;
+    const paseoHome = process.env.PASEO_HOME?.trim();
+    if (!paseoHome) return null;
+    return path.join(
+      paseoHome,
+      "runtime",
+      "mock-workflow-turns",
+      `${this.id.replaceAll(/[^a-zA-Z0-9_-]/g, "_")}.json`,
+    );
   }
 }

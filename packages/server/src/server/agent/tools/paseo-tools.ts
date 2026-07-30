@@ -83,6 +83,7 @@ import {
 } from "../../worktree/commands.js";
 import { registerBrowserTools } from "../../browser-tools/tools.js";
 import type { BrowserToolsBroker } from "../../browser-tools/broker.js";
+import type { WorkflowService } from "../../workflow/service.js";
 import type {
   PaseoToolCatalog,
   PaseoToolConfig,
@@ -97,6 +98,7 @@ export interface PaseoToolHostDependencies {
   terminalManager?: TerminalManager | null;
   getDaemonTcpPort?: () => number | null;
   scheduleService?: ScheduleService | null;
+  workflowService?: WorkflowService | null;
   providerSnapshotManager: ProviderSnapshotManager;
   github?: ForgeService;
   workspaceGitService?: Pick<
@@ -542,6 +544,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     terminalManager,
     workspaceScripts,
     scheduleService,
+    workflowService,
     providerSnapshotManager,
     callerAgentId,
     resolveSpeakHandler,
@@ -1936,6 +1939,191 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         structuredContent: validJson,
       };
       return response;
+    },
+  );
+
+  registerTool(
+    "list_workflows",
+    {
+      title: "List workflows",
+      description:
+        "List built-in and user-authored workflow definitions available to this Paseo daemon.",
+      inputSchema: {},
+      outputSchema: {
+        workflows: z.array(z.record(z.string(), z.unknown())),
+      },
+    },
+    async () => {
+      if (!workflowService) throw new Error("Workflows are unavailable");
+      return {
+        content: [],
+        structuredContent: ensureValidJson({ workflows: await workflowService.listSpecs() }),
+      };
+    },
+  );
+
+  registerTool(
+    "validate_workflow",
+    {
+      title: "Validate workflow",
+      description: "Validate a JSON workflow definition without saving it.",
+      inputSchema: {
+        spec: z.record(z.string(), z.unknown()),
+      },
+      outputSchema: {
+        validation: z.record(z.string(), z.unknown()),
+      },
+    },
+    async ({ spec }) => {
+      if (!workflowService) throw new Error("Workflows are unavailable");
+      return {
+        content: [],
+        structuredContent: ensureValidJson({ validation: workflowService.validateSpec(spec) }),
+      };
+    },
+  );
+
+  registerTool(
+    "save_workflow",
+    {
+      title: "Save workflow",
+      description:
+        "Validate and save a user-authored JSON workflow definition outside the Paseo release.",
+      inputSchema: {
+        spec: z.record(z.string(), z.unknown()),
+      },
+      outputSchema: {
+        workflow: z.record(z.string(), z.unknown()),
+      },
+    },
+    async ({ spec }) => {
+      if (!workflowService) throw new Error("Workflows are unavailable");
+      return {
+        content: [],
+        structuredContent: ensureValidJson({ workflow: await workflowService.saveSpec(spec) }),
+      };
+    },
+  );
+
+  registerTool(
+    "run_workflow",
+    {
+      title: "Run workflow",
+      description:
+        "Queue a workflow and return its run immediately. Current workspace, worktree, and agent bindings are resolved from the calling agent.",
+      inputSchema: {
+        workflowId: z.string().min(1),
+        parameters: z.record(z.string(), z.unknown()).optional(),
+      },
+      outputSchema: {
+        run: z.record(z.string(), z.unknown()),
+      },
+    },
+    async ({ workflowId, parameters }) => {
+      if (!workflowService) throw new Error("Workflows are unavailable");
+      if (!callerAgentId) throw new Error("run_workflow requires an agent caller");
+      const run = await workflowService.startRun({
+        workflowId,
+        parameters,
+        context: { agentId: callerAgentId },
+      });
+      return { content: [], structuredContent: ensureValidJson({ run }) };
+    },
+  );
+
+  registerTool(
+    "inspect_workflow_run",
+    {
+      title: "Inspect workflow run",
+      description:
+        "Inspect workflow state, native agent and workspace identities, events, and rendered prompts.",
+      inputSchema: {
+        runId: z.string().min(1),
+      },
+      outputSchema: {
+        details: z.record(z.string(), z.unknown()),
+      },
+    },
+    async ({ runId }) => {
+      if (!workflowService) throw new Error("Workflows are unavailable");
+      return {
+        content: [],
+        structuredContent: ensureValidJson({ details: await workflowService.inspectRun(runId) }),
+      };
+    },
+  );
+
+  registerTool(
+    "stop_workflow",
+    {
+      title: "Stop workflow",
+      description:
+        "Request a graceful workflow stop. Active native turns finish and no new turns launch.",
+      inputSchema: {
+        runId: z.string().min(1),
+      },
+      outputSchema: {
+        run: z.record(z.string(), z.unknown()),
+      },
+    },
+    async ({ runId }) => {
+      if (!workflowService) throw new Error("Workflows are unavailable");
+      return {
+        content: [],
+        structuredContent: ensureValidJson({ run: await workflowService.stopRun(runId) }),
+      };
+    },
+  );
+
+  registerTool(
+    "resume_workflow",
+    {
+      title: "Resume workflow",
+      description: "Resume a stopped native workflow from its persisted state.",
+      inputSchema: {
+        runId: z.string().min(1),
+      },
+      outputSchema: {
+        run: z.record(z.string(), z.unknown()),
+      },
+    },
+    async ({ runId }) => {
+      if (!workflowService) throw new Error("Workflows are unavailable");
+      return {
+        content: [],
+        structuredContent: ensureValidJson({ run: await workflowService.resumeRun(runId) }),
+      };
+    },
+  );
+
+  registerTool(
+    "emit_event",
+    {
+      title: "Emit workflow event",
+      description:
+        "Report the named event requested by your active workflow turn. The event is authorized from your agent and native turn identity.",
+      inputSchema: {
+        event: z.string().min(1),
+        message: z.string().optional(),
+        data: z.unknown().optional(),
+      },
+      outputSchema: {
+        accepted: z.boolean(),
+      },
+    },
+    async ({ event, message, data }) => {
+      if (!workflowService) throw new Error("Workflows are unavailable");
+      if (!callerAgentId) throw new Error("emit_event requires an agent caller");
+      await workflowService.emitEvent({
+        callerAgentId,
+        event,
+        message,
+        data,
+      });
+      return {
+        content: [],
+        structuredContent: ensureValidJson({ accepted: true }),
+      };
     },
   );
 

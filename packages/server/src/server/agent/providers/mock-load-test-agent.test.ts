@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { AgentManager } from "../agent-manager.js";
 import type { AgentStreamEvent, AgentTimelineItem } from "../agent-sdk-types.js";
+import type { PaseoToolCatalog, PaseoToolResult } from "../tools/types.js";
 import {
   MOCK_LOAD_TEST_DEFAULT_MODEL_ID,
   MockLoadTestAgentClient,
@@ -209,6 +210,129 @@ describe("MockLoadTestAgentClient", () => {
       type: "turn_failed",
       error: "Requested mock provider failure",
     });
+  });
+
+  test("drives deterministic workflow E2E through the native Paseo tool catalog", async () => {
+    vi.useFakeTimers();
+    const executeTool = vi.fn(
+      async (_name: string, input: unknown): Promise<PaseoToolResult> => ({
+        content: [{ type: "text", text: "accepted" }],
+        structuredContent: { accepted: true, input },
+      }),
+    );
+    const paseoTools: PaseoToolCatalog = {
+      tools: new Map(),
+      getTool: () => undefined,
+      executeTool,
+    };
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession(
+      {
+        provider: "mock",
+        cwd: process.cwd(),
+        model: "ten-second-stream",
+      },
+      { paseoTools },
+    );
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+
+    const resultPromise = session.run(
+      [
+        'PASEO_WORKFLOW_TEST_SCRIPT: {"delayMs":25,"rules":{"continue":["continue","complete"]}}',
+        "Workflow routing:",
+        "- `continue`: Keep working.",
+        "- `complete`: Finish.",
+      ].join("\n"),
+    );
+    await vi.advanceTimersByTimeAsync(25);
+
+    await expect(resultPromise).resolves.toMatchObject({
+      finalText: "Emitted deterministic workflow event: continue",
+      canceled: false,
+    });
+    expect(executeTool).toHaveBeenCalledWith("emit_event", {
+      event: "continue",
+      message: "Deterministic mock event: continue",
+    });
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "timeline" &&
+          event.item.type === "tool_call" &&
+          event.item.name === "emit_event",
+      ),
+    ).toHaveLength(2);
+    unsubscribe();
+  });
+
+  test("resumes a persisted deterministic workflow turn under its native turn id", async () => {
+    vi.useFakeTimers();
+    const paseoHome = mkdtempSync(join(tmpdir(), "paseo-mock-workflow-recovery-"));
+    const previousHome = process.env.PASEO_HOME;
+    const previousRecovery = process.env.PASEO_MOCK_WORKFLOW_RECOVERY;
+    process.env.PASEO_HOME = paseoHome;
+    process.env.PASEO_MOCK_WORKFLOW_RECOVERY = "1";
+    const executeTool = vi.fn(
+      async (_name: string, input: unknown): Promise<PaseoToolResult> => ({
+        content: [{ type: "text", text: "accepted" }],
+        structuredContent: { accepted: true, input },
+      }),
+    );
+    const paseoTools: PaseoToolCatalog = {
+      tools: new Map(),
+      getTool: () => undefined,
+      executeTool,
+    };
+    try {
+      const client = new MockLoadTestAgentClient();
+      const original = await client.createSession(
+        { provider: "mock", cwd: process.cwd(), model: "ten-second-stream" },
+        { paseoTools },
+      );
+      const prompt = [
+        'PASEO_WORKFLOW_TEST_SCRIPT: {"delayMs":25,"rules":{"complete":["complete"]}}',
+        "Workflow routing:",
+        "- `complete`: Finish.",
+      ].join("\n");
+      const { turnId } = await original.startTurn(prompt, {
+        clientMessageId: "workflow-client-message",
+      });
+      const persistence = original.describePersistence();
+      if (!persistence) throw new Error("mock persistence handle is missing");
+      vi.clearAllTimers();
+
+      const resumed = await client.resumeSession(
+        persistence,
+        { provider: "mock", cwd: process.cwd(), model: "ten-second-stream" },
+        { paseoTools },
+      );
+      const events: AgentStreamEvent[] = [];
+      resumed.subscribe((event) => events.push(event));
+      await vi.advanceTimersByTimeAsync(25);
+
+      expect(executeTool).toHaveBeenCalledTimes(1);
+      expect(events.filter((event) => event.type === "turn_started")).toEqual([
+        expect.objectContaining({ turnId }),
+      ]);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "timeline",
+          turnId,
+          item: expect.objectContaining({
+            type: "user_message",
+            clientMessageId: "workflow-client-message",
+          }),
+        }),
+      );
+      expect(events.at(-1)).toMatchObject({ type: "turn_completed", turnId });
+    } finally {
+      if (previousHome === undefined) delete process.env.PASEO_HOME;
+      else process.env.PASEO_HOME = previousHome;
+      if (previousRecovery === undefined) delete process.env.PASEO_MOCK_WORKFLOW_RECOVERY;
+      else process.env.PASEO_MOCK_WORKFLOW_RECOVERY = previousRecovery;
+      rmSync(paseoHome, { recursive: true, force: true });
+    }
   });
 
   test("emits the free-write question scenario selected by prompt", async () => {
