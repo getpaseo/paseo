@@ -134,6 +134,47 @@ generation. The daemon retains only the latest projection per entity and bounded
 event log. A missing, expired, or previous-generation cursor receives a full snapshot. Projects are
 independent records; a project with no workspaces does not need a workspace placeholder.
 
+#### Live Voice ownership and cross-host routing
+
+Live Voice is one daemon-global call per owning client socket. The daemon creates
+a hidden Codex host session for the realtime conversation; it is not attached to
+a project or ordinary visible agent. SDP and control messages travel over the
+existing authenticated Paseo WebSocket, while microphone and remote speech media
+travel directly between the app's WebRTC peer and OpenAI. The app never receives
+or stores an OpenAI API key for this path: Codex uses its existing
+ChatGPT-subscription authentication to establish the realtime session.
+
+The exact source socket owns the call. The app pins that host connection so
+adaptive direct/relay selection cannot replace it mid-call, and a socket loss
+still tears the call down immediately. Native background audio keeps the peer and
+socket alive across Home/screen lock; the physical-device checks and platform
+constraints are in [mobile-testing.md](mobile-testing.md).
+
+For clients advertising `live_voice_cross_host_router`, the hidden session gets
+only two routing tools: list the hosts visible to the owning app, and execute one
+ordinary top-level Paseo tool on a selected host. The route is:
+
+```text
+hidden Live Voice host on A
+  -> exact owning socket on A
+  -> owning app (authorizes the active call, selects and pins B)
+  -> authenticated existing socket on B
+  -> B's top-level Paseo tool catalog
+```
+
+The app is the authorization boundary because it already owns each saved host
+connection. Route messages contain only opaque server ids, sanitized host
+labels/status, tool names/arguments, and results. Passwords, relay keys, endpoint
+configuration, and OpenAI credentials never cross from one daemon to another.
+The target catalog is created without a caller agent id, so a routed request
+cannot claim an agent's workspace authority or recursively acquire the hidden
+Live Voice routing tools. A paired source daemon also cannot use the app as a
+general cross-host bridge: the app accepts a route only while it owns the exact
+active Live Voice session id on that source host.
+
+Older clients that do not advertise the routing capability retain local-only
+Live Voice behavior and never receive the new server-initiated route messages.
+
 Workspace label definitions use a separate, explicitly subscribed sequence. The list request both
 fetches and grants live updates for that session. A current cursor receives an empty correlated
 catch-up response when nothing changed; idle sessions and unsubscribed sessions receive no label
