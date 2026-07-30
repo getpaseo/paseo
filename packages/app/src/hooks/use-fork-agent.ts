@@ -118,9 +118,10 @@ function buildForkDraftTabTarget(
 }
 
 /**
- * Shared fork driver behind both fork surfaces: the per-turn "Fork chat" menu
- * in the assistant turn footer (which supplies a boundary) and the workspace
- * tab context menu (which omits the boundary to fork mid-run).
+ * Shared fork driver behind both turn-footer fork affordances: the completed
+ * turn's footer (which supplies a boundary pinned to that turn) and the
+ * in-flight turn's footer next to the progress loader (which omits the boundary
+ * so the fork captures the still-streaming response).
  */
 export function useForkAgent(
   input: UseForkAgentInput,

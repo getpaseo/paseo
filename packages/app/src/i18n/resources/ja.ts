@@ -499,8 +499,6 @@ export const ja: TranslationResources = {
         copyTerminalId: "ターミナルIDをコピー",
         copyFilePath: "ファイルパスをコピー",
         rename: "名前を変更",
-        forkChatInNewTab: "チャットを新しいタブにフォーク",
-        forkChatInNewWorkspace: "チャットを新しいワークスペースにフォーク",
         closeAbove: "上のタブを閉じる",
         closeBelow: "下のタブを閉じる",
         closeLeft: "左のタブを閉じる",

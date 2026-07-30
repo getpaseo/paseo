@@ -499,8 +499,6 @@ export const es: TranslationResources = {
         copyTerminalId: "Copiar ID del terminal",
         copyFilePath: "Copy file path",
         rename: "Rebautizar",
-        forkChatInNewTab: "Bifurcar el chat en una pestaña nueva",
-        forkChatInNewWorkspace: "Bifurcar el chat en un espacio de trabajo nuevo",
         closeAbove: "Cerrar pestañas arriba",
         closeBelow: "Cerrar pestañas a continuación",
         closeLeft: "Cerca de la izquierda",

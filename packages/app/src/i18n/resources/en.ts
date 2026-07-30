@@ -494,8 +494,6 @@ export const en = {
         copyTerminalId: "Copy terminal id",
         copyFilePath: "Copy file path",
         rename: "Rename",
-        forkChatInNewTab: "Fork chat in a new tab",
-        forkChatInNewWorkspace: "Fork chat in a new workspace",
         closeAbove: "Close tabs above",
         closeBelow: "Close tabs below",
         closeLeft: "Close to the left",

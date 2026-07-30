@@ -31,7 +31,6 @@ import {
   Import as ImportIcon,
   PanelRight,
   Pencil,
-  Split,
   RotateCw,
   Settings,
   SquarePen,
@@ -196,10 +195,6 @@ import {
   resolveTerminalProfiles,
 } from "@getpaseo/protocol/terminal-profiles";
 import { getProviderIcon } from "@/components/provider-icons";
-import type { AssistantForkTarget } from "@/components/assistant-fork-menu";
-import { useForkAgent } from "@/hooks/use-fork-agent";
-import { resolveForkAgentSource } from "@/hooks/resolve-fork-agent-source";
-import { storeFetchedAgentDetail } from "@/utils/agent-detail-store";
 import {
   createWorkspaceFileTabTarget,
   normalizeWorkspaceFileLocation,
@@ -257,7 +252,6 @@ const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
 const ThemedArrowRightToLine = withUnistyles(ArrowRightToLine);
 const ThemedCopyX = withUnistyles(CopyX);
 const ThemedPencil = withUnistyles(Pencil);
-const ThemedSplit = withUnistyles(Split);
 const ThemedX = withUnistyles(X);
 const ThemedSquarePen = withUnistyles(SquarePen);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
@@ -434,7 +428,6 @@ interface MobileWorkspaceTabSwitcherProps {
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
-  onForkAgent: (agentId: string, target: AssistantForkTarget) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   onCloseTabsAbove: (tabId: string) => Promise<void> | void;
@@ -585,8 +578,6 @@ function MobileTabDropdownMenuItem({
         return <ThemedCopyX size={16} uniProps={mutedColorMapping} />;
       case "pencil":
         return <ThemedPencil size={16} uniProps={mutedColorMapping} />;
-      case "split":
-        return <ThemedSplit size={16} uniProps={mutedColorMapping} />;
       case "x":
         return <ThemedX size={16} uniProps={mutedColorMapping} />;
       default:
@@ -626,7 +617,6 @@ function MobileWorkspaceTabOption({
   onCopyTerminalId,
   onCopyFilePath,
   onReloadAgent,
-  onForkAgent,
   onRenameTab,
   onCloseTab,
   onCloseTabsAbove,
@@ -646,7 +636,6 @@ function MobileWorkspaceTabOption({
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
-  onForkAgent: (agentId: string, target: AssistantForkTarget) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   onCloseTabsAbove: (tabId: string) => Promise<void> | void;
@@ -661,8 +650,6 @@ function MobileWorkspaceTabOption({
       copyTerminalId: t("workspace.tabs.menu.copyTerminalId"),
       copyFilePath: t("workspace.tabs.menu.copyFilePath"),
       rename: t("workspace.tabs.menu.rename"),
-      forkChatInNewTab: t("workspace.tabs.menu.forkChatInNewTab"),
-      forkChatInNewWorkspace: t("workspace.tabs.menu.forkChatInNewWorkspace"),
       closeAbove: t("workspace.tabs.menu.closeAbove"),
       closeBelow: t("workspace.tabs.menu.closeBelow"),
       closeLeft: t("workspace.tabs.menu.closeLeft"),
@@ -686,7 +673,6 @@ function MobileWorkspaceTabOption({
     onCopyTerminalId,
     onCopyFilePath,
     onReloadAgent,
-    onForkAgent,
     onRenameTab,
     onCloseTab,
     onCloseTabsBefore: onCloseTabsAbove,
@@ -756,7 +742,6 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
   onCopyTerminalId,
   onCopyFilePath,
   onReloadAgent,
-  onForkAgent,
   onRenameTab,
   onCloseTab,
   onCloseTabsAbove,
@@ -814,7 +799,6 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
           onCopyTerminalId={onCopyTerminalId}
           onCopyFilePath={onCopyFilePath}
           onReloadAgent={onReloadAgent}
-          onForkAgent={onForkAgent}
           onRenameTab={onRenameTab}
           onCloseTab={onCloseTab}
           onCloseTabsAbove={onCloseTabsAbove}
@@ -834,7 +818,6 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
       onCopyTerminalId,
       onCopyFilePath,
       onReloadAgent,
-      onForkAgent,
       onRenameTab,
       onCloseTab,
       onCloseTabsAbove,
@@ -2889,51 +2872,6 @@ function WorkspaceScreenContent({
     [client, isConnected, normalizedServerId, toast, t],
   );
 
-  const forkAgent = useForkAgent({ serverId: normalizedServerId, toast });
-  const handleForkAgent = useCallback(
-    async (agentId: string, target: AssistantForkTarget) => {
-      const resolution = await resolveForkAgentSource({
-        agentId,
-        // Read the agent record at invoke time (mirroring handleReloadAgent) so
-        // the tab strip does not subscribe to agent records it only needs on
-        // select.
-        readAgent: () => {
-          const sessionState = useSessionStore.getState().sessions[normalizedServerId];
-          return sessionState?.agents.get(agentId) ?? sessionState?.agentDetails.get(agentId);
-        },
-        fetchAgent: client && isConnected ? (id) => client.fetchAgent({ agentId: id }) : null,
-        storeAgent: (result) => storeFetchedAgentDetail({ serverId: normalizedServerId, result }),
-      });
-
-      if (resolution.kind === "disconnected") {
-        toast.error(t("workspace.terminal.hostDisconnected"));
-        return;
-      }
-      if (resolution.kind !== "resolved") {
-        // `not_found` and `error` both mean "we could not resolve the agent".
-        // A raw transient message has no room to establish context in a toast
-        // this handler never framed, so both report the same fork failure — but
-        // a transient fetch error still gets logged, or "fork just failed" is
-        // undebuggable.
-        if (resolution.kind === "error") {
-          console.warn(
-            `[Workspace] fork could not resolve agent ${agentId}: ${resolution.message}`,
-          );
-        }
-        toast.error(t("message.actions.forkFailed"));
-        return;
-      }
-
-      await forkAgent({
-        agentId,
-        agent: resolution.agent,
-        workspaceId: normalizedWorkspaceId,
-        target,
-      });
-    },
-    [client, isConnected, forkAgent, normalizedServerId, normalizedWorkspaceId, toast, t],
-  );
-
   const handleCopyWorkspacePath = useCallback(async () => {
     if (!workspaceDirectory) {
       toast.error(t("workspace.header.toasts.workspacePathUnavailable"));
@@ -3732,7 +3670,6 @@ function WorkspaceScreenContent({
         onCopyTerminalId={handleCopyTerminalId}
         onCopyFilePath={handleCopyFilePath}
         onReloadAgent={handleReloadAgent}
-        onForkAgent={handleForkAgent}
         onRenameTab={handleRenameTab}
         onCloseTabsToLeft={handleCloseTabsToLeftInPane}
         onCloseTabsToRight={handleCloseTabsToRightInPane}
@@ -3770,7 +3707,6 @@ function WorkspaceScreenContent({
     handleCopyTerminalId,
     handleCopyFilePath,
     handleReloadAgent,
-    handleForkAgent,
     handleRenameTab,
     handleCloseTabsToLeftInPane,
     handleCloseTabsToRightInPane,
@@ -3853,7 +3789,6 @@ function WorkspaceScreenContent({
           onCopyTerminalId={handleCopyTerminalId}
           onCopyFilePath={handleCopyFilePath}
           onReloadAgent={handleReloadAgent}
-          onForkAgent={handleForkAgent}
           onRenameTab={handleRenameTab}
           onCloseTab={handleCloseTabById}
           onCloseTabsAbove={handleCloseTabsToLeft}
@@ -3877,7 +3812,6 @@ function WorkspaceScreenContent({
           onCopyTerminalId={handleCopyTerminalId}
           onCopyFilePath={handleCopyFilePath}
           onReloadAgent={handleReloadAgent}
-          onForkAgent={handleForkAgent}
           onRenameTab={handleRenameTab}
           onCloseTabsToLeft={handleCloseTabsToLeft}
           onCloseTabsToRight={handleCloseTabsToRight}
