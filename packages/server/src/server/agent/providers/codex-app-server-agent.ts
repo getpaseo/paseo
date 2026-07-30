@@ -138,6 +138,22 @@ function isCodexAlreadyUnarchivedError(error: unknown, threadId: string): boolea
 const TURN_START_TIMEOUT_MS = 90 * 1000;
 const INTERRUPT_TIMEOUT_MS = 2_000;
 const CODEX_PROVIDER = "codex" as const;
+const CODEX_SPARK_MODEL_ID = "gpt-5.3-codex-spark";
+const CODEX_REASONING_SUMMARIES = new Set(["auto", "concise", "detailed", "none"] as const);
+type CodexReasoningSummary = "auto" | "concise" | "detailed" | "none";
+
+// COMPAT(codexSparkReasoningSummary): added in v0.2.4; remove after 2027-01-30.
+// Codex 0.144.4 sends reasoning.summary, which Spark rejects.
+function applyCodexModelCompatibilityOverrides(
+  config: Record<string, unknown>,
+  provider: string,
+  model: string | undefined,
+): void {
+  if (provider === CODEX_PROVIDER && model === CODEX_SPARK_MODEL_ID) {
+    config.model_reasoning_summary = "none";
+  }
+}
+
 // Codex treats most app-server client names as the model-request originator.
 // This reserved Codex name is non-originating, so requests keep Codex's default
 // CLI identity instead of showing up as Paseo in provider usage logs.
@@ -351,6 +367,12 @@ function normalizeCodexModelId(modelId: string | null | undefined): string | und
   return normalized;
 }
 
+function normalizeCodexReasoningSummary(value: unknown): CodexReasoningSummary | undefined {
+  return typeof value === "string" && CODEX_REASONING_SUMMARIES.has(value as CodexReasoningSummary)
+    ? (value as CodexReasoningSummary)
+    : undefined;
+}
+
 function normalizeCodexModelLabel(displayName: string): string {
   return displayName.replace(/\bgpt\b/gi, "GPT");
 }
@@ -424,6 +446,7 @@ export function normalizeCodexOutputSchema(schema: unknown): Record<string, unkn
 interface CodexConfiguredDefaults {
   model?: string;
   thinkingOptionId?: string;
+  reasoningSummary?: CodexReasoningSummary;
 }
 
 interface PersistedTimelineEntry {
@@ -448,6 +471,7 @@ function mergeCodexConfiguredDefaults(
   return {
     model: primary.model ?? fallback.model,
     thinkingOptionId: primary.thinkingOptionId ?? fallback.thinkingOptionId,
+    reasoningSummary: primary.reasoningSummary ?? fallback.reasoningSummary,
   };
 }
 
@@ -3017,12 +3041,17 @@ async function readCodexConfiguredDefaults(
     savedConfigDefaults = {
       model: normalizeCodexModelId(modelValue),
       thinkingOptionId: normalizeCodexThinkingOptionId(thinkingOptionValue),
+      reasoningSummary: normalizeCodexReasoningSummary(config?.modelReasoningSummary),
     };
   } catch (error) {
     logger.debug({ error }, "Failed to read Codex saved config defaults");
   }
 
-  if (savedConfigDefaults.model && savedConfigDefaults.thinkingOptionId) {
+  if (
+    savedConfigDefaults.model &&
+    savedConfigDefaults.thinkingOptionId &&
+    savedConfigDefaults.reasoningSummary
+  ) {
     return savedConfigDefaults;
   }
 
@@ -3036,6 +3065,7 @@ async function readCodexConfiguredDefaults(
     configReadDefaults = {
       model: normalizeCodexModelId(modelValue),
       thinkingOptionId: normalizeCodexThinkingOptionId(thinkingOptionValue),
+      reasoningSummary: normalizeCodexReasoningSummary(config?.model_reasoning_summary),
     };
   } catch (error) {
     logger.debug({ error }, "Failed to read Codex config defaults");
@@ -3294,6 +3324,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private connected = false;
   private connectionPromise: Promise<void> | null = null;
   private closed = false;
+  private configuredDefaultsPromise: Promise<CodexConfiguredDefaults> | null = null;
   private collaborationModes: Array<{
     name: string;
     mode?: string | null;
@@ -3942,6 +3973,10 @@ export class CodexAppServerAgentSession implements AgentSession {
     const thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId);
     if (thinkingOptionId) {
       params.effort = thinkingOptionId;
+    }
+    const reasoningSummary = await this.resolveTurnReasoningSummary();
+    if (reasoningSummary) {
+      params.summary = reasoningSummary;
     }
     if (this.serviceTier) {
       params.serviceTier = this.serviceTier;
@@ -4901,7 +4936,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     let model = this.config.model;
     let thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId);
     if (!model || !thinkingOptionId) {
-      configuredDefaults = await readCodexConfiguredDefaults(this.client, this.logger);
+      configuredDefaults = await this.getConfiguredDefaults();
     }
     if (!model) {
       model = configuredDefaults.model;
@@ -4944,6 +4979,26 @@ export class CodexAppServerAgentSession implements AgentSession {
       throw new Error("Unable to resolve Codex model");
     }
     return { model, thinkingOptionId };
+  }
+
+  private async getConfiguredDefaults(): Promise<CodexConfiguredDefaults> {
+    if (!this.client) {
+      return {};
+    }
+    this.configuredDefaultsPromise ??= readCodexConfiguredDefaults(this.client, this.logger);
+    return await this.configuredDefaultsPromise;
+  }
+
+  private async resolveTurnReasoningSummary(): Promise<CodexReasoningSummary | undefined> {
+    if (this.config.provider !== CODEX_PROVIDER) {
+      return undefined;
+    }
+    if (this.config.model === CODEX_SPARK_MODEL_ID) {
+      return "none";
+    }
+    const sessionConfig = this.buildCodexInnerConfig();
+    const sessionSummary = normalizeCodexReasoningSummary(sessionConfig?.model_reasoning_summary);
+    return sessionSummary ?? (await this.getConfiguredDefaults()).reasoningSummary;
   }
 
   private async ensureThread(): Promise<void> {
@@ -5021,7 +5076,8 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
       innerConfig.mcp_servers = mcpServers;
     }
-    const configured = applyCodexToolPolicy(innerConfig, this.config.toolPolicy);
+const configured = applyCodexToolPolicy(innerConfig, this.config.toolPolicy);
+    applyCodexModelCompatibilityOverrides(configured, this.config.provider, this.config.model);
     return Object.keys(configured).length > 0 ? configured : null;
   }
 

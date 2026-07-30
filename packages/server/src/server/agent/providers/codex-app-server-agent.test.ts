@@ -1956,6 +1956,132 @@ describe("Codex app-server provider", () => {
     );
   });
 
+  test("disables reasoning summaries when starting a built-in Spark thread", async () => {
+    const session = createSession({
+      model: "gpt-5.3-codex-spark",
+      thinkingOptionId: "medium",
+      extra: { codex: { model_reasoning_summary: "concise" } },
+    });
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/start") return { thread: { id: "spark-thread" } };
+      if (method === "turn/start") return {};
+      throw new Error(`Unexpected request: ${method}`);
+    });
+
+    session.currentThreadId = null;
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({ request });
+
+    await session.startTurn("Use Spark");
+
+    const threadStart = request.mock.calls.find(([method]) => method === "thread/start");
+    expect(threadStart?.[1]).toEqual(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          model_reasoning_summary: "none",
+        }),
+      }),
+    );
+    const turnStart = request.mock.calls.find(([method]) => method === "turn/start");
+    expect(turnStart?.[1]).toEqual(
+      expect.objectContaining({
+        summary: "none",
+      }),
+    );
+  });
+
+  test("disables reasoning summaries when resuming a built-in Spark thread", async () => {
+    const session = createSession({
+      model: "gpt-5.3-codex-spark",
+      thinkingOptionId: "medium",
+      extra: { codex: { model_reasoning_summary: "concise" } },
+    });
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/loaded/list") return { data: [] };
+      if (method === "thread/resume") return {};
+      if (method === "turn/start") return {};
+      throw new Error(`Unexpected request: ${method}`);
+    });
+
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({ request });
+
+    await session.startTurn("Resume Spark");
+
+    const threadResume = request.mock.calls.find(([method]) => method === "thread/resume");
+    expect(threadResume?.[1]).toEqual(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          model_reasoning_summary: "none",
+        }),
+      }),
+    );
+    const turnStart = request.mock.calls.find(([method]) => method === "turn/start");
+    expect(turnStart?.[1]).toEqual(
+      expect.objectContaining({
+        summary: "none",
+      }),
+    );
+  });
+
+  test("restores configured reasoning summaries when switching away from Spark", async () => {
+    const session = createSession({
+      model: "gpt-5.6-sol",
+      thinkingOptionId: "medium",
+    });
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/loaded/list") return { data: ["test-thread"] };
+      if (method === "getUserSavedConfig") return { config: {} };
+      if (method === "config/read") {
+        return { config: { model_reasoning_summary: "concise" } };
+      }
+      if (method === "turn/start") return {};
+      throw new Error(`Unexpected request: ${method}`);
+    });
+
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({ request });
+
+    await session.startTurn("Use Sol");
+    session.activeForegroundTurnId = null;
+    await session.setModel("gpt-5.3-codex-spark");
+    await session.startTurn("Use Spark");
+    session.activeForegroundTurnId = null;
+    await session.setModel("gpt-5.6-terra");
+    await session.startTurn("Use Terra");
+
+    const summaries = request.mock.calls
+      .filter(([method]) => method === "turn/start")
+      .map(([, params]) => (params as Record<string, unknown>).summary);
+    expect(summaries).toEqual(["concise", "none", "concise"]);
+  });
+
+  test("does not invent a reasoning summary when Codex has none configured", async () => {
+    const session = createSession({
+      model: "gpt-5.6-terra",
+      thinkingOptionId: "medium",
+    });
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/loaded/list") return { data: ["test-thread"] };
+      if (method === "getUserSavedConfig") return { config: {} };
+      if (method === "config/read") return { config: {} };
+      if (method === "turn/start") return {};
+      throw new Error(`Unexpected request: ${method}`);
+    });
+
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({ request });
+
+    await session.startTurn("Use Terra");
+
+    const turnStart = request.mock.calls.find(([method]) => method === "turn/start");
+    expect(turnStart?.[1]).not.toEqual(
+      expect.objectContaining({
+        summary: expect.anything(),
+      }),
+    );
+  });
+
   test("resolves Codex skill slash commands into app-server skill input", async () => {
     const session = createSession();
     const request = vi.fn(async (method: string) => {
