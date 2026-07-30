@@ -2327,6 +2327,33 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
+  test("fails closed when the SDK abort throws before returning a promise", async () => {
+    const openCode = new TestOpenCodeClient();
+    const sdkClient = openCode.asSdkClient();
+    const workingAbort = sdkClient.session.abort;
+    sdkClient.session.abort = (() => {
+      throw new Error("synchronous abort failure");
+    }) as typeof sdkClient.session.abort;
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/workspace/repo" },
+      sdkClient,
+      "ses_sync_abort_failure",
+      createTestLogger(),
+    );
+
+    try {
+      await session.interrupt().catch(() => undefined);
+
+      await expect(session.startTurn("unsafe replacement")).rejects.toThrow(
+        "synchronous abort failure",
+      );
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(0);
+    } finally {
+      sdkClient.session.abort = workingAbort;
+      await session.close();
+    }
+  });
+
   test("fails closed when idle-session abort attempts return SDK errors", async () => {
     const { parent: session, openCode } = await createParentSession("ses_error_idle_abort");
     openCode.sessionPromptAsyncEvents = [];
@@ -2465,6 +2492,60 @@ describe("OpenCode adapter startTurn error handling", () => {
       await session.close();
     }
   }, 15_000);
+
+  test("does not reconnect repeatedly after a persistent stop-observer failure", async () => {
+    const firstStreamEnd = createTestDeferred<void>();
+    const settleAbort = createTestDeferred<void>();
+    const parkedReconnect = createTestDeferred<void>();
+    let subscriptionCount = 0;
+    const { parent: session, openCode } = await createParentSession(
+      "ses_persistent_stop_observer_failure",
+      (client) => {
+        client.globalEventImplementation = async (options) => {
+          subscriptionCount += 1;
+          const signal = (options as { signal: AbortSignal }).signal;
+          if (subscriptionCount === 2) {
+            throw new Error("provider unavailable");
+          }
+          return {
+            stream: {
+              async *[Symbol.asyncIterator]() {
+                yield { type: "server.connected", properties: {} };
+                if (subscriptionCount === 1) {
+                  await firstStreamEnd.promise;
+                  return;
+                }
+                await parkedReconnect.promise;
+                await waitForAbort(signal);
+              },
+            },
+          };
+        };
+      },
+    );
+    openCode.sessionPromptAsyncEvents = [];
+    openCode.sessionAbortImplementation = async () => {
+      await settleAbort.promise;
+      return { data: true };
+    };
+
+    try {
+      await session.startTurn("first");
+      const interrupt = session.interrupt();
+      firstStreamEnd.resolve();
+      await vi.waitFor(() => expect(openCode.calls.globalEvent).toHaveLength(2));
+
+      settleAbort.resolve();
+      await interrupt;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(openCode.calls.globalEvent).toHaveLength(2);
+    } finally {
+      settleAbort.resolve();
+      parkedReconnect.resolve();
+      await session.close();
+    }
+  });
 
   test("does not reconnect the stop observer while closing", async () => {
     const streamSignals: AbortSignal[] = [];

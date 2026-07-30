@@ -2763,6 +2763,7 @@ interface OpenCodeRunBoundaryState {
   idle: Deferred<void>;
   abort: Promise<void>;
   quiescence: Promise<void>;
+  observationFailed: boolean;
   providerIdleObserved: boolean;
   deferredEvents: Array<{ rawEvent: unknown; eventCount: number }>;
 }
@@ -3069,12 +3070,29 @@ class OpenCodeAgentSession implements AgentSession {
     // OpenCode creates prompts before joining its single session runner, and
     // abort is session-scoped. Reuse requires both provider-confirmed idle and
     // the earlier abort to settle so it cannot cancel the replacement run.
-    const quiescence = stopping.quiescence;
-    await withTimeout(
-      quiescence,
-      OPENCODE_PENDING_ABORT_START_TIMEOUT_MS,
-      "OpenCode previous turn to stop",
-    );
+    const observedQuiescence = stopping.quiescence;
+    try {
+      await withTimeout(
+        observedQuiescence,
+        OPENCODE_PENDING_ABORT_START_TIMEOUT_MS,
+        "OpenCode previous turn to stop",
+      );
+    } catch (error) {
+      if (this.runBoundary !== stopping) {
+        throw error;
+      }
+      if (stopping.quiescence === observedQuiescence) {
+        if (!stopping.observationFailed) {
+          throw error;
+        }
+        this.armStopQuiescence(stopping);
+      }
+      await withTimeout(
+        stopping.quiescence,
+        OPENCODE_PENDING_ABORT_START_TIMEOUT_MS,
+        "OpenCode previous turn to stop",
+      );
+    }
   }
 
   private async observeProviderStopBoundary(stopping: OpenCodeRunBoundaryState): Promise<void> {
@@ -3767,14 +3785,15 @@ class OpenCodeAgentSession implements AgentSession {
       idle,
       abort: Promise.resolve(),
       quiescence: Promise.resolve(),
+      observationFailed: false,
       providerIdleObserved: !turnId,
       deferredEvents: previousBoundary?.deferredEvents.splice(0) ?? [],
     };
     this.turnState = { status: "idle" };
     this.runBoundary = stopping;
-    stopping.abort = this.abortSession(turnId, "interrupt").catch(() =>
-      this.abortSession(null, "turn_start_boundary"),
-    );
+    stopping.abort = Promise.resolve()
+      .then(() => this.abortSession(turnId, "interrupt"))
+      .catch(() => this.abortSession(null, "turn_start_boundary"));
     this.armStopQuiescence(stopping);
     if (turnId) {
       this.notifySubscribers(
@@ -3786,6 +3805,7 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private armStopQuiescence(stopping: OpenCodeRunBoundaryState): void {
+    stopping.observationFailed = false;
     const observation = Promise.all([
       stopping.abort,
       this.observeProviderStopBoundary(stopping),
@@ -3803,7 +3823,7 @@ class OpenCodeAgentSession implements AgentSession {
               this.runBoundary === stopping &&
               stopping.quiescence === quiescence
             ) {
-              this.armStopQuiescence(stopping);
+              stopping.observationFailed = true;
             }
             return undefined;
           },
