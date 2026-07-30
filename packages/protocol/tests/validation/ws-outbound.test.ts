@@ -82,6 +82,45 @@ const SourceSchema = z.discriminatedUnion("type", [
     });
   });
 
+  it("preserves non-string discriminators in discriminated-union branches", async () => {
+    const schema = await compileInlineSchema(`
+const SourceSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), value: z.string() }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+]);
+`);
+
+    expect(schema.safeParse({ ok: true, value: "done" })).toMatchObject({
+      success: true,
+      data: { ok: true, value: "done" },
+    });
+    expect(schema.safeParse({ ok: false, error: "failed" })).toMatchObject({
+      success: true,
+      data: { ok: false, error: "failed" },
+    });
+    expect(schema.safeParse({ ok: "true", value: "wrong type" }).success).toBe(false);
+  });
+
+  it("delegates recursive JSON leaves to their runtime Zod schema", async () => {
+    const schema = await compileInlineSchema(`
+const SourceSchema = z.object({
+  value: z.json(),
+});
+`);
+
+    expect(
+      schema.safeParse({
+        value: {
+          content: [{ type: "text", text: "done" }],
+          structuredContent: { nested: [true, null, 2] },
+        },
+      }),
+    ).toMatchObject({
+      success: true,
+    });
+    expect(schema.safeParse({ value: { invalid: undefined } }).success).toBe(false);
+  });
+
   it("routes tool-call-like status unions through the current sequential item union", async () => {
     const schema = await compileInlineSchema(`
 const ToolCallItemSchema = z.discriminatedUnion("status", [
