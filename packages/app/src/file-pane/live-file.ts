@@ -16,6 +16,8 @@ export function useLiveFile(input: {
   const [subscriptionReady, setSubscriptionReady] = useState(!input.liveUpdates);
   const [version, setVersion] = useState<FileVersion | null>(null);
   const latestVersion = useRef<FileVersion | null>(null);
+  const latestQueryDataUpdatedAt = useRef(0);
+  const nonReadyObservedAt = useRef<number | null>(null);
   const queryKey = useMemo(
     () => ["workspaceFile", input.serverId, input.cwd, input.path] as const,
     [input.cwd, input.path, input.serverId],
@@ -23,6 +25,7 @@ export function useLiveFile(input: {
 
   useEffect(() => {
     latestVersion.current = null;
+    nonReadyObservedAt.current = null;
     setVersion(null);
     const { client, cwd, path } = input;
     if (!input.liveUpdates || !client || !cwd || !path || !input.enabled) {
@@ -36,6 +39,8 @@ export function useLiveFile(input: {
       try {
         const subscription = await client.subscribeFile({ cwd, path }, (next) => {
           if (disposed) return;
+          nonReadyObservedAt.current =
+            next.status === "ready" ? null : latestQueryDataUpdatedAt.current;
           latestVersion.current = next;
           setVersion(next);
           void queryClient.invalidateQueries({ queryKey });
@@ -45,6 +50,8 @@ export function useLiveFile(input: {
           return;
         }
         unsubscribe = subscription.unsubscribe;
+        nonReadyObservedAt.current =
+          subscription.initial.status === "ready" ? null : latestQueryDataUpdatedAt.current;
         latestVersion.current = subscription.initial;
         setVersion(subscription.initial);
         setSubscriptionReady(true);
@@ -77,6 +84,7 @@ export function useLiveFile(input: {
     dataShape: "value",
     staleTimeMs: 5_000,
   });
+  latestQueryDataUpdatedAt.current = query.dataUpdatedAt;
 
   useEffect(() => {
     const observed = latestVersion.current;
@@ -88,6 +96,27 @@ export function useLiveFile(input: {
       void queryClient.invalidateQueries({ queryKey });
     }
   }, [query.data, queryClient, queryKey]);
+
+  useEffect(() => {
+    if (!input.liveUpdates || !query.data || !input.cwd || !input.path) return;
+    const observed = latestVersion.current;
+    const observedAt = nonReadyObservedAt.current;
+    if (observed?.status === "ready" || observedAt === null || query.dataUpdatedAt <= observedAt) {
+      return;
+    }
+
+    const recoveredVersion: FileVersion = {
+      status: "ready",
+      cwd: input.cwd,
+      path: input.path,
+      size: query.data.size,
+      modifiedAt: query.data.modifiedAt,
+      revision: query.data.revision,
+    };
+    nonReadyObservedAt.current = null;
+    latestVersion.current = recoveredVersion;
+    setVersion(recoveredVersion);
+  }, [input.cwd, input.liveUpdates, input.path, query.data, query.dataUpdatedAt]);
 
   return { query, version };
 }

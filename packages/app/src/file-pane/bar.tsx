@@ -19,6 +19,7 @@ export function FilePanelBar({
   cursor,
   vimMode,
   conflictUnavailable,
+  conflictModified,
   onOverwrite,
   onReload,
 }: {
@@ -30,6 +31,7 @@ export function FilePanelBar({
   cursor?: { line: number; column: number };
   vimMode?: string | null;
   conflictUnavailable?: boolean;
+  conflictModified?: boolean;
   onOverwrite?(): void;
   onReload?(): void;
 }) {
@@ -84,9 +86,6 @@ export function FilePanelBar({
           {editorStatus === "error" ? (
             <Text style={styles.error}>{t("panels.file.editor.saveFailed")}</Text>
           ) : null}
-          {editorStatus === "conflict" ? (
-            <Text style={styles.error}>{t("panels.file.editor.changedOnDisk")}</Text>
-          ) : null}
           {vimMode ? (
             <Text
               style={styles.vim}
@@ -115,13 +114,12 @@ export function FilePanelBar({
         ) : null}
       </View>
       {editorStatus === "conflict" && onOverwrite && onReload ? (
-        <View style={styles.notice}>
-          <FileConflictAlert
-            unavailable={conflictUnavailable ?? false}
-            onOverwrite={onOverwrite}
-            onReload={onReload}
-          />
-        </View>
+        <FileConflictAlert
+          unavailable={conflictUnavailable ?? false}
+          modified={conflictModified ?? false}
+          onOverwrite={onOverwrite}
+          onReload={onReload}
+        />
       ) : null}
     </View>
   );
@@ -137,8 +135,6 @@ const styles = StyleSheet.create((theme) => ({
   chrome: {
     flexShrink: 0,
     backgroundColor: theme.colors.surface1,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
   },
   row: {
     minHeight: 32,
@@ -146,6 +142,8 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[3],
     paddingHorizontal: theme.spacing[3],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
   },
   metadata: {
     flex: 1,
@@ -174,5 +172,4 @@ const styles = StyleSheet.create((theme) => ({
     fontFamily: theme.fontFamily.mono,
     fontSize: theme.fontSize.xs,
   },
-  notice: { paddingHorizontal: theme.spacing[3], paddingBottom: theme.spacing[3] },
 }));

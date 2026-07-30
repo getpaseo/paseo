@@ -437,10 +437,11 @@ export function FilePane({
   });
 
   useEffect(() => {
+    if (!query.data) return;
     let active = true;
     const key = readTarget ? `${readTarget.cwd}:${readTarget.path}` : null;
     void (async () => {
-      const nextPreview = await createFilePanePreview(query.data ?? null);
+      const nextPreview = await createFilePanePreview(query.data);
       if (active) setResolvedPreview({ key, ...nextPreview });
     })();
     return () => {
@@ -716,6 +717,10 @@ function EditableFilePane({
   }, [model, version]);
 
   const handleReload = useCallback(() => {
+    if (!snapshot.modified) {
+      void model.reload();
+      return;
+    }
     void (async () => {
       const confirmed = await confirmDialog({
         title: t("panels.file.editor.reloadTitle"),
@@ -725,7 +730,7 @@ function EditableFilePane({
       });
       if (confirmed) void model.reload();
     })();
-  }, [model, t]);
+  }, [model, snapshot.modified, t]);
   const handleOverwrite = useCallback(() => void model.overwrite(), [model]);
   const handleVimModeChange = useCallback((nextMode: string | null) => setVimMode(nextMode), []);
   const renderedPreview = useMemo<ExplorerFile>(
@@ -751,6 +756,7 @@ function EditableFilePane({
         cursor={showSource ? cursor : undefined}
         vimMode={showSource ? vimMode : null}
         conflictUnavailable={snapshot.observedVersion.status !== "ready"}
+        conflictModified={snapshot.modified}
         onOverwrite={handleOverwrite}
         onReload={handleReload}
         mode={mode}
