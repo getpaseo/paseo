@@ -24,7 +24,7 @@ import {
   useSelectionAnchor,
 } from "@/read-aloud/use-selection-anchor.web";
 import { useHostFeatureMap } from "@/runtime/host-features";
-import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
+import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { parseActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store/navigation";
 
 const BUBBLE_HEIGHT = 32;
@@ -67,28 +67,26 @@ function useRouteServerId(): string | null {
 /**
  * Which host synthesizes the speech.
  *
- * Read aloud carries no workspace context — it is pure text-to-speech — so any
- * host that advertises the capability will do. The host owning the current
- * workspace is preferred so the work lands where the content came from, but
- * selections on routes without a workspace (settings, history) still get a
- * voice. Reachability is not checked here: the daemon client resolves to `null`
- * before it has a transport, and a host that drops mid-request surfaces the
- * failure on the bubble.
+ * The selection is spoken by the host that owns the route it came from, never
+ * another paired daemon. The text being read *is* workspace content — code,
+ * agent output — so sending it to a different host would disclose it across an
+ * independently paired daemon boundary. There is deliberately no fallback: a
+ * route host that doesn't advertise the capability shows no button, and so does
+ * a route with no host at all (settings, history).
+ *
+ * Reachability is not checked here: the daemon client resolves to `null` before
+ * it has a transport, and a host that drops mid-request surfaces the failure on
+ * the bubble.
  */
 function useReadAloudServerId(): string | null {
   const routeServerId = useRouteServerId();
-  const hosts = useHosts();
-  const serverIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
+  const serverIds = useMemo(() => (routeServerId ? [routeServerId] : []), [routeServerId]);
   const featureByServerId = useHostFeatureMap(serverIds, "readAloud");
 
-  return useMemo(() => {
-    const supportsReadAloud = (serverId: string) => featureByServerId.get(serverId) === true;
-
-    if (routeServerId && supportsReadAloud(routeServerId)) {
-      return routeServerId;
-    }
-    return serverIds.find(supportsReadAloud) ?? null;
-  }, [featureByServerId, routeServerId, serverIds]);
+  if (!routeServerId) {
+    return null;
+  }
+  return featureByServerId.get(routeServerId) === true ? routeServerId : null;
 }
 
 function renderStatusIcon(status: ReadAloudSnapshot["status"], color: string): ReactNode {

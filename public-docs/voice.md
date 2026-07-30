@@ -121,6 +121,7 @@ Two limits:
 
 - **Web and desktop only.** The bubble is anchored to a live text selection, and iOS/Android hand selection to the system edit menu, which the app cannot read. There is no read-aloud affordance on the mobile apps.
 - **The composer and the terminal are excluded.** Both own their own selection behavior.
+- **The selection is spoken by the host it came from.** Read aloud never sends text to another paired host, so a selection on a route with no host — settings, history — gets no button.
 
 Hosts older than v0.2.5 do not have the read-aloud RPC; against those the bubble simply never appears.
 
