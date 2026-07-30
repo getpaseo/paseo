@@ -1748,10 +1748,8 @@ export const en = {
       assistant: "Agent:",
     },
     errors: {
-      busy: "Another client already has a live voice call on this agent.",
+      busy: "A live voice call is already active on this host.",
       unsupported: "This host does not support live voice.",
-      agentNotFound: "That agent is no longer available.",
-      agentBusy: "The agent is busy. Wait for the current turn to finish.",
       startFailed: "Live voice could not be started.",
       micBusy: "The microphone is in use by another feature.",
       notConnected: "This host is not connected.",

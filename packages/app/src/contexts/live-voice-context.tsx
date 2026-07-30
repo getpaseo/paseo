@@ -8,28 +8,29 @@ import {
   type ReactNode,
 } from "react";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { AppState } from "react-native";
-import { isNative } from "@/constants/platform";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import {
   createDefaultLiveVoiceRuntimeDeps,
   createLiveVoiceRuntime,
+  type LiveVoiceDaemonClient,
   type LiveVoiceRuntime,
   type LiveVoiceSnapshot,
 } from "@/live-voice/live-voice-runtime";
+import { registerLiveVoiceRouteAuthority } from "@/live-voice/live-voice-route-authority";
 
 interface LiveVoiceContextValue extends LiveVoiceSnapshot {
-  start: (serverId: string, agentId: string) => Promise<void>;
+  start: (serverId: string) => Promise<void>;
   stop: () => Promise<void>;
   toggleMute: () => void;
   resumeAudio: () => Promise<void>;
-  isActiveForAgent: (serverId: string, agentId: string) => boolean;
+  dismiss: () => void;
+  isActiveForServer: (serverId: string) => boolean;
 }
 
 const EMPTY_SNAPSHOT: LiveVoiceSnapshot = {
   phase: "idle",
   serverId: null,
-  agentId: null,
   liveSessionId: null,
   isMuted: false,
   isAudioBlocked: false,
@@ -42,6 +43,14 @@ const LiveVoiceRuntimeContext = createContext<LiveVoiceRuntime | null>(null);
 
 const noopSubscribe = () => () => {};
 const getEmptySnapshot = () => EMPTY_SNAPSHOT;
+
+function asLiveVoiceDaemonClient(client: DaemonClient): LiveVoiceDaemonClient {
+  return {
+    startLiveVoice: (input) => client.startLiveVoice(input),
+    stopLiveVoice: (input) => client.stopLiveVoice(input),
+    subscribeUpdates: (handler) => client.on("voice.live.update", handler),
+  };
+}
 
 export function useLiveVoiceOptional(): LiveVoiceContextValue | null {
   const runtime = useContext(LiveVoiceRuntimeContext);
@@ -64,7 +73,8 @@ export function useLiveVoiceOptional(): LiveVoiceContextValue | null {
       stop: runtime.stop,
       toggleMute: runtime.toggleMute,
       resumeAudio: runtime.resumeAudio,
-      isActiveForAgent: runtime.isActiveForAgent,
+      dismiss: runtime.dismiss,
+      isActiveForServer: runtime.isActiveForServer,
     };
   }, [snapshot, runtime]);
 }
@@ -78,23 +88,30 @@ export function LiveVoiceProvider({ children }: LiveVoiceProviderProps) {
 
   if (!runtimeRef.current) {
     runtimeRef.current = createLiveVoiceRuntime(
-      createDefaultLiveVoiceRuntimeDeps((serverId) => {
-        // Read through the store on demand: the client is replaced on reconnect,
-        // and the runtime should always negotiate over the current one.
-        const client = useSessionStore.getState().sessions[serverId]?.client ?? null;
-        if (!client) {
-          return null;
-        }
-        return {
-          startLiveVoice: (input) => client.startLiveVoice(input),
-          stopLiveVoice: (input) => client.stopLiveVoice(input),
-          subscribeUpdates: (handler) => client.on("voice.live.update", handler),
-        };
-      }),
+      createDefaultLiveVoiceRuntimeDeps(
+        (serverId) => {
+          // Read through the store on demand: the client is replaced on reconnect,
+          // and the runtime should always negotiate over the current one.
+          const client = useSessionStore.getState().sessions[serverId]?.client ?? null;
+          return client ? asLiveVoiceDaemonClient(client) : null;
+        },
+        (serverId) => {
+          const pin = getHostRuntimeStore().pinActiveConnection(serverId);
+          if (!pin) {
+            return null;
+          }
+          return {
+            client: asLiveVoiceDaemonClient(pin.client),
+            release: pin.release,
+          };
+        },
+      ),
     );
   }
 
   const runtime = runtimeRef.current;
+
+  useEffect(() => registerLiveVoiceRouteAuthority(runtime), [runtime]);
 
   // A Live Voice call holds the microphone and an open peer connection, so losing
   // the daemon connection has to tear it down locally. Two distinct losses: the
@@ -149,26 +166,6 @@ export function LiveVoiceProvider({ children }: LiveVoiceProviderProps) {
       unsubscribeStore();
       unsubscribeRuntime();
       unsubscribeStatus?.();
-    };
-  }, [runtime]);
-
-  useEffect(() => {
-    if (!isNative) {
-      return;
-    }
-    const subscription = AppState.addEventListener("change", (state) => {
-      // Stop only once the app actually enters the background. iOS can report
-      // `inactive` while presenting the first microphone permission prompt;
-      // stopping there would cancel the call before permission can be granted.
-      if (state !== "background") {
-        return;
-      }
-      void runtime.stop().catch((error) => {
-        console.error("[LiveVoiceProvider] Failed to stop live voice in background", error);
-      });
-    });
-    return () => {
-      subscription.remove();
     };
   }, [runtime]);
 

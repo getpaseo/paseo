@@ -9,14 +9,13 @@ import {
 } from "./live-voice-context.js";
 import { LiveVoiceDaemonContextProvider } from "./live-voice-daemon-context.js";
 
-const ATTACHED_AGENT_ID = "agent-attached";
+const AGENT_ID = "agent-1";
 
 function snapshot(overrides: Partial<LiveVoiceContextSnapshot> = {}): LiveVoiceContextSnapshot {
   return {
-    attachedAgentId: ATTACHED_AGENT_ID,
     agents: [
       {
-        id: ATTACHED_AGENT_ID,
+        id: AGENT_ID,
         provider: "codex",
         cwd: "/work/paseo",
         workspaceId: "ws-1",
@@ -40,30 +39,45 @@ function snapshot(overrides: Partial<LiveVoiceContextSnapshot> = {}): LiveVoiceC
 const logger = pino({ level: "silent" });
 
 describe("live voice prompt", () => {
-  it("tells the model it delegates to the attached session and can reach Paseo's own controls", () => {
+  it("tells the model it routes work to sessions and can reach Paseo's own controls", () => {
     const prompt = buildLiveVoicePrompt(true);
 
-    expect(prompt).toContain("You are the voice of Paseo.");
-    expect(prompt).toContain("delegate to the attached session");
+    expect(prompt).toContain("You are the voice of Paseo");
+    expect(prompt).toContain("prompt an existing agent session");
     // The whole point of phase 2: the model must know Paseo itself is actionable.
     expect(prompt).toMatch(/archive workspaces/i);
     expect(prompt).toMatch(/agent sessions/i);
+    expect(prompt).toContain("list_hosts");
+    expect(prompt).toContain("run_paseo_tool_on_host");
+    expect(prompt).toMatch(/credentials and connection endpoints are intentionally unavailable/i);
+    // Its own session is not a project session, and must not be used as one.
+    expect(prompt).toMatch(/never do coding work yourself/i);
+    expect(prompt).not.toMatch(/attached/i);
     // Spoken-output discipline, since this prompt replaces codex's entire prompt.
     expect(prompt).toMatch(/no markdown/i);
   });
 
-  it("does not promise Paseo control when the session has no Paseo tools", () => {
+  it("admits it cannot act on Paseo when it has no Paseo tools", () => {
     const prompt = buildLiveVoicePrompt(false);
 
-    expect(prompt).toContain("It cannot control Paseo itself on this daemon");
+    expect(prompt).toContain("you cannot act on Paseo");
     expect(prompt).not.toMatch(/archive workspaces/i);
-    // Code work is still delegable — only Paseo control is off the table.
-    expect(prompt).toContain("read and change code");
+    // Describing current state is still honest and still on the table.
+    expect(prompt).toContain("describe what is running from the state below");
+    expect(prompt).toMatch(/never promise work/i);
+  });
+
+  it("keeps the local-only instructions for a legacy client without routing capability", () => {
+    const prompt = buildLiveVoicePrompt(true, false);
+
+    expect(prompt).toContain("Your session has Paseo's tools for this machine");
+    expect(prompt).toContain("cannot route work to another Paseo host");
+    expect(prompt).not.toContain("run_paseo_tool_on_host");
   });
 });
 
 describe("live voice initial items", () => {
-  it("puts the attached session first and labels the other sections", () => {
+  it("lists every session in one section, then the workspaces", () => {
     const items = buildLiveVoiceInitialItems(
       snapshot({
         agents: [
@@ -80,22 +94,25 @@ describe("live voice initial items", () => {
       }),
     );
 
-    expect(items).toHaveLength(3);
+    expect(items).toHaveLength(2);
     expect(items.every((item) => item.role === "developer")).toBe(true);
-    expect(items[0]?.text).toContain("The agent session you are attached to:");
+    // No session is singled out as "attached": the call belongs to the daemon.
+    expect(items[0]?.text).toContain("Agent sessions on this daemon (2)");
     expect(items[0]?.text).toContain("Live voice work");
-    expect(items[0]?.text).not.toContain("Docs pass");
-    expect(items[1]?.text).toContain("Other agent sessions on this daemon (1)");
-    expect(items[1]?.text).toContain("Docs pass");
-    expect(items[2]?.text).toContain("Workspaces on this daemon (1)");
-    expect(items[2]?.text).toContain("realtime-voice-actions");
+    expect(items[0]?.text).toContain("Docs pass");
+    expect(items[1]?.text).toContain("Workspaces on this daemon (1)");
+    expect(items[1]?.text).toContain("realtime-voice-actions");
   });
 
   it("omits sections that have nothing in them", () => {
     const items = buildLiveVoiceInitialItems(snapshot({ workspaces: [] }));
 
     expect(items).toHaveLength(1);
-    expect(items[0]?.text).toContain("attached to:");
+    expect(items[0]?.text).toContain("Agent sessions on this daemon (1)");
+  });
+
+  it("produces no items at all on a daemon with nothing running", () => {
+    expect(buildLiveVoiceInitialItems(snapshot({ agents: [], workspaces: [] }))).toEqual([]);
   });
 
   it("reports a truncated list as truncated rather than silently cutting it", () => {
@@ -149,7 +166,7 @@ describe("daemon context provider", () => {
         hasPaseoMcpInjection: () => true,
         listAgents: () => [
           {
-            id: ATTACHED_AGENT_ID,
+            id: AGENT_ID,
             provider: "codex",
             cwd: "/work/paseo",
             workspaceId: "ws-1",
@@ -189,16 +206,15 @@ describe("daemon context provider", () => {
       logger,
     });
 
-    const context = await provider.build(ATTACHED_AGENT_ID);
+    const context = await provider.build();
 
-    expect(context?.prompt).toContain("You are the voice of Paseo.");
+    expect(context?.prompt).toContain("You are the voice of Paseo");
     const text = (context?.initialItems ?? []).map((item) => item.text).join("\n");
     expect(text).toContain("Live voice work");
     expect(text).toContain("wrathful-seal");
     expect(text).not.toContain("Finished");
     expect(text).not.toContain("/work/old");
-    // Only the attached session exists, so there is no "other sessions" section.
-    expect(text).not.toContain("Other agent sessions");
+    expect(text).toContain("Agent sessions on this daemon (1)");
   });
 
   it("reflects a daemon that does not inject Paseo tools into sessions", async () => {
@@ -208,9 +224,9 @@ describe("daemon context provider", () => {
       logger,
     });
 
-    const context = await provider.build(ATTACHED_AGENT_ID);
+    const context = await provider.build();
 
-    expect(context?.prompt).toContain("It cannot control Paseo itself on this daemon");
+    expect(context?.prompt).toContain("you cannot act on Paseo");
   });
 
   it("prefers the workspace title over its derived display name", async () => {
@@ -231,7 +247,7 @@ describe("daemon context provider", () => {
       logger,
     });
 
-    const context = await provider.build(ATTACHED_AGENT_ID);
+    const context = await provider.build();
 
     const text = (context?.initialItems ?? []).map((item) => item.text).join("\n");
     expect(text).toContain("user-title");

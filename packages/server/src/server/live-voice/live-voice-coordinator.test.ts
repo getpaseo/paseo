@@ -1,16 +1,19 @@
+import os from "node:os";
 import { describe, expect, it } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type { AgentRealtimeVoiceEvent } from "../agent/agent-realtime-voice.js";
+import type { AgentSessionConfig } from "../agent/agent-sdk-types.js";
 import {
   LiveVoiceCoordinator,
-  type LiveVoiceAgentRef,
   type LiveVoiceContextProvider,
   type LiveVoiceUpdate,
 } from "./live-voice-coordinator.js";
+import { LiveVoiceRouteBroker } from "./live-voice-route-broker.js";
 
 const OFFER_SDP = "v=0\r\no=- offer\r\n";
 const ANSWER_SDP = "v=0\r\no=- answer\r\n";
+const HOST_CWD = "/home/test-user";
 
 interface FakeStartParams {
   sdp: string;
@@ -67,42 +70,100 @@ function createFakeProviderSession(options?: {
   };
 }
 
+/** Answers the SDP synchronously from `realtimeStart`, the common happy path. */
+function answeringProvider(): FakeProviderSession {
+  return createFakeProviderSession({ onStart: (emit) => emit({ kind: "sdp", sdp: ANSWER_SDP }) });
+}
+
+interface HostRecord {
+  agentId: string;
+  provider: FakeProviderSession;
+}
+
 interface Harness {
   coordinator: LiveVoiceCoordinator;
-  provider: FakeProviderSession;
-  agent: LiveVoiceAgentRef & { session: unknown };
+  hosts: HostRecord[];
+  /** The provider of the first host session, i.e. the one most tests drive. */
+  provider: () => FakeProviderSession;
+  createConfigs: AgentSessionConfig[];
+  closedHostIds: string[];
+  routeBroker: LiveVoiceRouteBroker;
+  routeRequests: unknown[];
+  routingRegisteredDuringCreate: boolean[];
   updates: LiveVoiceUpdate[];
   owner: { sessionKey: object; sourceKey: object };
   triggerAgentClosing: (agentId: string) => void;
-  setAgent: (agent: LiveVoiceAgentRef | null) => void;
 }
 
 function createHarness(options?: {
-  provider?: FakeProviderSession;
-  agentOverrides?: Partial<LiveVoiceAgentRef>;
+  makeProvider?: () => FakeProviderSession;
+  capabilities?: { readonly [capability: string]: boolean | undefined };
+  availability?: { available: boolean; error?: string | null };
+  availabilityGate?: Promise<unknown>;
+  createAgentError?: Error;
+  /** Resolves before `createAgent` returns, so tests can close mid-spawn. */
+  createAgentGate?: Promise<unknown>;
   startSdpTimeoutMs?: number;
   context?: LiveVoiceContextProvider;
+  /** `null` omits the option so the coordinator's own default applies. */
+  hostCwd?: string | null;
 }): Harness {
-  const provider = options?.provider ?? createFakeProviderSession();
-  const agent: LiveVoiceAgentRef = {
-    lifecycle: "idle",
-    capabilities: { supportsLiveVoice: true },
-    session: provider,
-    activeForegroundTurnId: null,
-    ...options?.agentOverrides,
-  };
-  let current: LiveVoiceAgentRef | null = agent;
+  const makeProvider = options?.makeProvider ?? answeringProvider;
+  const hosts: HostRecord[] = [];
+  const createConfigs: AgentSessionConfig[] = [];
+  const closedHostIds: string[] = [];
   const closingListeners = new Set<(agentId: string) => void>();
   const updates: LiveVoiceUpdate[] = [];
+  const routeRequests: unknown[] = [];
+  const routeBroker = new LiveVoiceRouteBroker();
+  const routingRegisteredDuringCreate: boolean[] = [];
+  const notifyClosing = (agentId: string): void => {
+    for (const listener of Array.from(closingListeners)) listener(agentId);
+  };
   const coordinator = new LiveVoiceCoordinator({
     agents: {
-      getAgent: () => current,
+      getProviderAvailability: async () => {
+        if (options?.availabilityGate) {
+          await options.availabilityGate;
+        }
+        return options?.availability ?? { available: true, error: null };
+      },
+      createAgent: async (config, agentId) => {
+        createConfigs.push(config);
+        if (!agentId) throw new Error("expected the coordinator to choose the host id");
+        routingRegisteredDuringCreate.push(routeBroker.isRegisteredHost(agentId));
+        if (options?.createAgentGate) {
+          await options.createAgentGate;
+        }
+        if (options?.createAgentError) {
+          throw options.createAgentError;
+        }
+        const host: HostRecord = {
+          agentId,
+          provider: makeProvider(),
+        };
+        hosts.push(host);
+        return {
+          id: host.agentId,
+          capabilities: options?.capabilities ?? { supportsLiveVoice: true },
+          session: host.provider,
+        };
+      },
+      // The real manager fires `onAgentClosing` from inside `closeAgent`, so the
+      // fake does too: closing a host must not re-enter into a second teardown.
+      closeAgent: async (agentId) => {
+        closedHostIds.push(agentId);
+        notifyClosing(agentId);
+      },
       onAgentClosing: (callback) => {
         closingListeners.add(callback);
         return () => closingListeners.delete(callback);
       },
     },
     logger: createTestLogger(),
+    routeBroker,
+    createHostAgentId: () => `host-${hosts.length + 1}`,
+    ...(options?.hostCwd === null ? {} : { hostCwd: options?.hostCwd ?? HOST_CWD }),
     ...(options?.startSdpTimeoutMs === undefined
       ? {}
       : { startSdpTimeoutMs: options.startSdpTimeoutMs }),
@@ -110,34 +171,35 @@ function createHarness(options?: {
   });
   return {
     coordinator,
-    provider,
-    agent: agent as LiveVoiceAgentRef & { session: unknown },
+    hosts,
+    provider: () => {
+      const host = hosts[0];
+      if (!host) throw new Error("no host session was spawned");
+      return host.provider;
+    },
+    createConfigs,
+    closedHostIds,
+    routeBroker,
+    routeRequests,
+    routingRegisteredDuringCreate,
     updates,
     owner: { sessionKey: {}, sourceKey: {} },
-    triggerAgentClosing: (agentId) => {
-      for (const listener of Array.from(closingListeners)) listener(agentId);
-    },
-    setAgent: (next) => {
-      current = next;
-    },
+    triggerAgentClosing: notifyClosing,
   };
 }
 
-function startCall(harness: Harness, owner = harness.owner) {
+function startCall(harness: Harness, owner = harness.owner, routed = true) {
   return harness.coordinator.start({
-    agentId: "agent-1",
     offerSdp: OFFER_SDP,
     owner,
     emit: (update) => harness.updates.push(update),
+    ...(routed ? { sendRouteRequest: (request) => harness.routeRequests.push(request) } : {}),
   });
 }
 
 describe("LiveVoiceCoordinator", () => {
-  it("accepts a call when the answer SDP arrives before the start response resolves", async () => {
-    const provider = createFakeProviderSession({
-      onStart: (emit) => emit({ kind: "sdp", sdp: ANSWER_SDP }),
-    });
-    const harness = createHarness({ provider });
+  it("spawns a hidden host session and accepts the call when the SDP arrives during start", async () => {
+    const harness = createHarness();
 
     const result = await startCall(harness);
 
@@ -146,8 +208,14 @@ describe("LiveVoiceCoordinator", () => {
       liveSessionId: expect.any(String),
       answerSdp: ANSWER_SDP,
     });
-    expect(provider.startCalls).toHaveLength(1);
-    expect(provider.startCalls[0]).toMatchObject({
+    // Hidden, provider-specific, and deliberately not in a project directory.
+    expect(harness.createConfigs).toEqual([
+      { provider: "codex", cwd: HOST_CWD, title: "Live Voice host", internal: true },
+    ]);
+    expect(harness.hosts).toHaveLength(1);
+    expect(harness.routingRegisteredDuringCreate).toEqual([true]);
+    expect(harness.routeBroker.isRegisteredHost("host-1")).toBe(true);
+    expect(harness.provider().startCalls[0]).toMatchObject({
       sdp: OFFER_SDP,
       realtimeSessionId: result.accepted ? result.liveSessionId : "",
     });
@@ -155,18 +223,35 @@ describe("LiveVoiceCoordinator", () => {
     expect(harness.updates[0]?.seq).toBe(0);
   });
 
+  it("runs the host session in the user's home directory by default", async () => {
+    const harness = createHarness({ hostCwd: null });
+
+    expect(await startCall(harness)).toMatchObject({ accepted: true });
+    expect(harness.createConfigs[0]?.cwd).toBe(os.homedir());
+  });
+
+  it("preserves the legacy local catalog when the owner cannot route across hosts", async () => {
+    const harness = createHarness();
+
+    const result = await startCall(harness, harness.owner, false);
+
+    expect(result).toMatchObject({ accepted: true });
+    expect(harness.routingRegisteredDuringCreate).toEqual([false]);
+    expect(harness.routeBroker.isRegisteredHost("host-1")).toBe(false);
+    expect(harness.routeRequests).toEqual([]);
+  });
+
   it("accepts a call when the answer SDP arrives after the start response resolves", async () => {
-    const provider = createFakeProviderSession();
-    const harness = createHarness({ provider });
+    const harness = createHarness({ makeProvider: () => createFakeProviderSession() });
 
     const pending = startCall(harness);
-    // Let realtimeStart settle first, then deliver the notification.
+    // Let the host spawn and realtimeStart settle, then deliver the notification.
     await Promise.resolve();
     await Promise.resolve();
-    provider.emit({ kind: "sdp", sdp: ANSWER_SDP });
+    await Promise.resolve();
+    harness.provider().emit({ kind: "sdp", sdp: ANSWER_SDP });
 
-    const result = await pending;
-    expect(result).toEqual({
+    expect(await pending).toEqual({
       accepted: true,
       liveSessionId: expect.any(String),
       answerSdp: ANSWER_SDP,
@@ -174,14 +259,11 @@ describe("LiveVoiceCoordinator", () => {
   });
 
   it("forwards finalized transcripts with a monotonic seq", async () => {
-    const provider = createFakeProviderSession({
-      onStart: (emit) => emit({ kind: "sdp", sdp: ANSWER_SDP }),
-    });
-    const harness = createHarness({ provider });
+    const harness = createHarness();
     await startCall(harness);
 
-    provider.emit({ kind: "transcript", role: "user", text: "hello" });
-    provider.emit({ kind: "transcript", role: "assistant", text: "hi" });
+    harness.provider().emit({ kind: "transcript", role: "user", text: "hello" });
+    harness.provider().emit({ kind: "transcript", role: "assistant", text: "hi" });
 
     expect(harness.updates.map((update) => update.seq)).toEqual([0, 1, 2]);
     expect(harness.updates[1]?.event).toMatchObject({
@@ -192,79 +274,95 @@ describe("LiveVoiceCoordinator", () => {
     expect(harness.updates[2]?.event).toMatchObject({ kind: "transcript", role: "assistant" });
   });
 
-  it("rejects a second acquire on the same agent with busy", async () => {
-    const provider = createFakeProviderSession({
-      onStart: (emit) => emit({ kind: "sdp", sdp: ANSWER_SDP }),
-    });
-    const harness = createHarness({ provider });
+  it("rejects a second start from the same client with busy", async () => {
+    const harness = createHarness();
     await startCall(harness);
 
-    const second = await startCall(harness, { sessionKey: {}, sourceKey: {} });
+    const second = await startCall(harness);
 
     expect(second).toMatchObject({ accepted: false, errorCode: "busy" });
-    expect(provider.startCalls).toHaveLength(1);
+    // No second host session was spawned for the rejected start.
+    expect(harness.hosts).toHaveLength(1);
   });
 
-  it("rejects agents without the live voice capability as unsupported", async () => {
-    const harness = createHarness({ agentOverrides: { capabilities: {} } });
-    expect(await startCall(harness)).toMatchObject({ accepted: false, errorCode: "unsupported" });
-  });
-
-  it("rejects a mid-turn agent as agent_busy", async () => {
-    const harness = createHarness({
-      agentOverrides: { lifecycle: "running", activeForegroundTurnId: "turn-1" },
-    });
-    expect(await startCall(harness)).toMatchObject({ accepted: false, errorCode: "agent_busy" });
-  });
-
-  it("rejects an unloaded agent as agent_not_found", async () => {
+  it("lets a different client hold its own concurrent call on its own host session", async () => {
     const harness = createHarness();
-    harness.setAgent(null);
+    const first = await startCall(harness);
+    const second = await startCall(harness, { sessionKey: {}, sourceKey: {} });
+
+    expect(first.accepted).toBe(true);
+    expect(second).toMatchObject({ accepted: true });
+    expect(harness.hosts.map((host) => host.agentId)).toEqual(["host-1", "host-2"]);
+    if (!first.accepted || !second.accepted) throw new Error("expected both calls to be accepted");
+    expect(first.liveSessionId).not.toBe(second.liveSessionId);
+  });
+
+  it("reports unsupported when the daemon has no provider that can host a call", async () => {
+    const harness = createHarness({
+      availability: { available: false, error: "codex CLI not installed" },
+    });
+
     expect(await startCall(harness)).toMatchObject({
       accepted: false,
-      errorCode: "agent_not_found",
+      errorCode: "unsupported",
+      errorMessage: expect.stringContaining("codex CLI not installed"),
+    });
+    // Nothing was spawned, so nothing needs tearing down.
+    expect(harness.createConfigs).toEqual([]);
+  });
+
+  it("reports unsupported and disposes the host when it lacks the live voice capability", async () => {
+    const harness = createHarness({ capabilities: {} });
+
+    expect(await startCall(harness)).toMatchObject({ accepted: false, errorCode: "unsupported" });
+    expect(harness.closedHostIds).toEqual(["host-1"]);
+  });
+
+  it("reports start_failed when the host session cannot be spawned", async () => {
+    const harness = createHarness({ createAgentError: new Error("provider launch failed") });
+
+    expect(await startCall(harness)).toMatchObject({
+      accepted: false,
+      errorCode: "start_failed",
+      errorMessage: "provider launch failed",
     });
   });
 
-  it("treats a stop with a stale liveSessionId as a no-op", async () => {
-    const provider = createFakeProviderSession({
-      onStart: (emit) => emit({ kind: "sdp", sdp: ANSWER_SDP }),
-    });
-    const harness = createHarness({ provider });
-    await startCall(harness);
-
-    harness.coordinator.stop({ agentId: "agent-1", liveSessionId: "not-the-live-session" });
-
-    expect(harness.coordinator.hasActiveCall("agent-1")).toBe(true);
-    expect(provider.stopCalls).toHaveLength(0);
-    expect(harness.updates.map((update) => update.event.kind)).toEqual(["started"]);
-  });
-
-  it("closes with cause requested on a matching stop", async () => {
-    const provider = createFakeProviderSession({
-      onStart: (emit) => emit({ kind: "sdp", sdp: ANSWER_SDP }),
-    });
-    const harness = createHarness({ provider });
+  it("treats a stop with an unknown liveSessionId as a no-op", async () => {
+    const harness = createHarness();
     const result = await startCall(harness);
     if (!result.accepted) throw new Error("expected the call to be accepted");
 
-    harness.coordinator.stop({ agentId: "agent-1", liveSessionId: result.liveSessionId });
-    // A second stop must not produce a second closed update.
-    harness.coordinator.stop({ agentId: "agent-1", liveSessionId: result.liveSessionId });
+    harness.coordinator.stop({ liveSessionId: "not-the-live-session" });
+
+    expect(harness.coordinator.hasActiveCall(result.liveSessionId)).toBe(true);
+    expect(harness.provider().stopCalls).toHaveLength(0);
+    expect(harness.closedHostIds).toEqual([]);
+    expect(harness.updates.map((update) => update.event.kind)).toEqual(["started"]);
+  });
+
+  it("closes with cause requested on a matching stop and tears the host session down", async () => {
+    const harness = createHarness();
+    const result = await startCall(harness);
+    if (!result.accepted) throw new Error("expected the call to be accepted");
+
+    harness.coordinator.stop({ liveSessionId: result.liveSessionId });
+    // A second stop must not produce a second closed update or a second teardown.
+    harness.coordinator.stop({ liveSessionId: result.liveSessionId });
 
     expect(harness.updates.at(-1)?.event).toMatchObject({ kind: "closed", cause: "requested" });
     expect(harness.updates.filter((update) => update.event.kind === "closed")).toHaveLength(1);
-    expect(provider.stopCalls).toHaveLength(1);
-    expect(provider.subscriberCount()).toBe(0);
-    expect(harness.coordinator.hasActiveCall("agent-1")).toBe(false);
+    expect(harness.provider().stopCalls).toHaveLength(1);
+    expect(harness.provider().subscriberCount()).toBe(0);
+    expect(harness.closedHostIds).toEqual(["host-1"]);
+    expect(harness.coordinator.hasActiveCall(result.liveSessionId)).toBe(false);
+    expect(harness.routeBroker.isRegisteredHost("host-1")).toBe(false);
   });
 
-  it("tears the call down immediately when the owning socket detaches", async () => {
-    const provider = createFakeProviderSession({
-      onStart: (emit) => emit({ kind: "sdp", sdp: ANSWER_SDP }),
-    });
-    const harness = createHarness({ provider });
-    await startCall(harness);
+  it("tears the call and its host session down when the owning socket detaches", async () => {
+    const harness = createHarness();
+    const result = await startCall(harness);
+    if (!result.accepted) throw new Error("expected the call to be accepted");
 
     harness.coordinator.closeForSource(harness.owner.sourceKey);
 
@@ -272,30 +370,68 @@ describe("LiveVoiceCoordinator", () => {
       kind: "closed",
       cause: "owner_disconnected",
     });
-    expect(harness.coordinator.hasActiveCall("agent-1")).toBe(false);
-    expect(provider.stopCalls).toHaveLength(1);
+    expect(harness.coordinator.hasActiveCall(result.liveSessionId)).toBe(false);
+    expect(harness.provider().stopCalls).toHaveLength(1);
+    expect(harness.closedHostIds).toEqual(["host-1"]);
   });
 
   it("leaves calls owned by other sockets alone on detach", async () => {
-    const provider = createFakeProviderSession({
-      onStart: (emit) => emit({ kind: "sdp", sdp: ANSWER_SDP }),
-    });
-    const harness = createHarness({ provider });
-    await startCall(harness);
+    const harness = createHarness();
+    const result = await startCall(harness);
+    if (!result.accepted) throw new Error("expected the call to be accepted");
 
     harness.coordinator.closeForSource({});
 
-    expect(harness.coordinator.hasActiveCall("agent-1")).toBe(true);
+    expect(harness.coordinator.hasActiveCall(result.liveSessionId)).toBe(true);
+    expect(harness.closedHostIds).toEqual([]);
+  });
+
+  it("tears every call of a session down when the whole client session goes away", async () => {
+    const harness = createHarness();
+    const result = await startCall(harness);
+    if (!result.accepted) throw new Error("expected the call to be accepted");
+
+    harness.coordinator.closeForSession(harness.owner.sessionKey);
+
+    expect(harness.coordinator.hasActiveCall(result.liveSessionId)).toBe(false);
+    expect(harness.closedHostIds).toEqual(["host-1"]);
+  });
+
+  it("closes with cause host_session_closed when the host session is torn down mid-call", async () => {
+    const harness = createHarness();
+    const result = await startCall(harness);
+    if (!result.accepted) throw new Error("expected the call to be accepted");
+
+    harness.triggerAgentClosing("host-1");
+
+    expect(harness.updates.at(-1)?.event).toMatchObject({
+      kind: "closed",
+      cause: "host_session_closed",
+    });
+    expect(harness.coordinator.hasActiveCall(result.liveSessionId)).toBe(false);
+    // onAgentClosing fires before the provider session is disposed, so the
+    // coordinator still tells codex to end the upstream realtime session.
+    expect(harness.provider().stopCalls).toHaveLength(1);
+    // And the host teardown that re-enters through onAgentClosing must not loop.
+    expect(harness.closedHostIds).toEqual(["host-1"]);
+  });
+
+  it("ignores a closing agent that is not hosting a call", async () => {
+    const harness = createHarness();
+    const result = await startCall(harness);
+    if (!result.accepted) throw new Error("expected the call to be accepted");
+
+    harness.triggerAgentClosing("some-unrelated-agent");
+
+    expect(harness.coordinator.hasActiveCall(result.liveSessionId)).toBe(true);
+    expect(harness.updates.map((update) => update.event.kind)).toEqual(["started"]);
   });
 
   it("closes with cause codex_exit when the provider transport dies mid-call", async () => {
-    const provider = createFakeProviderSession({
-      onStart: (emit) => emit({ kind: "sdp", sdp: ANSWER_SDP }),
-    });
-    const harness = createHarness({ provider });
+    const harness = createHarness();
     await startCall(harness);
 
-    provider.emit({ kind: "transport_closed", reason: "Codex app-server exited" });
+    harness.provider().emit({ kind: "transport_closed", reason: "Codex app-server exited" });
 
     expect(harness.updates.at(-1)?.event).toMatchObject({
       kind: "closed",
@@ -303,34 +439,31 @@ describe("LiveVoiceCoordinator", () => {
       detail: "Codex app-server exited",
     });
     // The transport is gone; never ask it to stop (that would respawn codex).
-    expect(provider.stopCalls).toHaveLength(0);
+    expect(harness.provider().stopCalls).toHaveLength(0);
+    // The host session still has to go.
+    expect(harness.closedHostIds).toEqual(["host-1"]);
   });
 
   it("closes with cause codex_closed when codex ends the realtime session", async () => {
-    const provider = createFakeProviderSession({
-      onStart: (emit) => emit({ kind: "sdp", sdp: ANSWER_SDP }),
-    });
-    const harness = createHarness({ provider });
+    const harness = createHarness();
     await startCall(harness);
 
-    provider.emit({ kind: "closed", reason: "client_closed" });
+    harness.provider().emit({ kind: "closed", reason: "client_closed" });
 
     expect(harness.updates.at(-1)?.event).toMatchObject({
       kind: "closed",
       cause: "codex_closed",
       detail: "client_closed",
     });
-    expect(provider.stopCalls).toHaveLength(0);
+    expect(harness.provider().stopCalls).toHaveLength(0);
+    expect(harness.closedHostIds).toEqual(["host-1"]);
   });
 
   it("emits a fatal error then closes on a codex realtime error", async () => {
-    const provider = createFakeProviderSession({
-      onStart: (emit) => emit({ kind: "sdp", sdp: ANSWER_SDP }),
-    });
-    const harness = createHarness({ provider });
+    const harness = createHarness();
     await startCall(harness);
 
-    provider.emit({ kind: "error", message: "invalid_offer" });
+    harness.provider().emit({ kind: "error", message: "invalid_offer" });
 
     expect(harness.updates.map((update) => update.event.kind)).toEqual([
       "started",
@@ -341,123 +474,147 @@ describe("LiveVoiceCoordinator", () => {
     expect(harness.updates[2]?.event).toMatchObject({ kind: "closed", cause: "error" });
   });
 
-  it("closes with cause agent_closed when the agent session is torn down mid-call", async () => {
-    const provider = createFakeProviderSession({
-      onStart: (emit) => emit({ kind: "sdp", sdp: ANSWER_SDP }),
+  it("fails with start_failed and disposes the host when the answer SDP never arrives", async () => {
+    const harness = createHarness({
+      makeProvider: () => createFakeProviderSession(),
+      startSdpTimeoutMs: 5,
     });
-    const harness = createHarness({ provider });
-    await startCall(harness);
-
-    harness.triggerAgentClosing("agent-1");
-
-    expect(harness.updates.at(-1)?.event).toMatchObject({
-      kind: "closed",
-      cause: "agent_closed",
-    });
-    expect(harness.coordinator.hasActiveCall("agent-1")).toBe(false);
-    // onAgentClosing fires before the provider session is disposed, so the
-    // coordinator still tells codex to end the upstream realtime session.
-    expect(provider.stopCalls).toHaveLength(1);
-  });
-
-  it("fails with start_failed and releases the agent when the answer SDP never arrives", async () => {
-    const provider = createFakeProviderSession();
-    const harness = createHarness({ provider, startSdpTimeoutMs: 5 });
 
     const result = await startCall(harness);
 
     expect(result).toMatchObject({ accepted: false, errorCode: "start_failed" });
-    expect(harness.coordinator.hasActiveCall("agent-1")).toBe(false);
     // The call never went active, so the owner gets no push — only the response.
     expect(harness.updates).toEqual([]);
-    expect(provider.subscriberCount()).toBe(0);
-    expect(provider.stopCalls).toHaveLength(1);
+    expect(harness.provider().subscriberCount()).toBe(0);
+    expect(harness.provider().stopCalls).toHaveLength(1);
+    expect(harness.closedHostIds).toEqual(["host-1"]);
 
-    // The agent is released, so a retry can acquire it again.
-    provider.emit({ kind: "sdp", sdp: ANSWER_SDP });
-    expect(harness.coordinator.hasActiveCall("agent-1")).toBe(false);
+    // The client is released, so a retry can place a new call.
+    const retry = await startCall(harness);
+    expect(retry).toMatchObject({ accepted: false, errorCode: "start_failed" });
+    expect(harness.hosts).toHaveLength(2);
   });
 
   it("fails with start_failed when the provider rejects the start request", async () => {
-    const provider = createFakeProviderSession({ startError: new Error("realtime disabled") });
-    const harness = createHarness({ provider });
+    const harness = createHarness({
+      makeProvider: () => createFakeProviderSession({ startError: new Error("realtime disabled") }),
+    });
 
-    const result = await startCall(harness);
-
-    expect(result).toMatchObject({
+    expect(await startCall(harness)).toMatchObject({
       accepted: false,
       errorCode: "start_failed",
       errorMessage: "realtime disabled",
     });
-    expect(harness.coordinator.hasActiveCall("agent-1")).toBe(false);
+    expect(harness.closedHostIds).toEqual(["host-1"]);
   });
 
   it("does not resurrect a call closed while the handshake was in flight", async () => {
-    const provider = createFakeProviderSession({
-      onStart: (emit) => {
-        emit({ kind: "sdp", sdp: ANSWER_SDP });
-        emit({ kind: "transport_closed", reason: "Codex app-server exited" });
-      },
+    const harness = createHarness({
+      makeProvider: () =>
+        createFakeProviderSession({
+          onStart: (emit) => {
+            emit({ kind: "sdp", sdp: ANSWER_SDP });
+            emit({ kind: "transport_closed", reason: "Codex app-server exited" });
+          },
+        }),
     });
-    const harness = createHarness({ provider });
 
     const result = await startCall(harness);
 
     expect(result).toMatchObject({ accepted: false, errorCode: "start_failed" });
-    expect(harness.coordinator.hasActiveCall("agent-1")).toBe(false);
+    expect(harness.updates).toEqual([]);
+    expect(harness.closedHostIds).toEqual(["host-1"]);
+  });
+
+  it("disposes a host session that finished spawning after its call was closed", async () => {
+    let releaseSpawn: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseSpawn = resolve;
+    });
+    const harness = createHarness({ createAgentGate: gate });
+
+    const pending = startCall(harness);
+    await Promise.resolve();
+    expect(harness.routingRegisteredDuringCreate).toEqual([true]);
+    // The call exists from the moment it is accepted, so the detach lands while
+    // the host is still spawning.
+    harness.coordinator.closeForSource(harness.owner.sourceKey);
+    releaseSpawn();
+
+    expect(await pending).toMatchObject({ accepted: false, errorCode: "start_failed" });
+    expect(harness.closedHostIds).toEqual(["host-1"]);
     expect(harness.updates).toEqual([]);
   });
 
-  it("passes the Paseo prompt and snapshot to the provider and suppresses its startup context", async () => {
-    const provider = createFakeProviderSession({
-      onStart: (emit) => emit({ kind: "sdp", sdp: ANSWER_SDP }),
+  it("does not register or spawn a host after the owner closes during availability checking", async () => {
+    let releaseAvailability: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseAvailability = resolve;
     });
+    const harness = createHarness({ availabilityGate: gate });
+
+    const pending = startCall(harness);
+    harness.coordinator.closeForSource(harness.owner.sourceKey);
+    releaseAvailability();
+
+    expect(await pending).toMatchObject({ accepted: false, errorCode: "start_failed" });
+    expect(harness.createConfigs).toEqual([]);
+    expect(harness.routingRegisteredDuringCreate).toEqual([]);
+    expect(harness.routeBroker.isRegisteredHost("host-1")).toBe(false);
+  });
+
+  it("closes every call and host session on dispose", async () => {
+    const harness = createHarness();
+    const first = await startCall(harness);
+    const second = await startCall(harness, { sessionKey: {}, sourceKey: {} });
+    if (!first.accepted || !second.accepted) throw new Error("expected both calls to be accepted");
+
+    harness.coordinator.dispose();
+
+    expect(harness.coordinator.hasActiveCall(first.liveSessionId)).toBe(false);
+    expect(harness.coordinator.hasActiveCall(second.liveSessionId)).toBe(false);
+    expect(harness.closedHostIds).toEqual(["host-1", "host-2"]);
+  });
+
+  it("passes the Paseo prompt and snapshot to the provider and suppresses its startup context", async () => {
     const context: LiveVoiceContextProvider = {
-      build: async (agentId) => ({
-        prompt: `prompt for ${agentId}`,
+      build: async () => ({
+        prompt: "daemon prompt",
         initialItems: [{ role: "developer", text: "state snapshot" }],
       }),
     };
-    const harness = createHarness({ provider, context });
+    const harness = createHarness({ context });
 
     await startCall(harness);
 
-    expect(provider.startCalls[0]).toMatchObject({
-      prompt: "prompt for agent-1",
+    expect(harness.provider().startCalls[0]).toMatchObject({
+      prompt: "daemon prompt",
       initialItems: [{ role: "developer", text: "state snapshot" }],
       includeStartupContext: false,
     });
   });
 
   it("still places the call when building the Paseo context fails", async () => {
-    const provider = createFakeProviderSession({
-      onStart: (emit) => emit({ kind: "sdp", sdp: ANSWER_SDP }),
-    });
     const context: LiveVoiceContextProvider = {
       build: async () => {
         throw new Error("workspace registry unavailable");
       },
     };
-    const harness = createHarness({ provider, context });
+    const harness = createHarness({ context });
 
-    const result = await startCall(harness);
-
-    expect(result).toMatchObject({ accepted: true });
+    expect(await startCall(harness)).toMatchObject({ accepted: true });
     // Falls back to the provider's own context rather than failing the call.
-    expect(provider.startCalls[0]?.prompt).toBeUndefined();
-    expect(provider.startCalls[0]?.includeStartupContext).toBeUndefined();
+    expect(harness.provider().startCalls[0]?.prompt).toBeUndefined();
+    expect(harness.provider().startCalls[0]?.includeStartupContext).toBeUndefined();
   });
 
   it("omits context fields entirely when no provider is configured", async () => {
-    const provider = createFakeProviderSession({
-      onStart: (emit) => emit({ kind: "sdp", sdp: ANSWER_SDP }),
-    });
-    const harness = createHarness({ provider });
+    const harness = createHarness();
 
     await startCall(harness);
 
-    expect(provider.startCalls[0]).not.toHaveProperty("prompt");
-    expect(provider.startCalls[0]).not.toHaveProperty("initialItems");
-    expect(provider.startCalls[0]).not.toHaveProperty("includeStartupContext");
+    expect(harness.provider().startCalls[0]).not.toHaveProperty("prompt");
+    expect(harness.provider().startCalls[0]).not.toHaveProperty("initialItems");
+    expect(harness.provider().startCalls[0]).not.toHaveProperty("includeStartupContext");
   });
 });

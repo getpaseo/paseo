@@ -13,7 +13,6 @@ import type { LiveVoiceSession, StartLiveVoiceSessionOptions } from "./live-voic
 type VoiceLiveUpdateMessage = Extract<SessionOutboundMessage, { type: "voice.live.update" }>;
 
 const SERVER_ID = "host-1";
-const AGENT_ID = "agent-1";
 const LIVE_SESSION_ID = "live-1";
 const OFFER_SDP = "v=0\r\no=- offer";
 const ANSWER_SDP = "v=0\r\no=- answer";
@@ -33,9 +32,11 @@ interface Harness {
   /** Options the session module was constructed with, for driving its callbacks. */
   sessionOptions(): StartLiveVoiceSessionOptions;
   /** Push a `voice.live.update` as if it came off the socket. */
-  push(event: VoiceLiveEvent, overrides?: { agentId?: string; liveSessionId?: string }): void;
+  push(event: VoiceLiveEvent, overrides?: { liveSessionId?: string }): void;
   subscriberCount(): number;
   startSession: Mock<LiveVoiceRuntimeDeps["startSession"]>;
+  pinConnection: Mock<NonNullable<LiveVoiceRuntimeDeps["pinConnection"]>> | null;
+  pinRelease: Mock<() => void>;
 }
 
 function createHarness(
@@ -43,6 +44,7 @@ function createHarness(
     startLiveVoice?: StartLiveVoiceMock;
     isSessionSupported?: boolean;
     getClient?: LiveVoiceRuntimeDeps["getClient"];
+    pinConnection?: "active" | LiveVoiceRuntimeDeps["pinConnection"];
   } = {},
 ): Harness {
   const lease = createAudioSessionLease();
@@ -63,6 +65,13 @@ function createHarness(
       };
     },
   };
+  const pinRelease = vi.fn<() => void>();
+  let pinConnection: Mock<NonNullable<LiveVoiceRuntimeDeps["pinConnection"]>> | null = null;
+  if (overrides.pinConnection === "active") {
+    pinConnection = vi.fn(() => ({ client, release: pinRelease }));
+  } else if (overrides.pinConnection) {
+    pinConnection = vi.fn(overrides.pinConnection);
+  }
 
   const session: Harness["session"] = {
     close: vi.fn<() => void>(),
@@ -84,6 +93,7 @@ function createHarness(
 
   const runtime = createLiveVoiceRuntime({
     getClient: overrides.getClient ?? (() => client),
+    ...(pinConnection ? { pinConnection } : {}),
     startSession,
     isSessionSupported: overrides.isSessionSupported ?? true,
     lease,
@@ -95,6 +105,8 @@ function createHarness(
     client,
     session,
     startSession,
+    pinConnection,
+    pinRelease,
     sessionOptions: () => {
       if (!capturedOptions) {
         throw new Error("startSession was never called");
@@ -105,7 +117,6 @@ function createHarness(
       const message: VoiceLiveUpdateMessage = {
         type: "voice.live.update",
         payload: {
-          agentId: options?.agentId ?? AGENT_ID,
           liveSessionId: options?.liveSessionId ?? LIVE_SESSION_ID,
           seq: seq++,
           event,
@@ -129,25 +140,23 @@ describe("live voice runtime", () => {
   });
 
   it("starts a call, takes the mic lease, and lands in active", async () => {
-    await harness.runtime.start(SERVER_ID, AGENT_ID);
+    await harness.runtime.start(SERVER_ID);
 
     const snapshot = harness.runtime.getSnapshot();
     expect(snapshot.phase).toBe("active");
     expect(snapshot.serverId).toBe(SERVER_ID);
-    expect(snapshot.agentId).toBe(AGENT_ID);
     expect(snapshot.liveSessionId).toBe(LIVE_SESSION_ID);
     expect(snapshot.error).toBeNull();
     expect(harness.client.startLiveVoice).toHaveBeenCalledWith({
-      agentId: AGENT_ID,
       offerSdp: OFFER_SDP,
     });
     expect(harness.lease.current()).toBe("liveVoice");
-    expect(harness.runtime.isActiveForAgent(SERVER_ID, AGENT_ID)).toBe(true);
-    expect(harness.runtime.isActiveForAgent(SERVER_ID, "other-agent")).toBe(false);
+    expect(harness.runtime.isActiveForServer(SERVER_ID)).toBe(true);
+    expect(harness.runtime.isActiveForServer("other-host")).toBe(false);
   });
 
   it("records finalized transcripts and replaces by transcript id", async () => {
-    await harness.runtime.start(SERVER_ID, AGENT_ID);
+    await harness.runtime.start(SERVER_ID);
 
     harness.push({ kind: "started" });
     harness.push({ kind: "transcript", role: "user", transcriptId: "t1", text: "hello" });
@@ -160,21 +169,37 @@ describe("live voice runtime", () => {
     ]);
   });
 
+  it("caps retained transcripts by dropping the oldest entries", async () => {
+    await harness.runtime.start(SERVER_ID);
+
+    for (let index = 0; index < 205; index += 1) {
+      harness.push({
+        kind: "transcript",
+        role: "user",
+        transcriptId: `t${index}`,
+        text: `line ${index}`,
+      });
+    }
+
+    const transcripts = harness.runtime.getSnapshot().transcripts;
+    expect(transcripts).toHaveLength(200);
+    expect(transcripts[0]?.id).toBe("t5");
+    expect(transcripts[transcripts.length - 1]?.id).toBe("t204");
+  });
+
   it("reports a daemon rejection through LiveVoiceStartError and releases the lease", async () => {
-    const rejection = Object.assign(new Error("Agent already has a call"), { errorCode: "busy" });
+    const rejection = Object.assign(new Error("Host already has a call"), { errorCode: "busy" });
     harness = createHarness({
       startLiveVoice: vi.fn(async () => {
         throw rejection;
       }),
     });
 
-    await expect(harness.runtime.start(SERVER_ID, AGENT_ID)).rejects.toBeInstanceOf(
-      LiveVoiceStartError,
-    );
+    await expect(harness.runtime.start(SERVER_ID)).rejects.toBeInstanceOf(LiveVoiceStartError);
 
     const snapshot = harness.runtime.getSnapshot();
     expect(snapshot.phase).toBe("error");
-    expect(snapshot.error).toEqual({ code: "busy", message: "Agent already has a call" });
+    expect(snapshot.error).toEqual({ code: "busy", message: "Host already has a call" });
     expect(snapshot.liveSessionId).toBeNull();
     // Everything the runtime owns is handed back on the failure path.
     expect(harness.lease.current()).toBeNull();
@@ -185,7 +210,7 @@ describe("live voice runtime", () => {
     const other = harness.lease.acquire("dictation");
     expect(other).not.toBeNull();
 
-    await expect(harness.runtime.start(SERVER_ID, AGENT_ID)).rejects.toMatchObject({
+    await expect(harness.runtime.start(SERVER_ID)).rejects.toMatchObject({
       info: { code: "mic_busy", owner: "dictation" },
     });
 
@@ -198,7 +223,7 @@ describe("live voice runtime", () => {
   it("refuses to start when the platform has no WebRTC transport", async () => {
     harness = createHarness({ isSessionSupported: false });
 
-    await expect(harness.runtime.start(SERVER_ID, AGENT_ID)).rejects.toMatchObject({
+    await expect(harness.runtime.start(SERVER_ID)).rejects.toMatchObject({
       info: { code: "unsupported" },
     });
     expect(harness.lease.current()).toBeNull();
@@ -207,24 +232,65 @@ describe("live voice runtime", () => {
   it("refuses to start when the host is not connected", async () => {
     harness = createHarness({ getClient: () => null });
 
-    await expect(harness.runtime.start(SERVER_ID, AGENT_ID)).rejects.toMatchObject({
+    await expect(harness.runtime.start(SERVER_ID)).rejects.toMatchObject({
       info: { code: "not_connected" },
     });
     expect(harness.lease.current()).toBeNull();
   });
 
+  it("requires an exact connection pin when the host runtime supports pinning", async () => {
+    const getClient = vi.fn(() => harness.client);
+    harness = createHarness({
+      getClient,
+      pinConnection: () => null,
+    });
+
+    await expect(harness.runtime.start(SERVER_ID)).rejects.toMatchObject({
+      info: { code: "not_connected" },
+    });
+
+    expect(harness.pinConnection).toHaveBeenCalledWith(SERVER_ID);
+    expect(getClient).not.toHaveBeenCalled();
+    expect(harness.client.startLiveVoice).not.toHaveBeenCalled();
+  });
+
+  it("pins the negotiated daemon client until the call ends", async () => {
+    harness = createHarness({ pinConnection: "active" });
+
+    await harness.runtime.start(SERVER_ID);
+
+    expect(harness.pinConnection).toHaveBeenCalledWith(SERVER_ID);
+    expect(harness.pinRelease).not.toHaveBeenCalled();
+
+    await harness.runtime.stop();
+
+    expect(harness.client.stopLiveVoice).toHaveBeenCalledWith({
+      liveSessionId: LIVE_SESSION_ID,
+    });
+    expect(harness.pinRelease).toHaveBeenCalledOnce();
+  });
+
+  it("releases the connection pin when daemon negotiation fails", async () => {
+    harness = createHarness({
+      pinConnection: "active",
+      startLiveVoice: vi.fn(async () => {
+        throw Object.assign(new Error("no call"), { errorCode: "busy" });
+      }),
+    });
+
+    await expect(harness.runtime.start(SERVER_ID)).rejects.toBeInstanceOf(LiveVoiceStartError);
+
+    expect(harness.pinRelease).toHaveBeenCalledOnce();
+  });
+
   it("drops updates whose liveSessionId belongs to another call", async () => {
-    await harness.runtime.start(SERVER_ID, AGENT_ID);
+    await harness.runtime.start(SERVER_ID);
 
     harness.push(
       { kind: "transcript", role: "user", transcriptId: "stale", text: "not ours" },
       { liveSessionId: "some-other-call" },
     );
     harness.push({ kind: "closed", cause: "requested" }, { liveSessionId: "some-other-call" });
-    harness.push(
-      { kind: "transcript", role: "user", transcriptId: "other-agent", text: "not ours" },
-      { agentId: "agent-2" },
-    );
 
     const snapshot = harness.runtime.getSnapshot();
     expect(snapshot.transcripts).toEqual([]);
@@ -233,7 +299,7 @@ describe("live voice runtime", () => {
   });
 
   it("tears everything down on a closed update without sending a stop", async () => {
-    await harness.runtime.start(SERVER_ID, AGENT_ID);
+    await harness.runtime.start(SERVER_ID);
     harness.push({ kind: "transcript", role: "user", transcriptId: "t1", text: "hello" });
 
     harness.push({ kind: "closed", cause: "codex_exit", detail: "child died" });
@@ -250,8 +316,48 @@ describe("live voice runtime", () => {
     expect(harness.client.stopLiveVoice).not.toHaveBeenCalled();
   });
 
+  it("clears a terminal ended state on dismiss()", async () => {
+    await harness.runtime.start(SERVER_ID);
+    harness.push({ kind: "transcript", role: "user", transcriptId: "t1", text: "hello" });
+    harness.push({ kind: "closed", cause: "codex_exit" });
+
+    harness.runtime.dismiss();
+
+    const snapshot = harness.runtime.getSnapshot();
+    expect(snapshot.phase).toBe("idle");
+    expect(snapshot.closedCause).toBeNull();
+    expect(snapshot.transcripts).toEqual([]);
+    expect(snapshot.error).toBeNull();
+  });
+
+  it("clears a start failure on dismiss()", async () => {
+    harness = createHarness({
+      startLiveVoice: vi.fn(async () => {
+        throw Object.assign(new Error("no"), { errorCode: "start_failed" });
+      }),
+    });
+    await harness.runtime.start(SERVER_ID).catch(() => undefined);
+    expect(harness.runtime.getSnapshot().phase).toBe("error");
+
+    harness.runtime.dismiss();
+
+    expect(harness.runtime.getSnapshot()).toMatchObject({ phase: "idle", error: null });
+  });
+
+  it("ignores dismiss() while a call is live", async () => {
+    await harness.runtime.start(SERVER_ID);
+
+    harness.runtime.dismiss();
+
+    expect(harness.runtime.getSnapshot()).toMatchObject({
+      phase: "active",
+      liveSessionId: LIVE_SESSION_ID,
+    });
+    expect(harness.lease.current()).toBe("liveVoice");
+  });
+
   it("goes to error on a fatal error update and keeps that error across the close", async () => {
-    await harness.runtime.start(SERVER_ID, AGENT_ID);
+    await harness.runtime.start(SERVER_ID);
 
     harness.push({ kind: "error", code: "provider_error", message: "model died", fatal: true });
     expect(harness.runtime.getSnapshot()).toMatchObject({
@@ -268,7 +374,7 @@ describe("live voice runtime", () => {
   });
 
   it("keeps the call up on a non-fatal error update", async () => {
-    await harness.runtime.start(SERVER_ID, AGENT_ID);
+    await harness.runtime.start(SERVER_ID);
 
     harness.push({ kind: "error", code: "transient", message: "hiccup", fatal: false });
 
@@ -281,7 +387,7 @@ describe("live voice runtime", () => {
   });
 
   it("cleans up locally and sends the stop RPC on stop()", async () => {
-    await harness.runtime.start(SERVER_ID, AGENT_ID);
+    await harness.runtime.start(SERVER_ID);
     await harness.runtime.stop();
 
     expect(harness.runtime.getSnapshot().phase).toBe("idle");
@@ -289,13 +395,12 @@ describe("live voice runtime", () => {
     expect(harness.lease.current()).toBeNull();
     expect(harness.subscriberCount()).toBe(0);
     expect(harness.client.stopLiveVoice).toHaveBeenCalledWith({
-      agentId: AGENT_ID,
       liveSessionId: LIVE_SESSION_ID,
     });
   });
 
   it("still reaches idle when the stop RPC fails", async () => {
-    await harness.runtime.start(SERVER_ID, AGENT_ID);
+    await harness.runtime.start(SERVER_ID);
     harness.client.stopLiveVoice.mockRejectedValueOnce(new Error("socket gone"));
 
     await harness.runtime.stop();
@@ -308,7 +413,7 @@ describe("live voice runtime", () => {
     harness.runtime.toggleMute();
     expect(harness.session.setMuted).not.toHaveBeenCalled();
 
-    await harness.runtime.start(SERVER_ID, AGENT_ID);
+    await harness.runtime.start(SERVER_ID);
     harness.runtime.toggleMute();
     expect(harness.session.setMuted).toHaveBeenLastCalledWith(true);
     expect(harness.runtime.getSnapshot().isMuted).toBe(true);
@@ -319,7 +424,7 @@ describe("live voice runtime", () => {
   });
 
   it("surfaces and clears the autoplay-blocked state", async () => {
-    await harness.runtime.start(SERVER_ID, AGENT_ID);
+    await harness.runtime.start(SERVER_ID);
 
     harness.sessionOptions().onAudioBlocked();
     expect(harness.runtime.getSnapshot().isAudioBlocked).toBe(true);
@@ -329,7 +434,7 @@ describe("live voice runtime", () => {
   });
 
   it("treats a terminal transport transition as an error and tells the daemon", async () => {
-    await harness.runtime.start(SERVER_ID, AGENT_ID);
+    await harness.runtime.start(SERVER_ID);
 
     harness.sessionOptions().onTerminal({ code: "webrtc_failed", message: "connection failed" });
 
@@ -340,27 +445,26 @@ describe("live voice runtime", () => {
     });
     expect(harness.lease.current()).toBeNull();
     expect(harness.client.stopLiveVoice).toHaveBeenCalledWith({
-      agentId: AGENT_ID,
       liveSessionId: LIVE_SESSION_ID,
     });
   });
 
   it("refuses a second concurrent start", async () => {
-    await harness.runtime.start(SERVER_ID, AGENT_ID);
+    await harness.runtime.start(SERVER_ID);
 
-    await expect(harness.runtime.start(SERVER_ID, "agent-2")).rejects.toMatchObject({
+    await expect(harness.runtime.start("other-host")).rejects.toMatchObject({
       info: { code: "already_active" },
     });
     // The live call is untouched.
     expect(harness.runtime.getSnapshot()).toMatchObject({
       phase: "active",
-      agentId: AGENT_ID,
+      serverId: SERVER_ID,
       liveSessionId: LIVE_SESSION_ID,
     });
   });
 
   it("tears the call down and frees the mic when the daemon connection is lost", async () => {
-    await harness.runtime.start(SERVER_ID, AGENT_ID);
+    await harness.runtime.start(SERVER_ID);
     expect(harness.lease.current()).toBe("liveVoice");
 
     harness.runtime.handleConnectionLost(SERVER_ID);
@@ -377,7 +481,7 @@ describe("live voice runtime", () => {
   });
 
   it("ignores a connection loss for a different host", async () => {
-    await harness.runtime.start(SERVER_ID, AGENT_ID);
+    await harness.runtime.start(SERVER_ID);
 
     harness.runtime.handleConnectionLost("some-other-server");
 
@@ -398,7 +502,7 @@ describe("live voice runtime", () => {
       ),
     });
 
-    const startPromise = harness.runtime.start(SERVER_ID, AGENT_ID);
+    const startPromise = harness.runtime.start(SERVER_ID);
     await vi.waitFor(() => expect(harness.startSession).toHaveBeenCalled());
     harness.runtime.handleConnectionLost(SERVER_ID);
 
@@ -414,6 +518,7 @@ describe("live voice runtime", () => {
     let resolveNegotiation: (value: { liveSessionId: string; answerSdp: string }) => void = () =>
       undefined;
     harness = createHarness({
+      pinConnection: "active",
       startLiveVoice: vi.fn(
         () =>
           new Promise<{ liveSessionId: string; answerSdp: string }>((resolve) => {
@@ -422,7 +527,7 @@ describe("live voice runtime", () => {
       ),
     });
 
-    const startPromise = harness.runtime.start(SERVER_ID, AGENT_ID);
+    const startPromise = harness.runtime.start(SERVER_ID);
     await vi.waitFor(() => expect(harness.startSession).toHaveBeenCalled());
 
     await harness.runtime.stop();
@@ -430,12 +535,14 @@ describe("live voice runtime", () => {
     // lease must not be released to another owner until that session settles.
     expect(harness.lease.current()).toBe("liveVoice");
     expect(harness.lease.acquire("dictation")).toBeNull();
+    expect(harness.pinRelease).not.toHaveBeenCalled();
 
     resolveNegotiation({ liveSessionId: LIVE_SESSION_ID, answerSdp: ANSWER_SDP });
     await startPromise;
 
     expect(harness.session.close).toHaveBeenCalledTimes(1);
     expect(harness.lease.current()).toBeNull();
+    expect(harness.pinRelease).toHaveBeenCalledOnce();
     expect(harness.runtime.getSnapshot().phase).toBe("idle");
   });
 
@@ -451,7 +558,7 @@ describe("live voice runtime", () => {
     });
     pushEarly = () => harness.push({ kind: "closed", cause: "codex_closed" });
 
-    await harness.runtime.start(SERVER_ID, AGENT_ID);
+    await harness.runtime.start(SERVER_ID);
 
     const snapshot = harness.runtime.getSnapshot();
     expect(snapshot.phase).toBe("idle");
@@ -464,7 +571,7 @@ describe("live voice runtime", () => {
     const listener = vi.fn();
     const unsubscribe = harness.runtime.subscribe(listener);
 
-    await harness.runtime.start(SERVER_ID, AGENT_ID);
+    await harness.runtime.start(SERVER_ID);
     expect(listener).toHaveBeenCalled();
 
     const beforeUnsubscribe = listener.mock.calls.length;

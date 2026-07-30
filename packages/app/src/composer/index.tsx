@@ -79,7 +79,6 @@ import {
 import { useVoiceOptional } from "@/contexts/voice-context";
 import { useToast } from "@/contexts/toast-context";
 import { LiveVoiceButton } from "@/live-voice/live-voice-button";
-import { LiveVoicePanel } from "@/live-voice/live-voice-panel";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
@@ -301,14 +300,13 @@ function renderContextWindowMeter(
 
 /**
  * The trailing control cluster that sits before the voice/dictation button: the
- * context-window meter and, when the host and agent support it, the Live Voice
- * start/stop control. Both only exist once there is a real agent.
+ * context-window meter and, when the host supports it, the Live Voice start
+ * control. Both only exist once there is a real agent.
  */
 function resolveTrailingAgentControls(args: {
   meter: ReactElement | null;
   reserveSlot: boolean;
   serverId: string;
-  agentId: string;
 }): ReactNode {
   if (!args.reserveSlot) {
     return null;
@@ -316,7 +314,7 @@ function resolveTrailingAgentControls(args: {
   return (
     <>
       <View style={styles.contextWindowMeterSlot}>{args.meter}</View>
-      <LiveVoiceButton serverId={args.serverId} agentId={args.agentId} />
+      <LiveVoiceButton serverId={args.serverId} />
     </>
   );
 }
@@ -2037,9 +2035,8 @@ function ComposerContentImpl({
         meter: contextWindowMeter,
         reserveSlot: hasAgent,
         serverId,
-        agentId,
       }),
-    [agentId, contextWindowMeter, hasAgent, serverId],
+    [contextWindowMeter, hasAgent, serverId],
   );
 
   const hasGithubAttachment = useMemo(
@@ -2335,7 +2332,6 @@ function ComposerContentImpl({
           <View style={styles.inputAreaContent}>
             {queueList}
             {sendErrorNode}
-            <LiveVoicePanel serverId={serverId} agentId={agentId} />
 
             <View ref={messageInputContainerRef} style={styles.messageInputContainer}>
               <ComposerAutocomplete

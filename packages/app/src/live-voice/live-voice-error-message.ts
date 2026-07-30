@@ -10,8 +10,6 @@ const ERROR_MESSAGE_KEYS: Record<string, string> = {
   // Daemon rejections (voice.live.start.response.errorCode).
   busy: "liveVoice.errors.busy",
   unsupported: "liveVoice.errors.unsupported",
-  agent_not_found: "liveVoice.errors.agentNotFound",
-  agent_busy: "liveVoice.errors.agentBusy",
   start_failed: "liveVoice.errors.startFailed",
   // Local runtime refusals.
   mic_busy: "liveVoice.errors.micBusy",

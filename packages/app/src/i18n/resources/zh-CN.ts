@@ -1717,10 +1717,8 @@ export const zhCN: TranslationResources = {
       assistant: "Agent：",
     },
     errors: {
-      busy: "另一个客户端已在该 Agent 上进行实时语音通话。",
+      busy: "该主机上已有进行中的实时语音通话。",
       unsupported: "该主机不支持实时语音。",
-      agentNotFound: "该 Agent 已不可用。",
-      agentBusy: "Agent 正忙，请等待当前回合结束。",
       startFailed: "无法启动实时语音。",
       micBusy: "麦克风正被其他功能占用。",
       notConnected: "该主机未连接。",

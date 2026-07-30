@@ -1788,10 +1788,8 @@ export const fr: TranslationResources = {
       assistant: "Agent :",
     },
     errors: {
-      busy: "Un autre client a déjà un appel vocal en direct sur cet agent.",
+      busy: "Un appel vocal en direct est déjà actif sur cet hôte.",
       unsupported: "Cet hôte ne prend pas en charge la voix en direct.",
-      agentNotFound: "Cet agent n'est plus disponible.",
-      agentBusy: "L'agent est occupé. Attendez la fin du tour en cours.",
       startFailed: "Impossible de démarrer la voix en direct.",
       micBusy: "Le micro est utilisé par une autre fonction.",
       notConnected: "Cet hôte n'est pas connecté.",

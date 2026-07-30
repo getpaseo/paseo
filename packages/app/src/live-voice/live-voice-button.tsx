@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { AudioLines, PhoneOff } from "lucide-react-native";
+import { AudioLines } from "lucide-react-native";
 import type { Theme } from "@/styles/theme";
 import { useToast } from "@/contexts/toast-context";
 import { useLiveVoiceOptional } from "@/contexts/live-voice-context";
@@ -14,36 +14,30 @@ const BUTTON_ICON_SIZE = 16;
 
 interface LiveVoiceButtonProps {
   serverId: string;
-  agentId: string;
 }
 
 /**
- * Start/stop control for Live Voice, sized to sit in the composer's trailing
- * control row next to the context-window meter and the dictation button.
+ * Start control for Live Voice, sized to sit in the composer's trailing control
+ * row next to the context-window meter and the dictation button.
  *
- * Renders nothing unless the host and the agent both advertise the capability, so
- * callers can mount it unconditionally.
+ * Start-only on purpose: a call is daemon-global and outlives any one screen, so
+ * every in-call control (mute, stop, transcript) lives on the app-level call
+ * strip. While a call is non-idle this button yields to the strip entirely.
+ *
+ * Renders nothing unless the host advertises the capability, so callers can
+ * mount it unconditionally.
  */
-export function LiveVoiceButton({ serverId, agentId }: LiveVoiceButtonProps) {
-  const isAvailable = useIsLiveVoiceAvailable(serverId, agentId);
+export function LiveVoiceButton({ serverId }: LiveVoiceButtonProps) {
+  const isAvailable = useIsLiveVoiceAvailable(serverId);
   const liveVoice = useLiveVoiceOptional();
   const toast = useToast();
   const { t } = useTranslation();
 
-  const isActiveHere = liveVoice?.isActiveForAgent(serverId, agentId) ?? false;
-  const isBusy = liveVoice?.phase === "starting" || liveVoice?.phase === "stopping";
-
   const handlePress = useCallback(() => {
-    if (!liveVoice || isBusy) {
+    if (!liveVoice) {
       return;
     }
-    if (isActiveHere) {
-      void liveVoice.stop().catch((error: unknown) => {
-        console.error("[LiveVoice] Failed to stop", error);
-      });
-      return;
-    }
-    void liveVoice.start(serverId, agentId).catch((error: unknown) => {
+    void liveVoice.start(serverId).catch((error: unknown) => {
       if (error instanceof LiveVoiceStartError) {
         toast.error(resolveLiveVoiceErrorMessage(error.info, t));
         return;
@@ -51,34 +45,27 @@ export function LiveVoiceButton({ serverId, agentId }: LiveVoiceButtonProps) {
       console.error("[LiveVoice] Failed to start", error);
       toast.error(t("liveVoice.errors.startFailed"));
     });
-  }, [agentId, isActiveHere, isBusy, liveVoice, serverId, t, toast]);
+  }, [liveVoice, serverId, t, toast]);
 
-  if (!isAvailable || !liveVoice) {
+  if (!isAvailable || !liveVoice || liveVoice.phase !== "idle") {
     return null;
   }
 
   return (
     <Pressable
       onPress={handlePress}
-      disabled={isBusy}
       accessibilityRole="button"
-      accessibilityLabel={isActiveHere ? t("liveVoice.actions.stop") : t("liveVoice.actions.start")}
-      style={isActiveHere ? styles.buttonActive : styles.button}
+      accessibilityLabel={t("liveVoice.actions.start")}
+      style={styles.button}
     >
-      {isActiveHere ? (
-        <ThemedPhoneOff size={BUTTON_ICON_SIZE} uniProps={iconDangerMapping} />
-      ) : (
-        <ThemedAudioLines size={BUTTON_ICON_SIZE} uniProps={iconMutedMapping} />
-      )}
+      <ThemedAudioLines size={BUTTON_ICON_SIZE} uniProps={iconMutedMapping} />
     </Pressable>
   );
 }
 
 const ThemedAudioLines = withUnistyles(AudioLines);
-const ThemedPhoneOff = withUnistyles(PhoneOff);
 
 const iconMutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-const iconDangerMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
 
 const styles = StyleSheet.create((theme) => ({
   button: {
@@ -87,13 +74,5 @@ const styles = StyleSheet.create((theme) => ({
     width: 28,
     height: 28,
     borderRadius: theme.borderRadius.md,
-  },
-  buttonActive: {
-    alignItems: "center",
-    justifyContent: "center",
-    width: 28,
-    height: 28,
-    borderRadius: theme.borderRadius.md,
-    backgroundColor: theme.colors.surface2,
   },
 }));

@@ -1,13 +1,14 @@
 /**
  * Paseo context for a Live Voice call.
  *
- * The realtime model is a conversational front end, not the coding agent. Every
- * request it delegates becomes an ordinary turn on the attached agent session,
- * and that session already has Paseo's own MCP tools injected (see
- * `withRuntimePaseoMcpServer`). So the voice model needs no tools of its own —
- * codex has no way to give the realtime model client-defined tools regardless —
- * it needs to know that Paseo exists, what it can ask for, and what is running
- * right now.
+ * The realtime model is a conversational front end, not a coding agent. The call
+ * is daemon-global and runs on a hidden host session the daemon spawns for it,
+ * in a neutral directory rather than any of the user's projects. That host
+ * session has exactly two Paseo MCP routing tools injected (see
+ * `withRuntimePaseoMcpServer`). They send ordinary Paseo tool calls through the
+ * owning client to whichever connected host the user chooses. So the voice
+ * model needs to know that Paseo exists, how to select a host safely, and what
+ * is running on the host that placed the call.
  *
  * Two levers, both set on `thread/realtime/start`:
  *   - `prompt` replaces the voice model's entire system prompt.
@@ -48,13 +49,12 @@ export interface LiveVoiceContextWorkspace {
 }
 
 export interface LiveVoiceContextSnapshot {
-  attachedAgentId: string;
   agents: LiveVoiceContextAgent[];
   workspaces: LiveVoiceContextWorkspace[];
   /**
-   * Whether the attached session launched with Paseo's MCP tools. When false the
-   * model must not offer to act on Paseo — it would promise work the session
-   * cannot carry out.
+   * Whether the host session launched with Paseo's MCP tools. When false the
+   * model must not offer to act on Paseo — it would promise work it has no way
+   * to carry out.
    */
   paseoToolsAvailable: boolean;
 }
@@ -69,27 +69,56 @@ const CONTEXT_TOKEN_BUDGET = 3_000;
 const BYTES_PER_TOKEN = 4;
 const MAX_LISTED = 20;
 
-const DELEGATION_WITH_PASEO_TOOLS =
-  "- To get anything done, delegate to the attached session by saying what needs to happen. It runs on the user's machine with their code, and it also has Paseo's own tools, so it can read and change code, run commands, and control Paseo itself: list, create and archive workspaces; list, create, cancel and prompt other agent sessions; open terminals; manage schedules and heartbeats.";
+const DELEGATION_WITH_PASEO_TOOLS = [
+  "- To get anything done, route it to the right host instead of doing it yourself. Call list_hosts first, choose the host from its label and hostname, then call run_paseo_tool_on_host with that exact opaque serverId and an ordinary Paseo tool name.",
+  "- Through that routing tool you can prompt an existing agent session in the workspace that owns the work, or create a workspace or session when none fits. You can list, create and archive workspaces; list, create, cancel and prompt agent sessions; open terminals; and manage schedules and heartbeats.",
+  "- The state below describes only the host that placed this call. Never assume another host has the same sessions or workspaces; list or inspect them through that host's Paseo tools.",
+  "- Host credentials and connection endpoints are intentionally unavailable. Never ask the user for them.",
+  "- Route anything that touches code, files, or commands. Answer directly only when the answer is already in this conversation or in the state below, or when you need a clarifying question first.",
+  "- Replies from a session you prompted come back to you as text. Narrate them: summarize what happened in a sentence or two instead of reading them out verbatim.",
+];
 
-const DELEGATION_WITHOUT_PASEO_TOOLS =
-  "- To get anything done, delegate to the attached session by saying what needs to happen. It runs on the user's machine with their code, so it can read and change code and run commands. It cannot control Paseo itself on this daemon, so do not offer to create, archive, or manage workspaces, sessions, terminals, or schedules.";
+const DELEGATION_WITH_LOCAL_PASEO_TOOLS = [
+  "- To get anything done, route it to the right place on this machine instead of doing it yourself: prompt an existing agent session in the workspace that owns the work, or create a workspace or session when none fits.",
+  "- Your session has Paseo's tools for this machine, so you can list, create and archive workspaces; list, create, cancel and prompt agent sessions; open terminals; and manage schedules and heartbeats.",
+  "- This client cannot route work to another Paseo host. Do not claim that you can see or control other machines.",
+  "- Route anything that touches code, files, or commands. Answer directly only when the answer is already in this conversation or in the state below, or when you need a clarifying question first.",
+  "- Replies from a session you prompted come back to you as text. Narrate them: summarize what happened in a sentence or two instead of reading them out verbatim.",
+];
 
-export function buildLiveVoicePrompt(paseoToolsAvailable: boolean): string {
+const DELEGATION_WITHOUT_PASEO_TOOLS = [
+  "- Paseo's own tools are not available to you on this daemon, so you cannot act on Paseo: you cannot prompt, create, cancel, or change anything.",
+  "- What you can do is describe what is running from the state below and answer questions about it. If the user asks for work to be done, say plainly that you cannot start it from here — never promise work you have no way to carry out.",
+];
+
+function resolveDelegationInstructions(
+  paseoToolsAvailable: boolean,
+  crossHostRoutingAvailable: boolean,
+): string[] {
+  if (!paseoToolsAvailable) {
+    return DELEGATION_WITHOUT_PASEO_TOOLS;
+  }
+  return crossHostRoutingAvailable
+    ? DELEGATION_WITH_PASEO_TOOLS
+    : DELEGATION_WITH_LOCAL_PASEO_TOOLS;
+}
+
+export function buildLiveVoicePrompt(
+  paseoToolsAvailable: boolean,
+  crossHostRoutingAvailable = true,
+): string {
   return [
-    "You are the voice of Paseo.",
+    "You are the voice of Paseo on this machine.",
     "",
     "Paseo runs and monitors AI coding agent sessions on the user's own machine. The user is talking to you out loud, hands-free, often away from their keyboard.",
     "",
     "How you work:",
-    "- You are attached to one agent session, described below. You are not that session; you are its voice.",
-    paseoToolsAvailable ? DELEGATION_WITH_PASEO_TOOLS : DELEGATION_WITHOUT_PASEO_TOOLS,
-    "- Delegate anything that touches code, files, or commands. Answer directly only when the answer is already in this conversation or when you need a clarifying question first.",
-    "- Replies from the attached session come back to you as text. Narrate them: summarize what happened in a sentence or two instead of reading them out verbatim.",
+    "- You are not one of the user's agent sessions. You have a working session of your own, in a plain directory with none of their projects in it, so never do coding work yourself — the sessions you route to are the ones that run with their code.",
+    ...resolveDelegationInstructions(paseoToolsAvailable, crossHostRoutingAvailable),
     "",
     "How to speak:",
     "- Short, plain, spoken sentences. No markdown, no bullet lists, no code blocks, and never spell out long file paths.",
-    "- Before delegating something slow, say briefly what you are about to do so the user is not left in silence.",
+    "- Before starting something slow, say briefly what you are about to do so the user is not left in silence.",
     "- If a transcription sounds garbled or ambiguous, ask instead of guessing.",
     "- Use Paseo's vocabulary: workspace, agent session, provider, terminal, schedule, heartbeat.",
   ].join("\n");
@@ -110,23 +139,17 @@ function describeWorkspace(workspace: LiveVoiceContextWorkspace): string {
 }
 
 /**
- * Sections in priority order. The attached session matters most (it is what the
- * user is talking about), then the other sessions, then the workspace map.
+ * Sections in priority order. Sessions come first: they are what the user asks
+ * about and what work gets routed to. Then the workspace map.
  */
 function buildSections(snapshot: LiveVoiceContextSnapshot): string[] {
   const sections: string[] = [];
-  const attached = snapshot.agents.find((agent) => agent.id === snapshot.attachedAgentId);
-  if (attached) {
-    sections.push(["The agent session you are attached to:", describeAgent(attached)].join("\n"));
-  }
-
-  const others = snapshot.agents.filter((agent) => agent.id !== snapshot.attachedAgentId);
-  if (others.length > 0) {
-    const listed = others.slice(0, MAX_LISTED);
-    const omitted = others.length - listed.length;
+  if (snapshot.agents.length > 0) {
+    const listed = snapshot.agents.slice(0, MAX_LISTED);
+    const omitted = snapshot.agents.length - listed.length;
     sections.push(
       [
-        `Other agent sessions on this daemon (${others.length}):`,
+        `Agent sessions on this daemon (${snapshot.agents.length}):`,
         ...listed.map(describeAgent),
         ...(omitted > 0 ? [`- ...and ${omitted} more.`] : []),
       ].join("\n"),
@@ -173,9 +196,13 @@ export function buildLiveVoiceInitialItems(
 
 export function buildLiveVoiceStartContext(
   snapshot: LiveVoiceContextSnapshot,
+  options: { crossHostRoutingAvailable?: boolean } = {},
 ): LiveVoiceStartContext {
   return {
-    prompt: buildLiveVoicePrompt(snapshot.paseoToolsAvailable),
+    prompt: buildLiveVoicePrompt(
+      snapshot.paseoToolsAvailable,
+      options.crossHostRoutingAvailable ?? true,
+    ),
     initialItems: buildLiveVoiceInitialItems(snapshot),
   };
 }

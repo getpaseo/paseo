@@ -19,7 +19,11 @@ export interface LiveVoiceContextAgentSource {
     lifecycle: string;
     config: { title?: string | null | undefined };
   }>;
-  /** Whether sessions launch with Paseo's MCP tools, i.e. can act on Paseo. */
+  /**
+   * Whether sessions launch with Paseo's MCP tools, i.e. can act on Paseo. It is
+   * a daemon-wide fact, so it holds for the hidden host session too — MCP
+   * injection happens for every created session, internal ones included.
+   */
   hasPaseoMcpInjection(): boolean;
 }
 
@@ -58,10 +62,14 @@ export class LiveVoiceDaemonContextProvider implements LiveVoiceContextProvider 
     this.logger = options.logger.child({ module: "live-voice-context" });
   }
 
-  async build(agentId: string): Promise<LiveVoiceStartContext | null> {
+  async build(options?: {
+    crossHostRoutingAvailable: boolean;
+  }): Promise<LiveVoiceStartContext | null> {
+    // `listAgents` already omits internal sessions, so the call's own hidden host
+    // session never shows up in the snapshot it is given.
     const agents: LiveVoiceContextAgent[] = this.agents
       .listAgents()
-      .filter((agent) => agent.lifecycle !== "closed" || agent.id === agentId)
+      .filter((agent) => agent.lifecycle !== "closed")
       .map((agent) => ({
         id: agent.id,
         provider: agent.provider,
@@ -82,19 +90,20 @@ export class LiveVoiceDaemonContextProvider implements LiveVoiceContextProvider 
 
     const paseoToolsAvailable = this.agents.hasPaseoMcpInjection();
     const snapshot: LiveVoiceContextSnapshot = {
-      attachedAgentId: agentId,
       agents,
       workspaces,
       paseoToolsAvailable,
     };
-    const context = buildLiveVoiceStartContext(snapshot);
+    const context = buildLiveVoiceStartContext(snapshot, {
+      crossHostRoutingAvailable: options?.crossHostRoutingAvailable ?? true,
+    });
     this.logger.debug(
       {
-        agentId,
         agentCount: agents.length,
         workspaceCount: workspaces.length,
         itemCount: context.initialItems.length,
         paseoToolsAvailable,
+        crossHostRoutingAvailable: options?.crossHostRoutingAvailable ?? true,
       },
       "live_voice.context.built",
     );

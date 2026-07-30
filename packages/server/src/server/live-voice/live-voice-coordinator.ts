@@ -1,22 +1,34 @@
 import { randomUUID } from "node:crypto";
+import os from "node:os";
 import type { Logger } from "pino";
 
+import type { AgentProvider, AgentSessionConfig } from "../agent/agent-sdk-types.js";
 import {
   asAgentRealtimeVoiceSession,
   type AgentRealtimeVoiceEvent,
   type AgentRealtimeVoiceSession,
 } from "../agent/agent-realtime-voice.js";
 import type { LiveVoiceStartContext } from "./live-voice-context.js";
+import {
+  LiveVoiceRouteBroker,
+  type LiveVoiceRouteRegistration,
+} from "./live-voice-route-broker.js";
 
 /** How long to wait for codex's async answer-SDP notification before giving up. */
 const START_SDP_TIMEOUT_MS = 30_000;
 
-export type LiveVoiceStartErrorCode =
-  | "busy"
-  | "unsupported"
-  | "agent_not_found"
-  | "agent_busy"
-  | "start_failed";
+/**
+ * Provider the hidden host session runs on. Codex is the only provider that
+ * implements the realtime seam today; the capability check below stays
+ * provider-agnostic so this constant is the only thing to change if another
+ * provider gains it.
+ */
+const HOST_PROVIDER: AgentProvider = "codex";
+
+/** Shows up only in daemon logs and internal listings — the host session is hidden. */
+const HOST_TITLE = "Live Voice host";
+
+export type LiveVoiceStartErrorCode = "busy" | "unsupported" | "start_failed";
 
 export type LiveVoiceCloseCause =
   | "requested"
@@ -24,13 +36,13 @@ export type LiveVoiceCloseCause =
   | "error"
   | "codex_closed"
   | "codex_exit"
-  | "agent_closed"
+  | "host_session_closed"
   | "start_failed";
 
 /**
  * Causes where the provider session is still usable, so we tell codex to tear
- * down its realtime session. `agent_closed` qualifies: `onAgentClosing` fires
- * before the provider session is disposed, so the stop still has a live
+ * down its realtime session. `host_session_closed` qualifies: `onAgentClosing`
+ * fires before the provider session is disposed, so the stop still has a live
  * transport and keeps the upstream realtime session from outliving a stalled
  * teardown. The remaining causes mean codex already ended the session
  * (`codex_closed`) or the process is gone (`codex_exit`) — calling
@@ -41,7 +53,7 @@ const CAUSES_REQUIRING_CODEX_STOP: ReadonlySet<LiveVoiceCloseCause> = new Set([
   "owner_disconnected",
   "error",
   "start_failed",
-  "agent_closed",
+  "host_session_closed",
 ]);
 
 /** Mirrors the protocol's `VoiceLiveEventSchema` union. */
@@ -52,7 +64,6 @@ export type LiveVoiceUpdateEvent =
   | { kind: "closed"; cause: string; detail?: string };
 
 export interface LiveVoiceUpdate {
-  agentId: string;
   liveSessionId: string;
   seq: number;
   event: LiveVoiceUpdateEvent;
@@ -69,39 +80,48 @@ export interface LiveVoiceOwner {
 }
 
 export interface LiveVoiceStartRequest {
-  agentId: string;
   offerSdp: string;
   voice?: string;
   owner: LiveVoiceOwner;
   emit: (update: LiveVoiceUpdate) => void;
+  sendRouteRequest?: LiveVoiceRouteRegistration["send"];
 }
 
 export type LiveVoiceStartResult =
   | { accepted: true; liveSessionId: string; answerSdp: string }
   | { accepted: false; errorCode: LiveVoiceStartErrorCode; errorMessage: string };
 
+/** The agent-manager surface used to spawn and dispose host sessions. */
+export interface LiveVoiceHostAgent {
+  id: string;
+  capabilities: { readonly [capability: string]: boolean | undefined };
+  session: unknown;
+}
+
 /**
  * The slice of the agent manager the coordinator needs. `AgentManager` satisfies
  * it structurally; tests supply a minimal fake.
  */
 export interface LiveVoiceAgentSource {
-  getAgent(agentId: string): LiveVoiceAgentRef | null;
+  getProviderAvailability(
+    provider: AgentProvider,
+  ): Promise<{ available: boolean; error?: string | null }>;
+  createAgent(
+    config: AgentSessionConfig,
+    agentId: string | undefined,
+    options: { workspaceId: string | undefined; initialTitle?: string | null },
+  ): Promise<LiveVoiceHostAgent>;
+  closeAgent(agentId: string): Promise<void>;
   onAgentClosing(callback: (agentId: string) => void): () => void;
 }
 
-export interface LiveVoiceAgentRef {
-  lifecycle: string;
-  capabilities: { readonly [capability: string]: boolean | undefined };
-  session: unknown;
-  activeForegroundTurnId: string | null;
-}
-
 interface LiveVoiceCall {
-  readonly agentId: string;
   readonly liveSessionId: string;
   readonly owner: LiveVoiceOwner;
   readonly emit: (update: LiveVoiceUpdate) => void;
-  readonly provider: AgentRealtimeVoiceSession;
+  /** Both are filled once the host session is up; null while it is being spawned. */
+  hostAgentId: string | null;
+  provider: AgentRealtimeVoiceSession | null;
   state: "starting" | "active" | "stopping" | "closed";
   seq: number;
   unsubscribeRealtime: (() => void) | null;
@@ -113,6 +133,7 @@ interface LiveVoiceCall {
    */
   bufferedAnswerSdp: string | null;
   sdpWaiter: { resolve: (sdp: string) => void; reject: (error: Error) => void } | null;
+  unregisterRoute: (() => void) | null;
 }
 
 /**
@@ -121,7 +142,7 @@ interface LiveVoiceCall {
  * context, which yields a working but Paseo-unaware call.
  */
 export interface LiveVoiceContextProvider {
-  build(agentId: string): Promise<LiveVoiceStartContext | null>;
+  build(options?: { crossHostRoutingAvailable: boolean }): Promise<LiveVoiceStartContext | null>;
 }
 
 export interface LiveVoiceCoordinatorOptions {
@@ -129,13 +150,23 @@ export interface LiveVoiceCoordinatorOptions {
   logger: Logger;
   startSdpTimeoutMs?: number;
   context?: LiveVoiceContextProvider;
+  routeBroker: LiveVoiceRouteBroker;
+  createHostAgentId?: () => string;
+  /** Where the host session runs. Neutral by design — it is not a project session. */
+  hostCwd?: string;
+}
+
+/** Start failure that means this daemon cannot host live voice at all. */
+class LiveVoiceUnsupportedError extends Error {
+  readonly name = "LiveVoiceUnsupportedError";
 }
 
 /**
- * Daemon-global owner of Live Voice calls. Exactly one call per agent: codex
- * silently replaces an existing realtime session when a second
- * `thread/realtime/start` lands on the same thread, so exclusivity has to be
- * enforced here.
+ * Daemon-global owner of Live Voice calls. A call is not attached to an agent:
+ * each one spawns its own hidden host session to run the realtime conversation
+ * on, so concurrent calls from different clients never share a codex thread
+ * (codex silently replaces an existing realtime session when a second
+ * `thread/realtime/start` lands on the same thread). One call per client socket.
  */
 export class LiveVoiceCoordinator {
   private readonly calls = new Map<string, LiveVoiceCall>();
@@ -143,6 +174,9 @@ export class LiveVoiceCoordinator {
   private readonly logger: Logger;
   private readonly startSdpTimeoutMs: number;
   private readonly context: LiveVoiceContextProvider | null;
+  private readonly routeBroker: LiveVoiceRouteBroker;
+  private readonly createHostAgentId: () => string;
+  private readonly hostCwd: string;
   private readonly unsubscribeAgentClosing: () => void;
 
   constructor(options: LiveVoiceCoordinatorOptions) {
@@ -150,74 +184,89 @@ export class LiveVoiceCoordinator {
     this.logger = options.logger.child({ module: "live-voice" });
     this.startSdpTimeoutMs = options.startSdpTimeoutMs ?? START_SDP_TIMEOUT_MS;
     this.context = options.context ?? null;
+    this.routeBroker = options.routeBroker;
+    this.createHostAgentId = options.createHostAgentId ?? randomUUID;
+    this.hostCwd = options.hostCwd ?? os.homedir();
     this.unsubscribeAgentClosing = this.agents.onAgentClosing((agentId) => {
-      this.closeForAgent(agentId, "agent_closed");
+      this.closeForHostAgent(agentId, "host_session_closed");
     });
   }
 
   async start(request: LiveVoiceStartRequest): Promise<LiveVoiceStartResult> {
-    const { agentId } = request;
-    if (this.calls.has(agentId)) {
+    if (this.findCallForSource(request.owner.sourceKey)) {
       return {
         accepted: false,
         errorCode: "busy",
-        errorMessage: "Another client already has a live voice call on this agent.",
+        errorMessage: "This client already has a live voice call.",
       };
     }
 
-    const resolved = this.resolveProvider(agentId);
-    if (!resolved.ok) {
-      return {
-        accepted: false,
-        errorCode: resolved.errorCode,
-        errorMessage: resolved.errorMessage,
-      };
-    }
-
-    // Reserve the agent synchronously: everything above is sync, so no second
-    // caller can interleave before the map entry exists.
+    // Registered synchronously — everything above is sync, so no second start
+    // from the same socket can interleave before the map entry exists, and a
+    // close arriving while the host spawns finds a call to close.
     const call: LiveVoiceCall = {
-      agentId,
       liveSessionId: randomUUID(),
       owner: request.owner,
       emit: request.emit,
-      provider: resolved.provider,
+      hostAgentId: null,
+      provider: null,
       state: "starting",
       seq: 0,
       unsubscribeRealtime: null,
       startTimer: null,
       bufferedAnswerSdp: null,
       sdpWaiter: null,
+      unregisterRoute: null,
     };
-    this.calls.set(agentId, call);
-    call.unsubscribeRealtime = resolved.provider.subscribeRealtimeEvents((event) => {
-      this.handleRealtimeEvent(call, event);
-    });
+    this.calls.set(call.liveSessionId, call);
 
     try {
-      const answerSdp = await this.performHandshake(call, request);
-      if (call.state !== "starting" || this.calls.get(agentId) !== call) {
+      const host = await this.spawnHostSession(call, request);
+      if (call.state !== "starting" || this.calls.get(call.liveSessionId) !== call) {
+        // The call was torn down while the host was still spawning; the host is
+        // ours alone, so it dies with the call rather than leaking.
+        this.disposeHostSession(host.agentId);
+        throw new Error("Live voice call closed during startup");
+      }
+      call.hostAgentId = host.agentId;
+      call.provider = host.provider;
+      call.unsubscribeRealtime = host.provider.subscribeRealtimeEvents((event) => {
+        this.handleRealtimeEvent(call, event);
+      });
+
+      const answerSdp = await this.performHandshake(call, host.provider, request);
+      if (call.state !== "starting" || this.calls.get(call.liveSessionId) !== call) {
         // A terminal cause landed between the SDP arriving and this resumption;
         // the call is already gone and must not be resurrected.
         throw new Error("Live voice call closed during startup");
       }
       call.state = "active";
       this.publish(call, { kind: "started" });
-      this.logger.info({ agentId, liveSessionId: call.liveSessionId }, "live_voice.call.started");
+      this.logger.info(
+        { liveSessionId: call.liveSessionId, hostAgentId: call.hostAgentId },
+        "live_voice.call.started",
+      );
       return { accepted: true, liveSessionId: call.liveSessionId, answerSdp };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.close(call, "start_failed", errorMessage);
-      this.logger.warn({ err: error, agentId }, "live_voice.call.start_failed");
-      return { accepted: false, errorCode: "start_failed", errorMessage };
+      this.logger.warn(
+        { err: error, liveSessionId: call.liveSessionId },
+        "live_voice.call.start_failed",
+      );
+      return {
+        accepted: false,
+        errorCode: error instanceof LiveVoiceUnsupportedError ? "unsupported" : "start_failed",
+        errorMessage,
+      };
     }
   }
 
-  stop(params: { agentId: string; liveSessionId: string }): void {
-    const call = this.calls.get(params.agentId);
-    // A stop for a superseded or already-closed call is a no-op; the caller
-    // still gets a response.
-    if (!call || call.liveSessionId !== params.liveSessionId) {
+  stop(params: { liveSessionId: string }): void {
+    const call = this.calls.get(params.liveSessionId);
+    // A stop for an already-closed call is a no-op; the caller still gets a
+    // response.
+    if (!call) {
       return;
     }
     this.close(call, "requested");
@@ -241,42 +290,128 @@ export class LiveVoiceCoordinator {
     }
   }
 
-  closeForAgent(agentId: string, cause: LiveVoiceCloseCause): void {
-    const call = this.calls.get(agentId);
-    if (call) {
-      this.close(call, cause);
+  /** The host session died under a call — close the call it was hosting. */
+  closeForHostAgent(hostAgentId: string, cause: LiveVoiceCloseCause): void {
+    for (const call of Array.from(this.calls.values())) {
+      if (call.hostAgentId === hostAgentId) {
+        this.close(call, cause);
+      }
     }
   }
 
-  hasActiveCall(agentId: string): boolean {
-    return this.calls.has(agentId);
+  hasActiveCall(liveSessionId: string): boolean {
+    return this.calls.has(liveSessionId);
   }
 
   dispose(): void {
     this.unsubscribeAgentClosing();
     for (const call of Array.from(this.calls.values())) {
-      this.close(call, "agent_closed");
+      // The daemon is going away and the host sessions with it.
+      this.close(call, "host_session_closed");
     }
+  }
+
+  private findCallForSource(sourceKey: object): LiveVoiceCall | null {
+    for (const call of this.calls.values()) {
+      if (call.owner.sourceKey === sourceKey) {
+        return call;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Spawns the hidden session that hosts the realtime conversation. It is
+   * internal (never listed, never persisted, no notifications) and lives in a
+   * neutral directory: it is the model's own session, not a project session.
+   */
+  private async spawnHostSession(
+    call: LiveVoiceCall,
+    request: LiveVoiceStartRequest,
+  ): Promise<{
+    agentId: string;
+    provider: AgentRealtimeVoiceSession;
+  }> {
+    const availability = await this.agents.getProviderAvailability(HOST_PROVIDER);
+    if (!availability.available) {
+      throw new LiveVoiceUnsupportedError(
+        `This daemon cannot host live voice: ${availability.error ?? `provider '${HOST_PROVIDER}' is unavailable`}`,
+      );
+    }
+    if (call.state !== "starting" || this.calls.get(call.liveSessionId) !== call) {
+      throw new Error("Live voice call closed while checking host availability");
+    }
+
+    const config: AgentSessionConfig = {
+      provider: HOST_PROVIDER,
+      cwd: this.hostCwd,
+      title: HOST_TITLE,
+      internal: true,
+    };
+    // The exact id is registered before agent creation. Both native tool
+    // injection and the HTTP MCP catalog can be built during createAgent, so
+    // registering afterward would expose the ordinary privileged catalog to the
+    // hidden host for a race window.
+    const hostAgentId = this.createHostAgentId();
+    if (request.sendRouteRequest) {
+      call.unregisterRoute = this.routeBroker.register({
+        hostAgentId,
+        liveSessionId: call.liveSessionId,
+        sourceKey: call.owner.sourceKey,
+        send: request.sendRouteRequest,
+      });
+    }
+    const agent = await this.agents.createAgent(config, hostAgentId, {
+      workspaceId: undefined,
+      initialTitle: HOST_TITLE,
+    });
+    if (agent.id !== hostAgentId) {
+      this.disposeHostSession(agent.id);
+      throw new Error(`Live Voice host id mismatch: expected ${hostAgentId}, received ${agent.id}`);
+    }
+
+    // Provider-agnostic on purpose: any provider whose session implements the
+    // realtime seam and advertises the capability can host a call.
+    const provider = agent.capabilities.supportsLiveVoice
+      ? asAgentRealtimeVoiceSession(agent.session)
+      : null;
+    if (!provider) {
+      // Spawned but useless — don't leave it running.
+      this.disposeHostSession(agent.id);
+      throw new LiveVoiceUnsupportedError(
+        "This daemon's agent provider does not support live voice.",
+      );
+    }
+    this.logger.debug({ hostAgentId: agent.id, cwd: this.hostCwd }, "live_voice.host.started");
+    return { agentId: agent.id, provider };
+  }
+
+  /** Fire-and-forget: a failed host teardown must not fail the call teardown. */
+  private disposeHostSession(hostAgentId: string): void {
+    void this.agents.closeAgent(hostAgentId).catch((error) => {
+      this.logger.warn({ err: error, hostAgentId }, "live_voice.host.close_failed");
+    });
   }
 
   private async performHandshake(
     call: LiveVoiceCall,
+    provider: AgentRealtimeVoiceSession,
     request: LiveVoiceStartRequest,
   ): Promise<string> {
     // Built before the waiter is armed: it only awaits daemon state, and no SDP
     // can arrive until `realtimeStart` below is issued.
-    const context = await this.buildContext(call.agentId);
+    const context = await this.buildContext(request.sendRouteRequest !== undefined);
     if (call.state !== "starting") {
       throw new Error("Live voice call closed while building context");
     }
 
     const sdpPromise = this.waitForAnswerSdp(call);
     // Observe the waiter immediately: `close()` can reject it while
-    // `realtimeStart` is still in flight (owner disconnect, agent archive), and
-    // a rejection with no handler attached in that window is an unhandled
+    // `realtimeStart` is still in flight (owner disconnect, host session death),
+    // and a rejection with no handler attached in that window is an unhandled
     // rejection. The `await` below still sees the rejection.
     sdpPromise.catch(() => undefined);
-    await call.provider.realtimeStart({
+    await provider.realtimeStart({
       sdp: request.offerSdp,
       realtimeSessionId: call.liveSessionId,
       ...(request.voice ? { voice: request.voice } : {}),
@@ -296,14 +431,16 @@ export class LiveVoiceCoordinator {
    * A context failure must not cost the user their call: fall back to the
    * provider's default context rather than aborting the start.
    */
-  private async buildContext(agentId: string): Promise<LiveVoiceStartContext | null> {
+  private async buildContext(
+    crossHostRoutingAvailable: boolean,
+  ): Promise<LiveVoiceStartContext | null> {
     if (!this.context) {
       return null;
     }
     try {
-      return await this.context.build(agentId);
+      return await this.context.build({ crossHostRoutingAvailable });
     } catch (error) {
-      this.logger.warn({ err: error, agentId }, "live_voice.context.build_failed");
+      this.logger.warn({ err: error }, "live_voice.context.build_failed");
       return null;
     }
   }
@@ -331,48 +468,6 @@ export class LiveVoiceCoordinator {
     });
   }
 
-  private resolveProvider(
-    agentId: string,
-  ):
-    | { ok: true; provider: AgentRealtimeVoiceSession }
-    | { ok: false; errorCode: LiveVoiceStartErrorCode; errorMessage: string } {
-    const agent = this.agents.getAgent(agentId);
-    if (!agent) {
-      return {
-        ok: false,
-        errorCode: "agent_not_found",
-        errorMessage: "Agent is not loaded. Open it and try again.",
-      };
-    }
-    if (agent.lifecycle === "closed" || agent.session === null) {
-      return {
-        ok: false,
-        errorCode: "agent_not_found",
-        errorMessage: "Agent is not running. Open it and try again.",
-      };
-    }
-    // Provider-agnostic on purpose: any provider whose session implements the
-    // realtime seam and advertises the capability can host a call.
-    const provider = agent.capabilities.supportsLiveVoice
-      ? asAgentRealtimeVoiceSession(agent.session)
-      : null;
-    if (!provider) {
-      return {
-        ok: false,
-        errorCode: "unsupported",
-        errorMessage: "This agent does not support live voice.",
-      };
-    }
-    if (agent.lifecycle === "running" || agent.activeForegroundTurnId !== null) {
-      return {
-        ok: false,
-        errorCode: "agent_busy",
-        errorMessage: "Agent is mid-turn. Wait for it to finish and try again.",
-      };
-    }
-    return { ok: true, provider };
-  }
-
   private handleRealtimeEvent(call: LiveVoiceCall, event: AgentRealtimeVoiceEvent): void {
     if (call.state === "closed" || call.state === "stopping") {
       return;
@@ -386,8 +481,8 @@ export class LiveVoiceCoordinator {
         // completes and the client has the liveSessionId.
         this.logger.debug(
           {
-            agentId: call.agentId,
             liveSessionId: call.liveSessionId,
+            hostAgentId: call.hostAgentId,
             realtimeSessionId: event.realtimeSessionId,
             version: event.version,
           },
@@ -433,7 +528,6 @@ export class LiveVoiceCoordinator {
 
   private publish(call: LiveVoiceCall, event: LiveVoiceUpdateEvent): void {
     const update: LiveVoiceUpdate = {
-      agentId: call.agentId,
       liveSessionId: call.liveSessionId,
       seq: call.seq++,
       event,
@@ -442,7 +536,7 @@ export class LiveVoiceCoordinator {
       call.emit(update);
     } catch (error) {
       this.logger.warn(
-        { err: error, agentId: call.agentId, liveSessionId: call.liveSessionId },
+        { err: error, liveSessionId: call.liveSessionId },
         "live_voice.update.emit_failed",
       );
     }
@@ -465,18 +559,29 @@ export class LiveVoiceCoordinator {
 
     const waiter = call.sdpWaiter;
     call.sdpWaiter = null;
+    call.unregisterRoute?.();
+    call.unregisterRoute = null;
 
-    if (this.calls.get(call.agentId) === call) {
-      this.calls.delete(call.agentId);
+    // Deregistered before the host teardown below: closing the host re-enters
+    // through `onAgentClosing`, which must find no call to close.
+    if (this.calls.get(call.liveSessionId) === call) {
+      this.calls.delete(call.liveSessionId);
     }
 
-    if (CAUSES_REQUIRING_CODEX_STOP.has(cause)) {
+    if (call.provider && CAUSES_REQUIRING_CODEX_STOP.has(cause)) {
       void call.provider.realtimeStop().catch((error) => {
         this.logger.debug(
-          { err: error, agentId: call.agentId, liveSessionId: call.liveSessionId, cause },
+          { err: error, liveSessionId: call.liveSessionId, cause },
           "live_voice.codex.stop_failed",
         );
       });
+    }
+
+    // The host session exists only for this call, so every cause disposes it.
+    const hostAgentId = call.hostAgentId;
+    call.hostAgentId = null;
+    if (hostAgentId) {
+      this.disposeHostSession(hostAgentId);
     }
 
     call.state = "closed";
@@ -490,7 +595,7 @@ export class LiveVoiceCoordinator {
     waiter?.reject(new Error(`Live voice call closed (${cause})`));
 
     this.logger.info(
-      { agentId: call.agentId, liveSessionId: call.liveSessionId, cause, detail },
+      { liveSessionId: call.liveSessionId, hostAgentId, cause, detail },
       "live_voice.call.closed",
     );
   }

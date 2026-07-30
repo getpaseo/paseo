@@ -158,6 +158,12 @@ import type {
   BrowserAutomationExecuteRequest,
   BrowserAutomationExecuteResponse,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import type {
+  LiveVoiceJsonObject,
+  VoiceLiveRouteRequest,
+  VoiceLiveRouteResponse,
+  VoiceLiveToolResult,
+} from "@getpaseo/protocol/live-voice-routing";
 
 export interface Logger {
   debug(obj: object, msg?: string): void;
@@ -183,6 +189,7 @@ const PROJECT_GITHUB_CLONE_TIMEOUT_MS = 5 * 60 * 1000;
 // The daemon holds `voice.live.start.request` open while the provider produces
 // the answer SDP, which is well past the default session RPC timeout.
 const LIVE_VOICE_START_TIMEOUT_MS = 45_000;
+const LIVE_VOICE_TOOL_EXECUTION_TIMEOUT_MS = 10 * 60 * 1000;
 
 interface ImportAgentInputBase {
   cwd?: string;
@@ -310,6 +317,8 @@ export type DaemonEvent =
 export type DaemonEventHandler = (event: DaemonEvent) => void;
 export type BrowserAutomationExecuteRequestMessage = BrowserAutomationExecuteRequest;
 export type BrowserAutomationExecuteResponseMessage = BrowserAutomationExecuteResponse;
+export type LiveVoiceRouteRequestMessage = VoiceLiveRouteRequest;
+export type LiveVoiceRouteResponseMessage = VoiceLiveRouteResponse;
 
 export interface DaemonClientConfig {
   /** Deliver compact bodies/hash references to a caller-owned snapshot cache.
@@ -505,7 +514,6 @@ type SetVoiceModePayload = Extract<
 >["payload"];
 /** Resolved handshake for an accepted Live Voice call. */
 export interface AcceptedLiveVoiceStart {
-  agentId: string;
   liveSessionId: string;
   answerSdp: string;
 }
@@ -918,22 +926,36 @@ class DaemonProtocolError extends Error {
  *
  * `errorCode` stays a plain string on the wire so a newer daemon can introduce
  * codes without breaking older clients; callers switch on the values they know
- * (`busy`, `unsupported`, `agent_not_found`, `agent_busy`, `start_failed`) and
- * fall back to `errorMessage` for anything else.
+ * (`busy`, `unsupported`, `start_failed`) and fall back to `errorMessage` for
+ * anything else.
  */
 export class LiveVoiceStartRejectedError extends Error {
   readonly name = "LiveVoiceStartRejectedError";
-  readonly agentId: string;
   readonly errorCode: string;
   readonly errorMessage: string | null;
 
-  constructor(params: { agentId: string; errorCode?: string; errorMessage?: string }) {
+  constructor(params: { errorCode?: string; errorMessage?: string }) {
     const errorCode = params.errorCode?.trim() || "start_failed";
     const errorMessage = params.errorMessage?.trim() || null;
     super(errorMessage ? `${errorMessage} (${errorCode})` : `Live voice rejected (${errorCode})`);
-    this.agentId = params.agentId;
     this.errorCode = errorCode;
     this.errorMessage = errorMessage;
+  }
+}
+
+/**
+ * A target daemon understood `voice.live.tool.execute.request` but rejected the
+ * operation. Error codes stay open on the wire for forward compatibility.
+ */
+export class LiveVoiceToolExecutionRejectedError extends Error {
+  readonly name = "LiveVoiceToolExecutionRejectedError";
+  readonly errorCode: string;
+  readonly retryable: boolean;
+
+  constructor(params: { code: string; message: string; retryable?: boolean }) {
+    super(params.message);
+    this.errorCode = params.code;
+    this.retryable = params.retryable ?? false;
   }
 }
 
@@ -3482,7 +3504,10 @@ export class DaemonClient {
   }
 
   /**
-   * Open a Live Voice call on `agentId`.
+   * Open a Live Voice call with this daemon.
+   *
+   * The call is daemon-global: the daemon hosts it on a hidden session of its
+   * own, so there is no agent to attach to. One call per client connection.
    *
    * The daemon relays the SDP offer to the provider and waits for the answer
    * before replying, so this request is much slower than a normal RPC — hence
@@ -3491,7 +3516,6 @@ export class DaemonClient {
    * {@link LiveVoiceStartRejectedError} so callers can switch on `errorCode`.
    */
   async startLiveVoice(input: {
-    agentId: string;
     offerSdp: string;
     voice?: string;
     requestId?: string;
@@ -3500,7 +3524,6 @@ export class DaemonClient {
       ...(input.requestId ? { requestId: input.requestId } : {}),
       message: {
         type: "voice.live.start.request",
-        agentId: input.agentId,
         offerSdp: input.offerSdp,
         ...(input.voice ? { voice: input.voice } : {}),
       },
@@ -3509,32 +3532,61 @@ export class DaemonClient {
     });
     if (!payload.accepted || !payload.liveSessionId || !payload.answerSdp) {
       throw new LiveVoiceStartRejectedError({
-        agentId: payload.agentId,
         ...(payload.errorCode ? { errorCode: payload.errorCode } : {}),
         ...(payload.errorMessage ? { errorMessage: payload.errorMessage } : {}),
       });
     }
     return {
-      agentId: payload.agentId,
       liveSessionId: payload.liveSessionId,
       answerSdp: payload.answerSdp,
     };
   }
 
   /** Close a Live Voice call. Idempotent on the daemon side. */
-  async stopLiveVoice(input: {
-    agentId: string;
-    liveSessionId: string;
-    requestId?: string;
-  }): Promise<void> {
+  async stopLiveVoice(input: { liveSessionId: string; requestId?: string }): Promise<void> {
     await this.sendNamespacedCorrelatedSessionRequest<"voice.live.stop.response">({
       ...(input.requestId ? { requestId: input.requestId } : {}),
       message: {
         type: "voice.live.stop.request",
-        agentId: input.agentId,
         liveSessionId: input.liveSessionId,
       },
     });
+  }
+
+  /**
+   * Execute one Paseo tool on this daemon on behalf of a Live Voice router.
+   *
+   * Callers should pin this exact client connection for the duration so an
+   * adaptive host switch cannot move a privileged operation between sockets.
+   */
+  async executeLiveVoiceTool(input: {
+    toolName: string;
+    arguments: LiveVoiceJsonObject;
+    requestId?: string;
+  }): Promise<VoiceLiveToolResult> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"voice.live.tool.execute.response">({
+        ...(input.requestId ? { requestId: input.requestId } : {}),
+        message: {
+          type: "voice.live.tool.execute.request",
+          toolName: input.toolName,
+          arguments: input.arguments,
+        },
+        timeout: LIVE_VOICE_TOOL_EXECUTION_TIMEOUT_MS,
+      });
+    if (!payload.ok) {
+      throw new LiveVoiceToolExecutionRejectedError({
+        code: payload.error.code,
+        message: payload.error.message,
+        ...(payload.error.retryable !== undefined ? { retryable: payload.error.retryable } : {}),
+      });
+    }
+    return payload.toolResult;
+  }
+
+  /** Reply to a server-initiated Live Voice route request on this exact client. */
+  sendLiveVoiceRouteResponse(response: VoiceLiveRouteResponse): void {
+    this.sendSessionMessageStrict(response);
   }
 
   async sendVoiceAudioChunk(audio: string, format: string, isLast = false): Promise<void> {

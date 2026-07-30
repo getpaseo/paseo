@@ -1770,10 +1770,8 @@ export const ptBR: TranslationResources = {
       assistant: "Agente:",
     },
     errors: {
-      busy: "Outro cliente já tem uma chamada de voz ao vivo neste agente.",
+      busy: "Já existe uma chamada de voz ao vivo ativa neste host.",
       unsupported: "Este host não suporta voz ao vivo.",
-      agentNotFound: "Esse agente não está mais disponível.",
-      agentBusy: "O agente está ocupado. Aguarde o fim do turno atual.",
       startFailed: "Não foi possível iniciar a voz ao vivo.",
       micBusy: "O microfone está sendo usado por outro recurso.",
       notConnected: "Este host não está conectado.",

@@ -24,7 +24,6 @@ describe("live voice messages", () => {
       VoiceLiveStartRequestSchema.parse({
         type: "voice.live.start.request",
         requestId: "request-1",
-        agentId: "agent-1",
         offerSdp: "v=0\r\n",
       }).voice,
     ).toBeUndefined();
@@ -32,7 +31,6 @@ describe("live voice messages", () => {
       VoiceLiveStartRequestSchema.parse({
         type: "voice.live.start.request",
         requestId: "request-1",
-        agentId: "agent-1",
         offerSdp: "v=0\r\n",
         voice: "cedar",
       }).voice,
@@ -45,7 +43,6 @@ describe("live voice messages", () => {
         type: "voice.live.start.response",
         payload: {
           requestId: "request-1",
-          agentId: "agent-1",
           accepted: true,
           liveSessionId: "live-1",
           answerSdp: "v=0\r\n",
@@ -57,7 +54,6 @@ describe("live voice messages", () => {
         type: "voice.live.start.response",
         payload: {
           requestId: "request-1",
-          agentId: "agent-1",
           accepted: false,
           errorCode: "busy",
           errorMessage: "Another client already holds this call.",
@@ -72,7 +68,6 @@ describe("live voice messages", () => {
         type: "voice.live.start.response",
         payload: {
           requestId: "request-1",
-          agentId: "agent-1",
           accepted: false,
           errorCode: "a_code_from_a_newer_daemon",
         },
@@ -85,7 +80,6 @@ describe("live voice messages", () => {
       VoiceLiveStopRequestSchema.parse({
         type: "voice.live.stop.request",
         requestId: "request-2",
-        agentId: "agent-1",
         liveSessionId: "live-1",
       }).liveSessionId,
     ).toBe("live-1");
@@ -101,7 +95,7 @@ describe("live voice messages", () => {
     const parseEvent = (event: unknown) =>
       VoiceLiveUpdateSchema.parse({
         type: "voice.live.update",
-        payload: { agentId: "agent-1", liveSessionId: "live-1", seq: 0, event },
+        payload: { liveSessionId: "live-1", seq: 0, event },
       }).payload.event;
 
     expect(parseEvent({ kind: "started" }).kind).toBe("started");
@@ -130,7 +124,6 @@ describe("live voice messages", () => {
       VoiceLiveUpdateSchema.safeParse({
         type: "voice.live.update",
         payload: {
-          agentId: "agent-1",
           liveSessionId: "live-1",
           seq: 1,
           event: { kind: "transcript", role: "system", transcriptId: "t-1", text: "hi" },

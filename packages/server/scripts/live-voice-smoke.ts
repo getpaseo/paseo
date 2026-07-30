@@ -1,13 +1,16 @@
 /**
  * End-to-end Live Voice smoke against a real codex CLI and real OpenAI backend.
  *
- * Spins an isolated in-process daemon (never touches port 6767), creates a codex
- * agent, then drives the full phase-1 client path: a real Chrome builds the
- * WebRTC offer (audio transceiver + `oai-events` data channel + full ICE
- * gathering), the daemon relays it through `voice.live.start`, and the script
+ * Spins an isolated in-process daemon (never touches port 6767), then drives the
+ * full client path: a real Chrome builds the WebRTC offer (audio transceiver +
+ * `oai-events` data channel + full ICE gathering), the daemon spawns its hidden
+ * host session and relays the offer through `voice.live.start`, and the script
  * asserts the answer SDP applies, the peer connection reaches `connected`, the
  * provider's `session.started` arrives on the data channel, and stop tears the
  * call down with a `closed` update.
+ *
+ * The call is daemon-global: no agent is created here, and the host session runs
+ * in the user's home directory the way it does in production.
  *
  * Requires: `codex` on PATH with a logged-in account entitled to realtime v3,
  * and a Chrome binary (default /run/current-system/sw/bin/google-chrome,
@@ -84,10 +87,8 @@ async function main(): Promise<void> {
   const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-live-voice-smoke-"));
   const paseoHome = path.join(paseoHomeRoot, ".paseo");
   const staticDir = path.join(paseoHomeRoot, "static");
-  const agentCwd = path.join(paseoHomeRoot, "agent-cwd");
   await mkdir(paseoHome, { recursive: true });
   await mkdir(staticDir, { recursive: true });
-  await mkdir(agentCwd, { recursive: true });
 
   let done = step("starting in-process daemon");
   const daemon = await createPaseoDaemon(
@@ -96,8 +97,8 @@ async function main(): Promise<void> {
       paseoHome,
       corsAllowedOrigins: [],
       hostnames: true,
-      // Production default. Also what gives the attached session Paseo's own MCP
-      // tools, which is what makes "act on Paseo by voice" work at all.
+      // Production default. Also what gives the hidden host session Paseo's own
+      // MCP tools, which is what makes "act on Paseo by voice" work at all.
       mcpEnabled: true,
       staticDir,
       mcpDebug: false,
@@ -137,18 +138,6 @@ async function main(): Promise<void> {
       );
     }
     done("features.liveVoice=true");
-
-    done = step("creating codex agent");
-    const agent = await withTimeout(
-      "createAgent",
-      client.createAgent({ provider: "codex", cwd: agentCwd }),
-    );
-    if (agent.capabilities?.supportsLiveVoice !== true) {
-      throw new Error(
-        `agent.capabilities.supportsLiveVoice is ${String(agent.capabilities?.supportsLiveVoice)} — spawn flag/version gate did not surface`,
-      );
-    }
-    done(`agent ${agent.id}, supportsLiveVoice=true`);
 
     done = step("launching Chrome + building offer");
     browser = await chromium.launch({
@@ -213,10 +202,7 @@ async function main(): Promise<void> {
     done(`${offerSdp.length} chars`);
 
     done = step("voice.live.start via daemon");
-    const accepted = await withTimeout(
-      "startLiveVoice",
-      client.startLiveVoice({ agentId: agent.id, offerSdp }),
-    );
+    const accepted = await withTimeout("startLiveVoice", client.startLiveVoice({ offerSdp }));
     done(`liveSessionId ${accepted.liveSessionId}, answer ${accepted.answerSdp.length} chars`);
 
     done = step("applying answer + waiting for connected + session.started");
@@ -266,7 +252,7 @@ async function main(): Promise<void> {
     done(`state=${connectionResult.state}, model=${String(startedSession?.model)}`);
 
     done = step("checking injected Paseo context");
-    done(assertPaseoContext({ instructions: startedSession?.instructions, records, agent }));
+    done(assertPaseoContext({ instructions: startedSession?.instructions, records }));
 
     const sawStartedUpdate = updates.some((update) => update.event.kind === "started");
     if (!sawStartedUpdate) {
@@ -276,7 +262,7 @@ async function main(): Promise<void> {
     done = step("stopping call");
     await withTimeout(
       "stopLiveVoice",
-      client.stopLiveVoice({ agentId: agent.id, liveSessionId: accepted.liveSessionId }),
+      client.stopLiveVoice({ liveSessionId: accepted.liveSessionId }),
     );
     const closedCause = await waitForClosedUpdate(updates);
     done(`cause=${closedCause}`);
@@ -305,33 +291,35 @@ async function main(): Promise<void> {
 function assertPaseoContext(params: {
   instructions: string | undefined;
   records: Record<string, unknown>[];
-  agent: { id: string };
 }): string {
   const instructions = params.instructions ?? "";
-  if (!instructions.includes("You are the voice of Paseo.")) {
+  if (!instructions.includes("You are the voice of Paseo")) {
     throw new Error(
       `session instructions are not the Paseo prompt: ${instructions.slice(0, 120)}...`,
     );
+  }
+  const host = params.records.find((record) => record.msg === "live_voice.host.started");
+  if (!host?.hostAgentId) {
+    throw new Error("daemon never spawned a hidden host session");
   }
   const built = params.records.find((record) => record.msg === "live_voice.context.built");
   if (!built) {
     throw new Error("daemon never logged live_voice.context.built");
   }
-  if (built.agentId !== params.agent.id) {
-    throw new Error(`context was built for ${String(built.agentId)}, not the attached agent`);
+  // A freshly created daemon may have no sessions and no workspaces to report,
+  // so an empty snapshot is legitimate here; the prompt is the real assertion.
+  if (typeof built.itemCount !== "number") {
+    throw new Error(`context did not record its item count: ${JSON.stringify(built)}`);
   }
-  if (typeof built.itemCount !== "number" || built.itemCount === 0) {
-    throw new Error(`context carried no items: ${JSON.stringify(built)}`);
-  }
-  // MCP is enabled above, so the session must have Paseo's tools and the prompt
-  // must say so — otherwise the model would refuse to act on Paseo.
+  // MCP is enabled above, so the host session must have Paseo's tools and the
+  // prompt must say so — otherwise the model would refuse to act on Paseo.
   if (built.paseoToolsAvailable !== true) {
-    throw new Error("Paseo MCP tools were not injected into the attached session");
+    throw new Error("Paseo MCP tools were not injected into the host session");
   }
-  if (!instructions.includes("control Paseo itself")) {
+  if (!instructions.includes("prompt an existing agent session")) {
     throw new Error("the prompt does not tell the model it can act on Paseo");
   }
-  return `${instructions.length} chars of instructions, ${String(built.itemCount)} seeded items, ${String(built.agentCount)} sessions / ${String(built.workspaceCount)} workspaces, paseoTools=${String(built.paseoToolsAvailable)}`;
+  return `host ${String(host.hostAgentId)}, ${instructions.length} chars of instructions, ${String(built.itemCount)} seeded items, ${String(built.agentCount)} sessions / ${String(built.workspaceCount)} workspaces, paseoTools=${String(built.paseoToolsAvailable)}`;
 }
 
 async function waitForClosedUpdate(updates: VoiceLiveUpdate["payload"][]): Promise<string> {

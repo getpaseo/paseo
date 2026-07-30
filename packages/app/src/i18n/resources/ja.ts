@@ -1755,10 +1755,8 @@ export const ja: TranslationResources = {
       assistant: "エージェント:",
     },
     errors: {
-      busy: "このエージェントでは別のクライアントがライブ音声通話中です。",
+      busy: "このホストではすでにライブ音声通話が進行中です。",
       unsupported: "このホストはライブ音声に対応していません。",
-      agentNotFound: "そのエージェントは利用できません。",
-      agentBusy: "エージェントがビジーです。現在のターンの完了を待ってください。",
       startFailed: "ライブ音声を開始できませんでした。",
       micBusy: "マイクは他の機能が使用中です。",
       notConnected: "このホストは接続されていません。",
