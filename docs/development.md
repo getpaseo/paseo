@@ -393,12 +393,16 @@ Use `npm run cli` to run the in-repo CLI from source (`npx tsx packages/cli/src/
 
 Canonical automation uses `paseo workspace create/ls/archive`, `paseo heartbeat create/update/delete`, and the full `paseo schedule` group. MCP heartbeat automation is intentionally smaller: create and delete only. Detach remains an explicit user lifecycle action rather than an agent tool. `paseo run --new-workspace local|worktree` composes workspace creation with agent creation. The old `paseo worktree` and `paseo run --worktree` forms are hidden compatibility aliases.
 
+`paseo workflow` validates and imports JSON specs, launches runs, and exposes the same inspect,
+logs, stop, and resume operations as the Workflows screen. See [workflows.md](./workflows.md).
+
 ```bash
 npm run cli -- ls -a -g              # List all agents globally
 npm run cli -- ls -a -g --json       # Same, as JSON
 npm run cli -- inspect <id>          # Show detailed agent info
 npm run cli -- logs <id>             # View agent timeline
 npm run cli -- agent open <id>       # Focus an existing agent in Paseo Desktop
+npm run cli -- workflow specs        # List built-in and user workflow specs
 npm run cli -- daemon status         # Check daemon status
 npm run cli -- clone owner/repo --dir ~/workspace # Clone GitHub repo and register project
 ```

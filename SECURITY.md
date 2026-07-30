@@ -50,6 +50,11 @@ The daemon also supports an optional shared-secret password (set via `auth.passw
 
 Connected clients are trusted operators of the daemon user. File previews follow that authority: a preview request may read any regular file the daemon process can read, while keeping path normalization and symlink checks in the daemon file service. Workspace-relative paths remain a UI convenience, not a security boundary.
 
+Workflow event routing does not accept a public capability token. The daemon binds a tool call to
+the caller agent, its active native turn, and the persisted workflow turn, then accepts a declared
+event once. Workflow storage rejects traversal and symlink targets. See
+[docs/workflows.md](docs/workflows.md) for the full contract.
+
 If you expose the daemon beyond loopback, such as by binding to `0.0.0.0`, forwarding it through a tunnel or reverse proxy, or publishing it from a Docker container, you are responsible for restricting and securing that access. Setting a password is strongly recommended in that case.
 
 In Docker, the official image runs the daemon and agents as the non-root

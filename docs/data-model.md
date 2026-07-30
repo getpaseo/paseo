@@ -58,6 +58,9 @@ $PASEO_HOME/
 │   └── rooms.json                       # All rooms + messages
 ├── loops/
 │   └── loops.json                       # All loop records
+├── workflows/
+│   ├── specs/{workflowId}.json           # User-defined workflow specs
+│   └── runs/{runId}/                     # Materialized spec, state, events, and prompts
 ├── projects/
 │   ├── projects.json                    # Project registry
 │   └── workspaces.json                  # Workspace registry
@@ -448,7 +451,16 @@ Single file containing an array of all loop records. Writes are direct (not atom
 
 ---
 
-## 6. Project Registry
+## 6. Workflow
+
+Workflow specs and runs are directory-backed records because audit streams and rendered prompts
+grow independently. State and materialized specs use atomic JSON writes; events are append-only
+JSONL. Historical YAML runs have a read-only compatibility path. See
+[workflows.md](./workflows.md) for the ownership, layout, recovery, and authorization contract.
+
+---
+
+## 7. Project Registry
 
 **Path:** `$PASEO_HOME/projects/projects.json`
 
@@ -476,7 +488,7 @@ workspace together with its owning project.
 
 ---
 
-## 7. Workspace Registry
+## 8. Workspace Registry
 
 **Path:** `$PASEO_HOME/projects/workspaces.json`
 
@@ -509,7 +521,7 @@ than treating it as valid.
 
 ---
 
-## 8. Push Token Store
+## 9. Push Token Store
 
 **Path:** `$PASEO_HOME/push-tokens.json`
 
@@ -523,7 +535,7 @@ Simple set of Expo push notification tokens. Loaded with permissive parsing (fil
 
 ---
 
-## 9. Daemon meta files
+## 10. Daemon meta files
 
 These small files are not validated as full Zod schemas but are persisted under `$PASEO_HOME` for daemon identity and runtime coordination.
 

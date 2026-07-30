@@ -76,6 +76,7 @@ Anyone who builds software:
 - Voice mode: dictate prompts or talk through problems hands-free
 - MCP server exposes the daemon to other agents (workspaces, create/detach agent, schedules, heartbeats, terminals, workspace renaming)
 - Scheduled agents (cron-style triggers) via app, CLI, and MCP
+- User-defined JSON workflows via browser, Electron, CLI, and native agent tools
 - Frequent releases (multiple per week)
 - Community contributions across packaging, providers, and bug fixes
 - Key UX: split panes, keybinding customization, workspace model, in-app browser

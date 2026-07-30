@@ -77,6 +77,7 @@ not retain non-Git directories.
 | `server/relay-transport.ts`     | Outbound relay connection with E2E encryption                                 |
 | `server/schedule/`              | Cron-based scheduled agents                                                   |
 | `server/loop-service.ts`        | Looping agent runs that retry until an exit condition                         |
+| `server/workflow/`              | Native JSON workflow execution; see [workflows.md](workflows.md)              |
 | `server/chat/`                  | Chat rooms for agent-to-agent and human-to-agent messaging                    |
 
 ### `packages/protocol` — Wire schemas and shared protocol types
@@ -123,6 +124,7 @@ Commander.js CLI with Docker-style commands. Common agent operations are also ex
 - `paseo terminal ls/create/capture/send-keys/kill`
 - `paseo script ls/start/stop`
 - `paseo loop run/ls/inspect/logs/stop`
+- `paseo workflow specs/show/validate/import/run/runs/inspect/logs/stop/resume`
 - `paseo schedule create/ls/inspect/update/pause/resume/run-once/logs/delete`
 - `paseo heartbeat create/update/delete`
 - `paseo workspace create/ls/archive`
@@ -377,6 +379,7 @@ $PASEO_HOME/
 ├── chat/                                       # Chat rooms
 ├── schedules/                                  # Scheduled-agent definitions and runs
 ├── loops/                                      # Loop runs and logs
+├── workflows/                                  # User workflow specs and native run audit data
 ├── config.json                                 # Daemon config (mutable)
 ├── daemon-keypair.json                         # Daemon identity for relay/E2EE
 ├── push-tokens.json                            # Mobile push tokens
