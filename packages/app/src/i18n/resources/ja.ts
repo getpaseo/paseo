@@ -1724,6 +1724,52 @@ export const ja: TranslationResources = {
       copied: "コピーしました",
     },
   },
+  audioSession: {
+    busy: {
+      voiceMode: "音声モードがマイクを使用中です。先に停止してください。",
+      dictation: "音声入力がマイクを使用中です。先に停止してください。",
+      liveVoice: "ライブ音声がマイクを使用中です。先に停止してください。",
+      unknown: "マイクが使用中です。先に他の音声機能を停止してください。",
+    },
+  },
+  liveVoice: {
+    label: "ライブ音声",
+    actions: {
+      start: "ライブ音声を開始",
+      stop: "ライブ音声を停止",
+      mute: "マイクをミュート",
+      unmute: "マイクのミュートを解除",
+      enableAudio: "タップして音声を有効化",
+    },
+    status: {
+      connecting: "接続中...",
+      live: "ライブ",
+      audioBlocked: "音声がブロックされています",
+      stopping: "停止中...",
+      ended: "通話終了",
+      error: "失敗",
+    },
+    transcript: {
+      empty: "まだ発話はありません。",
+      user: "あなた:",
+      assistant: "エージェント:",
+    },
+    errors: {
+      busy: "このエージェントでは別のクライアントがライブ音声通話中です。",
+      unsupported: "このホストはライブ音声に対応していません。",
+      agentNotFound: "そのエージェントは利用できません。",
+      agentBusy: "エージェントがビジーです。現在のターンの完了を待ってください。",
+      startFailed: "ライブ音声を開始できませんでした。",
+      micBusy: "マイクは他の機能が使用中です。",
+      notConnected: "このホストは接続されていません。",
+      alreadyActive: "ライブ音声通話はすでに実行中です。",
+      stopping: "前回のライブ音声通話がまだ停止中です。",
+      micDenied: "マイクへのアクセスが拒否されました。",
+      micUnavailable: "マイクを開けませんでした。",
+      iceTimeout: "時間内に接続を確立できませんでした。",
+      connectionLost: "ライブ音声の接続が切断されました。",
+    },
+  },
   realtimeVoice: {
     actions: {
       mute: "リアルタイム音声をミュート",

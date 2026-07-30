@@ -1717,6 +1717,52 @@ export const en = {
       copied: "Copied",
     },
   },
+  audioSession: {
+    busy: {
+      voiceMode: "Voice mode is using the microphone. Stop it first.",
+      dictation: "Dictation is using the microphone. Stop it first.",
+      liveVoice: "Live voice is using the microphone. Stop it first.",
+      unknown: "The microphone is in use. Stop the other audio feature first.",
+    },
+  },
+  liveVoice: {
+    label: "Live voice",
+    actions: {
+      start: "Start live voice",
+      stop: "Stop live voice",
+      mute: "Mute microphone",
+      unmute: "Unmute microphone",
+      enableAudio: "Tap to enable audio",
+    },
+    status: {
+      connecting: "Connecting...",
+      live: "Live",
+      audioBlocked: "Audio blocked",
+      stopping: "Stopping...",
+      ended: "Call ended",
+      error: "Failed",
+    },
+    transcript: {
+      empty: "Nothing spoken yet.",
+      user: "You:",
+      assistant: "Agent:",
+    },
+    errors: {
+      busy: "Another client already has a live voice call on this agent.",
+      unsupported: "This host does not support live voice.",
+      agentNotFound: "That agent is no longer available.",
+      agentBusy: "The agent is busy. Wait for the current turn to finish.",
+      startFailed: "Live voice could not be started.",
+      micBusy: "The microphone is in use by another feature.",
+      notConnected: "This host is not connected.",
+      alreadyActive: "A live voice call is already running.",
+      stopping: "The previous live voice call is still stopping.",
+      micDenied: "Microphone access was denied.",
+      micUnavailable: "The microphone could not be opened.",
+      iceTimeout: "The connection could not be negotiated in time.",
+      connectionLost: "The live voice connection dropped.",
+    },
+  },
   realtimeVoice: {
     actions: {
       mute: "Mute realtime voice",

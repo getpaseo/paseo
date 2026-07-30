@@ -1686,6 +1686,52 @@ export const zhCN: TranslationResources = {
       copied: "已复制",
     },
   },
+  audioSession: {
+    busy: {
+      voiceMode: "语音模式正在使用麦克风，请先停止。",
+      dictation: "语音输入正在使用麦克风，请先停止。",
+      liveVoice: "实时语音正在使用麦克风，请先停止。",
+      unknown: "麦克风正在使用中，请先停止其他音频功能。",
+    },
+  },
+  liveVoice: {
+    label: "实时语音",
+    actions: {
+      start: "开始实时语音",
+      stop: "停止实时语音",
+      mute: "静音麦克风",
+      unmute: "取消静音",
+      enableAudio: "点按以启用音频",
+    },
+    status: {
+      connecting: "正在连接...",
+      live: "进行中",
+      audioBlocked: "音频被阻止",
+      stopping: "正在停止...",
+      ended: "通话已结束",
+      error: "失败",
+    },
+    transcript: {
+      empty: "还没有语音内容。",
+      user: "你：",
+      assistant: "Agent：",
+    },
+    errors: {
+      busy: "另一个客户端已在该 Agent 上进行实时语音通话。",
+      unsupported: "该主机不支持实时语音。",
+      agentNotFound: "该 Agent 已不可用。",
+      agentBusy: "Agent 正忙，请等待当前回合结束。",
+      startFailed: "无法启动实时语音。",
+      micBusy: "麦克风正被其他功能占用。",
+      notConnected: "该主机未连接。",
+      alreadyActive: "实时语音通话已在进行中。",
+      stopping: "上一次实时语音通话仍在停止中。",
+      micDenied: "麦克风访问被拒绝。",
+      micUnavailable: "无法打开麦克风。",
+      iceTimeout: "未能及时协商连接。",
+      connectionLost: "实时语音连接已断开。",
+    },
+  },
   realtimeVoice: {
     actions: {
       mute: "静音 realtime voice",

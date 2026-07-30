@@ -180,6 +180,10 @@ const perfNow: () => number =
 
 const PROJECT_GITHUB_CLONE_TIMEOUT_MS = 5 * 60 * 1000;
 
+// The daemon holds `voice.live.start.request` open while the provider produces
+// the answer SDP, which is well past the default session RPC timeout.
+const LIVE_VOICE_START_TIMEOUT_MS = 45_000;
+
 interface ImportAgentInputBase {
   cwd?: string;
   workspaceId?: string;
@@ -499,6 +503,12 @@ type SetVoiceModePayload = Extract<
   SessionOutboundMessage,
   { type: "set_voice_mode_response" }
 >["payload"];
+/** Resolved handshake for an accepted Live Voice call. */
+export interface AcceptedLiveVoiceStart {
+  agentId: string;
+  liveSessionId: string;
+  answerSdp: string;
+}
 type DictationFinishAcceptedPayload = Extract<
   SessionOutboundMessage,
   { type: "dictation_stream_finish_accepted" }
@@ -900,6 +910,30 @@ class DaemonProtocolError extends Error {
     this.name = "DaemonProtocolError";
     this.requestId = identity.requestId;
     this.responseType = identity.responseType;
+  }
+}
+
+/**
+ * `voice.live.start.request` answered with `accepted: false`.
+ *
+ * `errorCode` stays a plain string on the wire so a newer daemon can introduce
+ * codes without breaking older clients; callers switch on the values they know
+ * (`busy`, `unsupported`, `agent_not_found`, `agent_busy`, `start_failed`) and
+ * fall back to `errorMessage` for anything else.
+ */
+export class LiveVoiceStartRejectedError extends Error {
+  readonly name = "LiveVoiceStartRejectedError";
+  readonly agentId: string;
+  readonly errorCode: string;
+  readonly errorMessage: string | null;
+
+  constructor(params: { agentId: string; errorCode?: string; errorMessage?: string }) {
+    const errorCode = params.errorCode?.trim() || "start_failed";
+    const errorMessage = params.errorMessage?.trim() || null;
+    super(errorMessage ? `${errorMessage} (${errorCode})` : `Live voice rejected (${errorCode})`);
+    this.agentId = params.agentId;
+    this.errorCode = errorCode;
+    this.errorMessage = errorMessage;
   }
 }
 
@@ -3445,6 +3479,62 @@ export class DaemonClient {
       throw new Error((response.error ?? "Failed to set voice mode") + codeSuffix);
     }
     return response;
+  }
+
+  /**
+   * Open a Live Voice call on `agentId`.
+   *
+   * The daemon relays the SDP offer to the provider and waits for the answer
+   * before replying, so this request is much slower than a normal RPC — hence
+   * the dedicated timeout. Rejections arrive inside an accepted response
+   * (`accepted: false`) rather than as an RPC error; they are rethrown as a
+   * {@link LiveVoiceStartRejectedError} so callers can switch on `errorCode`.
+   */
+  async startLiveVoice(input: {
+    agentId: string;
+    offerSdp: string;
+    voice?: string;
+    requestId?: string;
+  }): Promise<AcceptedLiveVoiceStart> {
+    const payload = await this.sendNamespacedCorrelatedSessionRequest<"voice.live.start.response">({
+      ...(input.requestId ? { requestId: input.requestId } : {}),
+      message: {
+        type: "voice.live.start.request",
+        agentId: input.agentId,
+        offerSdp: input.offerSdp,
+        ...(input.voice ? { voice: input.voice } : {}),
+      },
+      // The daemon awaits the provider's answer SDP before responding.
+      timeout: LIVE_VOICE_START_TIMEOUT_MS,
+    });
+    if (!payload.accepted || !payload.liveSessionId || !payload.answerSdp) {
+      throw new LiveVoiceStartRejectedError({
+        agentId: payload.agentId,
+        ...(payload.errorCode ? { errorCode: payload.errorCode } : {}),
+        ...(payload.errorMessage ? { errorMessage: payload.errorMessage } : {}),
+      });
+    }
+    return {
+      agentId: payload.agentId,
+      liveSessionId: payload.liveSessionId,
+      answerSdp: payload.answerSdp,
+    };
+  }
+
+  /** Close a Live Voice call. Idempotent on the daemon side. */
+  async stopLiveVoice(input: {
+    agentId: string;
+    liveSessionId: string;
+    requestId?: string;
+  }): Promise<void> {
+    await this.sendNamespacedCorrelatedSessionRequest<"voice.live.stop.response">({
+      ...(input.requestId ? { requestId: input.requestId } : {}),
+      message: {
+        type: "voice.live.stop.request",
+        agentId: input.agentId,
+        liveSessionId: input.liveSessionId,
+      },
+    });
   }
 
   async sendVoiceAudioChunk(audio: string, format: string, isLast = false): Promise<void> {

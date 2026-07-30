@@ -1753,6 +1753,52 @@ export const es: TranslationResources = {
       copied: "Copiado",
     },
   },
+  audioSession: {
+    busy: {
+      voiceMode: "El modo de voz está usando el micrófono. Detenlo primero.",
+      dictation: "El dictado está usando el micrófono. Detenlo primero.",
+      liveVoice: "La voz en directo está usando el micrófono. Detenla primero.",
+      unknown: "El micrófono está en uso. Detén primero la otra función de audio.",
+    },
+  },
+  liveVoice: {
+    label: "Voz en directo",
+    actions: {
+      start: "Iniciar voz en directo",
+      stop: "Detener voz en directo",
+      mute: "Silenciar micrófono",
+      unmute: "Activar micrófono",
+      enableAudio: "Toca para activar el audio",
+    },
+    status: {
+      connecting: "Conectando...",
+      live: "En directo",
+      audioBlocked: "Audio bloqueado",
+      stopping: "Deteniendo...",
+      ended: "Llamada finalizada",
+      error: "Error",
+    },
+    transcript: {
+      empty: "Aún no se ha hablado.",
+      user: "Tú:",
+      assistant: "Agente:",
+    },
+    errors: {
+      busy: "Otro cliente ya tiene una llamada de voz en directo en este agente.",
+      unsupported: "Este host no admite la voz en directo.",
+      agentNotFound: "Ese agente ya no está disponible.",
+      agentBusy: "El agente está ocupado. Espera a que termine el turno actual.",
+      startFailed: "No se pudo iniciar la voz en directo.",
+      micBusy: "Otra función está usando el micrófono.",
+      notConnected: "Este host no está conectado.",
+      alreadyActive: "Ya hay una llamada de voz en directo en curso.",
+      stopping: "La llamada de voz en directo anterior aún se está deteniendo.",
+      micDenied: "Se denegó el acceso al micrófono.",
+      micUnavailable: "No se pudo abrir el micrófono.",
+      iceTimeout: "No se pudo negociar la conexión a tiempo.",
+      connectionLost: "Se perdió la conexión de voz en directo.",
+    },
+  },
   realtimeVoice: {
     actions: {
       mute: "Silenciar voz en tiempo real",

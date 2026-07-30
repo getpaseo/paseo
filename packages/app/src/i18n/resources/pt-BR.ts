@@ -1739,6 +1739,52 @@ export const ptBR: TranslationResources = {
       copied: "Copiado",
     },
   },
+  audioSession: {
+    busy: {
+      voiceMode: "O modo de voz está usando o microfone. Pare-o primeiro.",
+      dictation: "O ditado está usando o microfone. Pare-o primeiro.",
+      liveVoice: "A voz ao vivo está usando o microfone. Pare-a primeiro.",
+      unknown: "O microfone está em uso. Pare primeiro o outro recurso de áudio.",
+    },
+  },
+  liveVoice: {
+    label: "Voz ao vivo",
+    actions: {
+      start: "Iniciar voz ao vivo",
+      stop: "Parar voz ao vivo",
+      mute: "Silenciar microfone",
+      unmute: "Ativar microfone",
+      enableAudio: "Toque para ativar o áudio",
+    },
+    status: {
+      connecting: "Conectando...",
+      live: "Ao vivo",
+      audioBlocked: "Áudio bloqueado",
+      stopping: "Parando...",
+      ended: "Chamada encerrada",
+      error: "Falha",
+    },
+    transcript: {
+      empty: "Nada falado ainda.",
+      user: "Você:",
+      assistant: "Agente:",
+    },
+    errors: {
+      busy: "Outro cliente já tem uma chamada de voz ao vivo neste agente.",
+      unsupported: "Este host não suporta voz ao vivo.",
+      agentNotFound: "Esse agente não está mais disponível.",
+      agentBusy: "O agente está ocupado. Aguarde o fim do turno atual.",
+      startFailed: "Não foi possível iniciar a voz ao vivo.",
+      micBusy: "O microfone está sendo usado por outro recurso.",
+      notConnected: "Este host não está conectado.",
+      alreadyActive: "Já existe uma chamada de voz ao vivo em andamento.",
+      stopping: "A chamada de voz ao vivo anterior ainda está sendo encerrada.",
+      micDenied: "O acesso ao microfone foi negado.",
+      micUnavailable: "Não foi possível abrir o microfone.",
+      iceTimeout: "Não foi possível negociar a conexão em tempo.",
+      connectionLost: "A conexão de voz ao vivo caiu.",
+    },
+  },
   realtimeVoice: {
     actions: {
       mute: "Silenciar voz em tempo real",

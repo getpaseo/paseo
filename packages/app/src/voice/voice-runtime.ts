@@ -1,5 +1,7 @@
 import { Buffer } from "buffer";
 import type { AgentStreamEventPayload, SessionOutboundMessage } from "@getpaseo/protocol/messages";
+import { resolveAudioSessionBusyMessage } from "@/audio/audio-session-busy-message";
+import { audioSessionLease, type AudioSessionLeaseToken } from "@/audio/audio-session-lease";
 import { resolveVoiceUnavailableMessage } from "@/utils/server-info-capabilities";
 import type { DaemonServerInfo } from "@/stores/session-store";
 import type { AudioEngine } from "@/voice/audio-engine-types";
@@ -516,7 +518,33 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
     },
   };
 
+  // Voice mode is one of three microphone owners; the app-global lease keeps
+  // dictation and live voice from talking over it (and vice versa).
+  let micLeaseToken: AudioSessionLeaseToken | null = null;
+
+  /**
+   * Reused across agent switches: `startVoice` on a new agent while voice mode is
+   * already running must not have to give the mic up and take it back.
+   */
+  function acquireMicLease(): void {
+    if (audioSessionLease.isHeldBy(micLeaseToken)) {
+      return;
+    }
+    const token = audioSessionLease.acquire("voiceMode");
+    if (!token) {
+      throw new Error(resolveAudioSessionBusyMessage(audioSessionLease.current()));
+    }
+    micLeaseToken = token;
+  }
+
+  function releaseMicLease(): void {
+    const token = micLeaseToken;
+    micLeaseToken = null;
+    audioSessionLease.release(token);
+  }
+
   function resetToDisabledState(): void {
+    releaseMicLease();
     state.transportReady = false;
     state.turnInProgress = false;
     state.serverSpeechDetected = false;
@@ -726,6 +754,10 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
       if (unavailableMessage) {
         throw new Error(unavailableMessage);
       }
+
+      // Refuse rather than interrupt: throws before any state churn, so a busy
+      // microphone leaves the runtime exactly as it was.
+      acquireMicLease();
 
       const previousServerId = state.snapshot.activeServerId;
       const previousAgentId = state.snapshot.activeAgentId;

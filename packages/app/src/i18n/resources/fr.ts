@@ -1757,6 +1757,52 @@ export const fr: TranslationResources = {
       copied: "Copié",
     },
   },
+  audioSession: {
+    busy: {
+      voiceMode: "Le mode vocal utilise le micro. Arrêtez-le d'abord.",
+      dictation: "La dictée utilise le micro. Arrêtez-la d'abord.",
+      liveVoice: "La voix en direct utilise le micro. Arrêtez-la d'abord.",
+      unknown: "Le micro est occupé. Arrêtez d'abord l'autre fonction audio.",
+    },
+  },
+  liveVoice: {
+    label: "Voix en direct",
+    actions: {
+      start: "Démarrer la voix en direct",
+      stop: "Arrêter la voix en direct",
+      mute: "Couper le micro",
+      unmute: "Réactiver le micro",
+      enableAudio: "Touchez pour activer l'audio",
+    },
+    status: {
+      connecting: "Connexion...",
+      live: "En direct",
+      audioBlocked: "Audio bloqué",
+      stopping: "Arrêt...",
+      ended: "Appel terminé",
+      error: "Échec",
+    },
+    transcript: {
+      empty: "Rien n'a encore été dit.",
+      user: "Vous :",
+      assistant: "Agent :",
+    },
+    errors: {
+      busy: "Un autre client a déjà un appel vocal en direct sur cet agent.",
+      unsupported: "Cet hôte ne prend pas en charge la voix en direct.",
+      agentNotFound: "Cet agent n'est plus disponible.",
+      agentBusy: "L'agent est occupé. Attendez la fin du tour en cours.",
+      startFailed: "Impossible de démarrer la voix en direct.",
+      micBusy: "Le micro est utilisé par une autre fonction.",
+      notConnected: "Cet hôte n'est pas connecté.",
+      alreadyActive: "Un appel vocal en direct est déjà en cours.",
+      stopping: "L'appel vocal en direct précédent est encore en cours d'arrêt.",
+      micDenied: "L'accès au micro a été refusé.",
+      micUnavailable: "Le micro n'a pas pu être ouvert.",
+      iceTimeout: "La connexion n'a pas pu être négociée à temps.",
+      connectionLost: "La connexion vocale en direct a été perdue.",
+    },
+  },
   realtimeVoice: {
     actions: {
       mute: "Couper la voix en temps réel",
