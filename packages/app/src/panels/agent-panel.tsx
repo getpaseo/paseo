@@ -20,6 +20,7 @@ import invariant from "tiny-invariant";
 import { shallow, useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { AgentStreamView, type AgentStreamViewHandle } from "@/agent-stream/view";
+import { TaskListCard } from "@/components/task-list-card";
 import { ArchivedAgentCallout } from "@/components/archived-agent-callout";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { useRetainedPanelActive } from "@/components/retained-panel";
@@ -1450,6 +1451,21 @@ function ActiveAgentComposer({
     serverId,
     parentAgentId: agentId,
   });
+  const activeTodoItems = useStoreWithEqualityFn(
+    useSessionStore,
+    (state) => {
+      const tail = state.sessions[serverId]?.agentStreamTail?.get(agentId);
+      if (!tail) return [];
+      for (let i = tail.length - 1; i >= 0; i--) {
+        const item = tail[i];
+        if (item.kind === "todo_list") {
+          return item.items;
+        }
+      }
+      return [];
+    },
+    shallow,
+  );
   const canDetachSubagents = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.agentDetach === true,
   );
@@ -1557,6 +1573,7 @@ function ActiveAgentComposer({
 
   return (
     <ReanimatedAnimated.View style={inputAreaStyle} onLayout={onInputAreaLayout}>
+      <TaskListCard items={activeTodoItems} />
       <SubagentsTrack
         rows={subagentRows}
         onOpenSubagent={handleOpenSubagent}

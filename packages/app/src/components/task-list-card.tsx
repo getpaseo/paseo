@@ -1,15 +1,25 @@
 import { memo, useCallback, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
-import { Check, ChevronDown, ChevronRight } from "lucide-react-native";
+import { Check, ChevronDown, ChevronRight, Square } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import type { TodoEntry } from "@/types/stream";
+import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 
 const ThemedCheck = withUnistyles(Check);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedChevronRight = withUnistyles(ChevronRight);
+const ThemedSquare = withUnistyles(Square);
 
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const completedColorMapping = (theme: Theme) => ({ color: theme.colors.statusSuccess });
+
+function TaskCheckbox({ completed }: { completed: boolean }) {
+  if (completed) {
+    return <ThemedCheck size={16} uniProps={completedColorMapping} />;
+  }
+  return <ThemedSquare size={16} uniProps={foregroundMutedColorMapping} />;
+}
 
 interface TaskListCardProps {
   items: TodoEntry[];
@@ -56,44 +66,46 @@ export const TaskListCard = memo(function TaskListCard({ items }: TaskListCardPr
 
   return (
     <View style={styles.container}>
-      <View style={surfaceStyle}>
-        <View style={headerContainerStyle}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={headerLabel}
-            onPress={toggleExpanded}
-            style={headerToggleStyle}
-          >
-            {expanded ? (
-              <ThemedChevronDown size={12} uniProps={foregroundMutedColorMapping} />
-            ) : (
-              <ThemedChevronRight size={12} uniProps={foregroundMutedColorMapping} />
-            )}
-            <Text style={styles.headerLabel} numberOfLines={1}>
-              {headerLabel}
-            </Text>
-          </Pressable>
-        </View>
-        {expanded ? (
-          <ScrollView
-            style={styles.scroll}
-            contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}
-            nestedScrollEnabled
-          >
-            {items.map((item) => {
-              const textStyle = [styles.itemText, item.completed && styles.itemTextCompleted];
-              return (
+      <View style={styles.track}>
+        <View style={surfaceStyle}>
+          <View style={headerContainerStyle}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={headerLabel}
+              onPress={toggleExpanded}
+              style={headerToggleStyle}
+            >
+              {expanded ? (
+                <ThemedChevronDown size={12} uniProps={foregroundMutedColorMapping} />
+              ) : (
+                <ThemedChevronRight size={12} uniProps={foregroundMutedColorMapping} />
+              )}
+              <Text style={styles.headerLabel} numberOfLines={1}>
+                {headerLabel}
+              </Text>
+            </Pressable>
+          </View>
+          {expanded ? (
+            <ScrollView
+              style={styles.scroll}
+              contentContainerStyle={styles.scrollContent}
+              showsVerticalScrollIndicator={false}
+              nestedScrollEnabled
+            >
+              {items.map((item) => (
                 <View key={item.text} style={styles.row}>
-                  <ThemedCheck size={12} uniProps={foregroundMutedColorMapping} />
-                  <Text style={textStyle} numberOfLines={1}>
+                  <TaskCheckbox completed={item.completed} />
+                  <Text
+                    style={[styles.itemText, item.completed && styles.itemTextCompleted]}
+                    numberOfLines={1}
+                  >
                     {item.text}
                   </Text>
                 </View>
-              );
-            })}
-          </ScrollView>
-        ) : null}
+              ))}
+            </ScrollView>
+          ) : null}
+        </View>
       </View>
     </View>
   );
@@ -101,7 +113,12 @@ export const TaskListCard = memo(function TaskListCard({ items }: TaskListCardPr
 
 const styles = StyleSheet.create((theme) => ({
   container: {
+    alignItems: "center",
+    paddingHorizontal: theme.spacing[4],
+  },
+  track: {
     width: "100%",
+    maxWidth: MAX_CONTENT_WIDTH,
   },
   surface: {
     alignSelf: "stretch",

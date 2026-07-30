@@ -37,7 +37,6 @@ import {
   MessageOuterSpacingProvider,
   type InlinePathTarget,
 } from "@/components/message";
-import { TaskListCard } from "@/components/task-list-card";
 import { PlanCard } from "@/components/plan-card";
 import type { StreamItem } from "@/types/stream";
 import type { PendingMessageSubmission } from "@/composer/submission/model";
@@ -794,7 +793,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             );
 
           case "todo_list":
-            return <TaskListCard items={item.items} />;
+            return (
+              <ActivityLog
+                type="info"
+                message={`${item.items.filter((entry) => entry.completed).length}/${item.items.length} tasks`}
+                timestamp={item.timestamp.getTime()}
+              />
+            );
 
           case "compaction":
             return (
