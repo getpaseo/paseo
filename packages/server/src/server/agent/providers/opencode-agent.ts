@@ -3142,6 +3142,19 @@ class OpenCodeAgentSession implements AgentSession {
       const status = readOpenCodeRecord(statuses[this.sessionId]);
       const statusType = readNonEmptyString(status?.type);
       if (!status || statusType === "idle") {
+        if (
+          this.externallyDriven &&
+          stopping.deferredEvents.length > 0 &&
+          stopping.deferredEvents.every(({ rawEvent }) => {
+            const deferredEvent = unwrapOpenCodeGlobalEvent(rawEvent);
+            return (
+              deferredEvent?.type === "session.status" &&
+              deferredEvent.properties.status.type === "busy"
+            );
+          })
+        ) {
+          stopping.deferredEvents.length = 0;
+        }
         this.finishStoppingTurn(stopping);
         return;
       }

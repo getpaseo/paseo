@@ -2673,6 +2673,73 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   }, 15_000);
 
+  test("discards an adopted reconnect busy marker reconciled as idle", async () => {
+    const firstStreamEnd = createTestDeferred<void>();
+    const busyMarkerSent = createTestDeferred<void>();
+    const statusReturnedIdle = createTestDeferred<void>();
+    let subscriptionCount = 0;
+    const openCode = new TestOpenCodeClient();
+    openCode.globalEventImplementation = async (options) => {
+      subscriptionCount += 1;
+      const signal = (options as { signal: AbortSignal }).signal;
+      return {
+        stream: {
+          async *[Symbol.asyncIterator]() {
+            yield { type: "server.connected", properties: {} };
+            if (subscriptionCount === 1) {
+              await firstStreamEnd.promise;
+              return;
+            }
+            yield {
+              type: "session.status",
+              properties: {
+                sessionID: "ses_adopted_stale_busy",
+                status: { type: "busy" },
+              },
+            };
+            busyMarkerSent.resolve();
+            await waitForAbort(signal);
+          },
+        },
+      };
+    };
+    openCode.sessionStatusImplementation = async () => {
+      await busyMarkerSent.promise;
+      statusReturnedIdle.resolve();
+      return { data: { ses_adopted_stale_busy: { type: "idle" } } };
+    };
+    openCode.sessionPromptAsyncEvents = [];
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/workspace/repo" },
+      openCode.asSdkClient(),
+      "ses_adopted_stale_busy",
+      createTestLogger(),
+      new Map(),
+      undefined,
+      true,
+      undefined,
+      undefined,
+      true,
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    try {
+      await session.startTurn("first");
+      await session.interrupt();
+      firstStreamEnd.resolve();
+      await statusReturnedIdle.promise;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(events.filter((event) => event.type === "turn_started")).toHaveLength(1);
+      await session.startTurn("replacement");
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
+    } finally {
+      firstStreamEnd.resolve();
+      await session.close();
+    }
+  }, 15_000);
+
   test("recovers an eager stop observer after a transient status failure", async () => {
     const firstStreamEnd = createTestDeferred<void>();
     const settleAbort = createTestDeferred<void>();
