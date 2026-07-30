@@ -4,9 +4,19 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { createDaemonTestContext, type DaemonTestContext } from "../test-utils/index.js";
+import { TIMELINE_PAGE_BYTE_BUDGET } from "../websocket/physical-socket.js";
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-e2e-"));
+}
+
+// The server enforces the budget on the projection entries; the wire response adds a
+// per-entry `provider` field the budget measurement does not count, so strip it to
+// compare on the same basis the bound is applied.
+function projectedPageBytes(entries: ReadonlyArray<{ provider?: string }>): number {
+  return Buffer.byteLength(
+    JSON.stringify(entries.map(({ provider: _provider, ...entry }) => entry)),
+  );
 }
 
 // ~40 KiB per entry x 400 entries ≈ 16 MiB of projected content — well over the 4 MiB
@@ -64,8 +74,7 @@ describe("daemon E2E - timeline byte bound (#2610)", () => {
       expect(tail.entries.length).toBeGreaterThan(0);
       expect(tail.entries.length).toBeLessThan(400);
       expect(tail.hasOlder).toBe(true);
-      const tailBytes = Buffer.byteLength(JSON.stringify(tail.entries));
-      expect(tailBytes).toBeLessThan(8 * 1024 * 1024);
+      expect(projectedPageBytes(tail.entries)).toBeLessThanOrEqual(TIMELINE_PAGE_BYTE_BUDGET);
 
       // (d)+(e) forward progress + bounded-not-partial: page from the start forward with
       // `after`; endCursor strictly advances; the union reproduces the full committed set.
@@ -150,7 +159,7 @@ describe("daemon E2E - timeline byte bound (#2610)", () => {
       expect(tail.entries.length).toBeGreaterThan(0);
       expect(tail.entries.length).toBeLessThan(100);
       expect(tail.hasOlder).toBe(true);
-      expect(Buffer.byteLength(JSON.stringify(tail.entries))).toBeLessThan(8 * 1024 * 1024);
+      expect(projectedPageBytes(tail.entries)).toBeLessThanOrEqual(TIMELINE_PAGE_BYTE_BUDGET);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
