@@ -2005,6 +2005,30 @@ describe("OpenCode adapter startTurn error handling", () => {
 
     try {
       await session.startTurn("first");
+      openCode.emitEvent({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "prt_canceled_usage",
+            sessionID: "ses_deferred_autonomous",
+            messageID: "msg_canceled_assistant",
+            type: "step-finish",
+            tokens: { input: 100, output: 20, cache: { read: 50 } },
+          },
+        },
+      });
+      await vi.waitFor(() =>
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: "usage_updated",
+            usage: expect.objectContaining({
+              inputTokens: 100,
+              outputTokens: 20,
+              cachedInputTokens: 50,
+            }),
+          }),
+        ),
+      );
       const interrupt = session.interrupt();
       await vi.waitFor(() => expect(openCode.calls.sessionAbort).toHaveLength(1));
       openCode.emitEvent({
@@ -2018,6 +2042,18 @@ describe("OpenCode adapter startTurn error handling", () => {
             id: "msg_plugin_wake",
             sessionID: "ses_deferred_autonomous",
             role: "user",
+          },
+        },
+      });
+      openCode.emitEvent({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "prt_autonomous_usage",
+            sessionID: "ses_deferred_autonomous",
+            messageID: "msg_autonomous_assistant",
+            type: "step-finish",
+            tokens: { input: 7, output: 3 },
           },
         },
       });
@@ -2054,8 +2090,20 @@ describe("OpenCode adapter startTurn error handling", () => {
           type: "turn_completed",
           provider: "opencode",
           turnId: "opencode-turn-1",
+          usage: expect.objectContaining({
+            inputTokens: 7,
+            outputTokens: 3,
+            contextWindowUsedTokens: 10,
+          }),
         }),
       );
+      const autonomousCompletion = events.find(
+        (event) => event.type === "turn_completed" && event.turnId === "opencode-turn-1",
+      );
+      expect(autonomousCompletion?.type).toBe("turn_completed");
+      if (autonomousCompletion?.type === "turn_completed") {
+        expect(autonomousCompletion.usage?.cachedInputTokens).toBeUndefined();
+      }
       expect(events).toContainEqual(
         expect.objectContaining({
           type: "timeline",
@@ -2071,6 +2119,83 @@ describe("OpenCode adapter startTurn error handling", () => {
       });
     } finally {
       settleAbort.resolve();
+      await session.close();
+    }
+  });
+
+  test("keeps replacement prompts behind deferred stop-event replay", async () => {
+    const { parent: session, openCode } = await createParentSession("ses_serialized_replay");
+    const settleAbort = createTestDeferred<void>();
+    const settlePermissionReply = createTestDeferred<void>();
+    const events: AgentStreamEvent[] = [];
+    openCode.sessionPromptAsyncEvents = [];
+    openCode.sessionAbortImplementation = async () => {
+      await settleAbort.promise;
+      return { data: true };
+    };
+    openCode.permissionReplyImplementation = async () => {
+      await settlePermissionReply.promise;
+      return {};
+    };
+    await session.setFeature("auto_accept", true);
+    session.subscribe((event) => events.push(event));
+
+    let replacement: Promise<{ turnId: string }> | undefined;
+    try {
+      await session.startTurn("first");
+      const interrupt = session.interrupt();
+      await vi.waitFor(() => expect(openCode.calls.sessionAbort).toHaveLength(1));
+      openCode.emitEvent({
+        type: "session.idle",
+        properties: { sessionID: "ses_serialized_replay" },
+      });
+      openCode.emitEvent({
+        type: "permission.asked",
+        properties: {
+          id: "perm_deferred_replay",
+          sessionID: "ses_serialized_replay",
+          permission: "bash",
+          patterns: ["npm test"],
+          metadata: { command: "npm test" },
+        },
+      });
+
+      settleAbort.resolve();
+      await vi.waitFor(() => expect(openCode.calls.permissionReply).toHaveLength(1));
+      replacement = session.startTurn("replacement");
+      openCode.emitEvent({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "msg_wake_during_replay",
+            sessionID: "ses_serialized_replay",
+            role: "user",
+          },
+        },
+      });
+      for (const event of assistantTurnEvents({
+        sessionId: "ses_serialized_replay",
+        text: "Replay completed before replacement.",
+      })) {
+        openCode.emitEvent(event);
+      }
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
+
+      settlePermissionReply.resolve();
+      await interrupt;
+      await replacement;
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
+      expect(events).toContainEqual({
+        type: "turn_completed",
+        provider: "opencode",
+        turnId: "opencode-turn-1",
+      });
+    } finally {
+      settleAbort.resolve();
+      settlePermissionReply.resolve();
+      await replacement?.catch(() => undefined);
       await session.close();
     }
   });
@@ -2111,6 +2236,26 @@ describe("OpenCode adapter startTurn error handling", () => {
       await session.interrupt();
 
       await expect(session.startTurn("unsafe replacement")).rejects.toThrow("abort failed");
+      expect(openCode.calls.sessionAbort).toHaveLength(2);
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(0);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("fails closed when idle-session abort attempts return SDK errors", async () => {
+    const { parent: session, openCode } = await createParentSession("ses_error_idle_abort");
+    openCode.sessionPromptAsyncEvents = [];
+    openCode.sessionAbortImplementation = async () => ({
+      error: new Error("abort response failed"),
+    });
+
+    try {
+      await session.interrupt();
+
+      await expect(session.startTurn("unsafe replacement")).rejects.toThrow(
+        "abort response failed",
+      );
       expect(openCode.calls.sessionAbort).toHaveLength(2);
       expect(openCode.calls.sessionPromptAsync).toHaveLength(0);
     } finally {
@@ -2178,8 +2323,9 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   }, 15_000);
 
-  test("recovers the stop observer after a transient status failure", async () => {
+  test("recovers an eager stop observer after a transient status failure", async () => {
     const firstStreamEnd = createTestDeferred<void>();
+    const settleAbort = createTestDeferred<void>();
     const recoveredIdle = createTestDeferred<void>();
     let subscriptionCount = 0;
     const { parent: session, openCode } = await createParentSession(
@@ -2212,18 +2358,26 @@ describe("OpenCode adapter startTurn error handling", () => {
       },
     );
     openCode.sessionPromptAsyncEvents = [];
+    openCode.sessionAbortImplementation = async () => {
+      await settleAbort.promise;
+      return { data: true };
+    };
 
     try {
       await session.startTurn("first");
-      await session.interrupt();
-      const failedReplacement = session.startTurn("second");
+      const interrupt = session.interrupt();
       firstStreamEnd.resolve();
-      await expect(failedReplacement).rejects.toThrow("transient status failure");
+      await vi.waitFor(() => expect(openCode.calls.sessionStatus).toHaveLength(1));
 
+      settleAbort.resolve();
+      await interrupt;
       recoveredIdle.resolve();
-      await expect(session.startTurn("third")).resolves.toEqual({ turnId: "opencode-turn-1" });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      await expect(session.startTurn("second")).resolves.toEqual({ turnId: "opencode-turn-1" });
       expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
     } finally {
+      settleAbort.resolve();
       await session.close();
     }
   }, 15_000);

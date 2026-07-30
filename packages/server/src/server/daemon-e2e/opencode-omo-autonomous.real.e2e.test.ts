@@ -1,3 +1,6 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import { expect, test } from "vitest";
 
 import type { SessionOutboundMessage } from "../messages.js";
@@ -7,6 +10,7 @@ import { createOpenCodeOmoRealRuntime } from "./opencode-omo-real-runtime.js";
 const CHILD_TOKEN = "PASEO_OMO_CHILD_READY";
 const ROOT_IDLE_TOKEN = "PASEO_OMO_ROOT_WAITING";
 const FINAL_TOKEN = "PASEO_OMO_AUTONOMOUS_FINAL";
+const ROOT_IDLE_BARRIER = ".paseo-omo-root-idle";
 
 test("OpenCode remains idle while an OMO child works and completes the autonomous wake", async () => {
   const runtime = await createOpenCodeOmoRealRuntime();
@@ -27,7 +31,7 @@ test("OpenCode remains idle while an OMO child works and completes the autonomou
       agent.id,
       [
         "Use the OMO task tool exactly once with category quick and run_in_background=true.",
-        `Tell the child: use bash to sleep 5, then return exactly ${CHILD_TOKEN}.`,
+        `Tell the child: use bash to wait until ${ROOT_IDLE_BARRIER} exists in the workspace, sleep 5, then return exactly ${CHILD_TOKEN}.`,
         `After the background task starts, reply exactly ${ROOT_IDLE_TOKEN} and stop.`,
         "When the background completion notification arrives, retrieve the task result with background_output.",
         `After confirming ${CHILD_TOKEN}, reply exactly ${FINAL_TOKEN}.`,
@@ -38,6 +42,7 @@ test("OpenCode remains idle while an OMO child works and completes the autonomou
     expect(firstFinish.status).toBe("idle");
     const firstTimeline = await runtime.client.fetchAgentTimeline(agent.id, { limit: 240 });
     expect(assistantTexts(firstTimeline.entries).join("\n")).toContain(ROOT_IDLE_TOKEN);
+    await writeFile(join(runtime.workspace, ROOT_IDLE_BARRIER), "root idle\n", "utf8");
 
     const completedChild = await waitForCompletedChildWithToken(
       runtime.client,
