@@ -127,9 +127,11 @@ function userMessageEvents(params: {
 
 function assistantTurnEvents({
   sessionId = "session-1",
+  messageId = "msg_assistant",
   text = "Hello from OpenCode",
 }: {
   sessionId?: string;
+  messageId?: string;
   text?: string;
 } = {}): unknown[] {
   return [
@@ -137,7 +139,7 @@ function assistantTurnEvents({
       type: "message.updated",
       properties: {
         info: {
-          id: "msg_assistant",
+          id: messageId,
           sessionID: sessionId,
           role: "assistant",
         },
@@ -147,8 +149,8 @@ function assistantTurnEvents({
       type: "message.part.delta",
       properties: {
         sessionID: sessionId,
-        messageID: "msg_assistant",
-        partID: "prt_text",
+        messageID: messageId,
+        partID: messageId === "msg_assistant" ? "prt_text" : `part_${messageId}`,
         field: "text",
         delta: text,
       },
@@ -2528,7 +2530,7 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   }, 15_000);
 
-  test("does not replay adopted-session canceled output after reconnect", async () => {
+  test("preserves an adopted busy wake without replaying canceled reconnect output", async () => {
     const firstStreamEnd = createTestDeferred<void>();
     const lateOutputSent = createTestDeferred<void>();
     const releaseTerminal = createTestDeferred<void>();
@@ -2554,8 +2556,23 @@ describe("OpenCode adapter startTurn error handling", () => {
               yield event;
             }
             lateOutputSent.resolve();
+            yield {
+              type: "session.status",
+              properties: {
+                sessionID: "ses_adopted_reconnect",
+                status: { type: "busy" },
+              },
+            };
+            const autonomousOutput = assistantTurnEvents({
+              sessionId: "ses_adopted_reconnect",
+              messageId: "msg_adopted_autonomous",
+              text: "Adopted autonomous output survives.",
+            });
+            for (const event of autonomousOutput.slice(0, -1)) {
+              yield event;
+            }
             await releaseTerminal.promise;
-            yield lateOutput.at(-1);
+            yield autonomousOutput.at(-1);
             yield {
               type: "session.created",
               properties: {
@@ -2611,11 +2628,17 @@ describe("OpenCode adapter startTurn error handling", () => {
       await streamDrained.promise;
       await new Promise<void>((resolve) => setImmediate(resolve));
 
-      expect(events.filter((event) => event.type === "turn_started")).toHaveLength(1);
+      expect(events.filter((event) => event.type === "turn_started")).toHaveLength(2);
       expect(events).not.toContainEqual(
         expect.objectContaining({
           type: "timeline",
           item: expect.objectContaining({ text: "Canceled output must stay canceled." }),
+        }),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "timeline",
+          item: expect.objectContaining({ text: "Adopted autonomous output survives." }),
         }),
       );
     } finally {

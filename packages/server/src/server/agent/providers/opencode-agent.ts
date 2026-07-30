@@ -3141,7 +3141,7 @@ class OpenCodeAgentSession implements AgentSession {
       const status = readOpenCodeRecord(statuses[this.sessionId]);
       const statusType = readNonEmptyString(status?.type);
       if (!status || statusType === "idle") {
-        this.finishStoppingTurn();
+        this.finishStoppingTurn(stopping);
         return;
       }
       if (statusType !== "busy" && statusType !== "retry") {
@@ -3709,7 +3709,7 @@ class OpenCodeAgentSession implements AgentSession {
       if (retainEvent) {
         stopping.deferredEvents.push(params);
       }
-      this.finishStoppingTurn();
+      this.finishStoppingTurn(stopping);
     } else if (retainEvent) {
       stopping.deferredEvents.push(params);
     }
@@ -3756,9 +3756,12 @@ class OpenCodeAgentSession implements AgentSession {
 
   private isAutonomousWakeBoundary(event: OpenCodeEvent): boolean {
     return (
-      event.type === "message.updated" &&
-      event.properties.info.role === "user" &&
-      !this.emittedUserMessageIds.has(event.properties.info.id)
+      (event.type === "message.updated" &&
+        event.properties.info.role === "user" &&
+        !this.emittedUserMessageIds.has(event.properties.info.id)) ||
+      (this.externallyDriven &&
+        event.type === "session.status" &&
+        event.properties.status.type === "busy")
     );
   }
 
@@ -3890,9 +3893,8 @@ class OpenCodeAgentSession implements AgentSession {
     }
   }
 
-  private finishStoppingTurn(): void {
-    const stopping = this.runBoundary;
-    if (!stopping) {
+  private finishStoppingTurn(stopping: OpenCodeRunBoundaryState): void {
+    if (this.runBoundary !== stopping) {
       return;
     }
     resetOpenCodeTurnTrackingState(this.createTranslationState());
