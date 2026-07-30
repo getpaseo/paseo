@@ -1982,6 +1982,74 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
+  test("preserves an autonomous wake that arrives after provider idle but before abort settlement", async () => {
+    const { parent: session, openCode } = await createParentSession("ses_deferred_autonomous");
+    const settleAbort = createTestDeferred<void>();
+    const events: AgentStreamEvent[] = [];
+    openCode.sessionPromptAsyncEvents = [];
+    openCode.sessionAbortImplementation = async () => {
+      await settleAbort.promise;
+      return { data: true };
+    };
+    session.subscribe((event) => events.push(event));
+
+    try {
+      await session.startTurn("first");
+      const interrupt = session.interrupt();
+      await vi.waitFor(() => expect(openCode.calls.sessionAbort).toHaveLength(1));
+      openCode.emitEvent({
+        type: "session.idle",
+        properties: { sessionID: "ses_deferred_autonomous" },
+      });
+      openCode.emitEvent({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "msg_plugin_wake",
+            sessionID: "ses_deferred_autonomous",
+            role: "user",
+          },
+        },
+      });
+
+      settleAbort.resolve();
+      await interrupt;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(events).toContainEqual({
+        type: "turn_started",
+        provider: "opencode",
+        turnId: "opencode-turn-1",
+      });
+      for (const event of assistantTurnEvents({
+        sessionId: "ses_deferred_autonomous",
+        text: "Autonomous wake completed.",
+      })) {
+        openCode.emitEvent(event);
+      }
+      await vi.waitFor(() =>
+        expect(events).toContainEqual({
+          type: "turn_completed",
+          provider: "opencode",
+          turnId: "opencode-turn-1",
+        }),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "timeline",
+          turnId: "opencode-turn-1",
+          item: expect.objectContaining({
+            type: "assistant_message",
+            text: "Autonomous wake completed.",
+          }),
+        }),
+      );
+    } finally {
+      settleAbort.resolve();
+      await session.close();
+    }
+  });
+
   test("waits for an idle-session abort before starting a prompt", async () => {
     const { parent: session, openCode } = await createParentSession("ses_idle_abort");
     const settleAbort = createTestDeferred<void>();

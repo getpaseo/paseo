@@ -7,6 +7,7 @@ import { Transform } from "node:stream";
 import pino from "pino";
 
 import { OpenCodeAgentClient } from "../agent/providers/opencode-agent.js";
+import { OpenCodeServerManager } from "../agent/providers/opencode/server-manager.js";
 import { terminateWithTreeKill } from "../../utils/tree-kill.js";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
@@ -160,10 +161,17 @@ export async function createOpenCodeOmoRealRuntime(): Promise<OpenCodeOmoRealRun
   redactingTrace.pipe(traceDestination, { end: false });
   const logger = pino({ level: "trace" }, redactingTrace);
   const closeTrace = createTraceCloser(redactingTrace, traceDestination);
-  const openCodeClient = new OpenCodeAgentClient(logger, {
+  const runtimeSettings = {
     command: { mode: "replace", argv: [openCodeCommand] },
     env: runtimeEnv,
+  } as const;
+  const serverManager = new OpenCodeServerManager({
+    logger,
+    runtimeSettings,
+    baseEnv: runtimeEnv,
+    resolveHomeDir: () => paths.home,
   });
+  const openCodeClient = new OpenCodeAgentClient(logger, runtimeSettings, { serverManager });
 
   let daemon: TestPaseoDaemon | null = null;
   let client: DaemonClient | null = null;
@@ -181,6 +189,7 @@ export async function createOpenCodeOmoRealRuntime(): Promise<OpenCodeOmoRealRun
   } catch (error) {
     await client?.close().catch(() => undefined);
     await daemon?.close().catch(() => undefined);
+    await serverManager.shutdown().catch(() => undefined);
     closeTrace();
     restoreEnvironment("PASEO_HOME", previousPaseoHome);
     throw withArtifactLocation(error, paths.artifacts);
@@ -195,6 +204,7 @@ export async function createOpenCodeOmoRealRuntime(): Promise<OpenCodeOmoRealRun
     close: async (passed) => {
       await client.close().catch(() => undefined);
       await daemon.close().catch(() => undefined);
+      await serverManager.shutdown().catch(() => undefined);
       closeTrace();
       restoreEnvironment("PASEO_HOME", previousPaseoHome);
       if (passed) {
@@ -222,6 +232,11 @@ function createRuntimePaths(): RuntimePaths {
   for (const directory of Object.values(paths)) {
     mkdirSync(directory, { recursive: true });
   }
+  if (process.platform === "win32") {
+    const windowsHome = resolveWindowsHomeEnv(paths.home);
+    mkdirSync(windowsHome.APPDATA, { recursive: true });
+    mkdirSync(windowsHome.LOCALAPPDATA, { recursive: true });
+  }
   return paths;
 }
 
@@ -245,6 +260,7 @@ function buildRuntimeEnv(paths: RuntimePaths, openRouterApiKey: string | null): 
     SSL_CERT_FILE: process.env.SSL_CERT_FILE,
     SSL_CERT_DIR: process.env.SSL_CERT_DIR,
     HOME: paths.home,
+    ...(process.platform === "win32" ? resolveWindowsHomeEnv(paths.home) : {}),
     PASEO_HOME: path.join(paths.paseoHomeRoot, ".paseo"),
     XDG_CONFIG_HOME: paths.xdgConfig,
     XDG_DATA_HOME: paths.xdgData,
@@ -258,6 +274,24 @@ function buildRuntimeEnv(paths: RuntimePaths, openRouterApiKey: string | null): 
     CI: "1",
     FORCE_COLOR: "",
     ...(openRouterApiKey ? { OPENROUTER_API_KEY: openRouterApiKey } : {}),
+  };
+}
+
+export function resolveWindowsHomeEnv(home: string): {
+  USERPROFILE: string;
+  HOMEDRIVE: string;
+  HOMEPATH: string;
+  APPDATA: string;
+  LOCALAPPDATA: string;
+} {
+  const root = path.win32.parse(home).root;
+  const relativeHome = path.win32.relative(root, home);
+  return {
+    USERPROFILE: home,
+    HOMEDRIVE: root.replace(/[\\/]$/, ""),
+    HOMEPATH: `\\${relativeHome}`,
+    APPDATA: path.win32.join(home, "AppData", "Roaming"),
+    LOCALAPPDATA: path.win32.join(home, "AppData", "Local"),
   };
 }
 

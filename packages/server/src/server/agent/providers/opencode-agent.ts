@@ -2765,6 +2765,8 @@ type OpenCodeTurnState =
       idle: Deferred<void>;
       abort: Promise<void>;
       quiescence: Promise<void>;
+      providerIdleObserved: boolean;
+      deferredEvents: Array<{ rawEvent: unknown; eventCount: number }>;
     };
 
 function unwrapOpenCodeGlobalEvent(event: unknown): OpenCodeEvent | null {
@@ -3609,13 +3611,7 @@ class OpenCodeAgentSession implements AgentSession {
     if (!event) {
       return;
     }
-    if (
-      this.turnState.status === "stopping" &&
-      getOpenCodeEventSessionId(event) === this.sessionId
-    ) {
-      if (isOpenCodeTerminalEvent(event, this.sessionId)) {
-        this.finishStoppingTurn();
-      }
+    if (this.deferEventWhileStopping(event, params)) {
       this.traceOpenCode("provider.opencode.event.skip", {
         n: eventCount,
         reason: "turn_stopping",
@@ -3671,6 +3667,25 @@ class OpenCodeAgentSession implements AgentSession {
       }
       this.notifySubscribers(e, turnId);
     }
+  }
+
+  private deferEventWhileStopping(
+    event: OpenCodeEvent,
+    params: { rawEvent: unknown; eventCount: number },
+  ): boolean {
+    if (
+      this.turnState.status !== "stopping" ||
+      getOpenCodeEventSessionId(event) !== this.sessionId
+    ) {
+      return false;
+    }
+    const stopping = this.turnState;
+    if (isOpenCodeTerminalEvent(event, this.sessionId)) {
+      this.finishStoppingTurn();
+    } else if (stopping.providerIdleObserved) {
+      stopping.deferredEvents.push(params);
+    }
+    return true;
   }
 
   private emitBackgroundPermissionRequests(events: readonly AgentStreamEvent[]): void {
@@ -3774,6 +3789,8 @@ class OpenCodeAgentSession implements AgentSession {
       idle,
       abort: Promise.resolve(),
       quiescence: Promise.resolve(),
+      providerIdleObserved: !turnId,
+      deferredEvents: [],
     };
     this.turnState = stopping;
     stopping.abort = this.abortSession(turnId, "interrupt").catch(() =>
@@ -3797,13 +3814,29 @@ class OpenCodeAgentSession implements AgentSession {
     stopping.quiescence = quiescence;
     void quiescence.then(
       () => {
-        if (this.turnState === stopping) {
-          this.turnState = { status: "idle" };
-        }
+        void this.finishStopQuiescence(stopping).catch((error) => {
+          this.logger.warn(
+            { err: error, sessionId: this.sessionId },
+            "OpenCode deferred stop-boundary events failed",
+          );
+        });
         return undefined;
       },
       () => undefined,
     );
+  }
+
+  private async finishStopQuiescence(
+    stopping: Extract<OpenCodeTurnState, { status: "stopping" }>,
+  ): Promise<void> {
+    if (this.turnState !== stopping) {
+      return;
+    }
+    const deferredEvents = stopping.deferredEvents.splice(0);
+    this.turnState = { status: "idle" };
+    for (const event of deferredEvents) {
+      await this.consumeOpenCodeStreamEvent(event);
+    }
   }
 
   private finishStoppingTurn(): void {
@@ -3812,6 +3845,7 @@ class OpenCodeAgentSession implements AgentSession {
     }
     const stopping = this.turnState;
     resetOpenCodeTurnTrackingState(this.createTranslationState());
+    stopping.providerIdleObserved = true;
     stopping.idle.resolve();
   }
 

@@ -1,6 +1,10 @@
 import { describe, expect, test } from "vitest";
 
-import { resolveCommandLaunch, withArtifactLocation } from "./opencode-omo-real-runtime.js";
+import {
+  resolveCommandLaunch,
+  resolveWindowsHomeEnv,
+  withArtifactLocation,
+} from "./opencode-omo-real-runtime.js";
 
 describe("resolveCommandLaunch", () => {
   test("launches Windows npm command shims through cmd.exe", () => {
@@ -24,4 +28,14 @@ test("includes retained artifacts in fixture setup failures", () => {
   expect(
     withArtifactLocation(new Error("Command timed out: npm-install.log"), "/tmp/artifacts").message,
   ).toBe("Command timed out: npm-install.log. Retained real-test artifacts: /tmp/artifacts");
+});
+
+test("isolates Windows native home resolution", () => {
+  expect(resolveWindowsHomeEnv("C:\\fixture\\home")).toEqual({
+    USERPROFILE: "C:\\fixture\\home",
+    HOMEDRIVE: "C:",
+    HOMEPATH: "\\fixture\\home",
+    APPDATA: "C:\\fixture\\home\\AppData\\Roaming",
+    LOCALAPPDATA: "C:\\fixture\\home\\AppData\\Local",
+  });
 });
