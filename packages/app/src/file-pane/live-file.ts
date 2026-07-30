@@ -3,6 +3,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { DaemonClient, FileReadResult } from "@getpaseo/client/internal/daemon-client";
 import type { FileVersion } from "@getpaseo/protocol/messages";
 import { useFetchQuery } from "@/data/query";
+import { FileReadRecoveryTracker } from "./file-read-recovery";
+
+interface SequencedFileReadResult extends FileReadResult {
+  readSequence: number;
+}
 
 export function useLiveFile(input: {
   client: DaemonClient | null;
@@ -16,8 +21,7 @@ export function useLiveFile(input: {
   const [subscriptionReady, setSubscriptionReady] = useState(!input.liveUpdates);
   const [version, setVersion] = useState<FileVersion | null>(null);
   const latestVersion = useRef<FileVersion | null>(null);
-  const latestQueryDataUpdatedAt = useRef(0);
-  const nonReadyObservedAt = useRef<number | null>(null);
+  const recoveryTracker = useRef(new FileReadRecoveryTracker());
   const queryKey = useMemo(
     () => ["workspaceFile", input.serverId, input.cwd, input.path] as const,
     [input.cwd, input.path, input.serverId],
@@ -25,7 +29,7 @@ export function useLiveFile(input: {
 
   useEffect(() => {
     latestVersion.current = null;
-    nonReadyObservedAt.current = null;
+    recoveryTracker.current.reset();
     setVersion(null);
     const { client, cwd, path } = input;
     if (!input.liveUpdates || !client || !cwd || !path || !input.enabled) {
@@ -39,8 +43,7 @@ export function useLiveFile(input: {
       try {
         const subscription = await client.subscribeFile({ cwd, path }, (next) => {
           if (disposed) return;
-          nonReadyObservedAt.current =
-            next.status === "ready" ? null : latestQueryDataUpdatedAt.current;
+          recoveryTracker.current.observe(next.status);
           latestVersion.current = next;
           setVersion(next);
           void queryClient.invalidateQueries({ queryKey });
@@ -50,8 +53,7 @@ export function useLiveFile(input: {
           return;
         }
         unsubscribe = subscription.unsubscribe;
-        nonReadyObservedAt.current =
-          subscription.initial.status === "ready" ? null : latestQueryDataUpdatedAt.current;
+        recoveryTracker.current.observe(subscription.initial.status);
         latestVersion.current = subscription.initial;
         setVersion(subscription.initial);
         setSubscriptionReady(true);
@@ -77,15 +79,15 @@ export function useLiveFile(input: {
   const query = useFetchQuery({
     queryKey,
     enabled: input.enabled && Boolean(input.client && input.cwd && input.path) && subscriptionReady,
-    queryFn: async (): Promise<FileReadResult> => {
+    queryFn: async (): Promise<SequencedFileReadResult> => {
       if (!input.client || !input.cwd || !input.path) throw new Error("File unavailable.");
-      return input.client.readFile(input.cwd, input.path);
+      const readSequence = recoveryTracker.current.startRead();
+      const result = await input.client.readFile(input.cwd, input.path);
+      return { ...result, readSequence };
     },
     dataShape: "value",
     staleTimeMs: 5_000,
   });
-  latestQueryDataUpdatedAt.current = query.dataUpdatedAt;
-
   useEffect(() => {
     const observed = latestVersion.current;
     if (
@@ -98,12 +100,14 @@ export function useLiveFile(input: {
   }, [query.data, queryClient, queryKey]);
 
   useEffect(() => {
-    if (!input.liveUpdates || !query.data || !input.cwd || !input.path) return;
+    if (!input.liveUpdates || !input.cwd || !input.path) return;
     const observed = latestVersion.current;
-    const observedAt = nonReadyObservedAt.current;
-    if (observed?.status === "ready" || observedAt === null || query.dataUpdatedAt <= observedAt) {
+    if (observed?.status === "ready") return;
+    if (recoveryTracker.current.needsRecoveryRead(query.isFetching)) {
+      void queryClient.invalidateQueries({ queryKey });
       return;
     }
+    if (!query.data || !recoveryTracker.current.canRecoverFrom(query.data.readSequence)) return;
 
     const recoveredVersion: FileVersion = {
       status: "ready",
@@ -113,10 +117,18 @@ export function useLiveFile(input: {
       modifiedAt: query.data.modifiedAt,
       revision: query.data.revision,
     };
-    nonReadyObservedAt.current = null;
+    recoveryTracker.current.markRecovered();
     latestVersion.current = recoveredVersion;
     setVersion(recoveredVersion);
-  }, [input.cwd, input.liveUpdates, input.path, query.data, query.dataUpdatedAt]);
+  }, [
+    input.cwd,
+    input.liveUpdates,
+    input.path,
+    query.data,
+    query.isFetching,
+    queryClient,
+    queryKey,
+  ]);
 
   return { query, version };
 }

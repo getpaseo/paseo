@@ -755,7 +755,7 @@ function EditableFilePane({
         editorStatus={snapshot.status}
         cursor={showSource ? cursor : undefined}
         vimMode={showSource ? vimMode : null}
-        conflictUnavailable={snapshot.observedVersion.status !== "ready"}
+        conflictFileStatus={snapshot.observedVersion.status}
         conflictModified={snapshot.modified}
         onOverwrite={handleOverwrite}
         onReload={handleReload}

@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
+import type { FileVersion } from "@getpaseo/protocol/messages";
 import { AlertTriangle } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
@@ -9,24 +10,24 @@ const ThemedAlertTriangle = withUnistyles(AlertTriangle);
 const warningIconMapping = (theme: Theme) => ({ color: theme.colors.palette.amber[500] });
 
 export function FileConflictAlert({
-  unavailable,
+  fileStatus,
   modified,
   onOverwrite,
   onReload,
 }: {
-  unavailable: boolean;
+  fileStatus: FileVersion["status"];
   modified: boolean;
   onOverwrite(): void;
   onReload(): void;
 }) {
   const { t } = useTranslation();
-  const canReload = !unavailable;
+  const canReload = fileStatus === "ready";
   const canOverwrite = canReload && modified;
-  const title = unavailable
-    ? t("panels.file.editor.deletedTitle")
-    : t("panels.file.editor.changedOnDisk");
+  let title = t("panels.file.editor.changedOnDisk");
+  if (fileStatus === "missing") title = t("panels.file.editor.deletedTitle");
+  else if (fileStatus === "error") title = t("panels.file.editor.checkFailedTitle");
   let description: string | undefined;
-  if (unavailable) description = t("panels.file.editor.deletedDescription");
+  if (fileStatus !== "ready") description = t("panels.file.editor.preservedDescription");
   else if (canOverwrite) description = t("panels.file.editor.conflictDescription");
 
   return (

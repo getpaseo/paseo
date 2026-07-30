@@ -6,6 +6,7 @@ import { SegmentedControl } from "@/components/ui/segmented-control";
 import type { Theme } from "@/styles/theme";
 import { FileConflictAlert } from "./conflict-alert";
 import type { FileEditorStatus } from "./editor/model";
+import type { FileVersion } from "@getpaseo/protocol/messages";
 
 const ThemedSpinner = withUnistyles(LoadingSpinner);
 const spinnerMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -18,7 +19,7 @@ export function FilePanelBar({
   editorStatus,
   cursor,
   vimMode,
-  conflictUnavailable,
+  conflictFileStatus,
   conflictModified,
   onOverwrite,
   onReload,
@@ -30,7 +31,7 @@ export function FilePanelBar({
   editorStatus?: FileEditorStatus;
   cursor?: { line: number; column: number };
   vimMode?: string | null;
-  conflictUnavailable?: boolean;
+  conflictFileStatus?: FileVersion["status"];
   conflictModified?: boolean;
   onOverwrite?(): void;
   onReload?(): void;
@@ -115,7 +116,7 @@ export function FilePanelBar({
       </View>
       {editorStatus === "conflict" && onOverwrite && onReload ? (
         <FileConflictAlert
-          unavailable={conflictUnavailable ?? false}
+          fileStatus={conflictFileStatus ?? "ready"}
           modified={conflictModified ?? false}
           onOverwrite={onOverwrite}
           onReload={onReload}
