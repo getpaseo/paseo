@@ -8,8 +8,9 @@ import {
 } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { useIsFocused } from "@react-navigation/native";
-import { CalendarClock, Plus } from "lucide-react-native";
+import { CalendarClock, Plus, Search } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { ExternalLink } from "@/components/ui/external-link";
 import { HostFilter } from "@/components/hosts/host-filter";
@@ -38,6 +39,7 @@ import {
   buildProjectNameByCwd,
   buildScheduleProjectTargets,
 } from "@/schedules/schedule-project-targets";
+import { filterScheduleRowsBySearchQuery } from "@/utils/schedule-list-search";
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 
 type FormState =
@@ -94,6 +96,7 @@ function SchedulesScreenContent(): ReactElement {
   const [form, setForm] = useState<FormState>({ mode: "closed" });
   const [selectedHost, setSelectedHost] = useState(ALL_HOSTS_OPTION_ID);
   const [statusFilter, setStatusFilter] = useState<ScheduleBucket>("runnable");
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     if (
@@ -141,7 +144,7 @@ function SchedulesScreenContent(): ReactElement {
     }));
   }, [schedules, agentsByKey, projectNameByCwd, agentDirReadyHosts]);
 
-  const visibleRows = useMemo<ScheduleRowView[]>(() => {
+  const hostFilteredRows = useMemo<ScheduleRowView[]>(() => {
     const singleHost = hosts.length <= 1;
     return resolvedRows
       .filter(
@@ -160,6 +163,11 @@ function SchedulesScreenContent(): ReactElement {
       }));
   }, [resolvedRows, selectedHost, statusFilter, hosts.length]);
 
+  const visibleRows = useMemo(
+    () => filterScheduleRowsBySearchQuery(hostFilteredRows, searchQuery),
+    [hostFilteredRows, searchQuery],
+  );
+
   const showLoadError = isError && loadState.status !== "loaded";
   const showHostFilter = hosts.length > 1;
 
@@ -168,6 +176,9 @@ function SchedulesScreenContent(): ReactElement {
       <MenuHeader title="Schedules" />
       <SchedulesScreenBody
         rows={visibleRows}
+        hostFilteredRowCount={hostFilteredRows.length}
+        searchQuery={searchQuery}
+        onSearchQueryChange={setSearchQuery}
         loadState={loadState}
         hostErrors={hostErrors}
         showLoadError={showLoadError}
@@ -194,6 +205,9 @@ function SchedulesScreenContent(): ReactElement {
 
 function SchedulesScreenBody({
   rows,
+  hostFilteredRowCount,
+  searchQuery,
+  onSearchQueryChange,
   loadState,
   hostErrors,
   showLoadError,
@@ -208,6 +222,9 @@ function SchedulesScreenBody({
   onEdit,
 }: {
   rows: ScheduleRowView[];
+  hostFilteredRowCount: number;
+  searchQuery: string;
+  onSearchQueryChange: (value: string) => void;
   loadState: AggregateLoadState<AggregatedSchedule>;
   hostErrors: ScheduleHostError[];
   showLoadError: boolean;
@@ -222,6 +239,7 @@ function SchedulesScreenBody({
   onEdit: (schedule: AggregatedSchedule) => void;
 }): ReactElement {
   const bodyState = resolveSchedulesScreenBodyState({ loadState, showLoadError });
+  const hasSearchQuery = searchQuery.trim().length > 0;
 
   if (bodyState.kind === "loading") {
     return (
@@ -254,6 +272,8 @@ function SchedulesScreenBody({
   let schedulesContent: ReactElement;
   if (rows.length > 0) {
     schedulesContent = <SchedulesTable rows={rows} onEditSchedule={onEdit} />;
+  } else if (hasSearchQuery && hostFilteredRowCount > 0) {
+    schedulesContent = <SchedulesSearchEmptyState />;
   } else if (statusFilter === "ended") {
     schedulesContent = <SchedulesEndedEmptyState />;
   } else {
@@ -294,6 +314,9 @@ function SchedulesScreenBody({
           New schedule
         </Button>
       </View>
+      <View style={styles.searchRow}>
+        <SchedulesSearchField value={searchQuery} onChangeText={onSearchQueryChange} />
+      </View>
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
@@ -304,6 +327,41 @@ function SchedulesScreenBody({
         {hostErrors.length > 0 ? <ScheduleHostErrorsBanner errors={hostErrors} /> : null}
         {schedulesContent}
       </ScrollView>
+    </View>
+  );
+}
+
+function SchedulesSearchField({
+  value,
+  onChangeText,
+}: {
+  value: string;
+  onChangeText: (value: string) => void;
+}): ReactElement {
+  return (
+    <View style={styles.searchField}>
+      <Search size={16} color={styles.searchIcon.color} />
+      <AdaptiveTextInput
+        value={value}
+        onChangeText={onChangeText}
+        placeholder="Search schedules..."
+        style={styles.searchInput}
+        autoCapitalize="none"
+        autoCorrect={false}
+        testID="schedules-search"
+      />
+    </View>
+  );
+}
+
+function SchedulesSearchEmptyState(): ReactElement {
+  return (
+    <View style={styles.filterEmpty}>
+      <View style={styles.endedEmptyState}>
+        <CalendarClock size={styles.emptyIcon.width} color={styles.emptyIcon.color} />
+        <Text style={styles.emptyTitle}>No matching schedules</Text>
+        <Text style={styles.emptyDescription}>Try a different search.</Text>
+      </View>
     </View>
   );
 }
@@ -385,6 +443,32 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[3],
     flexShrink: 1,
     flexWrap: "wrap",
+  },
+  searchRow: {
+    paddingHorizontal: { xs: theme.spacing[3], md: theme.spacing[6] },
+    paddingTop: theme.spacing[3],
+  },
+  searchField: {
+    minHeight: 40,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.lg,
+    paddingHorizontal: theme.spacing[3],
+    backgroundColor: theme.colors.surface0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  searchIcon: {
+    color: theme.colors.foregroundMuted,
+  },
+  searchInput: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 38,
+    paddingVertical: theme.spacing[2],
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
   },
   scroll: {
     flex: 1,

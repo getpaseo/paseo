@@ -444,6 +444,8 @@ interface BacklogRouteOptions {
   serverId?: string;
   projectId?: string;
   displayName?: string;
+  /** When true, the backlog screen opens the add-task form immediately. */
+  create?: boolean;
 }
 
 function buildNewWorkspaceSearch(options: NewWorkspaceRouteOptions): string {
@@ -487,6 +489,9 @@ export function buildBacklogRoute(options: BacklogRouteOptions = {}) {
   }
   if (options.displayName) {
     params.set("name", options.displayName);
+  }
+  if (options.create) {
+    params.set("create", "1");
   }
   const query = params.toString();
   return query ? (`/backlog?${query}` as const) : ("/backlog" as const);

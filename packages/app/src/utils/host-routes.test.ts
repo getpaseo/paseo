@@ -256,6 +256,10 @@ describe("global routes", () => {
       }),
     ).toBe("/backlog?serverId=local&projectId=project-1&name=Project");
   });
+
+  it("buildBacklogRoute can open the add-task form", () => {
+    expect(buildBacklogRoute({ create: true })).toBe("/backlog?create=1");
+  });
 });
 
 describe("host settings section slugs", () => {

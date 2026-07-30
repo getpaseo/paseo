@@ -3,8 +3,9 @@ import { View, Text } from "react-native";
 import { useIsFocused } from "@react-navigation/native";
 import { router } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { ChevronLeft } from "lucide-react-native";
+import { ChevronLeft, Search } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
+import { AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -14,6 +15,7 @@ import { ALL_HOSTS_OPTION_ID } from "@/components/hosts/host-picker";
 import { useAgentHistory } from "@/hooks/use-agent-history";
 import { useHosts } from "@/runtime/host-runtime";
 import { buildOpenProjectRoute } from "@/utils/host-routes";
+import { filterAgentsBySearchQuery } from "@/utils/session-list-search";
 
 export function SessionsScreen() {
   const isFocused = useIsFocused();
@@ -30,6 +32,7 @@ function SessionsScreenContent() {
   const { t } = useTranslation();
   const hosts = useHosts();
   const [selectedHost, setSelectedHost] = useState(ALL_HOSTS_OPTION_ID);
+  const [searchQuery, setSearchQuery] = useState("");
   const historyServerId = selectedHost === ALL_HOSTS_OPTION_ID ? null : selectedHost;
   const { agents, hasMore, isInitialLoad, isLoadingMore, isError, loadMore, refreshAll } =
     useAgentHistory({
@@ -56,8 +59,18 @@ function SessionsScreenContent() {
     return [...agents].sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime());
   }, [agents]);
 
-  const emptyText =
-    selectedHost === ALL_HOSTS_OPTION_ID ? t("sessions.empty") : "No sessions for this host";
+  const visibleAgents = useMemo(
+    () => filterAgentsBySearchQuery(sortedAgents, searchQuery),
+    [searchQuery, sortedAgents],
+  );
+
+  const hasSearchQuery = searchQuery.trim().length > 0;
+  let emptyText = t("sessions.empty");
+  if (hasSearchQuery) {
+    emptyText = "No matching sessions";
+  } else if (selectedHost !== ALL_HOSTS_OPTION_ID) {
+    emptyText = "No sessions for this host";
+  }
   const showHostFilter = hosts.length > 1;
   const showLoadError = isError && sortedAgents.length === 0;
 
@@ -80,16 +93,17 @@ function SessionsScreenContent() {
   return (
     <View style={styles.container}>
       <MenuHeader title={t("sessions.title")} />
-      {showHostFilter ? (
-        <View style={styles.filterContainer}>
+      <View style={styles.filterContainer}>
+        {showHostFilter ? (
           <HostFilter
             hosts={hosts}
             selectedHost={selectedHost}
             onSelectHost={setSelectedHost}
             triggerTestID="sessions-host-filter-trigger"
           />
-        </View>
-      ) : null}
+        ) : null}
+        <SessionsSearchField value={searchQuery} onChangeText={setSearchQuery} />
+      </View>
       {isInitialLoad ? (
         <View style={styles.loadingContainer}>
           <LoadingSpinner size="large" color={theme.colors.foregroundMuted} />
@@ -103,17 +117,32 @@ function SessionsScreenContent() {
           </Button>
         </View>
       ) : null}
-      {!isInitialLoad && !showLoadError && sortedAgents.length === 0 ? (
+      {!isInitialLoad && !showLoadError && visibleAgents.length === 0 ? (
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyText}>{emptyText}</Text>
-          <Button variant="ghost" leftIcon={ChevronLeft} onPress={handleBack}>
-            Back
-          </Button>
+          {hasSearchQuery ? (
+            <>
+              <Text style={styles.emptyHint}>
+                {hasMore
+                  ? "No matches in the loaded history. Load more sessions or try a different search."
+                  : "Try a different search."}
+              </Text>
+              {hasMore ? (
+                <Button variant="ghost" onPress={loadMore} disabled={isLoadingMore}>
+                  {isLoadingMore ? "Loading..." : t("sessions.actions.loadMore")}
+                </Button>
+              ) : null}
+            </>
+          ) : (
+            <Button variant="ghost" leftIcon={ChevronLeft} onPress={handleBack}>
+              Back
+            </Button>
+          )}
         </View>
       ) : null}
-      {!isInitialLoad && !showLoadError && sortedAgents.length > 0 ? (
+      {!isInitialLoad && !showLoadError && visibleAgents.length > 0 ? (
         <AgentList
-          agents={sortedAgents}
+          agents={visibleAgents}
           showCheckoutInfo={false}
           isRefreshing={isManualRefresh}
           onRefresh={handleRefresh}
@@ -122,6 +151,29 @@ function SessionsScreenContent() {
           showHostColumn
         />
       ) : null}
+    </View>
+  );
+}
+
+function SessionsSearchField({
+  value,
+  onChangeText,
+}: {
+  value: string;
+  onChangeText: (value: string) => void;
+}) {
+  return (
+    <View style={styles.searchField}>
+      <Search size={16} color={styles.searchIcon.color} />
+      <AdaptiveTextInput
+        value={value}
+        onChangeText={onChangeText}
+        placeholder="Search sessions..."
+        style={styles.searchInput}
+        autoCapitalize="none"
+        autoCorrect={false}
+        testID="sessions-search"
+      />
     </View>
   );
 }
@@ -137,6 +189,29 @@ const styles = StyleSheet.create((theme) => ({
       md: theme.spacing[6],
     },
     paddingTop: theme.spacing[4],
+    gap: theme.spacing[3],
+  },
+  searchField: {
+    minHeight: 40,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.lg,
+    paddingHorizontal: theme.spacing[3],
+    backgroundColor: theme.colors.surface0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  searchIcon: {
+    color: theme.colors.foregroundMuted,
+  },
+  searchInput: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 38,
+    paddingVertical: theme.spacing[2],
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
   },
   emptyContainer: {
     flex: 1,
@@ -148,6 +223,10 @@ const styles = StyleSheet.create((theme) => ({
   emptyText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.lg,
+  },
+  emptyHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
   },
   loadingContainer: {
     flex: 1,

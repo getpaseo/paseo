@@ -78,7 +78,7 @@ import { generateDraftId } from "@/stores/draft-keys";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { PickedFile } from "@/attachments/picked-file";
 import { toErrorMessage } from "@/utils/error-messages";
-import { buildNewWorkspaceRoute } from "@/utils/host-routes";
+import { buildBacklogRoute, buildNewWorkspaceRoute } from "@/utils/host-routes";
 import { buildNewWorkspaceDraftKey } from "@/utils/new-workspace-draft";
 import { shortenPath } from "@/utils/shorten-path";
 import { formatBacklogTaskWorkspacePrompt } from "@getpaseo/protocol/tasks/prompt";
@@ -117,6 +117,7 @@ interface BacklogScreenProps {
   serverId: string;
   projectId: string;
   displayName?: string;
+  openCreate?: boolean;
 }
 
 interface AttachmentPreview {
@@ -160,16 +161,31 @@ const VIEW_MODE_OPTIONS: SegmentedControlOption<BacklogViewMode>[] = [
   },
 ];
 
-export function BacklogScreen({ serverId, projectId, displayName }: BacklogScreenProps) {
+export function BacklogScreen({
+  serverId,
+  projectId,
+  displayName,
+  openCreate = false,
+}: BacklogScreenProps) {
   if (serverId && projectId) {
     return (
-      <ProjectBacklogScreen serverId={serverId} projectId={projectId} displayName={displayName} />
+      <ProjectBacklogScreen
+        serverId={serverId}
+        projectId={projectId}
+        displayName={displayName}
+        openCreate={openCreate}
+      />
     );
   }
-  return <MasterBacklogScreen />;
+  return <MasterBacklogScreen openCreate={openCreate} />;
 }
 
-function ProjectBacklogScreen({ serverId, projectId, displayName }: BacklogScreenProps) {
+function ProjectBacklogScreen({
+  serverId,
+  projectId,
+  displayName,
+  openCreate = false,
+}: BacklogScreenProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -197,6 +213,12 @@ function ProjectBacklogScreen({ serverId, projectId, displayName }: BacklogScree
   const [searchQuery, setSearchQuery] = useState("");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<TaskCard | null>(null);
+
+  useEffect(() => {
+    if (openCreate) {
+      setIsCreateOpen(true);
+    }
+  }, [openCreate]);
   const [preview, setPreview] = useState<AttachmentPreview | null>(null);
   const [creatingWorkspaceTaskId, setCreatingWorkspaceTaskId] = useState<string | null>(null);
   const [contentWidth, setContentWidth] = useState(0);
@@ -461,7 +483,19 @@ function ProjectBacklogScreen({ serverId, projectId, displayName }: BacklogScree
   }, []);
   const handleCloseCreate = useCallback(() => {
     setIsCreateOpen(false);
-  }, []);
+    if (!openCreate) {
+      return;
+    }
+    // Drop the one-shot create intent so a later "+" can re-open the form and
+    // so refresh doesn't resurrect a dismissed sheet.
+    router.replace(
+      buildBacklogRoute({
+        serverId,
+        projectId,
+        displayName,
+      }) as Href,
+    );
+  }, [displayName, openCreate, projectId, serverId]);
   const handleCloseEdit = useCallback(() => {
     setEditingTask(null);
   }, []);
@@ -626,7 +660,7 @@ function ProjectBacklogScreen({ serverId, projectId, displayName }: BacklogScree
   );
 }
 
-function MasterBacklogScreen() {
+function MasterBacklogScreen({ openCreate = false }: { openCreate?: boolean }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -658,6 +692,12 @@ function MasterBacklogScreen() {
   const [projectFilterId, setProjectFilterId] = useState(MASTER_BACKLOG_ALL_PROJECTS_FILTER_ID);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<MasterBacklogTask | null>(null);
+
+  useEffect(() => {
+    if (openCreate) {
+      setIsCreateOpen(true);
+    }
+  }, [openCreate]);
   const [preview, setPreview] = useState<AttachmentPreview | null>(null);
   const [creatingWorkspaceTaskKey, setCreatingWorkspaceTaskKey] = useState<string | null>(null);
   const [contentWidth, setContentWidth] = useState(0);
@@ -972,7 +1012,11 @@ function MasterBacklogScreen() {
   }, []);
   const handleCloseCreate = useCallback(() => {
     setIsCreateOpen(false);
-  }, []);
+    if (!openCreate) {
+      return;
+    }
+    router.replace(buildBacklogRoute() as Href);
+  }, [openCreate]);
   const handleCloseEdit = useCallback(() => {
     setEditingTask(null);
   }, []);

@@ -27,6 +27,29 @@ describe("code server store state", () => {
     ).toBe("Code Server 4");
   });
 
+  test("scopes default title numbering to a workspace key", () => {
+    expect(
+      getNextCodeServerTitle(
+        {
+          a: { ...record("a", "Code Server 1"), workspaceKey: "ws-a" },
+          b: { ...record("b", "Code Server 7"), workspaceKey: "ws-b" },
+          c: { ...record("c", "Code Server 2"), workspaceKey: "ws-a" },
+          d: record("d", "Code Server 9"),
+        },
+        "ws-a",
+      ),
+    ).toBe("Code Server 3");
+    expect(
+      getNextCodeServerTitle(
+        {
+          a: { ...record("a", "Code Server 1"), workspaceKey: "ws-a" },
+          b: { ...record("b", "Code Server 7"), workspaceKey: "ws-b" },
+        },
+        "ws-b",
+      ),
+    ).toBe("Code Server 8");
+  });
+
   test("normalizes localhost-style initial URLs", () => {
     expect(
       createCodeServerRecord({

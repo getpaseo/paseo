@@ -15,7 +15,11 @@ import { createWorkspaceBrowser } from "@/stores/browser-store";
 export type { CodeServerRecord } from "./state";
 
 interface CodeServerStoreState extends CodeServerIndexState {
-  createCodeServer: (input: { initialUrl: string; browserId: string }) => string;
+  createCodeServer: (input: {
+    initialUrl: string;
+    browserId: string;
+    workspaceKey?: string | null;
+  }) => string;
   renameCodeServer: (codeServerId: string, title: string) => void;
   removeCodeServer: (codeServerId: string) => void;
 }
@@ -37,8 +41,9 @@ export const useCodeServerStore = create<CodeServerStoreState>()(
         const record = createCodeServerRecord({
           codeServerId,
           browserId: input.browserId,
+          workspaceKey: input.workspaceKey,
           initialUrl: input.initialUrl,
-          title: getNextCodeServerTitle(get().codeServersById),
+          title: getNextCodeServerTitle(get().codeServersById, input.workspaceKey),
           now: Date.now(),
         });
 
@@ -73,15 +78,20 @@ export function getCodeServerRecord(codeServerId: string): CodeServerRecord | nu
   return useCodeServerStore.getState().codeServersById[normalizedCodeServerId] ?? null;
 }
 
-export function createWorkspaceCodeServer(input: { initialUrl: string }): {
+export function createWorkspaceCodeServer(input: {
+  initialUrl: string;
+  workspaceKey?: string | null;
+}): {
   codeServerId: string;
   browserId: string;
   initialUrl: string;
 } {
   const browser = createWorkspaceBrowser({ initialUrl: input.initialUrl });
-  const codeServerId = useCodeServerStore
-    .getState()
-    .createCodeServer({ initialUrl: browser.url, browserId: browser.browserId });
+  const codeServerId = useCodeServerStore.getState().createCodeServer({
+    initialUrl: browser.url,
+    browserId: browser.browserId,
+    workspaceKey: input.workspaceKey,
+  });
   const record = getCodeServerRecord(codeServerId);
   return {
     codeServerId,
