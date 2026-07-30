@@ -15,12 +15,30 @@ export type AgentRealtimeVoiceEvent =
    */
   | { kind: "transport_closed"; reason: string };
 
+/** A conversation item seeded at session start. Roles are the provider's allowed set. */
+export interface AgentRealtimeVoiceInitialItem {
+  role: "user" | "developer" | "assistant";
+  text: string;
+}
+
 export interface AgentRealtimeVoiceStartParams {
   /** Client WebRTC offer SDP, relayed verbatim. */
   sdp: string;
   voice?: string;
   /** Caller-assigned id; the provider echoes it back on `started`. */
   realtimeSessionId: string;
+  /**
+   * Replaces the voice model's entire system prompt. When set, the caller owns
+   * every instruction the model gets, including how to speak.
+   */
+  prompt?: string;
+  /** Conversation seed. Subject to provider item/token limits. */
+  initialItems?: AgentRealtimeVoiceInitialItem[];
+  /**
+   * Suppress the provider's own synthesized startup context. Set this when the
+   * caller supplies its own, so the two don't compete.
+   */
+  includeStartupContext?: boolean;
 }
 
 /**

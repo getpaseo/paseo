@@ -5049,6 +5049,12 @@ export class CodexAppServerAgentSession implements AgentSession, AgentRealtimeVo
       transport: { type: "webrtc", sdp: params.sdp },
       realtimeSessionId: params.realtimeSessionId,
       ...(params.voice ? { voice: params.voice } : {}),
+      // `initialItems` is v3-only, which is the version we pin above.
+      ...(params.prompt !== undefined ? { prompt: params.prompt } : {}),
+      ...(params.initialItems?.length ? { initialItems: params.initialItems } : {}),
+      ...(params.includeStartupContext !== undefined
+        ? { includeStartupContext: params.includeStartupContext }
+        : {}),
     });
   }
 

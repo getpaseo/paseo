@@ -832,6 +832,15 @@ export class AgentManager {
     this.mcpBaseUrl = url;
   }
 
+  /**
+   * Whether agent sessions launch with Paseo's own MCP server attached, i.e.
+   * whether an agent can act on Paseo itself. False when MCP is disabled or
+   * `mcpInjectIntoAgents` is off.
+   */
+  hasPaseoMcpInjection(): boolean {
+    return this.mcpBaseUrl !== null;
+  }
+
   prepareForShutdown(): void {
     this.acceptingAgentRegistrations = false;
   }

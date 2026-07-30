@@ -6,6 +6,7 @@ import {
   type AgentRealtimeVoiceEvent,
   type AgentRealtimeVoiceSession,
 } from "../agent/agent-realtime-voice.js";
+import type { LiveVoiceStartContext } from "./live-voice-context.js";
 
 /** How long to wait for codex's async answer-SDP notification before giving up. */
 const START_SDP_TIMEOUT_MS = 30_000;
@@ -114,10 +115,20 @@ interface LiveVoiceCall {
   sdpWaiter: { resolve: (sdp: string) => void; reject: (error: Error) => void } | null;
 }
 
+/**
+ * Supplies the Paseo prompt and state snapshot handed to the voice model at
+ * start. Optional: without it the provider falls back to its own startup
+ * context, which yields a working but Paseo-unaware call.
+ */
+export interface LiveVoiceContextProvider {
+  build(agentId: string): Promise<LiveVoiceStartContext | null>;
+}
+
 export interface LiveVoiceCoordinatorOptions {
   agents: LiveVoiceAgentSource;
   logger: Logger;
   startSdpTimeoutMs?: number;
+  context?: LiveVoiceContextProvider;
 }
 
 /**
@@ -131,12 +142,14 @@ export class LiveVoiceCoordinator {
   private readonly agents: LiveVoiceAgentSource;
   private readonly logger: Logger;
   private readonly startSdpTimeoutMs: number;
+  private readonly context: LiveVoiceContextProvider | null;
   private readonly unsubscribeAgentClosing: () => void;
 
   constructor(options: LiveVoiceCoordinatorOptions) {
     this.agents = options.agents;
     this.logger = options.logger.child({ module: "live-voice" });
     this.startSdpTimeoutMs = options.startSdpTimeoutMs ?? START_SDP_TIMEOUT_MS;
+    this.context = options.context ?? null;
     this.unsubscribeAgentClosing = this.agents.onAgentClosing((agentId) => {
       this.closeForAgent(agentId, "agent_closed");
     });
@@ -250,6 +263,13 @@ export class LiveVoiceCoordinator {
     call: LiveVoiceCall,
     request: LiveVoiceStartRequest,
   ): Promise<string> {
+    // Built before the waiter is armed: it only awaits daemon state, and no SDP
+    // can arrive until `realtimeStart` below is issued.
+    const context = await this.buildContext(call.agentId);
+    if (call.state !== "starting") {
+      throw new Error("Live voice call closed while building context");
+    }
+
     const sdpPromise = this.waitForAnswerSdp(call);
     // Observe the waiter immediately: `close()` can reject it while
     // `realtimeStart` is still in flight (owner disconnect, agent archive), and
@@ -260,8 +280,32 @@ export class LiveVoiceCoordinator {
       sdp: request.offerSdp,
       realtimeSessionId: call.liveSessionId,
       ...(request.voice ? { voice: request.voice } : {}),
+      ...(context
+        ? {
+            prompt: context.prompt,
+            initialItems: context.initialItems,
+            // Our snapshot replaces the provider's own startup context.
+            includeStartupContext: false,
+          }
+        : {}),
     });
     return await sdpPromise;
+  }
+
+  /**
+   * A context failure must not cost the user their call: fall back to the
+   * provider's default context rather than aborting the start.
+   */
+  private async buildContext(agentId: string): Promise<LiveVoiceStartContext | null> {
+    if (!this.context) {
+      return null;
+    }
+    try {
+      return await this.context.build(agentId);
+    } catch (error) {
+      this.logger.warn({ err: error, agentId }, "live_voice.context.build_failed");
+      return null;
+    }
   }
 
   private waitForAnswerSdp(call: LiveVoiceCall): Promise<string> {

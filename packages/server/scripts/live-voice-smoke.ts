@@ -19,6 +19,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { Writable } from "node:stream";
 import pino from "pino";
 import playwrightModule from "playwright-core";
 import type { VoiceLiveUpdate } from "@getpaseo/protocol/messages";
@@ -52,8 +53,34 @@ async function withTimeout<T>(label: string, promise: Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * Captures daemon log records so the smoke can assert on daemon-internal
+ * behavior that isn't visible on the wire, and keeps stdout to warnings and up.
+ */
+function createCapturingLogger(): { logger: pino.Logger; records: Record<string, unknown>[] } {
+  const records: Record<string, unknown>[] = [];
+  const stream = new Writable({
+    write(chunk, _encoding, callback) {
+      for (const line of String(chunk).split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const record = JSON.parse(line) as Record<string, unknown>;
+          records.push(record);
+          if (typeof record.level === "number" && record.level >= 40) {
+            process.stdout.write(`[daemon] ${String(record.msg)}\n`);
+          }
+        } catch {
+          // Non-JSON output is not a log record we care about.
+        }
+      }
+      callback();
+    },
+  });
+  return { logger: pino({ level: "debug" }, stream), records };
+}
+
 async function main(): Promise<void> {
-  const logger = pino({ level: "warn" });
+  const { logger, records } = createCapturingLogger();
   const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-live-voice-smoke-"));
   const paseoHome = path.join(paseoHomeRoot, ".paseo");
   const staticDir = path.join(paseoHomeRoot, "static");
@@ -69,7 +96,9 @@ async function main(): Promise<void> {
       paseoHome,
       corsAllowedOrigins: [],
       hostnames: true,
-      mcpEnabled: false,
+      // Production default. Also what gives the attached session Paseo's own MCP
+      // tools, which is what makes "act on Paseo by voice" work at all.
+      mcpEnabled: true,
       staticDir,
       mcpDebug: false,
       agentClients: {},
@@ -229,9 +258,15 @@ async function main(): Promise<void> {
     if (connectionResult.sessionStarted === null) {
       throw new Error("session.started never arrived on oai-events");
     }
-    const startedModel = (connectionResult.sessionStarted as { session?: { model?: string } })
-      .session?.model;
-    done(`state=${connectionResult.state}, model=${String(startedModel)}`);
+    const startedSession = (
+      connectionResult.sessionStarted as {
+        session?: { model?: string; instructions?: string; initial_items?: unknown[] };
+      }
+    ).session;
+    done(`state=${connectionResult.state}, model=${String(startedSession?.model)}`);
+
+    done = step("checking injected Paseo context");
+    done(assertPaseoContext({ instructions: startedSession?.instructions, records, agent }));
 
     const sawStartedUpdate = updates.some((update) => update.event.kind === "started");
     if (!sawStartedUpdate) {
@@ -258,6 +293,45 @@ async function main(): Promise<void> {
     await daemon.stop().catch(() => undefined);
     await rm(paseoHomeRoot, { recursive: true, force: true });
   }
+}
+
+/**
+ * The instructions check is the real end-to-end proof: the provider echoes them
+ * on `session.started`, so seeing the Paseo prompt there means it travelled
+ * daemon → codex → OpenAI and was accepted. `initial_items` is *not* echoed, so
+ * the seeded snapshot is verified from the daemon's own record of what it sent —
+ * a malformed or over-budget snapshot would have failed the start outright.
+ */
+function assertPaseoContext(params: {
+  instructions: string | undefined;
+  records: Record<string, unknown>[];
+  agent: { id: string };
+}): string {
+  const instructions = params.instructions ?? "";
+  if (!instructions.includes("You are the voice of Paseo.")) {
+    throw new Error(
+      `session instructions are not the Paseo prompt: ${instructions.slice(0, 120)}...`,
+    );
+  }
+  const built = params.records.find((record) => record.msg === "live_voice.context.built");
+  if (!built) {
+    throw new Error("daemon never logged live_voice.context.built");
+  }
+  if (built.agentId !== params.agent.id) {
+    throw new Error(`context was built for ${String(built.agentId)}, not the attached agent`);
+  }
+  if (typeof built.itemCount !== "number" || built.itemCount === 0) {
+    throw new Error(`context carried no items: ${JSON.stringify(built)}`);
+  }
+  // MCP is enabled above, so the session must have Paseo's tools and the prompt
+  // must say so — otherwise the model would refuse to act on Paseo.
+  if (built.paseoToolsAvailable !== true) {
+    throw new Error("Paseo MCP tools were not injected into the attached session");
+  }
+  if (!instructions.includes("control Paseo itself")) {
+    throw new Error("the prompt does not tell the model it can act on Paseo");
+  }
+  return `${instructions.length} chars of instructions, ${String(built.itemCount)} seeded items, ${String(built.agentCount)} sessions / ${String(built.workspaceCount)} workspaces, paseoTools=${String(built.paseoToolsAvailable)}`;
 }
 
 async function waitForClosedUpdate(updates: VoiceLiveUpdate["payload"][]): Promise<string> {

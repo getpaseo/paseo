@@ -5,18 +5,28 @@ import type { AgentRealtimeVoiceEvent } from "../agent/agent-realtime-voice.js";
 import {
   LiveVoiceCoordinator,
   type LiveVoiceAgentRef,
+  type LiveVoiceContextProvider,
   type LiveVoiceUpdate,
 } from "./live-voice-coordinator.js";
 
 const OFFER_SDP = "v=0\r\no=- offer\r\n";
 const ANSWER_SDP = "v=0\r\no=- answer\r\n";
 
+interface FakeStartParams {
+  sdp: string;
+  voice?: string;
+  realtimeSessionId: string;
+  prompt?: string;
+  initialItems?: Array<{ role: string; text: string }>;
+  includeStartupContext?: boolean;
+}
+
 interface FakeProviderSession {
-  realtimeStart(params: { sdp: string; voice?: string; realtimeSessionId: string }): Promise<void>;
+  realtimeStart(params: FakeStartParams): Promise<void>;
   realtimeStop(): Promise<void>;
   subscribeRealtimeEvents(callback: (event: AgentRealtimeVoiceEvent) => void): () => void;
   emit(event: AgentRealtimeVoiceEvent): void;
-  readonly startCalls: Array<{ sdp: string; voice?: string; realtimeSessionId: string }>;
+  readonly startCalls: FakeStartParams[];
   readonly stopCalls: number[];
   readonly subscriberCount: () => number;
 }
@@ -30,7 +40,7 @@ function createFakeProviderSession(options?: {
   startError?: Error;
 }): FakeProviderSession {
   const subscribers = new Set<(event: AgentRealtimeVoiceEvent) => void>();
-  const startCalls: Array<{ sdp: string; voice?: string; realtimeSessionId: string }> = [];
+  const startCalls: FakeStartParams[] = [];
   const stopCalls: number[] = [];
   const emit = (event: AgentRealtimeVoiceEvent): void => {
     for (const subscriber of Array.from(subscribers)) subscriber(event);
@@ -71,6 +81,7 @@ function createHarness(options?: {
   provider?: FakeProviderSession;
   agentOverrides?: Partial<LiveVoiceAgentRef>;
   startSdpTimeoutMs?: number;
+  context?: LiveVoiceContextProvider;
 }): Harness {
   const provider = options?.provider ?? createFakeProviderSession();
   const agent: LiveVoiceAgentRef = {
@@ -95,6 +106,7 @@ function createHarness(options?: {
     ...(options?.startSdpTimeoutMs === undefined
       ? {}
       : { startSdpTimeoutMs: options.startSdpTimeoutMs }),
+    ...(options?.context ? { context: options.context } : {}),
   });
   return {
     coordinator,
@@ -394,5 +406,58 @@ describe("LiveVoiceCoordinator", () => {
     expect(result).toMatchObject({ accepted: false, errorCode: "start_failed" });
     expect(harness.coordinator.hasActiveCall("agent-1")).toBe(false);
     expect(harness.updates).toEqual([]);
+  });
+
+  it("passes the Paseo prompt and snapshot to the provider and suppresses its startup context", async () => {
+    const provider = createFakeProviderSession({
+      onStart: (emit) => emit({ kind: "sdp", sdp: ANSWER_SDP }),
+    });
+    const context: LiveVoiceContextProvider = {
+      build: async (agentId) => ({
+        prompt: `prompt for ${agentId}`,
+        initialItems: [{ role: "developer", text: "state snapshot" }],
+      }),
+    };
+    const harness = createHarness({ provider, context });
+
+    await startCall(harness);
+
+    expect(provider.startCalls[0]).toMatchObject({
+      prompt: "prompt for agent-1",
+      initialItems: [{ role: "developer", text: "state snapshot" }],
+      includeStartupContext: false,
+    });
+  });
+
+  it("still places the call when building the Paseo context fails", async () => {
+    const provider = createFakeProviderSession({
+      onStart: (emit) => emit({ kind: "sdp", sdp: ANSWER_SDP }),
+    });
+    const context: LiveVoiceContextProvider = {
+      build: async () => {
+        throw new Error("workspace registry unavailable");
+      },
+    };
+    const harness = createHarness({ provider, context });
+
+    const result = await startCall(harness);
+
+    expect(result).toMatchObject({ accepted: true });
+    // Falls back to the provider's own context rather than failing the call.
+    expect(provider.startCalls[0]?.prompt).toBeUndefined();
+    expect(provider.startCalls[0]?.includeStartupContext).toBeUndefined();
+  });
+
+  it("omits context fields entirely when no provider is configured", async () => {
+    const provider = createFakeProviderSession({
+      onStart: (emit) => emit({ kind: "sdp", sdp: ANSWER_SDP }),
+    });
+    const harness = createHarness({ provider });
+
+    await startCall(harness);
+
+    expect(provider.startCalls[0]).not.toHaveProperty("prompt");
+    expect(provider.startCalls[0]).not.toHaveProperty("initialItems");
+    expect(provider.startCalls[0]).not.toHaveProperty("includeStartupContext");
   });
 });

@@ -100,6 +100,32 @@ describe("codex live voice", () => {
     expect(realtimeRequests(requests)[0]?.params).toMatchObject({ voice: "cedar" });
   });
 
+  test("realtimeStart forwards the Paseo prompt, initial items, and startup-context opt-out", async () => {
+    const { session, requests } = createSession(true);
+    await session.realtimeStart({
+      sdp: "offer-sdp",
+      realtimeSessionId: "live-1",
+      prompt: "you are the voice of paseo",
+      initialItems: [{ role: "developer", text: "snapshot" }],
+      includeStartupContext: false,
+    });
+    expect(realtimeRequests(requests)[0]?.params).toMatchObject({
+      prompt: "you are the voice of paseo",
+      initialItems: [{ role: "developer", text: "snapshot" }],
+      includeStartupContext: false,
+    });
+  });
+
+  test("realtimeStart omits initialItems when the list is empty", async () => {
+    const { session, requests } = createSession(true);
+    await session.realtimeStart({
+      sdp: "offer-sdp",
+      realtimeSessionId: "live-1",
+      initialItems: [],
+    });
+    expect(realtimeRequests(requests)[0]?.params).not.toHaveProperty("initialItems");
+  });
+
   test("realtimeStop is thread-scoped", async () => {
     const { session, requests } = createSession(true);
     await session.realtimeStop();
