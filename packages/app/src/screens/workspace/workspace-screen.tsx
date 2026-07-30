@@ -198,6 +198,8 @@ import {
 import { getProviderIcon } from "@/components/provider-icons";
 import type { AssistantForkTarget } from "@/components/assistant-fork-menu";
 import { useForkAgent } from "@/hooks/use-fork-agent";
+import { resolveForkAgentSource } from "@/hooks/resolve-fork-agent-source";
+import { storeFetchedAgentDetail } from "@/utils/agent-detail-store";
 import {
   createWorkspaceFileTabTarget,
   normalizeWorkspaceFileLocation,
@@ -2890,22 +2892,46 @@ function WorkspaceScreenContent({
   const forkAgent = useForkAgent({ serverId: normalizedServerId, toast });
   const handleForkAgent = useCallback(
     async (agentId: string, target: AssistantForkTarget) => {
-      // Read the agent record at invoke time (mirroring handleReloadAgent) so the
-      // tab strip does not subscribe to agent records it only needs on select.
-      const sessionState = useSessionStore.getState().sessions[normalizedServerId];
-      const agent = sessionState?.agents.get(agentId) ?? sessionState?.agentDetails.get(agentId);
-      if (!agent) {
+      const resolution = await resolveForkAgentSource({
+        agentId,
+        // Read the agent record at invoke time (mirroring handleReloadAgent) so
+        // the tab strip does not subscribe to agent records it only needs on
+        // select.
+        readAgent: () => {
+          const sessionState = useSessionStore.getState().sessions[normalizedServerId];
+          return sessionState?.agents.get(agentId) ?? sessionState?.agentDetails.get(agentId);
+        },
+        fetchAgent: client && isConnected ? (id) => client.fetchAgent({ agentId: id }) : null,
+        storeAgent: (result) => storeFetchedAgentDetail({ serverId: normalizedServerId, result }),
+      });
+
+      if (resolution.kind === "disconnected") {
+        toast.error(t("workspace.terminal.hostDisconnected"));
+        return;
+      }
+      if (resolution.kind !== "resolved") {
+        // `not_found` and `error` both mean "we could not resolve the agent".
+        // A raw transient message has no room to establish context in a toast
+        // this handler never framed, so both report the same fork failure — but
+        // a transient fetch error still gets logged, or "fork just failed" is
+        // undebuggable.
+        if (resolution.kind === "error") {
+          console.warn(
+            `[Workspace] fork could not resolve agent ${agentId}: ${resolution.message}`,
+          );
+        }
         toast.error(t("message.actions.forkFailed"));
         return;
       }
+
       await forkAgent({
         agentId,
-        agent,
+        agent: resolution.agent,
         workspaceId: normalizedWorkspaceId,
         target,
       });
     },
-    [forkAgent, normalizedServerId, normalizedWorkspaceId, toast, t],
+    [client, isConnected, forkAgent, normalizedServerId, normalizedWorkspaceId, toast, t],
   );
 
   const handleCopyWorkspacePath = useCallback(async () => {
