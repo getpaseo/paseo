@@ -3146,14 +3146,8 @@ class OpenCodeAgentSession implements AgentSession {
       const statusType = readNonEmptyString(status?.type);
       if (!status || statusType === "idle") {
         if (this.externallyDriven && stopping.deferredEvents.length > 0) {
-          const wakeStart = stopping.deferredEvents.findIndex(({ rawEvent }) => {
-            const deferredEvent = unwrapOpenCodeGlobalEvent(rawEvent);
-            return deferredEvent ? this.isUnseenUserWakeBoundary(deferredEvent) : false;
-          });
-          stopping.deferredEvents.splice(
-            0,
-            wakeStart < 0 ? stopping.deferredEvents.length : wakeStart,
-          );
+          // The current status lookup supersedes provisional reconnect events.
+          stopping.deferredEvents.length = 0;
         }
         this.finishStoppingTurn(stopping);
         return;
@@ -3718,29 +3712,36 @@ class OpenCodeAgentSession implements AgentSession {
     if (stopping.replayedTurnActive) {
       return false;
     }
-    const retainReconciledWake =
+    const wakeAlreadyDeferred = stopping.deferredEvents.some(({ rawEvent }) => {
+      const deferredEvent = unwrapOpenCodeGlobalEvent(rawEvent);
+      return deferredEvent ? this.isAutonomousWakeBoundary(deferredEvent) : false;
+    });
+    if (
       stopping.reconcilingProviderStatus &&
-      (this.isAutonomousWakeBoundary(event) ||
-        stopping.deferredEvents.some(({ rawEvent }) => {
-          const deferredEvent = unwrapOpenCodeGlobalEvent(rawEvent);
-          return deferredEvent ? this.isAutonomousWakeBoundary(deferredEvent) : false;
-        }));
-    const retainEvent = stopping.providerIdleObserved || retainReconciledWake;
+      this.isAutonomousWakeBoundary(event) &&
+      !wakeAlreadyDeferred
+    ) {
+      // Output preceding the provider's first busy boundary still belongs to
+      // the canceled run. Keep only the new run from its authoritative start.
+      stopping.deferredEvents.length = 0;
+    }
+    // Preserve exact-session ordering while the status request decides whether
+    // these events belong to a new provider run. If it reports idle, everything
+    // before the first authoritative busy boundary is discarded.
+    const retainEvent = stopping.providerIdleObserved || stopping.reconcilingProviderStatus;
     if (isOpenCodeTerminalEvent(event, this.sessionId) && !stopping.providerIdleObserved) {
-      const userWakeIndex = stopping.deferredEvents.findIndex(({ rawEvent }) => {
+      const wakeStart = stopping.deferredEvents.findIndex(({ rawEvent }) => {
         const deferredEvent = unwrapOpenCodeGlobalEvent(rawEvent);
-        return deferredEvent ? this.isUnseenUserWakeBoundary(deferredEvent) : false;
+        return deferredEvent ? this.isAutonomousWakeBoundary(deferredEvent) : false;
       });
-      const hasWakeOutput = stopping.deferredEvents
-        .slice(userWakeIndex + 1)
-        .some(({ rawEvent }) => {
-          const deferredEvent = unwrapOpenCodeGlobalEvent(rawEvent);
-          return (
-            deferredEvent?.type === "message.updated" &&
-            deferredEvent.properties.info.role === "assistant"
-          );
-        });
-      if (retainEvent && userWakeIndex >= 0 && hasWakeOutput) {
+      const hasWakeOutput = stopping.deferredEvents.slice(wakeStart + 1).some(({ rawEvent }) => {
+        const deferredEvent = unwrapOpenCodeGlobalEvent(rawEvent);
+        return (
+          deferredEvent?.type === "message.updated" &&
+          deferredEvent.properties.info.role === "assistant"
+        );
+      });
+      if (retainEvent && wakeStart >= 0 && hasWakeOutput) {
         stopping.deferredEvents.push(params);
       }
       this.finishStoppingTurn(stopping);
@@ -3796,15 +3797,6 @@ class OpenCodeAgentSession implements AgentSession {
 
   private clearPendingAutonomousEvents(): void {
     this.pendingAutonomousEvents.length = 0;
-  }
-
-  private isUnseenUserWakeBoundary(event: OpenCodeEvent): boolean {
-    return (
-      event.type === "message.updated" &&
-      event.properties.info.role === "user" &&
-      !event.properties.info.summary?.diffs &&
-      !this.emittedUserMessageIds.has(event.properties.info.id)
-    );
   }
 
   private startAutonomousTurn(): string {
