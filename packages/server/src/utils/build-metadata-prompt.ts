@@ -47,16 +47,31 @@ function renderStyleSection(section: MetadataStyleSection, override: string | un
 async function readProjectMetadataOverrides(
   options: Pick<BuildMetadataPromptOptions, "cwd" | "workspaceGitService">,
 ): Promise<PaseoMetadataGeneration | undefined> {
-  if (!options.workspaceGitService) {
-    return undefined;
-  }
+  const configDir = await resolveMetadataConfigDir(options);
   try {
-    const repoRoot = await options.workspaceGitService.resolveRepoRoot(options.cwd);
-    const json = readPaseoConfigJson(repoRoot);
+    const json = readPaseoConfigJson(configDir);
     return PaseoConfigSchema.parse(json).metadataGeneration;
   } catch {
     return undefined;
   }
+}
+
+// The directory to read paseo.json overrides from. In a git repo resolveRepoRoot
+// returns the repo root. Non-git directories make it throw ("Create worktree
+// requires a git repository"); since a non-git workspace keeps its paseo.json at
+// its own root, fall back to options.cwd. We deliberately do not walk parent
+// directories — for a non-git workspace the cwd is the project root by definition.
+async function resolveMetadataConfigDir(
+  options: Pick<BuildMetadataPromptOptions, "cwd" | "workspaceGitService">,
+): Promise<string> {
+  if (options.workspaceGitService) {
+    try {
+      return await options.workspaceGitService.resolveRepoRoot(options.cwd);
+    } catch {
+      // Non-git directory — fall back to the workspace cwd below.
+    }
+  }
+  return options.cwd;
 }
 
 function isNonEmptyString(value: unknown): value is string {
