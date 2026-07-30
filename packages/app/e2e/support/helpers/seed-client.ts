@@ -168,13 +168,17 @@ export interface SeedDaemonClient {
   killTerminal(terminalId: string): Promise<{ error: string | null }>;
 }
 
-export async function connectSeedClient(options?: { port?: number }): Promise<SeedDaemonClient> {
+export async function connectSeedClient(options?: {
+  port?: number;
+  /** Use only with a private host whose teardown removes its entire PASEO_HOME. */
+  projectOwnership?: "client" | "host";
+}): Promise<SeedDaemonClient> {
   const client = await connectDaemonClient<SeedDaemonClient>({
     clientIdPrefix: "seed",
     appVersion: loadAppVersion(),
     port: options?.port,
   });
-  return withProjectOwnership(client);
+  return options?.projectOwnership === "host" ? client : withProjectOwnership(client);
 }
 
 /**

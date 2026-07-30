@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { test as base } from "./fixtures";
+import { test as base } from "../support/fixtures";
 import {
   beginWorkspaceFromProject,
   createWorkspaceWithoutAgent,
@@ -14,11 +14,15 @@ import {
   openProjectDirectoryWithHosts,
   renameProject,
   selectWorkspaceHost,
-} from "./helpers/project-grouping";
-import { type IsolatedHostDaemon, startIsolatedHostDaemon } from "./helpers/isolated-host-daemon";
-import { connectSeedClient, type SeedDaemonClient } from "./helpers/seed-client";
-import { getServerId } from "./helpers/server-id";
-import { createTempGitRepo } from "./helpers/workspace";
+  switchProjectSettingsHost,
+} from "../support/helpers/project-grouping";
+import {
+  type IsolatedHostDaemon,
+  startIsolatedHostDaemon,
+} from "../support/helpers/isolated-host-daemon";
+import { connectSeedClient, type SeedDaemonClient } from "../support/helpers/seed-client";
+import { getServerId } from "../support/helpers/server-id";
+import { createTempGitRepo } from "../support/helpers/workspace";
 
 const PRIMARY_HOST_LABEL = "Primary Host";
 const SECONDARY_HOST_LABEL = "Secondary Host";
@@ -139,8 +143,14 @@ const test = base.extend<{
     const secondaryRepo = await createTempGitRepo("grouped-legacy-secondary-", {
       originUrl: SHARED_REMOTE_URL,
     });
-    const primaryClient = await connectSeedClient({ port: primaryHost.port });
-    const secondaryClient = await connectSeedClient({ port: secondaryHost.port });
+    const primaryClient = await connectSeedClient({
+      port: primaryHost.port,
+      projectOwnership: "host",
+    });
+    const secondaryClient = await connectSeedClient({
+      port: secondaryHost.port,
+      projectOwnership: "host",
+    });
 
     try {
       await createProject(primaryClient, {
