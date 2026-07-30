@@ -112,7 +112,11 @@ function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSession
 
 function createSession(
   configOverrides: Partial<AgentSessionConfig> = {},
-  options: { goalsEnabled?: boolean; autoReviewEnabled?: boolean } = {},
+  options: {
+    goalsEnabled?: boolean;
+    autoReviewEnabled?: boolean;
+    customProvider?: { id: string; label: string; extends: string };
+  } = {},
 ): CodexTestSession {
   const session = new CodexAppServerAgentSession(
     createConfig(configOverrides),
@@ -121,7 +125,7 @@ function createSession(
     () => {
       throw new Error("Test session cannot spawn Codex app-server");
     },
-    {},
+    options.customProvider ? { customProvider: options.customProvider } : {},
     false,
     options.goalsEnabled === true,
     options.autoReviewEnabled === true,
@@ -1986,6 +1990,49 @@ describe("Codex app-server provider", () => {
     expect(turnStart?.[1]).toEqual(
       expect.objectContaining({
         summary: "none",
+      }),
+    );
+  });
+
+  test("preserves reasoning summaries for a custom Codex-derived Spark provider", async () => {
+    const session = createSession(
+      {
+        model: "gpt-5.3-codex-spark",
+        thinkingOptionId: "medium",
+        extra: { codex: { model_reasoning_summary: "concise" } },
+      },
+      {
+        customProvider: {
+          id: "custom-codex",
+          label: "Custom Codex",
+          extends: "codex",
+        },
+      },
+    );
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/start") return { thread: { id: "custom-spark-thread" } };
+      if (method === "turn/start") return {};
+      throw new Error(`Unexpected request: ${method}`);
+    });
+
+    session.currentThreadId = null;
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({ request });
+
+    await session.startTurn("Use custom Spark");
+
+    const threadStart = request.mock.calls.find(([method]) => method === "thread/start");
+    expect(threadStart?.[1]).toEqual(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          model_reasoning_summary: "concise",
+        }),
+      }),
+    );
+    const turnStart = request.mock.calls.find(([method]) => method === "turn/start");
+    expect(turnStart?.[1]).not.toEqual(
+      expect.objectContaining({
+        summary: expect.anything(),
       }),
     );
   });

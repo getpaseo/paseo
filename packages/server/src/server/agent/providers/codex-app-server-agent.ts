@@ -148,8 +148,9 @@ function applyCodexModelCompatibilityOverrides(
   config: Record<string, unknown>,
   provider: string,
   model: string | undefined,
+  isCustomProvider: boolean,
 ): void {
-  if (provider === CODEX_PROVIDER && model === CODEX_SPARK_MODEL_ID) {
+  if (!isCustomProvider && provider === CODEX_PROVIDER && model === CODEX_SPARK_MODEL_ID) {
     config.model_reasoning_summary = "none";
   }
 }
@@ -4990,7 +4991,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private async resolveTurnReasoningSummary(): Promise<CodexReasoningSummary | undefined> {
-    if (this.config.provider !== CODEX_PROVIDER) {
+    if (this.config.provider !== CODEX_PROVIDER || this.deps.customProvider) {
       return undefined;
     }
     if (this.config.model === CODEX_SPARK_MODEL_ID) {
@@ -5077,7 +5078,12 @@ export class CodexAppServerAgentSession implements AgentSession {
       innerConfig.mcp_servers = mcpServers;
     }
 const configured = applyCodexToolPolicy(innerConfig, this.config.toolPolicy);
-    applyCodexModelCompatibilityOverrides(configured, this.config.provider, this.config.model);
+    applyCodexModelCompatibilityOverrides(
+      configured,
+      this.config.provider,
+      this.config.model,
+      this.deps.customProvider !== undefined,
+    );
     return Object.keys(configured).length > 0 ? configured : null;
   }
 
