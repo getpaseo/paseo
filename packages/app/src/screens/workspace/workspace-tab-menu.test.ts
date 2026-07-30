@@ -37,6 +37,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyTerminalId: vi.fn(),
       onCopyFilePath,
       onReloadAgent,
+      onForkAgent: vi.fn(),
       onRenameTab,
       onCloseTab,
       onCloseTabsBefore,
@@ -47,6 +48,8 @@ describe("buildWorkspaceTabMenuEntries", () => {
     expect(entries.filter((entry) => entry.kind === "item").map((entry) => entry.label)).toEqual([
       "Copy resume command",
       "Copy agent id",
+      "Fork chat in a new tab",
+      "Fork chat in a new workspace",
       "Rename",
       "Close to the left",
       "Close to the right",
@@ -68,6 +71,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyTerminalId: vi.fn(),
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
+      onForkAgent: vi.fn(),
       onRenameTab: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
@@ -78,6 +82,8 @@ describe("buildWorkspaceTabMenuEntries", () => {
     expect(entries.filter((entry) => entry.kind === "item").map((entry) => entry.label)).toEqual([
       "Copy resume command",
       "Copy agent id",
+      "Fork chat in a new tab",
+      "Fork chat in a new workspace",
       "Rename",
       "Close tabs above",
       "Close tabs below",
@@ -104,6 +110,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyTerminalId: vi.fn(),
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
+      onForkAgent: vi.fn(),
       onRenameTab: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
@@ -133,6 +140,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyTerminalId: vi.fn(),
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
+      onForkAgent: vi.fn(),
       onRenameTab: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
@@ -163,6 +171,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyTerminalId: vi.fn(),
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
+      onForkAgent: vi.fn(),
       onRenameTab,
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
@@ -199,6 +208,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyTerminalId,
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
+      onForkAgent: vi.fn(),
       onRenameTab,
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
@@ -250,6 +260,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyTerminalId: vi.fn(),
       onCopyFilePath,
       onReloadAgent: vi.fn(),
+      onForkAgent: vi.fn(),
       onRenameTab: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
@@ -293,6 +304,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyTerminalId: vi.fn(),
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
+      onForkAgent: vi.fn(),
       onRenameTab: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsToLeft: vi.fn(),
@@ -324,6 +336,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyTerminalId: vi.fn(),
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
+      onForkAgent: vi.fn(),
       onRenameTab: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
@@ -364,5 +377,181 @@ describe("buildWorkspaceTabMenuEntries", () => {
       .find((entry) => entry.kind === "separator");
     expect(agentSeparator?.key).toBe("rename-separator");
     expect(terminalSeparator?.key).toBe("rename-separator");
+  });
+
+  it("offers both fork targets for agent tabs and forwards the selected target", () => {
+    const onForkAgent = vi.fn();
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab: createAgentTab(),
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context-agent_123",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onForkAgent,
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    const forkTab = entries.find(
+      (entry) => entry.kind === "item" && entry.key === "fork-chat-new-tab",
+    );
+    const forkWorkspace = entries.find(
+      (entry) => entry.kind === "item" && entry.key === "fork-chat-new-workspace",
+    );
+    if (!forkTab || forkTab.kind !== "item") throw new Error("Fork-in-new-tab entry missing");
+    if (!forkWorkspace || forkWorkspace.kind !== "item") {
+      throw new Error("Fork-in-new-workspace entry missing");
+    }
+
+    expect(forkTab.label).toBe("Fork chat in a new tab");
+    expect(forkTab.icon).toBe("split");
+    expect(forkTab.testID).toBe("workspace-tab-context-agent_123-fork-chat-new-tab");
+    expect(forkTab.disabled).toBeUndefined();
+    expect(forkWorkspace.label).toBe("Fork chat in a new workspace");
+    expect(forkWorkspace.icon).toBe("split");
+    expect(forkWorkspace.testID).toBe("workspace-tab-context-agent_123-fork-chat-new-workspace");
+    expect(forkWorkspace.disabled).toBeUndefined();
+
+    forkTab.onSelect();
+    expect(onForkAgent).toHaveBeenNthCalledWith(1, "agent-123", "tab");
+    forkWorkspace.onSelect();
+    expect(onForkAgent).toHaveBeenNthCalledWith(2, "agent-123", "workspace");
+  });
+
+  it("offers fork entries on mobile agent menus too", () => {
+    const onForkAgent = vi.fn();
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "mobile",
+      tab: createAgentTab(),
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-menu-agent_123",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onForkAgent,
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    const forkTab = entries.find(
+      (entry) => entry.kind === "item" && entry.key === "fork-chat-new-tab",
+    );
+    if (!forkTab || forkTab.kind !== "item") throw new Error("Fork-in-new-tab entry missing");
+    expect(forkTab.testID).toBe("workspace-tab-menu-agent_123-fork-chat-new-tab");
+    forkTab.onSelect();
+    expect(onForkAgent).toHaveBeenCalledWith("agent-123", "tab");
+  });
+
+  it.each([
+    [
+      "terminal",
+      {
+        key: "terminal_abc",
+        tabId: "terminal_abc",
+        kind: "terminal",
+        target: { kind: "terminal", terminalId: "terminal-abc" },
+      } satisfies WorkspaceTabDescriptor,
+    ],
+    [
+      "file",
+      {
+        key: "file_abc",
+        tabId: "file_abc",
+        kind: "file",
+        target: { kind: "file", path: "/some/path.ts", lineStart: 1, lineEnd: 10 },
+      } satisfies WorkspaceTabDescriptor,
+    ],
+    [
+      "draft",
+      {
+        key: "draft_123",
+        tabId: "draft_123",
+        kind: "draft",
+        target: { kind: "draft", draftId: "draft_123" },
+      } satisfies WorkspaceTabDescriptor,
+    ],
+    [
+      "provider_subagent",
+      {
+        key: "provider_subagent_x",
+        tabId: "provider_subagent_x",
+        kind: "provider_subagent",
+        target: {
+          kind: "provider_subagent",
+          parentAgentId: "agent-123",
+          subagentId: "subagent-x",
+        },
+      } satisfies WorkspaceTabDescriptor,
+    ],
+  ])("omits fork entries for %s tabs", (_kind, tab) => {
+    const onForkAgent = vi.fn();
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab,
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onForkAgent,
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    const forkKeys = entries
+      .filter((entry) => entry.kind === "item")
+      .map((entry) => entry.key)
+      .filter((key) => key.startsWith("fork-chat-"));
+    expect(forkKeys).toEqual([]);
+    expect(onForkAgent).not.toHaveBeenCalled();
+  });
+
+  it("forwards onForkAgent through the desktop actions builder", () => {
+    const onForkAgent = vi.fn();
+    const actions = buildWorkspaceDesktopTabActions({
+      tab: createAgentTab(),
+      index: 0,
+      tabCount: 1,
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onForkAgent,
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsToLeft: vi.fn(),
+      onCloseTabsToRight: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    const forkWorkspace = actions.menuEntries.find(
+      (entry) => entry.kind === "item" && entry.key === "fork-chat-new-workspace",
+    );
+    if (!forkWorkspace || forkWorkspace.kind !== "item") {
+      throw new Error("Fork-in-new-workspace entry missing");
+    }
+    forkWorkspace.onSelect();
+    expect(onForkAgent).toHaveBeenCalledWith("agent-123", "workspace");
   });
 });

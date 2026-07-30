@@ -499,6 +499,8 @@ export const fr: TranslationResources = {
         copyTerminalId: "Copier l'identifiant du terminal",
         copyFilePath: "Copy file path",
         rename: "Rebaptiser",
+        forkChatInNewTab: "Dupliquer la conversation dans un nouvel onglet",
+        forkChatInNewWorkspace: "Dupliquer la conversation dans un nouvel espace de travail",
         closeAbove: "Fermer les onglets ci-dessus",
         closeBelow: "Fermer les onglets ci-dessous",
         closeLeft: "Près de la gauche",

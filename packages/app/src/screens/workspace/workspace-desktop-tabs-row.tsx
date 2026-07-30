@@ -24,6 +24,7 @@ import {
   Columns2,
   Copy,
   Pencil,
+  Split,
   RotateCw,
   Rows2,
   Globe,
@@ -89,6 +90,7 @@ import { runPinnedTabTarget, type TabTargetHandlers } from "@/workspace-pins/run
 import type { PinnedTabTarget } from "@/workspace-pins/target";
 import { PinnedTargetsRow } from "@/workspace-pins/pinned-targets-row";
 import { PinnableMenuItem } from "@/workspace-pins/pinnable-menu-item";
+import type { AssistantForkTarget } from "@/components/assistant-fork-menu";
 
 const DROPDOWN_WIDTH = 220;
 const LOADING_TAB_LABEL_SKELETON_WIDTH = 80;
@@ -102,6 +104,7 @@ const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
 const ThemedArrowRightToLine = withUnistyles(ArrowRightToLine);
 const ThemedCopyX = withUnistyles(CopyX);
 const ThemedPencil = withUnistyles(Pencil);
+const ThemedSplit = withUnistyles(Split);
 const ThemedSquarePen = withUnistyles(SquarePen);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
 const ThemedChevronDown = withUnistyles(ChevronDown);
@@ -338,6 +341,8 @@ function TabContextMenuItem({
         return <ThemedCopyX size={16} uniProps={mutedColorMapping} />;
       case "pencil":
         return <ThemedPencil size={16} uniProps={mutedColorMapping} />;
+      case "split":
+        return <ThemedSplit size={16} uniProps={mutedColorMapping} />;
       case "x":
         return <ThemedX size={16} uniProps={mutedColorMapping} />;
       default:
@@ -422,6 +427,7 @@ interface WorkspaceDesktopTabsRowProps {
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
+  onForkAgent: (agentId: string, target: AssistantForkTarget) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
@@ -768,6 +774,7 @@ export function WorkspaceDesktopTabsRow({
   onCopyTerminalId,
   onCopyFilePath,
   onReloadAgent,
+  onForkAgent,
   onRenameTab,
   onCloseTabsToLeft,
   onCloseTabsToRight,
@@ -852,6 +859,8 @@ export function WorkspaceDesktopTabsRow({
       copyTerminalId: t("workspace.tabs.menu.copyTerminalId"),
       copyFilePath: t("workspace.tabs.menu.copyFilePath"),
       rename: t("workspace.tabs.menu.rename"),
+      forkChatInNewTab: t("workspace.tabs.menu.forkChatInNewTab"),
+      forkChatInNewWorkspace: t("workspace.tabs.menu.forkChatInNewWorkspace"),
       closeAbove: t("workspace.tabs.menu.closeAbove"),
       closeBelow: t("workspace.tabs.menu.closeBelow"),
       closeLeft: t("workspace.tabs.menu.closeLeft"),
@@ -951,6 +960,7 @@ export function WorkspaceDesktopTabsRow({
           onCopyTerminalId={onCopyTerminalId}
           onCopyFilePath={onCopyFilePath}
           onReloadAgent={onReloadAgent}
+          onForkAgent={onForkAgent}
           onRenameTab={onRenameTab}
           onCloseTabsToLeft={onCloseTabsToLeft}
           onCloseTabsToRight={onCloseTabsToRight}
@@ -985,6 +995,7 @@ export function WorkspaceDesktopTabsRow({
       onCopyResumeCommand,
       onNavigateTab,
       onReloadAgent,
+      onForkAgent,
       onRenameTab,
       setHoveredCloseTabKey,
       tabMenuLabels,
@@ -1105,6 +1116,7 @@ function ResolvedDesktopTabChip({
   onCopyTerminalId,
   onCopyFilePath,
   onReloadAgent,
+  onForkAgent,
   onRenameTab,
   onCloseTabsToLeft,
   onCloseTabsToRight,
@@ -1132,6 +1144,7 @@ function ResolvedDesktopTabChip({
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
+  onForkAgent: (agentId: string, target: AssistantForkTarget) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
@@ -1159,6 +1172,7 @@ function ResolvedDesktopTabChip({
         onCopyTerminalId,
         onCopyFilePath,
         onReloadAgent,
+        onForkAgent,
         onRenameTab,
         onCloseTab,
         onCloseTabsToLeft,
@@ -1179,6 +1193,7 @@ function ResolvedDesktopTabChip({
       onCopyResumeCommand,
       labels,
       onReloadAgent,
+      onForkAgent,
       onRenameTab,
       tabCount,
     ],

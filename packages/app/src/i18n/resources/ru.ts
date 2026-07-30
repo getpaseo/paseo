@@ -499,6 +499,8 @@ export const ru: TranslationResources = {
         copyTerminalId: "Скопировать идентификатор терминала",
         copyFilePath: "Copy file path",
         rename: "Переименовать",
+        forkChatInNewTab: "Форкнуть чат в новой вкладке",
+        forkChatInNewWorkspace: "Форкнуть чат в новом рабочем пространстве",
         closeAbove: "Закрыть вкладки выше",
         closeBelow: "Закройте вкладки ниже",
         closeLeft: "Ближе к левому краю",

@@ -495,6 +495,8 @@ export const zhCN: TranslationResources = {
         copyTerminalId: "复制 Terminal ID",
         copyFilePath: "Copy file path",
         rename: "重命名",
+        forkChatInNewTab: "将对话分叉到新标签页",
+        forkChatInNewWorkspace: "将对话分叉到新工作区",
         closeAbove: "关闭上方标签",
         closeBelow: "关闭下方标签",
         closeLeft: "关闭左侧标签",

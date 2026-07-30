@@ -499,6 +499,8 @@ export const ptBR: TranslationResources = {
         copyTerminalId: "Copiar ID do terminal",
         copyFilePath: "Copiar caminho do arquivo",
         rename: "Renomear",
+        forkChatInNewTab: "Bifurcar o chat em uma nova aba",
+        forkChatInNewWorkspace: "Bifurcar o chat em um novo workspace",
         closeAbove: "Fechar abas acima",
         closeBelow: "Fechar abas abaixo",
         closeLeft: "Fechar à esquerda",

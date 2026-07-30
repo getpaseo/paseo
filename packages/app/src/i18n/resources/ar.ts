@@ -495,6 +495,8 @@ export const ar: TranslationResources = {
         copyTerminalId: "نسخ معرف المحطة",
         copyFilePath: "Copy file path",
         rename: "إعادة تسمية",
+        forkChatInNewTab: "تفريع المحادثة في تبويب جديد",
+        forkChatInNewWorkspace: "تفريع المحادثة في مساحة عمل جديدة",
         closeAbove: "إغلاق علامات التبويب أعلاه",
         closeBelow: "إغلاق علامات التبويب أدناه",
         closeLeft: "بالقرب من اليسار",

@@ -1,3 +1,4 @@
+import type { AssistantForkTarget } from "@/components/assistant-fork-menu";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import { i18n } from "@/i18n/i18next";
 import { encodeFilePathForPathSegment, encodeWorkspaceIdForPathSegment } from "@/utils/host-routes";
@@ -11,6 +12,8 @@ export interface WorkspaceTabMenuLabels {
   copyTerminalId: string;
   copyFilePath: string;
   rename: string;
+  forkChatInNewTab: string;
+  forkChatInNewWorkspace: string;
   closeAbove: string;
   closeBelow: string;
   closeLeft: string;
@@ -27,6 +30,8 @@ export const DEFAULT_WORKSPACE_TAB_MENU_LABELS: WorkspaceTabMenuLabels = {
   copyTerminalId: i18n.t("workspace.tabs.menu.copyTerminalId"),
   copyFilePath: i18n.t("workspace.tabs.menu.copyFilePath"),
   rename: i18n.t("workspace.tabs.menu.rename"),
+  forkChatInNewTab: i18n.t("workspace.tabs.menu.forkChatInNewTab"),
+  forkChatInNewWorkspace: i18n.t("workspace.tabs.menu.forkChatInNewWorkspace"),
   closeAbove: i18n.t("workspace.tabs.menu.closeAbove"),
   closeBelow: i18n.t("workspace.tabs.menu.closeBelow"),
   closeLeft: i18n.t("workspace.tabs.menu.closeLeft"),
@@ -49,6 +54,7 @@ export type WorkspaceTabMenuEntry =
         | "arrow-right-to-line"
         | "copy-x"
         | "pencil"
+        | "split"
         | "x";
       hint?: string;
       tooltip?: string;
@@ -73,6 +79,7 @@ interface BuildWorkspaceTabMenuEntriesInput {
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
+  onForkAgent: (agentId: string, target: AssistantForkTarget) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   onCloseTabsBefore: (tabId: string) => Promise<void> | void;
@@ -90,6 +97,7 @@ interface BuildWorkspaceDesktopTabActionsInput {
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
+  onForkAgent: (agentId: string, target: AssistantForkTarget) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
@@ -168,6 +176,7 @@ export function buildWorkspaceTabMenuEntries(
     onCopyTerminalId,
     onCopyFilePath,
     onReloadAgent,
+    onForkAgent,
     onRenameTab,
     onCloseTab,
     onCloseTabsBefore,
@@ -201,6 +210,29 @@ export function buildWorkspaceTabMenuEntries(
       testID: `${menuTestIDBase}-copy-agent-id`,
       onSelect: () => {
         void onCopyAgentId(agentId);
+      },
+    });
+    // Fork is reachable here regardless of run state — the turn footer only
+    // offers it on completed turns, so a user watching a live run would
+    // otherwise have to scroll back to find a fork affordance.
+    entries.push({
+      kind: "item",
+      key: "fork-chat-new-tab",
+      label: labels.forkChatInNewTab,
+      icon: "split",
+      testID: `${menuTestIDBase}-fork-chat-new-tab`,
+      onSelect: () => {
+        void onForkAgent(agentId, "tab");
+      },
+    });
+    entries.push({
+      kind: "item",
+      key: "fork-chat-new-workspace",
+      label: labels.forkChatInNewWorkspace,
+      icon: "split",
+      testID: `${menuTestIDBase}-fork-chat-new-workspace`,
+      onSelect: () => {
+        void onForkAgent(agentId, "workspace");
       },
     });
   }
@@ -329,6 +361,7 @@ export function buildWorkspaceDesktopTabActions(
       onCopyTerminalId: input.onCopyTerminalId,
       onCopyFilePath: input.onCopyFilePath,
       onReloadAgent: input.onReloadAgent,
+      onForkAgent: input.onForkAgent,
       onRenameTab: input.onRenameTab,
       onCloseTab: input.onCloseTab,
       onCloseTabsBefore: input.onCloseTabsToLeft,
