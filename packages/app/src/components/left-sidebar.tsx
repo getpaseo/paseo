@@ -117,6 +117,7 @@ interface MobileSidebarProps extends SidebarSharedProps {
   closeSidebar: () => void;
   handleViewMoreNavigate: () => void;
   handleViewBacklogNavigate: () => void;
+  handleCreateBacklogTaskNavigate: () => void;
   handleViewSchedulesNavigate: () => void;
 }
 
@@ -125,6 +126,7 @@ interface DesktopSidebarProps extends SidebarSharedProps {
   active: boolean;
   handleViewMore: () => void;
   handleViewBacklog: () => void;
+  handleCreateBacklogTask: () => void;
   handleViewSchedules: () => void;
 }
 
@@ -222,6 +224,10 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
     router.push(buildBacklogRoute());
   }, []);
 
+  const handleCreateBacklogTaskNavigate = useCallback(() => {
+    router.push(buildBacklogRoute({ create: true }));
+  }, []);
+
   const handleViewSchedulesNavigate = useCallback(() => {
     router.push(buildSchedulesRoute());
   }, []);
@@ -277,6 +283,7 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
           handleOpenHostSettings={handleOpenHostSettingsMobile}
           handleViewMoreNavigate={handleViewMoreNavigate}
           handleViewBacklogNavigate={handleViewBacklogNavigate}
+          handleCreateBacklogTaskNavigate={handleCreateBacklogTaskNavigate}
           handleViewSchedulesNavigate={handleViewSchedulesNavigate}
         />
       </RetainedPanelActivity>
@@ -296,6 +303,7 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
         handleOpenHostSettings={handleOpenHostSettingsDesktop}
         handleViewMore={handleViewMoreNavigate}
         handleViewBacklog={handleViewBacklogNavigate}
+        handleCreateBacklogTask={handleCreateBacklogTaskNavigate}
         handleViewSchedules={handleViewSchedulesNavigate}
       />
     </RetainedPanelActivity>
@@ -626,6 +634,7 @@ function MobileSidebar({
   closeSidebar,
   handleViewMoreNavigate,
   handleViewBacklogNavigate,
+  handleCreateBacklogTaskNavigate,
   handleViewSchedulesNavigate,
 }: MobileSidebarProps) {
   const pathname = usePathname();
@@ -649,6 +658,21 @@ function MobileSidebar({
     closeSidebar();
     handleViewBacklogNavigate();
   }, [closeSidebar, handleViewBacklogNavigate]);
+
+  const handleCreateBacklogTask = useCallback(() => {
+    closeSidebar();
+    handleCreateBacklogTaskNavigate();
+  }, [closeSidebar, handleCreateBacklogTaskNavigate]);
+
+  const backlogTrailingAction = useMemo(
+    () => ({
+      icon: Plus,
+      onPress: handleCreateBacklogTask,
+      accessibilityLabel: "Add task",
+      testID: "sidebar-backlog-add",
+    }),
+    [handleCreateBacklogTask],
+  );
 
   const handleWorkspacePress = useCallback(() => {
     closeSidebar();
@@ -694,6 +718,7 @@ function MobileSidebar({
             isActive={isBacklogActive}
             testID="sidebar-backlog"
             variant="compact"
+            trailingAction={backlogTrailingAction}
           />
           <SidebarHeaderRow
             icon={CalendarClock}
@@ -786,6 +811,7 @@ function DesktopSidebar({
   active,
   handleViewMore,
   handleViewBacklog,
+  handleCreateBacklogTask,
   handleViewSchedules,
 }: DesktopSidebarProps) {
   const ownsTopLeft = useOwnsWindowChromeCorner("top-left");
@@ -794,6 +820,15 @@ function DesktopSidebar({
   const isSessionsActive = pathname.includes("/sessions");
   const isBacklogActive = pathname.includes("/backlog");
   const isSchedulesActive = pathname.includes("/schedules");
+  const backlogTrailingAction = useMemo(
+    () => ({
+      icon: Plus,
+      onPress: handleCreateBacklogTask,
+      accessibilityLabel: "Add task",
+      testID: "sidebar-backlog-add",
+    }),
+    [handleCreateBacklogTask],
+  );
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
   const { width: viewportWidth } = useWindowDimensions();
@@ -889,6 +924,7 @@ function DesktopSidebar({
               isActive={isBacklogActive}
               testID="sidebar-backlog"
               variant="compact"
+              trailingAction={backlogTrailingAction}
             />
             <SidebarHeaderRow
               icon={CalendarClock}

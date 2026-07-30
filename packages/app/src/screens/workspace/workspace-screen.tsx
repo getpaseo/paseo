@@ -410,7 +410,10 @@ function useWorkspaceCodeServerAction({
         if (input?.paneId) {
           focusWorkspacePane(persistenceKey, input.paneId);
         }
-        const { codeServerId } = createWorkspaceCodeServer({ initialUrl: codeServerLaunchUrl });
+        const { codeServerId } = createWorkspaceCodeServer({
+          initialUrl: codeServerLaunchUrl,
+          workspaceKey: persistenceKey,
+        });
         openWorkspaceTabFocused(persistenceKey, { kind: "codeServer", codeServerId });
         return;
       }

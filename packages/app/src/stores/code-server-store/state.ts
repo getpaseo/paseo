@@ -1,6 +1,8 @@
 export interface CodeServerRecord {
   codeServerId: string;
   browserId: string;
+  /** Workspace key used to scope default title numbering. Older records may omit this. */
+  workspaceKey?: string | null;
   initialUrl: string;
   title: string;
   createdAt: number;
@@ -29,9 +31,19 @@ function normalizeCodeServerUrl(value: string): string {
   return trimmed;
 }
 
-export function getNextCodeServerTitle(records: Record<string, CodeServerRecord>): string {
+export function getNextCodeServerTitle(
+  records: Record<string, CodeServerRecord>,
+  workspaceKey?: string | null,
+): string {
+  const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
   let maxSuffix = 0;
   for (const record of Object.values(records)) {
+    const recordWorkspaceKey = trimNonEmpty(record.workspaceKey);
+    // Numbering is workspace-scoped. Records without a workspace key only
+    // compete with other unscoped records (legacy / unknown workspace).
+    if ((recordWorkspaceKey ?? null) !== (normalizedWorkspaceKey ?? null)) {
+      continue;
+    }
     const match = record.title.match(/^Code Server (\d+)$/);
     if (!match) {
       continue;
@@ -47,6 +59,7 @@ export function getNextCodeServerTitle(records: Record<string, CodeServerRecord>
 export function createCodeServerRecord(input: {
   codeServerId: string;
   browserId: string;
+  workspaceKey?: string | null;
   initialUrl: string;
   title: string;
   now: number;
@@ -54,6 +67,7 @@ export function createCodeServerRecord(input: {
   return {
     codeServerId: input.codeServerId,
     browserId: input.browserId,
+    workspaceKey: trimNonEmpty(input.workspaceKey),
     initialUrl: normalizeCodeServerUrl(input.initialUrl),
     title: trimNonEmpty(input.title) ?? "Code Server",
     createdAt: input.now,

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.913 - 2026-07-30
+
+### Added
+
+- Free-text search on Sessions (History) and Schedules screens
+- Plus control on the sidebar Backlog row that opens the add-task form immediately
+- Peek button on in-app attention notifications for a read-only modal without navigating away or clearing attention
+
+### Fixed
+
+- Code Server default title numbering is scoped per workspace instead of global
+- Sessions search empty state still offers Load more when more history is available
+- Sidebar Backlog plus no longer also triggers the row navigation press
+- Closing an add-task form opened via `?create=1` clears the create intent so a later plus can reopen it
+- Attention peek pauses banner auto-dismiss so details stay available while reading
+
 ## 0.2.912 - 2026-07-30
 
 ### Fixed
