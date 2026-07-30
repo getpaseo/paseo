@@ -103,6 +103,7 @@ const OPENCODE_LEGACY_FULL_ACCESS_MODE_ID = "full-access";
 const OPENCODE_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
 const OPENCODE_PERSISTED_SESSION_LIMIT = 200;
 const OPENCODE_PENDING_ABORT_START_TIMEOUT_MS = 10_000;
+const OPENCODE_PENDING_AUTONOMOUS_EVENT_LIMIT = 64;
 const OPENCODE_CHILD_SESSION_HYDRATION_LIMIT = 100;
 const OPENCODE_CHILD_SESSION_SERVER_REGISTRY_LIMIT = 500;
 const OPENCODE_PERMISSION_ACTION_ALLOW_ONCE = "allow_once";
@@ -2923,6 +2924,8 @@ class OpenCodeAgentSession implements AgentSession {
   private nextTurnOrdinal = 0;
   private turnState: OpenCodeTurnState = { status: "idle" };
   private runBoundary: OpenCodeRunBoundaryState | null = null;
+  /** Exact-session content OpenCode persists immediately before its runner reports busy. */
+  private readonly pendingAutonomousEvents: AgentStreamEvent[] = [];
   private readonly runningToolCalls = new Map<string, ToolCallTimelineItem>();
   private subAgentsByCallId = new Map<string, OpenCodeSubAgentActivityState>();
   private subAgentCallIdByChildSessionId = new Map<string, string>();
@@ -3173,6 +3176,7 @@ class OpenCodeAgentSession implements AgentSession {
       throw new Error("OpenCode is still stopping the previous turn");
     }
 
+    this.clearPendingAutonomousEvents();
     this.runningToolCalls.clear();
     this.subAgentsByCallId.clear();
     this.subAgentCallIdByChildSessionId.clear();
@@ -3651,10 +3655,16 @@ class OpenCodeAgentSession implements AgentSession {
         foregroundEvents.push(translatedEvent);
       }
     }
-    if (!turnId && this.shouldStartAutonomousTurn(event, foregroundEvents)) {
+    if (!turnId && this.shouldStartAutonomousTurn(event)) {
       turnId = this.startAutonomousTurn();
+      foregroundEvents.unshift(...this.takePendingAutonomousEvents());
     }
     if (!turnId) {
+      if (isOpenCodeTerminalEvent(event, this.sessionId)) {
+        this.clearPendingAutonomousEvents();
+      } else if (getOpenCodeEventSessionId(event) === this.sessionId) {
+        this.stagePendingAutonomousEvents(foregroundEvents);
+      }
       this.emitBackgroundPermissionRequests(foregroundEvents);
       this.traceOpenCode("provider.opencode.event.skip", {
         n: eventCount,
@@ -3748,43 +3758,44 @@ class OpenCodeAgentSession implements AgentSession {
     }
   }
 
-  private shouldStartAutonomousTurn(
-    event: OpenCodeEvent,
-    foregroundEvents: readonly AgentStreamEvent[],
-  ): boolean {
+  private shouldStartAutonomousTurn(event: OpenCodeEvent): boolean {
     if (this.turnState.status !== "idle") {
       return false;
     }
     if (getOpenCodeEventSessionId(event) !== this.sessionId) {
       return false;
     }
-    // OpenCode publishes the persisted user message before it marks the runner
-    // busy. That message is the earliest unambiguous boundary for a plugin-
-    // initiated parent turn; session metadata and assistant echoes are not.
-    if (this.isAutonomousWakeBoundary(event)) {
-      return true;
-    }
-    if (!this.externallyDriven) {
-      return false;
-    }
-    if (
-      foregroundEvents.some(
-        (foregroundEvent) =>
-          foregroundEvent.type !== "thread_started" && !toTerminalTurnEvent(foregroundEvent),
-      )
-    ) {
-      return true;
-    }
-    return event.type === "session.status" && event.properties.status.type === "busy";
+    return this.isAutonomousWakeBoundary(event);
   }
 
   private isAutonomousWakeBoundary(event: OpenCodeEvent): boolean {
-    return (
-      this.isUnseenUserWakeBoundary(event) ||
-      (this.externallyDriven &&
-        event.type === "session.status" &&
-        event.properties.status.type === "busy")
-    );
+    // Message records are mutable and can be patched after the runner stops.
+    // Only OpenCode's execution status is authoritative for autonomous activity.
+    return event.type === "session.status" && event.properties.status.type === "busy";
+  }
+
+  private stagePendingAutonomousEvents(events: readonly AgentStreamEvent[]): void {
+    for (const event of events) {
+      if (
+        event.type === "thread_started" ||
+        event.type === "permission_requested" ||
+        toTerminalTurnEvent(event)
+      ) {
+        continue;
+      }
+      if (this.pendingAutonomousEvents.length === OPENCODE_PENDING_AUTONOMOUS_EVENT_LIMIT) {
+        this.pendingAutonomousEvents.shift();
+      }
+      this.pendingAutonomousEvents.push(event);
+    }
+  }
+
+  private takePendingAutonomousEvents(): AgentStreamEvent[] {
+    return this.pendingAutonomousEvents.splice(0);
+  }
+
+  private clearPendingAutonomousEvents(): void {
+    this.pendingAutonomousEvents.length = 0;
   }
 
   private isUnseenUserWakeBoundary(event: OpenCodeEvent): boolean {
@@ -3830,6 +3841,7 @@ class OpenCodeAgentSession implements AgentSession {
     }
     this.pendingUserMessageText = null;
     this.pendingClientMessageId = null;
+    this.clearPendingAutonomousEvents();
     this.turnState = { status: "idle" };
     this.abortController = null;
     this.notifySubscribers(event, turnId);
@@ -3863,6 +3875,7 @@ class OpenCodeAgentSession implements AgentSession {
     }
     this.pendingUserMessageText = null;
     this.pendingClientMessageId = null;
+    this.clearPendingAutonomousEvents();
     this.abortController = null;
     const stopping: OpenCodeRunBoundaryState = {
       idle,
@@ -3950,6 +3963,7 @@ class OpenCodeAgentSession implements AgentSession {
     this.accumulatedUsage = contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
     stopping.providerIdleObserved = true;
     stopping.reconcilingProviderStatus = false;
+    this.clearPendingAutonomousEvents();
     stopping.idle.resolve();
     if (stopping.observationFailed) {
       this.armStopQuiescence(stopping);
@@ -4206,6 +4220,7 @@ class OpenCodeAgentSession implements AgentSession {
         this.runBoundary.idle.resolve();
       }
       this.runBoundary = null;
+      this.clearPendingAutonomousEvents();
       this.turnState = { status: "idle" };
     } finally {
       await this.releaseServer?.();
