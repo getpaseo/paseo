@@ -3023,7 +3023,15 @@ class OpenCodeAgentSession implements AgentSession {
     // quickly while still giving OpenCode a chance to confirm the abort
     // cleanly. Drop the timeout once upstream returns abort acknowledgement
     // before tool teardown.
-    await withTimeout(stopping.abort, 2_000, "OpenCode session.abort").catch((error) => {
+    let abortRejected = false;
+    const observedAbort = stopping.abort.catch((error) => {
+      abortRejected = true;
+      throw error;
+    });
+    await withTimeout(observedAbort, 2_000, "OpenCode session.abort").catch((error) => {
+      if (abortRejected) {
+        throw error;
+      }
       this.logger.warn(
         { err: error, sessionId: this.sessionId, turnId },
         "OpenCode session.abort did not settle within the cancel cap",
@@ -3062,36 +3070,41 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private async waitUntilProviderIdle(): Promise<void> {
-    const stopping = this.runBoundary;
-    if (!stopping) {
-      return;
-    }
+    while (true) {
+      const stopping = this.runBoundary;
+      if (!stopping) {
+        return;
+      }
 
-    // OpenCode creates prompts before joining its single session runner, and
-    // abort is session-scoped. Reuse requires both provider-confirmed idle and
-    // the earlier abort to settle so it cannot cancel the replacement run.
-    const observedQuiescence = stopping.quiescence;
-    try {
-      await withTimeout(
-        observedQuiescence,
-        OPENCODE_PENDING_ABORT_START_TIMEOUT_MS,
-        "OpenCode previous turn to stop",
-      );
-    } catch (error) {
-      if (this.runBoundary !== stopping) {
-        throw error;
-      }
-      if (stopping.quiescence === observedQuiescence) {
-        if (!stopping.observationFailed) {
-          throw error;
+      // OpenCode creates prompts before joining its single session runner, and
+      // abort is session-scoped. Reuse requires both provider-confirmed idle and
+      // the earlier abort to settle so it cannot cancel the replacement run.
+      const observedQuiescence = stopping.quiescence;
+      try {
+        await withTimeout(
+          observedQuiescence,
+          OPENCODE_PENDING_ABORT_START_TIMEOUT_MS,
+          "OpenCode previous turn to stop",
+        );
+      } catch (error) {
+        if (this.runBoundary !== stopping) {
+          continue;
         }
-        this.armStopQuiescence(stopping);
+        if (stopping.quiescence === observedQuiescence) {
+          if (!stopping.observationFailed) {
+            throw error;
+          }
+          this.armStopQuiescence(stopping);
+        }
+        await withTimeout(
+          stopping.quiescence,
+          OPENCODE_PENDING_ABORT_START_TIMEOUT_MS,
+          "OpenCode previous turn to stop",
+        );
       }
-      await withTimeout(
-        stopping.quiescence,
-        OPENCODE_PENDING_ABORT_START_TIMEOUT_MS,
-        "OpenCode previous turn to stop",
-      );
+      if (this.runBoundary === stopping) {
+        return;
+      }
     }
   }
 
@@ -3773,9 +3786,17 @@ class OpenCodeAgentSession implements AgentSession {
     }
 
     const idle = createDeferred<void>();
+    const deferredEvents = previousBoundary?.deferredEvents.splice(0) ?? [];
+    const providerIdleObserved =
+      !turnId ||
+      deferredEvents.some(({ rawEvent }) => {
+        const event = unwrapOpenCodeGlobalEvent(rawEvent);
+        return event ? isOpenCodeTerminalEvent(event, this.sessionId) : false;
+      });
     if (turnId) {
       this.synthesizeInterruptedToolCalls(turnId);
-    } else {
+    }
+    if (providerIdleObserved) {
       idle.resolve();
     }
     this.pendingUserMessageText = null;
@@ -3786,8 +3807,8 @@ class OpenCodeAgentSession implements AgentSession {
       abort: Promise.resolve(),
       quiescence: Promise.resolve(),
       observationFailed: false,
-      providerIdleObserved: !turnId,
-      deferredEvents: previousBoundary?.deferredEvents.splice(0) ?? [],
+      providerIdleObserved,
+      deferredEvents,
     };
     this.turnState = { status: "idle" };
     this.runBoundary = stopping;

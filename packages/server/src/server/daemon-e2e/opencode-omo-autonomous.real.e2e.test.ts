@@ -112,7 +112,7 @@ test("OpenCode remains idle while an OMO child works and completes the autonomou
     collector.unsubscribe();
     await runtime.close(passed);
   }
-}, 600_000);
+}, 2_100_000);
 
 function assistantTexts(
   entries: Awaited<

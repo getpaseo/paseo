@@ -2205,6 +2205,7 @@ describe("OpenCode adapter startTurn error handling", () => {
     const settleFirstAbort = createTestDeferred<void>();
     const settleSecondAbort = createTestDeferred<void>();
     const settlePermissionReply = createTestDeferred<void>();
+    const deferredEventsConsumed = createTestDeferred<void>();
     const events: AgentStreamEvent[] = [];
     openCode.sessionPromptAsyncEvents = [];
     openCode.sessionAbortImplementation = async () => {
@@ -2220,8 +2221,18 @@ describe("OpenCode adapter startTurn error handling", () => {
       return {};
     };
     await session.setFeature("auto_accept", true);
-    session.subscribe((event) => events.push(event));
+    session.subscribe((event) => {
+      events.push(event);
+      if (
+        event.type === "provider_subagent" &&
+        event.event.type === "upsert" &&
+        event.event.id === "ses_stop_during_replay_drain"
+      ) {
+        deferredEventsConsumed.resolve();
+      }
+    });
 
+    let replacement: Promise<{ turnId: string }> | undefined;
     try {
       await session.startTurn("first");
       const firstInterrupt = session.interrupt();
@@ -2250,6 +2261,25 @@ describe("OpenCode adapter startTurn error handling", () => {
           metadata: { command: "npm test" },
         },
       });
+      for (const event of assistantTurnEvents({
+        sessionId: "ses_stop_during_replay",
+        text: "Autonomous turn finished while replay was blocked.",
+      })) {
+        openCode.emitEvent(event);
+      }
+      openCode.emitEvent({
+        type: "session.created",
+        properties: {
+          info: {
+            id: "ses_stop_during_replay_drain",
+            parentID: "ses_stop_during_replay",
+            title: "Deferred events drain marker",
+            directory: "/workspace/repo",
+          },
+        },
+      });
+      await deferredEventsConsumed.promise;
+      replacement = session.startTurn("replacement");
 
       settleFirstAbort.resolve();
       await firstInterrupt;
@@ -2269,17 +2299,19 @@ describe("OpenCode adapter startTurn error handling", () => {
         turnId: "opencode-turn-1",
       });
 
-      settleSecondAbort.resolve();
       settlePermissionReply.resolve();
-      openCode.emitEvent({
-        type: "session.idle",
-        properties: { sessionID: "ses_stop_during_replay" },
-      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
+
+      settleSecondAbort.resolve();
       await secondInterrupt;
+      await replacement;
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
     } finally {
       settleFirstAbort.resolve();
       settleSecondAbort.resolve();
       settlePermissionReply.resolve();
+      await replacement?.catch(() => undefined);
       await session.close();
     }
   });
@@ -2317,7 +2349,7 @@ describe("OpenCode adapter startTurn error handling", () => {
     };
 
     try {
-      await session.interrupt();
+      await expect(session.interrupt()).rejects.toThrow("abort failed");
 
       await expect(session.startTurn("unsafe replacement")).rejects.toThrow("abort failed");
       expect(openCode.calls.sessionAbort).toHaveLength(2);
@@ -2342,7 +2374,7 @@ describe("OpenCode adapter startTurn error handling", () => {
     );
 
     try {
-      await session.interrupt().catch(() => undefined);
+      await expect(session.interrupt()).rejects.toThrow("synchronous abort failure");
 
       await expect(session.startTurn("unsafe replacement")).rejects.toThrow(
         "synchronous abort failure",
@@ -2362,7 +2394,7 @@ describe("OpenCode adapter startTurn error handling", () => {
     });
 
     try {
-      await session.interrupt();
+      await expect(session.interrupt()).rejects.toThrow("abort response failed");
 
       await expect(session.startTurn("unsafe replacement")).rejects.toThrow(
         "abort response failed",
