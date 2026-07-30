@@ -2007,6 +2007,24 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
+  test("fails closed when both idle-session abort attempts fail", async () => {
+    const { parent: session, openCode } = await createParentSession("ses_failed_idle_abort");
+    openCode.sessionPromptAsyncEvents = [];
+    openCode.sessionAbortImplementation = async () => {
+      throw new Error("abort failed");
+    };
+
+    try {
+      await session.interrupt();
+
+      await expect(session.startTurn("unsafe replacement")).rejects.toThrow("abort failed");
+      expect(openCode.calls.sessionAbort).toHaveLength(2);
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(0);
+    } finally {
+      await session.close();
+    }
+  });
+
   test("does not send a prompt while the previous provider turn is still stopping", async () => {
     vi.useFakeTimers();
     const { parent: session, openCode } = await createParentSession("ses_unit_test");
@@ -2066,6 +2084,94 @@ describe("OpenCode adapter startTurn error handling", () => {
       await session.close();
     }
   }, 15_000);
+
+  test("recovers the stop observer after a transient status failure", async () => {
+    const firstStreamEnd = createTestDeferred<void>();
+    const recoveredIdle = createTestDeferred<void>();
+    let subscriptionCount = 0;
+    const { parent: session, openCode } = await createParentSession(
+      "ses_stop_observer_recovery",
+      (client) => {
+        client.globalEventImplementation = async (options) => {
+          subscriptionCount += 1;
+          const signal = (options as { signal: AbortSignal }).signal;
+          return {
+            stream: {
+              async *[Symbol.asyncIterator]() {
+                yield { type: "server.connected", properties: {} };
+                if (subscriptionCount === 1) {
+                  await firstStreamEnd.promise;
+                  return;
+                }
+                await recoveredIdle.promise;
+                yield {
+                  type: "session.idle",
+                  properties: { sessionID: "ses_stop_observer_recovery" },
+                };
+                await waitForAbort(signal);
+              },
+            },
+          };
+        };
+        client.sessionStatusImplementation = async () => {
+          throw new Error("transient status failure");
+        };
+      },
+    );
+    openCode.sessionPromptAsyncEvents = [];
+
+    try {
+      await session.startTurn("first");
+      await session.interrupt();
+      const failedReplacement = session.startTurn("second");
+      firstStreamEnd.resolve();
+      await expect(failedReplacement).rejects.toThrow("transient status failure");
+
+      recoveredIdle.resolve();
+      await expect(session.startTurn("third")).resolves.toEqual({ turnId: "opencode-turn-1" });
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
+    } finally {
+      await session.close();
+    }
+  }, 15_000);
+
+  test("does not reconnect the stop observer while closing", async () => {
+    const streamSignals: AbortSignal[] = [];
+    const { parent: session, openCode } = await createParentSession(
+      "ses_close_while_stopping",
+      (client) => {
+        client.globalEventImplementation = async (options) => {
+          const signal = (options as { signal: AbortSignal }).signal;
+          streamSignals.push(signal);
+          return {
+            stream: {
+              async *[Symbol.asyncIterator]() {
+                yield { type: "server.connected", properties: {} };
+                await waitForAbort(signal);
+              },
+            },
+          };
+        };
+      },
+    );
+    openCode.sessionPromptAsyncEvents = [];
+
+    try {
+      await session.startTurn("first");
+      await session.interrupt();
+      await session.close();
+
+      expect(openCode.calls.globalEvent).toHaveLength(1);
+    } finally {
+      for (const signal of streamSignals) {
+        if (!signal.aborted) {
+          (signal as AbortSignal & { dispatchEvent: (event: Event) => boolean }).dispatchEvent(
+            new Event("abort"),
+          );
+        }
+      }
+    }
+  });
 });
 
 describe("OpenCodeAgentClient env", () => {

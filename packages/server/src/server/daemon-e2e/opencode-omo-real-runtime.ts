@@ -296,7 +296,7 @@ async function runCommand(input: CommandInput): Promise<void> {
   } catch (error) {
     await stopChild(child);
     writeCommandArtifact(input, stdout, stderr);
-    throw error;
+    throw withArtifactLocation(error, input.artifacts);
   } finally {
     if (timeout) {
       clearTimeout(timeout);
@@ -439,7 +439,7 @@ function restoreEnvironment(name: string, previous: string | undefined): void {
   process.env[name] = previous;
 }
 
-function withArtifactLocation(error: unknown, artifacts: string): Error {
+export function withArtifactLocation(error: unknown, artifacts: string): Error {
   const message = error instanceof Error ? error.message : String(error);
   return new Error(`${message}. Retained real-test artifacts: ${artifacts}`, { cause: error });
 }

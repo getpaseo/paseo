@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { resolveCommandLaunch } from "./opencode-omo-real-runtime.js";
+import { resolveCommandLaunch, withArtifactLocation } from "./opencode-omo-real-runtime.js";
 
 describe("resolveCommandLaunch", () => {
   test("launches Windows npm command shims through cmd.exe", () => {
@@ -18,4 +18,10 @@ describe("resolveCommandLaunch", () => {
       shell: false,
     });
   });
+});
+
+test("includes retained artifacts in fixture setup failures", () => {
+  expect(
+    withArtifactLocation(new Error("Command timed out: npm-install.log"), "/tmp/artifacts").message,
+  ).toBe("Command timed out: npm-install.log. Retained real-test artifacts: /tmp/artifacts");
 });

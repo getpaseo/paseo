@@ -3063,11 +3063,36 @@ class OpenCodeAgentSession implements AgentSession {
     // OpenCode creates prompts before joining its single session runner, and
     // abort is session-scoped. Reuse requires both provider-confirmed idle and
     // the earlier abort to settle so it cannot cancel the replacement run.
-    await withTimeout(
-      stopping.quiescence,
-      OPENCODE_PENDING_ABORT_START_TIMEOUT_MS,
-      "OpenCode previous turn to stop",
-    );
+    const quiescence = stopping.quiescence;
+    let quiescenceRejected = false;
+    try {
+      await withTimeout(
+        quiescence.catch((error) => {
+          quiescenceRejected = true;
+          throw error;
+        }),
+        OPENCODE_PENDING_ABORT_START_TIMEOUT_MS,
+        "OpenCode previous turn to stop",
+      );
+    } catch (error) {
+      if (
+        quiescenceRejected &&
+        !this.closed &&
+        this.turnState === stopping &&
+        stopping.quiescence === quiescence
+      ) {
+        void stopping.abort.then(
+          () => {
+            if (!this.closed && this.turnState === stopping && stopping.quiescence === quiescence) {
+              this.armStopQuiescence(stopping);
+            }
+            return undefined;
+          },
+          () => undefined,
+        );
+      }
+      throw error;
+    }
     if (this.turnState === stopping) {
       this.turnState = { status: "idle" };
     }
@@ -3456,6 +3481,9 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private ensureEventStreamReady(): Promise<void> {
+    if (this.closed) {
+      return Promise.reject(new Error("OpenCode session is closed"));
+    }
     if (this.eventStreamReady) {
       return this.eventStreamReady.promise;
     }
@@ -3751,11 +3779,23 @@ class OpenCodeAgentSession implements AgentSession {
     stopping.abort = this.abortSession(turnId, "interrupt").catch(() =>
       this.abortSession(null, "turn_start_boundary"),
     );
-    stopping.quiescence = Promise.all([
+    this.armStopQuiescence(stopping);
+    if (turnId) {
+      this.notifySubscribers(
+        { type: "turn_canceled", provider: "opencode", reason: "interrupted" },
+        turnId,
+      );
+    }
+    return stopping;
+  }
+
+  private armStopQuiescence(stopping: Extract<OpenCodeTurnState, { status: "stopping" }>): void {
+    const quiescence = Promise.all([
       stopping.abort,
       this.observeProviderStopBoundary(stopping),
     ]).then(() => undefined);
-    void stopping.quiescence.then(
+    stopping.quiescence = quiescence;
+    void quiescence.then(
       () => {
         if (this.turnState === stopping) {
           this.turnState = { status: "idle" };
@@ -3764,13 +3804,6 @@ class OpenCodeAgentSession implements AgentSession {
       },
       () => undefined,
     );
-    if (turnId) {
-      this.notifySubscribers(
-        { type: "turn_canceled", provider: "opencode", reason: "interrupted" },
-        turnId,
-      );
-    }
-    return stopping;
   }
 
   private finishStoppingTurn(): void {
