@@ -57,6 +57,35 @@ function formatFileSize({ size }: { size: number }): string {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+export interface FileExplorerMetaHeaderProps {
+  size: number;
+  modifiedAt: number | string | Date;
+}
+
+export function FileExplorerMetaHeader({ size, modifiedAt }: FileExplorerMetaHeaderProps) {
+  const { t } = useTranslation();
+  return (
+    <View style={styles.contextMetaBlock}>
+      <View style={styles.contextMetaRow}>
+        <Text style={styles.contextMetaLabel} numberOfLines={1}>
+          {t("workspace.fileExplorer.context.size")}
+        </Text>
+        <Text style={styles.contextMetaValue} numberOfLines={1} ellipsizeMode="tail">
+          {formatFileSize({ size })}
+        </Text>
+      </View>
+      <View style={styles.contextMetaRow}>
+        <Text style={styles.contextMetaLabel} numberOfLines={1}>
+          {t("workspace.fileExplorer.context.modified")}
+        </Text>
+        <Text style={styles.contextMetaValue} numberOfLines={1} ellipsizeMode="tail">
+          {formatTimeAgo(new Date(modifiedAt))}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 interface TreeRowItemProps {
   serverId: string;
   workspaceId?: string | null;
@@ -136,27 +165,8 @@ function TreeRowItem({
   }, [onAddToChat, entry.path]);
 
   const metaHeader = useMemo(
-    () => (
-      <View style={styles.contextMetaBlock}>
-        <View style={styles.contextMetaRow}>
-          <Text style={styles.contextMetaLabel} numberOfLines={1}>
-            {t("workspace.fileExplorer.context.size")}
-          </Text>
-          <Text style={styles.contextMetaValue} numberOfLines={1} ellipsizeMode="tail">
-            {formatFileSize({ size: entry.size })}
-          </Text>
-        </View>
-        <View style={styles.contextMetaRow}>
-          <Text style={styles.contextMetaLabel} numberOfLines={1}>
-            {t("workspace.fileExplorer.context.modified")}
-          </Text>
-          <Text style={styles.contextMetaValue} numberOfLines={1} ellipsizeMode="tail">
-            {formatTimeAgo(new Date(entry.modifiedAt))}
-          </Text>
-        </View>
-      </View>
-    ),
-    [entry.modifiedAt, entry.size, t],
+    () => <FileExplorerMetaHeader size={entry.size} modifiedAt={entry.modifiedAt} />,
+    [entry.modifiedAt, entry.size],
   );
 
   return (
