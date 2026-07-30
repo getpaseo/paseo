@@ -124,6 +124,7 @@ export class FileEditorModel {
       }
       return;
     }
+    if (this.restoreUnchangedConflict(version)) return;
     this.setSnapshot({ ...this.snapshot, observedVersion: version });
     if (this.snapshot.status === "saving") {
       this.observedWhileSaving = version;
@@ -277,6 +278,29 @@ export class FileEditorModel {
       observedVersion: version,
       error: version.status === "error" ? version.error : null,
     });
+  }
+
+  private restoreUnchangedConflict(version: FileVersion): boolean {
+    if (
+      this.snapshot.status !== "conflict" ||
+      version.status !== "ready" ||
+      this.snapshot.version.status !== "ready" ||
+      !sameVersion(version, this.snapshot.version)
+    ) {
+      return false;
+    }
+    const modified = this.snapshot.content !== this.persistedContent;
+    this.setSnapshot({
+      ...this.snapshot,
+      status: modified ? "dirty" : "clean",
+      modified,
+      version,
+      observedVersion: version,
+      error: null,
+    });
+    if (modified) this.scheduleAutosave();
+    else this.clearAutosave();
+    return true;
   }
 
   private scheduleAutosave(): void {

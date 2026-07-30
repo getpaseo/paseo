@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test, type Page } from "./fixtures";
 import { expectFileTabOpen, openFileExplorer, openFileFromExplorer } from "./helpers/file-explorer";
@@ -160,6 +160,36 @@ test.describe("Workspace file change conflicts", () => {
     await gate.waitForHeldReadyFileUpdate();
     await fileCallout(page).getByRole("button", { name: "Retry" }).click();
     await expectCleanReplacementCanReload(page);
+    gate.releaseHeldReadyFileUpdate();
+  });
+
+  test("retry clears a transient error when the file is unchanged", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const gate = await installDaemonWebSocketGate(page);
+    const relativePath = "unchanged.md";
+    const filePath = await openTrackedFile(page, withWorkspace, {
+      prefix: "file-check-unchanged-",
+      relativePath,
+      content: "# Unchanged\n",
+    });
+    const parkedPath = `${filePath}.parked`;
+    await gate.waitForFileSubscription(relativePath);
+    await expect(filePane(page).getByText("Unchanged", { exact: true })).toBeVisible();
+
+    await rename(filePath, parkedPath);
+    await mkdir(filePath);
+    await expectOnlyFileCallout(page, "Couldn't check file on disk");
+
+    gate.holdNextReadyFileUpdate(relativePath);
+    await rm(filePath, { recursive: true });
+    await rename(parkedPath, filePath);
+    await gate.waitForHeldReadyFileUpdate();
+    await fileCallout(page).getByRole("button", { name: "Retry" }).click();
+
+    await expect(fileCallout(page)).toHaveCount(0);
+    await expect(filePane(page).getByText("Changed on disk", { exact: true })).toHaveCount(0);
     gate.releaseHeldReadyFileUpdate();
   });
 
