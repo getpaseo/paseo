@@ -9,10 +9,18 @@ const { getNativeReleaseVersion } = require("./native-release-version");
 const appVariant = process.env.APP_VARIANT ?? "production";
 const isFdroidBuild = process.env.PASEO_FDROID_BUILD === "1";
 const isProfileBuild = process.env.PASEO_PROFILE_BUILD === "1";
+const liveVoiceAndroidPermissions = [
+  "android.permission.ACCESS_NETWORK_STATE",
+  "android.permission.CHANGE_NETWORK_STATE",
+  "android.permission.INTERNET",
+  "android.permission.WAKE_LOCK",
+  "android.permission.BLUETOOTH",
+];
 
 const buildProfile = isFdroidBuild
   ? {
       androidPermissions: [
+        ...liveVoiceAndroidPermissions,
         "RECORD_AUDIO",
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",
@@ -23,6 +31,7 @@ const buildProfile = isFdroidBuild
     }
   : {
       androidPermissions: [
+        ...liveVoiceAndroidPermissions,
         "RECORD_AUDIO",
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",

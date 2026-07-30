@@ -8,6 +8,8 @@ import {
   type ReactNode,
 } from "react";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { AppState } from "react-native";
+import { isNative } from "@/constants/platform";
 import { useSessionStore } from "@/stores/session-store";
 import {
   createDefaultLiveVoiceRuntimeDeps,
@@ -147,6 +149,26 @@ export function LiveVoiceProvider({ children }: LiveVoiceProviderProps) {
       unsubscribeStore();
       unsubscribeRuntime();
       unsubscribeStatus?.();
+    };
+  }, [runtime]);
+
+  useEffect(() => {
+    if (!isNative) {
+      return;
+    }
+    const subscription = AppState.addEventListener("change", (state) => {
+      // Stop only once the app actually enters the background. iOS can report
+      // `inactive` while presenting the first microphone permission prompt;
+      // stopping there would cancel the call before permission can be granted.
+      if (state !== "background") {
+        return;
+      }
+      void runtime.stop().catch((error) => {
+        console.error("[LiveVoiceProvider] Failed to stop live voice in background", error);
+      });
+    });
+    return () => {
+      subscription.remove();
     };
   }, [runtime]);
 

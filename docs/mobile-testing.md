@@ -273,6 +273,20 @@ This cannot be validated by a JS test — verify on a device: play music through
 open Paseo, use dictation once, stop, and confirm the music resumes at full quality; then
 background/foreground the app and confirm it keeps playing at full quality.
 
+### Live Voice foreground support
+
+Live Voice uses `react-native-webrtc` directly on iOS and Android. It is
+foreground-only: moving Paseo to the background stops the call and releases the
+microphone and peer connection. The transient iOS `inactive` state does not stop
+the call because the system microphone permission prompt can produce that state.
+
+On a physical device, verify:
+
+- the first microphone permission prompt can be accepted without cancelling startup
+- remote speech plays and mute disables only the outgoing microphone track
+- pressing Home ends the call, releases the microphone indicator, and leaves the UI idle
+- returning to Paseo requires starting a new call; phase 1 does not reconnect or resume
+
 ## Unistyles + Reanimated
 
 ### The crash

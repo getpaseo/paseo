@@ -1,11 +1,11 @@
-import { isWeb } from "@/constants/platform";
 import { useSessionStore } from "@/stores/session-store";
+import { isLiveVoiceSessionSupported } from "@/live-voice/live-voice-session";
 
 /**
  * Whether the Live Voice surface should exist for this agent at all.
  *
  * Three independent facts have to line up:
- *   - the client can run the WebRTC transport (web/Electron only in phase 1),
+ *   - the current platform has a Live Voice WebRTC transport,
  *   - `server_info.features.liveVoice` — the daemon speaks the `voice.live.*` RPCs,
  *   - the agent's own `supportsLiveVoice` capability — this codex process was
  *     launched with realtime support.
@@ -22,5 +22,5 @@ export function useIsLiveVoiceAvailable(serverId: string, agentId: string): bool
     (state) =>
       state.sessions[serverId]?.agents?.get(agentId)?.capabilities?.supportsLiveVoice === true,
   );
-  return isWeb && hostSupportsLiveVoice && agentSupportsLiveVoice;
+  return isLiveVoiceSessionSupported && hostSupportsLiveVoice && agentSupportsLiveVoice;
 }

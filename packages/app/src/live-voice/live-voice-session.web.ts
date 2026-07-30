@@ -22,7 +22,7 @@ import {
   LiveVoiceSessionError,
   type LiveVoiceSession,
   type StartLiveVoiceSessionOptions,
-} from "./live-voice-session";
+} from "./live-voice-session.types";
 
 export {
   LiveVoiceSessionError,
@@ -30,7 +30,7 @@ export {
   type LiveVoiceSession,
   type LiveVoiceSessionFailureCode,
   type StartLiveVoiceSessionOptions,
-} from "./live-voice-session";
+} from "./live-voice-session.types";
 
 /** Full ICE gathering on a healthy network finishes in well under a second. */
 const ICE_GATHERING_TIMEOUT_MS = 10_000;
