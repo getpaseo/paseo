@@ -3,8 +3,10 @@ import type { TaskCard } from "@getpaseo/protocol/tasks/types";
 import type { ProjectSummary } from "@/utils/projects";
 import {
   annotateMasterBacklogTasks,
+  buildMasterBacklogProjectFilterOptions,
   buildMasterBacklogProjectTargets,
   filterBacklogTasksByQuery,
+  filterMasterBacklogTasksByProject,
   sortMasterBacklogTasks,
 } from "./master-backlog";
 
@@ -79,6 +81,64 @@ describe("master backlog helpers", () => {
     ]);
 
     expect(sorted.map((entry) => entry.id)).toEqual(["active-new", "active-old", "completed-new"]);
+  });
+
+  it("builds distinct project filter options and disambiguates duplicate names", () => {
+    const options = buildMasterBacklogProjectFilterOptions([
+      masterTask({
+        id: "1",
+        projectId: "app",
+        projectName: "App",
+        serverName: "Alpha",
+      }),
+      masterTask({
+        id: "2",
+        projectId: "app",
+        projectName: "App",
+        serverName: "Alpha",
+      }),
+      masterTask({
+        id: "3",
+        projectId: "app-b",
+        projectName: "App",
+        serverName: "Beta",
+      }),
+      masterTask({
+        id: "4",
+        projectId: "auth",
+        projectName: "Auth",
+        serverName: "Alpha",
+      }),
+    ]);
+
+    expect(options).toEqual([
+      { id: "app", label: "App · Alpha" },
+      { id: "app-b", label: "App · Beta" },
+      { id: "auth", label: "Auth" },
+    ]);
+  });
+
+  it("filters master backlog tasks by selected project before search", () => {
+    const tasks = [
+      masterTask({ id: "1", projectId: "app", title: "Ship search", projectName: "App" }),
+      masterTask({ id: "2", projectId: "auth", title: "Ship search", projectName: "Auth" }),
+      masterTask({ id: "3", projectId: "app", title: "Fix login", projectName: "App" }),
+    ];
+    const projectFiltered = filterMasterBacklogTasksByProject(tasks, "app");
+    expect(projectFiltered.map((entry) => entry.id)).toEqual(["1", "3"]);
+    expect(filterBacklogTasksByQuery(projectFiltered, "search").map((entry) => entry.id)).toEqual([
+      "1",
+    ]);
+    expect(filterMasterBacklogTasksByProject(tasks, "all").map((entry) => entry.id)).toEqual([
+      "1",
+      "2",
+      "3",
+    ]);
+    expect(filterMasterBacklogTasksByProject(tasks, null).map((entry) => entry.id)).toEqual([
+      "1",
+      "2",
+      "3",
+    ]);
   });
 
   it("filters backlog tasks by title description and project context", () => {
