@@ -420,6 +420,9 @@ function applyCheckoutDiffUpdate(input: {
       cwd: input.message.payload.cwd,
       files: orderCheckoutDiffFiles(input.message.payload.files),
       error: input.message.payload.error,
+      ...(input.message.payload.diffTooLarge !== undefined
+        ? { diffTooLarge: input.message.payload.diffTooLarge }
+        : {}),
       requestId: `subscription:${input.message.payload.subscriptionId}`,
     },
   });
@@ -440,6 +443,9 @@ function applyCheckoutDiffSubscribeResponse(input: {
       cwd: input.message.payload.cwd,
       files: orderCheckoutDiffFiles(input.message.payload.files),
       error: input.message.payload.error,
+      ...(input.message.payload.diffTooLarge !== undefined
+        ? { diffTooLarge: input.message.payload.diffTooLarge }
+        : {}),
       requestId: input.message.payload.requestId,
     },
   });

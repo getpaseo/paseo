@@ -1,3 +1,6 @@
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import pino from "pino";
 import { describe, expect, test } from "vitest";
 
@@ -42,7 +45,6 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on("line
     return;
   }
   if (command.type === "hang") {
-    process.stderr.write("still waiting");
     return;
   }
   if (command.type === "exit") {
@@ -52,7 +54,33 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on("line
 });
 `;
 
-function startProcess(): JsonlRpcProcess {
+interface InMemoryChildProcess extends ChildProcessWithoutNullStreams {
+  stdin: PassThrough;
+  stdout: PassThrough;
+  stderr: PassThrough;
+}
+
+interface StartProcessOptions {
+  child?: ChildProcessWithoutNullStreams;
+}
+
+function createInMemoryChildProcess(): InMemoryChildProcess {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    exitCode: null,
+    signalCode: null,
+  }) as InMemoryChildProcess;
+  child.kill = ((signal?: NodeJS.Signals | number) => {
+    queueMicrotask(() => child.emit("exit", null, signal ?? null));
+    return true;
+  }) as ChildProcessWithoutNullStreams["kill"];
+  return child;
+}
+
+function startProcess(options: StartProcessOptions = {}): JsonlRpcProcess {
+  const child = options.child;
   return new JsonlRpcProcess({
     launch: {
       command: process.execPath,
@@ -61,6 +89,7 @@ function startProcess(): JsonlRpcProcess {
       env: { JSONL_RPC_TEST_VALUE: "resolved-env" },
     },
     logger: pino({ level: "silent" }),
+    ...(child ? { spawn: () => child } : {}),
   });
 }
 
@@ -127,10 +156,11 @@ describe("JsonlRpcProcess", () => {
   });
 
   test("includes buffered stderr when a request times out", async () => {
-    const transport = startProcess();
+    const child = createInMemoryChildProcess();
+    const transport = startProcess({ child });
 
     try {
-      await transport.request({ type: "echo", value: "ready" });
+      child.stderr.write("still waiting");
 
       await expect(transport.request({ type: "hang" }, 50)).rejects.toThrow(
         "JSONL RPC request timed out for hang\nstill waiting",

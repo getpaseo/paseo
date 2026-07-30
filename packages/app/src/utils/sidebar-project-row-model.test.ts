@@ -6,6 +6,7 @@ import type {
 import {
   buildSidebarProjectRowModel,
   resolveSidebarProjectIconTarget,
+  resolveSidebarProjectLocalPath,
 } from "./sidebar-project-row-model";
 
 function workspace(overrides: Partial<SidebarWorkspaceEntry> = {}): SidebarWorkspaceEntry {
@@ -34,18 +35,26 @@ function workspace(overrides: Partial<SidebarWorkspaceEntry> = {}): SidebarWorks
   };
 }
 
-function project(overrides: Partial<SidebarProjectEntry> = {}): SidebarProjectEntry {
+type ProjectOverrides = Omit<Partial<SidebarProjectEntry>, "hosts"> & {
+  hosts?: Array<Omit<SidebarProjectEntry["hosts"][number], "projectId"> & { projectId?: string }>;
+};
+
+function project(overrides: ProjectOverrides = {}): SidebarProjectEntry {
   const projectKind = overrides.projectKind ?? "git";
+  const hosts = Array.from(
+    overrides.hosts ?? [
+      { serverId: "srv", iconWorkingDir: "/repo", canCreateWorktree: projectKind === "git" },
+    ],
+    (host) => Object.assign({}, host, { projectId: host.projectId ?? `project-${host.serverId}` }),
+  );
   return {
     projectKey: "project-1",
     projectName: "paseo",
     projectKind,
     iconWorkingDir: "/repo",
-    hosts: overrides.hosts ?? [
-      { serverId: "srv", iconWorkingDir: "/repo", canCreateWorktree: projectKind === "git" },
-    ],
     workspaces: [workspace()],
     ...overrides,
+    hosts,
   };
 }
 
@@ -80,7 +89,7 @@ describe("buildSidebarProjectRowModel", () => {
       chevron: "expand",
       trailingAction: {
         kind: "new_workspace",
-        target: { serverId: "srv", iconWorkingDir: "/repo" },
+        target: { serverId: "srv", projectId: "project-srv", iconWorkingDir: "/repo" },
       },
     });
   });
@@ -94,7 +103,7 @@ describe("buildSidebarProjectRowModel", () => {
 
     expect(result.trailingAction).toEqual({
       kind: "new_workspace",
-      target: { serverId: "srv", iconWorkingDir: "/repo" },
+      target: { serverId: "srv", projectId: "project-srv", iconWorkingDir: "/repo" },
     });
   });
 
@@ -117,7 +126,7 @@ describe("buildSidebarProjectRowModel", () => {
 
     expect(result.trailingAction).toEqual({
       kind: "new_workspace",
-      target: { serverId: "srv", iconWorkingDir: "/repo" },
+      target: { serverId: "srv", projectId: "project-srv", iconWorkingDir: "/repo" },
     });
   });
 
@@ -178,7 +187,7 @@ describe("buildSidebarProjectRowModel", () => {
       chevron: "expand",
       trailingAction: {
         kind: "new_workspace",
-        target: { serverId: "srv", iconWorkingDir: "/repo" },
+        target: { serverId: "srv", projectId: "project-srv", iconWorkingDir: "/repo" },
       },
     });
   });
@@ -193,7 +202,24 @@ describe("buildSidebarProjectRowModel", () => {
       }),
     );
 
-    expect(iconTarget).toEqual({ serverId: "host-b", iconWorkingDir: "/repo/b" });
+    expect(iconTarget).toEqual({
+      serverId: "host-b",
+      projectId: "project-host-b",
+      iconWorkingDir: "/repo/b",
+    });
+  });
+
+  it("resolves desktop file actions from the local project placement", () => {
+    const groupedProject = project({
+      iconWorkingDir: "/remote/repo",
+      hosts: [
+        { serverId: "remote", iconWorkingDir: "/remote/repo", canCreateWorktree: true },
+        { serverId: "local", iconWorkingDir: "/local/repo", canCreateWorktree: true },
+      ],
+    });
+
+    expect(resolveSidebarProjectLocalPath(groupedProject, "local")).toBe("/local/repo");
+    expect(resolveSidebarProjectLocalPath(groupedProject, "missing")).toBe("");
   });
 
   it("renders an empty project as an expandable section", () => {
@@ -207,7 +233,7 @@ describe("buildSidebarProjectRowModel", () => {
       chevron: "collapse",
       trailingAction: {
         kind: "new_workspace",
-        target: { serverId: "srv", iconWorkingDir: "/repo" },
+        target: { serverId: "srv", projectId: "project-srv", iconWorkingDir: "/repo" },
       },
     });
   });

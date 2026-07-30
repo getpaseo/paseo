@@ -588,6 +588,28 @@ describe("schedule form model", () => {
     });
   });
 
+  it("hydrates an edited schedule's project label when its host targets arrive", () => {
+    const form = open({
+      mode: "edit",
+      schedule: scheduleOnHost({
+        serverId: "host-b",
+        serverName: "Host B",
+        cwd: "/repo/b",
+        model: "model-b",
+      }),
+      defaults: { serverId: null, projectTargets: [], preferences: {} },
+    });
+
+    expect(form.getState().projectDisplay).toEqual({ label: "/repo/b" });
+
+    form.applyProjectTargets(PROJECT_TARGETS);
+
+    expect(form.getState()).toMatchObject({
+      projectDisplay: { label: "Project B" },
+      selectedProjectOptionId: buildProjectOptionId("host-b", "project-b"),
+    });
+  });
+
   it("hydrates late create preferences without overwriting user changes or edited schedules", () => {
     const savedPreferences: FormPreferences = {
       provider: "mock",

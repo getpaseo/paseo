@@ -9,6 +9,7 @@ import { withDisabledE2ESpeechEnv } from "./speech-env";
 export interface IsolatedHostDaemon {
   serverId: string;
   port: number;
+  paseoHome: string;
   restart(): Promise<void>;
   close(): Promise<void>;
 }
@@ -133,6 +134,7 @@ export async function startIsolatedHostDaemon(serverId: string): Promise<Isolate
   return {
     serverId,
     port,
+    paseoHome,
     restart: async () => {
       if (closed) throw new Error(`Cannot restart closed isolated daemon ${serverId}`);
       await stopProcess(child);

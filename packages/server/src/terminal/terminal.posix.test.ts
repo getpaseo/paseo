@@ -253,7 +253,7 @@ function lastNonEmptyLineIsPrompt(state: ReturnType<TerminalSession["getState"]>
 }
 
 function removeZshShellIntegrationRuntimeDir(): void {
-  rmSync(join(tmpdir(), `${userInfo().username || "unknown"}-paseo-zsh`), {
+  rmSync(join(tmpdir(), `${userInfo().username || "unknown"}-paseo-zsh-${process.pid}`), {
     recursive: true,
     force: true,
   });
@@ -272,7 +272,9 @@ describe.skipIf(isPlatform("win32"))("terminal POSIX-only", () => {
     expect(resolvedEnv.TERM).toBe("xterm-256color");
     expect(resolvedEnv.TERM_PROGRAM).toBe("kitty");
     expect(resolvedEnv.PASEO_ZSH_ZDOTDIR).toBe("/tmp/paseo-zdotdir");
-    expect(resolvedEnv.ZDOTDIR).not.toBe("/tmp/paseo-zdotdir");
+    expect(resolvedEnv.ZDOTDIR).toBe(
+      join(tmpdir(), `${userInfo().username || "unknown"}-paseo-zsh-${process.pid}`),
+    );
     expect(existsSync(join(resolvedEnv.ZDOTDIR, ".zshenv"))).toBe(true);
     expect(existsSync(join(resolvedEnv.ZDOTDIR, "paseo-integration.zsh"))).toBe(true);
   });

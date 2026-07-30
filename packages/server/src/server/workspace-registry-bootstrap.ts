@@ -45,6 +45,7 @@ function resolveAgentUpdatedAt(record: StoredAgentRecord): string {
 }
 
 export async function bootstrapWorkspaceRegistries(options: {
+  serverId?: string;
   paseoHome: string;
   agentStorage: AgentStorage;
   projectRegistry: ProjectRegistry;
@@ -96,6 +97,7 @@ export async function bootstrapWorkspaceRegistries(options: {
       const membership = classifyDirectoryForProjectMembership({
         cwd: normalizedCwd,
         checkout,
+        serverId: options.serverId,
       });
       return { record, membership, directoryKey: membership.workspaceDirectoryKey };
     }),
@@ -156,7 +158,7 @@ export async function bootstrapWorkspaceRegistries(options: {
           options.workspaceRegistry.upsert(
             createPersistedWorkspaceRecord({
               workspaceId,
-              projectId: membership.projectKey,
+              projectId: membership.projectId,
               cwd: workspaceCwd,
               kind: membership.workspaceKind,
               displayName: membership.workspaceDisplayName,
@@ -166,10 +168,11 @@ export async function bootstrapWorkspaceRegistries(options: {
           ),
           options.projectRegistry.upsert(
             createPersistedProjectRecord({
-              projectId: membership.projectKey,
+              projectId: membership.projectId,
               rootPath: membership.projectRootPath,
               kind: membership.projectKind,
               displayName: membership.projectName,
+              projectKey: membership.projectKey,
               createdAt: projectRange.createdAt ?? createdAt,
               updatedAt: projectRange.updatedAt ?? updatedAt,
             }),

@@ -1,8 +1,8 @@
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   View,
   Text,
   Pressable,
-  ActivityIndicator,
   ScrollView,
   type GestureResponderEvent,
   type PressableStateCallbackType,
@@ -115,6 +115,7 @@ import type { PrHint } from "@/git/use-pr-status-query";
 import {
   buildSidebarProjectRowModel,
   resolveSidebarProjectIconTarget,
+  resolveSidebarProjectLocalPath,
   type SidebarProjectHostTarget,
 } from "@/utils/sidebar-project-row-model";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
@@ -131,6 +132,8 @@ import {
   getIsElectron,
 } from "@/constants/platform";
 import { getDesktopHost } from "@/desktop/host";
+import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
+import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 
 const workspaceKeyExtractor = (workspace: SidebarWorkspacePlacement) => workspace.workspaceKey;
 
@@ -143,7 +146,7 @@ const DEFAULT_STATUS_DOT_OFFSET = 0;
 const EMPHASIZED_STATUS_DOT_OFFSET = -1;
 const ThemedExternalLink = withUnistyles(ExternalLink);
 const ThemedGitPullRequest = withUnistyles(GitPullRequest);
-const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedCircleAlert = withUnistyles(CircleAlert);
 const ThemedSyncedLoader = withUnistyles(SyncedLoader);
 const ThemedPlus = withUnistyles(Plus);
@@ -504,6 +507,9 @@ function ProjectRowTrailingActions({
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
   const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint;
+  const localDaemonServerId = useLocalDaemonServerId();
+  const localProjectPath = resolveSidebarProjectLocalPath(project, localDaemonServerId);
+  const settingsTarget = project.hosts[0] ?? null;
   return (
     <View style={styles.projectTrailingActions}>
       {worktreeTarget ? (
@@ -522,7 +528,8 @@ function ProjectRowTrailingActions({
         >
           <ProjectKebabMenu
             projectKey={project.projectKey}
-            projectPath={project.iconWorkingDir}
+            settingsTarget={settingsTarget}
+            projectPath={localProjectPath}
             onRemoveProject={onRemoveProject}
             removeProjectStatus={removeProjectStatus}
           />
@@ -549,11 +556,13 @@ function renderKebabTriggerIcon({ hovered }: { hovered?: boolean }) {
 
 function ProjectKebabMenu({
   projectKey,
+  settingsTarget,
   projectPath,
   onRemoveProject,
   removeProjectStatus,
 }: {
   projectKey: string;
+  settingsTarget: { serverId: string; projectId: string } | null;
   projectPath: string;
   onRemoveProject: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
@@ -561,10 +570,10 @@ function ProjectKebabMenu({
   const { t } = useTranslation();
   const toast = useToast();
   const handleOpenProjectSettings = useCallback(() => {
-    if (projectKey.trim().length === 0) return;
-    router.navigate(buildProjectSettingsRoute(projectKey));
-  }, [projectKey]);
-  const canOpenProjectSettings = projectKey.trim().length > 0;
+    if (!settingsTarget) return;
+    router.navigate(buildProjectSettingsRoute(settingsTarget.serverId, settingsTarget.projectId));
+  }, [settingsTarget]);
+  const canOpenProjectSettings = settingsTarget !== null;
   // Desktop-only: open a second window that lands on this project via the same
   // open-project flow as a CLI launch. The project stays visible here too — no
   // ownership, no move.
@@ -609,6 +618,10 @@ function ProjectKebabMenu({
             {t("sidebar.project.actions.openNewWindow")}
           </DropdownMenuItem>
         ) : null}
+        <OpenInFileManagerMenuItem
+          path={projectPath}
+          testID={`sidebar-project-menu-open-folder-${projectKey}`}
+        />
         <DropdownMenuItem
           testID={`sidebar-project-menu-remove-${projectKey}`}
           leading={trash2LeadingIcon}
@@ -660,6 +673,7 @@ function WorkspaceRowRightGroup({
   isPinned?: boolean;
   onTogglePin?: () => void;
 }) {
+  const workspacePath = workspace.workspaceDirectory ?? workspace.projectRootPath;
   const { t } = useTranslation();
   const showShortcut = showShortcutBadge && shortcutNumber !== null;
   const showKebab = Boolean(onArchive && (isHovered || isTouchPlatform));
@@ -698,6 +712,7 @@ function WorkspaceRowRightGroup({
                 archiveShortcutKeys={archiveShortcutKeys}
                 isPinned={isPinned}
                 onTogglePin={onTogglePin}
+                openInFileManagerPath={workspacePath}
               />
             ) : null}
           </SidebarWorkspaceTrailingActionOverlay>
@@ -746,7 +761,7 @@ function ProjectLeadingVisualStatus({
   if (isArchiving) {
     return (
       <View style={styles.projectLeadingVisualSlot}>
-        <ThemedActivityIndicator size={8} uniProps={foregroundMutedColorMapping} />
+        <ThemedLoadingSpinner size={8} uniProps={foregroundMutedColorMapping} />
       </View>
     );
   }
@@ -855,7 +870,7 @@ function NewWorktreeButton({
           >
             {({ hovered, pressed }) =>
               loading ? (
-                <ThemedActivityIndicator size={14} uniProps={foregroundMutedColorMapping} />
+                <ThemedLoadingSpinner size={14} uniProps={foregroundMutedColorMapping} />
               ) : (
                 <ThemedPlus
                   size={15}
@@ -901,10 +916,10 @@ function NewWorkspaceGhostRow({
         serverId: worktreeTarget.serverId,
         sourceDirectory: worktreeTarget.iconWorkingDir,
         displayName,
-        projectId: project.projectKey,
+        projectId: worktreeTarget.projectId,
       }) as Href,
     );
-  }, [displayName, onWorkspacePress, project.projectKey, worktreeTarget]);
+  }, [displayName, onWorkspacePress, worktreeTarget]);
   const rowStyle = useCallback(
     ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.newWorkspaceGhostRow,
@@ -981,10 +996,10 @@ function ProjectHeaderRow({
         serverId: worktreeTarget.serverId,
         sourceDirectory: worktreeTarget.iconWorkingDir,
         displayName,
-        projectId: project.projectKey,
+        projectId: worktreeTarget.projectId,
       }) as Href,
     );
-  }, [displayName, onWorkspacePress, project.projectKey, worktreeTarget]);
+  }, [displayName, onWorkspacePress, worktreeTarget]);
   const interaction = useLongPressDragInteraction({
     drag,
     menuController,
@@ -1748,7 +1763,6 @@ function ProjectBlock({
       }
 
       void removeProjectFromHosts({
-        projectKey: project.projectKey,
         targets: readiness.targets,
         getClient: (serverId) => getHostRuntimeStore().getClient(serverId),
       })
@@ -1817,7 +1831,7 @@ function ProjectBlock({
   }
 
   return (
-    <View style={styles.projectBlock}>
+    <View role="group" accessibilityLabel={displayName} style={styles.projectBlock}>
       <ProjectHeaderRow
         project={project}
         displayName={displayName}

@@ -122,7 +122,21 @@ The whitespace is the design.
 
 ---
 
-## 8. Responsiveness
+## 8. Alignment
+
+Things align to their glyphs, not to their boxes. A row's leading icon, its title, and the label of the button in its trailing slot sit on the same rails — the ink lines up, not the padding, not the touch target, not the hover background.
+
+Pick the rails from the content, then hold them. A settings card establishes a leading rail at the icon's left edge and a trailing rail at the last glyph's right edge; every row in that card uses the same two. A row whose icon is absent still starts its title on the leading rail. Indentation is a new rail, not an arbitrary offset.
+
+The pressable is bigger than the glyph, and that is fine. Hit areas grow outward from the aligned content — they never move it. A button that looks two pixels off because its padding is asymmetric is misaligned even though its box is correct.
+
+Optical alignment beats arithmetic when a glyph disagrees with its bounding box. Icons with visual weight on one side, chevrons, and single-character labels usually need a small nudge to look centered. Trust the eye, then leave a comment saying the offset is optical.
+
+One row off the rail makes the whole card look unconsidered.
+
+---
+
+## 9. Responsiveness
 
 Compact-first. The small case is designed; the large case adds chrome around it.
 
@@ -143,7 +157,7 @@ A new list+detail feature copies the settings shell. A new workspace-shaped feat
 
 ---
 
-## 9. Copy and voice
+## 10. Copy and voice
 
 Sentence case. "Pair a device", "Danger zone", "Restart daemon", "Inject Paseo tools", "No sessions yet", "Load more". Proper nouns retain casing — Paseo, Beta, Stable, Local. Title case is wrong.
 
@@ -165,7 +179,7 @@ Terminology:
 
 ---
 
-## 10. States
+## 11. States
 
 Loading is inline by default. `<LoadingSpinner size={14} color={foregroundMuted} />` sits next to the thing it relates to (`packages/app/src/screens/settings/providers-section.tsx:227-231`). Page-level loading is a centered `<LoadingSpinner size="large">` (`packages/app/src/screens/sessions-screen.tsx:69-72`). Card-level loading is a single short line, not a spinner. In-row dropdown items use `<DropdownMenuItem status="pending" pendingLabel="Removing...">`; the menu item handles its own pending state.
 
@@ -185,9 +199,11 @@ Partial failure (a list mostly fine but one source errored) is a bordered banner
 
 State surfaces at the smallest scope it affects. Field error stays under the field; page error is a banner; flow-stopping error is an `Alert`.
 
+Changing state must not move the layout. A row that grows when its badge arrives, a card that reflows when a count resolves, a list that jumps as data streams in — all wrong. Reserve the space the loaded state will need, so the skeleton, the spinner, and the content occupy the same box. A surface that shifts under the user stops feeling calm.
+
 ---
 
-## 11. List rows
+## 12. List rows
 
 The row anatomy is a content column with an optional trailing slot. Inside a card the row is `settingsStyles.row`. Inside a sidebar list the row carries its own padding and `borderRadius.lg` per item (`packages/app/src/components/sidebar-workspace-list.tsx:2614-2625`).
 
@@ -203,7 +219,7 @@ Selected state on rows in a desktop list+detail uses `surfaceSidebarHover` as th
 
 ---
 
-## 12. Status pills and badges
+## 13. Status pills and badges
 
 Status pills are `palette.<color>[300]` foreground on a 10%-alpha background of the same color. Success uses green, warning uses amber, danger uses red, muted uses zinc. The `<StatusBadge>` primitive (`packages/app/src/components/ui/status-badge.tsx`) is canonical.
 
@@ -213,7 +229,7 @@ The bespoke pills in `packages/app/src/screens/settings/host-page.tsx:97-116`, `
 
 ---
 
-## 13. Forbidden
+## 14. Forbidden
 
 - `fontWeight.medium` on row titles, body text, button labels, badge text, or `<SidebarCallout>` titles. Medium is reserved for the structural-label tier described in §3 — section labels, modal/sheet titles, dense metadata emphasis, and tight action labels. Anything else is `normal`. `<ScreenTitle>` is responsive `400/300` and is never overridden.
 - `<Pressable>` wrapping `<Text>` to make a button. `<Button>` exists.
@@ -233,7 +249,7 @@ The bespoke pills in `packages/app/src/screens/settings/host-page.tsx:97-116`, `
 
 ---
 
-## 14. Canonical surfaces by pattern
+## 15. Canonical surfaces by pattern
 
 | Pattern                                             | Reference                                                                                                                                                                                                                                                                                                |
 | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

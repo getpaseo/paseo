@@ -9,7 +9,6 @@ import {
 } from "react";
 import {
   FlatList,
-  ActivityIndicator,
   Keyboard,
   Platform,
   View,
@@ -17,23 +16,43 @@ import {
   type ListRenderItemInfo,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
+  type ViewStyle,
 } from "react-native";
+import { withUnistyles } from "react-native-unistyles";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { StreamItem } from "@/types/stream";
+import type { Theme } from "@/styles/theme";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useBottomAnchorController } from "./bottom-anchor-controller";
+import { useScrollKeyboardDismiss } from "./scroll-keyboard-dismiss/use-scroll-keyboard-dismiss";
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./strategy";
 import {
   createStreamStrategy,
   isNearBottomForStreamRenderStrategy,
   resolveBottomAnchorTransportBehavior,
 } from "./strategy";
+import {
+  createHistoryStartPaginationState,
+  evaluateHistoryStartPagination,
+  rearmHistoryStartPagination,
+} from "./history-start-pagination";
 
 const DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION = Object.freeze({
   minIndexForVisible: 0,
   autoscrollToTopThreshold: 0,
 });
-const HISTORY_START_THRESHOLD_PX = 96;
 
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
+const foregroundMutedColorMapping = (theme: Theme) => ({
+  color: theme.colors.foregroundMuted,
+});
+const historyStartSlotStyle: ViewStyle = {
+  alignItems: "center",
+  justifyContent: "center",
+  minHeight: 32,
+  paddingTop: 4,
+  paddingBottom: 8,
+};
 interface HistoryRowDisplayVariants {
   regular?: StreamItem;
   compact?: StreamItem;
@@ -72,6 +91,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     onNearHistoryStart,
     isLoadingOlderHistory,
     hasOlderHistory,
+    olderHistoryProgressKey,
     scrollEnabled,
     listStyle,
     baseListContentContainerStyle,
@@ -90,11 +110,13 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   });
   const scrollOffsetYRef = useRef(0);
   const isUserScrollActiveRef = useRef(false);
+  const scrollKeyboardDismiss = useScrollKeyboardDismiss();
   const userScrollEndFrameIdRef = useRef<number | null>(null);
   const programmaticScrollEventBudgetRef = useRef(0);
   const [isNativeViewportSettling, setIsNativeViewportSettling] = useState(false);
   const nativeViewportSettlingFrameIdRef = useRef<number | null>(null);
   const historyStartReadyRef = useRef(false);
+  const historyStartPaginationStateRef = useRef(createHistoryStartPaginationState());
 
   const historyItems = useMemo(() => {
     if (segments.historyVirtualized.length === 0) {
@@ -123,6 +145,23 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       ),
     [displayStateHistoryRows, historyRowRevision?.contentById],
   );
+  const evaluateHistoryStart = useStableEvent(() => {
+    const metrics = streamViewportMetricsRef.current;
+    const hasMeasuredViewport =
+      metrics.viewportMeasuredForKey === metrics.containerKey &&
+      metrics.contentMeasuredForKey === metrics.containerKey;
+    const result = evaluateHistoryStartPagination(historyStartPaginationStateRef.current, {
+      distanceFromHistoryStart: metrics.contentHeight - metrics.viewportHeight - metrics.offsetY,
+      hasOlderHistory,
+      isLoadingOlderHistory,
+      isReady: historyStartReadyRef.current && hasMeasuredViewport,
+      progressKey: olderHistoryProgressKey,
+    });
+    historyStartPaginationStateRef.current = result.state;
+    if (result.shouldLoad) {
+      onNearHistoryStart();
+    }
+  });
 
   const clearNativeViewportSettling = useCallback(() => {
     if (nativeViewportSettlingFrameIdRef.current !== null) {
@@ -222,14 +261,16 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     clearNativeViewportSettling();
     setIsNativeViewportSettling(false);
     historyStartReadyRef.current = false;
+    historyStartPaginationStateRef.current = createHistoryStartPaginationState();
     const frame = requestAnimationFrame(() => {
       historyStartReadyRef.current = true;
+      evaluateHistoryStart();
     });
     return () => {
       cancelAnimationFrame(frame);
       clearPendingUserScrollEnd();
     };
-  }, [agentId, clearNativeViewportSettling, clearPendingUserScrollEnd]);
+  }, [agentId, clearNativeViewportSettling, clearPendingUserScrollEnd, evaluateHistoryStart]);
 
   useEffect(() => {
     const keyboardEvents = [
@@ -295,6 +336,8 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
     const previousOffsetY = scrollOffsetYRef.current;
     scrollOffsetYRef.current = contentOffset.y;
+    scrollKeyboardDismiss.onScroll(event);
+
     streamViewportMetricsRef.current = {
       contentHeight: Math.max(0, contentSize.height),
       viewportWidth: Math.max(0, layoutMeasurement.width),
@@ -308,17 +351,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     const nearBottom = isScrollEventNearBottom(event);
     onNearBottomChange(nearBottom);
 
-    const distanceFromOldestEdge =
-      streamViewportMetricsRef.current.contentHeight -
-      streamViewportMetricsRef.current.viewportHeight -
-      contentOffset.y;
-    if (
-      historyStartReadyRef.current &&
-      hasOlderHistory &&
-      distanceFromOldestEdge <= HISTORY_START_THRESHOLD_PX
-    ) {
-      onNearHistoryStart();
-    }
+    evaluateHistoryStart();
 
     if (
       !isUserScrollActiveRef.current &&
@@ -335,16 +368,25 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     }
   });
 
-  const handleScrollBeginDrag = useStableEvent(() => {
+  const handleScrollBeginDrag = useStableEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (!isLoadingOlderHistory) {
+      historyStartPaginationStateRef.current = rearmHistoryStartPagination(
+        historyStartPaginationStateRef.current,
+      );
+    }
     clearPendingUserScrollEnd();
     isUserScrollActiveRef.current = true;
+    scrollKeyboardDismiss.onScrollBeginDrag(event);
     bottomAnchorController.beginUserScroll();
+    evaluateHistoryStart();
   });
 
   // Defer drag end so momentum can take ownership, but capture the terminal
   // gesture position now because layout may move the viewport in the meantime.
   const handleScrollEndDrag = useStableEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const isNearBottom = isScrollEventNearBottom(event);
+    scrollKeyboardDismiss.onScrollEndDrag(event);
+
     clearPendingUserScrollEnd();
     userScrollEndFrameIdRef.current = requestAnimationFrame(() => {
       userScrollEndFrameIdRef.current = null;
@@ -359,6 +401,11 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
 
   const handleMomentumScrollEnd = useStableEvent(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      // Android can emit momentum-end after a programmatic anchor correction.
+      // Only momentum that still owns the user gesture may settle scroll intent.
+      if (!isUserScrollActiveRef.current) {
+        return;
+      }
       const isNearBottom = isScrollEventNearBottom(event);
       clearPendingUserScrollEnd();
       isUserScrollActiveRef.current = false;
@@ -390,6 +437,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       previousViewportHeight,
       viewportHeight,
     });
+    evaluateHistoryStart();
   });
 
   const handleContentSizeChange = useStableEvent((_width: number, height: number) => {
@@ -405,7 +453,12 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       previousContentHeight,
       contentHeight: nextContentHeight,
     });
+    evaluateHistoryStart();
   });
+
+  useEffect(() => {
+    evaluateHistoryStart();
+  }, [evaluateHistoryStart, hasOlderHistory, isLoadingOlderHistory, olderHistoryProgressKey]);
 
   const renderItem = useStableEvent(
     ({ item, index }: ListRenderItemInfo<StreamItem>): ReactElement | null => {
@@ -446,15 +499,20 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   ]);
 
   const historyFooterContent = useMemo(() => {
-    if (!isLoadingOlderHistory) {
+    if (!hasOlderHistory && !isLoadingOlderHistory) {
       return null;
     }
     return (
-      <View testID="load-older-history-spinner">
-        <ActivityIndicator size="small" />
+      <View
+        style={historyStartSlotStyle}
+        testID={isLoadingOlderHistory ? "load-older-history-spinner" : undefined}
+      >
+        {isLoadingOlderHistory ? (
+          <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
+        ) : null}
       </View>
     );
-  }, [isLoadingOlderHistory]);
+  }, [hasOlderHistory, isLoadingOlderHistory]);
 
   // RN's FlatList strictMode keeps its internal renderItem wrapper stable when
   // data or the live header changes, preserving the row identities above.

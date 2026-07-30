@@ -55,6 +55,8 @@ import {
   type PendingWorkspaceDraftSetup,
 } from "@/stores/workspace-draft-submission-store";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
+import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
+import type { KeyboardActionId } from "@/keyboard/keyboard-action-dispatcher";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { getForgePresentation } from "@/git/forge";
@@ -64,6 +66,7 @@ import { toErrorMessage } from "@/utils/error-messages";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import {
   getHostProjectSourceDirectory,
+  getHostProjectId,
   hostProjectFromRoute,
   hostProjectFromWorkspace,
   useHostProjects,
@@ -183,6 +186,8 @@ interface PickerOptionData {
 
 const PR_OPTION_PREFIX = "github-pr:";
 const PROJECT_ICON_FALLBACK_FONT_SIZE = 10;
+// Stable reference so the keyboard-action handler doesn't re-register each render.
+const PROJECT_PICK_ACTIONS: readonly KeyboardActionId[] = ["workspace.project.pick"];
 // Height of a single picker-trigger badge. The Base-row spacer reserves exactly
 // this so toggling Isolation to Local hides the row without shifting the form.
 const BADGE_HEIGHT = 28;
@@ -829,6 +834,8 @@ async function createMultiplicityWorkspace(input: {
   serverId: string;
   createFailedMessage: string;
 }): Promise<ReturnType<typeof normalizeWorkspaceDescriptor>> {
+  const projectId = getHostProjectId(input.project, input.serverId);
+  if (!projectId) throw new Error("Project is not available on the selected host");
   const isWorktree = input.isolation === "worktree";
   const checkoutRequest = isWorktree
     ? resolveCheckoutRequest(input.selectedItem, input.currentBranch)
@@ -842,14 +849,14 @@ async function createMultiplicityWorkspace(input: {
       ? {
           kind: "worktree",
           cwd: input.sourceDirectory,
-          projectId: input.project.projectKey,
+          projectId,
           worktreeSlug: createNameId(),
           ...checkoutRequest,
         }
       : {
           kind: "directory",
           path: input.sourceDirectory,
-          projectId: input.project.projectKey,
+          projectId,
         },
     ...(firstAgentContext ? { firstAgentContext } : {}),
   });
@@ -1417,6 +1424,8 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
       >
         <Pressable
           ref={host.anchorRef}
+          accessibilityRole="button"
+          accessibilityLabel="Host"
           onPress={host.open}
           disabled={isPending || host.allHosts.length === 0}
           style={badgePressableStyle}
@@ -1802,6 +1811,22 @@ export function NewWorkspaceScreen({
     setProjectPickerOpen(true);
   }, []);
 
+  // Cmd/Ctrl+P opens the project picker with its search focused so the user can
+  // switch projects from the keyboard. Registered only while this screen is
+  // mounted, so the shortcut doesn't swallow the browser's native print
+  // elsewhere; gated on having projects to pick.
+  const handleProjectPick = useCallback(() => {
+    openProjectPicker();
+    return true;
+  }, [openProjectPicker]);
+  useKeyboardActionHandler({
+    handlerId: "new-workspace-project-pick",
+    actions: PROJECT_PICK_ACTIONS,
+    enabled: projectPickerOptions.length > 0,
+    priority: 0,
+    handle: handleProjectPick,
+  });
+
   const openIsolationPicker = useCallback(() => {
     setIsolationPickerOpen(true);
   }, []);
@@ -1883,16 +1908,20 @@ export function NewWorkspaceScreen({
       }
       const checkoutRequest = resolveCheckoutRequest(selectedItem, currentBranch);
       const firstAgentContext = buildFirstAgentContext(input);
+      const hostProjectId = getHostProjectId(selectedProject, selectedServerId);
+      if (!hostProjectId) {
+        throw new Error("Project is not available on the selected host");
+      }
 
       return {
         cwd: selectedSourceDirectory,
-        projectId: selectedProject.projectKey,
+        projectId: hostProjectId,
         worktreeSlug: createNameId(),
         ...(firstAgentContext ? { firstAgentContext } : {}),
         ...checkoutRequest,
       };
     },
-    [currentBranch, selectedItem, selectedProject, selectedSourceDirectory],
+    [currentBranch, selectedItem, selectedProject, selectedServerId, selectedSourceDirectory],
   );
 
   const ensureWorkspace = useCallback(

@@ -646,7 +646,7 @@ test(
 );
 
 test(
-  "resumed Pi prompts retain their exact native entry ids after idle collection",
+  "resumed Pi prompts retain their exact native entry ids after explicit runtime close",
   async () => {
     const cwd = tmpCwd("pi-resumed-entry-id-");
     const firstPrompt = "PASEO_PI_ENTRY_ID_FIRST. Reply exactly: first-ok";
@@ -665,12 +665,7 @@ test(
         const firstFinish = await client.waitForFinish(agent.id, PI_TEST_TIMEOUT_MS);
         expect(firstFinish.status).toBe("idle");
 
-        const collection = await daemon.daemon.agentManager.collectIdleAgents({
-          cutoff: new Date(Date.now() + 1_000),
-          protectedAgentIds: new Set(),
-        });
-        expect(collection.failures).toEqual([]);
-        expect(collection.collected.map((entry) => entry.agentId)).toContain(agent.id);
+        await daemon.daemon.agentManager.closeAgent(agent.id);
 
         await client.sendMessage(agent.id, secondPrompt);
         const secondFinish = await client.waitForFinish(agent.id, PI_TEST_TIMEOUT_MS);

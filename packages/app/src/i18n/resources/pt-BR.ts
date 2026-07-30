@@ -786,6 +786,8 @@ export const ptBR: TranslationResources = {
         closeChangesTab: "Fechar a aba Alterações",
         binaryFile: "Arquivo binário",
         tooLarge: "Diff grande demais para exibir",
+        previewTooLargeTitle: "Este diff é grande demais para visualizar",
+        previewTooLargeDescription: "Reduza a comparação para visualizá-la aqui",
         unified: "Diff unificado",
         split: "Diff lado a lado",
         switchToUnified: "Alternar para diff unificado",
@@ -930,6 +932,8 @@ export const ptBR: TranslationResources = {
         openSettings: "Abrir configurações do projeto",
         openNewWindow: "Abrir em nova janela",
         openNewWindowFailed: "Não foi possível abrir uma nova janela",
+        openFolder: "Open in file manager",
+        openFolderFailed: "Couldn't open folder",
         remove: "Remover projeto",
         removing: "Removendo...",
       },
@@ -1862,6 +1866,7 @@ export const ptBR: TranslationResources = {
         sendMessage: "Enviar mensagem",
         queueMessage: "Enfileirar mensagem",
         muteUnmuteVoiceMode: "Silenciar/ativar modo de voz",
+        switchProject: "Trocar projeto",
       },
       helpNotes: {
         showKeyboardShortcuts:

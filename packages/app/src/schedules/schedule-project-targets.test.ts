@@ -21,6 +21,9 @@ function makeProject(overrides: Partial<ProjectSummary>): ProjectSummary {
 function makeHost(overrides: Partial<ProjectSummary["hosts"][number]>) {
   return {
     serverId: "host-1",
+    projectId: "project-1",
+    projectName: "Project",
+    projectCustomName: null,
     serverName: "Host 1",
     isOnline: true,
     repoRoot: "/tmp/project",
@@ -35,14 +38,17 @@ describe("buildScheduleProjectTargets", () => {
     const targets = buildScheduleProjectTargets([
       makeProject({
         projectName: "Alpha",
-        hosts: [makeHost({ repoRoot: "/tmp/alpha" }), makeHost({ serverId: "host-2" })],
+        hosts: [
+          makeHost({ projectName: "Alpha on Host 1", repoRoot: "/tmp/alpha" }),
+          makeHost({ serverId: "host-2", projectName: "Alpha on Host 2" }),
+        ],
       }),
     ]);
     expect(targets).toHaveLength(2);
     expect(targets[0]).toMatchObject({
       serverId: "host-1",
       cwd: "/tmp/alpha",
-      projectName: "Alpha",
+      projectName: "Alpha on Host 1",
     });
   });
 
@@ -60,12 +66,15 @@ describe("describeScheduleCwd", () => {
   it("prefers a matched project name and shortens unmatched paths", () => {
     const byCwd = buildProjectNameByCwd(
       buildScheduleProjectTargets([
-        makeProject({ projectName: "Alpha", hosts: [makeHost({ repoRoot: "/tmp/alpha" })] }),
+        makeProject({
+          projectName: "Grouped Alpha",
+          hosts: [makeHost({ projectName: "Alpha on Host 1", repoRoot: "/tmp/alpha" })],
+        }),
       ]),
     );
     expect(
       describeScheduleCwd({ serverId: "host-1", cwd: "/tmp/alpha", projectNameByCwd: byCwd }),
-    ).toBe("Alpha");
+    ).toBe("Alpha on Host 1");
     expect(
       describeScheduleCwd({ serverId: "host-1", cwd: "/Users/sam/api", projectNameByCwd: byCwd }),
     ).toBe("~/api");

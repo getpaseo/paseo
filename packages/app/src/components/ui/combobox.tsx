@@ -23,6 +23,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -62,6 +63,12 @@ import {
 } from "@/components/adaptive-modal-sheet";
 import { FloatingSurface } from "@/components/ui/floating";
 import { useDismissKeyboardOnOpen } from "@/components/ui/keyboard-dismiss";
+import {
+  getOverlayRoot,
+  OverlayLayerProvider,
+  useOverlayLayer,
+  useWebOverlayRegistration,
+} from "@/lib/overlay-root";
 import { buildDesktopFrameStyle } from "./combobox-frame-style";
 
 export { buildDesktopFrameStyle } from "./combobox-frame-style";
@@ -300,7 +307,7 @@ export function ComboboxItem({
       onPress={onPress}
       style={itemPressableStyle}
       accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
+      accessibilityLabel={accessibilityLabel ?? label}
     >
       {leadingContent}
       <View style={itemContentStyle}>
@@ -872,45 +879,31 @@ function isDesktopKey(key: string): key is DesktopKey {
   return key === "ArrowDown" || key === "ArrowUp" || key === "Enter" || key === "Escape";
 }
 
-function useWebKeyboardListener(
-  isOpen: boolean,
-  handleDesktopKey: (key: DesktopKey, event?: KeyboardEvent) => void,
-) {
-  useEffect(() => {
-    if (!IS_WEB || !isOpen) return;
-
-    const handler = (event: KeyboardEvent) => {
-      if (!isDesktopKey(event.key)) return;
-      handleDesktopKey(event.key, event);
-    };
-
-    // react-native-web's TextInput can stop propagation on key events, so listen in capture phase.
-    window.addEventListener("keydown", handler, true);
-    return () => {
-      window.removeEventListener("keydown", handler, true);
-    };
-  }, [handleDesktopKey, isOpen]);
-}
-
-function dispatchDesktopKey(input: DesktopKeyHandlerInput, key: DesktopKey, event?: KeyboardEvent) {
-  if (!input.isOpen) return;
-  if (!IS_WEB && input.isMobile) return;
+function dispatchDesktopKey(
+  input: DesktopKeyHandlerInput,
+  key: DesktopKey,
+  event?: KeyboardEvent,
+): boolean {
+  if (!input.isOpen) return false;
+  if (!IS_WEB && input.isMobile) return false;
 
   if (key === "ArrowDown" || key === "ArrowUp") {
     event?.preventDefault();
     handleDesktopArrowKey(input, key);
-    return;
+    return true;
   }
   if (key === "Enter") {
-    if (input.orderedVisibleOptions.length === 0) return;
+    if (input.orderedVisibleOptions.length === 0) return false;
     event?.preventDefault();
     handleDesktopEnterKey(input);
-    return;
+    return true;
   }
   if (key === "Escape") {
     event?.preventDefault();
     input.handleClose();
+    return true;
   }
+  return false;
 }
 
 function resolveInitialActiveIndex(
@@ -1059,8 +1052,10 @@ function MobileComboboxBody(props: MobileBodyProps): ReactElement {
 }
 
 interface DesktopBodyProps {
+  overlayLayer: number;
   isOpen: boolean;
   handleClose: () => void;
+  handleDesktopKey: (key: DesktopKey, event?: KeyboardEvent) => boolean;
   refs: ReturnType<typeof useFloating>["refs"];
   shouldUseDesktopFade: boolean;
   desktopFrameStyle: StyleProp<ViewStyle>;
@@ -1175,14 +1170,38 @@ function DesktopComboboxOptionsBody(props: {
 }
 
 function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
-  return (
-    <Modal
-      transparent
-      animationType="none"
-      visible={props.isOpen}
-      onRequestClose={props.handleClose}
-    >
-      <View ref={props.refs.setOffsetParent} collapsable={false} style={styles.desktopOverlay}>
+  const handleDesktopKey = props.handleDesktopKey;
+  const handleWebOverlayKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      if (!isDesktopKey(event.key)) return false;
+      return handleDesktopKey(event.key, event);
+    },
+    [handleDesktopKey],
+  );
+  const setWebOverlayScope = useWebOverlayRegistration({
+    active: isWeb && props.isOpen,
+    layer: props.overlayLayer,
+    onKeyDown: handleWebOverlayKeyDown,
+  });
+  const setFloatingRef = useCallback(
+    (node: View | null) => {
+      props.refs.setFloating(node);
+      setWebOverlayScope(node);
+    },
+    [props.refs, setWebOverlayScope],
+  );
+
+  const overlay = (
+    <OverlayLayerProvider layer={props.overlayLayer}>
+      <View
+        ref={props.refs.setOffsetParent}
+        collapsable={false}
+        style={[
+          styles.desktopOverlay,
+          isWeb ? styles.desktopOverlayWeb : null,
+          isWeb ? { zIndex: props.overlayLayer } : null,
+        ]}
+      >
         <Pressable style={styles.desktopBackdrop} onPress={props.handleClose} />
         <FloatingSurface
           testID="combobox-desktop-container"
@@ -1190,8 +1209,11 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
           exiting={props.shouldUseDesktopFade ? FadeOut.duration(100) : undefined}
           style={styles.desktopContainer}
           frameStyle={props.desktopFrameStyle}
-          ref={props.refs.setFloating}
+          ref={setFloatingRef}
           collapsable={false}
+          role="dialog"
+          aria-modal
+          tabIndex={-1}
           onLayout={props.handleDesktopContentLayout}
         >
           {props.hasChildren ? (
@@ -1224,6 +1246,21 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
           {props.footer ? <View style={styles.footer}>{props.footer}</View> : null}
         </FloatingSurface>
       </View>
+    </OverlayLayerProvider>
+  );
+
+  if (isWeb && typeof document !== "undefined") {
+    return createPortal(overlay, getOverlayRoot());
+  }
+
+  return (
+    <Modal
+      transparent
+      animationType="none"
+      visible={props.isOpen}
+      onRequestClose={props.handleClose}
+    >
+      {overlay}
     </Modal>
   );
 }
@@ -1266,6 +1303,7 @@ export function Combobox({
   const resolvedEmptyText = emptyText ?? t("common.empty.noOptionsMatchSearch");
   const resolvedTitle = title ?? t("common.actions.select");
   const isMobile = useIsCompactFormFactor();
+  const floatingLayer = useOverlayLayer("floating");
   const safeAreaInsets = useSafeAreaInsets();
   const titleColor = theme.colors.foreground;
   const effectiveOptionsPosition = resolveEffectiveOptionsPosition(isMobile, optionsPosition);
@@ -1471,7 +1509,7 @@ export function Combobox({
 
   const handleDesktopKey = useCallback(
     (key: DesktopKey, event?: KeyboardEvent) => {
-      dispatchDesktopKey(
+      return dispatchDesktopKey(
         {
           isOpen,
           isMobile,
@@ -1488,7 +1526,6 @@ export function Combobox({
     [activeIndex, handleClose, handleSelect, isMobile, isOpen, orderedVisibleOptions],
   );
 
-  useWebKeyboardListener(isOpen, handleDesktopKey);
   useDismissKeyboardOnOpen(isOpen, isMobile);
 
   const handleIndicatorStyle = useMemo(
@@ -1565,8 +1602,10 @@ export function Combobox({
 
   return (
     <DesktopComboboxBody
+      overlayLayer={floatingLayer}
       isOpen={isOpen}
       handleClose={handleClose}
+      handleDesktopKey={handleDesktopKey}
       refs={refs}
       shouldUseDesktopFade={shouldUseDesktopFade}
       desktopFrameStyle={desktopFrameStyle}
@@ -1715,6 +1754,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   desktopOverlay: {
     flex: 1,
+  },
+  desktopOverlayWeb: {
+    ...StyleSheet.absoluteFillObject,
+    pointerEvents: "auto" as const,
   },
   desktopBackdrop: {
     position: "absolute",

@@ -1,6 +1,10 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { useSessionStore, type AgentFileExplorerState } from "@/stores/session-store";
+import {
+  useSessionStore,
+  type AgentFileExplorerState,
+  type ExplorerDirectory,
+} from "@/stores/session-store";
 import { explorerFileFromReadResult } from "@/file-explorer/read-result";
 
 function createExplorerState(): AgentFileExplorerState {
@@ -88,9 +92,9 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
     async (
       path: string,
       options?: { recordHistory?: boolean; setCurrentPath?: boolean },
-    ): Promise<boolean> => {
+    ): Promise<ExplorerDirectory | null> => {
       if (!workspaceStateKey) {
-        return false;
+        return null;
       }
       const normalizedPath = path && path.length > 0 ? path : ".";
       const shouldSetCurrentPath = options?.setCurrentPath ?? true;
@@ -119,7 +123,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
           lastError: t("workspace.fileExplorer.states.unavailable"),
           pendingRequest: null,
         }));
-        return false;
+        return null;
       }
 
       if (!client) {
@@ -129,7 +133,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
           lastError: t("workspace.terminal.hostDisconnected"),
           pendingRequest: null,
         }));
-        return false;
+        return null;
       }
 
       try {
@@ -150,7 +154,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
 
           return nextState;
         });
-        return true;
+        return directory;
       } catch (error) {
         updateExplorerState((state) => ({
           ...state,
@@ -161,7 +165,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
               : t("workspace.fileExplorer.errors.failedToListDirectory"),
           pendingRequest: null,
         }));
-        return false;
+        return null;
       }
     },
     [client, normalizedWorkspaceRoot, t, updateExplorerState, workspaceStateKey],

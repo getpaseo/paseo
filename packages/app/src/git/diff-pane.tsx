@@ -14,7 +14,6 @@ import { DiffStat } from "@/components/diff-stat";
 import {
   View,
   Text,
-  ActivityIndicator,
   Pressable,
   FlatList,
   type LayoutChangeEvent,
@@ -120,6 +119,7 @@ import {
   type InlineReviewActions,
 } from "@/review";
 import { usePublishWorkingDiffAttachment, useWorkingDiff } from "@/git/use-working-diff";
+import { DiffTooLargeState } from "@/git/diff-too-large-state";
 
 export type { GitActionId, GitAction, GitActions } from "@/git/policy";
 
@@ -1320,7 +1320,7 @@ type PressableStyleFn = (
 
 const foregroundMutedIconColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
-const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedAlignJustify = withUnistyles(AlignJustify);
 const ThemedColumns2 = withUnistyles(Columns2);
 const ThemedPilcrow = withUnistyles(Pilcrow);
@@ -1693,7 +1693,6 @@ export function DiffOptionsMenu({
 }
 
 const ThemedRotateCw = withUnistyles(RotateCw);
-const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 
 type DiffFlatItemLayoutGetter = NonNullable<FlatListProps<DiffFlatItem>["getItemLayout"]>;
 const EMPTY_PATH_LIST: string[] = [];
@@ -1757,6 +1756,7 @@ interface DiffBodyContentProps {
   notGit: boolean;
   isDiffLoading: boolean;
   diffErrorMessage: string | null;
+  diffTooLarge: boolean;
   hasChanges: boolean;
   emptyMessage: string;
   children: ReactElement;
@@ -1770,6 +1770,7 @@ function DiffBodyContent({
   notGit,
   isDiffLoading,
   diffErrorMessage,
+  diffTooLarge,
   hasChanges,
   emptyMessage,
   children,
@@ -1779,7 +1780,7 @@ function DiffBodyContent({
   if (isStatusLoading) {
     return (
       <View style={styles.loadingContainer}>
-        <ThemedActivityIndicator size="large" uniProps={foregroundMutedIconColorMapping} />
+        <ThemedLoadingSpinner size="large" uniProps={foregroundMutedIconColorMapping} />
         <Text style={styles.loadingText}>{checkingRepositoryLabel}</Text>
       </View>
     );
@@ -1801,9 +1802,12 @@ function DiffBodyContent({
   if (isDiffLoading) {
     return (
       <View style={styles.loadingContainer}>
-        <ThemedActivityIndicator size="large" uniProps={foregroundMutedIconColorMapping} />
+        <ThemedLoadingSpinner size="large" uniProps={foregroundMutedIconColorMapping} />
       </View>
     );
+  }
+  if (diffTooLarge) {
+    return <DiffTooLargeState />;
   }
   if (diffErrorMessage) {
     return (
@@ -2695,6 +2699,7 @@ export function GitDiffPane({
     selectBase: handleSelectBase,
     files,
     diffPayloadError,
+    diffTooLarge,
     isDiffLoading,
     reviewActions,
     reviewAttachment,
@@ -2857,6 +2862,7 @@ export function GitDiffPane({
       notGit={notGit}
       isDiffLoading={isDiffLoading}
       diffErrorMessage={diffErrorMessage}
+      diffTooLarge={diffTooLarge}
       hasChanges={hasChanges}
       emptyMessage={emptyMessage}
       checkingRepositoryLabel={t("workspace.git.diff.checkingRepository")}
