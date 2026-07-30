@@ -14,15 +14,18 @@ export function FileConflictAlert({
   modified,
   onOverwrite,
   onReload,
+  onRetry,
 }: {
   fileStatus: FileVersion["status"];
   modified: boolean;
   onOverwrite(): void;
   onReload(): void;
+  onRetry(): void;
 }) {
   const { t } = useTranslation();
   const canReload = fileStatus === "ready";
   const canOverwrite = canReload && modified;
+  const canRetry = fileStatus === "error";
   let title = t("panels.file.editor.changedOnDisk");
   if (fileStatus === "missing") title = t("panels.file.editor.deletedTitle");
   else if (fileStatus === "error") title = t("panels.file.editor.checkFailedTitle");
@@ -37,7 +40,7 @@ export function FileConflictAlert({
         <Text style={styles.title}>{title}</Text>
         {description ? <Text style={styles.description}>{description}</Text> : null}
       </View>
-      {canOverwrite || canReload ? (
+      {canOverwrite || canReload || canRetry ? (
         <View style={styles.actions}>
           {canOverwrite ? (
             <Button variant="outline" size="sm" onPress={onOverwrite}>
@@ -47,6 +50,11 @@ export function FileConflictAlert({
           {canReload ? (
             <Button variant="outline" size="sm" onPress={onReload}>
               {t("panels.file.editor.reload")}
+            </Button>
+          ) : null}
+          {canRetry ? (
+            <Button variant="outline" size="sm" onPress={onRetry}>
+              {t("common.actions.retry")}
             </Button>
           ) : null}
         </View>

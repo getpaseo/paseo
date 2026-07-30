@@ -23,6 +23,7 @@ export function FilePanelBar({
   conflictModified,
   onOverwrite,
   onReload,
+  onRetry,
 }: {
   size: number;
   lineCount?: number;
@@ -35,6 +36,7 @@ export function FilePanelBar({
   conflictModified?: boolean;
   onOverwrite?(): void;
   onReload?(): void;
+  onRetry?(): void;
 }) {
   const { t } = useTranslation();
   const markdownModes = [
@@ -114,12 +116,13 @@ export function FilePanelBar({
           />
         ) : null}
       </View>
-      {editorStatus === "conflict" && onOverwrite && onReload ? (
+      {editorStatus === "conflict" && onOverwrite && onReload && onRetry ? (
         <FileConflictAlert
           fileStatus={conflictFileStatus ?? "ready"}
           modified={conflictModified ?? false}
           onOverwrite={onOverwrite}
           onReload={onReload}
+          onRetry={onRetry}
         />
       ) : null}
     </View>

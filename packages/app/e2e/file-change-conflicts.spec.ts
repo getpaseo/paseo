@@ -1,4 +1,4 @@
-import { readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test, type Page } from "./fixtures";
 import { expectFileTabOpen, openFileExplorer, openFileFromExplorer } from "./helpers/file-explorer";
@@ -134,6 +134,33 @@ test.describe("Workspace file change conflicts", () => {
     await expect(filePane(page).getByText("Present", { exact: true })).toBeVisible();
     await unlink(filePath);
     await expectDeletedFileNotice(page);
+  });
+
+  test("a file check error offers a working retry", async ({ page, withWorkspace }) => {
+    const gate = await installDaemonWebSocketGate(page);
+    const relativePath = "retry.md";
+    const filePath = await openTrackedFile(page, withWorkspace, {
+      prefix: "file-check-retry-",
+      relativePath,
+      content: "# Before\n",
+    });
+    await gate.waitForFileSubscription(relativePath);
+    await expect(filePane(page).getByText("Before", { exact: true })).toBeVisible();
+
+    await unlink(filePath);
+    await mkdir(filePath);
+    await expectOnlyFileCallout(page, "Couldn't check file on disk");
+    await expect(fileCallout(page).getByRole("button", { name: "Retry" })).toBeEnabled();
+    await expect(fileCallout(page).getByRole("button", { name: "Reload" })).toHaveCount(0);
+    await expect(fileCallout(page).getByRole("button", { name: "Overwrite" })).toHaveCount(0);
+
+    gate.holdNextReadyFileUpdate(relativePath);
+    await rm(filePath, { recursive: true });
+    await writeFile(filePath, "# After\n", "utf8");
+    await gate.waitForHeldReadyFileUpdate();
+    await fileCallout(page).getByRole("button", { name: "Retry" }).click();
+    await expectCleanReplacementCanReload(page);
+    gate.releaseHeldReadyFileUpdate();
   });
 
   test("a changed file with local edits offers overwrite and a working reload", async ({

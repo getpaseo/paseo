@@ -44,6 +44,7 @@ vi.mock("react-i18next", () => ({
           "The local buffer was preserved. Choose which version to keep.",
         "panels.file.editor.overwrite": "Overwrite",
         "panels.file.editor.reload": "Reload",
+        "common.actions.retry": "Retry",
       })[key] ?? key,
   }),
 }));
@@ -76,6 +77,7 @@ describe("FileConflictAlert", () => {
   });
 
   function render(fileStatus: "ready" | "missing" | "error", modified: boolean) {
+    const onRetry = vi.fn();
     act(() => {
       root?.render(
         <FileConflictAlert
@@ -83,9 +85,11 @@ describe("FileConflictAlert", () => {
           modified={modified}
           onOverwrite={vi.fn()}
           onReload={vi.fn()}
+          onRetry={onRetry}
         />,
       );
     });
+    return { onRetry };
   }
 
   it("offers only reload when an unmodified file changed on disk", () => {
@@ -113,10 +117,13 @@ describe("FileConflictAlert", () => {
   });
 
   it("does not report a file check error as a deletion", () => {
-    render("error", false);
+    const { onRetry } = render("error", false);
 
     expect(container?.textContent).toContain("Couldn't check file on disk");
     expect(container?.textContent).not.toContain("File deleted on disk");
-    expect(container?.querySelectorAll("button")).toHaveLength(0);
+    const retry = container?.querySelector("button");
+    expect(retry?.textContent).toContain("Retry");
+    act(() => retry?.click());
+    expect(onRetry).toHaveBeenCalledOnce();
   });
 });

@@ -465,6 +465,8 @@ export function FilePane({
   const lineCount =
     preview?.kind === "text" ? (preview.content ?? "").split("\n").length : undefined;
   const errorMessage = getFileErrorMessage(query.error, t("panels.file.failedToLoad"));
+  const refetchFile = query.refetch;
+  const retryRead = useCallback(() => void refetchFile(), [refetchFile]);
 
   return (
     <FilePanePresentation
@@ -473,6 +475,7 @@ export function FilePane({
       readTarget={readTarget}
       preview={preview}
       version={version}
+      onRetryRead={retryRead}
       filename={getFileNameFromPath(location.path) ?? location.path}
       markdownMode={canToggleMarkdownMode ? markdownMode : undefined}
       onMarkdownModeChange={canToggleMarkdownMode ? setMarkdownMode : undefined}
@@ -516,6 +519,7 @@ function FilePanePresentation({
   readTarget,
   preview,
   version,
+  onRetryRead,
   filename,
   markdownMode,
   onMarkdownModeChange,
@@ -534,6 +538,7 @@ function FilePanePresentation({
   readTarget: { cwd: string; path: string } | null;
   preview: ExplorerFile | null;
   version: FileVersion | null;
+  onRetryRead: () => void;
   filename: string;
   markdownMode?: "preview" | "source";
   onMarkdownModeChange?: (mode: "preview" | "source") => void;
@@ -566,6 +571,7 @@ function FilePanePresentation({
         path={readTarget.path}
         preview={preview as TextExplorerFile}
         version={version}
+        onRetryRead={onRetryRead}
         filename={filename}
         mode={markdownMode}
         onModeChange={onMarkdownModeChange}
@@ -611,6 +617,7 @@ function EditableFilePane({
   path,
   preview,
   version,
+  onRetryRead,
   filename,
   mode,
   onModeChange,
@@ -624,6 +631,7 @@ function EditableFilePane({
   path: string;
   preview: TextExplorerFile;
   version: FileVersion | null;
+  onRetryRead: () => void;
   filename: string;
   mode?: "preview" | "source";
   onModeChange?: (mode: "preview" | "source") => void;
@@ -759,6 +767,7 @@ function EditableFilePane({
         conflictModified={snapshot.modified}
         onOverwrite={handleOverwrite}
         onReload={handleReload}
+        onRetry={onRetryRead}
         mode={mode}
         onModeChange={onModeChange}
       />
