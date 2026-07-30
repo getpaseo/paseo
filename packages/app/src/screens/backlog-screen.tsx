@@ -36,6 +36,7 @@ import {
   Paperclip,
   Plus,
   RotateCcw,
+  Search,
   Trash2,
   Video,
 } from "lucide-react-native";
@@ -75,10 +76,12 @@ import { toErrorMessage } from "@/utils/error-messages";
 import { buildNewWorkspaceRoute } from "@/utils/host-routes";
 import { buildNewWorkspaceDraftKey } from "@/utils/new-workspace-draft";
 import { shortenPath } from "@/utils/shorten-path";
+import { formatBacklogTaskWorkspacePrompt } from "@getpaseo/protocol/tasks/prompt";
 import {
   annotateMasterBacklogTasks,
   buildMasterBacklogProjectTargets,
   fetchMasterBacklogTasks,
+  filterBacklogTasksByQuery,
   sortMasterBacklogTasks,
   type MasterBacklogProjectTarget,
   type MasterBacklogTask,
@@ -170,6 +173,7 @@ function ProjectBacklogScreen({ serverId, projectId, displayName }: BacklogScree
   );
   const startDownload = useDownloadStore((state) => state.startDownload);
   const [viewMode, setViewMode] = useState<BacklogViewMode>("grid");
+  const [searchQuery, setSearchQuery] = useState("");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<TaskCard | null>(null);
   const [preview, setPreview] = useState<AttachmentPreview | null>(null);
@@ -198,16 +202,15 @@ function ProjectBacklogScreen({ serverId, projectId, displayName }: BacklogScree
   });
 
   const tasks = tasksQuery.data ?? EMPTY_TASKS;
-  const visibleTasks = useMemo(
-    () =>
-      [...tasks].sort((left, right) => {
-        if (left.status !== right.status) {
-          return left.status === "active" ? -1 : 1;
-        }
-        return left.order - right.order || left.createdAt.localeCompare(right.createdAt);
-      }),
-    [tasks],
-  );
+  const visibleTasks = useMemo(() => {
+    const sorted = [...tasks].sort((left, right) => {
+      if (left.status !== right.status) {
+        return left.status === "active" ? -1 : 1;
+      }
+      return left.order - right.order || left.createdAt.localeCompare(right.createdAt);
+    });
+    return filterBacklogTasksByQuery(sorted, searchQuery);
+  }, [searchQuery, tasks]);
 
   const handleLayout = useCallback((event: LayoutChangeEvent) => {
     setContentWidth(event.nativeEvent.layout.width);
@@ -399,7 +402,7 @@ function ProjectBacklogScreen({ serverId, projectId, displayName }: BacklogScree
             draftId,
           }),
           draft: {
-            text: formatTaskWorkspacePrompt(task),
+            text: formatBacklogTaskWorkspacePrompt(task),
             attachments,
           },
         });
@@ -505,7 +508,12 @@ function ProjectBacklogScreen({ serverId, projectId, displayName }: BacklogScree
       );
     }
     if (visibleTasks.length === 0) {
-      return <PanelMessage title="No tasks" message={null} />;
+      return (
+        <PanelMessage
+          title={searchQuery.trim() ? "No matching tasks" : "No tasks"}
+          message={searchQuery.trim() ? "Try a different search." : null}
+        />
+      );
     }
     return (
       <ScrollView style={styles.scroll} contentContainerStyle={scrollContentStyle}>
@@ -533,6 +541,7 @@ function ProjectBacklogScreen({ serverId, projectId, displayName }: BacklogScree
     handleToggleTaskStatus,
     creatingWorkspaceTaskId,
     projectId,
+    searchQuery,
     serverId,
     supportsBacklog,
     taskCardStyle,
@@ -565,6 +574,7 @@ function ProjectBacklogScreen({ serverId, projectId, displayName }: BacklogScree
               options={VIEW_MODE_OPTIONS}
             />
           </View>
+          <BacklogSearchField value={searchQuery} onChangeText={setSearchQuery} />
 
           {content}
         </View>
@@ -611,6 +621,7 @@ function MasterBacklogScreen() {
   const allServerIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const supportsListAllByServerId = useHostFeatureMap(allServerIds, "taskBacklogListAll");
   const [viewMode, setViewMode] = useState<BacklogViewMode>("grid");
+  const [searchQuery, setSearchQuery] = useState("");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<MasterBacklogTask | null>(null);
   const [preview, setPreview] = useState<AttachmentPreview | null>(null);
@@ -650,16 +661,15 @@ function MasterBacklogScreen() {
     staleTimeMs: 5_000,
   });
 
-  const visibleTasks = useMemo(
-    () =>
-      sortMasterBacklogTasks(
-        annotateMasterBacklogTasks({
-          hostTasks: tasksQuery.data?.hostTasks ?? [],
-          projects,
-        }),
-      ),
-    [projects, tasksQuery.data?.hostTasks],
-  );
+  const visibleTasks = useMemo(() => {
+    const sorted = sortMasterBacklogTasks(
+      annotateMasterBacklogTasks({
+        hostTasks: tasksQuery.data?.hostTasks ?? [],
+        projects,
+      }),
+    );
+    return filterBacklogTasksByQuery(sorted, searchQuery);
+  }, [projects, searchQuery, tasksQuery.data?.hostTasks]);
 
   const handleLayout = useCallback((event: LayoutChangeEvent) => {
     setContentWidth(event.nativeEvent.layout.width);
@@ -868,7 +878,7 @@ function MasterBacklogScreen() {
             draftId,
           }),
           draft: {
-            text: formatTaskWorkspacePrompt(task),
+            text: formatBacklogTaskWorkspacePrompt(task),
             attachments,
           },
         });
@@ -986,7 +996,12 @@ function MasterBacklogScreen() {
       );
     }
     if (visibleTasks.length === 0) {
-      return <PanelMessage title="No tasks" message={null} />;
+      return (
+        <PanelMessage
+          title={searchQuery.trim() ? "No matching tasks" : "No tasks"}
+          message={searchQuery.trim() ? "Try a different search." : null}
+        />
+      );
     }
     return (
       <ScrollView style={styles.scroll} contentContainerStyle={scrollContentStyle}>
@@ -1022,6 +1037,7 @@ function MasterBacklogScreen() {
     handleToggleTaskStatus,
     hostErrors.length,
     hosts.length,
+    searchQuery,
     showUnsupportedNotice,
     supportedHosts.length,
     taskCardStyle,
@@ -1053,6 +1069,7 @@ function MasterBacklogScreen() {
               options={VIEW_MODE_OPTIONS}
             />
           </View>
+          <BacklogSearchField value={searchQuery} onChangeText={setSearchQuery} />
 
           {content}
         </View>
@@ -1080,6 +1097,29 @@ function MasterBacklogScreen() {
         preview={preview}
         onClose={handleClosePreview}
         onDownload={previewDownloadHandler}
+      />
+    </View>
+  );
+}
+
+function BacklogSearchField({
+  value,
+  onChangeText,
+}: {
+  value: string;
+  onChangeText: (value: string) => void;
+}) {
+  return (
+    <View style={styles.searchField}>
+      <Search size={16} color={styles.searchIcon.color} />
+      <AdaptiveTextInput
+        value={value}
+        onChangeText={onChangeText}
+        placeholder="Search tasks..."
+        style={styles.searchInput}
+        autoCapitalize="none"
+        autoCorrect={false}
+        testID="backlog-search"
       />
     </View>
   );
@@ -1874,15 +1914,6 @@ function isRenderableAttachment(attachment: TaskAttachment): boolean {
   return attachment.mimeType.startsWith("image/") || attachment.mimeType.startsWith("video/");
 }
 
-function formatTaskWorkspacePrompt(task: TaskCard): string {
-  const title = task.title.trim();
-  const description = task.description.trim();
-  if (!description) {
-    return title;
-  }
-  return `${title}\n\n${description}`;
-}
-
 async function buildWorkspaceDraftAttachmentsFromTask(input: {
   task: TaskCard;
   requestAttachmentToken: (
@@ -1959,6 +1990,30 @@ const styles = StyleSheet.create((theme) => ({
   subtitle: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
+  },
+  searchField: {
+    marginHorizontal: CONTENT_PADDING,
+    marginBottom: theme.spacing[3],
+    minHeight: 40,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.lg,
+    paddingHorizontal: theme.spacing[3],
+    backgroundColor: theme.colors.surface0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  searchIcon: {
+    color: theme.colors.foregroundMuted,
+  },
+  searchInput: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 38,
+    paddingVertical: theme.spacing[2],
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
   },
   scroll: {
     flex: 1,

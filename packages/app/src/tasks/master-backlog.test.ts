@@ -4,6 +4,7 @@ import type { ProjectSummary } from "@/utils/projects";
 import {
   annotateMasterBacklogTasks,
   buildMasterBacklogProjectTargets,
+  filterBacklogTasksByQuery,
   sortMasterBacklogTasks,
 } from "./master-backlog";
 
@@ -78,6 +79,28 @@ describe("master backlog helpers", () => {
     ]);
 
     expect(sorted.map((entry) => entry.id)).toEqual(["active-new", "active-old", "completed-new"]);
+  });
+
+  it("filters backlog tasks by title description and project context", () => {
+    const tasks = [
+      masterTask({
+        id: "1",
+        title: "Ship search",
+        description: "Add query box",
+        projectName: "App",
+      }),
+      masterTask({
+        id: "2",
+        title: "Fix login",
+        description: "Token refresh",
+        projectName: "Auth",
+        serverName: "Office",
+      }),
+    ];
+    expect(filterBacklogTasksByQuery(tasks, "search").map((entry) => entry.id)).toEqual(["1"]);
+    expect(filterBacklogTasksByQuery(tasks, "token").map((entry) => entry.id)).toEqual(["2"]);
+    expect(filterBacklogTasksByQuery(tasks, "office").map((entry) => entry.id)).toEqual(["2"]);
+    expect(filterBacklogTasksByQuery(tasks, "   ").map((entry) => entry.id)).toEqual(["1", "2"]);
   });
 });
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.910 - 2026-07-30
+
+### Added
+
+- Agent backlog MCP tools: list/search, get, create, update, resolve, and delete project backlog tasks
+- Backlog task ID is injected into agent prompts (and optional `create_agent` `backlogTaskId` linkage) so agents can mark work resolved
+- Search field on project and master Backlog screens
+
 ## 0.2.909 - 2026-07-30
 
 ### Added
