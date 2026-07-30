@@ -56,7 +56,12 @@ import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/s
 import { useFetchQuery } from "@/data/query";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { TaskVideoPreview } from "@/components/tasks/task-video-preview";
-import { MAX_CONTENT_WIDTH } from "@/constants/layout";
+import { MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
+import {
+  resolveBacklogViewMode,
+  useBacklogPreferences,
+  type BacklogViewModePreference,
+} from "@/hooks/use-backlog-preferences";
 import { isWeb } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
 import { useFilePicker } from "@/hooks/use-file-picker";
@@ -79,10 +84,14 @@ import { shortenPath } from "@/utils/shorten-path";
 import { formatBacklogTaskWorkspacePrompt } from "@getpaseo/protocol/tasks/prompt";
 import {
   annotateMasterBacklogTasks,
+  buildMasterBacklogProjectFilterOptions,
   buildMasterBacklogProjectTargets,
   fetchMasterBacklogTasks,
   filterBacklogTasksByQuery,
+  filterMasterBacklogTasksByProject,
+  MASTER_BACKLOG_ALL_PROJECTS_FILTER_ID,
   sortMasterBacklogTasks,
+  type MasterBacklogProjectFilterOption,
   type MasterBacklogProjectTarget,
   type MasterBacklogTask,
 } from "@/tasks/master-backlog";
@@ -102,7 +111,7 @@ const scrollContentStyle = {
   paddingBottom: CONTENT_PADDING * 2,
 } satisfies ViewStyle;
 
-type BacklogViewMode = "grid" | "list";
+type BacklogViewMode = BacklogViewModePreference;
 
 interface BacklogScreenProps {
   serverId: string;
@@ -172,7 +181,19 @@ function ProjectBacklogScreen({ serverId, projectId, displayName }: BacklogScree
     [hosts, serverId],
   );
   const startDownload = useDownloadStore((state) => state.startDownload);
-  const [viewMode, setViewMode] = useState<BacklogViewMode>("grid");
+  const isCompact = useIsCompactFormFactor();
+  const { preferences: backlogPreferences, updatePreferences: updateBacklogPreferences } =
+    useBacklogPreferences();
+  const viewMode = resolveBacklogViewMode({
+    preference: backlogPreferences.viewMode,
+    isCompact,
+  });
+  const handleViewModeChange = useCallback(
+    (next: BacklogViewMode) => {
+      void updateBacklogPreferences({ viewMode: next });
+    },
+    [updateBacklogPreferences],
+  );
   const [searchQuery, setSearchQuery] = useState("");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<TaskCard | null>(null);
@@ -570,7 +591,7 @@ function ProjectBacklogScreen({ serverId, projectId, displayName }: BacklogScree
             <SegmentedControl
               size="sm"
               value={viewMode}
-              onValueChange={setViewMode}
+              onValueChange={handleViewModeChange}
               options={VIEW_MODE_OPTIONS}
             />
           </View>
@@ -613,6 +634,19 @@ function MasterBacklogScreen() {
   const hosts = useHosts();
   const { projects } = useProjects();
   const startDownload = useDownloadStore((state) => state.startDownload);
+  const isCompact = useIsCompactFormFactor();
+  const { preferences: backlogPreferences, updatePreferences: updateBacklogPreferences } =
+    useBacklogPreferences();
+  const viewMode = resolveBacklogViewMode({
+    preference: backlogPreferences.viewMode,
+    isCompact,
+  });
+  const handleViewModeChange = useCallback(
+    (next: BacklogViewMode) => {
+      void updateBacklogPreferences({ viewMode: next });
+    },
+    [updateBacklogPreferences],
+  );
   const runtimeVersion = useSyncExternalStore(
     (onStoreChange) => runtime.subscribeAll(onStoreChange),
     () => runtime.getVersion(),
@@ -620,8 +654,8 @@ function MasterBacklogScreen() {
   );
   const allServerIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const supportsListAllByServerId = useHostFeatureMap(allServerIds, "taskBacklogListAll");
-  const [viewMode, setViewMode] = useState<BacklogViewMode>("grid");
   const [searchQuery, setSearchQuery] = useState("");
+  const [projectFilterId, setProjectFilterId] = useState(MASTER_BACKLOG_ALL_PROJECTS_FILTER_ID);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<MasterBacklogTask | null>(null);
   const [preview, setPreview] = useState<AttachmentPreview | null>(null);
@@ -661,15 +695,36 @@ function MasterBacklogScreen() {
     staleTimeMs: 5_000,
   });
 
+  const annotatedTasks = useMemo(
+    () =>
+      sortMasterBacklogTasks(
+        annotateMasterBacklogTasks({
+          hostTasks: tasksQuery.data?.hostTasks ?? [],
+          projects,
+        }),
+      ),
+    [projects, tasksQuery.data?.hostTasks],
+  );
+  const projectFilterOptions = useMemo(
+    () => buildMasterBacklogProjectFilterOptions(annotatedTasks),
+    [annotatedTasks],
+  );
+  const resolvedProjectFilterId = useMemo(() => {
+    if (projectFilterId === MASTER_BACKLOG_ALL_PROJECTS_FILTER_ID) {
+      return MASTER_BACKLOG_ALL_PROJECTS_FILTER_ID;
+    }
+    if (projectFilterOptions.some((option) => option.id === projectFilterId)) {
+      return projectFilterId;
+    }
+    return MASTER_BACKLOG_ALL_PROJECTS_FILTER_ID;
+  }, [projectFilterId, projectFilterOptions]);
   const visibleTasks = useMemo(() => {
-    const sorted = sortMasterBacklogTasks(
-      annotateMasterBacklogTasks({
-        hostTasks: tasksQuery.data?.hostTasks ?? [],
-        projects,
-      }),
+    const projectFiltered = filterMasterBacklogTasksByProject(
+      annotatedTasks,
+      resolvedProjectFilterId,
     );
-    return filterBacklogTasksByQuery(sorted, searchQuery);
-  }, [projects, searchQuery, tasksQuery.data?.hostTasks]);
+    return filterBacklogTasksByQuery(projectFiltered, searchQuery);
+  }, [annotatedTasks, resolvedProjectFilterId, searchQuery]);
 
   const handleLayout = useCallback((event: LayoutChangeEvent) => {
     setContentWidth(event.nativeEvent.layout.width);
@@ -996,10 +1051,13 @@ function MasterBacklogScreen() {
       );
     }
     if (visibleTasks.length === 0) {
+      const hasActiveFilters =
+        Boolean(searchQuery.trim()) ||
+        resolvedProjectFilterId !== MASTER_BACKLOG_ALL_PROJECTS_FILTER_ID;
       return (
         <PanelMessage
-          title={searchQuery.trim() ? "No matching tasks" : "No tasks"}
-          message={searchQuery.trim() ? "Try a different search." : null}
+          title={hasActiveFilters ? "No matching tasks" : "No tasks"}
+          message={hasActiveFilters ? "Try a different search or project filter." : null}
         />
       );
     }
@@ -1037,6 +1095,7 @@ function MasterBacklogScreen() {
     handleToggleTaskStatus,
     hostErrors.length,
     hosts.length,
+    resolvedProjectFilterId,
     searchQuery,
     showUnsupportedNotice,
     supportedHosts.length,
@@ -1065,8 +1124,15 @@ function MasterBacklogScreen() {
             <SegmentedControl
               size="sm"
               value={viewMode}
-              onValueChange={setViewMode}
+              onValueChange={handleViewModeChange}
               options={VIEW_MODE_OPTIONS}
+            />
+          </View>
+          <View style={styles.filterRow}>
+            <MasterBacklogProjectFilter
+              options={projectFilterOptions}
+              value={resolvedProjectFilterId}
+              onSelect={setProjectFilterId}
             />
           </View>
           <BacklogSearchField value={searchQuery} onChangeText={setSearchQuery} />
@@ -1099,6 +1165,84 @@ function MasterBacklogScreen() {
         onDownload={previewDownloadHandler}
       />
     </View>
+  );
+}
+
+function MasterBacklogProjectFilter({
+  options,
+  value,
+  onSelect,
+}: {
+  options: readonly MasterBacklogProjectFilterOption[];
+  value: string;
+  onSelect: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const anchorRef = useRef<View | null>(null);
+  const comboboxOptions = useMemo<ComboboxOption[]>(
+    () => [
+      { id: MASTER_BACKLOG_ALL_PROJECTS_FILTER_ID, label: "All projects" },
+      ...options.map((option) => ({ id: option.id, label: option.label })),
+    ],
+    [options],
+  );
+  const selectedLabel =
+    value === MASTER_BACKLOG_ALL_PROJECTS_FILTER_ID
+      ? "All projects"
+      : (options.find((option) => option.id === value)?.label ?? "All projects");
+  const triggerStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.projectFilterTrigger,
+      (Boolean(hovered) || pressed || open) && styles.projectFilterTriggerActive,
+    ],
+    [open],
+  );
+  const handlePress = useCallback(() => {
+    setOpen((current) => !current);
+  }, []);
+  const handleSelect = useCallback(
+    (id: string) => {
+      onSelect(id);
+      setOpen(false);
+    },
+    [onSelect],
+  );
+
+  if (options.length === 0) {
+    return null;
+  }
+
+  return (
+    <>
+      <View ref={anchorRef} collapsable={false} style={styles.projectFilterWrap}>
+        <Pressable
+          onPress={handlePress}
+          style={triggerStyle}
+          accessibilityRole="button"
+          accessibilityLabel={`Filter by project: ${selectedLabel}`}
+          testID="backlog-project-filter-trigger"
+        >
+          <Folder size={14} color={styles.chevron.color} />
+          <Text style={styles.projectFilterTriggerText} numberOfLines={1}>
+            {selectedLabel}
+          </Text>
+          <ChevronDown size={14} color={styles.chevron.color} />
+        </Pressable>
+      </View>
+      <Combobox
+        options={comboboxOptions}
+        value={value}
+        onSelect={handleSelect}
+        searchable={options.length > 6}
+        searchPlaceholder="Search projects..."
+        emptyText="No projects found"
+        title="Filter by project"
+        open={open}
+        onOpenChange={setOpen}
+        anchorRef={anchorRef}
+        desktopPlacement="bottom-start"
+      />
+    </>
   );
 }
 
@@ -1448,8 +1592,20 @@ function TaskFormSheet({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  const wasVisibleRef = useRef(false);
+  const lastSeedTaskIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (!visible) {
+      wasVisibleRef.current = false;
+      return;
+    }
+    const taskId = task?.id ?? null;
+    const justOpened = !wasVisibleRef.current;
+    const taskChanged = taskId !== lastSeedTaskIdRef.current;
+    wasVisibleRef.current = true;
+    lastSeedTaskIdRef.current = taskId;
+    if (!justOpened && !taskChanged) {
       return;
     }
     setTitle(task?.title ?? "");
@@ -1465,7 +1621,7 @@ function TaskFormSheet({
       return;
     }
     setSelectedTargetOptionId((current) => {
-      if (projectTargets.some((target) => target.optionId === current)) {
+      if (current && projectTargets.some((target) => target.optionId === current)) {
         return current;
       }
       return projectTargets[0]?.optionId ?? "";
@@ -1582,8 +1738,9 @@ function TaskFormSheet({
         title: title.trim() || task.title,
         description,
       });
+      onClose();
     }
-  }, [description, onCreateWorkspace, task, title]);
+  }, [description, onClose, onCreateWorkspace, task, title]);
 
   const insertBold = useCallback(() => {
     insertMarkdown("**bold**");
@@ -1976,6 +2133,39 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "space-between",
     gap: theme.spacing[3],
+  },
+  filterRow: {
+    paddingHorizontal: CONTENT_PADDING,
+    marginBottom: theme.spacing[3],
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  projectFilterWrap: {
+    alignSelf: "flex-start",
+    maxWidth: "100%",
+  },
+  projectFilterTrigger: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1.5],
+    alignSelf: "flex-start",
+    maxWidth: "100%",
+    paddingVertical: theme.spacing[1.5],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surface1,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  projectFilterTriggerActive: {
+    backgroundColor: theme.colors.surface2,
+  },
+  projectFilterTriggerText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+    maxWidth: 220,
   },
   titleGroup: {
     minWidth: 0,

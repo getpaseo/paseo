@@ -149,6 +149,7 @@
         "packages/app/src/hooks/use-agent-history.ts",
         "packages/app/src/hooks/use-branch-switcher.ts",
         "packages/app/src/hooks/use-changes-preferences/index.ts",
+        "packages/app/src/hooks/use-backlog-preferences/index.ts",
         "packages/app/src/hooks/use-draft-agent-features.ts",
         "packages/app/src/hooks/use-form-preferences.ts",
         "packages/app/src/hooks/use-is-local-daemon.ts",

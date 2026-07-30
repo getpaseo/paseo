@@ -219,6 +219,85 @@ export async function fetchMasterBacklogTasks(input: {
   return { hostTasks, hostErrors };
 }
 
+export const MASTER_BACKLOG_ALL_PROJECTS_FILTER_ID = "all";
+
+export interface MasterBacklogProjectFilterOption {
+  id: string;
+  label: string;
+}
+
+function compareFilterLabels(left: string, right: string): number {
+  return left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" });
+}
+
+/**
+ * Distinct project options from currently loaded master backlog tasks.
+ * Labels include a host only when the same project name appears more than once.
+ */
+export function buildMasterBacklogProjectFilterOptions(
+  tasks: readonly MasterBacklogTask[],
+): MasterBacklogProjectFilterOption[] {
+  const byProjectId = new Map<
+    string,
+    {
+      projectId: string;
+      projectName: string;
+      serverNames: Set<string>;
+    }
+  >();
+
+  for (const task of tasks) {
+    const projectId = task.projectId.trim();
+    if (!projectId) {
+      continue;
+    }
+    const existing = byProjectId.get(projectId);
+    if (existing) {
+      existing.serverNames.add(task.serverName);
+      continue;
+    }
+    byProjectId.set(projectId, {
+      projectId,
+      projectName: task.projectName.trim() || projectId,
+      serverNames: new Set([task.serverName]),
+    });
+  }
+
+  const nameCounts = new Map<string, number>();
+  for (const entry of byProjectId.values()) {
+    nameCounts.set(entry.projectName, (nameCounts.get(entry.projectName) ?? 0) + 1);
+  }
+
+  return [...byProjectId.values()]
+    .map((entry) => {
+      const needsHostDisambiguation = (nameCounts.get(entry.projectName) ?? 0) > 1;
+      const hostLabel =
+        entry.serverNames.size === 1
+          ? [...entry.serverNames][0]
+          : [...entry.serverNames].sort(compareFilterLabels).join(", ");
+      return {
+        id: entry.projectId,
+        label: needsHostDisambiguation ? `${entry.projectName} · ${hostLabel}` : entry.projectName,
+      } satisfies MasterBacklogProjectFilterOption;
+    })
+    .sort(
+      (left, right) =>
+        compareFilterLabels(left.label, right.label) || left.id.localeCompare(right.id),
+    );
+}
+
+export function filterMasterBacklogTasksByProject<
+  T extends {
+    projectId: string;
+  },
+>(tasks: readonly T[], projectId: string | null | undefined): T[] {
+  const selected = projectId?.trim() ?? "";
+  if (!selected || selected === MASTER_BACKLOG_ALL_PROJECTS_FILTER_ID) {
+    return [...tasks];
+  }
+  return tasks.filter((task) => task.projectId === selected);
+}
+
 export function matchesBacklogSearchQuery(
   task: {
     title: string;
