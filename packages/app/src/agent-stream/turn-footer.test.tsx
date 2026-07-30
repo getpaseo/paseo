@@ -117,6 +117,15 @@ const completedHost = {
   startIndex: 0,
   timing: undefined,
 };
+// Same host, but the assistant item carries a messageId so the completed footer
+// resolves a real fork boundary and `data-can-fork` is a live signal rather than
+// a constant "no".
+const forkableHost = {
+  itemId: "assistant-1",
+  items: [{ ...(assistantItem as object), messageId: "message-1" } as never],
+  startIndex: 0,
+  timing: undefined,
+};
 
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
@@ -132,6 +141,12 @@ async function render(element: React.ReactElement) {
     throw new Error("container missing");
   }
   return container;
+}
+
+async function rerender(element: React.ReactElement) {
+  await act(async () => {
+    root?.render(element);
+  });
 }
 
 const query = (testID: string) =>
@@ -232,6 +247,101 @@ describe("TurnFooter running turn", () => {
 
     expect(query("turn-working-elapsed")).toBeNull();
     expect(query("assistant-fork-menu-trigger")).not.toBeNull();
+  });
+});
+
+describe("TurnFooter run completion while the fork menu is interactive", () => {
+  /**
+   * `TurnFooter` swaps two disjoint subtrees on `isRunning`, so the in-flight
+   * fork menu is destroyed the moment the run ends — including mid-request,
+   * while `AssistantForkMenu` still holds `pendingTarget` state it intends to
+   * clear in a `finally`. This pins the observable outcome of that swap.
+   *
+   * Caveat worth knowing when reading this: the `DropdownMenuContent` mock above
+   * renders its children unconditionally, so "menu open" is not a representable
+   * state here — the test exercises the subtree swap and the orphaned request,
+   * not the open/closed transition of the real overlay.
+   */
+  it("swaps to the completed footer mid-fork without erroring or leaking menu content", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const unhandledRejections: unknown[] = [];
+    const captureUnhandled = (reason: unknown) => {
+      unhandledRejections.push(reason);
+    };
+    process.on("unhandledRejection", captureUnhandled);
+
+    let settleFork!: () => void;
+    const forkRequest = new Promise<void>((resolve) => {
+      settleFork = resolve;
+    });
+    const onForkInFlightTurn = vi.fn(() => forkRequest);
+
+    try {
+      await render(
+        <TurnFooter
+          isRunning
+          inFlightTurnStartedAt={new Date(0)}
+          host={null}
+          strategy={strategy}
+          supportsTimelineCursor={false}
+          onForkInFlightTurn={onForkInFlightTurn}
+        />,
+      );
+
+      // Start a fork and leave it in flight — the menu is now locked on
+      // `pendingTarget` and its `finally` has not run.
+      await act(async () => {
+        fireEvent.click(query("assistant-fork-menu-new-tab") as HTMLElement);
+      });
+      expect(onForkInFlightTurn).toHaveBeenCalledTimes(1);
+      expect(query("assistant-fork-menu-content")).not.toBeNull();
+
+      // The run finishes underneath the open, mid-request menu.
+      await rerender(
+        <TurnFooter
+          isRunning={false}
+          inFlightTurnStartedAt={null}
+          host={forkableHost}
+          strategy={strategy}
+          supportsTimelineCursor={false}
+          onForkAssistantTurn={vi.fn()}
+          onForkInFlightTurn={onForkInFlightTurn}
+        />,
+      );
+
+      // The in-flight affordances are gone and the completed-turn cluster —
+      // with its own fork handler wired — took their place.
+      expect(query("turn-working-indicator")).toBeNull();
+      expect(query("assistant-fork-menu-trigger")).toBeNull();
+      expect(query("assistant-fork-menu-content")).toBeNull();
+      expect(query("assistant-fork-menu-new-tab")).toBeNull();
+      const completedFooter = query("assistant-turn-footer");
+      expect(completedFooter).not.toBeNull();
+      expect(completedFooter?.getAttribute("data-can-fork")).toBe("yes");
+
+      // The orphaned request settles into an unmounted tree. React 18+ dropped
+      // the setState-on-unmounted warning, so the honest claim is that this is a
+      // benign no-op — assert exactly that, nothing stronger.
+      await act(async () => {
+        settleFork();
+        await forkRequest;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      // Tripwire, not a verified path: `AssistantForkMenu.handleSelect` has a
+      // `finally` but no `catch`, and `DropdownMenuItem` calls it unawaited — so
+      // a rejecting `onFork` would escape. `useForkAgent` currently catches
+      // everything into a toast, so nothing can produce that today. This guards
+      // the day that stops being true.
+      expect(unhandledRejections).toEqual([]);
+      expect(consoleError).not.toHaveBeenCalled();
+      // No re-entry: the destroyed menu cannot fire another fork.
+      expect(onForkInFlightTurn).toHaveBeenCalledTimes(1);
+    } finally {
+      process.off("unhandledRejection", captureUnhandled);
+      consoleError.mockRestore();
+      settleFork();
+    }
   });
 });
 
