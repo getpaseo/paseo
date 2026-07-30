@@ -2141,6 +2141,7 @@ describe("OpenCode adapter startTurn error handling", () => {
     session.subscribe((event) => events.push(event));
 
     let replacement: Promise<{ turnId: string }> | undefined;
+    let replacementSettled = false;
     try {
       await session.startTurn("first");
       const interrupt = session.interrupt();
@@ -2163,6 +2164,11 @@ describe("OpenCode adapter startTurn error handling", () => {
       settleAbort.resolve();
       await vi.waitFor(() => expect(openCode.calls.permissionReply).toHaveLength(1));
       replacement = session.startTurn("replacement");
+      void replacement
+        .finally(() => {
+          replacementSettled = true;
+        })
+        .catch(() => undefined);
       openCode.emitEvent({
         type: "message.updated",
         properties: {
@@ -2173,18 +2179,28 @@ describe("OpenCode adapter startTurn error handling", () => {
           },
         },
       });
-      for (const event of assistantTurnEvents({
-        sessionId: "ses_serialized_replay",
-        text: "Replay completed before replacement.",
-      })) {
-        openCode.emitEvent(event);
-      }
       await new Promise<void>((resolve) => setImmediate(resolve));
 
       expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
 
       settlePermissionReply.resolve();
       await interrupt;
+      await vi.waitFor(() =>
+        expect(events).toContainEqual({
+          type: "turn_started",
+          provider: "opencode",
+          turnId: "opencode-turn-1",
+        }),
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(replacementSettled).toBe(false);
+
+      for (const event of assistantTurnEvents({
+        sessionId: "ses_serialized_replay",
+        text: "Replay completed before replacement.",
+      })) {
+        openCode.emitEvent(event);
+      }
       await replacement;
       expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
       expect(events).toContainEqual({
@@ -2574,7 +2590,7 @@ describe("OpenCode adapter startTurn error handling", () => {
   test("does not reconnect repeatedly after a persistent stop-observer failure", async () => {
     const firstStreamEnd = createTestDeferred<void>();
     const settleAbort = createTestDeferred<void>();
-    const parkedReconnect = createTestDeferred<void>();
+    const releaseWake = createTestDeferred<void>();
     let subscriptionCount = 0;
     const { parent: session, openCode } = await createParentSession(
       "ses_persistent_stop_observer_failure",
@@ -2582,9 +2598,6 @@ describe("OpenCode adapter startTurn error handling", () => {
         client.globalEventImplementation = async (options) => {
           subscriptionCount += 1;
           const signal = (options as { signal: AbortSignal }).signal;
-          if (subscriptionCount === 2) {
-            throw new Error("provider unavailable");
-          }
           return {
             stream: {
               async *[Symbol.asyncIterator]() {
@@ -2593,11 +2606,27 @@ describe("OpenCode adapter startTurn error handling", () => {
                   await firstStreamEnd.promise;
                   return;
                 }
-                await parkedReconnect.promise;
+                await releaseWake.promise;
+                for (const event of userMessageEvents({
+                  sessionId: "ses_persistent_stop_observer_failure",
+                  messageId: "msg_dormant_reconnect_wake",
+                  text: "Wake after failed status observation",
+                })) {
+                  yield event;
+                }
+                for (const event of assistantTurnEvents({
+                  sessionId: "ses_persistent_stop_observer_failure",
+                  text: "Dormant reconnect wake completed.",
+                })) {
+                  yield event;
+                }
                 await waitForAbort(signal);
               },
             },
           };
+        };
+        client.sessionStatusImplementation = async () => {
+          throw new Error("provider status unavailable");
         };
       },
     );
@@ -2606,6 +2635,8 @@ describe("OpenCode adapter startTurn error handling", () => {
       await settleAbort.promise;
       return { data: true };
     };
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
 
     try {
       await session.startTurn("first");
@@ -2618,9 +2649,18 @@ describe("OpenCode adapter startTurn error handling", () => {
       await new Promise<void>((resolve) => setImmediate(resolve));
 
       expect(openCode.calls.globalEvent).toHaveLength(2);
+      releaseWake.resolve();
+      await vi.waitFor(() =>
+        expect(events).toContainEqual({
+          type: "turn_completed",
+          provider: "opencode",
+          turnId: "opencode-turn-1",
+          usage: undefined,
+        }),
+      );
     } finally {
       settleAbort.resolve();
-      parkedReconnect.resolve();
+      releaseWake.resolve();
       await session.close();
     }
   });

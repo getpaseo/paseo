@@ -148,34 +148,36 @@ export async function createOpenCodeOmoRealRuntime(): Promise<OpenCodeOmoRealRun
   }
 
   const previousPaseoHome = process.env.PASEO_HOME;
-  process.env.PASEO_HOME = path.join(paths.paseoHomeRoot, ".paseo");
-  const traceDestination = pino.destination({
-    dest: path.join(paths.artifacts, "daemon.log"),
-    sync: true,
-  });
-  const redactingTrace = new Transform({
-    transform(chunk: Buffer, _encoding, callback) {
-      callback(null, redactSecrets(chunk.toString(), secrets));
-    },
-  });
-  redactingTrace.pipe(traceDestination, { end: false });
-  const logger = pino({ level: "trace" }, redactingTrace);
-  const closeTrace = createTraceCloser(redactingTrace, traceDestination);
-  const runtimeSettings = {
-    command: { mode: "replace", argv: [openCodeCommand] },
-    env: runtimeEnv,
-  } as const;
-  const serverManager = new OpenCodeServerManager({
-    logger,
-    runtimeSettings,
-    baseEnv: runtimeEnv,
-    resolveHomeDir: () => paths.home,
-  });
-  const openCodeClient = new OpenCodeAgentClient(logger, runtimeSettings, { serverManager });
-
+  let traceDestination: ReturnType<typeof pino.destination> | null = null;
+  let closeTrace: (() => void) | null = null;
+  let serverManager: OpenCodeServerManager | null = null;
   let daemon: TestPaseoDaemon | null = null;
   let client: DaemonClient | null = null;
   try {
+    process.env.PASEO_HOME = path.join(paths.paseoHomeRoot, ".paseo");
+    traceDestination = pino.destination({
+      dest: path.join(paths.artifacts, "daemon.log"),
+      sync: true,
+    });
+    const redactingTrace = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        callback(null, redactSecrets(chunk.toString(), secrets));
+      },
+    });
+    redactingTrace.pipe(traceDestination, { end: false });
+    const logger = pino({ level: "trace" }, redactingTrace);
+    closeTrace = createTraceCloser(redactingTrace, traceDestination);
+    const runtimeSettings = {
+      command: { mode: "replace", argv: [openCodeCommand] },
+      env: runtimeEnv,
+    } as const;
+    serverManager = new OpenCodeServerManager({
+      logger,
+      runtimeSettings,
+      baseEnv: runtimeEnv,
+      resolveHomeDir: () => paths.home,
+    });
+    const openCodeClient = new OpenCodeAgentClient(logger, runtimeSettings, { serverManager });
     daemon = await createTestPaseoDaemon({
       agentClients: { opencode: openCodeClient },
       logger,
@@ -186,32 +188,36 @@ export async function createOpenCodeOmoRealRuntime(): Promise<OpenCodeOmoRealRun
     client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
     await client.connect();
     await client.fetchAgents({ subscribe: { subscriptionId: "opencode-omo-real" } });
+
+    return {
+      client,
+      daemon,
+      model,
+      workspace: paths.workspace,
+      artifacts: paths.artifacts,
+      close: async (passed) => {
+        await client.close().catch(() => undefined);
+        await daemon.close().catch(() => undefined);
+        await serverManager.shutdown().catch(() => undefined);
+        closeTrace();
+        restoreEnvironment("PASEO_HOME", previousPaseoHome);
+        if (passed) {
+          rmSync(paths.root, { recursive: true, force: true });
+        }
+      },
+    };
   } catch (error) {
     await client?.close().catch(() => undefined);
     await daemon?.close().catch(() => undefined);
-    await serverManager.shutdown().catch(() => undefined);
-    closeTrace();
+    await serverManager?.shutdown().catch(() => undefined);
+    if (closeTrace) {
+      closeTrace();
+    } else {
+      traceDestination?.end();
+    }
     restoreEnvironment("PASEO_HOME", previousPaseoHome);
     throw withArtifactLocation(error, paths.artifacts);
   }
-
-  return {
-    client,
-    daemon,
-    model,
-    workspace: paths.workspace,
-    artifacts: paths.artifacts,
-    close: async (passed) => {
-      await client.close().catch(() => undefined);
-      await daemon.close().catch(() => undefined);
-      await serverManager.shutdown().catch(() => undefined);
-      closeTrace();
-      restoreEnvironment("PASEO_HOME", previousPaseoHome);
-      if (passed) {
-        rmSync(paths.root, { recursive: true, force: true });
-      }
-    },
-  };
 }
 
 function createRuntimePaths(): RuntimePaths {

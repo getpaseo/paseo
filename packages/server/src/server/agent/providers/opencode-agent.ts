@@ -2766,6 +2766,7 @@ interface OpenCodeRunBoundaryState {
   observationFailed: boolean;
   providerIdleObserved: boolean;
   reconcilingProviderStatus: boolean;
+  replayedTurnActive: boolean;
   deferredEvents: Array<{ rawEvent: unknown; eventCount: number }>;
 }
 
@@ -3103,7 +3104,7 @@ class OpenCodeAgentSession implements AgentSession {
           "OpenCode previous turn to stop",
         );
       }
-      if (this.runBoundary === stopping) {
+      if (this.runBoundary === stopping && stopping.quiescence === observedQuiescence) {
         return;
       }
     }
@@ -3693,6 +3694,9 @@ class OpenCodeAgentSession implements AgentSession {
     ) {
       return false;
     }
+    if (stopping.replayedTurnActive) {
+      return false;
+    }
     const retainEvent = stopping.providerIdleObserved || stopping.reconcilingProviderStatus;
     if (isOpenCodeTerminalEvent(event, this.sessionId) && !stopping.providerIdleObserved) {
       if (retainEvent) {
@@ -3783,6 +3787,12 @@ class OpenCodeAgentSession implements AgentSession {
     this.turnState = { status: "idle" };
     this.abortController = null;
     this.notifySubscribers(event, turnId);
+    const stopping = this.runBoundary;
+    if (stopping?.replayedTurnActive) {
+      stopping.replayedTurnActive = false;
+      stopping.providerIdleObserved = true;
+      stopping.idle.resolve();
+    }
   }
 
   private beginStoppingTurn(turnId: string | null): OpenCodeRunBoundaryState {
@@ -3815,6 +3825,7 @@ class OpenCodeAgentSession implements AgentSession {
       observationFailed: false,
       providerIdleObserved,
       reconcilingProviderStatus: false,
+      replayedTurnActive: false,
       deferredEvents,
     };
     this.turnState = { status: "idle" };
@@ -3853,6 +3864,13 @@ class OpenCodeAgentSession implements AgentSession {
     while (this.runBoundary === stopping) {
       const event = stopping.deferredEvents.shift();
       if (!event) {
+        if (this.activeForegroundTurnId) {
+          stopping.idle = createDeferred<void>();
+          stopping.providerIdleObserved = false;
+          stopping.replayedTurnActive = true;
+          this.armStopQuiescence(stopping);
+          return;
+        }
         this.runBoundary = null;
         return;
       }
@@ -3871,6 +3889,9 @@ class OpenCodeAgentSession implements AgentSession {
     stopping.providerIdleObserved = true;
     stopping.reconcilingProviderStatus = false;
     stopping.idle.resolve();
+    if (stopping.observationFailed) {
+      this.armStopQuiescence(stopping);
+    }
   }
 
   private trackToolCall(item: ToolCallTimelineItem): void {
