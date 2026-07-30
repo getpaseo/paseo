@@ -97,6 +97,9 @@ function projectSummary(input: {
     projectCustomName: null,
     hosts: input.hosts.map((host) => ({
       ...host,
+      projectId: input.projectKey,
+      projectName: input.projectName,
+      projectCustomName: null,
       workspaceCount: 1,
       workspaces: [],
     })),
