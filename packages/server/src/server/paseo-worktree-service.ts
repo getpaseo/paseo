@@ -28,7 +28,6 @@ import type { WorktreeCreationIntent } from "./resolve-worktree-creation-intent.
 import { resolveFirstAgentPromptTitle } from "./agent/create-agent-title.js";
 import { buildAgentBranchNameSeed } from "./agent/prompt-attachments.js";
 import type { FirstAgentContext } from "@getpaseo/protocol/messages";
-import type { WorktreeIncludeSummary } from "../utils/worktree-include.js";
 
 export interface CreatePaseoWorktreeInput extends CreateWorktreeCoreInput {
   projectId?: string;
@@ -37,7 +36,6 @@ export interface CreatePaseoWorktreeInput extends CreateWorktreeCoreInput {
 
 export interface CreatePaseoWorktreeResult {
   worktree: WorktreeConfig;
-  worktreeIncludeSummary?: WorktreeIncludeSummary;
   intent: WorktreeCreationIntent;
   workspace: PersistedWorkspaceRecord;
   repoRoot: string;
@@ -100,7 +98,6 @@ export async function createPaseoWorktree(
 
     return {
       worktree: createdWorktree.worktree,
-      worktreeIncludeSummary: createdWorktree.worktreeIncludeSummary,
       intent: createdWorktree.intent,
       workspace,
       repoRoot: createdWorktree.repoRoot,
