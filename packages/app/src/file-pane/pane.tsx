@@ -1,3 +1,4 @@
+import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
   useCallback,
@@ -480,6 +481,7 @@ export function FilePane({
       liveFile={liveFile.model}
       onRetryRead={liveFile.refresh}
       retryingRead={liveFile.isRetrying}
+      retryLabel={t("common.actions.retry")}
       filename={getFileNameFromPath(location.path) ?? location.path}
       markdownMode={canToggleMarkdownMode ? markdownMode : undefined}
       onMarkdownModeChange={canToggleMarkdownMode ? setMarkdownMode : undefined}
@@ -502,6 +504,7 @@ function isMarkdownPreview(preview: ExplorerFile | null, path: string): boolean 
 
 function getFileErrorMessage(error: unknown, fallback: string): string | null {
   if (!error) return null;
+  if (typeof error === "string") return error;
   return error instanceof Error ? error.message : fallback;
 }
 
@@ -525,6 +528,7 @@ function FilePanePresentation({
   liveFile,
   onRetryRead,
   retryingRead,
+  retryLabel,
   filename,
   markdownMode,
   onMarkdownModeChange,
@@ -545,6 +549,7 @@ function FilePanePresentation({
   liveFile: LiveFileModel;
   onRetryRead: () => void;
   retryingRead: boolean;
+  retryLabel: string;
   filename: string;
   markdownMode?: "preview" | "source";
   onMarkdownModeChange?: (mode: "preview" | "source") => void;
@@ -590,6 +595,19 @@ function FilePanePresentation({
     );
   }
 
+  if (errorMessage) {
+    return (
+      <View style={styles.container} testID="workspace-file-pane">
+        <View style={styles.centerState}>
+          <Text style={styles.errorText}>{errorMessage}</Text>
+          <Button variant="outline" size="sm" onPress={onRetryRead} loading={retryingRead}>
+            {retryLabel}
+          </Button>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container} testID="workspace-file-pane">
       {preview ? (
@@ -600,12 +618,6 @@ function FilePanePresentation({
           onModeChange={onMarkdownModeChange}
         />
       ) : null}
-      {errorMessage ? (
-        <View style={styles.centerState}>
-          <Text style={styles.errorText}>{errorMessage}</Text>
-        </View>
-      ) : null}
-
       <FilePreviewBody
         preview={preview}
         isLoading={isLoading}
@@ -838,6 +850,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
+    gap: theme.spacing[3],
     padding: theme.spacing[4],
   },
   loadingText: {

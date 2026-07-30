@@ -26,11 +26,15 @@ async function openFile(page: Page, filename: string): Promise<void> {
 async function openTrackedFile(
   page: Page,
   withWorkspace: WithWorkspace,
-  input: { prefix: string; relativePath: string; content: string },
+  input: { prefix: string; relativePath: string; content: string | Uint8Array },
 ): Promise<string> {
   const workspace = await withWorkspace({ prefix: input.prefix });
   const filePath = path.join(workspace.repoPath, input.relativePath);
-  await writeFile(filePath, input.content, "utf8");
+  if (typeof input.content === "string") {
+    await writeFile(filePath, input.content, "utf8");
+  } else {
+    await writeFile(filePath, input.content);
+  }
   await workspace.navigateTo();
   await openFile(page, input.relativePath);
   return filePath;
@@ -194,6 +198,51 @@ test.describe("Workspace file change conflicts", () => {
 
     await expect(fileCallout(page)).toHaveCount(0);
     await expect(filePane(page).getByText("Changed on disk", { exact: true })).toHaveCount(0);
+    gate.releaseHeldReadyFileUpdate();
+  });
+
+  test("a read-only file error preserves its message and offers retry", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const gate = await installDaemonWebSocketGate(page);
+    const relativePath = "artifact.bin";
+    const binaryContent = new Uint8Array([0, 1, 2, 3, 255]);
+    const filePath = await openTrackedFile(page, withWorkspace, {
+      prefix: "file-read-only-retry-",
+      relativePath,
+      content: binaryContent,
+    });
+    await gate.waitForFileSubscription(relativePath);
+    await expect(
+      filePane(page).getByText("Binary preview unavailable", { exact: true }),
+    ).toBeVisible();
+
+    await unlink(filePath);
+    await mkdir(filePath);
+    await expect(
+      filePane(page).getByText("Requested path is not a file", { exact: true }),
+    ).toBeVisible();
+    await expect(filePane(page).getByRole("button", { name: "Retry" })).toBeEnabled();
+
+    gate.holdNextReadyFileUpdate(relativePath);
+    await rm(filePath, { recursive: true });
+    await writeFile(filePath, binaryContent);
+    await gate.waitForHeldReadyFileUpdate();
+    gate.holdFileReads(relativePath);
+    await filePane(page).getByRole("button", { name: "Retry" }).click();
+    await gate.waitForHeldFileRead();
+    await expect(
+      filePane(page).getByText("Requested path is not a file", { exact: true }),
+    ).toHaveCount(0);
+    gate.releaseHeldFileRead();
+
+    await expect(
+      filePane(page).getByText("Binary preview unavailable", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      filePane(page).getByText("Requested path is not a file", { exact: true }),
+    ).toHaveCount(0);
     gate.releaseHeldReadyFileUpdate();
   });
 
