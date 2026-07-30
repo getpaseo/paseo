@@ -922,6 +922,25 @@ test("extension inherits base override — override claude command, zai extends 
   ).toBe(true);
 });
 
+const CLAUDE_GATEWAY_THINKING = {
+  thinkingOptions: [
+    { id: "off", label: "Off" },
+    { id: "low", label: "Low" },
+    { id: "medium", label: "Medium" },
+    { id: "high", label: "High" },
+    { id: "xhigh", label: "Extra High" },
+    { id: "max", label: "Max" },
+    { id: "ultracode", label: "Ultra Code" },
+  ],
+  defaultThinkingOptionId: "low",
+} as const;
+
+function withClaudeGatewayThinking<T extends Record<string, unknown>>(
+  model: T,
+): T & typeof CLAUDE_GATEWAY_THINKING {
+  return { ...model, ...CLAUDE_GATEWAY_THINKING };
+}
+
 describe("model merging", () => {
   test("profile models replace runtime models", async () => {
     mockState.runtimeModels.set("codex", [
@@ -1104,18 +1123,15 @@ describe("model merging", () => {
       force: false,
     });
 
-    expect(models).toEqual([
-      {
-        provider: "claude",
-        id: "runtime-pro",
-        label: "Runtime Pro",
-      },
-      {
-        provider: "claude",
-        id: "profile-fast",
-        label: "Profile Fast",
-      },
-    ]);
+    expect(models.map((model) => model.id)).toEqual(["runtime-pro", "profile-fast"]);
+    expect(models.find((model) => model.id === "runtime-pro")).toMatchObject({
+      provider: "claude",
+      id: "runtime-pro",
+      label: "Runtime Pro",
+    });
+    expect(
+      models.find((model) => model.id === "profile-fast")?.thinkingOptions?.map((o) => o.id),
+    ).toEqual(["off", "low", "medium", "high", "xhigh", "max", "ultracode"]);
   });
 
   test("built-in Claude profile models replace runtime models (issue #1299)", async () => {
@@ -1156,16 +1172,16 @@ describe("model merging", () => {
     });
 
     expect(models).toEqual([
-      {
+      withClaudeGatewayThinking({
         provider: "claude",
         id: "shared-model",
         label: "Profile Label",
-      },
-      {
+      }),
+      withClaudeGatewayThinking({
         provider: "claude",
         id: "profile-model",
         label: "Profile Model",
-      },
+      }),
     ]);
   });
 
@@ -1244,7 +1260,7 @@ describe("model merging", () => {
     });
 
     expect(models).toEqual([
-      {
+      withClaudeGatewayThinking({
         provider: "claude",
         id: "shared-model",
         label: "Profile Label",
@@ -1252,12 +1268,12 @@ describe("model merging", () => {
         metadata: {
           source: "runtime",
         },
-      },
-      {
+      }),
+      withClaudeGatewayThinking({
         provider: "claude",
         id: "runtime-only",
         label: "Runtime Only",
-      },
+      }),
     ]);
   });
 
@@ -1297,24 +1313,24 @@ describe("model merging", () => {
     });
 
     expect(models).toEqual([
-      {
+      withClaudeGatewayThinking({
         provider: "claude",
         id: "runtime-default",
         label: "Runtime Default",
         isDefault: false,
-      },
-      {
+      }),
+      withClaudeGatewayThinking({
         provider: "claude",
         id: "runtime-other",
         label: "Runtime Other",
         isDefault: false,
-      },
-      {
+      }),
+      withClaudeGatewayThinking({
         provider: "claude",
         id: "profile-default",
         label: "Profile Default",
         isDefault: true,
-      },
+      }),
     ]);
   });
 
@@ -1336,12 +1352,12 @@ describe("model merging", () => {
     });
 
     expect(models).toEqual([
-      {
+      withClaudeGatewayThinking({
         provider: "claude",
         id: "runtime-default",
         label: "Runtime Default",
         isDefault: true,
-      },
+      }),
     ]);
   });
 

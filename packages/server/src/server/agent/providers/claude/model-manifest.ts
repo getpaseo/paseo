@@ -14,10 +14,14 @@ interface ClaudeModelManifestEntry {
   supportsFastMode?: boolean;
 }
 
-const CLAUDE_EFFORT_LEVELS = {
-  standard: ["low", "medium", "high", "max"],
-  xhigh: ["low", "medium", "high", "xhigh", "max"],
-} as const satisfies Record<string, readonly ClaudeEffortLevel[]>;
+/** Claude Code TUI effort levels: low, medium, high, xhigh, max. */
+const CLAUDE_EFFORT_LEVELS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const satisfies readonly ClaudeEffortLevel[];
 
 const CLAUDE_EFFORT_LABELS = {
   low: "Low",
@@ -32,13 +36,22 @@ export const CLAUDE_ULTRACODE_THINKING_OPTION_ID = "ultracode";
 
 export const CLAUDE_MODEL_MANIFEST = [
   {
-    id: "claude-opus-5",
-    label: "Opus 5",
-    description: "Opus 5 · Latest release",
+    id: "claude-opus-5[1m]",
+    label: "Opus 5 1M",
+    description: "Opus 5 with 1M context window",
     defaultPriority: 2,
     minimumClaudeCodeVersion: "2.1.219",
     contextWindowMaxTokens: 1_000_000,
-    effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
+    effortLevels: CLAUDE_EFFORT_LEVELS,
+    supportsThinkingDisabled: true,
+  },
+  {
+    id: "claude-opus-5",
+    label: "Opus 5",
+    description: "Opus 5 · 200K context window",
+    minimumClaudeCodeVersion: "2.1.219",
+    contextWindowMaxTokens: 200_000,
+    effortLevels: CLAUDE_EFFORT_LEVELS,
     supportsThinkingDisabled: true,
   },
   {
@@ -47,7 +60,7 @@ export const CLAUDE_MODEL_MANIFEST = [
     description: "Fable 5 with 1M context window",
     minimumClaudeCodeVersion: "2.1.169",
     contextWindowMaxTokens: 1_000_000,
-    effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
+    effortLevels: CLAUDE_EFFORT_LEVELS,
   },
   {
     id: "claude-fable-5",
@@ -55,14 +68,14 @@ export const CLAUDE_MODEL_MANIFEST = [
     description: "Fable 5 · Most powerful model",
     minimumClaudeCodeVersion: "2.1.169",
     contextWindowMaxTokens: 200_000,
-    effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
+    effortLevels: CLAUDE_EFFORT_LEVELS,
   },
   {
     id: "claude-opus-4-8[1m]",
     label: "Opus 4.8 1M",
     description: "Opus 4.8 with 1M context window",
     contextWindowMaxTokens: 1_000_000,
-    effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
+    effortLevels: CLAUDE_EFFORT_LEVELS,
     supportsThinkingDisabled: true,
     supportsFastMode: true,
   },
@@ -72,7 +85,7 @@ export const CLAUDE_MODEL_MANIFEST = [
     description: "Opus 4.8 · Previous release",
     defaultPriority: 1,
     contextWindowMaxTokens: 200_000,
-    effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
+    effortLevels: CLAUDE_EFFORT_LEVELS,
     supportsThinkingDisabled: true,
     supportsFastMode: true,
   },
@@ -81,7 +94,7 @@ export const CLAUDE_MODEL_MANIFEST = [
     label: "Sonnet 5",
     description: "Sonnet 5 · Best for everyday tasks",
     contextWindowMaxTokens: 200_000,
-    effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
+    effortLevels: CLAUDE_EFFORT_LEVELS,
     supportsThinkingDisabled: true,
   },
   {
@@ -89,7 +102,7 @@ export const CLAUDE_MODEL_MANIFEST = [
     label: "Sonnet 5 1M",
     description: "Sonnet 5 with 1M context window",
     contextWindowMaxTokens: 1_000_000,
-    effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
+    effortLevels: CLAUDE_EFFORT_LEVELS,
     supportsThinkingDisabled: true,
   },
   {
@@ -97,7 +110,7 @@ export const CLAUDE_MODEL_MANIFEST = [
     label: "Opus 4.7 1M",
     description: "Opus 4.7 with 1M context window",
     contextWindowMaxTokens: 1_000_000,
-    effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
+    effortLevels: CLAUDE_EFFORT_LEVELS,
     supportsThinkingDisabled: true,
     supportsFastMode: true,
   },
@@ -106,7 +119,7 @@ export const CLAUDE_MODEL_MANIFEST = [
     label: "Opus 4.7",
     description: "Opus 4.7 · Previous release",
     contextWindowMaxTokens: 200_000,
-    effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
+    effortLevels: CLAUDE_EFFORT_LEVELS,
     supportsThinkingDisabled: true,
     supportsFastMode: true,
   },
@@ -115,7 +128,7 @@ export const CLAUDE_MODEL_MANIFEST = [
     label: "Opus 4.6 1M",
     description: "Opus 4.6 with 1M context window",
     contextWindowMaxTokens: 1_000_000,
-    effortLevels: CLAUDE_EFFORT_LEVELS.standard,
+    effortLevels: CLAUDE_EFFORT_LEVELS,
     supportsThinkingDisabled: true,
     supportsFastMode: true,
   },
@@ -124,7 +137,7 @@ export const CLAUDE_MODEL_MANIFEST = [
     label: "Opus 4.6",
     description: "Opus 4.6 · Most capable for complex work",
     contextWindowMaxTokens: 200_000,
-    effortLevels: CLAUDE_EFFORT_LEVELS.standard,
+    effortLevels: CLAUDE_EFFORT_LEVELS,
     supportsThinkingDisabled: true,
     supportsFastMode: true,
   },
@@ -133,7 +146,7 @@ export const CLAUDE_MODEL_MANIFEST = [
     label: "Sonnet 4.6 1M",
     description: "Sonnet 4.6 with 1M context window",
     contextWindowMaxTokens: 1_000_000,
-    effortLevels: CLAUDE_EFFORT_LEVELS.standard,
+    effortLevels: CLAUDE_EFFORT_LEVELS,
     supportsThinkingDisabled: true,
   },
   {
@@ -141,7 +154,7 @@ export const CLAUDE_MODEL_MANIFEST = [
     label: "Sonnet 4.6",
     description: "Sonnet 4.6 · Best for everyday tasks",
     contextWindowMaxTokens: 200_000,
-    effortLevels: CLAUDE_EFFORT_LEVELS.standard,
+    effortLevels: CLAUDE_EFFORT_LEVELS,
     supportsThinkingDisabled: true,
   },
   {
@@ -149,6 +162,7 @@ export const CLAUDE_MODEL_MANIFEST = [
     label: "Haiku 4.5",
     description: "Haiku 4.5 · Fastest for quick answers",
     contextWindowMaxTokens: 200_000,
+    effortLevels: CLAUDE_EFFORT_LEVELS,
   },
 ] as const satisfies readonly ClaudeModelManifestEntry[];
 
@@ -173,6 +187,51 @@ function buildThinkingOptions(
   }
 
   return options;
+}
+
+/**
+ * Attach Claude Code TUI effort options to catalog models that do not already declare them.
+ *
+ * First-party manifest IDs keep their curated capabilities. Custom/gateway models get
+ * the full low..xhigh..max set because Claude Code accepts those efforts under gateway
+ * discovery.
+ */
+export function enrichClaudeCatalogModel(model: AgentModelDefinition): AgentModelDefinition {
+  if (model.thinkingOptions && model.thinkingOptions.length > 0) {
+    return model;
+  }
+
+  // Runtime normalization also accepts provider-prefixed gateway IDs
+  // (e.g. us.anthropic.claude-opus-4-8[1m]).
+  const normalizedId = normalizeClaudeRuntimeModelId(model.id);
+  if (normalizedId) {
+    const entry = CLAUDE_MODEL_MANIFEST.find((candidate) => candidate.id === normalizedId);
+    if (entry) {
+      const effortLevels = "effortLevels" in entry ? entry.effortLevels : undefined;
+      const thinkingOptions = buildThinkingOptions(
+        effortLevels,
+        "supportsThinkingDisabled" in entry && entry.supportsThinkingDisabled === true,
+      );
+      if (!thinkingOptions) {
+        return model;
+      }
+      return {
+        ...model,
+        thinkingOptions,
+        defaultThinkingOptionId: model.defaultThinkingOptionId ?? effortLevels?.[0],
+      };
+    }
+  }
+
+  const thinkingOptions = buildThinkingOptions(CLAUDE_EFFORT_LEVELS, true);
+  if (!thinkingOptions) {
+    return model;
+  }
+  return {
+    ...model,
+    thinkingOptions,
+    defaultThinkingOptionId: model.defaultThinkingOptionId ?? CLAUDE_EFFORT_LEVELS[0],
+  };
 }
 
 export function getClaudeManifestModels(claudeCodeVersion?: string): AgentModelDefinition[] {
