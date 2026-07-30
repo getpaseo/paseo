@@ -161,6 +161,65 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
+test("sends dotted workflow RPCs and correlates the queued run response", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "workflow_client_test",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { workflows: true } });
+  await connectPromise;
+
+  const pending = client.workflowRunStart({
+    workflowId: "echo-demo",
+    parameters: { message: "hello" },
+    context: { workspaceId: "workspace-1" },
+    requestId: "workflow-start-1",
+  });
+  const request = parseSentFrame(mock.sent.at(-1));
+  expect(request).toEqual({
+    type: "workflow.run.start.request",
+    requestId: "workflow-start-1",
+    workflowId: "echo-demo",
+    parameters: { message: "hello" },
+    context: { workspaceId: "workspace-1" },
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workflow.run.start.response",
+      payload: {
+        requestId: "workflow-start-1",
+        run: {
+          id: "wfr_test",
+          workflowId: "echo-demo",
+          workflowName: "Echo demo",
+          status: "queued",
+          reason: null,
+          createdAt: "2026-07-30T00:00:00.000Z",
+          updatedAt: "2026-07-30T00:00:00.000Z",
+          startedAt: null,
+          completedAt: null,
+          iteration: 0,
+          activeTurns: 0,
+          legacy: false,
+          resumable: false,
+          workspaceIds: [],
+          agentIds: [],
+        },
+        error: null,
+      },
+    }),
+  );
+  await expect(pending).resolves.toMatchObject({
+    run: { id: "wfr_test", status: "queued" },
+    error: null,
+  });
+});
+
 test("does not infer browser automation capabilities from Electron runtime", async () => {
   vi.stubGlobal("navigator", {
     userAgent:

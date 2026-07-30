@@ -1,6 +1,12 @@
 import path from "node:path";
 import { readFileSync } from "node:fs";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
+import type {
+  WorkflowRunDetails,
+  WorkflowRunSummary,
+  WorkflowSpecSummary,
+  WorkflowValidationResult,
+} from "@getpaseo/protocol/workflow/types";
 import { connectDaemonClient } from "./daemon-client-loader";
 import { createTempDirectory, createTempGitRepo } from "./workspace";
 
@@ -148,8 +154,31 @@ export interface SeedDaemonClient {
     features?: {
       projectAdd?: boolean;
       workspaceRecovery?: boolean;
+      workflows?: boolean;
     } | null;
   } | null;
+  workflowSpecValidate(spec: Record<string, unknown>): Promise<{
+    validation: WorkflowValidationResult;
+    error: string | null;
+  }>;
+  workflowSpecSave(spec: Record<string, unknown>): Promise<{
+    summary: WorkflowSpecSummary | null;
+    validation: WorkflowValidationResult | null;
+    error: string | null;
+  }>;
+  workflowRunStart(options: {
+    workflowId: string;
+    parameters?: Record<string, unknown>;
+    context?: { workspaceId?: string; agentId?: string };
+  }): Promise<{ run: WorkflowRunSummary | null; error: string | null }>;
+  workflowRunList(): Promise<{ runs: WorkflowRunSummary[]; error: string | null }>;
+  workflowRunInspect(
+    runId: string,
+  ): Promise<{ details: WorkflowRunDetails | null; error: string | null }>;
+  workflowRunStop(runId: string): Promise<{ run: WorkflowRunSummary | null; error: string | null }>;
+  workflowRunResume(
+    runId: string,
+  ): Promise<{ run: WorkflowRunSummary | null; error: string | null }>;
   fetchAgentHistory(options?: {
     page?: { limit: number };
   }): Promise<{ entries: Array<{ agent: { id: string } }> }>;

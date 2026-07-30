@@ -97,6 +97,7 @@ export async function startIsolatedHostDaemon(serverId: string): Promise<Isolate
         PASEO_LISTEN: `127.0.0.1:${port}`,
         PASEO_CORS_ORIGINS: `http://localhost:${metroPort}`,
         PASEO_RELAY_ENABLED: "0",
+        PASEO_MOCK_WORKFLOW_RECOVERY: "1",
         PASEO_NODE_ENV: "development",
         NODE_ENV: "development",
       }),

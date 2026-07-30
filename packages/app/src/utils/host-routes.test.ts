@@ -9,6 +9,7 @@ import {
   resolveKnownHostRoute,
   buildSessionsRoute,
   buildSettingsAddHostRoute,
+  buildWorkflowsRoute,
   buildProjectSettingsRoute,
   buildProjectsSettingsRoute,
   decodeFilePathFromPathSegment,
@@ -31,6 +32,18 @@ describe("parseHostAgentRouteFromPathname", () => {
       serverId: "local",
       agentId: "abc123",
     });
+  });
+});
+
+describe("workflow routes", () => {
+  it("carries native current workspace and agent context", () => {
+    expect(
+      buildWorkflowsRoute({
+        serverId: "local",
+        workspaceId: "workspace-1",
+        agentId: "agent-1",
+      }),
+    ).toBe("/workflows?serverId=local&workspaceId=workspace-1&agentId=agent-1");
   });
 });
 

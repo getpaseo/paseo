@@ -428,6 +428,24 @@ export function buildSchedulesRoute() {
   return "/schedules" as const;
 }
 
+export function buildWorkflowsRoute(
+  context: {
+    serverId?: string | null;
+    workspaceId?: string | null;
+    agentId?: string | null;
+  } = {},
+) {
+  const params = new URLSearchParams();
+  const serverId = trimNonEmpty(context.serverId);
+  const workspaceId = trimNonEmpty(context.workspaceId);
+  const agentId = trimNonEmpty(context.agentId);
+  if (serverId) params.set("serverId", serverId);
+  if (workspaceId) params.set("workspaceId", workspaceId);
+  if (agentId) params.set("agentId", agentId);
+  const query = params.toString();
+  return query ? (`/workflows?${query}` as const) : ("/workflows" as const);
+}
+
 export function buildOpenProjectRoute() {
   return "/open-project" as const;
 }

@@ -11,6 +11,7 @@ import { createScriptCommand } from "./commands/script/index.js";
 import { createTerminalCommand } from "./commands/terminal/index.js";
 import { createWorktreeCommand } from "./commands/worktree/index.js";
 import { createWorkspaceCommand } from "./commands/workspace/index.js";
+import { createWorkflowCommand } from "./commands/workflow/index.js";
 import { createHeartbeatCommand } from "./commands/heartbeat/index.js";
 import { createHubCommand } from "./commands/hub/index.js";
 import { createHooksCommand } from "./commands/hooks.js";
@@ -177,6 +178,9 @@ export function createCli(): Command {
 
   // Loop commands
   program.addCommand(createLoopCommand());
+
+  // Workflow commands
+  program.addCommand(createWorkflowCommand());
 
   // Schedule commands
   program.addCommand(createScheduleCommand());

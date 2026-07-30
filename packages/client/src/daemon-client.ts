@@ -507,6 +507,42 @@ type LoopInspectPayload = Extract<
 >["payload"];
 type LoopLogsPayload = Extract<SessionOutboundMessage, { type: "loop/logs/response" }>["payload"];
 type LoopStopPayload = Extract<SessionOutboundMessage, { type: "loop/stop/response" }>["payload"];
+export type WorkflowSpecListPayload = Extract<
+  SessionOutboundMessage,
+  { type: "workflow.spec.list.response" }
+>["payload"];
+export type WorkflowSpecGetPayload = Extract<
+  SessionOutboundMessage,
+  { type: "workflow.spec.get.response" }
+>["payload"];
+export type WorkflowSpecSavePayload = Extract<
+  SessionOutboundMessage,
+  { type: "workflow.spec.save.response" }
+>["payload"];
+export type WorkflowSpecValidatePayload = Extract<
+  SessionOutboundMessage,
+  { type: "workflow.spec.validate.response" }
+>["payload"];
+export type WorkflowRunStartPayload = Extract<
+  SessionOutboundMessage,
+  { type: "workflow.run.start.response" }
+>["payload"];
+export type WorkflowRunListPayload = Extract<
+  SessionOutboundMessage,
+  { type: "workflow.run.list.response" }
+>["payload"];
+export type WorkflowRunInspectPayload = Extract<
+  SessionOutboundMessage,
+  { type: "workflow.run.inspect.response" }
+>["payload"];
+export type WorkflowRunLogsPayload = Extract<
+  SessionOutboundMessage,
+  { type: "workflow.run.logs.response" }
+>["payload"];
+export type WorkflowRunMutationPayload = Extract<
+  SessionOutboundMessage,
+  { type: "workflow.run.stop.response" }
+>["payload"];
 type ScheduleCreatePayload = Extract<
   SessionOutboundMessage,
   { type: "schedule/create/response" }
@@ -744,6 +780,20 @@ export interface LoopLogsOptions {
 }
 export interface StopLoopOptions {
   id: string;
+  requestId?: string;
+}
+export interface StartWorkflowOptions {
+  workflowId: string;
+  parameters?: Record<string, unknown>;
+  context?: {
+    workspaceId?: string;
+    agentId?: string;
+  };
+  requestId?: string;
+}
+export interface WorkflowRunLogsOptions {
+  runId: string;
+  afterSeq?: number;
   requestId?: string;
 }
 export interface CreateScheduleOptions {
@@ -5206,6 +5256,91 @@ export class DaemonClient {
         id: normalized.id,
       },
       responseType: "loop/stop/response",
+    });
+  }
+
+  async workflowSpecList(requestId?: string): Promise<WorkflowSpecListPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: { type: "workflow.spec.list.request" },
+    });
+  }
+
+  async workflowSpecGet(id: string, requestId?: string): Promise<WorkflowSpecGetPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: { type: "workflow.spec.get.request", id },
+    });
+  }
+
+  async workflowSpecValidate(
+    spec: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<WorkflowSpecValidatePayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: { type: "workflow.spec.validate.request", spec },
+    });
+  }
+
+  async workflowSpecSave(
+    spec: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<WorkflowSpecSavePayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: { type: "workflow.spec.save.request", spec },
+    });
+  }
+
+  async workflowRunStart(options: StartWorkflowOptions): Promise<WorkflowRunStartPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "workflow.run.start.request",
+        workflowId: options.workflowId,
+        ...(options.parameters ? { parameters: options.parameters } : {}),
+        ...(options.context ? { context: options.context } : {}),
+      },
+    });
+  }
+
+  async workflowRunList(requestId?: string): Promise<WorkflowRunListPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: { type: "workflow.run.list.request" },
+    });
+  }
+
+  async workflowRunInspect(runId: string, requestId?: string): Promise<WorkflowRunInspectPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: { type: "workflow.run.inspect.request", runId },
+    });
+  }
+
+  async workflowRunLogs(options: WorkflowRunLogsOptions): Promise<WorkflowRunLogsPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "workflow.run.logs.request",
+        runId: options.runId,
+        ...(options.afterSeq !== undefined ? { afterSeq: options.afterSeq } : {}),
+      },
+    });
+  }
+
+  async workflowRunStop(runId: string, requestId?: string): Promise<WorkflowRunMutationPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: { type: "workflow.run.stop.request", runId },
+    });
+  }
+
+  async workflowRunResume(runId: string, requestId?: string): Promise<WorkflowRunMutationPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: { type: "workflow.run.resume.request", runId },
     });
   }
 

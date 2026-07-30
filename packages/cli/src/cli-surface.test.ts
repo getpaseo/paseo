@@ -55,4 +55,24 @@ describe("canonical CLI surface", () => {
     expect(open?.helpInformation()).toContain("<agent-id>");
     expect(open?.helpInformation()).toContain("--server <server-id>");
   });
+
+  it("exposes native workflow definition and run controls", () => {
+    const workflow = createCli().commands.find((command) => command.name() === "workflow");
+    expect(workflow?.commands.map((command) => command.name())).toEqual([
+      "specs",
+      "show",
+      "validate",
+      "import",
+      "run",
+      "runs",
+      "inspect",
+      "logs",
+      "stop",
+      "resume",
+    ]);
+    const run = workflow?.commands.find((command) => command.name() === "run");
+    expect(run?.helpInformation()).toContain("--params-file <file>");
+    expect(run?.helpInformation()).toContain("--workspace <workspace-id>");
+    expect(run?.helpInformation()).toContain("--agent <agent-id>");
+  });
 });
