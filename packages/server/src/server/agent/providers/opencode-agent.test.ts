@@ -2528,6 +2528,103 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   }, 15_000);
 
+  test("does not replay adopted-session canceled output after reconnect", async () => {
+    const firstStreamEnd = createTestDeferred<void>();
+    const lateOutputSent = createTestDeferred<void>();
+    const releaseTerminal = createTestDeferred<void>();
+    const streamDrained = createTestDeferred<void>();
+    let subscriptionCount = 0;
+    const openCode = new TestOpenCodeClient();
+    openCode.globalEventImplementation = async (options) => {
+      subscriptionCount += 1;
+      const signal = (options as { signal: AbortSignal }).signal;
+      return {
+        stream: {
+          async *[Symbol.asyncIterator]() {
+            yield { type: "server.connected", properties: {} };
+            if (subscriptionCount === 1) {
+              await firstStreamEnd.promise;
+              return;
+            }
+            const lateOutput = assistantTurnEvents({
+              sessionId: "ses_adopted_reconnect",
+              text: "Canceled output must stay canceled.",
+            });
+            for (const event of lateOutput.slice(0, -1)) {
+              yield event;
+            }
+            lateOutputSent.resolve();
+            await releaseTerminal.promise;
+            yield lateOutput.at(-1);
+            yield {
+              type: "session.created",
+              properties: {
+                info: {
+                  id: "ses_adopted_reconnect_drain",
+                  parentID: "ses_adopted_reconnect",
+                  title: "Reconnect drain marker",
+                  directory: "/workspace/repo",
+                },
+              },
+            };
+            await waitForAbort(signal);
+          },
+        },
+      };
+    };
+    openCode.sessionStatusImplementation = async () => {
+      await lateOutputSent.promise;
+      return { data: { ses_adopted_reconnect: { type: "busy" } } };
+    };
+    openCode.sessionPromptAsyncEvents = [];
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/workspace/repo" },
+      openCode.asSdkClient(),
+      "ses_adopted_reconnect",
+      createTestLogger(),
+      new Map(),
+      undefined,
+      true,
+      undefined,
+      undefined,
+      true,
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => {
+      events.push(event);
+      if (
+        event.type === "provider_subagent" &&
+        event.event.type === "upsert" &&
+        event.event.id === "ses_adopted_reconnect_drain"
+      ) {
+        streamDrained.resolve();
+      }
+    });
+
+    try {
+      await session.startTurn("first");
+      await session.interrupt();
+      firstStreamEnd.resolve();
+      await lateOutputSent.promise;
+      await vi.waitFor(() => expect(openCode.calls.sessionStatus).toHaveLength(1));
+      releaseTerminal.resolve();
+      await streamDrained.promise;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(events.filter((event) => event.type === "turn_started")).toHaveLength(1);
+      expect(events).not.toContainEqual(
+        expect.objectContaining({
+          type: "timeline",
+          item: expect.objectContaining({ text: "Canceled output must stay canceled." }),
+        }),
+      );
+    } finally {
+      firstStreamEnd.resolve();
+      releaseTerminal.resolve();
+      await session.close();
+    }
+  }, 15_000);
+
   test("recovers an eager stop observer after a transient status failure", async () => {
     const firstStreamEnd = createTestDeferred<void>();
     const settleAbort = createTestDeferred<void>();

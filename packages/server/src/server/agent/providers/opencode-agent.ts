@@ -3697,7 +3697,14 @@ class OpenCodeAgentSession implements AgentSession {
     if (stopping.replayedTurnActive) {
       return false;
     }
-    const retainEvent = stopping.providerIdleObserved || stopping.reconcilingProviderStatus;
+    const retainReconciledWake =
+      stopping.reconcilingProviderStatus &&
+      (this.isAutonomousWakeBoundary(event) ||
+        stopping.deferredEvents.some(({ rawEvent }) => {
+          const deferredEvent = unwrapOpenCodeGlobalEvent(rawEvent);
+          return deferredEvent ? this.isAutonomousWakeBoundary(deferredEvent) : false;
+        }));
+    const retainEvent = stopping.providerIdleObserved || retainReconciledWake;
     if (isOpenCodeTerminalEvent(event, this.sessionId) && !stopping.providerIdleObserved) {
       if (retainEvent) {
         stopping.deferredEvents.push(params);
@@ -3730,10 +3737,7 @@ class OpenCodeAgentSession implements AgentSession {
     // OpenCode publishes the persisted user message before it marks the runner
     // busy. That message is the earliest unambiguous boundary for a plugin-
     // initiated parent turn; session metadata and assistant echoes are not.
-    if (event.type === "message.updated" && event.properties.info.role === "user") {
-      if (this.emittedUserMessageIds.has(event.properties.info.id)) {
-        return false;
-      }
+    if (this.isAutonomousWakeBoundary(event)) {
       return true;
     }
     if (!this.externallyDriven) {
@@ -3748,6 +3752,14 @@ class OpenCodeAgentSession implements AgentSession {
       return true;
     }
     return event.type === "session.status" && event.properties.status.type === "busy";
+  }
+
+  private isAutonomousWakeBoundary(event: OpenCodeEvent): boolean {
+    return (
+      event.type === "message.updated" &&
+      event.properties.info.role === "user" &&
+      !this.emittedUserMessageIds.has(event.properties.info.id)
+    );
   }
 
   private startAutonomousTurn(): string {

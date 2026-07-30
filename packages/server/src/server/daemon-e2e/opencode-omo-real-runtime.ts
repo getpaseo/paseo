@@ -196,26 +196,32 @@ export async function createOpenCodeOmoRealRuntime(): Promise<OpenCodeOmoRealRun
       workspace: paths.workspace,
       artifacts: paths.artifacts,
       close: async (passed) => {
-        await client.close().catch(() => undefined);
-        await daemon.close().catch(() => undefined);
-        await serverManager.shutdown().catch(() => undefined);
-        closeTrace();
-        restoreEnvironment("PASEO_HOME", previousPaseoHome);
-        if (passed) {
-          rmSync(paths.root, { recursive: true, force: true });
+        try {
+          await client.close().catch(() => undefined);
+          await daemon.close().catch(() => undefined);
+          await serverManager.shutdown().catch(() => undefined);
+          closeTrace();
+          if (passed) {
+            rmSync(paths.root, { recursive: true, force: true });
+          }
+        } finally {
+          restoreEnvironment("PASEO_HOME", previousPaseoHome);
         }
       },
     };
   } catch (error) {
-    await client?.close().catch(() => undefined);
-    await daemon?.close().catch(() => undefined);
-    await serverManager?.shutdown().catch(() => undefined);
-    if (closeTrace) {
-      closeTrace();
-    } else {
-      traceDestination?.end();
+    try {
+      await client?.close().catch(() => undefined);
+      await daemon?.close().catch(() => undefined);
+      await serverManager?.shutdown().catch(() => undefined);
+      if (closeTrace) {
+        closeTrace();
+      } else {
+        traceDestination?.end();
+      }
+    } finally {
+      restoreEnvironment("PASEO_HOME", previousPaseoHome);
     }
-    restoreEnvironment("PASEO_HOME", previousPaseoHome);
     throw withArtifactLocation(error, paths.artifacts);
   }
 }
