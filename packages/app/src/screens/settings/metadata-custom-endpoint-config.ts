@@ -64,3 +64,14 @@ export function areMetadataCustomEndpointDraftsEqual(
     left.model === right.model
   );
 }
+
+/**
+ * AdaptiveTextInput ignores controlled `value` and only seeds via
+ * `initialValue` + remount `resetKey`. Key off the persisted snapshot so
+ * fields remount after save/config reload without wiping in-progress edits.
+ */
+export function buildMetadataCustomEndpointFieldResetKey(
+  input: MetadataCustomEndpointDraft,
+): string {
+  return JSON.stringify([input.enabled, input.baseUrl, input.apiKey, input.model]);
+}

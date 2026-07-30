@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
@@ -11,6 +11,7 @@ import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-
 import { settingsStyles } from "@/styles/settings";
 import {
   areMetadataCustomEndpointDraftsEqual,
+  buildMetadataCustomEndpointFieldResetKey,
   createMetadataCustomEndpointPatch,
   getMetadataCustomEndpointCardState,
   readMetadataCustomEndpointFromConfig,
@@ -59,16 +60,28 @@ export function MetadataCustomEndpointCard({ serverId }: { serverId: string }) {
   const client = useHostRuntimeClient(serverId);
 
   const persisted = useMemo(() => readMetadataCustomEndpointFromConfig(config), [config]);
+  const fieldResetKey = useMemo(
+    () => buildMetadataCustomEndpointFieldResetKey(persisted),
+    [persisted],
+  );
   const [draft, setDraft] = useState<MetadataCustomEndpointDraft>(persisted);
+  const [seededFieldResetKey, setSeededFieldResetKey] = useState(fieldResetKey);
+  // Bumped when a model chip is selected so the uncontrolled model input remounts.
+  const [modelFieldEpoch, setModelFieldEpoch] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [discoveryStatus, setDiscoveryStatus] = useState<MetadataModelDiscoveryStatus>("idle");
   const [models, setModels] = useState<DiscoveredModel[]>([]);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
 
-  useEffect(() => {
+  // Keep draft aligned with the persisted snapshot before paint when config
+  // reloads. AdaptiveTextInput remounts on fieldResetKey and must seed from
+  // the same snapshot, not a stale draft from the previous render.
+  if (fieldResetKey !== seededFieldResetKey) {
+    setSeededFieldResetKey(fieldResetKey);
     setDraft(persisted);
-  }, [persisted]);
+    setModelFieldEpoch(0);
+  }
 
   const cardState = getMetadataCustomEndpointCardState({
     isConnected,
@@ -95,6 +108,7 @@ export function MetadataCustomEndpointCard({ serverId }: { serverId: string }) {
 
   const handleSelectModel = useCallback((modelId: string) => {
     setDraft((current) => ({ ...current, model: modelId }));
+    setModelFieldEpoch((current) => current + 1);
     setSaveError(null);
   }, []);
 
@@ -186,7 +200,8 @@ export function MetadataCustomEndpointCard({ serverId }: { serverId: string }) {
         <View style={styles.fields}>
           <Field label={t("settings.host.orchestration.metadataEndpoint.baseUrlLabel")}>
             <FormTextInput
-              value={draft.baseUrl}
+              initialValue={draft.baseUrl}
+              resetKey={fieldResetKey}
               onChangeText={handleBaseUrlChange}
               autoCapitalize="none"
               autoCorrect={false}
@@ -197,7 +212,8 @@ export function MetadataCustomEndpointCard({ serverId }: { serverId: string }) {
 
           <Field label={t("settings.host.orchestration.metadataEndpoint.apiKeyLabel")}>
             <FormTextInput
-              value={draft.apiKey}
+              initialValue={draft.apiKey}
+              resetKey={fieldResetKey}
               onChangeText={handleApiKeyChange}
               autoCapitalize="none"
               autoCorrect={false}
@@ -209,7 +225,8 @@ export function MetadataCustomEndpointCard({ serverId }: { serverId: string }) {
 
           <Field label={t("settings.host.orchestration.metadataEndpoint.modelLabel")}>
             <FormTextInput
-              value={draft.model}
+              initialValue={draft.model}
+              resetKey={`${fieldResetKey}:model:${modelFieldEpoch}`}
               onChangeText={handleModelChange}
               autoCapitalize="none"
               autoCorrect={false}
