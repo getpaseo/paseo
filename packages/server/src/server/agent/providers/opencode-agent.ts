@@ -2757,18 +2757,28 @@ function createDeferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
-type OpenCodeTurnState = { status: "idle" } | { status: "running"; turnId: string };
+type OpenCodeTurnState =
+  | { status: "idle" }
+  | { status: "running"; turnId: string }
+  | { status: "stopping"; stop: OpenCodeStop };
 
-interface OpenCodeRunBoundaryState {
-  idle: Deferred<void>;
-  abort: Promise<void>;
-  quiescence: Promise<void>;
-  pendingCancellationTurnId: string | null;
-  observationFailed: boolean;
-  providerIdleObserved: boolean;
-  reconcilingProviderStatus: boolean;
-  replayedTurnActive: boolean;
-  deferredEvents: Array<{ rawEvent: unknown; eventCount: number }>;
+/**
+ * One in-flight stop of the OpenCode session runner.
+ *
+ * OpenCode's abort is session-scoped rather than turn-scoped, so a stop owns
+ * both halves of the boundary: the abort it issued (plus its single retry) and
+ * the canceled run's terminal. The runner is reusable only once both settle —
+ * an abort still in flight would otherwise land on the replacement run.
+ */
+type OpenCodeRunnerStatus = "idle" | "busy" | "retry";
+
+interface OpenCodeStop {
+  /** Foreground turn awaiting a cancellation acknowledgement, if any. */
+  readonly turnId: string | null;
+  /** Resolves when the canceled run publishes its authoritative terminal. */
+  readonly terminal: Deferred<void>;
+  /** Resolves when the owned abort settles; rejects when it and its retry fail. */
+  readonly abort: Promise<void>;
 }
 
 function unwrapOpenCodeGlobalEvent(event: unknown): OpenCodeEvent | null {
@@ -2922,7 +2932,12 @@ class OpenCodeAgentSession implements AgentSession {
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private nextTurnOrdinal = 0;
   private turnState: OpenCodeTurnState = { status: "idle" };
-  private runBoundary: OpenCodeRunBoundaryState | null = null;
+  /**
+   * Settlement of the most recent session-scoped abort. It outlives its stop
+   * because a pending abort can still cancel a replacement run, and a failed one
+   * means we never proved the runner stopped.
+   */
+  private abortSettlement: Promise<void> = Promise.resolve();
   private readonly runningToolCalls = new Map<string, ToolCallTimelineItem>();
   private subAgentsByCallId = new Map<string, OpenCodeSubAgentActivityState>();
   private subAgentCallIdByChildSessionId = new Map<string, string>();
@@ -3017,29 +3032,32 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   async interrupt(): Promise<void> {
-    const turnId = this.activeForegroundTurnId;
     this.abortController?.abort();
-    const stopping = this.beginStoppingTurn(turnId);
+    const stop = this.beginStop(this.activeForegroundTurnId);
     // COMPAT(opencodeSlowAbort): OpenCode 1.14.42+ blocks session.abort until
     // the running tool actually stops, which can be tens of seconds for
     // long-running tools. Cap the wait so the user-visible cancel lands
     // quickly while still giving OpenCode a chance to confirm the abort
     // cleanly. Drop the timeout once upstream returns abort acknowledgement
     // before tool teardown.
-    let abortRejected = false;
-    const observedAbort = stopping.abort.catch((error) => {
-      abortRejected = true;
-      throw error;
-    });
-    await withTimeout(observedAbort, 2_000, "OpenCode session.abort").catch((error) => {
-      if (abortRejected) {
-        throw error;
-      }
-      this.logger.warn(
-        { err: error, sessionId: this.sessionId, turnId },
-        "OpenCode session.abort did not settle within the cancel cap",
-      );
-    });
+    const settledAbort = stop.abort.then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    // Only the cap is tolerated. A settled failure means the runner may still be
+    // going, and the caller must hear about it.
+    const abortFailure = await withTimeout(settledAbort, 2_000, "OpenCode session.abort").catch(
+      (error) => {
+        this.logger.warn(
+          { err: error, sessionId: this.sessionId, turnId: stop.turnId },
+          "OpenCode session.abort did not settle within the cancel cap",
+        );
+        return undefined;
+      },
+    );
+    if (abortFailure !== undefined) {
+      throw abortFailure;
+    }
   }
 
   async revertBoth(input: { messageId: string }): Promise<void> {
@@ -3072,93 +3090,94 @@ class OpenCodeAgentSession implements AgentSession {
       });
   }
 
-  private async waitUntilProviderIdle(): Promise<void> {
-    while (true) {
-      const stopping = this.runBoundary;
-      if (!stopping) {
-        return;
-      }
-
-      // OpenCode creates prompts before joining its single session runner, and
-      // abort is session-scoped. Reuse requires both provider-confirmed idle and
-      // the earlier abort to settle so it cannot cancel the replacement run.
-      const observedQuiescence = stopping.quiescence;
-      try {
-        await withTimeout(
-          observedQuiescence,
-          OPENCODE_PENDING_ABORT_START_TIMEOUT_MS,
-          "OpenCode previous turn to stop",
-        );
-      } catch (error) {
-        if (this.runBoundary !== stopping) {
-          continue;
-        }
-        if (stopping.quiescence === observedQuiescence) {
-          if (!stopping.observationFailed) {
-            throw error;
-          }
-          this.armStopQuiescence(stopping);
-        }
-        await withTimeout(
-          stopping.quiescence,
-          OPENCODE_PENDING_ABORT_START_TIMEOUT_MS,
-          "OpenCode previous turn to stop",
-        );
-      }
-      if (this.runBoundary === stopping && stopping.quiescence === observedQuiescence) {
-        return;
-      }
-    }
+  /**
+   * Gate every runner-affecting operation on the previous stop. OpenCode runs one
+   * runner per session and aborts it session-wide, so a replacement may start
+   * only once the canceled run published its terminal and our own abort settled.
+   * A failed abort never proved the runner stopped, so it fails closed until the
+   * next Stop issues a fresh one.
+   */
+  private async awaitRunnerQuiescence(): Promise<void> {
+    const providerIdle = this.waitUntilProviderIdle();
+    // A failed abort is decisive on its own, so let it reject this wait without
+    // leaving the still-running observation unhandled.
+    void providerIdle.catch(() => undefined);
+    await Promise.all([this.abortSettlement, providerIdle]);
   }
 
-  private async observeProviderStopBoundary(stopping: OpenCodeRunBoundaryState): Promise<void> {
-    while (this.runBoundary === stopping) {
+  private async waitUntilProviderIdle(): Promise<void> {
+    if (this.turnState.status !== "stopping") {
+      return;
+    }
+    await withTimeout(
+      this.observeProviderStopBoundary(this.turnState.stop),
+      OPENCODE_PENDING_ABORT_START_TIMEOUT_MS,
+      "OpenCode previous turn to stop",
+    );
+  }
+
+  private async observeProviderStopBoundary(stop: OpenCodeStop): Promise<void> {
+    while (this.isStopping(stop)) {
       const eventStreamTask = this.eventStreamTask;
       const boundary = await (eventStreamTask
         ? Promise.race([
-            stopping.idle.promise.then(() => "idle" as const),
+            stop.terminal.promise.then(() => "terminal" as const),
             eventStreamTask.then(
               () => "stream_ended" as const,
               () => "stream_ended" as const,
             ),
           ])
         : Promise.resolve("stream_ended" as const));
-      if (boundary === "idle") {
+      if (boundary === "terminal") {
         return;
       }
-
-      stopping.reconcilingProviderStatus = true;
-      await this.ensureEventStreamReady();
-      const response = await this.client.session.status({ directory: this.config.cwd });
-      if (response.error) {
-        throw new Error(
-          `Failed to confirm OpenCode session status: ${toDiagnosticErrorMessage(response.error)}`,
-        );
-      }
-      const statuses = readOpenCodeRecord(response.data);
-      if (!statuses) {
-        throw new Error("OpenCode returned an invalid session status response");
-      }
-      const status = readOpenCodeRecord(statuses[this.sessionId]);
-      const statusType = readNonEmptyString(status?.type);
-      if (!status || statusType === "idle") {
-        if (this.externallyDriven && stopping.deferredEvents.length > 0) {
-          const wakeStart = stopping.deferredEvents.findIndex(({ rawEvent }) => {
-            const deferredEvent = unwrapOpenCodeGlobalEvent(rawEvent);
-            return deferredEvent ? this.isUnseenUserWakeBoundary(deferredEvent) : false;
-          });
-          stopping.deferredEvents.splice(
-            0,
-            wakeStart < 0 ? stopping.deferredEvents.length : wakeStart,
-          );
-        }
-        this.finishStoppingTurn(stopping);
-        return;
-      }
-      if (statusType !== "busy" && statusType !== "retry") {
-        throw new Error(`OpenCode returned an unknown session status '${statusType ?? "missing"}'`);
-      }
+      await this.reconcileStopWithProviderStatus(stop);
     }
+  }
+
+  /**
+   * The event stream dropped mid-stop, so the canceled run's terminal may have
+   * gone with it. `session.status` is the provider's authority on whether the
+   * runner is still going, and an idle answer ends the stop through the same
+   * transition an SSE terminal takes. A failed probe is not evidence either way,
+   * so the stop keeps waiting on the replacement stream instead of rejecting a
+   * caller that a later terminal would have released.
+   */
+  private async reconcileStopWithProviderStatus(stop: OpenCodeStop): Promise<void> {
+    await this.ensureEventStreamReady();
+    try {
+      if ((await this.readProviderRunnerStatus()) === "idle") {
+        this.finishStoppingTurn(stop);
+      }
+    } catch (error) {
+      this.logger.warn(
+        { err: error, sessionId: this.sessionId, turnId: stop.turnId },
+        "Failed to reconcile the OpenCode stop with provider session status",
+      );
+    }
+  }
+
+  private async readProviderRunnerStatus(): Promise<OpenCodeRunnerStatus> {
+    const response = await this.client.session.status({ directory: this.config.cwd });
+    if (response.error) {
+      throw new Error(
+        `Failed to confirm OpenCode session status: ${toDiagnosticErrorMessage(response.error)}`,
+      );
+    }
+    const statuses = readOpenCodeRecord(response.data);
+    if (!statuses) {
+      throw new Error("OpenCode returned an invalid session status response");
+    }
+    const status = readOpenCodeRecord(statuses[this.sessionId]);
+    // OpenCode drops idle sessions from the status map entirely.
+    if (!status) {
+      return "idle";
+    }
+    const statusType = readNonEmptyString(status.type);
+    if (statusType !== "idle" && statusType !== "busy" && statusType !== "retry") {
+      throw new Error(`OpenCode returned an unknown session status '${statusType ?? "missing"}'`);
+    }
+    return statusType;
   }
 
   async startTurn(
@@ -3168,7 +3187,7 @@ class OpenCodeAgentSession implements AgentSession {
     if (this.turnState.status === "running") {
       throw new Error("A foreground turn is already active");
     }
-    await this.waitUntilProviderIdle();
+    await this.awaitRunnerQuiescence();
     if (this.turnState.status !== "idle") {
       throw new Error("OpenCode is still stopping the previous turn");
     }
@@ -3612,13 +3631,10 @@ class OpenCodeAgentSession implements AgentSession {
     }
   }
 
-  private async consumeOpenCodeStreamEvent(
-    params: {
-      rawEvent: unknown;
-      eventCount: number;
-    },
-    replayingBoundary?: OpenCodeRunBoundaryState,
-  ): Promise<void> {
+  private async consumeOpenCodeStreamEvent(params: {
+    rawEvent: unknown;
+    eventCount: number;
+  }): Promise<void> {
     const { rawEvent, eventCount } = params;
     let turnId = this.activeForegroundTurnId;
     const event = unwrapOpenCodeGlobalEvent(rawEvent);
@@ -3634,7 +3650,16 @@ class OpenCodeAgentSession implements AgentSession {
     if (!event) {
       return;
     }
-    if (this.deferEventWhileStopping(event, params, replayingBoundary)) {
+    if (
+      this.turnState.status === "stopping" &&
+      getOpenCodeEventSessionId(event) === this.sessionId
+    ) {
+      // Residue of the canceled run must not surface as a new turn. Its terminal
+      // is the authoritative end of the stop, so anything OpenCode publishes
+      // afterwards belongs to a new run by construction and takes the live path.
+      if (isOpenCodeTerminalEvent(event, this.sessionId)) {
+        this.finishStoppingTurn(this.turnState.stop);
+      }
       this.traceOpenCode("provider.opencode.event.skip", {
         n: eventCount,
         reason: "turn_stopping",
@@ -3692,54 +3717,6 @@ class OpenCodeAgentSession implements AgentSession {
     }
   }
 
-  private deferEventWhileStopping(
-    event: OpenCodeEvent,
-    params: { rawEvent: unknown; eventCount: number },
-    replayingBoundary?: OpenCodeRunBoundaryState,
-  ): boolean {
-    const stopping = this.runBoundary;
-    if (
-      !stopping ||
-      stopping === replayingBoundary ||
-      getOpenCodeEventSessionId(event) !== this.sessionId
-    ) {
-      return false;
-    }
-    if (stopping.replayedTurnActive) {
-      return false;
-    }
-    const retainReconciledWake =
-      stopping.reconcilingProviderStatus &&
-      (this.isAutonomousWakeBoundary(event) ||
-        stopping.deferredEvents.some(({ rawEvent }) => {
-          const deferredEvent = unwrapOpenCodeGlobalEvent(rawEvent);
-          return deferredEvent ? this.isAutonomousWakeBoundary(deferredEvent) : false;
-        }));
-    const retainEvent = stopping.providerIdleObserved || retainReconciledWake;
-    if (isOpenCodeTerminalEvent(event, this.sessionId) && !stopping.providerIdleObserved) {
-      const userWakeIndex = stopping.deferredEvents.findIndex(({ rawEvent }) => {
-        const deferredEvent = unwrapOpenCodeGlobalEvent(rawEvent);
-        return deferredEvent ? this.isUnseenUserWakeBoundary(deferredEvent) : false;
-      });
-      const hasWakeOutput = stopping.deferredEvents
-        .slice(userWakeIndex + 1)
-        .some(({ rawEvent }) => {
-          const deferredEvent = unwrapOpenCodeGlobalEvent(rawEvent);
-          return (
-            deferredEvent?.type === "message.updated" &&
-            deferredEvent.properties.info.role === "assistant"
-          );
-        });
-      if (retainEvent && userWakeIndex >= 0 && hasWakeOutput) {
-        stopping.deferredEvents.push(params);
-      }
-      this.finishStoppingTurn(stopping);
-    } else if (retainEvent) {
-      stopping.deferredEvents.push(params);
-    }
-    return true;
-  }
-
   private emitBackgroundPermissionRequests(events: readonly AgentStreamEvent[]): void {
     for (const event of events) {
       if (event.type === "permission_requested") {
@@ -3761,7 +3738,10 @@ class OpenCodeAgentSession implements AgentSession {
     // OpenCode publishes the persisted user message before it marks the runner
     // busy. That message is the earliest unambiguous boundary for a plugin-
     // initiated parent turn; session metadata and assistant echoes are not.
-    if (this.isAutonomousWakeBoundary(event)) {
+    if (event.type === "message.updated" && event.properties.info.role === "user") {
+      if (this.emittedUserMessageIds.has(event.properties.info.id)) {
+        return false;
+      }
       return true;
     }
     if (!this.externallyDriven) {
@@ -3776,23 +3756,6 @@ class OpenCodeAgentSession implements AgentSession {
       return true;
     }
     return event.type === "session.status" && event.properties.status.type === "busy";
-  }
-
-  private isAutonomousWakeBoundary(event: OpenCodeEvent): boolean {
-    return (
-      this.isUnseenUserWakeBoundary(event) ||
-      (this.externallyDriven &&
-        event.type === "session.status" &&
-        event.properties.status.type === "busy")
-    );
-  }
-
-  private isUnseenUserWakeBoundary(event: OpenCodeEvent): boolean {
-    return (
-      event.type === "message.updated" &&
-      event.properties.info.role === "user" &&
-      !this.emittedUserMessageIds.has(event.properties.info.id)
-    );
   }
 
   private startAutonomousTurn(): string {
@@ -3832,127 +3795,68 @@ class OpenCodeAgentSession implements AgentSession {
     this.turnState = { status: "idle" };
     this.abortController = null;
     this.notifySubscribers(event, turnId);
-    const stopping = this.runBoundary;
-    if (stopping?.replayedTurnActive) {
-      stopping.replayedTurnActive = false;
-      stopping.providerIdleObserved = true;
-      stopping.idle.resolve();
-    }
   }
 
-  private beginStoppingTurn(turnId: string | null): OpenCodeRunBoundaryState {
-    const previousBoundary = this.runBoundary;
-    if (previousBoundary && !turnId) {
-      return previousBoundary;
-    }
+  private isStopping(stop: OpenCodeStop): boolean {
+    return this.turnState.status === "stopping" && this.turnState.stop === stop;
+  }
 
-    const idle = createDeferred<void>();
-    const deferredEvents = previousBoundary?.deferredEvents.splice(0) ?? [];
-    const providerIdleObserved =
-      !turnId ||
-      deferredEvents.some(({ rawEvent }) => {
-        const event = unwrapOpenCodeGlobalEvent(rawEvent);
-        return event ? isOpenCodeTerminalEvent(event, this.sessionId) : false;
-      });
+  private beginStop(turnId: string | null): OpenCodeStop {
+    const terminal = createDeferred<void>();
+    const abort = this.runOwnedAbort(turnId);
+    void abort.catch(() => undefined);
+    this.abortSettlement = abort;
     if (turnId) {
       this.synthesizeInterruptedToolCalls(turnId);
-    }
-    if (providerIdleObserved) {
-      idle.resolve();
     }
     this.pendingUserMessageText = null;
     this.pendingClientMessageId = null;
     this.abortController = null;
-    const stopping: OpenCodeRunBoundaryState = {
-      idle,
-      abort: Promise.resolve(),
-      quiescence: Promise.resolve(),
-      pendingCancellationTurnId: turnId,
-      observationFailed: false,
-      providerIdleObserved,
-      reconcilingProviderStatus: false,
-      replayedTurnActive: false,
-      deferredEvents,
-    };
-    this.turnState = { status: "idle" };
-    this.runBoundary = stopping;
-    stopping.abort = Promise.resolve()
+    const stop: OpenCodeStop = { turnId, terminal, abort };
+    if (turnId) {
+      // An idle session has no run to observe, so only abort settlement gates
+      // reuse there. A running one also owes the canceled run's terminal.
+      this.turnState = { status: "stopping", stop };
+      // Cancellation is acknowledged only once the stop is proven: either the
+      // owned abort succeeded, or the provider published the run's terminal.
+      void Promise.any([abort, terminal.promise]).then(
+        () =>
+          this.notifySubscribers(
+            { type: "turn_canceled", provider: "opencode", reason: "interrupted" },
+            turnId,
+          ),
+        () => undefined,
+      );
+    }
+    return stop;
+  }
+
+  /**
+   * Issues the session-scoped abort for one stop, retrying it once. The stop owns
+   * every abort it needs: a detached retry would outlive its own boundary and
+   * cancel whichever run happened to be current when it landed.
+   */
+  private runOwnedAbort(turnId: string | null): Promise<void> {
+    // The turn hop also converts a synchronous SDK throw into a rejection.
+    return Promise.resolve()
       .then(() => this.abortSession(turnId, "interrupt"))
       .catch((error) => {
         if (this.closed) {
           throw error;
         }
-        return this.abortSession(null, "turn_start_boundary");
-      })
-      .then(() => this.acknowledgeStoppedTurn(stopping));
-    this.armStopQuiescence(stopping);
-    if (providerIdleObserved) {
-      this.acknowledgeStoppedTurn(stopping);
-    }
-    return stopping;
+        return this.abortSession(turnId, "stop_retry");
+      });
   }
 
-  private acknowledgeStoppedTurn(stopping: OpenCodeRunBoundaryState): void {
-    const turnId = stopping.pendingCancellationTurnId;
-    if (!turnId) {
+  private finishStoppingTurn(stop: OpenCodeStop): void {
+    if (!this.isStopping(stop)) {
       return;
     }
-    stopping.pendingCancellationTurnId = null;
-    this.notifySubscribers(
-      { type: "turn_canceled", provider: "opencode", reason: "interrupted" },
-      turnId,
-    );
-  }
-
-  private armStopQuiescence(stopping: OpenCodeRunBoundaryState): void {
-    stopping.observationFailed = false;
-    const providerObservation = this.observeProviderStopBoundary(stopping).catch((error) => {
-      if (!this.closed && this.runBoundary === stopping) {
-        stopping.observationFailed = true;
-      }
-      throw error;
-    });
-    const observation = Promise.all([stopping.abort, providerObservation]).then(() => undefined);
-    const quiescence = observation.then(() => this.finishStopQuiescence(stopping));
-    stopping.quiescence = quiescence;
-    void quiescence.catch(() => undefined);
-  }
-
-  private async finishStopQuiescence(stopping: OpenCodeRunBoundaryState): Promise<void> {
-    if (this.runBoundary !== stopping) {
-      return;
-    }
-    while (this.runBoundary === stopping) {
-      const event = stopping.deferredEvents.shift();
-      if (!event) {
-        if (this.activeForegroundTurnId) {
-          stopping.idle = createDeferred<void>();
-          stopping.providerIdleObserved = false;
-          stopping.replayedTurnActive = true;
-          this.armStopQuiescence(stopping);
-          return;
-        }
-        this.runBoundary = null;
-        return;
-      }
-      await this.consumeOpenCodeStreamEvent(event, stopping);
-    }
-  }
-
-  private finishStoppingTurn(stopping: OpenCodeRunBoundaryState): void {
-    if (this.runBoundary !== stopping) {
-      return;
-    }
-    this.acknowledgeStoppedTurn(stopping);
     resetOpenCodeTurnTrackingState(this.createTranslationState());
     const contextWindowMaxTokens = this.resolveSelectedModelContextWindowMaxTokens();
     this.accumulatedUsage = contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
-    stopping.providerIdleObserved = true;
-    stopping.reconcilingProviderStatus = false;
-    stopping.idle.resolve();
-    if (stopping.observationFailed) {
-      this.armStopQuiescence(stopping);
-    }
+    this.turnState = { status: "idle" };
+    stop.terminal.resolve();
   }
 
   private trackToolCall(item: ToolCallTimelineItem): void {
@@ -4201,10 +4105,6 @@ class OpenCodeAgentSession implements AgentSession {
         logger: this.logger,
       });
       await this.deleteProviderSessionIfEphemeral();
-      if (this.runBoundary) {
-        this.runBoundary.idle.resolve();
-      }
-      this.runBoundary = null;
       this.turnState = { status: "idle" };
     } finally {
       await this.releaseServer?.();

@@ -101,7 +101,6 @@ export class TestOpenCodeClient {
   mcpAddResponse: OpenCodeResponse = {};
   mcpConnectResponse: OpenCodeResponse = {};
   permissionReplyResponse: OpenCodeResponse = {};
-  permissionReplyImplementation: ((parameters: unknown) => Promise<OpenCodeResponse>) | null = null;
   providerListResponse: OpenCodeResponse = { data: { connected: [], all: [] } };
   providerListImplementation: (() => Promise<OpenCodeResponse>) | null = null;
   globalEventImplementation:
@@ -192,9 +191,7 @@ export class TestOpenCodeClient {
       permission: {
         reply: async (parameters: unknown) => {
           this.calls.permissionReply.push(parameters);
-          return this.permissionReplyImplementation
-            ? await this.permissionReplyImplementation(parameters)
-            : this.permissionReplyResponse;
+          return this.permissionReplyResponse;
         },
       },
       provider: {
