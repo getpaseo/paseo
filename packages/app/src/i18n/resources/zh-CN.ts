@@ -1400,6 +1400,18 @@ export const zhCN: TranslationResources = {
       copied: "已复制",
     },
   },
+  readAloud: {
+    action: "朗读",
+    stop: "停止",
+    speed: "播放速度 {{rate}}",
+    errors: {
+      ttsUnavailable: "此主机未配置文字转语音",
+      tooLong: "选中的文本过长，无法朗读",
+      empty: "没有可朗读的内容",
+      unsupported: "此处无法使用朗读",
+      failed: "无法朗读该内容",
+    },
+  },
   realtimeVoice: {
     actions: {
       mute: "静音 realtime voice",

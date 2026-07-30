@@ -1435,6 +1435,18 @@ export const ja: TranslationResources = {
       copied: "コピーしました",
     },
   },
+  readAloud: {
+    action: "読み上げ",
+    stop: "停止",
+    speed: "再生速度 {{rate}}",
+    errors: {
+      ttsUnavailable: "このホストでは音声合成が設定されていません",
+      tooLong: "選択範囲が長すぎて読み上げできません",
+      empty: "読み上げる内容がありません",
+      unsupported: "ここでは読み上げを利用できません",
+      failed: "読み上げできませんでした",
+    },
+  },
   realtimeVoice: {
     actions: {
       mute: "リアルタイム音声をミュート",

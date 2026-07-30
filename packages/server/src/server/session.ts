@@ -1826,6 +1826,16 @@ export class Session {
       case "dictation_stream_cancel":
         this.voiceSession.handleDictationCancel(msg.dictationId);
         return undefined;
+      case "speech.tts.read_aloud.request":
+        // Not awaited: this spans the whole synthesis (seconds to a minute for a
+        // long selection), and the caller measures the awaited duration as
+        // request latency. Read aloud is a stream of `.response` segments, not a
+        // request/response, and the controller reports its own failures.
+        void this.voiceSession.handleReadAloudRequest(msg);
+        return undefined;
+      case "speech.tts.cancel_read_aloud.request":
+        this.voiceSession.handleReadAloudCancel(msg);
+        return undefined;
       case "restart_server_request":
         return this.handleRestartServerRequest(msg.requestId, msg.reason);
       case "shutdown_server_request":

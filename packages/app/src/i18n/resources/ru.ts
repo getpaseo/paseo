@@ -1453,6 +1453,18 @@ export const ru: TranslationResources = {
       copied: "Скопировано",
     },
   },
+  readAloud: {
+    action: "Прочитать вслух",
+    stop: "Остановить",
+    speed: "Скорость воспроизведения {{rate}}",
+    errors: {
+      ttsUnavailable: "Синтез речи не настроен на этом хосте",
+      tooLong: "Выделенный текст слишком длинный для чтения вслух",
+      empty: "Нечего читать вслух",
+      unsupported: "Чтение вслух здесь недоступно",
+      failed: "Не удалось прочитать это вслух",
+    },
+  },
   realtimeVoice: {
     actions: {
       mute: "Отключить звук в реальном времени",

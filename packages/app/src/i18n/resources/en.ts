@@ -1430,6 +1430,18 @@ export const en = {
       copied: "Copied",
     },
   },
+  readAloud: {
+    action: "Read aloud",
+    stop: "Stop",
+    speed: "{{rate}} playback speed",
+    errors: {
+      ttsUnavailable: "Text-to-speech isn't set up on this host",
+      tooLong: "Selection is too long to read aloud",
+      empty: "Nothing to read aloud",
+      unsupported: "Read aloud isn't available here",
+      failed: "Couldn't read that aloud",
+    },
+  },
   realtimeVoice: {
     actions: {
       mute: "Mute realtime voice",

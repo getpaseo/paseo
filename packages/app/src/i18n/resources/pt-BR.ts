@@ -1448,6 +1448,18 @@ export const ptBR: TranslationResources = {
       copied: "Copiado",
     },
   },
+  readAloud: {
+    action: "Ler em voz alta",
+    stop: "Parar",
+    speed: "Velocidade de reprodução {{rate}}",
+    errors: {
+      ttsUnavailable: "A conversão de texto em fala não está configurada neste host",
+      tooLong: "A seleção é longa demais para ser lida em voz alta",
+      empty: "Nada para ler em voz alta",
+      unsupported: "Ler em voz alta não está disponível aqui",
+      failed: "Não foi possível ler isso em voz alta",
+    },
+  },
   realtimeVoice: {
     actions: {
       mute: "Silenciar voz em tempo real",

@@ -111,6 +111,19 @@ Paseo uses these paths under the configured OpenAI base URL:
 - voice mode STT: `/v1/audio/transcriptions`
 - voice mode TTS: `/v1/audio/speech`
 
+## Read Aloud
+
+Select text anywhere in the app — an agent's answer, a diff, a file — and a speaker button appears above the selection. Pressing it speaks the selection; the icon becomes a stop square while it plays, and pressing it again stops. Playback also stops as soon as the selection is cleared.
+
+Read aloud uses the same text-to-speech provider as voice mode (`features.voiceMode.tts`), so local Kokoro and OpenAI both work with no extra configuration. Audio is synthesized sentence by sentence and streamed to the client, so long selections start speaking on the first sentence. Selections above 4000 characters are rejected rather than queued.
+
+Two limits:
+
+- **Web and desktop only.** The bubble is anchored to a live text selection, and iOS/Android hand selection to the system edit menu, which the app cannot read. There is no read-aloud affordance on the mobile apps.
+- **The composer and the terminal are excluded.** Both own their own selection behavior.
+
+Hosts older than v0.2.5 do not have the read-aloud RPC; against those the bubble simply never appears.
+
 ## Environment Variables
 
 - `PASEO_VOICE_LLM_PROVIDER`, voice agent provider override
