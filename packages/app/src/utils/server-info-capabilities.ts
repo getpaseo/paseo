@@ -3,6 +3,14 @@ import type { DaemonServerInfo } from "@/stores/session-store";
 
 export type VoiceReadinessMode = "dictation" | "voice";
 
+// COMPAT(agentMessageQueue): added in v0.6.2, drop the gate after 2027-02-26
+// once the supported daemon floor is >= v0.6.2.
+export function supportsAgentMessageQueue(
+  serverInfo: DaemonServerInfo | null | undefined,
+): boolean {
+  return serverInfo?.features?.agentMessageQueue === true;
+}
+
 export function getServerCapabilities(params: {
   serverInfo: DaemonServerInfo | null | undefined;
 }): DaemonServerInfo["capabilities"] | null {

@@ -123,6 +123,12 @@ class FakeDirectoryClient {
 
 const serverIds = new Set<string>();
 
+const NOOP_DIRECTORY_CALLBACKS = {
+  onAgentStoppedRunning: () => undefined,
+  onAgentInactive: () => undefined,
+  onAgentDirectoryCommitted: () => undefined,
+};
+
 function createDirectory(serverId: string): {
   client: FakeDirectoryClient;
   directory: DirectorySync;
@@ -130,7 +136,7 @@ function createDirectory(serverId: string): {
   serverIds.add(serverId);
   const client = new FakeDirectoryClient();
   const directory = new DirectorySync(serverId, {
-    onAgentStoppedRunning: () => undefined,
+    ...NOOP_DIRECTORY_CALLBACKS,
     markAgentLoading: () => undefined,
     markAgentReady: () => undefined,
     markAgentError: () => undefined,
@@ -211,7 +217,7 @@ describe("DirectorySync session readiness", () => {
     const directory = new DirectorySync(
       serverId,
       {
-        onAgentStoppedRunning: () => undefined,
+        ...NOOP_DIRECTORY_CALLBACKS,
         markAgentLoading: () => undefined,
         markAgentReady: () => undefined,
         markAgentError: () => undefined,
@@ -267,7 +273,7 @@ describe("DirectorySync session readiness", () => {
     const directory = new DirectorySync(
       serverId,
       {
-        onAgentStoppedRunning: () => undefined,
+        ...NOOP_DIRECTORY_CALLBACKS,
         markAgentLoading: () => undefined,
         markAgentReady: () => undefined,
         markAgentError: () => undefined,
@@ -305,7 +311,7 @@ describe("DirectorySync session readiness", () => {
     const directory = new DirectorySync(
       serverId,
       {
-        onAgentStoppedRunning: () => undefined,
+        ...NOOP_DIRECTORY_CALLBACKS,
         markAgentLoading: () => undefined,
         markAgentReady: () => undefined,
         markAgentError: () => undefined,
@@ -460,7 +466,7 @@ describe("DirectorySync session readiness", () => {
     const directory = new DirectorySync(
       serverId,
       {
-        onAgentStoppedRunning: () => undefined,
+        ...NOOP_DIRECTORY_CALLBACKS,
         markAgentLoading: () => undefined,
         markAgentReady: () => undefined,
         markAgentError: () => undefined,
@@ -542,7 +548,7 @@ describe("DirectorySync session readiness", () => {
     const directory = new DirectorySync(
       serverId,
       {
-        onAgentStoppedRunning: () => undefined,
+        ...NOOP_DIRECTORY_CALLBACKS,
         markAgentLoading: () => undefined,
         markAgentReady: () => undefined,
         markAgentError: () => undefined,
@@ -608,7 +614,7 @@ describe("DirectorySync session readiness", () => {
     const directory = new DirectorySync(
       serverId,
       {
-        onAgentStoppedRunning: () => undefined,
+        ...NOOP_DIRECTORY_CALLBACKS,
         markAgentLoading: () => undefined,
         markAgentReady: () => undefined,
         markAgentError: () => undefined,
@@ -693,7 +699,7 @@ describe("DirectorySync session readiness", () => {
     const directory = new DirectorySync(
       serverId,
       {
-        onAgentStoppedRunning: () => undefined,
+        ...NOOP_DIRECTORY_CALLBACKS,
         markAgentLoading: () => undefined,
         markAgentReady: () => undefined,
         markAgentError: () => undefined,
@@ -741,7 +747,7 @@ describe("DirectorySync session readiness", () => {
     const directory = new DirectorySync(
       serverId,
       {
-        onAgentStoppedRunning: () => undefined,
+        ...NOOP_DIRECTORY_CALLBACKS,
         markAgentLoading: () => undefined,
         markAgentReady: () => undefined,
         markAgentError: () => undefined,
@@ -793,7 +799,7 @@ describe("DirectorySync session readiness", () => {
     const directory = new DirectorySync(
       serverId,
       {
-        onAgentStoppedRunning: () => undefined,
+        ...NOOP_DIRECTORY_CALLBACKS,
         markAgentLoading: () => undefined,
         markAgentReady: () => undefined,
         markAgentError: () => undefined,
@@ -909,7 +915,7 @@ describe("DirectorySync session readiness", () => {
     const directory = new DirectorySync(
       serverId,
       {
-        onAgentStoppedRunning: () => undefined,
+        ...NOOP_DIRECTORY_CALLBACKS,
         markAgentLoading: () => undefined,
         markAgentReady: () => undefined,
         markAgentError: () => undefined,
