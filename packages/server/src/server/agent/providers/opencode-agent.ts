@@ -2763,6 +2763,7 @@ interface OpenCodeRunBoundaryState {
   idle: Deferred<void>;
   abort: Promise<void>;
   quiescence: Promise<void>;
+  pendingCancellationTurnId: string | null;
   observationFailed: boolean;
   providerIdleObserved: boolean;
   reconcilingProviderStatus: boolean;
@@ -3837,6 +3838,7 @@ class OpenCodeAgentSession implements AgentSession {
       idle,
       abort: Promise.resolve(),
       quiescence: Promise.resolve(),
+      pendingCancellationTurnId: turnId,
       observationFailed: false,
       providerIdleObserved,
       reconcilingProviderStatus: false,
@@ -3847,15 +3849,30 @@ class OpenCodeAgentSession implements AgentSession {
     this.runBoundary = stopping;
     stopping.abort = Promise.resolve()
       .then(() => this.abortSession(turnId, "interrupt"))
-      .catch(() => this.abortSession(null, "turn_start_boundary"));
+      .catch((error) => {
+        if (this.closed) {
+          throw error;
+        }
+        return this.abortSession(null, "turn_start_boundary");
+      })
+      .then(() => this.acknowledgeStoppedTurn(stopping));
     this.armStopQuiescence(stopping);
-    if (turnId) {
-      this.notifySubscribers(
-        { type: "turn_canceled", provider: "opencode", reason: "interrupted" },
-        turnId,
-      );
+    if (providerIdleObserved) {
+      this.acknowledgeStoppedTurn(stopping);
     }
     return stopping;
+  }
+
+  private acknowledgeStoppedTurn(stopping: OpenCodeRunBoundaryState): void {
+    const turnId = stopping.pendingCancellationTurnId;
+    if (!turnId) {
+      return;
+    }
+    stopping.pendingCancellationTurnId = null;
+    this.notifySubscribers(
+      { type: "turn_canceled", provider: "opencode", reason: "interrupted" },
+      turnId,
+    );
   }
 
   private armStopQuiescence(stopping: OpenCodeRunBoundaryState): void {
@@ -3897,6 +3914,7 @@ class OpenCodeAgentSession implements AgentSession {
     if (this.runBoundary !== stopping) {
       return;
     }
+    this.acknowledgeStoppedTurn(stopping);
     resetOpenCodeTurnTrackingState(this.createTranslationState());
     const contextWindowMaxTokens = this.resolveSelectedModelContextWindowMaxTokens();
     this.accumulatedUsage = contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};

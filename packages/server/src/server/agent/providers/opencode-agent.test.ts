@@ -2359,22 +2359,47 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
-  test("fails closed when both idle-session abort attempts fail", async () => {
+  test("does not acknowledge cancellation when both abort attempts fail", async () => {
     const { parent: session, openCode } = await createParentSession("ses_failed_idle_abort");
+    const events: AgentStreamEvent[] = [];
     openCode.sessionPromptAsyncEvents = [];
     openCode.sessionAbortImplementation = async () => {
       throw new Error("abort failed");
     };
+    session.subscribe((event) => events.push(event));
 
     try {
+      await session.startTurn("still running upstream");
       await expect(session.interrupt()).rejects.toThrow("abort failed");
 
       await expect(session.startTurn("unsafe replacement")).rejects.toThrow("abort failed");
       expect(openCode.calls.sessionAbort).toHaveLength(2);
-      expect(openCode.calls.sessionPromptAsync).toHaveLength(0);
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
+      expect(events.map((event) => event.type)).toEqual(["turn_started"]);
     } finally {
       await session.close();
     }
+  });
+
+  test("does not retry an owned abort after the session closes", async () => {
+    const { parent: session, openCode } = await createParentSession("ses_close_pending_abort");
+    const settleOwnedAbort = createTestDeferred<void>();
+    openCode.sessionAbortImplementation = async () => {
+      if (openCode.calls.sessionAbort.length === 1) {
+        await settleOwnedAbort.promise;
+        throw new Error("late abort failure");
+      }
+      return { data: true };
+    };
+
+    const interrupt = session.interrupt();
+    await vi.waitFor(() => expect(openCode.calls.sessionAbort).toHaveLength(1));
+    await session.close();
+    expect(openCode.calls.sessionAbort).toHaveLength(2);
+
+    settleOwnedAbort.resolve();
+    await expect(interrupt).rejects.toThrow("late abort failure");
+    expect(openCode.calls.sessionAbort).toHaveLength(2);
   });
 
   test("fails closed when the SDK abort throws before returning a promise", async () => {
