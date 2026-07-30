@@ -158,7 +158,11 @@ test.describe("Workspace file change conflicts", () => {
     await rm(filePath, { recursive: true });
     await writeFile(filePath, "# After\n", "utf8");
     await gate.waitForHeldReadyFileUpdate();
+    gate.holdFileReads(relativePath);
     await fileCallout(page).getByRole("button", { name: "Retry" }).click();
+    await gate.waitForHeldFileRead();
+    await expect(fileCallout(page).getByRole("button", { name: "Retry" })).toBeDisabled();
+    gate.releaseHeldFileRead();
     await expectCleanReplacementCanReload(page);
     gate.releaseHeldReadyFileUpdate();
   });

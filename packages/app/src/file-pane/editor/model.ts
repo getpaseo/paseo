@@ -13,6 +13,11 @@ export interface FileEditorSnapshot {
   error: string | null;
 }
 
+export type FileConflictCallout =
+  | { kind: "changed"; canOverwrite: boolean }
+  | { kind: "deleted" }
+  | { kind: "checkFailed" };
+
 export interface FileEditorFile {
   content: string;
   hasBom: boolean;
@@ -26,6 +31,11 @@ export interface FileEditorSession {
     expectedModifiedAt: string;
     expectedRevision?: string;
   }): Promise<FileWriteResult>;
+}
+
+export interface FileVersionSource {
+  subscribe(listener: () => void): () => void;
+  getVersion(): FileVersion | null;
 }
 
 export interface FileEditorClock {
@@ -53,6 +63,7 @@ export class FileEditorModel {
   private observedWhileSaving: FileVersion | null = null;
   private persistedContent: string;
   private hasBom: boolean;
+  private unsubscribeVersionSource: (() => void) | null = null;
 
   constructor(input: {
     file: FileEditorFile;
@@ -80,6 +91,21 @@ export class FileEditorModel {
   };
 
   getSnapshot = (): FileEditorSnapshot => this.snapshot;
+
+  connectFileVersions(source: FileVersionSource): void {
+    this.disconnectFileVersions();
+    const receiveVersion = () => {
+      const version = source.getVersion();
+      if (version) this.receiveFileVersion(version);
+    };
+    this.unsubscribeVersionSource = source.subscribe(receiveVersion);
+    receiveVersion();
+  }
+
+  disconnectFileVersions(): void {
+    this.unsubscribeVersionSource?.();
+    this.unsubscribeVersionSource = null;
+  }
 
   edit(content: string): void {
     if (this.disposed || content === this.snapshot.content) return;
@@ -152,6 +178,7 @@ export class FileEditorModel {
     this.disposed = true;
     this.saveSequence += 1;
     this.clearAutosave();
+    this.disconnectFileVersions();
     this.listeners.clear();
   }
 
@@ -321,6 +348,24 @@ export class FileEditorModel {
     this.snapshot = snapshot;
     for (const listener of this.listeners) listener();
   }
+}
+
+export function getFileConflictCallout(snapshot: FileEditorSnapshot): FileConflictCallout | null {
+  if (snapshot.status !== "conflict") return null;
+  switch (snapshot.observedVersion.status) {
+    case "ready":
+      return { kind: "changed", canOverwrite: snapshot.modified };
+    case "missing":
+      return { kind: "deleted" };
+    case "error":
+      return { kind: "checkFailed" };
+    default:
+      return assertNever(snapshot.observedVersion);
+  }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unexpected file version: ${JSON.stringify(value)}`);
 }
 
 function detectLineSeparator(content: string): FileLineSeparator {

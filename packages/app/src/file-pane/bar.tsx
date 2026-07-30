@@ -4,9 +4,8 @@ import { useTranslation } from "react-i18next";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import type { Theme } from "@/styles/theme";
-import { FileConflictAlert } from "./conflict-alert";
+import { FileConflictAlert, type FileConflictAlertState } from "./conflict-alert";
 import type { FileEditorStatus } from "./editor/model";
-import type { FileVersion } from "@getpaseo/protocol/messages";
 
 const ThemedSpinner = withUnistyles(LoadingSpinner);
 const spinnerMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -19,11 +18,7 @@ export function FilePanelBar({
   editorStatus,
   cursor,
   vimMode,
-  conflictFileStatus,
-  conflictModified,
-  onOverwrite,
-  onReload,
-  onRetry,
+  conflict,
 }: {
   size: number;
   lineCount?: number;
@@ -32,11 +27,7 @@ export function FilePanelBar({
   editorStatus?: FileEditorStatus;
   cursor?: { line: number; column: number };
   vimMode?: string | null;
-  conflictFileStatus?: FileVersion["status"];
-  conflictModified?: boolean;
-  onOverwrite?(): void;
-  onReload?(): void;
-  onRetry?(): void;
+  conflict?: FileConflictAlertState;
 }) {
   const { t } = useTranslation();
   const markdownModes = [
@@ -116,15 +107,7 @@ export function FilePanelBar({
           />
         ) : null}
       </View>
-      {editorStatus === "conflict" && onOverwrite && onReload && onRetry ? (
-        <FileConflictAlert
-          fileStatus={conflictFileStatus ?? "ready"}
-          modified={conflictModified ?? false}
-          onOverwrite={onOverwrite}
-          onReload={onReload}
-          onRetry={onRetry}
-        />
-      ) : null}
+      {conflict ? <FileConflictAlert state={conflict} /> : null}
     </View>
   );
 }

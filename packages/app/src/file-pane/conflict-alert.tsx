@@ -1,6 +1,5 @@
 import { Button } from "@/components/ui/button";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
-import type { FileVersion } from "@getpaseo/protocol/messages";
 import { AlertTriangle } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
@@ -9,29 +8,19 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 const ThemedAlertTriangle = withUnistyles(AlertTriangle);
 const warningIconMapping = (theme: Theme) => ({ color: theme.colors.palette.amber[500] });
 
-export function FileConflictAlert({
-  fileStatus,
-  modified,
-  onOverwrite,
-  onReload,
-  onRetry,
-}: {
-  fileStatus: FileVersion["status"];
-  modified: boolean;
-  onOverwrite(): void;
-  onReload(): void;
-  onRetry(): void;
-}) {
+export type FileConflictAlertState =
+  | { kind: "changed"; canOverwrite: boolean; onReload(): void; onOverwrite(): void }
+  | { kind: "deleted" }
+  | { kind: "checkFailed"; retrying: boolean; onRetry(): void };
+
+export function FileConflictAlert({ state }: { state: FileConflictAlertState }) {
   const { t } = useTranslation();
-  const canReload = fileStatus === "ready";
-  const canOverwrite = canReload && modified;
-  const canRetry = fileStatus === "error";
   let title = t("panels.file.editor.changedOnDisk");
-  if (fileStatus === "missing") title = t("panels.file.editor.deletedTitle");
-  else if (fileStatus === "error") title = t("panels.file.editor.checkFailedTitle");
+  if (state.kind === "deleted") title = t("panels.file.editor.deletedTitle");
+  else if (state.kind === "checkFailed") title = t("panels.file.editor.checkFailedTitle");
   let description: string | undefined;
-  if (fileStatus !== "ready") description = t("panels.file.editor.preservedDescription");
-  else if (canOverwrite) description = t("panels.file.editor.conflictDescription");
+  if (state.kind !== "changed") description = t("panels.file.editor.preservedDescription");
+  else if (state.canOverwrite) description = t("panels.file.editor.conflictDescription");
 
   return (
     <View style={styles.container} testID="file-conflict-alert" accessibilityRole="alert">
@@ -40,20 +29,20 @@ export function FileConflictAlert({
         <Text style={styles.title}>{title}</Text>
         {description ? <Text style={styles.description}>{description}</Text> : null}
       </View>
-      {canOverwrite || canReload || canRetry ? (
+      {state.kind !== "deleted" ? (
         <View style={styles.actions}>
-          {canOverwrite ? (
-            <Button variant="outline" size="sm" onPress={onOverwrite}>
+          {state.kind === "changed" && state.canOverwrite ? (
+            <Button variant="outline" size="sm" onPress={state.onOverwrite}>
               {t("panels.file.editor.overwrite")}
             </Button>
           ) : null}
-          {canReload ? (
-            <Button variant="outline" size="sm" onPress={onReload}>
+          {state.kind === "changed" ? (
+            <Button variant="outline" size="sm" onPress={state.onReload}>
               {t("panels.file.editor.reload")}
             </Button>
           ) : null}
-          {canRetry ? (
-            <Button variant="outline" size="sm" onPress={onRetry}>
+          {state.kind === "checkFailed" ? (
+            <Button variant="outline" size="sm" onPress={state.onRetry} loading={state.retrying}>
               {t("common.actions.retry")}
             </Button>
           ) : null}
