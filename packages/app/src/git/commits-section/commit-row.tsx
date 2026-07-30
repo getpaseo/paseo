@@ -1,18 +1,34 @@
 import { memo, useCallback } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import type { CheckoutCommit } from "@getpaseo/protocol/messages";
 import { ThemedChevron, chevronColorMapping } from "@/git/themed-chevron";
+import type { ClassifiedCheckoutCommit } from "@/git/use-commits-query";
+import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { formatTimeAgo } from "@/utils/time";
-import { dotStyles } from "./shared";
+import { CommitGraphNode } from "./commit-graph-node";
 
 interface CommitRowProps {
-  commit: CheckoutCommit;
+  commit: ClassifiedCheckoutCommit;
+  isFirst: boolean;
+  isLast: boolean;
   now: Date;
   onCommitPress: (sha: string) => void;
 }
 
-export const CommitRow = memo(function CommitRow({ commit, now, onCommitPress }: CommitRowProps) {
+function commitRowPressableStyle({
+  hovered,
+  pressed,
+}: PressableStateCallbackType & { hovered?: boolean }) {
+  return [styles.row, (Boolean(hovered) || pressed) && styles.rowActive];
+}
+
+export const CommitRow = memo(function CommitRow({
+  commit,
+  isFirst,
+  isLast,
+  now,
+  onCommitPress,
+}: CommitRowProps) {
   const handlePress = useCallback(() => {
     onCommitPress(commit.sha);
   }, [commit.sha, onCommitPress]);
@@ -22,16 +38,17 @@ export const CommitRow = memo(function CommitRow({ commit, now, onCommitPress }:
       accessibilityRole="button"
       testID={`commit-row-${commit.shortSha}`}
       onPress={handlePress}
-      style={styles.row}
+      style={commitRowPressableStyle}
     >
-      <View
-        testID={commit.isOnRemote ? "commit-dot-remote" : "commit-dot-local"}
-        style={commit.isOnRemote ? dotStyles.dotRemote : dotStyles.dotLocal}
-      />
-      <Text style={styles.shortSha}>{commit.shortSha}</Text>
-      <Text style={styles.subject} numberOfLines={1}>
-        {commit.subject}
-      </Text>
+      <CommitGraphNode commit={commit} isFirst={isFirst} isLast={isLast} />
+      <View style={styles.commitDetails}>
+        <Text dataSet={CODE_SURFACE_DATASET} style={styles.shortSha} numberOfLines={1}>
+          {commit.shortSha}
+        </Text>
+        <Text style={styles.subject} numberOfLines={1}>
+          {commit.subject}
+        </Text>
+      </View>
       <Text style={styles.timestamp}>{formatTimeAgo(new Date(commit.authorDate), now)}</Text>
       <View style={styles.caret}>
         <ThemedChevron size={14} uniProps={chevronColorMapping} />
@@ -49,10 +66,21 @@ const styles = StyleSheet.create((theme) => ({
     paddingRight: theme.spacing[2],
     paddingVertical: theme.spacing[1],
   },
+  rowActive: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  commitDetails: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
   shortSha: {
     fontSize: theme.fontSize.xs,
     fontFamily: theme.fontFamily.mono,
     color: theme.colors.foregroundMuted,
+    width: 70,
     flexShrink: 0,
   },
   subject: {

@@ -77,8 +77,17 @@ function ready(
   return { status: "ready", cwd: "/workspace", path: "file.ts", size, modifiedAt };
 }
 
-function makeModel() {
-  const file = { content: "one", version: ready() as Extract<FileVersion, { status: "ready" }> };
+interface MakeModelInput {
+  content?: string;
+  hasBom?: boolean;
+}
+
+function makeModel(input: MakeModelInput = {}) {
+  const file = {
+    content: input.content ?? "one",
+    hasBom: input.hasBom ?? false,
+    version: ready() as Extract<FileVersion, { status: "ready" }>,
+  };
   const session = new FileSession(file);
   const clock = new TestClock();
   return { model: new FileEditorModel({ file, session, clock }), session, clock };
@@ -142,10 +151,55 @@ describe("FileEditorModel", () => {
     expect(model.getSnapshot().status).toBe("clean");
   });
 
+  test("keeps CRLF content in file form", async () => {
+    const { model, session } = makeModel({ content: "one\r\ntwo\r\n" });
+
+    expect(model.getSnapshot()).toMatchObject({
+      content: "one\r\ntwo\r\n",
+      lineSeparator: "\r\n",
+    });
+    model.edit("one\r\ntwo\r\nthree\r\n");
+    await model.save();
+
+    expect(session.writes).toEqual([
+      {
+        content: "one\r\ntwo\r\nthree\r\n",
+        expectedModifiedAt: "2026-07-18T00:00:00.000Z",
+      },
+    ]);
+  });
+
+  test("restores a UTF-8 BOM before writing a CRLF file", async () => {
+    const { model, session } = makeModel({ content: "one\r\n", hasBom: true });
+
+    model.edit("saved\r\n");
+    await model.save();
+    model.edit("saved again\r\n");
+    await model.save();
+
+    expect(session.writes).toEqual([
+      {
+        content: "\uFEFFsaved\r\n",
+        expectedModifiedAt: "2026-07-18T00:00:00.000Z",
+      },
+      {
+        content: "\uFEFFsaved again\r\n",
+        expectedModifiedAt: "2026-07-18T00:00:01.000Z",
+      },
+    ]);
+  });
+
+  test("uses the first line separator when a file mixes styles", () => {
+    const { model } = makeModel({ content: "one\r\ntwo\nthree\r" });
+
+    expect(model.getSnapshot().lineSeparator).toBe("\r\n");
+  });
+
   test("reloads a clean editor when the disk version changes", async () => {
     const { model, session } = makeModel();
     session.file = {
       content: "external",
+      hasBom: false,
       version: ready("2026-07-18T00:00:02.000Z", 8) as Extract<FileVersion, { status: "ready" }>,
     };
 
@@ -153,6 +207,26 @@ describe("FileEditorModel", () => {
     await Promise.resolve();
 
     expect(model.getSnapshot()).toMatchObject({ status: "clean", content: "external" });
+  });
+
+  test("adopts the format from a clean remote refresh", async () => {
+    const { model, session } = makeModel({ content: "local\r\n", hasBom: true });
+    session.file = {
+      content: "remote\n",
+      hasBom: false,
+      version: ready("2026-07-18T00:00:02.000Z", 7) as Extract<FileVersion, { status: "ready" }>,
+    };
+
+    model.receiveFileVersion(session.file.version);
+    await Promise.resolve();
+    expect(model.getSnapshot().lineSeparator).toBe("\n");
+    model.edit("saved\n");
+    await model.save();
+
+    expect(session.writes.at(-1)).toEqual({
+      content: "saved\n",
+      expectedModifiedAt: "2026-07-18T00:00:02.000Z",
+    });
   });
 
   test("coalesces consecutive clean disk updates onto the latest reload", async () => {
@@ -164,9 +238,9 @@ describe("FileEditorModel", () => {
 
     model.receiveFileVersion(firstVersion);
     model.receiveFileVersion(latestVersion);
-    reads[0]?.({ content: "first", version: firstVersion });
+    reads[0]?.({ content: "first", hasBom: false, version: firstVersion });
     await Promise.resolve();
-    reads[1]?.({ content: "latest", version: latestVersion });
+    reads[1]?.({ content: "latest", hasBom: false, version: latestVersion });
     await Promise.resolve();
 
     expect(model.getSnapshot()).toMatchObject({ status: "clean", content: "latest" });
@@ -186,6 +260,21 @@ describe("FileEditorModel", () => {
     expect(model.getSnapshot().status).toBe("clean");
   });
 
+  test("keeps the local CRLF and BOM when overwriting a conflict", async () => {
+    const { model, session } = makeModel({ content: "one\r\n", hasBom: true });
+    model.edit("local\r\n");
+    model.receiveFileVersion(ready("2026-07-18T00:00:02.000Z", 4));
+
+    await model.overwrite();
+
+    expect(session.writes).toEqual([
+      {
+        content: "\uFEFFlocal\r\n",
+        expectedModifiedAt: "2026-07-18T00:00:02.000Z",
+      },
+    ]);
+  });
+
   test("reload discards a conflicted local buffer for the disk contents", async () => {
     const { model, session } = makeModel();
     model.edit("local");
@@ -193,12 +282,32 @@ describe("FileEditorModel", () => {
       FileVersion,
       { status: "ready" }
     >;
-    session.file = { content: "disk", version: diskVersion };
+    session.file = { content: "disk", hasBom: false, version: diskVersion };
     model.receiveFileVersion(diskVersion);
 
     await model.reload();
 
     expect(model.getSnapshot()).toMatchObject({ status: "clean", content: "disk" });
+  });
+
+  test("adopts the remote format when reloading a conflict", async () => {
+    const { model, session } = makeModel({ content: "one\r\n", hasBom: true });
+    model.edit("local\r\n");
+    const diskVersion = ready("2026-07-18T00:00:02.000Z", 5) as Extract<
+      FileVersion,
+      { status: "ready" }
+    >;
+    session.file = { content: "disk\n", hasBom: false, version: diskVersion };
+    model.receiveFileVersion(diskVersion);
+
+    await model.reload();
+    model.edit("saved\n");
+    await model.save();
+
+    expect(session.writes.at(-1)).toEqual({
+      content: "saved\n",
+      expectedModifiedAt: "2026-07-18T00:00:02.000Z",
+    });
   });
 
   test("reports failed saves without losing the local buffer", async () => {

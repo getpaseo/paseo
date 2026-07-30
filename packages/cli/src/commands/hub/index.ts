@@ -1,7 +1,37 @@
 import { Command } from "commander";
+import { hostname } from "node:os";
 import { withOutput, type ListResult, type OutputSchema } from "../../output/index.js";
 import { addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
 import { connectToDaemon } from "../../utils/client.js";
+import { createDeviceAuthorizationWorkflow } from "./device-authorization.js";
+
+interface HubCommandClient {
+  connectHub(url: string, token: string): Promise<{ status: HubStatus }>;
+  getHubStatus(): Promise<{ status: HubStatus }>;
+  disconnectHub(force: boolean): Promise<{ status: HubStatus; warning?: string }>;
+  close(): Promise<void>;
+}
+
+interface HubStatus {
+  state: string;
+  daemonId: string | null;
+  hubOrigin: string | null;
+  scopes: string[];
+  connectedAt: string | null;
+  lastError: string | null;
+}
+
+interface HubCommandEnvironment {
+  connect(host: string | undefined): Promise<HubCommandClient>;
+  authorize(url: string, displayName: string): Promise<string>;
+  displayName(): string;
+}
+
+const productionEnvironment: HubCommandEnvironment = {
+  connect: (host) => connectToDaemon({ host }),
+  authorize: (url, displayName) => createDeviceAuthorizationWorkflow().authorize(url, displayName),
+  displayName: hostname,
+};
 
 interface HubRow {
   state: string;
@@ -55,10 +85,11 @@ function result(
 }
 
 async function withClient<T>(
+  environment: HubCommandEnvironment,
   host: string | undefined,
-  action: (client: Awaited<ReturnType<typeof connectToDaemon>>) => Promise<T>,
+  action: (client: HubCommandClient) => Promise<T>,
 ): Promise<T> {
-  const client = await connectToDaemon({ host });
+  const client = await environment.connect(host);
   try {
     return await action(client);
   } finally {
@@ -66,23 +97,36 @@ async function withClient<T>(
   }
 }
 
-export function createHubCommand(): Command {
+export function createHubCommand(
+  environment: HubCommandEnvironment = productionEnvironment,
+): Command {
   const hub = new Command("hub").description("Manage this daemon's Paseo Hub relationship");
   addJsonAndDaemonHostOptions(
-    hub.command("connect").argument("<url>").requiredOption("--token <token>"),
+    hub.command("connect").argument("<url>").option("--token <token>"),
   ).action(
     withOutput(async (...args) => {
       const url = args[0] as string;
-      const options = args.at(-2) as { token: string; host?: string };
-      return withClient(options.host, async (client) =>
-        result((await client.connectHub(url, options.token)).status),
-      );
+      const options = args.at(-2) as { token?: string; host?: string };
+      return withClient(environment, options.host, async (client) => {
+        if (options.token !== undefined) {
+          return result((await client.connectHub(url, options.token)).status);
+        }
+        const existing = (await client.getHubStatus()).status;
+        if (existing.state !== "not_connected" && existing.state !== "revoked") {
+          throw new Error("This daemon already has a Hub relationship");
+        }
+        const token = await environment.authorize(
+          url,
+          suggestedDisplayName(environment.displayName()),
+        );
+        return result((await client.connectHub(url, token)).status);
+      });
     }),
   );
   addJsonAndDaemonHostOptions(hub.command("status")).action(
     withOutput(async (...args) => {
       const options = args.at(-2) as { host?: string };
-      return withClient(options.host, async (client) =>
+      return withClient(environment, options.host, async (client) =>
         result((await client.getHubStatus()).status),
       );
     }),
@@ -94,11 +138,15 @@ export function createHubCommand(): Command {
   ).action(
     withOutput(async (...args) => {
       const options = args.at(-2) as { host?: string; force?: boolean };
-      return withClient(options.host, async (client) => {
+      return withClient(environment, options.host, async (client) => {
         const response = await client.disconnectHub(options.force ?? false);
         return result(response.status, response.warning);
       });
     }),
   );
   return hub;
+}
+
+function suggestedDisplayName(value: string): string {
+  return value.trim().slice(0, 100) || "Paseo daemon";
 }

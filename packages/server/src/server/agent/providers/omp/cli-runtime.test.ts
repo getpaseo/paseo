@@ -96,6 +96,23 @@ describe("OMP CLI runtime", () => {
     });
   });
 
+  test("accepts session state without thinkingLevel for non-reasoning models", async () => {
+    const child = createOmpChild();
+    // Models like cursor-grok-4.5-high-fast encode effort in the model ID, so
+    // OMP marks them reasoning: false and omits thinkingLevel from get_state.
+    replyToCommands(child, () => ({
+      model: null,
+      isStreaming: false,
+      isCompacting: false,
+      sessionId: "session-1",
+      messageCount: 0,
+      queuedMessageCount: 0,
+    }));
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    await expect(session.getState()).resolves.toMatchObject({ sessionId: "session-1" });
+  });
+
   test("rejects malformed RPC results instead of trusting transport data", async () => {
     const child = createOmpChild();
     replyToCommands(child, () => ({
@@ -165,6 +182,40 @@ describe("OMP CLI runtime", () => {
         provider: "openai-codex",
         id: "gpt-5.6-sol",
         maxTokens: null,
+      }),
+    ]);
+  });
+
+  test("accepts model catalogs with null contextWindow from NVIDIA", async () => {
+    const child = createOmpChild();
+    replyToCommands(child, () => ({
+      models: [
+        {
+          provider: "nvidia",
+          id: "minimaxai/minimax-m3",
+          name: "MiniMax-M3",
+          contextWindow: null,
+        },
+        {
+          provider: "zai",
+          id: "glm-5.2",
+          name: "GLM-5.2",
+          contextWindow: 131_072,
+        },
+      ],
+    }));
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    await expect(session.getAvailableModels()).resolves.toEqual([
+      expect.objectContaining({
+        provider: "nvidia",
+        id: "minimaxai/minimax-m3",
+        contextWindow: null,
+      }),
+      expect.objectContaining({
+        provider: "zai",
+        id: "glm-5.2",
+        contextWindow: 131_072,
       }),
     ]);
   });

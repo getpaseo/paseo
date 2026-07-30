@@ -26,6 +26,18 @@ dev--feature-auth--miniweb.localhost
 
 Local and public routes use one combined leftmost label (`script--branch--project`). This keeps the hostname compatible with normal single-level wildcard DNS and TLS. If the combined label would exceed DNS's 63-character label limit, Paseo truncates it with a deterministic hash suffix to avoid collisions.
 
+## Managing workspace scripts
+
+Configured `paseo.json` scripts can be managed without addressing their backing terminal directly:
+
+```bash
+paseo script ls [--cwd <path> | --workspace <workspace-id>]
+paseo script start <name> [--cwd <path> | --workspace <workspace-id>]
+paseo script stop <name> [--cwd <path> | --workspace <workspace-id>]
+```
+
+The commands return the same script metadata shown by the workspace: lifecycle, service port, proxy URLs, health, exit code, and supervised terminal ID. `stop` terminates the managed terminal rather than only removing the proxy route, so normal script lifecycle cleanup remains authoritative. MCP exposes matching `list_workspace_scripts`, `start_workspace_script`, and `stop_workspace_script` tools; those require an explicit workspace ID.
+
 ## Configuration
 
 Add a `serviceProxy` block under `daemon` in `~/.paseo/config.json`:
@@ -94,6 +106,29 @@ server {
     }
 }
 ```
+
+Nginx's `$host` drops the port. If you terminate on a non-default port, use `$http_host` instead so the port survives — that is what "forwards the `Host` header unchanged" means here.
+
+## Forwarded headers
+
+Paseo sets these when it forwards a request to a workspace service:
+
+| Header              | Value                                                                                                                                   |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `X-Forwarded-Host`  | The `Host` header verbatim, including the port when the client used one                                                                 |
+| `X-Forwarded-Proto` | The request scheme (`http` on the WebSocket upgrade path)                                                                               |
+| `X-Forwarded-For`   | The immediate peer address. Replaces any existing chain, so behind your own reverse proxy this is the proxy's address, not the client's |
+| `X-Forwarded-Port`  | The port from the `Host` header when it has one, otherwise whatever your proxy already set                                              |
+
+`X-Forwarded-Port` follows the same trust rule as `X-Forwarded-Host`: the authority Paseo observed wins. When the `Host` header carries a port, that port is reported and replaces any inbound `X-Forwarded-Port`, so a client cannot forge one. When `Host` carries no port there is nothing to observe, so a value your reverse proxy set survives untouched — that is the case where nginx's `$host` drops the port and `X-Forwarded-Port` is the only source. Paseo never derives the port from the scheme. Any other `X-Forwarded-*` header your proxy sends is passed through untouched.
+
+Services that build absolute URLs should prefer `Host` or `X-Forwarded-Host`.
+
+### The forwarded authority is not authenticated
+
+Route lookup normalizes the port away before matching a service hostname, so a client can address the daemon with any port in `Host` and still reach the service. That port is what lands in `X-Forwarded-Host` and `X-Forwarded-Port`. Paseo also does not check whether an inbound `X-Forwarded-Port` came from a proxy in `trustedProxies` — when `Host` carries no port, a client-supplied value is passed through.
+
+Treat the forwarded authority as client-influenced input. A service that builds password reset links, absolute redirects, or cached URLs from it should pin its own public origin in configuration rather than deriving one from request headers. This is not specific to `X-Forwarded-Port`: the `Host` header has always carried a client-chosen port.
 
 ## Environment variables
 

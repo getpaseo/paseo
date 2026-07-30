@@ -63,6 +63,8 @@ export {
   selectPanelVisibility,
 };
 
+export type ExpandedPathsUpdate = string[] | ((currentPaths: string[]) => string[]);
+
 export interface PanelState {
   // Mobile: React's durable target plus the generation that owns it.
   mobilePanel: MobilePanelSelection;
@@ -104,7 +106,7 @@ export interface PanelState {
   // File explorer settings actions
   setExplorerTab: (tab: ExplorerTab) => void;
   setExplorerTabForCheckout: (params: ExplorerCheckoutContext & { tab: ExplorerTab }) => void;
-  setExpandedPathsForWorkspace: (workspaceKey: string, paths: string[]) => void;
+  setExpandedPathsForWorkspace: (workspaceKey: string, paths: ExpandedPathsUpdate) => void;
   setDiffExpandedPathsForWorkspace: (workspaceKey: string, paths: string[]) => void;
   setDiffCollapsedFoldersForWorkspace: (workspaceKey: string, dirPaths: string[]) => void;
   activateExplorerTabForCheckout: (checkout: ExplorerCheckoutContext) => void;
@@ -253,9 +255,16 @@ export const usePanelStore = create<PanelState>()(
           return nextState;
         }),
       setExpandedPathsForWorkspace: (workspaceKey, paths) =>
-        set((state) => ({
-          expandedPathsByWorkspace: { ...state.expandedPathsByWorkspace, [workspaceKey]: paths },
-        })),
+        set((state) => {
+          const currentPaths = state.expandedPathsByWorkspace[workspaceKey] ?? ["."];
+          const nextPaths = typeof paths === "function" ? paths(currentPaths) : paths;
+          return {
+            expandedPathsByWorkspace: {
+              ...state.expandedPathsByWorkspace,
+              [workspaceKey]: nextPaths,
+            },
+          };
+        }),
       setDiffExpandedPathsForWorkspace: (workspaceKey, paths) =>
         set((state) => ({
           diffExpandedPathsByWorkspace: {

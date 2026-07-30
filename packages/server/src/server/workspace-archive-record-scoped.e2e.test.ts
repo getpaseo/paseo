@@ -5,7 +5,11 @@ import path from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 
 import { getFullAccessConfig } from "./daemon-e2e/agent-configs.js";
-import { createDaemonTestContext, type DaemonTestContext } from "./test-utils/index.js";
+import {
+  createDaemonTestContext,
+  DaemonClient,
+  type DaemonTestContext,
+} from "./test-utils/index.js";
 
 // Model B archive is scoped to a single workspace RECORD (by workspaceId), not
 // to a directory on disk. A directory can back multiple workspaces, so archiving
@@ -85,6 +89,33 @@ async function terminalIdsForWorkspace(cwd: string, workspaceId: string): Promis
   return new Set(listed.terminals.map((terminal) => terminal.id));
 }
 
+function collectWorkspaceRemovals(client: DaemonClient): {
+  workspaceIds: string[];
+  stop: () => void;
+} {
+  const workspaceIds: string[] = [];
+  const stop = client.on("workspace_update", (message) => {
+    if (message.payload.kind === "remove") {
+      workspaceIds.push(message.payload.id);
+    }
+  });
+  return { workspaceIds, stop };
+}
+
+function collectWorkspaceTitles(client: DaemonClient): {
+  workspaces: Array<{ id: string; name: string; title: string | null }>;
+  stop: () => void;
+} {
+  const workspaces: Array<{ id: string; name: string; title: string | null }> = [];
+  const stop = client.on("workspace_update", (message) => {
+    if (message.payload.kind === "upsert") {
+      const { id, name, title } = message.payload.workspace;
+      workspaces.push({ id, name, title });
+    }
+  });
+  return { workspaces, stop };
+}
+
 test("archiving one of two workspaces sharing a cwd spares the sibling and the directory", async () => {
   const cwd = makeTempDir("workspace-archive-shared-cwd-");
 
@@ -160,6 +191,62 @@ test("archiving one of two workspaces sharing a cwd spares the sibling and the d
 
   await ctx.client.killTerminal(terminalBId);
 }, 60000);
+
+test("archiving a workspace removes it from every subscribed client", async () => {
+  const cwd = makeTempDir("workspace-archive-global-");
+  const workspaceId = await createLocalWorkspace(cwd, "shared workspace");
+  const observer = new DaemonClient({
+    url: `ws://127.0.0.1:${ctx.daemon.port}/ws`,
+    reconnect: { enabled: false },
+  });
+
+  await observer.connect();
+  const initiatingClientRemovals = collectWorkspaceRemovals(ctx.client);
+  const removals = collectWorkspaceRemovals(observer);
+
+  try {
+    await ctx.client.fetchWorkspaces({ subscribe: { subscriptionId: "workspace-initiator" } });
+    await observer.fetchWorkspaces({ subscribe: { subscriptionId: "workspace-observer" } });
+
+    const archive = await ctx.client.archiveWorkspace(workspaceId);
+    await observer.ping({ requestId: "archive-observer-barrier" });
+
+    expect(archive.error).toBe(null);
+    expect(initiatingClientRemovals.workspaceIds).toEqual([workspaceId]);
+    expect(removals.workspaceIds).toEqual([workspaceId]);
+  } finally {
+    initiatingClientRemovals.stop();
+    removals.stop();
+    await observer.close();
+  }
+});
+
+test("renaming a workspace updates every subscribed client", async () => {
+  const cwd = makeTempDir("workspace-rename-global-");
+  const workspaceId = await createLocalWorkspace(cwd, "shared workspace");
+  const observer = new DaemonClient({
+    url: `ws://127.0.0.1:${ctx.daemon.port}/ws`,
+    reconnect: { enabled: false },
+  });
+
+  await observer.connect();
+  const titles = collectWorkspaceTitles(observer);
+
+  try {
+    await observer.fetchWorkspaces({ subscribe: { subscriptionId: "workspace-observer" } });
+
+    const renamed = await ctx.client.setWorkspaceTitle(workspaceId, "Renamed workspace");
+    await observer.ping({ requestId: "rename-observer-barrier" });
+
+    expect(renamed).toEqual({ title: "Renamed workspace" });
+    expect(titles.workspaces).toEqual([
+      { id: workspaceId, name: "Renamed workspace", title: "Renamed workspace" },
+    ]);
+  } finally {
+    titles.stop();
+    await observer.close();
+  }
+});
 
 test("archiving the last reference to a worktree removes it from disk regardless of the disk flag", async () => {
   const repoDir = createGitRepo();

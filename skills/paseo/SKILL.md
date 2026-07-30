@@ -1,6 +1,6 @@
 ---
 name: paseo
-description: Paseo reference for managing workspaces, agents, schedules, and heartbeats.
+description: Paseo reference for managing workspaces, workspace scripts, agents, schedules, and heartbeats.
 ---
 
 Paseo is a daemon that supervises AI coding agents on your machine. Control it through tools or a CLI.
@@ -14,6 +14,24 @@ Paseo is a daemon that supervises AI coding agents on your machine. Control it t
 **`archive_workspace`** — `{ workspaceId }`. Archives the workspace, its agents, and its terminals. Local directories remain; Paseo removes an owned worktree only after its final active workspace reference is archived.
 
 Worktree creation and reference accounting are implementation details of `isolation: "worktree"`.
+
+## Workspace scripts
+
+Configured `paseo.json` scripts use the same supervised lifecycle from tools and the CLI.
+
+**`list_workspace_scripts`** — `{ workspaceId }`. Lists configured scripts with lifecycle, service port, proxy URLs, health, exit code, and terminal ID.
+
+**`start_workspace_script`** — `{ workspaceId, scriptName }`. Starts one configured script through Paseo's managed workspace-script launcher and returns its status metadata.
+
+**`stop_workspace_script`** — `{ workspaceId, scriptName }`. Stops a running script through its supervised terminal and returns the stopped status metadata.
+
+The matching CLI surface accepts either an explicit workspace ID or resolves the current directory:
+
+```bash
+paseo script ls [--cwd <path> | --workspace <workspace-id>]
+paseo script start <name> [--cwd <path> | --workspace <workspace-id>]
+paseo script stop <name> [--cwd <path> | --workspace <workspace-id>]
+```
 
 ## Agents
 
@@ -104,6 +122,7 @@ paseo workspace create --isolation worktree --mode branch-off --new-branch fix-x
 paseo workspace create --isolation worktree --mode checkout-branch --branch existing-work
 paseo workspace create --isolation worktree --mode checkout-pr --pr-number 42
 paseo run --provider codex/gpt-5.4 --mode full-access --workspace <workspace-id> "<prompt>"
+paseo run --provider codex/gpt-5.4 --mode full-access --new-workspace worktree --worktree-mode branch-off --new-branch fix-x --base main "<prompt>"
 paseo send <agent-id> "<follow-up>"
 paseo ls
 paseo schedule create --cron "*/15 * * * *" "ping main build"

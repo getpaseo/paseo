@@ -130,7 +130,13 @@ function shellQuoteCliArg(value) {
 
 function getTerminalHookSmokeCommand(marker) {
   if (process.platform === "win32") {
-    return `"%PASEO_HOOK_CLI%" hooks codex Stop && echo ${marker}`;
+    const script = [
+      "& $env:PASEO_HOOK_CLI hooks codex Stop",
+      "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+      `Write-Output '${marker}'`,
+    ].join("; ");
+    const encodedScript = Buffer.from(script, "utf16le").toString("base64");
+    return `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encodedScript}`;
   }
 
   return `"$PASEO_HOOK_CLI" hooks codex Stop && echo ${marker}`;

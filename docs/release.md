@@ -38,6 +38,14 @@ There are two supported ways to ship from `main`:
 1. **Direct stable release**: you are ready to ship the current `main` commit to everyone immediately.
 2. **Beta flow**: release candidates on the `beta` channel. Betas carry an in-place changelog entry (beta users check it), publish npm only on the explicit `beta` dist-tag, and never move the website download target off the latest stable.
 
+Paseo has one linear release track even though npm dist-tags are independent
+pointers. The npm invariant is:
+
+- A beta release moves only `beta`; `latest` remains on the newest stable.
+- A stable release moves both `latest` and `beta` to that stable version. This
+  keeps users who install `@getpaseo/cli@beta` on the newest Paseo release after
+  a beta is promoted or superseded by a direct stable release.
+
 ## Release version decision
 
 Every fresh release starts by classifying the full previous-stable-to-`HEAD`
@@ -76,9 +84,23 @@ npm run release:minor
 
 This bumps the version across all workspaces, runs checks, publishes to npm, and pushes the branch + tag. The tag push triggers `Desktop Release`, `Android APK Release`, `Docker`, and `Release Notes Sync` on GitHub Actions. EAS picks up the same tag via the EAS GitHub app and starts the iOS + Android store builds in parallel (see "Mobile builds (EAS)" below) — there is no `release-mobile.yml` in this repo.
 
+After the stable release succeeds, move npm's `beta` pointer to the new stable
+version for every published package. This changes dist-tags only; do not
+republish the packages:
+
+```bash
+PASEO_VERSION=$(node -p "require('./package.json').version")
+for package in highlight relay protocol client server cli; do
+  npm dist-tag add "@getpaseo/$package@$PASEO_VERSION" beta
+done
+```
+
+Verify both npm tags now resolve to `PASEO_VERSION` before considering the
+stable release complete.
+
 The Docker workflow builds images from the checked-out source tree on pull requests and on `main` as non-publishing checks. Stable `vX.Y.Z` tag pushes publish `ghcr.io/getpaseo/paseo:X.Y.Z` and `ghcr.io/getpaseo/paseo:latest`; beta `vX.Y.Z-beta.N` tag pushes publish only `ghcr.io/getpaseo/paseo:X.Y.Z-beta.N` and never move `latest`.
 
-Relay deployment is manual-only while `relay.paseo.sh` bridges traffic to the Fly deployment. Releases and pushes to `main` do not deploy the Cloudflare relay worker. Deploy it explicitly with `gh workflow run deploy-relay.yml` only when the production bridge should change.
+The production relay is the Elixir service in [getpaseo/paseo-relay](https://github.com/getpaseo/paseo-relay), with its own deployment process. Paseo releases and pushes to this repository do not deploy it. The Cloudflare relay code and workflow in this repository are legacy and are not used in production.
 
 **Stable means stable.** If the user says "stable" or "ship stable", do not ask whether they want a beta first. They picked stable; treat it as a direct stable release. Only run the beta flow when the user explicitly says "beta".
 
@@ -92,6 +114,7 @@ npm run version:all:patch
 npm run version:all:minor
 npm run release:publish      # Publish to npm
 npm run release:push         # Push HEAD + tag (triggers CI workflows)
+# Then move npm's beta dist-tag to this stable version using the command above.
 ```
 
 ## Beta flow
@@ -506,6 +529,7 @@ Betas are checkpoints along the way; the entry is the single record for the jump
 - [ ] Update `CHANGELOG.md` with user-facing release notes (features, fixes — not refactors). When promoting from beta, overwrite the existing `## X.Y.Z-beta.N` heading in place (heading → `X.Y.Z`, date → promotion day) — do not add a new entry on top of the beta one
 - [ ] Verify the changelog heading follows strict `## X.Y.Z - YYYY-MM-DD` format
 - [ ] `npm run release:patch`, `npm run release:minor`, or `npm run release:promote` completes successfully
+- [ ] Move npm's `beta` dist-tag to the new stable version for every published package and verify both `latest` and `beta` resolve to it
 - [ ] GitHub `Desktop Release` workflow for the `v*` tag is green
 - [ ] GitHub `Android APK Release` workflow for the same tag is green
 - [ ] EAS `Release Mobile` workflow for the same tag is green

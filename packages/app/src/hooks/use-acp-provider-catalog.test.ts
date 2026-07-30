@@ -34,6 +34,10 @@ describe("ACP provider catalog", () => {
     }
   });
 
+  it("does not offer Pi's unsupported ACP adapter", () => {
+    expect(ACP_PROVIDER_CATALOG.some((entry) => entry.id === "pi-acp")).toBe(false);
+  });
+
   it("uses PATH commands for entries that were binary distributions upstream", () => {
     expect(findProvider("amp-acp").command).toEqual(["amp-acp"]);
     expect(findProvider("cursor").command).toEqual(["cursor-agent", "acp"]);

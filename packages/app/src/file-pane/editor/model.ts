@@ -1,10 +1,12 @@
 import type { FileVersion, FileWriteResult } from "@getpaseo/protocol/messages";
 
 export type FileEditorStatus = "loading" | "clean" | "dirty" | "saving" | "conflict" | "error";
+export type FileLineSeparator = "\n" | "\r\n" | "\r";
 
 export interface FileEditorSnapshot {
   status: FileEditorStatus;
   content: string;
+  lineSeparator: FileLineSeparator;
   modified: boolean;
   version: FileVersion;
   observedVersion: FileVersion;
@@ -13,6 +15,7 @@ export interface FileEditorSnapshot {
 
 export interface FileEditorFile {
   content: string;
+  hasBom: boolean;
   version: Extract<FileVersion, { status: "ready" }>;
 }
 
@@ -49,6 +52,7 @@ export class FileEditorModel {
   private disposed = false;
   private observedWhileSaving: FileVersion | null = null;
   private persistedContent: string;
+  private hasBom: boolean;
 
   constructor(input: {
     file: FileEditorFile;
@@ -58,9 +62,11 @@ export class FileEditorModel {
     this.session = input.session;
     this.clock = input.clock ?? systemClock;
     this.persistedContent = input.file.content;
+    this.hasBom = input.file.hasBom;
     this.snapshot = {
       status: "clean",
       content: input.file.content,
+      lineSeparator: detectLineSeparator(input.file.content),
       modified: false,
       version: input.file.version,
       observedVersion: input.file.version,
@@ -167,10 +173,11 @@ export class FileEditorModel {
     const content = this.snapshot.content;
     this.observedWhileSaving = null;
     this.setSnapshot({ ...this.snapshot, status: "saving", error: null });
+    const serializedContent = this.hasBom ? `\uFEFF${content}` : content;
     let result: FileWriteResult;
     try {
       result = await this.session.write({
-        content,
+        content: serializedContent,
         expectedModifiedAt: expectedVersion.modifiedAt,
         expectedRevision: expectedVersion.revision,
       });
@@ -241,9 +248,11 @@ export class FileEditorModel {
         return;
       }
       this.persistedContent = file.content;
+      this.hasBom = file.hasBom;
       this.setSnapshot({
         status: "clean",
         content: file.content,
+        lineSeparator: detectLineSeparator(file.content),
         modified: false,
         version: file.version,
         observedVersion: file.version,
@@ -288,6 +297,15 @@ export class FileEditorModel {
     this.snapshot = snapshot;
     for (const listener of this.listeners) listener();
   }
+}
+
+function detectLineSeparator(content: string): FileLineSeparator {
+  for (let index = 0; index < content.length; index += 1) {
+    const character = content.charCodeAt(index);
+    if (character === 10) return "\n";
+    if (character === 13) return content.charCodeAt(index + 1) === 10 ? "\r\n" : "\r";
+  }
+  return "\n";
 }
 
 function sameVersion(left: FileVersion, right: FileVersion): boolean {

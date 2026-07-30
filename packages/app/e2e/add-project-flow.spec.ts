@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { test, expect, type Page } from "./fixtures";
+import { test, expect } from "./fixtures";
 import {
   addProjectFlow,
   addProjectFlowBack,
@@ -13,35 +13,20 @@ import {
   expectAddProjectPage,
   expectNewWorkspaceForAddedProject,
   openAddProjectFlow,
-  waitForConnectedHost,
 } from "./helpers/add-project-flow";
 import { gotoAppShell } from "./helpers/app";
-import { buildSeededHost } from "./helpers/daemon-registry";
-import { addOfflineHostAndReload } from "./helpers/hosts";
+import {
+  addConnectedHostAndReload,
+  addOfflineHostAndReload,
+  waitForConnectedHost,
+} from "./helpers/hosts";
 import { type IsolatedHostDaemon, startIsolatedHostDaemon } from "./helpers/isolated-host-daemon";
 import { expectOpenedProject } from "./helpers/project-picker-ui";
 import { connectSeedClient } from "./helpers/seed-client";
 import { getServerId } from "./helpers/server-id";
 
-const EXTRA_HOSTS_KEY = "@paseo:e2e-extra-hosts";
 const SECONDARY_HOST_ID = "add-project-flow-secondary";
 const SECONDARY_HOST_LABEL = "Secondary Host";
-
-async function addConnectedHostAndReload(page: Page, host: IsolatedHostDaemon): Promise<void> {
-  const registryEntry = buildSeededHost({
-    serverId: host.serverId,
-    label: SECONDARY_HOST_LABEL,
-    endpoint: `127.0.0.1:${host.port}`,
-    nowIso: new Date().toISOString(),
-  });
-  await page.evaluate(
-    ({ key, entry }) => {
-      localStorage.setItem(key, JSON.stringify([entry]));
-    },
-    { key: EXTRA_HOSTS_KEY, entry: registryEntry },
-  );
-  await page.reload();
-}
 
 async function expectProjectDirectory(pathname: string): Promise<void> {
   await expect.poll(async () => (await stat(pathname)).isDirectory()).toBe(true);
@@ -149,7 +134,11 @@ test.describe("Add Project command-center flow", () => {
 
     test("keyboard selection chooses the second host", async ({ page }) => {
       await gotoAppShell(page);
-      await addConnectedHostAndReload(page, secondaryHost);
+      await addConnectedHostAndReload(page, {
+        serverId: secondaryHost.serverId,
+        label: SECONDARY_HOST_LABEL,
+        port: secondaryHost.port,
+      });
       await waitForConnectedHost(page, {
         serverId: SECONDARY_HOST_ID,
         endpoint: `localhost:${secondaryHost.port}`,
@@ -167,7 +156,11 @@ test.describe("Add Project command-center flow", () => {
       page,
     }) => {
       await gotoAppShell(page);
-      await addConnectedHostAndReload(page, secondaryHost);
+      await addConnectedHostAndReload(page, {
+        serverId: secondaryHost.serverId,
+        label: SECONDARY_HOST_LABEL,
+        port: secondaryHost.port,
+      });
       await waitForConnectedHost(page, {
         serverId: SECONDARY_HOST_ID,
         endpoint: `localhost:${secondaryHost.port}`,
@@ -211,7 +204,11 @@ test.describe("Add Project command-center flow", () => {
 
       try {
         await gotoAppShell(page);
-        await addConnectedHostAndReload(page, secondaryHost);
+        await addConnectedHostAndReload(page, {
+          serverId: secondaryHost.serverId,
+          label: SECONDARY_HOST_LABEL,
+          port: secondaryHost.port,
+        });
         await waitForConnectedHost(page, {
           serverId: SECONDARY_HOST_ID,
           endpoint: `localhost:${secondaryHost.port}`,

@@ -8,6 +8,10 @@ import {
   decrypt,
 } from "./crypto.js";
 
+function decryptText(sharedKey: Uint8Array, ciphertext: ArrayBuffer): string {
+  return new TextDecoder().decode(decrypt(sharedKey, ciphertext));
+}
+
 describe("crypto", () => {
   describe("generateKeyPair", () => {
     it("generates a valid keypair", () => {
@@ -55,7 +59,7 @@ describe("crypto", () => {
       // Both should derive the same key - test by encrypting with one, decrypting with other
       const testMessage = "Hello, encrypted world!";
       const encrypted = encrypt(daemonSharedKey, testMessage);
-      const decrypted = decrypt(clientSharedKey, encrypted);
+      const decrypted = decryptText(clientSharedKey, encrypted);
 
       expect(decrypted).toBe(testMessage);
     });
@@ -73,7 +77,7 @@ describe("crypto", () => {
       expect(ciphertext).toBeInstanceOf(ArrayBuffer);
       expect(ciphertext.byteLength).toBeGreaterThan(plaintext.length);
 
-      const decrypted = decrypt(sharedKey, ciphertext);
+      const decrypted = decryptText(sharedKey, ciphertext);
       expect(decrypted).toBe(plaintext);
     });
 
@@ -118,8 +122,8 @@ describe("crypto", () => {
       expect(arr1).not.toEqual(arr2);
 
       // But both should decrypt to same plaintext
-      expect(decrypt(sharedKey, ciphertext1)).toBe(plaintext);
-      expect(decrypt(sharedKey, ciphertext2)).toBe(plaintext);
+      expect(decryptText(sharedKey, ciphertext1)).toBe(plaintext);
+      expect(decryptText(sharedKey, ciphertext2)).toBe(plaintext);
     });
   });
 
@@ -156,11 +160,11 @@ describe("crypto", () => {
 
       // Daemon encrypts, client decrypts
       const encryptedFromDaemon = encrypt(daemonSharedKey, testFromDaemon);
-      expect(decrypt(clientSharedKey, encryptedFromDaemon)).toBe(testFromDaemon);
+      expect(decryptText(clientSharedKey, encryptedFromDaemon)).toBe(testFromDaemon);
 
       // Client encrypts, daemon decrypts
       const encryptedFromClient = encrypt(clientSharedKey, testFromClient);
-      expect(decrypt(daemonSharedKey, encryptedFromClient)).toBe(testFromClient);
+      expect(decryptText(daemonSharedKey, encryptedFromClient)).toBe(testFromClient);
     });
   });
 });

@@ -19,6 +19,9 @@
       "channel": "production",
       "env": {
         "APP_VARIANT": "production"
+      },
+      "android": {
+        "resourceClass": "large"
       }
     },
     "production-apk": {

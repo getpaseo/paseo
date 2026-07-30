@@ -5,6 +5,8 @@ export const AgentOwnerSchema = z.discriminatedUnion("kind", [
     kind: z.literal("daemon"),
     daemonId: z.string(),
     executionId: z.string(),
+    // Durable proof that this execution created, rather than merely used, the workspace.
+    createdWorkspaceId: z.string().optional(),
   }),
 ]);
 

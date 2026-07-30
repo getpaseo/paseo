@@ -18,6 +18,14 @@ function editor(page: Page) {
   return page.getByTestId("file-source-editor").filter({ visible: true }).locator(".cm-content");
 }
 
+function hasHorizontalOverflow(element: HTMLElement): boolean {
+  return element.scrollWidth > element.clientWidth;
+}
+
+function fitsViewportWidth(element: HTMLElement): boolean {
+  return element.scrollWidth === element.clientWidth;
+}
+
 async function replaceEditorText(page: Page, content: string): Promise<void> {
   const contentElement = editor(page);
   await contentElement.click();
@@ -89,6 +97,34 @@ test.describe("CodeMirror workspace file editing", () => {
       await expect(page.getByLabel("Line 42, column 1")).toBeVisible();
       await expect(
         page.getByTestId("file-source-editor").locator(".cm-line", { hasText: "line42 = 42" }),
+      ).toBeVisible();
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("clicking the editor focuses its pane beside an agent", async ({ page }) => {
+    const target = "target.ts:42";
+    const session = await seedAgentWithFileLink(target);
+
+    try {
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await openAgentRoute(page, session);
+
+      await page.getByRole("button", { name: "Split pane right" }).first().click();
+      await expect(page.getByTestId("workspace-tabs-row").filter({ visible: true })).toHaveCount(2);
+      await openWorkspaceFile(page, "target.ts");
+
+      await page
+        .getByTestId(`workspace-tab-agent_${session.agentId}`)
+        .filter({ visible: true })
+        .click();
+      await editor(page).click();
+      await page.keyboard.press("Alt+Shift+W");
+
+      await expect(page.getByTestId("workspace-tab-file_target.ts")).not.toBeVisible();
+      await expect(
+        page.getByTestId(`workspace-tab-agent_${session.agentId}`).filter({ visible: true }),
       ).toBeVisible();
     } finally {
       await session.cleanup();
@@ -174,6 +210,36 @@ test.describe("CodeMirror workspace file editing", () => {
     ).toHaveCSS("font-family", "monospace");
   });
 
+  test("wraps Markdown while source code remains horizontally scrollable", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const workspace = await withWorkspace({ prefix: "file-editing-wrap-" });
+    const longLine = "word ".repeat(300);
+    await writeFile(path.join(workspace.repoPath, "notes.md"), `${longLine}\n`, "utf8");
+    await writeFile(
+      path.join(workspace.repoPath, "source.ts"),
+      `const value = "${longLine}";\n`,
+      "utf8",
+    );
+    await workspace.navigateTo();
+    await openWorkspaceFile(page, "notes.md");
+    await page.getByTestId("file-mode-source").click();
+
+    const markdownScroller = page
+      .getByTestId("file-source-editor")
+      .filter({ visible: true })
+      .locator(".cm-scroller");
+    await expect.poll(() => markdownScroller.evaluate(fitsViewportWidth)).toBe(true);
+
+    await openWorkspaceFile(page, "source.ts");
+    const sourceScroller = page
+      .getByTestId("file-source-editor")
+      .filter({ visible: true })
+      .locator(".cm-scroller");
+    await expect.poll(() => sourceScroller.evaluate(hasHorizontalOverflow)).toBe(true);
+  });
+
   test("autosaves, saves immediately, resolves conflicts, and restores live updates after reconnect", async ({
     page,
     withWorkspace,
@@ -237,6 +303,29 @@ test.describe("CodeMirror workspace file editing", () => {
       .toBeGreaterThan(subscriptionCount);
     await writeFile(sourcePath, "const afterReconnect = 9;\n", "utf8");
     await expect(editor(page)).toContainText("const afterReconnect = 9;");
+  });
+
+  test("preserves a UTF-8 BOM and uses the first line separator after saving", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const workspace = await withWorkspace({ prefix: "file-editing-encoding-" });
+    const sourcePath = path.join(workspace.repoPath, "windows.ts");
+    await writeFile(
+      sourcePath,
+      Buffer.from("\uFEFFconst initial = true;\r\nconst mixed = true;\n", "utf8"),
+    );
+    await workspace.navigateTo();
+    await openWorkspaceFile(page, "windows.ts");
+
+    await replaceEditorText(page, "const saved = true;\nconst normalized = true;\n");
+    await editor(page).press("Control+s");
+
+    const expected = Buffer.from(
+      "\uFEFFconst saved = true;\r\nconst normalized = true;\r\n",
+      "utf8",
+    ).toString("hex");
+    await expect.poll(async () => (await readFile(sourcePath)).toString("hex")).toBe(expected);
   });
 
   test("warns before closing a panel with an unsaved draft", async ({ page, withWorkspace }) => {

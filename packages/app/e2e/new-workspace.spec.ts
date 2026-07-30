@@ -195,6 +195,7 @@ async function submitNewWorkspaceWithoutPrompt(page: import("@playwright/test").
 test.describe("New workspace flow", () => {
   let client: Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
   const localWorkspaceIds = new Set<string>();
+  const localProjectIds = new Set<string>();
   const createdWorktreeDirectories = new Set<string>();
   const localGithubFixtures = new Set<LocalGhPrFixture>();
 
@@ -212,9 +213,13 @@ test.describe("New workspace flow", () => {
       for (const workspaceId of localWorkspaceIds) {
         await archiveLocalWorkspaceFromDaemon(client, workspaceId).catch(() => undefined);
       }
+      for (const projectId of localProjectIds) {
+        await client.removeProject(projectId).catch(() => undefined);
+      }
     }
     createdWorktreeDirectories.clear();
     localWorkspaceIds.clear();
+    localProjectIds.clear();
     await client?.close().catch(() => undefined);
   });
 
@@ -830,6 +835,7 @@ test.describe("New workspace flow", () => {
 
     const openedProject = await openProjectViaDaemon(client, mainCheckout.path);
     localWorkspaceIds.add(openedProject.workspaceId);
+    localProjectIds.add(openedProject.projectId);
 
     await gotoAppShell(page);
     await waitForSidebarHydration(page);
@@ -881,6 +887,7 @@ test.describe("New workspace flow", () => {
 
     const openedProject = await openProjectViaDaemon(client, mainCheckout.path);
     localWorkspaceIds.add(openedProject.workspaceId);
+    localProjectIds.add(openedProject.projectId);
 
     await gotoAppShell(page);
     await waitForSidebarHydration(page);

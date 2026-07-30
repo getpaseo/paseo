@@ -6,6 +6,7 @@ import {
   isRasterImageMimeType,
   isRasterImagePath,
   RASTER_IMAGE_FILE_EXTENSIONS,
+  resolveRasterImageMimeType,
 } from "./file-types";
 
 describe("attachment file types", () => {
@@ -36,5 +37,29 @@ describe("attachment file types", () => {
     expect(new Set(RASTER_IMAGE_FILE_EXTENSIONS)).toEqual(
       new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "heic", "heif", "avif", "tif", "tiff"]),
     );
+  });
+
+  it("uses explicit raster MIME metadata before the filename", () => {
+    expect(
+      resolveRasterImageMimeType({ mimeType: "image/jpeg", path: "/tmp/screenshot.png" }),
+    ).toBe("image/jpeg");
+    expect(
+      resolveRasterImageMimeType({
+        mimeType: "image/png; charset=binary",
+        path: "/tmp/screenshot.jpg",
+      }),
+    ).toBe("image/png");
+  });
+
+  it("uses the filename only when MIME metadata is absent", () => {
+    expect(resolveRasterImageMimeType({ mimeType: "", path: "/tmp/screenshot.png" })).toBe(
+      "image/png",
+    );
+    expect(
+      resolveRasterImageMimeType({
+        mimeType: "application/octet-stream",
+        path: "/tmp/screenshot.png",
+      }),
+    ).toBeNull();
   });
 });

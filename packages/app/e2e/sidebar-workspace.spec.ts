@@ -219,7 +219,7 @@ test.describe("Half-screen desktop layout", () => {
       }
 
       await gotoAppShell(page);
-      await page.getByTestId(`sidebar-project-show-more-${workspace.projectId}`).click();
+      await page.getByTestId(`sidebar-project-show-more-${workspace.projectKey}`).click();
       await waitForSidebarWorkspace(page, lastWorkspaceId);
 
       const sidebarScroll = page.getByTestId("sidebar-project-workspace-list-scroll");

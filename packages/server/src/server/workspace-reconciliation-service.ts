@@ -15,6 +15,7 @@ import {
   type MutableWorkspacePlacement,
 } from "./workspace-registry-model.js";
 import { workspaceIdsForProjects } from "./workspace-directory.js";
+import { deriveProjectKey } from "./project-key.js";
 
 const DEFAULT_RESCAN_INTERVAL_MS = 5 * 60_000;
 const DEFAULT_DEBOUNCE_MS = 100;
@@ -66,7 +67,7 @@ export type ReconciliationChange =
       kind: "project_updated";
       projectId: string;
       directory: string;
-      fields: Partial<Pick<PersistedProjectRecord, "kind">>;
+      fields: Partial<Pick<PersistedProjectRecord, "kind" | "projectKey">>;
     }
   | {
       kind: "workspace_updated";
@@ -81,12 +82,14 @@ export interface ReconciliationResult {
 }
 
 export interface WorkspaceReconciliationServiceOptions {
+  serverId?: string;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
   logger: pino.Logger;
   onChanges?: (changes: ReconciliationChange[]) => void;
   workspaceGitService?: Pick<WorkspaceGitService, "getCheckout">;
   onProjectUpdate?: (update: ProjectUpdate) => void;
+  onWorkspaceArchived?: (workspaceId: string) => void | Promise<void>;
   onWorkspacesChanged?: (workspaceIds: string[]) => Promise<void>;
   watchProjectRoot?: ProjectRootWatch;
   clock?: ReconciliationClock;
@@ -110,12 +113,14 @@ interface CachedCheckoutRead {
 type DirectoryState = "directory" | "missing" | "unreadable";
 
 export class WorkspaceReconciliationService {
+  private readonly serverId: string | undefined;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
   private readonly logger: pino.Logger;
   private readonly onChanges: ((changes: ReconciliationChange[]) => void) | null;
   private readonly workspaceGitService: Pick<WorkspaceGitService, "getCheckout"> | null;
   private readonly onProjectUpdate: ((update: ProjectUpdate) => void) | null;
+  private readonly onWorkspaceArchived: ((workspaceId: string) => void | Promise<void>) | null;
   private readonly onWorkspacesChanged: ((workspaceIds: string[]) => Promise<void>) | null;
   private readonly watchProjectRoot: ProjectRootWatch;
   private readonly clock: ReconciliationClock;
@@ -131,12 +136,14 @@ export class WorkspaceReconciliationService {
   private reconcileQueuedMode: "metadata" | "full" | null = null;
 
   constructor(options: WorkspaceReconciliationServiceOptions) {
+    this.serverId = options.serverId;
     this.projectRegistry = options.projectRegistry;
     this.workspaceRegistry = options.workspaceRegistry;
     this.logger = options.logger.child({ module: "workspace-reconciliation" });
     this.onChanges = options.onChanges ?? null;
     this.workspaceGitService = options.workspaceGitService ?? null;
     this.onProjectUpdate = options.onProjectUpdate ?? null;
+    this.onWorkspaceArchived = options.onWorkspaceArchived ?? null;
     this.onWorkspacesChanged = options.onWorkspacesChanged ?? null;
     this.watchProjectRoot = options.watchProjectRoot ?? watchProjectRoot;
     this.clock = options.clock ?? systemClock;
@@ -237,6 +244,7 @@ export class WorkspaceReconciliationService {
       missingWorkspaces.map(async (workspace) => {
         const timestamp = new Date().toISOString();
         await this.workspaceRegistry.archive(workspace.workspaceId, timestamp);
+        await this.onWorkspaceArchived?.(workspace.workspaceId);
         changes.push({
           kind: "workspace_archived",
           workspaceId: workspace.workspaceId,
@@ -274,6 +282,11 @@ export class WorkspaceReconciliationService {
       );
     }
     return result;
+  }
+
+  /** Runs the boot-time convergence path and publishes every affected workspace. */
+  async reconcileNow(): Promise<void> {
+    await this.reconcileObservedGitMetadata("full");
   }
 
   private async reconcileGitMetadataForProjects(
@@ -330,11 +343,21 @@ export class WorkspaceReconciliationService {
         checkout: await readCheckout(workspace.cwd),
       })),
     );
-    const projectUpdates: Partial<Pick<PersistedProjectRecord, "kind">> = {};
+    const projectUpdates: Partial<Pick<PersistedProjectRecord, "kind" | "projectKey">> = {};
     const mappedKind = deriveProjectKind(currentGit);
+    const projectKey = deriveProjectKey({
+      rootPath: project.rootPath,
+      remoteUrl: currentGit.remoteUrl,
+      worktreeRoot: currentGit.worktreeRoot,
+      mainRepoRoot: currentGit.mainRepoRoot,
+      serverId: this.serverId,
+    });
 
     if (project.kind !== mappedKind) {
       projectUpdates.kind = mappedKind;
+    }
+    if (project.projectKey !== projectKey) {
+      projectUpdates.projectKey = projectKey;
     }
 
     if (Object.keys(projectUpdates).length > 0) {

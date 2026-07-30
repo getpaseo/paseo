@@ -11,6 +11,7 @@ import {
   convertClaudeHistoryEntry,
   normalizeClaudeAskUserQuestionRequestInput,
   normalizeClaudeAskUserQuestionUpdatedInput,
+  resolveClaudeCodeVersion,
   toClaudeSdkMcpConfig,
 } from "./agent.js";
 import { claudeProjectDirSync } from "./project-dir.js";
@@ -405,6 +406,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       const client = new ClaudeAgentClient({
         logger,
         resolveBinary: async () => "/test/claude/bin",
+        resolveVersion: async () => "2.1.219",
         configDir: emptyConfigDir,
       });
       const { models } = await client.fetchCatalog({
@@ -414,10 +416,13 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       });
 
       expect(models.map((m) => m.id)).toEqual([
+        "claude-opus-5",
+        "claude-fable-5[1m]",
         "claude-fable-5",
         "claude-opus-4-8[1m]",
         "claude-opus-4-8",
         "claude-sonnet-5",
+        "claude-sonnet-5[1m]",
         "claude-opus-4-7[1m]",
         "claude-opus-4-7",
         "claude-opus-4-6[1m]",
@@ -433,7 +438,30 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       }
 
       const defaultModel = models.find((m) => m.isDefault);
-      expect(defaultModel?.id).toBe("claude-opus-4-8");
+      expect(defaultModel?.id).toBe("claude-opus-5");
+    } finally {
+      await fs.rm(emptyConfigDir, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves the catalog when Claude Code version detection fails", async () => {
+    const emptyConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-models-empty-"));
+    try {
+      const client = new ClaudeAgentClient({
+        logger,
+        resolveVersion: async () => {
+          throw new Error("unrecognized version output");
+        },
+        configDir: emptyConfigDir,
+      });
+      const { models } = await client.fetchCatalog({
+        scope: "workspace",
+        cwd: "/tmp/claude-models",
+        force: false,
+      });
+
+      expect(models.find((model) => model.isDefault)?.id).toBe("claude-opus-5");
+      expect(models.map((model) => model.id)).toContain("claude-fable-5[1m]");
     } finally {
       await fs.rm(emptyConfigDir, { recursive: true, force: true });
     }
@@ -445,6 +473,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       const client = new ClaudeAgentClient({
         logger,
         resolveBinary: async () => "/test/claude/bin",
+        resolveVersion: async () => "2.1.219",
         configDir: emptyConfigDir,
       });
       const { models } = await client.fetchCatalog({
@@ -456,6 +485,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
         return models.find((model) => model.id === modelId)?.thinkingOptions?.map(({ id }) => id);
       };
 
+      expect(getThinkingIds("claude-opus-5")).toContain("ultracode");
       expect(getThinkingIds("claude-fable-5")).toContain("ultracode");
       expect(getThinkingIds("claude-opus-4-8[1m]")).toContain("ultracode");
       expect(getThinkingIds("claude-opus-4-8")).toContain("ultracode");
@@ -472,6 +502,10 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
 
 describe("ClaudeAgentClient binary resolution", () => {
   const logger = createTestLogger();
+
+  test("resolves the installed Claude Code version", async () => {
+    await expect(resolveClaudeCodeVersion()).resolves.toMatch(/^\d+\.\d+\.\d+$/);
+  });
 
   test("loads user, project, and local Claude settings", async () => {
     const queryReturn = vi.fn();
@@ -2081,10 +2115,10 @@ describe("ClaudeAgentSession context window usage", () => {
     }
   });
 
-  test("native 1M Claude models seed active context window usage from the catalog", async () => {
+  test("selected 1M Claude models seed active context window usage from the catalog", async () => {
     const session = await createSessionForTurns(
       [[createInitMessage(), createMessageStartEvent(), createSuccessResult()]],
-      { model: "claude-sonnet-5" },
+      { model: "claude-sonnet-5[1m]" },
     );
 
     try {
