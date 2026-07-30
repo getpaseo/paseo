@@ -606,7 +606,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         hasActiveInitDeferred,
         initRequestDirection: activeInitDeferred?.requestDirection ?? "tail",
         sendingClientMessageIds,
-        hasAuthoritativeBaseline: timeline.status === "synced",
       });
 
       if (result.error) {

@@ -80,8 +80,10 @@ reconciled with the authoritative tail and subsequent catch-up.
 
 Every daemon-derived live item carries its timeline epoch and sequence position. Bootstrap
 replacement keeps only positioned rows newer than the page it installs, while unresolved local
-submissions remain governed by the submission registry. This prevents a page from duplicating rows
-it already covers without making the display replica authoritative.
+user presentations identify themselves by having client identity without provider identity or a
+timeline position. This prevents a page from duplicating rows it already covers without coupling
+display continuity to the shorter-lived submission registry. Unreconciled local presentations are
+not persisted in the durable replica cache.
 
 ## Selective and legacy delivery
 
@@ -117,10 +119,11 @@ footer, and permanently drops attachments because the daemon does not echo them 
 
 A submitted prompt is one `UserMessageItem` row. That row is the authoritative local presentation:
 its stable identity, text, timestamp, images, and attachments do not change when the provider
-acknowledges it. Submission lifecycle is a separate record keyed by agent, not another row shape or
-a property inferred from message identity. The transaction registry holds every unresolved send and
-records RPC acceptance and provider acknowledgement independently. Provider acknowledgement exists
-solely so a later transport error cannot roll back a prompt already observed canonically.
+acknowledges it. Submission lifecycle is a separate record keyed by agent, not another row shape.
+The transaction registry records RPC acceptance and provider acknowledgement independently for
+agent-scoped sends. Provider acknowledgement exists solely so a later transport error cannot roll
+back a prompt already observed canonically; it does not own whether the local presentation remains
+visible.
 
 The daemon's accepted response already waits for the correlated run start, but its response and the
 directory update reach client state separately. An accepted transaction remains active until the
@@ -140,7 +143,13 @@ arrived first. Generic reducers and consumers do not reimplement message identit
 Ordinary bootstrap, same-epoch reset, and catch-up replacement preserve unmatched locally submitted
 rows because a provider may never echo them. A known epoch change or rewind replaces history and
 drops acknowledged local rows omitted by the new canonical epoch; every transaction not yet
-acknowledged by the provider, and no other local row, crosses that destructive boundary.
+acknowledged by the provider, and no other local row, crosses that destructive boundary. A cold
+reset without an existing epoch is destructive because the client has no continuity anchor.
+
+Tail rows are positioned history, so an unmatched local presentation is appended after the
+canonical replacement rather than ordered by timestamps from different machines. The head is a
+live overlay: cursorless items stay there during continuity replacement until canonical positions
+arrive, while a destructive replacement retains only active submission transactions.
 
 Canonical replacement owns both timeline lanes. A matching local row keeps its presentation ID and
 payload while taking the canonical row's ordered position. If a live assistant head is the

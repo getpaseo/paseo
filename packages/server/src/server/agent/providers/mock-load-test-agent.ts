@@ -662,7 +662,32 @@ export class MockLoadTestAgentSession implements AgentSession {
       turnStarted: false,
     };
     this.activeTurn = turn;
+    const largePayload = parseLargeAgentStreamPayloadPrompt(prompt);
+    const stress = parseAgentStreamStressPrompt(prompt);
+    const questionPrompt = parseMockQuestionPrompt(prompt);
+    const structuredBranchName = parseStructuredBranchNamePrompt(prompt);
+    const settledAssistantImageMarkdown = parseSettledAssistantImageMarkdown(prompt);
+    const scheduleTurn = () => {
+      if (shouldEmitTurnFailure(prompt)) {
+        this.scheduleFailedTurn(turn);
+      } else if (structuredBranchName) {
+        this.scheduleSettledAssistantTurn(turn, JSON.stringify(structuredBranchName));
+      } else if (settledAssistantImageMarkdown) {
+        this.scheduleSettledAssistantTurn(turn, settledAssistantImageMarkdown);
+      } else if (shouldEmitPlanApprovalPrompt(prompt)) {
+        this.schedulePlanApprovalTurn(turn);
+      } else if (questionPrompt) {
+        this.scheduleQuestionPromptTurn(turn, questionPrompt);
+      } else if (largePayload) {
+        this.scheduleLargePayloadTurn(turn, largePayload);
+      } else if (stress) {
+        this.scheduleStressTurn(turn, stress);
+      } else {
+        this.schedule(turn, 0);
+      }
+    };
     const userMessageId = randomUUID();
+    const userMessageDelayMs = parseUserMessageDelayMs(prompt);
     const userMessageTimer = setTimeout(() => {
       if (this.activeTurn?.turnId !== turnId) {
         return;
@@ -678,31 +703,10 @@ export class MockLoadTestAgentSession implements AgentSession {
           ...(options?.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
         },
       });
-    }, parseUserMessageDelayMs(prompt));
+      if (userMessageDelayMs > 0) scheduleTurn();
+    }, userMessageDelayMs);
     userMessageTimer.unref?.();
-
-    const largePayload = parseLargeAgentStreamPayloadPrompt(prompt);
-    const stress = parseAgentStreamStressPrompt(prompt);
-    const questionPrompt = parseMockQuestionPrompt(prompt);
-    const structuredBranchName = parseStructuredBranchNamePrompt(prompt);
-    const settledAssistantImageMarkdown = parseSettledAssistantImageMarkdown(prompt);
-    if (shouldEmitTurnFailure(prompt)) {
-      this.scheduleFailedTurn(turn);
-    } else if (structuredBranchName) {
-      this.scheduleSettledAssistantTurn(turn, JSON.stringify(structuredBranchName));
-    } else if (settledAssistantImageMarkdown) {
-      this.scheduleSettledAssistantTurn(turn, settledAssistantImageMarkdown);
-    } else if (shouldEmitPlanApprovalPrompt(prompt)) {
-      this.schedulePlanApprovalTurn(turn);
-    } else if (questionPrompt) {
-      this.scheduleQuestionPromptTurn(turn, questionPrompt);
-    } else if (largePayload) {
-      this.scheduleLargePayloadTurn(turn, largePayload);
-    } else if (stress) {
-      this.scheduleStressTurn(turn, stress);
-    } else {
-      this.schedule(turn, 0);
-    }
+    if (userMessageDelayMs === 0) scheduleTurn();
     return { turnId };
   }
 

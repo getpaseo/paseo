@@ -89,7 +89,6 @@ export interface ProcessTimelineResponseInput {
   hasActiveInitDeferred: boolean;
   initRequestDirection: InitRequestDirection;
   sendingClientMessageIds: readonly string[];
-  hasAuthoritativeBaseline: boolean;
 }
 
 export interface ProcessTimelineResponseOutput {
@@ -212,7 +211,7 @@ function applyTimelineReplacePath(args: {
   currentTail: StreamItem[];
   currentHead: StreamItem[];
   sendingClientMessageIds: readonly string[];
-  preserveLiveHead: boolean;
+  preserveContinuity: boolean;
   toHydratedEvents: (
     units: TimelineUnit[],
   ) => Array<{ event: AgentStreamEventPayload; timestamp: Date }>;
@@ -224,7 +223,7 @@ function applyTimelineReplacePath(args: {
     currentTail,
     currentHead,
     sendingClientMessageIds,
-    preserveLiveHead,
+    preserveContinuity,
     toHydratedEvents,
   } = args;
   const hydratedTail = hydrateStreamState(toHydratedEvents(timelineUnits), { source: "canonical" });
@@ -233,7 +232,7 @@ function applyTimelineReplacePath(args: {
     previousTail: currentTail,
     previousHead: currentHead,
     sendingClientMessageIds,
-    preserveLiveHead,
+    preserveContinuity,
     canonicalCoverage: {
       epoch: payload.epoch,
       endSeq: payload.endCursor?.seq ?? null,
@@ -823,7 +822,6 @@ export function processTimelineResponse(
     hasActiveInitDeferred,
     initRequestDirection,
     sendingClientMessageIds,
-    hasAuthoritativeBaseline,
   } = input;
 
   // ------------------------------------------------------------------
@@ -895,8 +893,7 @@ export function processTimelineResponse(
         currentTail,
         currentHead,
         sendingClientMessageIds,
-        preserveLiveHead:
-          currentCursor?.epoch === payload.epoch || (!payload.reset && !hasAuthoritativeBaseline),
+        preserveContinuity: currentCursor?.epoch === payload.epoch || !payload.reset,
         toHydratedEvents,
       })
     : applyTimelineIncrementalPath({

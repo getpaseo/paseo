@@ -7,7 +7,7 @@ import {
   selectAgentTimelineState,
   useSessionStore,
 } from "@/stores/session-store";
-import type { StreamItem } from "@/types/stream";
+import { createUserMessage, type StreamItem } from "@/types/stream";
 import { ReplicaCache, type ReplicaCacheStorage } from ".";
 
 const SERVER_ID = "cached-host";
@@ -223,8 +223,38 @@ describe("ReplicaCache", () => {
       version: number;
       hosts: Array<{ timeline: Record<string, unknown> | null }>;
     };
-    expect(persisted.version).toBe(2);
+    expect(persisted.version).toBe(3);
     expect(Object.keys(persisted.hosts[0]?.timeline ?? {}).sort()).toEqual(["agentId", "items"]);
+  });
+
+  it("persists reconciled rows without caching unreconciled local presentations", async () => {
+    const storage = new MemoryStorage();
+    const cache = new ReplicaCache(storage);
+    cache.setHosts([SERVER_ID]);
+    seedSession();
+    const unreconciled = createUserMessage({
+      clientMessageId: "client-pending",
+      text: "Pending",
+      timestamp: new Date("2026-07-18T08:01:00.000Z"),
+    });
+    const reconciled = createUserMessage({
+      clientMessageId: "client-sent",
+      messageId: "provider-sent",
+      timelineCursor: { epoch: "epoch-1", seq: 11 },
+      text: "Sent",
+      timestamp: new Date("2026-07-18T08:01:30.000Z"),
+    });
+    useSessionStore
+      .getState()
+      .setAgentStreamTail(SERVER_ID, new Map([["agent-1", [unreconciled, reconciled]]]));
+
+    await cache.flush();
+    useSessionStore.getState().clearSession(SERVER_ID);
+    await cache.restore();
+
+    expect(useSessionStore.getState().sessions[SERVER_ID]?.agentStreamTail.get("agent-1")).toEqual([
+      reconciled,
+    ]);
   });
 
   it("evicts the least recently written host when the cache exceeds its byte budget", async () => {
@@ -282,7 +312,7 @@ describe("ReplicaCache", () => {
 
     expect(useSessionStore.getState().sessions[SERVER_ID]).toBeUndefined();
     expect(JSON.parse(storage.values.get("@paseo:replica-cache") ?? "null")).toEqual({
-      version: 2,
+      version: 3,
       hosts: [],
     });
   });

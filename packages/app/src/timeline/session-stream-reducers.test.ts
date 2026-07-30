@@ -199,7 +199,6 @@ const baseTimelineInput: ProcessTimelineResponseInput = {
   hasActiveInitDeferred: false,
   initRequestDirection: "tail",
   sendingClientMessageIds: [],
-  hasAuthoritativeBaseline: true,
 };
 
 const baseStreamInput: ProcessAgentStreamEventInput = {
@@ -332,7 +331,7 @@ describe("processTimelineResponse", () => {
       currentTail: [],
       currentHead: [liveAssistant, submitted],
       currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
-      sendingClientMessageIds: ["client-new-prompt"],
+      sendingClientMessageIds: [],
       payload: {
         ...baseTimelineInput.payload,
         reset: true,
@@ -412,7 +411,6 @@ describe("processTimelineResponse", () => {
     const result = processTimelineResponse({
       ...baseTimelineInput,
       currentHead: liveCompletion,
-      hasAuthoritativeBaseline: false,
       isInitializing: true,
       hasActiveInitDeferred: true,
       payload: {
@@ -464,7 +462,6 @@ describe("processTimelineResponse", () => {
     const result = processTimelineResponse({
       ...baseTimelineInput,
       currentHead: liveTodo,
-      hasAuthoritativeBaseline: false,
       isInitializing: true,
       hasActiveInitDeferred: true,
       payload: {
@@ -516,7 +513,6 @@ describe("processTimelineResponse", () => {
     const result = processTimelineResponse({
       ...baseTimelineInput,
       currentHead: liveCompaction,
-      hasAuthoritativeBaseline: false,
       isInitializing: true,
       hasActiveInitDeferred: true,
       payload: {
@@ -554,7 +550,6 @@ describe("processTimelineResponse", () => {
       currentTail: [makeAssistantItem("painted replica")],
       isInitializing: true,
       hasActiveInitDeferred: true,
-      hasAuthoritativeBaseline: false,
       payload: {
         ...baseTimelineInput.payload,
         direction: "tail",
@@ -585,7 +580,6 @@ describe("processTimelineResponse", () => {
       ],
       isInitializing: true,
       hasActiveInitDeferred: true,
-      hasAuthoritativeBaseline: false,
       payload: {
         ...baseTimelineInput.payload,
         direction: "tail",
@@ -643,7 +637,6 @@ describe("processTimelineResponse", () => {
       currentHead: liveTool,
       isInitializing: true,
       hasActiveInitDeferred: true,
-      hasAuthoritativeBaseline: false,
       payload: {
         ...baseTimelineInput.payload,
         direction: "tail",
@@ -688,7 +681,6 @@ describe("processTimelineResponse", () => {
       ],
       isInitializing: true,
       hasActiveInitDeferred: true,
-      hasAuthoritativeBaseline: false,
       payload: {
         ...baseTimelineInput.payload,
         direction: "tail",
@@ -734,7 +726,6 @@ describe("processTimelineResponse", () => {
       currentHead: live.head,
       isInitializing: true,
       hasActiveInitDeferred: true,
-      hasAuthoritativeBaseline: false,
       payload: {
         ...baseTimelineInput.payload,
         direction: "tail",
@@ -775,7 +766,6 @@ describe("processTimelineResponse", () => {
       sendingClientMessageIds: [],
       isInitializing: true,
       hasActiveInitDeferred: true,
-      hasAuthoritativeBaseline: false,
       payload: {
         ...baseTimelineInput.payload,
         direction: "tail",
@@ -810,7 +800,6 @@ describe("processTimelineResponse", () => {
       currentHead: live.head,
       isInitializing: true,
       hasActiveInitDeferred: true,
-      hasAuthoritativeBaseline: false,
       payload: {
         ...baseTimelineInput.payload,
         direction: "tail",
@@ -973,31 +962,71 @@ describe("processTimelineResponse", () => {
     expect(result.tail).toEqual([first, second]);
   });
 
-  it("drops an acknowledged local row omitted by a same-epoch replacement", () => {
-    const acknowledged = createUserMessage({
+  it("keeps an unreconciled local presentation through same-epoch replacement", () => {
+    const image = {
+      id: "local-image",
+      mimeType: "image/png",
+      storageType: "web-indexeddb" as const,
+      storageKey: "local-image",
+      createdAt: 1000,
+    };
+    const attachment = {
+      type: "text" as const,
+      mimeType: "text/plain" as const,
+      text: "attached context",
+      title: "context.txt",
+    };
+    const local = createUserMessage({
       clientMessageId: "client-local-only",
       text: "provider may not echo this",
       timestamp: new Date(1000),
+      images: [image],
+      attachments: [attachment],
     });
 
     const result = processTimelineResponse({
       ...baseTimelineInput,
-      currentTail: [acknowledged],
+      currentTail: [local],
       currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
       sendingClientMessageIds: [],
       payload: {
         ...baseTimelineInput.payload,
         reset: true,
         epoch: "epoch-1",
-        entries: [],
+        startCursor: { seq: 2 },
+        endCursor: { seq: 2 },
+        entries: [makeTimelineEntry(2, "another client's response")],
       },
     });
 
-    expect(result.tail).toEqual([]);
+    expect(result.tail).toEqual([
+      expect.objectContaining({
+        kind: "assistant_message",
+        text: "another client's response",
+      }),
+      local,
+    ]);
   });
 
-  it("drops an acknowledged local row omitted by a known epoch change", () => {
-    const acknowledged = createUserMessage({
+  it("keeps an unreconciled local presentation during non-reset bootstrap", () => {
+    const local = makeSubmittedUserMessage("first prompt", "client-first-prompt");
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [local],
+      isInitializing: true,
+      hasActiveInitDeferred: true,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "tail",
+      },
+    });
+
+    expect(result.tail).toEqual([local]);
+  });
+
+  it("drops an unreconciled local row omitted by a known epoch change", () => {
+    const local = createUserMessage({
       clientMessageId: "client-prior-epoch",
       text: "prior prompt",
       timestamp: new Date(1000),
@@ -1005,7 +1034,7 @@ describe("processTimelineResponse", () => {
 
     const result = processTimelineResponse({
       ...baseTimelineInput,
-      currentTail: [acknowledged],
+      currentTail: [local],
       currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
       sendingClientMessageIds: [],
       payload: {
@@ -1017,6 +1046,44 @@ describe("processTimelineResponse", () => {
     });
 
     expect(result.tail).toEqual([]);
+  });
+
+  it("drops an unreconciled head row omitted by a known epoch change", () => {
+    const local = makeSubmittedUserMessage("prior prompt", "client-prior-epoch");
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentHead: [local],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
+      sendingClientMessageIds: [],
+      payload: {
+        ...baseTimelineInput.payload,
+        reset: true,
+        epoch: "epoch-2",
+        entries: [],
+      },
+    });
+
+    expect(result.head).toEqual([]);
+  });
+
+  it("keeps an active head submission across a known epoch change", () => {
+    const local = makeSubmittedUserMessage("pending prompt", "client-pending");
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentHead: [local],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
+      sendingClientMessageIds: ["client-pending"],
+      payload: {
+        ...baseTimelineInput.payload,
+        reset: true,
+        epoch: "epoch-2",
+        entries: [],
+      },
+    });
+
+    expect(result.head).toEqual([local]);
   });
 
   it("keeps an unmatched submission after the canonical replacement range", () => {

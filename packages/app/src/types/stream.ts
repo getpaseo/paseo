@@ -126,6 +126,14 @@ export function createUserMessage(input: UserMessageInput): UserMessageItem {
   };
 }
 
+export function isUnreconciledLocalUserMessage(message: UserMessageItem): boolean {
+  return (
+    message.clientMessageId !== undefined &&
+    message.messageId === undefined &&
+    message.timelineCursor === undefined
+  );
+}
+
 export function appendSubmittedUserMessage(input: {
   tail: StreamItem[];
   head: StreamItem[];
@@ -396,7 +404,7 @@ export interface CanonicalStreamReplacementInput {
   previousTail: StreamItem[];
   previousHead: StreamItem[];
   sendingClientMessageIds: readonly string[];
-  preserveLiveHead: boolean;
+  preserveContinuity: boolean;
   canonicalCoverage: { epoch: string; endSeq: number | null };
 }
 
@@ -504,12 +512,12 @@ function reconcileReplacementHeadAgainstTail(
 function preserveReplacementHead(
   tail: StreamItem[],
   currentHead: StreamItem[],
-  preserveLiveHead: boolean,
+  preserveContinuity: boolean,
   sendingClientMessageIds: ReadonlySet<string>,
   canonicalCoverage: CanonicalStreamReplacementInput["canonicalCoverage"],
 ): CanonicalStreamReplacementResult {
   const canonicalTailAssistant = tail.at(-1);
-  const retainedHead = preserveLiveHead
+  const retainedHead = preserveContinuity
     ? currentHead.filter(
         (item) =>
           !item.timelineCursor ||
@@ -609,10 +617,7 @@ export function replaceWithCanonicalStream(
     if (tailResult.matched) {
       unmatchedTailMessages = removeUserMessageAt(unmatchedTailMessages, tailResult.index);
       nextTail.push(tailResult.message);
-      if (
-        tailResult.message.clientMessageId &&
-        sendingClientMessageIds.has(tailResult.message.clientMessageId)
-      ) {
+      if (tailResult.message.clientMessageId) {
         acknowledgedClientMessageIds.add(tailResult.message.clientMessageId);
       }
       continue;
@@ -625,10 +630,7 @@ export function replaceWithCanonicalStream(
         ...headResult.items.slice(headResult.index + 1),
       ];
       nextTail.push(headResult.message);
-      if (
-        headResult.message.clientMessageId &&
-        sendingClientMessageIds.has(headResult.message.clientMessageId)
-      ) {
+      if (headResult.message.clientMessageId) {
         acknowledgedClientMessageIds.add(headResult.message.clientMessageId);
       }
       continue;
@@ -639,10 +641,13 @@ export function replaceWithCanonicalStream(
 
   const retainedTailMessages: UserMessageItem[] = [];
   for (const local of unmatchedTailMessages) {
-    if (local.clientMessageId && sendingClientMessageIds.has(local.clientMessageId)) {
+    const preserveLocal = input.preserveContinuity
+      ? isUnreconciledLocalUserMessage(local)
+      : local.clientMessageId !== undefined && sendingClientMessageIds.has(local.clientMessageId);
+    if (preserveLocal) {
       nextTail.push(local);
     } else if (
-      input.preserveLiveHead &&
+      input.preserveContinuity &&
       local.timelineCursor &&
       isAfterCanonicalCoverage(local.timelineCursor, input.canonicalCoverage)
     ) {
@@ -651,17 +656,10 @@ export function replaceWithCanonicalStream(
   }
   nextHead = [...retainedTailMessages, ...nextHead];
 
-  nextHead = nextHead.filter((item) => {
-    if (item.kind !== "user_message" || !item.clientMessageId) return true;
-    if (sendingClientMessageIds.has(item.clientMessageId)) return true;
-    if (!input.preserveLiveHead || !item.timelineCursor) return false;
-    return isAfterCanonicalCoverage(item.timelineCursor, input.canonicalCoverage);
-  });
-
   const replacement = preserveReplacementHead(
     nextTail,
     nextHead,
-    input.preserveLiveHead,
+    input.preserveContinuity,
     sendingClientMessageIds,
     input.canonicalCoverage,
   );

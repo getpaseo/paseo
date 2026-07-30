@@ -1,7 +1,12 @@
 import type { Page } from "@playwright/test";
 import { expect, test as baseTest } from "./fixtures";
 import { expectAgentIdle } from "./helpers/agent-stream";
-import { expectComposerVisible, submitMessage } from "./helpers/composer";
+import {
+  attachImageFromMenu,
+  expectAttachmentPill,
+  expectComposerVisible,
+  submitMessage,
+} from "./helpers/composer";
 import { clickNewChat, gotoWorkspace } from "./helpers/launcher";
 import { seedWorkspace } from "./helpers/seed-client";
 import {
@@ -37,6 +42,7 @@ interface ContentChildFrame extends ElementFrame {
 interface TurnFrame {
   at: number;
   userRow: ElementFrame;
+  attachment: ElementFrame;
   footerRow: ElementFrame;
   spinner: ElementFrame;
   interruptControl: ElementFrame;
@@ -48,6 +54,15 @@ interface TurnFrame {
     scrollHeight: number | null;
   };
 }
+
+const FIRST_PROMPT_IMAGE = {
+  name: "first-prompt.png",
+  mimeType: "image/png",
+  buffer: Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+    "base64",
+  ),
+};
 
 declare global {
   interface Window {
@@ -124,6 +139,12 @@ async function recordTurnFrames(page: Page, prompt: string): Promise<void> {
         const style = getComputedStyle(candidate);
         if (Number(style.opacity) <= 0) return false;
         if (hasColor(style.backgroundColor)) return true;
+        const hasPaintedBorder = ["Top", "Right", "Bottom", "Left"].some(
+          (side) =>
+            Number.parseFloat(style.getPropertyValue(`border-${side.toLowerCase()}-width`)) > 0 &&
+            hasColor(style.getPropertyValue(`border-${side.toLowerCase()}-color`)),
+        );
+        if (hasPaintedBorder) return true;
         if (candidate.textContent?.trim() && hasColor(style.color)) return true;
         if (candidate instanceof SVGElement) {
           const fill = style.fill || candidate.getAttribute("fill") || "";
@@ -176,6 +197,8 @@ async function recordTurnFrames(page: Page, prompt: string): Promise<void> {
         backgroundColor: getComputedStyle(dots[0]).backgroundColor,
       };
     };
+    const findImageAttachment = (row: Element | undefined) =>
+      row?.querySelector('[role="button"][aria-label="Open image attachment"]');
     const sample = () => {
       const viewport = Array.from(
         document.querySelectorAll('[data-testid="agent-chat-scroll"]'),
@@ -183,6 +206,7 @@ async function recordTurnFrames(page: Page, prompt: string): Promise<void> {
       const promptRow = Array.from(
         viewport?.querySelectorAll('[data-testid="user-message"]') ?? [],
       ).find((candidate) => candidate.textContent?.includes(promptText));
+      const attachment = findImageAttachment(promptRow);
       const footer = Array.from(
         viewport?.querySelectorAll('[data-testid="turn-working-indicator"]') ?? [],
       )[0];
@@ -212,6 +236,7 @@ async function recordTurnFrames(page: Page, prompt: string): Promise<void> {
       state.frames.push({
         at: performance.now(),
         userRow: snapshot(promptRow, viewport),
+        attachment: snapshot(attachment, viewport),
         footerRow: snapshot(footerRow, viewport, spinner.painted),
         spinner,
         interruptControl: snapshot(interrupt),
@@ -308,6 +333,9 @@ function expectRowContinuity(frames: TurnFrame[]): void {
       baseline !== undefined &&
       Math.abs((frame.userRow.rect?.top ?? baseline) - baseline) > 1,
   );
+  const attachmentMissing = frames.findIndex(
+    (frame, index) => index >= first && !hasPaintedLayout(frame.attachment),
+  );
   const violations = [
     ...(first < 0 ? ["submitted row never became visible"] : []),
     ...(disappeared >= 0
@@ -320,8 +348,10 @@ function expectRowContinuity(frames: TurnFrame[]): void {
           `submitted row moved from ${baseline?.toFixed(1)} to ${frames[shifted].userRow.rect?.top.toFixed(1)}`,
         ]
       : []),
+    ...(attachmentMissing >= 0 ? ["submitted image attachment left the painted layout"] : []),
   ];
   let failure = Math.max(0, first);
+  if (attachmentMissing >= 0) failure = attachmentMissing;
   if (shifted >= 0) failure = shifted;
   if (disappeared >= 0) failure = disappeared;
   expect(
@@ -560,6 +590,8 @@ test("keeps the first prompt of a new agent in place through authoritative hydra
     await expectComposerVisible(page);
 
     const prompt = "Delay synthetic user message by 300ms.";
+    await attachImageFromMenu(page, FIRST_PROMPT_IMAGE);
+    await expectAttachmentPill(page, "composer-image-attachment-pill");
     await recordTurnFrames(page, prompt);
     await submitMessage(page, prompt);
 
