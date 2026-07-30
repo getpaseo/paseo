@@ -1088,6 +1088,27 @@ export const SetVoiceModeMessageSchema = z.object({
   requestId: z.string().optional(),
 });
 
+// Live Voice: a realtime speech-to-speech call attached to a single agent.
+// Audio rides a direct WebRTC media track; the daemon only relays SDP and
+// control. `voice.live.start.response` carries the answer SDP, so the client
+// never has to correlate a separate push for the handshake.
+export const VoiceLiveStartRequestSchema = z.object({
+  type: z.literal("voice.live.start.request"),
+  requestId: z.string(),
+  agentId: z.string(),
+  offerSdp: z.string(),
+  voice: z.string().optional(),
+});
+
+// Stopping is idempotent: a stop for an already-closed or superseded
+// liveSessionId still answers `voice.live.stop.response`.
+export const VoiceLiveStopRequestSchema = z.object({
+  type: z.literal("voice.live.stop.request"),
+  requestId: z.string(),
+  agentId: z.string(),
+  liveSessionId: z.string(),
+});
+
 // COMPAT(githubAttachmentKinds): legacy wire attachment retained when
 // forge-neutral attachments shipped in v0.2.0-beta.1. Stop emitting it after
 // 2027-01-17 once supported client and daemon floors are >= v0.2.0.
@@ -2083,6 +2104,67 @@ export const SetVoiceModeResponseMessageSchema = z.object({
   }),
 });
 
+// liveSessionId and answerSdp are present iff accepted; errorCode/errorMessage
+// are present iff rejected. errorCode stays z.string() (not z.enum) so a newer
+// daemon can introduce codes without breaking older clients.
+export const VoiceLiveStartResponseSchema = z.object({
+  type: z.literal("voice.live.start.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    accepted: z.boolean(),
+    liveSessionId: z.string().optional(),
+    answerSdp: z.string().optional(),
+    errorCode: z.string().optional(),
+    errorMessage: z.string().optional(),
+  }),
+});
+
+export const VoiceLiveStopResponseSchema = z.object({
+  type: z.literal("voice.live.stop.response"),
+  payload: z.object({
+    requestId: z.string(),
+  }),
+});
+
+// `code` and `cause` stay z.string() (not z.enum) so a newer daemon can add
+// codes without breaking older clients. `role` is an enum by design: the set of
+// speakers in a call is closed.
+export const VoiceLiveEventSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("started"),
+  }),
+  z.object({
+    kind: z.literal("transcript"),
+    role: z.enum(["user", "assistant"]),
+    transcriptId: z.string(),
+    text: z.string(),
+  }),
+  z.object({
+    kind: z.literal("error"),
+    code: z.string(),
+    message: z.string(),
+    fatal: z.boolean(),
+  }),
+  z.object({
+    kind: z.literal("closed"),
+    cause: z.string(),
+    detail: z.string().optional(),
+  }),
+]);
+
+// Server-initiated push with no matching request; sent only to the client that
+// owns the call. `seq` is monotonic per liveSessionId.
+export const VoiceLiveUpdateSchema = z.object({
+  type: z.literal("voice.live.update"),
+  payload: z.object({
+    agentId: z.string(),
+    liveSessionId: z.string(),
+    seq: z.number().int().nonnegative(),
+    event: VoiceLiveEventSchema,
+  }),
+});
+
 export const AgentPermissionResponseMessageSchema = z.object({
   type: z.literal("agent_permission_response"),
   agentId: z.string(),
@@ -3071,6 +3153,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceRecoveryInspectRequestSchema,
   WorkspaceRecoveryRestoreRequestSchema,
   SetVoiceModeMessageSchema,
+  VoiceLiveStartRequestSchema,
+  VoiceLiveStopRequestSchema,
   SendAgentMessageRequestSchema,
   WaitForFinishRequestSchema,
   DaemonGetStatusRequestSchema,
@@ -3559,6 +3643,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentProfiles: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
+        // COMPAT(liveVoice): added in v0.2.5, remove after 2027-01-30.
+        liveVoice: z.boolean().optional(),
       })
       .optional(),
   })
@@ -6506,6 +6592,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceClearAttentionResponseSchema,
   SendAgentMessageResponseMessageSchema,
   SetVoiceModeResponseMessageSchema,
+  VoiceLiveStartResponseSchema,
+  VoiceLiveStopResponseSchema,
+  VoiceLiveUpdateSchema,
   DaemonGetStatusResponseSchema,
   DaemonGetPairingOfferResponseSchema,
   DaemonConfigReloadResponseSchema,
@@ -6716,6 +6805,10 @@ export type AgentForkContextResponseMessage = z.infer<typeof AgentForkContextRes
 export type CancelAgentResponseMessage = z.infer<typeof CancelAgentResponseMessageSchema>;
 export type SendAgentMessageResponseMessage = z.infer<typeof SendAgentMessageResponseMessageSchema>;
 export type SetVoiceModeResponseMessage = z.infer<typeof SetVoiceModeResponseMessageSchema>;
+export type VoiceLiveStartResponse = z.infer<typeof VoiceLiveStartResponseSchema>;
+export type VoiceLiveStopResponse = z.infer<typeof VoiceLiveStopResponseSchema>;
+export type VoiceLiveEvent = z.infer<typeof VoiceLiveEventSchema>;
+export type VoiceLiveUpdate = z.infer<typeof VoiceLiveUpdateSchema>;
 export type SetAgentModeResponseMessage = z.infer<typeof SetAgentModeResponseMessageSchema>;
 export type SetAgentModelResponseMessage = z.infer<typeof SetAgentModelResponseMessageSchema>;
 export type SetAgentThinkingResponseMessage = z.infer<typeof SetAgentThinkingResponseMessageSchema>;
@@ -6808,6 +6901,8 @@ export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;
 
 // Type exports for inbound message types
 export type VoiceAudioChunkMessage = z.infer<typeof VoiceAudioChunkMessageSchema>;
+export type VoiceLiveStartRequest = z.infer<typeof VoiceLiveStartRequestSchema>;
+export type VoiceLiveStopRequest = z.infer<typeof VoiceLiveStopRequestSchema>;
 export type FetchAgentsRequestMessage = z.infer<typeof FetchAgentsRequestMessageSchema>;
 export type FetchAgentHistoryRequestMessage = z.infer<typeof FetchAgentHistoryRequestMessageSchema>;
 export type FetchRecentProviderSessionsRequestMessage = z.infer<
