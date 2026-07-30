@@ -296,6 +296,16 @@ describe("splitHtmlishMarkdown", () => {
     );
   });
 
+  it("normalizes HTML table cells and inline formatting into markdown", () => {
+    expect(
+      normalizeHtmlishMarkdown(
+        "<table><tr><td><strong>Score</strong>: 78</td></tr><tr><td><strong>No security concerns identified</strong></td></tr><tr><td><strong>Recommended focus areas for review</strong></td><td>Bearer authentication</td></tr></table>",
+      ),
+    ).toBe(
+      "\n- **Score**: 78\n- **No security concerns identified**\n- **Recommended focus areas for review**: Bearer authentication\n",
+    );
+  });
+
   it("leaves complex code tags inert instead of parsing HTML", () => {
     expect(normalizeHtmlishMarkdown('<code onclick="evil()"><script>x</script></code>')).toBe(
       '<code onclick="evil()"><script>x</script></code>',

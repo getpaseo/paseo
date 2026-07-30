@@ -25,6 +25,7 @@ import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentManagerEvent } from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
+import { deriveProjectKey } from "./project-key.js";
 import type { SessionOptions } from "./session.js";
 import type { SessionInboundMessage, SessionOutboundMessage } from "./messages.js";
 import {
@@ -649,6 +650,12 @@ describe("project command-center RPCs", () => {
         rootPath: directoryPath,
         kind: "non_git",
         displayName: "new-project",
+        projectKey: deriveProjectKey({
+          rootPath: directoryPath,
+          remoteUrl: null,
+          worktreeRoot: null,
+          mainRepoRoot: null,
+        }),
         timestamp: expect.any(String),
       });
       expect(messages).toEqual([
@@ -3416,7 +3423,7 @@ describe("session workspace descriptors", () => {
     const messages: unknown[] = [];
     const workspace = {
       workspaceId: "ws-gh",
-      projectId: "remote:github.com/acme/app",
+      projectId: "prj_app",
       cwd: "/repo/app",
       kind: "local_checkout" as const,
       displayName: "app",
@@ -3424,7 +3431,8 @@ describe("session workspace descriptors", () => {
       archivedAt: null,
     };
     const project = {
-      projectId: "remote:github.com/acme/app",
+      projectId: "prj_app",
+      projectKey: "remote:github.com/acme/app",
       rootPath: "/repo/app",
       kind: "git" as const,
       displayName: "acme/app",
@@ -3435,7 +3443,10 @@ describe("session workspace descriptors", () => {
     const session = createSessionForTest({
       messages,
       workspaceRegistry: { get: vi.fn(), list: vi.fn().mockResolvedValue([workspace]) },
-      projectRegistry: { list: vi.fn().mockResolvedValue([project]), get: vi.fn() },
+      projectRegistry: {
+        list: vi.fn().mockResolvedValue([project]),
+        get: vi.fn().mockResolvedValue(project),
+      },
       workspaceGitService: {
         getSnapshot: vi.fn(),
         peekSnapshot: vi.fn(() =>
@@ -3464,8 +3475,9 @@ describe("session workspace descriptors", () => {
         entries: [
           expect.objectContaining({
             id: "ws-gh",
+            projectId: "prj_app",
             project: expect.objectContaining({
-              projectKey: "remote:github.com/acme/app",
+              projectKey: "prj_app",
               projectName: "acme/app",
               workspaceName: "app",
               checkout: expect.objectContaining({
@@ -4900,13 +4912,60 @@ test("sends project updates only to capable sockets in a retained session", () =
   ]);
 });
 
+test("project.list returns every active project descriptor", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const active = createPersistedProjectRecord({
+    projectId: "project-active",
+    projectKey: "remote:github.com/acme/app",
+    rootPath: "/tmp/project-active",
+    kind: "git",
+    displayName: "acme/app",
+    createdAt: "2026-07-17T00:00:00.000Z",
+    updatedAt: "2026-07-17T00:00:00.000Z",
+  });
+  const archived = createPersistedProjectRecord({
+    projectId: "project-archived",
+    rootPath: "/tmp/project-archived",
+    kind: "non_git",
+    displayName: "archived",
+    createdAt: "2026-07-17T00:00:00.000Z",
+    updatedAt: "2026-07-17T00:00:00.000Z",
+    archivedAt: "2026-07-18T00:00:00.000Z",
+  });
+  const session = createSessionForTest({
+    messages,
+    projectRegistry: { list: vi.fn().mockResolvedValue([active, archived]) },
+  });
+
+  await session.handleMessage({ type: "project.list.request", requestId: "projects-1" });
+
+  expect(messages).toEqual([
+    {
+      type: "project.list.response",
+      payload: {
+        requestId: "projects-1",
+        projects: [
+          {
+            projectId: "project-active",
+            projectKey: "remote:github.com/acme/app",
+            projectDisplayName: "acme/app",
+            projectCustomName: null,
+            projectRootPath: "/tmp/project-active",
+            projectKind: "git",
+          },
+        ],
+      },
+    },
+  ]);
+});
+
 describe("agent config setters", () => {
   function liveAgentManager(overrides: { [K in keyof SessionOptions["agentManager"]]?: unknown }): {
     [K in keyof SessionOptions["agentManager"]]?: unknown;
   } {
     return {
       waitForAgentClose: vi.fn().mockResolvedValue(undefined),
-      touchAgentActivity: vi.fn(() => ({ id: "agent-1" })),
+      getAgent: vi.fn(() => ({ id: "agent-1" })),
       ...overrides,
     };
   }

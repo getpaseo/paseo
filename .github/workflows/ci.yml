@@ -79,6 +79,106 @@ jobs:
           chmod +x ./gradlew
           ./gradlew :paseo-browser-proxy:testDebugUnitTest :app:assembleDebug --no-daemon --max-workers=1 -Dorg.gradle.parallel=false
 
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      quality: ${{ steps.filter.outputs.shared != 'false' || steps.filter.outputs.quality != 'false' }}
+      server: ${{ steps.filter.outputs.shared != 'false' || steps.filter.outputs.server != 'false' }}
+      desktop: ${{ steps.filter.outputs.shared != 'false' || steps.filter.outputs.desktop != 'false' }}
+      desktop_package: ${{ steps.filter.outputs.shared != 'false' || steps.filter.outputs.desktop_package != 'false' }}
+      app: ${{ steps.filter.outputs.shared != 'false' || steps.filter.outputs.app != 'false' }}
+      sdk: ${{ steps.filter.outputs.shared != 'false' || steps.filter.outputs.sdk != 'false' }}
+      playwright: ${{ steps.filter.outputs.shared != 'false' || steps.filter.outputs.playwright != 'false' }}
+      relay: ${{ steps.filter.outputs.shared != 'false' || steps.filter.outputs.relay != 'false' }}
+      cli: ${{ steps.filter.outputs.shared != 'false' || steps.filter.outputs.cli != 'false' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Detect affected CI jobs
+        id: filter
+        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3.0.3
+        with:
+          filters: |
+            shared:
+              - '.github/workflows/ci.yml'
+              - '.github/actions/**'
+              - '.mise.toml'
+              - '.tool-versions'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'patches/**'
+              - 'scripts/**'
+              - 'tsconfig.json'
+              - 'tsconfig.base.json'
+              - 'vitest.config.ts'
+            quality:
+              - 'packages/**'
+              - '*.cjs'
+              - '*.js'
+              - '*.json'
+              - '*.mjs'
+              - '*.ts'
+            server:
+              - 'packages/app/e2e/fixtures/recording.*'
+              - 'packages/client/**'
+              - 'packages/cli/src/**'
+              - 'packages/highlight/**'
+              - 'packages/protocol/**'
+              - 'packages/relay/**'
+              - 'packages/server/**'
+            desktop:
+              - 'packages/app/**'
+              - 'packages/cli/**'
+              - 'packages/client/**'
+              - 'packages/desktop/**'
+              - 'packages/expo-two-way-audio/**'
+              - 'packages/highlight/**'
+              - 'packages/protocol/**'
+              - 'packages/relay/**'
+              - 'packages/server/**'
+            desktop_package:
+              - '.github/workflows/ci.yml'
+              - 'packages/desktop/**'
+            app:
+              - 'packages/app/**'
+              - 'packages/client/**'
+              - 'packages/expo-two-way-audio/**'
+              - 'packages/highlight/**'
+              - 'packages/protocol/**'
+              - 'packages/relay/**'
+            sdk:
+              - 'packages/client/**'
+              - 'packages/protocol/**'
+              - 'packages/relay/**'
+            playwright:
+              - 'packages/app/**'
+              - 'packages/client/**'
+              - 'packages/expo-two-way-audio/**'
+              - 'packages/highlight/**'
+              - 'packages/protocol/**'
+              - 'packages/relay/**'
+              - 'packages/server/**'
+            relay:
+              - 'packages/relay/**'
+            cli:
+              - 'nix/**'
+              - 'packages/app/e2e/global-setup.ts'
+              - 'packages/cli/**'
+              - 'packages/client/**'
+              - 'packages/desktop/src/daemon/runtime-paths.ts'
+              - 'packages/highlight/**'
+              - 'packages/protocol/**'
+              - 'packages/relay/**'
+              - 'packages/server/**'
+
+      - name: Validate CI workflow
+        run: node --test scripts/ci-workflow.test.mjs
+
   format:
     runs-on: ubuntu-latest
     env:
@@ -100,6 +200,12 @@ jobs:
         run: npx oxfmt --check .
 
   lint:
+    needs: changes
+    if: >-
+      ${{ !cancelled() &&
+          (github.event_name == 'workflow_dispatch' ||
+           needs.changes.result != 'success' ||
+           needs.changes.outputs.quality != 'false') }}
     runs-on: ubuntu-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
@@ -124,6 +230,12 @@ jobs:
         run: npm run lint
 
   typecheck:
+    needs: changes
+    if: >-
+      ${{ !cancelled() &&
+          (github.event_name == 'workflow_dispatch' ||
+           needs.changes.result != 'success' ||
+           needs.changes.outputs.quality != 'false') }}
     runs-on: ubuntu-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
@@ -150,6 +262,8 @@ jobs:
           npm pack --dry-run --ignore-scripts --workspace=@getpaseo/server
 
   server-tests:
+    needs: changes
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -158,28 +272,43 @@ jobs:
     name: server-tests (${{ matrix.os }})
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      RUN_TESTS: >-
+        ${{ github.event_name == 'workflow_dispatch' ||
+            needs.changes.result != 'success' ||
+            needs.changes.outputs.server != 'false' }}
     steps:
+      - name: Skip unaffected server tests
+        if: env.RUN_TESTS != 'true'
+        run: echo "No server changes detected."
+
       - uses: actions/checkout@v4
+        if: env.RUN_TESTS == 'true'
         with:
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
+        if: env.RUN_TESTS == 'true'
         with:
           node-version: "22"
           cache: "npm"
 
       - name: Fetch origin/main (worktree tests)
+        if: env.RUN_TESTS == 'true'
         run: git fetch --no-tags origin main:refs/remotes/origin/main
 
       - name: Install dependencies
+        if: env.RUN_TESTS == 'true'
         run: node scripts/npm-retry.mjs ci
       - name: Install agent CLIs for provider tests
+        if: env.RUN_TESTS == 'true'
         run: node scripts/npm-retry.mjs install -g @anthropic-ai/claude-code opencode-ai
 
       - name: Build server dependencies
+        if: env.RUN_TESTS == 'true'
         run: npm run build:server-deps
 
       - name: Run server tests
+        if: env.RUN_TESTS == 'true'
         run: npm run test --workspace=@getpaseo/server
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -187,6 +316,8 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 
   desktop-tests:
+    needs: changes
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -195,49 +326,53 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      pull-requests: read
+    env:
+      RUN_TESTS: >-
+        ${{ github.event_name == 'workflow_dispatch' ||
+            needs.changes.result != 'success' ||
+            needs.changes.outputs.desktop != 'false' }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Skip unaffected desktop tests
+        if: env.RUN_TESTS != 'true'
+        run: echo "No desktop changes detected."
 
-      - name: Detect desktop changes
-        if: matrix.os == 'ubuntu-latest'
-        id: desktop_changes
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            desktop:
-              - 'packages/desktop/**'
+      - uses: actions/checkout@v4
+        if: env.RUN_TESTS == 'true'
 
       - uses: actions/setup-node@v4
+        if: env.RUN_TESTS == 'true'
         with:
           node-version: "22"
           cache: "npm"
 
       - name: Install dependencies with retry
+        if: env.RUN_TESTS == 'true'
         run: node scripts/npm-retry.mjs ci
       - name: Build server stack
+        if: env.RUN_TESTS == 'true'
         run: npm run build:server
 
       - name: Run desktop tests
+        if: env.RUN_TESTS == 'true'
         run: npm run test --workspace=@getpaseo/desktop
 
       - name: Build app dependencies for desktop E2E
-        if: matrix.os == 'ubuntu-latest'
+        if: env.RUN_TESTS == 'true' && matrix.os == 'ubuntu-latest'
         run: npm run build:app-deps
 
       - name: Install virtual display
-        if: matrix.os == 'ubuntu-latest'
+        if: env.RUN_TESTS == 'true' && matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y xvfb xauth
 
       - name: Run real Electron browser tab bridge E2E
-        if: matrix.os == 'ubuntu-latest'
+        if: env.RUN_TESTS == 'true' && matrix.os == 'ubuntu-latest'
         run: npm run test:e2e:browser-tab-bridge --workspace=@getpaseo/desktop
         env:
           PASEO_TAB_BRIDGE_E2E_ARTIFACT_DIR: ${{ runner.temp }}/browser-tab-bridge-e2e
 
       - name: Upload browser tab bridge diagnostics
         uses: actions/upload-artifact@v4
-        if: failure() && matrix.os == 'ubuntu-latest'
+        if: env.RUN_TESTS == 'true' && failure() && matrix.os == 'ubuntu-latest'
         with:
           name: browser-tab-bridge-e2e
           path: ${{ runner.temp }}/browser-tab-bridge-e2e
@@ -245,7 +380,11 @@ jobs:
           retention-days: 7
 
       - name: Build and smoke unpacked desktop app
-        if: matrix.os == 'ubuntu-latest' && steps.desktop_changes.outputs.desktop == 'true'
+        if: >-
+          env.RUN_TESTS == 'true' && matrix.os == 'ubuntu-latest' &&
+          (github.event_name == 'workflow_dispatch' ||
+           needs.changes.result != 'success' ||
+           needs.changes.outputs.desktop_package != 'false')
         run: npm run build:desktop -- --publish never --linux --x64 --dir
         env:
           EP_GH_IGNORE_TIME: true
@@ -253,7 +392,11 @@ jobs:
           PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke
 
       - name: Upload packaged smoke diagnostics
-        if: failure() && matrix.os == 'ubuntu-latest' && steps.desktop_changes.outputs.desktop == 'true'
+        if: >-
+          env.RUN_TESTS == 'true' && failure() && matrix.os == 'ubuntu-latest' &&
+          (github.event_name == 'workflow_dispatch' ||
+           needs.changes.result != 'success' ||
+           needs.changes.outputs.desktop_package != 'false')
         uses: actions/upload-artifact@v4
         with:
           name: desktop-packaged-smoke-linux-x64
@@ -262,6 +405,12 @@ jobs:
           retention-days: 7
 
   app-tests:
+    needs: changes
+    if: >-
+      ${{ !cancelled() &&
+          (github.event_name == 'workflow_dispatch' ||
+           needs.changes.result != 'success' ||
+           needs.changes.outputs.app != 'false') }}
     runs-on: ubuntu-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
@@ -286,6 +435,12 @@ jobs:
         run: npm run test --workspace=@getpaseo/app
 
   sdk-tests:
+    needs: changes
+    if: >-
+      ${{ !cancelled() &&
+          (github.event_name == 'workflow_dispatch' ||
+           needs.changes.result != 'success' ||
+           needs.changes.outputs.sdk != 'false') }}
     runs-on: ubuntu-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
@@ -312,6 +467,8 @@ jobs:
         run: npm run typecheck:examples --workspace=@getpaseo/client
 
   playwright:
+    needs: changes
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -325,43 +482,57 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      RUN_TESTS: >-
+        ${{ github.event_name == 'workflow_dispatch' ||
+            needs.changes.result != 'success' ||
+            needs.changes.outputs.playwright != 'false' }}
     steps:
+      - name: Skip unaffected Playwright tests
+        if: env.RUN_TESTS != 'true'
+        run: echo "No Playwright changes detected."
+
       - uses: actions/checkout@v4
+        if: env.RUN_TESTS == 'true'
 
       - uses: actions/setup-node@v4
+        if: env.RUN_TESTS == 'true'
         with:
           node-version: "22"
           cache: "npm"
 
       - name: Install dependencies with retry
+        if: env.RUN_TESTS == 'true'
         run: node scripts/npm-retry.mjs ci
       - name: Install Playwright browsers
+        if: env.RUN_TESTS == 'true'
         timeout-minutes: 10
         run: npx playwright install chromium
 
       - name: Build app dependencies
+        if: env.RUN_TESTS == 'true'
         run: npm run build:app-deps
 
       - name: Build server stack
+        if: env.RUN_TESTS == 'true'
         run: npm run build:server
 
       - name: Install agent CLIs for provider tests
-        if: ${{ !matrix.desktop }}
+        if: env.RUN_TESTS == 'true' && !matrix.desktop
         run: node scripts/npm-retry.mjs install -g @anthropic-ai/claude-code @openai/codex@0.105.0 opencode-ai
 
       - name: Run Playwright E2E tests
-        if: ${{ !matrix.desktop }}
+        if: env.RUN_TESTS == 'true' && !matrix.desktop
         run: npm run test:e2e --workspace=@getpaseo/app -- --shard=${{ matrix.shard }}/4
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
       - name: Run desktop-overlay Playwright tests
-        if: ${{ matrix.desktop }}
+        if: env.RUN_TESTS == 'true' && matrix.desktop
         run: npm run test:e2e:desktop --workspace=@getpaseo/app
 
       - name: Upload test artifacts
         uses: actions/upload-artifact@v4
-        if: failure()
+        if: env.RUN_TESTS == 'true' && failure()
         with:
           name: playwright-results-${{ matrix.shard }}
           path: |
@@ -370,6 +541,12 @@ jobs:
           retention-days: 7
 
   relay-tests:
+    needs: changes
+    if: >-
+      ${{ !cancelled() &&
+          (github.event_name == 'workflow_dispatch' ||
+           needs.changes.result != 'success' ||
+           needs.changes.outputs.relay != 'false') }}
     runs-on: ubuntu-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
@@ -391,6 +568,8 @@ jobs:
         run: npm run test --workspace=@getpaseo/relay
 
   cli-tests:
+    needs: changes
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -399,24 +578,38 @@ jobs:
     name: cli-tests (shard ${{ matrix.shard }}/3)
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      RUN_TESTS: >-
+        ${{ github.event_name == 'workflow_dispatch' ||
+            needs.changes.result != 'success' ||
+            needs.changes.outputs.cli != 'false' }}
     steps:
+      - name: Skip unaffected CLI tests
+        if: env.RUN_TESTS != 'true'
+        run: echo "No CLI changes detected."
+
       - uses: actions/checkout@v4
+        if: env.RUN_TESTS == 'true'
 
       - uses: actions/setup-node@v4
+        if: env.RUN_TESTS == 'true'
         with:
           node-version: "22"
           cache: "npm"
 
       - name: Install dependencies
+        if: env.RUN_TESTS == 'true'
         run: node scripts/npm-retry.mjs ci
 
       - name: Build server stack
+        if: env.RUN_TESTS == 'true'
         run: npm run build:server
 
       - name: Install agent CLIs for provider tests
+        if: env.RUN_TESTS == 'true'
         run: node scripts/npm-retry.mjs install -g @anthropic-ai/claude-code @openai/codex@0.105.0 opencode-ai
 
       - name: Run CLI tests
+        if: env.RUN_TESTS == 'true'
         run: npm run test --workspace=@getpaseo/cli
         env:
           PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: "0"

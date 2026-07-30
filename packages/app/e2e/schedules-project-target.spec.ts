@@ -205,7 +205,7 @@ test.describe("Schedules project target", () => {
     await expect(formSheet.getByText("Cron", { exact: true })).toHaveCount(0);
 
     await page.getByRole("button", { name: /select project/i }).click();
-    await page.getByTestId(`schedule-project-option-${workspace.projectId}`).click();
+    await page.getByTestId(`schedule-project-option-${workspace.projectKey}`).click();
     const projectTrigger = page.getByTestId("schedule-project-trigger");
     await expect(projectTrigger).toContainText(workspace.projectDisplayName);
     await expectSettled(projectTrigger);
@@ -245,6 +245,7 @@ test.describe("Schedules project target", () => {
       port: fakePort,
       serverId: fakeHost.serverId,
       workspace: fakeHost.workspace,
+      project: fakeHost,
     });
     await addFakeScheduleHostAndReload({
       page,
@@ -277,6 +278,7 @@ test.describe("Schedules project target", () => {
       port: fakePort,
       serverId: fakeHost.serverId,
       workspace: fakeHost.workspace,
+      project: fakeHost,
     });
 
     await gotoAppShell(page);
@@ -313,7 +315,7 @@ test.describe("Schedules project target", () => {
     await expectSettled(hostTrigger);
 
     await projectTrigger.click();
-    await page.getByTestId(`schedule-project-option-${workspace.projectId}`).click();
+    await page.getByTestId(`schedule-project-option-${workspace.projectKey}`).click();
     await expect(projectTrigger).toContainText(workspace.projectDisplayName);
     await expectSettled(projectTrigger);
 
@@ -335,8 +337,7 @@ test.describe("Schedules project target", () => {
     await expectSettled(projectTrigger);
 
     await projectTrigger.click();
-    await expect(page.getByTestId(`schedule-project-option-${workspace.projectId}`)).toHaveCount(0);
-    await page.getByTestId(`schedule-project-option-${fakeHost.projectId}`).click();
+    await page.getByTestId(`schedule-project-option-${fakeHost.projectKey}`).click();
     await expect(projectTrigger).toContainText(fakeHost.projectDisplayName);
     await expectSettled(projectTrigger);
     await expect(modelTrigger).toContainText(/select model/i);
@@ -362,7 +363,7 @@ test.describe("Schedules project target", () => {
     await page.getByTestId("schedules-empty-new").click();
 
     await page.getByRole("button", { name: /select project/i }).click();
-    await page.getByTestId(`schedule-project-option-${workspace.projectId}`).click();
+    await page.getByTestId(`schedule-project-option-${workspace.projectKey}`).click();
     await selectModelByLabel(page, "Ten second stream");
     await expect(
       page.getByText("Off keeps each run's workspace in the sidebar for inspection."),

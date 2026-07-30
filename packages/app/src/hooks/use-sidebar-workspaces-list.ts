@@ -1,12 +1,9 @@
 import { useCallback, useEffect, useMemo } from "react";
-import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
 import { useHydratedWorkspaceServerIds } from "@/stores/session-store-hooks";
 import { useHostProjects } from "@/projects/host-projects";
-import { fetchAllWorkspaceDescriptors } from "@/projects/workspace-fetching";
 import { getHostRuntimeStore, useHostRegistryLoaded, useHosts } from "@/runtime/host-runtime";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
-import { shouldSuppressWorkspaceForLocalArchive } from "@/contexts/session-workspace-upserts";
 import {
   buildSidebarWorkspacePlacementModel,
   computeSidebarOrderUpdates,
@@ -128,35 +125,12 @@ export function useSidebarWorkspacesList(options?: {
     for (const serverId of serverIds) {
       const snapshot = runtime.getSnapshot(serverId);
       if (snapshot?.connectionStatus !== "online") continue;
-      const client = runtime.getClient(serverId);
-      if (!client) continue;
-      void (async () => {
-        const next = new Map<string, WorkspaceDescriptor>();
-        try {
-          const { workspaces, emptyProjects } = await fetchAllWorkspaceDescriptors({
-            client,
-            sort: [{ key: "activity_at", direction: "desc" }],
-          });
-          for (const workspace of workspaces) {
-            if (shouldSuppressWorkspaceForLocalArchive({ serverId, workspace })) {
-              continue;
-            }
-            next.set(workspace.id, workspace);
-          }
-          const store = useSessionStore.getState();
-          store.setWorkspaces(serverId, next);
-          // Keep parents with no workspaces yet, so a manual refresh doesn't drop
-          // a freshly-added project from the sidebar.
-          store.setEmptyProjects(serverId, emptyProjects);
-          store.setHasHydratedWorkspaces(serverId, true);
-        } catch (error) {
-          console.error("[WorkspaceFetch][sidebar-refresh] failed", {
-            serverId,
-            error,
-          });
-          // ignore explicit refresh failures; hook keeps existing data
-        }
-      })();
+      void runtime.refreshDirectories(serverId).catch((error) => {
+        console.error("[WorkspaceFetch][sidebar-refresh] failed", {
+          serverId,
+          error,
+        });
+      });
     }
   }, [isActive, runtime, serverIds]);
 

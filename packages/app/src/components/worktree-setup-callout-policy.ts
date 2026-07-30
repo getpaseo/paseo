@@ -6,16 +6,11 @@ export interface WorktreeSetupWorkspaceInput {
   projectId: string;
   projectKind: string;
   projectRootPath: string;
-  project?: {
-    checkout?: {
-      mainRepoRoot?: string | null;
-    } | null;
-  } | null;
 }
 
 export interface ActiveGitWorkspaceProject {
   serverId: string;
-  projectKey: string;
+  projectId: string;
   repoRoot: string;
 }
 
@@ -43,13 +38,13 @@ export function selectActiveGitWorkspaceProject(
     return null;
   }
 
-  const projectKey = workspace.projectId.trim();
-  const repoRoot = (workspace.project?.checkout?.mainRepoRoot ?? workspace.projectRootPath).trim();
-  if (!projectKey || !repoRoot) {
+  const projectId = workspace.projectId;
+  const repoRoot = workspace.projectRootPath.trim();
+  if (!projectId.trim() || !repoRoot) {
     return null;
   }
 
-  return { serverId, projectKey, repoRoot };
+  return { serverId, projectId, repoRoot };
 }
 
 export function shouldShowWorktreeSetupCallout(readResult: ReadProjectConfigResult | undefined) {
@@ -59,7 +54,7 @@ export function shouldShowWorktreeSetupCallout(readResult: ReadProjectConfigResu
 export function buildWorktreeSetupCalloutPolicy(
   project: ActiveGitWorkspaceProject,
 ): WorktreeSetupCalloutPolicy {
-  const calloutKey = `worktree-setup-missing:${project.projectKey}`;
+  const calloutKey = `worktree-setup-missing:${project.serverId}:${project.projectId}`;
 
   return {
     id: calloutKey,
@@ -68,8 +63,8 @@ export function buildWorktreeSetupCalloutPolicy(
     title: i18n.t("sidebar.worktreeSetup.title"),
     description: i18n.t("sidebar.worktreeSetup.description"),
     actionLabel: i18n.t("sidebar.worktreeSetup.openProjectSettings"),
-    projectSettingsRoute: buildProjectSettingsRoute(project.projectKey),
-    testID: `worktree-setup-callout-${project.projectKey}`,
+    projectSettingsRoute: buildProjectSettingsRoute(project.serverId, project.projectId),
+    testID: `worktree-setup-callout-${project.projectId}`,
   };
 }
 

@@ -83,7 +83,7 @@ describe("fetchAggregatedSchedules load state", () => {
     expect(result).toEqual({ status: "loaded", data: [], hostErrors: [] });
   });
 
-  it("does not report loaded empty while another known host is still connecting", async () => {
+  it("reports loaded empty after a reachable host answers, even if another host is still connecting", async () => {
     const result = await fetchAggregatedSchedules({
       hosts: [
         { serverId: "host-a", serverName: "Host A" },
@@ -92,6 +92,26 @@ describe("fetchAggregatedSchedules load state", () => {
       runtime: makeRuntime({
         snapshots: {
           "host-a": { connectionStatus: "online" },
+          "host-b": { connectionStatus: "connecting" },
+        },
+        schedules: {
+          "host-a": [],
+        },
+      }),
+    });
+
+    expect(result).toEqual({ status: "loaded", data: [], hostErrors: [] });
+  });
+
+  it("stays connecting when no host has answered yet and a host is still settling", async () => {
+    const result = await fetchAggregatedSchedules({
+      hosts: [
+        { serverId: "host-a", serverName: "Host A" },
+        { serverId: "host-b", serverName: "Host B" },
+      ],
+      runtime: makeRuntime({
+        snapshots: {
+          "host-a": { connectionStatus: "offline" },
           "host-b": { connectionStatus: "connecting" },
         },
         schedules: {

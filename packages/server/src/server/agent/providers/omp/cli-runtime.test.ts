@@ -186,6 +186,40 @@ describe("OMP CLI runtime", () => {
     ]);
   });
 
+  test("accepts model catalogs with null contextWindow from NVIDIA", async () => {
+    const child = createOmpChild();
+    replyToCommands(child, () => ({
+      models: [
+        {
+          provider: "nvidia",
+          id: "minimaxai/minimax-m3",
+          name: "MiniMax-M3",
+          contextWindow: null,
+        },
+        {
+          provider: "zai",
+          id: "glm-5.2",
+          name: "GLM-5.2",
+          contextWindow: 131_072,
+        },
+      ],
+    }));
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    await expect(session.getAvailableModels()).resolves.toEqual([
+      expect.objectContaining({
+        provider: "nvidia",
+        id: "minimaxai/minimax-m3",
+        contextWindow: null,
+      }),
+      expect.objectContaining({
+        provider: "zai",
+        id: "glm-5.2",
+        contextWindow: 131_072,
+      }),
+    ]);
+  });
+
   test("wraps OMP subagent RPC commands", async () => {
     const child = createOmpChild();
     const commands: Record<string, unknown>[] = [];

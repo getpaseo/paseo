@@ -116,10 +116,11 @@ export async function fetchAggregatedSchedules(
     throw new Error(ALL_SCHEDULE_HOSTS_FAILED_MESSAGE);
   }
 
-  if (schedules.length === 0 && hasSettlingHost) {
-    return { status: "connecting" };
-  }
-
+  // Do not keep waiting after at least one host answered. The earlier
+  // !hasAskableHost && hasSettlingHost gate already covers the true "still
+  // connecting" case. Waiting again when schedules are empty caused infinite
+  // loading on desktop when one host stayed connecting while another already
+  // returned an empty list. Settling hosts refetch when they come online.
   return { status: "loaded", data: schedules, hostErrors };
 }
 
