@@ -262,10 +262,12 @@ function buildRuntimeEnv(paths: RuntimePaths, openRouterApiKey: string | null): 
 }
 
 async function runCommand(input: CommandInput): Promise<void> {
-  const child = spawn(input.command, input.args, {
+  const launch = resolveCommandLaunch(input.command, input.args);
+  const child = spawn(launch.command, launch.args, {
     cwd: input.cwd,
     env: input.env,
     detached: process.platform !== "win32",
+    shell: launch.shell,
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
@@ -312,6 +314,18 @@ async function runCommand(input: CommandInput): Promise<void> {
       `Command did not produce ${input.requiredOutput}: ${input.artifactName}. Retained real-test artifacts: ${input.artifacts}`,
     );
   }
+}
+
+export function resolveCommandLaunch(
+  command: string,
+  args: string[],
+  platform: NodeJS.Platform = process.platform,
+): { command: string; args: string[]; shell: boolean } {
+  return {
+    command,
+    args,
+    shell: platform === "win32" && path.extname(command).toLowerCase() === ".cmd",
+  };
 }
 
 function writeCommandArtifact(input: CommandInput, stdout: Buffer[], stderr: Buffer[]): string {
