@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.912 - 2026-07-30
+
+### Fixed
+
+- Restore Claude Opus 5 as separate 200K and 1M catalog entries so 1M context is selectable again
+- Show Effort on custom Claude models (settings/gateway/manual additional models), not only first-party catalog IDs
+
+### Improved
+
+- Claude Effort selector matches Claude Code TUI levels for every catalog model, including Haiku and custom models: Low, Medium, High, Extra High, Max
+
 ## 0.2.911 - 2026-07-30
 
 ### Improved

@@ -5,6 +5,7 @@ import type { Logger } from "pino";
 
 import type { AgentModelDefinition } from "../../agent-sdk-types.js";
 import {
+  enrichClaudeCatalogModel,
   getClaudeManifestModels,
   normalizeClaudeRuntimeModelId as normalizeClaudeManifestRuntimeModelId,
 } from "./model-manifest.js";
@@ -113,12 +114,14 @@ function addSettingsModel(
     return;
   }
 
-  models.push({
-    provider: "claude",
-    id,
-    label: id,
-    description: `From Claude settings.json ${settingsKey}`,
-  });
+  models.push(
+    enrichClaudeCatalogModel({
+      provider: "claude",
+      id,
+      label: id,
+      description: `From Claude settings.json ${settingsKey}`,
+    }),
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

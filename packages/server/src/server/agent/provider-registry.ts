@@ -30,6 +30,7 @@ import type {
   ProviderRuntimeSettings,
 } from "./provider-launch-config.js";
 import { ClaudeAgentClient } from "./providers/claude/agent.js";
+import { enrichClaudeCatalogModel } from "./providers/claude/model-manifest.js";
 import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js";
 import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
 import { CursorACPAgentClient } from "./providers/cursor-acp-agent.js";
@@ -284,7 +285,11 @@ function mapModel(
   provider: AgentProvider,
   model: AgentModelDefinition | ProviderProfileModel,
 ): AgentModelDefinition {
-  return normalizeAgentModelDefinition({ ...model, provider });
+  const mapped = normalizeAgentModelDefinition({ ...model, provider });
+  if (provider === "claude") {
+    return enrichClaudeCatalogModel(mapped);
+  }
+  return mapped;
 }
 
 function mergeModels(
