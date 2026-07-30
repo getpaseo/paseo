@@ -66,6 +66,21 @@ export class TaskStore {
       .map(stripAttachmentPaths);
   }
 
+  async get(input: { projectId: string; taskId: string }): Promise<TaskCard | null> {
+    const payload = await this.read();
+    const task = payload.tasks.find((entry) => entry.id === input.taskId);
+    if (!task || task.projectId !== input.projectId) {
+      return null;
+    }
+    return stripAttachmentPaths(task);
+  }
+
+  async getById(taskId: string): Promise<TaskCard | null> {
+    const payload = await this.read();
+    const task = payload.tasks.find((entry) => entry.id === taskId);
+    return task ? stripAttachmentPaths(task) : null;
+  }
+
   async getAttachment(input: {
     projectId: string;
     taskId: string;

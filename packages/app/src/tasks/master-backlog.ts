@@ -218,3 +218,45 @@ export async function fetchMasterBacklogTasks(input: {
 
   return { hostTasks, hostErrors };
 }
+
+export function matchesBacklogSearchQuery(
+  task: {
+    title: string;
+    description: string;
+    projectName?: string | null;
+    serverName?: string | null;
+    projectId?: string | null;
+  },
+  query: string,
+): boolean {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+  const haystack = [
+    task.title,
+    task.description,
+    task.projectName ?? "",
+    task.serverName ?? "",
+    task.projectId ?? "",
+  ]
+    .join("\n")
+    .toLowerCase();
+  return haystack.includes(normalized);
+}
+
+export function filterBacklogTasksByQuery<
+  T extends {
+    title: string;
+    description: string;
+    projectName?: string | null;
+    serverName?: string | null;
+    projectId?: string | null;
+  },
+>(tasks: readonly T[], query: string): T[] {
+  const normalized = query.trim();
+  if (!normalized) {
+    return [...tasks];
+  }
+  return tasks.filter((task) => matchesBacklogSearchQuery(task, normalized));
+}
