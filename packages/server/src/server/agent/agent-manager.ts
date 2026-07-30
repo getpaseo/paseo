@@ -1868,11 +1868,26 @@ export class AgentManager {
    * emitted by the handler flow through dispatchStream so they persist and
    * broadcast like normal timeline events.
    */
-  tryRunOutOfBand(agentId: string, prompt: AgentPromptInput): boolean {
+  tryRunOutOfBand(agentId: string, prompt: AgentPromptInput, options?: AgentRunOptions): boolean {
     const agent = this.requireSessionAgent(agentId);
     const handler = agent.session.tryHandleOutOfBand?.(prompt);
     if (!handler) {
       return false;
+    }
+    if (options?.clientMessageId) {
+      if (typeof prompt !== "string") {
+        throw new Error("Daemon-handled submitted prompts must be text");
+      }
+      this.touchUpdatedAt(agent);
+      this.recordAndDispatchTimelineItem(
+        agent.id,
+        {
+          type: "user_message",
+          text: prompt,
+          clientMessageId: options.clientMessageId,
+        },
+        agent.provider,
+      );
     }
     const dispatch = (event: AgentStreamEvent): void => {
       // Persist timeline items so they show up in fetchAgentTimeline; broadcast

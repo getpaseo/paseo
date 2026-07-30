@@ -149,10 +149,22 @@ describe("deriveAgentStreamTurnActivity", () => {
     }
   });
 
-  it("leaves activity unchanged when a batch has no lifecycle event", () => {
-    expect(
-      deriveAgentStreamTurnActivity([makeStreamReducerEvent(makeAssistantTimelineEvent("hi"), 1)]),
-    ).toBeUndefined();
+  it("keeps an open turn without stream lifecycle and closes it on an ordered terminal event", () => {
+    let hasOpenTurn = true;
+    hasOpenTurn =
+      deriveAgentStreamTurnActivity([
+        makeStreamReducerEvent(makeAssistantTimelineEvent("still working"), 1),
+      ]) ?? hasOpenTurn;
+    expect(hasOpenTurn).toBe(true);
+
+    hasOpenTurn =
+      deriveAgentStreamTurnActivity([
+        makeStreamReducerEvent(
+          { type: "turn_completed", provider: "claude" } as AgentStreamEventPayload,
+          2,
+        ),
+      ]) ?? hasOpenTurn;
+    expect(hasOpenTurn).toBe(false);
   });
 });
 

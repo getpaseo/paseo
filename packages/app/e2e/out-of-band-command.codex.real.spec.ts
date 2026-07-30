@@ -4,7 +4,6 @@ import path from "node:path";
 import { expect, test } from "./fixtures";
 import { submitMessage } from "./helpers/composer";
 import { cleanupRewindFlow, launchAgent, type AgentHandle } from "./helpers/rewind-flow";
-import { installDaemonWebSocketGate } from "./helpers/daemon-websocket-gate";
 
 test.describe("Codex out-of-band commands", () => {
   test.setTimeout(300_000);
@@ -24,28 +23,6 @@ test.describe("Codex out-of-band commands", () => {
       await expect(command).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
       await expect(page.getByTestId("turn-working-indicator")).toHaveCount(0);
     } finally {
-      await cleanupRewindFlow({ handle, cwd });
-    }
-  });
-
-  test("settles the submitted row when an older daemon omits submission disposition", async ({
-    page,
-  }) => {
-    const gate = await installDaemonWebSocketGate(page);
-    gate.setMessageSubmissionDispositionStripped(true);
-    const cwd = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-codex-command-compat-")));
-    let handle: AgentHandle | undefined;
-
-    try {
-      handle = await launchAgent({ page, provider: "codex", cwd, mode: "full-access" });
-      await submitMessage(page, "/goal clear");
-      const command = page.getByTestId("user-message").filter({ hasText: "/goal clear" });
-
-      await expect(command).toBeVisible();
-      await expect(command).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
-      await expect(page.getByTestId("turn-working-indicator")).toHaveCount(0);
-    } finally {
-      gate.restore();
       await cleanupRewindFlow({ handle, cwd });
     }
   });

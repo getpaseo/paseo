@@ -7,6 +7,7 @@ import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import {
   appendSubmittedUserMessage,
   handoffCreatedAgentUserMessageToStream,
+  isUnreconciledLocalUserMessage,
   removeSubmittedUserMessage,
   type StreamItem,
   type UserMessageItem,
@@ -14,7 +15,6 @@ import {
 import {
   acceptMessageSubmission,
   beginMessageSubmission,
-  observeAcceptedMessageSubmissionsRunning,
   observeMessageSubmissionCanonical,
   rejectMessageSubmission,
   type MessageSubmissionRecord,
@@ -513,7 +513,6 @@ interface SessionStoreActions {
     serverId: string,
     agentId: string,
     clientMessageId: string,
-    outOfBand: boolean | undefined,
   ) => void;
   rejectAgentMessageSubmission: (
     serverId: string,
@@ -524,6 +523,7 @@ interface SessionStoreActions {
     serverId: string,
     agentId: string,
     message: UserMessageItem,
+    trackSubmission: boolean,
   ) => boolean;
   clearAgentStreamHead: (serverId: string, agentId: string) => void;
   setAgentTimelineCursor: (
@@ -637,27 +637,6 @@ interface SessionStoreActions {
 type SessionStore = SessionStoreState & SessionStoreActions;
 
 const agentLastActivityCoalescer = createAgentLastActivityCoalescer();
-
-function applyRunningAgentsToAcceptedSubmissions(input: {
-  previousAgents: Map<string, Agent>;
-  nextAgents: Map<string, Agent>;
-  submissions: Map<string, MessageSubmissionRecord[]>;
-}): Map<string, MessageSubmissionRecord[]> {
-  let nextSubmissions = input.submissions;
-  for (const [agentId, submissions] of input.submissions) {
-    const previousAgent = input.previousAgents.get(agentId);
-    const nextAgent = input.nextAgents.get(agentId);
-    if (!nextAgent || previousAgent?.status === "running" || nextAgent.status !== "running") {
-      continue;
-    }
-    const remaining = observeAcceptedMessageSubmissionsRunning(submissions);
-    if (remaining === submissions) continue;
-    if (nextSubmissions === input.submissions) nextSubmissions = new Map(input.submissions);
-    if (remaining.length > 0) nextSubmissions.set(agentId, remaining);
-    else nextSubmissions.delete(agentId);
-  }
-  return nextSubmissions;
-}
 
 function updateActiveAgentTurn(
   activeAgentTurns: ReadonlySet<string>,
@@ -1222,7 +1201,6 @@ export const useSessionStore = create<SessionStore>()(
                   stream.head === currentHead
                     ? session.agentStreamHead
                     : new Map(session.agentStreamHead).set(agentId, stream.head),
-                activeAgentTurns: updateActiveAgentTurn(session.activeAgentTurns, agentId, true),
                 messageSubmissions,
               },
             },
@@ -1230,30 +1208,13 @@ export const useSessionStore = create<SessionStore>()(
         });
       },
 
-      acceptAgentMessageSubmission: (serverId, agentId, clientMessageId, outOfBand) => {
+      acceptAgentMessageSubmission: (serverId, agentId, clientMessageId) => {
         set((prev) => {
           const session = prev.sessions[serverId];
           if (!session) return prev;
           const currentSubmissions = session.messageSubmissions.get(agentId) ?? [];
-          const isAgentRunning = session.agents.get(agentId)?.status === "running";
-          const submissions = acceptMessageSubmission(
-            currentSubmissions,
-            clientMessageId,
-            isAgentRunning,
-            outOfBand,
-          );
-          let activeAgentTurns = session.activeAgentTurns;
-          if (
-            submissions !== currentSubmissions &&
-            !isAgentRunning &&
-            outOfBand === true &&
-            submissions.length === 0
-          ) {
-            activeAgentTurns = updateActiveAgentTurn(activeAgentTurns, agentId, false);
-          }
-          if (submissions === currentSubmissions && activeAgentTurns === session.activeAgentTurns) {
-            return prev;
-          }
+          const submissions = acceptMessageSubmission(currentSubmissions, clientMessageId);
+          if (submissions === currentSubmissions) return prev;
           const messageSubmissions = new Map(session.messageSubmissions);
           if (submissions.length > 0) {
             messageSubmissions.set(agentId, submissions);
@@ -1264,7 +1225,7 @@ export const useSessionStore = create<SessionStore>()(
             ...prev,
             sessions: {
               ...prev.sessions,
-              [serverId]: { ...session, activeAgentTurns, messageSubmissions },
+              [serverId]: { ...session, messageSubmissions },
             },
           };
         });
@@ -1295,12 +1256,6 @@ export const useSessionStore = create<SessionStore>()(
           } else {
             messageSubmissions.delete(agentId);
           }
-          const activeAgentTurns =
-            outcome === "rejected" &&
-            result.submissions.length === 0 &&
-            session.agents.get(agentId)?.status !== "running"
-              ? updateActiveAgentTurn(session.activeAgentTurns, agentId, false)
-              : session.activeAgentTurns;
           return {
             ...prev,
             sessions: {
@@ -1315,7 +1270,6 @@ export const useSessionStore = create<SessionStore>()(
                   stream.head === currentHead
                     ? session.agentStreamHead
                     : new Map(session.agentStreamHead).set(agentId, stream.head),
-                activeAgentTurns,
                 messageSubmissions,
               },
             },
@@ -1324,7 +1278,7 @@ export const useSessionStore = create<SessionStore>()(
         return outcome;
       },
 
-      handoffCreatedAgentUserMessage: (serverId, agentId, message) => {
+      handoffCreatedAgentUserMessage: (serverId, agentId, message, trackSubmission) => {
         let didHandoff = false;
         set((prev) => {
           const session = prev.sessions[serverId];
@@ -1349,6 +1303,28 @@ export const useSessionStore = create<SessionStore>()(
           const nextHead = result.changedHead
             ? new Map(session.agentStreamHead).set(agentId, result.head)
             : session.agentStreamHead;
+          const clientMessageId = message.clientMessageId;
+          let messageSubmissions = session.messageSubmissions;
+          if (
+            trackSubmission &&
+            clientMessageId &&
+            [...result.tail, ...result.head].some(
+              (item) =>
+                item.kind === "user_message" &&
+                item.clientMessageId === clientMessageId &&
+                isUnreconciledLocalUserMessage(item),
+            )
+          ) {
+            const currentSubmissions = session.messageSubmissions.get(agentId) ?? [];
+            const accepted = acceptMessageSubmission(
+              beginMessageSubmission(currentSubmissions, {
+                clientMessageId,
+                submittedAt: message.timestamp,
+              }),
+              clientMessageId,
+            );
+            messageSubmissions = new Map(session.messageSubmissions).set(agentId, accepted);
+          }
           didHandoff = true;
 
           return {
@@ -1359,7 +1335,7 @@ export const useSessionStore = create<SessionStore>()(
                 ...session,
                 agentStreamTail: nextTail,
                 agentStreamHead: nextHead,
-                activeAgentTurns: updateActiveAgentTurn(session.activeAgentTurns, agentId, true),
+                messageSubmissions,
               },
             },
           };
@@ -1613,12 +1589,14 @@ export const useSessionStore = create<SessionStore>()(
             return prev;
           }
           const nextAgents = typeof agents === "function" ? agents(session.agents) : agents;
-          const messageSubmissions = applyRunningAgentsToAcceptedSubmissions({
-            previousAgents: session.agents,
-            nextAgents,
-            submissions: session.messageSubmissions,
-          });
-          if (session.agents === nextAgents && session.messageSubmissions === messageSubmissions) {
+          let activeAgentTurns = session.activeAgentTurns;
+          for (const [agentId, agent] of nextAgents) {
+            const previousAgent = session.agents.get(agentId);
+            if (previousAgent?.status !== "running" && agent.status === "running") {
+              activeAgentTurns = updateActiveAgentTurn(activeAgentTurns, agentId, true);
+            }
+          }
+          if (session.agents === nextAgents && activeAgentTurns === session.activeAgentTurns) {
             return prev;
           }
           return {
@@ -1628,11 +1606,11 @@ export const useSessionStore = create<SessionStore>()(
               [serverId]: {
                 ...session,
                 agents: nextAgents,
-                messageSubmissions,
-                workspaceAgentActivity:
-                  nextAgents === session.agents
-                    ? session.workspaceAgentActivity
-                    : buildWorkspaceAgentActivityIndex(nextAgents, session.workspaceAgentActivity),
+                activeAgentTurns,
+                workspaceAgentActivity: buildWorkspaceAgentActivityIndex(
+                  nextAgents,
+                  session.workspaceAgentActivity,
+                ),
               },
             },
           };

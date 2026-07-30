@@ -391,6 +391,10 @@ export class OmpHarness {
     return this.events.flatMap((event) => (event.type === "timeline" ? [event.item] : []));
   }
 
+  eventTypes(): AgentStreamEvent["type"][] {
+    return this.events.map((event) => event.type);
+  }
+
   async history(): Promise<AgentTimelineItem[]> {
     const items: AgentTimelineItem[] = [];
     for await (const event of this.requireSession().streamHistory()) {

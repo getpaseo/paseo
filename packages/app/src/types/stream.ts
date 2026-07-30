@@ -161,7 +161,10 @@ export function removeSubmittedUserMessage(input: {
 }): { tail: StreamItem[]; head: StreamItem[] } {
   const remove = (items: StreamItem[]) => {
     const next = items.filter(
-      (item) => item.kind !== "user_message" || item.clientMessageId !== input.clientMessageId,
+      (item) =>
+        item.kind !== "user_message" ||
+        item.clientMessageId !== input.clientMessageId ||
+        !isUnreconciledLocalUserMessage(item),
     );
     return next.length === items.length ? items : next;
   };

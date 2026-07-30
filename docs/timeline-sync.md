@@ -126,11 +126,25 @@ back a prompt already observed canonically; it does not own whether the local pr
 visible.
 
 The daemon's accepted response already waits for the correlated run start, but its response and the
-directory update reach client state separately. An accepted transaction remains active until the
-directory observes that run or canonical ingestion acknowledges the prompt, bridging those ordered
-authorities without inspecting timeline snapshots. Either signal clears only an RPC-accepted
-transaction, regardless of which arrived first; it cannot settle a fresh send.
-Overlapping sends settle independently rather than collapsing to one newest pending message.
+canonical submitted row reach client state independently and may arrive in either order. The
+transaction therefore records RPC acceptance and provider acknowledgement as separate phases. RPC
+acceptance marks the record accepted unless provider acknowledgement already arrived; canonical
+acknowledgement marks the record acknowledged unless RPC acceptance already arrived. Only the second
+authority removes the transaction. Directory status never settles a submission. Overlapping sends
+settle independently rather than collapsing to one newest pending message.
+
+Daemons advertising `server_info.features.canonicalSubmittedPrompts` guarantee that every accepted
+prompt carrying a client message id is recorded and streamed as a canonical `user_message` with that
+same id. This includes daemon-handled commands that do not allocate a foreground turn; their submitted
+row is recorded before handler output. The app creates two-phase submission records only for hosts with
+this capability. Older hosts keep the shipped untracked optimistic-row behavior and roll that row back
+on RPC rejection.
+
+Turn liveness is the union of an unsettled submission and an open stream turn. `turn_started` opens the
+turn; ordered `turn_completed`, `turn_failed`, and `turn_canceled` events close it. A running directory
+transition may seed or raise an open turn during hydration or after a selective stream subscription
+lapses, but directory status never closes one or settles a submission. Disconnect and replica removal
+are the other destructive close boundaries.
 
 Canonical submitted user rows carry the provider's `messageId` and Paseo's optional
 `clientMessageId`. The user-message producer reconciles them by `clientMessageId`, adds provider

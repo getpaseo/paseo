@@ -89,7 +89,6 @@ class FakeDaemonClient {
     if (response) await response;
     const failure = this.sendAgentMessageFailures.shift();
     if (failure) throw failure;
-    return {};
   }
 
   async waitForSentMessages(count: number): Promise<void> {
@@ -2280,6 +2279,12 @@ describe("HostRuntimeStore", () => {
     });
     const sessionStore = useSessionStore.getState();
     sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    sessionStore.updateSessionServerInfo(host.serverId, {
+      serverId: host.serverId,
+      hostname: null,
+      version: null,
+      features: { canonicalSubmittedPrompts: true },
+    });
     sessionStore.setQueuedMessages(
       host.serverId,
       new Map([

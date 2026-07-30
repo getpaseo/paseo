@@ -44,36 +44,18 @@ export function beginMessageSubmission(
 export function acceptMessageSubmission(
   submissions: readonly MessageSubmissionRecord[],
   clientMessageId: string,
-  isAgentRunning: boolean,
-  outOfBand: boolean | undefined,
 ): MessageSubmissionRecord[] {
   const index = submissions.findIndex(
     (submission) => submission.clientMessageId === clientMessageId,
   );
   if (index < 0) return submissions as MessageSubmissionRecord[];
-  // COMPAT(messageSubmissionDisposition): daemons before v0.2.3 omitted outOfBand.
-  // An idle response cannot distinguish a normal send that has not reported running yet
-  // from an out-of-band send; the separate active-turn lease bridges that gap. Remove after 2027-01-27.
-  const legacyOutOfBand = outOfBand === undefined && !isAgentRunning;
-  if (
-    outOfBand === true ||
-    legacyOutOfBand ||
-    isAgentRunning ||
-    submissions[index].providerAcknowledged
-  ) {
+  if (submissions[index].providerAcknowledged) {
     return submissions.filter((_, submissionIndex) => submissionIndex !== index);
   }
   if (submissions[index].rpcAccepted) return submissions as MessageSubmissionRecord[];
   const next = submissions.slice();
   next[index] = { ...next[index], rpcAccepted: true };
   return next;
-}
-
-export function observeAcceptedMessageSubmissionsRunning(
-  submissions: readonly MessageSubmissionRecord[],
-): MessageSubmissionRecord[] {
-  const next = submissions.filter((submission) => !submission.rpcAccepted);
-  return next.length === submissions.length ? (submissions as MessageSubmissionRecord[]) : next;
 }
 
 export function observeMessageSubmissionCanonical(

@@ -230,6 +230,32 @@ describe("MockLoadTestAgentClient", () => {
     });
   });
 
+  test("emits turn_started before the submitted user message", async () => {
+    vi.useFakeTimers();
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "ten-second-stream",
+    });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+
+    await session.startTurn("Order the submitted prompt.", {
+      clientMessageId: "client-message-1",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    unsubscribe();
+
+    expect(
+      events
+        .slice(0, 2)
+        .map((event) =>
+          event.type === "timeline" ? `${event.type}:${event.item.type}` : event.type,
+        ),
+    ).toEqual(["turn_started", "timeline:user_message"]);
+  });
+
   test("emits the free-write question scenario selected by prompt", async () => {
     vi.useFakeTimers();
     const client = new MockLoadTestAgentClient();

@@ -565,11 +565,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     }
     const effectiveStreamItems = isActive ? streamItems : frozenStreamItemsRef.current;
     const effectiveStreamHead = isActive ? streamHead : frozenStreamHeadRef.current;
-    const isTurnActive = [
-      context.status === "running",
-      pendingMessageSubmissions.length > 0,
-      hasActiveTurn,
-    ].some(Boolean);
+    const isTurnActive = pendingMessageSubmissions.length > 0 || hasActiveTurn;
     // Keep retained history outside the 48ms live-head flush path.
     const preparedToolCallHistory = useMemo(
       () => prepareToolCallHistory(toolCallDetailLevel, effectiveStreamItems),

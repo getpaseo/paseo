@@ -33,6 +33,7 @@ import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest
 
 export const MOCK_LOAD_TEST_PROVIDER_ID = "mock";
 export const MOCK_LOAD_TEST_DEFAULT_MODEL_ID = "five-minute-stream";
+export const MOCK_LOAD_TEST_HANDLED_COMMAND = "/mock handled-command";
 const MOCK_LOAD_TEST_MODE_ID = "load-test";
 const MOCK_LOAD_TEST_DURATION_MS = 5 * 60 * 1000;
 const MOCK_LOAD_TEST_INTERVAL_MS = 40;
@@ -692,6 +693,7 @@ export class MockLoadTestAgentSession implements AgentSession {
       if (this.activeTurn?.turnId !== turnId) {
         return;
       }
+      this.emitTurnStarted(turn);
       this.emit({
         type: "timeline",
         provider: this.provider,
@@ -708,6 +710,21 @@ export class MockLoadTestAgentSession implements AgentSession {
     userMessageTimer.unref?.();
     if (userMessageDelayMs === 0) scheduleTurn();
     return { turnId };
+  }
+
+  tryHandleOutOfBand(
+    prompt: AgentPromptInput,
+  ): { run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void> } | null {
+    if (prompt !== MOCK_LOAD_TEST_HANDLED_COMMAND) return null;
+    return {
+      run: async ({ emit }) => {
+        emit({
+          type: "timeline",
+          provider: this.provider,
+          item: { type: "assistant_message", text: "Mock command handled" },
+        });
+      },
+    };
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -842,6 +859,18 @@ export class MockLoadTestAgentSession implements AgentSession {
     turn.timer.unref?.();
   }
 
+  private emitTurnStarted(turn: ActiveTurn): void {
+    if (turn.turnStarted) {
+      return;
+    }
+    turn.turnStarted = true;
+    this.emit({
+      type: "turn_started",
+      provider: this.provider,
+      turnId: turn.turnId,
+    });
+  }
+
   private failConfiguredRewind(): void {
     if (this.rewindError) {
       throw new Error(this.rewindError);
@@ -864,11 +893,7 @@ export class MockLoadTestAgentSession implements AgentSession {
         return;
       }
       this.clearTurnTimer(turn);
-      this.emit({
-        type: "turn_started",
-        provider: this.provider,
-        turnId: turn.turnId,
-      });
+      this.emitTurnStarted(turn);
       this.activeTurn = null;
       this.emit({
         type: "turn_failed",
@@ -923,11 +948,7 @@ export class MockLoadTestAgentSession implements AgentSession {
     }
 
     this.clearTurnTimer(turn);
-    this.emit({
-      type: "turn_started",
-      provider: this.provider,
-      turnId: turn.turnId,
-    });
+    this.emitTurnStarted(turn);
 
     this.emitTimeline(turn.turnId, {
       type: "assistant_message",
@@ -960,11 +981,7 @@ export class MockLoadTestAgentSession implements AgentSession {
     }
 
     this.clearTurnTimer(turn);
-    this.emit({
-      type: "turn_started",
-      provider: this.provider,
-      turnId: turn.turnId,
-    });
+    this.emitTurnStarted(turn);
 
     const request: AgentPermissionRequest = {
       id: `mock-plan-${turn.turnId}`,
@@ -1015,11 +1032,7 @@ export class MockLoadTestAgentSession implements AgentSession {
     }
 
     this.clearTurnTimer(turn);
-    this.emit({
-      type: "turn_started",
-      provider: this.provider,
-      turnId: turn.turnId,
-    });
+    this.emitTurnStarted(turn);
 
     const request: AgentPermissionRequest = {
       id: `mock-questions-${turn.turnId}`,
@@ -1050,11 +1063,7 @@ export class MockLoadTestAgentSession implements AgentSession {
     }
 
     this.clearTurnTimer(turn);
-    this.emit({
-      type: "turn_started",
-      provider: this.provider,
-      turnId: turn.turnId,
-    });
+    this.emitTurnStarted(turn);
 
     for (let index = 0; index < stress.count; index += 1) {
       this.emitTimeline(
@@ -1103,11 +1112,7 @@ export class MockLoadTestAgentSession implements AgentSession {
     }
 
     this.clearTurnTimer(turn);
-    this.emit({
-      type: "turn_started",
-      provider: this.provider,
-      turnId: turn.turnId,
-    });
+    this.emitTurnStarted(turn);
 
     const payload = buildRepeatedPayload(largePayload.bytes, largePayload.kind);
     if (largePayload.kind === "diff") {
@@ -1179,14 +1184,7 @@ export class MockLoadTestAgentSession implements AgentSession {
     }
 
     this.clearTurnTimer(turn);
-    if (!turn.turnStarted) {
-      turn.turnStarted = true;
-      this.emit({
-        type: "turn_started",
-        provider: this.provider,
-        turnId: turn.turnId,
-      });
-    }
+    this.emitTurnStarted(turn);
 
     const elapsedMs = Date.now() - turn.startedAt;
     if (elapsedMs >= turn.durationMs) {

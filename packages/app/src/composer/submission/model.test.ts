@@ -4,7 +4,6 @@ import {
   beginMessageSubmission,
   getActiveMessageSubmissions,
   getSendingClientMessageIds,
-  observeAcceptedMessageSubmissionsRunning,
   observeMessageSubmissionCanonical,
   rejectMessageSubmission,
 } from "./model";
@@ -26,13 +25,14 @@ describe("message submission transactions", () => {
     expect(getSendingClientMessageIds(both)).toEqual(["client-1", "client-2"]);
   });
 
-  it("removes only the RPC-accepted transaction", () => {
+  it("removes only the provider-acknowledged transaction on RPC acceptance", () => {
     const both = beginMessageSubmission(
       beginMessageSubmission([], { clientMessageId: "client-1", submittedAt }),
       { clientMessageId: "client-2", submittedAt },
     );
+    const acknowledged = observeMessageSubmissionCanonical(both, ["client-1"]);
 
-    expect(acceptMessageSubmission(both, "client-1", true, false)).toEqual([
+    expect(acceptMessageSubmission(acknowledged, "client-1")).toEqual([
       {
         clientMessageId: "client-2",
         submittedAt,
@@ -42,32 +42,32 @@ describe("message submission transactions", () => {
     ]);
   });
 
-  it("bridges an accepted RPC until the correlated running state is observed", () => {
+  it("keeps an accepted RPC active until canonical acknowledgement", () => {
     const sending = beginMessageSubmission([], { clientMessageId: "client-1", submittedAt });
-    const accepted = acceptMessageSubmission(sending, "client-1", false, false);
+    const accepted = acceptMessageSubmission(sending, "client-1");
 
     expect(getActiveMessageSubmissions(accepted)).toHaveLength(1);
     expect(accepted[0].rpcAccepted).toBe(true);
-    expect(observeAcceptedMessageSubmissionsRunning(accepted)).toEqual([]);
+  });
+
+  it("does not settle RPC acceptance from directory running status", () => {
+    const sending = beginMessageSubmission([], { clientMessageId: "client-1", submittedAt });
+
+    expect(acceptMessageSubmission(sending, "client-1")).toEqual([
+      {
+        clientMessageId: "client-1",
+        submittedAt,
+        rpcAccepted: true,
+        providerAcknowledged: false,
+      },
+    ]);
   });
 
   it("settles an accepted RPC when provider acknowledgement arrives after running was missed", () => {
     const sending = beginMessageSubmission([], { clientMessageId: "client-1", submittedAt });
-    const accepted = acceptMessageSubmission(sending, "client-1", false, false);
+    const accepted = acceptMessageSubmission(sending, "client-1");
 
     expect(observeMessageSubmissionCanonical(accepted, ["client-1"])).toEqual([]);
-  });
-
-  it("settles an explicitly out-of-band acceptance without lifecycle inference", () => {
-    const sending = beginMessageSubmission([], { clientMessageId: "client-1", submittedAt });
-
-    expect(acceptMessageSubmission(sending, "client-1", false, true)).toEqual([]);
-  });
-
-  it("settles an idle acceptance from a daemon without submission disposition", () => {
-    const sending = beginMessageSubmission([], { clientMessageId: "client-1", submittedAt });
-
-    expect(acceptMessageSubmission(sending, "client-1", false, undefined)).toEqual([]);
   });
 
   it("records provider acknowledgement without settling another transaction", () => {

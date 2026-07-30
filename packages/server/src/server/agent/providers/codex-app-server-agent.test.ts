@@ -1119,7 +1119,13 @@ describe("Codex app-server provider", () => {
       async () => appServer.child,
     );
 
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
     await session.startTurn("remember this", { clientMessageId: "client-message" });
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "thread-1",
+      turn: { id: "turn-1" },
+    });
     const userMessage = waitForNextTimelineItem(session, "user_message");
     emitCodexUserMessage(appServer, { id: "codex-message", text: "remember this" });
 
@@ -1130,6 +1136,7 @@ describe("Codex app-server provider", () => {
         clientMessageId: "client-message",
       },
     });
+    expect(events.slice(0, 2).map((event) => event.type)).toEqual(["turn_started", "timeline"]);
     appServer.completeTurn();
     await session.close();
   });

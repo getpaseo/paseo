@@ -11,6 +11,7 @@ import {
   fillComposerDraft,
   sendDraftToQueue,
   startRunningMockAgent,
+  submitMessage,
 } from "./helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "./helpers/mock-agent";
 import { seedWorkspace } from "./helpers/seed-client";
@@ -517,6 +518,89 @@ async function expectCanonicalOrderWinsAcrossOverlappingClients(
   }
 }
 
+async function expectDaemonHandledSubmissionSurvivesReload(
+  page: Page,
+  testInfo: { workerIndex: number },
+): Promise<void> {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: `daemon-handled-submission-${testInfo.workerIndex}-`,
+    title: "Daemon-handled submission",
+  });
+  const prompt = "/mock handled-command";
+  try {
+    await openAgentRoute(page, { workspaceId: agent.workspaceId, agentId: agent.agentId });
+    await expectComposerVisible(page);
+    await expectAgentIdle(page);
+    await submitMessage(page, prompt);
+    const command = page.getByTestId("user-message").filter({ hasText: prompt });
+    await expect(command).toHaveAttribute("aria-busy", "false");
+    await expect(page.getByText("Mock command handled", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("turn-working-indicator")).toHaveCount(0);
+
+    await page.reload();
+    await expectComposerVisible(page);
+    await expect(command).toBeVisible();
+    await expect(command).toHaveAttribute("aria-busy", "false");
+    await expect(page.getByText("Mock command handled", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("turn-working-indicator")).toHaveCount(0);
+  } finally {
+    await agent.cleanup();
+  }
+}
+
+async function expectOldHostSubmissionBehavior(
+  page: Page,
+  testInfo: { workerIndex: number },
+): Promise<void> {
+  const gate = await installDaemonWebSocketGate(page);
+  gate.setCanonicalSubmittedPromptsStripped(true);
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: `old-host-submission-${testInfo.workerIndex}-`,
+    title: "Old host submission",
+  });
+  const prompt = "/mock handled-command";
+  try {
+    await openAgentRoute(page, { workspaceId: agent.workspaceId, agentId: agent.agentId });
+    await expectComposerVisible(page);
+    await expectAgentIdle(page);
+    gate.holdNextClientRequest("send_agent_message_request");
+    const composer = page.getByRole("textbox", { name: "Message agent..." }).first();
+    await composer.fill(prompt);
+    await composer.press("Enter");
+    const nextFrame = await composer.evaluate(
+      (_, submittedPrompt) =>
+        new Promise<{ rowPresent: boolean; ariaBusy: string | null; workingPresent: boolean }>(
+          (resolve) => {
+            requestAnimationFrame(() => {
+              const row = Array.from(
+                document.querySelectorAll('[data-testid="user-message"]'),
+              ).find((candidate) => candidate.textContent?.includes(submittedPrompt));
+              resolve({
+                rowPresent: Boolean(row),
+                ariaBusy: row?.getAttribute("aria-busy") ?? null,
+                workingPresent: Boolean(
+                  document.querySelector('[data-testid="turn-working-indicator"]'),
+                ),
+              });
+            });
+          },
+        ),
+      prompt,
+    );
+    expect(nextFrame).toEqual({ rowPresent: true, ariaBusy: "false", workingPresent: false });
+
+    await gate.waitForHeldClientRequest();
+    gate.releaseHeldClientRequest();
+    const command = page.getByTestId("user-message").filter({ hasText: prompt });
+    await expect(command).toHaveAttribute("aria-busy", "false");
+    await expect(page.getByText("Mock command handled", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("turn-working-indicator")).toHaveCount(0);
+  } finally {
+    gate.restore();
+    await agent.cleanup();
+  }
+}
+
 async function expectRenderedBefore(first: Locator, second: Locator): Promise<void> {
   const secondElement = await second.elementHandle();
   if (!secondElement) throw new Error("Expected the second timeline item to be rendered");
@@ -710,5 +794,15 @@ test.describe("Agent message submission", () => {
     page,
   }, testInfo) => {
     await expectCanonicalOrderWinsAcrossOverlappingClients(page, testInfo);
+  });
+
+  test("keeps a daemon-handled submitted row after authoritative reload", async ({
+    page,
+  }, testInfo) => {
+    await expectDaemonHandledSubmissionSurvivesReload(page, testInfo);
+  });
+
+  test("uses untracked optimistic rows for an old host", async ({ page }, testInfo) => {
+    await expectOldHostSubmissionBehavior(page, testInfo);
   });
 });

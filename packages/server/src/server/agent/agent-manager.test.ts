@@ -16,7 +16,7 @@ import {
 import { AgentStorage } from "./agent-storage.js";
 import { toAgentPayload } from "./agent-projections.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
-import { formatSystemNotificationPrompt } from "./agent-prompt.js";
+import { formatSystemNotificationPrompt, startAgentRun } from "./agent-prompt.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent-loading.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
 import type {
@@ -7994,6 +7994,67 @@ test("authoritative timeline includes provider-emitted submitted user prompt", a
       messageId: "provider-message-1",
       clientMessageId: "msg-client-1",
     });
+  } finally {
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("authoritative timeline records a daemon-handled submitted prompt before its output", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-daemon-handled-prompt-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const commandCompleted = deferred<void>();
+
+  class DaemonHandledPromptSession extends TestAgentSession {
+    override tryHandleOutOfBand(prompt: AgentPromptInput) {
+      if (prompt !== "/handled") return null;
+      return {
+        run: async ({ emit }: { emit: (event: AgentStreamEvent) => void }) => {
+          emit({
+            type: "timeline",
+            provider: this.provider,
+            item: { type: "assistant_message", text: "Handled by the daemon" },
+          });
+          commandCompleted.resolve();
+        },
+      };
+    }
+  }
+
+  class DaemonHandledPromptClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new DaemonHandledPromptSession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new DaemonHandledPromptClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000403",
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    await startAgentRun(manager, snapshot.id, "/handled", logger, {
+      runOptions: { clientMessageId: "msg-client-daemon-handled" },
+    });
+    await commandCompleted.promise;
+
+    const timeline = manager.fetchTimeline(snapshot.id, { direction: "tail", limit: 20 }).rows;
+    expect(timeline.map((row) => row.item)).toEqual([
+      {
+        type: "user_message",
+        text: "/handled",
+        clientMessageId: "msg-client-daemon-handled",
+      },
+      { type: "assistant_message", text: "Handled by the daemon" },
+    ]);
   } finally {
     await manager.flush().catch(() => undefined);
     await storage.flush().catch(() => undefined);

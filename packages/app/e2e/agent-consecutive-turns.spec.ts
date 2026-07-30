@@ -533,8 +533,6 @@ async function recordDelayedRunningTransition(
 
   const prompt = "Second prompt keeps streaming.";
   gate.holdNextAgentUpdate(agent.agentId, "running");
-  gate.setMessageSubmissionDispositionStripped(true);
-  gate.setAgentStreamEventSuppressed("turn_started", true);
   gate.setAgentStreamItemSuppressed("assistant_message", true);
   await recordTurnFrames(page, prompt);
   await submitMessage(page, prompt);
@@ -553,14 +551,10 @@ async function recordDelayedRunningTransition(
     released = true;
     await waitForRecordedFrames(page, "turn-running", 3);
     const frames = await stopTurnFrameRecording(page);
-    gate.setMessageSubmissionDispositionStripped(false);
-    gate.setAgentStreamEventSuppressed("turn_started", false);
     gate.setAgentStreamItemSuppressed("assistant_message", false);
     return frames;
   } finally {
     if (!released) gate.releaseHeldServerMessage();
-    gate.setMessageSubmissionDispositionStripped(false);
-    gate.setAgentStreamEventSuppressed("turn_started", false);
     gate.setAgentStreamItemSuppressed("assistant_message", false);
   }
 }
