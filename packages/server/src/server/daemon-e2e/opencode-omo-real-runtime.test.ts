@@ -9,9 +9,9 @@ import {
 describe("resolveCommandLaunch", () => {
   test("launches Windows npm command shims through cmd.exe", () => {
     expect(resolveCommandLaunch("C:\\fixture runtime\\omo.cmd", ["install"], "win32")).toEqual({
-      command: "C:\\fixture runtime\\omo.cmd",
-      args: ["install"],
-      shell: true,
+      command: process.env.COMSPEC || "cmd.exe",
+      args: ["/d", "/s", "/c", '"C:\\fixture runtime\\omo.cmd" install'],
+      shell: false,
     });
   });
 

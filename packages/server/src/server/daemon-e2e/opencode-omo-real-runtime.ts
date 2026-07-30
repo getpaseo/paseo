@@ -362,11 +362,33 @@ export function resolveCommandLaunch(
   args: string[],
   platform: NodeJS.Platform = process.platform,
 ): { command: string; args: string[]; shell: boolean } {
+  if (platform === "win32" && path.extname(command).toLowerCase() === ".cmd") {
+    return {
+      command: process.env.COMSPEC || "cmd.exe",
+      args: [
+        "/d",
+        "/s",
+        "/c",
+        [
+          quoteWindowsCommandArg(command, true),
+          ...args.map((arg) => quoteWindowsCommandArg(arg)),
+        ].join(" "),
+      ],
+      shell: false,
+    };
+  }
   return {
     command,
     args,
-    shell: platform === "win32" && path.extname(command).toLowerCase() === ".cmd",
+    shell: false,
   };
+}
+
+function quoteWindowsCommandArg(value: string, force = false): string {
+  if (!force && value.length > 0 && !/[\s"&|<>^()]/.test(value)) {
+    return value;
+  }
+  return `"${value.replaceAll('"', '""')}"`;
 }
 
 function writeCommandArtifact(input: CommandInput, stdout: Buffer[], stderr: Buffer[]): string {

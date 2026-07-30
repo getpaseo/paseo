@@ -2200,6 +2200,90 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
+  test("aborts an autonomous turn started during deferred stop-event replay", async () => {
+    const { parent: session, openCode } = await createParentSession("ses_stop_during_replay");
+    const settleFirstAbort = createTestDeferred<void>();
+    const settleSecondAbort = createTestDeferred<void>();
+    const settlePermissionReply = createTestDeferred<void>();
+    const events: AgentStreamEvent[] = [];
+    openCode.sessionPromptAsyncEvents = [];
+    openCode.sessionAbortImplementation = async () => {
+      if (openCode.calls.sessionAbort.length === 1) {
+        await settleFirstAbort.promise;
+      } else {
+        await settleSecondAbort.promise;
+      }
+      return { data: true };
+    };
+    openCode.permissionReplyImplementation = async () => {
+      await settlePermissionReply.promise;
+      return {};
+    };
+    await session.setFeature("auto_accept", true);
+    session.subscribe((event) => events.push(event));
+
+    try {
+      await session.startTurn("first");
+      const firstInterrupt = session.interrupt();
+      await vi.waitFor(() => expect(openCode.calls.sessionAbort).toHaveLength(1));
+      openCode.emitEvent({
+        type: "session.idle",
+        properties: { sessionID: "ses_stop_during_replay" },
+      });
+      openCode.emitEvent({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "msg_replayed_autonomous_turn",
+            sessionID: "ses_stop_during_replay",
+            role: "user",
+          },
+        },
+      });
+      openCode.emitEvent({
+        type: "permission.asked",
+        properties: {
+          id: "perm_block_replay",
+          sessionID: "ses_stop_during_replay",
+          permission: "bash",
+          patterns: ["npm test"],
+          metadata: { command: "npm test" },
+        },
+      });
+
+      settleFirstAbort.resolve();
+      await firstInterrupt;
+      await vi.waitFor(() => expect(openCode.calls.permissionReply).toHaveLength(1));
+      expect(events).toContainEqual({
+        type: "turn_started",
+        provider: "opencode",
+        turnId: "opencode-turn-1",
+      });
+
+      const secondInterrupt = session.interrupt();
+      await vi.waitFor(() => expect(openCode.calls.sessionAbort).toHaveLength(2));
+      expect(events).toContainEqual({
+        type: "turn_canceled",
+        provider: "opencode",
+        reason: "interrupted",
+        turnId: "opencode-turn-1",
+      });
+
+      settleSecondAbort.resolve();
+      settlePermissionReply.resolve();
+      openCode.emitEvent({
+        type: "session.idle",
+        properties: { sessionID: "ses_stop_during_replay" },
+      });
+      await secondInterrupt;
+    } finally {
+      settleFirstAbort.resolve();
+      settleSecondAbort.resolve();
+      settlePermissionReply.resolve();
+      await session.close();
+    }
+  });
+
   test("waits for an idle-session abort before starting a prompt", async () => {
     const { parent: session, openCode } = await createParentSession("ses_idle_abort");
     const settleAbort = createTestDeferred<void>();

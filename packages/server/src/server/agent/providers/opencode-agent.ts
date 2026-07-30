@@ -3749,8 +3749,9 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private beginStoppingTurn(turnId: string | null): OpenCodeRunBoundaryState {
-    if (this.runBoundary) {
-      return this.runBoundary;
+    const previousBoundary = this.runBoundary;
+    if (previousBoundary && !turnId) {
+      return previousBoundary;
     }
 
     const idle = createDeferred<void>();
@@ -3767,7 +3768,7 @@ class OpenCodeAgentSession implements AgentSession {
       abort: Promise.resolve(),
       quiescence: Promise.resolve(),
       providerIdleObserved: !turnId,
-      deferredEvents: [],
+      deferredEvents: previousBoundary?.deferredEvents.splice(0) ?? [],
     };
     this.turnState = { status: "idle" };
     this.runBoundary = stopping;
