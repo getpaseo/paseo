@@ -2,7 +2,8 @@
  * @vitest-environment jsdom
  */
 import { cleanup, render } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.hoisted(() => {
   Object.defineProperty(window, "matchMedia", {
@@ -90,6 +91,39 @@ vi.mock("lucide-react-native", () => {
 vi.mock("@/constants/platform", () => ({
   isNative: false,
   isWeb: true,
+  getIsElectron: vi.fn().mockReturnValue(true),
+}));
+
+vi.mock("@/desktop/daemon/desktop-daemon", () => ({
+  getDesktopDaemonStatus: vi.fn().mockResolvedValue({
+    serverId: "local-server",
+    status: "running",
+    listen: "127.0.0.1:6768",
+    hostname: "localhost",
+    pid: 1234,
+    home: "/home/user",
+    version: "0.2.3",
+    desktopManaged: true,
+    error: null,
+  }),
+  shouldUseDesktopDaemon: vi.fn().mockReturnValue(true),
+}));
+
+vi.mock("@/desktop/host", () => ({
+  getDesktopHost: vi.fn().mockReturnValue({
+    editor: {
+      listTargets: vi.fn().mockResolvedValue([
+        {
+          id: "explorer",
+          label: "Explorer",
+          kind: "file-manager",
+          icon: { kind: "symbol", name: "folder" },
+        },
+      ]),
+      openTarget: vi.fn(),
+    },
+  }),
+  isElectronRuntime: vi.fn().mockReturnValue(true),
 }));
 
 vi.mock("@/components/ui/dropdown-menu", () => ({
@@ -132,6 +166,7 @@ const mockT = vi.fn((key: string) => {
     "sidebar.workspace.actions.archiving": "Archiving",
     "sidebar.workspace.actions.unpin": "Unpin",
     "sidebar.workspace.actions.pin": "Pin",
+    "sidebar.project.actions.openFolder": "Open in file manager",
   };
   return map[key] ?? key;
 });
@@ -140,35 +175,30 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: mockT }),
 }));
 
-vi.mock("@/constants/platform", () => ({
-  isNative: false,
-  isWeb: true,
-  getIsElectron: vi.fn().mockReturnValue(true),
-}));
-
-vi.mock("@/hooks/use-is-local-daemon", () => ({
-  useIsLocalDaemon: vi.fn(),
-}));
-
-vi.mock("@/workspace/desktop-open-targets", () => ({
-  useDesktopOpenTargets: vi.fn(),
-  openDesktopTarget: vi.fn(),
-}));
-
 vi.mock("@/contexts/toast-context", () => ({
   useToast: () => ({ error: vi.fn() }),
 }));
 
 import { getIsElectron } from "@/constants/platform";
-import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
-import { useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
 
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
 });
 
-describe("SidebarWorkspaceMenu", () => {
+describe("SidebarWorkspaceMenu (integration coverage)", () => {
+  let queryClient: QueryClient;
+
+  beforeEach(() => {
+    queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+      },
+    });
+  });
+
   const baseProps = {
     workspaceKey: "test-workspace",
     onArchive: vi.fn(),
@@ -183,15 +213,16 @@ describe("SidebarWorkspaceMenu", () => {
     },
   ];
 
-  it("renders 'Open in file manager' when workspace is local", () => {
-    vi.mocked(getIsElectron).mockReturnValue(true);
-    vi.mocked(useIsLocalDaemon).mockReturnValue(true);
-    vi.mocked(useDesktopOpenTargets).mockReturnValue({
-      targets: fileManagerTargets,
-      isAvailable: true,
-    });
+  function renderWithProviders(ui: React.ReactElement) {
+    return render(React.createElement(QueryClientProvider, { client: queryClient }, ui));
+  }
 
-    const { queryByTestId } = render(
+  it("renders 'Open in file manager' through unmocked hooks when workspace matches local daemon serverId", () => {
+    vi.mocked(getIsElectron).mockReturnValue(true);
+    queryClient.setQueryData(["desktop-daemon-server-id"], { serverId: "local-server" });
+    queryClient.setQueryData(["desktop-open-targets"], fileManagerTargets);
+
+    const { queryByTestId } = renderWithProviders(
       <SidebarWorkspaceMenu
         {...baseProps}
         serverId="local-server"
@@ -202,15 +233,12 @@ describe("SidebarWorkspaceMenu", () => {
     expect(queryByTestId("sidebar-workspace-menu-open-folder-test-workspace")).not.toBeNull();
   });
 
-  it("hides 'Open in file manager' when workspace is on a remote host", () => {
+  it("hides 'Open in file manager' through unmocked locality and target discovery hooks when workspace is on a remote host", () => {
     vi.mocked(getIsElectron).mockReturnValue(true);
-    vi.mocked(useIsLocalDaemon).mockReturnValue(false);
-    vi.mocked(useDesktopOpenTargets).mockReturnValue({
-      targets: [],
-      isAvailable: false,
-    });
+    queryClient.setQueryData(["desktop-daemon-server-id"], { serverId: "local-server" });
+    queryClient.setQueryData(["desktop-open-targets"], fileManagerTargets);
 
-    const { queryByTestId } = render(
+    const { queryByTestId } = renderWithProviders(
       <SidebarWorkspaceMenu
         {...baseProps}
         serverId="remote-server"
@@ -221,17 +249,18 @@ describe("SidebarWorkspaceMenu", () => {
     expect(queryByTestId("sidebar-workspace-menu-open-folder-test-workspace")).toBeNull();
   });
 
-  it("passes serverId to useIsLocalDaemon correctly", () => {
+  it("evaluates locality boundary dynamically when serverId matches local daemon", () => {
     vi.mocked(getIsElectron).mockReturnValue(true);
+    queryClient.setQueryData(["desktop-daemon-server-id"], { serverId: "daemon-xyz" });
+    queryClient.setQueryData(["desktop-open-targets"], fileManagerTargets);
 
-    render(
+    const { queryByTestId: queryLocal } = renderWithProviders(
       <SidebarWorkspaceMenu
         {...baseProps}
-        serverId="server-abc"
+        serverId="daemon-xyz"
         openInFileManagerPath="/some/path"
       />,
     );
-
-    expect(useIsLocalDaemon).toHaveBeenCalledWith("server-abc");
+    expect(queryLocal("sidebar-workspace-menu-open-folder-test-workspace")).not.toBeNull();
   });
 });
