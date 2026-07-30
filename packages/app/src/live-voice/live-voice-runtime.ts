@@ -99,6 +99,13 @@ export interface LiveVoiceRuntime {
   /** Retry autoplay-blocked playback. Must be driven by a user gesture. */
   resumeAudio(): Promise<void>;
   isActiveForAgent(serverId: string, agentId: string): boolean;
+  /**
+   * The daemon connection this call was placed over is gone (socket dropped, or
+   * the host swapped in a new client). Tears the local half down: the daemon has
+   * already released its side as `owner_disconnected`, and that update can never
+   * reach us over the connection that just died.
+   */
+  handleConnectionLost(serverId: string): void;
   destroy(): Promise<void>;
 }
 
@@ -464,6 +471,24 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
         snapshot.serverId === serverId &&
         snapshot.agentId === agentId
       );
+    },
+
+    handleConnectionLost(serverId) {
+      if (snapshot.phase === "idle" || snapshot.serverId !== serverId) {
+        return;
+      }
+      // Invalidate any in-flight start so its continuation can't revive the call.
+      generation += 1;
+      const { agentId, transcripts } = snapshot;
+      cleanupLocal();
+      publish({
+        ...IDLE_SNAPSHOT,
+        serverId,
+        agentId,
+        transcripts,
+        // Same cause the daemon reports for this teardown, so the UI has one story.
+        closedCause: "owner_disconnected",
+      });
     },
 
     async destroy() {

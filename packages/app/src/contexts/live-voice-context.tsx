@@ -7,6 +7,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useSessionStore } from "@/stores/session-store";
 import {
   createDefaultLiveVoiceRuntimeDeps,
@@ -92,6 +93,62 @@ export function LiveVoiceProvider({ children }: LiveVoiceProviderProps) {
   }
 
   const runtime = runtimeRef.current;
+
+  // A Live Voice call holds the microphone and an open peer connection, so losing
+  // the daemon connection has to tear it down locally. Two distinct losses: the
+  // socket reporting anything other than `connected`, and the host replacing the
+  // client on reconnect (a fresh client is "connected", but our call died with
+  // the old one and the daemon has already released it).
+  useEffect(() => {
+    let unsubscribeStatus: (() => void) | null = null;
+    let watchedServerId: string | null = null;
+    let watchedClient: DaemonClient | null = null;
+
+    const sync = (): void => {
+      const snapshot = runtime.getSnapshot();
+      // Only a live call is worth watching; an idle runtime owns no microphone.
+      const activeServerId = snapshot.phase === "idle" ? null : snapshot.serverId;
+      const client = activeServerId
+        ? (useSessionStore.getState().sessions[activeServerId]?.client ?? null)
+        : null;
+
+      if (activeServerId === watchedServerId && client === watchedClient) {
+        return;
+      }
+
+      // Same host, different client: the host reconnected and swapped the client
+      // out from under our call. The new one is healthy, but ours is gone.
+      const replacedFor =
+        watchedServerId !== null && activeServerId === watchedServerId ? watchedServerId : null;
+
+      unsubscribeStatus?.();
+      unsubscribeStatus = null;
+      watchedServerId = activeServerId;
+      watchedClient = client;
+
+      if (replacedFor !== null) {
+        runtime.handleConnectionLost(replacedFor);
+        return;
+      }
+      if (!activeServerId || !client) {
+        return;
+      }
+      unsubscribeStatus = client.subscribeConnectionStatus((state) => {
+        if (state.status !== "connected") {
+          runtime.handleConnectionLost(activeServerId);
+        }
+      });
+    };
+
+    const unsubscribeStore = useSessionStore.subscribe(sync);
+    const unsubscribeRuntime = runtime.subscribe(sync);
+    sync();
+    return () => {
+      unsubscribeStore();
+      unsubscribeRuntime();
+      unsubscribeStatus?.();
+    };
+  }, [runtime]);
 
   useEffect(() => {
     return () => {

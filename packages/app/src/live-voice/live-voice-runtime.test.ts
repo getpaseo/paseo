@@ -359,6 +359,57 @@ describe("live voice runtime", () => {
     });
   });
 
+  it("tears the call down and frees the mic when the daemon connection is lost", async () => {
+    await harness.runtime.start(SERVER_ID, AGENT_ID);
+    expect(harness.lease.current()).toBe("liveVoice");
+
+    harness.runtime.handleConnectionLost(SERVER_ID);
+
+    const snapshot = harness.runtime.getSnapshot();
+    expect(snapshot.phase).toBe("idle");
+    expect(snapshot.liveSessionId).toBeNull();
+    expect(snapshot.closedCause).toBe("owner_disconnected");
+    expect(harness.session.close).toHaveBeenCalledTimes(1);
+    // The whole point: the microphone must not stay locked out.
+    expect(harness.lease.current()).toBeNull();
+    // The socket is gone and the daemon already released its side.
+    expect(harness.client.stopLiveVoice).not.toHaveBeenCalled();
+  });
+
+  it("ignores a connection loss for a different host", async () => {
+    await harness.runtime.start(SERVER_ID, AGENT_ID);
+
+    harness.runtime.handleConnectionLost("some-other-server");
+
+    expect(harness.runtime.getSnapshot().phase).toBe("active");
+    expect(harness.session.close).not.toHaveBeenCalled();
+    expect(harness.lease.current()).toBe("liveVoice");
+  });
+
+  it("does not revive a call when a start resolves after its connection was lost", async () => {
+    let resolveNegotiation: (value: { liveSessionId: string; answerSdp: string }) => void = () =>
+      undefined;
+    harness = createHarness({
+      startLiveVoice: vi.fn(
+        () =>
+          new Promise<{ liveSessionId: string; answerSdp: string }>((resolve) => {
+            resolveNegotiation = resolve;
+          }),
+      ),
+    });
+
+    const startPromise = harness.runtime.start(SERVER_ID, AGENT_ID);
+    await vi.waitFor(() => expect(harness.startSession).toHaveBeenCalled());
+    harness.runtime.handleConnectionLost(SERVER_ID);
+
+    resolveNegotiation({ liveSessionId: LIVE_SESSION_ID, answerSdp: ANSWER_SDP });
+    await startPromise.catch(() => undefined);
+
+    expect(harness.runtime.getSnapshot().phase).toBe("idle");
+    expect(harness.lease.current()).toBeNull();
+    expect(harness.session.close).toHaveBeenCalled();
+  });
+
   it("holds the mic lease through a stop() that lands mid-negotiation", async () => {
     let resolveNegotiation: (value: { liveSessionId: string; answerSdp: string }) => void = () =>
       undefined;
