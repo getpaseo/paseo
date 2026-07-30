@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.911 - 2026-07-30
+
+### Improved
+
+- Backlog remembers your grid or list preference, and phones default to list
+- Master Backlog can filter the task list by project
+
+### Fixed
+
+- Adding a task no longer clears the form when a host comes online or offline
+- Create workspace from a task sheet closes the sheet instead of leaving it open
+
 ## 0.2.910 - 2026-07-30
 
 ### Added
