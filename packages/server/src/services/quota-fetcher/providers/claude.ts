@@ -491,11 +491,15 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
     oauth: ClaudeCredentials["claudeAiOauth"],
   ): Promise<void> {
     try {
-      const existing = ClaudeCredentialsSchema.parse(
-        JSON.parse(await fs.readFile(credPath, "utf8")),
-      );
-      existing.claudeAiOauth = oauth;
-      await fs.writeFile(credPath, JSON.stringify(existing, null, 2), { mode: 0o600 });
+      // Merge into the raw document: parsing through ClaudeCredentialsSchema
+      // would strip sibling keys (mcpOAuth, expiresAt, scopes, ...) on write.
+      const existing: unknown = JSON.parse(await fs.readFile(credPath, "utf8"));
+      const record =
+        existing && typeof existing === "object" && !Array.isArray(existing)
+          ? (existing as Record<string, unknown>)
+          : {};
+      record["claudeAiOauth"] = oauth;
+      await fs.writeFile(credPath, JSON.stringify(record, null, 2), { mode: 0o600 });
     } catch {
       // Non-fatal; Claude Code can refresh again on its own next time.
     }

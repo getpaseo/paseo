@@ -7,6 +7,7 @@ import { ClaudeQuotaProvider } from "./providers/claude.js";
 import { CodexQuotaProvider } from "./providers/codex.js";
 import { CopilotQuotaProvider } from "./providers/copilot.js";
 import { CursorQuotaProvider } from "./providers/cursor.js";
+import { GeminiQuotaProvider } from "./providers/gemini.js";
 import { GrokQuotaProvider } from "./providers/grok.js";
 import { KimiQuotaProvider } from "./providers/kimi.js";
 import { MiniMaxQuotaProvider } from "./providers/minimax.js";
@@ -44,6 +45,10 @@ export const PROVIDER_USAGE_FETCHERS: readonly ProviderUsageFetcherManifestEntry
   {
     providerId: "grok",
     create: (options) => new GrokQuotaProvider({ logger: options.logger, fetch: options.fetch }),
+  },
+  {
+    providerId: "gemini",
+    create: (options) => new GeminiQuotaProvider({ logger: options.logger, fetch: options.fetch }),
   },
   {
     providerId: "kimi",
