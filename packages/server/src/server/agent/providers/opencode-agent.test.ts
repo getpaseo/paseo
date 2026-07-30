@@ -2427,8 +2427,10 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
-  test("reconnects and confirms provider idle when the event stream ends while stopping", async () => {
+  test("preserves an autonomous wake while reconnect status is unresolved", async () => {
     const firstStreamEnd = createTestDeferred<void>();
+    const wakeEventsSent = createTestDeferred<void>();
+    const releaseWakeTerminal = createTestDeferred<void>();
     let subscriptionCount = 0;
     const { parent: session, openCode } = await createParentSession(
       "ses_stream_reconnect",
@@ -2436,32 +2438,76 @@ describe("OpenCode adapter startTurn error handling", () => {
         client.globalEventImplementation = async (options) => {
           subscriptionCount += 1;
           const signal = (options as { signal: AbortSignal }).signal;
-          const end = subscriptionCount === 1 ? firstStreamEnd.promise : waitForAbort(signal);
           return {
             stream: {
               async *[Symbol.asyncIterator]() {
                 yield { type: "server.connected", properties: {} };
-                await end;
+                if (subscriptionCount === 1) {
+                  await firstStreamEnd.promise;
+                  return;
+                }
+                const wakeEvents = [
+                  ...userMessageEvents({
+                    sessionId: "ses_stream_reconnect",
+                    messageId: "msg_reconnect_wake",
+                    text: "Autonomous wake during reconnect",
+                  }),
+                  ...assistantTurnEvents({
+                    sessionId: "ses_stream_reconnect",
+                    text: "Reconnect wake completed.",
+                  }),
+                ];
+                for (const event of wakeEvents.slice(0, -1)) {
+                  yield event;
+                }
+                wakeEventsSent.resolve();
+                await releaseWakeTerminal.promise;
+                yield wakeEvents.at(-1);
+                await waitForAbort(signal);
               },
             },
           };
         };
+        client.sessionStatusImplementation = async () => {
+          await wakeEventsSent.promise;
+          return { data: { ses_stream_reconnect: { type: "busy" } } };
+        };
       },
     );
     openCode.sessionPromptAsyncEvents = [];
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
 
     try {
       await session.startTurn("first");
       await session.interrupt();
-
-      const secondTurn = session.startTurn("second");
       firstStreamEnd.resolve();
+      await wakeEventsSent.promise;
+      await vi.waitFor(() => expect(openCode.calls.sessionStatus).toHaveLength(1));
+      releaseWakeTerminal.resolve();
 
-      await expect(secondTurn).resolves.toEqual({ turnId: "opencode-turn-1" });
+      await vi.waitFor(() =>
+        expect(events).toContainEqual({
+          type: "turn_completed",
+          provider: "opencode",
+          turnId: "opencode-turn-1",
+          usage: undefined,
+        }),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "timeline",
+          turnId: "opencode-turn-1",
+          item: expect.objectContaining({
+            type: "assistant_message",
+            text: "Reconnect wake completed.",
+          }),
+        }),
+      );
       expect(openCode.calls.globalEvent).toHaveLength(2);
       expect(openCode.calls.sessionStatus).toEqual([{ directory: "/workspace/repo" }]);
-      expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
     } finally {
+      releaseWakeTerminal.resolve();
       await session.close();
     }
   }, 15_000);
@@ -2509,15 +2555,15 @@ describe("OpenCode adapter startTurn error handling", () => {
     try {
       await session.startTurn("first");
       const interrupt = session.interrupt();
+      const replacement = session.startTurn("second");
       firstStreamEnd.resolve();
       await vi.waitFor(() => expect(openCode.calls.sessionStatus).toHaveLength(1));
 
       settleAbort.resolve();
       await interrupt;
       recoveredIdle.resolve();
-      await new Promise<void>((resolve) => setImmediate(resolve));
 
-      await expect(session.startTurn("second")).resolves.toEqual({ turnId: "opencode-turn-1" });
+      await expect(replacement).resolves.toEqual({ turnId: "opencode-turn-1" });
       expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
     } finally {
       settleAbort.resolve();

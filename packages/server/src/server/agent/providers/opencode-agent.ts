@@ -2765,6 +2765,7 @@ interface OpenCodeRunBoundaryState {
   quiescence: Promise<void>;
   observationFailed: boolean;
   providerIdleObserved: boolean;
+  reconcilingProviderStatus: boolean;
   deferredEvents: Array<{ rawEvent: unknown; eventCount: number }>;
 }
 
@@ -3124,6 +3125,7 @@ class OpenCodeAgentSession implements AgentSession {
         return;
       }
 
+      stopping.reconcilingProviderStatus = true;
       await this.ensureEventStreamReady();
       const response = await this.client.session.status({ directory: this.config.cwd });
       if (response.error) {
@@ -3691,9 +3693,13 @@ class OpenCodeAgentSession implements AgentSession {
     ) {
       return false;
     }
+    const retainEvent = stopping.providerIdleObserved || stopping.reconcilingProviderStatus;
     if (isOpenCodeTerminalEvent(event, this.sessionId) && !stopping.providerIdleObserved) {
+      if (retainEvent) {
+        stopping.deferredEvents.push(params);
+      }
       this.finishStoppingTurn();
-    } else if (stopping.providerIdleObserved) {
+    } else if (retainEvent) {
       stopping.deferredEvents.push(params);
     }
     return true;
@@ -3808,6 +3814,7 @@ class OpenCodeAgentSession implements AgentSession {
       quiescence: Promise.resolve(),
       observationFailed: false,
       providerIdleObserved,
+      reconcilingProviderStatus: false,
       deferredEvents,
     };
     this.turnState = { status: "idle" };
@@ -3827,31 +3834,16 @@ class OpenCodeAgentSession implements AgentSession {
 
   private armStopQuiescence(stopping: OpenCodeRunBoundaryState): void {
     stopping.observationFailed = false;
-    const observation = Promise.all([
-      stopping.abort,
-      this.observeProviderStopBoundary(stopping),
-    ]).then(() => undefined);
+    const providerObservation = this.observeProviderStopBoundary(stopping).catch((error) => {
+      if (!this.closed && this.runBoundary === stopping) {
+        stopping.observationFailed = true;
+      }
+      throw error;
+    });
+    const observation = Promise.all([stopping.abort, providerObservation]).then(() => undefined);
     const quiescence = observation.then(() => this.finishStopQuiescence(stopping));
     stopping.quiescence = quiescence;
     void quiescence.catch(() => undefined);
-    void observation.then(
-      () => undefined,
-      () => {
-        void stopping.abort.then(
-          () => {
-            if (
-              !this.closed &&
-              this.runBoundary === stopping &&
-              stopping.quiescence === quiescence
-            ) {
-              stopping.observationFailed = true;
-            }
-            return undefined;
-          },
-          () => undefined,
-        );
-      },
-    );
   }
 
   private async finishStopQuiescence(stopping: OpenCodeRunBoundaryState): Promise<void> {
@@ -3877,6 +3869,7 @@ class OpenCodeAgentSession implements AgentSession {
     const contextWindowMaxTokens = this.resolveSelectedModelContextWindowMaxTokens();
     this.accumulatedUsage = contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
     stopping.providerIdleObserved = true;
+    stopping.reconcilingProviderStatus = false;
     stopping.idle.resolve();
   }
 
