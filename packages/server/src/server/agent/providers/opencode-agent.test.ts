@@ -2048,6 +2048,10 @@ describe("OpenCode adapter startTurn error handling", () => {
         },
       });
       openCode.emitEvent({
+        type: "session.status",
+        properties: { sessionID: "ses_deferred_autonomous", status: { type: "busy" } },
+      });
+      openCode.emitEvent({
         type: "message.part.updated",
         properties: {
           part: {
@@ -2181,6 +2185,10 @@ describe("OpenCode adapter startTurn error handling", () => {
           },
         },
       });
+      openCode.emitEvent({
+        type: "session.status",
+        properties: { sessionID: "ses_serialized_replay", status: { type: "busy" } },
+      });
       await new Promise<void>((resolve) => setImmediate(resolve));
 
       expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
@@ -2268,6 +2276,10 @@ describe("OpenCode adapter startTurn error handling", () => {
             role: "user",
           },
         },
+      });
+      openCode.emitEvent({
+        type: "session.status",
+        properties: { sessionID: "ses_stop_during_replay", status: { type: "busy" } },
       });
       openCode.emitEvent({
         type: "permission.asked",
@@ -2496,6 +2508,13 @@ describe("OpenCode adapter startTurn error handling", () => {
                 })) {
                   yield event;
                 }
+                yield {
+                  type: "session.status",
+                  properties: {
+                    sessionID: "ses_stream_reconnect",
+                    status: { type: "busy" },
+                  },
+                };
                 wakeEventsSent.resolve();
                 yield {
                   type: "session.idle",
@@ -2840,6 +2859,13 @@ describe("OpenCode adapter startTurn error handling", () => {
                 })) {
                   yield event;
                 }
+                yield {
+                  type: "session.status",
+                  properties: {
+                    sessionID: "ses_persistent_stop_observer_failure",
+                    status: { type: "busy" },
+                  },
+                };
                 for (const event of assistantTurnEvents({
                   sessionId: "ses_persistent_stop_observer_failure",
                   text: "Dormant reconnect wake completed.",
