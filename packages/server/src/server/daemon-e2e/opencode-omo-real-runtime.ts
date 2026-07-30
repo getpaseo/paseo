@@ -233,7 +233,7 @@ function createRuntimePaths(): RuntimePaths {
     mkdirSync(directory, { recursive: true });
   }
   if (process.platform === "win32") {
-    const windowsHome = resolveWindowsHomeEnv(paths.home);
+    const windowsHome = resolveWindowsHomeEnv(paths.home, paths.temporary);
     mkdirSync(windowsHome.APPDATA, { recursive: true });
     mkdirSync(windowsHome.LOCALAPPDATA, { recursive: true });
   }
@@ -260,7 +260,7 @@ function buildRuntimeEnv(paths: RuntimePaths, openRouterApiKey: string | null): 
     SSL_CERT_FILE: process.env.SSL_CERT_FILE,
     SSL_CERT_DIR: process.env.SSL_CERT_DIR,
     HOME: paths.home,
-    ...(process.platform === "win32" ? resolveWindowsHomeEnv(paths.home) : {}),
+    ...(process.platform === "win32" ? resolveWindowsHomeEnv(paths.home, paths.temporary) : {}),
     PASEO_HOME: path.join(paths.paseoHomeRoot, ".paseo"),
     XDG_CONFIG_HOME: paths.xdgConfig,
     XDG_DATA_HOME: paths.xdgData,
@@ -277,12 +277,17 @@ function buildRuntimeEnv(paths: RuntimePaths, openRouterApiKey: string | null): 
   };
 }
 
-export function resolveWindowsHomeEnv(home: string): {
+export function resolveWindowsHomeEnv(
+  home: string,
+  temporary: string,
+): {
   USERPROFILE: string;
   HOMEDRIVE: string;
   HOMEPATH: string;
   APPDATA: string;
   LOCALAPPDATA: string;
+  TEMP: string;
+  TMP: string;
 } {
   const root = path.win32.parse(home).root;
   const relativeHome = path.win32.relative(root, home);
@@ -292,6 +297,8 @@ export function resolveWindowsHomeEnv(home: string): {
     HOMEPATH: `\\${relativeHome}`,
     APPDATA: path.win32.join(home, "AppData", "Roaming"),
     LOCALAPPDATA: path.win32.join(home, "AppData", "Local"),
+    TEMP: temporary,
+    TMP: temporary,
   };
 }
 

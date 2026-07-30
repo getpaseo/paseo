@@ -3680,7 +3680,7 @@ class OpenCodeAgentSession implements AgentSession {
       return false;
     }
     const stopping = this.turnState;
-    if (isOpenCodeTerminalEvent(event, this.sessionId)) {
+    if (isOpenCodeTerminalEvent(event, this.sessionId) && !stopping.providerIdleObserved) {
       this.finishStoppingTurn();
     } else if (stopping.providerIdleObserved) {
       stopping.deferredEvents.push(params);

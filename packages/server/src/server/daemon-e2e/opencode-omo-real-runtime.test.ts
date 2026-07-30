@@ -31,11 +31,13 @@ test("includes retained artifacts in fixture setup failures", () => {
 });
 
 test("isolates Windows native home resolution", () => {
-  expect(resolveWindowsHomeEnv("C:\\fixture\\home")).toEqual({
+  expect(resolveWindowsHomeEnv("C:\\fixture\\home", "C:\\fixture\\tmp")).toEqual({
     USERPROFILE: "C:\\fixture\\home",
     HOMEDRIVE: "C:",
     HOMEPATH: "\\fixture\\home",
     APPDATA: "C:\\fixture\\home\\AppData\\Roaming",
     LOCALAPPDATA: "C:\\fixture\\home\\AppData\\Local",
+    TEMP: "C:\\fixture\\tmp",
+    TMP: "C:\\fixture\\tmp",
   });
 });

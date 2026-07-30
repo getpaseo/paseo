@@ -1985,13 +1985,23 @@ describe("OpenCode adapter startTurn error handling", () => {
   test("preserves an autonomous wake that arrives after provider idle but before abort settlement", async () => {
     const { parent: session, openCode } = await createParentSession("ses_deferred_autonomous");
     const settleAbort = createTestDeferred<void>();
+    const wakeEventsConsumed = createTestDeferred<void>();
     const events: AgentStreamEvent[] = [];
     openCode.sessionPromptAsyncEvents = [];
     openCode.sessionAbortImplementation = async () => {
       await settleAbort.promise;
       return { data: true };
     };
-    session.subscribe((event) => events.push(event));
+    session.subscribe((event) => {
+      events.push(event);
+      if (
+        event.type === "provider_subagent" &&
+        event.event.type === "upsert" &&
+        event.event.id === "ses_deferred_wake_drain"
+      ) {
+        wakeEventsConsumed.resolve();
+      }
+    });
 
     try {
       await session.startTurn("first");
@@ -2011,6 +2021,24 @@ describe("OpenCode adapter startTurn error handling", () => {
           },
         },
       });
+      for (const event of assistantTurnEvents({
+        sessionId: "ses_deferred_autonomous",
+        text: "Autonomous wake completed.",
+      })) {
+        openCode.emitEvent(event);
+      }
+      openCode.emitEvent({
+        type: "session.created",
+        properties: {
+          info: {
+            id: "ses_deferred_wake_drain",
+            parentID: "ses_deferred_autonomous",
+            title: "Deferred wake drain marker",
+            directory: "/workspace/repo",
+          },
+        },
+      });
+      await wakeEventsConsumed.promise;
 
       settleAbort.resolve();
       await interrupt;
@@ -2021,12 +2049,6 @@ describe("OpenCode adapter startTurn error handling", () => {
         provider: "opencode",
         turnId: "opencode-turn-1",
       });
-      for (const event of assistantTurnEvents({
-        sessionId: "ses_deferred_autonomous",
-        text: "Autonomous wake completed.",
-      })) {
-        openCode.emitEvent(event);
-      }
       await vi.waitFor(() =>
         expect(events).toContainEqual({
           type: "turn_completed",
@@ -2044,6 +2066,9 @@ describe("OpenCode adapter startTurn error handling", () => {
           }),
         }),
       );
+      await expect(session.startTurn("after autonomous wake")).resolves.toEqual({
+        turnId: "opencode-turn-2",
+      });
     } finally {
       settleAbort.resolve();
       await session.close();
