@@ -2760,7 +2760,12 @@ function createDeferred<T>(): Deferred<T> {
 type OpenCodeTurnState =
   | { status: "idle" }
   | { status: "running"; turnId: string }
-  | { status: "stopping"; idle: Deferred<void>; abort: Promise<void> };
+  | {
+      status: "stopping";
+      idle: Deferred<void>;
+      abort: Promise<void>;
+      quiescence: Promise<void>;
+    };
 
 function unwrapOpenCodeGlobalEvent(event: unknown): OpenCodeEvent | null {
   const record = readOpenCodeRecord(event);
@@ -3059,20 +3064,12 @@ class OpenCodeAgentSession implements AgentSession {
     // abort is session-scoped. Reuse requires both provider-confirmed idle and
     // the earlier abort to settle so it cannot cancel the replacement run.
     await withTimeout(
-      Promise.all([this.settleStopAbort(stopping), this.observeProviderStopBoundary(stopping)]),
+      stopping.quiescence,
       OPENCODE_PENDING_ABORT_START_TIMEOUT_MS,
       "OpenCode previous turn to stop",
     );
-  }
-
-  private async settleStopAbort(
-    stopping: Extract<OpenCodeTurnState, { status: "stopping" }>,
-  ): Promise<void> {
-    try {
-      await stopping.abort;
-    } catch {
-      stopping.abort = this.abortSession(null, "turn_start_boundary");
-      await stopping.abort;
+    if (this.turnState === stopping) {
+      this.turnState = { status: "idle" };
     }
   }
 
@@ -3744,9 +3741,29 @@ class OpenCodeAgentSession implements AgentSession {
     this.pendingUserMessageText = null;
     this.pendingClientMessageId = null;
     this.abortController = null;
-    const stopping = { status: "stopping" as const, idle, abort: Promise.resolve() };
+    const stopping = {
+      status: "stopping" as const,
+      idle,
+      abort: Promise.resolve(),
+      quiescence: Promise.resolve(),
+    };
     this.turnState = stopping;
-    stopping.abort = this.abortSession(turnId, "interrupt");
+    stopping.abort = this.abortSession(turnId, "interrupt").catch(() =>
+      this.abortSession(null, "turn_start_boundary"),
+    );
+    stopping.quiescence = Promise.all([
+      stopping.abort,
+      this.observeProviderStopBoundary(stopping),
+    ]).then(() => undefined);
+    void stopping.quiescence.then(
+      () => {
+        if (this.turnState === stopping) {
+          this.turnState = { status: "idle" };
+        }
+        return undefined;
+      },
+      () => undefined,
+    );
     if (turnId) {
       this.notifySubscribers(
         { type: "turn_canceled", provider: "opencode", reason: "interrupted" },
@@ -3762,7 +3779,6 @@ class OpenCodeAgentSession implements AgentSession {
     }
     const stopping = this.turnState;
     resetOpenCodeTurnTrackingState(this.createTranslationState());
-    this.turnState = { status: "idle" };
     stopping.idle.resolve();
   }
 

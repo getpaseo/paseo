@@ -1928,11 +1928,10 @@ describe("OpenCode adapter startTurn error handling", () => {
     });
     try {
       await session.startTurn("first");
-      await session.interrupt();
+      const interrupt = session.interrupt();
+      await retryStarted.promise;
       expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
 
-      const replacement = session.startTurn("second");
-      await retryStarted.promise;
       openCode.emitEvent({
         type: "session.idle",
         properties: { sessionID: "ses_unit_test" },
@@ -1949,12 +1948,14 @@ describe("OpenCode adapter startTurn error handling", () => {
         },
       });
       await oldIdleConsumed.promise;
+      const replacement = session.startTurn("second");
       await new Promise<void>((resolve) => setImmediate(resolve));
 
       expect(openCode.calls.sessionAbort).toHaveLength(2);
       expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
 
       settleRetry.resolve();
+      await interrupt;
       await replacement;
       expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
 
@@ -1977,6 +1978,31 @@ describe("OpenCode adapter startTurn error handling", () => {
       ]);
     } finally {
       settleRetry.resolve();
+      await session.close();
+    }
+  });
+
+  test("waits for an idle-session abort before starting a prompt", async () => {
+    const { parent: session, openCode } = await createParentSession("ses_idle_abort");
+    const settleAbort = createTestDeferred<void>();
+    openCode.sessionPromptAsyncEvents = [];
+    openCode.sessionAbortImplementation = async () => {
+      await settleAbort.promise;
+      return { data: true };
+    };
+
+    try {
+      const interrupt = session.interrupt();
+      const prompt = session.startTurn("next");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(0);
+
+      settleAbort.resolve();
+      await interrupt;
+      await prompt;
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
+    } finally {
+      settleAbort.resolve();
       await session.close();
     }
   });

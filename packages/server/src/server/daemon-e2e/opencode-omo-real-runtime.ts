@@ -235,7 +235,15 @@ function resolveModel(openRouterApiKey: string | null): string {
 
 function buildRuntimeEnv(paths: RuntimePaths, openRouterApiKey: string | null): NodeJS.ProcessEnv {
   return {
-    ...process.env,
+    LANG: process.env.LANG,
+    LC_ALL: process.env.LC_ALL,
+    TZ: process.env.TZ,
+    SystemRoot: process.env.SystemRoot,
+    COMSPEC: process.env.COMSPEC,
+    PATHEXT: process.env.PATHEXT,
+    NODE_EXTRA_CA_CERTS: process.env.NODE_EXTRA_CA_CERTS,
+    SSL_CERT_FILE: process.env.SSL_CERT_FILE,
+    SSL_CERT_DIR: process.env.SSL_CERT_DIR,
     HOME: paths.home,
     PASEO_HOME: path.join(paths.paseoHomeRoot, ".paseo"),
     XDG_CONFIG_HOME: paths.xdgConfig,
@@ -270,7 +278,7 @@ async function runCommand(input: CommandInput): Promise<void> {
   const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
     (resolve, reject) => {
       child.once("error", reject);
-      child.once("exit", (code, signal) => resolve({ code, signal }));
+      child.once("close", (code, signal) => resolve({ code, signal }));
     },
   );
   const timedOut = new Promise<never>((_resolve, reject) => {

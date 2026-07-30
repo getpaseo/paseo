@@ -185,10 +185,16 @@ async function waitForCompletedChildWithToken(
       });
       if (
         subagent.status === "completed" &&
-        timeline.rows
+        (timeline.rows
           .flatMap((row) => (row.item.type === "assistant_message" ? [row.item.text] : []))
           .join("")
-          .includes(token)
+          .includes(token) ||
+          timeline.rows.some(
+            (row) =>
+              row.item.type === "tool_call" &&
+              row.item.detail.type === "shell" &&
+              row.item.detail.output?.includes(token),
+          ))
       ) {
         return subagent;
       }
