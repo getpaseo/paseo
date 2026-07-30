@@ -3240,6 +3240,14 @@ export class CodexAppServerAgentSession implements AgentSession {
         await this.ensureThreadLoaded({
           allowArchivedHistory: this.initialResumePurpose === "history",
         });
+        // Codex Goals can keep working after a native thread/resume, outside
+        // Paseo's turn/start path (so status stays idle while events stream,
+        // and mode presets like Full Access never apply). Pause on interactive
+        // reconnect so daemon restart does not auto-continue Goal sessions.
+        // Users re-enable with /goal resume or by setting a new objective.
+        if (this.goalsEnabled && this.initialResumePurpose === "interactive") {
+          await this.pauseActiveGoalAfterResume();
+        }
         await this.loadPersistedHistory();
       }
 
@@ -4396,6 +4404,25 @@ export class CodexAppServerAgentSession implements AgentSession {
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown error";
       return `Failed to compact context: ${message}`;
+    }
+  }
+
+  private async pauseActiveGoalAfterResume(): Promise<void> {
+    if (!this.client || !this.currentThreadId || !this.goalsEnabled) {
+      return;
+    }
+    try {
+      await this.client.request("thread/goal/set", {
+        threadId: this.currentThreadId,
+        status: "paused",
+      });
+    } catch (error) {
+      // No active goal, older Codex builds, or goal already paused — reconnect
+      // should still succeed for history/timeline loads.
+      this.logger.debug(
+        { err: error, threadId: this.currentThreadId },
+        "Codex goal pause after resume skipped",
+      );
     }
   }
 
