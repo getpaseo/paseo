@@ -126,7 +126,7 @@ test.describe("New Workspace mode cycle safety", () => {
       // so its handler is still registered when we cycle here.
       await openGlobalNewWorkspaceComposer(page);
       await selectNewWorkspaceProject(page, {
-        projectKey: seeded.projectId,
+        projectKey: seeded.projectKey,
         projectDisplayName: seeded.projectDisplayName,
       });
 

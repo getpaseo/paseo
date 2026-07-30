@@ -1,8 +1,9 @@
-import type { EmptyProjectDescriptor, WorkspaceDescriptor } from "@/stores/session-store";
+import type { ProjectDescriptor, WorkspaceDescriptor } from "@/stores/session-store";
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
 
 export interface WorkspaceStructureHostPlacement {
   serverId: string;
+  projectId: string;
   iconWorkingDir: string;
   canCreateWorktree: boolean;
 }
@@ -20,126 +21,55 @@ export interface WorkspaceStructure {
   projects: WorkspaceStructureProject[];
 }
 
-function compareWorkspaceStructureItems(
-  left: { workspaceId: string; workspaceName: string },
-  right: { workspaceId: string; workspaceName: string },
-): number {
-  const nameDelta = left.workspaceName.localeCompare(right.workspaceName, undefined, {
-    numeric: true,
-    sensitivity: "base",
-  });
-  if (nameDelta !== 0) {
-    return nameDelta;
-  }
-
-  return left.workspaceId.localeCompare(right.workspaceId, undefined, {
-    sensitivity: "base",
-  });
-}
-
-function compareWorkspaceStructureProjects(
-  left: WorkspaceStructureProject,
-  right: WorkspaceStructureProject,
-): number {
-  return left.projectName.localeCompare(right.projectName, undefined, {
-    numeric: true,
-    sensitivity: "base",
-  });
-}
-
-function canCreateWorktreeForProjectKind(projectKind: WorkspaceDescriptor["projectKind"]): boolean {
-  return projectKind === "git";
-}
-
 interface WorkspaceStructureSession {
   serverId: string;
+  projects: Iterable<ProjectDescriptor>;
   workspaces: Iterable<WorkspaceDescriptor>;
-  emptyProjects?: Iterable<EmptyProjectDescriptor>;
 }
 
+interface ProjectDraft {
+  projectKey: string;
+  projectName: string;
+  hasCustomName: boolean;
+  projectKind: WorkspaceDescriptor["projectKind"];
+  iconWorkingDir: string;
+  hosts: Map<string, WorkspaceStructureHostPlacement>;
+  workspaces: Array<{ workspaceId: string; workspaceName: string; workspaceKey: string }>;
+}
+
+/** The single app boundary that turns host-local projects into grouped display projects. */
 export function buildWorkspaceStructureProjects(input: {
   sessions: WorkspaceStructureSession[];
 }): WorkspaceStructureProject[] {
-  const byProject = new Map<
-    string,
-    {
-      projectKey: string;
-      projectName: string;
-      projectKind: WorkspaceDescriptor["projectKind"];
-      iconWorkingDir: string;
-      hosts: Map<string, WorkspaceStructureHostPlacement>;
-      workspaces: Array<{ workspaceId: string; workspaceName: string; workspaceKey: string }>;
-    }
-  >();
+  const byProject = new Map<string, ProjectDraft>();
+  const projectEntries: Array<{ serverId: string; project: ProjectDescriptor }> = [];
+  const keyCountsByServer = new Map<string, Map<string, number>>();
+  const viewKeyByServerProjectId = new Map<string, Map<string, string>>();
 
   for (const session of input.sessions) {
-    for (const emptyProject of session.emptyProjects ?? []) {
-      const projectKey = emptyProject.projectId;
-      const placement = {
-        serverId: session.serverId,
-        iconWorkingDir: emptyProject.projectRootPath,
-        canCreateWorktree: canCreateWorktreeForProjectKind(emptyProject.projectKind),
-      };
-      const existing = byProject.get(projectKey);
-
-      if (!existing) {
-        byProject.set(projectKey, {
-          projectKey,
-          projectName:
-            emptyProject.projectCustomName ??
-            emptyProject.projectDisplayName ??
-            projectDisplayNameFromProjectId(projectKey),
-          projectKind: emptyProject.projectKind,
-          iconWorkingDir: emptyProject.projectRootPath,
-          hosts: new Map([[session.serverId, placement]]),
-          workspaces: [],
-        });
-        continue;
+    for (const project of session.projects) {
+      projectEntries.push({ serverId: session.serverId, project });
+      const sharedKey = project.projectKey ?? null;
+      if (sharedKey) {
+        const counts = getOrCreate(keyCountsByServer, session.serverId, () => new Map());
+        counts.set(sharedKey, (counts.get(sharedKey) ?? 0) + 1);
       }
-
-      existing.hosts.set(session.serverId, placement);
     }
+  }
 
+  for (const { serverId, project } of projectEntries) {
+    const projectKey = addProjectToView({ byProject, keyCountsByServer, serverId, project });
+    getOrCreate(viewKeyByServerProjectId, serverId, () => new Map()).set(
+      project.projectId,
+      projectKey,
+    );
+  }
+
+  for (const session of input.sessions) {
     for (const workspace of session.workspaces) {
-      const projectKey = workspace.project?.projectKey ?? workspace.projectId;
-      const existing = byProject.get(projectKey);
-
-      if (!existing) {
-        byProject.set(projectKey, {
-          projectKey,
-          projectName:
-            workspace.projectCustomName ??
-            workspace.projectDisplayName ??
-            projectDisplayNameFromProjectId(projectKey),
-          projectKind: workspace.projectKind,
-          iconWorkingDir: workspace.projectRootPath,
-          hosts: new Map([
-            [
-              session.serverId,
-              {
-                serverId: session.serverId,
-                iconWorkingDir: workspace.projectRootPath,
-                canCreateWorktree: canCreateWorktreeForProjectKind(workspace.projectKind),
-              },
-            ],
-          ]),
-          workspaces: [
-            {
-              workspaceId: workspace.id,
-              workspaceName: workspace.name,
-              workspaceKey: `${session.serverId}:${workspace.id}`,
-            },
-          ],
-        });
-        continue;
-      }
-
-      existing.hosts.set(session.serverId, {
-        serverId: session.serverId,
-        iconWorkingDir: workspace.projectRootPath,
-        canCreateWorktree: canCreateWorktreeForProjectKind(workspace.projectKind),
-      });
-      existing.workspaces.push({
+      const projectKey = viewKeyByServerProjectId.get(session.serverId)?.get(workspace.projectId);
+      if (!projectKey) continue;
+      byProject.get(projectKey)?.workspaces.push({
         workspaceId: workspace.id,
         workspaceName: workspace.name,
         workspaceKey: `${session.serverId}:${workspace.id}`,
@@ -147,19 +77,82 @@ export function buildWorkspaceStructureProjects(input: {
     }
   }
 
-  const projects: WorkspaceStructureProject[] = [];
-  for (const raw of byProject.values()) {
-    const sortedWorkspaces = [...raw.workspaces].sort(compareWorkspaceStructureItems);
-    projects.push({
-      projectKey: raw.projectKey,
-      projectName: raw.projectName,
-      projectKind: raw.projectKind,
-      iconWorkingDir: raw.iconWorkingDir,
-      hosts: Array.from(raw.hosts.values()),
-      workspaceKeys: sortedWorkspaces.map((w) => w.workspaceKey),
-    });
-  }
+  return Array.from(byProject.values())
+    .map((draft) => ({
+      projectKey: draft.projectKey,
+      projectName: draft.projectName,
+      projectKind: draft.projectKind,
+      iconWorkingDir: draft.iconWorkingDir,
+      hosts: Array.from(draft.hosts.values()),
+      workspaceKeys: draft.workspaces
+        .sort(compareWorkspaceStructureItems)
+        .map((workspace) => workspace.workspaceKey),
+    }))
+    .sort((left, right) =>
+      left.projectName.localeCompare(right.projectName, undefined, {
+        numeric: true,
+        sensitivity: "base",
+      }),
+    );
+}
 
-  projects.sort(compareWorkspaceStructureProjects);
-  return projects;
+function addProjectToView(input: {
+  byProject: Map<string, ProjectDraft>;
+  keyCountsByServer: Map<string, Map<string, number>>;
+  serverId: string;
+  project: ProjectDescriptor;
+}): string {
+  const { byProject, keyCountsByServer, serverId, project } = input;
+  const sharedKey = project.projectKey ?? null;
+  const canUseSharedKey =
+    sharedKey !== null && keyCountsByServer.get(serverId)?.get(sharedKey) === 1;
+  const projectKey = canUseSharedKey ? sharedKey : JSON.stringify([serverId, project.projectId]);
+  const placement: WorkspaceStructureHostPlacement = {
+    serverId,
+    projectId: project.projectId,
+    iconWorkingDir: project.projectRootPath,
+    canCreateWorktree: project.projectKind === "git",
+  };
+  const draft = byProject.get(projectKey);
+  if (!draft) {
+    byProject.set(projectKey, {
+      projectKey,
+      projectName:
+        project.projectCustomName ??
+        project.projectDisplayName ??
+        projectDisplayNameFromProjectId(project.projectId),
+      hasCustomName: Boolean(project.projectCustomName),
+      projectKind: project.projectKind,
+      iconWorkingDir: project.projectRootPath,
+      hosts: new Map([[serverId, placement]]),
+      workspaces: [],
+    });
+  } else {
+    if (project.projectCustomName && !draft.hasCustomName) {
+      draft.projectName = project.projectCustomName;
+      draft.hasCustomName = true;
+    }
+    draft.hosts.set(serverId, placement);
+  }
+  return projectKey;
+}
+
+function getOrCreate<K, V>(map: Map<K, V>, key: K, create: () => V): V {
+  const existing = map.get(key);
+  if (existing !== undefined) return existing;
+  const value = create();
+  map.set(key, value);
+  return value;
+}
+
+function compareWorkspaceStructureItems(
+  left: { workspaceId: string; workspaceName: string },
+  right: { workspaceId: string; workspaceName: string },
+): number {
+  return (
+    left.workspaceName.localeCompare(right.workspaceName, undefined, {
+      numeric: true,
+      sensitivity: "base",
+    }) || left.workspaceId.localeCompare(right.workspaceId, undefined, { sensitivity: "base" })
+  );
 }

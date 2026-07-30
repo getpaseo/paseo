@@ -7,7 +7,8 @@ export async function expectOpenedProject(page: Page, projectName: string): Prom
     .first();
   await expect(projectRow).toBeVisible({ timeout: 30_000 });
 
-  const testId = await projectRow.getAttribute("data-testid");
-  expect(testId).not.toBeNull();
-  return testId!.replace("sidebar-project-row-", "");
+  await expect(page).toHaveURL(/\/new\?.*projectId=/u, { timeout: 30_000 });
+  const projectId = new URL(page.url()).searchParams.get("projectId");
+  expect(projectId).not.toBeNull();
+  return projectId!;
 }

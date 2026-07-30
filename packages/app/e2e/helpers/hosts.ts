@@ -57,6 +57,69 @@ export async function addOfflineHostAndReload(
   await page.reload();
 }
 
+export async function addConnectedHostAndReload(
+  page: Page,
+  input: { serverId: string; label: string; port: number; primaryLabel?: string },
+): Promise<void> {
+  await addConnectedHostsAndReload(page, [input], { primaryLabel: input.primaryLabel });
+}
+
+export async function addConnectedHostsAndReload(
+  page: Page,
+  inputs: Array<{ serverId: string; label: string; port: number }>,
+  options?: { primaryLabel?: string },
+): Promise<void> {
+  const connectedHosts = inputs.map((input) =>
+    buildSeededHost({
+      serverId: input.serverId,
+      label: input.label,
+      endpoint: `127.0.0.1:${input.port}`,
+      nowIso: new Date().toISOString(),
+    }),
+  );
+
+  await page.evaluate(
+    ({ hosts, keys, primaryLabel }) => {
+      const nonce = localStorage.getItem(keys.nonce);
+      if (!nonce) {
+        throw new Error("Expected the e2e seed nonce before overriding the host registry.");
+      }
+      const raw = localStorage.getItem(keys.registry);
+      const registry: Array<{ serverId: string; label?: string }> = raw ? JSON.parse(raw) : [];
+      if (primaryLabel && registry[0]) registry[0].label = primaryLabel;
+      for (const host of hosts) {
+        if (!registry.some((entry) => entry.serverId === host.serverId)) {
+          registry.push(host);
+        }
+      }
+      localStorage.setItem(keys.registry, JSON.stringify(registry));
+      localStorage.setItem(keys.disableSeedOnce, nonce);
+    },
+    {
+      hosts: connectedHosts,
+      keys: {
+        registry: REGISTRY_KEY,
+        nonce: SEED_NONCE_KEY,
+        disableSeedOnce: DISABLE_DEFAULT_SEED_ONCE_KEY,
+      },
+      primaryLabel: options?.primaryLabel,
+    },
+  );
+
+  await page.reload();
+}
+
+export async function waitForConnectedHost(
+  page: Page,
+  input: { serverId: string; endpoint: string },
+): Promise<void> {
+  await page.getByTestId("sidebar-hosts-trigger").click();
+  const host = page.getByTestId(`sidebar-host-row-${input.serverId}`);
+  await expect(host).toContainText(input.endpoint, { timeout: 30_000 });
+  await page.keyboard.press("Escape");
+  await expect(host).not.toBeVisible();
+}
+
 export async function openSidebarDisplayPreferences(page: Page): Promise<void> {
   await page.getByTestId("sidebar-display-preferences-menu").click();
   await expect(page.getByTestId("sidebar-display-preferences-content")).toBeVisible({

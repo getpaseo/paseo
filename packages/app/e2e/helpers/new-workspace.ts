@@ -18,6 +18,7 @@ type NewWorkspaceDaemonClient = Pick<
   | "getPaseoWorktreeList"
   | "getDaemonConfig"
   | "inspectWorkspaceRecovery"
+  | "listProjects"
   | "on"
   | "patchDaemonConfig"
   | "removeProject"
@@ -29,6 +30,7 @@ type WorkspaceDescriptor = NonNullable<CreateWorkspacePayload["workspace"]>;
 
 export interface OpenedProject {
   workspaceId: string;
+  projectId: string;
   projectKey: string;
   projectDisplayName: string;
   workspaceName: string;
@@ -45,10 +47,19 @@ function requireWorkspace(payload: WorkspacePayload) {
   return payload.workspace;
 }
 
-function openedProjectFromWorkspace(workspace: WorkspaceDescriptor): OpenedProject {
+async function openedProjectFromWorkspace(
+  client: NewWorkspaceDaemonClient,
+  workspace: WorkspaceDescriptor,
+): Promise<OpenedProject> {
+  const payload = await client.listProjects();
+  const project = payload.projects.find((candidate) => candidate.projectId === workspace.projectId);
+  if (!project?.projectKey) {
+    throw new Error(`Project ${workspace.projectId} has no project key`);
+  }
   return {
     workspaceId: workspace.id,
-    projectKey: workspace.projectId,
+    projectId: workspace.projectId,
+    projectKey: project.projectKey,
     projectDisplayName: workspace.projectDisplayName,
     workspaceName: workspace.name,
     workspaceDirectory: workspace.workspaceDirectory,
@@ -107,7 +118,7 @@ export async function openProjectViaDaemon(
       source: { kind: "directory", path: repoPath },
     }),
   );
-  return openedProjectFromWorkspace(workspace);
+  return openedProjectFromWorkspace(client, workspace);
 }
 
 export async function archiveWorkspaceFromDaemon(
@@ -149,7 +160,7 @@ export async function createWorktreeViaDaemon(
     worktreeSlug: input.slug,
   });
   const workspace = requireWorkspace(payload);
-  return openedProjectFromWorkspace(workspace);
+  return openedProjectFromWorkspace(client, workspace);
 }
 
 export async function openNewWorkspaceComposer(
@@ -175,6 +186,14 @@ export async function openGlobalNewWorkspaceComposer(page: Page): Promise<void> 
   await expect(page).toHaveURL(/\/new(?:\?.*)?$/, {
     timeout: 30_000,
   });
+}
+
+export async function openNewWorkspaceProjectPickerWithShortcut(page: Page): Promise<void> {
+  await page.keyboard.press("Control+P");
+
+  const searchInput = page.getByPlaceholder("Search projects");
+  await expect(searchInput).toBeVisible({ timeout: 30_000 });
+  await expect(searchInput).toBeFocused();
 }
 
 export async function expectNewWorkspaceProjectSelected(
