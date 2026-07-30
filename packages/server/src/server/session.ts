@@ -155,6 +155,8 @@ import {
   setProjectCustomIcon,
 } from "../utils/project-custom-icon.js";
 import { VoiceSession } from "./session/voice/voice-session.js";
+import type { AgentMessageQueueController } from "./agent-message-queue.js";
+import { AgentMessageQueueSession } from "./session/agent-message-queue/agent-message-queue-session.js";
 import { CheckoutSession } from "./session/checkout/checkout-session.js";
 import {
   createWorkspaceGitObserverService,
@@ -451,6 +453,7 @@ export interface SessionOptions {
   worktreesRoot?: string;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
+  agentMessageQueue?: AgentMessageQueueController;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
   directorySync?: DirectorySyncService;
@@ -677,6 +680,7 @@ export class Session {
 
   private agentManager: AgentManager;
   private readonly agentStorage: AgentStorage;
+  private readonly agentMessageQueueSession: AgentMessageQueueSession;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
   private readonly directorySync: DirectorySyncService;
@@ -770,6 +774,7 @@ export class Session {
       worktreesRoot,
       agentManager,
       agentStorage,
+      agentMessageQueue,
       projectRegistry,
       workspaceRegistry,
       directorySync,
@@ -843,6 +848,13 @@ export class Session {
     });
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
+    this.agentMessageQueueSession = new AgentMessageQueueSession({
+      host: {
+        emit: (message, source) => this.emitForSource(message, source),
+        resolveAgentIdentifier: (identifier) => this.resolveAgentIdentifier(identifier),
+      },
+      queue: agentMessageQueue,
+    });
     this.projectRegistry = projectRegistry;
     this.workspaceRegistry = workspaceRegistry;
     this.directorySync = resolveDirectorySync(directorySync);
@@ -1927,7 +1939,7 @@ export class Session {
       this.dispatchVoiceAndControlMessage(msg) ??
       this.dispatchAgentRewindMessage(msg, source) ??
       this.dispatchAgentRelationshipMessage(msg) ??
-      this.dispatchAgentTimelineMessage(msg, source) ??
+      this.dispatchAgentConversationMessage(msg, source) ??
       this.dispatchHubExecutionMessage(msg) ??
       this.dispatchAgentLifecycleMessage(msg) ??
       this.dispatchAgentConfigMessage(msg) ??
@@ -2229,7 +2241,7 @@ export class Session {
     }
   }
 
-  private dispatchAgentTimelineMessage(
+  private dispatchAgentConversationMessage(
     msg: SessionInboundMessage,
     source?: object,
   ): Promise<void> | undefined {
@@ -2262,7 +2274,7 @@ export class Session {
       case "agent.fork_context.request":
         return this.handleAgentForkContextRequest(msg);
       default:
-        return undefined;
+        return this.agentMessageQueueSession.dispatch(msg, source);
     }
   }
 
@@ -7312,7 +7324,7 @@ export class Session {
         },
         "agent.session.send_agent_message",
       );
-      let dispatchResult: { disposition: "out_of_band" | "steered" | "turn_started" };
+      let dispatchResult: Awaited<ReturnType<typeof sendPromptToAgent>>;
       try {
         dispatchResult = await sendPromptToAgent({
           agentManager: this.agentManager,

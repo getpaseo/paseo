@@ -152,6 +152,20 @@ import {
   normalizeProviderSnapshotUpdateMessage,
   normalizeProvidersSnapshotPayload,
 } from "./compat/normalize-provider-models.js";
+import {
+  normalizeAgentMessageQueueMessage,
+  normalizeQueuedAgentMessagePayload,
+  normalizeQueuedAgentMessageQueuePayload,
+  type NormalizedQueuedAgentMessagePayload,
+  type NormalizedQueuedAgentMessageQueuePayload,
+} from "./compat/normalize-agent-message-queue.js";
+
+export {
+  normalizeQueuedAgentMessagePayload,
+  normalizeQueuedAgentMessageQueuePayload,
+  type NormalizedQueuedAgentMessagePayload,
+  type NormalizedQueuedAgentMessageQueuePayload,
+};
 import { TerminalStreamRouter, type TerminalStreamEvent } from "./terminal-stream-router.js";
 import type {
   BrowserAutomationExecuteRequest,
@@ -354,6 +368,8 @@ export interface AgentAttentionRequiredNotification {
   shouldNotify: boolean;
   notification?: AgentAttentionNotificationPayload;
 }
+
+export type QueueAgentMessageOptions = SendMessageOptions;
 
 type AgentConfigOverrides = Partial<Omit<AgentSessionConfig, "provider" | "cwd">>;
 
@@ -3077,6 +3093,73 @@ export class DaemonClient {
     await this.sendAgentMessage(agentId, text, options);
   }
 
+  async queueAgentMessage(
+    agentId: string,
+    text: string,
+    options?: QueueAgentMessageOptions,
+  ): Promise<NormalizedQueuedAgentMessagePayload | null> {
+    const messageId = options?.messageId ?? crypto.randomUUID();
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"queue.agent_message.enqueue.response">({
+        message: {
+          type: "queue.agent_message.enqueue.request",
+          agentId,
+          text,
+          messageId,
+          ...(options?.images ? { images: options.images } : {}),
+          ...(options?.attachments ? { attachments: options.attachments } : {}),
+        },
+      });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "queueAgentMessage rejected");
+    }
+    return payload.message ? normalizeQueuedAgentMessagePayload(payload.message) : null;
+  }
+
+  async listQueuedAgentMessages(
+    agentId?: string,
+  ): Promise<NormalizedQueuedAgentMessageQueuePayload[]> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"queue.agent_message.list.response">({
+        message: {
+          type: "queue.agent_message.list.request",
+          ...(agentId ? { agentId } : {}),
+        },
+      });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    return payload.queues.map(normalizeQueuedAgentMessageQueuePayload);
+  }
+
+  async cancelQueuedAgentMessage(agentId: string, queuedMessageId: string): Promise<void> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"queue.agent_message.cancel.response">({
+        message: {
+          type: "queue.agent_message.cancel.request",
+          agentId,
+          queuedMessageId,
+        },
+      });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "cancelQueuedAgentMessage rejected");
+    }
+  }
+
+  async dispatchQueuedAgentMessage(agentId: string, queuedMessageId: string): Promise<void> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"queue.agent_message.dispatch.response">({
+        message: {
+          type: "queue.agent_message.dispatch.request",
+          agentId,
+          queuedMessageId,
+        },
+      });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "dispatchQueuedAgentMessage rejected");
+    }
+  }
+
   async rewindAgent(
     agentId: string,
     messageId: string,
@@ -5603,6 +5686,7 @@ export class DaemonClient {
           [CLIENT_CAPS.providerSubagents]: true,
           [CLIENT_CAPS.projectUpdates]: true,
           [CLIENT_CAPS.compactProviderSnapshots]: true,
+          [CLIENT_CAPS.agentMessageQueueEvents]: true,
           ...this.config.capabilities,
         },
         ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),
@@ -6024,7 +6108,9 @@ export class DaemonClient {
   }
 
   private handleSessionMessage(msg: SessionOutboundMessage): void {
-    const consumerMessage = normalizeProviderSnapshotUpdateMessage(msg);
+    const consumerMessage = normalizeAgentMessageQueueMessage(
+      normalizeProviderSnapshotUpdateMessage(msg),
+    );
 
     if (consumerMessage.type === "status") {
       const serverInfo = parseServerInfoStatusPayload(consumerMessage.payload);

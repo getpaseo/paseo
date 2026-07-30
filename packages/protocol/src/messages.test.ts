@@ -1,8 +1,10 @@
 import { describe, expect, test } from "vitest";
+import { z } from "zod";
 import {
   FileExplorerRequestSchema,
   PaseoWorktreeArchiveRequestSchema,
   parseServerInfoStatusPayload,
+  QueuedAgentMessageQueuePayloadSchema,
   SessionInboundMessageSchema,
   SessionOutboundMessageSchema,
   WorkspaceProjectDescriptorPayloadSchema,
@@ -343,6 +345,49 @@ describe("agent detach RPC", () => {
       throw new Error("Expected server info payload to parse");
     }
     expect(parsed.features?.importSessionWorkspaceTarget).toBe(true);
+  });
+});
+
+describe("queued agent message compatibility", () => {
+  test("wire parsing leaves queue compatibility defaults to explicit normalization", () => {
+    const parsedQueue = QueuedAgentMessageQueuePayloadSchema.parse({
+      agentId: "agent-1",
+      messages: [],
+    });
+
+    expect(parsedQueue.revision).toBeUndefined();
+
+    const parsedMessage = SessionOutboundMessageSchema.parse({
+      type: "queue.agent_message.updated",
+      payload: {
+        agentId: "agent-1",
+        messages: [],
+      },
+    });
+
+    expect(parsedMessage.type).toBe("queue.agent_message.updated");
+    if (parsedMessage.type !== "queue.agent_message.updated") {
+      throw new Error("Expected queue.agent_message.updated");
+    }
+    expect(parsedMessage.payload.revision).toBeUndefined();
+  });
+
+  test("old queue payload schema strips new daemon revision field", () => {
+    const LegacyQueuedAgentMessageQueuePayloadSchema = z.object({
+      agentId: z.string(),
+      messages: z.array(z.unknown()),
+    });
+
+    const parsed = LegacyQueuedAgentMessageQueuePayloadSchema.parse({
+      agentId: "agent-1",
+      revision: 4,
+      messages: [],
+    });
+
+    expect(parsed).toEqual({
+      agentId: "agent-1",
+      messages: [],
+    });
   });
 });
 

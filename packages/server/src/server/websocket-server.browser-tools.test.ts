@@ -274,6 +274,7 @@ function createVoiceAssistantWebSocketServer(params: {
   const agentManager = {
     setAgentAttentionCallback() {},
     subscribe: () => () => {},
+    addAgentArchivedCallback: () => () => {},
     getMetricsSnapshot: () => ({
       total: 0,
       byLifecycle: {},

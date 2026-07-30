@@ -21,6 +21,7 @@ export type AgentRunController = Pick<
   | "replaceAgentRun"
   | "steerOrReplaceActiveTurn"
   | "streamAgent"
+  | "waitForAgentRunStart"
 >;
 
 export interface StartAgentRunOptions {
@@ -78,13 +79,18 @@ async function startOrReplaceRun(
   return { iterator, replaced };
 }
 
+export interface StartAgentRunResult {
+  disposition: PromptDispatchDisposition;
+  startAcknowledged: Promise<void>;
+}
+
 export async function startAgentRun(
   agentManager: AgentRunController,
   agentId: string,
   prompt: AgentPromptInput,
   logger: Logger,
   options?: StartAgentRunOptions,
-): Promise<{ disposition: PromptDispatchDisposition }> {
+): Promise<StartAgentRunResult> {
   const snapshot = agentManager.getAgent(agentId);
   logger.trace(
     {
@@ -102,11 +108,11 @@ export async function startAgentRun(
   // in-flight turn — replaceAgentRun would interrupt the running turn. The
   // intercept lives at this layer so it covers every prompt entrypoint.
   if (agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions)) {
-    return { disposition: "out_of_band" };
+    return { disposition: "out_of_band", startAcknowledged: Promise.resolve() };
   }
   const steered = await steerOrReplaceActiveRun(agentManager, agentId, prompt, options);
   if (steered?.disposition === "steered") {
-    return steered;
+    return { ...steered, startAcknowledged: Promise.resolve() };
   }
   const { iterator, replaced } = steered
     ? { iterator: steered.iterator, replaced: true }
@@ -120,6 +126,8 @@ export async function startAgentRun(
     },
     "agent.session.start_stream.iterator_returned",
   );
+  const startAcknowledged = agentManager.waitForAgentRunStart(agentId);
+  void startAcknowledged.catch(() => {});
   void (async () => {
     try {
       for await (const _ of iterator) {
@@ -146,7 +154,7 @@ export async function startAgentRun(
       logger.error({ err: error, agentId }, "Agent stream failed");
     }
   })();
-  return { disposition: "turn_started" };
+  return { disposition: "turn_started", startAcknowledged };
 }
 
 /**
@@ -190,6 +198,8 @@ export interface SendPromptToAgentParams {
   messageId?: string;
   activeTurnBehavior?: ActiveTurnBehavior;
   runOptions?: AgentRunOptions;
+  /** Whether this send may interrupt an active foreground run. Defaults to true. */
+  replaceRunning?: boolean;
   /** Optional mode to set on the agent before the run starts. */
   sessionMode?: string;
   /**
@@ -201,6 +211,12 @@ export interface SendPromptToAgentParams {
   /** See {@link StartAgentRunOptions.clearPendingPermissions}. */
   clearPendingPermissions?: boolean;
   logger: Logger;
+}
+
+export interface SendPromptToAgentResult {
+  disposition: PromptDispatchDisposition;
+  startAcknowledged: Promise<void>;
+  skippedReason?: "archived";
 }
 
 export interface StartCreatedAgentInitialPromptParams {
@@ -241,7 +257,6 @@ export async function waitForAgentRunStartWithTimeout(
       ),
     AGENT_RUN_START_TIMEOUT_MS,
   );
-
   try {
     await agentManager.waitForAgentRunStart(agentId, { signal: startAbort.signal });
   } finally {
@@ -257,18 +272,22 @@ export async function waitForAgentRunStartWithTimeout(
  * chat mentions, notify-on-finish) MUST go through this so behavior can never
  * drift between them.
  *
- * When `unarchive` is false and the agent is archived, the call is a silent
- * no-op (returns the normal turn-start disposition) — the agent is not run.
+ * When `unarchive` is false and the agent is archived, the call is a no-op
+ * with `skippedReason: "archived"` — the agent is not run.
  */
 export async function sendPromptToAgent(
   params: SendPromptToAgentParams,
-): Promise<{ disposition: PromptDispatchDisposition }> {
+): Promise<SendPromptToAgentResult> {
   const unarchive = params.unarchive ?? true;
 
   const record = await params.agentStorage.get(params.agentId);
   if (record?.archivedAt) {
     if (!unarchive) {
-      return { disposition: "turn_started" };
+      return {
+        disposition: "turn_started",
+        startAcknowledged: Promise.resolve(),
+        skippedReason: "archived",
+      };
     }
     await unarchiveAgentState(params.agentStorage, params.agentManager, params.agentId);
   }
@@ -288,7 +307,7 @@ export async function sendPromptToAgent(
     : params.runOptions;
 
   return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
-    replaceRunning: true,
+    replaceRunning: params.replaceRunning ?? true,
     activeTurnBehavior: params.activeTurnBehavior,
     clearPendingPermissions: params.clearPendingPermissions,
     runOptions,

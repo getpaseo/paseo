@@ -696,7 +696,8 @@ export class AgentManager {
   private paseoToolCatalogFactory: PaseoToolCatalogFactory | null = null;
   private appendSystemPrompt: string;
   private onAgentAttention?: AgentAttentionCallback;
-  private onAgentArchived?: AgentArchivedCallback;
+  private readonly agentArchivedCallbacks = new Set<AgentArchivedCallback>();
+  private replaceableAgentArchivedCallbackUnsubscribe: (() => void) | null = null;
   private onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
@@ -774,7 +775,15 @@ export class AgentManager {
   }
 
   setAgentArchivedCallback(callback: AgentArchivedCallback): void {
-    this.onAgentArchived = callback;
+    this.replaceableAgentArchivedCallbackUnsubscribe?.();
+    this.replaceableAgentArchivedCallbackUnsubscribe = this.addAgentArchivedCallback(callback);
+  }
+
+  addAgentArchivedCallback(callback: AgentArchivedCallback): () => void {
+    this.agentArchivedCallbacks.add(callback);
+    return () => {
+      this.agentArchivedCallbacks.delete(callback);
+    };
   }
 
   setMcpBaseUrl(url: string | null): void {
@@ -1646,14 +1655,15 @@ export class AgentManager {
   }
 
   private async fireAgentArchived(agentId: string): Promise<void> {
-    const callback = this.onAgentArchived;
-    if (!callback) {
+    if (this.agentArchivedCallbacks.size === 0) {
       return;
     }
-    try {
-      await callback(agentId);
-    } catch (error) {
-      this.logger.warn({ err: error, agentId }, "onAgentArchived callback failed");
+    for (const callback of this.agentArchivedCallbacks) {
+      try {
+        await callback(agentId);
+      } catch (error) {
+        this.logger.warn({ err: error, agentId }, "onAgentArchived callback failed");
+      }
     }
   }
 

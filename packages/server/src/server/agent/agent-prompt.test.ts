@@ -9,9 +9,12 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
 import {
+  type AgentRunController,
   formatSystemNotificationPrompt,
   isSystemInjectedEnvelope,
+  sendPromptToAgent,
   setupFinishNotification,
+  startAgentRun,
   waitForAgentRunStartWithTimeout,
 } from "./agent-prompt.js";
 import type { AgentManagerEvent, ManagedAgent } from "./agent-manager.js";
@@ -262,6 +265,78 @@ function createFinishNotificationScenario(
 test("isSystemInjectedEnvelope matches the envelope formatSystemNotificationPrompt produces", () => {
   expect(isSystemInjectedEnvelope(formatSystemNotificationPrompt("child finished"))).toBe(true);
   expect(isSystemInjectedEnvelope("hello world")).toBe(false);
+});
+
+test("sendPromptToAgent forwards the client message id as run options", async () => {
+  const agent: ManagedAgent = Object.create(null);
+  Reflect.set(agent, "id", "agent-1");
+  Reflect.set(agent, "provider", "codex");
+
+  const streamAgentSpy = vi.fn(() => (async function* noop() {})());
+  const agentManager: AgentManager = Object.create(AgentManager.prototype);
+  Reflect.set(
+    agentManager,
+    "getAgent",
+    vi.fn(() => agent),
+  );
+  Reflect.set(agentManager, "tryRunOutOfBand", vi.fn().mockReturnValue(false));
+  Reflect.set(agentManager, "hasInFlightRun", vi.fn().mockReturnValue(false));
+  Reflect.set(agentManager, "streamAgent", streamAgentSpy);
+
+  const agentStorage: AgentStorage = Object.create(AgentStorage.prototype);
+  Reflect.set(
+    agentStorage,
+    "get",
+    vi.fn(async () => null),
+  );
+
+  await sendPromptToAgent({
+    agentManager,
+    agentStorage,
+    agentId: "agent-1",
+    prompt: "hello",
+    messageId: "msg-client-1",
+    runOptions: { outputSchema: { type: "object" } },
+    logger: createTestLogger(),
+  });
+
+  expect(streamAgentSpy).toHaveBeenCalledWith("agent-1", "hello", {
+    outputSchema: { type: "object" },
+    clientMessageId: "msg-client-1",
+  });
+});
+
+test("startAgentRun registers acknowledgement before consuming a fast iterator", async () => {
+  const turnStarted = Promise.withResolvers<void>();
+  let acknowledgementRegistered = false;
+  let deliveries = 0;
+  const streamAgent = vi.fn(() =>
+    (async function* startAndFinish() {
+      if (!acknowledgementRegistered) {
+        throw new Error("Iterator consumed before acknowledgement registration");
+      }
+      deliveries += 1;
+      turnStarted.resolve();
+      yield { type: "turn_started", provider: "codex", turnId: "turn-1" } as const;
+    })(),
+  );
+  const agentManager = {
+    getAgent: () => undefined,
+    tryRunOutOfBand: () => false,
+    hasInFlightRun: () => false,
+    replaceAgentRun: async () => (async function* noop() {})(),
+    streamAgent,
+    waitForAgentRunStart: async () => {
+      acknowledgementRegistered = true;
+      await turnStarted.promise;
+    },
+  } satisfies AgentRunController;
+
+  const result = await startAgentRun(agentManager, "agent-1", "hello", createTestLogger());
+  await result.startAcknowledged;
+
+  expect(streamAgent).toHaveBeenCalledTimes(1);
+  expect(deliveries).toBe(1);
 });
 
 test("finish notifications tell the parent the child's last assistant message", async () => {
