@@ -16,6 +16,7 @@ import {
   rememberTimelinePromptPosition,
   reloadAgentTimelineFromPersistedReplica,
   scrollTimelineUntilOlderHistoryIsReachable,
+  scrollTimelineToOldestLoadedEdge,
   scrollTimelineToNewestLoadedEdge,
   seedLongMockAgentTimeline,
   sendLiveTurnBeforeHydration,
@@ -143,6 +144,7 @@ test.describe("Agent timeline pagination", () => {
       await makeLoadedTimelineFitViewport(page);
       const history = await holdOlderHistoryPages(page, agent);
       await openAgentTimeline(page, agent);
+      await scrollTimelineToOldestLoadedEdge(page);
       await history.expectRequestedPages(1);
       const loading = await rememberOlderHistoryLoadingOperation(page);
 

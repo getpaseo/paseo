@@ -19,6 +19,11 @@ interface ClientRequest {
   payload?: unknown;
 }
 
+interface HeldAgentUpdate {
+  agentId: string;
+  status: string;
+}
+
 function readSessionMessage(message: string | Buffer): ClientRequest | null {
   if (typeof message !== "string") return null;
   try {
@@ -122,13 +127,35 @@ function shouldSuppressServerMessage(input: {
   message: ClientRequest | null;
   messageTypes: ReadonlySet<string>;
   agentStreamEventTypes: ReadonlySet<string>;
+  agentStreamItemTypes: ReadonlySet<string>;
   suppressAgentStream: boolean;
 }): boolean {
   const messageType = typeof input.message?.type === "string" ? input.message.type : null;
   if (messageType && input.messageTypes.has(messageType)) return true;
   if (input.suppressAgentStream && messageType === "agent_stream") return true;
+  const itemType = readAgentStreamItemType(input.message);
+  if (itemType && input.agentStreamItemTypes.has(itemType)) return true;
   const eventType = readAgentStreamEventType(input.message);
   return Boolean(eventType && input.agentStreamEventTypes.has(eventType));
+}
+
+function shouldHoldServerMessage(
+  message: ClientRequest | null,
+  messageType: string | null,
+  agentUpdate: HeldAgentUpdate | null,
+): boolean {
+  if (message?.type === messageType) return true;
+  if (message?.type !== "agent_update" || !agentUpdate) return false;
+  const payload = message.payload;
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    (payload as { kind?: unknown }).kind !== "upsert"
+  ) {
+    return false;
+  }
+  const agent = (payload as { agent?: { id?: unknown; status?: unknown } }).agent;
+  return agent?.id === agentUpdate.agentId && agent.status === agentUpdate.status;
 }
 
 export async function installDaemonWebSocketGate(page: Page) {
@@ -142,10 +169,12 @@ export async function installDaemonWebSocketGate(page: Page) {
   let heldClientRequest: { server: WebSocketRoute; message: string | Buffer } | null = null;
   let resolveHeldClientRequest: (() => void) | null = null;
   let heldServerMessageType: string | null = null;
+  let heldAgentUpdate: HeldAgentUpdate | null = null;
   let heldServerMessage: { browser: WebSocketRoute; message: string | Buffer } | null = null;
   let resolveHeldServerMessage: (() => void) | null = null;
   const suppressedServerMessageTypes = new Set<string>();
   const suppressedAgentStreamEventTypes = new Set<string>();
+  const suppressedAgentStreamItemTypes = new Set<string>();
   const activeSockets = new Set<WebSocketRoute>();
   let latestServer: WebSocketRoute | null = null;
   const directoryStarts: DirectoryRequestStartCounts = {
@@ -237,7 +266,7 @@ export async function installDaemonWebSocketGate(page: Page) {
         for (const resolve of serverMessageWaiters) resolve();
         serverMessageWaiters.clear();
       }
-      if (serverMessage?.type === heldServerMessageType) {
+      if (shouldHoldServerMessage(serverMessage, heldServerMessageType, heldAgentUpdate)) {
         heldServerMessage = { browser: ws, message: outboundMessage };
         resolveHeldServerMessage?.();
         resolveHeldServerMessage = null;
@@ -248,6 +277,7 @@ export async function installDaemonWebSocketGate(page: Page) {
           message: serverMessage,
           messageTypes: suppressedServerMessageTypes,
           agentStreamEventTypes: suppressedAgentStreamEventTypes,
+          agentStreamItemTypes: suppressedAgentStreamItemTypes,
           suppressAgentStream,
         })
       )
@@ -296,6 +326,12 @@ export async function installDaemonWebSocketGate(page: Page) {
     },
     holdNextServerMessage(type: string): void {
       heldServerMessageType = type;
+      heldAgentUpdate = null;
+      heldServerMessage = null;
+    },
+    holdNextAgentUpdate(agentId: string, status: string): void {
+      heldServerMessageType = null;
+      heldAgentUpdate = { agentId, status };
       heldServerMessage = null;
     },
     waitForHeldServerMessage(): Promise<void> {
@@ -309,6 +345,7 @@ export async function installDaemonWebSocketGate(page: Page) {
       heldServerMessage.browser.send(heldServerMessage.message);
       heldServerMessage = null;
       heldServerMessageType = null;
+      heldAgentUpdate = null;
     },
     requestTimelineTail(agentId: string): void {
       if (!latestServer) throw new Error("No daemon WebSocket is connected");
@@ -379,6 +416,13 @@ export async function installDaemonWebSocketGate(page: Page) {
         suppressedAgentStreamEventTypes.add(type);
       } else {
         suppressedAgentStreamEventTypes.delete(type);
+      }
+    },
+    setAgentStreamItemSuppressed(type: string, suppressed: boolean): void {
+      if (suppressed) {
+        suppressedAgentStreamItemTypes.add(type);
+      } else {
+        suppressedAgentStreamItemTypes.delete(type);
       }
     },
     setAssistantMessageIdsStripped(stripped: boolean): void {

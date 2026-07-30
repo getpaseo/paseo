@@ -242,6 +242,7 @@ export interface AgentStreamViewProps {
   streamHead?: StreamItem[];
   pendingPermissions: Map<string, PendingPermission>;
   pendingMessageSubmissions?: readonly PendingMessageSubmission[];
+  hasActiveTurn?: boolean;
   routeBottomAnchorRequest?: BottomAnchorRouteRequest | null;
   isAuthoritativeHistoryReady?: boolean;
   toast?: ToastApi | null;
@@ -332,6 +333,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       streamHead: providedStreamHead,
       pendingPermissions,
       pendingMessageSubmissions = EMPTY_PENDING_MESSAGE_SUBMISSIONS,
+      hasActiveTurn = false,
       routeBottomAnchorRequest = null,
       isAuthoritativeHistoryReady = true,
       toast,
@@ -563,6 +565,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     }
     const effectiveStreamItems = isActive ? streamItems : frozenStreamItemsRef.current;
     const effectiveStreamHead = isActive ? streamHead : frozenStreamHeadRef.current;
+    const isTurnActive = [
+      context.status === "running",
+      pendingMessageSubmissions.length > 0,
+      hasActiveTurn,
+    ].some(Boolean);
     // Keep retained history outside the 48ms live-head flush path.
     const preparedToolCallHistory = useMemo(
       () => prepareToolCallHistory(toolCallDetailLevel, effectiveStreamItems),
@@ -575,12 +582,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           tail: effectiveStreamItems,
           head: effectiveStreamHead ?? EMPTY_STREAM_HEAD,
           preparedHistory: preparedToolCallHistory,
-          isTurnActive: context.status === "running",
+          isTurnActive,
         }),
       [
-        context.status,
         effectiveStreamHead,
         effectiveStreamItems,
+        isTurnActive,
         preparedToolCallHistory,
         toolCallDetailLevel,
       ],
@@ -588,27 +595,27 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const baseRenderModel = useMemo(() => {
       return buildAgentStreamRenderModel({
-        agentStatus: context.status,
+        isTurnActive,
         tail: projectedToolCalls.tail,
         head: projectedToolCalls.head,
         platform: isWeb ? "web" : "native",
         isMobileBreakpoint: isMobile,
       });
-    }, [context.status, isMobile, projectedToolCalls.head, projectedToolCalls.tail]);
+    }, [isMobile, isTurnActive, projectedToolCalls.head, projectedToolCalls.tail]);
     const streamLayout = useMemo(
       () =>
         layoutStream({
           strategy: streamRenderStrategy,
-          agentStatus: context.status,
+          isTurnActive,
           history: baseRenderModel.history,
           liveHead: baseRenderModel.segments.liveHead,
           timingByAssistantId: baseRenderModel.turnTiming.byAssistantId,
         }),
       [
-        context.status,
         baseRenderModel.history,
         baseRenderModel.segments.liveHead,
         baseRenderModel.turnTiming.byAssistantId,
+        isTurnActive,
         streamRenderStrategy,
       ],
     );
@@ -892,8 +899,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [pendingPermissions, agentId],
     );
 
-    const showRunningTurnFooter =
-      context.status === "running" || pendingMessageSubmissions.length > 0;
     const pendingPermissionsNode = useMemo(
       () =>
         renderPendingPermissionsNode({
@@ -904,9 +909,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     );
     const turnFooterNode = useMemo(
       () =>
-        showRunningTurnFooter || bottomTurnFooterHost ? (
+        isTurnActive || bottomTurnFooterHost ? (
           <TurnFooter
-            isRunning={showRunningTurnFooter}
+            isRunning={isTurnActive}
             inFlightTurnStartedAt={baseRenderModel.turnTiming.runningStartedAt}
             host={bottomTurnFooterHost}
             strategy={streamRenderStrategy}
@@ -917,7 +922,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [
         handleForkAssistantTurn,
         readOnly,
-        showRunningTurnFooter,
+        isTurnActive,
         baseRenderModel.turnTiming.runningStartedAt,
         bottomTurnFooterHost,
         streamRenderStrategy,
@@ -1175,6 +1180,7 @@ function agentStreamViewPropsEqual(
   if (left.pendingMessageSubmissions !== right.pendingMessageSubmissions) {
     reasons.push("pendingMessageSubmissions");
   }
+  if (left.hasActiveTurn !== right.hasActiveTurn) reasons.push("hasActiveTurn");
   if (
     !bottomAnchorRouteRequestsEqual(left.routeBottomAnchorRequest, right.routeBottomAnchorRequest)
   ) {

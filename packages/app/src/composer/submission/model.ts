@@ -52,8 +52,8 @@ export function acceptMessageSubmission(
   );
   if (index < 0) return submissions as MessageSubmissionRecord[];
   // COMPAT(messageSubmissionDisposition): daemons before v0.2.3 omitted outOfBand.
-  // Their normal-send response follows the ordered running/canonical events, while an
-  // out-of-band response arrives with the agent still idle. Remove after 2027-01-27.
+  // An idle response cannot distinguish a normal send that has not reported running yet
+  // from an out-of-band send; the separate active-turn lease bridges that gap. Remove after 2027-01-27.
   const legacyOutOfBand = outOfBand === undefined && !isAgentRunning;
   if (
     outOfBand === true ||

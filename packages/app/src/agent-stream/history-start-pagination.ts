@@ -1,6 +1,7 @@
 export const HISTORY_START_THRESHOLD_PX = 96;
 
 export type HistoryStartPaginationState =
+  | { status: "dormant" }
   | { status: "ready" }
   | { status: "loading"; requestedProgressKey: string; requestObserved: boolean }
   | { status: "settling"; loadedProgressKey: string }
@@ -20,7 +21,7 @@ export interface HistoryStartPaginationTransition {
 }
 
 export function createHistoryStartPaginationState(): HistoryStartPaginationState {
-  return { status: "ready" };
+  return { status: "dormant" };
 }
 
 export function isHistoryStartLoadingOperation(state: HistoryStartPaginationState): boolean {
@@ -30,7 +31,14 @@ export function isHistoryStartLoadingOperation(state: HistoryStartPaginationStat
 export function rearmHistoryStartPagination(
   state: HistoryStartPaginationState,
 ): HistoryStartPaginationState {
-  return state.status === "latched" ? { status: "ready" } : state;
+  return state.status === "dormant" || state.status === "latched" ? { status: "ready" } : state;
+}
+
+export function isHistoryStartSlotReserved(
+  state: HistoryStartPaginationState,
+  hasOlderHistory: boolean,
+): boolean {
+  return state.status !== "dormant" && (hasOlderHistory || state.status !== "ready");
 }
 
 export function abandonHistoryStartPaginationRequest(
@@ -51,6 +59,9 @@ export function evaluateHistoryStartPagination(
   state: HistoryStartPaginationState,
   input: HistoryStartPaginationInput,
 ): HistoryStartPaginationTransition {
+  if (state.status === "dormant") {
+    return { state, shouldLoad: false };
+  }
   if (state.status === "loading") {
     if (input.progressKey !== null && input.progressKey !== state.requestedProgressKey) {
       return {

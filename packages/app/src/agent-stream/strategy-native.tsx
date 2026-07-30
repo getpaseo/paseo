@@ -36,6 +36,7 @@ import {
   createHistoryStartPaginationState,
   evaluateHistoryStartPagination,
   isHistoryStartLoadingOperation,
+  isHistoryStartSlotReserved,
   rearmHistoryStartPagination,
   settleHistoryStartPagination,
   type HistoryStartPaginationInput,
@@ -583,7 +584,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
 
   const historyFooterContent = useMemo(() => {
     const isLoadingOperation = isHistoryStartLoadingOperation(historyStartPaginationState);
-    if (!hasOlderHistory && !isLoadingOperation) {
+    if (!isHistoryStartSlotReserved(historyStartPaginationState, hasOlderHistory)) {
       return null;
     }
     return (

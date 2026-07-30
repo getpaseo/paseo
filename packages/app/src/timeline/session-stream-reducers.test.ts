@@ -8,6 +8,7 @@ import {
 } from "@/types/stream";
 import {
   createAgentStreamReducerQueue,
+  deriveAgentStreamTurnActivity,
   processTimelineResponse,
   processAgentStreamEvent,
   processAgentStreamEvents,
@@ -129,6 +130,31 @@ function makeSubmittedUserMessage(
     timestamp: new Date(1000),
   });
 }
+
+describe("deriveAgentStreamTurnActivity", () => {
+  it("tracks start through every terminal turn event", () => {
+    const started = makeStreamReducerEvent(
+      { type: "turn_started", provider: "claude" } as AgentStreamEventPayload,
+      1,
+    );
+    expect(deriveAgentStreamTurnActivity([started])).toBe(true);
+    for (const event of [
+      { type: "turn_completed", provider: "claude" },
+      { type: "turn_failed", provider: "claude", error: "failed" },
+      { type: "turn_canceled", provider: "claude", reason: "canceled" },
+    ] as AgentStreamEventPayload[]) {
+      expect(deriveAgentStreamTurnActivity([started, makeStreamReducerEvent(event, 2)])).toBe(
+        false,
+      );
+    }
+  });
+
+  it("leaves activity unchanged when a batch has no lifecycle event", () => {
+    expect(
+      deriveAgentStreamTurnActivity([makeStreamReducerEvent(makeAssistantTimelineEvent("hi"), 1)]),
+    ).toBeUndefined();
+  });
+});
 
 function getAssistantTexts(items: StreamItem[]): string[] {
   return items

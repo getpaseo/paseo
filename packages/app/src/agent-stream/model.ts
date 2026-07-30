@@ -35,7 +35,7 @@ export interface AgentStreamRenderModel {
 }
 
 export interface BuildAgentStreamRenderModelInput {
-  agentStatus: string;
+  isTurnActive: boolean;
   tail: StreamItem[];
   head: StreamItem[];
   platform: "web" | "native";
@@ -56,7 +56,7 @@ const splitHistoryCache = new WeakMap<
 >();
 const turnTimingCache = new WeakMap<
   StreamItem[],
-  WeakMap<StreamItem[], Map<string, StreamTurnTiming>>
+  WeakMap<StreamItem[], Map<boolean, StreamTurnTiming>>
 >();
 
 function getOrderedItems(params: {
@@ -131,7 +131,7 @@ function splitOrderedTail(params: {
 }
 
 function getTurnTiming(params: {
-  agentStatus: string;
+  isTurnActive: boolean;
   tail: StreamItem[];
   head: StreamItem[];
 }): StreamTurnTiming {
@@ -140,17 +140,17 @@ function getTurnTiming(params: {
     cachedByHead = new WeakMap();
     turnTimingCache.set(params.tail, cachedByHead);
   }
-  let cachedByStatus = cachedByHead.get(params.head);
-  if (!cachedByStatus) {
-    cachedByStatus = new Map();
-    cachedByHead.set(params.head, cachedByStatus);
+  let cachedByActivity = cachedByHead.get(params.head);
+  if (!cachedByActivity) {
+    cachedByActivity = new Map();
+    cachedByHead.set(params.head, cachedByActivity);
   }
-  const cached = cachedByStatus.get(params.agentStatus);
+  const cached = cachedByActivity.get(params.isTurnActive);
   if (cached) {
     return cached;
   }
   const timing = deriveStreamTurnTiming(params);
-  cachedByStatus.set(params.agentStatus, timing);
+  cachedByActivity.set(params.isTurnActive, timing);
   return timing;
 }
 
@@ -188,7 +188,7 @@ export function buildAgentStreamRenderModel(
     isMobileBreakpoint: input.isMobileBreakpoint,
   });
   const turnTiming = getTurnTiming({
-    agentStatus: input.agentStatus,
+    isTurnActive: input.isTurnActive,
     tail: input.tail,
     head: input.head,
   });

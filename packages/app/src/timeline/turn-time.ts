@@ -12,7 +12,7 @@ export interface StreamTurnTiming {
 }
 
 export function deriveStreamTurnTiming(params: {
-  agentStatus: string;
+  isTurnActive: boolean;
   tail: StreamItem[];
   head: StreamItem[];
 }): StreamTurnTiming {
@@ -59,9 +59,8 @@ export function deriveStreamTurnTiming(params: {
     visitItem(item);
   }
 
-  const isRunning = params.agentStatus === "running";
-  const runningStartedAt = isRunning ? currentUserAt : null;
-  if (params.agentStatus !== "running") {
+  const runningStartedAt = params.isTurnActive ? currentUserAt : null;
+  if (!params.isTurnActive) {
     flushCompletedTurn();
   }
 

@@ -243,6 +243,12 @@ function promptToText(prompt: AgentPromptInput): string {
     .trim();
 }
 
+function parseUserMessageDelayMs(prompt: AgentPromptInput): number {
+  const match = /delay synthetic user message by (\d+)ms/i.exec(promptToText(prompt));
+  const delayMs = Number(match?.[1] ?? 0);
+  return Number.isSafeInteger(delayMs) ? Math.min(delayMs, 2_000) : 0;
+}
+
 function parseLargeAgentStreamPayloadPrompt(
   prompt: AgentPromptInput,
 ): LargeAgentStreamPayloadRequest | null {
@@ -657,7 +663,7 @@ export class MockLoadTestAgentSession implements AgentSession {
     };
     this.activeTurn = turn;
     const userMessageId = randomUUID();
-    setTimeout(() => {
+    const userMessageTimer = setTimeout(() => {
       if (this.activeTurn?.turnId !== turnId) {
         return;
       }
@@ -672,7 +678,8 @@ export class MockLoadTestAgentSession implements AgentSession {
           ...(options?.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
         },
       });
-    }, 0);
+    }, parseUserMessageDelayMs(prompt));
+    userMessageTimer.unref?.();
 
     const largePayload = parseLargeAgentStreamPayloadPrompt(prompt);
     const stress = parseAgentStreamStressPrompt(prompt);

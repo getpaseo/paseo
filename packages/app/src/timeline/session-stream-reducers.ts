@@ -1310,7 +1310,25 @@ export function createAgentStreamReducerQueue(
 interface StreamStatePatch {
   tail?: StreamItem[];
   head?: StreamItem[];
+  turnActive?: boolean;
   acknowledgedClientMessageIds?: readonly string[];
+}
+
+export function deriveAgentStreamTurnActivity(
+  events: readonly AgentStreamReducerEvent[],
+): boolean | undefined {
+  let active: boolean | undefined;
+  for (const { event } of events) {
+    if (event.type === "turn_started") active = true;
+    else if (
+      event.type === "turn_completed" ||
+      event.type === "turn_failed" ||
+      event.type === "turn_canceled"
+    ) {
+      active = false;
+    }
+  }
+  return active;
 }
 
 export interface CreateSessionAgentStreamReducerQueueInput {
@@ -1348,14 +1366,17 @@ export function createSessionAgentStreamReducerQueue(
       };
     },
     commit: (agentId, result, events) => {
+      const turnActive = deriveAgentStreamTurnActivity(events);
       if (
         result.changedTail ||
         result.changedHead ||
+        turnActive !== undefined ||
         result.acknowledgedClientMessageIds.length > 0
       ) {
         setAgentStreamState(serverId, agentId, {
           ...(result.changedTail ? { tail: result.tail } : {}),
           ...(result.changedHead ? { head: result.head } : {}),
+          ...(turnActive === undefined ? {} : { turnActive }),
           ...(result.acknowledgedClientMessageIds.length > 0
             ? { acknowledgedClientMessageIds: result.acknowledgedClientMessageIds }
             : {}),

@@ -546,6 +546,18 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     }
   }, [flushAgentLastActivity, serverId, isConnected, setInitializingAgents]);
 
+  useEffect(
+    () =>
+      client.subscribeConnectionStatus((connection) => {
+        if (connection.status === "connected") return;
+        const activeAgentTurns = useSessionStore.getState().sessions[serverId]?.activeAgentTurns;
+        for (const agentId of activeAgentTurns ?? []) {
+          setAgentStreamState(serverId, agentId, { turnActive: false });
+        }
+      }),
+    [client, serverId, setAgentStreamState],
+  );
+
   const applyWorkspaceSetupProgress = useCallback(
     (payload: WorkspaceSetupProgressPayload) => {
       upsertWorkspaceSetupProgress({ serverId, payload });

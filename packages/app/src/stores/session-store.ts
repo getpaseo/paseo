@@ -404,6 +404,7 @@ export interface SessionState {
   // Stream state (head/tail model)
   agentStreamTail: Map<string, StreamItem[]>;
   agentStreamHead: Map<string, StreamItem[]>;
+  activeAgentTurns: Set<string>;
   messageSubmissions: Map<string, MessageSubmissionRecord[]>;
   agentTimelineCursor: Map<string, AgentTimelineCursorState>;
   agentTimelineHasOlder: Map<string, boolean>;
@@ -499,6 +500,7 @@ interface SessionStoreActions {
     state: {
       tail?: StreamItem[];
       head?: StreamItem[];
+      turnActive?: boolean;
       acknowledgedClientMessageIds?: readonly string[];
     },
   ) => void;
@@ -657,6 +659,18 @@ function applyRunningAgentsToAcceptedSubmissions(input: {
   return nextSubmissions;
 }
 
+function updateActiveAgentTurn(
+  activeAgentTurns: ReadonlySet<string>,
+  agentId: string,
+  active: boolean,
+): Set<string> {
+  if (activeAgentTurns.has(agentId) === active) return activeAgentTurns as Set<string>;
+  const next = new Set(activeAgentTurns);
+  if (active) next.add(agentId);
+  else next.delete(agentId);
+  return next;
+}
+
 // Helper to create initial session state
 function createInitialSessionState(
   serverId: string,
@@ -678,6 +692,7 @@ function createInitialSessionState(
     currentAssistantMessage: "",
     agentStreamTail: new Map(),
     agentStreamHead: new Map(),
+    activeAgentTurns: new Set(),
     messageSubmissions: new Map(),
     agentTimelineCursor: new Map(),
     agentTimelineHasOlder: new Map(),
@@ -1100,6 +1115,7 @@ export const useSessionStore = create<SessionStore>()(
           let nextHead = session.agentStreamHead;
           let changedTail = false;
           let changedHead = false;
+          let activeAgentTurns = session.activeAgentTurns;
 
           if (state.tail !== undefined) {
             const existingTail = session.agentStreamTail.get(agentId);
@@ -1126,6 +1142,10 @@ export const useSessionStore = create<SessionStore>()(
             }
           }
 
+          if (state.turnActive !== undefined) {
+            activeAgentTurns = updateActiveAgentTurn(activeAgentTurns, agentId, state.turnActive);
+          }
+
           const currentSubmissions = session.messageSubmissions.get(agentId) ?? [];
           const observedSubmissions = observeMessageSubmissionCanonical(
             currentSubmissions,
@@ -1133,7 +1153,12 @@ export const useSessionStore = create<SessionStore>()(
           );
           const changedSubmissions = observedSubmissions !== currentSubmissions;
 
-          if (!changedTail && !changedHead && !changedSubmissions) {
+          if (
+            !changedTail &&
+            !changedHead &&
+            !changedSubmissions &&
+            activeAgentTurns === session.activeAgentTurns
+          ) {
             return prev;
           }
 
@@ -1155,6 +1180,7 @@ export const useSessionStore = create<SessionStore>()(
                 ...session,
                 agentStreamTail: nextTail,
                 agentStreamHead: nextHead,
+                activeAgentTurns,
                 messageSubmissions,
               },
             },
@@ -1196,6 +1222,7 @@ export const useSessionStore = create<SessionStore>()(
                   stream.head === currentHead
                     ? session.agentStreamHead
                     : new Map(session.agentStreamHead).set(agentId, stream.head),
+                activeAgentTurns: updateActiveAgentTurn(session.activeAgentTurns, agentId, true),
                 messageSubmissions,
               },
             },
@@ -1208,13 +1235,25 @@ export const useSessionStore = create<SessionStore>()(
           const session = prev.sessions[serverId];
           if (!session) return prev;
           const currentSubmissions = session.messageSubmissions.get(agentId) ?? [];
+          const isAgentRunning = session.agents.get(agentId)?.status === "running";
           const submissions = acceptMessageSubmission(
             currentSubmissions,
             clientMessageId,
-            session.agents.get(agentId)?.status === "running",
+            isAgentRunning,
             outOfBand,
           );
-          if (submissions === currentSubmissions) return prev;
+          let activeAgentTurns = session.activeAgentTurns;
+          if (
+            submissions !== currentSubmissions &&
+            !isAgentRunning &&
+            outOfBand === true &&
+            submissions.length === 0
+          ) {
+            activeAgentTurns = updateActiveAgentTurn(activeAgentTurns, agentId, false);
+          }
+          if (submissions === currentSubmissions && activeAgentTurns === session.activeAgentTurns) {
+            return prev;
+          }
           const messageSubmissions = new Map(session.messageSubmissions);
           if (submissions.length > 0) {
             messageSubmissions.set(agentId, submissions);
@@ -1225,7 +1264,7 @@ export const useSessionStore = create<SessionStore>()(
             ...prev,
             sessions: {
               ...prev.sessions,
-              [serverId]: { ...session, messageSubmissions },
+              [serverId]: { ...session, activeAgentTurns, messageSubmissions },
             },
           };
         });
@@ -1256,6 +1295,12 @@ export const useSessionStore = create<SessionStore>()(
           } else {
             messageSubmissions.delete(agentId);
           }
+          const activeAgentTurns =
+            outcome === "rejected" &&
+            result.submissions.length === 0 &&
+            session.agents.get(agentId)?.status !== "running"
+              ? updateActiveAgentTurn(session.activeAgentTurns, agentId, false)
+              : session.activeAgentTurns;
           return {
             ...prev,
             sessions: {
@@ -1270,6 +1315,7 @@ export const useSessionStore = create<SessionStore>()(
                   stream.head === currentHead
                     ? session.agentStreamHead
                     : new Map(session.agentStreamHead).set(agentId, stream.head),
+                activeAgentTurns,
                 messageSubmissions,
               },
             },
@@ -1313,6 +1359,7 @@ export const useSessionStore = create<SessionStore>()(
                 ...session,
                 agentStreamTail: nextTail,
                 agentStreamHead: nextHead,
+                activeAgentTurns: updateActiveAgentTurn(session.activeAgentTurns, agentId, true),
               },
             },
           };

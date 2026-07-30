@@ -21,6 +21,7 @@ import {
   createHistoryStartPaginationState,
   evaluateHistoryStartPagination,
   isHistoryStartLoadingOperation,
+  isHistoryStartSlotReserved,
   rearmHistoryStartPagination,
   settleHistoryStartPagination,
   type HistoryStartPaginationInput,
@@ -180,7 +181,6 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const [historyStartPaginationState, setHistoryStartPaginationState] = useState(
     createHistoryStartPaginationState,
   );
-  const [isHistoryStartSlotReserved, setIsHistoryStartSlotReserved] = useState(hasOlderHistory);
   const historyStartPaginationStateRef = useRef(historyStartPaginationState);
   const historyStartPrependAnchorRef = useRef<HistoryStartPrependAnchor | null>(null);
   const historyStartPrependAnchorActiveRef = useRef(false);
@@ -783,14 +783,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const liveAuxiliary = useMemo(() => {
     return renderLiveAuxiliary();
   }, [renderLiveAuxiliary]);
-  useEffect(() => {
-    if (hasOlderHistory || isHistoryStartLoadingOperation(historyStartPaginationState)) {
-      setIsHistoryStartSlotReserved(true);
-    }
-  }, [hasOlderHistory, historyStartPaginationState]);
   const historyStartSlot = useMemo(() => {
     const isLoadingOperation = isHistoryStartLoadingOperation(historyStartPaginationState);
-    if (!isHistoryStartSlotReserved && !hasOlderHistory && !isLoadingOperation) {
+    if (!isHistoryStartSlotReserved(historyStartPaginationState, hasOlderHistory)) {
       return null;
     }
     return (
@@ -803,7 +798,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         ) : null}
       </div>
     );
-  }, [hasOlderHistory, historyStartPaginationState, isHistoryStartSlotReserved]);
+  }, [hasOlderHistory, historyStartPaginationState]);
   const shouldRenderEmpty =
     !boundary.hasMountedHistory &&
     !boundary.hasVirtualizedHistory &&

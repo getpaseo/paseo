@@ -114,6 +114,7 @@ export function removeAgentDirectoryReplica(serverId: string, agentId: string): 
   store.setAgentAuthoritativeHistoryApplied(serverId, agentId, false);
   store.setAgentStreamTail(serverId, removeKey);
   store.clearAgentStreamHead(serverId, agentId);
+  store.setAgentStreamState(serverId, agentId, { turnActive: false });
   useSessionStore.setState((state) => {
     if (!state.agentLastActivity.has(agentId)) return state;
     const agentLastActivity = new Map(state.agentLastActivity);

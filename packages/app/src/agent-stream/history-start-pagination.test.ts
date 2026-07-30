@@ -4,10 +4,15 @@ import {
   createHistoryStartPaginationState,
   evaluateHistoryStartPagination,
   isHistoryStartLoadingOperation,
+  isHistoryStartSlotReserved,
   rearmHistoryStartPagination,
   settleHistoryStartPagination,
   type HistoryStartPaginationInput,
 } from "./history-start-pagination";
+
+function createArmedHistoryStartPaginationState() {
+  return rearmHistoryStartPagination(createHistoryStartPaginationState());
+}
 
 const visibleHistoryStart: HistoryStartPaginationInput = {
   distanceFromHistoryStart: 0,
@@ -18,9 +23,20 @@ const visibleHistoryStart: HistoryStartPaginationInput = {
 };
 
 describe("history start pagination", () => {
+  it("waits for user scroll intent before loading or reserving the loader slot", () => {
+    const dormant = createHistoryStartPaginationState();
+    const evaluated = evaluateHistoryStartPagination(dormant, visibleHistoryStart);
+
+    expect(evaluated).toEqual({ state: { status: "dormant" }, shouldLoad: false });
+    expect(isHistoryStartSlotReserved(evaluated.state, true)).toBe(false);
+    expect(isHistoryStartSlotReserved(rearmHistoryStartPagination(evaluated.state), true)).toBe(
+      true,
+    );
+  });
+
   it("waits for anchored page geometry before authorizing another page", () => {
     const first = evaluateHistoryStartPagination(
-      createHistoryStartPaginationState(),
+      createArmedHistoryStartPaginationState(),
       visibleHistoryStart,
     );
     const inFlight = evaluateHistoryStartPagination(first.state, {
@@ -43,7 +59,7 @@ describe("history start pagination", () => {
 
   it("loads one page each time anchored geometry leaves and returns to history start", () => {
     const first = evaluateHistoryStartPagination(
-      createHistoryStartPaginationState(),
+      createArmedHistoryStartPaginationState(),
       visibleHistoryStart,
     );
     const pageApplied = evaluateHistoryStartPagination(first.state, {
@@ -70,7 +86,7 @@ describe("history start pagination", () => {
 
   it("continues the same loading operation when anchored geometry remains at history start", () => {
     const first = evaluateHistoryStartPagination(
-      createHistoryStartPaginationState(),
+      createArmedHistoryStartPaginationState(),
       visibleHistoryStart,
     );
     const pageApplied = evaluateHistoryStartPagination(first.state, {
@@ -90,7 +106,7 @@ describe("history start pagination", () => {
 
   it("latches a request that finishes without cursor progress", () => {
     const first = evaluateHistoryStartPagination(
-      createHistoryStartPaginationState(),
+      createArmedHistoryStartPaginationState(),
       visibleHistoryStart,
     );
     const inFlight = evaluateHistoryStartPagination(first.state, {
@@ -115,7 +131,7 @@ describe("history start pagination", () => {
 
   it("allows another user attempt after a request finishes without progress", () => {
     const first = evaluateHistoryStartPagination(
-      createHistoryStartPaginationState(),
+      createArmedHistoryStartPaginationState(),
       visibleHistoryStart,
     );
     const inFlight = evaluateHistoryStartPagination(first.state, {
@@ -134,7 +150,7 @@ describe("history start pagination", () => {
 
   it("latches an attempt that becomes invalid before entering flight", () => {
     const requested = evaluateHistoryStartPagination(
-      createHistoryStartPaginationState(),
+      createArmedHistoryStartPaginationState(),
       visibleHistoryStart,
     );
 
@@ -145,7 +161,7 @@ describe("history start pagination", () => {
 
   it("does not mistake repeated edge observations for a finished request", () => {
     const first = evaluateHistoryStartPagination(
-      createHistoryStartPaginationState(),
+      createArmedHistoryStartPaginationState(),
       visibleHistoryStart,
     );
     const repeated = evaluateHistoryStartPagination(first.state, visibleHistoryStart);
@@ -155,7 +171,7 @@ describe("history start pagination", () => {
   });
 
   it("waits while history loading is unavailable or already active", () => {
-    const state = createHistoryStartPaginationState();
+    const state = createArmedHistoryStartPaginationState();
 
     expect([
       evaluateHistoryStartPagination(state, { ...visibleHistoryStart, isReady: false }).shouldLoad,
