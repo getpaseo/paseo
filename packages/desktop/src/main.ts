@@ -8,7 +8,7 @@ import { inheritLoginShellEnv } from "./login-shell-env.js";
 
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { existsSync, statSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import {
   app,
@@ -40,7 +40,6 @@ import {
   buildStandardContextMenuItems,
 } from "./window/window-manager.js";
 import { setupDarwinCompositorWatchdog } from "./window/compositor-watchdog/index.js";
-import { configureLinuxSandbox } from "./system/linux-sandbox.js";
 import { registerDialogHandlers } from "./features/dialogs.js";
 import {
   registerNotificationHandlers,
@@ -310,13 +309,12 @@ if (forcedUserDataDir) {
   }
 }
 
-configureLinuxSandbox({
-  platform: process.platform,
-  resourcesPath: process.resourcesPath,
-  statSandbox: (sandboxPath) => statSync(sandboxPath),
-  disableSandbox: () => app.commandLine.appendSwitch("no-sandbox"),
-  reportInspectionError: (error) => log.error("[linux-sandbox] failed to inspect helper", error),
-});
+// AppImage runtimes mount the app from /tmp under the user's UID, so the SUID
+// chrome-sandbox helper we ship in .deb/.rpm cannot work there. Disable the
+// sandbox only in that case; .deb/.rpm keep the sandbox on, matching VS Code.
+if (process.platform === "linux" && process.env.APPIMAGE) {
+  app.commandLine.appendSwitch("no-sandbox");
+}
 
 // Allow users to pass Chromium flags via PASEO_ELECTRON_FLAGS for debugging
 // rendering issues (e.g. "--disable-gpu --ozone-platform=x11").

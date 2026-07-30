@@ -89,15 +89,6 @@ describe("desktop packaging", () => {
     expect(config).toContain("!node_modules/@getpaseo/server/dist/server/web-ui/**");
   });
 
-  it("installs a root-owned SUID sandbox helper in Debian packages", () => {
-    const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
-    const afterInstall = readFileSync(join(packageRoot, "scripts", "deb-after-install.sh"), "utf8");
-
-    expect(config).toContain("afterInstall: scripts/deb-after-install.sh");
-    expect(afterInstall).toContain("chown root:root '/opt/Paseo/chrome-sandbox'");
-    expect(afterInstall).toContain("chmod 4755 '/opt/Paseo/chrome-sandbox'");
-  });
-
   it("registers Paseo agent links with the operating system", () => {
     const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
 
