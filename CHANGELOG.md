@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.909 - 2026-07-30
+
+### Added
+
+- Sync the fork with official Paseo v0.2.4 (CLI thinking level, project switcher, open folder from sidebar, keyboard dismiss flick, multi-host project grouping, idle agent keep-alive, and related fixes) while keeping fork-only features ([#28](https://github.com/iamriajul/paseo/pull/28) by [@iamriajul](https://github.com/iamriajul))
+
+### Fixed
+
+- Schedules no longer spins forever on desktop when there are no schedules and another host is still connecting; show the empty state once any online host answers
+
+### Improved
+
+- Preserve custom metadata endpoint, intrusive desktop attention, Browser localhost tunneling, Android push credentials, PDF preview, backlog, and related fork work on top of the official 0.2.4 line
+
 ## 0.2.908 - 2026-07-28
 
 ### Added
