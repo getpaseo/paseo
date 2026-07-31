@@ -18,6 +18,7 @@ import {
   type ArchiveResult,
   resolveWorkspaceIdAtPath,
 } from "./workspace-archive-service.js";
+import { WorkspaceLifecycleCoordinator } from "./workspace-lifecycle-coordinator.js";
 
 const cleanupPaths: string[] = [];
 
@@ -187,6 +188,93 @@ function assertArchiveResult(
 }
 
 describe("archiveByScope", () => {
+  test("waits for registered setup before archiving its workspace", async () => {
+    const { tempDir } = createGitRepo();
+    const workspaceId = "ws-setup-race";
+    const workspaceCwd = path.join(tempDir, "local-checkout");
+    mkdirSync(workspaceCwd);
+    const lifecycleCoordinator = new WorkspaceLifecycleCoordinator();
+    let finishSetup: (() => void) | undefined;
+    const setupTask = new Promise<void>((resolveSetup) => {
+      finishSetup = resolveSetup;
+    });
+    lifecycleCoordinator.trackWorkspaceSetup(workspaceId, setupTask);
+    let markWaitStarted: (() => void) | undefined;
+    const waitStarted = new Promise<void>((resolveWaitStarted) => {
+      markWaitStarted = resolveWaitStarted;
+    });
+    const waitForWorkspaceSetups =
+      lifecycleCoordinator.waitForWorkspaceSetups.bind(lifecycleCoordinator);
+    vi.spyOn(lifecycleCoordinator, "waitForWorkspaceSetups").mockImplementation(
+      async (workspaceIds) => {
+        markWaitStarted?.();
+        await waitForWorkspaceSetups(workspaceIds);
+      },
+    );
+    const deps = createArchiveDeps({
+      paseoHome: path.join(tempDir, ".paseo"),
+      activeWorkspaces: [{ workspaceId, cwd: workspaceCwd, kind: "local_checkout" }],
+    });
+    deps.lifecycleCoordinator = lifecycleCoordinator;
+    deps.archiveWorkspaceRecord = vi.fn(deps.archiveWorkspaceRecord);
+
+    const archiveTask = archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-setup-race",
+    });
+
+    await waitStarted;
+    expect(deps.archiveWorkspaceRecord).not.toHaveBeenCalled();
+
+    finishSetup?.();
+    await expect(archiveTask).resolves.toMatchObject({
+      archivedWorkspaceIds: [workspaceId],
+    });
+  });
+
+  test("coalesces simultaneous archive requests for the same backing directory", async () => {
+    const { tempDir } = createGitRepo();
+    const workspaceId = "ws-simultaneous";
+    const workspaceCwd = path.join(tempDir, "local-checkout");
+    mkdirSync(workspaceCwd);
+    const lifecycleCoordinator = new WorkspaceLifecycleCoordinator();
+    const deps = createArchiveDeps({
+      paseoHome: path.join(tempDir, ".paseo"),
+      activeWorkspaces: [{ workspaceId, cwd: workspaceCwd, kind: "local_checkout" }],
+    });
+    deps.lifecycleCoordinator = lifecycleCoordinator;
+    const originalArchiveWorkspaceRecord = deps.archiveWorkspaceRecord;
+    let releaseArchive: (() => void) | undefined;
+    const archiveGate = new Promise<void>((resolveArchive) => {
+      releaseArchive = resolveArchive;
+    });
+    let markArchiveStarted: (() => void) | undefined;
+    const archiveStarted = new Promise<void>((resolveStarted) => {
+      markArchiveStarted = resolveStarted;
+    });
+    deps.archiveWorkspaceRecord = vi.fn(async (id: string) => {
+      markArchiveStarted?.();
+      await archiveGate;
+      await originalArchiveWorkspaceRecord(id);
+    });
+
+    const first = archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-simultaneous-first",
+    });
+    const second = archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-simultaneous-second",
+    });
+    await archiveStarted;
+    expect(deps.archiveWorkspaceRecord).toHaveBeenCalledTimes(1);
+
+    releaseArchive?.();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(secondResult).toEqual(firstResult);
+    expect(deps.archiveWorkspaceRecord).toHaveBeenCalledTimes(1);
+  });
+
   test("workspace scope archives the record and removes the directory on last reference", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
@@ -300,6 +388,44 @@ describe("archiveByScope", () => {
       archivedWorkspaceIds: [sourceWorkspaceId],
       removedDirectory: false,
     });
+    expect(existsSync(worktree.worktreePath)).toBe(true);
+  });
+
+  test("rechecks owners after archival before removing the backing directory", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "late-owner");
+    const workspaceId = "ws-late-owner-target";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+        },
+      ],
+    });
+    const originalArchiveWorkspaceRecord = deps.archiveWorkspaceRecord;
+    deps.archiveWorkspaceRecord = async (id: string) => {
+      await originalArchiveWorkspaceRecord(id);
+      deps.activeWorkspaces.push({
+        workspaceId: "ws-late-owner-sibling",
+        cwd: path.join(worktree.worktreePath, "packages", "app"),
+        kind: "worktree",
+        worktreeRoot: worktree.worktreePath,
+        isPaseoOwnedWorktree: true,
+      });
+    };
+
+    const result = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-late-owner",
+    });
+
+    expect(result.removedDirectory).toBe(false);
     expect(existsSync(worktree.worktreePath)).toBe(true);
   });
 

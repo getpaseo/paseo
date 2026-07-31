@@ -49,6 +49,7 @@ import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import { isPlatform } from "../test-utils/platform.js";
 import { createWorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
+import { WorkspaceLifecycleCoordinator } from "./workspace-lifecycle-coordinator.js";
 
 interface LegacyCreateWorktreeTestOptions {
   branchName: string;
@@ -450,7 +451,51 @@ describe("resolveGitCreateBaseBranch", () => {
   });
 });
 
-describe("create-agent worktree setup boundary", () => {
+describe("create worktree setup boundary", () => {
+  test("registers workspace setup before returning the created workspace", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const lifecycleCoordinator = new WorkspaceLifecycleCoordinator();
+    const trackWorkspaceSetup = vi.spyOn(lifecycleCoordinator, "trackWorkspaceSetup");
+
+    try {
+      const result = await createPaseoWorktreeWorkflow(
+        {
+          paseoHome,
+          createPaseoWorktree: createPaseoWorktreeForTest({ paseoHome }),
+          warmWorkspaceGitData: async () => {},
+          autoNameWorkspaceBranchForFirstAgent: () => {},
+          emitWorkspaceUpdateForWorkspaceId: async () => {},
+          cacheWorkspaceSetupSnapshot: () => {},
+          emit: () => {},
+          sessionLogger: createLogger(),
+          terminalManager: null,
+          archiveWorkspaceRecord: async () => {},
+          serviceProxy: null,
+          scriptRuntimeStore: null,
+          getDaemonTcpPort: null,
+          getDaemonTcpHost: null,
+          onScriptsChanged: null,
+          lifecycleCoordinator,
+        },
+        {
+          cwd: repoDir,
+          worktreeSlug: "registered-before-return",
+          runSetup: false,
+          paseoHome,
+        },
+      );
+
+      expect(trackWorkspaceSetup).toHaveBeenCalledWith(
+        result.workspace.workspaceId,
+        expect.any(Promise),
+      );
+      await lifecycleCoordinator.waitForWorkspaceSetups([result.workspace.workspaceId]);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("agent setup continuation starts setup for the created agent timeline", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");

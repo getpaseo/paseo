@@ -15,6 +15,10 @@ import {
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { PersistedWorkspaceRecord, WorkspaceRegistry } from "./workspace-registry.js";
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
+import {
+  defaultWorkspaceLifecycleCoordinator,
+  type WorkspaceLifecycleCoordinator,
+} from "./workspace-lifecycle-coordinator.js";
 
 export type ActiveWorkspaceRef = Pick<
   PersistedWorkspaceRecord,
@@ -43,6 +47,7 @@ export interface ArchiveDependencies {
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
   clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => void;
   killTerminalsForWorkspace: (workspaceId: string) => Promise<void>;
+  lifecycleCoordinator?: WorkspaceLifecycleCoordinator;
   sessionLogger?: Logger;
 }
 
@@ -114,7 +119,42 @@ export async function archiveByScope(
   dependencies: ArchiveDependencies,
   request: ArchiveByScopeRequest,
 ): Promise<ArchiveResult> {
-  const target = await resolveArchiveTarget(dependencies, request.scope);
+  const initialTarget = await resolveArchiveTarget(dependencies, request.scope);
+  const lifecycleCoordinator =
+    dependencies.lifecycleCoordinator ?? defaultWorkspaceLifecycleCoordinator;
+  let operationKey: string;
+  if (initialTarget.backing) {
+    operationKey = `directory:${resolve(initialTarget.backing.path)}`;
+  } else if (request.scope.kind === "workspace") {
+    operationKey = `workspace:${request.scope.workspaceId}`;
+  } else {
+    operationKey = `directory:${resolve(request.scope.targetPath)}`;
+  }
+
+  return lifecycleCoordinator.runArchive(operationKey, async () => {
+    await lifecycleCoordinator.waitForWorkspaceSetups(initialTarget.workspaceIds);
+    const refreshedTarget = await resolveArchiveTarget(dependencies, request.scope);
+    const target = mergeArchiveTargets(initialTarget, refreshedTarget);
+    return archiveResolvedTarget(dependencies, request, target);
+  });
+}
+
+function mergeArchiveTargets(initial: ArchiveTarget, refreshed: ArchiveTarget): ArchiveTarget {
+  if (refreshed.backing !== null || refreshed.workspaceIds.length > 0) {
+    return refreshed;
+  }
+  return {
+    backing: initial.backing,
+    teardownTargets: initial.teardownTargets,
+    workspaceIds: [],
+  };
+}
+
+async function archiveResolvedTarget(
+  dependencies: ArchiveDependencies,
+  request: ArchiveByScopeRequest,
+  target: ArchiveTarget,
+): Promise<ArchiveResult> {
   const targetWorkspaceIds = target.workspaceIds;
 
   if (targetWorkspaceIds.length > 0) {
