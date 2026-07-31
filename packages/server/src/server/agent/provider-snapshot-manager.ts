@@ -170,11 +170,15 @@ interface ProviderSnapshotTarget {
   catalogScope: ProviderCatalogScope;
 }
 
+type ProviderRuntimeLifecycle = "active" | "shutting_down" | "shut_down";
+
 export class ProviderSnapshotManager {
   private readonly snapshots = new Map<string, Map<AgentProvider, ProviderSnapshotEntry>>();
   private readonly providerLoads = new Map<string, Map<AgentProvider, ProviderLoad>>();
   private readonly events = new EventEmitter();
   private destroyed = false;
+  private lifecycle: ProviderRuntimeLifecycle = "active";
+  private shutdownPromise: Promise<void> | null = null;
   private readonly refreshTimeoutMs: number;
   private readonly diagnosticTimeoutMs: number;
   private readonly logger: Logger;
@@ -212,6 +216,7 @@ export class ProviderSnapshotManager {
   }
 
   async refreshSnapshotForCwd(options: ProviderSnapshotRefreshOptions): Promise<void> {
+    this.assertRuntimeActive();
     const snapshotCwd = resolveSnapshotCwd(options.cwd);
     const target = createWorkspaceSnapshotTarget(snapshotCwd);
     const providers = this.resolveRefreshProviders(options.providers);
@@ -223,6 +228,7 @@ export class ProviderSnapshotManager {
   async refreshSettingsSnapshot(
     options: Omit<ProviderSnapshotRefreshOptions, "cwd"> = {},
   ): Promise<void> {
+    this.assertRuntimeActive();
     const target = createGlobalSnapshotTarget();
     const homeCwd = target.snapshotCwd;
     const providers = this.resolveRefreshProviders(options.providers);
@@ -235,6 +241,7 @@ export class ProviderSnapshotManager {
   }
 
   async warmUpSnapshotForCwd(options: ProviderSnapshotWarmUpOptions): Promise<void> {
+    this.assertRuntimeActive();
     const target = resolveProviderSnapshotTarget(options.cwd);
     const snapshotCwd = target.snapshotCwd;
     const providers = this.resolveRefreshProviders(options.providers);
@@ -266,6 +273,7 @@ export class ProviderSnapshotManager {
   }
 
   getAgentManagerProviderState(): AgentManagerProviderState {
+    this.assertRuntimeActive();
     const providerDefinitions: AgentManagerProviderState["providerDefinitions"] = {};
     const clients: AgentManagerProviderState["clients"] = {};
     for (const [provider, definition] of Object.entries(this.providerRegistry)) {
@@ -286,6 +294,7 @@ export class ProviderSnapshotManager {
   }
 
   private ensureClient(provider: AgentProvider, definition: ProviderDefinition): AgentClient {
+    this.assertRuntimeActive();
     const existing = this.providerClients[provider];
     if (existing) {
       return existing;
@@ -297,7 +306,7 @@ export class ProviderSnapshotManager {
 
   async listProviders(input: ProviderSnapshotReadOptions = {}): Promise<ProviderSnapshotEntry[]> {
     const target = resolveProviderSnapshotTarget(input.cwd);
-    if (input.wait) {
+    if (input.wait && this.lifecycle === "active") {
       await this.warmUpSnapshotForCwd({ cwd: input.cwd, providers: input.providers });
     }
     const providerFilter = input.providers ? new Set(input.providers) : null;
@@ -375,6 +384,16 @@ export class ProviderSnapshotManager {
       };
     }
 
+    if (this.lifecycle !== "active") {
+      const entry = await this.getProvider({ provider, wait: false });
+      const modelCount = entry.status === "ready" ? String(entry.models?.length ?? 0) : "—";
+      const status = formatProviderStatus(entry);
+      const diagnostic = `${formatProviderDiagnostic(definition.label ?? provider, [
+        { label: "Runtime", value: this.getRuntimeUnavailableReason() },
+      ])}\n  Models: ${modelCount}\n  Status: ${status}`;
+      return { provider, diagnostic };
+    }
+
     const baseDiagnosticPromise = this.getBaseProviderDiagnostic(provider, definition);
     const snapshotEntryPromise = this.refreshDiagnosticSnapshotEntry(provider, definition);
     const [baseDiagnostic, entry] = await Promise.all([
@@ -392,6 +411,7 @@ export class ProviderSnapshotManager {
     mutableProviders: MutableDaemonConfig["providers"] | undefined,
     options: ApplyMutableProviderConfigOptions = {},
   ): AgentManagerProviderState {
+    this.assertRuntimeActive();
     this.baseProviderOverrides = omitProviderOverrides(
       this.baseProviderOverrides,
       options.removeProviders ?? [],
@@ -423,6 +443,13 @@ export class ProviderSnapshotManager {
   }
 
   async shutdown(): Promise<void> {
+    if (this.shutdownPromise) {
+      return this.shutdownPromise;
+    }
+    if (this.lifecycle === "shut_down") {
+      return;
+    }
+
     // Materialize a client per enabled provider so provider-owned resources
     // (background processes, sockets, etc.) get a chance to release even when
     // a given provider hasn't been touched yet during this daemon's lifetime.
@@ -430,7 +457,18 @@ export class ProviderSnapshotManager {
     const clients = Object.values(state.clients).filter(
       (client): client is AgentClient => client !== undefined,
     );
-    await shutdownAgentClients(clients, this.logger);
+    this.lifecycle = "shutting_down";
+    this.invalidateProviderLoads();
+    this.demoteSnapshotsForUnavailableRuntime();
+
+    this.shutdownPromise = Promise.resolve()
+      .then(() => shutdownAgentClients(clients, this.logger))
+      .finally(() => {
+        this.lifecycle = "shut_down";
+        this.invalidateProviderLoads();
+        this.demoteSnapshotsForUnavailableRuntime();
+      });
+    return this.shutdownPromise;
   }
 
   destroy(): void {
@@ -483,6 +521,9 @@ export class ProviderSnapshotManager {
   }
 
   private getSnapshotForTarget(target: ProviderSnapshotTarget): ProviderSnapshotEntry[] {
+    if (this.lifecycle !== "active") {
+      return entriesToArray(this.getOrCreateSnapshot(target.snapshotCwd));
+    }
     const providersToWarm = this.resolveProvidersToWarm(target.snapshotCwd);
     if (providersToWarm.length > 0) {
       void this.warmUp(target, providersToWarm);
@@ -502,6 +543,9 @@ export class ProviderSnapshotManager {
     }
     if (entry.status === "error") {
       throw new Error(entry.error ?? `Failed to load provider '${entry.provider}'`);
+    }
+    if (entry.error) {
+      throw new Error(entry.error);
     }
     throw new Error(`Provider '${entry.provider}' is not available`);
   }
@@ -700,12 +744,16 @@ export class ProviderSnapshotManager {
   }
 
   private async loadProviders(options: ProviderLoadOptions): Promise<void> {
+    this.assertRuntimeActive();
     await Promise.allSettled(
       options.providers.map((provider) => this.loadProvider({ ...options, provider })),
     );
   }
 
   private loadProvider(options: ProviderLoadOptions & { provider: AgentProvider }): Promise<void> {
+    if (this.lifecycle !== "active") {
+      return Promise.reject(new Error(this.getRuntimeUnavailableReason()));
+    }
     const definition = this.providerRegistry[options.provider];
     if (!definition) {
       return Promise.resolve();
@@ -774,6 +822,9 @@ export class ProviderSnapshotManager {
     };
 
     try {
+      if (this.lifecycle !== "active") {
+        return;
+      }
       if (!definition.enabled) {
         setEntry({ ...base, status: "unavailable", enabled: false });
         return;
@@ -785,6 +836,9 @@ export class ProviderSnapshotManager {
         this.refreshTimeoutMs,
         `Timed out checking ${definition.label} availability after ${this.refreshTimeoutMs}ms`,
       );
+      if (this.lifecycle !== "active") {
+        return;
+      }
       if (!available) {
         setEntry({ ...base, status: "unavailable", enabled: true });
         return;
@@ -796,6 +850,9 @@ export class ProviderSnapshotManager {
         this.refreshTimeoutMs,
         `Timed out refreshing ${definition.label} after ${this.refreshTimeoutMs}ms`,
       );
+      if (this.lifecycle !== "active") {
+        return;
+      }
 
       setEntry({
         ...base,
@@ -861,9 +918,55 @@ export class ProviderSnapshotManager {
       return existing;
     }
 
-    const created = this.createLoadingEntries();
+    const created =
+      this.lifecycle === "active"
+        ? this.createLoadingEntries()
+        : this.createUnavailableRuntimeEntries();
     this.snapshots.set(cwdKey, created);
     return created;
+  }
+
+  private assertRuntimeActive(): void {
+    if (this.lifecycle !== "active") {
+      throw new Error(this.getRuntimeUnavailableReason());
+    }
+  }
+
+  private getRuntimeUnavailableReason(): string {
+    return this.lifecycle === "shutting_down"
+      ? "Provider runtime is shutting down"
+      : "Provider runtime has shut down";
+  }
+
+  private invalidateProviderLoads(): void {
+    this.providerLoads.clear();
+  }
+
+  private demoteSnapshotsForUnavailableRuntime(): void {
+    for (const cwd of this.snapshots.keys()) {
+      this.snapshots.set(cwd, this.createUnavailableRuntimeEntries());
+      this.emitChange(cwd);
+    }
+  }
+
+  private createUnavailableRuntimeEntries(): Map<AgentProvider, ProviderSnapshotEntry> {
+    const entries = new Map<AgentProvider, ProviderSnapshotEntry>();
+    const error = this.getRuntimeUnavailableReason();
+    for (const provider of this.getProviderIds()) {
+      const definition = this.providerRegistry[provider];
+      const enabled = definition?.enabled ?? true;
+      entries.set(provider, {
+        provider,
+        status: "unavailable",
+        enabled,
+        source: this.getProviderSource(provider),
+        label: definition?.label,
+        description: definition?.description,
+        defaultModeId: definition?.defaultModeId ?? null,
+        ...(enabled ? { error } : {}),
+      });
+    }
+    return entries;
   }
 
   private resetSnapshotToLoading(
