@@ -1658,15 +1658,32 @@ function buildPullRequestLookupTargetFromPushConfig(
 
 function buildPullRequestLookupTargetFromMetadata(
   metadata: PaseoWorktreeMetadata | null,
+  currentBranch: string,
 ): PullRequestStatusLookupTarget | null {
   const target = metadata?.changeRequestLookupTarget;
-  if (!target) {
+  if (!target || !isChangeRequestLookupTargetForBranch(target, currentBranch)) {
     return null;
   }
   return {
     headRef: target.headRef,
     ...(target.headRepositoryOwner ? { headRepositoryOwner: target.headRepositoryOwner } : {}),
   };
+}
+
+function isChangeRequestLookupTargetForBranch(
+  target: NonNullable<PaseoWorktreeMetadata["changeRequestLookupTarget"]>,
+  currentBranch: string,
+): boolean {
+  if (target.localBranchName) {
+    return target.localBranchName === currentBranch;
+  }
+
+  // Legacy metadata did not record the local branch. Only accept canonical names;
+  // a collision suffix cannot be distinguished from an unrelated later branch.
+  const legacyLocalBranch = target.headRepositoryOwner
+    ? `${target.headRepositoryOwner}/${target.headRef}`
+    : target.headRef;
+  return currentBranch === legacyLocalBranch;
 }
 
 function buildInitialPullRequestLookupTarget(input: {
@@ -1682,8 +1699,24 @@ function buildInitialPullRequestLookupTarget(input: {
     return null;
   }
 
+  const hasConfiguredBranchTarget = Boolean(
+    input.branchRemoteName &&
+    input.branchRemoteUrl &&
+    parseBranchMergeHeadRef(input.branchMergeRef),
+  );
+  if (hasConfiguredBranchTarget) {
+    return buildPullRequestLookupTargetFromBranchConfig({
+      currentBranch: input.currentBranch,
+      branchRemoteName: input.branchRemoteName,
+      branchMergeRef: input.branchMergeRef,
+      branchRemoteUrl: input.branchRemoteUrl,
+      originRemoteUrl: input.originRemoteUrl,
+      resolvedBaseRef: input.resolvedBaseRef,
+    });
+  }
+
   return (
-    buildPullRequestLookupTargetFromMetadata(input.metadata) ??
+    buildPullRequestLookupTargetFromMetadata(input.metadata, input.currentBranch) ??
     buildPullRequestLookupTargetFromBranchConfig({
       currentBranch: input.currentBranch,
       branchRemoteName: input.branchRemoteName,

@@ -6,6 +6,7 @@ const ChangeRequestLookupTargetSchema = z.object({
   headRef: z.string().min(1),
   headRepositoryOwner: z.string().min(1).optional(),
   changeRequestNumber: z.number().int().positive().optional(),
+  localBranchName: z.string().min(1).optional(),
 });
 
 const PaseoWorktreeMetadataV1Schema = z.object({

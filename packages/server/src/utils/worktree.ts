@@ -1414,6 +1414,7 @@ async function resolveWorktreeSourcePlan({
             ? { headRepositoryOwner: source.headRepositoryOwner }
             : {}),
           changeRequestNumber,
+          localBranchName,
         },
         addArguments: [localBranchName],
         ...remotePlan,

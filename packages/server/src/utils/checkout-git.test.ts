@@ -89,7 +89,7 @@ function createLegacyWorktreeForTest(
     paseoHome: options.paseoHome,
   });
 }
-import { getPaseoWorktreeMetadataPath } from "./worktree-metadata.js";
+import { getPaseoWorktreeMetadataPath, writePaseoWorktreeMetadata } from "./worktree-metadata.js";
 
 function initRepo(): { tempDir: string; repoDir: string } {
   const tempDir = realpathSync.native(mkdtempSync(join(tmpdir(), "checkout-git-test-")));
@@ -2478,6 +2478,82 @@ const x = 1;
 
     expect(lookupTarget).toMatchObject({ headRef: "feature" });
     expect(lookupTarget?.headSha).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it("reconciles a PR worktree lookup from current branch tracking", async () => {
+    execFileSync("git", ["remote", "add", "origin", "https://github.com/acme/repo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["branch", "contributor/old-change"], { cwd: repoDir });
+    execFileSync("git", ["branch", "new-change"], { cwd: repoDir });
+    execFileSync("git", ["config", "branch.new-change.remote", "origin"], { cwd: repoDir });
+    execFileSync("git", ["config", "branch.new-change.merge", "refs/heads/new-change"], {
+      cwd: repoDir,
+    });
+    const workspaceDir = join(paseoHome, "worktrees", "repo", "pr-worktree");
+    mkdirSync(join(paseoHome, "worktrees", "repo"), { recursive: true });
+    execFileSync("git", ["worktree", "add", workspaceDir, "contributor/old-change"], {
+      cwd: repoDir,
+    });
+    const staleLookupTarget = {
+      headRef: "old-change",
+      headRepositoryOwner: "contributor",
+      changeRequestNumber: 41,
+    };
+    writePaseoWorktreeMetadata(workspaceDir, {
+      baseRefName: "main",
+      changeRequestLookupTarget: {
+        ...staleLookupTarget,
+        localBranchName: "contributor/old-change",
+      },
+    });
+
+    expect(await readPullRequestLookupTargetFromFacts(workspaceDir, paseoHome)).toMatchObject({
+      headRef: "old-change",
+      headRepositoryOwner: "contributor",
+    });
+
+    execFileSync("git", ["checkout", "new-change"], { cwd: workspaceDir });
+    startGitCommandMetrics();
+    const switchedTarget = await readPullRequestLookupTargetFromFacts(workspaceDir, paseoHome);
+    const commands = stopGitCommandMetrics().commands.map((command) => command.args[0]);
+
+    expect(switchedTarget).toMatchObject({ headRef: "new-change" });
+    expect(switchedTarget).not.toHaveProperty("headRepositoryOwner");
+    expect(commands).not.toContain("fetch");
+
+    writePaseoWorktreeMetadata(workspaceDir, {
+      baseRefName: "main",
+      changeRequestLookupTarget: {
+        ...staleLookupTarget,
+        localBranchName: "new-change",
+      },
+    });
+    expect(await readPullRequestLookupTargetFromFacts(workspaceDir, paseoHome)).toMatchObject({
+      headRef: "new-change",
+    });
+  });
+
+  it("does not apply ambiguous legacy PR metadata to a suffixed branch", async () => {
+    execFileSync("git", ["branch", "contributor/old-change-1"], { cwd: repoDir });
+    const workspaceDir = join(paseoHome, "worktrees", "repo", "legacy-pr-worktree");
+    mkdirSync(join(paseoHome, "worktrees", "repo"), { recursive: true });
+    execFileSync("git", ["worktree", "add", workspaceDir, "contributor/old-change-1"], {
+      cwd: repoDir,
+    });
+    writePaseoWorktreeMetadata(workspaceDir, {
+      baseRefName: "main",
+      changeRequestLookupTarget: {
+        headRef: "old-change",
+        headRepositoryOwner: "contributor",
+        changeRequestNumber: 41,
+      },
+    });
+
+    const lookupTarget = await readPullRequestLookupTargetFromFacts(workspaceDir, paseoHome);
+
+    expect(lookupTarget).toMatchObject({ headRef: "contributor/old-change-1" });
+    expect(lookupTarget).not.toHaveProperty("headRepositoryOwner");
   });
 
   it("does not attach an owner when the tracked remote is the same GitHub repository", async () => {
