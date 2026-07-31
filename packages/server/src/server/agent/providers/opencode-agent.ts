@@ -2999,6 +2999,10 @@ class OpenCodeAgentSession implements AgentSession {
     return this.turnState.status === "running" ? this.turnState.turnId : null;
   }
 
+  private isForegroundTurnCanceled(turnId: string, signal: AbortSignal): boolean {
+    return signal.aborted || this.activeForegroundTurnId !== turnId;
+  }
+
   get features(): AgentFeature[] {
     return [buildOpenCodeAutoAcceptFeature(this.config)];
   }
@@ -3192,8 +3196,10 @@ class OpenCodeAgentSession implements AgentSession {
     }
     if (slashCommand) {
       const startingTotalCostUsd = this.sessionTotalCostUsd;
-      const foregroundMessages = await this.readForegroundSessionMessages();
-      if (this.activeForegroundTurnId !== turnId) {
+      const foregroundMessages = await this.readForegroundSessionMessages(
+        turnAbortController.signal,
+      );
+      if (this.isForegroundTurnCanceled(turnId, turnAbortController.signal)) {
         return { turnId };
       }
       this.foregroundOwnership = foregroundMessages

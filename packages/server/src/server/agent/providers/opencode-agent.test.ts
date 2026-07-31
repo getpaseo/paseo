@@ -1931,6 +1931,68 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
+  test.each(["interrupt", "close"] as const)(
+    "cancels a pending slash-command baseline read on $cancelMethod without dispatching",
+    async (cancelMethod) => {
+      const baselineRequested = createTestDeferred<AbortSignal>();
+      const { parent, openCode } = await createParentSession(
+        "ses_pending_command_baseline",
+        (client) => {
+          client.commandListResponse = {
+            data: [{ name: "review", description: "Test command", source: "command" }],
+          };
+          client.sessionMessagesImplementation = async (_parameters, options) => {
+            const signal = (options as { signal?: AbortSignal }).signal;
+            if (!signal) {
+              throw new Error("Expected slash-command baseline read to receive an AbortSignal");
+            }
+            baselineRequested.resolve(signal);
+            await waitForAbort(signal);
+            throw new DOMException("The operation was aborted", "AbortError");
+          };
+        },
+      );
+      const events: AgentStreamEvent[] = [];
+      parent.subscribe((event) => events.push(event));
+      let closed = false;
+
+      try {
+        const startTurnPromise = parent.startTurn("/review staged changes");
+        const baselineSignal = await baselineRequested.promise;
+        expect(baselineSignal.aborted).toBe(false);
+        expect(eventsWithType(events, "turn_started")).toHaveLength(1);
+
+        if (cancelMethod === "interrupt") {
+          await Promise.all([startTurnPromise, parent.interrupt()]);
+        } else {
+          await Promise.all([startTurnPromise, parent.close()]);
+          closed = true;
+        }
+
+        expect(baselineSignal.aborted).toBe(true);
+        expect(openCode.calls.sessionMessages).toEqual([
+          { sessionID: "ses_pending_command_baseline", directory: "/workspace/repo" },
+        ]);
+        expect(openCode.calls.sessionCommand).toEqual([]);
+        expect(openCode.calls.sessionSummarize).toEqual([]);
+        expect(openCode.calls.sessionPromptAsync).toEqual([]);
+        if (cancelMethod === "interrupt") {
+          expect(terminalTurnEvents(events)).toEqual([
+            expect.objectContaining({
+              type: "turn_canceled",
+              provider: "opencode",
+              reason: "interrupted",
+            }),
+          ]);
+        }
+      } finally {
+        if (!closed) {
+          await parent.close();
+        }
+      }
+    },
+  );
+
   test.each([
     { label: "user-only history with missing session status", includeAssistant: false },
     { label: "an incomplete assistant message", includeAssistant: true },
