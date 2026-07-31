@@ -5,12 +5,17 @@ interface PaseoBackgroundCallModule {
   end(): Promise<void>;
 }
 
-const module = requireNativeModule<PaseoBackgroundCallModule>("PaseoBackgroundCall");
+function getBackgroundCallModule(): PaseoBackgroundCallModule {
+  // `requireNativeModule` throws when an OTA bundle is newer than the installed
+  // binary. Resolve it only when Live Voice starts so the rest of the app can
+  // still launch on binaries that predate this native module.
+  return requireNativeModule<PaseoBackgroundCallModule>("PaseoBackgroundCall");
+}
 
 export async function beginLiveVoiceBackgroundCall(): Promise<void> {
-  await module.begin();
+  await getBackgroundCallModule().begin();
 }
 
 export async function endLiveVoiceBackgroundCall(): Promise<void> {
-  await module.end();
+  await getBackgroundCallModule().end();
 }

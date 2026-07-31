@@ -6,11 +6,10 @@
  * remote audio is rendered by the native WebRTC audio device.
  */
 
-import {
-  mediaDevices,
-  RTCPeerConnection,
-  type MediaStream,
-  type MediaStreamTrack,
+import type {
+  MediaStream,
+  MediaStreamTrack,
+  RTCPeerConnection as NativeRTCPeerConnection,
 } from "react-native-webrtc";
 import {
   beginLiveVoiceBackgroundCall,
@@ -45,8 +44,8 @@ export async function startLiveVoiceSession(
 ): Promise<LiveVoiceSession> {
   let stream: MediaStream | null = null;
   let micTrack: MediaStreamTrack | null = null;
-  let pc: RTCPeerConnection | null = null;
-  let channel: ReturnType<RTCPeerConnection["createDataChannel"]> | null = null;
+  let pc: NativeRTCPeerConnection | null = null;
+  let channel: ReturnType<NativeRTCPeerConnection["createDataChannel"]> | null = null;
   let disconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let backgroundCallActive = false;
   let closed = false;
@@ -144,7 +143,11 @@ export async function startLiveVoiceSession(
   }
 
   try {
-    stream = await requestMicrophone();
+    // Loading this package evaluates its native TurboModule bindings. Keep that
+    // outside the app's import path so an OTA bundle can still start on an older
+    // binary that predates mobile Live Voice.
+    const { mediaDevices, RTCPeerConnection } = await import("react-native-webrtc");
+    stream = await requestMicrophone(mediaDevices);
     micTrack = stream.getAudioTracks()[0] ?? null;
     if (!micTrack) {
       throw new LiveVoiceSessionError("mic_unavailable", "No microphone track was produced.");
@@ -205,7 +208,9 @@ export async function startLiveVoiceSession(
 }
 // oxlint-enable unicorn/prefer-add-event-listener
 
-async function requestMicrophone(): Promise<MediaStream> {
+async function requestMicrophone(
+  mediaDevices: typeof import("react-native-webrtc").mediaDevices,
+): Promise<MediaStream> {
   try {
     return await mediaDevices.getUserMedia({ audio: true });
   } catch (error) {
@@ -221,7 +226,7 @@ async function requestMicrophone(): Promise<MediaStream> {
   }
 }
 
-function waitForIceGatheringComplete(pc: RTCPeerConnection): Promise<void> {
+function waitForIceGatheringComplete(pc: NativeRTCPeerConnection): Promise<void> {
   if (pc.iceGatheringState === "complete") {
     return Promise.resolve();
   }
