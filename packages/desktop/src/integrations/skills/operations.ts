@@ -209,9 +209,7 @@ export async function installSkills(
   /** Apply exactly this plan instead of rescanning, so a confirmed plan is the applied plan. */
   plan?: SkillsStatus,
 ): Promise<SkillsStatus> {
-  if (plan) return applySkills(targets, selection, plan);
-  const status = await getSkillsStatus(targets, selection);
-  return applySkills(targets, selection, nonDestructivePlan(status));
+  return applySkills(targets, selection, plan);
 }
 
 export async function updateSkills(

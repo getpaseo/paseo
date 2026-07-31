@@ -151,7 +151,7 @@ export function createSkillsController({
 
   return {
     status: () => serialize(() => converge(getSkillsStatus)),
-    install: () => serialize(() => converge(installSkills)),
+    install: () => serialize(() => converge(updateSkills)),
     update: () => serialize(() => converge(updateSkills)),
     uninstall: () => serialize(() => converge(uninstallSkills)),
     autoUpdate: () => serialize(() => converge(autoUpdateInstalledSkills)),
