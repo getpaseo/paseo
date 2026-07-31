@@ -2649,10 +2649,12 @@ const x = 1;
         localBranchName: "feature/gitlab-mr",
       },
     });
+    const workspaceCwd = join(workspaceDir, "packages", "service");
+    mkdirSync(workspaceCwd, { recursive: true });
     const requestedTargets: RequestedPullRequestTarget[] = [];
     const forge = createGitHubServiceRecordingPullRequestTargets({ requestedTargets });
 
-    await renameCurrentBranch(workspaceDir, "feature/renamed");
+    await renameCurrentBranch(workspaceCwd, "feature/renamed");
     expect(readPaseoWorktreeMetadata(workspaceDir)?.changeRequestLookupTarget).toMatchObject({
       localBranchName: "feature/renamed",
     });
@@ -2677,6 +2679,25 @@ const x = 1;
     );
 
     expect(requestedTargets.at(-1)).toMatchObject({ headRef: "other-branch" });
+  });
+
+  it("keeps fork identity when the local and tracked branch names match", async () => {
+    execFileSync("git", ["remote", "add", "origin", "https://github.com/getpaseo/paseo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["remote", "add", "contributor", "git@github.com:contributor/paseo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["checkout", "-b", "topic"], { cwd: repoDir });
+    execFileSync("git", ["config", "branch.topic.remote", "contributor"], { cwd: repoDir });
+    execFileSync("git", ["config", "branch.topic.merge", "refs/heads/topic"], { cwd: repoDir });
+
+    const lookupTarget = await readPullRequestLookupTargetFromFacts(repoDir, paseoHome);
+
+    expect(lookupTarget).toMatchObject({
+      headRef: "topic",
+      headRepositoryOwner: "contributor",
+    });
   });
 
   it("does not attach an owner when the tracked remote is the same GitHub repository", async () => {
