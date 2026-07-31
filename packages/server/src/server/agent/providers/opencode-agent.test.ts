@@ -195,17 +195,18 @@ interface PersistedAssistantTokens {
 interface PersistedAssistantMessageParams {
   id: string;
   parentId: string;
+  sessionId?: string;
   completed?: number;
   error?: unknown;
   cost?: number;
   tokens?: PersistedAssistantTokens;
 }
 
-function persistedUserMessage(id: string): unknown {
+function persistedUserMessage(id: string, sessionId = "ses_eof_reconciliation"): unknown {
   return {
     info: {
       id,
-      sessionID: "ses_eof_reconciliation",
+      sessionID: sessionId,
       role: "user",
       time: { created: 1 },
     },
@@ -217,7 +218,7 @@ function persistedAssistantMessage(params: PersistedAssistantMessageParams): unk
   return {
     info: {
       id: params.id,
-      sessionID: "ses_eof_reconciliation",
+      sessionID: params.sessionId ?? "ses_eof_reconciliation",
       role: "assistant",
       parentID: params.parentId,
       time: {
@@ -230,18 +231,6 @@ function persistedAssistantMessage(params: PersistedAssistantMessageParams): unk
     },
     parts: [],
   };
-}
-
-function readDispatchedPromptMessageId(openCode: TestOpenCodeClient): string {
-  const promptCall = openCode.calls.sessionPromptAsync[0];
-  if (typeof promptCall !== "object" || promptCall === null) {
-    throw new Error("Expected OpenCode promptAsync to be dispatched");
-  }
-  const messageId = Reflect.get(promptCall, "messageID");
-  if (typeof messageId !== "string") {
-    throw new Error("Expected OpenCode promptAsync to include a messageID");
-  }
-  return messageId;
 }
 
 function terminalTurnEvents(events: AgentStreamEvent[]): AgentStreamEvent[] {
@@ -277,6 +266,7 @@ async function createControlledEofTurn(): Promise<{
   initiatingMessageId: string;
   initiatingMessage: unknown;
 }> {
+  const initiatingMessageId = "msg_provider_initiating";
   const streamEnd = createTestDeferred<unknown[]>();
   const { parent, openCode } = await createParentSession("ses_eof_reconciliation", (client) => {
     client.sessionPromptAsyncEvents = [];
@@ -299,14 +289,81 @@ async function createControlledEofTurn(): Promise<{
   const events: AgentStreamEvent[] = [];
   parent.subscribe((event) => events.push(event));
   await parent.startTurn("hello");
-  const initiatingMessageId = readDispatchedPromptMessageId(openCode);
   return {
     parent,
     openCode,
     events,
-    endStream: (finalEvents = []) => streamEnd.resolve(finalEvents),
+    endStream: (finalEvents = []) =>
+      streamEnd.resolve([
+        {
+          type: "message.updated",
+          properties: {
+            info: {
+              id: initiatingMessageId,
+              sessionID: "ses_eof_reconciliation",
+              role: "user",
+            },
+          },
+        },
+        ...finalEvents,
+      ]),
     initiatingMessageId,
     initiatingMessage: persistedUserMessage(initiatingMessageId),
+  };
+}
+
+async function createControlledCommandEofTurn(params: {
+  prompt: string;
+  customCommandName?: string;
+}): Promise<{
+  parent: Awaited<ReturnType<OpenCodeAgentClient["createSession"]>>;
+  openCode: TestOpenCodeClient;
+  events: AgentStreamEvent[];
+  endStream: () => void;
+  baselineMessages: unknown[];
+}> {
+  const streamEnd = createTestDeferred<void>();
+  const baselineUser = persistedUserMessage("msg_command_baseline_user");
+  const baselineAssistant = persistedAssistantMessage({
+    id: "msg_command_baseline_assistant",
+    parentId: "msg_command_baseline_user",
+    completed: 2,
+  });
+  const baselineMessages = [baselineUser, baselineAssistant];
+  const { parent, openCode } = await createParentSession("ses_eof_reconciliation", (client) => {
+    client.sessionMessagesResponse = { data: baselineMessages };
+    client.sessionCommandEvents = [];
+    client.sessionSummarizeEvents = [];
+    if (params.customCommandName) {
+      client.commandListResponse = {
+        data: [
+          {
+            name: params.customCommandName,
+            description: "Test command",
+            source: "command",
+          },
+        ],
+      };
+    }
+    client.globalEventImplementation = async (options) => {
+      const signal = (options as { signal: AbortSignal }).signal;
+      return {
+        stream: (async function* () {
+          yield { type: "server.connected", properties: {} };
+          await Promise.race([streamEnd.promise, waitForAbort(signal)]);
+        })(),
+      };
+    };
+  });
+  const events: AgentStreamEvent[] = [];
+  parent.subscribe((event) => events.push(event));
+  await parent.startTurn(params.prompt);
+  return {
+    parent,
+    openCode,
+    events,
+    endStream: () => streamEnd.resolve(),
+    baselineMessages,
   };
 }
 
@@ -534,6 +591,53 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     await session.close();
     rmSync(cwd, { recursive: true, force: true });
   }, 120_000);
+
+  test("uses the provider-issued user message ID without supplying a Paseo message ID", async () => {
+    const providerMessageId = "msg_provider_owned_user";
+    const { parent, openCode } = await createParentSession(
+      "ses_provider_owned_prompt",
+      (client) => {
+        client.sessionPromptAsyncEvents = [
+          {
+            type: "message.updated",
+            properties: {
+              info: {
+                id: providerMessageId,
+                sessionID: "ses_provider_owned_prompt",
+                role: "user",
+              },
+            },
+          },
+          ...assistantTurnEvents({ sessionId: "ses_provider_owned_prompt" }),
+        ];
+      },
+    );
+    const events: AgentStreamEvent[] = [];
+    parent.subscribe((event) => events.push(event));
+
+    try {
+      await parent.startTurn("Provider owns this ID", { clientMessageId: "client_message_1" });
+      await vi.waitFor(() => {
+        expect(eventsWithType(events, "turn_completed")).toHaveLength(1);
+      });
+
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
+      expect(openCode.calls.sessionPromptAsync[0]).not.toHaveProperty("messageID");
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "timeline",
+          item: {
+            type: "user_message",
+            text: "Provider owns this ID",
+            messageId: providerMessageId,
+            clientMessageId: "client_message_1",
+          },
+        }),
+      );
+    } finally {
+      await parent.close();
+    }
+  });
 
   test("completed and structured assistant messages preserve OpenCode message IDs", async () => {
     const cwd = tmpCwd();
@@ -1767,6 +1871,60 @@ describe("OpenCode adapter startTurn error handling", () => {
   });
 
   test.each([
+    {
+      label: "summarize",
+      prompt: "/compact",
+      customCommandName: undefined,
+      expectedCall: "summarize" as const,
+    },
+    {
+      label: "custom command",
+      prompt: "/review staged changes",
+      customCommandName: "review",
+      expectedCall: "command" as const,
+    },
+  ])("reconciles a $label turn from its pre-dispatch baseline after EOF", async (testCase) => {
+    const { parent, openCode, events, endStream, baselineMessages } =
+      await createControlledCommandEofTurn({
+        prompt: testCase.prompt,
+        customCommandName: testCase.customCommandName,
+      });
+    const commandUser = persistedUserMessage(`msg_${testCase.expectedCall}_user`);
+    const commandAssistant = persistedAssistantMessage({
+      id: `msg_${testCase.expectedCall}_assistant`,
+      parentId: `msg_${testCase.expectedCall}_user`,
+      completed: 4,
+    });
+    openCode.sessionMessagesResponse = {
+      data: [...baselineMessages, commandUser, commandAssistant],
+    };
+
+    try {
+      endStream();
+      await vi.waitFor(() => {
+        expect(terminalTurnEvents(events)).toEqual([
+          expect.objectContaining({ type: "turn_completed", provider: "opencode" }),
+        ]);
+      });
+      expect(openCode.calls.sessionMessages).toEqual([
+        { sessionID: "ses_eof_reconciliation", directory: "/workspace/repo" },
+        { sessionID: "ses_eof_reconciliation", directory: "/workspace/repo" },
+      ]);
+      if (testCase.expectedCall === "summarize") {
+        expect(openCode.calls.sessionSummarize).toHaveLength(1);
+        expect(openCode.calls.sessionCommand).toEqual([]);
+      } else {
+        expect(openCode.calls.sessionCommand).toEqual([
+          expect.objectContaining({ command: "review", arguments: "staged changes" }),
+        ]);
+        expect(openCode.calls.sessionSummarize).toEqual([]);
+      }
+    } finally {
+      await parent.close();
+    }
+  });
+
+  test.each([
     { label: "user-only history with missing session status", includeAssistant: false },
     { label: "an incomplete assistant message", includeAssistant: true },
   ])("fails EOF recovery for $label", async (testCase) => {
@@ -2006,6 +2164,105 @@ describe("OpenCode adapter startTurn error handling", () => {
       expect(openCode.calls.sessionPromptAsync).toEqual([]);
     } finally {
       await parent.close();
+    }
+  });
+
+  test.each([
+    {
+      label: "permission-first",
+      trigger: {
+        type: "permission.asked",
+        properties: {
+          id: "perm_autonomous_eof",
+          sessionID: "ses_late_owned_autonomous",
+          permission: "bash",
+          patterns: ["npm test"],
+          metadata: { command: "npm test", cwd: "/workspace/repo" },
+        },
+      },
+      ownershipEvent: {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "msg_late_owned_user",
+            sessionID: "ses_late_owned_autonomous",
+            role: "user",
+          },
+        },
+      },
+    },
+    {
+      label: "busy-first",
+      trigger: {
+        type: "session.status",
+        properties: {
+          sessionID: "ses_late_owned_autonomous",
+          status: { type: "busy" },
+        },
+      },
+      ownershipEvent: {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "msg_late_owned_assistant",
+            sessionID: "ses_late_owned_autonomous",
+            role: "assistant",
+            parentID: "msg_late_owned_user",
+          },
+        },
+      },
+    },
+  ])("promotes a $label autonomous turn to owned before EOF", async (testCase) => {
+    const releaseEvents = createTestDeferred<void>();
+    const openCode = new TestOpenCodeClient();
+    openCode.sessionMessagesResponse = {
+      data: [
+        persistedUserMessage("msg_late_owned_user", "ses_late_owned_autonomous"),
+        persistedAssistantMessage({
+          id: "msg_late_owned_assistant",
+          parentId: "msg_late_owned_user",
+          sessionId: "ses_late_owned_autonomous",
+          completed: 4,
+        }),
+      ],
+    };
+    openCode.globalEventImplementation = async () => ({
+      stream: (async function* () {
+        yield { type: "server.connected", properties: {} };
+        await releaseEvents.promise;
+        yield testCase.trigger;
+        yield testCase.ownershipEvent;
+      })(),
+    });
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/workspace/repo" },
+      openCode.asSdkClient(),
+      "ses_late_owned_autonomous",
+      createTestLogger(),
+      new Map(),
+      undefined,
+      true,
+      undefined,
+      undefined,
+      true,
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    try {
+      releaseEvents.resolve();
+      await vi.waitFor(() => {
+        expect(terminalTurnEvents(events)).toEqual([
+          expect.objectContaining({ type: "turn_completed", provider: "opencode" }),
+        ]);
+      });
+      expect(eventsWithType(events, "turn_started")).toHaveLength(1);
+      expect(openCode.calls.sessionMessages).toEqual([
+        { sessionID: "ses_late_owned_autonomous", directory: "/workspace/repo" },
+      ]);
+    } finally {
+      releaseEvents.resolve();
+      await session.close();
     }
   });
 

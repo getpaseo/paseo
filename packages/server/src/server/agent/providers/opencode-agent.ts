@@ -11,7 +11,6 @@ import {
   type Session as OpenCodeSession,
   type TextPartInput as OpenCodeTextPartInput,
 } from "@opencode-ai/sdk/v2/client";
-import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import { createPathEquivalenceMatcher } from "../../../utils/path.js";
 import pLimit from "p-limit";
@@ -865,10 +864,6 @@ function hasNormalizedOpenCodeUsage(usage: AgentUsage): boolean {
     usage.contextWindowMaxTokens,
     usage.contextWindowUsedTokens,
   ].some((value) => typeof value === "number" && Number.isFinite(value));
-}
-
-function createOpenCodeMessageId(): string {
-  return `msg_${randomUUID().replaceAll("-", "")}`;
 }
 
 function getOpenCodeAttachmentExtension(mimeType: string): string {
@@ -2772,7 +2767,16 @@ type OpenCodeTurnState =
   | { status: "stopping"; idle: Deferred<void> };
 
 type OpenCodeForegroundOwnership =
-  | { status: "unowned" }
+  | { status: "inactive" }
+  | {
+      status: "unowned";
+      startingTotalCostUsd: number | undefined;
+    }
+  | {
+      status: "baseline";
+      knownMessageIds: ReadonlySet<string>;
+      startingTotalCostUsd: number | undefined;
+    }
   | {
       status: "owned";
       initiatingMessageId: string;
@@ -2945,7 +2949,7 @@ class OpenCodeAgentSession implements AgentSession {
   private eventStreamAbortController: AbortController | null = null;
   private eventStreamReady: Deferred<void> | null = null;
   private eventStreamTask: Promise<void> | null = null;
-  private foregroundOwnership: OpenCodeForegroundOwnership = { status: "unowned" };
+  private foregroundOwnership: OpenCodeForegroundOwnership = { status: "inactive" };
   private closed = false;
   private readonly persistSession: boolean;
   private deletedFromProvider = false;
@@ -3168,7 +3172,7 @@ class OpenCodeAgentSession implements AgentSession {
 
     const turnId = this.createTurnId();
     this.turnState = { status: "running", turnId };
-    this.foregroundOwnership = { status: "unowned" };
+    this.foregroundOwnership = { status: "inactive" };
     this.notifySubscribers({ type: "turn_started", provider: "opencode" }, turnId);
 
     const slashCommand = await this.resolveSlashCommandInvocation(prompt);
@@ -3176,6 +3180,19 @@ class OpenCodeAgentSession implements AgentSession {
       return { turnId };
     }
     if (slashCommand) {
+      const startingTotalCostUsd = this.sessionTotalCostUsd;
+      const foregroundMessages = await this.readForegroundSessionMessages();
+      if (this.activeForegroundTurnId !== turnId) {
+        return { turnId };
+      }
+      this.foregroundOwnership = foregroundMessages
+        ? {
+            status: "baseline",
+            knownMessageIds: new Set(foregroundMessages.map((message) => message.info.id)),
+            startingTotalCostUsd,
+          }
+        : { status: "unowned", startingTotalCostUsd };
+
       if (slashCommand.commandName === "compact" || slashCommand.commandName === "summarize") {
         this.suppressAssistantMessagesUntilIdle.active = true;
         void this.client.session
@@ -3280,16 +3297,13 @@ class OpenCodeAgentSession implements AgentSession {
             this.config.systemPrompt,
             this.config.daemonAppendSystemPrompt,
           );
-          const initiatingMessageId = createOpenCodeMessageId();
           this.foregroundOwnership = {
-            status: "owned",
-            initiatingMessageId,
+            status: "unowned",
             startingTotalCostUsd: this.sessionTotalCostUsd,
           };
           const promptResponse = await this.client.session.promptAsync({
             sessionID: this.sessionId,
             directory: this.config.cwd,
-            messageID: initiatingMessageId,
             parts,
             ...(options?.outputSchema
               ? {
@@ -3609,7 +3623,10 @@ class OpenCodeAgentSession implements AgentSession {
     signal: AbortSignal,
   ): Promise<TerminalTurnEvent | null> {
     const ownership = this.foregroundOwnership;
-    if (this.activeForegroundTurnId !== turnId || ownership.status !== "owned") {
+    if (
+      this.activeForegroundTurnId !== turnId ||
+      (ownership.status !== "owned" && ownership.status !== "baseline")
+    ) {
       return null;
     }
 
@@ -3618,10 +3635,17 @@ class OpenCodeAgentSession implements AgentSession {
       return null;
     }
 
+    const initiatingMessageId =
+      ownership.status === "owned"
+        ? ownership.initiatingMessageId
+        : this.findBaselineInitiatingMessageId(messages, ownership.knownMessageIds);
+    if (!initiatingMessageId) {
+      return null;
+    }
+
     const ownedAssistantMessages = messages.filter(
       (message) =>
-        message.info.role === "assistant" &&
-        message.info.parentID === ownership.initiatingMessageId,
+        message.info.role === "assistant" && message.info.parentID === initiatingMessageId,
     );
     if (ownedAssistantMessages.length !== 1) {
       return null;
@@ -3658,6 +3682,33 @@ class OpenCodeAgentSession implements AgentSession {
     const contextWindowMaxTokens = this.resolveSelectedModelContextWindowMaxTokens();
     this.accumulatedUsage = contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
     return { type: "turn_completed", provider: "opencode", usage };
+  }
+
+  private findBaselineInitiatingMessageId(
+    messages: readonly OpenCodeSessionMessage[],
+    knownMessageIds: ReadonlySet<string>,
+  ): string | null {
+    const newMessages = messages.filter((message) => !knownMessageIds.has(message.info.id));
+    if (newMessages.length !== 2) {
+      return null;
+    }
+    const userMessages = newMessages.filter((message) => message.info.role === "user");
+    const assistantMessages = newMessages.filter((message) => message.info.role === "assistant");
+    if (userMessages.length !== 1 || assistantMessages.length !== 1) {
+      return null;
+    }
+    const userMessage = userMessages[0];
+    const assistantMessage = assistantMessages[0];
+    if (
+      !userMessage ||
+      userMessage.info.role !== "user" ||
+      !assistantMessage ||
+      assistantMessage.info.role !== "assistant" ||
+      assistantMessage.info.parentID !== userMessage.info.id
+    ) {
+      return null;
+    }
+    return userMessage.info.id;
   }
 
   private async readForegroundSessionMessages(
@@ -3735,6 +3786,7 @@ class OpenCodeAgentSession implements AgentSession {
       });
       return;
     }
+    this.promoteForegroundOwnership(event);
     this.traceOpenCode("provider.opencode.parsed_event", {
       turnId,
       n: eventCount,
@@ -3818,6 +3870,28 @@ class OpenCodeAgentSession implements AgentSession {
     return null;
   }
 
+  private promoteForegroundOwnership(event: OpenCodeEvent): void {
+    if (getOpenCodeEventSessionId(event) !== this.sessionId) {
+      return;
+    }
+    const ownership = this.foregroundOwnership;
+    if (ownership.status !== "unowned" && ownership.status !== "baseline") {
+      return;
+    }
+    const initiatingMessageId = this.getAutonomousTurnInitiatingMessageId(event);
+    if (
+      !initiatingMessageId ||
+      (ownership.status === "baseline" && ownership.knownMessageIds.has(initiatingMessageId))
+    ) {
+      return;
+    }
+    this.foregroundOwnership = {
+      status: "owned",
+      initiatingMessageId,
+      startingTotalCostUsd: ownership.startingTotalCostUsd,
+    };
+  }
+
   private startAutonomousTurn(initiatingMessageId: string | null): string {
     const turnId = this.createTurnId();
     this.turnState = { status: "running", turnId };
@@ -3827,7 +3901,7 @@ class OpenCodeAgentSession implements AgentSession {
           initiatingMessageId,
           startingTotalCostUsd: this.sessionTotalCostUsd,
         }
-      : { status: "unowned" };
+      : { status: "unowned", startingTotalCostUsd: this.sessionTotalCostUsd };
     this.runningToolCalls.clear();
     this.subAgentsByCallId.clear();
     this.subAgentCallIdByChildSessionId.clear();
@@ -3859,7 +3933,7 @@ class OpenCodeAgentSession implements AgentSession {
     }
     this.pendingUserMessageText = null;
     this.pendingClientMessageId = null;
-    this.foregroundOwnership = { status: "unowned" };
+    this.foregroundOwnership = { status: "inactive" };
     this.turnState = { status: "idle" };
     this.abortController = null;
     this.notifySubscribers(event, turnId);
@@ -3872,7 +3946,7 @@ class OpenCodeAgentSession implements AgentSession {
     this.synthesizeInterruptedToolCalls(turnId);
     this.pendingUserMessageText = null;
     this.pendingClientMessageId = null;
-    this.foregroundOwnership = { status: "unowned" };
+    this.foregroundOwnership = { status: "inactive" };
     this.abortController = null;
     this.turnState = { status: "stopping", idle: createDeferred<void>() };
     this.notifySubscribers(
