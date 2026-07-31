@@ -2339,7 +2339,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         return;
       }
       if (this.activeForegroundTurnId) {
-        this.synthesizeCanceledToolCalls();
+        this.settleRunningToolCalls("canceled");
         this.finishTurn({
           type: "turn_failed",
           provider: this.provider,
@@ -2685,10 +2685,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   private handlePromptResponse(response: PromptResponse, turnId: string): void {
     this.currentTurnUsage = mapACPUsage(response.usage) ?? this.currentTurnUsage;
+    if (response.stopReason === "end_turn") {
+      this.settleRunningToolCalls("completed");
+    }
 
     switch (response.stopReason) {
       case "cancelled":
-        this.synthesizeCanceledToolCalls();
+        this.settleRunningToolCalls("canceled");
         this.finishTurn({
           type: "turn_canceled",
           provider: this.provider,
@@ -2798,14 +2801,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     });
   }
 
-  private synthesizeCanceledToolCalls(): void {
+  private settleRunningToolCalls(status: "canceled" | "completed"): void {
     for (const snapshot of this.toolCalls.values()) {
       const mapped = mapToolSnapshotToTimeline(snapshot, this.terminalEntries);
       if (mapped.status === "running") {
         this.pushEvent(
           this.wrapTimeline({
             ...mapped,
-            status: "canceled",
+            status,
             error: null,
           }),
         );

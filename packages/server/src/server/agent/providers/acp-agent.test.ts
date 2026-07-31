@@ -2318,6 +2318,50 @@ describe("ACPAgentSession", () => {
     expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
   });
 
+  test("completes a running tool call when ACP ends the turn without a terminal update", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    let resolvePrompt!: (value: PromptResponse) => void;
+    const prompt = vi.fn(
+      () =>
+        new Promise<PromptResponse>((resolve) => {
+          resolvePrompt = resolve;
+        }),
+    );
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    session.subscribe((event) => events.push(event));
+
+    const { turnId } = await session.startTurn("stop the poller");
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "proc-d653724c39ce",
+        title: "process kill: proc_d653724c39ce",
+        kind: "execute",
+        status: "in_progress",
+      } as SessionUpdate,
+    });
+
+    resolvePrompt({ stopReason: "end_turn" });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const toolEvents = events.filter(
+      (event): event is Extract<AgentStreamEvent, { type: "timeline" }> =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.callId === "proc-d653724c39ce",
+    );
+
+    expect(toolEvents.map((event) => event.item.status)).toEqual(["running", "completed"]);
+    expect(events.indexOf(toolEvents[1]!)).toBeLessThan(
+      events.findIndex((event) => event.type === "turn_completed" && event.turnId === turnId),
+    );
+  });
+
   test("startTurn emits the submitted user message even when ACP does not echo it", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
