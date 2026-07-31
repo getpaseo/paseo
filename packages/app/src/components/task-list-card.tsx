@@ -63,7 +63,10 @@ export const TaskListCard = memo(function TaskListCard({
   onDismissCompleted,
 }: TaskListCardProps) {
   const [expanded, setExpanded] = useState(false);
-  const [allDismissed, setAllDismissed] = useState(false);
+  // Track which snapshot was dismissed by its text content hash.
+  // When the agent sends a new todo list the fingerprint changes and
+  // the card becomes visible again automatically.
+  const [dismissedKey, setDismissedKey] = useState<string | null>(null);
 
   const { t } = useTranslation();
 
@@ -72,9 +75,9 @@ export const TaskListCard = memo(function TaskListCard({
   }, []);
 
   const handleDismissCompleted = useCallback(() => {
-    setAllDismissed(true);
+    setDismissedKey(items.map((i) => `${i.text}:${i.completed}`).join("|"));
     onDismissCompleted?.();
-  }, [onDismissCompleted]);
+  }, [items, onDismissCompleted]);
 
   const surfaceStyle = useMemo(
     () => [styles.surface, expanded && styles.surfaceExpanded],
@@ -94,7 +97,10 @@ export const TaskListCard = memo(function TaskListCard({
     [],
   );
 
-  if (allDismissed || items.length === 0) {
+  if (
+    dismissedKey === items.map((i) => `${i.text}:${i.completed}`).join("|") ||
+    items.length === 0
+  ) {
     return null;
   }
 
