@@ -6,6 +6,7 @@ import { Check } from "lucide-react-native";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import type { Theme } from "@/styles/theme";
 import { confirmDialog } from "@/utils/confirm-dialog";
@@ -156,7 +157,7 @@ export function SkillSelectionSheet({
       footer={footer}
       testID="skill-selection-sheet"
     >
-      <View style={settingsStyles.card}>
+      <View style={settingsStyles.card} testID="skill-selection-all-card">
         <View style={settingsStyles.row}>
           <View style={settingsStyles.rowContent}>
             <Text style={settingsStyles.rowTitle}>
@@ -176,11 +177,10 @@ export function SkillSelectionSheet({
         </View>
       </View>
 
-      <View style={styles.listGroup}>
-        <Text style={settingsStyles.sectionTitle}>
-          {t("settings.integrations.skills.chooseList")}
-        </Text>
-        <View style={settingsStyles.card}>
+      {/* The sheet body already spaces its blocks apart, so the section owns
+          only the gap between its label and the list the label names. */}
+      <SettingsSection title={t("settings.integrations.skills.chooseList")} flush>
+        <View style={settingsStyles.card} testID="skill-selection-list-card">
           {available.length === 0 ? (
             <View style={settingsStyles.row}>
               <Text style={settingsStyles.rowHint}>
@@ -200,7 +200,7 @@ export function SkillSelectionSheet({
             ))
           )}
         </View>
-      </View>
+      </SettingsSection>
 
       {saveError ? <Text style={settingsStyles.rowError}>{saveError}</Text> : null}
     </AdaptiveModalSheet>
@@ -264,9 +264,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   footerButton: {
     flex: 1,
-  },
-  listGroup: {
-    gap: theme.spacing[1],
   },
   checkboxRow: {
     justifyContent: "flex-start",

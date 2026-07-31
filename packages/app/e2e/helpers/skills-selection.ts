@@ -2,8 +2,11 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promis
 import os from "node:os";
 import path from "node:path";
 import { expect, type Page } from "@playwright/test";
+import { buildOpenProjectRoute } from "@/utils/host-routes";
 import { openSettings } from "./app";
-import { openSettingsSection } from "./settings";
+import { injectDesktopBridge } from "./desktop-updates";
+import { getServerId } from "./server-id";
+import { openCompactSettings, openSettingsSection } from "./settings";
 // The desktop skills module is the real command surface: the same handlers the
 // Electron main process registers, running against a temp bundle and temp user
 // data. Nothing about persistence or convergence is simulated in the browser.
@@ -223,8 +226,26 @@ export async function serveRealSkillsCommands(page: Page, sandbox: SkillsSandbox
   }, SKILL_COMMANDS);
 }
 
+/** Real skills commands over a temp bundle, wired to this page's desktop bridge. */
+export async function startSkillsSandbox(
+  page: Page,
+  options: SkillsSandboxOptions = {},
+): Promise<SkillsSandbox> {
+  const sandbox = await createSkillsSandbox(options);
+  await injectDesktopBridge(page, { serverId: getServerId(), confirmShouldAccept: false });
+  await serveRealSkillsCommands(page, sandbox);
+  return sandbox;
+}
+
 export async function openSkillsIntegrations(page: Page): Promise<void> {
   await openSettings(page);
+  await openSettingsSection(page, "integrations");
+  await expect(page.getByText("Orchestration skills", { exact: true })).toBeVisible();
+}
+
+/** Settings on a compact form factor stacks list and detail, so it needs the menu first. */
+export async function openCompactSkillsIntegrations(page: Page): Promise<void> {
+  await openCompactSettings(page, buildOpenProjectRoute());
   await openSettingsSection(page, "integrations");
   await expect(page.getByText("Orchestration skills", { exact: true })).toBeVisible();
 }
