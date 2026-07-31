@@ -71,6 +71,7 @@ import {
   getHostProjectId,
   hostProjectFromRoute,
   hostProjectFromWorkspace,
+  resolveHydratedHostProject,
   useHostProjects,
   type HostProjectListItem,
 } from "@/projects/host-projects";
@@ -1654,8 +1655,14 @@ export function NewWorkspaceScreen({
   });
 
   const currentBranch = checkoutStatus?.currentBranch ?? null;
-  const projectCanCreateWorktree = selectedProject
-    ? canCreateWorktreeForHostProject({ project: selectedProject, serverId: selectedServerId })
+  const hydratedSelectedProject = selectedProject
+    ? resolveHydratedHostProject({ project: selectedProject, projects, serverId: selectedServerId })
+    : null;
+  const projectCanCreateWorktree = hydratedSelectedProject
+    ? canCreateWorktreeForHostProject({
+        project: hydratedSelectedProject,
+        serverId: selectedServerId,
+      })
     : false;
   const { effectiveIsolation, setIsolation, canCreateWorktree, showRefPicker } =
     useWorkspaceIsolation({

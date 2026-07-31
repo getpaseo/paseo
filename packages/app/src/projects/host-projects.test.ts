@@ -6,6 +6,7 @@ import {
   getHostProjectId,
   getHostProjectSourceDirectory,
   hostProjectFromRoute,
+  resolveHydratedHostProject,
 } from "./host-project-model";
 
 function project(): HostProjectListItem {
@@ -66,6 +67,37 @@ describe("host project lookups", () => {
     expect(canCreateWorktreeForHostProject({ project: groupedProject, serverId: "missing" })).toBe(
       false,
     );
+  });
+
+  test("does not treat an unhydrated route placeholder as authoritative", () => {
+    const routeProject = hostProjectFromRoute({
+      serverId: "host-a",
+      projectId: "prj_a",
+      displayName: "App",
+      sourceDirectory: "/repo/a",
+    });
+    expect(routeProject).not.toBeNull();
+
+    expect(
+      resolveHydratedHostProject({
+        project: routeProject!,
+        projects: [],
+        serverId: "host-a",
+      }),
+    ).toBeNull();
+
+    const hydratedProject = project();
+    hydratedProject.hosts[0] = {
+      ...hydratedProject.hosts[0]!,
+      canCreateWorktree: false,
+    };
+    expect(
+      resolveHydratedHostProject({
+        project: routeProject!,
+        projects: [hydratedProject],
+        serverId: "host-a",
+      }),
+    ).toBe(hydratedProject);
   });
 
   test("builds an unhydrated route project around the routed project id", () => {

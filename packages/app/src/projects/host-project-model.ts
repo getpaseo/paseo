@@ -108,6 +108,22 @@ export function canCreateWorktreeForHostProject(input: {
   return getHostProjectPlacement(input.project, input.serverId)?.canCreateWorktree === true;
 }
 
+export function resolveHydratedHostProject(input: {
+  project: HostProjectListItem;
+  projects: readonly HostProjectListItem[];
+  serverId: string;
+}): HostProjectListItem | null {
+  const projectId = getHostProjectPlacement(input.project, input.serverId)?.projectId;
+  if (!projectId) {
+    return null;
+  }
+  return (
+    input.projects.find(
+      (project) => getHostProjectPlacement(project, input.serverId)?.projectId === projectId,
+    ) ?? null
+  );
+}
+
 export function getHostProjectSourceDirectory(
   project: HostProjectListItem,
   serverId: string,
