@@ -40,6 +40,7 @@ import {
 export function useKeyboardShortcuts({
   enabled,
   isMobile,
+  isWorkspaceFocusModeEnabled,
   toggleAgentList,
   toggleBothSidebars,
   exitFocusMode,
@@ -47,6 +48,7 @@ export function useKeyboardShortcuts({
 }: {
   enabled: boolean;
   isMobile: boolean;
+  isWorkspaceFocusModeEnabled: boolean;
   toggleAgentList: () => void;
   toggleBothSidebars?: () => void;
   exitFocusMode: () => void;
@@ -209,14 +211,15 @@ export function useKeyboardShortcuts({
           shortcutsDialogOpen: store.shortcutsDialogOpen,
         },
       );
-      if (shortcutAction.kind !== "none" && input.action.startsWith("sidebar.")) {
-        exitFocusMode();
-      }
-      return performShortcutAction(
+      const handled = performShortcutAction(
         shortcutAction,
         input.domEvent,
         input.browserFocusRestoreElement,
       );
+      if (handled && isWorkspaceFocusModeEnabled && input.action.startsWith("sidebar.")) {
+        exitFocusMode();
+      }
+      return handled;
     };
 
     const resolveAndPerformShortcut = (input: {
@@ -381,6 +384,7 @@ export function useKeyboardShortcuts({
     isDesktopApp,
     isMac,
     isMobile,
+    isWorkspaceFocusModeEnabled,
     openProjectPickerAction,
     pathname,
     publishBrowserShortcutPolicy,

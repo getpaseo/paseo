@@ -14,6 +14,10 @@ async function pressRightSidebarShortcut(page: Page) {
   await page.keyboard.press(`${modifier}+E`);
 }
 
+async function returnToWorkspace(page: Page, workspaceUrl: string) {
+  await page.goto(workspaceUrl);
+}
+
 async function blurActiveElement(page: Page) {
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
 }
@@ -28,7 +32,10 @@ async function enterFocusMode(page: Page) {
   await expect(exitFocusModeButton(page)).toBeVisible();
 }
 
-test("sidebar shortcuts exit focus mode before executing", async ({ page, withWorkspace }) => {
+test("sidebar shortcuts exit focus mode and execute their action", async ({
+  page,
+  withWorkspace,
+}) => {
   const workspace = await withWorkspace({ prefix: "focus-mode-sidebar-shortcut-" });
   await workspace.navigateTo();
   await enterFocusMode(page);
@@ -37,6 +44,24 @@ test("sidebar shortcuts exit focus mode before executing", async ({ page, withWo
 
   await expect(exitFocusModeButton(page)).toHaveCount(0);
   await expect(page.getByText("Changes", { exact: true })).toBeVisible();
+});
+
+test("sidebar shortcuts outside a workspace preserve its focus mode", async ({
+  page,
+  withWorkspace,
+}) => {
+  const workspace = await withWorkspace({ prefix: "focus-mode-sidebar-boundary-" });
+  await workspace.navigateTo();
+  await enterFocusMode(page);
+  const workspaceUrl = page.url();
+
+  await pressSettingsShortcut(page);
+  await expect(page.getByRole("navigation", { name: "Settings" })).toBeVisible();
+
+  await pressRightSidebarShortcut(page);
+  await returnToWorkspace(page, workspaceUrl);
+
+  await expect(exitFocusModeButton(page)).toBeVisible();
 });
 
 test("focus mode only applies to the active workspace screen", async ({ page, withWorkspace }) => {
@@ -66,7 +91,7 @@ test("focus mode only applies to the active workspace screen", async ({ page, wi
   await expect(exitFocusMode).toHaveCount(0);
 
   await pressFocusModeShortcut(page);
-  await page.goto(workspaceUrl);
+  await returnToWorkspace(page, workspaceUrl);
 
   await expect(exitFocusMode).toBeVisible();
   await exitFocusMode.click();
