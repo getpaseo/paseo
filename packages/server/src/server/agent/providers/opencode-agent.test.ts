@@ -180,24 +180,68 @@ async function createParentSession(
   return { parent, openCode };
 }
 
-function persistedAssistantMessage(params: {
+interface PersistedAssistantCacheTokens {
+  read?: number;
+  write?: number;
+}
+
+interface PersistedAssistantTokens {
+  input?: number;
+  output?: number;
+  reasoning?: number;
+  cache?: PersistedAssistantCacheTokens;
+}
+
+interface PersistedAssistantMessageParams {
   id: string;
+  parentId: string;
   completed?: number;
   error?: unknown;
-}): unknown {
+  cost?: number;
+  tokens?: PersistedAssistantTokens;
+}
+
+function persistedUserMessage(id: string): unknown {
+  return {
+    info: {
+      id,
+      sessionID: "ses_eof_reconciliation",
+      role: "user",
+      time: { created: 1 },
+    },
+    parts: [],
+  };
+}
+
+function persistedAssistantMessage(params: PersistedAssistantMessageParams): unknown {
   return {
     info: {
       id: params.id,
       sessionID: "ses_eof_reconciliation",
       role: "assistant",
+      parentID: params.parentId,
       time: {
         created: 1,
         ...(params.completed !== undefined ? { completed: params.completed } : {}),
       },
       ...(params.error !== undefined ? { error: params.error } : {}),
+      ...(params.cost !== undefined ? { cost: params.cost } : {}),
+      ...(params.tokens ? { tokens: params.tokens } : {}),
     },
     parts: [],
   };
+}
+
+function readDispatchedPromptMessageId(openCode: TestOpenCodeClient): string {
+  const promptCall = openCode.calls.sessionPromptAsync[0];
+  if (typeof promptCall !== "object" || promptCall === null) {
+    throw new Error("Expected OpenCode promptAsync to be dispatched");
+  }
+  const messageId = Reflect.get(promptCall, "messageID");
+  if (typeof messageId !== "string") {
+    throw new Error("Expected OpenCode promptAsync to include a messageID");
+  }
+  return messageId;
 }
 
 function terminalTurnEvents(events: AgentStreamEvent[]): AgentStreamEvent[] {
@@ -229,20 +273,25 @@ async function createControlledEofTurn(): Promise<{
   parent: Awaited<ReturnType<OpenCodeAgentClient["createSession"]>>;
   openCode: TestOpenCodeClient;
   events: AgentStreamEvent[];
-  endStream: () => void;
-  previousMessage: unknown;
+  endStream: (events?: unknown[]) => void;
+  initiatingMessageId: string;
+  initiatingMessage: unknown;
 }> {
-  const streamEnd = createTestDeferred<void>();
-  const previousMessage = persistedAssistantMessage({ id: "msg_previous", completed: 2 });
+  const streamEnd = createTestDeferred<unknown[]>();
   const { parent, openCode } = await createParentSession("ses_eof_reconciliation", (client) => {
     client.sessionPromptAsyncEvents = [];
-    client.sessionMessagesResponse = { data: [previousMessage] };
     client.globalEventImplementation = async (options) => {
       const signal = (options as { signal: AbortSignal }).signal;
       return {
         stream: (async function* () {
           yield { type: "server.connected", properties: {} };
-          await Promise.race([streamEnd.promise, waitForAbort(signal)]);
+          const finalEvents = await Promise.race([
+            streamEnd.promise,
+            waitForAbort(signal).then(() => null),
+          ]);
+          for (const event of finalEvents ?? []) {
+            yield event;
+          }
         })(),
       };
     };
@@ -250,12 +299,73 @@ async function createControlledEofTurn(): Promise<{
   const events: AgentStreamEvent[] = [];
   parent.subscribe((event) => events.push(event));
   await parent.startTurn("hello");
+  const initiatingMessageId = readDispatchedPromptMessageId(openCode);
+  return {
+    parent,
+    openCode,
+    events,
+    endStream: (finalEvents = []) => streamEnd.resolve(finalEvents),
+    initiatingMessageId,
+    initiatingMessage: persistedUserMessage(initiatingMessageId),
+  };
+}
+
+async function createControlledAutonomousEofTurn(): Promise<{
+  parent: Awaited<ReturnType<OpenCodeAgentClient["createSession"]>>;
+  openCode: TestOpenCodeClient;
+  events: AgentStreamEvent[];
+  endStream: () => void;
+  initiatingMessageId: string;
+  initiatingMessage: unknown;
+}> {
+  const initiatingMessageId = "msg_autonomous_initiating";
+  const releaseAutonomousTurn = createTestDeferred<void>();
+  const streamEnd = createTestDeferred<void>();
+  const { parent, openCode } = await createParentSession("ses_eof_reconciliation", (client) => {
+    client.globalEventImplementation = async (options) => {
+      const signal = (options as { signal: AbortSignal }).signal;
+      return {
+        stream: (async function* () {
+          yield { type: "server.connected", properties: {} };
+          const shouldStart = await Promise.race([
+            releaseAutonomousTurn.promise.then(() => true),
+            waitForAbort(signal).then(() => false),
+          ]);
+          if (!shouldStart) {
+            return;
+          }
+          yield {
+            type: "message.updated",
+            properties: {
+              info: {
+                id: initiatingMessageId,
+                sessionID: "ses_eof_reconciliation",
+                role: "user",
+              },
+            },
+          };
+          await Promise.race([streamEnd.promise, waitForAbort(signal)]);
+        })(),
+      };
+    };
+  });
+  const events: AgentStreamEvent[] = [];
+  parent.subscribe((event) => events.push(event));
+  releaseAutonomousTurn.resolve();
+  await vi.waitFor(() => {
+    expect(events).toContainEqual({
+      type: "turn_started",
+      provider: "opencode",
+      turnId: "opencode-turn-0",
+    });
+  });
   return {
     parent,
     openCode,
     events,
     endStream: () => streamEnd.resolve(),
-    previousMessage,
+    initiatingMessageId,
+    initiatingMessage: persistedUserMessage(initiatingMessageId),
   };
 }
 
@@ -1610,17 +1720,15 @@ describe("OpenCode adapter startTurn error handling", () => {
   test.each([
     {
       label: "completed",
-      status: { ses_eof_reconciliation: { type: "busy" } },
-      message: persistedAssistantMessage({ id: "msg_completed", completed: 4 }),
+      message: { id: "msg_completed", completed: 4 },
       expected: { type: "turn_completed", provider: "opencode" },
     },
     {
       label: "failed",
-      status: {},
-      message: persistedAssistantMessage({
+      message: {
         id: "msg_failed",
         error: { name: "UnknownError", data: { message: "provider failed" } },
-      }),
+      },
       expected: {
         type: "turn_failed",
         provider: "opencode",
@@ -1629,39 +1737,52 @@ describe("OpenCode adapter startTurn error handling", () => {
     },
     {
       label: "interrupted",
-      status: {},
-      message: persistedAssistantMessage({
+      message: {
         id: "msg_interrupted",
         error: { name: "MessageAbortedError", data: { message: "aborted" } },
-      }),
+      },
       expected: { type: "turn_canceled", provider: "opencode", reason: "interrupted" },
     },
   ])("reconciles a persisted $label turn when the event stream ends", async (testCase) => {
-    const { parent, openCode, events, endStream, previousMessage } =
+    const { parent, openCode, events, endStream, initiatingMessageId, initiatingMessage } =
       await createControlledEofTurn();
-    openCode.sessionStatusResponse = { data: testCase.status };
-    openCode.sessionMessagesResponse = { data: [previousMessage, testCase.message] };
+    const assistantMessage = persistedAssistantMessage({
+      parentId: initiatingMessageId,
+      ...testCase.message,
+    });
+    openCode.sessionMessagesResponse = { data: [initiatingMessage, assistantMessage] };
 
     try {
       endStream();
       await vi.waitFor(() => {
         expect(terminalTurnEvents(events)).toEqual([expect.objectContaining(testCase.expected)]);
       });
-      expect(openCode.calls.sessionStatus).toEqual([{ directory: "/workspace/repo" }]);
       expect(openCode.calls.sessionMessages).toEqual([
         { sessionID: "ses_eof_reconciliation", directory: "/workspace/repo" },
-        { sessionID: "ses_eof_reconciliation", directory: "/workspace/repo" },
       ]);
+      expect(openCode.calls.sessionStatus).toEqual([]);
     } finally {
       await parent.close();
     }
   });
 
-  test("keeps the existing EOF failure when persisted state does not resolve the active turn", async () => {
-    const { parent, openCode, events, endStream, previousMessage } =
+  test.each([
+    { label: "user-only history with missing session status", includeAssistant: false },
+    { label: "an incomplete assistant message", includeAssistant: true },
+  ])("fails EOF recovery for $label", async (testCase) => {
+    const { parent, openCode, events, endStream, initiatingMessageId, initiatingMessage } =
       await createControlledEofTurn();
+    const messages = testCase.includeAssistant
+      ? [
+          initiatingMessage,
+          persistedAssistantMessage({
+            id: "msg_incomplete",
+            parentId: initiatingMessageId,
+          }),
+        ]
+      : [initiatingMessage];
     openCode.sessionStatusResponse = { data: {} };
-    openCode.sessionMessagesResponse = { data: [previousMessage] };
+    openCode.sessionMessagesResponse = { data: messages };
 
     try {
       endStream();
@@ -1674,6 +1795,215 @@ describe("OpenCode adapter startTurn error handling", () => {
         ]);
       });
       expect(eventsWithType(events, "turn_completed")).toEqual([]);
+      expect(openCode.calls.sessionStatus).toEqual([]);
+    } finally {
+      await parent.close();
+    }
+  });
+
+  test("ignores an interleaved unrelated assistant error after the owned completion", async () => {
+    const { parent, openCode, events, endStream, initiatingMessageId, initiatingMessage } =
+      await createControlledEofTurn();
+    openCode.sessionMessagesResponse = {
+      data: [
+        initiatingMessage,
+        persistedAssistantMessage({
+          id: "msg_owned_completed",
+          parentId: initiatingMessageId,
+          completed: 4,
+        }),
+        persistedUserMessage("msg_unrelated_user"),
+        persistedAssistantMessage({
+          id: "msg_unrelated_failed",
+          parentId: "msg_unrelated_user",
+          error: { name: "UnknownError", data: { message: "unrelated failure" } },
+        }),
+      ],
+    };
+
+    try {
+      endStream();
+      await vi.waitFor(() => {
+        expect(terminalTurnEvents(events)).toEqual([
+          expect.objectContaining({ type: "turn_completed", provider: "opencode" }),
+        ]);
+      });
+    } finally {
+      await parent.close();
+    }
+  });
+
+  test("ignores an interleaved unrelated completion after the owned assistant error", async () => {
+    const { parent, openCode, events, endStream, initiatingMessageId, initiatingMessage } =
+      await createControlledEofTurn();
+    openCode.sessionMessagesResponse = {
+      data: [
+        initiatingMessage,
+        persistedAssistantMessage({
+          id: "msg_owned_failed",
+          parentId: initiatingMessageId,
+          error: { name: "UnknownError", data: { message: "owned failure" } },
+        }),
+        persistedUserMessage("msg_unrelated_user"),
+        persistedAssistantMessage({
+          id: "msg_unrelated_completed",
+          parentId: "msg_unrelated_user",
+          completed: 5,
+        }),
+      ],
+    };
+
+    try {
+      endStream();
+      await vi.waitFor(() => {
+        expect(terminalTurnEvents(events)).toEqual([
+          expect.objectContaining({
+            type: "turn_failed",
+            provider: "opencode",
+            error: '{"name":"UnknownError","data":{"message":"owned failure"}}',
+          }),
+        ]);
+      });
+    } finally {
+      await parent.close();
+    }
+  });
+
+  test("fails closed when multiple assistant messages claim the initiating prompt", async () => {
+    const { parent, openCode, events, endStream, initiatingMessageId, initiatingMessage } =
+      await createControlledEofTurn();
+    openCode.sessionMessagesResponse = {
+      data: [
+        initiatingMessage,
+        persistedAssistantMessage({
+          id: "msg_ambiguous_completed",
+          parentId: initiatingMessageId,
+          completed: 4,
+        }),
+        persistedAssistantMessage({
+          id: "msg_ambiguous_failed",
+          parentId: initiatingMessageId,
+          error: { name: "UnknownError", data: { message: "ambiguous failure" } },
+        }),
+      ],
+    };
+
+    try {
+      endStream();
+      await vi.waitFor(() => {
+        expect(terminalTurnEvents(events)).toEqual([
+          expect.objectContaining({
+            type: "turn_failed",
+            error: "OpenCode event stream ended before the turn reached a terminal state",
+          }),
+        ]);
+      });
+    } finally {
+      await parent.close();
+    }
+  });
+
+  test("normalizes and merges persisted assistant usage before EOF completion", async () => {
+    const { parent, openCode, events, endStream, initiatingMessageId, initiatingMessage } =
+      await createControlledEofTurn();
+    openCode.sessionMessagesResponse = {
+      data: [
+        initiatingMessage,
+        persistedAssistantMessage({
+          id: "msg_usage",
+          parentId: initiatingMessageId,
+          completed: 4,
+          cost: 0.25,
+          tokens: {
+            input: 10,
+            output: 4,
+            reasoning: 2,
+            cache: { read: 3, write: 1 },
+          },
+        }),
+      ],
+    };
+
+    try {
+      endStream([
+        {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: "prt_streamed_usage",
+              sessionID: "ses_eof_reconciliation",
+              messageID: "msg_usage",
+              type: "step-finish",
+              cost: 0.1,
+              tokens: { input: 2, output: 1, cache: { read: 1, write: 1 } },
+            },
+          },
+        },
+      ]);
+      await vi.waitFor(() => {
+        expect(terminalTurnEvents(events)).toEqual([
+          expect.objectContaining({
+            type: "turn_completed",
+            usage: {
+              inputTokens: 10,
+              cachedInputTokens: 3,
+              outputTokens: 4,
+              contextWindowUsedTokens: 20,
+              totalCostUsd: 0.25,
+            },
+          }),
+        ]);
+      });
+    } finally {
+      await parent.close();
+    }
+  });
+
+  test.each([
+    {
+      label: "completed",
+      message: { id: "msg_autonomous_completed", completed: 4 },
+      expected: { type: "turn_completed", provider: "opencode" },
+    },
+    {
+      label: "failed",
+      message: {
+        id: "msg_autonomous_failed",
+        error: { name: "UnknownError", data: { message: "autonomous failure" } },
+      },
+      expected: {
+        type: "turn_failed",
+        provider: "opencode",
+        error: '{"name":"UnknownError","data":{"message":"autonomous failure"}}',
+      },
+    },
+    {
+      label: "interrupted",
+      message: {
+        id: "msg_autonomous_interrupted",
+        error: { name: "MessageAbortedError", data: { message: "aborted" } },
+      },
+      expected: { type: "turn_canceled", provider: "opencode", reason: "interrupted" },
+    },
+  ])("reconciles an owned autonomous $label turn after EOF", async (testCase) => {
+    const { parent, openCode, events, endStream, initiatingMessageId, initiatingMessage } =
+      await createControlledAutonomousEofTurn();
+    openCode.sessionMessagesResponse = {
+      data: [
+        initiatingMessage,
+        persistedAssistantMessage({
+          parentId: initiatingMessageId,
+          ...testCase.message,
+        }),
+      ],
+    };
+
+    try {
+      endStream();
+      await vi.waitFor(() => {
+        expect(terminalTurnEvents(events)).toEqual([expect.objectContaining(testCase.expected)]);
+      });
+      expect(openCode.calls.sessionPromptAsync).toEqual([]);
     } finally {
       await parent.close();
     }
@@ -1697,21 +2027,79 @@ describe("OpenCode adapter startTurn error handling", () => {
         expect(eventsWithType(events, "turn_completed")).toHaveLength(1);
       });
       expect(openCode.calls.sessionStatus).toEqual([]);
-      expect(openCode.calls.sessionMessages).toHaveLength(1);
+      expect(openCode.calls.sessionMessages).toEqual([]);
     } finally {
       releaseIdle.resolve();
       await parent.close();
     }
   });
 
-  test("does not reconcile EOF caused by closing an active session", async () => {
-    const { parent, openCode, events } = await createControlledEofTurn();
+  test("emits no terminal event when close races with in-flight EOF reconciliation", async () => {
+    const { parent, openCode, events, endStream, initiatingMessageId, initiatingMessage } =
+      await createControlledEofTurn();
+    const messagesRequested = createTestDeferred<void>();
+    const messagesResponse = createTestDeferred<{ data: unknown[] }>();
+    openCode.sessionMessagesImplementation = async () => {
+      messagesRequested.resolve();
+      return await messagesResponse.promise;
+    };
 
-    await parent.close();
+    endStream();
+    await messagesRequested.promise;
+    const closePromise = parent.close();
+    messagesResponse.resolve({
+      data: [
+        initiatingMessage,
+        persistedAssistantMessage({
+          id: "msg_close_race",
+          parentId: initiatingMessageId,
+          completed: 4,
+        }),
+      ],
+    });
+    await closePromise;
 
     expect(terminalTurnEvents(events)).toEqual([]);
-    expect(openCode.calls.sessionStatus).toEqual([]);
-    expect(openCode.calls.sessionMessages).toHaveLength(1);
+  });
+
+  test("emits exactly one canceled event when interrupt races with EOF reconciliation", async () => {
+    const { parent, openCode, events, endStream, initiatingMessageId, initiatingMessage } =
+      await createControlledEofTurn();
+    const messagesRequested = createTestDeferred<void>();
+    const messagesResponse = createTestDeferred<{ data: unknown[] }>();
+    openCode.sessionMessagesImplementation = async () => {
+      messagesRequested.resolve();
+      return await messagesResponse.promise;
+    };
+
+    try {
+      endStream();
+      await messagesRequested.promise;
+      const interruptPromise = parent.interrupt();
+      messagesResponse.resolve({
+        data: [
+          initiatingMessage,
+          persistedAssistantMessage({
+            id: "msg_interrupt_race",
+            parentId: initiatingMessageId,
+            completed: 4,
+          }),
+        ],
+      });
+      await interruptPromise;
+      await vi.waitFor(() => {
+        expect(terminalTurnEvents(events)).toEqual([
+          expect.objectContaining({
+            type: "turn_canceled",
+            provider: "opencode",
+            reason: "interrupted",
+          }),
+        ]);
+      });
+    } finally {
+      messagesResponse.resolve({ data: [] });
+      await parent.close();
+    }
   });
 
   test("streamHistory preserves OpenCode replay timestamps from message and part times", async () => {

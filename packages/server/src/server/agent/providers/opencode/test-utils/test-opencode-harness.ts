@@ -120,6 +120,9 @@ export class TestOpenCodeClient {
   sessionGetResponse: OpenCodeResponse = {
     data: { id: "session-1", directory: "/workspace/repo", title: null },
   };
+  sessionMessagesImplementation:
+    | ((parameters: unknown, options: unknown) => Promise<OpenCodeResponse>)
+    | null = null;
   sessionMessagesResponse: OpenCodeResponse = { data: [] };
   sessionPromptAsyncEvents: unknown[] = [idleEvent()];
   sessionPromptAsyncResponse: OpenCodeResponse = {};
@@ -247,9 +250,11 @@ export class TestOpenCodeClient {
           this.calls.sessionGet.push(parameters);
           return this.sessionGetResponse;
         },
-        messages: async (parameters: unknown) => {
+        messages: async (parameters: unknown, options: unknown) => {
           this.calls.sessionMessages.push(parameters);
-          return this.sessionMessagesResponse;
+          return this.sessionMessagesImplementation
+            ? await this.sessionMessagesImplementation(parameters, options)
+            : this.sessionMessagesResponse;
         },
         promptAsync: async (parameters: unknown) => {
           this.calls.sessionPromptAsync.push(parameters);
