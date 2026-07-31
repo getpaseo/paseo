@@ -5,12 +5,6 @@ export interface TimelineSyncCursor {
   seq: number;
 }
 
-export interface AgentTimelineCursorRange {
-  epoch: string;
-  startSeq: number;
-  endSeq: number;
-}
-
 export interface ProjectedTimelineTailFetchPlan {
   direction: "tail";
   limit: number;
@@ -39,27 +33,6 @@ export type ProjectedTimelineFetchPlan =
 export type ProjectedTimelineForwardFetchPlan =
   | ProjectedTimelineTailFetchPlan
   | ProjectedTimelineAfterFetchPlan;
-
-export function planInitialAgentTimelineSync(input: {
-  cursor: AgentTimelineCursorRange | undefined;
-  hasAuthoritativeHistory: boolean;
-}): ProjectedTimelineForwardFetchPlan {
-  if (input.hasAuthoritativeHistory && input.cursor) {
-    return planTimelineCatchUpAfter({ epoch: input.cursor.epoch, seq: input.cursor.endSeq });
-  }
-
-  return planTimelineTailFetch();
-}
-
-export function planResumeTimelineSync(input: {
-  cursor: AgentTimelineCursorRange | undefined;
-}): ProjectedTimelineForwardFetchPlan {
-  if (input.cursor) {
-    return planTimelineCatchUpAfter({ epoch: input.cursor.epoch, seq: input.cursor.endSeq });
-  }
-
-  return planTimelineTailFetch();
-}
 
 export function planTimelineCatchUpAfter(cursor: TimelineSyncCursor) {
   return {

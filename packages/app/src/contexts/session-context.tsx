@@ -351,6 +351,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const setAgentTimelineCursor = useSessionStore((state) => state.setAgentTimelineCursor);
   const setInitializingAgents = useSessionStore((state) => state.setInitializingAgents);
   const bumpHistorySyncGeneration = useSessionStore((state) => state.bumpHistorySyncGeneration);
+  const markAgentHistorySynchronized = useSessionStore(
+    (state) => state.markAgentHistorySynchronized,
+  );
   const applyAgentTimelineResponseState = useSessionStore(
     (state) => state.applyAgentTimelineResponseState,
   );
@@ -619,14 +622,18 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         return;
       }
 
-      applyAgentTimelineResponseState(serverId, agentId, {
-        items: result.tail,
-        head: result.head,
-        range: result.cursorChanged ? (result.cursor ?? null) : (currentCursor ?? null),
-        older: payload.hasOlder ? "available" : "none",
-        synchronized: shouldMarkAuthoritativeHistoryApplied,
-        acknowledgedClientMessageIds: result.acknowledgedClientMessageIds,
-      });
+      if (result.commit === "discard") {
+        markAgentHistorySynchronized(serverId, agentId);
+      } else {
+        applyAgentTimelineResponseState(serverId, agentId, {
+          items: result.tail,
+          head: result.head,
+          range: result.cursorChanged ? (result.cursor ?? null) : (currentCursor ?? null),
+          older: result.older,
+          synchronized: shouldMarkAuthoritativeHistoryApplied,
+          acknowledgedClientMessageIds: result.acknowledgedClientMessageIds,
+        });
+      }
 
       executeTimelineSideEffects({
         sideEffects: result.sideEffects,
@@ -643,7 +650,13 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         setInitializingAgents,
       });
     },
-    [applyAgentTimelineResponseState, recoverTimelineGap, serverId, setInitializingAgents],
+    [
+      applyAgentTimelineResponseState,
+      markAgentHistorySynchronized,
+      recoverTimelineGap,
+      serverId,
+      setInitializingAgents,
+    ],
   );
 
   useEffect(() => {
@@ -654,16 +667,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     const sync = createViewedTimelineSync({
       initialDeliveryMode,
       setSubscription: (agentIds) => client.setAgentTimelineSubscription(agentIds),
-      readCursor: (agentId) => {
-        const timeline = selectAgentTimelineState(
-          useSessionStore.getState().sessions[serverId],
-          agentId,
-        );
-        return timeline.status === "synced" ? (timeline.range ?? undefined) : undefined;
-      },
-      hasAuthoritativeHistory: (agentId) =>
-        selectAgentTimelineState(useSessionStore.getState().sessions[serverId], agentId).status ===
-        "synced",
       fetchPage: async (agentId, request) => {
         const session = useSessionStore.getState().sessions[serverId];
         const initKey = getInitKey(serverId, agentId);

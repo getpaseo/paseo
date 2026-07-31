@@ -554,7 +554,7 @@ interface SessionStoreActions {
       items: StreamItem[];
       head: StreamItem[];
       range: AgentTimelineCursorState | null;
-      older: "available" | "none";
+      older: "available" | "none" | "unchanged";
       synchronized: boolean;
       acknowledgedClientMessageIds: string[];
     },
@@ -1519,7 +1519,9 @@ export const useSessionStore = create<SessionStore>()(
           if (state.range) nextCursor.set(agentId, state.range);
           else nextCursor.delete(agentId);
           const nextHasOlder = new Map(session.agentTimelineHasOlder);
-          nextHasOlder.set(agentId, state.older === "available");
+          if (state.older !== "unchanged") {
+            nextHasOlder.set(agentId, state.older === "available");
+          }
           const nextAuthoritative = new Map(session.agentAuthoritativeHistoryApplied);
           const nextSyncGeneration = new Map(session.agentHistorySyncGeneration);
           const currentSubmissions = session.messageSubmissions.get(agentId) ?? [];

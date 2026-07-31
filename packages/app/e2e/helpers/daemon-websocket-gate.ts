@@ -14,6 +14,7 @@ export interface DirectoryRequestStartCounts {
 
 interface ClientRequest {
   type?: unknown;
+  direction?: unknown;
   subscribe?: unknown;
   page?: { cursor?: unknown };
   payload?: unknown;
@@ -181,6 +182,7 @@ export async function installDaemonWebSocketGate(page: Page) {
     total: { agents: 0, workspaces: 0 },
   };
   const clientRequestCounts = new Map<string, number>();
+  const timelineRequestCounts = new Map<string, number>();
   const serverMessageCounts = new Map<string, number>();
   const agentStreamItemCounts = new Map<string, number>();
   const serverMessageWaiters = new Set<() => void>();
@@ -210,6 +212,15 @@ export async function installDaemonWebSocketGate(page: Page) {
       const request = readClientRequest(message);
       if (typeof request?.type === "string") {
         clientRequestCounts.set(request.type, (clientRequestCounts.get(request.type) ?? 0) + 1);
+        if (
+          request.type === "fetch_agent_timeline_request" &&
+          typeof request.direction === "string"
+        ) {
+          timelineRequestCounts.set(
+            request.direction,
+            (timelineRequestCounts.get(request.direction) ?? 0) + 1,
+          );
+        }
         const directory = directoryForRequest(request);
         if (directory) {
           const subscription = request.subscribe === undefined ? "unsubscribed" : "subscribed";
@@ -444,6 +455,9 @@ export async function installDaemonWebSocketGate(page: Page) {
     },
     getClientRequestCount(type: string): number {
       return clientRequestCounts.get(type) ?? 0;
+    },
+    getTimelineRequestCount(direction: "tail" | "before" | "after"): number {
+      return timelineRequestCounts.get(direction) ?? 0;
     },
     getAgentStreamItemCount(type: string): number {
       return agentStreamItemCounts.get(type) ?? 0;

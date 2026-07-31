@@ -1,8 +1,6 @@
-import type { AgentTimelineCursorState } from "@/stores/session-store";
 import {
-  planInitialAgentTimelineSync,
-  planResumeTimelineSync,
   planTimelineCatchUpAfter,
+  planTimelineTailFetch,
   type ProjectedTimelineForwardFetchPlan,
 } from "./timeline-sync-plan";
 
@@ -14,8 +12,6 @@ interface TimelinePageResult {
 interface ViewedTimelineSyncPorts {
   initialDeliveryMode: TimelineDeliveryMode;
   setSubscription(agentIds: string[]): Promise<void>;
-  readCursor(agentId: string): AgentTimelineCursorState | undefined;
-  hasAuthoritativeHistory(agentId: string): boolean;
   fetchPage(
     agentId: string,
     request: ProjectedTimelineForwardFetchPlan,
@@ -62,19 +58,29 @@ function isSameCatchUpRequest(
   return left.cursor.epoch === right.cursor.epoch && left.cursor.seq === right.cursor.seq;
 }
 
-function shouldKeepCurrentCatchUp(input: {
+type CatchUpDecision = "keep" | "keep-and-park" | "replace";
+
+function decideCatchUp(input: {
   current: CatchUpState | undefined;
-  request: ProjectedTimelineForwardFetchPlan | undefined;
+  request: ProjectedTimelineForwardFetchPlan;
   supersede: boolean;
-}): boolean {
-  if (!input.current) return false;
+}): CatchUpDecision {
+  if (!input.current) return "replace";
   if (input.supersede) {
-    return (
+    if (
       input.current.status === "running" &&
       isSameCatchUpRequest(input.current.request, input.request)
-    );
+    ) {
+      return "keep";
+    }
+    if (input.current.status === "running" && input.current.request?.direction === "tail") {
+      return "keep-and-park";
+    }
+    return "replace";
   }
-  return input.current.status === "running" || input.current.status === "complete";
+  return input.current.status === "running" || input.current.status === "complete"
+    ? "keep"
+    : "replace";
 }
 
 function normalizeAgentIds(agentIds: string[]): string[] {
@@ -89,6 +95,8 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
   const sources = new Map<string, string[]>();
   const catchUps = new Map<string, CatchUpState>();
   const catchUpGenerations = new Map<string, number>();
+  // Recovery owed but not runnable yet: disconnected, unacknowledged, or parked behind a tail.
+  // Acknowledgement and tail completion are the only drain points.
   const pendingGaps = new Map<string, ProjectedTimelineForwardFetchPlan>();
   const lingeringRemovals = new Map<string, () => void>();
   const visibilityCatchUpPending = new Set<string>();
@@ -174,6 +182,11 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
         throw new Error(`Timeline page for ${agentId} hasNewer without an end cursor`);
       }
       catchUps.set(agentId, { generation, status: "complete" });
+      const pendingGap = pendingGaps.get(agentId);
+      if (pendingGap) {
+        startCatchUp(agentId, { request: pendingGap, supersede: true });
+        return;
+      }
       setVisibilityCatchUpReady(agentId);
     } catch (error) {
       if (catchUps.get(agentId)?.generation === generation) {
@@ -201,21 +214,21 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       if (request) pendingGaps.set(agentId, request);
       return;
     }
+    const nextRequest = request ?? planTimelineTailFetch();
     const current = catchUps.get(agentId);
-    if (shouldKeepCurrentCatchUp({ current, request, supersede })) {
+    const decision = decideCatchUp({ current, request: nextRequest, supersede });
+    if (decision === "keep-and-park") {
+      pendingGaps.set(agentId, nextRequest);
+      return;
+    }
+    if (decision === "keep") {
       return;
     }
     current?.cancelRetry?.();
     const generation = (catchUpGenerations.get(agentId) ?? 0) + 1;
     catchUpGenerations.set(agentId, generation);
-    catchUps.set(agentId, { generation, status: "running", request });
+    catchUps.set(agentId, { generation, status: "running", request: nextRequest });
     pendingGaps.delete(agentId);
-    const cursor = ports.readCursor(agentId);
-    const nextRequest =
-      request ??
-      (ports.hasAuthoritativeHistory(agentId)
-        ? planResumeTimelineSync({ cursor })
-        : planInitialAgentTimelineSync({ cursor, hasAuthoritativeHistory: false }));
     void fetchUntilCurrent(agentId, generation, nextRequest);
   };
 

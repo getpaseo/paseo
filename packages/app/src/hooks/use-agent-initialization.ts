@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
+import { useSessionStore } from "@/stores/session-store";
 import {
   createInitDeferred,
   getInitDeferred,
@@ -11,7 +11,7 @@ import {
   refreshInitTimeout,
 } from "@/utils/agent-initialization";
 import { getHostRuntimeStore, type HostRuntimeStore } from "@/runtime/host-runtime";
-import { planInitialAgentTimelineSync, planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
+import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import { i18n } from "@/i18n/i18next";
 
 export type SetAgentInitializing = (agentId: string, initializing: boolean) => void;
@@ -51,11 +51,7 @@ export function ensureAgentIsInitialized(input: EnsureAgentIsInitializedInput): 
     return existing.promise;
   }
 
-  const session = useSessionStore.getState().sessions[serverId];
-  const timeline = selectAgentTimelineState(session, agentId);
-  const cursor = timeline.status === "synced" ? (timeline.range ?? undefined) : undefined;
-  const hasAuthoritativeHistory = timeline.status === "synced";
-  const timelineRequest = planInitialAgentTimelineSync({ cursor, hasAuthoritativeHistory });
+  const timelineRequest = planTimelineTailFetch();
 
   const deferred = createInitDeferred(key, timelineRequest.direction);
   refreshAgentInitializationTimeout({ key, agentId, setAgentInitializing });

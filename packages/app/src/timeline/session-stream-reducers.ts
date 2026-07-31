@@ -75,6 +75,7 @@ export interface ProcessTimelineResponseInput {
     direction: TimelineDirection;
     reset: boolean;
     epoch: string;
+    window: { minSeq: number; maxSeq: number; nextSeq: number };
     startCursor: { seq: number } | null;
     endCursor: { seq: number } | null;
     entries: TimelineResponseEntry[];
@@ -92,10 +93,12 @@ export interface ProcessTimelineResponseInput {
 }
 
 export interface ProcessTimelineResponseOutput {
+  commit: "apply" | "discard";
   tail: StreamItem[];
   head: StreamItem[];
   cursor: TimelineCursor | null | undefined;
   cursorChanged: boolean;
+  older: "available" | "none" | "unchanged";
   initResolution: "resolve" | "reject" | null;
   clearInitializing: boolean;
   error: string | null;
@@ -116,6 +119,7 @@ interface TimelinePathResult {
   head: StreamItem[];
   cursor: TimelineCursor | null | undefined;
   cursorChanged: boolean;
+  older: "available" | "none" | "unchanged";
   sideEffects: TimelineReducerSideEffect[];
   acknowledgedClientMessageIds: string[];
 }
@@ -175,6 +179,39 @@ function deriveBootstrapTailTimelinePolicy({
     replace: true,
     catchUpCursor: endCursor ? { epoch, endSeq: endCursor.seq } : null,
   };
+}
+
+type ResumeTailPolicy =
+  | { kind: "not_resume" }
+  | { kind: "discard" }
+  | { kind: "append" }
+  | { kind: "replace"; preserveContinuity: boolean };
+
+function deriveResumeTailPolicy(input: {
+  direction: TimelineDirection;
+  reset: boolean;
+  epoch: string;
+  windowMaxSeq: number;
+  pageStartSeq: number | null;
+  currentCursor: TimelineCursor | undefined;
+  bootstrapReplace: boolean;
+}): ResumeTailPolicy {
+  if (input.direction !== "tail" || input.reset || input.bootstrapReplace || !input.currentCursor) {
+    return { kind: "not_resume" };
+  }
+  if (input.currentCursor.epoch !== input.epoch) {
+    return { kind: "replace", preserveContinuity: false };
+  }
+  if (input.windowMaxSeq === input.currentCursor.endSeq) {
+    return { kind: "discard" };
+  }
+  if (input.windowMaxSeq < input.currentCursor.endSeq) {
+    return { kind: "replace", preserveContinuity: false };
+  }
+  if (input.pageStartSeq !== null && input.pageStartSeq <= input.currentCursor.endSeq + 1) {
+    return { kind: "append" };
+  }
+  return { kind: "replace", preserveContinuity: true };
 }
 
 function shouldResolveTimelineInit({
@@ -255,6 +292,7 @@ function applyTimelineReplacePath(args: {
     head,
     cursor,
     cursorChanged: true,
+    older: payload.hasOlder ? "available" : "none",
     sideEffects,
     acknowledgedClientMessageIds,
   };
@@ -340,7 +378,7 @@ function acceptOlderTimelineUnits(args: {
   if (
     responseStartSeq === undefined ||
     responseEndSeq === undefined ||
-    responseEndSeq >= currentCursor.startSeq
+    responseEndSeq !== currentCursor.startSeq - 1
   ) {
     return { acceptedUnits: [], cursor: currentCursor, gapCursor: null };
   }
@@ -733,6 +771,7 @@ function applyTimelineIncrementalPath(args: {
   let nextHead = currentHead;
   let nextCursor: TimelineCursor | null | undefined = currentCursor;
   let cursorChanged = false;
+  let older: TimelinePathResult["older"] = "unchanged";
   const sideEffects: TimelineReducerSideEffect[] = [];
   let acknowledgedClientMessageIds: string[] = [];
 
@@ -742,6 +781,7 @@ function applyTimelineIncrementalPath(args: {
       head: nextHead,
       cursor: nextCursor,
       cursorChanged,
+      older,
       sideEffects,
       acknowledgedClientMessageIds,
     };
@@ -762,6 +802,7 @@ function applyTimelineIncrementalPath(args: {
 
   if (acceptedUnits.length > 0) {
     if (payload.direction === "before") {
+      older = payload.hasOlder ? "available" : "none";
       const olderTail = hydrateStreamState(
         acceptedUnits.map(({ event, timestamp, seqEnd }) => ({
           event,
@@ -805,6 +846,7 @@ function applyTimelineIncrementalPath(args: {
     head: nextHead,
     cursor: nextCursor,
     cursorChanged,
+    older,
     sideEffects,
     acknowledgedClientMessageIds,
   };
@@ -829,10 +871,12 @@ export function processTimelineResponse(
   // ------------------------------------------------------------------
   if (payload.error) {
     return {
+      commit: "apply",
       tail: currentTail,
       head: currentHead,
       cursor: currentCursor,
       cursorChanged: false,
+      older: "unchanged",
       initResolution: hasActiveInitDeferred ? "reject" : null,
       clearInitializing: isInitializing,
       error: payload.error,
@@ -885,24 +929,56 @@ export function processTimelineResponse(
   });
   const replace = bootstrapPolicy.replace;
   const sideEffects: TimelineReducerSideEffect[] = [];
-  const timelineResult = replace
-    ? applyTimelineReplacePath({
-        timelineUnits,
-        payload,
-        bootstrapPolicy,
-        currentTail,
-        currentHead,
-        sendingClientMessageIds,
-        preserveContinuity: currentCursor?.epoch === payload.epoch || !payload.reset,
-        toHydratedEvents,
-      })
-    : applyTimelineIncrementalPath({
-        timelineUnits,
-        payload,
-        currentTail,
-        currentHead,
-        currentCursor,
-      });
+  const resumeTailPolicy = deriveResumeTailPolicy({
+    direction: payload.direction,
+    reset: payload.reset,
+    epoch: payload.epoch,
+    windowMaxSeq: payload.window.maxSeq,
+    pageStartSeq: payload.startCursor?.seq ?? null,
+    currentCursor,
+    bootstrapReplace: replace,
+  });
+  const discard = resumeTailPolicy.kind === "discard";
+  let timelineResult: TimelinePathResult;
+  if (discard) {
+    timelineResult = {
+      tail: currentTail,
+      head: currentHead,
+      cursor: currentCursor,
+      cursorChanged: false,
+      older: "unchanged",
+      sideEffects: [],
+      acknowledgedClientMessageIds: [],
+    };
+  } else if (replace || resumeTailPolicy.kind === "replace") {
+    const isResumeReplacement = resumeTailPolicy.kind === "replace";
+    timelineResult = applyTimelineReplacePath({
+      timelineUnits,
+      payload,
+      bootstrapPolicy: isResumeReplacement
+        ? { replace: true, catchUpCursor: null }
+        : bootstrapPolicy,
+      currentTail,
+      currentHead,
+      sendingClientMessageIds,
+      preserveContinuity: isResumeReplacement
+        ? resumeTailPolicy.preserveContinuity
+        : currentCursor?.epoch === payload.epoch || !payload.reset,
+      toHydratedEvents,
+    });
+  } else {
+    const incrementalUnits =
+      resumeTailPolicy.kind === "append" && currentCursor
+        ? timelineUnits.filter((unit) => unit.seqEnd > currentCursor.endSeq)
+        : timelineUnits;
+    timelineResult = applyTimelineIncrementalPath({
+      timelineUnits: incrementalUnits,
+      payload,
+      currentTail,
+      currentHead,
+      currentCursor,
+    });
+  }
 
   const nextTail = timelineResult.tail;
   const nextHead = timelineResult.head;
@@ -934,10 +1010,12 @@ export function processTimelineResponse(
   const initResolution: "resolve" | "reject" | null = shouldResolveDeferredInit ? "resolve" : null;
 
   return {
+    commit: discard ? "discard" : "apply",
     tail: nextTail,
     head: nextHead,
     cursor: nextCursor,
     cursorChanged,
+    older: timelineResult.older,
     initResolution,
     clearInitializing,
     error: null,

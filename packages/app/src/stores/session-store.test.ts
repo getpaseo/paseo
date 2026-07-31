@@ -134,6 +134,37 @@ describe("agent timeline state", () => {
     ).toEqual({ status: "synced", items: [], range: null, older: "none" });
   });
 
+  it("preserves older availability when an applied response leaves it unchanged", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+    store.applyAgentTimelineResponseState("test-server", "agent-1", {
+      items: [],
+      head: [],
+      range: { epoch: "epoch-1", startSeq: 200, endSeq: 240 },
+      older: "available",
+      synchronized: true,
+      acknowledgedClientMessageIds: [],
+    });
+
+    store.applyAgentTimelineResponseState("test-server", "agent-1", {
+      items: [],
+      head: [],
+      range: { epoch: "epoch-1", startSeq: 200, endSeq: 240 },
+      older: "unchanged",
+      synchronized: false,
+      acknowledgedClientMessageIds: [],
+    });
+
+    expect(
+      selectAgentTimelineState(useSessionStore.getState().sessions["test-server"], "agent-1"),
+    ).toEqual({
+      status: "synced",
+      items: [],
+      range: { epoch: "epoch-1", startSeq: 200, endSeq: 240 },
+      older: "available",
+    });
+  });
+
   it("lets a later running directory transition raise but never lower an open turn", () => {
     initializeTestSession();
     const store = useSessionStore.getState();

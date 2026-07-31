@@ -16,8 +16,9 @@ interface LongTimelineAgentOptions {
   turns: number;
 }
 
-interface LongTimelineAgent extends MockAgentWorkspace {
+export interface LongTimelineAgent extends MockAgentWorkspace {
   firstOlderPagePrompt: string;
+  initialTailAnchorPrompt: string;
   initialTailOldestPrompt: string;
   oldestPrompt: string;
   newestPrompt: string;
@@ -34,6 +35,12 @@ const HISTORY_START_THRESHOLD_PX = 96;
 interface TimelineViewportSnapshot {
   scrollHeight: number;
   scrollTop: number;
+}
+
+export interface TimelinePresentationSnapshot {
+  marker: string;
+  position: TimelinePromptPositionSnapshot;
+  viewport: TimelineViewportSnapshot;
 }
 
 interface TimelinePromptPositionSnapshot {
@@ -74,6 +81,7 @@ export async function seedLongMockAgentTimeline(
   return {
     ...agent,
     firstOlderPagePrompt: promptForTurn(Math.max(0, options.turns - 40)),
+    initialTailAnchorPrompt: promptForTurn(Math.max(0, options.turns - 5)),
     initialTailOldestPrompt: promptForTurn(Math.max(0, options.turns - 20)),
     oldestPrompt: promptForTurn(0),
     newestPrompt: promptForTurn(options.turns - 1),
@@ -276,6 +284,43 @@ export async function holdOlderHistoryPages(
 
 export async function rememberTimelineViewport(page: Page): Promise<TimelineViewportSnapshot> {
   return readTimelineViewport(page);
+}
+
+export async function scrollTimelinePromptIntoView(page: Page, prompt: string): Promise<void> {
+  const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+  const row = timeline.getByTestId("user-message").filter({ hasText: prompt });
+  await row.scrollIntoViewIfNeeded();
+  await expect(row).toBeVisible();
+  await expect
+    .poll(async () => (await readTimelineViewport(page)).scrollTop)
+    .toBeGreaterThan(HISTORY_START_THRESHOLD_PX);
+}
+
+export async function rememberTimelinePresentation(
+  page: Page,
+  prompt: string,
+): Promise<TimelinePresentationSnapshot> {
+  const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+  const row = timeline.getByTestId("user-message").filter({ hasText: prompt });
+  await expect(row).toBeVisible();
+  const marker = `timeline-presentation-${Date.now()}`;
+  await row.evaluate((element, value) => {
+    element.dataset.timelinePresentation = value;
+  }, marker);
+  return {
+    marker,
+    position: await rememberTimelinePromptPosition(page, prompt),
+    viewport: await rememberTimelineViewport(page),
+  };
+}
+
+export async function expectTimelinePresentationUnchanged(
+  page: Page,
+  before: TimelinePresentationSnapshot,
+): Promise<void> {
+  await expect(page.locator(`[data-timeline-presentation="${before.marker}"]`)).toBeVisible();
+  await expectTimelinePromptPositionPreserved(page, before.position);
+  await expect.poll(async () => rememberTimelineViewport(page)).toEqual(before.viewport);
 }
 
 export async function expectTimelineViewportAnchoredAfterPrepend(

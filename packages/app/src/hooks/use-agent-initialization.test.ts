@@ -49,7 +49,7 @@ afterEach(() => {
 });
 
 describe("ensureAgentIsInitialized", () => {
-  it("requests bounded projected catch-up after the current cursor when authoritative history is loaded", () => {
+  it("requests a bounded projected tail when authoritative history is loaded", () => {
     const client = new FakeDaemonClient();
     const runtime = new FakeTimelineRuntime();
     useSessionStore.getState().initializeSession(serverId, client as never);
@@ -74,14 +74,13 @@ describe("ensureAgentIsInitialized", () => {
         serverId,
         agentId,
         request: {
-          direction: "after",
-          cursor: { epoch: "epoch-1", seq: 42 },
+          direction: "tail",
           limit: TIMELINE_FETCH_PAGE_SIZE,
           projection: "projected",
         },
       },
     ]);
-    expect(getInitDeferred(getInitKey(serverId, agentId))?.requestDirection).toBe("after");
+    expect(getInitDeferred(getInitKey(serverId, agentId))?.requestDirection).toBe("tail");
   });
 
   it("requests a bounded projected tail when no authoritative cursor is available", () => {

@@ -5,9 +5,11 @@ Agent chat delivery has two paths:
 1. **Live stream** — `agent_stream` WebSocket messages for immediacy. These may be delta-shaped lifecycle updates.
 2. **Authoritative history** — `fetch_agent_timeline_request` for correctness. This always returns full projected timeline items, never lifecycle deltas.
 
-The invariant is:
+The invariants are:
 
-> If the daemon has committed timeline rows for an agent, any connected client that opens or resumes that agent eventually displays every row through the daemon's current tail.
+> A continuously subscribed client applies every committed row in order. Opening or resuming an
+> agent establishes the daemon's current tail in one bounded request, with older history reachable
+> through backward pagination.
 
 Tool output is bounded before it enters either delivery path. Canonical shell tool output is sliced
 to 64 KiB, and the same bounded item is used for durable timeline rows and live stream events.
@@ -25,17 +27,20 @@ Client heartbeat reports presence:
 
 Heartbeat is used for notification routing. It must not be used as a correctness gate for `agent_stream` delivery. A stale mobile focus heartbeat may affect whether the user gets notified; it must not make timeline rows disappear from the live stream.
 
-## Catch-up is paged but complete
+## Gap recovery is paged but complete
 
 Large unbounded timeline responses can exceed relay frame limits, so catch-up uses bounded pages. Bounded does not mean partial.
 
 Page limits are projected-item targets. A tool call lifecycle is one projected item even if it spans many source sequence numbers, and assistant/reasoning chunks are merged before counting. The response carries `seqStart`, `seqEnd`, `sourceSeqRanges`, and `collapsed` so clients can advance sequence cursors without rendering delta rows.
 
-When the app fetches `direction: "after"` and the daemon responds with `hasNewer: true`, the app must immediately fetch the next page from `endCursor`. The catch-up is complete only when `hasNewer: false`.
+When live delivery detects a sequence gap, the app fetches `direction: "after"`. If the daemon
+responds with `hasNewer: true`, the app immediately fetches the next page from `endCursor`. Gap
+recovery is complete only when `hasNewer: false`.
 
 Initialization timeouts guard lack of catch-up progress, not the full multi-page sync. A successful page that queues the next `after` page refreshes the watchdog.
 
-The first load of an agent without a local cursor is different: it fetches a bounded latest tail page. Older history remains user-driven by scrolling upward.
+Opening or resuming an agent fetches one bounded latest tail page. Older history remains
+user-driven by scrolling upward.
 
 Reaching the history-start threshold loads one older page and preserves the visible content anchor.
 Cursor progress does not trigger another page. The user must leave and return to the threshold unless
@@ -53,9 +58,21 @@ The daemon validates that the epoch is current and the exact source sequence sti
 
 ## Resume behavior
 
-When a client resumes with a known cursor, it catches up after that cursor to completion. It does not replace the view with a latest tail page, because tail pagination can skip the middle of a long background run.
+Opening, reconnecting, or revisiting after selective-delivery grace fetches the latest tail page.
+Focus alone does not mutate timeline state; the tail response is compared with the local
+authoritative range first.
 
-When a client resumes without a cursor, it fetches the latest tail page.
+- The same epoch and `window.maxSeq` is an exact display no-op. The app advances synchronization
+  bookkeeping without replacing timeline arrays, preserving an upward-scrolled viewport.
+- When the page overlaps or is adjacent to the local end cursor, only projected items newer than
+  that cursor are applied. Already-covered rows are not replayed.
+- A true middle gap, epoch change, or rewind atomically replaces stale canonical history with the
+  latest tail. The replacement reconciles positioned live rows beyond its coverage and unresolved
+  local submissions; it never retains two discontiguous canonical ranges.
+
+The installed tail carries `hasOlder`, so history skipped by a replacement remains reachable through
+ordinary backward pagination. A backward page is accepted only when it is adjacent to the current
+history start; a response requested from a pre-replacement range is stale and is discarded.
 
 ## Client replica lifetime
 
