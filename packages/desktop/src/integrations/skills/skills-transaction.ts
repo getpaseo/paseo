@@ -193,8 +193,8 @@ export async function beginSkillsTransaction(
   targets: SkillTargets,
   previousSelection: SkillSelection,
   nextSelection: SkillSelection,
+  names: readonly string[],
 ): Promise<SkillsTransaction> {
-  const names = await listManagedSkillNames(targets.sourceDir);
   const roots = [targets.agentsDir, targets.claudeDir, targets.codexDir];
   // Staged next to the skills tree rather than inside it: same filesystem, so a
   // restore is a local copy, and never a directory a skill scan walks into.

@@ -1,5 +1,6 @@
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { access } from "node:fs/promises";
+import { watch } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -102,6 +103,17 @@ async function backupArtifacts(targets: SkillTargets): Promise<string[][]> {
       return entries.filter((entry) => entry !== path.basename(dir)).sort();
     }),
   );
+}
+
+async function waitForTransactionDirectory(parent: string): Promise<void> {
+  const events = watch(parent);
+  try {
+    for await (const event of events) {
+      if (event.filename?.startsWith(".paseo-skills-transaction-")) return;
+    }
+  } finally {
+    await events.return?.();
+  }
 }
 
 /** Puts a regular file where the agents skills tree goes, so convergence fails with ENOTDIR. */
@@ -352,7 +364,7 @@ describe("skills controller", () => {
     };
     await harness.controller.save(previous);
     await writeUserFile(harness.targets, "paseo-loop", "notes/mine.md", "hand written");
-    await beginSkillsTransaction(harness.targets, previous, next);
+    await beginSkillsTransaction(harness.targets, previous, next, ["paseo-loop"]);
     for (const root of [
       harness.targets.agentsDir,
       harness.targets.claudeDir,
@@ -381,7 +393,7 @@ describe("skills controller", () => {
       skills: ["paseo"],
     };
     await harness.controller.save(previous);
-    await beginSkillsTransaction(harness.targets, previous, next);
+    await beginSkillsTransaction(harness.targets, previous, next, ["paseo-loop"]);
     for (const root of [
       harness.targets.agentsDir,
       harness.targets.claudeDir,
@@ -448,6 +460,27 @@ describe("skills controller", () => {
       ["paseo", "paseo-advisor", "paseo-chat", "paseo-loop"],
       ["paseo", "paseo-advisor", "paseo-chat", "paseo-loop"],
       ["paseo", "paseo-advisor", "paseo-chat", "paseo-loop"],
+    ]);
+  });
+
+  it("does not commit when a new removal appears while the frozen plan is applying", async () => {
+    const selection: SkillSelection = { mode: "custom", skills: ["paseo"] };
+    await harness.controller.save(selection);
+    await writeFile(path.join(harness.targets.sourceDir, "paseo", "SKILL.md"), "paseo-v2");
+
+    const transactionStarted = waitForTransactionDirectory(path.dirname(harness.targets.agentsDir));
+    const save = harness.controller.save(selection);
+    await transactionStarted;
+    await writeUserFile(harness.targets, "paseo-chat", "notes/mine.md", "hand written");
+
+    const result = await save;
+
+    expect(result.confirmationRequired).toEqual({ removals: ["paseo-chat"] });
+    expect(result.selection).toEqual(selection);
+    expect(await readUserFile(harness.targets, "paseo-chat", "notes/mine.md")).toEqual([
+      "hand written",
+      "hand written",
+      "hand written",
     ]);
   });
 

@@ -41,6 +41,7 @@ export interface SkillsController {
 }
 
 type Converge = (targets: SkillTargets, selection: SkillSelection) => Promise<SkillsStatus>;
+const MAX_SAVE_ATTEMPTS = 3;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -91,30 +92,55 @@ export function createSkillsController({
     // The plan comes from a scan taken here, inside the queue, and is the exact
     // plan applied below. Deciding what will be deleted from an older snapshot
     // leaves a window for a directory to appear and be deleted unannounced.
-    const plan = await getSkillsStatus(targets, next);
-    const removals = plan.ops.filter((op) => op.kind === "delete").map((op) => op.name);
-    if (removals.some((name) => !confirmed.has(name))) {
-      return {
-        ...(await getSkillsStatus(targets, previous)),
-        selection: previous,
-        confirmationRequired: { removals },
-      };
+    let plan = await getSkillsStatus(targets, next);
+    for (let attempt = 0; attempt < MAX_SAVE_ATTEMPTS; attempt += 1) {
+      const removals = plan.ops.filter((op) => op.kind === "delete").map((op) => op.name);
+      if (removals.some((name) => !confirmed.has(name))) {
+        return {
+          ...(await getSkillsStatus(targets, previous)),
+          selection: previous,
+          confirmationRequired: { removals },
+        };
+      }
+
+      // Capture only paths this frozen plan can mutate. Capturing every managed
+      // path would make rollback delete a new external directory that appeared
+      // after the scan merely because it was absent from the snapshot.
+      const transaction = await beginSkillsTransaction(
+        targets,
+        previous,
+        next,
+        plan.ops.map((op) => op.name),
+      );
+      let status: SkillsStatus;
+      try {
+        status = await installSkills(targets, next, plan);
+      } catch (error) {
+        await transaction.rollback();
+        throw error;
+      }
+
+      // An empty custom selection converges to the intentional not-installed
+      // state; zero remaining operations is the invariant, not the label.
+      if (status.ops.length === 0) {
+        try {
+          await selectionStore.set(next);
+        } catch (error) {
+          await transaction.rollback();
+          throw error;
+        }
+        await transaction.commit();
+        return { ...status, selection: next, confirmationRequired: null };
+      }
+
+      // The frozen plan became incomplete while it was being applied. Put only
+      // its mutations back, rescan, and either request confirmation for a new
+      // deletion or retry harmless additions/updates from the fresh plan.
+      await transaction.rollback();
+      plan = await getSkillsStatus(targets, next);
     }
 
-    // Convergence deletes whole skill directories, so the only way a failed save
-    // can leave the machine as Cancel would is to hold the exact directories
-    // first. Re-installing the committed selection would rebuild the bundled
-    // files and lose whatever the user had put inside them.
-    const transaction = await beginSkillsTransaction(targets, previous, next);
-    try {
-      const status = await installSkills(targets, next, plan);
-      await selectionStore.set(next);
-      await transaction.commit();
-      return { ...status, selection: next, confirmationRequired: null };
-    } catch (error) {
-      await transaction.rollback();
-      throw error;
-    }
+    throw new Error("Skills changed repeatedly while the selection was being saved");
   }
 
   return {
