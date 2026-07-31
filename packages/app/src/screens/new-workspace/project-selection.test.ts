@@ -85,6 +85,7 @@ describe("reconcileProjectSelection", () => {
     const current: ProjectSelection = {
       contextKey: "previous-route",
       project: manual,
+      originProject: manual,
       source: "manual",
     };
     const nextContext = context({
@@ -216,6 +217,7 @@ describe("reconcileProjectSelection", () => {
     const current: ProjectSelection = {
       contextKey: "",
       project: manual,
+      originProject: manual,
       source: "manual",
     };
     const afterRememberedHydration = context({
@@ -227,13 +229,14 @@ describe("reconcileProjectSelection", () => {
     expect(reconcileProjectSelection(current, afterRememberedHydration)).toEqual(current);
   });
 
-  it("moves a manual selection to an equivalent project on another host", () => {
+  it("resolves a manual selection on another host while retaining its origin snapshot", () => {
     const selected = project("shared", "host-a");
     const equivalent = project("shared", "host-b");
     const fallback = project("fallback", "host-b");
     const current: ProjectSelection = {
       contextKey: "",
       project: selected,
+      originProject: selected,
       source: "manual",
     };
     const nextHost = context({
@@ -242,11 +245,15 @@ describe("reconcileProjectSelection", () => {
       projects: [fallback, equivalent],
     });
 
-    expect(reconcileProjectSelection(current, nextHost)).toEqual({
+    const reconciled = reconcileProjectSelection(current, nextHost);
+
+    expect(reconciled).toEqual({
       contextKey: "",
       project: equivalent,
+      originProject: selected,
       source: "manual",
     });
+    expect(resolveProjectSelection(reconciled, nextHost)).toBe(equivalent);
   });
 
   it("ignores a stale placement view collision and selects the persisted equivalent", () => {
@@ -263,6 +270,7 @@ describe("reconcileProjectSelection", () => {
     const current: ProjectSelection = {
       contextKey: "",
       project: selected,
+      originProject: selected,
       source: "manual",
     };
     const nextHost = context({
@@ -271,11 +279,15 @@ describe("reconcileProjectSelection", () => {
       projects: [unrelated, equivalent],
     });
 
-    expect(reconcileProjectSelection(current, nextHost)).toEqual({
+    const reconciled = reconcileProjectSelection(current, nextHost);
+
+    expect(reconciled).toEqual({
       contextKey: "",
       project: equivalent,
+      originProject: selected,
       source: "manual",
     });
+    expect(resolveProjectSelection(reconciled, nextHost)).toBe(equivalent);
   });
 
   it("chooses the same equivalent clone regardless of input order", () => {
@@ -301,20 +313,102 @@ describe("reconcileProjectSelection", () => {
     const current: ProjectSelection = {
       contextKey: "",
       project: selected,
+      originProject: selected,
       source: "manual",
     };
-    const reconcile = (projects: HostProjectListItem[]) =>
-      reconcileProjectSelection(
-        current,
-        context({
-          selectedServerId: "host-b",
-          initialProject: cloneB,
-          projects,
-        }),
-      );
+    const resolve = (projects: HostProjectListItem[]) => {
+      const nextHost = context({
+        selectedServerId: "host-b",
+        initialProject: cloneB,
+        projects,
+      });
+      return resolveProjectSelection(reconcileProjectSelection(current, nextHost), nextHost);
+    };
 
-    expect(reconcile([cloneB, cloneA]).project).toBe(cloneA);
-    expect(reconcile([cloneA, cloneB]).project).toBe(cloneA);
+    expect(resolve([cloneB, cloneA])).toBe(cloneA);
+    expect(resolve([cloneA, cloneB])).toBe(cloneA);
+  });
+
+  it("restores the exact manually selected clone after switching away and back", () => {
+    const selected = {
+      ...project("shared", "host-a"),
+      viewKey: "view:host-a:selected",
+      hosts: [
+        {
+          serverId: "host-a",
+          projectId: "prj_b",
+          iconWorkingDir: "/work/selected",
+          canCreateWorktree: true,
+        },
+      ],
+    };
+    const sibling = {
+      ...selected,
+      viewKey: "view:host-a:sibling",
+      hosts: [{ ...selected.hosts[0]!, projectId: "prj_a", iconWorkingDir: "/work/sibling" }],
+    };
+    const destination = project("shared", "host-b");
+    const current: ProjectSelection = {
+      contextKey: "",
+      project: selected,
+      originProject: selected,
+      source: "manual",
+    };
+    const otherHost = context({
+      selectedServerId: "host-b",
+      initialProject: destination,
+      projects: [destination],
+    });
+
+    const retained = reconcileProjectSelection(current, otherHost);
+    expect(retained).toEqual({
+      contextKey: "",
+      project: destination,
+      originProject: selected,
+      source: "manual",
+    });
+    expect(resolveProjectSelection(retained, otherHost)).toBe(destination);
+
+    const originHost = context({
+      selectedServerId: "host-a",
+      initialProject: sibling,
+      projects: [sibling, selected],
+    });
+    const restored = reconcileProjectSelection(retained, originHost);
+
+    expect(restored.project).toBe(selected);
+    expect(restored.source === "manual" ? restored.originProject : null).toBe(selected);
+    expect(resolveProjectSelection(restored, originHost)).toBe(selected);
+  });
+
+  it("preserves the current destination clone during its pending archive gap", () => {
+    const selected = project("shared", "host-a");
+    const destination = {
+      ...project("shared", "host-b"),
+      workspaceKeys: ["host-b:workspace"],
+    };
+    const fallback = project("fallback", "host-b");
+    const current: ProjectSelection = {
+      contextKey: "",
+      project: selected,
+      originProject: selected,
+      source: "manual",
+    };
+    const destinationHost = context({
+      selectedServerId: "host-b",
+      initialProject: fallback,
+      projects: [fallback, destination],
+    });
+    const resolvedDestination = reconcileProjectSelection(current, destinationHost);
+    const archiveGap = context({
+      selectedServerId: "host-b",
+      initialProject: fallback,
+      projects: [fallback],
+      shouldPreserveMissingProject: (candidate) => candidate === destination,
+    });
+
+    expect(reconcileProjectSelection(resolvedDestination, archiveGap)).toBe(resolvedDestination);
+    expect(resolveProjectSelection(resolvedDestination, archiveGap)).toBe(destination);
   });
 
   it("falls back when the only equivalent project is not selectable", () => {
@@ -334,6 +428,7 @@ describe("reconcileProjectSelection", () => {
     const current: ProjectSelection = {
       contextKey: "",
       project: selected,
+      originProject: selected,
       source: "manual",
     };
     const selectableProjects = filterWorkspaceProjectsForHost({
@@ -361,6 +456,7 @@ describe("reconcileProjectSelection", () => {
     const current: ProjectSelection = {
       contextKey: "",
       project: selected,
+      originProject: selected,
       source: "manual",
     };
 
@@ -427,6 +523,7 @@ describe("reconcileProjectSelection", () => {
         routeProjectViewKey: null,
       }),
       project: manual,
+      originProject: manual,
       source: "manual",
     };
     const afterCapabilityHydration = context({
@@ -519,6 +616,7 @@ describe("reconcileProjectSelection", () => {
     const current: ProjectSelection = {
       contextKey: routeProject.viewKey,
       project: manual,
+      originProject: manual,
       source: "manual",
     };
     const selectionContext = context({

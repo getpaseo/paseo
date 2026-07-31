@@ -7,11 +7,20 @@ import {
 export type ProjectSelectionSource = "initial" | "manual";
 export type InitialProjectSelectionSource = "route" | "lastActive" | "fallback" | null;
 
-export interface ProjectSelection {
+interface InitialProjectSelection {
   contextKey: string;
   project: HostProjectListItem | null;
-  source: ProjectSelectionSource;
+  source: "initial";
 }
+
+interface ManualProjectSelection {
+  contextKey: string;
+  project: HostProjectListItem;
+  originProject: HostProjectListItem;
+  source: "manual";
+}
+
+export type ProjectSelection = InitialProjectSelection | ManualProjectSelection;
 
 export interface ProjectSelectionContext {
   contextKey: string;
@@ -129,6 +138,17 @@ export function resolveProjectSelection(
     return null;
   }
 
+  if (selection.source === "manual") {
+    const exactOriginProject = resolveExactHostProjectCandidate({
+      candidate: selection.originProject,
+      projects: context.projects,
+      serverId: context.selectedServerId,
+    });
+    if (exactOriginProject) {
+      return exactOriginProject;
+    }
+  }
+
   const exactProject = resolveExactHostProjectCandidate({
     candidate: selection.project,
     projects: context.projects,
@@ -171,6 +191,38 @@ export function reconcileProjectSelection(
 
   if (shouldResetHydratedInitialSelection(current, context)) {
     return initialSelection;
+  }
+
+  if (!current.project) {
+    return initialSelection;
+  }
+
+  if (current.source === "manual") {
+    const exactOriginProject = resolveExactHostProjectCandidate({
+      candidate: current.originProject,
+      projects: context.projects,
+      serverId: context.selectedServerId,
+    });
+    if (exactOriginProject) {
+      return {
+        ...current,
+        project: exactOriginProject,
+        originProject: exactOriginProject,
+      };
+    }
+  }
+
+  const exactProject = resolveExactHostProjectCandidate({
+    candidate: current.project,
+    projects: context.projects,
+    serverId: context.selectedServerId,
+  });
+  if (exactProject) {
+    return refreshSelectionProject(current, exactProject);
+  }
+
+  if (context.shouldPreserveMissingProject(current.project)) {
+    return current;
   }
 
   const resolvedProject = resolveProjectSelection(current, context);
