@@ -1727,7 +1727,9 @@ export const en = {
   },
   liveVoice: {
     label: "Live voice",
-    scope: "Global across the app",
+    menu: {
+      hosts: "Host",
+    },
     actions: {
       start: "Start live voice",
       startForeground: "Start foreground",
@@ -1751,7 +1753,23 @@ export const en = {
       connecting: "Connecting to hosts. Live voice will appear when one is ready.",
       offline: "No hosts are online. Connect to a host to use live voice.",
       upgrade: "Connected hosts do not advertise live voice. Update their daemons.",
-      debug: "Debug: {{details}}",
+    },
+    diagnostics: {
+      title: "Live voice",
+      statusTitle: "Status",
+      noHosts: "No hosts configured.",
+      hostSummary: "{{version}} · {{support}}",
+      unknownVersion: "Version unknown",
+      supported: "Live voice supported",
+      unsupported: "Live voice not supported",
+      supportUnknown: "Live voice support unknown",
+      connection: {
+        idle: "Idle",
+        connecting: "Connecting",
+        online: "Online",
+        offline: "Offline",
+        error: "Error",
+      },
     },
     status: {
       connecting: "Connecting...",

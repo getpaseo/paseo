@@ -1734,7 +1734,9 @@ export const ja: TranslationResources = {
   },
   liveVoice: {
     label: "ライブ音声",
-    scope: "アプリ全体で利用できます",
+    menu: {
+      hosts: "ホスト",
+    },
     actions: {
       start: "ライブ音声を開始",
       startForeground: "フォアグラウンドで開始",
@@ -1758,7 +1760,23 @@ export const ja: TranslationResources = {
       connecting: "ホストに接続中です。準備ができるとライブ音声が表示されます。",
       offline: "オンラインのホストがありません。ライブ音声を使うにはホストに接続してください。",
       upgrade: "接続中のホストはライブ音声に対応していません。デーモンを更新してください。",
-      debug: "デバッグ: {{details}}",
+    },
+    diagnostics: {
+      title: "ライブ音声",
+      statusTitle: "ステータス",
+      noHosts: "ホストが設定されていません。",
+      hostSummary: "{{version}} · {{support}}",
+      unknownVersion: "バージョン不明",
+      supported: "ライブ音声に対応",
+      unsupported: "ライブ音声に非対応",
+      supportUnknown: "ライブ音声の対応状況は不明",
+      connection: {
+        idle: "待機中",
+        connecting: "接続中",
+        online: "オンライン",
+        offline: "オフライン",
+        error: "エラー",
+      },
     },
     status: {
       connecting: "接続中...",

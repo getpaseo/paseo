@@ -45,6 +45,7 @@ import { type SidebarGroupMode, useSidebarViewStore } from "@/stores/sidebar-vie
 import { useHosts } from "@/runtime/host-runtime";
 import { usePanelStore } from "@/stores/panel-store";
 import { useOwnsWindowChromeCorner, WindowChromeSafeArea } from "@/utils/desktop-window";
+import { LiveVoiceFooterButton } from "@/live-voice/live-voice-footer-button";
 import { SidebarLiveVoiceSlot } from "@/live-voice/live-voice-sidebar-card";
 import { useCloseAgentListGesture } from "@/mobile-panels/gestures";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
@@ -483,6 +484,7 @@ function SidebarFooter({
           onAddHost={handleAddHost}
           onOpenHostSettings={handleOpenHostSettings}
         />
+        <LiveVoiceFooterButton />
         <FooterIconButton
           onPress={handleImportSession}
           testID="sidebar-import-session"

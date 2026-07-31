@@ -1717,7 +1717,9 @@ export const ar: TranslationResources = {
   },
   liveVoice: {
     label: "صوت مباشر",
-    scope: "متاح في جميع أنحاء التطبيق",
+    menu: {
+      hosts: "المضيف",
+    },
     actions: {
       start: "بدء الصوت المباشر",
       startForeground: "البدء في المقدمة",
@@ -1741,7 +1743,23 @@ export const ar: TranslationResources = {
       connecting: "جارٍ الاتصال بالمضيفين. سيظهر الصوت المباشر عندما يصبح أحدهم جاهزًا.",
       offline: "لا يوجد مضيف متصل. اتصل بمضيف لاستخدام الصوت المباشر.",
       upgrade: "المضيفون المتصلون لا يعلنون دعم الصوت المباشر. حدّث برامجهم الخدمية.",
-      debug: "تصحيح: {{details}}",
+    },
+    diagnostics: {
+      title: "صوت مباشر",
+      statusTitle: "الحالة",
+      noHosts: "لا توجد مضيفات مهيأة.",
+      hostSummary: "{{version}} · {{support}}",
+      unknownVersion: "الإصدار غير معروف",
+      supported: "الصوت المباشر مدعوم",
+      unsupported: "الصوت المباشر غير مدعوم",
+      supportUnknown: "دعم الصوت المباشر غير معروف",
+      connection: {
+        idle: "خامل",
+        connecting: "جارٍ الاتصال",
+        online: "متصل",
+        offline: "غير متصل",
+        error: "خطأ",
+      },
     },
     status: {
       connecting: "جارٍ الاتصال...",

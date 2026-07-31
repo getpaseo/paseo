@@ -92,6 +92,12 @@ import { useDesktopAppUpdater } from "@/desktop/updates/use-desktop-app-updater"
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
 import { resolveAppVersion } from "@/utils/app-version";
 import { useAppDiagnosticStore } from "@/diagnostics/store";
+import {
+  useLiveVoiceAvailability,
+  useLiveVoiceHostAvailability,
+} from "@/live-voice/live-voice-availability";
+import type { LiveVoiceHostAvailability } from "@/live-voice/live-voice-availability-policy";
+import { resolveLiveVoiceUnavailableMessage } from "@/live-voice/live-voice-unavailable-message";
 import { settingsStyles } from "@/styles/settings";
 import { THINKING_TONE_NATIVE_PCM_BASE64 } from "@/utils/thinking-tone.native-pcm";
 import { useVoiceAudioEngineOptional } from "@/contexts/voice-context";
@@ -584,7 +590,96 @@ function DiagnosticsSection({
           </Button>
         </View>
       </View>
+      <Text style={styles.diagnosticsGroupTitle}>{t("liveVoice.diagnostics.title")}</Text>
+      <LiveVoiceDiagnosticsCard />
     </SettingsSection>
+  );
+}
+
+/**
+ * Why live voice can or cannot start, per host. This is the only place the
+ * per-host facts are shown — the launcher menu stays a short human sentence.
+ */
+function LiveVoiceDiagnosticsCard() {
+  const { t } = useTranslation();
+  const availability = useLiveVoiceAvailability();
+  const hosts = useLiveVoiceHostAvailability();
+
+  const unavailableMessage =
+    availability.kind === "unavailable"
+      ? resolveLiveVoiceUnavailableMessage(availability.reason, t)
+      : null;
+
+  return (
+    <View style={settingsStyles.card} testID="live-voice-diagnostics">
+      {unavailableMessage ? (
+        <View style={settingsStyles.row}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>{t("liveVoice.diagnostics.statusTitle")}</Text>
+            <Text style={settingsStyles.rowHint}>{unavailableMessage}</Text>
+          </View>
+        </View>
+      ) : null}
+      {hosts.length === 0 ? (
+        <View style={[settingsStyles.row, unavailableMessage && settingsStyles.rowBorder]}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowHint}>{t("liveVoice.diagnostics.noHosts")}</Text>
+          </View>
+        </View>
+      ) : (
+        hosts.map((host, index) => (
+          <LiveVoiceDiagnosticsRow
+            key={host.serverId}
+            host={host}
+            showBorder={index > 0 || unavailableMessage !== null}
+          />
+        ))
+      )}
+    </View>
+  );
+}
+
+function LiveVoiceDiagnosticsRow({
+  host,
+  showBorder,
+}: {
+  host: LiveVoiceHostAvailability;
+  showBorder: boolean;
+}) {
+  const { t } = useTranslation();
+  const rowStyle = useMemo(
+    () => [settingsStyles.row, showBorder && settingsStyles.rowBorder],
+    [showBorder],
+  );
+
+  let support: string;
+  if (host.supportsLiveVoice === true) {
+    support = t("liveVoice.diagnostics.supported");
+  } else if (host.supportsLiveVoice === false) {
+    support = t("liveVoice.diagnostics.unsupported");
+  } else {
+    support = t("liveVoice.diagnostics.supportUnknown");
+  }
+
+  return (
+    <View style={rowStyle} testID={`live-voice-diagnostics-${host.serverId}`}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle} numberOfLines={1}>
+          {host.label}
+        </Text>
+        <Text style={settingsStyles.rowHint}>
+          {t("liveVoice.diagnostics.hostSummary", {
+            version: host.version
+              ? formatVersionWithPrefix(host.version)
+              : t("liveVoice.diagnostics.unknownVersion"),
+            support,
+          })}
+        </Text>
+      </View>
+      <Text style={styles.aboutValue}>
+        {t(`liveVoice.diagnostics.connection.${host.connectionStatus}`)}
+      </Text>
+    </View>
   );
 }
 
@@ -1697,6 +1792,13 @@ const styles = StyleSheet.create((theme) => ({
   aboutValue: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
+  },
+  diagnosticsGroupTitle: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    marginTop: theme.spacing[4],
+    marginBottom: theme.spacing[2],
+    marginLeft: theme.spacing[1],
   },
   aboutVersionMismatch: {
     color: theme.colors.palette.amber[500],

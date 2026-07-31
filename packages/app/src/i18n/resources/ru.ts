@@ -1747,7 +1747,9 @@ export const ru: TranslationResources = {
   },
   liveVoice: {
     label: "Живой голос",
-    scope: "Доступно во всём приложении",
+    menu: {
+      hosts: "Хост",
+    },
     actions: {
       start: "Начать живой голос",
       startForeground: "Запустить на переднем плане",
@@ -1771,7 +1773,23 @@ export const ru: TranslationResources = {
       connecting: "Подключение к хостам. Живой голос появится, когда один из них будет готов.",
       offline: "Нет хостов в сети. Подключитесь к хосту, чтобы использовать живой голос.",
       upgrade: "Подключённые хосты не поддерживают живой голос. Обновите их демоны.",
-      debug: "Отладка: {{details}}",
+    },
+    diagnostics: {
+      title: "Живой голос",
+      statusTitle: "Состояние",
+      noHosts: "Хосты не настроены.",
+      hostSummary: "{{version}} · {{support}}",
+      unknownVersion: "Версия неизвестна",
+      supported: "Живой голос поддерживается",
+      unsupported: "Живой голос не поддерживается",
+      supportUnknown: "Поддержка живого голоса неизвестна",
+      connection: {
+        idle: "Ожидание",
+        connecting: "Подключение",
+        online: "В сети",
+        offline: "Не в сети",
+        error: "Ошибка",
+      },
     },
     status: {
       connecting: "Подключение...",
