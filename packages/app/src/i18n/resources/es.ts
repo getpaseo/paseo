@@ -1200,6 +1200,7 @@ export const es: TranslationResources = {
         installFailed: "No se pueden instalar habilidades de orquestación.",
         updateFailed: "No se pueden actualizar las habilidades de orquestación.",
         uninstallFailed: "No se pueden desinstalar las habilidades de orquestación.",
+        saveSelectionFailed: "No se puede guardar la selección de habilidades de orquestación.",
       },
     },
   },
@@ -1912,6 +1913,13 @@ export const es: TranslationResources = {
         uninstallTitle: "¿Desinstalar las habilidadesPaseo?",
         uninstallMessage:
           "Elimina todas las habilidades de orquestaciónPaseode ~/.agents, ~/.claude, ~/.codex.",
+        choose: "Elegir habilidades",
+        chooseAll: "Todas las habilidades",
+        chooseAllHint:
+          "Mantén instaladas todas las habilidades incluidas, también las que se agreguen después.",
+        chooseList: "Habilidades incluidas",
+        chooseEmpty: "Esta versión no incluye habilidades.",
+        saveFailed: "No se pudo guardar tu selección de habilidades.",
       },
       actions: {
         install: "Instalar",
@@ -1920,6 +1928,8 @@ export const es: TranslationResources = {
         update: "Actualizar",
         working: "Laboral...",
         uninstall: "Desinstalar",
+        save: "Guardar",
+        saving: "Guardando...",
       },
       operations: {
         add: "Agregar habilidad",

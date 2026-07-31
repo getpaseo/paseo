@@ -1173,6 +1173,7 @@ export const ja: TranslationResources = {
         installFailed: "オーケストレーションスキルをインストールできません。",
         updateFailed: "オーケストレーションスキルを更新できません。",
         uninstallFailed: "オーケストレーションスキルをアンインストールできません。",
+        saveSelectionFailed: "オーケストレーションスキルの選択を保存できません。",
       },
     },
   },
@@ -1881,6 +1882,13 @@ export const ja: TranslationResources = {
         uninstallTitle: "Paseoスキルをアンインストールしますか？",
         uninstallMessage:
           "~/.agents、~/.claude、~/.codexからすべてのPaseoオーケストレーションスキルを削除します。",
+        choose: "スキルを選択",
+        chooseAll: "すべてのスキル",
+        chooseAllHint:
+          "後から追加されるものも含め、バンドルされたスキルをすべてインストールしたままにします。",
+        chooseList: "バンドルされたスキル",
+        chooseEmpty: "このビルドにはスキルが含まれていません。",
+        saveFailed: "スキルの選択を保存できませんでした。",
       },
       actions: {
         install: "インストール",
@@ -1889,6 +1897,8 @@ export const ja: TranslationResources = {
         update: "更新",
         working: "処理中...",
         uninstall: "アンインストール",
+        save: "保存",
+        saving: "保存中...",
       },
       operations: {
         add: "スキルを追加",

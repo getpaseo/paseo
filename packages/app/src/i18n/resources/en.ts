@@ -1170,6 +1170,7 @@ export const en = {
         installFailed: "Unable to install orchestration skills.",
         updateFailed: "Unable to update orchestration skills.",
         uninstallFailed: "Unable to uninstall orchestration skills.",
+        saveSelectionFailed: "Unable to save the orchestration skills selection.",
       },
     },
   },
@@ -1874,6 +1875,12 @@ export const en = {
         uninstallTitle: "Uninstall Paseo skills?",
         uninstallMessage:
           "Removes all Paseo orchestration skills from ~/.agents, ~/.claude, ~/.codex.",
+        choose: "Choose skills",
+        chooseAll: "All skills",
+        chooseAllHint: "Keep every bundled skill installed, including ones added later.",
+        chooseList: "Bundled skills",
+        chooseEmpty: "This build bundles no skills.",
+        saveFailed: "Could not save your skill selection.",
       },
       actions: {
         install: "Install",
@@ -1882,6 +1889,8 @@ export const en = {
         update: "Update",
         working: "Working...",
         uninstall: "Uninstall",
+        save: "Save",
+        saving: "Saving...",
       },
       operations: {
         add: "Add skill",
