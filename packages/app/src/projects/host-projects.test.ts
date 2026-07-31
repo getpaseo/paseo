@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { HostProjectListItem } from "./host-project-model";
 import {
+  canCreateWorktreeForHostProject,
   canCreateWorkspaceForHostProject,
   getHostProjectId,
   getHostProjectSourceDirectory,
@@ -47,6 +48,24 @@ describe("host project lookups", () => {
         allowAllProjects: false,
       }),
     ).toBe(true);
+  });
+
+  test("checks worktree capability against the selected host placement", () => {
+    const groupedProject = project();
+    groupedProject.hosts[1] = {
+      ...groupedProject.hosts[1]!,
+      canCreateWorktree: false,
+    };
+
+    expect(canCreateWorktreeForHostProject({ project: groupedProject, serverId: "host-a" })).toBe(
+      true,
+    );
+    expect(canCreateWorktreeForHostProject({ project: groupedProject, serverId: "host-b" })).toBe(
+      false,
+    );
+    expect(canCreateWorktreeForHostProject({ project: groupedProject, serverId: "missing" })).toBe(
+      false,
+    );
   });
 
   test("builds an unhydrated route project around the routed project id", () => {

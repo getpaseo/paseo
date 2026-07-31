@@ -101,6 +101,13 @@ function getHostProjectPlacement(
   return null;
 }
 
+export function canCreateWorktreeForHostProject(input: {
+  project: HostProjectListItem;
+  serverId: string;
+}): boolean {
+  return getHostProjectPlacement(input.project, input.serverId)?.canCreateWorktree === true;
+}
+
 export function getHostProjectSourceDirectory(
   project: HostProjectListItem,
   serverId: string,

@@ -31,6 +31,7 @@ import { HEADER_INNER_HEIGHT, MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "
 import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
+import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import {
   useHostRuntimeClient,
   useHostRuntimeConnectionStatuses,
@@ -65,6 +66,7 @@ import { generateMessageId } from "@/types/stream";
 import { toErrorMessage } from "@/utils/error-messages";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import {
+  canCreateWorktreeForHostProject,
   getHostProjectSourceDirectory,
   getHostProjectId,
   hostProjectFromRoute,
@@ -702,16 +704,16 @@ interface WorkspaceIsolationState {
 // never submits an impossible request.
 function useWorkspaceIsolation(input: {
   supportsMultiplicity: boolean;
-  selectedIsGit: boolean;
+  projectCanCreateWorktree: boolean;
 }): WorkspaceIsolationState {
-  const { supportsMultiplicity, selectedIsGit } = input;
+  const { supportsMultiplicity, projectCanCreateWorktree } = input;
   // The last isolation choice is remembered alongside the other New Workspace
   // form preferences (provider, model, mode). A manual in-screen pick overrides
   // the remembered default until the screen remounts.
   const { preferences, updatePreferences } = useFormPreferences();
   const [manualIsolation, setManualIsolation] = useState<"local" | "worktree" | null>(null);
   const isolation = manualIsolation ?? preferences.isolation ?? "local";
-  const canCreateWorktree = supportsMultiplicity && selectedIsGit;
+  const canCreateWorktree = supportsMultiplicity && projectCanCreateWorktree;
   const isWorktree = isolation === "worktree" && canCreateWorktree;
 
   const setIsolation = useCallback(
@@ -1646,27 +1648,19 @@ export function NewWorkspaceScreen({
   const hasSelectedSourceDirectory = selectedSourceDirectory !== null;
   const pickerQueryEnabled = pickerOpen && clientReady && hasSelectedSourceDirectory;
 
-  const checkoutStatusQuery = useQuery({
-    queryKey: ["checkout-status", selectedServerId, selectedSourceDirectory],
-    queryFn: async () => {
-      if (!selectedSourceDirectory) {
-        throw new Error("Choose a project");
-      }
-      const connectedClient = withConnectedClient();
-      return connectedClient.getCheckoutStatus(selectedSourceDirectory);
-    },
-    enabled: clientReady && hasSelectedSourceDirectory,
-    staleTime: Infinity,
-    refetchOnMount: false,
-    refetchOnReconnect: false,
-    refetchOnWindowFocus: false,
+  const { status: checkoutStatus } = useCheckoutStatusQuery({
+    serverId: selectedServerId,
+    cwd: selectedSourceDirectory ?? "",
   });
 
-  const currentBranch = checkoutStatusQuery.data?.currentBranch ?? null;
+  const currentBranch = checkoutStatus?.currentBranch ?? null;
+  const projectCanCreateWorktree = selectedProject
+    ? canCreateWorktreeForHostProject({ project: selectedProject, serverId: selectedServerId })
+    : false;
   const { effectiveIsolation, setIsolation, canCreateWorktree, showRefPicker } =
     useWorkspaceIsolation({
       supportsMultiplicity: supportsWorkspaceMultiplicity,
-      selectedIsGit: checkoutStatusQuery.data?.isGit === true,
+      projectCanCreateWorktree,
     });
 
   const branchSuggestionsQuery = useQuery({
