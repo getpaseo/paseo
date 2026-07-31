@@ -165,7 +165,11 @@ export async function createSkillsSandbox(
           await saveRelease;
         }
       : undefined,
-    cleanup: () => rm(root, { recursive: true, force: true }),
+    // The save path atomically renames skill directories. On Linux/overlayfs,
+    // recursive removal can briefly observe a repopulated directory and fail
+    // with ENOTEMPTY even after the command has completed. Node only retries
+    // that transient when maxRetries is set.
+    cleanup: () => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }),
   };
 }
 
