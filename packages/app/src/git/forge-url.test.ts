@@ -32,7 +32,7 @@ describe("buildForgeBranchTreeUrl", () => {
   it("uses the configured Iceveil GitLab web port", () => {
     expect(
       buildForgeBranchTreeUrl("gitlab", {
-        remoteUrl: "git@gitlab.iceveil.com:group/repo.git",
+        remoteUrl: "ssh://git@gitlab.iceveil.com:10022/group/repo.git",
         branch: "main",
       }),
     ).toBe("https://gitlab.iceveil.com:38443/group/repo/-/tree/main");
