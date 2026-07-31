@@ -291,14 +291,25 @@ export function resolveClaudeWireModelId(modelId: string | null | undefined): st
     return trimmed;
   }
 
-  const manifestModel = CLAUDE_MODEL_MANIFEST.find((model) => model.id === trimmed);
+  // Match the way the catalog resolves a model, so dated, cased and provider-prefixed
+  // spellings get the same window the UI advertises for them.
+  const catalogModelId = normalizeClaudeRuntimeModelId(trimmed);
+  const manifestModel = catalogModelId
+    ? CLAUDE_MODEL_MANIFEST.find((model) => model.id === catalogModelId)
+    : undefined;
   if (!manifestModel || manifestModel.contextWindowMaxTokens !== 1_000_000) {
     return trimmed;
   }
 
   // Only rewrite when the suffixed form is not itself a separate catalog entry, so models
   // that ship an explicit 200K/1M pair keep their user-selected window.
-  return isClaudeManifestModelId(`${trimmed}[1m]`) ? trimmed : `${trimmed}[1m]`;
+  if (isClaudeManifestModelId(`${catalogModelId}[1m]`)) {
+    return trimmed;
+  }
+
+  // Suffix the caller's own spelling: provider prefixes and date stamps are meaningful
+  // routing information upstream, so they must survive the rewrite.
+  return `${trimmed}[1m]`;
 }
 
 export function claudeManifestModelSupportsFastMode(modelId: string | null | undefined): boolean {

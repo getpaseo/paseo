@@ -460,9 +460,44 @@ describe("resolveClaudeWireModelId", () => {
 
   it("passes through non-catalog model strings unchanged", () => {
     expect(resolveClaudeWireModelId("glm-5.1")).toBe("glm-5.1");
+    expect(resolveClaudeWireModelId("deepseek-v3")).toBe("deepseek-v3");
+    expect(resolveClaudeWireModelId("my-custom-opus")).toBe("my-custom-opus");
     expect(resolveClaudeWireModelId("us.anthropic.claude-opus-4-8")).toBe(
       "us.anthropic.claude-opus-4-8",
     );
+  });
+
+  it("covers the spellings the catalog resolves to a 1M Opus 5", () => {
+    // These all report a 1M window in the UI, so they all have to request one upstream.
+    for (const modelId of [
+      "claude-opus-5-20260724",
+      "CLAUDE-OPUS-5",
+      "claude_opus_5",
+      "us.anthropic.claude-opus-5",
+      "openrouter/anthropic/claude-opus-5",
+    ]) {
+      expect(findClaudeModel(modelId)?.contextWindowMaxTokens).toBe(1_000_000);
+      expect(resolveClaudeWireModelId(modelId)).toBe(`${modelId}[1m]`);
+    }
+  });
+
+  it("keeps provider prefixes and date stamps intact while suffixing", () => {
+    // The prefix and date stamp are upstream routing information, not decoration.
+    expect(resolveClaudeWireModelId("us.anthropic.claude-opus-5")).toBe(
+      "us.anthropic.claude-opus-5[1m]",
+    );
+    expect(resolveClaudeWireModelId("claude-opus-5-20260724")).toBe("claude-opus-5-20260724[1m]");
+  });
+
+  it("never advertises a window the wire ID does not request", () => {
+    for (const model of getClaudeModels()) {
+      const wireModelId = resolveClaudeWireModelId(model.id) ?? model.id;
+      if (model.contextWindowMaxTokens === 1_000_000) {
+        expect(wireModelId.toLowerCase()).toContain("[1m]");
+      } else {
+        expect(wireModelId.toLowerCase()).not.toContain("[1m]");
+      }
+    }
   });
 
   it("returns null for empty input", () => {
