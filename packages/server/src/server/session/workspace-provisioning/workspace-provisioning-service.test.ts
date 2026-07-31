@@ -337,6 +337,28 @@ test("ensureWorkspaceRecordUnarchived restores the owning archived project with 
   expect((await projectRegistry.get(created.projectId))?.archivedAt).toBeNull();
 });
 
+test("ensureWorkspaceRecordUnarchived preserves the consumed auto-archive change request", async () => {
+  const repo = path.join(tmpDir, "repo");
+  const changeRequestUrl = "https://github.com/getpaseo/paseo/pull/2714";
+  gitRoots.add(repo);
+  const created = await provisioning.findOrCreateWorkspaceForDirectory(repo);
+  await workspaceRegistry.archive(created.workspaceId, ARCHIVED_AT, {
+    autoArchivedChangeRequestUrl: changeRequestUrl,
+  });
+  const archivedWorkspace = await workspaceRegistry.get(created.workspaceId);
+
+  const unarchived = await provisioning.ensureWorkspaceRecordUnarchived(archivedWorkspace!);
+
+  expect(unarchived).toMatchObject({
+    archivedAt: null,
+    autoArchivedChangeRequestUrl: changeRequestUrl,
+  });
+  expect(await workspaceRegistry.get(created.workspaceId)).toMatchObject({
+    archivedAt: null,
+    autoArchivedChangeRequestUrl: changeRequestUrl,
+  });
+});
+
 test("does not unarchive either record when checkout refresh fails", async () => {
   const repo = path.join(tmpDir, "repo");
   gitRoots.add(repo);

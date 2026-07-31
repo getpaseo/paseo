@@ -80,6 +80,8 @@ const PersistedWorkspaceRecordSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   archivedAt: z.string().nullable(),
+  // COMPAT(autoArchivedChangeRequestUrl): added in v0.2.6, remove optional parsing after 2027-01-31.
+  // Records the merged change request whose automatic archive was consumed.
   autoArchivedChangeRequestUrl: z
     .string()
     .nullable()

@@ -37,6 +37,7 @@ test.describe("Auto-archive after pull request merge", () => {
       await restoreWorkspace(page, scenario.workspaceId);
 
       await scenario.refreshMergedPullRequest();
+      await scenario.expectWorkspaceRemainsActive();
       await waitForWorkspaceInSidebar(page, {
         serverId: getServerId(),
         workspaceId: scenario.workspaceId,
@@ -52,6 +53,7 @@ interface MergedPullRequestScenario {
   workspaceId: string;
   autoArchive(): Promise<void>;
   refreshMergedPullRequest(): Promise<void>;
+  expectWorkspaceRemainsActive(): Promise<void>;
   cleanup(): Promise<void>;
 }
 
@@ -123,6 +125,23 @@ async function createMergedPullRequestScenario(): Promise<MergedPullRequestScena
         if (!refresh.success) {
           throw new Error(`Failed to refresh restored workspace: ${String(refresh.error)}`);
         }
+      },
+      expectWorkspaceRemainsActive: async () => {
+        const observationDeadline = Date.now() + 5_000;
+        await expect
+          .poll(
+            async () => {
+              const descriptor = (await workspaceClient.fetchWorkspaces()).entries.find(
+                (entry) => entry.id === workspace.id,
+              );
+              if (!descriptor) {
+                return "archived";
+              }
+              return Date.now() >= observationDeadline ? "active" : "observing";
+            },
+            { timeout: 10_000, intervals: [100, 250, 500] },
+          )
+          .toBe("active");
       },
       cleanup: async () => {
         await workspaceClient
