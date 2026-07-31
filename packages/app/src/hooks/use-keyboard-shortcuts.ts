@@ -42,12 +42,14 @@ export function useKeyboardShortcuts({
   isMobile,
   toggleAgentList,
   toggleBothSidebars,
+  exitFocusMode,
   cycleTheme,
 }: {
   enabled: boolean;
   isMobile: boolean;
   toggleAgentList: () => void;
   toggleBothSidebars?: () => void;
+  exitFocusMode: () => void;
   cycleTheme?: () => void;
 }) {
   const pathname = usePathname();
@@ -207,11 +209,15 @@ export function useKeyboardShortcuts({
           shortcutsDialogOpen: store.shortcutsDialogOpen,
         },
       );
-      return performShortcutAction(
+      const handled = performShortcutAction(
         shortcutAction,
         input.domEvent,
         input.browserFocusRestoreElement,
       );
+      if (handled && input.action.startsWith("sidebar.")) {
+        exitFocusMode();
+      }
+      return handled;
     };
 
     const resolveAndPerformShortcut = (input: {
@@ -371,6 +377,7 @@ export function useKeyboardShortcuts({
     bindings,
     cycleTheme,
     enabled,
+    exitFocusMode,
     activeWorkspaceSelection,
     isDesktopApp,
     isMac,
