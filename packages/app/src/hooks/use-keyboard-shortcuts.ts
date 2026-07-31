@@ -209,15 +209,14 @@ export function useKeyboardShortcuts({
           shortcutsDialogOpen: store.shortcutsDialogOpen,
         },
       );
-      const handled = performShortcutAction(
+      if (shortcutAction.kind !== "none" && input.action.startsWith("sidebar.")) {
+        exitFocusMode();
+      }
+      return performShortcutAction(
         shortcutAction,
         input.domEvent,
         input.browserFocusRestoreElement,
       );
-      if (handled && input.action.startsWith("sidebar.")) {
-        exitFocusMode();
-      }
-      return handled;
     };
 
     const resolveAndPerformShortcut = (input: {
