@@ -1,7 +1,8 @@
 import { useCallback, useMemo, useState } from "react";
-import { Image, Text, TextInput, View } from "react-native";
+import { Text, TextInput, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import * as QRCode from "qrcode";
+import { SvgXml } from "react-native-svg";
 import { useMutation } from "@tanstack/react-query";
 import { Check, Copy, Network, RotateCw, ShieldCheck } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -71,7 +72,8 @@ export function PairDeviceSection({ serverId, onClose }: PairDeviceSectionProps)
   const qrQuery = useFetchQuery({
     queryKey: ["daemon-pairing-offer-qr", pairingQuery.data?.url],
     queryFn: () =>
-      QRCode.toDataURL(pairingQuery.data?.url ?? "", {
+      QRCode.toString(pairingQuery.data?.url ?? "", {
+        type: "svg",
         errorCorrectionLevel: "M",
         margin: 1,
         width: 480,
@@ -97,10 +99,7 @@ export function PairDeviceSection({ serverId, onClose }: PairDeviceSectionProps)
     enableRelay.mutate();
   }, [enableRelay]);
 
-  const qrImageSource = useMemo(
-    () => (qrQuery.data ? { uri: qrQuery.data } : null),
-    [qrQuery.data],
-  );
+  const qrSvg = useMemo(() => qrQuery.data ?? null, [qrQuery.data]);
 
   return (
     <View testID="pair-device-content">
@@ -112,7 +111,7 @@ export function PairDeviceSection({ serverId, onClose }: PairDeviceSectionProps)
         canConfigureRelay={canConfigureRelay}
         enablePending={enableRelay.isPending}
         enableError={enableRelay.error}
-        qrImageSource={qrImageSource}
+        qrSvg={qrSvg}
         qrError={qrQuery.isError}
         copied={copied}
         onRetry={handleRetry}
@@ -132,7 +131,7 @@ interface PairDeviceBodyProps {
   canConfigureRelay: boolean;
   enablePending: boolean;
   enableError: Error | null;
-  qrImageSource: { uri: string } | null;
+  qrSvg: string | null;
   qrError: boolean;
   copied: boolean;
   onRetry: () => void;
@@ -235,7 +234,7 @@ function PairingOffer(props: PairDeviceBodyProps & { offer: { url: string } }) {
     <View style={styles.offer}>
       <Text style={styles.offerHint}>{t("pairing.device.hint")}</Text>
       <View style={styles.qrTile}>
-        <PairingQr imageSource={props.qrImageSource} isError={props.qrError} />
+        <PairingQr svg={props.qrSvg} isError={props.qrError} />
       </View>
       <View style={styles.linkRow}>
         <View style={styles.inputWrapper}>
@@ -260,20 +259,13 @@ function PairingOffer(props: PairDeviceBodyProps & { offer: { url: string } }) {
   );
 }
 
-function PairingQr({
-  imageSource,
-  isError,
-}: {
-  imageSource: { uri: string } | null;
-  isError: boolean;
-}) {
+function PairingQr({ svg, isError }: { svg: string | null; isError: boolean }) {
   const { t } = useTranslation();
-  if (imageSource) {
+  if (svg) {
     return (
-      <Image
-        source={imageSource}
+      <SvgXml
+        xml={svg}
         style={styles.qrImage}
-        resizeMode="contain"
         accessibilityRole="image"
         accessibilityLabel={t("pairing.device.qrAccessibility")}
       />
