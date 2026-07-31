@@ -1996,7 +1996,7 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
-  test("streams an autonomous wake as soon as the canceled run reaches its terminal", async () => {
+  test("streams an autonomous wake after the canceled run reaches its terminal", async () => {
     const { parent: session, openCode } = await createParentSession("ses_wake_after_terminal");
     const settleAbort = createTestDeferred<void>();
     const events: AgentStreamEvent[] = [];
@@ -2022,6 +2022,13 @@ describe("OpenCode adapter startTurn error handling", () => {
       openCode.emitEvent({
         type: "session.idle",
         properties: { sessionID: "ses_wake_after_terminal" },
+      });
+      openCode.emitEvent({
+        type: "session.status",
+        properties: {
+          sessionID: "ses_wake_after_terminal",
+          status: { type: "busy" },
+        },
       });
       for (const event of userMessageEvents({
         sessionId: "ses_wake_after_terminal",
@@ -2375,6 +2382,13 @@ describe("OpenCode adapter startTurn error handling", () => {
       openCode.emitEvent({
         type: "session.idle",
         properties: { sessionID: "ses_carried_abort" },
+      });
+      openCode.emitEvent({
+        type: "session.status",
+        properties: {
+          sessionID: "ses_carried_abort",
+          status: { type: "busy" },
+        },
       });
       for (const event of userMessageEvents({
         sessionId: "ses_carried_abort",

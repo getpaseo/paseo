@@ -3659,21 +3659,7 @@ class OpenCodeAgentSession implements AgentSession {
     if (!event) {
       return;
     }
-    if (
-      this.turnState.status === "stopping" &&
-      getOpenCodeEventSessionId(event) === this.sessionId
-    ) {
-      // Residue of the canceled run must not surface as a new turn. Its terminal
-      // is the authoritative end of the stop, so anything OpenCode publishes
-      // afterwards belongs to a new run by construction and takes the live path.
-      if (isOpenCodeTerminalEvent(event, this.sessionId)) {
-        this.finishStoppingTurn(this.turnState.stop);
-      }
-      this.traceOpenCode("provider.opencode.event.skip", {
-        n: eventCount,
-        reason: "turn_stopping",
-        type: event.type,
-      });
+    if (this.discardEventWhileStopping(event, eventCount)) {
       return;
     }
     const translated = await this.translateEvent(event);
@@ -3730,6 +3716,27 @@ class OpenCodeAgentSession implements AgentSession {
       }
       this.notifySubscribers(e, turnId);
     }
+  }
+
+  private discardEventWhileStopping(event: OpenCodeEvent, eventCount: number): boolean {
+    if (
+      this.turnState.status !== "stopping" ||
+      getOpenCodeEventSessionId(event) !== this.sessionId
+    ) {
+      return false;
+    }
+    // Residue of the canceled run must not surface as a new turn. Its terminal
+    // is the authoritative end of the stop, so anything OpenCode publishes
+    // afterwards belongs to a new run by construction and takes the live path.
+    if (isOpenCodeTerminalEvent(event, this.sessionId)) {
+      this.finishStoppingTurn(this.turnState.stop);
+    }
+    this.traceOpenCode("provider.opencode.event.skip", {
+      n: eventCount,
+      reason: "turn_stopping",
+      type: event.type,
+    });
+    return true;
   }
 
   private emitBackgroundPermissionRequests(events: readonly AgentStreamEvent[]): void {
