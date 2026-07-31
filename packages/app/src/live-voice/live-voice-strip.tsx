@@ -12,6 +12,7 @@ import {
 } from "@/live-voice/live-voice-call-ui";
 import { useSidebarOwnsLiveVoiceSurface } from "@/live-voice/live-voice-placement";
 import { resolveLiveVoiceErrorMessage } from "@/live-voice/live-voice-error-message";
+import { LiveVoiceLauncher } from "@/live-voice/live-voice-launcher";
 import { useHosts } from "@/runtime/host-runtime";
 
 const TRANSCRIPT_MAX_HEIGHT = 280;
@@ -24,9 +25,8 @@ const TRANSCRIPT_MAX_HEIGHT = 280;
  * expanded it grows upward into a bounded, bottom-pinned transcript.
  *
  * When a visible sidebar offers a voice slot, the sidebar card owns the call
- * surface instead and this renders nothing. It also renders nothing while there
- * is no call and no terminal state to explain, so the layout mounts it
- * unconditionally.
+ * surface instead and this renders nothing. While idle, this surface is the
+ * persistent global launcher.
  */
 export function LiveVoiceStrip() {
   const sidebarOwnsSurface = useSidebarOwnsLiveVoiceSurface();
@@ -50,7 +50,13 @@ export function LiveVoiceStrip() {
   }
   const { phase, serverId, transcripts, isAudioBlocked, error, closedCause } = liveVoice;
   if (phase === "idle" && closedCause === null) {
-    return null;
+    return (
+      <View style={[styles.container, { paddingBottom: insets.bottom }]}>
+        <View style={styles.bar}>
+          <LiveVoiceLauncher layout="row" />
+        </View>
+      </View>
+    );
   }
 
   const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? null;

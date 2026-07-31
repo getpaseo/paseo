@@ -1717,8 +1717,10 @@ export const ar: TranslationResources = {
   },
   liveVoice: {
     label: "صوت مباشر",
+    scope: "متاح في جميع أنحاء التطبيق",
     actions: {
       start: "بدء الصوت المباشر",
+      unavailable: "الصوت المباشر غير متاح",
       stop: "إيقاف الصوت المباشر",
       mute: "كتم الميكروفون",
       unmute: "إلغاء كتم الميكروفون",
@@ -1726,6 +1728,14 @@ export const ar: TranslationResources = {
       showTranscript: "عرض النص",
       hideTranscript: "إخفاء النص",
       dismiss: "تجاهل",
+    },
+    unavailable: {
+      platform: "الصوت المباشر غير مدعوم على هذا الجهاز.",
+      noHosts: "أضف مضيفًا لاستخدام الصوت المباشر.",
+      connecting: "جارٍ الاتصال بالمضيفين. سيظهر الصوت المباشر عندما يصبح أحدهم جاهزًا.",
+      offline: "لا يوجد مضيف متصل. اتصل بمضيف لاستخدام الصوت المباشر.",
+      upgrade: "المضيفون المتصلون لا يعلنون دعم الصوت المباشر. حدّث برامجهم الخدمية.",
+      debug: "تصحيح: {{details}}",
     },
     status: {
       connecting: "جارٍ الاتصال...",

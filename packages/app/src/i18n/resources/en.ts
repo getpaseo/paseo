@@ -1727,8 +1727,10 @@ export const en = {
   },
   liveVoice: {
     label: "Live voice",
+    scope: "Global across the app",
     actions: {
       start: "Start live voice",
+      unavailable: "Live voice unavailable",
       stop: "Stop live voice",
       mute: "Mute microphone",
       unmute: "Unmute microphone",
@@ -1736,6 +1738,14 @@ export const en = {
       showTranscript: "Show transcript",
       hideTranscript: "Hide transcript",
       dismiss: "Dismiss",
+    },
+    unavailable: {
+      platform: "Live voice is not supported on this device.",
+      noHosts: "Add a host to use live voice.",
+      connecting: "Connecting to hosts. Live voice will appear when one is ready.",
+      offline: "No hosts are online. Connect to a host to use live voice.",
+      upgrade: "Connected hosts do not advertise live voice. Update their daemons.",
+      debug: "Debug: {{details}}",
     },
     status: {
       connecting: "Connecting...",

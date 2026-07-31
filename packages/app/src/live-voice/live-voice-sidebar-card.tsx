@@ -11,6 +11,7 @@ import {
 } from "@/live-voice/live-voice-call-ui";
 import { acquireSidebarVoiceSlot } from "@/live-voice/live-voice-placement";
 import { resolveLiveVoiceErrorMessage } from "@/live-voice/live-voice-error-message";
+import { LiveVoiceLauncher } from "@/live-voice/live-voice-launcher";
 import { useHosts } from "@/runtime/host-runtime";
 
 const TRANSCRIPT_MAX_HEIGHT = 240;
@@ -19,7 +20,7 @@ const TRANSCRIPT_MAX_HEIGHT = 240;
  * Mounted by a sidebar wherever the voice card should live. While `active`
  * (the sidebar is really on screen) it claims the call surface — which hides
  * the docked strip — whether or not a call exists, so ownership never flaps
- * mid-call. The card itself only renders while there is a call to show.
+ * mid-call. While idle, the card is the app-global launch control.
  */
 export function SidebarLiveVoiceSlot({ active }: { active: boolean }) {
   useEffect(() => {
@@ -60,7 +61,11 @@ function LiveVoiceSidebarCard() {
   }
   const { phase, serverId, transcripts, isAudioBlocked, error, closedCause } = liveVoice;
   if (phase === "idle" && closedCause === null) {
-    return null;
+    return (
+      <View style={styles.card}>
+        <LiveVoiceLauncher layout="column" />
+      </View>
+    );
   }
 
   const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? null;

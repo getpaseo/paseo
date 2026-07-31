@@ -1763,8 +1763,10 @@ export const es: TranslationResources = {
   },
   liveVoice: {
     label: "Voz en directo",
+    scope: "Global en toda la aplicación",
     actions: {
       start: "Iniciar voz en directo",
+      unavailable: "Voz en directo no disponible",
       stop: "Detener voz en directo",
       mute: "Silenciar micrófono",
       unmute: "Activar micrófono",
@@ -1772,6 +1774,14 @@ export const es: TranslationResources = {
       showTranscript: "Mostrar transcripción",
       hideTranscript: "Ocultar transcripción",
       dismiss: "Descartar",
+    },
+    unavailable: {
+      platform: "La voz en directo no es compatible con este dispositivo.",
+      noHosts: "Añade un host para usar la voz en directo.",
+      connecting: "Conectando a los hosts. La voz en directo aparecerá cuando uno esté listo.",
+      offline: "No hay hosts conectados. Conecta uno para usar la voz en directo.",
+      upgrade: "Los hosts conectados no anuncian voz en directo. Actualiza sus daemons.",
+      debug: "Depuración: {{details}}",
     },
     status: {
       connecting: "Conectando...",

@@ -1696,8 +1696,10 @@ export const zhCN: TranslationResources = {
   },
   liveVoice: {
     label: "实时语音",
+    scope: "可在整个应用中使用",
     actions: {
       start: "开始实时语音",
+      unavailable: "实时语音不可用",
       stop: "停止实时语音",
       mute: "静音麦克风",
       unmute: "取消静音",
@@ -1705,6 +1707,14 @@ export const zhCN: TranslationResources = {
       showTranscript: "显示转录",
       hideTranscript: "隐藏转录",
       dismiss: "关闭",
+    },
+    unavailable: {
+      platform: "此设备不支持实时语音。",
+      noHosts: "请添加主机以使用实时语音。",
+      connecting: "正在连接主机。主机就绪后即可使用实时语音。",
+      offline: "没有在线主机。请连接主机以使用实时语音。",
+      upgrade: "已连接的主机未声明支持实时语音。请更新其守护进程。",
+      debug: "调试：{{details}}",
     },
     status: {
       connecting: "正在连接...",

@@ -1749,8 +1749,10 @@ export const ptBR: TranslationResources = {
   },
   liveVoice: {
     label: "Voz ao vivo",
+    scope: "Global em todo o aplicativo",
     actions: {
       start: "Iniciar voz ao vivo",
+      unavailable: "Voz ao vivo indisponível",
       stop: "Parar voz ao vivo",
       mute: "Silenciar microfone",
       unmute: "Ativar microfone",
@@ -1758,6 +1760,14 @@ export const ptBR: TranslationResources = {
       showTranscript: "Mostrar transcrição",
       hideTranscript: "Ocultar transcrição",
       dismiss: "Dispensar",
+    },
+    unavailable: {
+      platform: "A voz ao vivo não é compatível com este dispositivo.",
+      noHosts: "Adicione um host para usar a voz ao vivo.",
+      connecting: "Conectando aos hosts. A voz ao vivo aparecerá quando um estiver pronto.",
+      offline: "Nenhum host está online. Conecte-se a um host para usar a voz ao vivo.",
+      upgrade: "Os hosts conectados não anunciam voz ao vivo. Atualize seus daemons.",
+      debug: "Depuração: {{details}}",
     },
     status: {
       connecting: "Conectando...",

@@ -1734,8 +1734,10 @@ export const ja: TranslationResources = {
   },
   liveVoice: {
     label: "ライブ音声",
+    scope: "アプリ全体で利用できます",
     actions: {
       start: "ライブ音声を開始",
+      unavailable: "ライブ音声は利用できません",
       stop: "ライブ音声を停止",
       mute: "マイクをミュート",
       unmute: "マイクのミュートを解除",
@@ -1743,6 +1745,14 @@ export const ja: TranslationResources = {
       showTranscript: "文字起こしを表示",
       hideTranscript: "文字起こしを非表示",
       dismiss: "閉じる",
+    },
+    unavailable: {
+      platform: "このデバイスはライブ音声に対応していません。",
+      noHosts: "ライブ音声を使うにはホストを追加してください。",
+      connecting: "ホストに接続中です。準備ができるとライブ音声が表示されます。",
+      offline: "オンラインのホストがありません。ライブ音声を使うにはホストに接続してください。",
+      upgrade: "接続中のホストはライブ音声に対応していません。デーモンを更新してください。",
+      debug: "デバッグ: {{details}}",
     },
     status: {
       connecting: "接続中...",

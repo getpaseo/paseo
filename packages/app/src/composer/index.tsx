@@ -8,16 +8,7 @@ import {
   type PressableStateCallbackType,
 } from "react-native";
 import type { TFunction } from "i18next";
-import {
-  useState,
-  useEffect,
-  useRef,
-  useCallback,
-  useMemo,
-  memo,
-  type ReactElement,
-  type ReactNode,
-} from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, memo, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -78,7 +69,6 @@ import {
 } from "@/composer/actions";
 import { useVoiceOptional } from "@/contexts/voice-context";
 import { useToast } from "@/contexts/toast-context";
-import { LiveVoiceButton } from "@/live-voice/live-voice-button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
@@ -295,27 +285,6 @@ function renderContextWindowMeter(
       pending={pending}
       glyphSize={glyphSize}
     />
-  );
-}
-
-/**
- * The trailing control cluster that sits before the voice/dictation button: the
- * context-window meter and, when the host supports it, the Live Voice start
- * control. Both only exist once there is a real agent.
- */
-function resolveTrailingAgentControls(args: {
-  meter: ReactElement | null;
-  reserveSlot: boolean;
-  serverId: string;
-}): ReactNode {
-  if (!args.reserveSlot) {
-    return null;
-  }
-  return (
-    <>
-      <View style={styles.contextWindowMeterSlot}>{args.meter}</View>
-      <LiveVoiceButton serverId={args.serverId} />
-    </>
   );
 }
 
@@ -2031,12 +2000,8 @@ function ComposerContentImpl({
   );
   const beforeVoiceContent = useMemo(
     () =>
-      resolveTrailingAgentControls({
-        meter: contextWindowMeter,
-        reserveSlot: hasAgent,
-        serverId,
-      }),
-    [contextWindowMeter, hasAgent, serverId],
+      hasAgent ? <View style={styles.contextWindowMeterSlot}>{contextWindowMeter}</View> : null,
+    [contextWindowMeter, hasAgent],
   );
 
   const hasGithubAttachment = useMemo(

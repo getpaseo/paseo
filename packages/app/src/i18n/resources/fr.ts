@@ -1767,8 +1767,10 @@ export const fr: TranslationResources = {
   },
   liveVoice: {
     label: "Voix en direct",
+    scope: "Globale dans toute l’application",
     actions: {
       start: "Démarrer la voix en direct",
+      unavailable: "Voix en direct indisponible",
       stop: "Arrêter la voix en direct",
       mute: "Couper le micro",
       unmute: "Réactiver le micro",
@@ -1776,6 +1778,14 @@ export const fr: TranslationResources = {
       showTranscript: "Afficher la transcription",
       hideTranscript: "Masquer la transcription",
       dismiss: "Ignorer",
+    },
+    unavailable: {
+      platform: "La voix en direct n’est pas prise en charge sur cet appareil.",
+      noHosts: "Ajoutez un hôte pour utiliser la voix en direct.",
+      connecting: "Connexion aux hôtes. La voix en direct apparaîtra lorsqu’un hôte sera prêt.",
+      offline: "Aucun hôte n’est en ligne. Connectez-en un pour utiliser la voix en direct.",
+      upgrade: "Les hôtes connectés n’annoncent pas la voix en direct. Mettez à jour leurs démons.",
+      debug: "Diagnostic : {{details}}",
     },
     status: {
       connecting: "Connexion...",
