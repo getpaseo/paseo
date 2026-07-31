@@ -1477,7 +1477,6 @@ export class AgentManager {
     } catch (error) {
       persistError = error;
     }
-    this.failedHistoryHydrationAgentIds.delete(agentId);
     this.emitClosedAgent(closedAgent, { persist: false });
     this.logger.trace(
       {
@@ -2007,6 +2006,9 @@ export class AgentManager {
   async appendTimelineItem(agentId: string, item: AgentTimelineItem): Promise<void> {
     const agent = this.requireAgent(agentId);
     item = limitAgentTimelineItemContent(item);
+    if (item.type === "user_message" && !isSystemInjectedEnvelope(item.text)) {
+      this.failedHistoryHydrationAgentIds.delete(agentId);
+    }
     this.touchUpdatedAt(agent);
     const row = this.recordTimeline(agentId, item);
     this.dispatchStream(
@@ -3212,8 +3214,7 @@ export class AgentManager {
   ): Promise<AgentTimelineRow[] | null> {
     const limit = Math.max(1, Math.min(Math.floor(options.limit), MATERIAL_PROGRESS_PAGE_SIZE));
     if (this.failedHistoryHydrationAgentIds.has(agentId)) {
-      const durableRows = await this.resolveDurableMaterialProgressRows(agentId, limit);
-      return durableRows && durableRows.length > 0 ? durableRows : null;
+      return null;
     }
     if (this.timelineStore.has(agentId)) {
       const livePage = this.timelineStore.fetch(agentId, { direction: "tail", limit });
@@ -3733,6 +3734,9 @@ export class AgentManager {
       return;
     }
 
+    if (event.item.type === "user_message") {
+      this.failedHistoryHydrationAgentIds.delete(agent.id);
+    }
     this.recordAndDispatchTimelineItem(agent.id, event.item, event.provider, event.turnId);
     if (event.item.type === "user_message") {
       agent.lastUserMessageAt = new Date();

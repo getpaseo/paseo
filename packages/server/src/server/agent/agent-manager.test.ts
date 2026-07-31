@@ -4008,14 +4008,17 @@ test("a failed partial history hydration preserves persisted material progress",
   }
 
   class FailingHistoryClient extends TestAgentClient {
+    lastSession: FailingHistorySession | null = null;
+
     override async resumeSession(
       _handle: AgentPersistenceHandle,
       config?: Partial<AgentSessionConfig>,
     ): Promise<AgentSession> {
-      return new FailingHistorySession({
+      this.lastSession = new FailingHistorySession({
         provider: "codex",
         cwd: config?.cwd ?? workdir,
       });
+      return this.lastSession;
     }
   }
 
@@ -4043,9 +4046,12 @@ test("a failed partial history hydration preserves persisted material progress",
       state: "progressing",
       lastMaterialProgressKind: "write",
     });
+    const failingClient = new FailingHistoryClient();
+    const durableTimelineStore = new TestDurableTimelineStore();
     const resumedManager = new AgentManager({
-      clients: { codex: new FailingHistoryClient() },
+      clients: { codex: failingClient },
       registry: storage,
+      durableTimelineStore,
       logger,
     });
     await resumedManager.resumeAgentFromPersistence(
@@ -4054,6 +4060,7 @@ test("a failed partial history hydration preserves persisted material progress",
       created.id,
     );
     await resumedManager.hydrateTimelineFromProvider(created.id);
+    await resumedManager.flush();
 
     expect(resumedManager.getAgent(created.id)?.historyPrimed).toBe(false);
     expect(resumedManager.getTimeline(created.id)).toEqual([
@@ -4071,6 +4078,75 @@ test("a failed partial history hydration preserves persisted material progress",
     expect((await storage.get(created.id))?.materialProgress).toMatchObject({
       state: "progressing",
       lastMaterialProgressKind: "write",
+    });
+    await expect(resumedManager.getMaterialProgressSnapshot(created.id)).resolves.toMatchObject({
+      rows: null,
+      persisted: {
+        state: "progressing",
+        lastMaterialProgressKind: "write",
+      },
+    });
+
+    const continuingClient = new FailingHistoryClient();
+    const continuingManager = new AgentManager({
+      clients: { codex: continuingClient },
+      registry: storage,
+      durableTimelineStore,
+      logger,
+    });
+    await continuingManager.resumeAgentFromPersistence(
+      record!.persistence!,
+      { cwd: workdir },
+      created.id,
+    );
+    await continuingManager.hydrateTimelineFromProvider(created.id);
+    await continuingManager.flush();
+
+    continuingClient.lastSession?.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "user_message", text: "continue with a new task" },
+    });
+    continuingClient.lastSession?.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: {
+        type: "tool_call",
+        callId: "write-after-history-failure",
+        name: "write",
+        status: "completed",
+        error: null,
+        detail: { type: "write", filePath: "new-result.txt", content: "new durable result" },
+      },
+    });
+    await continuingManager.flush();
+    await expect(continuingManager.getMaterialProgressSnapshot(created.id)).resolves.toMatchObject({
+      rows: [
+        { item: { type: "user_message", text: "continue with a new task" } },
+        {
+          item: {
+            type: "tool_call",
+            callId: "write-after-history-failure",
+          },
+        },
+      ],
+    });
+
+    await continuingManager.closeAgent(created.id);
+    expect((await storage.get(created.id))?.materialProgress).toMatchObject({
+      state: "progressing",
+      lastMaterialProgressKind: "write",
+    });
+    await expect(continuingManager.getMaterialProgressSnapshot(created.id)).resolves.toMatchObject({
+      rows: [
+        { item: { type: "user_message", text: "continue with a new task" } },
+        {
+          item: {
+            type: "tool_call",
+            callId: "write-after-history-failure",
+          },
+        },
+      ],
     });
   } finally {
     rmSync(workdir, { recursive: true, force: true });
