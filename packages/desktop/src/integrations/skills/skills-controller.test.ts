@@ -512,6 +512,32 @@ describe("skills controller", () => {
   );
 
   it.skipIf(process.platform === "win32")(
+    "restores a relative symlink used as the skill directory",
+    async () => {
+      const previous: SkillSelection = {
+        mode: "custom",
+        skills: ["paseo", "paseo-loop"],
+      };
+      const next: SkillSelection = { mode: "custom", skills: ["paseo"] };
+      await harness.controller.save(previous);
+      const shared = path.join(harness.root, "home", "shared", "paseo-loop");
+      await mkdir(shared, { recursive: true });
+      await writeFile(path.join(shared, "SKILL.md"), "shared target");
+      const live = path.join(harness.targets.claudeDir, "paseo-loop");
+      await rm(live, { recursive: true, force: true });
+      await symlink(path.relative(harness.targets.claudeDir, shared), live, "dir");
+
+      const transaction = await beginSkillsTransaction(harness.targets, previous, next, [
+        { kind: "delete", name: "paseo-loop" },
+      ]);
+      await transaction.rollback();
+
+      expect((await lstat(live)).isSymbolicLink()).toBe(true);
+      expect(await readFile(path.join(live, "SKILL.md"), "utf8")).toBe("shared target");
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
     "restores a user-added symlink when deletion rolls back",
     async () => {
       const previous: SkillSelection = {

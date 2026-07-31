@@ -214,6 +214,20 @@ async function mergeBackupDirectory(livePath: string, backupPath: string | null)
   });
 }
 
+async function restoreDeletedDirectory(livePath: string, backupPath: string | null): Promise<void> {
+  if (backupPath === null) return;
+  const backupInfo = await lstat(backupPath);
+  if (!backupInfo.isSymbolicLink()) {
+    await mergeBackupDirectory(livePath, backupPath);
+    return;
+  }
+  if (await lstat(livePath).catch(() => null)) {
+    throw new Error(`Cannot safely restore skill symlink over a recreated path: ${livePath}`);
+  }
+  await mkdir(path.dirname(livePath), { recursive: true });
+  await rename(backupPath, livePath);
+}
+
 async function restoreStagedEntry(
   liveRoot: string,
   backupRoot: string | null,
@@ -258,14 +272,14 @@ async function restore(
   const expectedByName = new Map<string, Map<string, Buffer>>();
   for (const entry of manifest.entries) {
     const backup = resolveBackupPath(transactionDir, entry.backupPath);
-    if (backup !== null && !(await isDirectory(backup))) {
+    if (backup !== null && !(await lstat(backup).catch(() => null))) {
       // A crash may happen after the manifest is durable but before this delete
       // path is atomically moved. Its live directory was never touched.
-      if (entry.kind === "delete" && (await isDirectory(entry.livePath))) continue;
+      if (entry.kind === "delete" && (await lstat(entry.livePath).catch(() => null))) continue;
       throw new Error(`Skills transaction backup is missing: ${backup}`);
     }
     if (entry.kind === "delete") {
-      await mergeBackupDirectory(entry.livePath, backup);
+      await restoreDeletedDirectory(entry.livePath, backup);
       continue;
     }
     const name = path.basename(entry.livePath);
