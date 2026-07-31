@@ -3985,6 +3985,98 @@ test("an unhydrated resumed agent exposes its persisted material progress", asyn
   rmSync(workdir, { recursive: true, force: true });
 });
 
+test("a failed partial history hydration preserves persisted material progress", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-material-progress-history-failure-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentId = "00000000-0000-4000-8000-000000000147";
+  const firstManager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    idFactory: () => agentId,
+  });
+
+  class FailingHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "partial history" },
+      };
+      throw new Error("provider history unavailable");
+    }
+  }
+
+  class FailingHistoryClient extends TestAgentClient {
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new FailingHistorySession({
+        provider: "codex",
+        cwd: config?.cwd ?? workdir,
+      });
+    }
+  }
+
+  try {
+    const created = await firstManager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await firstManager.appendTimelineItem(created.id, {
+      type: "user_message",
+      text: "persist this result",
+    });
+    await firstManager.appendTimelineItem(created.id, {
+      type: "tool_call",
+      callId: "write-history-failure",
+      name: "write",
+      status: "completed",
+      error: null,
+      detail: { type: "write", filePath: "result.txt", content: "durable" },
+    });
+    await firstManager.closeAgent(created.id);
+
+    const record = await storage.get(created.id);
+    expect(record?.persistence).toBeTruthy();
+    expect(record?.materialProgress).toMatchObject({
+      state: "progressing",
+      lastMaterialProgressKind: "write",
+    });
+    const resumedManager = new AgentManager({
+      clients: { codex: new FailingHistoryClient() },
+      registry: storage,
+      logger,
+    });
+    await resumedManager.resumeAgentFromPersistence(
+      record!.persistence!,
+      { cwd: workdir },
+      created.id,
+    );
+    await resumedManager.hydrateTimelineFromProvider(created.id);
+
+    expect(resumedManager.getAgent(created.id)?.historyPrimed).toBe(false);
+    expect(resumedManager.getTimeline(created.id)).toEqual([
+      { type: "assistant_message", text: "partial history" },
+    ]);
+    await expect(resumedManager.getMaterialProgressSnapshot(created.id)).resolves.toMatchObject({
+      rows: null,
+      persisted: {
+        state: "progressing",
+        lastMaterialProgressKind: "write",
+      },
+    });
+
+    await resumedManager.closeAgent(created.id);
+    expect((await storage.get(created.id))?.materialProgress).toMatchObject({
+      state: "progressing",
+      lastMaterialProgressKind: "write",
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("a resumed agent with an empty live timeline derives progress from its durable tail", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-material-progress-durable-resume-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);

@@ -634,6 +634,7 @@ export class AgentManager {
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
   private readonly snapshotPersistenceTails = new Map<string, Promise<void>>();
+  private readonly failedHistoryHydrationAgentIds = new Set<string>();
   private readonly runs = new AgentRunState();
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
@@ -1476,6 +1477,7 @@ export class AgentManager {
     } catch (error) {
       persistError = error;
     }
+    this.failedHistoryHydrationAgentIds.delete(agentId);
     this.emitClosedAgent(closedAgent, { persist: false });
     this.logger.trace(
       {
@@ -3002,6 +3004,7 @@ export class AgentManager {
 
   private discardRetainedAgentState(agentId: string): void {
     this.timelineStore.delete(agentId);
+    this.failedHistoryHydrationAgentIds.delete(agentId);
     for (const event of this.providerSubagents.deleteParent(agentId)) {
       this.dispatch({ type: "provider_subagent", event });
     }
@@ -3208,6 +3211,10 @@ export class AgentManager {
     options: { limit: number; historyPrimed?: boolean },
   ): Promise<AgentTimelineRow[] | null> {
     const limit = Math.max(1, Math.min(Math.floor(options.limit), MATERIAL_PROGRESS_PAGE_SIZE));
+    if (this.failedHistoryHydrationAgentIds.has(agentId)) {
+      const durableRows = await this.resolveDurableMaterialProgressRows(agentId, limit);
+      return durableRows && durableRows.length > 0 ? durableRows : null;
+    }
     if (this.timelineStore.has(agentId)) {
       const livePage = this.timelineStore.fetch(agentId, { direction: "tail", limit });
       if (livePage.rows.length > 0) {
@@ -3366,6 +3373,7 @@ export class AgentManager {
     this.timelineStore.delete(agent.id);
     this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
     agent.historyPrimed = true;
+    this.failedHistoryHydrationAgentIds.delete(agent.id);
 
     for (const event of this.providerSubagents.deleteParent(agent.id)) {
       if (broadcast) {
@@ -3440,7 +3448,10 @@ export class AgentManager {
           });
         }
       }
+      this.failedHistoryHydrationAgentIds.delete(agent.id);
     } catch {
+      agent.historyPrimed = false;
+      this.failedHistoryHydrationAgentIds.add(agent.id);
       // ignore history failures
     }
 
