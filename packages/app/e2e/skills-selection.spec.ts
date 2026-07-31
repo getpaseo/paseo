@@ -1,4 +1,5 @@
 import { test as base } from "./fixtures";
+import { expect } from "@playwright/test";
 import { gotoAppShell } from "./helpers/app";
 import { injectDesktopBridge } from "./helpers/desktop-updates";
 import { getServerId } from "./helpers/server-id";
@@ -118,6 +119,26 @@ test.describe("Choosing installed skills", () => {
 });
 
 test.describe("Removing an installed skill", () => {
+  test("delete-only drift stays in Choose skills instead of Update", async ({
+    page,
+    startSkills,
+  }) => {
+    await startSkills({
+      installed: { mode: "custom", skills: ["paseo"] },
+      placeOnDisk: {
+        skill: "paseo-loop",
+        target: "claude",
+        files: { "SKILL.md": "# paseo-loop\n", "notes/mine.md": "my notes" },
+      },
+    });
+    await gotoAppShell(page);
+    await openSkillsIntegrations(page);
+
+    await expect(page.getByText("Update available", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Update", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Choose skills", exact: true })).toBeVisible();
+  });
+
   test("warns before deleting the skill folders", async ({ page, startSkills }) => {
     const skills = await startSkills({ installed: { mode: "all" }, confirmRemoval: false });
     await gotoAppShell(page);

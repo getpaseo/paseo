@@ -55,6 +55,10 @@ export function IntegrationsSection() {
     refresh: refreshSkillsStatus,
   } = useSkillsStatus();
   const [isChoosingSkills, setIsChoosingSkills] = useState(false);
+  const skillMaintenanceOps = useMemo(
+    () => skillsStatus?.ops.filter((op) => op.kind !== "delete") ?? [],
+    [skillsStatus?.ops],
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -77,18 +81,17 @@ export function IntegrationsSection() {
 
   const handleUpdateSkills = useCallback(async () => {
     if (isSkillsWorking) return;
-    const ops = skillsStatus?.ops ?? [];
     const confirmed = await confirmDialog({
       title: t("settings.integrations.skills.updateTitle"),
       message:
-        ops.length > 0
-          ? formatUpdateMessage(ops, t)
+        skillMaintenanceOps.length > 0
+          ? formatUpdateMessage(skillMaintenanceOps, t)
           : t("settings.integrations.skills.updateFallback"),
       confirmLabel: t("settings.integrations.actions.update"),
     });
     if (!confirmed) return;
     await updateSkills();
-  }, [isSkillsWorking, skillsStatus, t, updateSkills]);
+  }, [isSkillsWorking, skillMaintenanceOps, t, updateSkills]);
 
   const handleUninstallSkills = useCallback(async () => {
     if (isSkillsWorking) return;
@@ -162,7 +165,10 @@ export function IntegrationsSection() {
     return null;
   }
 
-  const skillsState = skillsStatus?.state ?? null;
+  const skillsState =
+    skillsStatus?.state === "drift" && skillMaintenanceOps.length === 0
+      ? "up-to-date"
+      : (skillsStatus?.state ?? null);
 
   return (
     <SettingsSection title={t("settings.integrations.title")} trailing={trailing}>
