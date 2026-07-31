@@ -115,6 +115,10 @@ desktop-only environment inherited by terminals opened inside Paseo from couplin
 a new worktree instance to the parent desktop instance's profile or single-instance
 lock.
 
+Electron remains in the desktop dev runner's process group. Closing or stopping the
+workspace-script terminal must terminate Electron with Metro; detaching Electron
+leaves an orphan holding the worktree's single-instance lock and broken output pipes.
+
 With desktop dev running, verify the real BrowserWindow, titlebar clearance, fullscreen
 transition, and 751-pixel settings split with:
 

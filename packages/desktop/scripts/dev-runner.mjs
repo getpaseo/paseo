@@ -4,6 +4,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { createElectronSpawnOptions, resolveChildKillTarget } from "./dev-runner-config.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopDir = path.resolve(scriptDir, "..");
@@ -58,7 +59,11 @@ function spawnChild(name, command, args, options = {}) {
     ...options,
   });
 
-  children.set(name, child);
+  const managedChild = {
+    process: child,
+    detached: options.detached === true,
+  };
+  children.set(name, managedChild);
   prefixStream(name, child.stdout, process.stdout);
   prefixStream(name, child.stderr, process.stderr);
 
@@ -82,17 +87,13 @@ function spawnChild(name, command, args, options = {}) {
   return child;
 }
 
-function killChild(child, signal) {
+function killChild({ process: child, detached }, signal) {
   if (!child.pid || child.killed) {
     return;
   }
 
   try {
-    if (child.detached) {
-      process.kill(-child.pid, signal);
-    } else {
-      child.kill(signal);
-    }
+    process.kill(resolveChildKillTarget(child.pid, detached), signal);
   } catch {
     // The child may have exited between the liveness check and the signal.
   }
@@ -176,12 +177,14 @@ try {
 }
 
 if (!stopping) {
-  spawnChild("electron", electron, [...electronArgs, desktopDir], {
-    detached: true,
-    env: {
-      ...process.env,
-      ...colorEnv,
-      EXPO_DEV_URL: expoDevUrl,
-    },
-  });
+  spawnChild(
+    "electron",
+    electron,
+    [...electronArgs, desktopDir],
+    createElectronSpawnOptions({
+      env: process.env,
+      colorEnv,
+      expoDevUrl,
+    }),
+  );
 }
