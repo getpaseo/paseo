@@ -1770,6 +1770,8 @@ export const fr: TranslationResources = {
     scope: "Globale dans toute l’application",
     actions: {
       start: "Démarrer la voix en direct",
+      startForeground: "Démarrer au premier plan",
+      startBackground: "Démarrer en arrière-plan",
       unavailable: "Voix en direct indisponible",
       stop: "Arrêter la voix en direct",
       mute: "Couper le micro",
@@ -1778,6 +1780,10 @@ export const fr: TranslationResources = {
       showTranscript: "Afficher la transcription",
       hideTranscript: "Masquer la transcription",
       dismiss: "Ignorer",
+    },
+    modes: {
+      foreground: "Mode premier plan",
+      background: "Mode arrière-plan",
     },
     unavailable: {
       platform: "La voix en direct n’est pas prise en charge sur cet appareil.",

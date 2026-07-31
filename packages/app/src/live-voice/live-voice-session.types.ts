@@ -26,7 +26,11 @@ export interface LiveVoiceNegotiationResult {
   answerSdp: string;
 }
 
+export type LiveVoiceSessionMode = "foreground" | "background";
+
 export interface StartLiveVoiceSessionOptions {
+  /** Whether native transports should keep the call alive after the app backgrounds. */
+  mode: LiveVoiceSessionMode;
   /** Exchange a fully gathered local offer for the provider's SDP answer. */
   negotiate(offerSdp: string): Promise<LiveVoiceNegotiationResult>;
   /** Browser autoplay blocked remote audio; native transports never call this. */

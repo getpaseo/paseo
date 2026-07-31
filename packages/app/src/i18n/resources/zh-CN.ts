@@ -1699,6 +1699,8 @@ export const zhCN: TranslationResources = {
     scope: "可在整个应用中使用",
     actions: {
       start: "开始实时语音",
+      startForeground: "在前台启动",
+      startBackground: "在后台启动",
       unavailable: "实时语音不可用",
       stop: "停止实时语音",
       mute: "静音麦克风",
@@ -1707,6 +1709,10 @@ export const zhCN: TranslationResources = {
       showTranscript: "显示转录",
       hideTranscript: "隐藏转录",
       dismiss: "关闭",
+    },
+    modes: {
+      foreground: "前台模式",
+      background: "后台模式",
     },
     unavailable: {
       platform: "此设备不支持实时语音。",

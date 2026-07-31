@@ -145,14 +145,23 @@ describe("live voice runtime", () => {
     const snapshot = harness.runtime.getSnapshot();
     expect(snapshot.phase).toBe("active");
     expect(snapshot.serverId).toBe(SERVER_ID);
+    expect(snapshot.sessionMode).toBe("background");
     expect(snapshot.liveSessionId).toBe(LIVE_SESSION_ID);
     expect(snapshot.error).toBeNull();
     expect(harness.client.startLiveVoice).toHaveBeenCalledWith({
       offerSdp: OFFER_SDP,
     });
+    expect(harness.sessionOptions().mode).toBe("background");
     expect(harness.lease.current()).toBe("liveVoice");
     expect(harness.runtime.isActiveForServer(SERVER_ID)).toBe(true);
     expect(harness.runtime.isActiveForServer("other-host")).toBe(false);
+  });
+
+  it("passes an explicit foreground mode to the transport and exposes it in the snapshot", async () => {
+    await harness.runtime.start(SERVER_ID, "foreground");
+
+    expect(harness.runtime.getSnapshot().sessionMode).toBe("foreground");
+    expect(harness.sessionOptions().mode).toBe("foreground");
   });
 
   it("records finalized transcripts and replaces by transcript id", async () => {

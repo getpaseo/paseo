@@ -29,6 +29,7 @@ export {
   type LiveVoiceNegotiationResult,
   type LiveVoiceSession,
   type LiveVoiceSessionFailureCode,
+  type LiveVoiceSessionMode,
   type StartLiveVoiceSessionOptions,
 } from "./live-voice-session.types";
 
@@ -50,6 +51,7 @@ export const isLiveVoiceSessionSupported =
   typeof RTCPeerConnection === "function" &&
   typeof navigator !== "undefined" &&
   typeof navigator.mediaDevices?.getUserMedia === "function";
+export const isLiveVoiceBackgroundSessionSupported = false;
 
 export async function startLiveVoiceSession(
   options: StartLiveVoiceSessionOptions,

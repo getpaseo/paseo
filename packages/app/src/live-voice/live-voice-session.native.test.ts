@@ -157,6 +157,7 @@ describe("native live voice session", () => {
   it("negotiates the required WebRTC offer and owns native audio cleanup", async () => {
     const onAudioResumed = vi.fn();
     const session = await startLiveVoiceSession({
+      mode: "background",
       negotiate: async (offerSdp) => {
         nativeRtc.trace.push("negotiate");
         expect(offerSdp).toBe(nativeRtc.OFFER_SDP);
@@ -199,9 +200,38 @@ describe("native live voice session", () => {
     expect(backgroundCallLifetime.end).toHaveBeenCalledOnce();
   });
 
+  it("runs a foreground session without activating background-call lifetime", async () => {
+    const session = await startLiveVoiceSession({
+      mode: "foreground",
+      negotiate: async () => ({
+        liveSessionId: "live-native",
+        answerSdp: nativeRtc.ANSWER_SDP,
+      }),
+      onAudioBlocked: vi.fn(),
+      onAudioResumed: vi.fn(),
+      onTerminal: vi.fn(),
+    });
+
+    expect(nativeRtc.trace).toEqual([
+      "getUserMedia",
+      "addTrack",
+      "createDataChannel:oai-events",
+      "createOffer",
+      "setLocalDescription",
+      "setRemoteDescription",
+    ]);
+    expect(backgroundCallLifetime.begin).not.toHaveBeenCalled();
+
+    session.close();
+    expect(backgroundCallLifetime.end).not.toHaveBeenCalled();
+    expect(nativeRtc.stream().track.stopped).toBe(true);
+    expect(nativeRtc.stream().released).toBe(true);
+  });
+
   it("reports a terminal peer failure once and tears down the microphone", async () => {
     const onTerminal = vi.fn();
     await startLiveVoiceSession({
+      mode: "background",
       negotiate: async () => ({
         liveSessionId: "live-native",
         answerSdp: nativeRtc.ANSWER_SDP,
@@ -236,6 +266,7 @@ describe("native live voice session", () => {
 
     await expect(
       startLiveVoiceSession({
+        mode: "background",
         negotiate: vi.fn(),
         onAudioBlocked: vi.fn(),
         onAudioResumed: vi.fn(),
@@ -255,6 +286,7 @@ describe("native live voice session", () => {
 
     await expect(
       startLiveVoiceSession({
+        mode: "background",
         negotiate: vi.fn(),
         onAudioBlocked: vi.fn(),
         onAudioResumed: vi.fn(),

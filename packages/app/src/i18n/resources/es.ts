@@ -1766,6 +1766,8 @@ export const es: TranslationResources = {
     scope: "Global en toda la aplicación",
     actions: {
       start: "Iniciar voz en directo",
+      startForeground: "Iniciar en primer plano",
+      startBackground: "Iniciar en segundo plano",
       unavailable: "Voz en directo no disponible",
       stop: "Detener voz en directo",
       mute: "Silenciar micrófono",
@@ -1774,6 +1776,10 @@ export const es: TranslationResources = {
       showTranscript: "Mostrar transcripción",
       hideTranscript: "Ocultar transcripción",
       dismiss: "Descartar",
+    },
+    modes: {
+      foreground: "Modo en primer plano",
+      background: "Modo en segundo plano",
     },
     unavailable: {
       platform: "La voz en directo no es compatible con este dispositivo.",

@@ -7,6 +7,7 @@ import {
   LiveVoiceCallControls,
   LiveVoiceStatusDot,
   LiveVoiceTranscript,
+  resolveLiveVoiceModeLabel,
   resolveLiveVoiceStatusLabel,
 } from "@/live-voice/live-voice-call-ui";
 import { acquireSidebarVoiceSlot } from "@/live-voice/live-voice-placement";
@@ -59,7 +60,8 @@ function LiveVoiceSidebarCard() {
   if (!liveVoice) {
     return null;
   }
-  const { phase, serverId, transcripts, isAudioBlocked, error, closedCause } = liveVoice;
+  const { phase, serverId, sessionMode, transcripts, isAudioBlocked, error, closedCause } =
+    liveVoice;
   if (phase === "idle" && closedCause === null) {
     return (
       <View style={styles.card}>
@@ -69,6 +71,7 @@ function LiveVoiceSidebarCard() {
   }
 
   const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? null;
+  const modeLabel = resolveLiveVoiceModeLabel({ sessionMode, t });
   const statusLabel = resolveLiveVoiceStatusLabel({ phase, isAudioBlocked, t });
   const errorText = error ? resolveLiveVoiceErrorMessage(error, t) : null;
   const latestTranscript = transcripts.length > 0 ? transcripts[transcripts.length - 1] : null;
@@ -80,10 +83,15 @@ function LiveVoiceSidebarCard() {
         <Text style={styles.title}>{t("liveVoice.label")}</Text>
         <Text style={phase === "error" ? styles.statusError : styles.status}>{statusLabel}</Text>
       </View>
-      {hostLabel ? (
-        <Text numberOfLines={1} style={styles.hostLabel}>
-          {hostLabel}
-        </Text>
+      {hostLabel || modeLabel ? (
+        <View style={styles.metadataRow}>
+          {hostLabel ? (
+            <Text numberOfLines={1} style={styles.hostLabel}>
+              {hostLabel}
+            </Text>
+          ) : null}
+          {modeLabel ? <Text style={styles.modeLabel}>{modeLabel}</Text> : null}
+        </View>
       ) : null}
 
       {isExpanded ? (
@@ -147,9 +155,21 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.statusDanger,
   },
   hostLabel: {
+    flex: 1,
     fontFamily: theme.fontFamily.ui,
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
+  },
+  metadataRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  modeLabel: {
+    fontFamily: theme.fontFamily.ui,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.medium,
+    color: theme.colors.foreground,
   },
   preview: {
     fontFamily: theme.fontFamily.ui,

@@ -26,6 +26,7 @@ export {
   type LiveVoiceNegotiationResult,
   type LiveVoiceSession,
   type LiveVoiceSessionFailureCode,
+  type LiveVoiceSessionMode,
   type StartLiveVoiceSessionOptions,
 } from "./live-voice-session.types";
 
@@ -34,6 +35,7 @@ const SUSTAINED_DISCONNECT_MS = 8_000;
 const EVENT_CHANNEL_LABEL = "oai-events";
 
 export const isLiveVoiceSessionSupported = true;
+export const isLiveVoiceBackgroundSessionSupported = true;
 
 // `react-native-webrtc` implements EventTarget methods at runtime, but its
 // published declaration output omits the inherited methods. Use the typed
@@ -153,15 +155,17 @@ export async function startLiveVoiceSession(
       throw new LiveVoiceSessionError("mic_unavailable", "No microphone track was produced.");
     }
 
-    try {
-      await beginLiveVoiceBackgroundCall();
-      backgroundCallActive = true;
-    } catch (error) {
-      throw new LiveVoiceSessionError(
-        "background_unavailable",
-        "Live Voice could not establish background audio support.",
-        { cause: error },
-      );
+    if (options.mode === "background") {
+      try {
+        await beginLiveVoiceBackgroundCall();
+        backgroundCallActive = true;
+      } catch (error) {
+        throw new LiveVoiceSessionError(
+          "background_unavailable",
+          "Live Voice could not establish background audio support.",
+          { cause: error },
+        );
+      }
     }
 
     pc = new RTCPeerConnection();

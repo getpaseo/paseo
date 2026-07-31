@@ -13,6 +13,10 @@ import type {
   LiveVoiceUnavailableReason,
 } from "@/live-voice/live-voice-availability-policy";
 import { LiveVoiceStartError } from "@/live-voice/live-voice-runtime";
+import {
+  isLiveVoiceBackgroundSessionSupported,
+  type LiveVoiceSessionMode,
+} from "@/live-voice/live-voice-session";
 
 interface LiveVoiceLauncherProps {
   layout: "row" | "column";
@@ -104,16 +108,27 @@ export function LiveVoiceLauncher({ layout }: LiveVoiceLauncherProps) {
   const selectedHost =
     availableHosts.find((host) => host.serverId === selectedServerId) ?? availableHosts[0] ?? null;
 
-  const handleStart = useCallback(() => {
-    if (!liveVoice || !selectedHost) {
-      return;
-    }
-    void liveVoice.start(selectedHost.serverId).catch((error: unknown) => {
-      if (!(error instanceof LiveVoiceStartError)) {
-        console.error("[LiveVoice] Failed to start", error);
+  const startLiveVoice = useCallback(
+    (sessionMode: LiveVoiceSessionMode) => {
+      if (!liveVoice || !selectedHost) {
+        return;
       }
-    });
-  }, [liveVoice, selectedHost]);
+      void liveVoice.start(selectedHost.serverId, sessionMode).catch((error: unknown) => {
+        if (!(error instanceof LiveVoiceStartError)) {
+          console.error(`[LiveVoice] Failed to start ${sessionMode} session`, error);
+        }
+      });
+    },
+    [liveVoice, selectedHost],
+  );
+
+  const handleStartForeground = useCallback(() => {
+    startLiveVoice("foreground");
+  }, [startLiveVoice]);
+
+  const handleStartBackground = useCallback(() => {
+    startLiveVoice("background");
+  }, [startLiveVoice]);
 
   const isRow = layout === "row";
   const identity = (
@@ -134,15 +149,27 @@ export function LiveVoiceLauncher({ layout }: LiveVoiceLauncherProps) {
             onSelect={setSelectedServerId}
           />
           <Button
-            variant="default"
+            variant={isLiveVoiceBackgroundSessionSupported ? "secondary" : "default"}
             size="sm"
             leftIcon={AudioLines}
-            onPress={handleStart}
+            onPress={handleStartForeground}
             style={isRow ? undefined : styles.fullWidthButton}
-            testID="live-voice-global-start"
+            testID="live-voice-global-start-foreground"
           >
-            {t("liveVoice.actions.start")}
+            {t("liveVoice.actions.startForeground")}
           </Button>
+          {isLiveVoiceBackgroundSessionSupported ? (
+            <Button
+              variant="default"
+              size="sm"
+              leftIcon={AudioLines}
+              onPress={handleStartBackground}
+              style={isRow ? undefined : styles.fullWidthButton}
+              testID="live-voice-global-start-background"
+            >
+              {t("liveVoice.actions.startBackground")}
+            </Button>
+          ) : null}
         </View>
       </View>
     );

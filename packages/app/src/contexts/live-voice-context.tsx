@@ -17,10 +17,11 @@ import {
   type LiveVoiceRuntime,
   type LiveVoiceSnapshot,
 } from "@/live-voice/live-voice-runtime";
+import type { LiveVoiceSessionMode } from "@/live-voice/live-voice-session";
 import { registerLiveVoiceRouteAuthority } from "@/live-voice/live-voice-route-authority";
 
 interface LiveVoiceContextValue extends LiveVoiceSnapshot {
-  start: (serverId: string) => Promise<void>;
+  start: (serverId: string, sessionMode?: LiveVoiceSessionMode) => Promise<void>;
   stop: () => Promise<void>;
   toggleMute: () => void;
   resumeAudio: () => Promise<void>;
@@ -32,6 +33,7 @@ const EMPTY_SNAPSHOT: LiveVoiceSnapshot = {
   phase: "idle",
   serverId: null,
   liveSessionId: null,
+  sessionMode: null,
   isMuted: false,
   isAudioBlocked: false,
   transcripts: [],

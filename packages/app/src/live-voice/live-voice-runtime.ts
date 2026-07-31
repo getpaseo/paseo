@@ -26,6 +26,7 @@ import {
   isLiveVoiceSessionSupported,
   startLiveVoiceSession,
   type LiveVoiceSession,
+  type LiveVoiceSessionMode,
   type StartLiveVoiceSessionOptions,
 } from "@/live-voice/live-voice-session";
 
@@ -55,6 +56,7 @@ export interface LiveVoiceSnapshot {
   phase: LiveVoicePhase;
   serverId: string | null;
   liveSessionId: string | null;
+  sessionMode: LiveVoiceSessionMode | null;
   isMuted: boolean;
   /** Autoplay policy blocked remote audio; the UI must offer "tap to enable audio". */
   isAudioBlocked: boolean;
@@ -101,7 +103,7 @@ export interface LiveVoiceRuntimeDeps {
 export interface LiveVoiceRuntime {
   subscribe(listener: () => void): () => void;
   getSnapshot(): LiveVoiceSnapshot;
-  start(serverId: string): Promise<void>;
+  start(serverId: string, sessionMode?: LiveVoiceSessionMode): Promise<void>;
   stop(): Promise<void>;
   toggleMute(): void;
   /** Retry autoplay-blocked playback. Must be driven by a user gesture. */
@@ -144,6 +146,7 @@ const IDLE_SNAPSHOT: LiveVoiceSnapshot = {
   phase: "idle",
   serverId: null,
   liveSessionId: null,
+  sessionMode: null,
   isMuted: false,
   isAudioBlocked: false,
   transcripts: [],
@@ -308,9 +311,13 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
     }
   }
 
-  function failStart(serverId: string, info: LiveVoiceErrorInfo): never {
+  function failStart(
+    serverId: string,
+    sessionMode: LiveVoiceSessionMode,
+    info: LiveVoiceErrorInfo,
+  ): never {
     cleanupLocal();
-    publish({ ...IDLE_SNAPSHOT, phase: "error", serverId, error: info });
+    publish({ ...IDLE_SNAPSHOT, phase: "error", serverId, sessionMode, error: info });
     throw new LiveVoiceStartError(info);
   }
 
@@ -343,7 +350,7 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
       return snapshot;
     },
 
-    async start(serverId) {
+    async start(serverId, sessionMode = "background") {
       if (snapshot.phase === "starting" || snapshot.phase === "active") {
         throw new LiveVoiceStartError({ code: "already_active", message: null });
       }
@@ -351,7 +358,7 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
         throw new LiveVoiceStartError({ code: "stopping", message: null });
       }
       if (!deps.isSessionSupported) {
-        failStart(serverId, { code: "unsupported", message: null });
+        failStart(serverId, sessionMode, { code: "unsupported", message: null });
       }
       const pin = deps.pinConnection?.(serverId) ?? null;
       // When pinning is available, never silently fall back to an unpinned
@@ -359,7 +366,7 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
       // call immediately after negotiation.
       const client = deps.pinConnection ? (pin?.client ?? null) : deps.getClient(serverId);
       if (!client) {
-        failStart(serverId, { code: "not_connected", message: null });
+        failStart(serverId, sessionMode, { code: "not_connected", message: null });
       }
       connectionPin = pin;
       daemonClient = client;
@@ -368,7 +375,7 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
       const token = deps.lease.acquire("liveVoice");
       if (!token) {
         const owner = deps.lease.current();
-        failStart(serverId, {
+        failStart(serverId, sessionMode, {
           code: "mic_busy",
           message: null,
           ...(owner ? { owner } : {}),
@@ -378,7 +385,7 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
 
       const startGeneration = ++generation;
       pendingUpdates = [];
-      publish({ ...IDLE_SNAPSHOT, phase: "starting", serverId });
+      publish({ ...IDLE_SNAPSHOT, phase: "starting", serverId, sessionMode });
 
       // Subscribe before negotiating: the daemon can push `started` (or a
       // terminal event) before it answers the start request.
@@ -390,6 +397,7 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
       });
 
       const sessionOptions: StartLiveVoiceSessionOptions = {
+        mode: sessionMode,
         negotiate: (offerSdp) => client.startLiveVoice({ offerSdp }),
         onAudioBlocked: () => {
           if (generation !== startGeneration) return;
@@ -445,7 +453,7 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
           releaseSupersededResources();
           throw error instanceof Error ? error : new Error(String(error));
         }
-        failStart(serverId, toErrorInfo(error));
+        failStart(serverId, sessionMode, toErrorInfo(error));
       } finally {
         startInFlight = false;
       }
@@ -526,6 +534,7 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
       publish({
         ...IDLE_SNAPSHOT,
         serverId,
+        sessionMode: snapshot.sessionMode,
         transcripts,
         // Same cause the daemon reports for this teardown, so the UI has one story.
         closedCause: "owner_disconnected",

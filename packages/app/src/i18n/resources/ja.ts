@@ -1737,6 +1737,8 @@ export const ja: TranslationResources = {
     scope: "アプリ全体で利用できます",
     actions: {
       start: "ライブ音声を開始",
+      startForeground: "フォアグラウンドで開始",
+      startBackground: "バックグラウンドで開始",
       unavailable: "ライブ音声は利用できません",
       stop: "ライブ音声を停止",
       mute: "マイクをミュート",
@@ -1745,6 +1747,10 @@ export const ja: TranslationResources = {
       showTranscript: "文字起こしを表示",
       hideTranscript: "文字起こしを非表示",
       dismiss: "閉じる",
+    },
+    modes: {
+      foreground: "フォアグラウンドモード",
+      background: "バックグラウンドモード",
     },
     unavailable: {
       platform: "このデバイスはライブ音声に対応していません。",
