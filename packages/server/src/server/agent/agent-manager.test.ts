@@ -3998,11 +3998,9 @@ test("a resumed agent with an empty live timeline derives progress from its dura
   });
 
   try {
-    const created = await firstManager.createAgent(
-      { provider: "codex", cwd: workdir },
-      undefined,
-      { workspaceId: undefined },
-    );
+    const created = await firstManager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
     await firstManager.closeAgent(created.id);
     await durableTimelineStore.bulkInsert(created.id, [
       timelineRow(1, { type: "user_message", text: "deliver this" }),
@@ -4098,11 +4096,9 @@ test("material progress pages beyond the durable 1000-row tail to the current co
   });
 
   try {
-    const created = await firstManager.createAgent(
-      { provider: "codex", cwd: workdir },
-      undefined,
-      { workspaceId: undefined },
-    );
+    const created = await firstManager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
     await firstManager.closeAgent(created.id);
 
     const durableRows: AgentTimelineRow[] = [
@@ -4183,11 +4179,9 @@ test("a delayed material progress write cannot overwrite a newer continuation", 
   });
 
   try {
-    const created = await firstManager.createAgent(
-      { provider: "codex", cwd: workdir },
-      undefined,
-      { workspaceId: undefined },
-    );
+    const created = await firstManager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
     await firstManager.closeAgent(created.id);
     await durableTimelineStore.bulkInsert(created.id, [
       timelineRow(1, { type: "user_message", text: "old continuation" }),
