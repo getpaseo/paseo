@@ -1890,13 +1890,20 @@ describe("OpenCode adapter startTurn error handling", () => {
         customCommandName: testCase.customCommandName,
       });
     const commandUser = persistedUserMessage(`msg_${testCase.expectedCall}_user`);
+    const commandAssistantStep = persistedAssistantMessage({
+      id: `msg_${testCase.expectedCall}_assistant_step`,
+      parentId: `msg_${testCase.expectedCall}_user`,
+      completed: 3,
+      cost: 0.1,
+    });
     const commandAssistant = persistedAssistantMessage({
       id: `msg_${testCase.expectedCall}_assistant`,
       parentId: `msg_${testCase.expectedCall}_user`,
       completed: 4,
+      cost: 0.2,
     });
     openCode.sessionMessagesResponse = {
-      data: [...baselineMessages, commandUser, commandAssistant],
+      data: [...baselineMessages, commandUser, commandAssistantStep, commandAssistant],
     };
 
     try {
@@ -2027,21 +2034,25 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
-  test("fails closed when multiple assistant messages claim the initiating prompt", async () => {
+  test("reconciles ordered multi-step assistant messages using the terminal step", async () => {
     const { parent, openCode, events, endStream, initiatingMessageId, initiatingMessage } =
       await createControlledEofTurn();
     openCode.sessionMessagesResponse = {
       data: [
         initiatingMessage,
         persistedAssistantMessage({
-          id: "msg_ambiguous_completed",
+          id: "msg_step_completed",
           parentId: initiatingMessageId,
           completed: 4,
+          cost: 0.1,
+          tokens: { input: 5, output: 2 },
         }),
         persistedAssistantMessage({
-          id: "msg_ambiguous_failed",
+          id: "msg_terminal_failed",
           parentId: initiatingMessageId,
-          error: { name: "UnknownError", data: { message: "ambiguous failure" } },
+          error: { name: "UnknownError", data: { message: "terminal failure" } },
+          cost: 0.2,
+          tokens: { input: 7, output: 3 },
         }),
       ],
     };
@@ -2052,10 +2063,78 @@ describe("OpenCode adapter startTurn error handling", () => {
         expect(terminalTurnEvents(events)).toEqual([
           expect.objectContaining({
             type: "turn_failed",
-            error: "OpenCode event stream ended before the turn reached a terminal state",
+            error: '{"name":"UnknownError","data":{"message":"terminal failure"}}',
           }),
         ]);
       });
+      expect(eventsWithType(events, "usage_updated")).toEqual([
+        expect.objectContaining({
+          type: "usage_updated",
+          usage: expect.objectContaining({
+            inputTokens: 7,
+            outputTokens: 3,
+            contextWindowUsedTokens: 10,
+            totalCostUsd: expect.closeTo(0.3, 10),
+          }),
+        }),
+      ]);
+    } finally {
+      await parent.close();
+    }
+  });
+
+  test.each([
+    {
+      label: "failed",
+      error: { name: "UnknownError", data: { message: "provider failed after usage" } },
+      terminal: "turn_failed" as const,
+    },
+    {
+      label: "canceled",
+      error: { name: "MessageAbortedError", data: { message: "aborted after usage" } },
+      terminal: "turn_canceled" as const,
+    },
+  ])("preserves persisted usage before an EOF-recovered $label turn", async (testCase) => {
+    const { parent, openCode, events, endStream, initiatingMessageId, initiatingMessage } =
+      await createControlledEofTurn();
+    openCode.sessionMessagesResponse = {
+      data: [
+        initiatingMessage,
+        persistedAssistantMessage({
+          id: `msg_${testCase.label}_with_usage`,
+          parentId: initiatingMessageId,
+          error: testCase.error,
+          cost: 0.25,
+          tokens: {
+            input: 10,
+            output: 4,
+            reasoning: 2,
+            cache: { read: 3, write: 1 },
+          },
+        }),
+      ],
+    };
+
+    try {
+      endStream();
+      await vi.waitFor(() => {
+        expect(eventsWithType(events, testCase.terminal)).toHaveLength(1);
+      });
+      expect(eventsWithType(events, "usage_updated")).toEqual([
+        expect.objectContaining({
+          type: "usage_updated",
+          usage: {
+            inputTokens: 10,
+            cachedInputTokens: 3,
+            outputTokens: 4,
+            contextWindowUsedTokens: 20,
+            totalCostUsd: 0.25,
+          },
+        }),
+      ]);
+      expect(events.findIndex((event) => event.type === "usage_updated")).toBeLessThan(
+        events.findIndex((event) => event.type === testCase.terminal),
+      );
     } finally {
       await parent.close();
     }

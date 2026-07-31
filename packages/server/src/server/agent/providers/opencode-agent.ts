@@ -3658,14 +3658,30 @@ class OpenCodeAgentSession implements AgentSession {
       (message) =>
         message.info.role === "assistant" && message.info.parentID === initiatingMessageId,
     );
-    if (ownedAssistantMessages.length !== 1) {
+    if (ownedAssistantMessages.length === 0) {
       return null;
     }
-    const assistantMessage = ownedAssistantMessages[0];
+    const assistantMessage = ownedAssistantMessages.at(-1);
     if (!assistantMessage || assistantMessage.info.role !== "assistant") {
       return null;
     }
+    const incompleteEarlierStep = ownedAssistantMessages
+      .slice(0, -1)
+      .some(
+        (message) =>
+          message.info.role !== "assistant" ||
+          message.info.error !== undefined ||
+          message.info.time?.completed === undefined,
+      );
+    if (incompleteEarlierStep) {
+      return null;
+    }
+
+    const usage = this.mergePersistedAssistantUsage(ownedAssistantMessages, ownership);
     if (assistantMessage.info.error) {
+      if (usage) {
+        this.notifySubscribers({ type: "usage_updated", provider: "opencode", usage }, turnId);
+      }
       return terminalTurnEventFromOpenCodeError(assistantMessage.info.error);
     }
 
@@ -3673,20 +3689,37 @@ class OpenCodeAgentSession implements AgentSession {
       return null;
     }
 
-    const persistedCost = readPositiveFiniteNumber(assistantMessage.info.cost);
-    if (persistedCost !== undefined) {
-      const persistedSessionTotal = (ownership.startingTotalCostUsd ?? 0) + persistedCost;
-      this.sessionTotalCostUsd = maxFiniteNumber(this.sessionTotalCostUsd, persistedSessionTotal);
-    }
-    const usageOptions =
-      this.sessionTotalCostUsd === undefined ? {} : { totalCostUsd: this.sessionTotalCostUsd };
-    mergeOpenCodeStepFinishUsage(this.accumulatedUsage, assistantMessage.info, usageOptions);
-    const usage = hasNormalizedOpenCodeUsage(this.accumulatedUsage)
-      ? { ...this.accumulatedUsage }
-      : undefined;
     const contextWindowMaxTokens = this.resolveSelectedModelContextWindowMaxTokens();
     this.accumulatedUsage = contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
     return { type: "turn_completed", provider: "opencode", usage };
+  }
+
+  private mergePersistedAssistantUsage(
+    assistantMessages: readonly OpenCodeSessionMessage[],
+    ownership: Extract<OpenCodeForegroundOwnership, { status: "owned" | "baseline" }>,
+  ): AgentUsage | undefined {
+    let persistedTurnCost = 0;
+    for (const message of assistantMessages) {
+      if (message.info.role !== "assistant") {
+        continue;
+      }
+      persistedTurnCost += readPositiveFiniteNumber(message.info.cost) ?? 0;
+    }
+    if (persistedTurnCost > 0) {
+      const persistedSessionTotal = (ownership.startingTotalCostUsd ?? 0) + persistedTurnCost;
+      this.sessionTotalCostUsd = maxFiniteNumber(this.sessionTotalCostUsd, persistedSessionTotal);
+    }
+
+    const usageOptions =
+      this.sessionTotalCostUsd === undefined ? {} : { totalCostUsd: this.sessionTotalCostUsd };
+    for (const message of assistantMessages) {
+      if (message.info.role === "assistant") {
+        mergeOpenCodeStepFinishUsage(this.accumulatedUsage, message.info, usageOptions);
+      }
+    }
+    return hasNormalizedOpenCodeUsage(this.accumulatedUsage)
+      ? { ...this.accumulatedUsage }
+      : undefined;
   }
 
   private findBaselineInitiatingMessageId(
@@ -3694,22 +3727,23 @@ class OpenCodeAgentSession implements AgentSession {
     knownMessageIds: ReadonlySet<string>,
   ): string | null {
     const newMessages = messages.filter((message) => !knownMessageIds.has(message.info.id));
-    if (newMessages.length !== 2) {
-      return null;
-    }
     const userMessages = newMessages.filter((message) => message.info.role === "user");
     const assistantMessages = newMessages.filter((message) => message.info.role === "assistant");
-    if (userMessages.length !== 1 || assistantMessages.length !== 1) {
+    if (
+      userMessages.length !== 1 ||
+      assistantMessages.length === 0 ||
+      newMessages.length !== userMessages.length + assistantMessages.length
+    ) {
       return null;
     }
     const userMessage = userMessages[0];
-    const assistantMessage = assistantMessages[0];
     if (
       !userMessage ||
       userMessage.info.role !== "user" ||
-      !assistantMessage ||
-      assistantMessage.info.role !== "assistant" ||
-      assistantMessage.info.parentID !== userMessage.info.id
+      assistantMessages.some(
+        (message) =>
+          message.info.role !== "assistant" || message.info.parentID !== userMessage.info.id,
+      )
     ) {
       return null;
     }
