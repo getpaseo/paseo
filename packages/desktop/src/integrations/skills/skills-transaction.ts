@@ -230,7 +230,7 @@ async function mergeBackupDirectory(livePath: string, backupPath: string | null)
 async function restoreDeletedDirectory(livePath: string, backupPath: string | null): Promise<void> {
   if (backupPath === null) return;
   const backupInfo = await lstat(backupPath);
-  if (!backupInfo.isSymbolicLink()) {
+  if (backupInfo.isDirectory() && !backupInfo.isSymbolicLink()) {
     await mergeBackupDirectory(livePath, backupPath);
     return;
   }
@@ -293,6 +293,11 @@ async function restore(
     }
     if (entry.kind === "delete") {
       await restoreDeletedDirectory(entry.livePath, backup);
+      continue;
+    }
+    const backupInfo = backup && (await lstat(backup).catch(() => null));
+    if (backupInfo && !backupInfo.isDirectory()) {
+      await restoreStagedEntry(entry.livePath, backup, ".");
       continue;
     }
     const name = path.basename(entry.livePath);
@@ -392,18 +397,21 @@ export async function beginSkillsTransaction(
         const name = op.name;
         const livePath = path.join(root, name);
         const liveInfo = await lstat(livePath).catch(() => null);
-        if (liveInfo === null || !(await isDirectory(livePath))) {
+        if (liveInfo === null) {
           entries.push({ livePath, kind: op.kind, backupPath: null });
           continue;
         }
+        const liveIsDirectory = await isDirectory(livePath);
         const backupPath =
           op.kind === "delete"
             ? path.join(root, path.basename(transactionDir), name)
             : path.join(BACKUP_DIRNAME, String(rootIndex), name);
         if (op.kind !== "delete") {
-          const captureSource = liveInfo.isSymbolicLink() ? await realpath(livePath) : livePath;
+          const captureSource =
+            liveInfo.isSymbolicLink() && liveIsDirectory ? await realpath(livePath) : livePath;
+          const captureInfo = await lstat(captureSource);
           await cp(captureSource, resolveBackupPath(transactionDir, backupPath)!, {
-            recursive: true,
+            recursive: captureInfo.isDirectory(),
             preserveTimestamps: true,
             verbatimSymlinks: true,
           });

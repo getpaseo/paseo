@@ -134,6 +134,19 @@ test.describe("Choosing installed skills", () => {
     await expect(page.getByRole("button", { name: "Choose skills", exact: true })).toBeVisible();
   });
 
+  test("a selection containing only retired skills does not offer a no-op Install", async ({
+    page,
+    startSkills,
+  }) => {
+    await startSkills({ installed: { mode: "custom", skills: ["retired-skill"] } });
+    await gotoAppShell(page);
+    await openSkillsIntegrations(page);
+
+    // The remaining Install action belongs to the command-line integration.
+    await expect(page.getByRole("button", { name: "Install", exact: true })).toHaveCount(1);
+    await expect(page.getByRole("button", { name: "Choose skills", exact: true })).toBeVisible();
+  });
+
   test("cannot dismiss the sheet while Save is pending", async ({ page, startSkills }) => {
     const skills = await startSkills({ holdSave: true });
     await gotoAppShell(page);

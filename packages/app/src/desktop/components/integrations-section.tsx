@@ -171,7 +171,8 @@ export function IntegrationsSection() {
       : (skillsStatus?.state ?? null);
   const hasSelectedSkills =
     skillsStatus?.selection.mode === "all" ||
-    (skillsStatus?.selection.mode === "custom" && skillsStatus.selection.skills.length > 0);
+    (skillsStatus?.selection.mode === "custom" &&
+      skillsStatus.selection.skills.some((name) => skillsStatus.available.includes(name)));
 
   return (
     <SettingsSection title={t("settings.integrations.title")} trailing={trailing}>

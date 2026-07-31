@@ -242,6 +242,19 @@ describe("skills controller", () => {
     expect(await isInstalled(harness.targets, "paseo-advisor")).toBe(true);
   });
 
+  it("does not remove deselected directories during install", async () => {
+    await harness.controller.save({ mode: "custom", skills: ["paseo"] });
+    await writeUserFile(harness.targets, "paseo-loop", "notes/mine.md", "keep this");
+
+    await harness.controller.install();
+
+    expect(await readUserFile(harness.targets, "paseo-loop", "notes/mine.md")).toEqual([
+      "keep this",
+      "keep this",
+      "keep this",
+    ]);
+  });
+
   it("saves a custom selection, converges disk, and returns the refreshed snapshot", async () => {
     const snapshot = await harness.controller.save({
       mode: "custom",
@@ -880,6 +893,16 @@ describe("skills controller", () => {
 
     expect(result.confirmationRequired).toBeNull();
     expect(await installedEverywhere(harness.targets)).toEqual([["paseo"], ["paseo"], ["paseo"]]);
+  });
+
+  it("preserves a regular file at a skill path when save convergence fails", async () => {
+    await mkdir(harness.targets.agentsDir, { recursive: true });
+    const collision = path.join(harness.targets.agentsDir, "paseo");
+    await writeFile(collision, "keep this file");
+
+    await expect(harness.controller.save({ mode: "custom", skills: ["paseo"] })).rejects.toThrow();
+
+    expect(await readFile(collision, "utf8")).toBe("keep this file");
   });
 
   it("serializes startup convergence with an interactive save", async () => {
