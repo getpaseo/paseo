@@ -76,7 +76,8 @@ export const FORGE_DEFINITIONS: ForgeDefinition[] = [
     issueNumberPrefix: "#",
     iconKind: "gitlab",
     signIn: { cli: "glab", command: "glab auth login", hostnameFlag: "--hostname" },
-    cloudHosts: ["gitlab.com"],
+    // YOOZ DOWNSTREAM(sync): keep Iceveil's self-hosted GitLab on the direct GitLab path.
+    cloudHosts: ["gitlab.com", "gitlab.iceveil.com"],
   },
   {
     id: "gitea",

@@ -1125,12 +1125,18 @@ describe("createGitLabService", () => {
   });
 
   it("reports authentication via a host-scoped glab auth status", async () => {
-    const { service, calls } = makeService((args) => {
-      if (args[0] === "auth") return ok("");
-      throw new Error("unexpected");
-    });
+    const { service, calls } = makeService(
+      (args) => {
+        if (args[0] === "auth") return ok("");
+        throw new Error("unexpected");
+      },
+      {
+        resolveRemoteUrl: async () =>
+          "https://gitlab.iceveil.com:38443/example-group/example-project.git",
+      },
+    );
     await expect(service.isAuthenticated({ cwd: "/repo" })).resolves.toBe(true);
-    expect(calls[0]).toEqual(["auth", "status", "--hostname", "gitlab.example.com"]);
+    expect(calls[0]).toEqual(["auth", "status", "--hostname", "gitlab.iceveil.com"]);
   });
 
   it("reports unauthenticated when glab auth status fails", async () => {

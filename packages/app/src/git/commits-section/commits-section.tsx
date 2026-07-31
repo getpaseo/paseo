@@ -6,7 +6,6 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import { useCheckoutCommitsQuery, type CheckoutCommitsQueryResult } from "@/git/use-commits-query";
 import { ThemedChevron, chevronColorMapping } from "@/git/themed-chevron";
-import { normalizeBranchOptionName } from "@/utils/branch-suggestions";
 import { CommitRow } from "./commit-row";
 
 interface CommitsSectionProps {
@@ -55,25 +54,23 @@ function CommitsSectionContent({
   if (query.status !== "loaded") {
     return <CommitsSectionSkeleton />;
   }
-  const workspaceCommits = query.data.commits.filter((commit) => !commit.isOnBase);
-  const baseRef = normalizeBranchOptionName(query.data.baseRef) ?? t("workspace.git.diff.base");
-  if (workspaceCommits.length === 0) {
+  // YOOZ DOWNSTREAM(sync): retain the base-context records returned by the daemon.
+  const commits = query.data.commits;
+  if (commits.length === 0) {
     return (
       <View style={styles.noWorkspaceCommitsRow} testID="commits-section-no-workspace-commits">
-        <Text style={styles.noWorkspaceCommitsText}>
-          {t("workspace.git.diff.commits.noneAhead", { baseRef })}
-        </Text>
+        <Text style={styles.noWorkspaceCommitsText}>{t("workspace.git.diff.commits.empty")}</Text>
       </View>
     );
   }
   return (
     <View style={styles.list}>
-      {workspaceCommits.map((commit, index) => (
+      {commits.map((commit, index) => (
         <CommitRow
           key={commit.sha}
           commit={commit}
           isFirst={index === 0}
-          isLast={index === workspaceCommits.length - 1}
+          isLast={index === commits.length - 1}
           now={now}
           onCommitPress={onCommitPress}
         />
@@ -118,10 +115,7 @@ export function CommitsSection({ serverId, cwd, onCommitPress }: CommitsSectionP
   if (query.status === "unsupported") {
     return null;
   }
-  const commitCount =
-    query.status === "loaded"
-      ? query.data.commits.filter((commit) => !commit.isOnBase).length
-      : null;
+  const commitCount = query.status === "loaded" ? query.data.commits.length : null;
 
   return (
     <View style={styles.container}>
