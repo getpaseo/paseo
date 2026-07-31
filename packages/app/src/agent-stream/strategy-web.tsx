@@ -21,7 +21,6 @@ import {
   createHistoryStartPaginationState,
   evaluateHistoryStartPagination,
   isHistoryStartLoadingOperation,
-  isHistoryStartSlotReserved,
   rearmHistoryStartPagination,
   settleHistoryStartPagination,
   type HistoryStartPaginationInput,
@@ -69,9 +68,8 @@ const historyStartSlotStyle: CSSProperties = {
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  minHeight: 32,
-  paddingTop: 4,
-  paddingBottom: 8,
+  height: 32,
+  flexShrink: 0,
 };
 
 const mountedHistoryRowStyle: CSSProperties = {
@@ -785,20 +783,16 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   }, [renderLiveAuxiliary]);
   const historyStartSlot = useMemo(() => {
     const isLoadingOperation = isHistoryStartLoadingOperation(historyStartPaginationState);
-    if (!isHistoryStartSlotReserved(historyStartPaginationState, hasOlderHistory)) {
-      return null;
-    }
     return (
-      <div
-        style={historyStartSlotStyle}
-        data-testid={isLoadingOperation ? "load-older-history-spinner" : undefined}
-      >
+      <div style={historyStartSlotStyle} data-testid="older-history-slot">
         {isLoadingOperation ? (
-          <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
+          <div data-testid="load-older-history-spinner">
+            <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
+          </div>
         ) : null}
       </div>
     );
-  }, [hasOlderHistory, historyStartPaginationState]);
+  }, [historyStartPaginationState]);
   const shouldRenderEmpty =
     !boundary.hasMountedHistory &&
     !boundary.hasVirtualizedHistory &&

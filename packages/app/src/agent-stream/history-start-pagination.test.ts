@@ -4,7 +4,6 @@ import {
   createHistoryStartPaginationState,
   evaluateHistoryStartPagination,
   isHistoryStartLoadingOperation,
-  isHistoryStartSlotReserved,
   rearmHistoryStartPagination,
   settleHistoryStartPagination,
   type HistoryStartPaginationInput,
@@ -23,15 +22,11 @@ const visibleHistoryStart: HistoryStartPaginationInput = {
 };
 
 describe("history start pagination", () => {
-  it("waits for user scroll intent before loading or reserving the loader slot", () => {
+  it("waits for user scroll intent before loading", () => {
     const dormant = createHistoryStartPaginationState();
     const evaluated = evaluateHistoryStartPagination(dormant, visibleHistoryStart);
 
     expect(evaluated).toEqual({ state: { status: "dormant" }, shouldLoad: false });
-    expect(isHistoryStartSlotReserved(evaluated.state, true)).toBe(false);
-    expect(isHistoryStartSlotReserved(rearmHistoryStartPagination(evaluated.state), true)).toBe(
-      true,
-    );
   });
 
   it("waits for anchored page geometry before authorizing another page", () => {

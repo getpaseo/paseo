@@ -36,7 +36,6 @@ import {
   createHistoryStartPaginationState,
   evaluateHistoryStartPagination,
   isHistoryStartLoadingOperation,
-  isHistoryStartSlotReserved,
   rearmHistoryStartPagination,
   settleHistoryStartPagination,
   type HistoryStartPaginationInput,
@@ -59,9 +58,8 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
 const historyStartSlotStyle: ViewStyle = {
   alignItems: "center",
   justifyContent: "center",
-  minHeight: 32,
-  paddingTop: 4,
-  paddingBottom: 8,
+  height: 32,
+  flexShrink: 0,
 };
 const HISTORY_START_SETTLE_FRAMES = 2;
 
@@ -584,20 +582,16 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
 
   const historyFooterContent = useMemo(() => {
     const isLoadingOperation = isHistoryStartLoadingOperation(historyStartPaginationState);
-    if (!isHistoryStartSlotReserved(historyStartPaginationState, hasOlderHistory)) {
-      return null;
-    }
     return (
-      <View
-        style={historyStartSlotStyle}
-        testID={isLoadingOperation ? "load-older-history-spinner" : undefined}
-      >
+      <View style={historyStartSlotStyle} testID="older-history-slot">
         {isLoadingOperation ? (
-          <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
+          <View testID="load-older-history-spinner">
+            <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
+          </View>
         ) : null}
       </View>
     );
-  }, [hasOlderHistory, historyStartPaginationState]);
+  }, [historyStartPaginationState]);
 
   // RN's FlatList strictMode keeps its internal renderItem wrapper stable when
   // data or the live header changes, preserving the row identities above.

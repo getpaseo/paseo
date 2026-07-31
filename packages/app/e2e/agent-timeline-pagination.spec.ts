@@ -1,6 +1,7 @@
 import { expect, test } from "./fixtures";
 import {
   expectSameOlderHistoryLoadingOperation,
+  expectStableHistoryStartGutter,
   expectTimelineAtHistoryStart,
   expectTimelinePromptCentered,
   expectTimelinePromptNotMounted,
@@ -27,6 +28,27 @@ import {
 } from "./helpers/timeline-pagination";
 
 test.describe("Agent timeline pagination", () => {
+  test("keeps a fixed history-start gutter before, during, and after pagination", async ({
+    page,
+  }) => {
+    const agent = await seedLongMockAgentTimeline({ turns: 40 });
+    try {
+      const history = await holdOlderHistoryPages(page, agent);
+      await openAgentTimeline(page, agent);
+      await expectStableHistoryStartGutter(page);
+
+      await userScrollsTimelineToHistoryStart(page);
+      await history.expectRequestedPages(1);
+      await expectStableHistoryStartGutter(page);
+
+      history.releasePage(1);
+      await history.expectSettledWithRequestedPages(1);
+      await expectStableHistoryStartGutter(page);
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
   test("loads one page each time the user returns to history start", async ({ page }) => {
     test.setTimeout(120_000);
     const agent = await seedLongMockAgentTimeline({ turns: 80 });

@@ -34,13 +34,6 @@ export function rearmHistoryStartPagination(
   return state.status === "dormant" || state.status === "latched" ? { status: "ready" } : state;
 }
 
-export function isHistoryStartSlotReserved(
-  state: HistoryStartPaginationState,
-  hasOlderHistory: boolean,
-): boolean {
-  return state.status !== "dormant" && (hasOlderHistory || state.status !== "ready");
-}
-
 export function abandonHistoryStartPaginationRequest(
   state: HistoryStartPaginationState,
   requestedProgressKey: string,

@@ -286,6 +286,14 @@ export async function rememberTimelineViewport(page: Page): Promise<TimelineView
   return readTimelineViewport(page);
 }
 
+export async function expectStableHistoryStartGutter(page: Page): Promise<void> {
+  const gutter = page.getByTestId("older-history-slot");
+  await expect(gutter).toBeAttached();
+  await expect
+    .poll(() => gutter.evaluate((element) => element.getBoundingClientRect().height))
+    .toBe(32);
+}
+
 export async function scrollTimelinePromptIntoView(page: Page, prompt: string): Promise<void> {
   const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
   const row = timeline.getByTestId("user-message").filter({ hasText: prompt });
