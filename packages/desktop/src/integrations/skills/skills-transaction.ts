@@ -228,10 +228,20 @@ async function mergeBackupDirectory(livePath: string, backupPath: string | null)
   });
 }
 
-async function quarantineStagedEntry(livePath: string, backupPath: string): Promise<void> {
-  const transactionId = path.basename(path.dirname(backupPath)).replace(TRANSACTION_PREFIX, "");
+async function quarantineStagedEntry(
+  transactionDir: string,
+  livePath: string,
+  backupPath: string,
+): Promise<void> {
+  const transactionId = path.basename(transactionDir).replace(TRANSACTION_PREFIX, "");
+  // Update backups live inside the central transaction directory; delete stages
+  // live beside their target root. Keep quarantine on the backup's filesystem
+  // so preserving it remains an atomic rename across mounted agent homes.
+  const recoveryParent = backupPath.startsWith(`${transactionDir}${path.sep}`)
+    ? path.dirname(transactionDir)
+    : path.dirname(livePath);
   const base = path.join(
-    path.dirname(livePath),
+    recoveryParent,
     `${RECOVERED_PREFIX}${path.basename(livePath)}-${transactionId}`,
   );
   let destination = base;
@@ -241,7 +251,11 @@ async function quarantineStagedEntry(livePath: string, backupPath: string): Prom
   await rename(backupPath, destination);
 }
 
-async function restoreDeletedDirectory(livePath: string, backupPath: string | null): Promise<void> {
+async function restoreDeletedDirectory(
+  transactionDir: string,
+  livePath: string,
+  backupPath: string | null,
+): Promise<void> {
   if (backupPath === null) return;
   const liveInfo = await lstat(livePath).catch(() => null);
   if (liveInfo === null) {
@@ -257,7 +271,7 @@ async function restoreDeletedDirectory(livePath: string, backupPath: string | nu
   // A concurrent writer recreated the path with an incompatible type. Keep its
   // entry live and move the staged original outside transaction cleanup so
   // neither side is overwritten and later controller operations can proceed.
-  await quarantineStagedEntry(livePath, backupPath);
+  await quarantineStagedEntry(transactionDir, livePath, backupPath);
 }
 
 async function restoreStagedEntry(
@@ -312,7 +326,17 @@ async function restore(
       throw new Error(`Skills transaction backup is missing: ${backup}`);
     }
     if (entry.kind === "delete") {
-      await restoreDeletedDirectory(entry.livePath, backup);
+      await restoreDeletedDirectory(transactionDir, entry.livePath, backup);
+      continue;
+    }
+    const liveInfo = await lstat(entry.livePath).catch(() => null);
+    if (liveInfo !== null && !(await isDirectory(entry.livePath))) {
+      // Add/update rollback has the same conflict state as delete rollback. A
+      // recreated file or file symlink belongs to the external writer; preserve
+      // it, and preserve any captured original outside transaction cleanup.
+      if (backup !== null) {
+        await quarantineStagedEntry(transactionDir, entry.livePath, backup);
+      }
       continue;
     }
     const backupInfo = backup && (await lstat(backup).catch(() => null));

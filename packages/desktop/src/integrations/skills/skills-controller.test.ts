@@ -169,7 +169,9 @@ async function backupArtifacts(targets: SkillTargets): Promise<string[][]> {
       const parentEntries = await readdir(path.dirname(dir)).catch(() => []);
       const rootEntries = await readdir(dir).catch(() => []);
       return [
-        ...parentEntries.filter((entry) => entry !== path.basename(dir)),
+        ...parentEntries.filter(
+          (entry) => entry !== path.basename(dir) && !entry.startsWith(".paseo-skills-recovered-"),
+        ),
         ...rootEntries.filter((entry) => entry.startsWith(".paseo-skills-transaction-")),
       ].sort();
     }),
@@ -607,6 +609,46 @@ describe("skills controller", () => {
       "keep this",
       "keep this",
       null,
+    ]);
+    expect(await backupArtifacts(harness.targets)).toEqual([[], [], []]);
+    await expect(harness.controller.status()).resolves.toMatchObject({ selection: previous });
+  });
+
+  it("preserves incompatible live paths while rolling back adds and updates", async () => {
+    const previous: SkillSelection = { mode: "custom", skills: ["paseo"] };
+    const next: SkillSelection = {
+      mode: "custom",
+      skills: ["paseo", "paseo-advisor"],
+    };
+    await harness.controller.save(previous);
+    await writeUserFile(harness.targets, "paseo", "notes/mine.md", "keep this");
+
+    const transaction = await beginSkillsTransaction(harness.targets, previous, next, [
+      { kind: "update", name: "paseo" },
+      { kind: "add", name: "paseo-advisor" },
+    ]);
+    const replacedUpdate = path.join(harness.targets.agentsDir, "paseo");
+    await rm(replacedUpdate, { recursive: true, force: true });
+    await writeFile(replacedUpdate, "external update replacement");
+    const replacedAdd = path.join(harness.targets.codexDir, "paseo-advisor");
+    await writeFile(replacedAdd, "external add replacement");
+
+    await transaction.rollback();
+
+    expect(await readFile(replacedUpdate, "utf8")).toBe("external update replacement");
+    expect(await readFile(replacedAdd, "utf8")).toBe("external add replacement");
+    const recoveryParent = path.dirname(harness.targets.agentsDir);
+    const recovered = (await readdir(recoveryParent)).find((entry) =>
+      entry.startsWith(".paseo-skills-recovered-paseo-"),
+    );
+    expect(recovered).toBeDefined();
+    expect(await readFile(path.join(recoveryParent, recovered!, "notes", "mine.md"), "utf8")).toBe(
+      "keep this",
+    );
+    expect(await readUserFile(harness.targets, "paseo", "notes/mine.md")).toEqual([
+      null,
+      "keep this",
+      "keep this",
     ]);
     expect(await backupArtifacts(harness.targets)).toEqual([[], [], []]);
     await expect(harness.controller.status()).resolves.toMatchObject({ selection: previous });
