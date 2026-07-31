@@ -637,6 +637,7 @@ export class AgentManager {
   private readonly failedHistoryHydrationAgentIds = new Set<string>();
   private readonly activeHistoryHydrationAgentIds = new Set<string>();
   private readonly bufferedHistoryHydrationSessionEvents = new Map<string, AgentStreamEvent[]>();
+  private readonly historyHydrationTails = new Map<string, Promise<void>>();
   private readonly runs = new AgentRunState();
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
@@ -3419,18 +3420,32 @@ export class AgentManager {
     agentId: string,
     hydrate: () => Promise<void>,
   ): Promise<void> {
-    this.activeHistoryHydrationAgentIds.add(agentId);
-    try {
-      await this.drainSessionEvents(agentId);
-      await hydrate();
-    } finally {
-      this.activeHistoryHydrationAgentIds.delete(agentId);
-      const buffered = this.bufferedHistoryHydrationSessionEvents.get(agentId) ?? [];
-      this.bufferedHistoryHydrationSessionEvents.delete(agentId);
-      for (const event of buffered) {
-        this.enqueueSessionEvent(agentId, event);
+    const previous = this.historyHydrationTails.get(agentId);
+    const current = (async () => {
+      if (previous) {
+        await previous.catch(() => undefined);
       }
-      await this.drainSessionEvents(agentId);
+      this.activeHistoryHydrationAgentIds.add(agentId);
+      try {
+        await this.drainSessionEvents(agentId);
+        await hydrate();
+      } finally {
+        this.activeHistoryHydrationAgentIds.delete(agentId);
+        const buffered = this.bufferedHistoryHydrationSessionEvents.get(agentId) ?? [];
+        this.bufferedHistoryHydrationSessionEvents.delete(agentId);
+        for (const event of buffered) {
+          this.enqueueSessionEvent(agentId, event);
+        }
+        await this.drainSessionEvents(agentId);
+      }
+    })();
+    this.historyHydrationTails.set(agentId, current);
+    try {
+      await current;
+    } finally {
+      if (this.historyHydrationTails.get(agentId) === current) {
+        this.historyHydrationTails.delete(agentId);
+      }
     }
   }
 

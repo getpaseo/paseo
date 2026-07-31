@@ -4411,6 +4411,121 @@ test("history hydration installs its live-event barrier before the first await",
   }
 });
 
+test("history hydration serializes overlapping normal and forced replacements", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-serialized-"));
+  const agentId = "00000000-0000-4000-8000-000000000150";
+  const firstHistoryStarted = deferred<void>();
+  const firstHistoryAllowed = deferred<void>();
+  const secondHistoryStarted = deferred<void>();
+  const secondHistoryAllowed = deferred<void>();
+  let historyCalls = 0;
+  let session: TestAgentSession | null = null;
+
+  class SerializedHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      historyCalls += 1;
+      if (historyCalls === 1) {
+        firstHistoryStarted.resolve();
+        await firstHistoryAllowed.promise;
+        yield {
+          type: "timeline",
+          provider: "codex",
+          item: { type: "user_message", text: "first history" },
+        };
+        return;
+      }
+      secondHistoryStarted.resolve();
+      await secondHistoryAllowed.promise;
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: "replacement history" },
+      };
+      yield {
+        type: "provider_subagent",
+        provider: "codex",
+        event: {
+          type: "upsert",
+          id: "serialized-child",
+          title: "Replacement child",
+          status: "running",
+        },
+      };
+    }
+  }
+
+  class SerializedHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new SerializedHistorySession(config);
+      return session;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new SerializedHistoryClient() },
+    durableTimelineStore: new TestDurableTimelineStore(),
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const firstHydration = manager.hydrateTimelineFromProvider(created.id);
+    await firstHistoryStarted.promise;
+    const forcedHydration = manager.hydrateTimelineFromProvider(created.id, {
+      force: true,
+      broadcast: true,
+    });
+    await Promise.resolve();
+    expect(historyCalls).toBe(1);
+
+    session?.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "assistant_message", text: "live event during first history" },
+    });
+    firstHistoryAllowed.resolve();
+    await secondHistoryStarted.promise;
+    session?.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "assistant_message", text: "live event during replacement history" },
+    });
+    session?.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: {
+        type: "upsert",
+        id: "serialized-child",
+        title: "Live replacement child",
+        status: "completed",
+      },
+    });
+    secondHistoryAllowed.resolve();
+    await Promise.all([firstHydration, forcedHydration]);
+    await manager.flush();
+
+    expect(manager.getTimeline(created.id)).toEqual([
+      { type: "user_message", text: "replacement history" },
+      { type: "assistant_message", text: "live event during replacement history" },
+    ]);
+    expect(manager.listProviderSubagents(created.id)).toEqual([
+      expect.objectContaining({
+        id: "serialized-child",
+        title: "Live replacement child",
+        status: "completed",
+      }),
+    ]);
+  } finally {
+    firstHistoryAllowed.resolve();
+    secondHistoryAllowed.resolve();
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("a resumed agent with an empty live timeline derives progress from its durable tail", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-material-progress-durable-resume-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
