@@ -9,6 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { settingsStyles } from "@/styles/settings";
 import type { Theme } from "@/styles/theme";
 import { confirmDialog } from "@/utils/confirm-dialog";
+import { skillsRemovedBySave } from "@/desktop/components/skill-removal";
 import type { SkillSelection } from "@/desktop/daemon/desktop-daemon";
 
 const ThemedCheck = withUnistyles(Check);
@@ -26,29 +27,6 @@ interface SkillSelectionSheetProps {
 
 function isSkillSelected(draft: SkillSelection, name: string): boolean {
   return draft.mode === "all" || draft.skills.includes(name);
-}
-
-/**
- * Which skill directories Save would delete. This reads the host's installed
- * list rather than inferring from pending operations: an `add` op only means a
- * skill is missing from at least one agent home, so a skill present in one of
- * them would look absent and get deleted with no warning.
- */
-export function skillsRemovedBySave({
-  saved,
-  draft,
-  available,
-  installed,
-}: {
-  saved: SkillSelection;
-  draft: SkillSelection;
-  available: readonly string[];
-  installed: readonly string[];
-}): string[] {
-  const onDisk = new Set(installed);
-  return available.filter(
-    (name) => isSkillSelected(saved, name) && !isSkillSelected(draft, name) && onDisk.has(name),
-  );
 }
 
 /**
@@ -95,8 +73,8 @@ export function SkillSelectionSheet({
   }, []);
 
   const removedSkills = useMemo(
-    () => skillsRemovedBySave({ saved: selection, draft, available, installed }),
-    [available, draft, installed, selection],
+    () => skillsRemovedBySave({ draft, available, installed }),
+    [available, draft, installed],
   );
 
   const handleSave = useCallback(() => {

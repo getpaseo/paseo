@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { expect, type Page } from "@playwright/test";
@@ -53,6 +53,12 @@ export interface SkillsSandboxOptions {
    * or a hand-deleted directory leaves it.
    */
   keepOnlyIn?: { skill: string; target: SkillTargetName };
+  /**
+   * Writes a skill directory straight into one agent home after the selection is
+   * committed, the way a manual reinstall or an external sync leaves a directory
+   * the saved preference does not mention.
+   */
+  placeOnDisk?: { skill: string; target: SkillTargetName; files: Record<string, string> };
 }
 
 export type SkillTargetName = "agents" | "claude" | "codex";
@@ -93,6 +99,18 @@ export async function createSkillsSandbox(
     for (const dir of [targets.agentsDir, targets.claudeDir, targets.codexDir]) {
       if (dir === kept) continue;
       await rm(path.join(dir, options.keepOnlyIn.skill), { recursive: true, force: true });
+    }
+  }
+
+  if (options.placeOnDisk) {
+    const dir = path.join(
+      targetDir(targets, options.placeOnDisk.target),
+      options.placeOnDisk.skill,
+    );
+    for (const [rel, contents] of Object.entries(options.placeOnDisk.files)) {
+      const file = path.join(dir, rel);
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(file, contents, "utf8");
     }
   }
 
@@ -282,6 +300,18 @@ export async function expectSkillPresentIn(
   await expect
     .poll(() => readInstalledSkills(targetDir(sandbox.targets, target)), { timeout: 15_000 })
     .toContain(skill);
+}
+
+export async function expectSkillFilePresent(
+  sandbox: SkillsSandbox,
+  target: SkillTargetName,
+  skill: string,
+  relativePath: string,
+): Promise<void> {
+  const file = path.join(targetDir(sandbox.targets, target), skill, relativePath);
+  await expect
+    .poll(() => readFile(file, "utf8").catch(() => null), { timeout: 15_000 })
+    .not.toBeNull();
 }
 
 export async function expectSkillsInstalled(

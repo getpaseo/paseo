@@ -13,6 +13,7 @@ import {
   expectSavedSkillSelection,
   expectSaveErrorKeepsSheetOpen,
   expectSelectedSkills,
+  expectSkillFilePresent,
   expectSkillPresentIn,
   expectSkillSelectionOpen,
   expectSkillsInstalled,
@@ -162,6 +163,34 @@ test.describe("Removing an installed skill", () => {
     await expectSkillSelectionOpen(page);
     await expectSkillPresentIn(skills, "claude", "paseo-loop");
     await expectSavedSkillSelection(skills, { mode: "all" });
+  });
+
+  test("warns for a skill on disk that the saved selection never mentioned", async ({
+    page,
+    startSkills,
+  }) => {
+    // The committed preference excludes paseo-loop, but the directory is back —
+    // a manual reinstall or an external sync. Saving any edit deletes it.
+    const skills = await startSkills({
+      installed: { mode: "custom", skills: ["paseo"] },
+      placeOnDisk: {
+        skill: "paseo-loop",
+        target: "claude",
+        files: { "SKILL.md": "# paseo-loop\n", "notes/mine.md": "my notes" },
+      },
+      confirmRemoval: false,
+    });
+    await gotoAppShell(page);
+    await openSkillsIntegrations(page);
+
+    await openSkillSelection(page);
+    await toggleSkill(page, "paseo-advisor");
+    await saveSkillSelection(page);
+
+    await expectRemovalWarning(page, ["paseo-loop"]);
+    await expectSkillSelectionOpen(page);
+    await expectSkillFilePresent(skills, "claude", "paseo-loop", "notes/mine.md");
+    await expectSavedSkillSelection(skills, { mode: "custom", skills: ["paseo"] });
   });
 
   test("adding a skill saves without a warning", async ({ page, startSkills }) => {
