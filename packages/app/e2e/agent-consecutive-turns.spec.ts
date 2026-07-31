@@ -656,7 +656,7 @@ test("keeps the first prompt of a new agent in place through authoritative hydra
 
     const submittedRow = page.getByTestId("user-message").filter({ hasText: prompt }).first();
     await expect(submittedRow).toBeVisible();
-    await gate.waitForAgentStreamItem("user_message");
+    await gate.waitForServerMessage("fetch_agent_timeline_response");
     await recordPaintsFor(page, 80);
     expectAtomicFirstPromptTransition(await stopTurnFrameRecording(page));
   } finally {

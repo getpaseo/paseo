@@ -4,7 +4,7 @@ import {
   buildElectronFlags,
   resolveDevUserDataDir,
   selectRemoteDebuggingPort,
-} from "./dev-runtime.mjs";
+} from "./dev-runtime-config.mjs";
 
 describe("desktop dev runtime isolation", () => {
   test("scopes inherited user data to the explicitly selected dev root", () => {
