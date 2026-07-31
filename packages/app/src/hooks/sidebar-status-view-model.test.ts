@@ -14,7 +14,7 @@ function ws(
   return {
     serverId: input.serverId ?? "srv",
     workspaceId: input.workspaceId ?? input.workspaceKey.split(":")[1] ?? "ws",
-    projectKey: input.projectKey ?? "proj",
+    projectViewKey: input.projectViewKey ?? "proj",
     projectName: input.projectName ?? "Project",
     projectRootPath: input.projectRootPath,
     workspaceDirectory: input.workspaceDirectory,
@@ -124,9 +124,24 @@ describe("buildStatusGroups", () => {
     ]);
 
     const workspaces = [
-      ws({ workspaceKey: "srv:1", statusBucket: "done", projectKey: "proj-b", name: "zebra" }),
-      ws({ workspaceKey: "srv:2", statusBucket: "done", projectKey: "proj-a", name: "alpha" }),
-      ws({ workspaceKey: "srv:3", statusBucket: "done", projectKey: "proj-a", name: "alpha" }),
+      ws({
+        workspaceKey: "srv:1",
+        statusBucket: "done",
+        projectViewKey: "proj-b",
+        name: "zebra",
+      }),
+      ws({
+        workspaceKey: "srv:2",
+        statusBucket: "done",
+        projectViewKey: "proj-a",
+        name: "alpha",
+      }),
+      ws({
+        workspaceKey: "srv:3",
+        statusBucket: "done",
+        projectViewKey: "proj-a",
+        name: "alpha",
+      }),
     ];
 
     const groups = buildStatusGroups(workspaces, projectNames);

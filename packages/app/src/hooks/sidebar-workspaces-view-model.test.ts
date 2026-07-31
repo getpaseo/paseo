@@ -83,6 +83,7 @@ function project(input: {
   >;
 }): WorkspaceStructureProject {
   return {
+    viewKey: input.projectKey,
     projectKey: input.projectKey,
     projectName: input.projectName ?? input.projectKey,
     projectKind: input.projectKind ?? "git",
@@ -227,7 +228,7 @@ describe("buildSidebarProjectsFromStructure", () => {
       ],
     });
 
-    expect(projects.map((entry) => entry.projectKey)).toEqual(["project-b", "project-a"]);
+    expect(projects.map((entry) => entry.viewKey)).toEqual(["project-b", "project-a"]);
   });
 
   it("preserves the structure hook workspace order", () => {
@@ -327,7 +328,7 @@ describe("shared sidebar workspace model", () => {
     ]);
     expect(model.projects).toEqual([
       expect.objectContaining({
-        projectKey: "getpaseo/paseo",
+        viewKey: "getpaseo/paseo",
         hosts: [
           {
             serverId: "host-a",
@@ -366,7 +367,7 @@ describe("shared sidebar workspace model", () => {
       ["host-a:main", "done", "main"],
       ["host-b:feature", "running", "feature/status-flow"],
     ]);
-    expect(model.projectNamesByKey).toEqual(new Map([["getpaseo/paseo", "getpaseo/paseo"]]));
+    expect(model.projectNamesByViewKey).toEqual(new Map([["getpaseo/paseo", "getpaseo/paseo"]]));
   });
 
   it("preserves unchanged row identities when another workspace updates", () => {
@@ -443,7 +444,7 @@ describe("shared sidebar workspace model", () => {
       ],
     });
 
-    expect(entries.get("srv:clone-a")?.projectKey).toBe(projectKey);
+    expect(entries.get("srv:clone-a")?.projectViewKey).toBe(projectKey);
   });
 });
 
@@ -529,8 +530,8 @@ describe("computeSidebarOrderUpdates", () => {
 
     expect(updates.projectOrder).toEqual(["project-a", "project-b"]);
     expect(updates.workspaceOrders).toEqual([
-      { projectKey: "project-a", order: ["srv:ws-2", "srv:ws-1"] },
-      { projectKey: "project-b", order: ["srv:ws-3"] },
+      { projectViewKey: "project-a", order: ["srv:ws-2", "srv:ws-1"] },
+      { projectViewKey: "project-b", order: ["srv:ws-3"] },
     ]);
   });
 
@@ -550,7 +551,7 @@ describe("computeSidebarOrderUpdates", () => {
 
     expect(updates.workspaceOrders).toEqual([
       {
-        projectKey: "project-a",
+        projectViewKey: "project-a",
         order: ["srv:newest", "srv:newer", "srv:old-b", "srv:old-a"],
       },
     ]);

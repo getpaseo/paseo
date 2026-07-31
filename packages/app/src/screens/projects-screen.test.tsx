@@ -202,7 +202,7 @@ vi.mock("@/hooks/use-projects", () => ({
 }));
 
 vi.mock("@/projects/project-icons", () => ({
-  useProjectIconDataByProjectKey: () => new Map(),
+  useProjectIconDataByProjectViewKey: () => new Map(),
 }));
 
 import ProjectsScreen from "./projects-screen";
@@ -239,7 +239,7 @@ function project(overrides: Partial<ProjectSummary> = {}): ProjectSummary {
     overrides.totalWorkspaceCount ?? hosts.reduce((sum, host) => sum + host.workspaceCount, 0);
   const onlineHostCount = overrides.onlineHostCount ?? hosts.filter((h) => h.isOnline).length;
   return {
-    projectKey: "remote:github.com/acme/app",
+    viewKey: "remote:github.com/acme/app",
     projectName: "acme/app",
     hosts,
     totalWorkspaceCount,
@@ -323,7 +323,7 @@ describe("ProjectsScreen", () => {
 
   it("navigates to the project detail route when the row is pressed", () => {
     setProjectsState({
-      projects: [project({ projectKey: "remote:github.com/acme/app" })],
+      projects: [project({ viewKey: "remote:github.com/acme/app" })],
     });
 
     render({ kind: "projects" });
@@ -339,7 +339,7 @@ describe("ProjectsScreen", () => {
 
   it("does not render a kebab menu on the row", () => {
     setProjectsState({
-      projects: [project({ projectKey: "remote:github.com/acme/app" })],
+      projects: [project({ viewKey: "remote:github.com/acme/app" })],
     });
 
     render({ kind: "projects" });
@@ -388,9 +388,9 @@ describe("ProjectsScreen", () => {
   it("highlights the selected row when the active view targets a project", () => {
     setProjectsState({
       projects: [
-        project({ projectKey: "remote:github.com/acme/app" }),
+        project({ viewKey: "remote:github.com/acme/app" }),
         project({
-          projectKey: "remote:github.com/acme/other",
+          viewKey: "remote:github.com/acme/other",
           projectName: "acme/other",
           githubUrl: "https://github.com/acme/other",
         }),

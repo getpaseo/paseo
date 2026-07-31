@@ -5,7 +5,7 @@ import { projectIconQueryKey, projectIconToDataUri } from "@/hooks/use-project-i
 
 export interface ProjectIconRequestTarget {
   serverId: string;
-  projectKey: string;
+  projectViewKey: string;
   iconWorkingDir: string;
 }
 
@@ -20,7 +20,7 @@ function useStableProjectIconData(
   return stableRef.current.data;
 }
 
-export function useProjectIconDataByProjectKey(input: {
+export function useProjectIconDataByProjectViewKey(input: {
   projects: readonly ProjectIconRequestTarget[];
 }): Map<string, string | null> {
   const projectIconRequests = useMemo(() => {
@@ -80,11 +80,11 @@ export function useProjectIconDataByProjectKey(input: {
     for (const project of input.projects) {
       const cwd = project.iconWorkingDir.trim();
       if (!cwd) {
-        byProject.set(project.projectKey, null);
+        byProject.set(project.projectViewKey, null);
         continue;
       }
       byProject.set(
-        project.projectKey,
+        project.projectViewKey,
         iconByServerAndCwd.get(`${project.serverId}:${cwd}`) ?? null,
       );
     }

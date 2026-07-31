@@ -4,6 +4,7 @@ import { gotoWorkspace, clickNewTerminal } from "./helpers/launcher";
 import { seedWorkspace, type SeededWorkspace } from "./helpers/seed-client";
 import { seedMockAgentWorkspace } from "./helpers/mock-agent";
 import { getServerId } from "./helpers/server-id";
+import { projectEquivalenceViewKey } from "./helpers/project-view-key";
 import { waitForSidebarHydration } from "./helpers/workspace-ui";
 import { getVisibleWorkspaceAgentTabIds } from "./helpers/workspace-tabs";
 
@@ -17,11 +18,11 @@ function workspaceRow(page: Page, workspaceId: string) {
 }
 
 function projectRow(page: Page, projectKey: string) {
-  return page.getByTestId(`sidebar-project-row-${projectKey}`);
+  return page.getByTestId(`sidebar-project-row-${projectEquivalenceViewKey(projectKey)}`);
 }
 
 function projectNewWorktreeIcon(page: Page, projectKey: string) {
-  return page.getByTestId(`sidebar-project-new-worktree-${projectKey}`);
+  return page.getByTestId(`sidebar-project-new-worktree-${projectEquivalenceViewKey(projectKey)}`);
 }
 
 async function seedSecondWorkspace(seeded: SeededWorkspace, title: string): Promise<string> {

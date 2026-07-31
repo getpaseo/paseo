@@ -31,7 +31,7 @@ import { SettingsGroup } from "@/screens/settings/settings-group";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { useProjects } from "@/hooks/use-projects";
-import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
+import { useProjectIconDataByProjectViewKey } from "@/projects/project-icons";
 import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
 import { useToast } from "@/contexts/toast-context";
 import { confirmDialog } from "@/utils/confirm-dialog";
@@ -233,16 +233,16 @@ function ProjectSettingsBody({
     () => [
       {
         serverId: selectedHost.serverId,
-        projectKey: project.projectKey,
+        projectViewKey: project.viewKey,
         iconWorkingDir: selectedHost.repoRoot,
       },
     ],
-    [project.projectKey, selectedHost.repoRoot, selectedHost.serverId],
+    [project.viewKey, selectedHost.repoRoot, selectedHost.serverId],
   );
-  const projectIconDataByKey = useProjectIconDataByProjectKey({
+  const projectIconDataByKey = useProjectIconDataByProjectViewKey({
     projects: projectIconTargets,
   });
-  const projectIconDataUri = projectIconDataByKey.get(project.projectKey) ?? null;
+  const projectIconDataUri = projectIconDataByKey.get(project.viewKey) ?? null;
   const loadedConfig: PaseoConfigRaw | null = data?.ok ? (data.config ?? {}) : null;
   const loadedRevision: PaseoConfigRevision | null = data?.ok ? data.revision : null;
   const readError: ProjectConfigRpcError | null = data && !data.ok ? data.error : null;
@@ -262,7 +262,7 @@ function ProjectSettingsBody({
           <ProjectTitleIcon
             iconDataUri={projectIconDataUri}
             projectName={project.projectName}
-            projectKey={project.projectKey}
+            projectViewKey={project.viewKey}
           />
           <ProjectNameEditor
             key={`${selectedHost.serverId}:${selectedHost.projectId}`}
@@ -959,18 +959,18 @@ function ProjectNameEditor({
 function ProjectTitleIcon({
   iconDataUri,
   projectName,
-  projectKey,
+  projectViewKey,
 }: {
   iconDataUri: string | null;
   projectName: string;
-  projectKey: string;
+  projectViewKey: string;
 }) {
   const initial = projectName.trim().charAt(0).toUpperCase() || "?";
   return (
     <ProjectIconView
       iconDataUri={iconDataUri}
       initial={initial}
-      projectKey={projectKey}
+      projectViewKey={projectViewKey}
       imageStyle={styles.titleIcon}
       fallbackStyle={styles.titleIconFallback}
       textStyle={styles.titleIconFallbackText}

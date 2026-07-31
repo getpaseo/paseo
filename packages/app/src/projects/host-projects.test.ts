@@ -9,6 +9,7 @@ import {
 
 function project(): HostProjectListItem {
   return {
+    viewKey: "view:acme/app",
     projectKey: "remote:github.com/acme/app",
     projectName: "acme/app",
     projectKind: "git",
@@ -57,7 +58,7 @@ describe("host project lookups", () => {
         sourceDirectory: "/repo/a",
       }),
     ).toMatchObject({
-      projectKey: "prj_a",
+      projectKey: null,
       hosts: [{ serverId: "host-a", projectId: "prj_a" }],
     });
   });

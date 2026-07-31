@@ -8,6 +8,7 @@ import {
 
 function projectFor(serverId: string, key = "project"): HostProjectListItem {
   return {
+    viewKey: `view:${serverId}:${key}`,
     projectKey: key,
     projectName: key,
     projectKind: "git",

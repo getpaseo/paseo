@@ -7,7 +7,7 @@ import { useTranslation } from "react-i18next";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useProjects, type ProjectHostError } from "@/hooks/use-projects";
-import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
+import { useProjectIconDataByProjectViewKey } from "@/projects/project-icons";
 import { settingsStyles } from "@/styles/settings";
 import { buildProjectSettingsRoute } from "@/utils/host-routes";
 import { getProjectSummaryForHostProject, type ProjectSummary } from "@/utils/projects";
@@ -19,10 +19,9 @@ interface ProjectsScreenProps {
 export default function ProjectsScreen({ view }: ProjectsScreenProps) {
   const { t } = useTranslation();
   const { projects, hostErrors, isLoading } = useProjects();
-  const selectedProjectKey =
+  const selectedProjectViewKey =
     view.kind === "project"
-      ? (getProjectSummaryForHostProject(projects, view.serverId, view.projectId)?.projectKey ??
-        null)
+      ? (getProjectSummaryForHostProject(projects, view.serverId, view.projectId)?.viewKey ?? null)
       : null;
   const iconTargets = useMemo(
     () =>
@@ -32,14 +31,14 @@ export default function ProjectsScreen({ view }: ProjectsScreenProps) {
         return [
           {
             serverId: host.serverId,
-            projectKey: project.projectKey,
+            projectViewKey: project.viewKey,
             iconWorkingDir: host.repoRoot,
           },
         ];
       }),
     [projects],
   );
-  const iconDataByProjectKey = useProjectIconDataByProjectKey({
+  const iconDataByProjectViewKey = useProjectIconDataByProjectViewKey({
     projects: iconTargets,
   });
 
@@ -65,11 +64,11 @@ export default function ProjectsScreen({ view }: ProjectsScreenProps) {
       <View style={settingsStyles.card}>
         {projects.map((project, index) => (
           <ProjectRow
-            key={project.projectKey}
+            key={project.viewKey}
             project={project}
             isFirst={index === 0}
-            isSelected={selectedProjectKey === project.projectKey}
-            iconDataUri={iconDataByProjectKey.get(project.projectKey) ?? null}
+            isSelected={selectedProjectViewKey === project.viewKey}
+            iconDataUri={iconDataByProjectViewKey.get(project.viewKey) ?? null}
           />
         ))}
       </View>
@@ -103,7 +102,7 @@ interface ProjectRowProps {
 function ProjectRow({ project, isFirst, isSelected, iconDataUri }: ProjectRowProps) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
-  const { projectKey, projectName } = project;
+  const { viewKey, projectName } = project;
   const target = project.hosts[0];
   const handleNavigate = useCallback(() => {
     if (target) router.navigate(buildProjectSettingsRoute(target.serverId, target.projectId));
@@ -127,7 +126,7 @@ function ProjectRow({ project, isFirst, isSelected, iconDataUri }: ProjectRowPro
       onPress={handleNavigate}
       accessibilityRole="button"
       accessibilityLabel={t("settings.projectList.editProject", { projectName })}
-      testID={`project-row-${projectKey}`}
+      testID={`project-row-${viewKey}`}
       data-selected={isSelected ? "true" : "false"}
     >
       <View style={styles.rowMain}>
@@ -135,7 +134,7 @@ function ProjectRow({ project, isFirst, isSelected, iconDataUri }: ProjectRowPro
           <ProjectRowIcon
             iconDataUri={iconDataUri}
             projectName={projectName}
-            projectKey={projectKey}
+            projectViewKey={viewKey}
           />
         </View>
         <Text style={settingsStyles.rowTitle} numberOfLines={1}>
@@ -150,18 +149,18 @@ function ProjectRow({ project, isFirst, isSelected, iconDataUri }: ProjectRowPro
 function ProjectRowIcon({
   iconDataUri,
   projectName,
-  projectKey,
+  projectViewKey,
 }: {
   iconDataUri: string | null;
   projectName: string;
-  projectKey: string;
+  projectViewKey: string;
 }) {
   const initial = projectName.trim().charAt(0).toUpperCase() || "?";
   return (
     <ProjectIconView
       iconDataUri={iconDataUri}
       initial={initial}
-      projectKey={projectKey}
+      projectViewKey={projectViewKey}
       imageStyle={styles.iconImage}
       fallbackStyle={styles.iconFallback}
       textStyle={styles.iconFallbackText}

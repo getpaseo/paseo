@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { HostProjectListItem } from "@/projects/host-projects";
+import { filterWorkspaceProjectsForHost, type HostProjectListItem } from "@/projects/host-projects";
 import {
   createManualProjectSelectionContextKey,
   createProjectSelectionContextKey,
@@ -13,6 +13,7 @@ import {
 
 function project(projectKey: string, serverId = "host"): HostProjectListItem {
   return {
+    viewKey: `view:${serverId}:${projectKey}`,
     projectKey,
     projectName: projectKey,
     projectKind: "git",
@@ -40,7 +41,8 @@ function context(
   const lastActiveProject = input.lastActiveProject ?? null;
   return {
     contextKey,
-    manualContextKey: input.manualContextKey ?? contextKey,
+    manualContextKey: input.manualContextKey ?? "",
+    selectedServerId: input.selectedServerId ?? "host",
     routeProject,
     lastActiveProject,
     initialProjectSource:
@@ -71,7 +73,6 @@ describe("reconcileProjectSelection", () => {
 
     expect(reconciled).toEqual({
       contextKey: "host:",
-      projectKey: remembered.projectKey,
       project: remembered,
       source: "initial",
     });
@@ -80,15 +81,15 @@ describe("reconcileProjectSelection", () => {
 
   it("resets stale selection when the route project context changes", () => {
     const manual = project("manual");
-    const routeProject = project("route-project");
+    const routeProject = { ...project("route-project"), projectKey: null };
     const current: ProjectSelection = {
-      contextKey: "host:previous-route",
-      projectKey: manual.projectKey,
+      contextKey: "previous-route",
       project: manual,
       source: "manual",
     };
     const nextContext = context({
       contextKey: "host:route-project",
+      manualContextKey: routeProject.viewKey,
       initialProject: routeProject,
       projects: [manual, routeProject],
       routeProject,
@@ -96,7 +97,6 @@ describe("reconcileProjectSelection", () => {
 
     expect(reconcileProjectSelection(current, nextContext)).toEqual({
       contextKey: "host:route-project",
-      projectKey: routeProject.projectKey,
       project: routeProject,
       source: "initial",
     });
@@ -112,7 +112,6 @@ describe("reconcileProjectSelection", () => {
 
     expect(reconcileProjectSelection(current, hydratedContext)).toEqual({
       contextKey: "host:",
-      projectKey: initialProject.projectKey,
       project: initialProject,
       source: "initial",
     });
@@ -121,6 +120,7 @@ describe("reconcileProjectSelection", () => {
   it("adopts a routed project's hydrated cross-host key", () => {
     const routedProject = {
       ...project("local-project-id"),
+      projectKey: null,
       hosts: [
         {
           serverId: "host",
@@ -152,7 +152,6 @@ describe("reconcileProjectSelection", () => {
 
     expect(reconcileProjectSelection(current, hydratedContext)).toEqual({
       contextKey: "host:",
-      projectKey: hydratedProject.projectKey,
       project: hydratedProject,
       source: "initial",
     });
@@ -177,7 +176,6 @@ describe("reconcileProjectSelection", () => {
 
     expect(hydratedSelection).toEqual({
       contextKey: "host:",
-      projectKey: hydratedProject.projectKey,
       project: hydratedProject,
       source: "initial",
     });
@@ -207,7 +205,6 @@ describe("reconcileProjectSelection", () => {
 
     expect(reconcileProjectSelection(current, afterRememberedHydration)).toEqual({
       contextKey: "host:",
-      projectKey: remembered.projectKey,
       project: remembered,
       source: "initial",
     });
@@ -217,8 +214,7 @@ describe("reconcileProjectSelection", () => {
     const manual = project("manual");
     const remembered = project("remembered");
     const current: ProjectSelection = {
-      contextKey: "host:",
-      projectKey: manual.projectKey,
+      contextKey: "",
       project: manual,
       source: "manual",
     };
@@ -229,6 +225,155 @@ describe("reconcileProjectSelection", () => {
     });
 
     expect(reconcileProjectSelection(current, afterRememberedHydration)).toEqual(current);
+  });
+
+  it("moves a manual selection to an equivalent project on another host", () => {
+    const selected = project("shared", "host-a");
+    const equivalent = project("shared", "host-b");
+    const fallback = project("fallback", "host-b");
+    const current: ProjectSelection = {
+      contextKey: "",
+      project: selected,
+      source: "manual",
+    };
+    const nextHost = context({
+      selectedServerId: "host-b",
+      initialProject: fallback,
+      projects: [fallback, equivalent],
+    });
+
+    expect(reconcileProjectSelection(current, nextHost)).toEqual({
+      contextKey: "",
+      project: equivalent,
+      source: "manual",
+    });
+  });
+
+  it("ignores a stale placement view collision and selects the persisted equivalent", () => {
+    const stalePlacementViewKey = JSON.stringify(["host-b", "opaque-project"]);
+    const selected = {
+      ...project("shared", "host-a"),
+      viewKey: stalePlacementViewKey,
+    };
+    const unrelated = {
+      ...project(stalePlacementViewKey, "host-b"),
+      viewKey: stalePlacementViewKey,
+    };
+    const equivalent = project("shared", "host-b");
+    const current: ProjectSelection = {
+      contextKey: "",
+      project: selected,
+      source: "manual",
+    };
+    const nextHost = context({
+      selectedServerId: "host-b",
+      initialProject: unrelated,
+      projects: [unrelated, equivalent],
+    });
+
+    expect(reconcileProjectSelection(current, nextHost)).toEqual({
+      contextKey: "",
+      project: equivalent,
+      source: "manual",
+    });
+  });
+
+  it("chooses the same equivalent clone regardless of input order", () => {
+    const selected = project("shared", "host-a");
+    const cloneA = {
+      ...project("shared", "host-b"),
+      viewKey: "view:host-b:clone-a",
+      projectName: "Shared",
+      hosts: [
+        {
+          serverId: "host-b",
+          projectId: "prj_a",
+          iconWorkingDir: "/work/a",
+          canCreateWorktree: true,
+        },
+      ],
+    };
+    const cloneB = {
+      ...cloneA,
+      viewKey: "view:host-b:clone-b",
+      hosts: [{ ...cloneA.hosts[0]!, projectId: "prj_b", iconWorkingDir: "/work/b" }],
+    };
+    const current: ProjectSelection = {
+      contextKey: "",
+      project: selected,
+      source: "manual",
+    };
+    const reconcile = (projects: HostProjectListItem[]) =>
+      reconcileProjectSelection(
+        current,
+        context({
+          selectedServerId: "host-b",
+          initialProject: cloneB,
+          projects,
+        }),
+      );
+
+    expect(reconcile([cloneB, cloneA]).project).toBe(cloneA);
+    expect(reconcile([cloneA, cloneB]).project).toBe(cloneA);
+  });
+
+  it("falls back when the only equivalent project is not selectable", () => {
+    const selected = project("shared", "host-a");
+    const unselectableEquivalent = {
+      ...project("shared", "host-b"),
+      hosts: [
+        {
+          serverId: "host-b",
+          projectId: "shared",
+          iconWorkingDir: "/work/shared",
+          canCreateWorktree: false,
+        },
+      ],
+    };
+    const fallback = project("fallback", "host-b");
+    const current: ProjectSelection = {
+      contextKey: "",
+      project: selected,
+      source: "manual",
+    };
+    const selectableProjects = filterWorkspaceProjectsForHost({
+      projects: [unselectableEquivalent, fallback],
+      serverId: "host-b",
+      allowAllProjects: false,
+    });
+    const selectableContext = context({
+      selectedServerId: "host-b",
+      initialProject: fallback,
+      projects: selectableProjects,
+    });
+
+    expect(reconcileProjectSelection(current, selectableContext).project).toBe(fallback);
+  });
+
+  it("does not equate projects without a persisted project key", () => {
+    const selected = { ...project("selected", "host-a"), projectKey: null };
+    const sameName = {
+      ...project("same-name", "host-b"),
+      projectKey: null,
+      projectName: selected.projectName,
+    };
+    const fallback = project("fallback", "host-b");
+    const current: ProjectSelection = {
+      contextKey: "",
+      project: selected,
+      source: "manual",
+    };
+
+    expect(
+      reconcileProjectSelection(
+        current,
+        context({
+          selectedServerId: "host-b",
+          initialProject: fallback,
+          projects: [sameName, fallback],
+        }),
+      ).project,
+    ).toBe(fallback);
   });
 
   it("preserves an opaque project key ending in whitespace", () => {
@@ -249,7 +394,7 @@ describe("reconcileProjectSelection", () => {
       context({
         contextKey: createProjectSelectionContextKey({
           selectedServerId: "host",
-          routeProjectKey: null,
+          routeProjectViewKey: null,
           allowAllProjects: false,
         }),
         initialProject: fallback,
@@ -259,7 +404,7 @@ describe("reconcileProjectSelection", () => {
     const afterCapabilityHydration = context({
       contextKey: createProjectSelectionContextKey({
         selectedServerId: "host",
-        routeProjectKey: null,
+        routeProjectViewKey: null,
         allowAllProjects: true,
       }),
       initialProject: remembered,
@@ -268,7 +413,6 @@ describe("reconcileProjectSelection", () => {
 
     expect(reconcileProjectSelection(current, afterCapabilityHydration)).toEqual({
       contextKey: "host:all-projects:",
-      projectKey: remembered.projectKey,
       project: remembered,
       source: "initial",
     });
@@ -280,22 +424,19 @@ describe("reconcileProjectSelection", () => {
     const remembered = project("remembered-directory");
     const current: ProjectSelection = {
       contextKey: createManualProjectSelectionContextKey({
-        selectedServerId: "host",
-        routeProjectKey: null,
+        routeProjectViewKey: null,
       }),
-      projectKey: manual.projectKey,
       project: manual,
       source: "manual",
     };
     const afterCapabilityHydration = context({
       contextKey: createProjectSelectionContextKey({
         selectedServerId: "host",
-        routeProjectKey: null,
+        routeProjectViewKey: null,
         allowAllProjects: true,
       }),
       manualContextKey: createManualProjectSelectionContextKey({
-        selectedServerId: "host",
-        routeProjectKey: null,
+        routeProjectViewKey: null,
       }),
       initialProject: remembered,
       projects: [fallback, manual, remembered],
@@ -325,6 +466,34 @@ describe("reconcileProjectSelection", () => {
     expect(resolveProjectSelection(reconciled, withoutRemembered)).toEqual(remembered);
   });
 
+  it("keeps a pending archived clone instead of jumping to a same-host equivalent", () => {
+    const remembered = project("shared");
+    const sibling = {
+      ...project("shared"),
+      viewKey: "view:host:sibling",
+      hosts: [
+        {
+          serverId: "host",
+          projectId: "sibling",
+          iconWorkingDir: "/work/sibling",
+          canCreateWorktree: true,
+        },
+      ],
+    };
+    const fallback = project("fallback");
+    const current = createProjectSelection(
+      context({ initialProject: remembered, projects: [remembered, sibling] }),
+    );
+    const archiveGap = context({
+      initialProject: fallback,
+      projects: [sibling, fallback],
+      shouldPreserveMissingProject: (candidate) => candidate.viewKey === remembered.viewKey,
+    });
+
+    expect(reconcileProjectSelection(current, archiveGap)).toEqual(current);
+    expect(resolveProjectSelection(current, archiveGap)).toEqual(remembered);
+  });
+
   it("falls back when the selected project disappears without a pending archive", () => {
     const remembered = project("remembered");
     const fallback = project("fallback");
@@ -338,7 +507,6 @@ describe("reconcileProjectSelection", () => {
 
     expect(reconcileProjectSelection(current, withoutRemembered)).toEqual({
       contextKey: "host:",
-      projectKey: fallback.projectKey,
       project: fallback,
       source: "initial",
     });
@@ -349,13 +517,13 @@ describe("reconcileProjectSelection", () => {
     const routeProject = project("route-project");
     const remembered = project("remembered");
     const current: ProjectSelection = {
-      contextKey: "host:route-project",
-      projectKey: manual.projectKey,
+      contextKey: routeProject.viewKey,
       project: manual,
       source: "manual",
     };
     const selectionContext = context({
       contextKey: "host:route-project",
+      manualContextKey: routeProject.viewKey,
       initialProject: routeProject,
       projects: [manual],
       routeProject,

@@ -44,7 +44,7 @@ export function resolveSidebarProjectIconTarget(
 }
 
 export interface SidebarProjectIconTarget extends SidebarProjectHostTarget {
-  projectKey: string;
+  projectViewKey: string;
 }
 
 export function resolveSidebarProjectIconTargets(
@@ -52,7 +52,7 @@ export function resolveSidebarProjectIconTargets(
 ): SidebarProjectIconTarget[] {
   return projects.flatMap((project) => {
     const target = resolveSidebarProjectIconTarget(project);
-    return target ? [{ projectKey: project.projectKey, ...target }] : [];
+    return target ? [{ projectViewKey: project.viewKey, ...target }] : [];
   });
 }
 

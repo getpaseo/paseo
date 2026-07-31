@@ -14,7 +14,7 @@ function workspace(overrides: Partial<SidebarWorkspaceEntry> = {}): SidebarWorks
     workspaceKey: "srv:ws-root",
     serverId: "srv",
     workspaceId: "ws-root",
-    projectKey: "project-1",
+    projectViewKey: "project-1",
     projectName: "paseo",
     workspaceDirectory: "/repo",
     projectKind: "git",
@@ -48,7 +48,7 @@ function project(overrides: ProjectOverrides = {}): SidebarProjectEntry {
     (host) => Object.assign({}, host, { projectId: host.projectId ?? `project-${host.serverId}` }),
   );
   return {
-    projectKey: "project-1",
+    viewKey: "project-1",
     projectName: "paseo",
     projectKind,
     iconWorkingDir: "/repo",

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { createProjectViewKey } from "@/projects/workspace-structure";
 
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import {
@@ -24,6 +25,10 @@ import {
 } from "../session-store";
 
 const SERVER_ID = "test-server";
+
+function equivalenceViewKey(projectKey: string): string {
+  return createProjectViewKey({ kind: "equivalence", projectKey });
+}
 
 function createWorkspace(
   input: Partial<WorkspaceDescriptor> & Pick<WorkspaceDescriptor, "id">,
@@ -114,10 +119,10 @@ function emptySidebarOrder(): SidebarOrderSnapshot {
   };
 }
 
-function selectWorkspaceStructureProjectKeys(
+function selectWorkspaceStructureProjectViewKeys(
   state: Parameters<typeof selectWorkspaceStructureProjects>[0],
 ): string[] {
-  return selectWorkspaceStructureProjects(state, [SERVER_ID]).map((project) => project.projectKey);
+  return selectWorkspaceStructureProjects(state, [SERVER_ID]).map((project) => project.viewKey);
 }
 
 afterEach(() => {
@@ -348,9 +353,11 @@ describe("workspace structure composition", () => {
     };
     initializeWorkspaces([workspace]);
 
-    const emittedProjectKeys = [selectWorkspaceStructureProjectKeys(useSessionStore.getState())];
+    const emittedProjectKeys = [
+      selectWorkspaceStructureProjectViewKeys(useSessionStore.getState()),
+    ];
     const stop = useSessionStore.subscribe((state) => {
-      emittedProjectKeys.push(selectWorkspaceStructureProjectKeys(state));
+      emittedProjectKeys.push(selectWorkspaceStructureProjectViewKeys(state));
     });
 
     try {
@@ -360,7 +367,10 @@ describe("workspace structure composition", () => {
       stop();
     }
 
-    expect(emittedProjectKeys).toEqual([["project-a"], ["project-a"]]);
+    expect(emittedProjectKeys).toEqual([
+      [equivalenceViewKey("project-a")],
+      [equivalenceViewKey("project-a")],
+    ]);
   });
 
   it("changes for membership updates but not status-only updates", () => {
@@ -451,10 +461,13 @@ describe("workspace structure composition", () => {
     const before = snapshotStructure(SERVER_ID, emptySidebarOrder());
     const after = snapshotStructure(SERVER_ID, {
       ...emptySidebarOrder(),
-      projectOrder: ["project-b", "project-a"],
+      projectOrder: [equivalenceViewKey("project-b"), equivalenceViewKey("project-a")],
     });
 
-    expect(after.projects.map((project) => project.projectKey)).toEqual(["project-b", "project-a"]);
+    expect(after.projects.map((project) => project.viewKey)).toEqual([
+      equivalenceViewKey("project-b"),
+      equivalenceViewKey("project-a"),
+    ]);
     expect(after).not.toEqual(before);
   });
 });

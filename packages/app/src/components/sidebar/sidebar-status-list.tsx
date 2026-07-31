@@ -64,8 +64,8 @@ const ThemedCircleX = withUnistyles(CircleX);
 interface StatusWorkspaceListProps {
   groups: StatusGroup[];
   pinnedWorkspaces: SidebarWorkspaceEntry[];
-  projectNamesByKey: Map<string, string>;
-  projectIconByProjectKey: ReadonlyMap<string, string | null>;
+  projectNamesByViewKey: Map<string, string>;
+  projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
   shortcutIndexByWorkspaceKey: Map<string, number>;
   showShortcutBadges: boolean;
   onWorkspacePress?: () => void;
@@ -79,8 +79,8 @@ interface StatusWorkspaceListProps {
 export function SidebarStatusWorkspaceList({
   groups,
   pinnedWorkspaces,
-  projectNamesByKey,
-  projectIconByProjectKey,
+  projectNamesByViewKey,
+  projectIconByProjectViewKey,
   shortcutIndexByWorkspaceKey,
   showShortcutBadges,
   onWorkspacePress,
@@ -118,8 +118,8 @@ export function SidebarStatusWorkspaceList({
                   workspace={workspace}
                   {...buildStatusRowProjectPresentation({
                     workspace,
-                    projectNamesByKey,
-                    projectIconByProjectKey,
+                    projectNamesByViewKey,
+                    projectIconByProjectViewKey,
                     hostLabelByServerId,
                     showHostLabels,
                   })}
@@ -145,8 +145,8 @@ export function SidebarStatusWorkspaceList({
       <StatusGroupList
         groups={groups}
         collapsedStatusGroupKeys={collapsedStatusGroupKeys}
-        projectNamesByKey={projectNamesByKey}
-        projectIconByProjectKey={projectIconByProjectKey}
+        projectNamesByViewKey={projectNamesByViewKey}
+        projectIconByProjectViewKey={projectIconByProjectViewKey}
         shortcutIndex={statusShortcutIndex}
         showShortcutBadges={showShortcutBadges}
         onWorkspacePress={onWorkspacePress}
@@ -186,8 +186,8 @@ export function SidebarStatusWorkspaceList({
 function StatusGroupList({
   groups,
   collapsedStatusGroupKeys,
-  projectNamesByKey,
-  projectIconByProjectKey,
+  projectNamesByViewKey,
+  projectIconByProjectViewKey,
   shortcutIndex,
   showShortcutBadges,
   onWorkspacePress,
@@ -198,8 +198,8 @@ function StatusGroupList({
 }: {
   groups: StatusGroup[];
   collapsedStatusGroupKeys: ReadonlySet<string>;
-  projectNamesByKey: Map<string, string>;
-  projectIconByProjectKey: ReadonlyMap<string, string | null>;
+  projectNamesByViewKey: Map<string, string>;
+  projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
   shortcutIndex: Map<string, number>;
   showShortcutBadges: boolean;
   onWorkspacePress?: () => void;
@@ -215,8 +215,8 @@ function StatusGroupList({
           key={group.bucket}
           group={group}
           collapsed={collapsedStatusGroupKeys.has(group.bucket)}
-          projectNamesByKey={projectNamesByKey}
-          projectIconByProjectKey={projectIconByProjectKey}
+          projectNamesByViewKey={projectNamesByViewKey}
+          projectIconByProjectViewKey={projectIconByProjectViewKey}
           shortcutIndex={shortcutIndex}
           showShortcutBadges={showShortcutBadges}
           onWorkspacePress={onWorkspacePress}
@@ -233,8 +233,8 @@ function StatusGroupList({
 function StatusGroupRows({
   group,
   collapsed,
-  projectNamesByKey,
-  projectIconByProjectKey,
+  projectNamesByViewKey,
+  projectIconByProjectViewKey,
   shortcutIndex,
   showShortcutBadges,
   onWorkspacePress,
@@ -245,8 +245,8 @@ function StatusGroupRows({
 }: {
   group: StatusGroup;
   collapsed: boolean;
-  projectNamesByKey: Map<string, string>;
-  projectIconByProjectKey: ReadonlyMap<string, string | null>;
+  projectNamesByViewKey: Map<string, string>;
+  projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
   shortcutIndex: Map<string, number>;
   showShortcutBadges: boolean;
   onWorkspacePress?: () => void;
@@ -276,8 +276,8 @@ function StatusGroupRows({
               workspace={workspace}
               {...buildStatusRowProjectPresentation({
                 workspace,
-                projectNamesByKey,
-                projectIconByProjectKey,
+                projectNamesByViewKey,
+                projectIconByProjectViewKey,
                 hostLabelByServerId,
                 showHostLabels,
               })}
@@ -324,25 +324,25 @@ interface StatusRowProjectPresentation {
 
 function buildStatusRowProjectPresentation({
   workspace,
-  projectNamesByKey,
-  projectIconByProjectKey,
+  projectNamesByViewKey,
+  projectIconByProjectViewKey,
   hostLabelByServerId,
   showHostLabels,
 }: {
   workspace: SidebarWorkspaceEntry;
-  projectNamesByKey: Map<string, string>;
-  projectIconByProjectKey: ReadonlyMap<string, string | null>;
+  projectNamesByViewKey: Map<string, string>;
+  projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
   hostLabelByServerId: ReadonlyMap<string, string>;
   showHostLabels: boolean;
 }): StatusRowProjectPresentation {
-  const projectName = projectNamesByKey.get(workspace.projectKey) ?? "";
+  const projectName = projectNamesByViewKey.get(workspace.projectViewKey) ?? "";
   const hostLabel = showHostLabels
     ? (hostLabelByServerId.get(workspace.serverId) ?? workspace.serverId)
     : null;
   return {
     subtitle: buildStatusRowSubtitle({ projectName, hostLabel }),
     projectName,
-    projectIconDataUri: projectIconByProjectKey.get(workspace.projectKey) ?? null,
+    projectIconDataUri: projectIconByProjectViewKey.get(workspace.projectViewKey) ?? null,
   };
 }
 

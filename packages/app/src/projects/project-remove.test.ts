@@ -6,7 +6,6 @@ import {
 } from "./project-remove";
 
 const project: ProjectRemoveProject = {
-  projectKey: "remote:github.com/acme/app",
   hosts: [
     { serverId: "host-a", projectId: "prj_host_a" },
     { serverId: "host-b", projectId: "prj_host_b" },
