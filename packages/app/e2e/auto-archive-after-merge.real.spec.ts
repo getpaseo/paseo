@@ -64,6 +64,8 @@ async function createMergedPullRequestScenario(): Promise<MergedPullRequestScena
   const workspaceClient = await connectNewWorkspaceDaemonClient();
   const agentClient = await connectSeedClient();
   const previousConfig = await workspaceClient.getDaemonConfig();
+  let workspaceDirectory: string | undefined;
+  let projectId: string | undefined;
   await workspaceClient.patchDaemonConfig({ autoArchiveAfterMerge: false });
 
   try {
@@ -86,6 +88,8 @@ async function createMergedPullRequestScenario(): Promise<MergedPullRequestScena
     }
 
     const workspace = created.workspace;
+    workspaceDirectory = workspace.workspaceDirectory;
+    projectId = workspace.projectId;
     const agentTitle = `Auto-archive latch ${Date.now()}`;
     const agent = await agentClient.createAgent({
       provider: "mock",
@@ -143,6 +147,8 @@ async function createMergedPullRequestScenario(): Promise<MergedPullRequestScena
       workspaceClient,
       agentClient,
       autoArchiveAfterMerge: previousConfig.config.autoArchiveAfterMerge,
+      workspaceDirectory,
+      projectId,
     });
     throw error;
   }
@@ -154,10 +160,20 @@ async function cleanupFailedScenario(input: {
   workspaceClient: Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
   agentClient: Awaited<ReturnType<typeof connectSeedClient>>;
   autoArchiveAfterMerge: boolean;
+  workspaceDirectory?: string;
+  projectId?: string;
 }): Promise<void> {
   await input.workspaceClient
     .patchDaemonConfig({ autoArchiveAfterMerge: input.autoArchiveAfterMerge })
     .catch(() => undefined);
+  if (input.workspaceDirectory) {
+    await archiveWorkspaceFromDaemon(input.workspaceClient, input.workspaceDirectory).catch(
+      () => undefined,
+    );
+  }
+  if (input.projectId) {
+    await input.workspaceClient.removeProject(input.projectId).catch(() => undefined);
+  }
   await input.agentClient.close().catch(() => undefined);
   await input.workspaceClient.close().catch(() => undefined);
   await input.checkout.cleanup().catch(() => undefined);
