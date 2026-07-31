@@ -84,7 +84,7 @@ test.describe("Workspace multiplicity creation flow", () => {
 
     try {
       const project = {
-        projectKey: seeded.projectId,
+        projectKey: seeded.projectKey,
         projectDisplayName: seeded.projectDisplayName,
       };
 
@@ -136,7 +136,7 @@ test.describe("Workspace multiplicity creation flow", () => {
 
     try {
       const project = {
-        projectKey: seeded.projectId,
+        projectKey: seeded.projectKey,
         projectDisplayName: seeded.projectDisplayName,
       };
 
@@ -182,7 +182,7 @@ test.describe("Workspace multiplicity creation flow", () => {
 
     try {
       const project = {
-        projectKey: seeded.projectId,
+        projectKey: seeded.projectKey,
         projectDisplayName: seeded.projectDisplayName,
       };
 
@@ -190,7 +190,7 @@ test.describe("Workspace multiplicity creation flow", () => {
       await waitForSidebarHydration(page);
       // Model B: a non-git project is an expandable parent like any other, with
       // its single workspace already rendered as its own row underneath.
-      await expect(page.getByTestId(`sidebar-project-row-${seeded.projectId}`)).toBeVisible({
+      await expect(page.getByTestId(`sidebar-project-row-${seeded.projectKey}`)).toBeVisible({
         timeout: 30_000,
       });
       await expect(page.getByTestId(workspaceRowTestId(seeded.workspaceId))).toBeVisible({
@@ -210,7 +210,7 @@ test.describe("Workspace multiplicity creation flow", () => {
 
       // Both the original and the new workspace render as distinct rows under
       // the same expandable parent.
-      await expect(page.getByTestId(`sidebar-project-row-${seeded.projectId}`)).toBeVisible({
+      await expect(page.getByTestId(`sidebar-project-row-${seeded.projectKey}`)).toBeVisible({
         timeout: 30_000,
       });
       await expect(page.getByTestId(workspaceRowTestId(seeded.workspaceId))).toBeVisible({

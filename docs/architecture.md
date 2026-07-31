@@ -121,6 +121,7 @@ Commander.js CLI with Docker-style commands. Common agent operations are also ex
 - `paseo daemon start/stop/restart/status/pair/set-password`
 - `paseo chat ls/create/inspect/post/read/wait/delete`
 - `paseo terminal ls/create/capture/send-keys/kill`
+- `paseo script ls/start/stop`
 - `paseo loop run/ls/inspect/logs/stop`
 - `paseo schedule create/ls/inspect/update/pause/resume/run-once/logs/delete`
 - `paseo heartbeat create/update/delete`
@@ -132,15 +133,18 @@ Commander.js CLI with Docker-style commands. Common agent operations are also ex
 
 Communicates with the daemon via the same WebSocket protocol as the app.
 
-### `packages/relay` — E2E encrypted relay
+### `packages/relay` — Relay transport and E2E encryption
 
 Enables remote access when the daemon is behind a firewall.
 
 - Curve25519 ECDH key exchange + XSalsa20-Poly1305 (NaCl `box`) encryption
-- Relay server is zero-knowledge — it routes encrypted bytes, cannot read content
+- The relay is zero-knowledge — it routes encrypted bytes and cannot read content
 - Client and daemon channels with identical API (`createClientChannel`, `createDaemonChannel`)
 - Pairing via QR code transfers the daemon's public key to the client
+- Optional E2EE capability negotiation preserves application frame kind: text plaintext uses base64 ciphertext text frames, while binary plaintext uses raw ciphertext binary frames; mixed-version peers remain base64-only
 - Self-hosted relays opt into TLS with `daemon.relay.useTls` or `PASEO_RELAY_USE_TLS=true`; the public (client-facing) TLS setting can be overridden independently via `daemon.relay.publicUseTls` or `PASEO_RELAY_PUBLIC_USE_TLS`
+
+The production relay server lives in [getpaseo/paseo-relay](https://github.com/getpaseo/paseo-relay). It is a distributed Elixir service. The Cloudflare relay implementation in this monorepo is retained as legacy code and is not deployed.
 
 See [SECURITY.md](../SECURITY.md) for the full threat model.
 
@@ -208,7 +212,9 @@ There is no dedicated welcome message; the server emits a `status` session messa
 
 **Top-level WS envelopes** are `hello`, `recording_state`, `ping`/`pong`, and `session` (which wraps the rich union of session messages).
 
-Client liveness checks use the top-level JSON `ping`/`pong` envelope, not a session RPC and not RFC6455 protocol ping. The app runs through browser and React Native WebSocket APIs, which do not expose protocol ping, so this envelope is the portable way to test the direct or relay data path. Session RPC timeouts are operation failures and must not be treated as proof that the socket is dead.
+Client liveness checks use the top-level JSON `ping`/`pong` envelope, not a session RPC or RFC6455 control ping. Current clients ping every 10 seconds, beginning one interval after connecting. The first ping claims an application-ownership lease for that physical socket, all later inbound activity renews it, and the daemon forcibly terminates the socket if the lease expires. A legacy or raw socket that never sends an application ping never enters this lease and is not closed for omitting one. Session RPC timeouts are operation failures and must not be treated as proof that the socket is dead.
+
+Every physical send path enforces an 8 MiB outbound high-water mark, including JSON broadcasts, binary terminal frames, and the encrypted relay adapter's asynchronous queue. This sits above the terminal stream's 4 MiB soft backpressure threshold, leaving room for snapshot catch-up before the hard cutoff. JSON is serialized once per broadcast after sockets already at the limit are removed, then its exact byte length is checked for every remaining socket. A frame that would cross the limit is not sent; that physical socket is forcibly terminated without disturbing other sockets attached to the same logical session. Multiple tabs and simultaneous direct and relay paths may legitimately share a client id.
 
 Client session RPC waits default to 60s so slow relay or mobile networks do not turn a live but delayed daemon response into a false operation failure. Keep connect timeouts, app-level grace windows, explicit diagnostic latency probes, liveness ping timers, and genuinely long-running RPCs separate from this default.
 
@@ -246,6 +252,10 @@ Terminal I/O is sent as binary WebSocket frames decoded by `decodeTerminalStream
 Terminal PTY size is last-interacting-client-wins. A client claims the PTY size only when its terminal viewport genuinely changes size or the user focuses/taps the terminal. Passive rendering work — attaching, restoring visibility, font settling, renderer refits, or just looking at a visible terminal — must not send a resize frame. The server does not broadcast resize ownership; the resized PTY redraws through normal output, and every attached client renders that output in its own local viewport.
 
 There is also a separate file-transfer binary frame format in the same directory, used for download/upload streams.
+File downloads keep the existing `FileBegin`/`FileChunk`/`FileEnd` framing and stream 256 KiB chunks
+from one stable file handle. Each transfer awaits completion of its own physical WebSocket send before
+reading the next chunk; it is scoped to the requesting physical socket and does not queue unrelated
+messages or transfers.
 
 ### Compatibility rules
 
@@ -377,5 +387,5 @@ $PASEO_HOME/
 ## Deployment models
 
 1. **Local daemon** (default): `paseo daemon start` on `127.0.0.1:6767`
-2. **Managed desktop**: Electron app spawns daemon as subprocess
+2. **Managed desktop**: Electron app spawns daemon as subprocess, and stops it again on quit so that "restart the app" is a complete reset. Settings > Host > "Keep daemon running after quit" opts out. Only a daemon the desktop started is stopped — a daemon you started yourself with `paseo daemon start` is left alone (`paseo.pid` records `desktopManaged`).
 3. **Remote + relay**: Daemon behind firewall, relay bridges with E2E encryption

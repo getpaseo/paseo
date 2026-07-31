@@ -138,6 +138,65 @@ const SourceSchema = z.object({
     );
   });
 
+  it.each([
+    {
+      name: "dedicated attention message",
+      message: {
+        type: "agent_attention_required",
+        payload: {
+          agentId: "agent-1",
+          reason: "finished",
+          timestamp: "2026-07-22T18:00:00.000Z",
+          shouldNotify: true,
+          notification: {
+            title: "Agent finished",
+            body: "Done",
+            data: {
+              serverId: "server-1",
+              workspaceId: "workspace-1",
+              agentId: "agent-1",
+              reason: "finished",
+            },
+          },
+        },
+      },
+    },
+    {
+      name: "agent stream attention event",
+      message: {
+        type: "agent_stream",
+        payload: {
+          agentId: "agent-1",
+          timestamp: "2026-07-22T18:00:00.000Z",
+          event: {
+            type: "attention_required",
+            provider: "codex",
+            reason: "finished",
+            timestamp: "2026-07-22T18:00:00.000Z",
+            shouldNotify: true,
+            notification: {
+              title: "Agent finished",
+              body: "Done",
+              data: {
+                serverId: "server-1",
+                workspaceId: "workspace-1",
+                agentId: "agent-1",
+                reason: "finished",
+              },
+            },
+          },
+        },
+      },
+    },
+  ])("preserves workspaceId in a $name", ({ message }) => {
+    const envelope = { type: "session", message };
+
+    expect(GeneratedWSOutboundMessageSchema.safeParse(envelope)).toEqual({
+      success: true,
+      data: envelope,
+    });
+  });
+
   it("emits runtime imports with .js extensions", async () => {
     const generated = await readFile(generatedWSOutboundPath, "utf8");
     expect(generated).toContain('from "../../validation/ws-outbound-schema-metadata.js"');

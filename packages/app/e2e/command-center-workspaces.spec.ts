@@ -55,9 +55,15 @@ test.describe("Command center workspaces", () => {
       );
       await expect(row).toBeVisible({ timeout: 30_000 });
       await expect(row).toContainText(WORKSPACE_TITLE);
-      await expect(row).toContainText(PRIMARY_HOST_LABEL);
       await expect(row).toContainText(WORKSPACE_BRANCH);
 
+      // The subtitle disambiguates by project: host · project · branch (multi-host).
+      const subtitle = row.getByTestId("command-center-workspace-subtitle");
+      await expect(subtitle).toContainText(PRIMARY_HOST_LABEL);
+      await expect(subtitle).toContainText(seeded.projectDisplayName);
+      await expect(subtitle).toContainText(WORKSPACE_BRANCH);
+
+      // The agent subtitle is unchanged by the shared-helper refactor.
       const agentRow = panel.getByTestId(`command-center-agent-${getServerId()}:${agent.id}`);
       await expect(agentRow).toContainText(AGENT_TITLE);
       await expect(agentRow).toContainText(PRIMARY_HOST_LABEL);
@@ -89,6 +95,10 @@ test.describe("Command center workspaces", () => {
       await expect(agentRow).toBeVisible();
       await expect(row).not.toBeVisible();
 
+      // The project name is now part of the workspace searchText.
+      await input.fill(seeded.projectDisplayName);
+      await expect(row).toBeVisible();
+
       await input.fill(AGENT_TITLE);
       await expect(agentRow).toBeVisible();
       await expect(row).not.toBeVisible();
@@ -99,6 +109,40 @@ test.describe("Command center workspaces", () => {
       await expectAppRoute(page, buildHostWorkspaceRoute(getServerId(), seeded.workspaceId), {
         timeout: 30_000,
       });
+    } finally {
+      await seeded.cleanup();
+    }
+  });
+
+  test("single-host workspace subtitle omits the host and shows project · branch", async ({
+    page,
+  }) => {
+    const seeded = await seedWorkspace({
+      repoPrefix: "command-center-workspace-single-",
+      title: WORKSPACE_TITLE,
+    });
+
+    try {
+      execFileSync("git", ["checkout", "-b", WORKSPACE_BRANCH], {
+        cwd: seeded.repoPath,
+        stdio: "ignore",
+      });
+      const refreshed = await seeded.client.checkoutRefresh(seeded.repoPath);
+      if (!refreshed.success) {
+        throw new Error(`Failed to refresh checkout: ${JSON.stringify(refreshed.error)}`);
+      }
+
+      // No secondary host: with a single host, the host label is gated away.
+      await gotoAppShell(page);
+
+      const panel = await openCommandCenter(page);
+      const row = panel.getByTestId(
+        `command-center-workspace-${getServerId()}:${seeded.workspaceId}`,
+      );
+      await expect(row).toBeVisible({ timeout: 30_000 });
+
+      const subtitle = row.getByTestId("command-center-workspace-subtitle");
+      await expect(subtitle).toHaveText(`${seeded.projectDisplayName} · ${WORKSPACE_BRANCH}`);
     } finally {
       await seeded.cleanup();
     }

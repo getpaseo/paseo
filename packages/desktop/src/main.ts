@@ -90,6 +90,12 @@ import { autoUpdateInstalledSkills } from "./integrations/skills/index.js";
 import { registerBrowserAutomationIpc } from "./features/browser-automation/ipc.js";
 import { BrowserKeyboard } from "./features/browser-keyboard/index.js";
 import { installAppUpdateOnQuit } from "./features/auto-updater.js";
+import {
+  buildAgentDeepLinkRoute,
+  parseAgentDeepLink,
+  type AgentDeepLinkTarget,
+} from "@getpaseo/protocol/agent-deep-link";
+import { AgentNavigationInbox, parseAgentDeepLinkFromArgv } from "./agent-navigation.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
@@ -98,6 +104,16 @@ const DISABLE_SINGLE_INSTANCE_LOCK = process.env.PASEO_DISABLE_SINGLE_INSTANCE_L
 const APP_NAME = process.env.PASEO_TEST_APP_NAME?.trim() || "Paseo";
 const UPDATE_QUIT_DEADLINE_MS = 5_000;
 const pendingBrowserWindowOpenRequests = new PendingBrowserWindowOpenRequests();
+const agentNavigationInbox = new AgentNavigationInbox();
+
+// A second-instance launch can arrive before the packaged protocol handler,
+// IPC handlers, and first window exist. Wait for full bootstrap, not just
+// app.whenReady(), before delivering navigation to the renderer.
+let resolveBootstrapComplete: () => void;
+const bootstrapComplete = new Promise<void>((resolve) => {
+  resolveBootstrapComplete = resolve;
+});
+let bootstrapIsComplete = false;
 
 app.setName(APP_NAME);
 
@@ -316,6 +332,7 @@ let pendingOpenProjectPath = parseOpenProjectPathFromArgv({
   argv: process.argv,
   isDefaultApp: process.defaultApp,
 });
+let pendingAgentNavigation = parseAgentDeepLinkFromArgv(process.argv);
 
 // Each window pulls its own pending open-project path on mount, keyed by
 // webContents id, so deep-linked windows (second-instance launches, the
@@ -339,6 +356,10 @@ ipcMain.handle("paseo:get-pending-open-project", (event) => {
     pendingPath: result,
   });
   return result;
+});
+
+ipcMain.handle("paseo:agent-navigation:ready", (event) => {
+  return agentNavigationInbox.windowReady(event.sender.id);
 });
 
 function normalizeBrowserCaptureRect(
@@ -653,6 +674,7 @@ function getWorkAreasPrimaryFirst(): Electron.Rectangle[] {
 
 async function createWindow(
   options: {
+    initialRoute?: string | null;
     pendingOpenProjectPath?: string | null;
     restoreWindowState?: boolean;
   } = {},
@@ -694,8 +716,14 @@ async function createWindow(
 
   const webContentsId = mainWindow.webContents.id;
   pendingOpenProjectStore.set(webContentsId, options.pendingOpenProjectPath);
+  mainWindow.webContents.on("did-start-navigation", (_event, _url, isSameDocument, isMainFrame) => {
+    if (isMainFrame && !isSameDocument) {
+      agentNavigationInbox.windowLoading(webContentsId);
+    }
+  });
   mainWindow.on("closed", () => {
     pendingOpenProjectStore.delete(webContentsId);
+    agentNavigationInbox.removeWindow(webContentsId);
     unregisterPaseoBrowserHost(webContentsId);
     browserKeyboard.detachHost(webContentsId);
   });
@@ -759,11 +787,14 @@ async function createWindow(
   if (!app.isPackaged) {
     const { loadReactDevTools } = await import("./features/react-devtools.js");
     await loadReactDevTools();
-    await mainWindow.loadURL(DEV_SERVER_URL);
+    const initialUrl = options.initialRoute
+      ? new URL(options.initialRoute, `${DEV_SERVER_URL}/`).toString()
+      : DEV_SERVER_URL;
+    await mainWindow.loadURL(initialUrl);
     return mainWindow;
   }
 
-  await mainWindow.loadURL(`${APP_SCHEME}://app/`);
+  await mainWindow.loadURL(`${APP_SCHEME}://app${options.initialRoute ?? "/"}`);
   return mainWindow;
 }
 
@@ -771,14 +802,72 @@ async function createWindow(
 // App lifecycle
 // ---------------------------------------------------------------------------
 
-// Resolves once bootstrap() has registered the custom protocol handler and IPC
-// handlers and created the first window. second-instance window creation waits
-// on this rather than app.whenReady(): in packaged mode createWindow loads
-// `paseo://app/`, which fails if the protocol handler isn't registered yet, and
-// a second instance can arrive mid-cold-start.
-let resolveBootstrapComplete: () => void;
-const bootstrapComplete = new Promise<void>((resolve) => {
-  resolveBootstrapComplete = resolve;
+let agentNavigationWindowCreation: Promise<BrowserWindow> | null = null;
+
+function focusExistingWindowOnAgent(target: AgentDeepLinkTarget): void {
+  const windows = BrowserWindow.getAllWindows();
+  const mainWindow =
+    BrowserWindow.getFocusedWindow() ?? windows.find((window) => window.isVisible()) ?? windows[0];
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    if (!agentNavigationWindowCreation) {
+      const creation = createWindow({
+        initialRoute: buildAgentDeepLinkRoute(target),
+        restoreWindowState: true,
+      });
+      agentNavigationWindowCreation = creation;
+      void creation
+        .catch((error) => log.error("[window] failed to create window for agent link", error))
+        .finally(() => {
+          if (agentNavigationWindowCreation === creation) {
+            agentNavigationWindowCreation = null;
+          }
+        });
+      return;
+    }
+
+    void agentNavigationWindowCreation
+      .then(() => focusExistingWindowOnAgent(target))
+      .catch((error) => log.error("[window] failed to deliver queued agent link", error));
+    return;
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  mainWindow.focus();
+
+  const deliverable = agentNavigationInbox.deliverOrQueue(mainWindow.webContents.id, target);
+  if (deliverable) {
+    mainWindow.webContents.send("paseo:event:open-agent", deliverable);
+  }
+}
+
+function receiveAgentDeepLink(input: string): void {
+  const target = parseAgentDeepLink(input);
+  if (!target) {
+    return;
+  }
+
+  if (bootstrapIsComplete) {
+    focusExistingWindowOnAgent(target);
+    return;
+  }
+
+  pendingAgentNavigation = target;
+  void bootstrapComplete.then(() => {
+    if (pendingAgentNavigation !== target) {
+      return undefined;
+    }
+    pendingAgentNavigation = null;
+    focusExistingWindowOnAgent(target);
+    return undefined;
+  });
+}
+
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  receiveAgentDeepLink(url);
 });
 
 function setupSingleInstanceLock(): boolean {
@@ -794,6 +883,12 @@ function setupSingleInstanceLock(): boolean {
   }
 
   app.on("second-instance", (_event, commandLine) => {
+    const agentTarget = parseAgentDeepLinkFromArgv(commandLine);
+    if (agentTarget) {
+      void bootstrapComplete.then(() => focusExistingWindowOnAgent(agentTarget));
+      return;
+    }
+
     log.info("[open-project] second-instance commandLine:", commandLine);
     const openProjectPath = parseOpenProjectPathFromArgv({
       argv: commandLine,
@@ -895,12 +990,25 @@ async function bootstrap(): Promise<void> {
   });
 
   // The first window of the session restores and persists saved geometry.
-  await createWindow({ pendingOpenProjectPath, restoreWindowState: true });
+  const initialAgentNavigation = pendingAgentNavigation;
+  pendingAgentNavigation = null;
+  await createWindow({
+    initialRoute: initialAgentNavigation ? buildAgentDeepLinkRoute(initialAgentNavigation) : null,
+    pendingOpenProjectPath,
+    restoreWindowState: true,
+  });
   pendingOpenProjectPath = null;
 
   // Protocol + IPC handlers and the first window now exist: release any
   // second-instance launches that arrived during cold start.
+  bootstrapIsComplete = true;
   resolveBootstrapComplete();
+
+  if (pendingAgentNavigation) {
+    const target = pendingAgentNavigation;
+    pendingAgentNavigation = null;
+    focusExistingWindowOnAgent(target);
+  }
 
   app.on("activate", async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -910,7 +1018,7 @@ async function bootstrap(): Promise<void> {
 }
 
 void runDesktopStartup({
-  hasPendingOpenProjectPath: Boolean(pendingOpenProjectPath),
+  hasPendingGuiLaunchRequest: Boolean(pendingOpenProjectPath || pendingAgentNavigation),
   runCliPassthroughIfRequested,
   inheritLoginShellEnv,
   bootstrapGui: bootstrap,

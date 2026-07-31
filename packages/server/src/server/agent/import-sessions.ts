@@ -121,10 +121,15 @@ export async function listImportableProviderSessions(
   const limit = request.limit ?? 20;
   const sinceTimestamp = parseRecentProviderSessionsSince(request.since);
   const providerFilter = request.providers ? new Set(request.providers) : undefined;
-  const importedHandles = await collectImportedProviderSessionHandles(agentManager, agentStorage);
+  const importedSessions = await collectImportedProviderSessions(
+    agentManager,
+    agentStorage,
+    providerFilter,
+  );
+  const importedHandles = importedSessions.handles;
 
   const sessions = await agentManager.listImportableSessions({
-    limit,
+    limit: limit + importedSessions.count,
     providerFilter,
     cwd: request.cwd,
   });
@@ -328,29 +333,40 @@ function parseRecentProviderSessionsSince(since: string | undefined): number | n
   return timestamp;
 }
 
-async function collectImportedProviderSessionHandles(
+async function collectImportedProviderSessions(
   agentManager: Pick<AgentManager, "listAgents">,
   agentStorage: Pick<AgentStorage, "list">,
-): Promise<Set<string>> {
+  providerFilter: Set<string> | undefined,
+): Promise<{ handles: Set<string>; count: number }> {
   const handles = new Set<string>();
+  const sessions = new Set<string>();
   const records = await agentStorage.list();
   const storedRecordsById = new Map(records.map((record) => [record.id, record]));
+
+  const collect = (
+    provider: AgentProvider | StoredAgentRecord["provider"] | string,
+    persistence: AgentPersistenceHandle | null | undefined,
+  ) => {
+    if (!persistence || (providerFilter && !providerFilter.has(provider))) return;
+    sessions.add(toProviderSessionHandleKey(provider, persistence.sessionId));
+    collectProviderSessionHandleKeys(handles, provider, persistence);
+  };
 
   for (const agent of agentManager.listAgents()) {
     if (storedRecordsById.get(agent.id)?.archivedAt) {
       continue;
     }
-    collectProviderSessionHandleKeys(handles, agent.provider, agent.persistence);
+    collect(agent.provider, agent.persistence);
   }
 
   for (const record of records) {
     if (record.archivedAt) {
       continue;
     }
-    collectProviderSessionHandleKeys(handles, record.provider, record.persistence);
+    collect(record.provider, record.persistence);
   }
 
-  return handles;
+  return { handles, count: sessions.size };
 }
 
 function toProviderSessionHandleKey(provider: string, providerHandleId: string): string {

@@ -32,6 +32,7 @@ import { AppDiagnosticHost } from "@/components/app-diagnostic-host";
 import { LeftSidebar } from "@/components/left-sidebar";
 import { WindowSidebarMenuToggle } from "@/components/headers/menu-header";
 import { SidebarModelProvider } from "@/components/sidebar/sidebar-model";
+import { WorkspacePinShortcutHandler } from "@/components/workspace-pin-shortcut-handler";
 import { CompactExplorerSidebarHost } from "@/components/compact-explorer-sidebar-host";
 import { ProviderSettingsHost } from "@/components/provider-settings-host";
 import { RootErrorBoundary } from "@/components/root-error-boundary";
@@ -60,13 +61,13 @@ import {
   resolveStartupBlocker,
   resolveStartupNavigationReady,
   shouldRunStartupGiveUpTimer,
-  startDaemonIfGateAllows,
   startHostRuntimeBootstrap,
   type StartupBlocker,
 } from "@/navigation/host-runtime-bootstrap";
 import { registerWorkspaceRouteNavigationRef } from "@/navigation/workspace-route-navigation";
 import { ThemedStack } from "@/navigation/themed-stack";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
+import { AgentNavigationListener } from "@/desktop/agent-navigation";
 import { listenToDesktopEvent } from "@/desktop/electron/events";
 import { updateDesktopWindowControls } from "@/desktop/electron/window";
 import { getDesktopHost } from "@/desktop/host";
@@ -147,9 +148,10 @@ function PushNotificationRouter() {
   const openNotification = useStableEvent((data: Record<string, unknown> | undefined) => {
     const target = resolveNotificationTarget(data);
     const serverId = target.serverId;
+    const workspaceId = target.workspaceId;
     const agentId = target.agentId;
-    if (serverId && agentId) {
-      navigateToAgent({ serverId, agentId, pin: true });
+    if (serverId && workspaceId && agentId) {
+      navigateToAgent({ serverId, workspaceId, agentId, pin: true });
       return;
     }
 
@@ -337,7 +339,6 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
       store,
       daemonStartService,
       shouldStartDaemon: shouldStartBuiltInDaemon,
-      onGateError: (message) => daemonStartService.recordError(message),
     });
   }, []);
 
@@ -376,11 +377,7 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
 
   const retry = useCallback(() => {
     const daemonStartService = getDaemonStartService({ store: getHostRuntimeStore() });
-    startDaemonIfGateAllows({
-      daemonStartService,
-      shouldStartDaemon: shouldStartBuiltInDaemon,
-      onGateError: (message) => daemonStartService.recordError(message),
-    });
+    void daemonStartService.startIfEnabled({ shouldStart: shouldStartBuiltInDaemon });
   }, []);
 
   const splashError =
@@ -555,6 +552,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
       <UpdateCalloutSource />
       <WorktreeSetupCalloutSource />
       <CommandCenterRootActions />
+      <WorkspacePinShortcutHandler />
       <CommandCenter />
       <AddProjectFlowHost />
       <HostChooserModal />
@@ -885,7 +883,7 @@ function RootStack() {
         <Stack.Screen name="settings/index" />
         <Stack.Screen name="settings/[section]" />
         <Stack.Screen name="settings/projects/index" />
-        <Stack.Screen name="settings/projects/[projectKey]" />
+        <Stack.Screen name="settings/projects/[serverId]/[projectId]" />
         <Stack.Screen name="new" />
         <Stack.Screen name="open-project" />
         <Stack.Screen name="sessions" />
@@ -914,6 +912,7 @@ function AppShell() {
     <MobilePanelsProvider>
       <HorizontalScrollProvider>
         <OpenProjectListener />
+        <AgentNavigationListener />
         <AppWithSidebar>
           <WorkspaceRouteNavigationBridge />
           <RootStack />

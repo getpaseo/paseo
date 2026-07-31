@@ -13,6 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Shortcut } from "@/components/ui/shortcut";
+import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -58,6 +59,7 @@ interface SidebarWorkspaceMenuProps {
   archiveShortcutKeys?: ShortcutKey[][] | null;
   isPinned?: boolean;
   onTogglePin?: () => void;
+  openInFileManagerPath?: string | null;
 }
 
 export function SidebarWorkspaceMenu({
@@ -73,6 +75,7 @@ export function SidebarWorkspaceMenu({
   archiveShortcutKeys,
   isPinned,
   onTogglePin,
+  openInFileManagerPath,
 }: SidebarWorkspaceMenuProps) {
   const { t } = useTranslation();
   const archiveTrailing = useMemo(
@@ -137,6 +140,10 @@ export function SidebarWorkspaceMenu({
             {isPinned ? t("sidebar.workspace.actions.unpin") : t("sidebar.workspace.actions.pin")}
           </DropdownMenuItem>
         ) : null}
+        <OpenInFileManagerMenuItem
+          path={openInFileManagerPath}
+          testID={`sidebar-workspace-menu-open-folder-${workspaceKey}`}
+        />
         <DropdownMenuItem
           testID={`sidebar-workspace-menu-archive-${workspaceKey}`}
           leading={archiveLeadingIcon}

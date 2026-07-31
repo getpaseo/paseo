@@ -1,7 +1,5 @@
-import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { normalizeWorkspaceFileLocation, workspaceFileLocationsEqual } from "@/workspace/file-open";
-
-type WorkspaceDraftTabSetup = NonNullable<Extract<WorkspaceTabTarget, { kind: "draft" }>["setup"]>;
+import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tabs/model";
 
 export function normalizeWorkspaceTabTarget(
   value: WorkspaceTabTarget | null | undefined,
@@ -30,6 +28,9 @@ export function normalizeWorkspaceTabTarget(
   }
   if (value.kind === "file") {
     return normalizeFileTabTarget(value);
+  }
+  if (value.kind === "working_diff") {
+    return normalizeWorkingDiffTabTarget(value);
   }
   return normalizeSimpleWorkspaceTabTarget(value);
 }
@@ -104,11 +105,21 @@ export function workspaceTabTargetsEqual(
   if (left.kind === "terminal" && right.kind === "terminal") {
     return left.terminalId === right.terminalId;
   }
+  return secondaryWorkspaceTabTargetsEqual(left, right);
+}
+
+function secondaryWorkspaceTabTargetsEqual(
+  left: WorkspaceTabTarget,
+  right: WorkspaceTabTarget,
+): boolean {
   if (left.kind === "browser" && right.kind === "browser") {
     return left.browserId === right.browserId;
   }
   if (left.kind === "file" && right.kind === "file") {
     return workspaceFileLocationsEqual(left, right);
+  }
+  if (left.kind === "working_diff" && right.kind === "working_diff") {
+    return left.focusPath === right.focusPath && left.focusRequestId === right.focusRequestId;
   }
   if (left.kind === "setup" && right.kind === "setup") {
     return left.workspaceId === right.workspaceId;
@@ -174,6 +185,9 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
   if (target.kind === "commit_diff") {
     return `commit_diff_${target.sha}`;
   }
+  if (target.kind === "working_diff") {
+    return "working_diff";
+  }
   return `file_${target.path}`;
 }
 
@@ -190,6 +204,24 @@ function normalizeFileTabTarget(
 ): WorkspaceTabTarget | null {
   const location = normalizeWorkspaceFileLocation(value);
   return location ? { kind: "file", ...location } : null;
+}
+
+function normalizeWorkingDiffTabTarget(
+  value: Extract<WorkspaceTabTarget, { kind: "working_diff" }>,
+): WorkspaceTabTarget | null {
+  const focusPath = trimNonEmpty(value.focusPath)?.replace(/\\/g, "/") ?? null;
+  const focusRequestId = normalizePositiveInteger(value.focusRequestId);
+  return {
+    kind: "working_diff" as const,
+    ...(focusPath ? { focusPath } : {}),
+    ...(focusRequestId ? { focusRequestId } : {}),
+  };
+}
+
+function normalizePositiveInteger(value: number | null | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : null;
 }
 
 function trimOptionalString(value: string | null | undefined): string | null {

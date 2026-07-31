@@ -1,10 +1,10 @@
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   View,
   Text,
   TextInput,
   Pressable,
   Platform,
-  ActivityIndicator,
   useWindowDimensions,
   NativeSyntheticEvent,
   TextInputContentSizeChangeEventData,
@@ -70,6 +70,7 @@ import {
   resolveComposerSurfacePresentation,
   runAlternateSendAction,
   runDefaultSendAction,
+  runMessageInputKeyboardAction,
   stopRealtimeVoice,
 } from "./state";
 
@@ -444,7 +445,7 @@ function SendButtonContent({
   buttonIconSize: number;
 }) {
   if (isSubmitLoading) {
-    return <ThemedActivityIndicator size="small" uniProps={iconAccentForegroundMapping} />;
+    return <ThemedLoadingSpinner size="small" uniProps={iconAccentForegroundMapping} />;
   }
   if (submitIcon === "return") {
     return <ThemedCornerDownLeft size={buttonIconSize} uniProps={iconAccentForegroundMapping} />;
@@ -494,65 +495,6 @@ function handleDesktopKeyPressImpl(
   if (ctx.isSubmitDisabled || ctx.isSubmitLoading || ctx.disabled) return;
   event.preventDefault();
   ctx.handleDefaultSendAction();
-}
-
-interface KeyboardActionHandlers {
-  textInputRef: React.MutableRefObject<
-    TextInput | (TextInput & { getNativeRef?: () => unknown }) | null
-  >;
-  isDictatingRef: React.MutableRefObject<boolean>;
-  sendAfterTranscriptRef: React.MutableRefObject<boolean>;
-  confirmDictation: () => void | Promise<void>;
-  cancelDictation: () => void | Promise<void>;
-  startDictationIfAvailable: () => Promise<void>;
-  handleToggleRealtimeVoiceShortcut: () => void;
-  isRealtimeVoiceForCurrentAgent: boolean;
-  voice: { toggleMute: () => void } | null | undefined;
-}
-
-function runKeyboardActionImpl(
-  action: MessageInputKeyboardActionKind,
-  h: KeyboardActionHandlers,
-): boolean {
-  if (action === "focus") {
-    h.textInputRef.current?.focus();
-    return true;
-  }
-  if (action === "send" || action === "dictation-confirm") {
-    if (h.isDictatingRef.current) {
-      h.sendAfterTranscriptRef.current = true;
-      void h.confirmDictation();
-      return true;
-    }
-    return false;
-  }
-  if (action === "voice-toggle") {
-    h.handleToggleRealtimeVoiceShortcut();
-    return true;
-  }
-  if (action === "voice-mute-toggle") {
-    if (h.isRealtimeVoiceForCurrentAgent) {
-      h.voice?.toggleMute();
-    }
-    return true;
-  }
-  if (action === "dictation-cancel") {
-    if (h.isDictatingRef.current) {
-      void h.cancelDictation();
-      return true;
-    }
-    return false;
-  }
-  if (action === "dictation-toggle") {
-    if (h.isDictatingRef.current) {
-      h.sendAfterTranscriptRef.current = true;
-      void h.confirmDictation();
-    } else {
-      void h.startDictationIfAvailable();
-    }
-    return true;
-  }
-  return false;
 }
 
 function getTextInputNativeElement(
@@ -916,22 +858,18 @@ function toggleRealtimeVoiceImpl(ctx: ToggleRealtimeVoiceContext): void {
 interface StartDictationContext {
   dictationUnavailableMessage: string | null | undefined;
   canStartDictation: () => boolean;
-  isDictatingRef: React.MutableRefObject<boolean>;
   toast: { error: (msg: string) => void };
   startDictation: () => Promise<void>;
 }
 
 async function startDictationIfAvailableImpl(ctx: StartDictationContext): Promise<void> {
   if (ctx.dictationUnavailableMessage) {
-    ctx.isDictatingRef.current = false;
     ctx.toast.error(ctx.dictationUnavailableMessage);
     return;
   }
   if (!ctx.canStartDictation()) {
-    ctx.isDictatingRef.current = false;
     return;
   }
-  ctx.isDictatingRef.current = true;
   await ctx.startDictation();
 }
 
@@ -1276,16 +1214,18 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         textInputRef.current?.blur?.();
       },
       runKeyboardAction: (action) =>
-        runKeyboardActionImpl(action, {
-          textInputRef,
-          isDictatingRef,
-          sendAfterTranscriptRef,
+        runMessageInputKeyboardAction(action, {
+          focusInput: () => textInputRef.current?.focus(),
+          isDictationRecording: isDictationActive,
+          markTranscriptForSend: () => {
+            sendAfterTranscriptRef.current = true;
+          },
           confirmDictation,
           cancelDictation,
-          startDictationIfAvailable,
-          handleToggleRealtimeVoiceShortcut,
-          isRealtimeVoiceForCurrentAgent,
-          voice,
+          startDictation: startDictationIfAvailable,
+          toggleRealtimeVoice: handleToggleRealtimeVoiceShortcut,
+          isRealtimeVoiceActive: isRealtimeVoiceForCurrentAgent,
+          toggleRealtimeVoiceMute: () => voice?.toggleMute(),
         }),
       getNativeElement: () => (isWeb ? getTextInputNativeElement(textInputRef.current) : null),
     }));
@@ -1369,6 +1309,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
     const {
       isRecording: isDictating,
+      isRecordingActive: isDictationActive,
       isProcessing: isDictationProcessing,
       partialTranscript: _dictationPartialTranscript,
       volume: dictationVolume,
@@ -1388,11 +1329,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       canConfirm: canConfirmDictation,
       enableDuration: true,
     });
-
-    const isDictatingRef = useRef(isDictating);
-    useEffect(() => {
-      isDictatingRef.current = isDictating;
-    }, [isDictating]);
 
     const isRealtimeVoiceForCurrentAgent = computeIsRealtimeVoiceForAgent(
       voice,
@@ -1420,7 +1356,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         startDictationIfAvailableImpl({
           dictationUnavailableMessage,
           canStartDictation,
-          isDictatingRef,
           toast,
           startDictation,
         }),
@@ -2065,7 +2000,7 @@ const ThemedMic = withUnistyles(Mic);
 const ThemedMicOff = withUnistyles(MicOff);
 const ThemedArrowUp = withUnistyles(ArrowUp);
 const ThemedCornerDownLeft = withUnistyles(CornerDownLeft);
-const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedTextInput = withUnistyles(TextInput);
 
 const iconForegroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });

@@ -199,7 +199,7 @@ export interface AgentRunOptions {
   outputSchema?: unknown;
   resumeFrom?: AgentPersistenceHandle;
   maxThinkingTokens?: number;
-  messageId?: string;
+  clientMessageId?: string;
 }
 
 export interface AgentUsage {
@@ -368,7 +368,7 @@ export interface CompactionTimelineItem {
 }
 
 export type AgentTimelineItem =
-  | { type: "user_message"; text: string; messageId?: string }
+  | { type: "user_message"; text: string; messageId?: string; clientMessageId?: string }
   | { type: "assistant_message"; text: string; messageId?: string }
   | { type: "reasoning"; text: string }
   | ToolCallTimelineItem
@@ -602,6 +602,12 @@ export interface AgentCreateSessionOptions {
   persistSession?: boolean;
 }
 
+/** Runtime-only intent for a persisted-session resume. Never persist this option. */
+export interface AgentResumeSessionOptions {
+  /** Defaults to interactive. History loading may be read-only for archived native sessions. */
+  purpose?: "interactive" | "history";
+}
+
 /**
  * Returned by respondToPermission when the permission resolution requires
  * a follow-up turn (e.g. Codex plan approval → implementation).
@@ -668,6 +674,12 @@ export type FetchCatalogOptions =
 export interface ProviderCatalog {
   models: AgentModelDefinition[];
   modes: AgentMode[];
+  defaultModeId?: string | null;
+}
+
+export interface ResolveAgentDefaultModeInput {
+  config: AgentSessionConfig;
+  env?: Record<string, string>;
 }
 
 export interface AgentClient {
@@ -682,6 +694,7 @@ export interface AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ): Promise<AgentSession>;
   /**
    * Discover models and modes together. Implementations may use one upstream
@@ -690,6 +703,7 @@ export interface AgentClient {
    * The registry is responsible for merging configured model overrides.
    */
   fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog>;
+  resolveDefaultModeId?(input: ResolveAgentDefaultModeInput): Promise<string | undefined>;
   resolveCreateConfig?(input: ResolveAgentCreateConfigInput): ResolveAgentCreateConfigResult;
   isCreateConfigUnattended?(input: AgentCreateConfigUnattendedInput): boolean;
   listCommands?(config: AgentSessionConfig): Promise<AgentSlashCommand[]>;

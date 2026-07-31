@@ -39,6 +39,11 @@ export function resolveOmpLaunchMode(
   switch (modeId ?? DEFAULT_OMP_MODE_ID) {
     case "full":
       return { modeId: "full", extraArgs: ["--approval-mode", "yolo", ...modelRoleArgs] };
+    case "write":
+      return {
+        modeId: "write",
+        extraArgs: ["--approval-mode", "write", ...modelRoleArgs],
+      };
     case "ask":
       return {
         modeId: "ask",

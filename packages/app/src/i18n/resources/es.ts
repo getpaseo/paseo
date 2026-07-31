@@ -370,6 +370,13 @@ export const es: TranslationResources = {
       copyBranchName: "Copiar nombre de rama",
       copied: "Copiado",
     },
+    fileActions: {
+      openFile: "Abrir archivo",
+      copyPath: "Copiar ruta",
+      download: "Descargar",
+      addToChat: "Añadir al chat…",
+      moreActions: "Más acciones",
+    },
     fileExplorer: {
       sort: {
         name: "Nombre",
@@ -379,8 +386,6 @@ export const es: TranslationResources = {
       context: {
         size: "Tamaño",
         modified: "Modificado",
-        copyPath: "Copiar ruta",
-        download: "Descargar",
       },
       actions: {
         back: "Atrás",
@@ -470,6 +475,7 @@ export const es: TranslationResources = {
     },
     tabs: {
       loading: "Cargando...",
+      modified: "Cambios sin guardar",
       loadingAgentTitle: "Título del agente de carga",
       emptyPane: "No hay pestañas en este panel.",
       fallback: {
@@ -490,6 +496,7 @@ export const es: TranslationResources = {
         openFor: "Menú abierto para{{label}}",
         copyResumeCommand: "Copiar comando de reanudación",
         copyAgentId: "Copiar ID del agente",
+        copyTerminalId: "Copiar ID del terminal",
         copyFilePath: "Copy file path",
         rename: "Rebautizar",
         closeAbove: "Cerrar pestañas arriba",
@@ -528,6 +535,7 @@ export const es: TranslationResources = {
       toasts: {
         copyFailed: "Copia fallida",
         agentIdCopiedLabel: "AgentID",
+        terminalIdCopiedLabel: "ID del terminal",
         resumeCommandCopiedLabel: "reanudar el comando",
         filePathCopiedLabel: "File path",
         resumeIdUnavailable: "ReanudarIDno disponible",
@@ -537,6 +545,13 @@ export const es: TranslationResources = {
         failedToReloadAgent: "No se pudo recargar el agente",
       },
       confirmations: {
+        unsavedTitle: "Cambios sin guardar",
+        unsavedMessage:
+          "Esta pestaña tiene cambios sin guardar. Al cerrarla se descartará el borrador.",
+        closeWithoutSaving: "Cerrar sin guardar",
+        closePaneTitle: "¿Cerrar panel?",
+        bulkUnsaved:
+          "{{count}} pestaña(s) tienen cambios sin guardar. Al cerrar se descartarán esos borradores.",
         close: "Cerca",
         cancel: "Cancelar",
         archive: "Archivo",
@@ -586,19 +601,34 @@ export const es: TranslationResources = {
     scripts: {
       title: "Scripts",
       actions: {
+        chooseUrl: "Elegir URL",
+        copyUrl: "Copiar URL",
+        openService: "Ver servicio",
+        restart: "Reiniciar",
         run: "Correr",
-        view: "Vista",
+        stop: "Detener",
+        view: "Ver terminal",
       },
       accessibility: {
         trigger: "GuionesWorkspace",
-        openAt: "Abrir{{scriptName}}en{{label}}",
+        openService: "Ver servicio {{scriptName}}",
         viewTerminal: "Ver terminal{{scriptName}}",
         runScript: "Ejecute el script{{scriptName}}",
+        stopScript: "Detener{{scriptName}}",
+        restartScript: "Reiniciar{{scriptName}}",
+        copyUrl: "Copiar URL de{{scriptName}}",
+        chooseUrl: "Elegir URL para {{scriptName}}",
         script: "Guión{{scriptName}}",
+      },
+      routes: {
+        public: "Proxy inverso",
+        paseo: "Memorable",
+        direct: "Directa",
       },
       states: {
         exitCode: "salir de{{code}}",
         startFailed: "No se pudo iniciar{{scriptName}}",
+        stopFailed: "No se pudo detener{{scriptName}}",
       },
     },
     git: {
@@ -761,8 +791,12 @@ export const es: TranslationResources = {
         },
       },
       diff: {
+        openChangesTab: "Abrir la pestaña Cambios",
+        closeChangesTab: "Cerrar la pestaña Cambios",
         binaryFile: "archivo binario",
         tooLarge: "La diferencia es demasiado grande para mostrarse",
+        previewTooLargeTitle: "Este diff es demasiado grande para previsualizarlo",
+        previewTooLargeDescription: "Reduce la comparación para previsualizarla aquí",
         unified: "Diferencia unificada",
         split: "Diferencia de lado a lado",
         switchToUnified: "Cambiar a diferencia unificada",
@@ -796,14 +830,13 @@ export const es: TranslationResources = {
         deletedFile: "Eliminado",
         commits: {
           title: "Commits",
-          legendLocal: "local",
-          legendRemote: "en remoto",
-          countLabel: "{{count}} commits por delante de la base",
+          countLabel: "{{count}} commits del espacio de trabajo",
+          noneAhead: "Aún no hay commits por delante de {{baseRef}}",
           fileDiffEmpty: "No hay cambios para mostrar",
           fileDiffError: "Error al cargar el diff del archivo",
           loading: "Cargando commits…",
           loadError: "Error al cargar los commits",
-          empty: "No hay commits por delante de la base",
+          empty: "Aún no hay commits",
         },
       },
       openInEditor: {
@@ -908,6 +941,8 @@ export const es: TranslationResources = {
         openSettings: "Abrir la configuración del proyecto",
         openNewWindow: "Open in new window",
         openNewWindowFailed: "Couldn't open a new window",
+        openFolder: "Open in file manager",
+        openFolderFailed: "Couldn't open folder",
         remove: "Eliminar proyecto",
         removing: "Eliminando...",
       },
@@ -936,6 +971,8 @@ export const es: TranslationResources = {
       actions: {
         menu: "AccionesWorkspace",
         newWorkspace: "Nuevo espacio de trabajo",
+        showMore: "Mostrar más",
+        showLess: "Mostrar menos",
         createWorkspaceFor: "Crea un nuevo espacio de trabajo para{{projectName}}",
         copyPath: "Copiar ruta",
         copyBranchName: "Copiar nombre de sucursal",
@@ -993,9 +1030,6 @@ export const es: TranslationResources = {
     refPicker: {
       startingRef: "Árbitro inicial",
       chooseStart: "Elige por dónde empezar",
-      checkoutHint: "¿Mira {{noun}} {{numberPrefix}}{{number}}?",
-      checkoutPr: "Echa un vistazo a {{noun}} {{numberPrefix}}{{number}}",
-      dismissCheckoutHint: "Descartar la sugerencia de pago de {{noun}} {{numberPrefix}}{{number}}",
       intoBase: "en {{baseRef}}",
       searching: "Búsqueda...",
       noMatchingRefs: "No hay árbitros coincidentes.",
@@ -1166,6 +1200,7 @@ export const es: TranslationResources = {
         installFailed: "No se pueden instalar habilidades de orquestación.",
         updateFailed: "No se pueden actualizar las habilidades de orquestación.",
         uninstallFailed: "No se pueden desinstalar las habilidades de orquestación.",
+        saveSelectionFailed: "No se puede guardar la selección de habilidades de orquestación.",
       },
     },
   },
@@ -1488,11 +1523,34 @@ export const es: TranslationResources = {
       binaryPreviewUnavailable: "Vista previa binaria no disponible",
       failedToLoad: "No se pudo cargar el archivo",
       failedToLoadPreview: "No se pudo cargar la vista previa del archivo",
+      editor: {
+        fileSize: "Tamaño {{size}}",
+        lines: "{{count}} líneas",
+        editorStatus: "Estado del editor: {{status}}",
+        unsavedChanges: "Cambios sin guardar",
+        saving: "Guardando...",
+        saveFailed: "Error al guardar",
+        changedOnDisk: "Cambiado en disco",
+        vimMode: "Modo Vim {{mode}}",
+        cursor: "Línea {{line}}, columna {{column}}",
+        preview: "Vista previa",
+        source: "Código fuente",
+        deletedTitle: "Archivo eliminado del disco",
+        checkFailedTitle: "No se pudo comprobar el archivo en disco",
+        preservedDescription: "La copia abierta se ha conservado.",
+        conflictDescription: "Se conservó el búfer local. Elige qué versión mantener.",
+        overwrite: "Sobrescribir",
+        reload: "Recargar",
+        reloadTitle: "¿Recargar desde el disco?",
+        reloadMessage: "Se perderán tus cambios locales.",
+      },
     },
     diff: {
       changesLabel: "Cambios",
       changesSubtitle: "Diferencias del árbol de trabajo",
       commitSubtitle: "Diferencias del commit",
+      uncommittedSubtitle: "Cambios sin confirmar",
+      baseSubtitle: "Comparado con {{baseRef}}",
       directoryMissing: "No se encontró el directorio de Workspace.",
       empty: "Sin cambios",
       loadError: "No se pudieron cargar las diferencias",
@@ -1583,11 +1641,17 @@ export const es: TranslationResources = {
     sections: {
       general: "General",
       appearance: "Apariencia",
+      editor: "Editor",
       shortcuts: "Atajos",
       integrations: "Integraciones",
       permissions: "Permisos",
       diagnostics: "Diagnóstico",
       about: "Acerca de",
+    },
+    editor: {
+      title: "Editor",
+      vimKeybindings: "Atajos de Vim",
+      vimHint: "Se aplica a archivos fuente en web y escritorio.",
     },
     hostSections: {
       connections: "Conexiones",
@@ -1822,6 +1886,7 @@ export const es: TranslationResources = {
         sendMessage: "enviar mensaje",
         queueMessage: "mensaje de cola",
         muteUnmuteVoiceMode: "Silenciar el modo de voz/unmute",
+        switchProject: "Cambiar proyecto",
       },
       helpNotes: {
         showKeyboardShortcuts: "Disponible cuando el foco no está en un campo de texto o terminal.",
@@ -1848,6 +1913,16 @@ export const es: TranslationResources = {
         uninstallTitle: "¿Desinstalar las habilidadesPaseo?",
         uninstallMessage:
           "Elimina todas las habilidades de orquestaciónPaseode ~/.agents, ~/.claude, ~/.codex.",
+        choose: "Elegir habilidades",
+        chooseAll: "Todas las habilidades",
+        chooseAllHint:
+          "Mantén instaladas todas las habilidades incluidas, también las que se agreguen después.",
+        chooseList: "Habilidades incluidas",
+        chooseEmpty: "Esta versión no incluye habilidades.",
+        removeTitle: "¿Eliminar las habilidades deseleccionadas?",
+        removeMessage:
+          "{{skills}} se eliminarán de ~/.agents, ~/.claude y ~/.codex. También se elimina todo lo que hayas añadido dentro de esas carpetas de habilidades.",
+        saveFailed: "No se pudo guardar tu selección de habilidades.",
       },
       actions: {
         install: "Instalar",
@@ -1855,7 +1930,10 @@ export const es: TranslationResources = {
         installed: "Instalado",
         update: "Actualizar",
         working: "Laboral...",
+        remove: "Eliminar",
         uninstall: "Desinstalar",
+        save: "Guardar",
+        saving: "Guardando...",
       },
       operations: {
         add: "Agregar habilidad",

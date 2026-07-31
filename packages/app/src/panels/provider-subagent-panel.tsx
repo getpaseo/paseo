@@ -49,6 +49,7 @@ function useProviderSubagentDescriptor(
   return {
     label,
     subtitle: `${formatProviderLabel(provider)} subagent`,
+    tooltip: label,
     titleState: descriptor ? "ready" : "loading",
     icon: getProviderIcon(provider),
     statusBucket: descriptor
@@ -129,6 +130,9 @@ function ProviderSubagentPanel() {
     target.subagentId,
     timeline,
   ]);
+  const firstTimelineSeq = timeline?.rows.size ? Math.min(...timeline.rows.keys()) : null;
+  const progressKey =
+    timeline?.epoch && firstTimelineSeq !== null ? `${timeline.epoch}:${firstTimelineSeq}` : null;
 
   const streamContext = useMemo<AgentScreenAgent>(
     () => ({
@@ -146,9 +150,10 @@ function ProviderSubagentPanel() {
     () => ({
       hasOlder: timeline?.hasOlder === true,
       isLoadingOlder,
+      progressKey,
       onLoadOlder: loadOlder,
     }),
-    [isLoadingOlder, loadOlder, timeline?.hasOlder],
+    [isLoadingOlder, loadOlder, progressKey, timeline?.hasOlder],
   );
 
   if (serverInfo && !supported) {

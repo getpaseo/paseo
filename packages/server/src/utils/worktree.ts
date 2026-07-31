@@ -155,6 +155,10 @@ export interface PaseoWorktreeOwnership {
   worktreePath?: string;
 }
 
+export interface PaseoWorktreeOwnershipOptions extends WorktreeRootOptions {
+  knownGitCommonDir?: string | null;
+}
+
 export interface WorktreeRootOptions {
   paseoHome?: string;
   worktreesRoot?: string;
@@ -913,7 +917,7 @@ function resolveRepoRootFromGitCommonDir(commonDir: string): string {
 
 export async function isPaseoOwnedWorktreeCwd(
   cwd: string,
-  options?: WorktreeRootOptions,
+  options?: PaseoWorktreeOwnershipOptions,
 ): Promise<PaseoWorktreeOwnership> {
   const resolvedCwd = normalizePathForOwnership(cwd);
 
@@ -921,11 +925,15 @@ export async function isPaseoOwnedWorktreeCwd(
   // previous archive attempt removed the admin dir before the working tree
   // could be fully cleaned up). We still want to allow archiving in that case.
   let repoRoot: string | undefined;
-  try {
-    const gitCommonDir = await getGitCommonDir(cwd);
-    repoRoot = resolveRepoRootFromGitCommonDir(gitCommonDir);
-  } catch {
-    // ignore
+  if (options?.knownGitCommonDir) {
+    repoRoot = resolveRepoRootFromGitCommonDir(options.knownGitCommonDir);
+  } else if (options?.knownGitCommonDir === undefined) {
+    try {
+      const gitCommonDir = await getGitCommonDir(cwd);
+      repoRoot = resolveRepoRootFromGitCommonDir(gitCommonDir);
+    } catch {
+      // ignore
+    }
   }
 
   const worktreesBaseRoot = resolvePaseoWorktreesBaseRoot(options);
@@ -1511,7 +1519,33 @@ async function tryFetchWorktreeTrackingRemote(options: {
       acceptExitCodes: [0, 1, 128],
     },
   );
-  return result.exitCode === 0 ? { name: options.remoteName, headRef: options.headRef } : undefined;
+  if (result.exitCode !== 0) {
+    return undefined;
+  }
+  await ensureRemoteFetchesBranch(options);
+  return { name: options.remoteName, headRef: options.headRef };
+}
+
+async function ensureRemoteFetchesBranch(options: {
+  cwd: string;
+  remoteName: string;
+  headRef: string;
+}): Promise<void> {
+  const configKey = `remote.${options.remoteName}.fetch`;
+  const exactRefspec = `refs/heads/${options.headRef}:refs/remotes/${options.remoteName}/${options.headRef}`;
+  const wildcardRefspec = `refs/heads/*:refs/remotes/${options.remoteName}/*`;
+  const { stdout } = await runGitCommand(["config", "--get-all", configKey], {
+    cwd: options.cwd,
+    acceptExitCodes: [0, 1],
+  });
+  const alreadyTracked = stdout
+    .split("\n")
+    .map((refspec) => refspec.trim().replace(/^\+/, ""))
+    .some((refspec) => refspec === exactRefspec || refspec === wildcardRefspec);
+  if (alreadyTracked) {
+    return;
+  }
+  await runGitCommand(["config", "--add", configKey, `+${exactRefspec}`], { cwd: options.cwd });
 }
 
 async function getWorktreeRemotePushUrl(

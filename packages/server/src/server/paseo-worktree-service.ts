@@ -91,6 +91,7 @@ export async function createPaseoWorktree(
       branch: createdWorktree.worktree.branchName || null,
       baseBranch: resolveIntentBaseBranch(createdWorktree.intent),
       title: input.title?.trim() || resolveFirstAgentPromptTitle(input.firstAgentContext),
+      expectsInitialAgent: Boolean(input.firstAgentContext),
     });
 
     deps.github.invalidate({ cwd: createdWorktree.worktree.worktreePath });

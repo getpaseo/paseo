@@ -2564,6 +2564,7 @@ describe("create_agent MCP tool", () => {
       providerSnapshotManager: createOpenCodeManager().manager,
       projectRegistry: {
         get: async (projectId) => (projectId === project.projectId ? project : null),
+        list: async () => [project],
       },
       createPaseoWorktree,
       logger,
@@ -5632,6 +5633,7 @@ describe("agent snapshot MCP serialization", () => {
     expect(spies.agentManager.resumeAgentFromPersistence).toHaveBeenCalled();
     expect(spies.agentManager.hydrateTimelineFromProvider).toHaveBeenCalledWith(
       "archived-activity-agent",
+      { broadcast: expect.any(Function) },
     );
   });
 

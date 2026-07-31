@@ -11,7 +11,15 @@ import {
   Search,
   Server,
 } from "lucide-react-native";
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import {
+  createElement,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentType,
+} from "react";
 import {
   Modal,
   Pressable,
@@ -66,6 +74,11 @@ import { useFetchQuery } from "@/data/query";
 import { getOpenProjectFailureReason, registerProjectDescriptor } from "@/hooks/open-project";
 import { useIsLocalDaemon, useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import { useCloneGithubProject, useOpenProject } from "@/hooks/use-open-project";
+import {
+  OverlayLayerProvider,
+  useGlobalWebOverlayLayer,
+  useWebOverlayRegistration,
+} from "@/lib/overlay-root";
 import {
   useHosts,
   useHostRuntimeClient,
@@ -352,7 +365,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   const recommendedPaths = useRecommendedProjectPaths(hostId);
   const openProject = useOpenProject(hostId);
   const cloneGithubProject = useCloneGithubProject(hostId);
-  const addEmptyProject = useSessionStore((store) => store.addEmptyProject);
+  const upsertProject = useSessionStore((store) => store.upsertProject);
   const setHasHydratedWorkspaces = useSessionStore((store) => store.setHasHydratedWorkspaces);
   const inputRef = useRef<TextInput>(null);
   const submissionInFlightRef = useRef(false);
@@ -631,7 +644,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         title: repository.cloneProtocol
           ? `${repository.nameWithOwner} via ${repository.cloneProtocol.toUpperCase()}`
           : repository.nameWithOwner,
-        subtitle: repository.description ?? repository.visibility,
+        subtitle: repository.description,
         icon: Github,
         testID: `add-project-flow-repository-${repository.id}`,
         select: () =>
@@ -722,7 +735,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       registerProjectDescriptor({
         serverId: page.hostId,
         project: payload.project,
-        addEmptyProject,
+        upsertProject,
         setHasHydratedWorkspaces,
       });
       openNewWorkspaceForProject(page.hostId, payload.project);
@@ -736,7 +749,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     } finally {
       submissionInFlightRef.current = false;
     }
-  }, [addEmptyProject, client, openNewWorkspaceForProject, page, setHasHydratedWorkspaces]);
+  }, [client, openNewWorkspaceForProject, page, setHasHydratedWorkspaces, upsertProject]);
 
   const submitActive = useCallback(() => {
     if (page.kind === "new-directory-name") {
@@ -769,14 +782,20 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     [activeIndex, handleBack, rows, submitActive],
   );
 
-  useEffect(() => {
-    if (!isWeb || typeof window === "undefined") return;
-    const listener = (event: KeyboardEvent) => {
-      if (handleKey(event.key)) event.preventDefault();
-    };
-    window.addEventListener("keydown", listener, true);
-    return () => window.removeEventListener("keydown", listener, true);
-  }, [handleKey]);
+  const modalLayer = useGlobalWebOverlayLayer("modal", isWeb);
+  const handleWebOverlayKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      if (!handleKey(event.key)) return false;
+      event.preventDefault();
+      return true;
+    },
+    [handleKey],
+  );
+  const setWebOverlayScope = useWebOverlayRegistration({
+    active: isWeb,
+    layer: modalLayer,
+    onKeyDown: handleWebOverlayKeyDown,
+  });
 
   const handleNativeKeyPress = useCallback(
     ({ nativeEvent: { key } }: { nativeEvent: { key: string } }) => {
@@ -816,11 +835,12 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       ? joinDirectoryPath(page.parentPath, page.name.trim())
       : null;
 
-  return (
+  const modal = (
     <Modal visible transparent animationType="fade" onRequestClose={isWeb ? undefined : handleBack}>
       <View style={styles.overlay} testID="add-project-flow">
         <Pressable style={styles.backdrop} onPress={onClose} testID="add-project-flow-backdrop" />
         <View
+          ref={setWebOverlayScope}
           style={styles.panel}
           testID={`add-project-flow-page-${page.kind}`}
           accessibilityLabel={`Add project: ${page.kind}`}
@@ -913,6 +933,8 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       </View>
     </Modal>
   );
+
+  return createElement(OverlayLayerProvider, { layer: isWeb ? modalLayer : 0 }, modal);
 }
 
 const styles = StyleSheet.create((theme) => ({

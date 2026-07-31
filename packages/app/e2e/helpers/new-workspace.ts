@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type BrowserContext, type Page } from "@playwright/test";
 import type { DaemonClient as InternalDaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { decodeWorkspaceIdFromPathSegment } from "@/utils/host-routes";
 import { connectDaemonClient } from "./daemon-client-loader";
@@ -18,6 +18,7 @@ type NewWorkspaceDaemonClient = Pick<
   | "getPaseoWorktreeList"
   | "getDaemonConfig"
   | "inspectWorkspaceRecovery"
+  | "listProjects"
   | "on"
   | "patchDaemonConfig"
   | "removeProject"
@@ -29,6 +30,7 @@ type WorkspaceDescriptor = NonNullable<CreateWorkspacePayload["workspace"]>;
 
 export interface OpenedProject {
   workspaceId: string;
+  projectId: string;
   projectKey: string;
   projectDisplayName: string;
   workspaceName: string;
@@ -45,10 +47,19 @@ function requireWorkspace(payload: WorkspacePayload) {
   return payload.workspace;
 }
 
-function openedProjectFromWorkspace(workspace: WorkspaceDescriptor): OpenedProject {
+async function openedProjectFromWorkspace(
+  client: NewWorkspaceDaemonClient,
+  workspace: WorkspaceDescriptor,
+): Promise<OpenedProject> {
+  const payload = await client.listProjects();
+  const project = payload.projects.find((candidate) => candidate.projectId === workspace.projectId);
+  if (!project?.projectKey) {
+    throw new Error(`Project ${workspace.projectId} has no project key`);
+  }
   return {
     workspaceId: workspace.id,
-    projectKey: workspace.projectId,
+    projectId: workspace.projectId,
+    projectKey: project.projectKey,
     projectDisplayName: workspace.projectDisplayName,
     workspaceName: workspace.name,
     workspaceDirectory: workspace.workspaceDirectory,
@@ -107,7 +118,7 @@ export async function openProjectViaDaemon(
       source: { kind: "directory", path: repoPath },
     }),
   );
-  return openedProjectFromWorkspace(workspace);
+  return openedProjectFromWorkspace(client, workspace);
 }
 
 export async function archiveWorkspaceFromDaemon(
@@ -149,7 +160,7 @@ export async function createWorktreeViaDaemon(
     worktreeSlug: input.slug,
   });
   const workspace = requireWorkspace(payload);
-  return openedProjectFromWorkspace(workspace);
+  return openedProjectFromWorkspace(client, workspace);
 }
 
 export async function openNewWorkspaceComposer(
@@ -175,6 +186,14 @@ export async function openGlobalNewWorkspaceComposer(page: Page): Promise<void> 
   await expect(page).toHaveURL(/\/new(?:\?.*)?$/, {
     timeout: 30_000,
   });
+}
+
+export async function openNewWorkspaceProjectPickerWithShortcut(page: Page): Promise<void> {
+  await page.keyboard.press("Control+P");
+
+  const searchInput = page.getByPlaceholder("Search projects");
+  await expect(searchInput).toBeVisible({ timeout: 30_000 });
+  await expect(searchInput).toBeFocused();
 }
 
 export async function expectNewWorkspaceProjectSelected(
@@ -290,6 +309,13 @@ export async function selectBranchInPicker(page: Page, name: string): Promise<vo
   await branchRow.click();
 }
 
+export async function searchAndSelectBranchInPicker(page: Page, name: string): Promise<void> {
+  const searchInput = page.getByPlaceholder("Search branches and PRs");
+  await expect(searchInput).toBeVisible({ timeout: 30_000 });
+  await searchInput.fill(name);
+  await selectBranchInPicker(page, name);
+}
+
 export async function selectGitHubPrInPicker(page: Page, number: number): Promise<void> {
   const prRow = page.getByTestId(`new-workspace-ref-picker-pr-${number}`);
   await expect(prRow).toBeVisible({ timeout: 30_000 });
@@ -349,6 +375,18 @@ export async function expectComposerGithubAttachmentPill(
   await expect(pills).toHaveCount(1);
   await expect(pills.first()).toContainText(`#${input.number}`);
   await expect(pills.first()).toContainText(input.title);
+}
+
+export async function pasteGithubPrUrl(
+  page: Page,
+  context: BrowserContext,
+  url: string,
+): Promise<void> {
+  const composer = page.getByRole("textbox", { name: "Message agent..." });
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.evaluate((value) => navigator.clipboard.writeText(value), url);
+  await composer.focus();
+  await page.keyboard.press("Control+V");
 }
 
 export async function assertNewWorkspaceSidebarAndHeader(

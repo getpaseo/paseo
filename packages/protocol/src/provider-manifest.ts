@@ -152,6 +152,13 @@ export const OMP_MODES: AgentProviderModeDefinition[] = [
     isUnattended: true,
   },
   {
+    id: "write",
+    label: "Write Approval",
+    description: "Launches OMP with write approval mode — reads are free, writes require approval.",
+    icon: "ShieldAlert",
+    colorTier: "moderate",
+  },
+  {
     id: "ask",
     label: "Always Ask",
     description: "Launches OMP with always-ask approval mode for write and exec tools.",
@@ -185,7 +192,7 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     id: "claude",
     label: "Claude",
     description: "Anthropic's multi-tool assistant with MCP support, streaming, and deep reasoning",
-    defaultModeId: "default",
+    defaultModeId: "auto",
     modes: CLAUDE_MODES,
     voice: {
       enabled: true,
@@ -197,7 +204,7 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     id: "codex",
     label: "Codex",
     description: "OpenAI's Codex workspace agent with sandbox controls and optional network access",
-    defaultModeId: "auto",
+    defaultModeId: "auto-review",
     modes: CODEX_MODES,
     voice: {
       enabled: true,

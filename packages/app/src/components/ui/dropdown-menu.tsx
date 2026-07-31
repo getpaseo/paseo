@@ -1,3 +1,4 @@
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   createContext,
   useCallback,
@@ -11,9 +12,9 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
-  ActivityIndicator,
   Modal,
   Pressable,
   Text,
@@ -33,6 +34,12 @@ import { FloatingScrollView, FloatingSurface } from "@/components/ui/floating";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { isWeb } from "@/constants/platform";
 import { useDismissKeyboardOnOpen } from "@/components/ui/keyboard-dismiss";
+import {
+  getOverlayRoot,
+  OverlayLayerProvider,
+  useOverlayLayer,
+  useWebOverlayRegistration,
+} from "@/lib/overlay-root";
 
 // Action status for menu items with loading/success feedback
 export type ActionStatus = "idle" | "pending" | "success";
@@ -183,6 +190,7 @@ function renderDropdownSurface(input: {
   content: ReactElement;
   surfaceNativeID: string;
   onExited: () => void;
+  scopeRef: (node: View | null) => void;
 }): ReactElement {
   const {
     frameStyle,
@@ -193,6 +201,7 @@ function renderDropdownSurface(input: {
     content,
     surfaceNativeID,
     onExited,
+    scopeRef,
   } = input;
 
   const body = scrollable ? (
@@ -210,18 +219,24 @@ function renderDropdownSurface(input: {
 
   return (
     <FloatingSurface
+      ref={scopeRef}
       collapsable={false}
+      tabIndex={-1}
       nativeID={surfaceNativeID}
       testID={testID}
       style={surfaceStyle}
       frameStyle={frameStyle}
       entering={contentEntering}
-      exiting={contentExiting.withCallback((finished) => {
-        "worklet";
-        if (finished) {
-          runOnJS(onExited)();
-        }
-      })}
+      exiting={
+        isWeb
+          ? undefined
+          : contentExiting.withCallback((finished) => {
+              "worklet";
+              if (finished) {
+                runOnJS(onExited)();
+              }
+            })
+      }
     >
       {body}
     </FloatingSurface>
@@ -443,6 +458,7 @@ export function DropdownMenuContent({
   testID?: string;
 }>): ReactElement | null {
   const { t } = useTranslation();
+  const floatingLayer = useOverlayLayer("floating");
   const { open, setOpen, triggerRef, flushPendingSelect } =
     useDropdownMenuContext("DropdownMenuContent");
   const [modalVisible, setModalVisible] = useState(false);
@@ -495,6 +511,22 @@ export function DropdownMenuContent({
   const handleClose = useCallback(() => {
     setOpen(false);
   }, [setOpen]);
+
+  const handleWebOverlayKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return false;
+      event.preventDefault();
+      event.stopPropagation();
+      handleClose();
+      return true;
+    },
+    [handleClose],
+  );
+  const setWebOverlayScope = useWebOverlayRegistration({
+    active: isWeb && modalVisible,
+    layer: floatingLayer,
+    onKeyDown: handleWebOverlayKeyDown,
+  });
 
   // Measure trigger when opening
   useEffect(() => {
@@ -613,16 +645,15 @@ export function DropdownMenuContent({
     </View>
   );
 
-  return (
-    <Modal
-      visible={modalVisible}
-      transparent
-      animationType="none"
-      statusBarTranslucent={Platform.OS === "android"}
-      onDismiss={flushPendingSelect}
-      onRequestClose={handleClose}
-    >
-      <View style={styles.overlay}>
+  const overlay = (
+    <OverlayLayerProvider layer={floatingLayer}>
+      <View
+        style={[
+          styles.overlay,
+          isWeb ? styles.overlayWeb : null,
+          isWeb ? { zIndex: floatingLayer } : null,
+        ]}
+      >
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={t("menu.backdrop")}
@@ -639,10 +670,28 @@ export function DropdownMenuContent({
               scrollViewportStyle,
               content,
               surfaceNativeID,
+              scopeRef: setWebOverlayScope,
               onExited: () => setModalVisible(false),
             })
           : null}
       </View>
+    </OverlayLayerProvider>
+  );
+
+  if (isWeb && typeof document !== "undefined") {
+    return createPortal(overlay, getOverlayRoot());
+  }
+
+  return (
+    <Modal
+      visible={modalVisible}
+      transparent
+      animationType="none"
+      statusBarTranslucent={Platform.OS === "android"}
+      onDismiss={flushPendingSelect}
+      onRequestClose={handleClose}
+    >
+      {overlay}
     </Modal>
   );
 }
@@ -692,7 +741,7 @@ function resolveDropdownItemLeadingContent(input: {
 }): ReactElement | null {
   const { isPending, isSuccess, leading, theme } = input;
   if (isPending) {
-    return <ActivityIndicator size={16} color={theme.colors.foregroundMuted} />;
+    return <LoadingSpinner size={16} color={theme.colors.foregroundMuted} />;
   }
   if (isSuccess) {
     return <CheckCircle size={16} color={theme.colors.palette.green[500]} />;
@@ -877,6 +926,10 @@ export function DropdownMenuItem({
 const styles = StyleSheet.create((theme) => ({
   overlay: {
     flex: 1,
+  },
+  overlayWeb: {
+    ...StyleSheet.absoluteFillObject,
+    pointerEvents: "auto" as const,
   },
   backdrop: {
     position: "absolute",

@@ -11,7 +11,12 @@ import {
   toAgentPersistenceHandle,
 } from "../persistence-hooks.js";
 
-const pendingAgentInitializations = new Map<string, Promise<ManagedAgent>>();
+interface PendingAgentInitialization {
+  promise: Promise<ManagedAgent>;
+  options: { broadcastTimeline: boolean };
+}
+
+const pendingAgentInitializations = new Map<string, PendingAgentInitialization>();
 
 export type AgentLoaderManager = Pick<
   AgentManager,
@@ -21,13 +26,37 @@ export type AgentLoaderManager = Pick<
   | "hydrateTimelineFromProvider"
   | "resumeAgentFromPersistence"
 > &
-  Partial<Pick<AgentManager, "touchAgentActivity" | "waitForAgentClose">>;
+  Partial<Pick<AgentManager, "waitForAgentClose">>;
 
 export interface EnsureAgentLoadedDeps {
   agentManager: AgentLoaderManager;
   agentStorage: AgentStorage;
   validProviders?: Iterable<AgentProvider>;
+  broadcastTimeline?: boolean;
   logger: Logger;
+}
+
+export async function ensureUnarchivedAgentLoaded(
+  agentId: string,
+  deps: EnsureAgentLoadedDeps & {
+    agentManager: AgentLoaderManager & Pick<AgentManager, "closeAgent">;
+  },
+): Promise<ManagedAgent> {
+  const record = await deps.agentStorage.get(agentId);
+  if (record?.archivedAt) {
+    throw new Error(`Agent is archived: ${agentId}`);
+  }
+
+  const agent = await ensureAgentLoaded(agentId, deps);
+  const latestRecord = await deps.agentStorage.get(agentId);
+  if (latestRecord?.archivedAt) {
+    await deps.agentManager.closeAgent(agentId).catch((error: unknown) => {
+      deps.logger.warn({ err: error, agentId }, "Failed to close concurrently archived agent");
+    });
+    throw new Error(`Agent is archived: ${agentId}`);
+  }
+
+  return agent;
 }
 
 export async function ensureAgentLoaded(
@@ -35,8 +64,14 @@ export async function ensureAgentLoaded(
   deps: EnsureAgentLoadedDeps,
 ): Promise<ManagedAgent> {
   await deps.agentManager.waitForAgentClose?.(agentId);
-  const existing =
-    deps.agentManager.touchAgentActivity?.(agentId) ?? deps.agentManager.getAgent(agentId);
+
+  const inflight = pendingAgentInitializations.get(agentId);
+  if (inflight) {
+    inflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
+    return inflight.promise;
+  }
+
+  const existing = deps.agentManager.getAgent(agentId);
   if (existing) {
     return existing;
   }
@@ -46,11 +81,15 @@ export async function ensureAgentLoaded(
   // before storage-backed resume begins.
   await deps.agentManager.waitForAgentClose?.(agentId);
 
-  const inflight = pendingAgentInitializations.get(agentId);
-  if (inflight) {
-    return inflight;
+  const laterInflight = pendingAgentInitializations.get(agentId);
+  if (laterInflight) {
+    laterInflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
+    return laterInflight.promise;
   }
 
+  const pendingOptions = {
+    broadcastTimeline: deps.broadcastTimeline === true,
+  };
   const initPromise = (async () => {
     const record = await deps.agentStorage.get(agentId);
     if (!record) {
@@ -71,6 +110,7 @@ export async function ensureAgentLoaded(
         buildConfigOverrides(record),
         agentId,
         extractTimestamps(record),
+        record.archivedAt ? { purpose: "history" } : undefined,
       );
       deps.logger.info({ agentId, provider: record.provider }, "Agent resumed from persistence");
     } else {
@@ -88,17 +128,20 @@ export async function ensureAgentLoaded(
       deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");
     }
 
-    await deps.agentManager.hydrateTimelineFromProvider(agentId);
+    await deps.agentManager.hydrateTimelineFromProvider(agentId, {
+      broadcast: () => pendingOptions.broadcastTimeline,
+    });
     return deps.agentManager.getAgent(agentId) ?? snapshot;
   })();
 
-  pendingAgentInitializations.set(agentId, initPromise);
+  const pending: PendingAgentInitialization = { promise: initPromise, options: pendingOptions };
+  pendingAgentInitializations.set(agentId, pending);
 
   try {
     return await initPromise;
   } finally {
     const current = pendingAgentInitializations.get(agentId);
-    if (current === initPromise) {
+    if (current === pending) {
       pendingAgentInitializations.delete(agentId);
     }
   }

@@ -1,8 +1,13 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdtemp, rm, stat, truncate, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { readExplorerFile } from "./service.js";
+import {
+  getExplorerFileVersion,
+  readExplorerFile,
+  streamExplorerFile,
+  writeExplorerFile,
+} from "./service.js";
 
 async function createHomeTempDir(prefix: string): Promise<string> {
   return mkdtemp(path.join(os.homedir(), prefix));
@@ -13,6 +18,120 @@ async function createTempDir(prefix: string): Promise<string> {
 }
 
 describe("file explorer service", () => {
+  it("atomically writes an existing text file at the expected revision", async () => {
+    const root = await createTempDir("paseo-file-write-");
+    try {
+      const filePath = path.join(root, "notes.txt");
+      await writeFile(filePath, "before", "utf8");
+      const current = await getExplorerFileVersion({ root, relativePath: "notes.txt" });
+      expect(current.status).toBe("ready");
+      if (current.status !== "ready") return;
+
+      const result = await writeExplorerFile({
+        root,
+        relativePath: "notes.txt",
+        content: "after",
+        expectedModifiedAt: current.modifiedAt,
+        expectedRevision: current.revision,
+      });
+
+      expect(result.status).toBe("written");
+      expect((await readExplorerFile({ root, relativePath: "notes.txt" })).content).toBe("after");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "preserves the original file permissions across atomic replacement",
+    async () => {
+      const root = await createTempDir("paseo-file-mode-");
+      try {
+        const filePath = path.join(root, "script.sh");
+        await writeFile(filePath, "before", "utf8");
+        await chmod(filePath, 0o764);
+        const current = await getExplorerFileVersion({ root, relativePath: "script.sh" });
+        expect(current.status).toBe("ready");
+        if (current.status !== "ready") return;
+
+        const result = await writeExplorerFile({
+          root,
+          relativePath: "script.sh",
+          content: "after",
+          expectedModifiedAt: current.modifiedAt,
+          expectedRevision: current.revision,
+        });
+
+        expect(result.status).toBe("written");
+        expect((await stat(filePath)).mode & 0o7777).toBe(0o764);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("preserves a newer disk revision instead of overwriting it", async () => {
+    const root = await createTempDir("paseo-file-conflict-");
+    try {
+      const filePath = path.join(root, "notes.txt");
+      await writeFile(filePath, "newer on disk", "utf8");
+
+      const result = await writeExplorerFile({
+        root,
+        relativePath: "notes.txt",
+        content: "stale local edit",
+        expectedModifiedAt: "2020-01-01T00:00:00.000Z",
+      });
+
+      expect(result).toMatchObject({ status: "conflict", version: { status: "ready" } });
+      expect((await readExplorerFile({ root, relativePath: "notes.txt" })).content).toBe(
+        "newer on disk",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers the high-precision revision token over the display timestamp", async () => {
+    const root = await createTempDir("paseo-file-revision-");
+    try {
+      const filePath = path.join(root, "notes.txt");
+      await writeFile(filePath, "on disk", "utf8");
+      const current = await getExplorerFileVersion({ root, relativePath: "notes.txt" });
+      expect(current.status).toBe("ready");
+      if (current.status !== "ready") return;
+
+      const result = await writeExplorerFile({
+        root,
+        relativePath: "notes.txt",
+        content: "stale local edit",
+        expectedModifiedAt: current.modifiedAt,
+        expectedRevision: `${current.revision}-stale`,
+      });
+
+      expect(result.status).toBe("conflict");
+      expect((await readExplorerFile({ root, relativePath: "notes.txt" })).content).toBe("on disk");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("never creates a missing file through the write API", async () => {
+    const root = await createTempDir("paseo-file-missing-");
+    try {
+      const result = await writeExplorerFile({
+        root,
+        relativePath: "missing.txt",
+        content: "new file",
+        expectedModifiedAt: "2020-01-01T00:00:00.000Z",
+      });
+
+      expect(result).toMatchObject({ status: "conflict", version: { status: "missing" } });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("reads .ex files as text", async () => {
     const root = await createTempDir("paseo-file-explorer-");
 
@@ -73,6 +192,127 @@ describe("file explorer service", () => {
       expect(result.encoding).toBe("none");
       expect(result.content).toBeUndefined();
       expect(result.mimeType).toBe("application/octet-stream");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails a stream when the file grows after its revision is advertised", async () => {
+    const root = await createTempDir("paseo-file-stream-growth-");
+
+    try {
+      const filePath = path.join(root, "growing.log");
+      const initial = Buffer.alloc(300 * 1024, 0x61);
+      await writeFile(filePath, initial);
+      await expect(
+        streamExplorerFile({ root, relativePath: "growing.log" }, async (file) => {
+          await appendFile(filePath, Buffer.alloc(300 * 1024, 0x62));
+          for await (const _chunk of file.chunks) {
+            // Consume through the advertised prefix before validating the revision.
+          }
+        }),
+      ).rejects.toThrow("File changed during transfer");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails a stream when the file shrinks below its advertised size", async () => {
+    const root = await createTempDir("paseo-file-stream-truncate-");
+
+    try {
+      const filePath = path.join(root, "shrinking.log");
+      await writeFile(filePath, Buffer.alloc(300 * 1024, 0x61));
+
+      await expect(
+        streamExplorerFile({ root, relativePath: "shrinking.log" }, async (file) => {
+          await truncate(filePath, 100 * 1024);
+          for await (const _chunk of file.chunks) {
+            // Consume until the stream detects the premature EOF.
+          }
+        }),
+      ).rejects.toThrow("File changed during transfer");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails a stream when the file is overwritten in place", async () => {
+    const root = await createTempDir("paseo-file-stream-overwrite-");
+
+    try {
+      const filePath = path.join(root, "changing.log");
+      const initial = Buffer.alloc(600 * 1024, 0x61);
+      await writeFile(filePath, initial);
+
+      await expect(
+        streamExplorerFile({ root, relativePath: "changing.log" }, async (file) => {
+          let chunkIndex = 0;
+          for await (const _chunk of file.chunks) {
+            chunkIndex += 1;
+            if (chunkIndex === 1) {
+              const replacement = Buffer.alloc(initial.byteLength, 0x62);
+              await writeFile(filePath, replacement);
+            }
+          }
+        }),
+      ).rejects.toThrow("File changed during transfer");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies sampled text when UTF-8 crosses the sample boundary", async () => {
+    const root = await createTempDir("paseo-file-stream-utf8-");
+
+    try {
+      const content = Buffer.concat([Buffer.alloc(8191, 0x61), Buffer.from("€"), Buffer.from("z")]);
+      await writeFile(path.join(root, "sample.txt"), content);
+      let kind: string | undefined;
+      let encoding: string | undefined;
+
+      await streamExplorerFile({ root, relativePath: "sample.txt" }, async (file) => {
+        kind = file.kind;
+        encoding = file.encoding;
+      });
+
+      expect(kind).toBe("text");
+      expect(encoding).toBe("utf-8");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects incomplete UTF-8 when the whole file was sampled", async () => {
+    const root = await createTempDir("paseo-file-stream-invalid-utf8-");
+
+    try {
+      await writeFile(path.join(root, "invalid.txt"), Buffer.from([0x61, 0xe2, 0x82]));
+      let kind: string | undefined;
+
+      await streamExplorerFile({ root, relativePath: "invalid.txt" }, async (file) => {
+        kind = file.kind;
+      });
+
+      expect(kind).toBe("binary");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("detects binary bytes beyond the initial classification block", async () => {
+    const root = await createTempDir("paseo-file-stream-late-binary-");
+
+    try {
+      const content = Buffer.concat([Buffer.alloc(8192, 0x61), Buffer.from([0xff])]);
+      await writeFile(path.join(root, "late-binary.unknown"), content);
+      let kind: string | undefined;
+
+      await streamExplorerFile({ root, relativePath: "late-binary.unknown" }, async (file) => {
+        kind = file.kind;
+      });
+
+      expect(kind).toBe("binary");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

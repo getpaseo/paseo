@@ -1,9 +1,9 @@
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   View,
   Text,
   Image,
   Pressable,
-  ActivityIndicator,
   type GestureResponderEvent,
   type LayoutChangeEvent,
   StyleProp,
@@ -172,6 +172,7 @@ const ThemedTodoCheckIcon = withUnistyles(Check);
 const ThemedFileSymlinkIcon = withUnistyles(FileSymlink);
 const ThemedTriangleAlertIcon = withUnistyles(TriangleAlertIcon);
 const ThemedChevronRightIcon = withUnistyles(ChevronRight);
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -865,7 +866,9 @@ const AssistantMarkdownResolvedImage = memo(function AssistantMarkdownResolvedIm
     return (
       <View style={frameStyle}>
         <View style={stateSurfaceStyle}>
-          {loadState.status === "loading" ? <ActivityIndicator size="small" /> : null}
+          {loadState.status === "loading" ? (
+            <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
+          ) : null}
           {loadState.status === "error" ? (
             <Text style={assistantMessageStylesheet.imageErrorText}>
               {t("message.attachments.imageUnavailable")}
@@ -1004,7 +1007,7 @@ function AssistantMarkdownImage({
   if (query.isLoading || dataImageQuery.isLoading) {
     return (
       <View style={stateFrameStyle}>
-        <ActivityIndicator size="small" />
+        <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
       </View>
     );
   }
@@ -1689,10 +1692,29 @@ export const AssistantMessage = memo(function AssistantMessage({
       // plain <Text> is not hoisted into a UITextViewChild and is dropped (same
       // root cause as strong/em/s) — so on iOS a hard line break vanished, and
       // a softbreak between words jammed them together ("one\ntwo" -> "onetwo").
-      // Emit the break through MarkdownTextSpan so it composes on iOS; web and
-      // Android keep the same "\n" they rendered before.
-      hardbreak: (node: ASTNode) => <MarkdownTextSpan key={node.key}>{"\n"}</MarkdownTextSpan>,
-      softbreak: (node: ASTNode) => <MarkdownTextSpan key={node.key}>{"\n"}</MarkdownTextSpan>,
+      // Emit the break through MarkdownTextSpan so it composes on iOS. Keep
+      // the resolved break styles: hardbreak is a full-width flex-row child on
+      // Android, and dropping that width joins the surrounding text spans.
+      hardbreak: (
+        node: ASTNode,
+        _children: ReactNode[],
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+      ) => (
+        <MarkdownTextSpan key={node.key} style={styles.hardbreak}>
+          {"\n"}
+        </MarkdownTextSpan>
+      ),
+      softbreak: (
+        node: ASTNode,
+        _children: ReactNode[],
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+      ) => (
+        <MarkdownTextSpan key={node.key} style={styles.softbreak}>
+          {"\n"}
+        </MarkdownTextSpan>
+      ),
       code_block: (
         node: ASTNode,
         _children: ReactNode[],
@@ -2225,7 +2247,7 @@ export const CompactionMarker = memo(function CompactionMarker({
       <View style={compactionStylesheet.line} />
       <View style={compactionStylesheet.label}>
         {status === "loading" ? (
-          <ActivityIndicator size="small" color="#a1a1aa" />
+          <LoadingSpinner size="small" color="#a1a1aa" />
         ) : (
           <Scissors size={12} color="#a1a1aa" />
         )}
@@ -2638,7 +2660,9 @@ function computeShimmerMetrics(input: {
     Math.min(120, input.labelRowWidth > 0 ? input.labelRowWidth * 0.28 : 0),
   );
   const isWebShimmer = input.isLoading && isWeb;
-  const shouldMeasureWebShimmer = isWebShimmer;
+  // React Native Web only observes a node when onLayout exists at mount. Keep
+  // measuring while idle so a retained badge has dimensions when it starts loading.
+  const shouldMeasureWebShimmer = isWeb;
   const shouldMeasureNativeShimmer = input.isLoading && isNative;
   const isNativeShimmer =
     shouldMeasureNativeShimmer && input.labelRowWidth > 0 && input.labelRowHeight > 0;

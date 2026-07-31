@@ -1,3 +1,4 @@
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   type ComponentProps,
   createContext,
@@ -14,7 +15,6 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  ActivityIndicator,
   Dimensions,
   Modal,
   Platform,
@@ -630,7 +630,7 @@ function resolveLeadingContent(input: {
   successColor: string;
 }): ReactElement | null {
   if (input.isPending) {
-    return <ActivityIndicator size={16} color={input.pendingColor} />;
+    return <LoadingSpinner size={16} color={input.pendingColor} />;
   }
   if (input.isSuccess) {
     return <CheckCircle size={16} color={input.successColor} />;

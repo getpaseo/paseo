@@ -29,6 +29,7 @@ import type { AgentAttachment, SessionOutboundMessage } from "@getpaseo/protocol
 import { parseServerInfoStatusPayload } from "@getpaseo/protocol/messages";
 import {
   buildAgentAttentionNotificationPayload,
+  type AgentAttentionReason,
   type AgentAttentionNotificationPayload,
   type NotificationPermissionRequest,
 } from "@getpaseo/protocol/agent-attention-notification";
@@ -153,6 +154,35 @@ const getLatestPermissionRequest = (
 
   return null;
 };
+
+interface AgentAttentionNotificationInput {
+  notification?: AgentAttentionNotificationPayload;
+  reason: AgentAttentionReason;
+  serverId: string;
+  workspaceId: string | undefined;
+  agentId: string;
+  assistantMessage: string | null;
+  permissionRequest: NotificationPermissionRequest | null;
+}
+
+function resolveAgentAttentionNotification(
+  input: AgentAttentionNotificationInput,
+): AgentAttentionNotificationPayload | null {
+  if (input.notification) {
+    return input.notification.data.workspaceId ? input.notification : null;
+  }
+  if (!input.workspaceId) {
+    return null;
+  }
+  return buildAgentAttentionNotificationPayload({
+    reason: input.reason,
+    serverId: input.serverId,
+    workspaceId: input.workspaceId,
+    agentId: input.agentId,
+    assistantMessage: input.reason === "finished" ? input.assistantMessage : null,
+    permissionRequest: input.reason === "permission" ? input.permissionRequest : null,
+  });
+}
 
 type WorkspaceSetupProgressPayload = Extract<
   SessionOutboundMessage,
@@ -387,8 +417,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const toast = useToast();
 
   // Zustand store actions
-  const initializeSession = useSessionStore((state) => state.initializeSession);
-  const clearSession = useSessionStore((state) => state.clearSession);
   const setIsPlayingAudio = useSessionStore((state) => state.setIsPlayingAudio);
   const setMessages = useSessionStore((state) => state.setMessages);
   const setCurrentAssistantMessage = useSessionStore((state) => state.setCurrentAssistantMessage);
@@ -410,11 +438,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const setWorkspaces = useSessionStore((state) => state.setWorkspaces);
   const flushAgentLastActivity = useSessionStore((state) => state.flushAgentLastActivity);
   const setPendingPermissions = useSessionStore((state) => state.setPendingPermissions);
-  const updateSessionClient = useSessionStore((state) => state.updateSessionClient);
   const updateSessionServerInfo = useSessionStore((state) => state.updateSessionServerInfo);
   const setViewedTimelineSync = useSessionStore((state) => state.setViewedTimelineSync);
   const upsertWorkspaceSetupProgress = useWorkspaceSetupStore((state) => state.upsertProgress);
-  const clearWorkspaceSetupServer = useWorkspaceSetupStore((state) => state.clearServer);
 
   // Track focused agent for heartbeat
   const focusedAgentId = useSessionStore(
@@ -459,11 +485,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         serverId,
         bumpHistorySyncGeneration,
         refreshDirectories: () => getHostRuntimeStore().refreshDirectories(serverId),
-      }).catch((error) => {
-        console.error("[SessionProvider] resume revalidation failed", {
-          serverId,
-          error: toErrorMessage(error),
-        });
       });
     },
     [bumpHistorySyncGeneration, serverId],
@@ -504,16 +525,20 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       const assistantMessage =
         findLatestAssistantMessageText(head) ?? findLatestAssistantMessageText(tail);
       const permissionRequest = getLatestPermissionRequest(session, params.agentId);
+      const workspaceId = session?.agents?.get(params.agentId)?.workspaceId;
 
-      const notification =
-        params.notification ??
-        buildAgentAttentionNotificationPayload({
-          reason: params.reason,
-          serverId,
-          agentId: params.agentId,
-          assistantMessage: params.reason === "finished" ? assistantMessage : null,
-          permissionRequest: params.reason === "permission" ? permissionRequest : null,
-        });
+      const notification = resolveAgentAttentionNotification({
+        notification: params.notification,
+        reason: params.reason,
+        serverId,
+        workspaceId,
+        agentId: params.agentId,
+        assistantMessage,
+        permissionRequest,
+      });
+      if (!notification) {
+        return;
+      }
 
       void sendOsNotification({
         title: notification.title,
@@ -523,17 +548,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     },
     [serverId],
   );
-
-  // Initialize session in store
-  useEffect(() => {
-    const generation = getHostRuntimeStore().getSnapshot(serverId)?.clientGeneration ?? 0;
-    initializeSession(serverId, client, generation);
-  }, [serverId, client, initializeSession]);
-
-  useEffect(() => {
-    const generation = getHostRuntimeStore().getSnapshot(serverId)?.clientGeneration ?? 0;
-    updateSessionClient(serverId, client, generation);
-  }, [serverId, client, updateSessionClient]);
 
   useEffect(() => {
     const serverInfo = client.getLastServerInfoMessage();
@@ -1326,14 +1340,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     },
     [client],
   );
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      clearWorkspaceSetupServer(serverId);
-      clearSession(serverId);
-    };
-  }, [clearSession, clearWorkspaceSetupServer, serverId]);
 
   return children;
 }

@@ -21,15 +21,8 @@ the agent runs through `ensureAgentLoaded()`, which resumes the durable provider
 same Paseo agent ID. Provider history is not appended again when the canonical timeline is already
 primed.
 
-The daemon collects an eligible idle runtime after two minutes and sweeps every 15 seconds. Only
-unarchived, non-internal agents that are exactly `idle`, have no active or pending run, replacement,
-or permission, and have not been activated during the idle window are eligible. `running`,
-`initializing`, and `error` agents stay resident. Subagents are considered independently; collection
-does not cascade or change parentage.
-
-Active schedules targeting an existing agent protect that agent from collection. Paused, completed,
-and new-agent schedules do not. A pane may remain open after collection; its next prompt resumes the
-runtime.
+Idle agents remain resident indefinitely. Runtime closure happens only through an explicit lifecycle
+action such as archive, replacement, reload, workspace teardown, or daemon shutdown.
 
 ### Cancellation
 
@@ -58,9 +51,8 @@ The provider still owns the underlying runtime. Paseo keeps an agent record so t
 
 Archive is a **soft delete**: the agent record stays on disk with `archivedAt` set, the runtime is closed, and the agent disappears from active lists. Archive is **global** — it lives on the server and propagates to every connected client.
 
-Archive is distinct from runtime collection. Archive sets `archivedAt`, invokes the provider's native
-archive hook, and cascades to managed children. Runtime collection does none of those things; it only
-releases the live runtime and writes `lastStatus: closed` on the still-active record.
+Archive sets `archivedAt`, invokes the provider's native archive hook, and cascades to managed
+children.
 
 `create_agent_request` can opt an agent into `autoArchive`. In that mode the daemon archives the agent after the first terminal turn event (`turn_completed`, `turn_failed`, or `turn_canceled`). When the agent owns an isolated workspace, auto-archive archives that workspace too; the managed worktree is removed when its final workspace reference is gone.
 
@@ -79,6 +71,20 @@ agent record without setting the agent's `archivedAt`, while its `workspaceId` s
 archived workspace. History navigation must not infer workspace lifecycle from `agent.archivedAt`
 or mutate either lifecycle. The workspace route asks the daemon for authoritative recovery state;
 only the route's explicit Unarchive or Restore action changes the archived workspace.
+
+History navigation preserves the selected agent as an explicit recovery target. If both that agent
+and its workspace are archived, the workspace recovery action restores the workspace and unarchives
+the selected agent as one user action. Other archived agents in the restored workspace remain
+recoverable from History. Opening one pins its tab and renders the archived-agent callout. Authoritative
+timeline catch-up may load provider history with a runtime-only `history` resume purpose, which must
+leave both Paseo's `archivedAt` and the provider's native archive state unchanged. **Unarchive** remains
+the only transition back to an interactive runtime: it runs the provider's native unarchive hook
+(including Codex `thread/unarchive`) before the normal agent resume and timeline hydration flow.
+
+Provider session connection owns every process it spawns until the session is registered with
+`AgentManager`. If initialization, persisted-session resume, or initial history hydration fails,
+`connect()` must dispose that process before rethrowing; the manager cannot clean up a session it never
+received.
 
 ## Tabs vs archive
 

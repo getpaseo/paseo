@@ -45,6 +45,12 @@ export interface FakePiSubagentMessagesResult {
   messages: PiAgentMessage[];
 }
 
+interface FakePiUserEntry {
+  id: string;
+  parentId: string | null;
+  text: string;
+}
+
 export class FakePi implements PiRuntime {
   readonly recordedLaunches: PiRuntimeLaunch[] = [];
   private readonly sessions: FakePiSession[] = [];
@@ -347,6 +353,19 @@ export class FakePiSession implements PiRuntimeSession {
   finishTurn(message: PiAgentMessage = { role: "assistant", content: [] }): void {
     this.messages = [...this.messages, message];
     this.emit({ type: "agent_end", messages: this.messages });
+  }
+
+  finishSubmittedUserMessage(entry: FakePiUserEntry): void {
+    this.emit({
+      type: "message_end",
+      message: { role: "user", content: entry.text },
+    });
+    this.emit({
+      type: "extension_ui_request",
+      id: `submitted-user-${entry.id}`,
+      method: "notify",
+      message: `PASEO_SUBMITTED_USER_ENTRY ${JSON.stringify({ entry })}`,
+    });
   }
 
   private handleTreeNavigationCommand(message: string): void {

@@ -3,17 +3,23 @@ import type { ReactNode, Ref } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import type { TextInputProps } from "react-native";
+import type { StyleProp, TextInputProps, ViewStyle } from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { getOverlayRoot, OVERLAY_Z } from "../lib/overlay-root";
+import {
+  getOverlayRoot,
+  OverlayLayerProvider,
+  useGlobalWebOverlayLayer,
+  useWebOverlayRegistration,
+} from "../lib/overlay-root";
 import {
   BottomSheetBackdrop,
   BottomSheetScrollView,
   BottomSheetTextInput,
+  useBottomSheetInternal,
   type BottomSheetBackgroundProps,
 } from "@gorhom/bottom-sheet";
-import Animated from "react-native-reanimated";
+import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { ArrowLeft, Search, X } from "lucide-react-native";
 import {
   IsolatedBottomSheetModal,
@@ -53,35 +59,7 @@ export interface SheetHeader {
   search?: SheetHeaderSearch;
 }
 
-type EscHandler = () => void;
-const escStack: EscHandler[] = [];
-let escListenerAttached = false;
 const ABSOLUTE_FILL_STYLE = { ...StyleSheet.absoluteFillObject };
-
-function handleEscKeyDown(event: KeyboardEvent) {
-  if (event.key !== "Escape") return;
-  const top = escStack[escStack.length - 1];
-  if (!top) return;
-  event.stopPropagation();
-  event.preventDefault();
-  top();
-}
-
-function pushEscHandler(handler: EscHandler): () => void {
-  escStack.push(handler);
-  if (!escListenerAttached && typeof window !== "undefined") {
-    window.addEventListener("keydown", handleEscKeyDown, true);
-    escListenerAttached = true;
-  }
-  return () => {
-    const index = escStack.lastIndexOf(handler);
-    if (index !== -1) escStack.splice(index, 1);
-    if (escStack.length === 0 && escListenerAttached && typeof window !== "undefined") {
-      window.removeEventListener("keydown", handleEscKeyDown, true);
-      escListenerAttached = false;
-    }
-  };
-}
 
 const styles = StyleSheet.create((theme) => ({
   desktopOverlay: {
@@ -90,7 +68,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     alignItems: "center",
     padding: theme.spacing[6],
-    zIndex: OVERLAY_Z.modal,
     pointerEvents: "auto" as const,
   },
   desktopCard: {
@@ -188,26 +165,30 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
     minHeight: 0,
   },
-  desktopContent: {
+  // The sheet's content inset — one definition for every presentation, always
+  // applied through <SheetContent />.
+  sheetContent: {
     padding: theme.spacing[SHEET_HORIZONTAL_PADDING_SCALE],
     gap: theme.spacing[4],
+  },
+  contentGrow: {
     flexGrow: 1,
   },
-  bottomSheetContent: {
-    padding: theme.spacing[SHEET_HORIZONTAL_PADDING_SCALE],
-    gap: theme.spacing[4],
-  },
-  bottomSheetStaticContent: {
+  compactStaticContent: {
     flex: 1,
-    padding: theme.spacing[SHEET_HORIZONTAL_PADDING_SCALE],
-    gap: theme.spacing[4],
+    minHeight: 0,
+  },
+  bottomSheetVisibleContent: {
+    minHeight: 0,
+    overflow: "hidden",
+  },
+  bottomSheetVisibleScroll: {
+    flex: 1,
     minHeight: 0,
   },
   desktopStaticContent: {
     flexShrink: 1,
     minHeight: 0,
-    padding: theme.spacing[SHEET_HORIZONTAL_PADDING_SCALE],
-    gap: theme.spacing[4],
   },
   footer: {
     paddingHorizontal: theme.spacing[SHEET_HORIZONTAL_PADDING_SCALE],
@@ -246,6 +227,53 @@ function SheetBackground({ style }: BottomSheetBackgroundProps) {
     [style, theme.colors.surface0, theme.borderRadius],
   );
   return <Animated.View pointerEvents="none" style={combinedStyle} />;
+}
+
+/**
+ * The sheet body, indented to the sheet's content inset.
+ *
+ * The inset lives on a real `View` and never on a scroller's
+ * `contentContainerStyle`: that is a library prop, not the `style` prop
+ * Unistyles registers, so a themed inset handed to a third-party scroller such
+ * as `BottomSheetScrollView` silently resolves to nothing on web — which is how
+ * the compact sheet ended up rendering its cards flush to the screen edges. See
+ * docs/unistyles.md "Main Gotcha: contentContainerStyle".
+ */
+function SheetContent({ style, children }: { style: StyleProp<ViewStyle>; children: ReactNode }) {
+  return <View style={[styles.sheetContent, style]}>{children}</View>;
+}
+
+function BottomSheetVisibleContent({ children }: { children: ReactNode }) {
+  const { animatedDetentsState, animatedKeyboardState, animatedLayoutState, animatedPosition } =
+    useBottomSheetInternal();
+  const visibleContentStyle = useAnimatedStyle(() => {
+    const { containerHeight, handleHeight } = animatedLayoutState.get();
+    if (containerHeight < 0 || handleHeight < 0) {
+      return { height: 0 };
+    }
+
+    const initialDetentPosition = animatedDetentsState.get().detents?.[0];
+    const contentPosition =
+      initialDetentPosition == null
+        ? animatedPosition.get()
+        : Math.min(animatedPosition.get(), initialDetentPosition);
+
+    return {
+      height: Math.max(
+        0,
+        containerHeight -
+          contentPosition -
+          handleHeight -
+          animatedKeyboardState.get().heightWithinContainer,
+      ),
+    };
+  }, [animatedDetentsState, animatedKeyboardState, animatedLayoutState, animatedPosition]);
+
+  return (
+    <Animated.View style={[styles.bottomSheetVisibleContent, visibleContentStyle]}>
+      {children}
+    </Animated.View>
+  );
 }
 
 export type AdaptiveTextInputProps = TextInputProps & {
@@ -354,6 +382,7 @@ export function SheetHeaderView({
         {header.actions ? <View style={styles.headerActions}>{header.actions}</View> : null}
         {showCloseButton ? (
           <Pressable
+            accessibilityRole="button"
             accessibilityLabel={t("common.actions.close")}
             style={styles.closeButton}
             onPress={onClose}
@@ -452,12 +481,17 @@ export interface AdaptiveModalSheetProps {
   children: ReactNode;
   /** Sticky footer rendered below the scrollable content. */
   footer?: ReactNode;
+  footerContainerStyle?: StyleProp<ViewStyle>;
   snapPoints?: string[];
   testID?: string;
   /** Override the max width of the desktop card. */
   desktopMaxWidth?: number;
   scrollable?: boolean;
   presentation?: "push" | "replace";
+  /** Layout intent for the sheet body, composed over the sheet's own content inset. */
+  contentStyle?: StyleProp<ViewStyle>;
+  /** Size compact sheet content to the live snap height instead of its largest snap point. */
+  sizeContentToCurrentSnapPoint?: boolean;
 }
 
 export function AdaptiveModalSheet({
@@ -467,11 +501,14 @@ export function AdaptiveModalSheet({
   onDismiss,
   children,
   footer,
+  footerContainerStyle,
   snapPoints,
   testID,
   desktopMaxWidth,
   scrollable = true,
   presentation,
+  contentStyle,
+  sizeContentToCurrentSnapPoint = false,
 }: AdaptiveModalSheetProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -489,32 +526,36 @@ export function AdaptiveModalSheet({
       }),
     [footer, insets.bottom, isMobile, theme.spacing],
   );
-  const bottomSheetContentStyle = useMemo(
+  const compactContentStyle = useMemo(
     () => [
-      styles.bottomSheetContent,
+      contentStyle,
       compactSafeAreaPadding.contentPaddingBottom != null
         ? { paddingBottom: compactSafeAreaPadding.contentPaddingBottom }
         : null,
     ],
-    [compactSafeAreaPadding.contentPaddingBottom],
+    [compactSafeAreaPadding.contentPaddingBottom, contentStyle],
   );
-  const bottomSheetStaticContentStyle = useMemo(
-    () => [
-      styles.bottomSheetStaticContent,
-      compactSafeAreaPadding.contentPaddingBottom != null
-        ? { paddingBottom: compactSafeAreaPadding.contentPaddingBottom }
-        : null,
-    ],
-    [compactSafeAreaPadding.contentPaddingBottom],
+  const compactStaticContentStyle = useMemo(
+    () => [styles.compactStaticContent, compactContentStyle],
+    [compactContentStyle],
+  );
+  const desktopScrollContentStyle = useMemo(
+    () => [styles.contentGrow, contentStyle],
+    [contentStyle],
+  );
+  const desktopStaticContentStyle = useMemo(
+    () => [styles.desktopStaticContent, contentStyle],
+    [contentStyle],
   );
   const footerStyle = useMemo(
     () => [
       styles.footer,
+      footerContainerStyle,
       compactSafeAreaPadding.footerPaddingBottom != null
         ? { paddingBottom: compactSafeAreaPadding.footerPaddingBottom }
         : null,
     ],
-    [compactSafeAreaPadding.footerPaddingBottom],
+    [compactSafeAreaPadding.footerPaddingBottom, footerContainerStyle],
   );
   const handleIndicatorStyle = useMemo(
     () => ({ backgroundColor: theme.colors.palette.zinc[600] }),
@@ -527,6 +568,7 @@ export function AdaptiveModalSheet({
   });
   const [shouldRenderWeb, setShouldRenderWeb] = useState(visible);
   const [isWebClosing, setIsWebClosing] = useState(false);
+  const modalLayer = useGlobalWebOverlayLayer("modal", isWeb && !isMobile && shouldRenderWeb);
   const nativeModalDismissNotifiedRef = useRef(!visible);
   const handleDismiss = useCallback(() => {
     handleSheetDismiss();
@@ -555,19 +597,31 @@ export function AdaptiveModalSheet({
     () => [
       styles.desktopOverlay,
       isWeb && {
+        zIndex: modalLayer,
         opacity: isWebClosing ? 0 : 1,
         transitionDuration: `${WEB_EXIT_DURATION_MS}ms`,
         transitionProperty: "opacity",
         transitionTimingFunction: "ease",
       },
     ],
-    [isWebClosing],
+    [isWebClosing, modalLayer],
   );
 
-  useEffect(() => {
-    if (!isWeb || isMobile || !visible) return;
-    return pushEscHandler(onClose);
-  }, [visible, isMobile, onClose]);
+  const handleWebOverlayKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return false;
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
+      return true;
+    },
+    [onClose],
+  );
+  const setWebOverlayScope = useWebOverlayRegistration({
+    active: isWeb && !isMobile && visible,
+    layer: modalLayer,
+    onKeyDown: handleWebOverlayKeyDown,
+  });
 
   useEffect(() => {
     if (visible) {
@@ -599,6 +653,24 @@ export function AdaptiveModalSheet({
   }, [visible, isMobile, notifyNativeModalDismiss]);
 
   if (isMobile) {
+    const sheetContent = (
+      <>
+        <SheetHeaderView header={header} onClose={onClose} testID={testID} />
+        {scrollable ? (
+          <BottomSheetScrollView
+            style={sizeContentToCurrentSnapPoint ? styles.bottomSheetVisibleScroll : undefined}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <SheetContent style={compactContentStyle}>{children}</SheetContent>
+          </BottomSheetScrollView>
+        ) : (
+          <SheetContent style={compactStaticContentStyle}>{children}</SheetContent>
+        )}
+        {footer ? <View style={footerStyle}>{footer}</View> : null}
+      </>
+    );
+
     return (
       <IsolatedBottomSheetModal
         ref={sheetRef}
@@ -616,42 +688,34 @@ export function AdaptiveModalSheet({
         accessible={false}
         presentation={presentation}
       >
-        <SheetHeaderView header={header} onClose={onClose} testID={testID} />
-        {scrollable ? (
-          <BottomSheetScrollView
-            contentContainerStyle={bottomSheetContentStyle}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
-            {children}
-          </BottomSheetScrollView>
+        {sizeContentToCurrentSnapPoint ? (
+          <BottomSheetVisibleContent>{sheetContent}</BottomSheetVisibleContent>
         ) : (
-          <View style={bottomSheetStaticContentStyle}>{children}</View>
+          sheetContent
         )}
-        {footer ? <View style={footerStyle}>{footer}</View> : null}
       </IsolatedBottomSheetModal>
     );
   }
 
   const cardInner = (
-    <>
+    <OverlayLayerProvider layer={modalLayer}>
       <SheetHeaderView header={header} onClose={onClose} />
       {scrollable ? (
         <View style={styles.desktopScrollContainer}>
           <ScrollView
             style={styles.desktopScroll}
-            contentContainerStyle={styles.desktopContent}
+            contentContainerStyle={styles.contentGrow}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator
           >
-            {children}
+            <SheetContent style={desktopScrollContentStyle}>{children}</SheetContent>
           </ScrollView>
         </View>
       ) : (
-        <View style={styles.desktopStaticContent}>{children}</View>
+        <SheetContent style={desktopStaticContentStyle}>{children}</SheetContent>
       )}
       {footer ? <View style={footerStyle}>{footer}</View> : null}
-    </>
+    </OverlayLayerProvider>
   );
 
   const desktopContent = (
@@ -661,7 +725,15 @@ export function AdaptiveModalSheet({
         style={ABSOLUTE_FILL_STYLE}
         onPress={onClose}
       />
-      <View style={desktopCardStyle}>{cardInner}</View>
+      <View
+        ref={setWebOverlayScope}
+        style={desktopCardStyle}
+        role="dialog"
+        aria-modal
+        tabIndex={-1}
+      >
+        {cardInner}
+      </View>
     </View>
   );
 

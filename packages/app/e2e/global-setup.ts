@@ -328,6 +328,12 @@ interface PairingDaemonClient {
 
 async function createFakeEditorBin(): Promise<string> {
   const binDir = await mkdtemp(path.join(tmpdir(), "paseo-e2e-editor-bin-"));
+  let realGhPath = "";
+  try {
+    realGhPath = execSync("which gh").toString().trim();
+  } catch {
+    // The local PR fixture below remains usable without a system gh binary.
+  }
 
   const fakeEditorSource = `#!/usr/bin/env node
 const fs = require("fs");
@@ -348,6 +354,70 @@ if (recordPath) {
     await writeFile(editorPath, fakeEditorSource);
     await chmod(editorPath, 0o755);
   }
+
+  const fakeGhPath = path.join(binDir, "gh");
+  const fakeGhSource = `#!/usr/bin/env node
+const { spawnSync } = require("child_process");
+const args = process.argv.slice(2);
+const fixtureRemote = "https://github.com/paseo-e2e/local-fixture.git";
+const origin = spawnSync("git", ["config", "--get", "remote.origin.url"], {
+  encoding: "utf8",
+  stdio: ["ignore", "pipe", "ignore"]
+}).stdout?.trim();
+
+if (origin === fixtureRemote) {
+  const command = args.slice(0, 2).join(" ");
+  if (command === "auth status") process.exit(0);
+  if (command === "repo view") {
+    process.stdout.write(JSON.stringify({ owner: { login: "paseo-e2e" }, name: "local-fixture", parent: null }));
+    process.exit(0);
+  }
+  if (command === "issue list") {
+    process.stdout.write("[]");
+    process.exit(0);
+  }
+  if (command === "pr list" || command === "pr view") {
+    const pr = {
+      number: 1,
+      title: "Use pasted PR as start ref",
+      url: "https://github.com/paseo-e2e/local-fixture/pull/1",
+      state: "OPEN",
+      body: null,
+      labels: [],
+      baseRefName: "main",
+      headRefName: "pr-branch-1",
+      updatedAt: "2026-01-01T00:00:00Z"
+    };
+    process.stdout.write(JSON.stringify(command === "pr list" ? [pr] : pr));
+    process.exit(0);
+  }
+  if (command === "api graphql" && args.some((arg) => arg.includes("PullRequestCheckoutTarget"))) {
+    process.stdout.write(JSON.stringify({
+      data: { repository: { pullRequest: {
+        number: 1,
+        baseRefName: "main",
+        headRefName: "pr-branch-1",
+        isCrossRepository: false,
+        headRepositoryOwner: { login: "paseo-e2e" },
+        headRepository: {
+          sshUrl: "git@github.com:paseo-e2e/local-fixture.git",
+          url: fixtureRemote
+        }
+      } } }
+    }));
+    process.exit(0);
+  }
+  process.stderr.write("Unsupported local GitHub fixture command: " + args.join(" ") + "\\n");
+  process.exit(1);
+}
+
+const realGhPath = ${JSON.stringify(realGhPath)};
+if (!realGhPath) process.exit(127);
+const result = spawnSync(realGhPath, args, { stdio: "inherit" });
+process.exit(result.status ?? 1);
+`;
+  await writeFile(fakeGhPath, fakeGhSource);
+  await chmod(fakeGhPath, 0o755);
 
   return binDir;
 }

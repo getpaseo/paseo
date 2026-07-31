@@ -369,6 +369,13 @@ export const ru: TranslationResources = {
       copyBranchName: "Копировать имя ветки",
       copied: "Скопировано",
     },
+    fileActions: {
+      openFile: "Открыть файл",
+      copyPath: "Копировать путь",
+      download: "Скачать",
+      addToChat: "Добавить в чат…",
+      moreActions: "Дополнительные действия",
+    },
     fileExplorer: {
       sort: {
         name: "Имя",
@@ -378,8 +385,6 @@ export const ru: TranslationResources = {
       context: {
         size: "Размер",
         modified: "Модифицированный",
-        copyPath: "Копировать путь",
-        download: "Скачать",
       },
       actions: {
         back: "Назад",
@@ -470,6 +475,7 @@ export const ru: TranslationResources = {
     },
     tabs: {
       loading: "Загрузка...",
+      modified: "Несохранённые изменения",
       loadingAgentTitle: "Название агента загрузки",
       emptyPane: "На этой панели нет вкладок.",
       fallback: {
@@ -490,6 +496,7 @@ export const ru: TranslationResources = {
         openFor: "Открыть меню для{{label}}",
         copyResumeCommand: "Копировать команду возобновления",
         copyAgentId: "Скопировать идентификатор агента",
+        copyTerminalId: "Скопировать идентификатор терминала",
         copyFilePath: "Copy file path",
         rename: "Переименовать",
         closeAbove: "Закрыть вкладки выше",
@@ -527,6 +534,7 @@ export const ru: TranslationResources = {
       toasts: {
         copyFailed: "Не удалось скопировать",
         agentIdCopiedLabel: "AgentID",
+        terminalIdCopiedLabel: "Идентификатор терминала",
         resumeCommandCopiedLabel: "команда возобновления",
         filePathCopiedLabel: "File path",
         resumeIdUnavailable: "Резюме ID недоступно",
@@ -536,6 +544,13 @@ export const ru: TranslationResources = {
         failedToReloadAgent: "Не удалось перезагрузить агент",
       },
       confirmations: {
+        unsavedTitle: "Несохранённые изменения",
+        unsavedMessage:
+          "В этой вкладке есть несохранённые изменения. При закрытии черновик будет удалён.",
+        closeWithoutSaving: "Закрыть без сохранения",
+        closePaneTitle: "Закрыть панель?",
+        bulkUnsaved:
+          "В {{count}} вкладках есть несохранённые изменения. При закрытии черновики будут удалены.",
         close: "Закрывать",
         cancel: "Отмена",
         archive: "Архив",
@@ -585,19 +600,34 @@ export const ru: TranslationResources = {
     scripts: {
       title: "Скрипты",
       actions: {
+        chooseUrl: "Выбрать URL",
+        copyUrl: "Скопировать URL",
+        openService: "Просмотреть сервис",
+        restart: "Перезапустить",
         run: "Бегать",
-        view: "Вид",
+        stop: "Остановить",
+        view: "Открыть терминал",
       },
       accessibility: {
         trigger: "Скрипты Workspace",
-        openAt: "Откройте{{scriptName}}на{{label}}",
+        openService: "Просмотреть сервис {{scriptName}}",
         viewTerminal: "Посмотреть терминал{{scriptName}}",
         runScript: "Запустите скрипт{{scriptName}}",
+        stopScript: "Остановить{{scriptName}}",
+        restartScript: "Перезапустить{{scriptName}}",
+        copyUrl: "Скопировать URL {{scriptName}}",
+        chooseUrl: "Выбрать URL для {{scriptName}}",
         script: "скрипт{{scriptName}}",
+      },
+      routes: {
+        public: "Обратный прокси",
+        paseo: "Memorable",
+        direct: "Прямой адрес",
       },
       states: {
         exitCode: "выйти из{{code}}",
         startFailed: "Не удалось запустить{{scriptName}}",
+        stopFailed: "Не удалось остановить{{scriptName}}",
       },
     },
     git: {
@@ -752,8 +782,12 @@ export const ru: TranslationResources = {
         },
       },
       diff: {
+        openChangesTab: "Открыть вкладку «Изменения»",
+        closeChangesTab: "Закрыть вкладку «Изменения»",
         binaryFile: "Бинарный файл",
         tooLarge: "Разница слишком велика для отображения",
+        previewTooLargeTitle: "Этот diff слишком велик для предпросмотра",
+        previewTooLargeDescription: "Сузьте сравнение, чтобы просмотреть его здесь",
         unified: "Единый дифференциал",
         split: "Параллельная разница",
         switchToUnified: "Переключить на объединенный diff",
@@ -787,14 +821,13 @@ export const ru: TranslationResources = {
         deletedFile: "Удалено",
         commits: {
           title: "Коммиты",
-          legendLocal: "локально",
-          legendRemote: "на удалённом",
-          countLabel: "{{count}} коммитов впереди базы",
+          countLabel: "{{count}} коммитов рабочего пространства",
+          noneAhead: "Коммитов впереди {{baseRef}} пока нет",
           fileDiffEmpty: "Нет изменений для отображения",
           fileDiffError: "Не удалось загрузить различия файла",
           loading: "Загрузка коммитов…",
           loadError: "Не удалось загрузить коммиты",
-          empty: "Нет коммитов впереди базы",
+          empty: "Коммитов пока нет",
         },
       },
       openInEditor: {
@@ -899,6 +932,8 @@ export const ru: TranslationResources = {
         openSettings: "Открыть настройки проекта",
         openNewWindow: "Open in new window",
         openNewWindowFailed: "Couldn't open a new window",
+        openFolder: "Open in file manager",
+        openFolderFailed: "Couldn't open folder",
         remove: "Удалить проект",
         removing: "Удаление...",
       },
@@ -927,6 +962,8 @@ export const ru: TranslationResources = {
       actions: {
         menu: "Действия Workspace",
         newWorkspace: "Новое рабочее пространство",
+        showMore: "Показать ещё",
+        showLess: "Показать меньше",
         createWorkspaceFor: "Создайте новое рабочее пространство для{{projectName}}.",
         copyPath: "Копировать путь",
         copyBranchName: "Скопировать название ветки",
@@ -984,10 +1021,6 @@ export const ru: TranslationResources = {
     refPicker: {
       startingRef: "Начальная ссылка",
       chooseStart: "Выберите, с чего начать",
-      checkoutHint: "Проверьте {{noun}} {{numberPrefix}}{{number}}?",
-      checkoutPr: "Проверьте {{noun}} {{numberPrefix}}{{number}}",
-      dismissCheckoutHint:
-        "Отклонить подсказку по оформлению заказа {{noun}} {{numberPrefix}}{{number}}",
       intoBase: "в {{baseRef}}",
       searching: "Идет поиск...",
       noMatchingRefs: "Нет подходящих ссылок.",
@@ -1156,6 +1189,7 @@ export const ru: TranslationResources = {
         installFailed: "Невозможно установить навыки оркестровки.",
         updateFailed: "Невозможно обновить навыки оркестровки.",
         uninstallFailed: "Невозможно удалить навыки оркестровки.",
+        saveSelectionFailed: "Не удалось сохранить выбор навыков оркестровки.",
       },
     },
   },
@@ -1480,11 +1514,34 @@ export const ru: TranslationResources = {
       binaryPreviewUnavailable: "Предварительный просмотр двоичного файла недоступен.",
       failedToLoad: "Не удалось загрузить файл",
       failedToLoadPreview: "Не удалось загрузить предварительный просмотр файла.",
+      editor: {
+        fileSize: "Размер файла {{size}}",
+        lines: "Строк: {{count}}",
+        editorStatus: "Состояние редактора: {{status}}",
+        unsavedChanges: "Несохранённые изменения",
+        saving: "Сохранение...",
+        saveFailed: "Не удалось сохранить",
+        changedOnDisk: "Изменён на диске",
+        vimMode: "Режим Vim {{mode}}",
+        cursor: "Строка {{line}}, столбец {{column}}",
+        preview: "Просмотр",
+        source: "Исходник",
+        deletedTitle: "Файл удалён с диска",
+        checkFailedTitle: "Не удалось проверить файл на диске",
+        preservedDescription: "Открытая копия сохранена.",
+        conflictDescription: "Локальный буфер сохранён. Выберите версию, которую нужно оставить.",
+        overwrite: "Перезаписать",
+        reload: "Перезагрузить",
+        reloadTitle: "Перезагрузить с диска?",
+        reloadMessage: "Локальные изменения будут потеряны.",
+      },
     },
     diff: {
       changesLabel: "Изменения",
       changesSubtitle: "Различия рабочего дерева",
       commitSubtitle: "Различия коммита",
+      uncommittedSubtitle: "Незафиксированные изменения",
+      baseSubtitle: "Сравнение с {{baseRef}}",
       directoryMissing: "Каталог Workspace не найден.",
       empty: "Нет изменений",
       loadError: "Не удалось загрузить различия",
@@ -1575,11 +1632,17 @@ export const ru: TranslationResources = {
     sections: {
       general: "Общий",
       appearance: "Появление",
+      editor: "Редактор",
       shortcuts: "Ярлыки",
       integrations: "Интеграции",
       permissions: "Разрешения",
       diagnostics: "Диагностика",
       about: "О",
+    },
+    editor: {
+      title: "Редактор",
+      vimKeybindings: "Клавиши Vim",
+      vimHint: "Применяется к исходным файлам в веб- и настольной версии.",
     },
     hostSections: {
       connections: "Соединения",
@@ -1813,6 +1876,7 @@ export const ru: TranslationResources = {
         sendMessage: "Отправить сообщение",
         queueMessage: "Сообщение в очереди",
         muteUnmuteVoiceMode: "Отключить голосовой режим /unmute",
+        switchProject: "Сменить проект",
       },
       helpNotes: {
         showKeyboardShortcuts: "Доступно, когда фокус находится не в текстовом поле или терминале.",
@@ -1838,6 +1902,15 @@ export const ru: TranslationResources = {
         updateFallback: "Синхронизируйте связанные навыки с вашим компьютером.",
         uninstallTitle: "Удалить навыки Paseo?",
         uninstallMessage: "Удаляет все навыки оркестровки Paseo из ~/.agents, ~/.claude, ~/.codex.",
+        choose: "Выбрать навыки",
+        chooseAll: "Все навыки",
+        chooseAllHint: "Держите установленными все входящие навыки, включая добавленные позже.",
+        chooseList: "Входящие навыки",
+        chooseEmpty: "В этой сборке нет навыков.",
+        removeTitle: "Удалить снятые навыки?",
+        removeMessage:
+          "{{skills}} будут удалены из ~/.agents, ~/.claude и ~/.codex. Всё, что вы добавили внутри этих папок навыков, тоже удаляется.",
+        saveFailed: "Не удалось сохранить выбор навыков.",
       },
       actions: {
         install: "Установить",
@@ -1845,7 +1918,10 @@ export const ru: TranslationResources = {
         installed: "Установлено",
         update: "Обновлять",
         working: "Работающий...",
+        remove: "Удалить",
         uninstall: "Удалить",
+        save: "Сохранить",
+        saving: "Сохранение...",
       },
       operations: {
         add: "Добавить навык",

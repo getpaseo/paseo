@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { Keyboard, ScrollView, Text, View } from "react-native";
+import { Keyboard, ScrollView, StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import ReanimatedAnimated from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
@@ -9,7 +9,6 @@ import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import invariant from "tiny-invariant";
 import { Composer } from "@/composer";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
-import { DraftAgentModeControl } from "@/composer/agent-controls/mode-control";
 import { ComposerImportPill } from "@/composer/draft/import-pill";
 import { AgentStreamView } from "@/agent-stream/view";
 import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
@@ -50,7 +49,7 @@ import {
   useIsCompactFormFactor,
 } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
-import type { WorkspaceDraftTabSetup } from "@/stores/workspace-tabs-store";
+import type { WorkspaceDraftTabSetup } from "@/workspace-tabs/model";
 
 const EMPTY_PENDING_PERMISSIONS = new Map();
 const EMPTY_ONLINE_SERVER_IDS: string[] = [];
@@ -609,63 +608,16 @@ export function WorkspaceDraftAgentTab({
     focusInputRef.current = focus;
   }, []);
 
-  const handleProviderSelectWithFocus = useCallback(
-    (provider: Parameters<typeof composerState.setProviderFromUser>[0]) => {
-      composerState.setProviderFromUser(provider);
-      focusInputRef.current?.();
-    },
-    [composerState],
-  );
-
-  const handleModeSelectWithFocus = useCallback(
-    (modeId: string) => {
-      composerState.setModeFromUser(modeId);
-      focusInputRef.current?.();
-    },
-    [composerState],
-  );
-
-  const handleModelSelectWithFocus = useCallback(
-    (modelId: string) => {
-      composerState.setModelFromUser(modelId);
-      focusInputRef.current?.();
-    },
-    [composerState],
-  );
-
-  const handleProviderAndModelSelectWithFocus = useCallback(
-    (
-      provider: Parameters<typeof composerState.setProviderAndModelFromUser>[0],
-      modelId: string,
-    ) => {
-      composerState.setProviderAndModelFromUser(provider, modelId);
-      focusInputRef.current?.();
-    },
-    [composerState],
-  );
-
-  const handleThinkingOptionSelectWithFocus = useCallback(
-    (optionId: string) => {
-      composerState.setThinkingOptionFromUser(optionId);
-      focusInputRef.current?.();
-    },
-    [composerState],
-  );
-
-  const handleSetFeatureWithFocus = useCallback(
-    (featureId: string, value: unknown) => {
-      composerState.agentControls.onSetFeature?.(featureId, value);
-      focusInputRef.current?.();
-    },
-    [composerState],
-  );
-
   const { style: composerKeyboardStyle } = useKeyboardShiftStyle({
     mode: "translate",
   });
 
   const inputAreaWrapperStyle = useMemo(
-    () => [styles.inputAreaWrapper, { paddingBottom: insets.bottom }, composerKeyboardStyle],
+    () => [
+      animatedStaticStyles.inputAreaWrapper,
+      { paddingBottom: insets.bottom },
+      composerKeyboardStyle,
+    ],
     [insets.bottom, composerKeyboardStyle],
   );
 
@@ -676,39 +628,11 @@ export function WorkspaceDraftAgentTab({
   const composerAgentControls = useMemo(
     () => ({
       ...composerState.agentControls,
-      onSelectProvider: handleProviderSelectWithFocus,
-      onSelectMode: handleModeSelectWithFocus,
-      onSelectModel: handleModelSelectWithFocus,
-      onSelectProviderAndModel: handleProviderAndModelSelectWithFocus,
-      onSelectThinkingOption: handleThinkingOptionSelectWithFocus,
-      onSetFeature: handleSetFeatureWithFocus,
       onDropdownClose: handleDropdownCloseFocus,
       disabled: isSubmitting,
     }),
-    [
-      composerState.agentControls,
-      handleProviderSelectWithFocus,
-      handleModeSelectWithFocus,
-      handleModelSelectWithFocus,
-      handleProviderAndModelSelectWithFocus,
-      handleThinkingOptionSelectWithFocus,
-      handleSetFeatureWithFocus,
-      handleDropdownCloseFocus,
-      isSubmitting,
-    ],
+    [composerState.agentControls, handleDropdownCloseFocus, isSubmitting],
   );
-  const composerFooter = useMemo(
-    () =>
-      isCompactComposerLayout ? (
-        <DraftAgentModeControl
-          placement="footer"
-          {...composerAgentControls}
-          isCompactLayout={isCompactComposerLayout}
-        />
-      ) : undefined,
-    [isCompactComposerLayout, composerAgentControls],
-  );
-
   return (
     <FileDropZone style={styles.container}>
       <View style={styles.contentContainer}>
@@ -747,6 +671,7 @@ export function WorkspaceDraftAgentTab({
         <Composer
           agentId={tabId}
           serverId={serverId}
+          workspaceId={workspaceId}
           externalKeyboardShift
           isPaneFocused={isPaneFocused}
           onSubmitMessage={handleCreateFromInput}
@@ -761,16 +686,22 @@ export function WorkspaceDraftAgentTab({
           cwd={composerState.workingDir}
           clearDraft={draftInput.clear}
           autoFocus={shouldAutoFocusWorkspaceDraftComposer({ isPaneFocused, isSubmitting })}
+          autoFocusKey={String(draftInput.attachmentFocusRequestId)}
           onFocusInput={handleFocusInputCallback}
           commandDraftConfig={composerState.commandDraftConfig}
           agentControls={composerAgentControls}
-          footer={composerFooter}
           isCompactLayout={isCompactComposerLayout}
         />
       </ReanimatedAnimated.View>
     </FileDropZone>
   );
 }
+
+const animatedStaticStyles = RNStyleSheet.create({
+  inputAreaWrapper: {
+    width: "100%",
+  },
+});
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -794,10 +725,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   configSection: {
     gap: theme.spacing[3],
-  },
-  inputAreaWrapper: {
-    width: "100%",
-    backgroundColor: theme.colors.surface0,
   },
   importPillRow: {
     width: "100%",

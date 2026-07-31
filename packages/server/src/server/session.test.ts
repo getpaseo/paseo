@@ -25,6 +25,7 @@ import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentManagerEvent } from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
+import { deriveProjectKey } from "./project-key.js";
 import type { SessionOptions } from "./session.js";
 import type { SessionInboundMessage, SessionOutboundMessage } from "./messages.js";
 import {
@@ -370,6 +371,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
       ...options.agentManager,
     }),
     agentStorage: asAgentStorage({
+      get: vi.fn().mockResolvedValue(undefined),
       list: vi.fn().mockResolvedValue([]),
       ...options.agentStorage,
     }),
@@ -648,6 +650,12 @@ describe("project command-center RPCs", () => {
         rootPath: directoryPath,
         kind: "non_git",
         displayName: "new-project",
+        projectKey: deriveProjectKey({
+          rootPath: directoryPath,
+          remoteUrl: null,
+          worktreeRoot: null,
+          mainRepoRoot: null,
+        }),
         timestamp: expect.any(String),
       });
       expect(messages).toEqual([
@@ -803,6 +811,7 @@ describe("file explorer binary responses", () => {
         size: 5,
         encoding: "binary",
         modifiedAt: expect.any(String),
+        revision: expect.any(String),
       },
       payload: new Uint8Array(),
     });
@@ -3414,7 +3423,7 @@ describe("session workspace descriptors", () => {
     const messages: unknown[] = [];
     const workspace = {
       workspaceId: "ws-gh",
-      projectId: "remote:github.com/acme/app",
+      projectId: "prj_app",
       cwd: "/repo/app",
       kind: "local_checkout" as const,
       displayName: "app",
@@ -3422,7 +3431,8 @@ describe("session workspace descriptors", () => {
       archivedAt: null,
     };
     const project = {
-      projectId: "remote:github.com/acme/app",
+      projectId: "prj_app",
+      projectKey: "remote:github.com/acme/app",
       rootPath: "/repo/app",
       kind: "git" as const,
       displayName: "acme/app",
@@ -3433,7 +3443,10 @@ describe("session workspace descriptors", () => {
     const session = createSessionForTest({
       messages,
       workspaceRegistry: { get: vi.fn(), list: vi.fn().mockResolvedValue([workspace]) },
-      projectRegistry: { list: vi.fn().mockResolvedValue([project]), get: vi.fn() },
+      projectRegistry: {
+        list: vi.fn().mockResolvedValue([project]),
+        get: vi.fn().mockResolvedValue(project),
+      },
       workspaceGitService: {
         getSnapshot: vi.fn(),
         peekSnapshot: vi.fn(() =>
@@ -3462,8 +3475,9 @@ describe("session workspace descriptors", () => {
         entries: [
           expect.objectContaining({
             id: "ws-gh",
+            projectId: "prj_app",
             project: expect.objectContaining({
-              projectKey: "remote:github.com/acme/app",
+              projectKey: "prj_app",
               projectName: "acme/app",
               workspaceName: "app",
               checkout: expect.objectContaining({
@@ -4898,13 +4912,70 @@ test("sends project updates only to capable sockets in a retained session", () =
   ]);
 });
 
+test("project.list returns every active project descriptor", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const active = createPersistedProjectRecord({
+    projectId: "project-active",
+    projectKey: "remote:github.com/acme/app",
+    rootPath: "/tmp/project-active",
+    kind: "git",
+    displayName: "acme/app",
+    createdAt: "2026-07-17T00:00:00.000Z",
+    updatedAt: "2026-07-17T00:00:00.000Z",
+  });
+  const archived = createPersistedProjectRecord({
+    projectId: "project-archived",
+    rootPath: "/tmp/project-archived",
+    kind: "non_git",
+    displayName: "archived",
+    createdAt: "2026-07-17T00:00:00.000Z",
+    updatedAt: "2026-07-17T00:00:00.000Z",
+    archivedAt: "2026-07-18T00:00:00.000Z",
+  });
+  const session = createSessionForTest({
+    messages,
+    projectRegistry: { list: vi.fn().mockResolvedValue([active, archived]) },
+  });
+
+  await session.handleMessage({ type: "project.list.request", requestId: "projects-1" });
+
+  expect(messages).toEqual([
+    {
+      type: "project.list.response",
+      payload: {
+        requestId: "projects-1",
+        projects: [
+          {
+            projectId: "project-active",
+            projectKey: "remote:github.com/acme/app",
+            projectDisplayName: "acme/app",
+            projectCustomName: null,
+            projectRootPath: "/tmp/project-active",
+            projectKind: "git",
+          },
+        ],
+      },
+    },
+  ]);
+});
+
 describe("agent config setters", () => {
+  function liveAgentManager(overrides: { [K in keyof SessionOptions["agentManager"]]?: unknown }): {
+    [K in keyof SessionOptions["agentManager"]]?: unknown;
+  } {
+    return {
+      waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+      getAgent: vi.fn(() => ({ id: "agent-1" })),
+      ...overrides,
+    };
+  }
+
   test("set_agent_mode_request: success emits accepted response carrying the notice", async () => {
     const messages: SessionOutboundMessage[] = [];
     const notice = { type: "info", message: "Switched to plan mode" } as const;
     const session = createSessionForTest({
       messages,
-      agentManager: { setAgentMode: vi.fn().mockResolvedValue(notice) },
+      agentManager: liveAgentManager({ setAgentMode: vi.fn().mockResolvedValue(notice) }),
     });
 
     await session.handleMessage({
@@ -4932,7 +5003,9 @@ describe("agent config setters", () => {
     const messages: SessionOutboundMessage[] = [];
     const session = createSessionForTest({
       messages,
-      agentManager: { setAgentMode: vi.fn().mockRejectedValue(new Error("mode boom")) },
+      agentManager: liveAgentManager({
+        setAgentMode: vi.fn().mockRejectedValue(new Error("mode boom")),
+      }),
     });
 
     await session.handleMessage({
@@ -4967,7 +5040,7 @@ describe("agent config setters", () => {
     const messages: SessionOutboundMessage[] = [];
     const session = createSessionForTest({
       messages,
-      agentManager: { setAgentModel: vi.fn().mockResolvedValue(undefined) },
+      agentManager: liveAgentManager({ setAgentModel: vi.fn().mockResolvedValue(undefined) }),
     });
 
     await session.handleMessage({
@@ -4989,7 +5062,9 @@ describe("agent config setters", () => {
     const messages: SessionOutboundMessage[] = [];
     const session = createSessionForTest({
       messages,
-      agentManager: { setAgentModel: vi.fn().mockRejectedValue(new Error("model boom")) },
+      agentManager: liveAgentManager({
+        setAgentModel: vi.fn().mockRejectedValue(new Error("model boom")),
+      }),
     });
 
     await session.handleMessage({
@@ -5024,7 +5099,7 @@ describe("agent config setters", () => {
     const messages: SessionOutboundMessage[] = [];
     const session = createSessionForTest({
       messages,
-      agentManager: { setAgentFeature: vi.fn().mockResolvedValue(undefined) },
+      agentManager: liveAgentManager({ setAgentFeature: vi.fn().mockResolvedValue(undefined) }),
     });
 
     await session.handleMessage({
@@ -5047,7 +5122,9 @@ describe("agent config setters", () => {
     const messages: SessionOutboundMessage[] = [];
     const session = createSessionForTest({
       messages,
-      agentManager: { setAgentFeature: vi.fn().mockRejectedValue(new Error("feature boom")) },
+      agentManager: liveAgentManager({
+        setAgentFeature: vi.fn().mockRejectedValue(new Error("feature boom")),
+      }),
     });
 
     await session.handleMessage({
@@ -5084,7 +5161,9 @@ describe("agent config setters", () => {
     const notice = { type: "warning", message: "Thinking budget reduced" } as const;
     const session = createSessionForTest({
       messages,
-      agentManager: { setAgentThinkingOption: vi.fn().mockResolvedValue(notice) },
+      agentManager: liveAgentManager({
+        setAgentThinkingOption: vi.fn().mockResolvedValue(notice),
+      }),
     });
 
     await session.handleMessage({
@@ -5112,9 +5191,9 @@ describe("agent config setters", () => {
     const messages: SessionOutboundMessage[] = [];
     const session = createSessionForTest({
       messages,
-      agentManager: {
+      agentManager: liveAgentManager({
         setAgentThinkingOption: vi.fn().mockRejectedValue(new Error("thinking boom")),
-      },
+      }),
     });
 
     await session.handleMessage({

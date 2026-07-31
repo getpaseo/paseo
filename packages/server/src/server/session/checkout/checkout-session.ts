@@ -17,8 +17,9 @@ import type {
   ValidateBranchRequest,
 } from "../../messages.js";
 import type {
-  CheckoutDiffCompareInput,
   CheckoutDiffSnapshotPayload,
+  CheckoutDiffSubscription,
+  CheckoutDiffSubscriptionRequest,
 } from "../../checkout-diff-manager.js";
 import { toCheckoutError } from "../../checkout-git-utils.js";
 import {
@@ -107,9 +108,9 @@ function toLegacyGithubSearchItems(items: ForgeSearchResultItem[]): LegacyGithub
  */
 export interface CheckoutDiffSubscriber {
   subscribe(
-    params: { cwd: string; compare: CheckoutDiffCompareInput },
+    params: CheckoutDiffSubscriptionRequest,
     listener: (snapshot: CheckoutDiffSnapshotPayload) => void,
-  ): Promise<{ initial: CheckoutDiffSnapshotPayload; unsubscribe: () => void }>;
+  ): Promise<CheckoutDiffSubscription>;
   scheduleRefreshForCwd(cwd: string): void;
 }
 
@@ -400,34 +401,45 @@ export class CheckoutSession {
   async handleSubscribeDiffRequest(msg: SubscribeCheckoutDiffRequest): Promise<void> {
     const cwd = expandTilde(msg.cwd);
     this.diffSubscriptions.get(msg.subscriptionId)?.();
-    this.diffSubscriptions.delete(msg.subscriptionId);
-    const subscription = await this.checkoutDiffManager.subscribe(
-      { cwd, compare: msg.compare },
-      (snapshot) => {
-        this.host.emit({
-          type: "checkout_diff_update",
-          payload: {
-            subscriptionId: msg.subscriptionId,
-            ...snapshot,
-          },
-        });
-      },
-    );
-    this.diffSubscriptions.set(msg.subscriptionId, subscription.unsubscribe);
+    const abort = new AbortController();
+    const unsubscribe = () => abort.abort();
+    this.diffSubscriptions.set(msg.subscriptionId, unsubscribe);
 
-    this.host.emit({
-      type: "subscribe_checkout_diff_response",
-      payload: {
-        subscriptionId: msg.subscriptionId,
-        ...subscription.initial,
-        requestId: msg.requestId,
-      },
-    });
+    try {
+      const subscription = await this.checkoutDiffManager.subscribe(
+        { cwd, compare: msg.compare, signal: abort.signal },
+        (snapshot) => {
+          this.host.emit({
+            type: "checkout_diff_update",
+            payload: {
+              subscriptionId: msg.subscriptionId,
+              ...snapshot,
+            },
+          });
+        },
+      );
+
+      this.host.emit({
+        type: "subscribe_checkout_diff_response",
+        payload: {
+          subscriptionId: msg.subscriptionId,
+          ...subscription.initial,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      if (this.diffSubscriptions.get(msg.subscriptionId) === unsubscribe) {
+        this.diffSubscriptions.delete(msg.subscriptionId);
+      }
+      unsubscribe();
+      throw error;
+    }
   }
 
   handleUnsubscribeDiffRequest(msg: UnsubscribeCheckoutDiffRequest): void {
-    this.diffSubscriptions.get(msg.subscriptionId)?.();
+    const unsubscribe = this.diffSubscriptions.get(msg.subscriptionId);
     this.diffSubscriptions.delete(msg.subscriptionId);
+    unsubscribe?.();
   }
 
   async handleRefreshRequest(msg: CheckoutRefreshRequest): Promise<void> {

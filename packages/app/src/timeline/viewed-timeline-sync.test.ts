@@ -174,6 +174,10 @@ class TimelineWorld {
   }
 }
 
+test("keeps hidden agents subscribed for thirty seconds", () => {
+  expect(VIEWED_TIMELINE_UNSUBSCRIBE_GRACE_MS).toBe(30_000);
+});
+
 test("uses a tail fetch when a live cursor is not authoritative", async () => {
   const world = new TimelineWorld();
   world.setLiveCursor("agent-a", 9);
@@ -183,7 +187,7 @@ test("uses a tail fetch when a live cursor is not authoritative", async () => {
   membership.succeed();
 
   const fetch = await world.nextFetch("agent-a");
-  expect(fetch.request).toEqual({ direction: "tail", limit: 100, projection: "projected" });
+  expect(fetch.request).toEqual({ direction: "tail", limit: 40, projection: "projected" });
   fetch.respond({ hasNewer: false });
 });
 
@@ -209,7 +213,7 @@ test("unchanged visible-set publication does not cancel paged catch-up", async (
   expect(secondPage.request).toEqual({
     direction: "after",
     cursor: { epoch: "epoch-agent-a", seq: 5 },
-    limit: 100,
+    limit: 40,
     projection: "projected",
   });
   world.expectNoPendingMembership();
@@ -371,13 +375,13 @@ test("gap recovery supersedes completed catch-up and pages through the current t
     {
       direction: "after",
       cursor: { epoch: "epoch-agent-a", seq: 10 },
-      limit: 100,
+      limit: 40,
       projection: "projected",
     },
     {
       direction: "after",
       cursor: { epoch: "epoch-agent-a", seq: 15 },
-      limit: 100,
+      limit: 40,
       projection: "projected",
     },
   ]);
@@ -660,7 +664,7 @@ test("legacy delivery skips subscription RPCs while retaining visibility catch-u
   expect(recovery.request).toEqual({
     direction: "after",
     cursor: { epoch: "epoch-agent-a", seq: 10 },
-    limit: 100,
+    limit: 40,
     projection: "projected",
   });
 });

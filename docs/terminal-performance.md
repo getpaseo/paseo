@@ -32,9 +32,14 @@ Terminal frames share the daemon main event loop with all agent traffic. The `ev
 - **Browser perf specs (user-perceived path):** gated behind `PASEO_TERMINAL_PERF_E2E=1` —
   `packages/app/e2e/terminal-performance.spec.ts` and `packages/app/e2e/terminal-keystroke-stress.spec.ts` (per-stage keydown→xterm-commit breakdown under mock-agent load). Healthy: keydown→commit p50 ~18ms under 600-key burst.
 - **Production:** grep `daemon.log` for `ws_runtime_metrics` and read `eventLoopDelay` + `bufferedAmount`.
+- **Git pressure:** the same log line includes `git.commands` (limiter occupancy, queue age,
+  queue wait, execution time, failures, timeouts, and top operations),
+  `git.workspaceService` (daemon-global Git observer ownership), and per-session workspace Git
+  subscription totals under `runtime`. Queue wait and execution time are separate because the Git
+  command timeout begins only after a command acquires a limiter slot.
 
 ## Known remaining contention (follow-up candidates)
 
 - A single large `agent_stream` message (e.g. a 250KB diff payload) measurably delays terminal echo (~100ms-class dips) — cost is split between daemon serialization and app-side parse/render on the shared browser main thread.
-- Relay-attached clients pay pure-JS tweetnacl encryption + base64 per frame on the daemon main loop (`packages/relay/src/encrypted-channel.ts`).
+- Relay-attached clients pay pure-JS tweetnacl encryption on the daemon main loop (`packages/relay/src/encrypted-channel.ts`). Negotiated binary application frames stay binary ciphertext and avoid base64 encode/decode; text and mixed-version traffic remain base64 WebSocket text frames.
 - `sendToClient` re-stringifies session messages per socket; only matters for multi-socket connections.

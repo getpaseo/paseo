@@ -10,7 +10,7 @@ export {
   describeTransportClose,
   describeTransportError,
   encodeUtf8String,
-  extractRelayMessageData,
+  extractRelayMessage,
   normalizeTransportPayload,
   safeRandomId,
 } from "./daemon-client-transport-utils.js";

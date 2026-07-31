@@ -569,8 +569,26 @@ export function createSharedMarkdownRules(): RenderRules {
         {children}
       </MarkdownInheritedText>
     ),
-    hardbreak: (node: ASTNode) => <MarkdownTextSpan key={node.key}>{"\n"}</MarkdownTextSpan>,
-    softbreak: (node: ASTNode) => <MarkdownTextSpan key={node.key}>{"\n"}</MarkdownTextSpan>,
+    hardbreak: (
+      node: ASTNode,
+      _children: ReactNode[],
+      _parent: ASTNode[],
+      styles: MarkdownStyles,
+    ) => (
+      <MarkdownTextSpan key={node.key} style={styles.hardbreak}>
+        {"\n"}
+      </MarkdownTextSpan>
+    ),
+    softbreak: (
+      node: ASTNode,
+      _children: ReactNode[],
+      _parent: ASTNode[],
+      styles: MarkdownStyles,
+    ) => (
+      <MarkdownTextSpan key={node.key} style={styles.softbreak}>
+        {"\n"}
+      </MarkdownTextSpan>
+    ),
     code_block: (
       node: ASTNode,
       _children: ReactNode[],

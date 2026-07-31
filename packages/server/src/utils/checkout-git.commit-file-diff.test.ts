@@ -88,4 +88,22 @@ describe("getCommitFileDiff", () => {
 
     expect(file).toBeNull();
   });
+
+  it("returns a merge commit diff against its first parent", async () => {
+    const repoDir = initRepo();
+    commitFile(repoDir, "README.md", "base\n", "initial");
+    git(["checkout", "-b", "feature"], repoDir);
+    commitFile(repoDir, "feature.txt", "feature\n", "add feature");
+    git(["checkout", "main"], repoDir);
+    commitFile(repoDir, "main.txt", "main\n", "advance main");
+    git(["merge", "--no-ff", "feature", "-m", "merge feature"], repoDir);
+    const sha = headSha(repoDir);
+
+    const file = await getCommitFileDiff({ cwd: repoDir, sha, path: "feature.txt" });
+
+    expect(file?.path).toBe("feature.txt");
+    expect(file?.isNew).toBe(true);
+    expect(file?.additions).toBe(1);
+    expect(file?.deletions).toBe(0);
+  });
 });

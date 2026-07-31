@@ -18,13 +18,12 @@ import {
   type AppUpdateCheckIntent,
   type AppReleaseChannel,
 } from "../features/auto-updater.js";
-import { getCliInstallStatus, installCli } from "../integrations/cli-install/index.js";
 import {
-  getSkillsStatus,
-  installSkills,
-  uninstallSkills,
-  updateSkills,
-} from "../integrations/skills/index.js";
+  getBundledCliShimPath,
+  getCliInstallStatus,
+  installCli,
+} from "../integrations/cli-install/index.js";
+import { createSkillsCommandHandlers, getSkillsController } from "../integrations/skills/index.js";
 import {
   openLocalTransportSession,
   sendLocalTransportMessage,
@@ -413,7 +412,11 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
     detached: true,
     envMode: "internal",
     env: invocation.env,
-    envOverlay: { PASEO_DESKTOP_MANAGED: "1", PASEO_WEB_UI_ENABLED: "false" },
+    envOverlay: {
+      PASEO_DESKTOP_MANAGED: "1",
+      PASEO_CLI: getBundledCliShimPath(),
+      PASEO_WEB_UI_ENABLED: "false",
+    },
     stdio: ["ignore", "ignore", "ignore"],
   });
 
@@ -615,10 +618,7 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     get_local_daemon_version: () => getLocalDaemonVersion(),
     install_cli: () => installCli(),
     get_cli_install_status: () => getCliInstallStatus(),
-    get_skills_status: () => getSkillsStatus(),
-    install_skills: () => installSkills(),
-    update_skills: () => updateSkills(),
-    uninstall_skills: () => uninstallSkills(),
+    ...createSkillsCommandHandlers({ controller: getSkillsController() }),
   };
 }
 

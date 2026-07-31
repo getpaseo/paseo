@@ -15,9 +15,8 @@ vi.mock("@react-native-async-storage/async-storage", () => {
   };
 });
 
-import type { WorkspaceTab } from "@/stores/workspace-tabs-store";
+import { buildWorkspaceTabPersistenceKey, type WorkspaceTab } from "@/workspace-tabs/model";
 import {
-  buildWorkspaceTabPersistenceKey,
   collectAllPanes,
   collectAllTabs,
   createWorkspaceLayoutStore,
@@ -27,8 +26,10 @@ import {
   getFocusedBrowserId,
   getTreeDepth,
   insertSplit,
+  normalizeLayout,
   removePaneFromTree,
   removeTabFromTree,
+  stripEphemeralTabsFromLayout,
   type SplitNode,
   type SplitPane,
 } from "@/stores/workspace-layout-store";
@@ -1128,6 +1129,73 @@ describe("workspace-layout-store actions", () => {
     ]);
   });
 
+  it("persists working diff tabs while stripping commit diff tabs", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+
+    store.openTabFocused(workspaceKey, {
+      kind: "working_diff",
+      focusPath: "src/a.ts",
+    });
+    store.openTabFocused(workspaceKey, { kind: "commit_diff", sha: "abc123" });
+
+    const partialize = workspaceLayoutStore.persist.getOptions().partialize;
+    expect(partialize).toBeTypeOf("function");
+    if (!partialize) {
+      throw new Error("Workspace layout partialize function is missing");
+    }
+    const currentState = workspaceLayoutStore.getState();
+    const layout = stripEphemeralTabsFromLayout(currentState.layoutByWorkspace[workspaceKey]);
+    const persisted = partialize(currentState);
+
+    expect(persisted).toEqual({
+      layoutByWorkspace: { [workspaceKey]: layout },
+      splitSizesByWorkspace: currentState.splitSizesByWorkspace,
+    });
+    expect(layout && collectAllTabs(layout.root).map((tab) => tab.target)).toEqual([
+      {
+        kind: "working_diff",
+        focusPath: "src/a.ts",
+      },
+    ]);
+  });
+
+  it("canonicalizes comparison-specific working diff tab ids from persisted layouts", () => {
+    const legacyTabId = "working_diff_uncommitted_0_n";
+    const layout = normalizeLayout({
+      root: {
+        kind: "pane",
+        pane: {
+          id: "main",
+          tabIds: [legacyTabId],
+          focusedTabId: legacyTabId,
+          tabs: [
+            {
+              tabId: legacyTabId,
+              createdAt: 1,
+              target: {
+                kind: "working_diff",
+                focusPath: "src/a.ts",
+                mode: "uncommitted",
+                baseRef: null,
+                ignoreWhitespace: false,
+              },
+            },
+          ],
+        },
+      },
+      focusedPaneId: "main",
+    });
+
+    expect(collectAllTabs(layout.root)).toEqual([
+      {
+        tabId: "working_diff",
+        target: { kind: "working_diff", focusPath: "src/a.ts" },
+        createdAt: 1,
+      },
+    ]);
+  });
+
   it("resizeSplit keeps sizes normalized while enforcing the minimum proportion", () => {
     useWorkspaceLayoutIds(
       "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
@@ -1589,6 +1657,66 @@ describe("workspace-layout-store actions", () => {
     const state = workspaceLayoutStore.getState();
     expect(state.hiddenAgentIdsByWorkspace[workspaceKey]).toBeUndefined();
     expect(Array.from(state.pinnedAgentIdsByWorkspace[workspaceKey] ?? [])).toEqual(["agent-1"]);
+  });
+
+  it("keeps an explicitly pinned archived agent before its detail is hydrated", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+
+    store.openTabFocused(workspaceKey, { kind: "agent", agentId: "archived-agent" });
+    store.pinAgent(workspaceKey, "archived-agent");
+    store.reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: [],
+      autoOpenAgentIds: [],
+      knownAgentIds: [],
+      standaloneTerminalIds: [],
+    });
+
+    expect(store.getWorkspaceTabs(workspaceKey).map((tab) => tab.tabId)).toEqual([
+      "agent_archived-agent",
+    ]);
+
+    store.reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: [],
+      autoOpenAgentIds: [],
+      knownAgentIds: [],
+      standaloneTerminalIds: [],
+    });
+
+    expect(store.getWorkspaceTabs(workspaceKey).map((tab) => tab.tabId)).toEqual([
+      "agent_archived-agent",
+    ]);
+
+    store.resolvePendingAgent(workspaceKey, "archived-agent");
+    store.reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: [],
+      autoOpenAgentIds: [],
+      knownAgentIds: [],
+      standaloneTerminalIds: [],
+    });
+
+    expect(store.getWorkspaceTabs(workspaceKey).map((tab) => tab.tabId)).toEqual([]);
+
+    store.openTabFocused(workspaceKey, { kind: "agent", agentId: "archived-agent" });
+    store.pinAgent(workspaceKey, "archived-agent");
+    store.reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: [],
+      autoOpenAgentIds: [],
+      knownAgentIds: [],
+      standaloneTerminalIds: [],
+    });
+
+    expect(store.getWorkspaceTabs(workspaceKey).map((tab) => tab.tabId)).toEqual([
+      "agent_archived-agent",
+    ]);
   });
 
   it("retargeting a tab to an agent clears hidden intent", () => {

@@ -11,8 +11,10 @@ import {
   convertClaudeHistoryEntry,
   normalizeClaudeAskUserQuestionRequestInput,
   normalizeClaudeAskUserQuestionUpdatedInput,
+  resolveClaudeCodeVersion,
   toClaudeSdkMcpConfig,
 } from "./agent.js";
+import { claudeProjectDirSync } from "./project-dir.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
 import type { AgentSession, AgentTimelineItem, AgentStreamEvent } from "../../agent-sdk-types.js";
 
@@ -404,6 +406,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       const client = new ClaudeAgentClient({
         logger,
         resolveBinary: async () => "/test/claude/bin",
+        resolveVersion: async () => "2.1.219",
         configDir: emptyConfigDir,
       });
       const { models } = await client.fetchCatalog({
@@ -413,10 +416,13 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       });
 
       expect(models.map((m) => m.id)).toEqual([
+        "claude-opus-5",
+        "claude-fable-5[1m]",
         "claude-fable-5",
         "claude-opus-4-8[1m]",
         "claude-opus-4-8",
         "claude-sonnet-5",
+        "claude-sonnet-5[1m]",
         "claude-opus-4-7[1m]",
         "claude-opus-4-7",
         "claude-opus-4-6[1m]",
@@ -432,7 +438,30 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       }
 
       const defaultModel = models.find((m) => m.isDefault);
-      expect(defaultModel?.id).toBe("claude-opus-4-8");
+      expect(defaultModel?.id).toBe("claude-opus-5");
+    } finally {
+      await fs.rm(emptyConfigDir, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves the catalog when Claude Code version detection fails", async () => {
+    const emptyConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-models-empty-"));
+    try {
+      const client = new ClaudeAgentClient({
+        logger,
+        resolveVersion: async () => {
+          throw new Error("unrecognized version output");
+        },
+        configDir: emptyConfigDir,
+      });
+      const { models } = await client.fetchCatalog({
+        scope: "workspace",
+        cwd: "/tmp/claude-models",
+        force: false,
+      });
+
+      expect(models.find((model) => model.isDefault)?.id).toBe("claude-opus-5");
+      expect(models.map((model) => model.id)).toContain("claude-fable-5[1m]");
     } finally {
       await fs.rm(emptyConfigDir, { recursive: true, force: true });
     }
@@ -444,6 +473,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       const client = new ClaudeAgentClient({
         logger,
         resolveBinary: async () => "/test/claude/bin",
+        resolveVersion: async () => "2.1.219",
         configDir: emptyConfigDir,
       });
       const { models } = await client.fetchCatalog({
@@ -455,6 +485,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
         return models.find((model) => model.id === modelId)?.thinkingOptions?.map(({ id }) => id);
       };
 
+      expect(getThinkingIds("claude-opus-5")).toContain("ultracode");
       expect(getThinkingIds("claude-fable-5")).toContain("ultracode");
       expect(getThinkingIds("claude-opus-4-8[1m]")).toContain("ultracode");
       expect(getThinkingIds("claude-opus-4-8")).toContain("ultracode");
@@ -471,6 +502,10 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
 
 describe("ClaudeAgentClient binary resolution", () => {
   const logger = createTestLogger();
+
+  test("resolves the installed Claude Code version", async () => {
+    await expect(resolveClaudeCodeVersion()).resolves.toMatch(/^\d+\.\d+\.\d+$/);
+  });
 
   test("loads user, project, and local Claude settings", async () => {
     const queryReturn = vi.fn();
@@ -583,8 +618,12 @@ describe("ClaudeAgentSession features", () => {
         };
       },
     };
-    const queryFactory = vi.fn(() => queryMock);
-    return { queryFactory, queryMock };
+    const launches: Array<{ options: Record<string, unknown> }> = [];
+    const queryFactory = vi.fn((input) => {
+      launches.push(input);
+      return queryMock;
+    });
+    return { queryFactory, queryMock, launches };
   }
 
   test("lists fast mode only for supported Opus models", async () => {
@@ -684,6 +723,96 @@ describe("ClaudeAgentSession features", () => {
     });
 
     await session.close();
+  });
+
+  test("turns Claude thinking off without retaining an effort level", async () => {
+    const { queryFactory, launches } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-sonnet-5",
+      thinkingOptionId: "off",
+    });
+
+    await expect(session.startTurn("hello")).resolves.toEqual({
+      turnId: expect.stringMatching(/^foreground-turn-/),
+    });
+
+    expect(launches[0]?.options.thinking).toEqual({ type: "disabled" });
+    expect(launches[0]?.options).not.toHaveProperty("effort");
+
+    await session.close();
+  });
+
+  test.each([
+    ["supported model", "claude-opus-4-8", { type: "disabled" }, undefined],
+    ["unsupported model", "claude-fable-5", { type: "adaptive" }, "low"],
+    ["custom model", "openrouter/anthropic/claude-opus-4-8", undefined, undefined],
+    ["provider default", null, undefined, undefined],
+  ])("reconciles Off when switching to a %s", async (_label, modelId, thinking, effort) => {
+    const { queryFactory, launches } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-sonnet-5",
+      thinkingOptionId: "off",
+    });
+
+    await session.setModel?.(modelId);
+    await session.startTurn("hello");
+
+    expect(launches.at(-1)?.options.thinking).toEqual(thinking);
+    expect(launches.at(-1)?.options.effort).toBe(effort);
+
+    await session.close();
+  });
+
+  test("rejects disabled thinking when the active model does not support it", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-fable-5",
+    });
+
+    await expect(session.setThinkingOption?.("off")).rejects.toThrow(
+      "Thinking option 'off' is not available for model 'claude-fable-5'",
+    );
+
+    await session.close();
+  });
+
+  test("rejects an initial disabled-thinking config for an unsupported model", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+
+    await expect(
+      client.createSession({
+        provider: "claude",
+        cwd: process.cwd(),
+        model: "claude-fable-5",
+        thinkingOptionId: "off",
+      }),
+    ).rejects.toThrow("Thinking option 'off' is not available for model 'claude-fable-5'");
   });
 
   test("returns a next-turn notice when changing Claude thinking during an active turn", async () => {
@@ -987,6 +1116,75 @@ describe("normalizeClaudeAskUserQuestionUpdatedInput", () => {
 });
 
 describe("ClaudeAgentClient.listImportableSessions", () => {
+  test("scopes candidates to the requested cwd before applying the limit", async () => {
+    const tmpConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-"));
+    const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = tmpConfigDir;
+
+    try {
+      const requestedCwd = path.join(tmpConfigDir, "requested-project");
+      const busyCwd = path.join(tmpConfigDir, "busy-project");
+      await fs.mkdir(requestedCwd, { recursive: true });
+      await fs.mkdir(busyCwd, { recursive: true });
+      const requestedProjectDir = claudeProjectDirSync(requestedCwd, { configDir: tmpConfigDir });
+      const busyProjectDir = claudeProjectDirSync(busyCwd, { configDir: tmpConfigDir });
+      await fs.mkdir(requestedProjectDir, { recursive: true });
+      await fs.mkdir(busyProjectDir, { recursive: true });
+
+      const writeSession = async (
+        projectDir: string,
+        sessionId: string,
+        cwd: string,
+        day: number,
+      ) => {
+        const file = path.join(projectDir, `${sessionId}.jsonl`);
+        await fs.writeFile(
+          file,
+          `${JSON.stringify({
+            isSidechain: false,
+            type: "user",
+            message: { role: "user", content: `Prompt for ${sessionId}` },
+            cwd,
+            sessionId,
+          })}\n`,
+          "utf-8",
+        );
+        const timestamp = new Date(`2026-06-${String(day).padStart(2, "0")}T12:00:00.000Z`);
+        await fs.utimes(file, timestamp, timestamp);
+      };
+
+      await writeSession(requestedProjectDir, "requested-session", requestedCwd, 1);
+      await writeSession(busyProjectDir, "newer-session-1", busyCwd, 2);
+      await writeSession(busyProjectDir, "newer-session-2", busyCwd, 3);
+      await writeSession(busyProjectDir, "newer-session-3", busyCwd, 4);
+
+      const client = new ClaudeAgentClient({
+        logger: createTestLogger(),
+        resolveBinary: async () => "/test/claude/bin",
+      });
+
+      await expect(client.listImportableSessions({ limit: 1, cwd: requestedCwd })).resolves.toEqual(
+        [
+          {
+            providerHandleId: "requested-session",
+            cwd: requestedCwd,
+            title: "Prompt for requested-session",
+            firstPromptPreview: "Prompt for requested-session",
+            lastPromptPreview: "Prompt for requested-session",
+            lastActivityAt: new Date("2026-06-01T12:00:00.000Z"),
+          },
+        ],
+      );
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.CLAUDE_CONFIG_DIR;
+      } else {
+        process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
+      }
+      await fs.rm(tmpConfigDir, { recursive: true, force: true });
+    }
+  });
+
   test("shows Claude slash command prompts without transcript tags", async () => {
     const tmpConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-"));
     const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
@@ -1141,7 +1339,7 @@ describe("ClaudeAgentSession context window usage", () => {
       }
 
       void (async () => {
-        for await (const _prompt of prompt) {
+        for await (const _ of prompt) {
           const turnMessages = turns[turnIndex] ?? [];
           turnIndex += 1;
           for (const message of turnMessages) {
@@ -1917,10 +2115,10 @@ describe("ClaudeAgentSession context window usage", () => {
     }
   });
 
-  test("native 1M Claude models seed active context window usage from the catalog", async () => {
+  test("selected 1M Claude models seed active context window usage from the catalog", async () => {
     const session = await createSessionForTurns(
       [[createInitMessage(), createMessageStartEvent(), createSuccessResult()]],
-      { model: "claude-sonnet-5" },
+      { model: "claude-sonnet-5[1m]" },
     );
 
     try {

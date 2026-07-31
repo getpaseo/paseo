@@ -3,13 +3,7 @@ import { AlertTriangle, Copy, FileText, Plus, RotateCw, Trash2 } from "lucide-re
 import type { TFunction } from "i18next";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  ActivityIndicator,
-  Pressable,
-  type PressableStateCallbackType,
-  Text,
-  View,
-} from "react-native";
+import { Pressable, type PressableStateCallbackType, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
   AdaptiveModalSheet,
@@ -365,7 +359,7 @@ function DiagnosticSubSheet({
     body = (
       <SurfaceCard key={visible ? "visible" : "hidden"}>
         <View style={sheetStyles.codeBlockLoading}>
-          <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
+          <LoadingSpinner size="small" color={theme.colors.foregroundMuted} />
           <Text style={sheetStyles.mutedText}>{t("settings.providers.diagnostic.running")}</Text>
         </View>
       </SurfaceCard>
@@ -504,7 +498,7 @@ function ProviderModalBody(props: ProviderModalBodyProps) {
   if (discoveredCount === 0 && additionalCount === 0 && providerSnapshotRefreshing) {
     return (
       <View style={sheetStyles.emptyState}>
-        <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
+        <LoadingSpinner size="small" color={theme.colors.foregroundMuted} />
         <Text style={sheetStyles.mutedText}>{t("settings.providers.models.loading")}</Text>
       </View>
     );

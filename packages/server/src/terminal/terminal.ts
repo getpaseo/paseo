@@ -308,16 +308,16 @@ function resolveExternalProcessPath(filePath: string): string {
 }
 
 export function resolvePaseoCliBinDir(): string | null {
-  const cliEntrypoint = resolvePaseoCliBinEntrypoint();
-  if (!cliEntrypoint) {
-    return null;
-  }
-
-  const externalCliEntrypoint = resolveExternalProcessPath(cliEntrypoint);
-  return findNpmBinDir(dirname(externalCliEntrypoint)) ?? dirname(externalCliEntrypoint);
+  const cliExecutable = resolvePaseoCliExecutablePath();
+  return cliExecutable ? dirname(cliExecutable) : null;
 }
 
 export function resolvePaseoCliExecutablePath(): string | null {
+  const configuredCli = process.env.PASEO_CLI?.trim();
+  if (configuredCli) {
+    return resolvePath(configuredCli);
+  }
+
   const cliEntrypoint = resolvePaseoCliBinEntrypoint();
   if (!cliEntrypoint) {
     return null;
@@ -384,7 +384,7 @@ function resolveZshShellIntegrationRuntimeDir(): string {
   } catch {
     // keep fallback
   }
-  return join(tmpdir(), `${username}-paseo-zsh`);
+  return join(tmpdir(), `${username}-paseo-zsh-${process.pid}`);
 }
 
 function prepareZshShellIntegrationRuntimeDir(sourceDir = resolveZshShellIntegrationDir()): string {

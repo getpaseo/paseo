@@ -63,6 +63,11 @@ function matchesQuery(searchText: string, query: string): boolean {
   return !normalized || searchText.includes(normalized);
 }
 
+/** Join non-empty subtitle parts with " · ", dropping null/undefined/empty. */
+export function joinSubtitleParts(parts: readonly (string | null | undefined)[]): string {
+  return parts.filter((part): part is string => Boolean(part)).join(" · ");
+}
+
 function contributionSearchText(contribution: CommandCenterContribution): string {
   const presentationText =
     contribution.presentation.kind === "action"
