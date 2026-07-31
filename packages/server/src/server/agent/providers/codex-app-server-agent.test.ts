@@ -1103,6 +1103,46 @@ describe("Codex app-server provider", () => {
     appServer.assertNoErrors();
   });
 
+  test("still resumes when Codex goal pause rejects after interactive resume", async () => {
+    const requests: Array<{ method: string; params?: unknown }> = [];
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => {
+        requests.push({ method: "thread/loaded/list" });
+        return { data: [] };
+      },
+      "thread/resume": (params) => {
+        requests.push({ method: "thread/resume", params });
+        return { thread: { id: "goal-thread-id" } };
+      },
+      "thread/goal/set": () => {
+        requests.push({ method: "thread/goal/set" });
+        // Reject via Promise so the fake server can turn this into a JSON-RPC
+        // error response (sync throws escape processMessage before that path).
+        return Promise.reject(new Error("no active goal for thread id goal-thread-id"));
+      },
+      "thread/read": () => {
+        requests.push({ method: "thread/read" });
+        return { thread: { turns: [] } };
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    castInternals<{ goalsEnabledPromise: Promise<boolean> | null }>(provider).goalsEnabledPromise =
+      Promise.resolve(true);
+
+    const session = await provider.resumeSession({
+      sessionId: "goal-thread-id",
+      metadata: {
+        cwd: "/tmp/codex-goal-test",
+        modeId: "full-access",
+        model: "gpt-5.4",
+      },
+    });
+
+    expect(requests.some((entry) => entry.method === "thread/goal/set")).toBe(true);
+    expect(requests.some((entry) => entry.method === "thread/read")).toBe(true);
+    await session.close();
+  });
+
   test("closes Codex app-server when an interactive resume fails", async () => {
     const appServer = createFakeCodexAppServer({
       "thread/resume": () =>

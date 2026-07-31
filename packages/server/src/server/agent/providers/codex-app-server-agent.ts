@@ -126,6 +126,8 @@ function isCodexAlreadyUnarchivedError(error: unknown, threadId: string): boolea
 
 const TURN_START_TIMEOUT_MS = 90 * 1000;
 const INTERRUPT_TIMEOUT_MS = 2_000;
+// Pause-on-resume must not hang connect() if app-server ignores the RPC.
+const GOAL_PAUSE_TIMEOUT_MS = 10_000;
 const CODEX_PROVIDER = "codex" as const;
 // Codex treats most app-server client names as the model-request originator.
 // This reserved Codex name is non-originating, so requests keep Codex's default
@@ -4418,10 +4420,14 @@ export class CodexAppServerAgentSession implements AgentSession {
       return;
     }
     try {
-      await this.client.request("thread/goal/set", {
-        threadId: this.currentThreadId,
-        status: "paused",
-      });
+      await this.client.request(
+        "thread/goal/set",
+        {
+          threadId: this.currentThreadId,
+          status: "paused",
+        },
+        GOAL_PAUSE_TIMEOUT_MS,
+      );
     } catch (error) {
       // No active goal, older Codex builds, or goal already paused — reconnect
       // should still succeed for history/timeline loads. Log at warn so a
