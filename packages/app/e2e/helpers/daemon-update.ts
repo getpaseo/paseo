@@ -24,6 +24,7 @@ type OutdatedDaemonMessage = OutdatedDaemonReadyMessage | OutdatedDaemonErrorMes
 
 export async function startOutdatedDaemon(options?: {
   desktopManaged?: boolean;
+  daemonStatusRpcCapability?: boolean;
   relayConfigCapability?: boolean;
 }): Promise<OutdatedDaemon> {
   const metroPort = process.env.E2E_METRO_PORT;
@@ -38,6 +39,7 @@ export async function startOutdatedDaemon(options?: {
         ...process.env,
         E2E_METRO_PORT: metroPort,
         E2E_DESKTOP_MANAGED: options?.desktopManaged === true ? "1" : "0",
+        E2E_DAEMON_STATUS_RPC_CAPABILITY: options?.daemonStatusRpcCapability === false ? "0" : "1",
         E2E_RELAY_CONFIG_CAPABILITY: options?.relayConfigCapability === false ? "0" : "1",
       },
       execArgv: ["--import", "tsx"],

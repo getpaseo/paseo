@@ -12,6 +12,7 @@ async function main(): Promise<void> {
     corsAllowedOrigins: [`http://localhost:${metroPort}`],
     daemonVersion: "0.0.0",
     desktopManaged: process.env.E2E_DESKTOP_MANAGED === "1",
+    daemonStatusRpcCapability: process.env.E2E_DAEMON_STATUS_RPC_CAPABILITY !== "0",
     relayConfigCapability: process.env.E2E_RELAY_CONFIG_CAPABILITY !== "0",
   });
   const serverId = (await readFile(path.join(daemon.paseoHome, "server-id"), "utf8")).trim();

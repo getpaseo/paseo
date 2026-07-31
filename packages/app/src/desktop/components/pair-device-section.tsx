@@ -43,7 +43,9 @@ export function PairDeviceSection({ serverId, onClose }: PairDeviceSectionProps)
     runtimeSnapshot?.connectionStatus === "error";
   const { patchConfig } = useDaemonConfig(serverId);
   const [copied, setCopied] = useState(false);
-  const canConfigureRelay = client?.getLastServerInfoMessage()?.features?.relayConfig === true;
+  const serverFeatures = client?.getLastServerInfoMessage()?.features;
+  const supportsPairingRpc = serverFeatures?.daemonStatusRpc === true;
+  const canConfigureRelay = supportsPairingRpc && serverFeatures?.relayConfig === true;
 
   const pairingQuery = useFetchQuery({
     queryKey: daemonPairingOfferQueryKey(serverId),
@@ -51,7 +53,7 @@ export function PairDeviceSection({ serverId, onClose }: PairDeviceSectionProps)
       if (!client) throw new Error(t("workspace.terminal.hostDisconnected"));
       return client.getDaemonPairingOffer();
     },
-    enabled: showSection && Boolean(client && isConnected),
+    enabled: showSection && supportsPairingRpc && Boolean(client && isConnected),
     dataShape: "value",
     staleTimeMs: 5 * 60 * 1000,
     retry: 1,
@@ -107,7 +109,7 @@ export function PairDeviceSection({ serverId, onClose }: PairDeviceSectionProps)
   return (
     <View testID="pair-device-content">
       <PairDeviceBody
-        isPending={pairingQuery.isPending}
+        isPending={supportsPairingRpc && pairingQuery.isPending}
         isDisconnected={isDisconnected}
         error={pairingQuery.error}
         offer={pairingQuery.data}

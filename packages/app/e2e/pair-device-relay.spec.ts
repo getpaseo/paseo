@@ -14,6 +14,7 @@ import {
   openPairDeviceModal,
   openPairDeviceFromHome,
   openRelaySecurityDocs,
+  observePairingOfferRequests,
   prepareLocalPairingHost,
   reloadAndOpenPairDevice,
   retryRelayAndExpectFailure,
@@ -173,8 +174,10 @@ test.describe("local device relay pairing", () => {
     page,
     relayConfigOutdatedDaemon,
   }) => {
+    const expectNoUnsupportedRequest = observePairingOfferRequests(page, relayConfigOutdatedDaemon);
     await prepareLocalPairingHost(page, relayConfigOutdatedDaemon);
     await openPairDeviceModal(page);
     await expectRelayUpdateRequired(page);
+    expectNoUnsupportedRequest();
   });
 });

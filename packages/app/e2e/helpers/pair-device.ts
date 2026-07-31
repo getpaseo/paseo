@@ -169,6 +169,19 @@ export async function expectRelayUpdateRequired(page: Page): Promise<void> {
   await expect(modal.getByRole("textbox", { name: "Pairing link" })).toHaveCount(0);
 }
 
+export function observePairingOfferRequests(page: Page, daemon: OutdatedDaemon): () => void {
+  let requestCount = 0;
+  const port = daemon.endpoint.slice(daemon.endpoint.lastIndexOf(":") + 1);
+  page.on("websocket", (socket) => {
+    if (!socket.url().includes(`:${port}`)) return;
+    socket.on("framesent", ({ payload }) => {
+      const message = typeof payload === "string" ? payload : payload.toString();
+      if (message.includes('"type":"daemon.get_pairing_offer.request"')) requestCount += 1;
+    });
+  });
+  return () => expect(requestCount).toBe(0);
+}
+
 export async function expectPairingDisconnected(page: Page): Promise<void> {
   const modal = page.getByTestId("host-page-pair-device-card");
   await expect(modal.getByRole("alert")).toContainText("Host is not connected");

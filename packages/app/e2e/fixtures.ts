@@ -131,7 +131,10 @@ const test = base.extend<{
     await daemon.close();
   },
   relayConfigOutdatedDaemon: async ({}, provide) => {
-    const daemon = await startOutdatedDaemon({ relayConfigCapability: false });
+    const daemon = await startOutdatedDaemon({
+      daemonStatusRpcCapability: false,
+      relayConfigCapability: false,
+    });
     await provide(daemon);
     await daemon.close();
   },
