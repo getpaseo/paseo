@@ -459,13 +459,20 @@ export async function runOnboard(options: OnboardOptions): Promise<void> {
     richUi,
   });
 
+  if (options.relay === false) {
+    log.message("Relay pairing skipped because --no-relay was provided.");
+    printNextSteps(null, paseoHome, richUi);
+    if (richUi) outro("Paseo daemon is running.");
+    return;
+  }
+
   let pairing = await resolveLocalPairingOffer({
     paseoHome,
     enableRelay: options.relay === true,
   });
 
   if (!pairing.relayEnabled) {
-    const shouldEnable = richUi && options.relay !== false ? await confirmRelayPairing() : false;
+    const shouldEnable = richUi ? await confirmRelayPairing() : false;
     if (!shouldEnable) {
       printDirectConnectionGuidance();
       printNextSteps(null, paseoHome, richUi);

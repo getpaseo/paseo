@@ -52,7 +52,26 @@ try {
   assert(status.stdout.includes("running"), "daemon should be running when onboarding exits");
   console.log("✓ onboarding keeps relay disabled and waits for daemon readiness\n");
 
-  console.log("Test 2: non-interactive onboarding persists voice disabled config");
+  console.log("Test 2: --no-relay suppresses pairing for an already-running daemon");
+  const enableRelay =
+    await $`PASEO_HOME=${paseoHome} npx paseo daemon pair --home ${paseoHome} --relay`.nothrow();
+  assert.strictEqual(enableRelay.exitCode, 0, `relay enable should succeed: ${enableRelay.stderr}`);
+  assert(enableRelay.stdout.includes("#offer="), "relay enable should produce a pairing offer");
+
+  const noRelayOnboard =
+    await $`PASEO_HOME=${paseoHome} PASEO_LISTEN=127.0.0.1:${port} npx paseo --no-relay`.nothrow();
+  assert.strictEqual(
+    noRelayOnboard.exitCode,
+    0,
+    `--no-relay onboarding should succeed: ${noRelayOnboard.stderr}`,
+  );
+  assert(
+    !noRelayOnboard.stdout.includes("#offer="),
+    "--no-relay onboarding should not include a pairing offer",
+  );
+  console.log("✓ --no-relay suppresses pairing for an already-running daemon\n");
+
+  console.log("Test 3: non-interactive onboarding persists voice disabled config");
   const configRaw = await readFile(join(paseoHome, "config.json"), "utf-8");
   const config = JSON.parse(configRaw) as {
     features?: {
