@@ -3183,6 +3183,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     private readonly autoReviewEnabled: boolean = false,
     private readonly agentId?: string,
     private readonly initialResumePurpose: "interactive" | "history" = "interactive",
+    private readonly pauseActiveGoalsOnResume: boolean = true,
   ) {
     this.logger = logger.child({
       module: "agent",
@@ -3244,8 +3245,13 @@ export class CodexAppServerAgentSession implements AgentSession {
         // Paseo's turn/start path (so status stays idle while events stream,
         // and mode presets like Full Access never apply). Pause on interactive
         // reconnect so daemon restart does not auto-continue Goal sessions.
+        // Hot reloads (voice/config swap) pass pauseActiveGoals: false.
         // Users re-enable with /goal resume or by setting a new objective.
-        if (this.goalsEnabled && this.initialResumePurpose === "interactive") {
+        if (
+          this.goalsEnabled &&
+          this.initialResumePurpose === "interactive" &&
+          this.pauseActiveGoalsOnResume
+        ) {
           await this.pauseActiveGoalAfterResume();
         }
         await this.loadPersistedHistory();
@@ -4418,8 +4424,9 @@ export class CodexAppServerAgentSession implements AgentSession {
       });
     } catch (error) {
       // No active goal, older Codex builds, or goal already paused — reconnect
-      // should still succeed for history/timeline loads.
-      this.logger.debug(
+      // should still succeed for history/timeline loads. Log at warn so a
+      // real pause failure is visible when Goals still auto-continue.
+      this.logger.warn(
         { err: error, threadId: this.currentThreadId },
         "Codex goal pause after resume skipped",
       );
@@ -6387,6 +6394,7 @@ export class CodexAppServerAgentClient implements AgentClient {
     };
     const goalsEnabled = await this.resolveGoalsEnabled();
     const autoReviewEnabled = await this.resolveAutoReviewEnabled();
+    const purpose = options?.purpose ?? "interactive";
     const session = new CodexAppServerAgentSession(
       merged,
       handle,
@@ -6398,7 +6406,8 @@ export class CodexAppServerAgentClient implements AgentClient {
       goalsEnabled,
       autoReviewEnabled,
       launchContext?.agentId,
-      options?.purpose ?? "interactive",
+      purpose,
+      options?.pauseActiveGoals !== false,
     );
     await session.connect();
     return session;

@@ -606,6 +606,12 @@ export interface AgentCreateSessionOptions {
 export interface AgentResumeSessionOptions {
   /** Defaults to interactive. History loading may be read-only for archived native sessions. */
   purpose?: "interactive" | "history";
+  /**
+   * When purpose is interactive, providers may pause autonomous Goal-style work after
+   * resume so daemon restarts do not auto-continue unsupervised runs.
+   * Defaults to true. Pass false for hot reloads that only swap config (e.g. voice mode).
+   */
+  pauseActiveGoals?: boolean;
 }
 
 /**

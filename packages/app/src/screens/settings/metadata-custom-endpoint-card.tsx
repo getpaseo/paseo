@@ -28,19 +28,23 @@ interface DiscoveredModel {
 function ModelSuggestionChip({
   model,
   selected,
+  disabled,
   onSelect,
 }: {
   model: DiscoveredModel;
   selected: boolean;
+  disabled?: boolean;
   onSelect: (modelId: string) => void;
 }) {
   const handlePress = useCallback(() => {
+    if (disabled) return;
     onSelect(model.id);
-  }, [model.id, onSelect]);
+  }, [disabled, model.id, onSelect]);
 
   return (
     <Pressable
       onPress={handlePress}
+      disabled={disabled}
       style={[styles.suggestionChip, selected ? styles.suggestionChipSelected : null]}
       testID={`host-page-metadata-custom-endpoint-model-option-${model.id}`}
     >
@@ -205,6 +209,7 @@ export function MetadataCustomEndpointCard({ serverId }: { serverId: string }) {
               onChangeText={handleBaseUrlChange}
               autoCapitalize="none"
               autoCorrect={false}
+              editable={!isSaving}
               placeholder={t("settings.host.orchestration.metadataEndpoint.baseUrlPlaceholder")}
               testID="host-page-metadata-custom-endpoint-base-url"
             />
@@ -218,6 +223,7 @@ export function MetadataCustomEndpointCard({ serverId }: { serverId: string }) {
               autoCapitalize="none"
               autoCorrect={false}
               secureTextEntry
+              editable={!isSaving}
               placeholder={t("settings.host.orchestration.metadataEndpoint.apiKeyPlaceholder")}
               testID="host-page-metadata-custom-endpoint-api-key"
             />
@@ -230,6 +236,7 @@ export function MetadataCustomEndpointCard({ serverId }: { serverId: string }) {
               onChangeText={handleModelChange}
               autoCapitalize="none"
               autoCorrect={false}
+              editable={!isSaving}
               placeholder={t("settings.host.orchestration.metadataEndpoint.modelPlaceholder")}
               testID="host-page-metadata-custom-endpoint-model"
             />
@@ -242,6 +249,7 @@ export function MetadataCustomEndpointCard({ serverId }: { serverId: string }) {
                   key={model.id}
                   model={model}
                   selected={draft.model === model.id}
+                  disabled={isSaving}
                   onSelect={handleSelectModel}
                 />
               ))}
@@ -270,7 +278,9 @@ export function MetadataCustomEndpointCard({ serverId }: { serverId: string }) {
               variant="outline"
               size="sm"
               onPress={handleRefreshModels}
-              disabled={discoveryStatus === "loading" || draft.baseUrl.trim().length === 0}
+              disabled={
+                isSaving || discoveryStatus === "loading" || draft.baseUrl.trim().length === 0
+              }
               testID="host-page-metadata-custom-endpoint-refresh-models"
             >
               {discoveryStatus === "loading"

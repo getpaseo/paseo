@@ -1022,6 +1022,87 @@ describe("Codex app-server provider", () => {
     appServer.assertNoErrors();
   });
 
+  test("does not pause Codex goals when interactive resume opts out (hot reload)", async () => {
+    const requests: Array<{ method: string; params?: unknown }> = [];
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => {
+        requests.push({ method: "thread/loaded/list" });
+        return { data: [] };
+      },
+      "thread/resume": (params) => {
+        requests.push({ method: "thread/resume", params });
+        return { thread: { id: "goal-thread-id" } };
+      },
+      "thread/goal/set": (params) => {
+        requests.push({ method: "thread/goal/set", params });
+        return {};
+      },
+      "thread/read": () => {
+        requests.push({ method: "thread/read" });
+        return { thread: { turns: [] } };
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    castInternals<{ goalsEnabledPromise: Promise<boolean> | null }>(provider).goalsEnabledPromise =
+      Promise.resolve(true);
+
+    const session = await provider.resumeSession(
+      {
+        sessionId: "goal-thread-id",
+        metadata: {
+          cwd: "/tmp/codex-goal-test",
+          modeId: "full-access",
+          model: "gpt-5.4",
+        },
+      },
+      undefined,
+      undefined,
+      { pauseActiveGoals: false },
+    );
+
+    expect(requests.some((entry) => entry.method === "thread/goal/set")).toBe(false);
+    await session.close();
+    appServer.assertNoErrors();
+  });
+
+  test("does not pause Codex goals when goals are disabled", async () => {
+    const requests: Array<{ method: string; params?: unknown }> = [];
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => {
+        requests.push({ method: "thread/loaded/list" });
+        return { data: [] };
+      },
+      "thread/resume": (params) => {
+        requests.push({ method: "thread/resume", params });
+        return { thread: { id: "goal-thread-id" } };
+      },
+      "thread/goal/set": (params) => {
+        requests.push({ method: "thread/goal/set", params });
+        return {};
+      },
+      "thread/read": () => {
+        requests.push({ method: "thread/read" });
+        return { thread: { turns: [] } };
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    castInternals<{ goalsEnabledPromise: Promise<boolean> | null }>(provider).goalsEnabledPromise =
+      Promise.resolve(false);
+
+    const session = await provider.resumeSession({
+      sessionId: "goal-thread-id",
+      metadata: {
+        cwd: "/tmp/codex-goal-test",
+        modeId: "full-access",
+        model: "gpt-5.4",
+      },
+    });
+
+    expect(requests.some((entry) => entry.method === "thread/goal/set")).toBe(false);
+    await session.close();
+    appServer.assertNoErrors();
+  });
+
   test("closes Codex app-server when an interactive resume fails", async () => {
     const appServer = createFakeCodexAppServer({
       "thread/resume": () =>
