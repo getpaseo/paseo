@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import type {
   AgentCapabilityFlags,
@@ -6,8 +6,15 @@ import type {
   AgentSession,
   AgentStreamEvent,
   AgentRuntimeInfo,
+  AgentClient,
+  AgentPersistenceHandle,
 } from "./agent-sdk-types.js";
-import { wrapSessionProvider } from "./provider-registry.js";
+import {
+  shutdownAgentClients,
+  wrapClientProvider,
+  wrapSessionProvider,
+} from "./provider-registry.js";
+import { createTestLogger } from "../../test-utils/test-logger.js";
 
 type OptionalAgentSessionMethodName = {
   [K in keyof AgentSession]-?: undefined extends AgentSession[K]
@@ -192,6 +199,79 @@ describe("wrapSessionProvider", () => {
       "revertBoth",
       "tryHandleOutOfBand",
       "tryHandleOutOfBand.run",
+    ]);
+  });
+});
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+function createFakeClient(overrides: Partial<AgentClient> = {}): AgentClient {
+  return {
+    provider: "opencode",
+    capabilities: CAPABILITIES,
+    createSession: async () => {
+      throw new Error("not implemented");
+    },
+    resumeSession: async () => {
+      throw new Error("not implemented");
+    },
+    fetchCatalog: async () => ({ models: [], modes: [] }),
+    isAvailable: async () => true,
+    ...overrides,
+  };
+}
+
+describe("wrapClientProvider", () => {
+  test("forwards lifecycle methods with the inner provider and shares reentrant shutdown", async () => {
+    const archiveNativeSession = vi.fn(async () => {});
+    const unarchiveNativeSession = vi.fn(async () => {});
+    const shutdownGate = createDeferred<void>();
+    let reentrantShutdown: Promise<void> | null = null;
+    let wrapped: AgentClient;
+    const shutdown = vi.fn(async () => {
+      reentrantShutdown = wrapped.shutdown?.() ?? null;
+      await shutdownGate.promise;
+    });
+    const inner = createFakeClient({ archiveNativeSession, unarchiveNativeSession, shutdown });
+    wrapped = wrapClientProvider("plexer", inner, [], [], false);
+    const handle: AgentPersistenceHandle = {
+      provider: "plexer",
+      sessionId: "session-1",
+      metadata: { cwd: "/workspace" },
+    };
+
+    await wrapped.archiveNativeSession?.(handle);
+    await wrapped.unarchiveNativeSession?.(handle);
+    const firstShutdown = wrapped.shutdown?.();
+    const repeatedShutdown = wrapped.shutdown?.();
+    await vi.waitFor(() => expect(shutdown).toHaveBeenCalledTimes(1));
+    shutdownGate.resolve();
+    await Promise.all([firstShutdown, repeatedShutdown, reentrantShutdown]);
+
+    expect(archiveNativeSession).toHaveBeenCalledWith({ ...handle, provider: "opencode" });
+    expect(unarchiveNativeSession).toHaveBeenCalledWith({ ...handle, provider: "opencode" });
+    expect(shutdown).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("shutdownAgentClients", () => {
+  test("returns a named timeout receipt instead of blocking daemon shutdown", async () => {
+    const client = createFakeClient({ shutdown: async () => await new Promise<void>(() => {}) });
+
+    await expect(
+      shutdownAgentClients([client], createTestLogger(), { timeoutMs: 1 }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        provider: "opencode",
+        status: "timed_out",
+        timeoutMs: 1,
+      }),
     ]);
   });
 });

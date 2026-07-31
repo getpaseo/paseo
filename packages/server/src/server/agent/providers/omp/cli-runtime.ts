@@ -61,6 +61,7 @@ export class OmpCliRuntime implements OmpRuntime {
   }
 
   async startSession(input: OmpStartSessionInput): Promise<OmpRuntimeSession> {
+    input.signal?.throwIfAborted();
     const launch = buildOmpLaunch({
       command: this.command,
       runtimeSettings: this.options.runtimeSettings,
@@ -78,6 +79,7 @@ export class OmpCliRuntime implements OmpRuntime {
       launch: processLaunch,
       logger: this.options.logger,
       diagnosticName: "OMP RPC",
+      signal: input.signal,
       ...(spawn ? { spawn: () => spawn(launch) } : {}),
     };
     const process = new JsonlRpcProcess(processOptions);

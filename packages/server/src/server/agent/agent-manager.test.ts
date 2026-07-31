@@ -37,6 +37,7 @@ import type {
   ImportProviderSessionInput,
   ImportProviderSessionContext,
   ResolveAgentDefaultModeInput,
+  FetchCatalogOptions,
 } from "./agent-sdk-types.js";
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
@@ -952,6 +953,44 @@ test("normalizeConfig injects the provider default model when omitted", async ()
 
   expect(snapshot.config.model).toBe("gpt-5.4");
   expect(snapshot.config.modeId).toBe("auto-review");
+});
+
+test("shutdown aborts a hung default-model lookup so registration flush completes", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-default-model-shutdown-"));
+  const catalogStarted = deferred<void>();
+  class HungCatalogClient extends TestAgentClient {
+    catalogSignal: AbortSignal | undefined;
+
+    override async fetchCatalog(options: FetchCatalogOptions) {
+      this.catalogSignal = options.signal;
+      catalogStarted.resolve();
+      return await new Promise<never>(() => {});
+    }
+  }
+  const client = new HungCatalogClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000102",
+  });
+
+  try {
+    const creation = manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await catalogStarted.promise;
+
+    manager.prepareForShutdown();
+
+    await expect(creation).rejects.toBeInstanceOf(AgentManagerShuttingDownError);
+    await expect(manager.flushForShutdown()).resolves.toBeUndefined();
+    expect(client.catalogSignal?.aborted).toBe(true);
+    expect(client.createdConfigs).toEqual([]);
+  } finally {
+    manager.prepareForShutdown();
+    await manager.flushForShutdown().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("normalizeConfig injects Claude's automatic approval default when omitted", async () => {

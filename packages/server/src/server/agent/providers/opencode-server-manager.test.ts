@@ -140,7 +140,7 @@ describe("OpenCodeServerManager generations", () => {
     const { manager, runtime } = createTestManager([4472], { autoAnnounce: false });
 
     const acquisition = manager.acquireCurrent();
-    await runtime.settle();
+    await vi.waitFor(() => expect(runtime.launchedPorts).toContain(4472));
 
     await manager.shutdown();
 
@@ -172,8 +172,8 @@ describe("OpenCodeServerManager generations", () => {
     await portAllocationStarted.promise;
 
     await manager.shutdown();
-    portGate.resolve(4477);
     await acquisitionFailure;
+    portGate.resolve(4477);
 
     expect(runtime.spawnCalls).toEqual([]);
     expect(runtime.terminatedPorts).toEqual([]);
@@ -209,8 +209,8 @@ describe("OpenCodeServerManager generations", () => {
     await replacementPrefixStarted.promise;
 
     await manager.shutdown();
-    replacementPrefixGate.resolve({ command: "opencode", args: [] });
     await rotationFailure;
+    replacementPrefixGate.resolve({ command: "opencode", args: [] });
     await current.release();
 
     expect(runtime.launchedPorts).toEqual([4478]);
@@ -222,12 +222,12 @@ describe("OpenCodeServerManager generations", () => {
     const { manager, runtime } = createTestManager([4473, 4474], { autoAnnounce: false });
 
     const currentStart = manager.acquireCurrent();
-    await runtime.settle();
+    await vi.waitFor(() => expect(runtime.launchedPorts).toContain(4473));
     runtime.processForPort(4473).announceListening();
     const currentAcquisition = await currentStart;
 
     const dedicatedStart = manager.acquireDedicated({ TEST_ENV: "custom" });
-    await runtime.settle();
+    await vi.waitFor(() => expect(runtime.launchedPorts).toContain(4474));
 
     await currentAcquisition.release();
     expect(runtime.terminatedPorts).toEqual([4473]);
@@ -239,6 +239,35 @@ describe("OpenCodeServerManager generations", () => {
 
     await dedicatedAcquisition.release();
     expect(runtime.terminatedPorts).toEqual([4473, 4474]);
+  });
+
+  test("concurrent shutdown and final release share one server termination", async () => {
+    const terminationGate = createDeferred<void>();
+    const runtime = new FakeOpenCodeServerRuntime([4475], { autoAnnounce: true });
+    const terminateProcess = vi.fn<ProcessTerminator>(async (target, options) => {
+      const result = await runtime.terminateProcess(target, options);
+      await terminationGate.promise;
+      return result;
+    });
+    const manager = new OpenCodeServerManager({
+      logger: createTestLogger(),
+      managedProcesses: runtime.managedProcesses,
+      portAllocator: runtime.allocatePort,
+      resolveCommandPrefix: runtime.resolveCommandPrefix,
+      spawnServerProcess: runtime.spawnServerProcess,
+      terminateProcess,
+    });
+    const acquisition = await manager.acquireCurrent();
+
+    const shutdown = manager.shutdown();
+    const release = acquisition.release();
+    await vi.waitFor(() => expect(terminateProcess).toHaveBeenCalledTimes(1));
+    terminationGate.resolve();
+    await Promise.all([shutdown, release]);
+
+    expect(terminateProcess).toHaveBeenCalledTimes(1);
+    expect(runtime.terminatedPorts).toEqual([4475]);
+    expect(await runtime.managedProcesses.list()).toEqual([]);
   });
 
   test("acquireExisting keeps a retired dedicated server alive until every reference releases", async () => {

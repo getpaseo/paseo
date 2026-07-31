@@ -37,6 +37,10 @@ function createDeferred<T>() {
   return { promise, resolve: resolvePromise };
 }
 
+function rejectWhenAborted(signal: AbortSignal, reject: (reason?: unknown) => void): void {
+  signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+}
+
 // Builds an AgentClient that can be injected via the public extraClients option.
 // extraClients is the only injection surface the manager exposes for tests.
 function createExtraClient(
@@ -1294,6 +1298,142 @@ describe("ProviderSnapshotManager lifecycle", () => {
       });
     } finally {
       catalogGate.resolve();
+      manager.destroy();
+    }
+  });
+
+  test("overlapping forced loads remain tracked and every generation aborts on shutdown", async () => {
+    const catalogSignals: AbortSignal[] = [];
+    const fetchCatalog = vi.fn(
+      async (options: FetchCatalogOptions) =>
+        await new Promise<{ models: AgentModelDefinition[]; modes: AgentMode[] }>(
+          (_resolve, reject) => {
+            const signal = options.signal!;
+            catalogSignals.push(signal);
+            rejectWhenAborted(signal, reject);
+          },
+        ),
+    );
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: vi.fn(async () => true),
+          fetchCatalog,
+          shutdown: vi.fn(async () => {}),
+        }),
+      },
+    });
+
+    try {
+      const first = manager.refreshSnapshotForCwd({ cwd: "/tmp/project", providers: ["codex"] });
+      await vi.waitFor(() => expect(catalogSignals).toHaveLength(1));
+      const second = manager.refreshSnapshotForCwd({ cwd: "/tmp/project", providers: ["codex"] });
+      await vi.waitFor(() => expect(catalogSignals).toHaveLength(2));
+      const third = manager.refreshSnapshotForCwd({ cwd: "/tmp/project", providers: ["codex"] });
+      await vi.waitFor(() => expect(catalogSignals).toHaveLength(3));
+
+      await manager.shutdown();
+      await Promise.all([first, second, third]);
+
+      expect(catalogSignals.map((signal) => signal.aborted)).toEqual([true, true, true]);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("provider config replacement aborts an active load before deleting its cache key", async () => {
+    let catalogSignal: AbortSignal | undefined;
+    const fetchCatalog = vi.fn(
+      async (options: FetchCatalogOptions) =>
+        await new Promise<{ models: AgentModelDefinition[]; modes: AgentMode[] }>(
+          (_resolve, reject) => {
+            catalogSignal = options.signal;
+            if (options.signal) rejectWhenAborted(options.signal, reject);
+          },
+        ),
+    );
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: vi.fn(async () => true),
+          fetchCatalog,
+        }),
+      },
+    });
+
+    try {
+      const refresh = manager.refreshSnapshotForCwd({
+        cwd: "/tmp/project",
+        providers: ["codex"],
+      });
+      await vi.waitFor(() => expect(catalogSignal).toBeDefined());
+
+      manager.applyMutableProviderConfig({ codex: { enabled: false } });
+      await refresh;
+
+      expect(catalogSignal?.aborted).toBe(true);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("settings cache refresh aborts active loads before clearing cached provider keys", async () => {
+    let firstSignal: AbortSignal | undefined;
+    let callCount = 0;
+    const fetchCatalog = vi.fn(async (options: FetchCatalogOptions) => {
+      callCount += 1;
+      if (callCount > 1) {
+        return { models: [] as AgentModelDefinition[], modes: [] as AgentMode[] };
+      }
+      return await new Promise<{ models: AgentModelDefinition[]; modes: AgentMode[] }>(
+        (_resolve, reject) => {
+          firstSignal = options.signal;
+          if (options.signal) rejectWhenAborted(options.signal, reject);
+        },
+      );
+    });
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: vi.fn(async () => true),
+          fetchCatalog,
+        }),
+      },
+    });
+
+    try {
+      const workspaceRefresh = manager.refreshSnapshotForCwd({
+        cwd: "/tmp/project",
+        providers: ["codex"],
+      });
+      await vi.waitFor(() => expect(firstSignal).toBeDefined());
+
+      await manager.refreshSettingsSnapshot({ providers: ["codex"] });
+      await workspaceRefresh;
+
+      expect(firstSignal?.aborted).toBe(true);
+    } finally {
       manager.destroy();
     }
   });

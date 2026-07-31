@@ -111,6 +111,32 @@ import { DEFAULT_OMP_THINKING_LEVEL, mapOmpModel } from "./map-omp-model.js";
 
 const OMP_PROVIDER = "omp";
 const OMP_CATALOG_REQUEST_TIMEOUT_MS = 120_000;
+
+function assertOmpCatalogActive(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new Error("OMP catalog probe was canceled");
+  }
+}
+
+async function raceOmpCatalogOperation<T>(
+  operation: Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  if (!signal) return await operation;
+  assertOmpCatalogActive(signal);
+  let onAbort: (() => void) | null = null;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([operation, aborted]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
+}
 const QUESTION_RESPONSE_HEADER = "Response";
 const QUESTION_COMMENT_HEADER = "Comment";
 const OMP_ASK_USER_FREEFORM_SENTINEL = "✏️ Type custom response...";
@@ -2325,18 +2351,30 @@ export class OmpAgentClient implements AgentClient {
   }
 
   async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
+    assertOmpCatalogActive(options.signal);
     const launchMode = this.resolveLaunchMode(undefined);
-    const runtimeSession = await this.runtime.startSession({
+    const startSession = this.runtime.startSession({
       cwd: options.scope === "global" ? homedir() : options.cwd,
       protocolMode: "rpc-ui",
       modeId: launchMode.modeId,
       extraArgs: launchMode.extraArgs,
+      signal: options.signal,
     });
+    let runtimeSession: OmpRuntimeSession;
+    try {
+      runtimeSession = await raceOmpCatalogOperation(startSession, options.signal);
+    } catch (error) {
+      void startSession.then((session) => session.close()).catch(() => undefined);
+      throw error;
+    }
     try {
       const models = transformOmpModels(
-        (await runtimeSession.getAvailableModels(OMP_CATALOG_REQUEST_TIMEOUT_MS)).map((model) =>
-          mapOmpModel(model, this.provider),
-        ),
+        (
+          await raceOmpCatalogOperation(
+            runtimeSession.getAvailableModels(OMP_CATALOG_REQUEST_TIMEOUT_MS),
+            options.signal,
+          )
+        ).map((model) => mapOmpModel(model, this.provider)),
       );
       return { models, modes: [...OMP_MODES] };
     } finally {

@@ -1606,6 +1606,69 @@ describe("ACPAgentClient sessionResponseTransformer", () => {
 });
 
 describe("ACPAgentClient fetchCatalog", () => {
+  test("an already canceled catalog never spawns its ACP probe", async () => {
+    const spawnProcess = vi.fn();
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override spawnProcess = spawnProcess;
+    }
+    const client = new TestACPAgentClient({
+      provider: "pi",
+      logger: createTestLogger(),
+      defaultCommand: ["test-acp"],
+    });
+    const controller = new AbortController();
+    controller.abort(new Error("catalog canceled before spawn"));
+
+    await expect(
+      client.fetchCatalog({
+        scope: "workspace",
+        cwd: "/tmp/acp-canceled",
+        force: false,
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("catalog canceled before spawn");
+    expect(spawnProcess).not.toHaveBeenCalled();
+  });
+
+  test("canceling an in-flight ACP request closes the partial probe", async () => {
+    const requestStarted = vi.fn();
+    const closeProbe = vi.fn(async () => {});
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: null, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession: async () => {
+              requestStarted();
+              return await new Promise(() => {});
+            },
+          },
+          initialize: { agentCapabilities: {} },
+        } as unknown as SpawnedACPProcess;
+      }
+
+      protected override closeProbe = closeProbe;
+    }
+    const client = new TestACPAgentClient({
+      provider: "pi",
+      logger: createTestLogger(),
+      defaultCommand: ["test-acp"],
+    });
+    const controller = new AbortController();
+    const catalog = client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/acp-inflight",
+      force: false,
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(requestStarted).toHaveBeenCalledTimes(1));
+
+    controller.abort(new Error("catalog canceled in request"));
+
+    await expect(catalog).rejects.toThrow("catalog canceled in request");
+    expect(closeProbe).toHaveBeenCalledTimes(1);
+  });
+
   test("passes the requested cwd to the catalog probe", async () => {
     const newSession = vi.fn().mockResolvedValue({ modes: null, models: null, configOptions: [] });
 

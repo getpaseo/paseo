@@ -1,8 +1,52 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import type { PaseoToolCatalog } from "../../tools/types.js";
-import type { OmpNoTurnScheduler, OmpProviderIdleScheduler } from "./agent.js";
+import { OmpAgentClient, type OmpNoTurnScheduler, type OmpProviderIdleScheduler } from "./agent.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
+import type { OmpRuntime, OmpRuntimeSession } from "./runtime.js";
+import { createTestLogger } from "../../../../test-utils/test-logger.js";
+
+describe("OmpAgentClient catalog cancellation", () => {
+  test("an already canceled OMP catalog never starts a runtime session", async () => {
+    const runtime = { startSession: vi.fn() } as unknown as OmpRuntime;
+    const client = new OmpAgentClient({ logger: createTestLogger(), runtime });
+    const controller = new AbortController();
+    controller.abort(new Error("OMP catalog canceled before start"));
+
+    await expect(
+      client.fetchCatalog({
+        scope: "workspace",
+        cwd: "/workspace/omp-canceled",
+        force: false,
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("OMP catalog canceled before start");
+    expect(runtime.startSession).not.toHaveBeenCalled();
+  });
+
+  test("canceling an in-flight OMP catalog request closes its probe session", async () => {
+    const getAvailableModels = vi.fn(async () => await new Promise(() => {}));
+    const close = vi.fn(async () => {});
+    const runtimeSession = { getAvailableModels, close } as unknown as OmpRuntimeSession;
+    const runtime = {
+      startSession: vi.fn(async () => runtimeSession),
+    } as unknown as OmpRuntime;
+    const client = new OmpAgentClient({ logger: createTestLogger(), runtime });
+    const controller = new AbortController();
+    const catalog = client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/omp-inflight",
+      force: false,
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(getAvailableModels).toHaveBeenCalledTimes(1));
+
+    controller.abort(new Error("OMP catalog canceled in request"));
+
+    await expect(catalog).rejects.toThrow("OMP catalog canceled in request");
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+});
 
 class ManualIdleScheduler implements OmpProviderIdleScheduler {
   private readonly retries: Array<() => void> = [];

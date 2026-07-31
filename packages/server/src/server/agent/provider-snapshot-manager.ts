@@ -163,6 +163,8 @@ interface ProviderLoad {
   promise: Promise<void>;
   controller: AbortController;
   runtimeEpoch: number;
+  snapshotCwd: string;
+  provider: AgentProvider;
 }
 
 type ProviderCatalogScope = { scope: "global" } | { scope: "workspace"; cwd: string };
@@ -177,6 +179,7 @@ type ProviderRuntimeLifecycle = "active" | "shutting_down" | "shut_down";
 export class ProviderSnapshotManager {
   private readonly snapshots = new Map<string, Map<AgentProvider, ProviderSnapshotEntry>>();
   private readonly providerLoads = new Map<string, Map<AgentProvider, ProviderLoad>>();
+  private readonly activeProviderLoads = new Set<ProviderLoad>();
   private readonly events = new EventEmitter();
   private destroyed = false;
   private lifecycle: ProviderRuntimeLifecycle = "active";
@@ -415,6 +418,11 @@ export class ProviderSnapshotManager {
     options: ApplyMutableProviderConfigOptions = {},
   ): AgentManagerProviderState {
     this.assertRuntimeActive();
+    this.abortProviderLoads(
+      () => true,
+      new Error("Provider catalog load canceled because provider configuration changed"),
+    );
+    this.providerLoads.clear();
     this.baseProviderOverrides = omitProviderOverrides(
       this.baseProviderOverrides,
       options.removeProviders ?? [],
@@ -427,7 +435,6 @@ export class ProviderSnapshotManager {
     this.providerClients = { ...this.extraClients } as Record<AgentProvider, AgentClient>;
 
     for (const cwd of this.snapshots.keys()) {
-      this.providerLoads.delete(cwd);
       this.snapshots.set(cwd, this.reconcileSnapshotForRegistry(cwd));
       this.emitChange(cwd);
     }
@@ -464,6 +471,7 @@ export class ProviderSnapshotManager {
     this.runtimeEpoch += 1;
     const shutdownPromise = Promise.resolve()
       .then(() => shutdownAgentClients(clients, this.logger))
+      .then(() => undefined)
       .finally(() => {
         this.lifecycle = "shut_down";
         this.invalidateProviderLoads();
@@ -479,6 +487,7 @@ export class ProviderSnapshotManager {
 
   destroy(): void {
     this.destroyed = true;
+    this.abortProviderLoads(() => true, new Error("Provider snapshot manager was destroyed"));
     this.events.removeAllListeners();
     this.snapshots.clear();
     this.providerLoads.clear();
@@ -712,6 +721,11 @@ export class ProviderSnapshotManager {
     const providerSet = providers ? new Set(providers) : null;
     const loadingEntries = this.createLoadingEntries();
 
+    this.abortProviderLoads(
+      (load) => !providerSet || providerSet.has(load.provider),
+      new Error("Provider catalog load was superseded by a forced refresh"),
+    );
+
     for (const [cwd, providerLoads] of Array.from(this.providerLoads.entries())) {
       if (!providerSet) {
         this.providerLoads.delete(cwd);
@@ -769,6 +783,11 @@ export class ProviderSnapshotManager {
     if (existingLoad && !options.force) {
       return existingLoad.promise;
     }
+    if (existingLoad) {
+      existingLoad.controller.abort(
+        new Error("Provider catalog load was superseded by a forced refresh"),
+      );
+    }
     const existingEntry = this.snapshots.get(options.snapshotCwd)?.get(options.provider);
     if (existingEntry && existingEntry.status !== "loading" && !options.force) {
       return Promise.resolve();
@@ -778,7 +797,10 @@ export class ProviderSnapshotManager {
       promise: Promise.resolve(),
       controller: new AbortController(),
       runtimeEpoch: this.runtimeEpoch,
+      snapshotCwd: options.snapshotCwd,
+      provider: options.provider,
     };
+    this.activeProviderLoads.add(load);
     this.setProviderLoad(options.snapshotCwd, options.provider, load);
     load.promise = Promise.resolve()
       .then(() =>
@@ -792,6 +814,7 @@ export class ProviderSnapshotManager {
         }),
       )
       .finally(() => {
+        this.activeProviderLoads.delete(load);
         const providerLoads = this.providerLoads.get(options.snapshotCwd);
         if (providerLoads?.get(options.provider) === load) {
           providerLoads.delete(options.provider);
@@ -954,12 +977,16 @@ export class ProviderSnapshotManager {
   }
 
   private invalidateProviderLoads(): void {
-    for (const loads of this.providerLoads.values()) {
-      for (const load of loads.values()) {
-        load.controller.abort(new Error(this.getRuntimeUnavailableReason()));
+    this.abortProviderLoads(() => true, new Error(this.getRuntimeUnavailableReason()));
+    this.providerLoads.clear();
+  }
+
+  private abortProviderLoads(predicate: (load: ProviderLoad) => boolean, reason: Error): void {
+    for (const load of this.activeProviderLoads) {
+      if (predicate(load)) {
+        load.controller.abort(reason);
       }
     }
-    this.providerLoads.clear();
   }
 
   private isProviderLoadRuntimeActive(load: ProviderLoad): boolean {

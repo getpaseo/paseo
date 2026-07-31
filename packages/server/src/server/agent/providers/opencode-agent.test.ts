@@ -612,6 +612,114 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     expect(maxActiveProviderListCalls).toBeLessThanOrEqual(4);
   });
 
+  test("aborting a catalog refresh aborts the actual OpenCode SDK requests", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const openCodeClient = new TestOpenCodeClient();
+    let providerSignal: AbortSignal | undefined;
+    let agentsSignal: AbortSignal | undefined;
+    openCodeClient.providerListImplementation = async (requestOptions) => {
+      providerSignal = (requestOptions as { signal?: AbortSignal } | undefined)?.signal;
+      return await new Promise((_, reject) => {
+        providerSignal?.addEventListener("abort", () => reject(providerSignal?.reason), {
+          once: true,
+        });
+      });
+    };
+    openCodeClient.appAgentsImplementation = async (requestOptions) => {
+      agentsSignal = (requestOptions as { signal?: AbortSignal } | undefined)?.signal;
+      return await new Promise((_, reject) => {
+        agentsSignal?.addEventListener("abort", () => reject(agentsSignal?.reason), { once: true });
+      });
+    };
+    runtime.enqueueClient(openCodeClient);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const controller = new AbortController();
+    const catalog = client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/opencode-abort",
+      force: false,
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => {
+      expect(providerSignal).toBe(controller.signal);
+      expect(agentsSignal).toBe(controller.signal);
+    });
+
+    controller.abort(new Error("catalog canceled"));
+
+    await expect(catalog).rejects.toThrow("catalog canceled");
+    expect(providerSignal?.aborted).toBe(true);
+    expect(agentsSignal?.aborted).toBe(true);
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+  });
+
+  test("a catalog aborted in the metadata queue never starts its SDK requests", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const activeGate = createTestDeferred<void>();
+    const providerResponse = {
+      data: {
+        connected: ["opencode"],
+        all: [
+          {
+            id: "opencode",
+            name: "OpenCode",
+            source: "api",
+            models: { "big-pickle": { name: "Big Pickle" } },
+          },
+        ],
+      },
+    };
+    let activeRequests = 0;
+    for (let index = 0; index < 2; index += 1) {
+      const activeClient = new TestOpenCodeClient();
+      activeClient.providerListImplementation = async () => {
+        activeRequests += 1;
+        await activeGate.promise;
+        return providerResponse;
+      };
+      activeClient.appAgentsImplementation = async () => {
+        activeRequests += 1;
+        await activeGate.promise;
+        return { data: [] };
+      };
+      runtime.enqueueClient(activeClient);
+    }
+    const queuedClient = new TestOpenCodeClient();
+    const queuedProviderRequest = vi.fn(async () => providerResponse);
+    const queuedAgentsRequest = vi.fn(async () => ({ data: [] }));
+    queuedClient.providerListImplementation = queuedProviderRequest;
+    queuedClient.appAgentsImplementation = queuedAgentsRequest;
+    runtime.enqueueClient(queuedClient);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const activeCatalogs = [
+      client.fetchCatalog({ scope: "workspace", cwd: "/tmp/opencode-active-1", force: false }),
+      client.fetchCatalog({ scope: "workspace", cwd: "/tmp/opencode-active-2", force: false }),
+    ];
+    await vi.waitFor(() => expect(activeRequests).toBe(4));
+    const controller = new AbortController();
+    const queuedCatalog = client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/opencode-queued",
+      force: false,
+      signal: controller.signal,
+    });
+
+    controller.abort(new Error("queued catalog canceled"));
+    await expect(queuedCatalog).rejects.toThrow("queued catalog canceled");
+    activeGate.resolve();
+    await Promise.all(activeCatalogs);
+    await Promise.resolve();
+
+    expect(queuedProviderRequest).not.toHaveBeenCalled();
+    expect(queuedAgentsRequest).not.toHaveBeenCalled();
+  });
+
   test("available modes reflect the agents OpenCode discovers", async () => {
     const cwd = tmpCwd();
     const runtime = new TestOpenCodeHarness();

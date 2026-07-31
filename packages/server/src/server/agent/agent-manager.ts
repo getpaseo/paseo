@@ -76,6 +76,7 @@ import {
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
+const DEFAULT_MODEL_RESOLUTION_TIMEOUT_MS = 30_000;
 const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: false,
   supportsSessionPersistence: true,
@@ -254,6 +255,7 @@ export interface AgentManagerOptions {
   appendSystemPrompt?: string;
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
+  defaultModelResolutionTimeoutMs?: number;
   logger: Logger;
 }
 
@@ -571,6 +573,7 @@ export class AgentManager {
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
+  private readonly defaultModelResolutionControllers = new Set<AbortController>();
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
@@ -583,6 +586,7 @@ export class AgentManager {
   private onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
+  private readonly defaultModelResolutionTimeoutMs: number;
   private acceptingAgentRegistrations = true;
 
   constructor(options: AgentManagerOptions) {
@@ -602,6 +606,8 @@ export class AgentManager {
       interruptSessionMs:
         options.rescueTimeouts?.interruptSessionMs ?? INTERRUPT_SESSION_TIMEOUT_MS,
     };
+    this.defaultModelResolutionTimeoutMs =
+      options.defaultModelResolutionTimeoutMs ?? DEFAULT_MODEL_RESOLUTION_TIMEOUT_MS;
     this.agentStreamCoalescer = new AgentStreamCoalescer({
       windowMs: options.agentStreamCoalesceWindowMs ?? AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS,
       timers: { setTimeout, clearTimeout },
@@ -662,6 +668,9 @@ export class AgentManager {
 
   prepareForShutdown(): void {
     this.acceptingAgentRegistrations = false;
+    for (const controller of this.defaultModelResolutionControllers) {
+      controller.abort(new AgentManagerShuttingDownError());
+    }
   }
 
   setPaseoToolsEnabled(enabled: boolean): void {
@@ -4133,16 +4142,59 @@ export class AgentManager {
     if (!client) {
       return undefined;
     }
+    const controller = new AbortController();
+    this.defaultModelResolutionControllers.add(controller);
+    const timeout = setTimeout(() => {
+      controller.abort(
+        new Error(
+          `Provider default model resolution timed out after ${this.defaultModelResolutionTimeoutMs}ms`,
+        ),
+      );
+    }, this.defaultModelResolutionTimeoutMs);
+    timeout.unref?.();
     try {
-      const catalog = await client.fetchCatalog({
+      const catalogRequest = client.fetchCatalog({
         scope: "workspace",
         cwd: config.cwd,
         force: false,
+        signal: controller.signal,
       });
+      const catalog = await this.waitForDefaultModelResolution(catalogRequest, controller.signal);
       return (catalog.models.find((model) => model.isDefault) ?? catalog.models[0])?.id;
-    } catch {
+    } catch (error) {
+      if (!this.acceptingAgentRegistrations) {
+        throw new AgentManagerShuttingDownError();
+      }
+      this.logger.warn(
+        { err: error, provider: config.provider },
+        "Failed to resolve provider default model",
+      );
       // Provider may not support model listing — leave model undefined.
       return undefined;
+    } finally {
+      clearTimeout(timeout);
+      this.defaultModelResolutionControllers.delete(controller);
+    }
+  }
+
+  private async waitForDefaultModelResolution<T>(
+    operation: Promise<T>,
+    signal: AbortSignal,
+  ): Promise<T> {
+    if (signal.aborted) {
+      throw signal.reason;
+    }
+    let onAbort: (() => void) | null = null;
+    const aborted = new Promise<never>((_, reject) => {
+      onAbort = () => reject(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      return await Promise.race([operation, aborted]);
+    } finally {
+      if (onAbort) {
+        signal.removeEventListener("abort", onAbort);
+      }
     }
   }
 

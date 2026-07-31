@@ -115,6 +115,15 @@ interface ResolvedProvider {
   createBaseClient: (logger: Logger) => AgentClient;
 }
 
+const PROVIDER_CLIENT_SHUTDOWN_TIMEOUT_MS = 15_000;
+
+export interface ProviderClientShutdownReceipt {
+  provider: AgentProvider;
+  status: "completed" | "failed" | "skipped" | "timed_out";
+  durationMs: number;
+  timeoutMs: number;
+}
+
 const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
   claude: (logger, runtimeSettings) =>
     new ClaudeAgentClient({
@@ -383,7 +392,7 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
   };
 }
 
-function wrapClientProvider(
+export function wrapClientProvider(
   provider: AgentProvider,
   inner: AgentClient,
   profileModels: ProviderProfileModel[],
@@ -393,6 +402,11 @@ function wrapClientProvider(
   const listImportableSessions = inner.listImportableSessions?.bind(inner);
   const importSession = inner.importSession?.bind(inner);
   const listFeatures = inner.listFeatures?.bind(inner);
+  const listCommands = inner.listCommands?.bind(inner);
+  const archiveNativeSession = inner.archiveNativeSession?.bind(inner);
+  const unarchiveNativeSession = inner.unarchiveNativeSession?.bind(inner);
+  const shutdown = inner.shutdown?.bind(inner);
+  let shutdownPromise: Promise<void> | null = null;
 
   return {
     provider,
@@ -448,6 +462,9 @@ function wrapClientProvider(
     listFeatures: listFeatures
       ? async (config) => await listFeatures({ ...config, provider: inner.provider })
       : undefined,
+    listCommands: listCommands
+      ? async (config) => await listCommands({ ...config, provider: inner.provider })
+      : undefined,
     listImportableSessions: listImportableSessions
       ? async (options) => await listImportableSessions(options)
       : undefined,
@@ -481,6 +498,22 @@ function wrapClientProvider(
       : undefined,
     isAvailable: () => inner.isAvailable(),
     getDiagnostic: inner.getDiagnostic?.bind(inner),
+    archiveNativeSession: archiveNativeSession
+      ? async (handle) => {
+          await archiveNativeSession({ ...handle, provider: inner.provider });
+        }
+      : undefined,
+    unarchiveNativeSession: unarchiveNativeSession
+      ? async (handle) => {
+          await unarchiveNativeSession({ ...handle, provider: inner.provider });
+        }
+      : undefined,
+    shutdown: shutdown
+      ? () => {
+          shutdownPromise ??= Promise.resolve().then(shutdown);
+          return shutdownPromise;
+        }
+      : undefined,
   };
 }
 
@@ -796,14 +829,52 @@ export async function shutdownProviders(
 export async function shutdownAgentClients(
   clients: Iterable<AgentClient>,
   logger: Logger,
-): Promise<void> {
-  await Promise.all(
-    Array.from(clients).map(async (client) => {
-      if (!client.shutdown) return;
+  options: { timeoutMs?: number } = {},
+): Promise<ProviderClientShutdownReceipt[]> {
+  const timeoutMs = options.timeoutMs ?? PROVIDER_CLIENT_SHUTDOWN_TIMEOUT_MS;
+  return await Promise.all(
+    Array.from(clients).map(async (client): Promise<ProviderClientShutdownReceipt> => {
+      const startedAt = Date.now();
+      if (!client.shutdown) {
+        return { provider: client.provider, status: "skipped", durationMs: 0, timeoutMs };
+      }
+
+      let timer: ReturnType<typeof setTimeout> | null = null;
       try {
-        await client.shutdown();
+        const result = await Promise.race([
+          Promise.resolve()
+            .then(() => client.shutdown?.())
+            .then(() => "completed" as const),
+          new Promise<"timed_out">((resolve) => {
+            timer = setTimeout(() => resolve("timed_out"), timeoutMs);
+            timer.unref?.();
+          }),
+        ]);
+        const receipt: ProviderClientShutdownReceipt = {
+          provider: client.provider,
+          status: result,
+          durationMs: Date.now() - startedAt,
+          timeoutMs,
+        };
+        if (result === "timed_out") {
+          logger.warn(receipt, "Provider client shutdown timed out");
+        } else {
+          logger.debug(receipt, "Provider client shutdown completed");
+        }
+        return receipt;
       } catch (error) {
-        logger.warn({ err: error, provider: client.provider }, "Provider client shutdown failed");
+        const receipt: ProviderClientShutdownReceipt = {
+          provider: client.provider,
+          status: "failed",
+          durationMs: Date.now() - startedAt,
+          timeoutMs,
+        };
+        logger.warn({ ...receipt, err: error }, "Provider client shutdown failed");
+        return receipt;
+      } finally {
+        if (timer) {
+          clearTimeout(timer);
+        }
       }
     }),
   );

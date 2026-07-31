@@ -71,6 +71,7 @@ export class TestOpenCodeHarness implements OpenCodeServerManagerLike {
 export class TestOpenCodeClient {
   readonly calls = {
     appAgents: [] as unknown[],
+    appAgentsOptions: [] as unknown[],
     commandList: [] as unknown[],
     eventSubscribe: [] as unknown[],
     experimentalSessionList: [] as unknown[],
@@ -79,6 +80,7 @@ export class TestOpenCodeClient {
     mcpConnect: [] as unknown[],
     permissionReply: [] as unknown[],
     providerList: [] as unknown[],
+    providerListOptions: [] as unknown[],
     questionReject: [] as unknown[],
     questionReply: [] as unknown[],
     sessionAbort: [] as unknown[],
@@ -102,7 +104,8 @@ export class TestOpenCodeClient {
   mcpConnectResponse: OpenCodeResponse = {};
   permissionReplyResponse: OpenCodeResponse = {};
   providerListResponse: OpenCodeResponse = { data: { connected: [], all: [] } };
-  providerListImplementation: (() => Promise<OpenCodeResponse>) | null = null;
+  providerListImplementation: ((options?: unknown) => Promise<OpenCodeResponse>) | null = null;
+  appAgentsImplementation: ((options?: unknown) => Promise<OpenCodeResponse>) | null = null;
   globalEventImplementation:
     | ((options: unknown) => Promise<{ stream: AsyncIterable<unknown> }>)
     | null = null;
@@ -140,9 +143,12 @@ export class TestOpenCodeClient {
   asSdkClient(): OpencodeClient {
     return {
       app: {
-        agents: async (parameters: unknown) => {
+        agents: async (parameters: unknown, options: unknown) => {
           this.calls.appAgents.push(parameters);
-          return this.appAgentsResponse;
+          this.calls.appAgentsOptions.push(options);
+          return this.appAgentsImplementation
+            ? await this.appAgentsImplementation(options)
+            : this.appAgentsResponse;
         },
       },
       command: {
@@ -194,10 +200,11 @@ export class TestOpenCodeClient {
         },
       },
       provider: {
-        list: async (parameters: unknown) => {
+        list: async (parameters: unknown, options: unknown) => {
           this.calls.providerList.push(parameters);
+          this.calls.providerListOptions.push(options);
           return this.providerListImplementation
-            ? await this.providerListImplementation()
+            ? await this.providerListImplementation(options)
             : this.providerListResponse;
         },
       },

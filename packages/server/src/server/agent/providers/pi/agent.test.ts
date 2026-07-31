@@ -14,11 +14,12 @@ import path from "node:path";
 import pino from "pino";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
-import { describe, expect, onTestFinished, test } from "vitest";
+import { describe, expect, onTestFinished, test, vi } from "vitest";
 
 import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
 import { PiRpcAgentClient, PiRpcAgentSession, transformPiModels } from "./agent.js";
 import { FakePi } from "./test-utils/fake-pi.js";
+import type { PiRuntime, PiRuntimeSession } from "./runtime.js";
 
 const ONE_BY_ONE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
@@ -1414,6 +1415,46 @@ describe("PiRpcAgentClient", () => {
       modes: [],
     });
     expect(pi.recordedLaunches[0]).toMatchObject({ cwd: "/workspace/with-extension" });
+  });
+
+  test("an already canceled Pi catalog never starts a runtime session", async () => {
+    const runtime = { startSession: vi.fn() } as unknown as PiRuntime;
+    const client = new PiRpcAgentClient({ logger: pino({ level: "silent" }), runtime });
+    const controller = new AbortController();
+    controller.abort(new Error("Pi catalog canceled before start"));
+
+    await expect(
+      client.fetchCatalog({
+        scope: "workspace",
+        cwd: "/workspace/pi-canceled",
+        force: false,
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("Pi catalog canceled before start");
+    expect(runtime.startSession).not.toHaveBeenCalled();
+  });
+
+  test("canceling an in-flight Pi catalog request closes its probe session", async () => {
+    const getAvailableModels = vi.fn(async () => await new Promise(() => {}));
+    const close = vi.fn(async () => {});
+    const runtimeSession = { getAvailableModels, close } as unknown as PiRuntimeSession;
+    const runtime = {
+      startSession: vi.fn(async () => runtimeSession),
+    } as unknown as PiRuntime;
+    const client = new PiRpcAgentClient({ logger: pino({ level: "silent" }), runtime });
+    const controller = new AbortController();
+    const catalog = client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/pi-inflight",
+      force: false,
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(getAvailableModels).toHaveBeenCalledTimes(1));
+
+    controller.abort(new Error("Pi catalog canceled in request"));
+
+    await expect(catalog).rejects.toThrow("Pi catalog canceled in request");
+    expect(close).toHaveBeenCalledTimes(1);
   });
 
   test("lists no draft features without starting a Pi session", async () => {

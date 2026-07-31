@@ -259,6 +259,37 @@ export function buildACPClientCapabilities(
 // NO_BROWSER is honored by Gemini CLI; other ACP agents ignore it.
 const PROBE_ENV: Record<string, string> = { NO_BROWSER: "true" };
 const ACP_CATALOG_TIMEOUT_MS = 60_000;
+
+function assertCatalogSignalActive(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) {
+    return;
+  }
+  throw signal.reason instanceof Error
+    ? signal.reason
+    : new Error("ACP catalog probe was canceled");
+}
+
+async function raceCatalogOperation<T>(
+  operation: Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  if (!signal) {
+    return await operation;
+  }
+  assertCatalogSignalActive(signal);
+  let onAbort: (() => void) | null = null;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([operation, aborted]);
+  } finally {
+    if (onAbort) {
+      signal.removeEventListener("abort", onAbort);
+    }
+  }
+}
 const ACP_DIAGNOSTIC_PHASE_TIMEOUT_MS = 20_000;
 
 function summarizeMalformedACPStdoutError(error: unknown): { type: string; message: string } {
@@ -844,6 +875,7 @@ export class ACPAgentClient implements AgentClient {
   }
 
   async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
+    assertCatalogSignalActive(options.signal);
     const cwd = options.scope === "global" ? homedir() : options.cwd;
     const timeoutMs = options.timeoutMs ?? ACP_CATALOG_TIMEOUT_MS;
     let probe: UninitializedACPProcess | null = null;
@@ -851,16 +883,20 @@ export class ACPAgentClient implements AgentClient {
       const catalogProbe = (async () => {
         const initializedProbe = await this.spawnProcess(PROBE_ENV, {
           initializeTimeoutMs: timeoutMs,
+          signal: options.signal,
           onSpawned: (spawned) => {
             probe = spawned;
           },
         });
         probe = initializedProbe;
-        const response = await this.runACPRequest(() =>
-          initializedProbe.connection.newSession({
-            cwd,
-            mcpServers: [],
-          }),
+        const response = await raceCatalogOperation(
+          this.runACPRequest(() =>
+            initializedProbe.connection.newSession({
+              cwd,
+              mcpServers: [],
+            }),
+          ),
+          options.signal,
         );
         const transformed = this.transformSessionResponse(response);
         const models = deriveModelDefinitionsFromACP(
@@ -977,9 +1013,10 @@ export class ACPAgentClient implements AgentClient {
     options?: {
       initializeTimeoutMs?: number;
       onSpawned?: (probe: UninitializedACPProcess) => void;
+      signal?: AbortSignal;
     },
   ): Promise<SpawnedACPProcess> {
-    const transport = await this.spawnTransport(launchEnv);
+    const transport = await this.spawnTransport(launchEnv, options?.signal);
     const probe: UninitializedACPProcess = {
       child: transport.child,
       connection: transport.connection,
@@ -987,7 +1024,11 @@ export class ACPAgentClient implements AgentClient {
     };
     options?.onSpawned?.(probe);
     try {
-      const initialize = await this.initializeTransport(transport, options?.initializeTimeoutMs);
+      const initialize = await this.initializeTransport(
+        transport,
+        options?.initializeTimeoutMs,
+        options?.signal,
+      );
       const initializedProbe: SpawnedACPProcess = {
         ...probe,
         initialize,
@@ -1000,8 +1041,12 @@ export class ACPAgentClient implements AgentClient {
     }
   }
 
-  protected async spawnTransport(launchEnv?: Record<string, string>): Promise<ACPProcessTransport> {
-    const { command, args } = await this.resolveLaunchCommand();
+  protected async spawnTransport(
+    launchEnv?: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<ACPProcessTransport> {
+    const { command, args } = await raceCatalogOperation(this.resolveLaunchCommand(), signal);
+    assertCatalogSignalActive(signal);
     const child = spawnProcess(command, args, {
       cwd: process.cwd(),
       ...createProviderEnvSpec({
@@ -1048,6 +1093,7 @@ export class ACPAgentClient implements AgentClient {
   protected async initializeTransport(
     transport: ACPProcessTransport,
     initializeTimeoutMs?: number,
+    signal?: AbortSignal,
   ): Promise<InitializeResponse> {
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const initializeTimeoutPromise = initializeTimeoutMs
@@ -1059,19 +1105,22 @@ export class ACPAgentClient implements AgentClient {
       : null;
 
     try {
-      return await this.runACPRequest(() =>
-        Promise.race([
-          transport.connection.initialize({
-            protocolVersion: PROTOCOL_VERSION,
-            clientCapabilities: buildACPClientCapabilities(
-              this.clientCapabilityMeta,
-              this.clientCapabilities,
-            ),
-            clientInfo: { name: "Paseo", version: "dev" },
-          }),
-          transport.spawnError,
-          ...(initializeTimeoutPromise ? [initializeTimeoutPromise] : []),
-        ]),
+      return await raceCatalogOperation(
+        this.runACPRequest(() =>
+          Promise.race([
+            transport.connection.initialize({
+              protocolVersion: PROTOCOL_VERSION,
+              clientCapabilities: buildACPClientCapabilities(
+                this.clientCapabilityMeta,
+                this.clientCapabilities,
+              ),
+              clientInfo: { name: "Paseo", version: "dev" },
+            }),
+            transport.spawnError,
+            ...(initializeTimeoutPromise ? [initializeTimeoutPromise] : []),
+          ]),
+        ),
+        signal,
       );
     } finally {
       if (timeout) {

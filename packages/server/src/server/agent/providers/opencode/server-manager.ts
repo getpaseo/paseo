@@ -41,6 +41,7 @@ export interface OpenCodeServerGeneration {
   ready: Promise<void>;
   managedProcessId?: string;
   managedProcessRecord?: Promise<{ id: string } | null>;
+  terminationPromise?: Promise<void>;
 }
 
 export type OpenCodePortAllocator = () => Promise<number>;
@@ -73,6 +74,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private lifecycleGeneration = 0;
   private shutDown = false;
   private shutdownPromise: Promise<void> | null = null;
+  private readonly shutdownController = new AbortController();
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly runtimeSettingsKey: string;
@@ -322,10 +324,13 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     generation: number,
   ): Promise<OpenCodeServerGeneration> {
     this.assertGenerationActive(generation);
-    const port = await this.portAllocator();
+    const port = await this.awaitLifecycleOperation(this.portAllocator(), generation);
     this.assertGenerationActive(generation);
     const url = `http://127.0.0.1:${port}`;
-    const launchPrefix = await this.resolveCommandPrefix();
+    const launchPrefix = await this.awaitLifecycleOperation(
+      this.resolveCommandPrefix(),
+      generation,
+    );
     this.assertGenerationActive(generation);
     const serverArgs = [...launchPrefix.args, "serve", "--port", String(port)];
     // Use a neutral OpenCode home as the server cwd. Launching from the user's
@@ -469,6 +474,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     }
     this.shutDown = true;
     this.lifecycleGeneration += 1;
+    this.shutdownController.abort(this.createShutDownError());
     const servers = new Set([
       ...(this.currentServer ? [this.currentServer] : []),
       ...Array.from(this.retiredServers),
@@ -505,6 +511,27 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     return new Error("OpenCode server manager has shut down");
   }
 
+  private async awaitLifecycleOperation<T>(operation: Promise<T>, generation: number): Promise<T> {
+    this.assertGenerationActive(generation);
+    const signal = this.shutdownController.signal;
+    if (signal.aborted) {
+      throw this.createShutDownError();
+    }
+
+    let onAbort: (() => void) | null = null;
+    const aborted = new Promise<never>((_, reject) => {
+      onAbort = () => reject(this.createShutDownError());
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      return await Promise.race([operation, aborted]);
+    } finally {
+      if (onAbort) {
+        signal.removeEventListener("abort", onAbort);
+      }
+    }
+  }
+
   private async cleanupRetiredServers(): Promise<void> {
     const cleanup: Promise<void>[] = [];
     for (const server of Array.from(this.retiredServers)) {
@@ -516,28 +543,29 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     await Promise.all(cleanup);
   }
 
-  private async killServer(server: OpenCodeServerGeneration): Promise<void> {
-    if (
-      (server.process.exitCode !== null && server.process.exitCode !== undefined) ||
-      (server.process.signalCode !== null && server.process.signalCode !== undefined)
-    ) {
-      return;
-    }
-    const result = await this.terminateProcess(server.process, {
-      gracefulTimeoutMs: OPENCODE_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS,
-      forceTimeoutMs: OPENCODE_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS,
-      onForceSignal: () => {
+  private killServer(server: OpenCodeServerGeneration): Promise<void> {
+    server.terminationPromise ??= this.terminateServer(server);
+    return server.terminationPromise;
+  }
+
+  private async terminateServer(server: OpenCodeServerGeneration): Promise<void> {
+    if (server.process.exitCode === null && server.process.signalCode === null) {
+      const result = await this.terminateProcess(server.process, {
+        gracefulTimeoutMs: OPENCODE_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS,
+        forceTimeoutMs: OPENCODE_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS,
+        onForceSignal: () => {
+          this.logger.warn(
+            { timeoutMs: OPENCODE_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS },
+            "OpenCode server did not exit after SIGTERM; sending SIGKILL",
+          );
+        },
+      });
+      if (result === "kill-timeout") {
         this.logger.warn(
-          { timeoutMs: OPENCODE_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS },
-          "OpenCode server did not exit after SIGTERM; sending SIGKILL",
+          { timeoutMs: OPENCODE_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS },
+          "OpenCode server did not report exit after SIGKILL",
         );
-      },
-    });
-    if (result === "kill-timeout") {
-      this.logger.warn(
-        { timeoutMs: OPENCODE_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS },
-        "OpenCode server did not report exit after SIGKILL",
-      );
+      }
     }
     if (server.managedProcessId) {
       await this.removeManagedProcessId(server.managedProcessId);
