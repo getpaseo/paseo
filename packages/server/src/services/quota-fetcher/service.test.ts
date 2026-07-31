@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,16 +37,22 @@ function writeCodexAuth(dir: string, accessToken: string, refreshToken = "rt_cod
   );
 }
 
-function writeKimiCredentials(dir: string, accessToken: string): void {
+function kimiCredentialPath(dir: string): string {
+  return join(dir, "credentials", "kimi-code.json");
+}
+
+function writeKimiCredentials(dir: string, accessToken: string, overrides: object = {}): void {
   mkdirSync(join(dir, "credentials"), { recursive: true });
   writeFileSync(
-    join(dir, "credentials", "kimi-code.json"),
+    kimiCredentialPath(dir),
     JSON.stringify({
       access_token: accessToken,
       refresh_token: "rt_kimi",
       expires_at: 1_798_812_800,
+      expires_in: 900,
       scope: "kimi-code",
       token_type: "Bearer",
+      ...overrides,
     }),
   );
 }
@@ -397,7 +403,9 @@ describe("real provider usage fetchers", () => {
         new KimiQuotaProvider({
           logger,
           fetch: fetchThroughTestDouble,
-          homeDir: options.kimiHomeDir,
+          // Never leave this undefined: the provider would fall back to os.homedir() and
+          // read — and now write — the developer's real Kimi credentials.
+          homeDir: options.kimiHomeDir ?? homeDir,
         }),
         new MiniMaxQuotaProvider({
           logger,
@@ -919,6 +927,157 @@ describe("real provider usage fetchers", () => {
         }),
       ],
     });
+  });
+
+  it("reads Kimi credentials whose optional fields are null", async () => {
+    writeKimiCredentials(join(homeDir, ".kimi-code"), "kimi_cli_token", {
+      expires_at: null,
+      expires_in: null,
+      scope: null,
+      token_type: null,
+    });
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.kimi.com/coding/v1/usages",
+          () => jsonResponse({ usage: { limit: "100", remaining: "60" } }),
+        ],
+      ]),
+    );
+
+    const kimi = findProvider(await service({ kimiHomeDir: homeDir }).listUsage(), "kimi");
+
+    expect(kimi.status).toBe("available");
+  });
+
+  it("persists refreshed Kimi tokens to the credential file that was read", async () => {
+    writeKimiCredentials(join(homeDir, ".kimi-code"), "at_kimi_expired", {
+      preserved_field: "keep-me",
+    });
+    const authorization: Array<string | null> = [];
+    let usageCalls = 0;
+    fetchApi = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const endpoint = url.toString();
+      if (endpoint === "https://api.kimi.com/coding/v1/usages") {
+        usageCalls += 1;
+        authorization.push(
+          (init?.headers as Record<string, string> | undefined)?.Authorization ?? null,
+        );
+        if (usageCalls === 1) return new Response(null, { status: 401 });
+        return jsonResponse({ usage: { limit: "100", remaining: "74" } });
+      }
+      if (endpoint === "https://auth.kimi.com/api/oauth/token") {
+        expect(init?.method).toBe("POST");
+        expect(init?.body?.toString()).toContain("grant_type=refresh_token");
+        expect(init?.body?.toString()).toContain("refresh_token=rt_kimi");
+        return jsonResponse({
+          access_token: "at_kimi_fresh",
+          refresh_token: "rt_kimi_rotated",
+          expires_in: 900,
+        });
+      }
+      throw new Error(`Unmocked fetch: ${endpoint}`);
+    }) as never;
+
+    const result = await service({ kimiHomeDir: homeDir }).listUsage();
+    const persisted = JSON.parse(
+      readFileSync(kimiCredentialPath(join(homeDir, ".kimi-code")), "utf8"),
+    );
+
+    expect(findProvider(result, "kimi").status).toBe("available");
+    expect(authorization).toEqual(["Bearer at_kimi_expired", "Bearer at_kimi_fresh"]);
+    expect(persisted).toMatchObject({
+      access_token: "at_kimi_fresh",
+      refresh_token: "rt_kimi_rotated",
+      expires_in: 900,
+      scope: "kimi-code",
+      preserved_field: "keep-me",
+    });
+    expect(persisted.expires_at).toBeGreaterThan(Date.now() / 1000);
+  });
+
+  it("prefers a Kimi token rewritten on disk over refreshing again", async () => {
+    const kimiHome = join(homeDir, ".kimi-code");
+    writeKimiCredentials(kimiHome, "at_kimi_old");
+    let usageCalls = 0;
+    fetchApi = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const endpoint = url.toString();
+      if (endpoint === "https://api.kimi.com/coding/v1/usages") {
+        usageCalls += 1;
+        if (usageCalls === 1) {
+          writeKimiCredentials(kimiHome, "at_kimi_rewritten");
+          return new Response(null, { status: 401 });
+        }
+        expect((init?.headers as Record<string, string> | undefined)?.Authorization).toBe(
+          "Bearer at_kimi_rewritten",
+        );
+        return jsonResponse({ usage: { limit: "100", remaining: "50" } });
+      }
+      throw new Error(`Unmocked fetch: ${endpoint}`);
+    }) as never;
+
+    const result = await service({ kimiHomeDir: homeDir }).listUsage();
+
+    expect(findProvider(result, "kimi").status).toBe("available");
+    expect(usageCalls).toBe(2);
+  });
+
+  it("does not recreate a Kimi credential file deleted during the refresh", async () => {
+    const credentialPath = kimiCredentialPath(join(homeDir, ".kimi-code"));
+    writeKimiCredentials(join(homeDir, ".kimi-code"), "at_kimi_expired");
+    fetchApi = mockFetch(
+      new Map([
+        ["https://api.kimi.com/coding/v1/usages", () => new Response(null, { status: 401 })],
+        [
+          "https://auth.kimi.com/api/oauth/token",
+          () => {
+            rmSync(credentialPath, { force: true });
+            return jsonResponse({ access_token: "at_kimi_fresh", expires_in: 900 });
+          },
+        ],
+      ]),
+    );
+
+    const result = await service({ kimiHomeDir: homeDir }).listUsage();
+
+    expect(findProvider(result, "kimi").status).toBe("unavailable");
+    expect(existsSync(credentialPath)).toBe(false);
+  });
+
+  it("returns unavailable Kimi usage when the token refresh is rejected", async () => {
+    writeKimiCredentials(join(homeDir, ".kimi-code"), "at_kimi_expired");
+    fetchApi = mockFetch(
+      new Map([
+        ["https://api.kimi.com/coding/v1/usages", () => new Response(null, { status: 401 })],
+        ["https://auth.kimi.com/api/oauth/token", () => new Response(null, { status: 400 })],
+      ]),
+    );
+
+    const result = await service({ kimiHomeDir: homeDir }).listUsage();
+
+    expect(findProvider(result, "kimi").status).toBe("unavailable");
+  });
+
+  it("does not refresh Kimi tokens read from the environment", async () => {
+    process.env["KIMI_TOKEN"] = "kimi_test_token";
+    const usageFetch = vi.fn(async () => new Response(null, { status: 401 }));
+    fetchApi = usageFetch as never;
+
+    const result = await service().listUsage();
+
+    expect(findProvider(result, "kimi").status).toBe("unavailable");
+    expect(usageFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not refresh Kimi tokens on a 403", async () => {
+    writeKimiCredentials(join(homeDir, ".kimi-code"), "at_kimi_forbidden");
+    const usageFetch = vi.fn(async () => new Response(null, { status: 403 }));
+    fetchApi = usageFetch as never;
+
+    const result = await service({ kimiHomeDir: homeDir }).listUsage();
+
+    expect(findProvider(result, "kimi").status).toBe("unavailable");
+    expect(usageFetch).toHaveBeenCalledTimes(1);
   });
 
   it("fetches MiniMax usage from MINIMAX_API_KEY against the global endpoint", async () => {

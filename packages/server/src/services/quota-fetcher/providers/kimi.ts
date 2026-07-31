@@ -1,11 +1,13 @@
+import { randomUUID } from "node:crypto";
 import { existsSync, promises as fs } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { Logger } from "pino";
 import { z } from "zod";
 import type { ProviderUsage } from "../../../server/messages.js";
 import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
 import {
+  ApiNumberSchema,
   ApiOptionalStringSchema,
   fetchProviderApi,
   toneFromUsedPct,
@@ -28,21 +30,21 @@ const KimiUsageResponseSchema = z.object({
 
 const KimiAuthSchema = z
   .object({
-    access_token: z.string().optional(),
-    refresh_token: z.string().optional(),
-    expires_at: z.number().optional(),
-    expires_in: z.number().optional(),
-    scope: z.string().optional(),
-    token_type: z.string().optional(),
+    access_token: z.string().nullish(),
+    refresh_token: z.string().nullish(),
+    expires_at: ApiNumberSchema.nullish(),
+    expires_in: ApiNumberSchema.nullish(),
+    scope: z.string().nullish(),
+    token_type: z.string().nullish(),
   })
   .passthrough();
 
 const KimiTokenRefreshSchema = z.object({
   access_token: z.string(),
-  refresh_token: z.string().optional(),
-  expires_in: z.coerce.number().optional(),
-  scope: z.string().optional(),
-  token_type: z.string().optional(),
+  refresh_token: z.string().nullish(),
+  expires_in: ApiNumberSchema.nullish(),
+  scope: z.string().nullish(),
+  token_type: z.string().nullish(),
 });
 
 type KimiAuth = z.infer<typeof KimiAuthSchema>;
@@ -77,36 +79,7 @@ export class KimiQuotaProvider implements ProviderUsageFetcher {
     const credentials = await this.readCredentials();
     if (!credentials) return unavailableUsage(this);
 
-    let token = credentials.credentials.access_token;
-    let res = await this.callUsageApi(token);
-
-    if (res.status === 401 || res.status === 403) {
-      if (!credentials.filePath || !credentials.credentials.refresh_token) {
-        return unavailableUsage(this);
-      }
-
-      // Kimi Code may have refreshed the same credential file while this request was in
-      // flight. Prefer that newer token before making a second refresh request ourselves.
-      const latest = await this.readCredentialFile(credentials.filePath);
-      if (latest?.access_token && latest.access_token !== token) {
-        token = latest.access_token;
-        res = await this.callUsageApi(token);
-      }
-
-      if (res.status === 401 || res.status === 403) {
-        const refreshToken = latest?.refresh_token ?? credentials.credentials.refresh_token;
-        const refreshed = await this.refreshToken(refreshToken);
-        if (!refreshed) return unavailableUsage(this);
-
-        const merged = this.mergeRefreshedCredentials(
-          latest ?? credentials.credentials,
-          refreshed,
-        );
-        await this.saveCredentials(credentials.filePath, merged);
-
-        res = await this.callUsageApi(refreshed.access_token);
-      }
-    }
+    const res = await this.fetchUsageResponse(credentials);
 
     if (!res.ok) {
       this.logger.debug({ status: res.status }, "Kimi usage fetch failed");
@@ -144,6 +117,26 @@ export class KimiQuotaProvider implements ProviderUsageFetcher {
     };
   }
 
+  private async fetchUsageResponse(record: KimiCredentialRecord): Promise<Response> {
+    const { credentials, filePath } = record;
+    const res = await this.callUsageApi(credentials.access_token);
+
+    if (res.status !== 401 || !filePath || !credentials.refresh_token) return res;
+
+    const latest = await this.readCredentialFile(filePath);
+    const retried =
+      latest?.access_token && latest.access_token !== credentials.access_token
+        ? await this.callUsageApi(latest.access_token)
+        : res;
+    if (retried.status !== 401) return retried;
+
+    const refreshed = await this.refreshToken(latest?.refresh_token ?? credentials.refresh_token);
+    if (!refreshed) return retried;
+
+    await this.saveRefreshedCredentials(filePath, refreshed);
+    return this.callUsageApi(refreshed.access_token);
+  }
+
   private async callUsageApi(token: string): Promise<Response> {
     return fetchProviderApi(this.fetchApi, KIMI_USAGE_URL, {
       headers: {
@@ -172,32 +165,34 @@ export class KimiQuotaProvider implements ProviderUsageFetcher {
     return parsed.success ? parsed.data : null;
   }
 
-  private mergeRefreshedCredentials(
-    existing: KimiAuth,
+  private async saveRefreshedCredentials(
+    filePath: string,
     refreshed: KimiTokenRefresh,
-  ): KimiAuth & { access_token: string } {
+  ): Promise<void> {
+    const existing = await this.readCredentialFile(filePath);
+    if (!existing) return;
+
     const expiresIn = refreshed.expires_in ?? existing.expires_in;
-    return {
+    const merged: KimiAuth = {
       ...existing,
       access_token: refreshed.access_token,
       refresh_token: refreshed.refresh_token ?? existing.refresh_token,
       expires_in: expiresIn,
-      expires_at: expiresIn === undefined ? existing.expires_at : Date.now() / 1000 + expiresIn,
+      expires_at:
+        expiresIn == null ? existing.expires_at : Math.floor(Date.now() / 1000) + expiresIn,
       scope: refreshed.scope ?? existing.scope,
       token_type: refreshed.token_type ?? existing.token_type,
     };
-  }
 
-  private async saveCredentials(filePath: string, credentials: KimiAuth): Promise<void> {
     const tempPath = join(
       dirname(filePath),
-      `.kimi-code.json.${process.pid}.${Date.now()}.tmp`,
+      `.${basename(filePath)}.${process.pid}.${randomUUID()}.tmp`,
     );
     try {
-      await fs.writeFile(tempPath, JSON.stringify(credentials), { mode: 0o600 });
+      await fs.writeFile(tempPath, JSON.stringify(merged, null, 2), { mode: 0o600 });
       await fs.rename(tempPath, filePath);
     } catch (error) {
-      this.logger.debug({ err: error }, "Failed to persist refreshed Kimi credentials");
+      this.logger.warn({ err: error }, "Failed to persist refreshed Kimi credentials");
       await fs.rm(tempPath, { force: true }).catch(() => undefined);
     }
   }
