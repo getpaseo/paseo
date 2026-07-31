@@ -3,10 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "vitest";
 import { DaemonClient } from "./test-utils/index.js";
-import {
-  createTestPaseoDaemon,
-  type TestPaseoDaemon,
-} from "./test-utils/paseo-daemon.js";
+import { createTestPaseoDaemon, type TestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 
 async function recordMaterialWrite(daemon: TestPaseoDaemon, agentId: string): Promise<void> {
   await daemon.daemon.agentManager.appendTimelineItem(agentId, {
@@ -63,7 +60,7 @@ test("fetch agent exposes a backward-compatible material progress signal", async
       completedCompactionsSinceMaterialProgress: 0,
       lastMaterialProgressAt: null,
       lastMaterialProgressKind: null,
-      reason: "No current continuation is available.",
+      reason: "Timeline history is unavailable.",
     });
   } finally {
     await client.close();
