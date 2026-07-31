@@ -48,6 +48,22 @@ test("emits beta release info from tags", () => {
   });
 });
 
-test("rejects non-beta prerelease versions", () => {
-  assert.throws(() => parseReleaseVersion("0.1.60-canary.1"), /Expected beta prerelease versions/);
+test("emits fork release info from desktop tags", () => {
+  assert.deepEqual(getReleaseInfoFromSourceTag("desktop-macos-v0.2.5-fork.1"), {
+    sourceTag: "desktop-macos-v0.2.5-fork.1",
+    releaseTag: "v0.2.5-fork.1",
+    version: "0.2.5-fork.1",
+    baseVersion: "0.2.5",
+    prerelease: "fork.1",
+    isPrerelease: true,
+    isBeta: false,
+    betaNumber: null,
+    releaseType: "prerelease",
+    releaseChannel: "fork",
+    isSmokeTag: false,
+  });
+});
+
+test("rejects unsupported prerelease versions", () => {
+  assert.throws(() => parseReleaseVersion("0.1.60-canary.1"), /Expected prerelease versions/);
 });

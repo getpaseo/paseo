@@ -23,11 +23,12 @@ export function parseReleaseVersion(version) {
   const patch = Number.parseInt(match.groups.patch, 10);
   const prerelease = match.groups.prerelease ?? null;
   const betaMatch = prerelease?.match(/^beta\.(?<beta>\d+)$/) ?? null;
+  const forkMatch = prerelease?.match(/^fork\.\d+$/) ?? null;
   const betaNumber = betaMatch?.groups?.beta ? Number.parseInt(betaMatch.groups.beta, 10) : null;
 
-  if (prerelease !== null && betaNumber === null) {
+  if (prerelease !== null && betaNumber === null && forkMatch === null) {
     throw new Error(
-      `Unsupported release version "${version}". Expected beta prerelease versions like 0.1.41-beta.1.`,
+      `Unsupported release version "${version}". Expected prerelease versions like 0.1.41-beta.1 or 0.1.41-fork.1.`,
     );
   }
 
@@ -72,6 +73,7 @@ export function normalizeReleaseTag(rawTag) {
 export function getReleaseInfoFromSourceTag(sourceTag) {
   const releaseTag = normalizeReleaseTag(sourceTag);
   const parsed = parseReleaseVersion(releaseTag.slice(1));
+  const releaseChannel = parsed.isBeta ? "beta" : (parsed.prerelease?.split(".")[0] ?? "latest");
   return {
     sourceTag,
     releaseTag,
@@ -82,7 +84,7 @@ export function getReleaseInfoFromSourceTag(sourceTag) {
     isBeta: parsed.isBeta,
     betaNumber: parsed.betaNumber,
     releaseType: parsed.isPrerelease ? "prerelease" : "release",
-    releaseChannel: parsed.isBeta ? "beta" : "latest",
+    releaseChannel,
     isSmokeTag: sourceTag.includes("gha-smoke"),
   };
 }
