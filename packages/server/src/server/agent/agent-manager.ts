@@ -1242,15 +1242,13 @@ export class AgentManager {
       : await client.createSession(providerLaunchConfig, launchContext);
 
     let handedToRegistration = false;
+    let existingPreparedForClosure = false;
     try {
       this.assertAcceptingAgentRegistrations();
 
       const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
-      try {
-        await this.persistSnapshot(closedExisting);
-      } finally {
-        await this.closeReloadedSession(existing.session, agentId);
-      }
+      existingPreparedForClosure = true;
+      await this.persistSnapshot(closedExisting);
 
       if (rehydrateFromDisk) {
         // Wipe both durable and in-memory timeline so registerSession mints a
@@ -1264,8 +1262,7 @@ export class AgentManager {
       }
 
       // Preserve existing labels and timeline during reload.
-      handedToRegistration = true;
-      return this.registerSession(session, storedConfig, agentId, {
+      const reloaded = await this.registerSession(session, storedConfig, agentId, {
         labels: existing.labels,
         workspaceId: existing.workspaceId,
         owner: existing.owner,
@@ -1277,6 +1274,31 @@ export class AgentManager {
         lastError: preservedLastError,
         attention: preservedAttention,
       });
+      handedToRegistration = true;
+      await this.closeReloadedSession(existing.session, agentId);
+      this.assertAcceptingAgentRegistrations();
+      this.assertAgentRegistrationActive(this.requireSessionAgent(agentId));
+      return reloaded;
+    } catch (error) {
+      if (existingPreparedForClosure && this.acceptingAgentRegistrations) {
+        const partiallyRegistered = this.agents.get(agentId);
+        if (partiallyRegistered && partiallyRegistered !== existing) {
+          this.prepareAgentForClosure(partiallyRegistered, "agent reload rolled back");
+        }
+        this.agents.set(agentId, existing);
+        this.previousStatuses.set(agentId, existing.lifecycle);
+        this.subscribeToSession(existing);
+        try {
+          await this.persistSnapshot(existing);
+        } catch (persistError) {
+          this.logger.warn(
+            { err: persistError, agentId },
+            "Failed to restore previous agent snapshot after reload failure",
+          );
+        }
+        this.emitState(existing, { persist: false });
+      }
+      throw error;
     } finally {
       if (!handedToRegistration) {
         await this.closeUnregisteredSession(session);
