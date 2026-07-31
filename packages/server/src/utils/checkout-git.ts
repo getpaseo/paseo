@@ -1631,7 +1631,7 @@ function buildPullRequestLookupTargetFromBranchConfig(
 
   const remoteRepo = parseRepositoryIdentityFromRemote(input.branchRemoteUrl);
   const originRepo = parseRepositoryIdentityFromRemote(input.originRemoteUrl);
-  const isSameRepo = Boolean(remoteRepo && originRepo && remoteRepo === originRepo);
+  const isSameRepo = areSameGitHubRepository(remoteRepo, originRepo);
   const headRepositoryOwner = remoteRepo && !isSameRepo ? remoteRepo.split("/")[0] : null;
   const normalizedBaseRef = input.resolvedBaseRef
     ? normalizeLocalBranchRefName(input.resolvedBaseRef)
@@ -1658,6 +1658,10 @@ function parseRepositoryIdentityFromRemote(remoteUrl: string | null): string | n
   return location ? (parseGitHubRemoteIdentity(location.path)?.repo ?? null) : null;
 }
 
+function areSameGitHubRepository(left: string | null, right: string | null): boolean {
+  return Boolean(left && right && left.toLowerCase() === right.toLowerCase());
+}
+
 function buildPullRequestLookupTargetFromPushConfig(
   input: PullRequestLookupTargetPushConfig,
 ): PullRequestStatusLookupTarget | null {
@@ -1670,7 +1674,7 @@ function buildPullRequestLookupTargetFromPushConfig(
   const originRepo = input.originRemoteUrl
     ? parseGitHubRepoFromRemote(input.originRemoteUrl)
     : null;
-  const isSameRepo = Boolean(remoteRepo && originRepo && remoteRepo === originRepo);
+  const isSameRepo = areSameGitHubRepository(remoteRepo, originRepo);
   const headRepositoryOwner = remoteRepo && !isSameRepo ? remoteRepo.split("/")[0] : null;
   const normalizedBaseRef = input.resolvedBaseRef
     ? normalizeLocalBranchRefName(input.resolvedBaseRef)

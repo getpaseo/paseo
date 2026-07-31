@@ -2812,6 +2812,29 @@ const x = 1;
     expect(lookupTarget?.headSha).toMatch(/^[0-9a-f]{40}$/);
   });
 
+  it("treats differently cased Enterprise remotes as the same repository", async () => {
+    execFileSync("git", ["checkout", "-b", "local-feature"], { cwd: repoDir });
+    execFileSync("git", ["remote", "add", "origin", "git@github.acme.internal:Acme/Repo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync(
+      "git",
+      ["remote", "add", "enterprise-alias", "git@github.acme.internal:acme/repo.git"],
+      { cwd: repoDir },
+    );
+    execFileSync("git", ["config", "branch.local-feature.remote", "enterprise-alias"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["config", "branch.local-feature.merge", "refs/heads/main"], {
+      cwd: repoDir,
+    });
+
+    const lookupTarget = await readPullRequestLookupTargetFromFacts(repoDir, paseoHome);
+
+    expect(lookupTarget).toMatchObject({ headRef: "local-feature" });
+    expect(lookupTarget).not.toHaveProperty("headRepositoryOwner");
+  });
+
   it("derives the same origin tracked head for on-demand PR status reads", async () => {
     execFileSync("git", ["checkout", "-b", "tender-parrot"], { cwd: repoDir });
     execFileSync("git", ["remote", "add", "origin", "https://github.com/getpaseo/paseo.git"], {
