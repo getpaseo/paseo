@@ -3752,6 +3752,14 @@ export const GetDaemonConfigResponseMessageSchema = z.object({
     .passthrough(),
 });
 
+const ProviderAvailabilitySchema = z.object({
+  provider: AgentProviderSchema,
+  available: z.boolean(),
+  error: z.string().nullable().optional(),
+  status: z.enum(["checking", "stale", "available", "unavailable"]).optional(),
+  checkedAt: z.string().nullable().optional(),
+});
+
 export const DaemonGetStatusResponseSchema = z.object({
   type: z.literal("daemon.get_status.response"),
   payload: z
@@ -3773,13 +3781,7 @@ export const DaemonGetStatusResponseSchema = z.object({
         })
         .nullable()
         .optional(),
-      providers: z.array(
-        z.object({
-          provider: z.string(),
-          available: z.boolean(),
-          error: z.string().nullable().optional(),
-        }),
-      ),
+      providers: z.array(ProviderAvailabilitySchema),
     })
     .passthrough(),
 });
@@ -4806,12 +4808,6 @@ export const ListProviderFeaturesResponseMessageSchema = z.object({
     fetchedAt: z.string(),
     requestId: z.string(),
   }),
-});
-
-const ProviderAvailabilitySchema = z.object({
-  provider: AgentProviderSchema,
-  available: z.boolean(),
-  error: z.string().nullable().optional(),
 });
 
 export const ListAvailableProvidersResponseSchema = z.object({

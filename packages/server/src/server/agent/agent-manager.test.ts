@@ -1650,13 +1650,243 @@ test("listProviderAvailability uses registered client keys, including custom pro
     logger,
   });
 
-  await expect(manager.listProviderAvailability()).resolves.toEqual([
+  const firstRead = await manager.listProviderAvailability();
+  expect(firstRead).toEqual([
     {
       provider: "zai",
-      available: true,
+      available: false,
       error: null,
+      status: "checking",
+      checkedAt: null,
     },
   ]);
+  await vi.waitFor(async () => {
+    await expect(manager.listProviderAvailability()).resolves.toEqual([
+      {
+        provider: "zai",
+        available: true,
+        error: null,
+        status: "available",
+        checkedAt: expect.any(String),
+      },
+    ]);
+  });
+});
+
+test("disabled provider health is authoritative and never starts a probe", async () => {
+  const client = new TestAgentClient();
+  const isAvailable = vi.spyOn(client, "isAvailable");
+  const manager = new AgentManager({
+    clients: { codex: client },
+    providerDefinitions: { codex: { enabled: false } },
+    logger,
+  });
+
+  await expect(manager.listProviderAvailability()).resolves.toEqual([
+    {
+      provider: "codex",
+      available: false,
+      error: "Provider 'codex' is disabled",
+      status: "unavailable",
+      checkedAt: null,
+    },
+  ]);
+  expect(isAvailable).not.toHaveBeenCalled();
+  await expect(
+    manager.createAgent({ provider: "codex", cwd: process.cwd() }, undefined, {
+      workspaceId: undefined,
+    }),
+  ).rejects.toThrow("Provider 'codex' is disabled");
+  expect(isAvailable).not.toHaveBeenCalled();
+});
+
+test("first provider-health read returns checking promptly and deduplicates the probe", async () => {
+  const availability = deferred<boolean>();
+  const client = new TestAgentClient();
+  const isAvailable = vi
+    .spyOn(client, "isAvailable")
+    .mockImplementation(async () => await availability.promise);
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+
+  await expect(manager.listProviderAvailability()).resolves.toEqual([
+    {
+      provider: "codex",
+      available: false,
+      error: null,
+      status: "checking",
+      checkedAt: null,
+    },
+  ]);
+  await expect(manager.listProviderAvailability()).resolves.toEqual([
+    expect.objectContaining({ provider: "codex", status: "checking" }),
+  ]);
+  expect(isAvailable).not.toHaveBeenCalled();
+  await vi.waitFor(() => expect(isAvailable).toHaveBeenCalledTimes(1));
+
+  availability.resolve(true);
+  await vi.waitFor(async () => {
+    await expect(manager.listProviderAvailability()).resolves.toEqual([
+      expect.objectContaining({ provider: "codex", status: "available", available: true }),
+    ]);
+  });
+});
+
+test("stale provider health stays distinct while one background refresh runs", async () => {
+  let now = Date.parse("2026-07-31T00:00:00.000Z");
+  const client = new TestAgentClient();
+  const refresh = deferred<boolean>();
+  const isAvailable = vi
+    .spyOn(client, "isAvailable")
+    .mockResolvedValueOnce(true)
+    .mockImplementationOnce(async () => await refresh.promise);
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    providerHealthNow: () => now,
+    providerHealthStaleAfterMs: 100,
+  });
+  await expect(manager.getProviderAvailability("codex", { fresh: true })).resolves.toMatchObject({
+    status: "available",
+    available: true,
+    checkedAt: "2026-07-31T00:00:00.000Z",
+  });
+
+  now += 101;
+  await expect(manager.listProviderAvailability()).resolves.toEqual([
+    expect.objectContaining({ provider: "codex", status: "stale", available: true }),
+  ]);
+  await expect(manager.listProviderAvailability()).resolves.toEqual([
+    expect.objectContaining({ provider: "codex", status: "stale", available: true }),
+  ]);
+  await vi.waitFor(() => expect(isAvailable).toHaveBeenCalledTimes(2));
+
+  refresh.resolve(false);
+  await vi.waitFor(async () => {
+    await expect(manager.listProviderAvailability()).resolves.toEqual([
+      expect.objectContaining({ provider: "codex", status: "unavailable", available: false }),
+    ]);
+  });
+});
+
+test("provider-health errors and timeouts become bounded unavailable results", async () => {
+  const errorClient = new TestAgentClient("codex");
+  vi.spyOn(errorClient, "isAvailable").mockRejectedValue(new Error("provider exploded"));
+  const timeoutClient = new TestAgentClient("claude");
+  vi.spyOn(timeoutClient, "isAvailable").mockImplementation(
+    async () => await new Promise(() => {}),
+  );
+  const manager = new AgentManager({
+    clients: { codex: errorClient, claude: timeoutClient },
+    logger,
+    providerHealthProbeTimeoutMs: 5,
+  });
+
+  await expect(manager.getProviderAvailability("codex", { fresh: true })).resolves.toMatchObject({
+    status: "unavailable",
+    available: false,
+    error: "provider exploded",
+  });
+  await expect(manager.getProviderAvailability("claude", { fresh: true })).resolves.toMatchObject({
+    status: "unavailable",
+    available: false,
+    error: "Provider availability check timed out after 5ms",
+  });
+});
+
+test("concurrent fresh provider probes share one in-flight request", async () => {
+  const availability = deferred<boolean>();
+  const client = new TestAgentClient();
+  const isAvailable = vi
+    .spyOn(client, "isAvailable")
+    .mockImplementation(async () => await availability.promise);
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+
+  const first = manager.getProviderAvailability("codex", { fresh: true });
+  const second = manager.getProviderAvailability("codex", { fresh: true });
+  await vi.waitFor(() => expect(isAvailable).toHaveBeenCalledTimes(1));
+  availability.resolve(true);
+
+  await expect(Promise.all([first, second])).resolves.toEqual([
+    expect.objectContaining({ status: "available" }),
+    expect.objectContaining({ status: "available" }),
+  ]);
+  expect(isAvailable).toHaveBeenCalledTimes(1);
+});
+
+test("provider registry generation changes discard old probe results and config state", async () => {
+  const oldAvailability = deferred<boolean>();
+  const oldClient = new TestAgentClient();
+  const oldProbe = vi
+    .spyOn(oldClient, "isAvailable")
+    .mockImplementation(async () => await oldAvailability.promise);
+  const newClient = new TestAgentClient();
+  const newProbe = vi.spyOn(newClient, "isAvailable").mockResolvedValue(true);
+  const manager = new AgentManager({ clients: { codex: oldClient }, logger });
+
+  const oldResult = manager.getProviderAvailability("codex", { fresh: true });
+  await vi.waitFor(() => expect(oldProbe).toHaveBeenCalledTimes(1));
+  manager.updateProviderRegistry({
+    clients: { codex: newClient },
+    providerDefinitions: { codex: { enabled: true } },
+  });
+  oldAvailability.resolve(true);
+  await expect(oldResult).resolves.toMatchObject({ status: "checking", checkedAt: null });
+  await expect(manager.listProviderAvailability({ startBackgroundChecks: false })).resolves.toEqual(
+    [expect.objectContaining({ status: "checking", checkedAt: null })],
+  );
+
+  await expect(manager.getProviderAvailability("codex", { fresh: true })).resolves.toMatchObject({
+    status: "available",
+  });
+  expect(newProbe).toHaveBeenCalledTimes(1);
+
+  manager.updateProviderRegistry({
+    clients: { codex: newClient },
+    providerDefinitions: { codex: { enabled: false } },
+  });
+  await expect(manager.listProviderAvailability()).resolves.toEqual([
+    expect.objectContaining({
+      status: "unavailable",
+      error: "Provider 'codex' is disabled",
+      checkedAt: null,
+    }),
+  ]);
+  expect(newProbe).toHaveBeenCalledTimes(1);
+});
+
+test("create and resume fresh-probe only the requested provider", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-health-requested-"));
+  const requestedClient = new TestAgentClient("codex");
+  const requestedProbe = vi.spyOn(requestedClient, "isAvailable").mockResolvedValue(true);
+  const unrelatedClient = new TestAgentClient("claude");
+  const unrelatedProbe = vi
+    .spyOn(unrelatedClient, "isAvailable")
+    .mockImplementation(async () => await new Promise(() => {}));
+  const manager = new AgentManager({
+    clients: { codex: requestedClient, claude: unrelatedClient },
+    logger,
+  });
+
+  try {
+    await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "requested-session",
+        metadata: { provider: "codex", cwd: workdir },
+      },
+      undefined,
+      undefined,
+      { workspaceId: undefined },
+    );
+
+    expect(requestedProbe).toHaveBeenCalledTimes(2);
+    expect(unrelatedProbe).not.toHaveBeenCalled();
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("createAgent passes daemon launch env through the provider launch context", async () => {
@@ -2165,7 +2395,7 @@ test("createAgent reports configured providers when provider is unknown", async 
   ).rejects.toThrow("Unknown provider 'missing-provider'. Configured providers: codex.");
 });
 
-test("createAgent reports available providers when selected provider is unavailable", async () => {
+test("createAgent does not probe unrelated providers when selected provider is unavailable", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -2176,10 +2406,12 @@ test("createAgent reports available providers when selected provider is unavaila
     }
   }
 
+  const availableClaude = new TestAgentClient();
+  const claudeAvailability = vi.spyOn(availableClaude, "isAvailable");
   const manager = new AgentManager({
     clients: {
       codex: new UnavailableCodexClient(),
-      claude: new TestAgentClient(),
+      claude: availableClaude,
     },
     registry: storage,
     logger,
@@ -2195,8 +2427,9 @@ test("createAgent reports available providers when selected provider is unavaila
       { workspaceId: undefined },
     ),
   ).rejects.toThrow(
-    "Provider 'codex' is not available. Available providers: claude. Use one of those providers, or install/configure 'codex'.",
+    "Provider 'codex' is not available. Available providers: none. Use one of those providers, or install/configure 'codex'.",
   );
+  expect(claudeAvailability).not.toHaveBeenCalled();
 });
 
 test("createAgent rejects a disabled provider without creating a session", async () => {

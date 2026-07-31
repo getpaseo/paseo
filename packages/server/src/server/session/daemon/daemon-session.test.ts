@@ -1,7 +1,7 @@
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import pino from "pino";
 import {
   DaemonSession,
@@ -9,7 +9,8 @@ import {
   type DaemonSessionHost,
 } from "./daemon-session.js";
 import type { DaemonWebSocketRuntimeDiagnosticSnapshot } from "./diagnostics.js";
-import type { ProviderAvailability } from "../../agent/agent-manager.js";
+import { AgentManager, type ProviderAvailability } from "../../agent/agent-manager.js";
+import type { AgentClient } from "../../agent/agent-sdk-types.js";
 import type { HubRelationshipManagement } from "../../hub/relationship-controller.js";
 import type { SessionOutboundMessage } from "../../messages.js";
 
@@ -129,8 +130,20 @@ describe("DaemonSession", () => {
       daemonVersion: "1.2.3",
       daemonRuntimeConfig: { listen: "127.0.0.1:6767", relay: null },
       listProviderAvailability: async () => [
-        { provider: "claude", available: true, error: null },
-        { provider: "codex", available: false, error: "boom" },
+        {
+          provider: "claude",
+          available: true,
+          error: null,
+          status: "available",
+          checkedAt: "2026-07-31T00:00:00.000Z",
+        },
+        {
+          provider: "codex",
+          available: false,
+          error: "boom",
+          status: "unavailable",
+          checkedAt: "2026-07-31T00:00:00.000Z",
+        },
       ],
     });
 
@@ -149,11 +162,78 @@ describe("DaemonSession", () => {
           listen: "127.0.0.1:6767",
           relay: null,
           providers: [
-            { provider: "claude", available: true, error: null },
-            { provider: "codex", available: false, error: "boom" },
+            {
+              provider: "claude",
+              available: true,
+              error: null,
+              status: "available",
+              checkedAt: "2026-07-31T00:00:00.000Z",
+            },
+            {
+              provider: "codex",
+              available: false,
+              error: "boom",
+              status: "unavailable",
+              checkedAt: "2026-07-31T00:00:00.000Z",
+            },
           ],
         },
       },
+    ]);
+  });
+
+  test("status remains responsive while the first provider check is still running", async () => {
+    const isAvailable = vi.fn(async () => await new Promise<boolean>(() => {}));
+    const client: AgentClient = {
+      provider: "codex",
+      capabilities: {
+        supportsStreaming: false,
+        supportsSessionPersistence: false,
+        supportsDynamicModes: false,
+        supportsMcpServers: false,
+        supportsReasoningStream: false,
+        supportsToolInvocations: false,
+      },
+      isAvailable,
+      async createSession() {
+        throw new Error("not implemented");
+      },
+      async resumeSession() {
+        throw new Error("not implemented");
+      },
+    };
+    const manager = new AgentManager({
+      clients: { codex: client },
+      logger: pino({ level: "silent" }),
+    });
+    await manager.listProviderAvailability();
+    const { subsystem, emitted } = makeSubsystem({
+      serverId: "srv-health",
+      listProviderAvailability: () => manager.listProviderAvailability(),
+    });
+
+    await subsystem.handleGetStatusRequest({
+      type: "daemon.get_status.request",
+      requestId: "health-latency",
+    });
+
+    expect(isAvailable).toHaveBeenCalledTimes(1);
+    expect(emitted).toEqual([
+      expect.objectContaining({
+        type: "daemon.get_status.response",
+        payload: expect.objectContaining({
+          requestId: "health-latency",
+          providers: [
+            {
+              provider: "codex",
+              available: false,
+              error: null,
+              status: "checking",
+              checkedAt: null,
+            },
+          ],
+        }),
+      }),
     ]);
   });
 

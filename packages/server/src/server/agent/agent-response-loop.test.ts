@@ -142,13 +142,19 @@ describe("generateStructuredAgentResponseWithFallback", () => {
       checkedProviders,
       getProviderAvailability: async (provider: string) => {
         checkedProviders.push(provider);
-        return (
-          availabilityByProvider.get(provider) ?? {
-            provider,
-            available: false,
-            error: `No client registered for provider '${provider}'`,
-          }
-        );
+        return availabilityByProvider.has(provider)
+          ? {
+              ...availabilityByProvider.get(provider)!,
+              status: availabilityByProvider.get(provider)!.available ? "available" : "unavailable",
+              checkedAt: "2026-07-31T00:00:00.000Z",
+            }
+          : {
+              provider,
+              available: false,
+              error: `No client registered for provider '${provider}'`,
+              status: "unavailable",
+              checkedAt: null,
+            };
       },
     } as unknown as AgentManager & { checkedProviders: string[] };
   }

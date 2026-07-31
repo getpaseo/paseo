@@ -158,6 +158,8 @@ export class DaemonSession {
         provider: p.provider,
         available: p.available,
         error: p.error ?? null,
+        status: p.status,
+        checkedAt: p.checkedAt,
       }));
       this.host.emit({
         type: "daemon.get_status.response",

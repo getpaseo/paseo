@@ -1,7 +1,7 @@
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { AgentProvider } from "../agent-sdk-types.js";
@@ -134,8 +134,21 @@ describe("default provider availability", () => {
         provider: "codex",
         available: false,
         error: null,
+        status: "checking",
+        checkedAt: null,
       },
     ]);
+    await vi.waitFor(async () => {
+      await expect(manager.listProviderAvailability()).resolves.toEqual([
+        {
+          provider: "codex",
+          available: false,
+          error: null,
+          status: "unavailable",
+          checkedAt: expect.any(String),
+        },
+      ]);
+    });
   });
 
   test("resumeAgentFromPersistence stops before provider spawn when Codex is unavailable", async () => {

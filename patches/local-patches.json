@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "patches": [
+    {
+      "id": "paseo-v025-provider-health-control-plane",
+      "category": "stable-core-provider-health",
+      "base": {
+        "tag": "v0.2.5",
+        "commit": "6fc491e6220fba6543bbbe4bf1b1f58cfe59228b"
+      },
+      "candidate": {
+        "branch": "review/v025-provider-health-status",
+        "commit": null
+      },
+      "sources": [
+        "packages/protocol/src/messages.ts",
+        "packages/server/src/server/agent/agent-manager.ts",
+        "packages/server/src/server/agent/agent-response-loop.ts",
+        "packages/server/src/server/session/daemon/daemon-session.ts",
+        "packages/server/src/server/session/daemon/diagnostics.ts",
+        "packages/cli/src/commands/daemon/status.ts"
+      ],
+      "tests": [
+        "packages/protocol/tests/validation/ws-outbound.test.ts",
+        "packages/server/src/server/agent/agent-manager.test.ts",
+        "packages/server/src/server/agent/agent-response-loop.test.ts",
+        "packages/server/src/server/agent/providers/provider-availability.test.ts",
+        "packages/server/src/server/session/daemon/daemon-session.test.ts",
+        "packages/server/src/server/session/provider/provider-catalog-session.test.ts",
+        "packages/cli/src/commands/daemon/status.test.ts"
+      ],
+      "testCases": [
+        "disabled providers resolve without probing",
+        "first reads return checking without blocking and start one background probe",
+        "stale, available, unavailable, and checking remain distinct",
+        "probe errors and timeouts become bounded unavailable health",
+        "concurrent fresh requests deduplicate per provider generation",
+        "registry and config changes invalidate cached and in-flight generations",
+        "daemon status returns promptly while a provider probe hangs",
+        "create and continuation fresh-probe only their requested provider",
+        "unrelated provider failure cannot block requested-provider lifecycle"
+      ],
+      "verification": {
+        "commit": null,
+        "completedAt": "2026-07-31T23:46:04Z",
+        "commands": [
+          "npm run test --workspace=@getpaseo/protocol",
+          "npx vitest run <provider-health focused and broader server suites>",
+          "npm run build:server",
+          "npm run typecheck:server",
+          "npx oxlint <changed TypeScript files>",
+          "npx oxfmt --check <changed TypeScript and manifest files>",
+          "git diff --check",
+          "jq empty patches/local-patches.json"
+        ],
+        "result": {
+          "focusedAndBroaderTests": "459 passed",
+          "protocolTests": "469 passed",
+          "serverBuild": "passed",
+          "serverTypechecks": "passed",
+          "lint": "0 warnings, 0 errors",
+          "formatDiffAndManifest": "passed"
+        }
+      },
+      "upstreamable": true,
+      "upstreamCondition": "Submit independently while daemon/provider status synchronously waits on live provider probes or requested-provider lifecycle can be blocked by unrelated provider health.",
+      "dropCondition": "Remove when the latest stable release provides equivalent nonblocking generation-aware provider health with distinct checking/stale states, bounded deduplicated probes, config invalidation, and requested-provider-only lifecycle gating.",
+      "deployedReceipt": null,
+      "deployedAt": null
+    }
+  ]
+}

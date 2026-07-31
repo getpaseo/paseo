@@ -76,6 +76,8 @@ import {
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
+const PROVIDER_HEALTH_PROBE_TIMEOUT_MS = 3_000;
+const PROVIDER_HEALTH_STALE_AFTER_MS = 30_000;
 const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: false,
   supportsSessionPersistence: true,
@@ -213,6 +215,30 @@ export interface ProviderAvailability {
   provider: AgentProvider;
   available: boolean;
   error: string | null;
+  status: "checking" | "stale" | "available" | "unavailable";
+  checkedAt: string | null;
+}
+
+interface CachedProviderAvailability extends ProviderAvailability {
+  status: "available" | "unavailable";
+  checkedAt: string;
+}
+
+interface ProviderAvailabilityProbe {
+  generation: number;
+  promise: Promise<ProviderAvailability>;
+}
+
+function resolveProviderHealthOptions(options: AgentManagerOptions): {
+  probeTimeoutMs: number;
+  staleAfterMs: number;
+  now: () => number;
+} {
+  return {
+    probeTimeoutMs: options.providerHealthProbeTimeoutMs ?? PROVIDER_HEALTH_PROBE_TIMEOUT_MS,
+    staleAfterMs: options.providerHealthStaleAfterMs ?? PROVIDER_HEALTH_STALE_AFTER_MS,
+    now: options.providerHealthNow ?? Date.now,
+  };
 }
 
 interface AgentManagerRescueTimeouts {
@@ -254,6 +280,9 @@ export interface AgentManagerOptions {
   appendSystemPrompt?: string;
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
+  providerHealthProbeTimeoutMs?: number;
+  providerHealthStaleAfterMs?: number;
+  providerHealthNow?: () => number;
   logger: Logger;
 }
 
@@ -558,6 +587,9 @@ function getFirstUserMessageTextFromRows(rows: readonly AgentTimelineRow[]): str
 export class AgentManager {
   private readonly clients = new Map<AgentProvider, AgentClient>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
+  private readonly providerAvailabilityCache = new Map<AgentProvider, CachedProviderAvailability>();
+  private readonly providerAvailabilityProbes = new Map<AgentProvider, ProviderAvailabilityProbe>();
+  private providerAvailabilityGeneration = 0;
   private readonly agents = new Map<string, LiveManagedAgent>();
   private readonly timelineStore = new InMemoryAgentTimelineStore();
   private readonly providerSubagents = new ProviderSubagentStore();
@@ -583,6 +615,9 @@ export class AgentManager {
   private onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
+  private readonly providerHealthProbeTimeoutMs: number;
+  private readonly providerHealthStaleAfterMs: number;
+  private readonly providerHealthNow: () => number;
   private acceptingAgentRegistrations = true;
 
   constructor(options: AgentManagerOptions) {
@@ -602,6 +637,10 @@ export class AgentManager {
       interruptSessionMs:
         options.rescueTimeouts?.interruptSessionMs ?? INTERRUPT_SESSION_TIMEOUT_MS,
     };
+    const providerHealth = resolveProviderHealthOptions(options);
+    this.providerHealthProbeTimeoutMs = providerHealth.probeTimeoutMs;
+    this.providerHealthStaleAfterMs = providerHealth.staleAfterMs;
+    this.providerHealthNow = providerHealth.now;
     this.agentStreamCoalescer = new AgentStreamCoalescer({
       windowMs: options.agentStreamCoalesceWindowMs ?? AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS,
       timers: { setTimeout, clearTimeout },
@@ -623,12 +662,14 @@ export class AgentManager {
 
   registerClient(provider: AgentProvider, client: AgentClient): void {
     this.clients.set(provider, client);
+    this.invalidateProviderAvailability();
   }
 
   updateProviderRegistry(input: {
     providerDefinitions: ProviderEnabledMap;
     clients: ProviderClientMap;
   }): void {
+    this.invalidateProviderAvailability();
     this.providerEnabled.clear();
     for (const [provider, definition] of Object.entries(input.providerDefinitions)) {
       if (definition) {
@@ -846,52 +887,30 @@ export class AgentManager {
     return true;
   }
 
-  async listProviderAvailability(): Promise<ProviderAvailability[]> {
-    return Promise.all(
-      Array.from(this.clients.keys()).map((provider) => this.getProviderAvailability(provider)),
+  async listProviderAvailability(options?: {
+    startBackgroundChecks?: boolean;
+  }): Promise<ProviderAvailability[]> {
+    return this.getConfiguredProviderIds().map((provider) =>
+      this.readProviderAvailability(provider, options?.startBackgroundChecks !== false),
     );
   }
 
-  async getProviderAvailability(provider: AgentProvider): Promise<ProviderAvailability> {
-    const client = this.clients.get(provider);
-    if (!client) {
-      return {
-        provider,
-        available: false,
-        error: `No client registered for provider '${provider}'`,
-      };
+  async getProviderAvailability(
+    provider: AgentProvider,
+    options?: { fresh?: boolean },
+  ): Promise<ProviderAvailability> {
+    if (options?.fresh) {
+      return await this.probeProviderAvailability(provider);
     }
-
-    try {
-      const available = await client.isAvailable();
-      return {
-        provider,
-        available,
-        error: null,
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn({ err: error, provider }, "Failed to check provider availability");
-      return {
-        provider,
-        available: false,
-        error: message,
-      };
-    }
+    return this.readProviderAvailability(provider, true);
   }
 
   async listDraftCommands(config: AgentSessionConfig): Promise<AgentSlashCommand[]> {
     const normalizedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
-    const client = this.requireClient(normalizedConfig.provider);
     if (!normalizedConfig.model) {
       return [];
     }
-    const available = await client.isAvailable();
-    if (!available) {
-      throw new Error(
-        `Provider '${normalizedConfig.provider}' is not available. Please ensure the CLI is installed.`,
-      );
-    }
+    const client = await this.requireAvailableClient({ provider: normalizedConfig.provider });
 
     if (client.listCommands) {
       return await client.listCommands(normalizedConfig);
@@ -919,16 +938,10 @@ export class AgentManager {
 
   async listDraftFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
     const normalizedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
-    const client = this.requireClient(normalizedConfig.provider);
     if (!normalizedConfig.model) {
       return [];
     }
-    const available = await client.isAvailable();
-    if (!available) {
-      throw new Error(
-        `Provider '${normalizedConfig.provider}' is not available. Please ensure the CLI is installed.`,
-      );
-    }
+    const client = await this.requireAvailableClient({ provider: normalizedConfig.provider });
 
     if (client.listFeatures) {
       return await client.listFeatures(normalizedConfig);
@@ -1014,15 +1027,12 @@ export class AgentManager {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
     await this.deleteAgentState(resolvedAgentId);
+    const client = await this.requireAvailableClient({ provider: config.provider });
     const { storedConfig, launchConfig } = await this.prepareSessionConfig(
       config,
       resolvedAgentId,
       options?.env,
     );
-    this.requireEnabledProvider(storedConfig.provider);
-    const client = await this.requireAvailableClient({
-      provider: storedConfig.provider,
-    });
     const launchContext = await this.buildLaunchContext(
       resolvedAgentId,
       client,
@@ -1094,18 +1104,12 @@ export class AgentManager {
       ...overrides,
       provider: handle.provider,
     } as AgentSessionConfig;
+    const client = await this.requireAvailableClient({ provider: handle.provider });
     const { storedConfig, launchConfig } = await this.prepareSessionConfig(
       mergedConfig,
       resolvedAgentId,
     );
 
-    const client = this.requireClient(handle.provider);
-    const available = await client.isAvailable();
-    if (!available) {
-      throw new Error(
-        `Provider '${handle.provider}' is not available. Please ensure the CLI is installed.`,
-      );
-    }
     const launchContext = await this.buildLaunchContext(resolvedAgentId, client, storedConfig.cwd);
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const session = await client.resumeSession(
@@ -1139,8 +1143,6 @@ export class AgentManager {
   }): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(this.idFactory(), "importProviderSession");
-    this.requireEnabledProvider(input.provider);
-
     const client = await this.requireAvailableClient({ provider: input.provider });
     if (!client.importSession) {
       throw new Error(`Provider '${input.provider}' does not support importing sessions`);
@@ -4207,10 +4209,174 @@ export class AgentManager {
     return launchContext.paseoTools ? stripInternalPaseoMcpServer(launchConfig) : launchConfig;
   }
 
-  private async requireAvailableClient(options: { provider: AgentProvider }): Promise<AgentClient> {
-    const client = this.clients.get(options.provider);
+  private readProviderAvailability(
+    provider: AgentProvider,
+    startBackgroundCheck: boolean,
+  ): ProviderAvailability {
+    if (this.providerEnabled.get(provider) === false) {
+      return {
+        provider,
+        available: false,
+        error: `Provider '${provider}' is disabled`,
+        status: "unavailable",
+        checkedAt: null,
+      };
+    }
+    if (!this.clients.has(provider)) {
+      return {
+        provider,
+        available: false,
+        error: `No client registered for provider '${provider}'`,
+        status: "unavailable",
+        checkedAt: null,
+      };
+    }
+
+    const cached = this.providerAvailabilityCache.get(provider);
+    if (!cached) {
+      if (startBackgroundCheck) {
+        this.startProviderAvailabilityCheck(provider);
+      }
+      return {
+        provider,
+        available: false,
+        error: null,
+        status: "checking",
+        checkedAt: null,
+      };
+    }
+
+    const checkedAt = Date.parse(cached.checkedAt);
+    if (this.providerHealthNow() - checkedAt >= this.providerHealthStaleAfterMs) {
+      if (startBackgroundCheck) {
+        this.startProviderAvailabilityCheck(provider);
+      }
+      return { ...cached, status: "stale" };
+    }
+    return cached;
+  }
+
+  private startProviderAvailabilityCheck(provider: AgentProvider): void {
+    void this.probeProviderAvailability(provider).catch((error) => {
+      this.logger.warn(
+        { err: error, provider },
+        "Unexpected provider availability background check failure",
+      );
+    });
+  }
+
+  private async probeProviderAvailability(provider: AgentProvider): Promise<ProviderAvailability> {
+    const immediate = this.readProviderAvailability(provider, false);
+    if (immediate.error && immediate.checkedAt === null) {
+      return immediate;
+    }
+
+    const existing = this.providerAvailabilityProbes.get(provider);
+    if (existing?.generation === this.providerAvailabilityGeneration) {
+      return await existing.promise;
+    }
+
+    const client = this.clients.get(provider);
     if (!client) {
-      const configuredProviders = this.getConfiguredProviderIds();
+      return this.readProviderAvailability(provider, false);
+    }
+    const generation = this.providerAvailabilityGeneration;
+    const probe: ProviderAvailabilityProbe = {
+      generation,
+      promise: Promise.resolve({
+        provider,
+        available: false,
+        error: null,
+        status: "checking" as const,
+        checkedAt: null,
+      }),
+    };
+    probe.promise = this.runProviderAvailabilityProbe(provider, client, generation).finally(() => {
+      if (this.providerAvailabilityProbes.get(provider) === probe) {
+        this.providerAvailabilityProbes.delete(provider);
+      }
+    });
+    this.providerAvailabilityProbes.set(provider, probe);
+    return await probe.promise;
+  }
+
+  private async runProviderAvailabilityProbe(
+    provider: AgentProvider,
+    client: AgentClient,
+    generation: number,
+  ): Promise<ProviderAvailability> {
+    // Status reads must be able to publish their cached/checking response before
+    // a provider implementation gets any opportunity to do synchronous work.
+    await new Promise<void>((resolveProbeStart) => setImmediate(resolveProbeStart));
+    if (
+      generation !== this.providerAvailabilityGeneration ||
+      this.clients.get(provider) !== client ||
+      this.providerEnabled.get(provider) === false
+    ) {
+      return this.readProviderAvailability(provider, false);
+    }
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let result: CachedProviderAvailability;
+    try {
+      const available = await Promise.race([
+        Promise.resolve().then(() => client.isAvailable()),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `Provider availability check timed out after ${this.providerHealthProbeTimeoutMs}ms`,
+                ),
+              ),
+            this.providerHealthProbeTimeoutMs,
+          );
+          timer.unref?.();
+        }),
+      ]);
+      result = {
+        provider,
+        available,
+        error: null,
+        status: available ? "available" : "unavailable",
+        checkedAt: new Date(this.providerHealthNow()).toISOString(),
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn({ err: error, provider }, "Failed to check provider availability");
+      result = {
+        provider,
+        available: false,
+        error: message,
+        status: "unavailable",
+        checkedAt: new Date(this.providerHealthNow()).toISOString(),
+      };
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
+
+    if (
+      generation !== this.providerAvailabilityGeneration ||
+      this.clients.get(provider) !== client ||
+      this.providerEnabled.get(provider) === false
+    ) {
+      return this.readProviderAvailability(provider, false);
+    }
+    this.providerAvailabilityCache.set(provider, result);
+    return result;
+  }
+
+  private invalidateProviderAvailability(): void {
+    this.providerAvailabilityGeneration += 1;
+    this.providerAvailabilityCache.clear();
+    this.providerAvailabilityProbes.clear();
+  }
+
+  private async requireAvailableClient(options: { provider: AgentProvider }): Promise<AgentClient> {
+    const configuredProviders = this.getConfiguredProviderIds();
+    if (!configuredProviders.includes(options.provider)) {
       throw new Error(
         `Unknown provider '${options.provider}'. Configured providers: ${formatProviderList(
           configuredProviders,
@@ -4218,30 +4384,22 @@ export class AgentManager {
       );
     }
 
-    let unavailableReason: string | null = null;
-    try {
-      const available = await client.isAvailable();
-      if (available) {
-        return client;
-      }
-    } catch (error) {
-      unavailableReason = error instanceof Error ? error.message : String(error);
+    const availability = await this.getProviderAvailability(options.provider, { fresh: true });
+    const client = this.clients.get(options.provider);
+    if (availability.status === "available" && client) {
+      return client;
     }
 
-    const availableProviders = (await this.listProviderAvailability())
+    const availableProviders = (
+      await this.listProviderAvailability({ startBackgroundChecks: false })
+    )
       .filter((entry) => entry.available)
       .map((entry) => entry.provider);
     const providerList = formatProviderList(availableProviders);
-    const reason = unavailableReason ? ` Reason: ${unavailableReason}.` : "";
+    const reason = availability.error ? ` Reason: ${availability.error}.` : "";
     throw new Error(
       `Provider '${options.provider}' is not available.${reason} Available providers: ${providerList}. Use one of those providers, or install/configure '${options.provider}'.`,
     );
-  }
-
-  private requireEnabledProvider(provider: AgentProvider): void {
-    if (this.providerEnabled.get(provider) === false) {
-      throw new Error(`Provider '${provider}' is disabled`);
-    }
   }
 
   private getConfiguredProviderIds(): AgentProvider[] {

@@ -138,6 +138,60 @@ const SourceSchema = z.object({
     );
   });
 
+  it("preserves distinct provider-health states on status and provider-list responses", () => {
+    const daemonStatus = {
+      type: "session",
+      message: {
+        type: "daemon.get_status.response",
+        payload: {
+          requestId: "daemon-health",
+          serverId: "server-1",
+          pid: 123,
+          nodePath: "/usr/local/bin/node",
+          listen: "127.0.0.1:6767",
+          providers: [
+            {
+              provider: "codex",
+              available: false,
+              error: null,
+              status: "checking",
+              checkedAt: null,
+            },
+          ],
+        },
+      },
+    };
+    const providerList = {
+      type: "session",
+      message: {
+        type: "list_available_providers_response",
+        payload: {
+          requestId: "provider-health",
+          fetchedAt: "2026-07-31T00:00:00.000Z",
+          error: null,
+          providers: [
+            {
+              provider: "codex",
+              available: true,
+              error: null,
+              status: "stale",
+              checkedAt: "2026-07-31T00:00:00.000Z",
+            },
+          ],
+        },
+      },
+    };
+
+    expect(GeneratedWSOutboundMessageSchema.safeParse(daemonStatus)).toEqual({
+      success: true,
+      data: daemonStatus,
+    });
+    expect(GeneratedWSOutboundMessageSchema.safeParse(providerList)).toEqual({
+      success: true,
+      data: providerList,
+    });
+  });
+
   it.each([
     {
       name: "dedicated attention message",
