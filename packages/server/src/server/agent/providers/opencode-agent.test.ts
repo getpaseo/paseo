@@ -3100,7 +3100,9 @@ describe("OpenCode persisted sessions", () => {
 });
 
 describe("OpenCode provider subagent contract", () => {
-  async function createAdoptedChildSession(): Promise<{
+  async function createAdoptedChildSession(
+    configureChild?: (client: TestOpenCodeClient) => void,
+  ): Promise<{
     readonly runtime: TestOpenCodeHarness;
     readonly provider: OpenCodeAgentClient;
     readonly parent: Awaited<ReturnType<OpenCodeAgentClient["createSession"]>>;
@@ -3110,6 +3112,7 @@ describe("OpenCode provider subagent contract", () => {
     const runtime = new TestOpenCodeHarness();
     const parentClient = new TestOpenCodeClient();
     const childClient = new TestOpenCodeClient();
+    configureChild?.(childClient);
     parentClient.sessionCreateResponse = { data: { id: "ses_parent_external" } };
     runtime.enqueueClient(parentClient);
     runtime.enqueueClient(childClient);
@@ -3251,14 +3254,14 @@ describe("OpenCode provider subagent contract", () => {
     });
 
     for (const event of [
-      ...assistantTurnEvents({ sessionId: "ses_child_external", text: "child says hi" }).slice(
-        0,
-        2,
-      ),
       {
         type: "session.status",
         properties: { sessionID: "ses_child_external", status: { type: "busy" } },
       },
+      ...assistantTurnEvents({ sessionId: "ses_child_external", text: "child says hi" }).slice(
+        0,
+        2,
+      ),
       { type: "session.idle", properties: { sessionID: "ses_child_external" } },
     ]) {
       childClient.emitEvent(event);
@@ -3290,7 +3293,55 @@ describe("OpenCode provider subagent contract", () => {
     );
   });
 
-  test("surfaces an autonomous OpenCode wake as a new parent turn", async () => {
+  test("reconciles an adopted child that was already busy before attachment", async () => {
+    const { child, childClient, parent } = await createAdoptedChildSession((client) => {
+      client.sessionStatusResponse = {
+        data: { ses_child_external: { type: "busy" } },
+      };
+    });
+    const completed = createTestDeferred<void>();
+    const started = createTestDeferred<void>();
+    const events: AgentStreamEvent[] = [];
+    try {
+      child.subscribe((event) => {
+        events.push(event);
+        if (event.type === "turn_started") {
+          started.resolve();
+        }
+        if (event.type === "turn_completed") {
+          completed.resolve();
+        }
+      });
+
+      await started.promise;
+      for (const event of assistantTurnEvents({
+        sessionId: "ses_child_external",
+        text: "already-running child says hi",
+      })) {
+        childClient.emitEvent(event);
+      }
+
+      await completed.promise;
+
+      expect(childClient.calls.sessionStatus).toEqual([{ directory: "/workspace/repo" }]);
+      expect(turnEventSignatures(events)).toEqual([
+        ["turn_started", "opencode-turn-0"],
+        ["timeline", "opencode-turn-0"],
+        ["turn_completed", "opencode-turn-0"],
+      ]);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "timeline",
+          item: expect.objectContaining({ text: "already-running child says hi" }),
+        }),
+      );
+    } finally {
+      await child.close();
+      await parent.close();
+    }
+  });
+
+  test("uses busy as the autonomous boundary without replaying earlier idle content", async () => {
     const { parent, openCode } = await createParentSession("ses_parent_plugin_wake");
     const events: AgentStreamEvent[] = [];
     parent.subscribe((event) => events.push(event));
@@ -3334,7 +3385,6 @@ describe("OpenCode provider subagent contract", () => {
         expect(turnEventSignatures(events)).toEqual([
           ["turn_started", "opencode-turn-0"],
           ["timeline", "opencode-turn-0"],
-          ["timeline", "opencode-turn-0"],
           ["turn_completed", "opencode-turn-0"],
         ]);
       });
@@ -3344,6 +3394,14 @@ describe("OpenCode provider subagent contract", () => {
           item: expect.objectContaining({
             type: "assistant_message",
             text: "Parent consumed the background result.",
+          }),
+        }),
+      );
+      expect(events).not.toContainEqual(
+        expect.objectContaining({
+          type: "timeline",
+          item: expect.objectContaining({
+            text: "<system-reminder>All background tasks are complete.</system-reminder>",
           }),
         }),
       );
