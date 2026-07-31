@@ -2767,21 +2767,17 @@ type OpenCodeRunnerStatus = "idle" | "busy" | "retry";
 /**
  * One in-flight stop of the OpenCode session runner.
  *
- * OpenCode's abort is session-scoped rather than turn-scoped, so a stop owns
- * both halves of the boundary: the abort it issued (plus its single retry) and
- * the canceled run's terminal. The runner is reusable only once both settle —
- * an abort still in flight would otherwise land on the replacement run.
+ * A stop tracks the run it is stopping: the terminal that run still owes, and
+ * the cancellation the caller is still owed. The aborts it issues are tracked by
+ * the session instead, because OpenCode's abort is session-scoped rather than
+ * turn-scoped and can outlive the stop that issued it. The runner is reusable
+ * only once both the terminal and every issued abort have settled.
  */
 interface OpenCodeStop {
   /** Foreground turn still owed a cancellation acknowledgement; cleared once emitted. */
   pendingCancellationTurnId: string | null;
   /** Resolves when the canceled run publishes its authoritative terminal. */
   readonly terminal: Deferred<void>;
-  /**
-   * Settlement of the abort this stop currently owns; rejects when it and its
-   * retry fail. A repeated Stop replaces it rather than opening a second stop.
-   */
-  abort: Promise<void>;
 }
 
 function unwrapOpenCodeGlobalEvent(event: unknown): OpenCodeEvent | null {
@@ -2936,9 +2932,9 @@ class OpenCodeAgentSession implements AgentSession {
   private nextTurnOrdinal = 0;
   private turnState: OpenCodeTurnState = { status: "idle" };
   /**
-   * Settlement of the most recent session-scoped abort. It outlives its stop
-   * because a pending abort can still cancel a replacement run, and a failed one
-   * means we never proved the runner stopped.
+   * Settlement of every session-scoped abort issued so far. It outlives the stop
+   * that issued it because a request still in flight can cancel a replacement
+   * run, and a rejection means we never proved the runner stopped.
    */
   private abortSettlement: Promise<void> = Promise.resolve();
   private readonly runningToolCalls = new Map<string, ToolCallTimelineItem>();
@@ -3817,7 +3813,6 @@ class OpenCodeAgentSession implements AgentSession {
     const stop: OpenCodeStop = {
       pendingCancellationTurnId: turnId,
       terminal: createDeferred<void>(),
-      abort: Promise.resolve(),
     };
     const abort = this.issueOwnedAbort(stop);
     if (turnId) {
@@ -3832,19 +3827,15 @@ class OpenCodeAgentSession implements AgentSession {
     return abort;
   }
 
-  /**
-   * Issues one more session-scoped abort for this stop and returns it.
-   *
-   * The stop's settlement accumulates every abort it has issued: a request still
-   * in flight can land on a replacement run just as easily as the newest one, so
-   * reuse waits for all of them. Only the newest may hold the gate closed — an
-   * older failure is precisely what pressing Stop again exists to recover from.
-   */
+  /** Issues one more session-scoped abort for this stop and returns it. */
   private issueOwnedAbort(stop: OpenCodeStop): Promise<void> {
-    const alreadyIssued = stop.abort.catch(() => undefined);
     const abort = this.runOwnedAbort(stop.pendingCancellationTurnId);
-    stop.abort = Promise.all([alreadyIssued, abort]).then(() => undefined);
-    this.abortSettlement = stop.abort;
+    // Abort is session-scoped, so its settlement is too: an older request lands
+    // on the runner whenever the server gets to it, however many stops have come
+    // and gone since. Only the newest abort may hold the gate closed, since
+    // recovering from a failed one is what pressing Stop again is for.
+    const stillInFlight = this.abortSettlement.catch(() => undefined);
+    this.abortSettlement = Promise.all([stillInFlight, abort]).then(() => undefined);
     void this.abortSettlement.catch(() => undefined);
     // Cancellation is acknowledged as soon as an owned abort succeeds, or when
     // the provider publishes the canceled run's terminal.
