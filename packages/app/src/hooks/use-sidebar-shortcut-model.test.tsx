@@ -25,6 +25,7 @@ function workspace(projectKey: string, workspaceId: string): SidebarWorkspaceEnt
     workspaceKind: "worktree",
     name: workspaceId,
     title: null,
+    paseoWorktreeRoot: null,
     currentBranch: null,
     statusBucket: "done",
     statusEnteredAt: null,

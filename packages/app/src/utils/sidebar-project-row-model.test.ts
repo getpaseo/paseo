@@ -32,6 +32,7 @@ function workspace(overrides: Partial<SidebarWorkspaceEntry> = {}): SidebarWorks
     hasRunningScripts: false,
     statusEnteredAt: null,
     ...overrides,
+    paseoWorktreeRoot: overrides.paseoWorktreeRoot ?? null,
     archivingAt: overrides.archivingAt ?? null,
   };
 }

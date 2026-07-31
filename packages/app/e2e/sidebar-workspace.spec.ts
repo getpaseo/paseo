@@ -47,6 +47,49 @@ async function waitForSidebarWorkspace(page: import("@playwright/test").Page, wo
   return row;
 }
 
+async function openWorkspaceHoverCard(page: import("@playwright/test").Page, workspaceId: string) {
+  const row = await waitForSidebarWorkspace(page, workspaceId);
+  await row.hover();
+
+  const hoverCard = page.getByRole("menu", { name: "Workspace scripts" });
+  await expect(hoverCard).toBeVisible({ timeout: 30_000 });
+  return hoverCard;
+}
+
+async function withPaseoOwnedWorktree(
+  run: (workspace: {
+    projectName: string;
+    workspaceId: string;
+    worktreeName: string;
+  }) => Promise<void>,
+): Promise<void> {
+  const project = await seedWorkspace({ repoPrefix: "sidebar-hover-owned-worktree-" });
+  const worktreeName = "hover-card-owned-worktree";
+
+  try {
+    const created = await project.client.createWorkspace({
+      source: {
+        kind: "worktree",
+        cwd: project.repoPath,
+        projectId: project.projectId,
+        worktreeSlug: worktreeName,
+      },
+    });
+    if (!created.workspace) {
+      throw new Error(created.error ?? "Failed to create Paseo-owned worktree");
+    }
+    expect(path.basename(created.workspace.workspaceDirectory)).toBe(worktreeName);
+
+    await run({
+      projectName: path.basename(project.repoPath),
+      workspaceId: created.workspace.id,
+      worktreeName,
+    });
+  } finally {
+    await project.cleanup();
+  }
+}
+
 test.describe("Sidebar workspace list", () => {
   test("project with GitHub remote shows its selected folder name in sidebar", async ({ page }) => {
     const workspace = await seedWorkspace({
@@ -146,16 +189,22 @@ test.describe("Sidebar workspace list", () => {
       await gotoAppShell(page);
       await waitForSidebarProject(page, path.basename(workspace.repoPath));
 
-      const row = await waitForSidebarWorkspace(page, workspace.workspaceId);
-      await row.hover();
-
-      const hoverCard = page.getByTestId("workspace-hover-card");
-      await expect(hoverCard).toBeVisible({ timeout: 30_000 });
+      const hoverCard = await openWorkspaceHoverCard(page, workspace.workspaceId);
       await expect(page.getByTestId("hover-card-workspace-host")).toHaveText("localhost");
       await expect(hoverCard).not.toContainText(/\b(Online|Connecting|Offline|Error|Idle)\b/);
     } finally {
       await workspace.cleanup();
     }
+  });
+
+  test("Paseo-owned worktree hover card shows the worktree directory name", async ({ page }) => {
+    await withPaseoOwnedWorktree(async ({ projectName, workspaceId, worktreeName }) => {
+      await gotoAppShell(page);
+      await waitForSidebarProject(page, projectName);
+      await openWorkspaceHoverCard(page, workspaceId);
+
+      await expect(page.getByTestId("hover-card-workspace-cwd")).toHaveText(worktreeName);
+    });
   });
 });
 

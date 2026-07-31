@@ -22,6 +22,7 @@ function ws(
     workspaceKind: input.workspaceKind ?? "worktree",
     name: input.name ?? "main",
     title: input.title ?? null,
+    paseoWorktreeRoot: input.paseoWorktreeRoot ?? null,
     currentBranch: input.currentBranch ?? null,
     statusBucket: input.statusBucket ?? "done",
     statusEnteredAt: input.statusEnteredAt ?? null,

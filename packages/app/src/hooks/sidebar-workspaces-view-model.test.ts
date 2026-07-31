@@ -64,6 +64,52 @@ describe("createSidebarWorkspaceEntry forge threading", () => {
   });
 });
 
+describe("createSidebarWorkspaceEntry worktree ownership", () => {
+  it("threads the exact Paseo-owned worktree root", () => {
+    const descriptor = workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42");
+    descriptor.workspaceDirectory = "/worktrees/feature/packages/app";
+    descriptor.project = {
+      projectKey: "project",
+      projectName: "repo",
+      checkout: {
+        cwd: descriptor.workspaceDirectory,
+        isGit: true,
+        currentBranch: "feature",
+        remoteUrl: null,
+        worktreeRoot: "/worktrees/feature",
+        isPaseoOwnedWorktree: true,
+        mainRepoRoot: "/repo",
+      },
+    };
+
+    const entry = createSidebarWorkspaceEntry({ serverId: "srv", workspace: descriptor });
+
+    expect(entry.paseoWorktreeRoot).toBe("/worktrees/feature");
+  });
+
+  it("does not treat an external Git worktree as Paseo-owned", () => {
+    const descriptor = workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42");
+    descriptor.project = {
+      projectKey: "project",
+      projectName: "repo",
+      checkout: {
+        cwd: "/external/feature",
+        isGit: true,
+        currentBranch: "feature",
+        remoteUrl: null,
+        worktreeRoot: "/external/feature",
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: "/repo",
+      },
+    };
+
+    const entry = createSidebarWorkspaceEntry({ serverId: "srv", workspace: descriptor });
+
+    expect(entry.workspaceKind).toBe("worktree");
+    expect(entry.paseoWorktreeRoot).toBeNull();
+  });
+});
+
 interface OrderedItem {
   key: string;
 }
