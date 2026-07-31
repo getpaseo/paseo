@@ -28,7 +28,12 @@ import {
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { runGitCommand } from "./run-git-command.js";
 import { isPaseoOwnedWorktreeCwd, resolvePaseoWorktreesBaseRoot } from "./worktree.js";
-import { type PaseoWorktreeMetadata, readPaseoWorktreeMetadata } from "./worktree-metadata.js";
+import {
+  getPaseoWorktreeChangeRequestHintForBranch,
+  type PaseoWorktreeMetadata,
+  readPaseoWorktreeMetadata,
+  rebindPaseoWorktreeChangeRequestHint,
+} from "./worktree-metadata.js";
 const READ_ONLY_GIT_ENV = {
   GIT_OPTIONAL_LOCKS: "0",
   LC_ALL: "C",
@@ -1050,6 +1055,9 @@ export async function renameCurrentBranch(
   });
 
   const currentBranch = await getCurrentBranch(cwd);
+  if (currentBranch) {
+    rebindPaseoWorktreeChangeRequestHint(cwd, previousBranch, currentBranch);
+  }
   return { previousBranch, currentBranch };
 }
 
@@ -1660,30 +1668,14 @@ function buildPullRequestLookupTargetFromMetadata(
   metadata: PaseoWorktreeMetadata | null,
   currentBranch: string,
 ): PullRequestStatusLookupTarget | null {
-  const target = metadata?.changeRequestLookupTarget;
-  if (!target || !isChangeRequestLookupTargetForBranch(target, currentBranch)) {
+  const target = getPaseoWorktreeChangeRequestHintForBranch(metadata, currentBranch);
+  if (!target) {
     return null;
   }
   return {
     headRef: target.headRef,
     ...(target.headRepositoryOwner ? { headRepositoryOwner: target.headRepositoryOwner } : {}),
   };
-}
-
-function isChangeRequestLookupTargetForBranch(
-  target: NonNullable<PaseoWorktreeMetadata["changeRequestLookupTarget"]>,
-  currentBranch: string,
-): boolean {
-  if (target.localBranchName) {
-    return target.localBranchName === currentBranch;
-  }
-
-  // Legacy metadata did not record the local branch. Only accept canonical names;
-  // a collision suffix cannot be distinguished from an unrelated later branch.
-  const legacyLocalBranch = target.headRepositoryOwner
-    ? `${target.headRepositoryOwner}/${target.headRef}`
-    : target.headRef;
-  return currentBranch === legacyLocalBranch;
 }
 
 function buildInitialPullRequestLookupTarget(input: {

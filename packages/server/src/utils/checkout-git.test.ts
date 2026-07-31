@@ -89,7 +89,11 @@ function createLegacyWorktreeForTest(
     paseoHome: options.paseoHome,
   });
 }
-import { getPaseoWorktreeMetadataPath, writePaseoWorktreeMetadata } from "./worktree-metadata.js";
+import {
+  getPaseoWorktreeMetadataPath,
+  readPaseoWorktreeMetadata,
+  writePaseoWorktreeMetadata,
+} from "./worktree-metadata.js";
 
 function initRepo(): { tempDir: string; repoDir: string } {
   const tempDir = realpathSync.native(mkdtempSync(join(tmpdir(), "checkout-git-test-")));
@@ -2581,6 +2585,98 @@ const x = 1;
 
     expect(lookupTarget).toMatchObject({ headRef: "contributor/old-change-1" });
     expect(lookupTarget).not.toHaveProperty("headRepositoryOwner");
+  });
+
+  it("recognizes a normalized GitHub owner branch from legacy Enterprise metadata", async () => {
+    execFileSync("git", ["remote", "add", "origin", "git@github.acme.internal:base/repo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync(
+      "git",
+      ["remote", "add", "enterprise-fork", "git@github.acme.internal:MixedOwner/repo.git"],
+      {
+        cwd: repoDir,
+      },
+    );
+    execFileSync("git", ["branch", "mixedowner/old-change"], { cwd: repoDir });
+    execFileSync("git", ["config", "branch.mixedowner/old-change.remote", "enterprise-fork"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["config", "branch.mixedowner/old-change.merge", "refs/heads/old-change"], {
+      cwd: repoDir,
+    });
+    const workspaceDir = join(paseoHome, "worktrees", "repo", "legacy-enterprise-worktree");
+    mkdirSync(join(paseoHome, "worktrees", "repo"), { recursive: true });
+    execFileSync("git", ["worktree", "add", workspaceDir, "mixedowner/old-change"], {
+      cwd: repoDir,
+    });
+    writePaseoWorktreeMetadata(workspaceDir, {
+      baseRefName: "main",
+      changeRequestLookupTarget: {
+        headRef: "old-change",
+        headRepositoryOwner: "MixedOwner",
+        changeRequestNumber: 41,
+      },
+    });
+    const requestedTargets: RequestedPullRequestTarget[] = [];
+    const forge = createGitHubServiceRecordingPullRequestTargets({ requestedTargets });
+
+    const facts = await getCheckoutSnapshotFacts(workspaceDir, { paseoHome });
+    await getPullRequestStatus(
+      workspaceDir,
+      forge,
+      { force: true, reason: "legacy-enterprise-owner" },
+      { paseoHome, facts },
+    );
+
+    expect(requestedTargets).toEqual([
+      expect.objectContaining({ headRef: "old-change", headRepositoryOwner: "MixedOwner" }),
+    ]);
+  });
+
+  it("keeps a ref-only change request bound across rename but not branch switch", async () => {
+    execFileSync("git", ["branch", "feature/gitlab-mr"], { cwd: repoDir });
+    const workspaceDir = join(paseoHome, "worktrees", "repo", "gitlab-mr-worktree");
+    mkdirSync(join(paseoHome, "worktrees", "repo"), { recursive: true });
+    execFileSync("git", ["worktree", "add", workspaceDir, "feature/gitlab-mr"], {
+      cwd: repoDir,
+    });
+    writePaseoWorktreeMetadata(workspaceDir, {
+      baseRefName: "main",
+      changeRequestLookupTarget: {
+        headRef: "feature/gitlab-mr",
+        changeRequestNumber: 14,
+        localBranchName: "feature/gitlab-mr",
+      },
+    });
+    const requestedTargets: RequestedPullRequestTarget[] = [];
+    const forge = createGitHubServiceRecordingPullRequestTargets({ requestedTargets });
+
+    await renameCurrentBranch(workspaceDir, "feature/renamed");
+    expect(readPaseoWorktreeMetadata(workspaceDir)?.changeRequestLookupTarget).toMatchObject({
+      localBranchName: "feature/renamed",
+    });
+    const renamedFacts = await getCheckoutSnapshotFacts(workspaceDir, { paseoHome });
+    const renamedStatus = await getPullRequestStatus(
+      workspaceDir,
+      forge,
+      { force: true, reason: "renamed-change-request" },
+      { paseoHome, facts: renamedFacts },
+    );
+
+    expect(requestedTargets).toEqual([expect.objectContaining({ headRef: "feature/gitlab-mr" })]);
+    expect(renamedStatus.status?.headRefName).toBe("feature/gitlab-mr");
+
+    execFileSync("git", ["checkout", "-b", "other-branch"], { cwd: workspaceDir });
+    const switchedFacts = await getCheckoutSnapshotFacts(workspaceDir, { paseoHome });
+    await getPullRequestStatus(
+      workspaceDir,
+      forge,
+      { force: true, reason: "switched-after-rename" },
+      { paseoHome, facts: switchedFacts },
+    );
+
+    expect(requestedTargets.at(-1)).toMatchObject({ headRef: "other-branch" });
   });
 
   it("does not attach an owner when the tracked remote is the same GitHub repository", async () => {

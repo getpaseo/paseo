@@ -22,8 +22,9 @@ export {
 } from "@getpaseo/protocol/paseo-config-schema";
 import { PaseoConfigSchema, type PaseoConfig } from "@getpaseo/protocol/paseo-config-schema";
 import {
+  createPaseoWorktreeChangeRequestHint,
   normalizeBaseRefName,
-  type PaseoWorktreeChangeRequestLookupTarget,
+  type PaseoWorktreeChangeRequestHint,
   readPaseoWorktreeMetadata,
   readPaseoWorktreeRuntimePort,
   writePaseoWorktreeMetadata,
@@ -1300,7 +1301,7 @@ interface ResolveWorktreeSourcePlanOptions {
 interface WorktreeSourcePlan {
   branchName: string;
   metadataBaseRefName: string;
-  changeRequestLookupTarget?: PaseoWorktreeChangeRequestLookupTarget;
+  changeRequestLookupTarget?: PaseoWorktreeChangeRequestHint;
   addArguments: string[];
   pushRemote?: {
     name: string;
@@ -1408,14 +1409,14 @@ async function resolveWorktreeSourcePlan({
       return {
         branchName: localBranchName,
         metadataBaseRefName: normalizedBaseRefName,
-        changeRequestLookupTarget: {
+        changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
           headRef: source.headRef,
           ...(source.headRepositoryOwner
             ? { headRepositoryOwner: source.headRepositoryOwner }
             : {}),
           changeRequestNumber,
           localBranchName,
-        },
+        }),
         addArguments: [localBranchName],
         ...remotePlan,
       };
