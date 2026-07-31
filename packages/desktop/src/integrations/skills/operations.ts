@@ -216,7 +216,12 @@ export async function updateSkills(
   targets: SkillTargets,
   selection: SkillSelection,
 ): Promise<SkillsStatus> {
-  return applySkills(targets, selection);
+  const status = await getSkillsStatus(targets, selection);
+  return applySkills(targets, selection, nonDestructivePlan(status));
+}
+
+function nonDestructivePlan(status: SkillsStatus): SkillsStatus {
+  return { ...status, ops: status.ops.filter((op) => op.kind !== "delete") };
 }
 
 export async function autoUpdateInstalledSkills(
@@ -227,10 +232,7 @@ export async function autoUpdateInstalledSkills(
   if (status.state !== "drift") return status;
   // Automatic maintenance may repair selected skills, but removal is an
   // interactive operation because managed directories can contain user files.
-  return applySkills(targets, selection, {
-    ...status,
-    ops: status.ops.filter((op) => op.kind !== "delete"),
-  });
+  return applySkills(targets, selection, nonDestructivePlan(status));
 }
 
 export async function uninstallSkills(

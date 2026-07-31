@@ -421,7 +421,7 @@ describe("installSkills / updateSkills", () => {
     ).toBe("user-unslop");
   });
 
-  it("converges to up-to-date when state has missing + edited + legacy skills", async () => {
+  it("repairs missing and edited skills without deleting a legacy directory", async () => {
     await writeCurrentBundle(sandbox.targets.sourceDir);
     await writeOnDiskSkill(sandbox.targets.agentsDir, "paseo", { "SKILL.md": "stale" });
     await writeOnDiskSkill(sandbox.targets.agentsDir, "paseo-chat", { "SKILL.md": "chat-old" });
@@ -431,10 +431,10 @@ describe("installSkills / updateSkills", () => {
     const status = await updateSkills(sandbox.targets, ALL_SKILLS);
 
     expect(status).toEqual({
-      state: "up-to-date",
-      ops: [],
+      state: "drift",
+      ops: [{ kind: "delete", name: "paseo-chat" }],
       available: ["paseo", "paseo-loop"],
-      installed: ["paseo", "paseo-loop"],
+      installed: ["paseo", "paseo-chat", "paseo-loop"],
     });
     expect(
       await fs.readFile(path.join(sandbox.targets.agentsDir, "paseo", "SKILL.md"), "utf-8"),
@@ -447,7 +447,7 @@ describe("installSkills / updateSkills", () => {
       sandbox.targets.claudeDir,
       sandbox.targets.codexDir,
     ]) {
-      expect(await pathExists(path.join(dir, "paseo-chat"))).toBe(false);
+      expect(await pathExists(path.join(dir, "paseo-chat"))).toBe(true);
     }
   });
 

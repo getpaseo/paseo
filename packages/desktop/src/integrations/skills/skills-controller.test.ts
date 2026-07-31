@@ -923,4 +923,17 @@ describe("skills controller", () => {
       selection: { mode: "custom", skills: ["paseo"] },
     });
   });
+
+  it("does not remove deselected directories during a manual update", async () => {
+    await harness.controller.save({ mode: "custom", skills: ["paseo"] });
+    await writeUserFile(harness.targets, "paseo-loop", "notes/mine.md", "keep this");
+
+    await harness.controller.update();
+
+    expect(await readUserFile(harness.targets, "paseo-loop", "notes/mine.md")).toEqual([
+      "keep this",
+      "keep this",
+      "keep this",
+    ]);
+  });
 });
