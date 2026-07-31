@@ -2349,6 +2349,11 @@ describe("ACPAgentSession", () => {
     await Promise.resolve();
     await Promise.resolve();
 
+    await session.startTurn("continue");
+    resolvePrompt({ stopReason: "end_turn" });
+    await Promise.resolve();
+    await Promise.resolve();
+
     const toolEvents = events.filter(
       (event): event is Extract<AgentStreamEvent, { type: "timeline" }> =>
         event.type === "timeline" &&
@@ -2361,6 +2366,50 @@ describe("ACPAgentSession", () => {
       events.findIndex((event) => event.type === "turn_completed" && event.turnId === turnId),
     );
   });
+
+  test.each(["max_tokens", "max_turn_requests", "refusal"] as const)(
+    "cancels a running tool call when ACP stops with %s",
+    async (stopReason) => {
+      const session = createSession();
+      const events: AgentStreamEvent[] = [];
+      let resolvePrompt!: (value: PromptResponse) => void;
+      const prompt = vi.fn(
+        () =>
+          new Promise<PromptResponse>((resolve) => {
+            resolvePrompt = resolve;
+          }),
+      );
+
+      asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+      asInternals<ACPSessionInternals>(session).connection = { prompt };
+      session.subscribe((event) => events.push(event));
+
+      await session.startTurn("stop the poller");
+      await session.sessionUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "proc-d653724c39ce",
+          title: "process kill: proc_d653724c39ce",
+          kind: "execute",
+          status: "in_progress",
+        } as SessionUpdate,
+      });
+
+      resolvePrompt({ stopReason });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const toolEvents = events.filter(
+        (event): event is Extract<AgentStreamEvent, { type: "timeline" }> =>
+          event.type === "timeline" &&
+          event.item.type === "tool_call" &&
+          event.item.callId === "proc-d653724c39ce",
+      );
+
+      expect(toolEvents.map((event) => event.item.status)).toEqual(["running", "canceled"]);
+    },
+  );
 
   test("startTurn emits the submitted user message even when ACP does not echo it", async () => {
     const session = createSession();
