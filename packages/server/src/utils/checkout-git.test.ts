@@ -2550,6 +2550,15 @@ const x = 1;
       headRef: "old-change",
       headRepositoryOwner: "contributor",
     });
+
+    execFileSync("git", ["branch", "local-upstream"], { cwd: repoDir });
+    execFileSync("git", ["config", "branch.new-change.remote", "."], { cwd: repoDir });
+    execFileSync("git", ["config", "branch.new-change.merge", "refs/heads/local-upstream"], {
+      cwd: repoDir,
+    });
+    expect(await readPullRequestLookupTargetFromFacts(workspaceDir, paseoHome)).toMatchObject({
+      headRef: "local-upstream",
+    });
   });
 
   it("does not apply ambiguous legacy PR metadata to a suffixed branch", async () => {

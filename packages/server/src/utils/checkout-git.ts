@@ -1700,9 +1700,7 @@ function buildInitialPullRequestLookupTarget(input: {
   }
 
   const hasConfiguredBranchTarget = Boolean(
-    input.branchRemoteName &&
-    input.branchRemoteUrl &&
-    parseBranchMergeHeadRef(input.branchMergeRef),
+    input.branchRemoteName && parseBranchMergeHeadRef(input.branchMergeRef),
   );
   if (hasConfiguredBranchTarget) {
     const configuredTarget = buildPullRequestLookupTargetFromBranchConfig({
@@ -1723,7 +1721,8 @@ function buildInitialPullRequestLookupTarget(input: {
     // agrees with the explicit tracking configuration.
     if (
       trackedHeadRef &&
-      !parseGitHubRepoFromRemote(input.branchRemoteUrl ?? "") &&
+      input.branchRemoteUrl &&
+      !parseGitHubRepoFromRemote(input.branchRemoteUrl) &&
       !configuredTarget.headRepositoryOwner &&
       metadataTarget?.headRef === trackedHeadRef &&
       metadataTarget.headRepositoryOwner
