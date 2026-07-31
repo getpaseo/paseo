@@ -2632,6 +2632,27 @@ const x = 1;
     expect(requestedTargets).toEqual([
       expect.objectContaining({ headRef: "old-change", headRepositoryOwner: "MixedOwner" }),
     ]);
+
+    execFileSync(
+      "git",
+      ["remote", "add", "replacement-fork", "git@github.acme.internal:OtherOwner/repo.git"],
+      { cwd: repoDir },
+    );
+    execFileSync("git", ["config", "branch.mixedowner/old-change.remote", "replacement-fork"], {
+      cwd: repoDir,
+    });
+    const repointedFacts = await getCheckoutSnapshotFacts(workspaceDir, { paseoHome });
+    await getPullRequestStatus(
+      workspaceDir,
+      forge,
+      { force: true, reason: "repointed-enterprise-owner" },
+      { paseoHome, facts: repointedFacts },
+    );
+
+    expect(requestedTargets.at(-1)).toMatchObject({
+      headRef: "old-change",
+      headRepositoryOwner: "OtherOwner",
+    });
   });
 
   it("keeps a ref-only change request bound across rename but not branch switch", async () => {

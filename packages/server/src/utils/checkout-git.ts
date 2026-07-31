@@ -3,6 +3,7 @@ import { existsSync, realpathSync } from "fs";
 import { open as openFile, readFile, stat as statFile } from "fs/promises";
 import { TTLCache } from "@isaacs/ttlcache";
 import type { CheckoutCommit, CheckoutCommitFile } from "@getpaseo/protocol/messages";
+import { parseGitHubRemoteIdentity, parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import { maxBase64EncryptedPlaintextByteLength } from "@getpaseo/relay";
 import type { Logger } from "pino";
 import type { ParsedDiffFile } from "../server/utils/diff-highlighter.js";
@@ -1628,12 +1629,8 @@ function buildPullRequestLookupTargetFromBranchConfig(
     return { headRef: input.currentBranch };
   }
 
-  const remoteRepo = input.branchRemoteUrl
-    ? parseGitHubRepoFromRemote(input.branchRemoteUrl)
-    : null;
-  const originRepo = input.originRemoteUrl
-    ? parseGitHubRepoFromRemote(input.originRemoteUrl)
-    : null;
+  const remoteRepo = parseRepositoryIdentityFromRemote(input.branchRemoteUrl);
+  const originRepo = parseRepositoryIdentityFromRemote(input.originRemoteUrl);
   const isSameRepo = Boolean(remoteRepo && originRepo && remoteRepo === originRepo);
   const headRepositoryOwner = remoteRepo && !isSameRepo ? remoteRepo.split("/")[0] : null;
   const normalizedBaseRef = input.resolvedBaseRef
@@ -1651,6 +1648,14 @@ function buildPullRequestLookupTargetFromBranchConfig(
     headRef: trackedHeadRef,
     ...(headRepositoryOwner ? { headRepositoryOwner } : {}),
   };
+}
+
+function parseRepositoryIdentityFromRemote(remoteUrl: string | null): string | null {
+  if (!remoteUrl) {
+    return null;
+  }
+  const location = parseGitRemoteLocation(remoteUrl);
+  return location ? (parseGitHubRemoteIdentity(location.path)?.repo ?? null) : null;
 }
 
 function buildPullRequestLookupTargetFromPushConfig(
@@ -1711,7 +1716,7 @@ function buildInitialPullRequestLookupTarget(input: {
     input.branchRemoteName && parseBranchMergeHeadRef(input.branchMergeRef),
   );
   if (hasConfiguredBranchTarget) {
-    const configuredTarget = buildPullRequestLookupTargetFromBranchConfig({
+    return buildPullRequestLookupTargetFromBranchConfig({
       currentBranch: input.currentBranch,
       branchRemoteName: input.branchRemoteName,
       branchMergeRef: input.branchMergeRef,
@@ -1719,28 +1724,6 @@ function buildInitialPullRequestLookupTarget(input: {
       originRemoteUrl: input.originRemoteUrl,
       resolvedBaseRef: input.resolvedBaseRef,
     });
-    const trackedHeadRef = parseBranchMergeHeadRef(input.branchMergeRef);
-    const metadataTarget = buildPullRequestLookupTargetFromMetadata(
-      input.metadata,
-      input.currentBranch,
-    );
-    // The cloud-host parser cannot derive an owner for Enterprise remotes. A
-    // branch-bound hint may supplement that owner only when its head still
-    // agrees with the explicit tracking configuration.
-    if (
-      trackedHeadRef &&
-      input.branchRemoteUrl &&
-      !parseGitHubRepoFromRemote(input.branchRemoteUrl) &&
-      !configuredTarget.headRepositoryOwner &&
-      metadataTarget?.headRef === trackedHeadRef &&
-      metadataTarget.headRepositoryOwner
-    ) {
-      return {
-        headRef: trackedHeadRef,
-        headRepositoryOwner: metadataTarget.headRepositoryOwner,
-      };
-    }
-    return configuredTarget;
   }
 
   return (
