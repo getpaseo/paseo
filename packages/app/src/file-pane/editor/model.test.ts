@@ -176,6 +176,50 @@ describe("FileEditorModel", () => {
     ]);
   });
 
+  test("adopts an external BOM change before saving a dirty buffer", async () => {
+    const { model, session } = makeModel();
+    model.edit("local");
+    observeFile(model, {
+      content: "one",
+      hasBom: true,
+      version: { ...ready(), revision: "replacement-revision" },
+    });
+
+    await model.save();
+
+    expect(session.writes).toEqual([
+      {
+        content: "\uFEFFlocal",
+        expectedModifiedAt: "2026-07-18T00:00:00.000Z",
+        expectedRevision: "replacement-revision",
+      },
+    ]);
+  });
+
+  test("conflicts when a same-content observation changes the BOM during a save", async () => {
+    const { model, session } = makeModel();
+    session.holdNextWrite();
+    model.edit("saved");
+    const save = model.save();
+    observeFile(model, {
+      content: "saved",
+      hasBom: true,
+      version: ready("2026-07-18T00:00:02.000Z", 6),
+    });
+    session.finishHeldWrite({
+      status: "written",
+      modifiedAt: "2026-07-18T00:00:01.000Z",
+      size: 5,
+    });
+
+    await save;
+
+    expect(model.getSnapshot()).toMatchObject({
+      status: "conflict",
+      observedVersion: { modifiedAt: "2026-07-18T00:00:02.000Z" },
+    });
+  });
+
   test("ignores a settled observation that was already consumed", () => {
     const { model } = makeModel();
     const observation: FileEditorObservation = {

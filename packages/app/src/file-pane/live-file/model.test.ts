@@ -161,6 +161,24 @@ describe("LiveFileModel", () => {
     await vi.waitFor(() => expect(model.getObservation()?.status).toBe("missing"));
   });
 
+  it("preserves a missing candidate for its queued confirming read", async () => {
+    const session = new TestLiveFileSession();
+    const model = new LiveFileModel();
+    model.open({
+      session,
+      target: { cwd: "/workspace", path: "file.ts" },
+      liveUpdates: true,
+    });
+    await waitForRead(session, 1);
+
+    session.emit({ status: "missing", cwd: "/workspace", path: "file.ts" });
+    session.reads[0].resolve(file());
+    await waitForRead(session, 2);
+    session.reads[1].reject(new Error("File not found."));
+
+    await vi.waitFor(() => expect(model.getObservation()?.status).toBe("missing"));
+  });
+
   it("recovers only from a read begun after a missing observation", async () => {
     const session = new TestLiveFileSession();
     const model = new LiveFileModel();

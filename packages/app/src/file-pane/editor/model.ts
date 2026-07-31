@@ -217,9 +217,10 @@ export class FileEditorModel {
     this.clearAutosave();
     const sequence = ++this.saveSequence;
     const content = this.snapshot.content;
+    const hasBom = this.hasBom;
     this.observedWhileSaving = null;
     this.setSnapshot({ ...this.snapshot, status: "saving", error: null });
-    const serializedContent = this.hasBom ? `\uFEFF${content}` : content;
+    const serializedContent = hasBom ? `\uFEFF${content}` : content;
     let result: FileWriteResult;
     try {
       result = await this.session.write({
@@ -257,7 +258,7 @@ export class FileEditorModel {
     };
     const pending = this.takeObservedWhileSaving();
     this.persistedContent = content;
-    if (pending && !observationMatchesContent(pending, content)) {
+    if (pending && !observationMatchesWrite(pending, content, hasBom)) {
       const pendingVersion = observationVersion(pending);
       this.observed = pending;
       this.setSnapshot({
@@ -319,6 +320,7 @@ export class FileEditorModel {
   }
 
   private adoptUnchangedFile(file: FileEditorFile): void {
+    this.hasBom = file.hasBom;
     this.observed = { status: "ready", file };
     const modified = this.snapshot.content !== this.persistedContent;
     const recovering = this.snapshot.status === "conflict";
@@ -387,6 +389,14 @@ function observationVersion(observation: FileEditorObservation): FileVersion {
   return observation.status === "ready" ? observation.file.version : observation;
 }
 
-function observationMatchesContent(observation: FileEditorObservation, content: string): boolean {
-  return observation.status === "ready" && observation.file.content === content;
+function observationMatchesWrite(
+  observation: FileEditorObservation,
+  content: string,
+  hasBom: boolean,
+): boolean {
+  return (
+    observation.status === "ready" &&
+    observation.file.content === content &&
+    observation.file.hasBom === hasBom
+  );
 }
