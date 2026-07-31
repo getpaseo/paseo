@@ -10,12 +10,12 @@ import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-disp
  * the meaning, so the icon itself stays out of the accessibility tree.
  */
 export function SidebarSubtitleProjectIcon({
-  projectKey,
+  projectViewKey,
   projectName,
   iconDataUri,
   testID,
 }: {
-  projectKey: string;
+  projectViewKey: string;
   projectName: string;
   iconDataUri: string | null;
   testID?: string;
@@ -37,7 +37,7 @@ export function SidebarSubtitleProjectIcon({
       <ProjectIconView
         iconDataUri={iconDataUri}
         initial={placeholderInitial}
-        projectKey={projectKey}
+        projectViewKey={projectViewKey}
         imageStyle={styles.icon}
         fallbackStyle={styles.fallback}
         textStyle={styles.fallbackText}

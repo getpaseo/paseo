@@ -6,6 +6,7 @@ import type {
 import {
   buildSidebarProjectRowModel,
   resolveSidebarProjectIconTarget,
+  resolveSidebarProjectIconTargets,
   resolveSidebarProjectLocalPath,
 } from "./sidebar-project-row-model";
 
@@ -203,6 +204,22 @@ describe("buildSidebarProjectRowModel", () => {
     );
 
     expect(iconTarget).toEqual({
+      serverId: "host-b",
+      projectId: "project-host-b",
+      iconWorkingDir: "/repo/b",
+    });
+  });
+
+  it("keys project icon results by the rendered project view", () => {
+    const [iconTarget] = resolveSidebarProjectIconTargets([
+      project({
+        viewKey: '["placement","host-b","project-b"]',
+        hosts: [{ serverId: "host-b", iconWorkingDir: "/repo/b", canCreateWorktree: true }],
+      }),
+    ]);
+
+    expect(iconTarget).toEqual({
+      projectViewKey: '["placement","host-b","project-b"]',
       serverId: "host-b",
       projectId: "project-host-b",
       iconWorkingDir: "/repo/b",

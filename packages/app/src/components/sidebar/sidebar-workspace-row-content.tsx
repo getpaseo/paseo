@@ -157,7 +157,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             <View style={styles.workspaceSubtitleRow}>
               {subtitleProjectName ? (
                 <SidebarSubtitleProjectIcon
-                  projectKey={workspace.projectKey}
+                  projectViewKey={workspace.projectViewKey}
                   projectName={subtitleProjectName}
                   iconDataUri={subtitleProjectIconDataUri}
                   testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
