@@ -161,6 +161,8 @@ interface ProviderLoadOptions {
 }
 interface ProviderLoad {
   promise: Promise<void>;
+  controller: AbortController;
+  runtimeEpoch: number;
 }
 
 type ProviderCatalogScope = { scope: "global" } | { scope: "workspace"; cwd: string };
@@ -178,6 +180,7 @@ export class ProviderSnapshotManager {
   private readonly events = new EventEmitter();
   private destroyed = false;
   private lifecycle: ProviderRuntimeLifecycle = "active";
+  private runtimeEpoch = 0;
   private shutdownPromise: Promise<void> | null = null;
   private readonly refreshTimeoutMs: number;
   private readonly diagnosticTimeoutMs: number;
@@ -458,17 +461,20 @@ export class ProviderSnapshotManager {
       (client): client is AgentClient => client !== undefined,
     );
     this.lifecycle = "shutting_down";
-    this.invalidateProviderLoads();
-    this.demoteSnapshotsForUnavailableRuntime();
-
-    this.shutdownPromise = Promise.resolve()
+    this.runtimeEpoch += 1;
+    const shutdownPromise = Promise.resolve()
       .then(() => shutdownAgentClients(clients, this.logger))
       .finally(() => {
         this.lifecycle = "shut_down";
         this.invalidateProviderLoads();
         this.demoteSnapshotsForUnavailableRuntime();
       });
-    return this.shutdownPromise;
+    // Publish the shared operation before any synchronous observer notification
+    // can re-enter shutdown or throw.
+    this.shutdownPromise = shutdownPromise;
+    this.invalidateProviderLoads();
+    this.demoteSnapshotsForUnavailableRuntime();
+    return shutdownPromise;
   }
 
   destroy(): void {
@@ -770,6 +776,8 @@ export class ProviderSnapshotManager {
 
     const load: ProviderLoad = {
       promise: Promise.resolve(),
+      controller: new AbortController(),
+      runtimeEpoch: this.runtimeEpoch,
     };
     this.setProviderLoad(options.snapshotCwd, options.provider, load);
     load.promise = Promise.resolve()
@@ -822,7 +830,7 @@ export class ProviderSnapshotManager {
     };
 
     try {
-      if (this.lifecycle !== "active") {
+      if (!this.isProviderLoadRuntimeActive(load)) {
         return;
       }
       if (!definition.enabled) {
@@ -836,7 +844,7 @@ export class ProviderSnapshotManager {
         this.refreshTimeoutMs,
         `Timed out checking ${definition.label} availability after ${this.refreshTimeoutMs}ms`,
       );
-      if (this.lifecycle !== "active") {
+      if (!this.isProviderLoadRuntimeActive(load)) {
         return;
       }
       if (!available) {
@@ -846,11 +854,18 @@ export class ProviderSnapshotManager {
 
       const catalogOptions = createFetchCatalogOptions(catalogScope, force);
       const catalog = await withTimeout(
-        definition.fetchCatalog({ ...catalogOptions, timeoutMs: this.refreshTimeoutMs }, client),
+        definition.fetchCatalog(
+          {
+            ...catalogOptions,
+            timeoutMs: this.refreshTimeoutMs,
+            signal: load.controller.signal,
+          },
+          client,
+        ),
         this.refreshTimeoutMs,
         `Timed out refreshing ${definition.label} after ${this.refreshTimeoutMs}ms`,
       );
-      if (this.lifecycle !== "active") {
+      if (!this.isProviderLoadRuntimeActive(load)) {
         return;
       }
 
@@ -939,13 +954,30 @@ export class ProviderSnapshotManager {
   }
 
   private invalidateProviderLoads(): void {
+    for (const loads of this.providerLoads.values()) {
+      for (const load of loads.values()) {
+        load.controller.abort(new Error(this.getRuntimeUnavailableReason()));
+      }
+    }
     this.providerLoads.clear();
+  }
+
+  private isProviderLoadRuntimeActive(load: ProviderLoad): boolean {
+    return (
+      this.lifecycle === "active" &&
+      load.runtimeEpoch === this.runtimeEpoch &&
+      !load.controller.signal.aborted
+    );
   }
 
   private demoteSnapshotsForUnavailableRuntime(): void {
     for (const cwd of this.snapshots.keys()) {
       this.snapshots.set(cwd, this.createUnavailableRuntimeEntries());
-      this.emitChange(cwd);
+      try {
+        this.emitChange(cwd);
+      } catch (error) {
+        this.logger.warn({ err: error, cwd }, "Provider snapshot shutdown notification failed");
+      }
     }
   }
 

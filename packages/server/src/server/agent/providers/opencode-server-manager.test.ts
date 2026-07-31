@@ -26,6 +26,14 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+function createDeferred<T>() {
+  let resolvePromise!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return { promise, resolve: resolvePromise };
+}
+
 describe("OpenCodeServerManager generations", () => {
   test("rotation creates a new current server without killing a referenced old server", async () => {
     const { manager, runtime } = createTestManager([4101, 4102]);
@@ -138,6 +146,75 @@ describe("OpenCodeServerManager generations", () => {
 
     await expect(acquisition).rejects.toThrow("OpenCode server exited with code null");
     expect(runtime.terminatedPorts).toEqual([4472]);
+    expect(await runtime.managedProcesses.list()).toEqual([]);
+  });
+
+  test("shutdown before spawn cancels a pending server generation", async () => {
+    const portGate = createDeferred<number>();
+    const portAllocationStarted = createDeferred<void>();
+    const runtime = new FakeOpenCodeServerRuntime([4477], { autoAnnounce: true });
+    const manager = new OpenCodeServerManager({
+      logger: createTestLogger(),
+      managedProcesses: runtime.managedProcesses,
+      portAllocator: async () => {
+        portAllocationStarted.resolve();
+        return portGate.promise;
+      },
+      resolveCommandPrefix: runtime.resolveCommandPrefix,
+      spawnServerProcess: runtime.spawnServerProcess,
+      terminateProcess: runtime.terminateProcess,
+    });
+
+    const acquisition = manager.acquireCurrent();
+    const acquisitionFailure = expect(acquisition).rejects.toThrow(
+      "OpenCode server manager has shut down",
+    );
+    await portAllocationStarted.promise;
+
+    await manager.shutdown();
+    portGate.resolve(4477);
+    await acquisitionFailure;
+
+    expect(runtime.spawnCalls).toEqual([]);
+    expect(runtime.terminatedPorts).toEqual([]);
+    expect(await runtime.managedProcesses.list()).toEqual([]);
+  });
+
+  test("shutdown while acquireNew rotation is pending prevents the replacement spawn", async () => {
+    const runtime = new FakeOpenCodeServerRuntime([4478, 4479], { autoAnnounce: true });
+    const replacementPrefixGate = createDeferred<{ command: string; args: string[] }>();
+    const replacementPrefixStarted = createDeferred<void>();
+    let prefixCalls = 0;
+    const manager = new OpenCodeServerManager({
+      logger: createTestLogger(),
+      managedProcesses: runtime.managedProcesses,
+      portAllocator: runtime.allocatePort,
+      resolveCommandPrefix: async () => {
+        prefixCalls += 1;
+        if (prefixCalls === 1) {
+          return { command: "opencode", args: [] };
+        }
+        replacementPrefixStarted.resolve();
+        return replacementPrefixGate.promise;
+      },
+      spawnServerProcess: runtime.spawnServerProcess,
+      terminateProcess: runtime.terminateProcess,
+    });
+
+    const current = await manager.acquireCurrent();
+    const rotation = manager.acquireNew();
+    const rotationFailure = expect(rotation).rejects.toThrow(
+      "OpenCode server manager has shut down",
+    );
+    await replacementPrefixStarted.promise;
+
+    await manager.shutdown();
+    replacementPrefixGate.resolve({ command: "opencode", args: [] });
+    await rotationFailure;
+    await current.release();
+
+    expect(runtime.launchedPorts).toEqual([4478]);
+    expect(runtime.terminatedPorts).toEqual([4478]);
     expect(await runtime.managedProcesses.list()).toEqual([]);
   });
 

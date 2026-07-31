@@ -1239,6 +1239,143 @@ describe("ProviderSnapshotManager lifecycle", () => {
     }
   });
 
+  test("shutdown cancels an in-flight catalog before its provider request survives", async () => {
+    const catalogEntered = createDeferred<void>();
+    const catalogGate = createDeferred<void>();
+    const providerRequest = vi.fn();
+    const fetchCatalog = vi.fn(async (options: FetchCatalogOptions) => {
+      catalogEntered.resolve();
+      await catalogGate.promise;
+      if (options.signal?.aborted) {
+        throw options.signal.reason;
+      }
+      providerRequest();
+      return {
+        models: [] as AgentModelDefinition[],
+        modes: [] as AgentMode[],
+      };
+    });
+    const shutdown = vi.fn(async () => {});
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: vi.fn(async () => true),
+          fetchCatalog,
+          shutdown,
+        }),
+      },
+    });
+
+    try {
+      const refreshPromise = manager.refreshSnapshotForCwd({
+        cwd: "/tmp/project",
+        providers: ["codex"],
+      });
+      await catalogEntered.promise;
+
+      await manager.shutdown();
+      catalogGate.resolve();
+      await refreshPromise;
+
+      expect(shutdown).toHaveBeenCalledTimes(1);
+      expect(providerRequest).not.toHaveBeenCalled();
+      expect(
+        manager.getSnapshot("/tmp/project").find((entry) => entry.provider === "codex"),
+      ).toMatchObject({
+        status: "unavailable",
+        error: "Provider runtime has shut down",
+      });
+    } finally {
+      catalogGate.resolve();
+      manager.destroy();
+    }
+  });
+
+  test("throwing shutdown observers cannot skip provider client cleanup", async () => {
+    const shutdown = vi.fn(async () => {});
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", { shutdown }),
+      },
+    });
+
+    try {
+      manager.getSnapshot("/tmp/project");
+      manager.on("change", () => {
+        throw new Error("observer failed");
+      });
+
+      await expect(manager.shutdown()).resolves.toBeUndefined();
+
+      expect(shutdown).toHaveBeenCalledTimes(1);
+      expect(
+        manager.getSnapshot("/tmp/project").find((entry) => entry.provider === "codex"),
+      ).toMatchObject({
+        status: "unavailable",
+        error: "Provider runtime has shut down",
+      });
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("reentrant repeated shutdown shares the published cleanup operation", async () => {
+    const shutdownGate = createDeferred<void>();
+    const shutdown = vi.fn(async () => shutdownGate.promise);
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", { shutdown }),
+      },
+    });
+    const reentrantShutdowns: Promise<void>[] = [];
+
+    try {
+      manager.getSnapshot("/tmp/project");
+      manager.on("change", () => {
+        reentrantShutdowns.push(manager.shutdown());
+      });
+
+      const firstShutdown = manager.shutdown();
+      const repeatedShutdown = manager.shutdown();
+      await vi.waitFor(() => expect(shutdown).toHaveBeenCalledTimes(1));
+      shutdownGate.resolve();
+      await Promise.all([firstShutdown, repeatedShutdown, ...reentrantShutdowns]);
+
+      expect(shutdown).toHaveBeenCalledTimes(1);
+      expect(reentrantShutdowns.length).toBeGreaterThan(0);
+      expect(
+        manager.getSnapshot("/tmp/project").find((entry) => entry.provider === "codex"),
+      ).toMatchObject({
+        status: "unavailable",
+        error: "Provider runtime has shut down",
+      });
+    } finally {
+      shutdownGate.resolve();
+      manager.destroy();
+    }
+  });
+
   test("on/off attaches and detaches change listeners", () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),

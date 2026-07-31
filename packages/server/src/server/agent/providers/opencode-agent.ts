@@ -1388,6 +1388,7 @@ export class OpenCodeAgentClient implements AgentClient {
   }
 
   async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
+    assertFetchCatalogActive(options);
     const acquisition = options.force
       ? await this.serverManager.acquireNew()
       : await this.serverManager.acquireCurrent();
@@ -1395,12 +1396,14 @@ export class OpenCodeAgentClient implements AgentClient {
     const isGlobalCatalog = options.scope === "global";
 
     try {
+      assertFetchCatalogActive(options);
       // OpenCode treats the catalog directory as a workspace. The global catalog
       // is not a project, so use the neutral OpenCode home instead of user home.
       const directory = isGlobalCatalog ? this.resolveHomeDir() : options.cwd;
 
       if (isGlobalCatalog) {
         await fs.mkdir(directory, { recursive: true });
+        assertFetchCatalogActive(options);
         this.logger.debug(
           { directory },
           "opencode catalog refresh: using opencode-home for global provider catalog",
@@ -1408,10 +1411,12 @@ export class OpenCodeAgentClient implements AgentClient {
       }
 
       const client = this.createOpenCodeClient({ baseUrl: url, directory });
+      assertFetchCatalogActive(options);
       const [models, modes] = await Promise.all([
         this.fetchModelsFromClient(client, directory),
         this.fetchModesFromClient(client, directory),
       ]);
+      assertFetchCatalogActive(options);
       return { models, modes };
     } finally {
       await acquisition.release();
@@ -1701,6 +1706,14 @@ export class OpenCodeAgentClient implements AgentClient {
       this.modelContextWindows.set(modelLookupKey, contextWindowMaxTokens);
     }
   }
+}
+
+function assertFetchCatalogActive(options: FetchCatalogOptions): void {
+  if (!options.signal?.aborted) {
+    return;
+  }
+  const reason = options.signal.reason;
+  throw reason instanceof Error ? reason : new Error("Provider catalog refresh was canceled");
 }
 
 export interface OpenCodeEventTranslationState {

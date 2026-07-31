@@ -663,12 +663,14 @@ export type FetchCatalogOptions =
       scope: "global";
       force: boolean;
       timeoutMs?: number;
+      signal?: AbortSignal;
     }
   | {
       scope: "workspace";
       cwd: string;
       force: boolean;
       timeoutMs?: number;
+      signal?: AbortSignal;
     };
 
 export interface ProviderCatalog {
