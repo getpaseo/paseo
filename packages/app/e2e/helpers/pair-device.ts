@@ -17,6 +17,14 @@ interface PairingHostInput {
   endpoint: string;
 }
 
+async function preserveSeededHostsOnNextLoad(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const nonce = localStorage.getItem("@paseo:e2e-seed-nonce");
+    if (!nonce) throw new Error("Expected e2e seed nonce");
+    localStorage.setItem("@paseo:e2e-disable-default-seed-once", nonce);
+  });
+}
+
 export async function prepareLocalPairingHost(
   page: Page,
   daemon: IsolatedHostDaemon | OutdatedDaemon,
@@ -119,11 +127,7 @@ export async function closePairDeviceModal(page: Page): Promise<void> {
 }
 
 export async function reloadAndOpenPairDevice(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    const nonce = localStorage.getItem("@paseo:e2e-seed-nonce");
-    if (!nonce) throw new Error("Expected e2e seed nonce");
-    localStorage.setItem("@paseo:e2e-disable-default-seed-once", nonce);
-  });
+  await preserveSeededHostsOnNextLoad(page);
   await page.reload();
   await openPairDeviceModal(page);
 }
@@ -150,11 +154,7 @@ export async function retryRelayAndExpectFailure(
 }
 
 export async function openPairDeviceFromHome(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    const nonce = localStorage.getItem("@paseo:e2e-seed-nonce");
-    if (!nonce) throw new Error("Expected e2e seed nonce");
-    localStorage.setItem("@paseo:e2e-disable-default-seed-once", nonce);
-  });
+  await preserveSeededHostsOnNextLoad(page);
   await page.goto("/open-project");
   await page.getByTestId("open-project-pair-device").click();
   await expect(page.getByTestId("open-project-pair-device-modal")).toBeVisible();
@@ -193,6 +193,13 @@ export async function switchPairDeviceToHost(page: Page, serverId: string): Prom
   await expectAppRoute(page, buildSettingsHostSectionRoute(serverId, "connections"));
   await expect(page.getByTestId("host-page-connections-card")).toBeVisible();
   await expect(page.getByTestId("host-page-pair-device-row")).toHaveCount(0);
+}
+
+export async function openRemotePairDeviceDeepLink(page: Page, serverId: string): Promise<void> {
+  await preserveSeededHostsOnNextLoad(page);
+  await page.goto(buildSettingsHostSectionRoute(serverId, "pair-device"));
+  await expectAppRoute(page, buildSettingsHostSectionRoute(serverId, "connections"));
+  await expect(page.getByTestId("host-page-connections-card")).toBeVisible();
 }
 
 export async function openRelaySecurityDocs(page: Page): Promise<void> {
