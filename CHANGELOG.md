@@ -120,6 +120,12 @@
 
 - Keep the fork's Code Server tabs, Browser localhost/loopback tunneling, PDF preview, task backlog, provider quota resets, and original Android package ID while adopting the official 0.2 release line ([#14](https://github.com/iamriajul/paseo/pull/14))
 
+## 0.2.5 - 2026-07-30
+
+### Fixed
+
+- Fixed the Linux Debian package ([#2654](https://github.com/getpaseo/paseo/pull/2654) by [@Neumannzc](https://github.com/Neumannzc))
+
 ## 0.2.4 - 2026-07-30
 
 ### Added
