@@ -109,8 +109,8 @@ export interface LiveVoiceRuntime {
   /** Retry autoplay-blocked playback. Must be driven by a user gesture. */
   resumeAudio(): Promise<void>;
   /**
-   * Clear a terminal error/ended state — and its retained transcript — so the
-   * call surface can disappear. No-op while a call is live.
+   * Clear a terminal error/ended state and its retained transcript from the
+   * footer control. No-op while a call is live.
    */
   dismiss(): void;
   isActiveForServer(serverId: string): boolean;

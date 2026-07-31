@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 import { useLiveVoiceOptional } from "@/contexts/live-voice-context";
 import {
+  isLiveVoiceCallInProgress,
   LiveVoiceCallControls,
   LiveVoiceStatusDot,
   LiveVoiceTranscript,
@@ -26,7 +27,7 @@ const TRANSCRIPT_MAX_HEIGHT = 280;
  *
  * When a visible sidebar offers a voice slot, the sidebar card owns the call
  * surface instead and this renders nothing. Idle it renders nothing at all —
- * starting a call is the sidebar footer button's job.
+ * starting a call and inspecting terminal status are the footer button's jobs.
  */
 export function LiveVoiceStrip() {
   const sidebarOwnsSurface = useSidebarOwnsLiveVoiceSurface();
@@ -40,17 +41,11 @@ export function LiveVoiceStrip() {
     setIsExpanded((current) => !current);
   }, []);
 
-  const handleDismiss = useCallback(() => {
-    setIsExpanded(false);
-    liveVoice?.dismiss();
-  }, [liveVoice]);
-
   if (sidebarOwnsSurface || !liveVoice) {
     return null;
   }
-  const { phase, serverId, sessionMode, transcripts, isAudioBlocked, error, closedCause } =
-    liveVoice;
-  if (phase === "idle" && closedCause === null) {
+  const { phase, serverId, sessionMode, transcripts, isAudioBlocked, error } = liveVoice;
+  if (!isLiveVoiceCallInProgress(phase)) {
     return null;
   }
 
@@ -61,7 +56,7 @@ export function LiveVoiceStrip() {
   const latestTranscript = transcripts.length > 0 ? transcripts[transcripts.length - 1] : null;
 
   return (
-    <View style={[styles.container, { paddingBottom: insets.bottom }]}>
+    <View testID="live-voice-strip" style={[styles.container, { paddingBottom: insets.bottom }]}>
       {isExpanded ? (
         <View style={styles.transcriptSection}>
           <LiveVoiceTranscript
@@ -87,11 +82,7 @@ export function LiveVoiceStrip() {
           <View style={styles.previewSpacer} />
         )}
 
-        <LiveVoiceCallControls
-          isExpanded={isExpanded}
-          onToggleExpanded={handleToggleExpanded}
-          onDismiss={handleDismiss}
-        />
+        <LiveVoiceCallControls isExpanded={isExpanded} onToggleExpanded={handleToggleExpanded} />
       </View>
     </View>
   );

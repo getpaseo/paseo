@@ -16,7 +16,7 @@ import {
   type NativeSyntheticEvent,
 } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { ChevronDown, ChevronUp, Mic, MicOff, PhoneOff, Volume2, X } from "lucide-react-native";
+import { ChevronDown, ChevronUp, Mic, MicOff, PhoneOff, Volume2 } from "lucide-react-native";
 import type { Theme } from "@/styles/theme";
 import { useLiveVoiceOptional } from "@/contexts/live-voice-context";
 import type { LiveVoicePhase, LiveVoiceTranscriptEntry } from "@/live-voice/live-voice-runtime";
@@ -25,6 +25,11 @@ import type { LiveVoiceSessionMode } from "@/live-voice/live-voice-session";
 const ICON_SIZE = 14;
 /** How close to the end counts as "pinned to the bottom" for auto-scroll. */
 const PINNED_THRESHOLD = 48;
+
+/** The large call surface exists only while a call is being established, live, or stopped. */
+export function isLiveVoiceCallInProgress(phase: LiveVoicePhase): boolean {
+  return phase === "starting" || phase === "active" || phase === "stopping";
+}
 
 export function resolveLiveVoiceStatusLabel(args: {
   phase: LiveVoicePhase;
@@ -63,18 +68,16 @@ export function resolveLiveVoiceModeLabel(args: {
 
 /**
  * The in-call control cluster: enable-audio (when autoplay is blocked), mute
- * (while live), the transcript toggle, and stop-or-dismiss depending on whether
- * the call is still up. Rendered as a fragment so each surface owns the row it
- * sits in.
+ * (while live), the transcript toggle, and stop. Terminal status and dismissal
+ * live in the footer menu after the large call surface disappears. Rendered as
+ * a fragment so each surface owns the row it sits in.
  */
 export function LiveVoiceCallControls({
   isExpanded,
   onToggleExpanded,
-  onDismiss,
 }: {
   isExpanded: boolean;
   onToggleExpanded: () => void;
-  onDismiss: () => void;
 }) {
   const liveVoice = useLiveVoiceOptional();
   const { t } = useTranslation();
@@ -99,7 +102,6 @@ export function LiveVoiceCallControls({
     return null;
   }
   const { phase, isMuted, isAudioBlocked } = liveVoice;
-  const isTerminal = phase === "error" || phase === "idle";
 
   return (
     <>
@@ -145,26 +147,15 @@ export function LiveVoiceCallControls({
         )}
       </Pressable>
 
-      {isTerminal ? (
-        <Pressable
-          onPress={onDismiss}
-          accessibilityRole="button"
-          accessibilityLabel={t("liveVoice.actions.dismiss")}
-          style={styles.iconButton}
-        >
-          <ThemedX size={ICON_SIZE} uniProps={iconForegroundMapping} />
-        </Pressable>
-      ) : (
-        <Pressable
-          onPress={handleStop}
-          disabled={phase === "stopping"}
-          accessibilityRole="button"
-          accessibilityLabel={t("liveVoice.actions.stop")}
-          style={styles.iconButton}
-        >
-          <ThemedPhoneOff size={ICON_SIZE} uniProps={iconDangerMapping} />
-        </Pressable>
-      )}
+      <Pressable
+        onPress={handleStop}
+        disabled={phase === "stopping"}
+        accessibilityRole="button"
+        accessibilityLabel={t("liveVoice.actions.stop")}
+        style={styles.iconButton}
+      >
+        <ThemedPhoneOff size={ICON_SIZE} uniProps={iconDangerMapping} />
+      </Pressable>
     </>
   );
 }
@@ -241,7 +232,6 @@ const ThemedPhoneOff = withUnistyles(PhoneOff);
 const ThemedVolume2 = withUnistyles(Volume2);
 const ThemedChevronUp = withUnistyles(ChevronUp);
 const ThemedChevronDown = withUnistyles(ChevronDown);
-const ThemedX = withUnistyles(X);
 
 const iconForegroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const iconDangerMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
