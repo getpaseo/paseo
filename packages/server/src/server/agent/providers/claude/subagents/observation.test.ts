@@ -89,57 +89,42 @@ describe("foldSubagentObservations", () => {
   });
 });
 
-describe("runtime and usage observations", () => {
-  it("reports a model without asserting a status", () => {
-    // task_notification carries usage alongside a terminal status. If a cost report asserted
-    // "running", fold order alone could revert a finished subagent.
+describe("subtitle observations", () => {
+  it("reports provider context without asserting a status", () => {
     const [event] = foldSubagentObservations([
-      { kind: "runtime", id: "toolu_1", model: "claude-opus-5" },
+      { kind: "subtitle", id: "toolu_1", subtitle: "Explore · Opus 5 · High" },
     ]);
-    expect(event).toEqual({ type: "upsert", id: "toolu_1", model: "claude-opus-5" });
+    expect(event).toEqual({
+      type: "upsert",
+      id: "toolu_1",
+      subtitle: "Explore · Opus 5 · High",
+    });
     expect(event).not.toHaveProperty("status");
   });
 
-  it("does not revert a finished subagent when usage arrives after completion", () => {
+  it("does not revert a finished subagent when presentation changes", () => {
     const store = new ProviderSubagentStore();
     let descriptor = null;
     for (const event of foldSubagentObservations([
       { kind: "declared", id: "toolu_1", title: "Explore" },
       { kind: "status", id: "toolu_1", status: "completed" },
-      { kind: "usage", id: "toolu_1", usage: { totalTokens: 32271, durationMs: 10934 } },
+      { kind: "subtitle", id: "toolu_1", subtitle: "Explore · Opus 5 · 32.3k tokens" },
     ])) {
       const applied = store.apply("parent", "claude", event);
       if (applied.type === "upsert") descriptor = applied.subagent;
     }
     expect(descriptor).toMatchObject({
       status: "completed",
-      usage: { totalTokens: 32271, durationMs: 10934 },
+      subtitle: "Explore · Opus 5 · 32.3k tokens",
     });
   });
 
-  it("merges partial usage reports rather than replacing them", () => {
-    // task_progress carries tokens and tool count; duration only lands at the end.
-    const store = new ProviderSubagentStore();
-    let descriptor = null;
-    for (const event of foldSubagentObservations([
-      { kind: "declared", id: "toolu_1" },
-      { kind: "usage", id: "toolu_1", usage: { totalTokens: 16484, toolUses: 1 } },
-      { kind: "usage", id: "toolu_1", usage: { durationMs: 10934 } },
-    ])) {
-      const applied = store.apply("parent", "claude", event);
-      if (applied.type === "upsert") descriptor = applied.subagent;
-    }
-    expect(descriptor).toMatchObject({
-      usage: { totalTokens: 16484, toolUses: 1, durationMs: 10934 },
-    });
-  });
-
-  it("keeps identity when a later runtime observation reports only a model", () => {
+  it("keeps identity when a later subtitle arrives", () => {
     const store = new ProviderSubagentStore();
     let descriptor = null;
     for (const event of foldSubagentObservations([
       { kind: "declared", id: "toolu_1", title: "Explore", description: "Find the code" },
-      { kind: "runtime", id: "toolu_1", model: "claude-opus-5" },
+      { kind: "subtitle", id: "toolu_1", subtitle: "Explore · Opus 5" },
     ])) {
       const applied = store.apply("parent", "claude", event);
       if (applied.type === "upsert") descriptor = applied.subagent;
@@ -147,7 +132,7 @@ describe("runtime and usage observations", () => {
     expect(descriptor).toMatchObject({
       title: "Explore",
       description: "Find the code",
-      model: "claude-opus-5",
+      subtitle: "Explore · Opus 5",
       status: "running",
     });
   });

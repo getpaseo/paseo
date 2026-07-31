@@ -1,12 +1,14 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import type { AgentMetadata } from "../../../agent-sdk-types.js";
-import type {
-  ProviderSubagentStatus,
-  ProviderSubagentUsage,
-} from "../../../provider-subagents/store.js";
+import type { ProviderSubagentStatus } from "../../../provider-subagents/store.js";
 import { resolveObservedClaudeModelId } from "../models.js";
 import type { SubagentObservation } from "./observation.js";
+import {
+  buildClaudeSubagentSubtitle,
+  type ClaudeSubagentPresentationFacts,
+  type ClaudeSubagentUsage,
+} from "./presentation.js";
 
 /**
  * Claude Code announces subagent lifecycle on the SDK stream. This reads those announcements
@@ -19,8 +21,9 @@ import type { SubagentObservation } from "./observation.js";
  *   task_notification  task_id, tool_use_id, status
  *
  * Only `task_started` carries `tool_use_id`, so the mapping from task id to the canonical
- * subagent id has to be remembered. That table is the only state here, and it is a lookup
- * rather than a state machine: nothing is inferred from message ordering.
+ * subagent id has to be remembered. The source also accumulates Claude's presentation facts so
+ * the shared descriptor receives one complete provider-owned subtitle rather than Claude fields.
+ * Neither is a lifecycle state machine: status comes directly from task announcements.
  *
  * The table is session-scoped, because task ids are. It survives a turn ending — the one thing a
  * turn ending warrants is `cancelRunningForegroundTasks`, not forgetting the session.
@@ -89,12 +92,10 @@ interface TaskProgressMessage {
 
 function readUsage(
   usage: { total_tokens?: number; tool_uses?: number; duration_ms?: number } | undefined,
-): ProviderSubagentUsage | null {
+): ClaudeSubagentUsage | null {
   if (!usage) return null;
-  const observed: ProviderSubagentUsage = {};
+  const observed: ClaudeSubagentUsage = {};
   if (typeof usage.total_tokens === "number") observed.totalTokens = usage.total_tokens;
-  if (typeof usage.tool_uses === "number") observed.toolUses = usage.tool_uses;
-  if (typeof usage.duration_ms === "number") observed.durationMs = usage.duration_ms;
   return Object.keys(observed).length > 0 ? observed : null;
 }
 
@@ -151,10 +152,9 @@ export class ClaudeTaskProtocolSource {
   private readonly backgroundedIds = new Set<string>();
   /** Last status emitted per subagent, so a redundant announcement is not re-broadcast. */
   private readonly lastStatusById = new Map<string, ProviderSubagentStatus>();
-  /** Last model reported per subagent, so an unchanged model is not re-broadcast. */
-  private readonly lastModelById = new Map<string, string>();
-  /** Last effort reported per subagent, for the same reason. */
-  private readonly lastEffortById = new Map<string, string>();
+  /** Claude facts stay inside the provider boundary; clients receive one compact subtitle. */
+  private readonly presentationById = new Map<string, ClaudeSubagentPresentationFacts>();
+  private readonly lastSubtitleById = new Map<string, string>();
   private sawTaskStarted = false;
   private sawAnyTask = false;
   private readonly getToolInput: (toolUseId: string) => AgentMetadata | null | undefined;
@@ -222,8 +222,8 @@ export class ClaudeTaskProtocolSource {
     this.declaredIds.clear();
     this.backgroundedIds.clear();
     this.lastStatusById.clear();
-    this.lastModelById.clear();
-    this.lastEffortById.clear();
+    this.presentationById.clear();
+    this.lastSubtitleById.clear();
     this.sawTaskStarted = false;
     this.sawAnyTask = false;
   }
@@ -277,6 +277,10 @@ export class ClaudeTaskProtocolSource {
         ...(description ? { description } : {}),
       },
     ];
+    const initialPresentation = title ? { title } : {};
+    this.presentationById.set(id, initialPresentation);
+    const initialSubtitle = buildClaudeSubagentSubtitle(initialPresentation);
+    if (initialSubtitle) this.lastSubtitleById.set(id, initialSubtitle);
 
     // Open the child's timeline with the prompt it was actually given. Without this the pane
     // starts mid-conversation, showing replies to a question the reader never sees.
@@ -319,7 +323,7 @@ export class ClaudeTaskProtocolSource {
     const id = this.subagentIdByTaskId.get(taskId);
     const usage = readUsage(raw);
     if (!id || !usage) return [];
-    return [{ kind: "usage", id, usage }];
+    return this.updatePresentation(id, { usage });
   }
 
   /**
@@ -337,9 +341,8 @@ export class ClaudeTaskProtocolSource {
     const effort = readString(input.effort?.level);
     if (!taskId || !effort) return [];
     const id = this.subagentIdByTaskId.get(taskId);
-    if (!id || this.lastEffortById.get(id) === effort) return [];
-    this.lastEffortById.set(id, effort);
-    return [{ kind: "runtime", id, effort }];
+    if (!id) return [];
+    return this.updatePresentation(id, { effort });
   }
 
   /**
@@ -356,9 +359,21 @@ export class ClaudeTaskProtocolSource {
     const model = resolveObservedClaudeModelId(
       typeof message.message?.model === "string" ? message.message.model : undefined,
     );
-    if (!model || this.lastModelById.get(subagentId) === model) return [];
-    this.lastModelById.set(subagentId, model);
-    return [{ kind: "runtime", id: subagentId, model }];
+    if (!model) return [];
+    return this.updatePresentation(subagentId, { model });
+  }
+
+  private updatePresentation(
+    id: string,
+    patch: ClaudeSubagentPresentationFacts,
+  ): SubagentObservation[] {
+    const previous = this.presentationById.get(id) ?? {};
+    const next: ClaudeSubagentPresentationFacts = { ...previous, ...patch };
+    this.presentationById.set(id, next);
+    const subtitle = buildClaudeSubagentSubtitle(next);
+    if (!subtitle || this.lastSubtitleById.get(id) === subtitle) return [];
+    this.lastSubtitleById.set(id, subtitle);
+    return [{ kind: "subtitle", id, subtitle }];
   }
 
   /**

@@ -396,11 +396,11 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
   },
-  // The subagent type sits inline beside the task so the track stays one row per subagent.
-  // Primary vs secondary is foreground vs foregroundMuted, per docs/design.md.
+  // Keep provider context secondary and bounded so the task remains readable on compact screens.
   rowSubtitle: {
     flexShrink: 1,
     minWidth: 0,
+    maxWidth: "45%",
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
   },

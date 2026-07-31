@@ -228,11 +228,10 @@ describe("replay runtime", () => {
       convertEntry: () => [],
     });
 
-    expect(observations.find((o) => o.kind === "runtime")).toEqual({
-      kind: "runtime",
+    expect(observations.find((o) => o.kind === "subtitle")).toEqual({
+      kind: "subtitle",
       id: TOOL_USE_ID,
-      model: "claude-opus-5",
-      effort: "high",
+      subtitle: "general-purpose · Opus 5 · High",
     });
   });
 
@@ -252,9 +251,8 @@ describe("replay runtime", () => {
       convertEntry: () => [],
     });
 
-    expect(observations.find((o) => o.kind === "runtime")).toMatchObject({
-      model: "claude-sonnet-5",
-      effort: "low",
+    expect(observations.find((o) => o.kind === "subtitle")).toMatchObject({
+      subtitle: "general-purpose · Sonnet 5 · Low",
     });
   });
 
@@ -264,7 +262,7 @@ describe("replay runtime", () => {
       parent: parentWithTaskCall(),
       convertEntry: () => [],
     });
-    expect(observations.some((o) => o.kind === "runtime")).toBe(false);
+    expect(observations.some((o) => o.kind === "subtitle")).toBe(false);
   });
 
   it("passes through a model the manifest does not know", () => {
@@ -280,17 +278,19 @@ describe("replay runtime", () => {
       parent: parentWithTaskCall(),
       convertEntry: () => [],
     });
-    expect(observations.find((o) => o.kind === "runtime")).toMatchObject({ model: "glm-5.1" });
+    expect(observations.find((o) => o.kind === "subtitle")).toMatchObject({
+      subtitle: "general-purpose · glm-5.1",
+    });
   });
 });
 
 describe("replay usage", () => {
-  function usageOf(entries: ClaudeReplayEntry[]): SubagentObservation | undefined {
+  function subtitleOf(entries: ClaudeReplayEntry[]): SubagentObservation | undefined {
     return observeReplaySubagents({
       subagents: [{ agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID }, entries }],
       parent: parentWithTaskCall(),
       convertEntry: () => [],
-    }).find((observation) => observation.kind === "usage");
+    }).find((observation) => observation.kind === "subtitle");
   }
 
   it("derives the counters Claude Code itself reports, from a real transcript's shape", () => {
@@ -298,7 +298,7 @@ describe("replay usage", () => {
     // subagent from the LAST assistant entry's usage, so the earlier, smaller turn must not win
     // and must not be added in.
     expect(
-      usageOf([
+      subtitleOf([
         {
           type: "assistant",
           timestamp: "2026-07-23T23:18:43.023Z",
@@ -333,17 +333,17 @@ describe("replay usage", () => {
         },
       ]),
     ).toEqual({
-      kind: "usage",
+      kind: "subtitle",
       id: TOOL_USE_ID,
       // 2293 + 0 + 65024 + 1376 — the last turn's context, matching the live path's total_tokens.
-      usage: { totalTokens: 68_693, toolUses: 2, durationMs: 1_822_045 },
+      subtitle: "general-purpose · Opus 5 · 68.7k tokens",
       timestamp: "2026-07-23T23:49:05.068Z",
     });
   });
 
-  it("reports zero tool uses for a child that only answered", () => {
+  it("formats tokens for a child that only answered", () => {
     expect(
-      usageOf([
+      subtitleOf([
         {
           type: "assistant",
           timestamp: "2026-07-27T16:42:14.698Z",
@@ -355,27 +355,26 @@ describe("replay usage", () => {
           message: { content: "ignored" },
         },
       ]),
-    ).toMatchObject({ usage: { totalTokens: 16_434, toolUses: 0, durationMs: 2228 } });
+    ).toMatchObject({ subtitle: "general-purpose · 16.4k tokens" });
   });
 
   it("emits nothing for a transcript with no entries", () => {
-    expect(usageOf([])).toBeUndefined();
+    expect(subtitleOf([])).toBeUndefined();
   });
 
-  it("omits duration when the transcript spans no measurable time", () => {
-    const observation = usageOf([
+  it("keeps duration out of the compact subtitle", () => {
+    const observation = subtitleOf([
       {
         type: "assistant",
         timestamp: "2026-07-27T16:42:14.698Z",
         message: { content: [], usage: { input_tokens: 10 } },
       },
     ]);
-    expect(observation).toMatchObject({ usage: { totalTokens: 10, toolUses: 0 } });
-    expect(observation?.kind === "usage" && observation.usage.durationMs).toBeUndefined();
+    expect(observation).toMatchObject({ subtitle: "general-purpose · 10 tokens" });
   });
 
   it("omits totalTokens when no entry carries a usage block", () => {
-    const observation = usageOf([
+    const observation = subtitleOf([
       { type: "assistant", timestamp: "2026-07-27T16:42:14.698Z", message: { content: [] } },
       {
         type: "assistant",
@@ -383,13 +382,12 @@ describe("replay usage", () => {
         message: { content: [{ type: "tool_use", name: "Bash" }], usage: "not-an-object" },
       },
     ]);
-    expect(observation).toMatchObject({ usage: { toolUses: 1, durationMs: 5302 } });
-    expect(observation?.kind === "usage" && observation.usage.totalTokens).toBeUndefined();
+    expect(observation).toBeUndefined();
   });
 
   it("keeps the last usage-bearing entry when the final assistant entry has none", () => {
     expect(
-      usageOf([
+      subtitleOf([
         {
           type: "assistant",
           timestamp: "2026-07-27T16:42:14.698Z",
@@ -397,26 +395,20 @@ describe("replay usage", () => {
         },
         { type: "assistant", timestamp: "2026-07-27T16:42:20.000Z", message: { content: [] } },
       ]),
-    ).toMatchObject({ usage: { totalTokens: 1000 } });
+    ).toMatchObject({ subtitle: "general-purpose · 1k tokens" });
   });
 
   it("only reports counters the transcript actually shows", () => {
     // A user-only transcript says nothing about cost: no assistant turn, so no tool count either.
-    const observation = usageOf([
+    const observation = subtitleOf([
       { type: "user", timestamp: "2026-07-27T16:42:14.698Z", message: { content: "prompt" } },
       { type: "user", timestamp: "2026-07-27T16:42:20.000Z", message: { content: "more" } },
     ]);
-    expect(observation).toMatchObject({ usage: { durationMs: 5302 } });
-    expect(observation?.kind === "usage" && observation.usage.toolUses).toBeUndefined();
+    expect(observation).toBeUndefined();
   });
 
-  it("lands on the descriptor and merges rather than replaces", () => {
+  it("lands the complete provider-owned subtitle on the descriptor", () => {
     const store = new ProviderSubagentStore();
-    for (const event of foldSubagentObservations([
-      { kind: "usage", id: TOOL_USE_ID, usage: { totalTokens: 100, toolUses: 3, durationMs: 5 } },
-    ])) {
-      store.apply("parent", "claude", event);
-    }
     const observations = observeReplaySubagents({
       subagents: [
         {
@@ -438,12 +430,7 @@ describe("replay usage", () => {
       store.apply("parent", "claude", event);
     }
 
-    // durationMs was never observed on replay, so the value already stored survives.
-    expect(store.get("parent", TOOL_USE_ID)?.usage).toEqual({
-      totalTokens: 7,
-      toolUses: 0,
-      durationMs: 5,
-    });
+    expect(store.get("parent", TOOL_USE_ID)?.subtitle).toBe("general-purpose · 7 tokens");
   });
 });
 

@@ -325,9 +325,9 @@ describe("ClaudeTaskProtocolSource usage and runtime", () => {
       source.observe(taskProgress({ total_tokens: 16484, tool_uses: 1, duration_ms: 2474 })),
     ).toEqual([
       {
-        kind: "usage",
+        kind: "subtitle",
         id: "toolu_01DgLoPMW9",
-        usage: { totalTokens: 16484, toolUses: 1, durationMs: 2474 },
+        subtitle: "general-purpose · 16.5k tokens",
       },
     ]);
   });
@@ -346,9 +346,9 @@ describe("ClaudeTaskProtocolSource usage and runtime", () => {
 
     expect(observations).toEqual([
       {
-        kind: "usage",
+        kind: "subtitle",
         id: "toolu_01DgLoPMW9",
-        usage: { totalTokens: 32271, toolUses: 2, durationMs: 10934 },
+        subtitle: "general-purpose · 32.3k tokens",
       },
       { kind: "status", id: "toolu_01DgLoPMW9", status: "completed" },
     ]);
@@ -364,7 +364,7 @@ describe("ClaudeTaskProtocolSource usage and runtime", () => {
     source.observe(taskStarted());
     expect(
       source.observeSidechainFrame(assistantFrame("claude-opus-5"), "toolu_01DgLoPMW9"),
-    ).toEqual([{ kind: "runtime", id: "toolu_01DgLoPMW9", model: "claude-opus-5" }]);
+    ).toEqual([{ kind: "subtitle", id: "toolu_01DgLoPMW9", subtitle: "general-purpose · Opus 5" }]);
   });
 
   it("re-reports only when the model actually changes", () => {
@@ -377,7 +377,9 @@ describe("ClaudeTaskProtocolSource usage and runtime", () => {
     ).toEqual([]);
     expect(
       source.observeSidechainFrame(assistantFrame("claude-sonnet-5"), "toolu_01DgLoPMW9"),
-    ).toEqual([{ kind: "runtime", id: "toolu_01DgLoPMW9", model: "claude-sonnet-5" }]);
+    ).toEqual([
+      { kind: "subtitle", id: "toolu_01DgLoPMW9", subtitle: "general-purpose · Sonnet 5" },
+    ]);
   });
 
   it("never reports a placeholder model", () => {
@@ -438,7 +440,7 @@ describe("ClaudeTaskProtocolSource effort from hooks", () => {
     const source = new ClaudeTaskProtocolSource();
     source.observe(taskStarted());
     expect(source.observeHook(hook())).toEqual([
-      { kind: "runtime", id: "toolu_01DgLoPMW9", effort: "high" },
+      { kind: "subtitle", id: "toolu_01DgLoPMW9", subtitle: "general-purpose · High" },
     ]);
   });
 
@@ -455,7 +457,7 @@ describe("ClaudeTaskProtocolSource effort from hooks", () => {
     source.observe(taskStarted());
     source.observeHook(hook());
     expect(source.observeHook(hook({ effort: { level: "medium" } }))).toEqual([
-      { kind: "runtime", id: "toolu_01DgLoPMW9", effort: "medium" },
+      { kind: "subtitle", id: "toolu_01DgLoPMW9", subtitle: "general-purpose · Medium" },
     ]);
   });
 

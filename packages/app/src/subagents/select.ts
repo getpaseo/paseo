@@ -13,6 +13,7 @@ export interface PaseoSubagentRow {
   title: Agent["title"];
   /** Managed agents have a real title, so the union's task line is always absent for them. */
   description: null;
+  subtitle: null;
   status: Agent["status"];
   requiresAttention: Agent["requiresAttention"];
   createdAt: Agent["createdAt"];
@@ -28,10 +29,8 @@ export interface ProviderSubagentRow {
   // one names the row — collapsing them here is what makes every row read alike.
   title: string | null;
   description: string | null;
-  // Observed from the subagent itself. Null means "not observed yet" and must render as nothing,
-  // never as the parent agent's model or thinking setting.
-  model: string | null;
-  effort: string | null;
+  /** Compact provider-owned context. The app displays it without interpreting its contents. */
+  subtitle: string | null;
   status: ProviderSubagentDescriptorPayload["status"];
   requiresAttention: boolean;
   createdAt: Date;
@@ -57,6 +56,7 @@ function toSubagentRow(agent: Agent): SubagentRow {
     provider: agent.provider,
     title: agent.title,
     description: null,
+    subtitle: null,
     status: agent.status,
     requiresAttention: agent.requiresAttention,
     createdAt: agent.createdAt,
@@ -110,8 +110,7 @@ export function selectProviderSubagentsForParent(
       provider: subagent.provider,
       title: subagent.title,
       description: subagent.description,
-      model: subagent.model ?? null,
-      effort: subagent.effort ?? null,
+      subtitle: subagent.subtitle ?? null,
       status: subagent.status,
       requiresAttention: subagent.status === "failed",
       createdAt: new Date(subagent.createdAt),

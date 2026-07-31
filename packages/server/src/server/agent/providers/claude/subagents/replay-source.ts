@@ -2,9 +2,9 @@ import { z } from "zod";
 
 import type { AgentTimelineItem } from "../../../agent-sdk-types.js";
 import { normalizeProviderReplayTimestamp } from "../../../provider-history-timestamps.js";
-import type { ProviderSubagentUsage } from "../../../provider-subagents/store.js";
 import { resolveObservedClaudeModelId } from "../models.js";
 import type { SubagentObservation } from "./observation.js";
+import { buildClaudeSubagentSubtitle, type ClaudeSubagentUsage } from "./presentation.js";
 
 /**
  * Rebuilds subagent observations from a persisted session, producing the same vocabulary the
@@ -116,63 +116,25 @@ function readTotalTokens(raw: unknown): number | undefined {
   return counters.reduce((total: number, counter) => total + (counter ?? 0), 0);
 }
 
-function countToolUses(content: unknown): number {
-  if (!Array.isArray(content)) return 0;
-  let count = 0;
-  for (const block of content) {
-    if (typeof block !== "object" || block === null) continue;
-    if ((block as { type?: unknown }).type === "tool_use") count++;
-  }
-  return count;
-}
-
 /**
- * Cost of a subagent's run, recovered from its own transcript.
+ * Token context of a subagent's run, recovered from its own transcript.
  *
  * Descriptors are in-memory and dropped when the agent closes, so without this a reopened agent
  * permanently loses its children's counters. The live path gets these numbers handed to it by
  * Claude Code; here they are re-derived to match those definitions:
  *
- *   totalTokens  last assistant entry's summed usage — exact (see readTotalTokens)
- *   toolUses     tool_use blocks across assistant entries — exact, same traversal
- *   durationMs   last entry timestamp minus first — an approximation: the live value is measured
- *                from task start to task end, and the transcript's first entry is written slightly
- *                after the task starts, so this reads a touch short.
- *
- * A field only appears when the transcript actually shows it. Absent means "not observed", and the
- * store merges usage field-by-field, so a partial report never blanks what is already there.
+ * The last assistant entry's summed usage matches Claude Code's live `total_tokens` definition.
  */
-function readUsage(entries: readonly ClaudeReplayEntry[]): ProviderSubagentUsage | null {
-  let sawAssistant = false;
-  let toolUses = 0;
+function readUsage(entries: readonly ClaudeReplayEntry[]): ClaudeSubagentUsage | null {
   let totalTokens: number | undefined;
-  let firstTimestamp: string | null = null;
-  let lastTimestamp: string | null = null;
 
   for (const entry of entries) {
-    const timestamp = normalizeProviderReplayTimestamp(entry.timestamp);
-    if (timestamp) {
-      firstTimestamp ??= timestamp;
-      lastTimestamp = timestamp;
-    }
     if (entry.type !== "assistant") continue;
-    sawAssistant = true;
-    toolUses += countToolUses(entry.message?.content);
     const observed = readTotalTokens(entry.message?.usage);
     if (observed !== undefined) totalTokens = observed;
   }
 
-  const usage: ProviderSubagentUsage = {};
-  if (totalTokens !== undefined) usage.totalTokens = totalTokens;
-  // Zero tool uses is a real observation, but only once the child has spoken at all.
-  if (sawAssistant) usage.toolUses = toolUses;
-  if (firstTimestamp && lastTimestamp) {
-    const durationMs = Date.parse(lastTimestamp) - Date.parse(firstTimestamp);
-    // A single timestamped entry yields 0, which is a measurement failure rather than an instant
-    // run. Leave it absent so the store keeps whatever it had.
-    if (durationMs > 0) usage.durationMs = durationMs;
-  }
-  return Object.keys(usage).length > 0 ? usage : null;
+  return totalTokens === undefined ? null : { totalTokens };
 }
 
 export interface ClaudeReplaySubagentInput {
@@ -250,6 +212,33 @@ function declareSubagent(
   };
 }
 
+function observeSubtitle(
+  subagent: ClaudeReplaySubagentInput,
+  link: ResolvedLink,
+  title: string | undefined,
+): SubagentObservation | null {
+  const runtime = readRuntime(subagent.entries);
+  const usage = readUsage(subagent.entries);
+  const hasDetails =
+    runtime.model !== undefined ||
+    runtime.effort !== undefined ||
+    (usage?.totalTokens !== undefined && usage.totalTokens > 0);
+  if (!hasDetails) return null;
+  const subtitle = buildClaudeSubagentSubtitle({
+    title,
+    ...runtime,
+    ...(usage ? { usage } : {}),
+  });
+  if (!subtitle) return null;
+  const timestamp = normalizeProviderReplayTimestamp(subagent.entries.at(-1)?.timestamp);
+  return {
+    kind: "subtitle",
+    id: link.id,
+    subtitle,
+    ...(timestamp ? { timestamp } : {}),
+  };
+}
+
 function observeSubagent(
   subagent: ClaudeReplaySubagentInput,
   parent: ClaudeReplayParentFacts,
@@ -259,25 +248,8 @@ function observeSubagent(
   const toolCall = link.toolCallId ? parent.toolCalls.get(link.toolCallId) : undefined;
 
   const observations: SubagentObservation[] = [declareSubagent(subagent, link, toolCall)];
-
-  // Never inherited from the parent: an unobserved value stays absent so the store's sticky
-  // merge keeps whatever it already had.
-  const runtime = readRuntime(subagent.entries);
-  if (runtime.model !== undefined || runtime.effort !== undefined) {
-    observations.push({ kind: "runtime", id: link.id, ...runtime });
-  }
-
-  const usage = readUsage(subagent.entries);
-  if (usage) {
-    // Stamp the run's end, not replay time, so a rebuilt descriptor does not look freshly active.
-    const lastTimestamp = normalizeProviderReplayTimestamp(subagent.entries.at(-1)?.timestamp);
-    observations.push({
-      kind: "usage",
-      id: link.id,
-      usage,
-      ...(lastTimestamp ? { timestamp: lastTimestamp } : {}),
-    });
-  }
+  const subtitle = observeSubtitle(subagent, link, toolCall?.title ?? subagent.meta?.agentType);
+  if (subtitle) observations.push(subtitle);
 
   for (const entry of subagent.entries) {
     const timestamp = normalizeProviderReplayTimestamp(entry.timestamp);

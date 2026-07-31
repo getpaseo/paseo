@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PaseoSubagentRow, ProviderSubagentRow, SubagentRow } from "./select";
 import {
-  buildSubagentPaneDetails,
   buildSubagentRowPresentationData,
   countFinishedSubagents,
   formatHeaderLabel,
@@ -17,6 +16,7 @@ function row(
     provider: overrides.provider ?? "codex",
     title: overrides.title ?? `Agent ${overrides.id}`,
     description: null,
+    subtitle: null,
     status: overrides.status ?? "idle",
     requiresAttention: overrides.requiresAttention ?? false,
     createdAt: overrides.createdAt ?? new Date("2026-04-20T00:00:00.000Z"),
@@ -85,8 +85,7 @@ describe("countFinishedSubagents", () => {
         provider: "claude",
         title: "running",
         description: null,
-        model: null,
-        effort: null,
+        subtitle: null,
         status: "running",
         requiresAttention: false,
         createdAt: new Date("2026-04-20T00:00:00.000Z"),
@@ -98,8 +97,7 @@ describe("countFinishedSubagents", () => {
         provider: "claude",
         title: "failed",
         description: null,
-        model: null,
-        effort: null,
+        subtitle: null,
         status: "failed",
         requiresAttention: true,
         createdAt: new Date("2026-04-20T00:00:01.000Z"),
@@ -184,8 +182,7 @@ describe("buildSubagentRowPresentationData for provider rows", () => {
       provider: "claude",
       title: "title" in overrides ? (overrides.title ?? null) : "general-purpose",
       description: overrides.description ?? null,
-      model: overrides.model ?? null,
-      effort: overrides.effort ?? null,
+      subtitle: overrides.subtitle ?? null,
       status: overrides.status ?? "running",
       requiresAttention: false,
       createdAt: overrides.createdAt ?? new Date("2026-07-26T00:00:00.000Z"),
@@ -230,7 +227,7 @@ describe("buildSubagentRowPresentationData for provider rows", () => {
   });
 });
 
-describe("subagent runtime and usage in the row subtitle", () => {
+describe("provider-owned row subtitles", () => {
   function providerRow(overrides: Partial<ProviderSubagentRow> = {}): ProviderSubagentRow {
     return {
       kind: "provider",
@@ -239,8 +236,7 @@ describe("subagent runtime and usage in the row subtitle", () => {
       provider: "claude",
       title: "general-purpose",
       description: "Reply with banana",
-      model: null,
-      effort: null,
+      subtitle: null,
       status: "running",
       requiresAttention: false,
       createdAt: new Date("2026-07-26T00:00:00.000Z"),
@@ -248,74 +244,23 @@ describe("subagent runtime and usage in the row subtitle", () => {
     };
   }
 
-  it("appends the observed model and effort after the type", () => {
+  it("displays provider context without interpreting it", () => {
     expect(
-      buildSubagentRowPresentationData(providerRow({ model: "claude-opus-5", effort: "high" }))
-        .subtitle,
-    ).toBe("general-purpose · claude-opus-5 · high");
+      buildSubagentRowPresentationData(
+        providerRow({ subtitle: "general-purpose · Opus 5 · High · 16.5k tokens" }),
+      ).subtitle,
+    ).toBe("general-purpose · Opus 5 · High · 16.5k tokens");
   });
 
-  it("keeps cost out of the row, which carries identity only", () => {
-    // Tokens are a context-size reading dominated by the reused prompt cache, and a tool count
-    // says little at a glance. Neither survives in a dense row; the pane shows both.
+  it("falls back to the type when an older provider sends no subtitle", () => {
     expect(buildSubagentRowPresentationData(providerRow()).subtitle).toBe("general-purpose");
   });
 
-  it("never invents a model, effort, or cost that was not observed", () => {
-    expect(buildSubagentRowPresentationData(providerRow()).subtitle).toBe("general-purpose");
-  });
-});
-
-describe("buildSubagentPaneDetails", () => {
-  it("renders nothing before a descriptor arrives", () => {
-    expect(buildSubagentPaneDetails(null)).toBe("");
-  });
-
-  it("renders nothing when the runtime was never observed", () => {
-    expect(buildSubagentPaneDetails({ model: null, effort: null, usage: null })).toBe("");
-  });
-
-  it("lists the observed model and effort", () => {
-    expect(buildSubagentPaneDetails({ model: "claude-opus-5", effort: "high", usage: null })).toBe(
-      "claude-opus-5 · high",
-    );
-  });
-
-  it("shows duration alongside cost, unlike the dense track row", () => {
+  it("does not duplicate the type when it is already the primary label", () => {
     expect(
-      buildSubagentPaneDetails({
-        model: "claude-opus-5",
-        effort: null,
-        usage: { totalTokens: 16484, toolUses: 2, durationMs: 10934 },
-      }),
-    ).toBe("claude-opus-5 · 16.5k tokens, 2 tools, 10.9s");
-  });
-
-  it("shows duration on its own for a child that reported no token cost", () => {
-    expect(
-      buildSubagentPaneDetails({ model: null, effort: null, usage: { durationMs: 4100 } }),
-    ).toBe("4.1s");
-  });
-
-  it("keeps sub-second and multi-minute durations terse", () => {
-    expect(
-      buildSubagentPaneDetails({ model: null, effort: null, usage: { durationMs: 412 } }),
-    ).toBe("412ms");
-    expect(
-      buildSubagentPaneDetails({ model: null, effort: null, usage: { durationMs: 125_400 } }),
-    ).toBe("2m 5s");
-    expect(
-      buildSubagentPaneDetails({ model: null, effort: null, usage: { durationMs: 119_600 } }),
-    ).toBe("2m 0s");
-  });
-
-  it("omits a zeroed usage report rather than showing 0 tokens", () => {
-    expect(
-      buildSubagentPaneDetails({
-        model: null,
-        effort: null,
-        usage: { totalTokens: 0, toolUses: 0, durationMs: 0 },
-      }),
+      buildSubagentRowPresentationData(
+        providerRow({ description: null, subtitle: null, title: "general-purpose" }),
+      ).subtitle,
     ).toBe("");
   });
 });
