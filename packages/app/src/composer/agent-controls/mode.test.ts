@@ -66,4 +66,15 @@ describe("resolveNextAgentModeId", () => {
     expect(resolveNextAgentModeId({ modeOptions: [], selectedMode: "" })).toBeNull();
     expect(resolveNextAgentModeId({ modeOptions: [PLAN_MODE], selectedMode: "plan" })).toBeNull();
   });
+
+  it("skips disabled modes", () => {
+    const modes = [
+      PLAN_MODE,
+      { id: "bypassPermissions", label: "Bypass", disabledReason: "Unavailable as root" },
+      { id: "default", label: "Always Ask" },
+    ] satisfies AgentMode[];
+
+    expect(resolveNextAgentModeId({ modeOptions: modes, selectedMode: "plan" })).toBe("default");
+    expect(resolveNextAgentModeId({ modeOptions: modes, selectedMode: "default" })).toBe("plan");
+  });
 });

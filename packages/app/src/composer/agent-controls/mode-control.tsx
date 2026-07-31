@@ -54,8 +54,10 @@ function ModeComboboxOption({
   return (
     <ComboboxItem
       label={option.label}
+      description={option.description}
       selected={selected}
       active={active}
+      disabled={Boolean(option.disabledReason)}
       onPress={onPress}
       leadingSlot={leadingSlot}
     />
@@ -98,7 +100,10 @@ export function AgentModeControl({
 
   const selectedMode = useMemo(() => {
     if (modeOptions.length === 0) return null;
-    return modeOptions.find((m) => m.id === selectedModeId) ?? modeOptions[0];
+    const selected = modeOptions.find((mode) => mode.id === selectedModeId);
+    return (
+      selected ?? modeOptions.find((mode) => mode.disabledReason === undefined) ?? modeOptions[0]
+    );
   }, [modeOptions, selectedModeId]);
 
   const Icon = getAgentModeIcon(provider, selectedMode?.id ?? "", providerDefinitions);
@@ -106,7 +111,13 @@ export function AgentModeControl({
   const selectedModeLabel = selectedMode ? formatAgentModeLabel(selectedMode) : "";
 
   const allOptions = useMemo<ComboboxOption[]>(
-    () => modeOptions.map((m) => ({ id: m.id, label: formatAgentModeLabel(m) })),
+    () =>
+      modeOptions.map((mode) => ({
+        id: mode.id,
+        label: formatAgentModeLabel(mode),
+        description: mode.disabledReason ?? mode.description,
+        disabledReason: mode.disabledReason,
+      })),
     [modeOptions],
   );
   const options = useMemo<ComboboxOption[]>(() => {
@@ -131,10 +142,11 @@ export function AgentModeControl({
   const handlePress = useCallback(() => handleOpenChange(!open), [handleOpenChange, open]);
   const handleSelect = useCallback(
     (id: string) => {
+      if (modeOptions.find((mode) => mode.id === id)?.disabledReason) return;
       onSelectMode(id);
       handleOpenChange(false);
     },
-    [onSelectMode, handleOpenChange],
+    [handleOpenChange, modeOptions, onSelectMode],
   );
 
   const handleKeyboardAction = useCallback(
