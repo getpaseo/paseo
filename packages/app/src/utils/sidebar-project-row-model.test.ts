@@ -44,7 +44,11 @@ function project(overrides: ProjectOverrides = {}): SidebarProjectEntry {
   const projectKind = overrides.projectKind ?? "git";
   const hosts = Array.from(
     overrides.hosts ?? [
-      { serverId: "srv", iconWorkingDir: "/repo", canCreateWorktree: projectKind === "git" },
+      {
+        serverId: "srv",
+        iconWorkingDir: "/repo",
+        worktreeSupport: projectKind === "git" ? "supported" : "unsupported",
+      },
     ],
     (host) => Object.assign({}, host, { projectId: host.projectId ?? `project-${host.serverId}` }),
   );
@@ -135,8 +139,12 @@ describe("buildSidebarProjectRowModel", () => {
     const result = buildSidebarProjectRowModel({
       project: project({
         hosts: [
-          { serverId: "host-a", iconWorkingDir: "/repo/a", canCreateWorktree: false },
-          { serverId: "host-b", iconWorkingDir: "/repo/b", canCreateWorktree: true },
+          {
+            serverId: "host-a",
+            iconWorkingDir: "/repo/a",
+            worktreeSupport: "unsupported" as const,
+          },
+          { serverId: "host-b", iconWorkingDir: "/repo/b", worktreeSupport: "supported" as const },
         ],
       }),
       collapsed: false,
@@ -155,8 +163,16 @@ describe("buildSidebarProjectRowModel", () => {
       project: project({
         projectKind: "directory",
         hosts: [
-          { serverId: "host-a", iconWorkingDir: "/repo/a", canCreateWorktree: false },
-          { serverId: "host-b", iconWorkingDir: "/repo/b", canCreateWorktree: false },
+          {
+            serverId: "host-a",
+            iconWorkingDir: "/repo/a",
+            worktreeSupport: "unsupported" as const,
+          },
+          {
+            serverId: "host-b",
+            iconWorkingDir: "/repo/b",
+            worktreeSupport: "unsupported" as const,
+          },
         ],
       }),
       collapsed: false,
@@ -197,8 +213,8 @@ describe("buildSidebarProjectRowModel", () => {
     const iconTarget = resolveSidebarProjectIconTarget(
       project({
         hosts: [
-          { serverId: "host-b", iconWorkingDir: "/repo/b", canCreateWorktree: true },
-          { serverId: "host-a", iconWorkingDir: "/repo/a", canCreateWorktree: true },
+          { serverId: "host-b", iconWorkingDir: "/repo/b", worktreeSupport: "supported" as const },
+          { serverId: "host-a", iconWorkingDir: "/repo/a", worktreeSupport: "supported" as const },
         ],
       }),
     );
@@ -214,7 +230,9 @@ describe("buildSidebarProjectRowModel", () => {
     const [iconTarget] = resolveSidebarProjectIconTargets([
       project({
         viewKey: '["placement","host-b","project-b"]',
-        hosts: [{ serverId: "host-b", iconWorkingDir: "/repo/b", canCreateWorktree: true }],
+        hosts: [
+          { serverId: "host-b", iconWorkingDir: "/repo/b", worktreeSupport: "supported" as const },
+        ],
       }),
     ]);
 
@@ -230,8 +248,12 @@ describe("buildSidebarProjectRowModel", () => {
     const groupedProject = project({
       iconWorkingDir: "/remote/repo",
       hosts: [
-        { serverId: "remote", iconWorkingDir: "/remote/repo", canCreateWorktree: true },
-        { serverId: "local", iconWorkingDir: "/local/repo", canCreateWorktree: true },
+        {
+          serverId: "remote",
+          iconWorkingDir: "/remote/repo",
+          worktreeSupport: "supported" as const,
+        },
+        { serverId: "local", iconWorkingDir: "/local/repo", worktreeSupport: "supported" as const },
       ],
     });
 

@@ -166,7 +166,11 @@ export function useNewWorkspaceProjectPicker({
     (id: string) => {
       const project = projectByOptionId.get(id);
       if (!project) return;
-      if (!allowAllProjects && !project.hosts.some((host) => host.canCreateWorktree)) return;
+      if (
+        !allowAllProjects &&
+        !project.hosts.some((host) => host.worktreeSupport !== "unsupported")
+      )
+        return;
       setProjectSelection({
         contextKey: manualSelectionContextKey,
         project,

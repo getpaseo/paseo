@@ -1,13 +1,11 @@
 import { describe, expect, test } from "vitest";
 import type { HostProjectListItem } from "./host-project-model";
 import {
-  canCreateWorktreeForHostProject,
   canCreateWorkspaceForHostProject,
   getHostProjectId,
   getHostProjectSourceDirectory,
-  getHostProjectWorktreeCapability,
+  getWorktreeSupportForHostProject,
   hostProjectFromRoute,
-  resolveHydratedHostProject,
 } from "./host-project-model";
 
 function project(): HostProjectListItem {
@@ -22,13 +20,13 @@ function project(): HostProjectListItem {
         serverId: "host-a",
         projectId: "prj_a",
         iconWorkingDir: "/repo/a",
-        canCreateWorktree: true,
+        worktreeSupport: "supported" as const,
       },
       {
         serverId: "host-b",
         projectId: "prj_b",
         iconWorkingDir: "/repo/b",
-        canCreateWorktree: true,
+        worktreeSupport: "supported" as const,
       },
     ],
     workspaceKeys: [],
@@ -56,21 +54,21 @@ describe("host project lookups", () => {
     const groupedProject = project();
     groupedProject.hosts[1] = {
       ...groupedProject.hosts[1]!,
-      canCreateWorktree: false,
+      worktreeSupport: "unsupported" as const,
     };
 
-    expect(canCreateWorktreeForHostProject({ project: groupedProject, serverId: "host-a" })).toBe(
-      true,
+    expect(getWorktreeSupportForHostProject({ project: groupedProject, serverId: "host-a" })).toBe(
+      "supported",
     );
-    expect(canCreateWorktreeForHostProject({ project: groupedProject, serverId: "host-b" })).toBe(
-      false,
+    expect(getWorktreeSupportForHostProject({ project: groupedProject, serverId: "host-b" })).toBe(
+      "unsupported",
     );
-    expect(canCreateWorktreeForHostProject({ project: groupedProject, serverId: "missing" })).toBe(
-      false,
+    expect(getWorktreeSupportForHostProject({ project: groupedProject, serverId: "missing" })).toBe(
+      "unknown",
     );
   });
 
-  test("does not treat an unhydrated route placeholder as authoritative", () => {
+  test("marks route placeholder worktree support as unknown", () => {
     const routeProject = hostProjectFromRoute({
       serverId: "host-a",
       projectId: "prj_a",
@@ -78,41 +76,10 @@ describe("host project lookups", () => {
       sourceDirectory: "/repo/a",
     });
     expect(routeProject).not.toBeNull();
-
-    expect(
-      resolveHydratedHostProject({
-        project: routeProject!,
-        projects: [],
-        serverId: "host-a",
-      }),
-    ).toBeNull();
-
-    const hydratedProject = project();
-    hydratedProject.hosts[0] = {
-      ...hydratedProject.hosts[0]!,
-      canCreateWorktree: false,
-    };
-    expect(
-      resolveHydratedHostProject({
-        project: routeProject!,
-        projects: [hydratedProject],
-        serverId: "host-a",
-      }),
-    ).toBe(hydratedProject);
-    expect(
-      getHostProjectWorktreeCapability({
-        project: routeProject!,
-        projects: [],
-        serverId: "host-a",
-      }),
-    ).toBe("pending");
-    expect(
-      getHostProjectWorktreeCapability({
-        project: routeProject!,
-        projects: [hydratedProject],
-        serverId: "host-a",
-      }),
-    ).toBe("unavailable");
+    expect(routeProject!.projectKind).toBe("unknown");
+    expect(getWorktreeSupportForHostProject({ project: routeProject!, serverId: "host-a" })).toBe(
+      "unknown",
+    );
   });
 
   test("builds an unhydrated route project around the routed project id", () => {

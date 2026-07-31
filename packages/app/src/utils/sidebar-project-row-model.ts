@@ -75,7 +75,10 @@ function resolveNewWorkspaceTarget(
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>,
 ): SidebarProjectHostTarget | null {
   for (const host of project.hosts) {
-    if (!host.canCreateWorktree && !supportsMultiplicityByServerId.get(host.serverId)) {
+    if (
+      host.worktreeSupport === "unsupported" &&
+      !supportsMultiplicityByServerId.get(host.serverId)
+    ) {
       continue;
     }
     const target = hostTarget(host);

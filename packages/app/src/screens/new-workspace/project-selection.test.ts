@@ -23,7 +23,7 @@ function project(projectKey: string, serverId = "host"): HostProjectListItem {
         serverId,
         projectId: projectKey,
         iconWorkingDir: `/work/${projectKey}`,
-        canCreateWorktree: true,
+        worktreeSupport: "supported" as const,
       },
     ],
     workspaceKeys: [],
@@ -127,7 +127,7 @@ describe("reconcileProjectSelection", () => {
           serverId: "host",
           projectId: "local-project-id",
           iconWorkingDir: "/work/project",
-          canCreateWorktree: true,
+          worktreeSupport: "supported" as const,
         },
       ],
     };
@@ -138,7 +138,7 @@ describe("reconcileProjectSelection", () => {
           serverId: "host",
           projectId: "local-project-id",
           iconWorkingDir: "/work/project",
-          canCreateWorktree: false,
+          worktreeSupport: "unsupported" as const,
         },
       ],
     };
@@ -301,7 +301,7 @@ describe("reconcileProjectSelection", () => {
           serverId: "host-b",
           projectId: "prj_a",
           iconWorkingDir: "/work/a",
-          canCreateWorktree: true,
+          worktreeSupport: "supported" as const,
         },
       ],
     };
@@ -338,7 +338,7 @@ describe("reconcileProjectSelection", () => {
           serverId: "host-a",
           projectId: "prj_b",
           iconWorkingDir: "/work/selected",
-          canCreateWorktree: true,
+          worktreeSupport: "supported" as const,
         },
       ],
     };
@@ -421,7 +421,7 @@ describe("reconcileProjectSelection", () => {
           serverId: "host-a",
           projectId: "prj_b",
           iconWorkingDir: "/work/selected",
-          canCreateWorktree: true,
+          worktreeSupport: "supported" as const,
         },
       ],
     };
@@ -466,7 +466,7 @@ describe("reconcileProjectSelection", () => {
           serverId: "host-b",
           projectId: "shared",
           iconWorkingDir: "/work/shared",
-          canCreateWorktree: false,
+          worktreeSupport: "unsupported" as const,
         },
       ],
     };
@@ -619,7 +619,7 @@ describe("reconcileProjectSelection", () => {
           serverId: "host",
           projectId: "sibling",
           iconWorkingDir: "/work/sibling",
-          canCreateWorktree: true,
+          worktreeSupport: "supported" as const,
         },
       ],
     };

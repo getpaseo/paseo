@@ -2,19 +2,17 @@ import { useWorkspaceStructure } from "@/stores/session-store-hooks";
 import { type HostProjectListItem } from "@/projects/host-project-model";
 
 export {
-  canCreateWorktreeForHostProject,
   canCreateWorkspaceForHostProject,
   canCreateWorktreeForProjectKind,
   filterWorkspaceProjectsForHost,
   getHostProjectSourceDirectory,
-  getHostProjectWorktreeCapability,
   getHostProjectId,
+  getWorktreeSupportForHostProject,
   hostProjectFromRoute,
   hostProjectFromWorkspace,
   resolveHostProjectCandidate,
   resolveExactHostProjectCandidate,
   resolveEquivalentHostProjectCandidate,
-  resolveHydratedHostProject,
   resolveInitialWorkspaceProject,
   resolveInitialWorktreeProject,
   resolveSelectedHostProject,

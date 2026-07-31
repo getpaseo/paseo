@@ -2,8 +2,10 @@ import { expect, test } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
 import {
   connectNewWorkspaceDaemonClient,
+  expectNewWorkspaceControlsEnabled,
   expectNewWorkspaceProjectSelected,
   openGlobalNewWorkspaceComposer,
+  openMissingProjectNewWorkspaceComposer,
   openNewWorkspaceComposer,
   openNewWorkspaceProjectPickerWithShortcut,
 } from "./helpers/new-workspace";
@@ -13,7 +15,7 @@ import { seedSavedSettingsHosts } from "./helpers/settings";
 import { getServerId } from "./helpers/server-id";
 import { projectEquivalenceViewKey } from "./helpers/project-view-key";
 import { clickArchiveWorkspaceMenuItem, expectWorkspaceAbsentFromSidebar } from "./helpers/sidebar";
-import { waitForSidebarHydration } from "./helpers/workspace-ui";
+import { waitForNoProjectsInSidebar, waitForSidebarHydration } from "./helpers/workspace-ui";
 
 // Model B entry points into the New Workspace screen. The surviving entries are
 // the global button (universal) and each project's per-row New workspace icon
@@ -106,6 +108,18 @@ test.describe("New workspace entry points", () => {
     } finally {
       await seeded.cleanup();
     }
+  });
+
+  test("a stale project route keeps the New Workspace controls enabled", async ({ page }) => {
+    await gotoAppShell(page);
+    await waitForNoProjectsInSidebar(page);
+    await openMissingProjectNewWorkspaceComposer(page, {
+      serverId: getServerId(),
+      projectId: "missing-project",
+      sourceDirectory: "/tmp/missing-project",
+    });
+
+    await expectNewWorkspaceControlsEnabled(page);
   });
 
   test("Ctrl+P opens the project picker with search focused", async ({ page }) => {

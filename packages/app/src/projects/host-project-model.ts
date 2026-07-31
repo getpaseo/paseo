@@ -35,14 +35,14 @@ export function hostProjectFromRoute(route: HostProjectRouteContext): HostProjec
     viewKey: createProjectViewKey({ kind: "placement", serverId: route.serverId, projectId }),
     projectKey: null,
     projectName: trimOptional(route.displayName) || projectId,
-    projectKind: "git",
+    projectKind: "unknown",
     iconWorkingDir,
     hosts: [
       {
         serverId: route.serverId,
         projectId,
         iconWorkingDir,
-        canCreateWorktree: true,
+        worktreeSupport: "unknown",
       },
     ],
     workspaceKeys: [],
@@ -80,7 +80,7 @@ export function hostProjectFromWorkspace(input: {
         serverId: input.serverId,
         projectId: input.workspace.projectId,
         iconWorkingDir,
-        canCreateWorktree: canCreate,
+        worktreeSupport: canCreate ? "supported" : "unsupported",
       },
     ],
     workspaceKeys: [`${input.serverId}:${input.workspace.id}`],
@@ -88,7 +88,7 @@ export function hostProjectFromWorkspace(input: {
 }
 
 function projectCanCreateWorktree(project: HostProjectListItem): boolean {
-  return project.hosts.some((h) => h.canCreateWorktree);
+  return project.hosts.some((host) => host.worktreeSupport !== "unsupported");
 }
 
 function getHostProjectPlacement(
@@ -101,41 +101,11 @@ function getHostProjectPlacement(
   return null;
 }
 
-export function canCreateWorktreeForHostProject(input: {
+export function getWorktreeSupportForHostProject(input: {
   project: HostProjectListItem;
   serverId: string;
-}): boolean {
-  return getHostProjectPlacement(input.project, input.serverId)?.canCreateWorktree === true;
-}
-
-export function resolveHydratedHostProject(input: {
-  project: HostProjectListItem;
-  projects: readonly HostProjectListItem[];
-  serverId: string;
-}): HostProjectListItem | null {
-  const projectId = getHostProjectPlacement(input.project, input.serverId)?.projectId;
-  if (!projectId) {
-    return null;
-  }
-  return (
-    input.projects.find(
-      (project) => getHostProjectPlacement(project, input.serverId)?.projectId === projectId,
-    ) ?? null
-  );
-}
-
-export function getHostProjectWorktreeCapability(input: {
-  project: HostProjectListItem;
-  projects: readonly HostProjectListItem[];
-  serverId: string;
-}): "pending" | "available" | "unavailable" {
-  const hydratedProject = resolveHydratedHostProject(input);
-  if (!hydratedProject) {
-    return "pending";
-  }
-  return canCreateWorktreeForHostProject({ project: hydratedProject, serverId: input.serverId })
-    ? "available"
-    : "unavailable";
+}): WorkspaceStructureHostPlacement["worktreeSupport"] {
+  return getHostProjectPlacement(input.project, input.serverId)?.worktreeSupport ?? "unknown";
 }
 
 export function getHostProjectSourceDirectory(
@@ -158,7 +128,7 @@ export function canCreateWorkspaceForHostProject(input: {
   if (!host) {
     return false;
   }
-  return input.allowAllProjects || host.canCreateWorktree;
+  return input.allowAllProjects || host.worktreeSupport !== "unsupported";
 }
 
 export function filterWorkspaceProjectsForHost(input: {

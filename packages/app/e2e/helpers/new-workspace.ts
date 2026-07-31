@@ -190,6 +190,29 @@ export async function openGlobalNewWorkspaceComposer(page: Page): Promise<void> 
   });
 }
 
+export async function openMissingProjectNewWorkspaceComposer(
+  page: Page,
+  input: { serverId: string; projectId: string; sourceDirectory: string },
+): Promise<void> {
+  const query = new URLSearchParams({
+    serverId: input.serverId,
+    projectId: input.projectId,
+    dir: input.sourceDirectory,
+    name: "Missing project",
+  });
+  await page.goto(`/new?${query.toString()}`);
+  await expect(page).toHaveURL(/\/new\?.*projectId=/u, { timeout: 30_000 });
+}
+
+export async function expectNewWorkspaceControlsEnabled(page: Page): Promise<void> {
+  await expect(page.getByRole("button", { name: "Workspace project" })).toBeEnabled({
+    timeout: 30_000,
+  });
+  await expect(page.getByRole("textbox", { name: "Message agent..." })).toBeEditable({
+    timeout: 30_000,
+  });
+}
+
 export async function openNewWorkspaceProjectPickerWithShortcut(page: Page): Promise<void> {
   await page.keyboard.press("Control+P");
 
@@ -286,9 +309,8 @@ export async function selectWorkspaceIsolation(
   await expect(trigger).toBeVisible({ timeout: 30_000 });
   await trigger.click();
 
-  // "New worktree" is only listed once the checkout status query confirms the
-  // selected project is a git repo, so wait for the option to appear before
-  // clicking it.
+  // Isolation options are derived from project capability. Wait for the option
+  // so this helper also covers route-to-project reconciliation.
   const option = page.getByTestId(`workspace-create-isolation-${isolation}`);
   await expect(option).toBeVisible({ timeout: 30_000 });
   await option.click();

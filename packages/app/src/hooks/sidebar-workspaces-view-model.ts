@@ -23,7 +23,7 @@ export interface SidebarWorkspacePlacement {
   projectName: string;
   projectRootPath?: string;
   workspaceDirectory?: string;
-  projectKind: WorkspaceDescriptor["projectKind"];
+  projectKind: WorkspaceStructureProject["projectKind"];
   workspaceKind: WorkspaceDescriptor["workspaceKind"];
   name: string;
 }
@@ -52,7 +52,7 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
 export interface SidebarProjectEntry {
   viewKey: string;
   projectName: string;
-  projectKind: WorkspaceDescriptor["projectKind"];
+  projectKind: WorkspaceStructureProject["projectKind"];
   iconWorkingDir: string;
   hosts: WorkspaceStructureHostPlacement[];
   workspaces: SidebarWorkspacePlacement[];

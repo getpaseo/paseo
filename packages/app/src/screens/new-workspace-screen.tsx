@@ -69,7 +69,7 @@ import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-disp
 import {
   getHostProjectSourceDirectory,
   getHostProjectId,
-  getHostProjectWorktreeCapability,
+  getWorktreeSupportForHostProject,
   hostProjectFromRoute,
   hostProjectFromWorkspace,
   useHostProjects,
@@ -554,7 +554,8 @@ function NewWorkspaceProjectPickerOption({
       active={active}
       disabled={
         isPending ||
-        (!supportsWorkspaceMultiplicity && !project.hosts.some((host) => host.canCreateWorktree))
+        (!supportsWorkspaceMultiplicity &&
+          !project.hosts.some((host) => host.worktreeSupport !== "unsupported"))
       }
       onPress={onPress}
     />
@@ -687,21 +688,20 @@ interface WorkspaceIsolationState {
   showRefPicker: boolean;
 }
 
-// Worktree isolation only makes sense for a git checkout. The effective isolation
-// falls back to local whenever the selected directory isn't git so the flow
-// never submits an impossible request.
+// Preserve the user's worktree choice while route metadata is provisional. Once
+// the authoritative placement arrives, unsupported projects fall back to local.
 function useWorkspaceIsolation(input: {
   supportsMultiplicity: boolean;
-  projectCanCreateWorktree: boolean;
+  worktreeSupport: "supported" | "unsupported" | "unknown";
 }): WorkspaceIsolationState {
-  const { supportsMultiplicity, projectCanCreateWorktree } = input;
+  const { supportsMultiplicity, worktreeSupport } = input;
   // The last isolation choice is remembered alongside the other New Workspace
   // form preferences (provider, model, mode). A manual in-screen pick overrides
   // the remembered default until the screen remounts.
   const { preferences, updatePreferences } = useFormPreferences();
   const [manualIsolation, setManualIsolation] = useState<"local" | "worktree" | null>(null);
   const isolation = manualIsolation ?? preferences.isolation ?? "local";
-  const canCreateWorktree = supportsMultiplicity && projectCanCreateWorktree;
+  const canCreateWorktree = supportsMultiplicity && worktreeSupport !== "unsupported";
   const isWorktree = isolation === "worktree" && canCreateWorktree;
 
   const setIsolation = useCallback(
@@ -1638,21 +1638,14 @@ export function NewWorkspaceScreen({
   });
 
   const currentBranch = checkoutStatus?.currentBranch ?? null;
-  const projectWorktreeCapability = selectedProject
-    ? getHostProjectWorktreeCapability({
-        project: selectedProject,
-        projects,
-        serverId: selectedServerId,
-      })
-    : "unavailable";
-  const projectCanCreateWorktree = projectWorktreeCapability === "available";
-  const isPending =
-    isNewWorkspacePending({ pendingAction, isDraftHandoffActive }) ||
-    projectWorktreeCapability === "pending";
+  const worktreeSupport = selectedProject
+    ? getWorktreeSupportForHostProject({ project: selectedProject, serverId: selectedServerId })
+    : "unsupported";
+  const isPending = isNewWorkspacePending({ pendingAction, isDraftHandoffActive });
   const { effectiveIsolation, setIsolation, canCreateWorktree, showRefPicker } =
     useWorkspaceIsolation({
       supportsMultiplicity: supportsWorkspaceMultiplicity,
-      projectCanCreateWorktree,
+      worktreeSupport,
     });
 
   const branchSuggestionsQuery = useQuery({

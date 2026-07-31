@@ -93,7 +93,7 @@ function project(input: {
         {
           serverId: "srv",
           iconWorkingDir: input.iconWorkingDir ?? input.projectKey,
-          canCreateWorktree: true,
+          worktreeSupport: "supported" as const,
         },
       ],
       (host) => Object.assign({}, host, { projectId: host.projectId ?? input.projectKey }),
@@ -251,7 +251,7 @@ describe("buildSidebarProjectsFromStructure", () => {
             {
               serverId: "relay:paseo-host",
               iconWorkingDir: "/repo/project-1",
-              canCreateWorktree: true,
+              worktreeSupport: "supported" as const,
             },
           ],
           workspaceKeys: ["relay:paseo-host:ws-main"],
@@ -276,8 +276,16 @@ describe("shared sidebar workspace model", () => {
           projectName: "getpaseo/paseo",
           iconWorkingDir: "/repo/getpaseo/paseo",
           hosts: [
-            { serverId: "host-a", iconWorkingDir: "/repo/getpaseo/paseo", canCreateWorktree: true },
-            { serverId: "host-b", iconWorkingDir: "/repo/getpaseo/paseo", canCreateWorktree: true },
+            {
+              serverId: "host-a",
+              iconWorkingDir: "/repo/getpaseo/paseo",
+              worktreeSupport: "supported" as const,
+            },
+            {
+              serverId: "host-b",
+              iconWorkingDir: "/repo/getpaseo/paseo",
+              worktreeSupport: "supported" as const,
+            },
           ],
           workspaceKeys: ["host-a:main", "host-b:feature"],
         }),
@@ -334,13 +342,13 @@ describe("shared sidebar workspace model", () => {
             serverId: "host-a",
             projectId: "getpaseo/paseo",
             iconWorkingDir: "/repo/getpaseo/paseo",
-            canCreateWorktree: true,
+            worktreeSupport: "supported" as const,
           },
           {
             serverId: "host-b",
             projectId: "getpaseo/paseo",
             iconWorkingDir: "/repo/getpaseo/paseo",
-            canCreateWorktree: true,
+            worktreeSupport: "supported" as const,
           },
         ],
         workspaces: [
@@ -470,14 +478,22 @@ describe("shouldShowSidebarHostLabels", () => {
         project({
           projectKey: "project-a",
           hosts: [
-            { serverId: "host-a", iconWorkingDir: "/repo/project-a", canCreateWorktree: true },
+            {
+              serverId: "host-a",
+              iconWorkingDir: "/repo/project-a",
+              worktreeSupport: "supported" as const,
+            },
           ],
           workspaceKeys: ["host-a:ws-1"],
         }),
         project({
           projectKey: "project-b",
           hosts: [
-            { serverId: "host-b", iconWorkingDir: "/repo/project-b", canCreateWorktree: true },
+            {
+              serverId: "host-b",
+              iconWorkingDir: "/repo/project-b",
+              worktreeSupport: "supported" as const,
+            },
           ],
           workspaceKeys: ["host-b:ws-2"],
         }),
@@ -493,8 +509,16 @@ describe("shouldShowSidebarHostLabels", () => {
         project({
           projectKey: "getpaseo/paseo",
           hosts: [
-            { serverId: "host-a", iconWorkingDir: "/repo/paseo", canCreateWorktree: true },
-            { serverId: "host-b", iconWorkingDir: "/repo/paseo", canCreateWorktree: true },
+            {
+              serverId: "host-a",
+              iconWorkingDir: "/repo/paseo",
+              worktreeSupport: "supported" as const,
+            },
+            {
+              serverId: "host-b",
+              iconWorkingDir: "/repo/paseo",
+              worktreeSupport: "supported" as const,
+            },
           ],
           workspaceKeys: ["host-a:main", "host-b:feature"],
         }),
