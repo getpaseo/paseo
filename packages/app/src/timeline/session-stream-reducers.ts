@@ -782,6 +782,20 @@ function deriveCanonicalAcknowledgements(params: {
   return [...acknowledged];
 }
 
+function shouldDiscardUnchangedTimelineResult(params: {
+  discardPolicy: boolean;
+  currentTail: StreamItem[];
+  currentHead: StreamItem[];
+  nextTail: StreamItem[];
+  nextHead: StreamItem[];
+}): boolean {
+  return (
+    params.discardPolicy &&
+    params.nextTail === params.currentTail &&
+    params.nextHead === params.currentHead
+  );
+}
+
 function applyTimelineIncrementalPath(args: {
   timelineUnits: TimelineUnit[];
   payload: ProcessTimelineResponseInput["payload"];
@@ -964,9 +978,20 @@ export function processTimelineResponse(
   const discard = resumeTailPolicy.kind === "discard";
   let timelineResult: TimelinePathResult;
   if (discard) {
+    const revision = processAgentStreamEvents({
+      events: timelineUnits.map((unit) => ({
+        event: unit.event,
+        seq: unit.seqEnd,
+        epoch: payload.epoch,
+        timestamp: unit.timestamp,
+      })),
+      currentTail,
+      currentHead,
+      currentCursor,
+    });
     timelineResult = {
-      tail: currentTail,
-      head: currentHead,
+      tail: revision.tail,
+      head: revision.head,
       cursor: currentCursor,
       cursorChanged: false,
       older: "unchanged",
@@ -1036,9 +1061,18 @@ export function processTimelineResponse(
     timelineResponseComplete;
 
   const initResolution: "resolve" | "reject" | null = shouldResolveDeferredInit ? "resolve" : null;
+  const commit = shouldDiscardUnchangedTimelineResult({
+    discardPolicy: discard,
+    currentTail,
+    currentHead,
+    nextTail,
+    nextHead,
+  })
+    ? "discard"
+    : "apply";
 
   return {
-    commit: discard ? "discard" : "apply",
+    commit,
     tail: nextTail,
     head: nextHead,
     cursor: nextCursor,
@@ -1135,7 +1169,7 @@ function applyCanonicalUserMessageRevision(input: {
       messageId: event.item.messageId,
       text: event.item.text,
       timestamp: input.timestamp,
-      timelineCursor: { epoch, seq },
+      timelineCursor: existing.timelineCursor,
     }),
     insert: "none",
     presentation: "existing",
