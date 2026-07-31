@@ -409,7 +409,6 @@ export class AgentStorage {
     }
     this.daemonExecutionKeysByAgentId.delete(agentId);
   }
-
 }
 
 function projectDirNameFromCwd(cwd: string): string {

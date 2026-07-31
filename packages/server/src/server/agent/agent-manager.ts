@@ -158,10 +158,12 @@ async function pageMaterialProgressRows(
   fetchOlder: FetchOlderMaterialProgressRows,
 ): Promise<AgentTimelineRow[] | null> {
   let page = initialPage;
-  let rows = [...page.rows];
-  while (page.hasOlder && !rows.some((row) => row.item.type === "user_message")) {
-    const firstRow = rows[0];
-    const remainingCapacity = MATERIAL_PROGRESS_MAX_SCAN_ROWS - rows.length;
+  const pageRows = [page.rows];
+  let rowCount = page.rows.length;
+  let hasUserMessage = page.rows.some((row) => row.item.type === "user_message");
+  while (page.hasOlder && !hasUserMessage) {
+    const firstRow = pageRows[0]?.[0];
+    const remainingCapacity = MATERIAL_PROGRESS_MAX_SCAN_ROWS - rowCount;
     if (!firstRow || remainingCapacity <= 0) return null;
 
     const olderPage = await fetchOlder({
@@ -178,9 +180,12 @@ async function pageMaterialProgressRows(
     ) {
       return null;
     }
-    rows = [...olderPage.rows, ...rows];
+    pageRows.unshift(olderPage.rows);
+    rowCount += olderPage.rows.length;
+    hasUserMessage = olderPage.rows.some((row) => row.item.type === "user_message");
     page = olderPage;
   }
+  const rows = pageRows.flat();
   if (!rows.some((row) => row.item.type === "user_message") && rows[0]?.seq !== 1) {
     return null;
   }
