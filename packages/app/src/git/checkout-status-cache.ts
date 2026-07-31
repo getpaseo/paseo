@@ -35,6 +35,24 @@ export async function fetchCheckoutStatus({
   return payload;
 }
 
+export async function ensureCheckoutStatus({
+  queryClient,
+  client,
+  serverId,
+  cwd,
+}: {
+  queryClient: QueryClient;
+  client: CheckoutStatusClient;
+  serverId: string;
+  cwd: string;
+}): Promise<CheckoutStatusPayload> {
+  return await queryClient.ensureQueryData({
+    queryKey: checkoutStatusQueryKey(serverId, cwd),
+    queryFn: () => fetchCheckoutStatus({ client, serverId, cwd }),
+    staleTime: Infinity,
+  });
+}
+
 export function applyCheckoutStatusUpdateFromEvent({
   queryClient,
   serverId,
