@@ -1848,6 +1848,9 @@ export const zhCN: TranslationResources = {
         chooseAllHint: "保持安装所有内置 skills，包括以后新增的。",
         chooseList: "内置 skills",
         chooseEmpty: "此版本未内置 skills。",
+        removeTitle: "移除取消勾选的 skills？",
+        removeMessage:
+          "将从 ~/.agents、~/.claude、~/.codex 中删除 {{skills}}。你在这些 skill 文件夹里添加的内容也会一并删除。",
         saveFailed: "无法保存你的 skills 选择。",
       },
       actions: {
@@ -1856,6 +1859,7 @@ export const zhCN: TranslationResources = {
         installed: "已安装",
         update: "更新",
         working: "处理中...",
+        remove: "移除",
         uninstall: "卸载",
         save: "保存",
         saving: "正在保存...",

@@ -1923,6 +1923,9 @@ export const fr: TranslationResources = {
           "Gardez installées toutes les compétences fournies, y compris celles ajoutées plus tard.",
         chooseList: "Compétences fournies",
         chooseEmpty: "Cette version ne fournit aucune compétence.",
+        removeTitle: "Supprimer les compétences décochées ?",
+        removeMessage:
+          "{{skills}} seront supprimées de ~/.agents, ~/.claude et ~/.codex. Tout ce que vous avez ajouté dans ces dossiers de compétences est également supprimé.",
         saveFailed: "Impossible d'enregistrer votre sélection de compétences.",
       },
       actions: {
@@ -1931,6 +1934,7 @@ export const fr: TranslationResources = {
         installed: "Installé",
         update: "Mise à jour",
         working: "Fonctionnement...",
+        remove: "Supprimer",
         uninstall: "Désinstaller",
         save: "Enregistrer",
         saving: "Enregistrement...",

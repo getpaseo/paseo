@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { settingsStyles } from "@/styles/settings";
 import type { Theme } from "@/styles/theme";
-import type { SkillSelection } from "@/desktop/daemon/desktop-daemon";
+import { confirmDialog } from "@/utils/confirm-dialog";
+import type { SkillOp, SkillSelection } from "@/desktop/daemon/desktop-daemon";
 
 const ThemedCheck = withUnistyles(Check);
 const checkedIconMapping = (theme: Theme) => ({ color: theme.colors.accentForeground });
@@ -17,6 +18,7 @@ interface SkillSelectionSheetProps {
   visible: boolean;
   available: readonly string[];
   selection: SkillSelection;
+  ops: readonly SkillOp[];
   isSaving: boolean;
   onSave: (selection: SkillSelection) => Promise<void>;
   onClose: () => void;
@@ -27,6 +29,28 @@ function isSkillSelected(draft: SkillSelection, name: string): boolean {
 }
 
 /**
+ * Which skill directories Save would delete. A skill the host still has to
+ * install is not on disk yet, so turning it off deletes nothing and must not
+ * raise a warning.
+ */
+export function skillsRemovedBySave({
+  saved,
+  draft,
+  available,
+  ops,
+}: {
+  saved: SkillSelection;
+  draft: SkillSelection;
+  available: readonly string[];
+  ops: readonly SkillOp[];
+}): string[] {
+  const notOnDisk = new Set(ops.filter((op) => op.kind === "add").map((op) => op.name));
+  return available.filter(
+    (name) => isSkillSelected(saved, name) && !isSkillSelected(draft, name) && !notOnDisk.has(name),
+  );
+}
+
+/**
  * Draft form state only. The saved selection, the convergence across agent skill
  * directories, and the resulting status all belong to the desktop skills module.
  */
@@ -34,6 +58,7 @@ export function SkillSelectionSheet({
   visible,
   available,
   selection,
+  ops,
   isSaving,
   onSave,
   onClose,
@@ -68,9 +93,28 @@ export function SkillSelectionSheet({
     });
   }, []);
 
+  const removedSkills = useMemo(
+    () => skillsRemovedBySave({ saved: selection, draft, available, ops }),
+    [available, draft, ops, selection],
+  );
+
   const handleSave = useCallback(() => {
     void (async () => {
       setSaveError(null);
+      // Removing a skill deletes its directory in every agent home, including
+      // anything the user put inside it, so it is confirmed like any other
+      // destructive action. Adding skills and re-saving the same set do not ask.
+      if (removedSkills.length > 0) {
+        const confirmed = await confirmDialog({
+          title: t("settings.integrations.skills.removeTitle"),
+          message: t("settings.integrations.skills.removeMessage", {
+            skills: removedSkills.join(", "),
+          }),
+          confirmLabel: t("settings.integrations.actions.remove"),
+          destructive: true,
+        });
+        if (!confirmed) return;
+      }
       try {
         await onSave(draft);
         onClose();
@@ -78,7 +122,7 @@ export function SkillSelectionSheet({
         setSaveError(t("settings.integrations.skills.saveFailed"));
       }
     })();
-  }, [draft, onClose, onSave, t]);
+  }, [draft, onClose, onSave, removedSkills, t]);
 
   const header = useMemo<SheetHeader>(
     () => ({ title: t("settings.integrations.skills.choose") }),

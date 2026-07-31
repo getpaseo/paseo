@@ -1907,6 +1907,9 @@ export const ru: TranslationResources = {
         chooseAllHint: "Держите установленными все входящие навыки, включая добавленные позже.",
         chooseList: "Входящие навыки",
         chooseEmpty: "В этой сборке нет навыков.",
+        removeTitle: "Удалить снятые навыки?",
+        removeMessage:
+          "{{skills}} будут удалены из ~/.agents, ~/.claude и ~/.codex. Всё, что вы добавили внутри этих папок навыков, тоже удаляется.",
         saveFailed: "Не удалось сохранить выбор навыков.",
       },
       actions: {
@@ -1915,6 +1918,7 @@ export const ru: TranslationResources = {
         installed: "Установлено",
         update: "Обновлять",
         working: "Работающий...",
+        remove: "Удалить",
         uninstall: "Удалить",
         save: "Сохранить",
         saving: "Сохранение...",

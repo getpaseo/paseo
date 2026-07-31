@@ -1903,6 +1903,9 @@ export const ptBR: TranslationResources = {
           "Mantenha instaladas todas as skills incluídas, inclusive as adicionadas depois.",
         chooseList: "Skills incluídas",
         chooseEmpty: "Esta versão não inclui skills.",
+        removeTitle: "Remover as skills desmarcadas?",
+        removeMessage:
+          "{{skills}} serão excluídas de ~/.agents, ~/.claude e ~/.codex. Tudo o que você adicionou dentro dessas pastas de skills também é excluído.",
         saveFailed: "Não foi possível salvar sua seleção de skills.",
       },
       actions: {
@@ -1911,6 +1914,7 @@ export const ptBR: TranslationResources = {
         installed: "Instalado",
         update: "Atualizar",
         working: "Trabalhando...",
+        remove: "Remover",
         uninstall: "Desinstalar",
         save: "Salvar",
         saving: "Salvando...",

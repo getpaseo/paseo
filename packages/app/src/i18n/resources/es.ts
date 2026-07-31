@@ -1919,6 +1919,9 @@ export const es: TranslationResources = {
           "Mantén instaladas todas las habilidades incluidas, también las que se agreguen después.",
         chooseList: "Habilidades incluidas",
         chooseEmpty: "Esta versión no incluye habilidades.",
+        removeTitle: "¿Eliminar las habilidades deseleccionadas?",
+        removeMessage:
+          "{{skills}} se eliminarán de ~/.agents, ~/.claude y ~/.codex. También se elimina todo lo que hayas añadido dentro de esas carpetas de habilidades.",
         saveFailed: "No se pudo guardar tu selección de habilidades.",
       },
       actions: {
@@ -1927,6 +1930,7 @@ export const es: TranslationResources = {
         installed: "Instalado",
         update: "Actualizar",
         working: "Laboral...",
+        remove: "Eliminar",
         uninstall: "Desinstalar",
         save: "Guardar",
         saving: "Guardando...",

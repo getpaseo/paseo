@@ -8,8 +8,12 @@ import {
   chooseCustomSkills,
   createSkillsSandbox,
   expectAllSkillsSelected,
+  expectNoRemovalWarning,
+  expectRemovalWarning,
+  expectSavedSkillSelection,
   expectSaveErrorKeepsSheetOpen,
   expectSelectedSkills,
+  expectSkillSelectionOpen,
   expectSkillsInstalled,
   openSkillsIntegrations,
   openSkillSelection,
@@ -17,30 +21,42 @@ import {
   toggleSkill,
   serveRealSkillsCommands,
   type SkillsSandbox,
+  type SkillsSandboxOptions,
 } from "./helpers/skills-selection";
+
+interface SkillsSandboxSetup extends SkillsSandboxOptions {
+  /** What the desktop confirm dialog answers when the removal warning fires. */
+  confirmRemoval?: boolean;
+}
+
+type StartSkills = (setup?: SkillsSandboxSetup) => Promise<SkillsSandbox>;
 
 // Every skills command runs against the real desktop handlers over a temp bundle
 // and temp user data, so the assertions cover persistence and convergence, not a
 // browser stand-in for them.
-const test = base.extend<{ skills: SkillsSandbox; brokenSkills: SkillsSandbox }>({
-  skills: async ({ page }, provide) => {
-    const sandbox = await createSkillsSandbox();
-    await injectDesktopBridge(page, { serverId: getServerId() });
-    await serveRealSkillsCommands(page, sandbox);
-    await provide(sandbox);
-    await sandbox.cleanup();
-  },
-  brokenSkills: async ({ page }, provide) => {
-    const sandbox = await createSkillsSandbox({ blockAgentsDir: true });
-    await injectDesktopBridge(page, { serverId: getServerId() });
-    await serveRealSkillsCommands(page, sandbox);
-    await provide(sandbox);
-    await sandbox.cleanup();
+const test = base.extend<{ startSkills: StartSkills }>({
+  startSkills: async ({ page }, provide) => {
+    const sandboxes: SkillsSandbox[] = [];
+    await provide(async (setup = {}) => {
+      const { confirmRemoval, ...options } = setup;
+      const sandbox = await createSkillsSandbox(options);
+      await injectDesktopBridge(page, {
+        serverId: getServerId(),
+        confirmShouldAccept: confirmRemoval ?? false,
+      });
+      await serveRealSkillsCommands(page, sandbox);
+      sandboxes.push(sandbox);
+      return sandbox;
+    });
+    for (const sandbox of sandboxes) {
+      await sandbox.cleanup();
+    }
   },
 });
 
 test.describe("Choosing installed skills", () => {
-  test("installs only the skills selected in Settings", async ({ page, skills }) => {
+  test("installs only the skills selected in Settings", async ({ page, startSkills }) => {
+    const skills = await startSkills();
     await gotoAppShell(page);
     await openSkillsIntegrations(page);
 
@@ -52,7 +68,8 @@ test.describe("Choosing installed skills", () => {
     await expectSelectedSkills(page, ["paseo", "paseo-loop"]);
   });
 
-  test("all skills includes every available skill", async ({ page, skills }) => {
+  test("all skills includes every available skill", async ({ page, startSkills }) => {
+    const skills = await startSkills();
     await gotoAppShell(page);
     await openSkillsIntegrations(page);
     await openSkillSelection(page);
@@ -67,7 +84,8 @@ test.describe("Choosing installed skills", () => {
     await expectAllSkillsSelected(page);
   });
 
-  test("cancelling leaves the installed skills untouched", async ({ page, skills }) => {
+  test("cancelling leaves the installed skills untouched", async ({ page, startSkills }) => {
+    const skills = await startSkills();
     await gotoAppShell(page);
     await openSkillsIntegrations(page);
     await openSkillSelection(page);
@@ -82,7 +100,8 @@ test.describe("Choosing installed skills", () => {
     await expectSelectedSkills(page, ["paseo"]);
   });
 
-  test("a failed save keeps the sheet open with an error", async ({ page, brokenSkills }) => {
+  test("a failed save keeps the sheet open with an error", async ({ page, startSkills }) => {
+    const skills = await startSkills({ blockAgentsDir: true });
     await gotoAppShell(page);
     await openSkillsIntegrations(page);
 
@@ -91,6 +110,53 @@ test.describe("Choosing installed skills", () => {
     await saveSkillSelection(page);
 
     await expectSaveErrorKeepsSheetOpen(page);
-    await expectSkillsInstalled(brokenSkills, []);
+    await expectSkillsInstalled(skills, []);
+  });
+});
+
+test.describe("Removing an installed skill", () => {
+  test("warns before deleting the skill folders", async ({ page, startSkills }) => {
+    const skills = await startSkills({ installed: { mode: "all" }, confirmRemoval: false });
+    await gotoAppShell(page);
+    await openSkillsIntegrations(page);
+
+    await openSkillSelection(page);
+    await chooseCustomSkills(page, ["paseo", "paseo-advisor"]);
+    await saveSkillSelection(page);
+
+    await expectRemovalWarning(page, ["paseo-loop"]);
+    await expectSkillSelectionOpen(page);
+    await expectSkillsInstalled(skills, skills.bundledSkills);
+    await expectSavedSkillSelection(skills, { mode: "all" });
+  });
+
+  test("confirming the warning removes the skill", async ({ page, startSkills }) => {
+    const skills = await startSkills({ installed: { mode: "all" }, confirmRemoval: true });
+    await gotoAppShell(page);
+    await openSkillsIntegrations(page);
+
+    await openSkillSelection(page);
+    await chooseCustomSkills(page, ["paseo", "paseo-advisor"]);
+    await saveSkillSelection(page);
+
+    await expectRemovalWarning(page, ["paseo-loop"]);
+    await expectSkillsInstalled(skills, ["paseo", "paseo-advisor"]);
+    await expectSelectedSkills(page, ["paseo", "paseo-advisor"]);
+  });
+
+  test("adding a skill saves without a warning", async ({ page, startSkills }) => {
+    const skills = await startSkills({
+      installed: { mode: "custom", skills: ["paseo"] },
+      confirmRemoval: false,
+    });
+    await gotoAppShell(page);
+    await openSkillsIntegrations(page);
+
+    await openSkillSelection(page);
+    await toggleSkill(page, "paseo-loop");
+    await saveSkillSelection(page);
+
+    await expectSkillsInstalled(skills, ["paseo", "paseo-loop"]);
+    await expectNoRemovalWarning(page);
   });
 });

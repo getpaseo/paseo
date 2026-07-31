@@ -1880,6 +1880,9 @@ export const en = {
         chooseAllHint: "Keep every bundled skill installed, including ones added later.",
         chooseList: "Bundled skills",
         chooseEmpty: "This build bundles no skills.",
+        removeTitle: "Remove deselected skills?",
+        removeMessage:
+          "{{skills}} will be deleted from ~/.agents, ~/.claude, and ~/.codex. Anything you added inside those skill folders is deleted too.",
         saveFailed: "Could not save your skill selection.",
       },
       actions: {
@@ -1888,6 +1891,7 @@ export const en = {
         installed: "Installed",
         update: "Update",
         working: "Working...",
+        remove: "Remove",
         uninstall: "Uninstall",
         save: "Save",
         saving: "Saving...",

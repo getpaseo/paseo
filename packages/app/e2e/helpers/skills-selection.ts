@@ -7,9 +7,13 @@ import { openSettingsSection } from "./settings";
 // The desktop skills module is the real command surface: the same handlers the
 // Electron main process registers, running against a temp bundle and temp user
 // data. Nothing about persistence or convergence is simulated in the browser.
-import type { SkillTargets } from "../../../desktop/src/integrations/skills/operations.js";
+import type {
+  SkillSelection,
+  SkillTargets,
+} from "../../../desktop/src/integrations/skills/operations.js";
 import { createSkillSelectionStore } from "../../../desktop/src/integrations/skills/selection-store.js";
 import { createSkillsCommandHandlers } from "../../../desktop/src/integrations/skills/skills-commands.js";
+import { createSkillsController } from "../../../desktop/src/integrations/skills/skills-controller.js";
 
 const SKILL_COMMANDS = [
   "get_skills_status",
@@ -42,6 +46,8 @@ export interface SkillsSandboxOptions {
    * convergence fails with ENOTDIR instead of a stubbed rejection.
    */
   blockAgentsDir?: boolean;
+  /** Converge and commit this selection before the app loads, through the real controller. */
+  installed?: SkillSelection;
 }
 
 export async function createSkillsSandbox(
@@ -61,6 +67,14 @@ export async function createSkillsSandbox(
     await writeFile(path.join(targets.sourceDir, name, "SKILL.md"), `# ${name}\n`, "utf8");
   }
 
+  const userDataPath = path.join(root, "user-data");
+  if (options.installed) {
+    await createSkillsController({
+      resolveTargets: () => targets,
+      selectionStore: createSkillSelectionStore({ userDataPath }),
+    }).save(options.installed);
+  }
+
   if (options.blockAgentsDir) {
     await mkdir(path.dirname(targets.agentsDir), { recursive: true });
     await writeFile(targets.agentsDir, "not a directory", "utf8");
@@ -68,10 +82,19 @@ export async function createSkillsSandbox(
 
   return {
     targets,
-    userDataPath: path.join(root, "user-data"),
+    userDataPath,
     bundledSkills,
     cleanup: () => rm(root, { recursive: true, force: true }),
   };
+}
+
+/** Reads the committed selection back through the same store the app writes. */
+export async function expectSavedSkillSelection(
+  sandbox: SkillsSandbox,
+  expected: SkillSelection,
+): Promise<void> {
+  const store = createSkillSelectionStore({ userDataPath: sandbox.userDataPath });
+  await expect.poll(() => store.get(), { timeout: 15_000 }).toEqual(expected);
 }
 
 /**
@@ -81,8 +104,10 @@ export async function createSkillsSandbox(
  */
 export async function serveRealSkillsCommands(page: Page, sandbox: SkillsSandbox): Promise<void> {
   const handlers = createSkillsCommandHandlers({
-    resolveTargets: () => sandbox.targets,
-    selectionStore: createSkillSelectionStore({ userDataPath: sandbox.userDataPath }),
+    controller: createSkillsController({
+      resolveTargets: () => sandbox.targets,
+      selectionStore: createSkillSelectionStore({ userDataPath: sandbox.userDataPath }),
+    }),
   });
 
   await page.exposeFunction(
@@ -204,6 +229,28 @@ export async function expectSaveErrorKeepsSheetOpen(page: Page): Promise<void> {
     { timeout: 15_000 },
   );
   await expectSkillSelectionOpen(page);
+}
+
+/**
+ * The removal warning is the desktop confirm dialog, which has no DOM to query.
+ * The injected bridge records the call the same way the daemon-management tests
+ * assert their confirmation copy.
+ */
+export async function expectRemovalWarning(page: Page, skills: string[]): Promise<void> {
+  await page.waitForFunction(() => !!window.__capturedDialogCall, { timeout: 15_000 });
+  const call = await page.evaluate(() => window.__capturedDialogCall);
+  expect(call?.title).toBe("Remove deselected skills?");
+  for (const name of skills) {
+    expect(call?.message).toContain(name);
+  }
+  for (const dir of ["~/.agents", "~/.claude", "~/.codex"]) {
+    expect(call?.message).toContain(dir);
+  }
+  expect(call?.message).toContain("Anything you added inside those skill folders is deleted too.");
+}
+
+export async function expectNoRemovalWarning(page: Page): Promise<void> {
+  expect(await page.evaluate(() => window.__capturedDialogCall)).toBeUndefined();
 }
 
 export async function expectSkillsInstalled(

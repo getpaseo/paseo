@@ -1869,6 +1869,9 @@ export const ar: TranslationResources = {
         chooseAllHint: "أبقِ جميع المهارات المرفقة مثبتة، بما فيها ما يُضاف لاحقًا.",
         chooseList: "المهارات المرفقة",
         chooseEmpty: "لا تتضمن هذه النسخة أي مهارات.",
+        removeTitle: "إزالة المهارات غير المحددة؟",
+        removeMessage:
+          "سيتم حذف {{skills}} من ~/.agents و~/.claude و~/.codex. كما يُحذف كل ما أضفته داخل مجلدات المهارات تلك.",
         saveFailed: "تعذر حفظ اختيار المهارات.",
       },
       actions: {
@@ -1877,6 +1880,7 @@ export const ar: TranslationResources = {
         installed: "تم التثبيت",
         update: "تحديث",
         working: "عمل...",
+        remove: "إزالة",
         uninstall: "إلغاء التثبيت",
         save: "حفظ",
         saving: "جارٍ الحفظ...",

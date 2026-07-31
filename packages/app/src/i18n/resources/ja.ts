@@ -1888,6 +1888,9 @@ export const ja: TranslationResources = {
           "後から追加されるものも含め、バンドルされたスキルをすべてインストールしたままにします。",
         chooseList: "バンドルされたスキル",
         chooseEmpty: "このビルドにはスキルが含まれていません。",
+        removeTitle: "選択を外したスキルを削除しますか？",
+        removeMessage:
+          "{{skills}} を ~/.agents、~/.claude、~/.codex から削除します。それらのスキルフォルダー内に追加したものもすべて削除されます。",
         saveFailed: "スキルの選択を保存できませんでした。",
       },
       actions: {
@@ -1896,6 +1899,7 @@ export const ja: TranslationResources = {
         installed: "インストール済み",
         update: "更新",
         working: "処理中...",
+        remove: "削除",
         uninstall: "アンインストール",
         save: "保存",
         saving: "保存中...",
