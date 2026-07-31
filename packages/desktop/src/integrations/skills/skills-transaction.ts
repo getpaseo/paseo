@@ -35,7 +35,7 @@ interface TransactionManifest {
 interface CapturedDirectory {
   livePath: string;
   kind: SkillOp["kind"];
-  /** Relative to the transaction directory. Null when nothing was there. */
+  /** Relative to the manifest directory, or an absolute same-filesystem delete stage. */
   backupPath: string | null;
 }
 
@@ -129,6 +129,8 @@ async function validateEntries(
     if (!names.has(name)) return false;
     if (entry.backupPath === null) return true;
     const expected = path.join(BACKUP_DIRNAME, String(rootIndex), name);
+    const sameFilesystemStage = path.join(roots[rootIndex]!, path.basename(transactionDir), name);
+    if (entry.kind === "delete" && entry.backupPath === sameFilesystemStage) return true;
     return (
       entry.backupPath === expected &&
       path
@@ -136,6 +138,28 @@ async function validateEntries(
         .startsWith(`${path.resolve(transactionDir)}${path.sep}`)
     );
   });
+}
+
+function resolveBackupPath(transactionDir: string, backupPath: string | null): string | null {
+  if (backupPath === null) return null;
+  return path.isAbsolute(backupPath) ? backupPath : path.join(transactionDir, backupPath);
+}
+
+async function discardTransaction(
+  transactionDir: string,
+  entries: readonly CapturedDirectory[],
+): Promise<void> {
+  const stagingDirs = new Set(
+    entries.flatMap((entry) =>
+      entry.backupPath !== null && path.isAbsolute(entry.backupPath)
+        ? [path.dirname(entry.backupPath)]
+        : [],
+    ),
+  );
+  for (const stagingDir of stagingDirs) {
+    await rm(stagingDir, { recursive: true, force: true });
+  }
+  await rm(transactionDir, { recursive: true, force: true });
 }
 
 async function listAllFiles(rootDir: string): Promise<string[]> {
@@ -233,7 +257,7 @@ async function restore(
   if (manifest.phase === "capturing") return;
   const expectedByName = new Map<string, Map<string, Buffer>>();
   for (const entry of manifest.entries) {
-    const backup = entry.backupPath && path.join(transactionDir, entry.backupPath);
+    const backup = resolveBackupPath(transactionDir, entry.backupPath);
     if (backup !== null && !(await isDirectory(backup))) {
       // A crash may happen after the manifest is durable but before this delete
       // path is atomically moved. Its live directory was never touched.
@@ -282,7 +306,7 @@ export async function recoverInterruptedSkillTransactions(
       if (!manifest) continue;
       if (!(await validateEntries(targets, transactionDir, manifest.entries))) continue;
       if (selectionsEqual(committedSelection, manifest.nextSelection)) {
-        await rm(transactionDir, { recursive: true, force: true });
+        await discardTransaction(transactionDir, manifest.entries);
         continue;
       }
       if (!selectionsEqual(committedSelection, manifest.previousSelection)) {
@@ -291,7 +315,7 @@ export async function recoverInterruptedSkillTransactions(
         );
       }
       await restore(targets, transactionDir, manifest);
-      await rm(transactionDir, { recursive: true, force: true });
+      await discardTransaction(transactionDir, manifest.entries);
     }
   }
 }
@@ -314,7 +338,7 @@ export async function beginSkillsTransaction(
   const entries: CapturedDirectory[] = [];
 
   async function discard(): Promise<void> {
-    await rm(transactionDir, { recursive: true, force: true });
+    await discardTransaction(transactionDir, entries);
   }
 
   await mkdir(transactionDir, { recursive: true });
@@ -336,9 +360,12 @@ export async function beginSkillsTransaction(
           entries.push({ livePath, kind: op.kind, backupPath: null });
           continue;
         }
-        const backupPath = path.join(BACKUP_DIRNAME, String(rootIndex), name);
+        const backupPath =
+          op.kind === "delete"
+            ? path.join(root, path.basename(transactionDir), name)
+            : path.join(BACKUP_DIRNAME, String(rootIndex), name);
         if (op.kind !== "delete") {
-          await cp(livePath, path.join(transactionDir, backupPath), {
+          await cp(livePath, resolveBackupPath(transactionDir, backupPath)!, {
             recursive: true,
             preserveTimestamps: true,
             verbatimSymlinks: true,
@@ -363,13 +390,15 @@ export async function beginSkillsTransaction(
   }
 
   try {
-    // A confirmed delete is the atomic move into staging itself. Any writer
+    // Each delete is staged inside its own skills root, so rename stays atomic
+    // even when the agent homes are symlinks or mounts on different filesystems.
+    // Any writer
     // holding the old directory keeps writing into the staged inode; any writer
     // recreating the old path remains live and is merged on rollback. The later
     // convergence plan deliberately omits deletes.
     for (const entry of entries) {
       if (entry.kind !== "delete" || entry.backupPath === null) continue;
-      const backup = path.join(transactionDir, entry.backupPath);
+      const backup = resolveBackupPath(transactionDir, entry.backupPath)!;
       await mkdir(path.dirname(backup), { recursive: true });
       await rename(entry.livePath, backup);
     }

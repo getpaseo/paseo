@@ -166,8 +166,12 @@ async function readUserFile(
 async function backupArtifacts(targets: SkillTargets): Promise<string[][]> {
   return Promise.all(
     [targets.agentsDir, targets.claudeDir, targets.codexDir].map(async (dir) => {
-      const entries = await readdir(path.dirname(dir)).catch(() => []);
-      return entries.filter((entry) => entry !== path.basename(dir)).sort();
+      const parentEntries = await readdir(path.dirname(dir)).catch(() => []);
+      const rootEntries = await readdir(dir).catch(() => []);
+      return [
+        ...parentEntries.filter((entry) => entry !== path.basename(dir)),
+        ...rootEntries.filter((entry) => entry.startsWith(".paseo-skills-transaction-")),
+      ].sort();
     }),
   );
 }
@@ -478,6 +482,35 @@ describe("skills controller", () => {
     expect(await isInstalled(harness.targets, "paseo-loop")).toBe(true);
   });
 
+  it.skipIf(process.platform !== "linux")(
+    "stages deletions when an agent skills root is on another filesystem",
+    async () => {
+      const crossFilesystemRoot = await mkdtemp("/dev/shm/paseo-skills-controller-");
+      try {
+        harness.targets.claudeDir = path.join(crossFilesystemRoot, "skills");
+        const previous: SkillSelection = {
+          mode: "custom",
+          skills: ["paseo", "paseo-loop"],
+        };
+        const next: SkillSelection = { mode: "custom", skills: ["paseo"] };
+        await harness.controller.save(previous);
+
+        expect((await lstat(harness.targets.agentsDir)).dev).not.toBe(
+          (await lstat(harness.targets.claudeDir)).dev,
+        );
+        const transaction = await beginSkillsTransaction(harness.targets, previous, next, [
+          { kind: "delete", name: "paseo-loop" },
+        ]);
+
+        expect(await isInstalled(harness.targets, "paseo-loop")).toBe(false);
+        await transaction.rollback();
+        expect(await isInstalled(harness.targets, "paseo-loop")).toBe(true);
+      } finally {
+        await rm(crossFilesystemRoot, { recursive: true, force: true });
+      }
+    },
+  );
+
   it.skipIf(process.platform === "win32")(
     "restores a user-added symlink when deletion rolls back",
     async () => {
@@ -567,31 +600,34 @@ describe("skills controller", () => {
     expect(await backupArtifacts(harness.targets)).toEqual([[], [], []]);
   });
 
-  it("surfaces committed transaction cleanup failure before another save", async () => {
-    const gated = createGatedSelectionStore({ mode: "all" });
-    const blocked = await makeHarness(gated.store);
-    const next: SkillSelection = { mode: "custom", skills: ["paseo"] };
-    const parent = path.dirname(blocked.targets.agentsDir);
-    const movedParent = `${parent}-moved`;
+  it.skipIf(process.platform === "win32")(
+    "surfaces committed transaction cleanup failure before another save",
+    async () => {
+      const gated = createGatedSelectionStore({ mode: "all" });
+      const blocked = await makeHarness(gated.store);
+      const next: SkillSelection = { mode: "custom", skills: ["paseo"] };
+      const parent = path.dirname(blocked.targets.agentsDir);
+      const movedParent = `${parent}-moved`;
 
-    const save = blocked.controller.save(next);
-    await gated.persistenceStarted;
-    await rename(parent, movedParent);
-    await writeFile(parent, "block transaction cleanup with ENOTDIR");
-    gated.finishPersistence();
-    const outcome = await save.then(
-      () => ({ ok: true as const }),
-      (error: unknown) => ({ ok: false as const, error }),
-    );
-    await rm(parent, { force: true });
-    await rename(movedParent, parent);
+      const save = blocked.controller.save(next);
+      await gated.persistenceStarted;
+      await rename(parent, movedParent);
+      await writeFile(parent, "block transaction cleanup with ENOTDIR");
+      gated.finishPersistence();
+      const outcome = await save.then(
+        () => ({ ok: true as const }),
+        (error: unknown) => ({ ok: false as const, error }),
+      );
+      await rm(parent, { force: true });
+      await rename(movedParent, parent);
 
-    expect(outcome.ok).toBe(false);
-    expect(await gated.store.get()).toEqual(next);
-    await blocked.controller.status();
-    expect(await backupArtifacts(blocked.targets)).toEqual([[], [], []]);
-    await rm(blocked.root, { recursive: true, force: true });
-  });
+      expect(outcome.ok).toBe(false);
+      expect(await gated.store.get()).toEqual(next);
+      await blocked.controller.status();
+      expect(await backupArtifacts(blocked.targets)).toEqual([[], [], []]);
+      await rm(blocked.root, { recursive: true, force: true });
+    },
+  );
 
   it("does not delete an unrelated file that resembles transaction staging", async () => {
     const unrelated = path.join(
