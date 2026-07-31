@@ -124,6 +124,17 @@ function registerOpenCodeChildSessionServerUrl(sessionId: string, serverUrl: str
   }
 }
 
+function terminalTurnEventFromOpenCodeError(error: unknown): TerminalTurnEvent {
+  if (isOpenCodeMessageAbortedError(error)) {
+    return { type: "turn_canceled", provider: "opencode", reason: "interrupted" };
+  }
+  return {
+    type: "turn_failed",
+    provider: "opencode",
+    error: toDiagnosticErrorMessage(error),
+  };
+}
+
 function unregisterOpenCodeChildSessionServerUrl(sessionId: string): void {
   openCodeChildSessionServerUrls.delete(sessionId);
 }
@@ -3655,13 +3666,7 @@ class OpenCodeAgentSession implements AgentSession {
       return null;
     }
     if (assistantMessage.info.error) {
-      return isOpenCodeMessageAbortedError(assistantMessage.info.error)
-        ? { type: "turn_canceled", provider: "opencode", reason: "interrupted" }
-        : {
-            type: "turn_failed",
-            provider: "opencode",
-            error: toDiagnosticErrorMessage(assistantMessage.info.error),
-          };
+      return terminalTurnEventFromOpenCodeError(assistantMessage.info.error);
     }
 
     if (assistantMessage.info.time?.completed === undefined) {
