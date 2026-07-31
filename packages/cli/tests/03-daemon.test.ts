@@ -143,12 +143,17 @@ try {
     const pidContents = await readFile(pidPath, "utf-8");
     await unlink(pidPath);
     const status = await daemonCommand(["status", "--json"]);
+    const pairing = await daemonCommand(["pair", "--json"]);
     await writeFile(pidPath, pidContents, "utf-8");
     assert.strictEqual(status.exitCode, 0, `IPC daemon status should succeed: ${status.stderr}`);
     const payload = JSON.parse(status.stdout);
     assert.strictEqual(payload.connectedDaemon, "reachable", "IPC daemon should be reachable");
     assert.strictEqual(payload.localDaemon, "stopped", "missing PID should report stopped locally");
     assert.notStrictEqual(payload.relay, "disabled", "status should use live relay state");
+    assert.strictEqual(pairing.exitCode, 0, `IPC daemon pairing should succeed: ${pairing.stderr}`);
+    const pairingPayload = JSON.parse(pairing.stdout);
+    assert.strictEqual(pairingPayload.relayEnabled, true, "pairing should use live relay state");
+    assert.match(pairingPayload.url, /#offer=/, "pairing should use the live daemon offer");
 
     const cleanup = await daemonCommand(["stop", "--force"]);
     assert.strictEqual(cleanup.exitCode, 0, "cleanup stop should succeed after IPC status");

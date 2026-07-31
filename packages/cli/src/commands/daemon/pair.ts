@@ -43,9 +43,10 @@ export async function resolveLocalPairingOffer(options: {
   enableRelay?: boolean;
 }): Promise<PairingOffer> {
   const state = resolveLocalDaemonState({ home: options.paseoHome });
+  const daemonOffer = await resolveDaemonPairingOffer(state.listen, options.enableRelay);
+  if (daemonOffer) return daemonOffer;
+
   if (state.running) {
-    const runningOffer = await resolveRunningDaemonPairingOffer(state.listen, options.enableRelay);
-    if (runningOffer) return runningOffer;
     throw new Error(
       "The running daemon did not provide a pairing offer. Check daemon connectivity or update the daemon.",
     );
@@ -68,7 +69,7 @@ export async function resolveLocalPairingOffer(options: {
   });
 }
 
-async function resolveRunningDaemonPairingOffer(
+async function resolveDaemonPairingOffer(
   listen: string,
   enableRelay: boolean | undefined,
 ): Promise<PairingOffer | null> {
@@ -80,7 +81,9 @@ async function resolveRunningDaemonPairingOffer(
 
   try {
     const serverInfo = client.getLastServerInfoMessage();
-    if (serverInfo?.features?.daemonStatusRpc !== true) return null;
+    if (serverInfo?.features?.daemonStatusRpc !== true) {
+      throw new Error("Update the Paseo daemon before pairing from this command.");
+    }
 
     let offer = await client.getDaemonPairingOffer({
       timeout: PAIRING_DAEMON_RPC_TIMEOUT_MS,
