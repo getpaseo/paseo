@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.914 - 2026-07-31
+
+### Added
+
+- Sync the fork with official Paseo v0.2.5 (Linux Debian package startup fix) while keeping fork-only features ([#36](https://github.com/iamriajul/paseo/pull/36) by [@iamriajul](https://github.com/iamriajul))
+
+### Improved
+
+- Preserve custom metadata endpoint, intrusive desktop attention, Browser localhost tunneling, Android push credentials, PDF preview, backlog, and related fork work on top of the official 0.2.5 line
+
 ## 0.2.913 - 2026-07-30
 
 ### Added
