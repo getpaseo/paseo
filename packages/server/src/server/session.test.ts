@@ -1425,7 +1425,7 @@ describe("daemon status + pairing RPC", () => {
       paseoHome: makeHome(),
       serverId: "srv-test",
       daemonVersion: "9.9.9",
-      daemonRuntimeConfig: { listen: "127.0.0.1:6767", relay: null },
+      daemonRuntimeConfig: { listen: "127.0.0.1:6767", getRelayConfig: () => null },
       agentManager: {
         listProviderAvailability: vi.fn().mockResolvedValue([
           { provider: "claude", available: true },
@@ -1464,7 +1464,7 @@ describe("daemon status + pairing RPC", () => {
       paseoHome: makeHome(),
       serverId: "srv-test",
       daemonVersion: "9.9.9",
-      daemonRuntimeConfig: { listen: "127.0.0.1:6767", relay: null },
+      daemonRuntimeConfig: { listen: "127.0.0.1:6767", getRelayConfig: () => null },
       agentManager: {
         listProviderAvailability: vi.fn().mockRejectedValue(new Error("provider listing failed")),
       },
@@ -1500,13 +1500,13 @@ describe("daemon status + pairing RPC", () => {
       paseoHome: makeHome(),
       daemonRuntimeConfig: {
         listen: "127.0.0.1:6767",
-        relay: {
+        getRelayConfig: () => ({
           enabled: false,
           endpoint: "relay.paseo.sh:443",
           publicEndpoint: "relay.paseo.sh:443",
           useTls: true,
           publicUseTls: true,
-        },
+        }),
       },
     });
 

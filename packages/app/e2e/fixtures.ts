@@ -25,6 +25,7 @@ const test = base.extend<{
   paseoE2ESetup: void;
   outdatedDaemon: OutdatedDaemon;
   desktopManagedOutdatedDaemon: OutdatedDaemon;
+  relayConfigOutdatedDaemon: OutdatedDaemon;
   projectPickerFixture: TrackedProjectPickerFixture;
   withWorkspace: WithWorkspace;
 }>({
@@ -126,6 +127,11 @@ const test = base.extend<{
   },
   desktopManagedOutdatedDaemon: async ({}, provide) => {
     const daemon = await startOutdatedDaemon({ desktopManaged: true });
+    await provide(daemon);
+    await daemon.close();
+  },
+  relayConfigOutdatedDaemon: async ({}, provide) => {
+    const daemon = await startOutdatedDaemon({ relayConfigCapability: false });
     await provide(daemon);
     await daemon.close();
   },

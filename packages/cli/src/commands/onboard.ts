@@ -2,13 +2,7 @@ import { cancel, confirm, intro, isCancel, log, note, outro, spinner } from "@cl
 import { Command, Option } from "commander";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
-import {
-  generateLocalPairingOffer,
-  loadConfig,
-  loadPersistedConfig,
-  type CliConfigOverrides,
-  type PersistedConfig,
-} from "@getpaseo/server";
+import { loadPersistedConfig, type PersistedConfig } from "@getpaseo/server";
 import {
   resolveLocalPaseoHome,
   resolveLocalDaemonState,
@@ -19,6 +13,11 @@ import {
 } from "./daemon/local-daemon.js";
 import { tryConnectToDaemon } from "../utils/client.js";
 import { formatPairingInstructions } from "../output/pairing.js";
+import {
+  confirmRelayPairing,
+  printDirectConnectionGuidance,
+  resolveLocalPairingOffer,
+} from "./daemon/pair.js";
 
 interface OnboardOptions extends DaemonStartOptions {
   timeout?: string;
@@ -68,37 +67,6 @@ function parseTimeoutMs(raw: string | undefined): number {
   }
 
   return Math.ceil(seconds * 1000);
-}
-
-function toCliOverrides(options: OnboardOptions): CliConfigOverrides {
-  const cliOverrides: CliConfigOverrides = {};
-
-  if (options.listen) {
-    cliOverrides.listen = options.listen;
-  } else if (options.port) {
-    cliOverrides.listen = `127.0.0.1:${options.port}`;
-  }
-
-  if (options.relay === false) {
-    cliOverrides.relayEnabled = false;
-  }
-
-  if (options.hostnames) {
-    const raw = options.hostnames.trim();
-    cliOverrides.hostnames =
-      raw.toLowerCase() === "true"
-        ? true
-        : raw
-            .split(",")
-            .map((host) => host.trim())
-            .filter(Boolean);
-  }
-
-  if (options.mcp === false) {
-    cliOverrides.mcpEnabled = false;
-  }
-
-  return cliOverrides;
 }
 
 function savePersistedConfig(paseoHome: string, config: OnboardPersistedConfig): void {
@@ -338,6 +306,7 @@ export function onboardCommand(): Command {
     .option("--listen <listen>", "Listen target (host:port, port, or unix socket path)")
     .option("--port <port>", "Port to listen on (default: 6767)")
     .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
+    .option("--relay", "Enable relay connection without prompting")
     .option("--no-relay", "Disable relay connection")
     .option("--no-mcp", "Disable the Agent MCP HTTP endpoint")
     .option(
@@ -477,8 +446,6 @@ export async function runOnboard(options: OnboardOptions): Promise<void> {
   }
 
   const voiceEnabled = await resolveAndPersistVoice(paseoHome, options);
-  const config = loadConfig(paseoHome, { cli: toCliOverrides(options) });
-
   log.message(
     voiceEnabled
       ? "Voice features enabled. Local speech models will be downloaded automatically if missing."
@@ -492,25 +459,22 @@ export async function runOnboard(options: OnboardOptions): Promise<void> {
     richUi,
   });
 
-  if (config.relayEnabled === false) {
-    log.warn("Relay is disabled; pairing offer is unavailable for this daemon.");
-    printNextSteps(null, paseoHome, richUi);
-    if (richUi) {
-      outro("Paseo daemon is running.");
-    }
-    return;
-  }
-
-  const pairing = await generateLocalPairingOffer({
+  let pairing = await resolveLocalPairingOffer({
     paseoHome,
-    relayEnabled: config.relayEnabled,
-    relayEndpoint: config.relayEndpoint,
-    relayPublicEndpoint: config.relayPublicEndpoint,
-    relayUseTls: config.relayUseTls,
-    relayPublicUseTls: config.relayPublicUseTls,
-    appBaseUrl: config.appBaseUrl,
-    includeQr: true,
+    enableRelay: options.relay === true,
   });
+
+  if (!pairing.relayEnabled) {
+    const shouldEnable = richUi && options.relay !== false ? await confirmRelayPairing() : false;
+    if (!shouldEnable) {
+      printDirectConnectionGuidance();
+      printNextSteps(null, paseoHome, richUi);
+      if (richUi) outro("Paseo daemon is running.");
+      return;
+    }
+    pairing = await resolveLocalPairingOffer({ paseoHome, enableRelay: true });
+    log.success("Relay enabled");
+  }
 
   if (!pairing.url) {
     log.warn("Relay pairing URL is unavailable for this daemon configuration.");

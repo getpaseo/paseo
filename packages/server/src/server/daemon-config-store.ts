@@ -162,11 +162,21 @@ export class DaemonConfigStore {
   private readonly logger: LoggerLike | undefined;
   private readonly changeListeners = new Set<ConfigListener>();
   private readonly fieldChangeHandlers = new Map<string, Set<FieldChangeHandler>>();
+  private readonly relayEnabledMutable: boolean;
 
-  constructor(paseoHome: string, initial: MutableDaemonConfig, logger?: LoggerLike) {
+  constructor(
+    paseoHome: string,
+    initial: MutableDaemonConfig,
+    logger?: LoggerLike,
+    options: { relayEnabledMutable?: boolean } = {},
+  ) {
     this.paseoHome = paseoHome;
     this.logger = getLogger(logger);
-    this.current = MutableDaemonConfigSchema.parse(initial);
+    this.current = MutableDaemonConfigSchema.parse({
+      ...initial,
+      relay: initial.relay ?? { enabled: true },
+    });
+    this.relayEnabledMutable = options.relayEnabledMutable ?? true;
   }
 
   public get(): MutableDaemonConfig {
@@ -175,6 +185,11 @@ export class DaemonConfigStore {
 
   public patch(partial: MutableDaemonConfigPatch): MutableDaemonConfig {
     const parsedPatch = MutableDaemonConfigPatchSchema.parse(partial);
+    if (parsedPatch.relay?.enabled !== undefined && !this.relayEnabledMutable) {
+      throw new Error(
+        "Relay is controlled by a daemon launch override. Remove PASEO_RELAY_ENABLED or the relay CLI flag before changing it here.",
+      );
+    }
     const { removeProviders = [], ...configPatch } = parsedPatch;
     const removedProviders = Array.from(new Set(removeProviders));
     const merged = deepMerge(this.current, configPatch);
@@ -263,6 +278,9 @@ function mergeMutableConfigIntoPersistedConfig(params: {
   removeProviders: readonly string[];
 }): PersistedConfig {
   const { persisted, mutable, removeProviders } = params;
+  if (!mutable.relay) {
+    throw new Error("Mutable daemon config is missing relay state");
+  }
   const browserToolsEnabled = readBrowserToolsEnabled(mutable);
   const metadataGenerationProviders = readMetadataGenerationProviders(mutable);
   const persistedProviderOverrides = omitProvidersFromOverrides(
@@ -300,6 +318,10 @@ function mergeMutableConfigIntoPersistedConfig(params: {
     ...persisted,
     daemon: {
       ...persisted.daemon,
+      relay: {
+        ...persisted.daemon?.relay,
+        enabled: mutable.relay.enabled,
+      },
       mcp: {
         ...persisted.daemon?.mcp,
         injectIntoAgents: mutable.mcp.injectIntoAgents,

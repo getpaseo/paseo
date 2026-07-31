@@ -34,6 +34,7 @@ import {
   FolderGit2,
   SquareTerminal,
   Code2,
+  Smartphone,
 } from "lucide-react-native";
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
@@ -95,6 +96,7 @@ import {
 } from "@/i18n/locales";
 import {
   HostConnectionsPage,
+  HostPairDevicePage,
   HostAgentsPage,
   HostSettingsPage,
   HostProvidersPage,
@@ -161,12 +163,19 @@ interface HostSectionItem {
   id: HostSectionSlug;
   labelKey: string;
   icon: ComponentType<{ size: number; color: string }>;
+  localOnly?: boolean;
 }
 
 const HOST_SECTION_ITEMS: HostSectionItem[] = [
   { id: "host", labelKey: "settings.hostSections.host", icon: Server },
   { id: "projects", labelKey: "settings.hostSections.projects", icon: FolderGit2 },
   { id: "connections", labelKey: "settings.hostSections.connections", icon: Network },
+  {
+    id: "pair-device",
+    labelKey: "openProject.tiles.pairDevice.title",
+    icon: Smartphone,
+    localOnly: true,
+  },
   { id: "agents", labelKey: "settings.hostSections.agents", icon: Bot },
   { id: "workspaces", labelKey: "settings.hostSections.workspaces", icon: FolderGit2 },
   { id: "providers", labelKey: "settings.hostSections.providers", icon: Boxes },
@@ -183,6 +192,8 @@ function renderHostSettingsContent(
       return <ProjectsScreen serverId={view.serverId} />;
     case "connections":
       return <HostConnectionsPage serverId={view.serverId} />;
+    case "pair-device":
+      return <HostPairDevicePage serverId={view.serverId} />;
     case "agents":
       return <HostAgentsPage serverId={view.serverId} />;
     case "workspaces":
@@ -1005,7 +1016,9 @@ function SettingsSidebar({
             onAddHost={onAddHost}
             enableBuiltInDaemonOption={enableBuiltInDaemonOption}
           />
-          {HOST_SECTION_ITEMS.map((item) => (
+          {HOST_SECTION_ITEMS.filter(
+            (item) => !item.localOnly || activeHostServerId === localServerId,
+          ).map((item) => (
             <SidebarHostSectionButton
               key={item.id}
               itemId={item.id}

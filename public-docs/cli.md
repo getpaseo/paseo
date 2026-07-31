@@ -200,8 +200,12 @@ Use `PASEO_HOME` to run multiple isolated daemon instances.
 Get an offer URL from the daemon you want to control:
 
 ```bash
-paseo daemon pair --json   # prints { url, qr, ... }
+paseo daemon pair          # asks before enabling relay, then prints the QR and link
+paseo daemon pair --relay  # enables relay without prompting
+paseo daemon pair --json   # structured output; never prompts
 ```
+
+Relay is off for new installations. In non-interactive or JSON mode, a disabled relay returns a `RELAY_DISABLED` error; pass `--relay` to provide explicit consent. Relay pairing is end-to-end encrypted. See [Security](/docs/security).
 
 Use it from anywhere:
 

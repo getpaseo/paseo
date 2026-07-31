@@ -27,6 +27,7 @@ interface TestPaseoDaemonOptions {
   relayEndpoint?: string;
   relayUseTls?: boolean;
   relayPublicUseTls?: boolean;
+  relayConfigCapability?: boolean;
   agentClients?: Partial<Record<AgentProvider, AgentClient>>;
   providerOverrides?: PaseoDaemonConfig["providerOverrides"];
   paseoHomeRoot?: string;
@@ -92,7 +93,9 @@ export async function createTestPaseoDaemon(
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const { config, paseoHomeRoot, paseoHome, staticDir } = await prepareTestDaemonConfig(options);
     const logger = options.logger ?? pino({ level: "silent" });
-    const daemon = await createPaseoDaemon(config, logger);
+    const daemon = await createPaseoDaemon(config, logger, {
+      serverFeatureOverrides: { relayConfig: options.relayConfigCapability },
+    });
     try {
       await startDaemonWithTimeout(daemon, TEST_DAEMON_START_TIMEOUT_MS);
       const listenTarget = daemon.getListenTarget();

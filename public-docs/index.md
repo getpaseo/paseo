@@ -25,7 +25,7 @@ npm install -g @getpaseo/cli
 paseo
 ```
 
-Paseo prints a QR code in the terminal. Scan it from the mobile app, or enter the daemon address manually from another client.
+Paseo starts the daemon locally, then asks whether to enable the end-to-end encrypted relay and print a pairing QR code. If you decline, enter the daemon address manually over TCP, Tailscale, or another VPN.
 
 The daemon can also serve the browser web app itself, so you can use the full UI without the hosted app. See [Self-hosting the web UI](/docs/web-ui).
 

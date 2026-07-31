@@ -246,6 +246,7 @@ describe("global routes", () => {
 describe("host settings section slugs", () => {
   it("keeps current host settings sections", () => {
     expect(normalizeHostSectionSlug("connections")).toBe("connections");
+    expect(normalizeHostSectionSlug("pair-device")).toBe("pair-device");
     expect(normalizeHostSectionSlug("agents")).toBe("agents");
     expect(normalizeHostSectionSlug("workspaces")).toBe("workspaces");
     expect(normalizeHostSectionSlug("projects")).toBe("projects");

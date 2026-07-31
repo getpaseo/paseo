@@ -210,6 +210,8 @@ function resolveTlsFromEnv(
 }
 
 function resolveRelayConfig(input: ResolveRelayInput): ResolvedRelay {
+  // COMPAT(relayOptInDefault): configs created before v0.2.6 may omit this field.
+  // Preserve their relay-on behavior until 2027-01-31; new homes materialize false.
   const enabled =
     input.cliRelayEnabled ??
     parseBooleanEnv(input.env.PASEO_RELAY_ENABLED) ??
@@ -506,6 +508,8 @@ export function loadConfig(
     staticDir: "public",
     agentClients: {},
     relayEnabled: relay.enabled,
+    relayEnabledMutable:
+      env.PASEO_RELAY_ENABLED === undefined && options?.cli?.relayEnabled === undefined,
     relayEndpoint: relay.endpoint,
     relayPublicEndpoint: relay.publicEndpoint,
     relayUseTls: relay.useTls,

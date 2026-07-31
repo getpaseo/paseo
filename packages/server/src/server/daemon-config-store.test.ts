@@ -63,6 +63,52 @@ describe("DaemonConfigStore", () => {
     }
   });
 
+  test("patch persists relay state and emits its field change", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+    const changes: unknown[] = [];
+    store.onFieldChange("relay.enabled", (value) => changes.push(value));
+
+    store.patch({ relay: { enabled: true } });
+
+    expect(changes).toEqual([true]);
+    expect(loadPersistedConfig(paseoHome).daemon?.relay?.enabled).toBe(true);
+  });
+
+  test("rejects relay patches when a launch override owns the setting", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        relay: { enabled: false },
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+      { relayEnabledMutable: false },
+    );
+
+    expect(() => store.patch({ relay: { enabled: true } })).toThrow(
+      "Relay is controlled by a daemon launch override",
+    );
+  });
+
   test("patch persists provider enabled flags into config.json", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);

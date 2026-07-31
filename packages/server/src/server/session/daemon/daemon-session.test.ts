@@ -127,7 +127,7 @@ describe("DaemonSession", () => {
     const { subsystem, emitted } = makeSubsystem({
       serverId: "srv-1",
       daemonVersion: "1.2.3",
-      daemonRuntimeConfig: { listen: "127.0.0.1:6767", relay: null },
+      daemonRuntimeConfig: { listen: "127.0.0.1:6767", getRelayConfig: () => null },
       listProviderAvailability: async () => [
         { provider: "claude", available: true, error: null },
         { provider: "codex", available: false, error: "boom" },
@@ -161,7 +161,7 @@ describe("DaemonSession", () => {
     const { subsystem, emitted } = makeSubsystem({
       serverId: "srv-1",
       daemonVersion: "1.2.3",
-      daemonRuntimeConfig: { listen: "127.0.0.1:6767", relay: null },
+      daemonRuntimeConfig: { listen: "127.0.0.1:6767", getRelayConfig: () => null },
       listProviderAvailability: async () => {
         throw new Error("provider listing failed");
       },
@@ -191,13 +191,13 @@ describe("DaemonSession", () => {
     const { subsystem, emitted } = makeSubsystem({
       daemonRuntimeConfig: {
         listen: "127.0.0.1:6767",
-        relay: {
+        getRelayConfig: () => ({
           enabled: false,
           endpoint: "relay.paseo.sh:443",
           publicEndpoint: "relay.paseo.sh:443",
           useTls: true,
           publicUseTls: true,
-        },
+        }),
       },
     });
 
@@ -219,13 +219,13 @@ describe("DaemonSession", () => {
       daemonRuntimeConfig: {
         listen: "127.0.0.1:6767",
         appBaseUrl: "https://app.example.test",
-        relay: {
+        getRelayConfig: () => ({
           enabled: true,
           endpoint: "relay.example.test:443",
           publicEndpoint: "relay.example.test:443",
           useTls: true,
           publicUseTls: true,
-        },
+        }),
       },
     });
 
@@ -246,19 +246,53 @@ describe("DaemonSession", () => {
     expect(typeof message.payload.qr).toBe("string");
   });
 
+  test("pairing offer reads relay state at request time", async () => {
+    let enabled = false;
+    const { subsystem, emitted } = makeSubsystem({
+      daemonRuntimeConfig: {
+        listen: "127.0.0.1:6767",
+        appBaseUrl: "https://app.example.test",
+        getRelayConfig: () => ({
+          enabled,
+          endpoint: "relay.example.test:443",
+          publicEndpoint: "relay.example.test:443",
+          useTls: true,
+          publicUseTls: true,
+        }),
+      },
+    });
+
+    await subsystem.handleGetPairingOfferRequest({
+      type: "daemon.get_pairing_offer.request",
+      requestId: "disabled",
+    });
+    enabled = true;
+    await subsystem.handleGetPairingOfferRequest({
+      type: "daemon.get_pairing_offer.request",
+      requestId: "enabled",
+    });
+
+    const pairingResponses = emitted.filter(
+      (message) => message.type === "daemon.get_pairing_offer.response",
+    );
+    expect(pairingResponses[0]?.payload.relayEnabled).toBe(false);
+    expect(pairingResponses[1]?.payload.relayEnabled).toBe(true);
+    expect(pairingResponses[1]?.payload.url).toContain("#offer=");
+  });
+
   test("diagnostics includes a log tail and redacts connection secrets", async () => {
     const { subsystem, emitted, paseoHome } = makeSubsystem({
       serverId: "srv-1",
       daemonVersion: "1.2.3",
       daemonRuntimeConfig: {
         listen: "127.0.0.1:6767",
-        relay: {
+        getRelayConfig: () => ({
           enabled: true,
           endpoint: "relay.secret.test:443",
           publicEndpoint: "relay.secret.test:443",
           useTls: true,
           publicUseTls: true,
-        },
+        }),
       },
     });
     writeFileSync(

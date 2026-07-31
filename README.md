@@ -75,7 +75,7 @@ npm install -g @getpaseo/cli
 paseo
 ```
 
-This shows a QR code in the terminal. Connect from any client. This path is useful for servers and remote machines.
+Paseo starts locally, then asks whether to enable the end-to-end encrypted relay for device pairing. If you decline, connect directly over TCP, Tailscale, or another VPN. This path is useful for servers and remote machines.
 
 For full setup and configuration, see:
 

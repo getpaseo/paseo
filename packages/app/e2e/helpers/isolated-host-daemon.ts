@@ -1,6 +1,6 @@
 import { once } from "node:events";
 import { spawn, execSync, type ChildProcess } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -10,8 +10,16 @@ export interface IsolatedHostDaemon {
   serverId: string;
   port: number;
   paseoHome: string;
+  getPid(): number | undefined;
   restart(): Promise<void>;
   close(): Promise<void>;
+}
+
+interface IsolatedHostDaemonOptions {
+  mutableRelay?: {
+    enabled: boolean;
+    endpoint?: string;
+  };
 }
 
 async function getAvailablePort(): Promise<number> {
@@ -76,7 +84,10 @@ async function stopProcess(child: ChildProcess): Promise<void> {
   }
 }
 
-export async function startIsolatedHostDaemon(serverId: string): Promise<IsolatedHostDaemon> {
+export async function startIsolatedHostDaemon(
+  serverId: string,
+  options: IsolatedHostDaemonOptions = {},
+): Promise<IsolatedHostDaemon> {
   const primaryPort = Number(process.env.E2E_DAEMON_PORT ?? 0);
   let port = await getAvailablePort();
   while (port === 6767 || port === primaryPort) port = await getAvailablePort();
@@ -85,6 +96,26 @@ export async function startIsolatedHostDaemon(serverId: string): Promise<Isolate
   if (!metroPort) throw new Error("E2E_METRO_PORT is required to start an isolated host daemon");
 
   const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-e2e-secondary-host-"));
+  if (options.mutableRelay) {
+    const endpoint =
+      options.mutableRelay.endpoint ??
+      (process.env.E2E_RELAY_PORT ? `127.0.0.1:${process.env.E2E_RELAY_PORT}` : "127.0.0.1:9");
+    await writeFile(
+      path.join(paseoHome, "config.json"),
+      `${JSON.stringify({
+        version: 1,
+        daemon: {
+          relay: {
+            enabled: options.mutableRelay.enabled,
+            endpoint,
+            publicEndpoint: endpoint,
+            useTls: false,
+            publicUseTls: false,
+          },
+        },
+      })}\n`,
+    );
+  }
   const serverDir = path.resolve(__dirname, "../../../server");
   const tsxBin = execSync("which tsx").toString().trim();
   const spawnDaemon = async (): Promise<ChildProcess> => {
@@ -96,7 +127,7 @@ export async function startIsolatedHostDaemon(serverId: string): Promise<Isolate
         PASEO_SERVER_ID: serverId,
         PASEO_LISTEN: `127.0.0.1:${port}`,
         PASEO_CORS_ORIGINS: `http://localhost:${metroPort}`,
-        PASEO_RELAY_ENABLED: "0",
+        PASEO_RELAY_ENABLED: options.mutableRelay ? undefined : "0",
         PASEO_NODE_ENV: "development",
         NODE_ENV: "development",
       }),
@@ -135,6 +166,7 @@ export async function startIsolatedHostDaemon(serverId: string): Promise<Isolate
     serverId,
     port,
     paseoHome,
+    getPid: () => child.pid,
     restart: async () => {
       if (closed) throw new Error(`Cannot restart closed isolated daemon ${serverId}`);
       await stopProcess(child);

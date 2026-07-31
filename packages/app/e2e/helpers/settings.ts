@@ -34,6 +34,7 @@ export type SettingsSection = keyof typeof SECTION_LABELS;
 type HostSection =
   | "projects"
   | "connections"
+  | "pair-device"
   | "agents"
   | "workspaces"
   | "providers"
