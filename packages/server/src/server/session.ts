@@ -2823,14 +2823,12 @@ export class Session {
         await removeCachedProjectFavicon({
           paseoHome: this.paseoHome,
           projectId: resolvedProjectId,
-        }).catch(
-          (error) => {
-            this.sessionLogger.warn(
-              { err: error, projectId: resolvedProjectId },
-              "Failed to clean up removed project favicon",
-            );
-          },
-        );
+        }).catch((error) => {
+          this.sessionLogger.warn(
+            { err: error, projectId: resolvedProjectId },
+            "Failed to clean up removed project favicon",
+          );
+        });
       } finally {
         if (activeWorkspaceIds.length > 0) {
           this.clearWorkspaceArchiving(activeWorkspaceIds);

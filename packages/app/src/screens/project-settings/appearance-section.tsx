@@ -101,6 +101,7 @@ export function ProjectAppearanceSection({
             <FormTextInput
               value={state.faviconUrl}
               onChangeText={form.setFaviconUrl}
+              accessibilityLabel={t("settings.project.appearance.url")}
               autoCapitalize="none"
               autoCorrect={false}
               placeholder="https://example.com/favicon.ico"
@@ -114,6 +115,7 @@ export function ProjectAppearanceSection({
             <FormTextInput
               value={state.customText}
               onChangeText={form.setCustomText}
+              accessibilityLabel={t("settings.project.appearance.text")}
               placeholder="🚀"
               size="sm"
               testID="project-icon-text"

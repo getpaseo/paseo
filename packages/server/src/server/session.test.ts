@@ -4951,6 +4951,7 @@ test("project.list returns every active project descriptor", async () => {
             projectKey: "remote:github.com/acme/app",
             projectDisplayName: "acme/app",
             projectCustomName: null,
+            projectAppearance: null,
             projectRootPath: "/tmp/project-active",
             projectKind: "git",
           },

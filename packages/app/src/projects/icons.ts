@@ -13,9 +13,18 @@ import {
 interface ProjectIconTarget {
   serverId: string;
   projectViewKey: string;
-  projectKey: string;
+  projectId: string;
   iconWorkingDir: string;
   projectAppearance?: ProjectAppearance | null;
+}
+
+export function resolveProjectIconLookup(
+  target: Pick<ProjectIconTarget, "projectId" | "iconWorkingDir">,
+  supportsAppearance: boolean,
+): { kind: "project"; projectId: string } | { kind: "legacy"; cwd: string } {
+  return supportsAppearance
+    ? { kind: "project", projectId: target.projectId }
+    : { kind: "legacy", cwd: target.iconWorkingDir };
 }
 
 function legacyIconQueryKey(serverId: string, cwd: string) {
@@ -79,8 +88,8 @@ export function useProjectIcons(input: {
   const requests = useMemo(() => {
     const unique = new Map<string, ProjectIconTarget>();
     for (const project of input.projects) {
-      if (!project.serverId || !project.projectKey || !project.iconWorkingDir.trim()) continue;
-      unique.set(`${project.serverId}:${project.projectKey}`, project);
+      if (!project.serverId || !project.projectId || !project.iconWorkingDir.trim()) continue;
+      unique.set(`${project.serverId}:${project.projectId}`, project);
     }
     return Array.from(unique.values());
   }, [input.projects]);
@@ -89,16 +98,19 @@ export function useProjectIcons(input: {
     queries: requests.map((request) => {
       const supports = supportsAppearance.get(request.serverId) === true;
       const revision = request.projectAppearance?.revision ?? "automatic";
+      const lookup = resolveProjectIconLookup(request, supports);
       return {
-        queryKey: supports
-          ? iconQueryKey(request.serverId, request.projectKey, revision)
-          : legacyIconQueryKey(request.serverId, request.iconWorkingDir),
+        queryKey:
+          lookup.kind === "project"
+            ? iconQueryKey(request.serverId, lookup.projectId, revision)
+            : legacyIconQueryKey(request.serverId, lookup.cwd),
         queryFn: async () => {
           const client = getHostRuntimeStore().getClient(request.serverId);
           if (!client) return null;
-          const result = supports
-            ? await client.getProjectIcon(request.projectKey)
-            : await client.requestProjectIcon(request.iconWorkingDir);
+          const result =
+            lookup.kind === "project"
+              ? await client.getProjectIcon(lookup.projectId)
+              : await client.requestProjectIcon(lookup.cwd);
           return result.icon;
         },
         select: iconDataUri,
@@ -125,14 +137,14 @@ export function useProjectIcons(input: {
   return useMemo(() => {
     const byTarget = new Map<string, string | null>();
     requests.forEach((request, index) => {
-      byTarget.set(`${request.serverId}:${request.projectKey}`, data[index] ?? null);
+      byTarget.set(`${request.serverId}:${request.projectId}`, data[index] ?? null);
     });
 
     const byProject = new Map<string, string | null>();
     for (const project of input.projects) {
       byProject.set(
         project.projectViewKey,
-        byTarget.get(`${project.serverId}:${project.projectKey}`) ?? null,
+        byTarget.get(`${project.serverId}:${project.projectId}`) ?? null,
       );
     }
     return byProject;

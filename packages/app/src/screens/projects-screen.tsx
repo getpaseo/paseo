@@ -32,6 +32,7 @@ export default function ProjectsScreen({ view }: ProjectsScreenProps) {
           {
             serverId: host.serverId,
             projectViewKey: project.viewKey,
+            projectId: host.projectId,
             iconWorkingDir: host.repoRoot,
             projectAppearance: host.projectAppearance,
           },

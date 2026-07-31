@@ -56,6 +56,7 @@ function projectDescriptorFromTestWorkspace(workspace: WorkspaceDescriptor): Pro
     projectKey: workspace.projectId,
     projectDisplayName: workspace.projectDisplayName,
     projectCustomName: workspace.projectCustomName ?? null,
+    projectAppearance: workspace.projectAppearance ?? null,
     projectRootPath: workspace.projectRootPath,
     projectKind: workspace.projectKind,
   };

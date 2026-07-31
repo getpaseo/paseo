@@ -263,7 +263,7 @@ function ProjectSettingsBody({
       {
         serverId: selectedHost.serverId,
         projectViewKey: project.viewKey,
-        projectKey: selectedHost.projectId,
+        projectId: selectedHost.projectId,
         iconWorkingDir: selectedHost.repoRoot,
         projectAppearance: selectedHost.projectAppearance,
       },
@@ -314,7 +314,7 @@ function ProjectSettingsBody({
       {supportsAppearance ? (
         <ProjectAppearanceSection
           key={appearanceKey}
-          projectId={project.projectKey}
+          projectId={selectedHost.projectId}
           serverId={selectedHost.serverId}
           appearance={selectedHost.projectAppearance}
           client={client}

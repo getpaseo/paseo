@@ -72,6 +72,39 @@ export async function clickReloadProjectSettings(page: Page): Promise<void> {
   await page.locator('[data-testid$="-callout"]').getByRole("button", { name: "Reload" }).click();
 }
 
+export async function selectProjectIconMode(
+  page: Page,
+  mode: "Automatic" | "Favicon URL" | "Custom",
+): Promise<void> {
+  await page.getByRole("button", { name: /^Project icon \(/ }).click();
+  await page.getByRole("button", { name: mode, exact: true }).click();
+}
+
+export async function setProjectCustomIcon(page: Page, text: string): Promise<void> {
+  await page.getByRole("textbox", { name: "Text or emoji" }).fill(text);
+}
+
+export async function setProjectFaviconUrl(page: Page, url: string): Promise<void> {
+  await page.getByRole("textbox", { name: "URL", exact: true }).fill(url);
+}
+
+export async function setProjectColorTransparent(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Transparent", exact: true }).click();
+}
+
+export async function saveProjectAppearance(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Save appearance", exact: true }).click();
+}
+
+export async function expectProjectAppearanceSaved(page: Page): Promise<void> {
+  await expect(page.getByTestId("app-toast-message")).toHaveText("Project appearance saved");
+}
+
+export async function expectProjectAppearanceSaveFailed(page: Page, detail: string): Promise<void> {
+  await expect(page.getByText("Couldn't save project appearance", { exact: true })).toBeVisible();
+  await expect(page.getByText(detail, { exact: true })).toBeVisible();
+}
+
 // --- Error-state assertions ---
 
 type ErrorKind = "stale" | "invalid" | "write_failed" | "transport" | "read_failed";

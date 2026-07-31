@@ -1601,7 +1601,7 @@ export function NewWorkspaceScreen({
         return [
           {
             projectViewKey: project.viewKey,
-            projectKey: host.projectId,
+            projectId: host.projectId,
             serverId: selectedServerId,
             iconWorkingDir,
             projectAppearance: host.projectAppearance,

@@ -15,6 +15,8 @@ import {
   expectHostPickerHidden,
   expectNoEditableTarget,
   expectNoProjectSettingsError,
+  expectProjectAppearanceSaved,
+  expectProjectAppearanceSaveFailed,
   expectProjectSettingsError,
   expectProjectSettingsFormHidden,
   expectProjectSettingsFormVisible,
@@ -28,6 +30,11 @@ import {
   openProjects,
   removeProjectScript,
   restorePaseoConfig,
+  saveProjectAppearance,
+  selectProjectIconMode,
+  setProjectColorTransparent,
+  setProjectCustomIcon,
+  setProjectFaviconUrl,
   unblockPaseoConfigWrites,
 } from "./helpers/project-settings";
 import { gotoAppShell } from "./helpers/app";
@@ -214,6 +221,33 @@ test.describe("Projects settings", () => {
     await editWorktreeSetup(page, updatedSetup);
     await clickSaveProjectSettings(page);
     await expectProjectConfigSaved(gitlabRemoteProject);
+  });
+
+  test("user saves a custom project icon and transparent color", async ({
+    page,
+    editableProject,
+  }) => {
+    await openProjects(page);
+    await openProjectSettings(page, editableProject.name);
+    await selectProjectIconMode(page, "Custom");
+    await setProjectCustomIcon(page, "🚀");
+    await setProjectColorTransparent(page);
+    await saveProjectAppearance(page);
+
+    await expectProjectAppearanceSaved(page);
+  });
+
+  test("project appearance keeps a rejected favicon URL actionable", async ({
+    page,
+    editableProject,
+  }) => {
+    await openProjects(page);
+    await openProjectSettings(page, editableProject.name);
+    await selectProjectIconMode(page, "Favicon URL");
+    await setProjectFaviconUrl(page, "file:///etc/passwd");
+    await saveProjectAppearance(page);
+
+    await expectProjectAppearanceSaveFailed(page, "URL must use HTTP or HTTPS without credentials");
   });
 });
 
