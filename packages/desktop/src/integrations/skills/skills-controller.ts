@@ -106,12 +106,7 @@ export function createSkillsController({
       // Capture only paths this frozen plan can mutate. Capturing every managed
       // path would make rollback delete a new external directory that appeared
       // after the scan merely because it was absent from the snapshot.
-      const transaction = await beginSkillsTransaction(
-        targets,
-        previous,
-        next,
-        plan.ops.map((op) => op.name),
-      );
+      const transaction = await beginSkillsTransaction(targets, previous, next, plan.ops);
       let status: SkillsStatus;
       try {
         status = await installSkills(targets, next, plan);

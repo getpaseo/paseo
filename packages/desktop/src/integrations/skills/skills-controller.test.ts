@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { access } from "node:fs/promises";
 import { watch } from "node:fs/promises";
 import os from "node:os";
@@ -55,6 +55,61 @@ function createUnwritableSelectionStore(initial: SkillSelection): SkillSelection
     set: async () => {
       throw new Error("selection store is read-only");
     },
+  };
+}
+
+function createGatedUnwritableSelectionStore(initial: SkillSelection): {
+  store: SkillSelectionStore;
+  persistenceStarted: Promise<void>;
+  failPersistence(): void;
+} {
+  let markStarted!: () => void;
+  let fail!: () => void;
+  const persistenceStarted = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  const failureGate = new Promise<void>((resolve) => {
+    fail = resolve;
+  });
+  return {
+    store: {
+      get: async () => initial,
+      set: async () => {
+        markStarted();
+        await failureGate;
+        throw new Error("selection store is read-only");
+      },
+    },
+    persistenceStarted,
+    failPersistence: fail,
+  };
+}
+
+function createGatedSelectionStore(initial: SkillSelection): {
+  store: SkillSelectionStore;
+  persistenceStarted: Promise<void>;
+  finishPersistence(): void;
+} {
+  let current = initial;
+  let markStarted!: () => void;
+  let finish!: () => void;
+  const persistenceStarted = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  return {
+    store: {
+      get: async () => current,
+      set: async (selection) => {
+        markStarted();
+        await gate;
+        current = selection;
+      },
+    },
+    persistenceStarted,
+    finishPersistence: finish,
   };
 }
 
@@ -334,10 +389,90 @@ describe("skills controller", () => {
     await rm(readOnly.root, { recursive: true, force: true });
   });
 
+  it("preserves files added by another writer before rollback", async () => {
+    const selection: SkillSelection = { mode: "custom", skills: ["paseo"] };
+    const gated = createGatedUnwritableSelectionStore(selection);
+    const readOnly = await makeHarness(gated.store);
+    await readOnly.controller.install();
+    await writeFile(path.join(readOnly.targets.sourceDir, "paseo", "SKILL.md"), "paseo-v2");
+
+    const save = readOnly.controller.save(selection);
+    await gated.persistenceStarted;
+    await writeUserFile(readOnly.targets, "paseo", "notes/concurrent.md", "keep this");
+    gated.failPersistence();
+    await expect(save).rejects.toThrow("selection store is read-only");
+
+    expect(await readUserFile(readOnly.targets, "paseo", "notes/concurrent.md")).toEqual([
+      "keep this",
+      "keep this",
+      "keep this",
+    ]);
+    await rm(readOnly.root, { recursive: true, force: true });
+  });
+
+  it("merges a deleted directory backup into files another writer recreated", async () => {
+    const previous: SkillSelection = {
+      mode: "custom",
+      skills: ["paseo", "paseo-loop"],
+    };
+    const gated = createGatedUnwritableSelectionStore(previous);
+    const readOnly = await makeHarness(gated.store);
+    await readOnly.controller.install();
+    await writeUserFile(readOnly.targets, "paseo-loop", "notes/before.md", "restore this");
+
+    const save = readOnly.controller.save({
+      mode: "custom",
+      skills: ["paseo"],
+      confirmedRemovals: ["paseo-loop"],
+    });
+    await gated.persistenceStarted;
+    await writeUserFile(readOnly.targets, "paseo-loop", "notes/concurrent.md", "keep this");
+    gated.failPersistence();
+    await expect(save).rejects.toThrow("selection store is read-only");
+
+    expect(await readUserFile(readOnly.targets, "paseo-loop", "notes/before.md")).toEqual([
+      "restore this",
+      "restore this",
+      "restore this",
+    ]);
+    expect(await readUserFile(readOnly.targets, "paseo-loop", "notes/concurrent.md")).toEqual([
+      "keep this",
+      "keep this",
+      "keep this",
+    ]);
+    await rm(readOnly.root, { recursive: true, force: true });
+  });
+
   it("leaves no backup artifacts behind after a successful save", async () => {
     await harness.controller.save({ mode: "custom", skills: ["paseo"] });
 
     expect(await backupArtifacts(harness.targets)).toEqual([[], [], []]);
+  });
+
+  it("surfaces committed transaction cleanup failure before another save", async () => {
+    const gated = createGatedSelectionStore({ mode: "all" });
+    const blocked = await makeHarness(gated.store);
+    const next: SkillSelection = { mode: "custom", skills: ["paseo"] };
+    const parent = path.dirname(blocked.targets.agentsDir);
+    const movedParent = `${parent}-moved`;
+
+    const save = blocked.controller.save(next);
+    await gated.persistenceStarted;
+    await rename(parent, movedParent);
+    await writeFile(parent, "block transaction cleanup with ENOTDIR");
+    gated.finishPersistence();
+    const outcome = await save.then(
+      () => ({ ok: true as const }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+    await rm(parent, { force: true });
+    await rename(movedParent, parent);
+
+    expect(outcome.ok).toBe(false);
+    expect(await gated.store.get()).toEqual(next);
+    await blocked.controller.status();
+    expect(await backupArtifacts(blocked.targets)).toEqual([[], [], []]);
+    await rm(blocked.root, { recursive: true, force: true });
   });
 
   it("does not delete an unrelated file that resembles transaction staging", async () => {
@@ -364,7 +499,9 @@ describe("skills controller", () => {
     };
     await harness.controller.save(previous);
     await writeUserFile(harness.targets, "paseo-loop", "notes/mine.md", "hand written");
-    await beginSkillsTransaction(harness.targets, previous, next, ["paseo-loop"]);
+    await beginSkillsTransaction(harness.targets, previous, next, [
+      { kind: "delete", name: "paseo-loop" },
+    ]);
     for (const root of [
       harness.targets.agentsDir,
       harness.targets.claudeDir,
@@ -393,7 +530,9 @@ describe("skills controller", () => {
       skills: ["paseo"],
     };
     await harness.controller.save(previous);
-    await beginSkillsTransaction(harness.targets, previous, next, ["paseo-loop"]);
+    await beginSkillsTransaction(harness.targets, previous, next, [
+      { kind: "delete", name: "paseo-loop" },
+    ]);
     for (const root of [
       harness.targets.agentsDir,
       harness.targets.claudeDir,

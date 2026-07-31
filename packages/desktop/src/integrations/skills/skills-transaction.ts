@@ -1,8 +1,14 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { listManagedSkillNames, type SkillSelection, type SkillTargets } from "./operations.js";
+import {
+  listManagedSkillNames,
+  type SkillOp,
+  type SkillSelection,
+  type SkillTargets,
+} from "./operations.js";
+import { listFilesRecursive } from "./sync.js";
 
 export interface SkillsTransaction {
   /** Convergence stuck. Drop the staged copies. */
@@ -28,6 +34,7 @@ interface TransactionManifest {
 
 interface CapturedDirectory {
   livePath: string;
+  kind: SkillOp["kind"];
   /** Relative to the transaction directory. Null when nothing was there. */
   backupPath: string | null;
 }
@@ -36,6 +43,7 @@ const MANIFEST_OWNER = "paseo-skills-transaction";
 const MANIFEST_FILENAME = "transaction.json";
 const TRANSACTION_PREFIX = ".paseo-skills-transaction-";
 const BACKUP_DIRNAME = "backup";
+const MANAGED_FILES_MANIFEST = ".paseo-managed-files.json";
 
 async function isDirectory(target: string): Promise<boolean> {
   const info = await stat(target).catch(() => null);
@@ -72,11 +80,14 @@ async function readManifest(transactionDir: string): Promise<TransactionManifest
     return null;
   }
   if (!Array.isArray(manifest.entries)) return null;
-  const entries = manifest.entries.filter(
-    (entry): entry is CapturedDirectory =>
+  const validEntries = manifest.entries.every(
+    (entry) =>
       typeof entry?.livePath === "string" &&
+      (entry.kind === "add" || entry.kind === "update" || entry.kind === "delete") &&
       (entry.backupPath === null || typeof entry.backupPath === "string"),
   );
+  if (!validEntries) return null;
+  const entries = manifest.entries as CapturedDirectory[];
   return {
     owner: MANIFEST_OWNER,
     version: 1,
@@ -127,18 +138,109 @@ async function validateEntries(
   });
 }
 
-async function restore(transactionDir: string, manifest: TransactionManifest): Promise<void> {
+async function listAllFiles(rootDir: string): Promise<string[]> {
+  const files: string[] = [];
+  async function walk(dir: string): Promise<void> {
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) await walk(full);
+      else if (entry.isFile()) files.push(path.relative(rootDir, full));
+    }
+  }
+  await walk(rootDir);
+  return files;
+}
+
+async function readFiles(rootDir: string | null): Promise<Map<string, Buffer>> {
+  const files = new Map<string, Buffer>();
+  if (rootDir === null) return files;
+  for (const rel of await listAllFiles(rootDir)) {
+    files.set(rel, await readFile(path.join(rootDir, rel)));
+  }
+  return files;
+}
+
+async function expectedSyncedFiles(sourceDir: string, name: string): Promise<Map<string, Buffer>> {
+  const skillDir = path.join(sourceDir, name);
+  const files = new Map<string, Buffer>();
+  const hashes: Record<string, string> = {};
+  for (const rel of await listFilesRecursive(skillDir)) {
+    const contents = await readFile(path.join(skillDir, rel));
+    files.set(rel, contents);
+    hashes[rel] = createHash("sha256").update(contents).digest("hex");
+  }
+  files.set(
+    MANAGED_FILES_MANIFEST,
+    Buffer.from(`${JSON.stringify({ version: 1, files: hashes }, null, 2)}\n`),
+  );
+  return files;
+}
+
+async function writeRestoredFile(target: string, contents: Buffer): Promise<void> {
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, contents);
+}
+
+async function mergeDeletedDirectory(
+  livePath: string,
+  backupFiles: ReadonlyMap<string, Buffer>,
+): Promise<void> {
+  for (const [rel, contents] of backupFiles) {
+    const target = path.join(livePath, rel);
+    if (await stat(target).catch(() => null)) continue;
+    await writeRestoredFile(target, contents);
+  }
+}
+
+async function undoSyncedDirectory(
+  livePath: string,
+  backupFiles: ReadonlyMap<string, Buffer>,
+  expectedFiles: ReadonlyMap<string, Buffer>,
+): Promise<void> {
+  for (const rel of await listAllFiles(livePath)) {
+    const target = path.join(livePath, rel);
+    const current = await readFile(target).catch(() => null);
+    const expected = expectedFiles.get(rel);
+    if (current === null || expected === undefined || !current.equals(expected)) continue;
+    const previous = backupFiles.get(rel);
+    if (previous) await writeRestoredFile(target, previous);
+    else await rm(target, { force: true });
+  }
+
+  // Sync can prune files that an older managed-files manifest owned. Restore
+  // missing pre-save files, but never overwrite a path another writer recreated.
+  await mergeDeletedDirectory(livePath, backupFiles);
+  if ((await listAllFiles(livePath)).length === 0) {
+    await rm(livePath, { recursive: true, force: true });
+  }
+}
+
+async function restore(
+  targets: SkillTargets,
+  transactionDir: string,
+  manifest: TransactionManifest,
+): Promise<void> {
   // Nothing was converged yet, so the live tree is already the pre-save state.
   if (manifest.phase === "capturing") return;
+  const expectedByName = new Map<string, Map<string, Buffer>>();
   for (const entry of manifest.entries) {
-    await rm(entry.livePath, { recursive: true, force: true });
-    if (entry.backupPath === null) continue;
-    const backup = path.join(transactionDir, entry.backupPath);
-    if (!(await isDirectory(backup))) {
+    const backup = entry.backupPath && path.join(transactionDir, entry.backupPath);
+    if (backup !== null && !(await isDirectory(backup))) {
       throw new Error(`Skills transaction backup is missing: ${backup}`);
     }
-    await mkdir(path.dirname(entry.livePath), { recursive: true });
-    await cp(backup, entry.livePath, { recursive: true });
+    const backupFiles = await readFiles(backup);
+    if (entry.kind === "delete") {
+      await mergeDeletedDirectory(entry.livePath, backupFiles);
+      continue;
+    }
+    const name = path.basename(entry.livePath);
+    let expected = expectedByName.get(name);
+    if (!expected) {
+      expected = await expectedSyncedFiles(targets.sourceDir, name);
+      expectedByName.set(name, expected);
+    }
+    await undoSyncedDirectory(entry.livePath, backupFiles, expected);
   }
 }
 
@@ -170,7 +272,7 @@ export async function recoverInterruptedSkillTransactions(
       if (!manifest) continue;
       if (!(await validateEntries(targets, transactionDir, manifest.entries))) continue;
       if (selectionsEqual(committedSelection, manifest.nextSelection)) {
-        await rm(transactionDir, { recursive: true, force: true }).catch(() => undefined);
+        await rm(transactionDir, { recursive: true, force: true });
         continue;
       }
       if (!selectionsEqual(committedSelection, manifest.previousSelection)) {
@@ -178,7 +280,7 @@ export async function recoverInterruptedSkillTransactions(
           `Cannot safely recover interrupted skills transaction at ${transactionDir}`,
         );
       }
-      await restore(transactionDir, manifest);
+      await restore(targets, transactionDir, manifest);
       await rm(transactionDir, { recursive: true, force: true });
     }
   }
@@ -193,7 +295,7 @@ export async function beginSkillsTransaction(
   targets: SkillTargets,
   previousSelection: SkillSelection,
   nextSelection: SkillSelection,
-  names: readonly string[],
+  ops: readonly SkillOp[],
 ): Promise<SkillsTransaction> {
   const roots = [targets.agentsDir, targets.claudeDir, targets.codexDir];
   // Staged next to the skills tree rather than inside it: same filesystem, so a
@@ -202,7 +304,7 @@ export async function beginSkillsTransaction(
   const entries: CapturedDirectory[] = [];
 
   async function discard(): Promise<void> {
-    await rm(transactionDir, { recursive: true, force: true }).catch(() => undefined);
+    await rm(transactionDir, { recursive: true, force: true });
   }
 
   await mkdir(transactionDir, { recursive: true });
@@ -217,15 +319,16 @@ export async function beginSkillsTransaction(
 
   try {
     for (const [rootIndex, root] of roots.entries()) {
-      for (const name of names) {
+      for (const op of ops) {
+        const name = op.name;
         const livePath = path.join(root, name);
         if (!(await isDirectory(livePath))) {
-          entries.push({ livePath, backupPath: null });
+          entries.push({ livePath, kind: op.kind, backupPath: null });
           continue;
         }
         const backupPath = path.join(BACKUP_DIRNAME, String(rootIndex), name);
         await cp(livePath, path.join(transactionDir, backupPath), { recursive: true });
-        entries.push({ livePath, backupPath });
+        entries.push({ livePath, kind: op.kind, backupPath });
       }
     }
     await writeManifest(transactionDir, {
@@ -246,7 +349,7 @@ export async function beginSkillsTransaction(
   return {
     commit: discard,
     async rollback(): Promise<void> {
-      await restore(transactionDir, {
+      await restore(targets, transactionDir, {
         owner: MANIFEST_OWNER,
         version: 1,
         phase: "converging",
