@@ -271,11 +271,7 @@ async function mergeBackupDirectory(livePath: string, backupPath: string | null)
   return hasConflict;
 }
 
-async function quarantineStagedEntry(
-  transactionDir: string,
-  livePath: string,
-  backupPath: string,
-): Promise<void> {
+function recoveryBase(transactionDir: string, livePath: string, backupPath: string): string {
   const transactionId = path.basename(transactionDir).replace(TRANSACTION_PREFIX, "");
   // Update backups live inside the central transaction directory; delete stages
   // live beside their target root. Keep quarantine on the backup's filesystem
@@ -283,10 +279,34 @@ async function quarantineStagedEntry(
   const recoveryParent = backupPath.startsWith(`${transactionDir}${path.sep}`)
     ? path.dirname(transactionDir)
     : path.dirname(livePath);
-  const base = path.join(
+  return path.join(
     recoveryParent,
     `${RECOVERED_PREFIX}${path.basename(livePath)}-${transactionId}`,
   );
+}
+
+async function findQuarantinedEntry(
+  transactionDir: string,
+  livePath: string,
+  backupPath: string,
+  claimed: ReadonlySet<string>,
+): Promise<string | null> {
+  const base = recoveryBase(transactionDir, livePath, backupPath);
+  const name = path.basename(base);
+  const matches = (await readdir(path.dirname(base)).catch(() => []))
+    .filter((entry) => entry === name || entry.startsWith(`${name}-`))
+    .map((entry) => path.join(path.dirname(base), entry))
+    .filter((entry) => !claimed.has(entry))
+    .sort();
+  return matches[0] ?? null;
+}
+
+async function quarantineStagedEntry(
+  transactionDir: string,
+  livePath: string,
+  backupPath: string,
+): Promise<void> {
+  const base = recoveryBase(transactionDir, livePath, backupPath);
   let destination = base;
   for (let suffix = 1; await lstat(destination).catch(() => null); suffix += 1) {
     destination = `${base}-${suffix}`;
@@ -364,6 +384,7 @@ async function restore(
   // Nothing was converged yet, so the live tree is already the pre-save state.
   if (manifest.phase === "capturing") return;
   const expectedByName = new Map<string, Map<string, Buffer>>();
+  const claimedQuarantines = new Set<string>();
   for (const entry of manifest.entries) {
     const backup = resolveBackupPath(transactionDir, entry.backupPath);
     if (backup !== null && !(await lstat(backup).catch(() => null))) {
@@ -371,6 +392,16 @@ async function restore(
       // present, an external actor deleted it; there is nothing this
       // transaction can restore. Other captured entries still need rollback.
       if (entry.kind === "delete") continue;
+      const quarantined = await findQuarantinedEntry(
+        transactionDir,
+        entry.livePath,
+        backup,
+        claimedQuarantines,
+      );
+      if (quarantined !== null) {
+        claimedQuarantines.add(quarantined);
+        continue;
+      }
       throw new Error(`Skills transaction backup is missing: ${backup}`);
     }
     if (entry.kind === "delete") {

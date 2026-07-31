@@ -689,6 +689,47 @@ describe("skills controller", () => {
     await expect(harness.controller.status()).resolves.toMatchObject({ selection: previous });
   });
 
+  it("recovers after an update backup was quarantined before transaction cleanup", async () => {
+    const previous: SkillSelection = { mode: "custom", skills: ["paseo"] };
+    const next: SkillSelection = {
+      mode: "custom",
+      skills: ["paseo", "paseo-advisor"],
+    };
+    await harness.controller.save(previous);
+    await writeUserFile(harness.targets, "paseo", "notes/mine.md", "captured notes");
+
+    await beginSkillsTransaction(harness.targets, previous, next, [
+      { kind: "update", name: "paseo" },
+    ]);
+    const transactionParent = path.dirname(harness.targets.agentsDir);
+    const transactionName = (await readdir(transactionParent)).find((entry) =>
+      entry.startsWith(".paseo-skills-transaction-"),
+    );
+    expect(transactionName).toBeDefined();
+    const transactionDir = path.join(transactionParent, transactionName!);
+    const manifest = JSON.parse(
+      await readFile(path.join(transactionDir, "transaction.json"), "utf8"),
+    ) as { entries: Array<{ livePath: string; backupPath: string | null }> };
+    const entry = manifest.entries.find(
+      (candidate) => candidate.livePath === path.join(harness.targets.agentsDir, "paseo"),
+    );
+    expect(entry?.backupPath).toBeTruthy();
+    const backup = path.join(transactionDir, entry!.backupPath!);
+    const recovered = path.join(
+      transactionParent,
+      `.paseo-skills-recovered-paseo-${transactionName!.replace(".paseo-skills-transaction-", "")}`,
+    );
+    await rm(entry!.livePath, { recursive: true, force: true });
+    await writeFile(entry!.livePath, "external replacement");
+    await rename(backup, recovered);
+
+    await expect(harness.controller.status()).resolves.toMatchObject({ selection: previous });
+
+    expect(await readFile(entry!.livePath, "utf8")).toBe("external replacement");
+    expect(await readFile(path.join(recovered, "notes", "mine.md"), "utf8")).toBe("captured notes");
+    expect(await backupArtifacts(harness.targets)).toEqual([[], [], []]);
+  });
+
   it.skipIf(process.platform !== "linux")(
     "stages deletions when an agent skills root is on another filesystem",
     async () => {
