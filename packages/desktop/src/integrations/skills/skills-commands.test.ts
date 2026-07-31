@@ -43,6 +43,13 @@ async function makeHarness(): Promise<Harness> {
   };
 }
 
+/** Puts a regular file where the agents skills tree goes, so convergence fails with ENOTDIR. */
+async function blockAgentsDir(targets: SkillTargets): Promise<void> {
+  await rm(targets.agentsDir, { recursive: true, force: true });
+  await mkdir(path.dirname(targets.agentsDir), { recursive: true });
+  await writeFile(targets.agentsDir, "not a directory");
+}
+
 async function isInstalled(targets: SkillTargets, name: string): Promise<boolean> {
   const dirs = [targets.agentsDir, targets.claudeDir, targets.codexDir];
   const present = await Promise.all(
@@ -167,6 +174,37 @@ describe("skills desktop commands", () => {
       selection: { mode: "all" },
     });
     expect(await isInstalled(harness.targets, "paseo-advisor")).toBe(true);
+  });
+
+  it("keeps the previous selection when the save fails to reach disk", async () => {
+    await harness.invoke("save_skills_selection", { mode: "custom", skills: ["paseo"] });
+    await blockAgentsDir(harness.targets);
+
+    await expect(harness.invoke("save_skills_selection", { mode: "all" })).rejects.toThrow();
+    await rm(harness.targets.agentsDir, { force: true });
+
+    expect(await harness.invoke("get_skills_status")).toEqual({
+      state: "drift",
+      ops: [{ kind: "add", name: "paseo" }],
+      available: BUNDLED_SKILLS,
+      selection: { mode: "custom", skills: ["paseo"] },
+    });
+  });
+
+  it("saves no selection at all when the very first save fails", async () => {
+    await blockAgentsDir(harness.targets);
+
+    await expect(
+      harness.invoke("save_skills_selection", { mode: "custom", skills: ["paseo"] }),
+    ).rejects.toThrow();
+    await rm(harness.targets.agentsDir, { force: true });
+
+    expect(await harness.invoke("get_skills_status")).toEqual({
+      state: "not-installed",
+      ops: BUNDLED_SKILLS.map((name) => ({ kind: "add", name })),
+      available: BUNDLED_SKILLS,
+      selection: { mode: "all" },
+    });
   });
 
   it("updates a drifted install without touching the saved selection", async () => {

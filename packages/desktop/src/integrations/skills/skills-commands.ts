@@ -35,8 +35,14 @@ export function createSkillsCommandHandlers({
     update_skills: () => snapshot((selection) => updateSkills(targets, selection)),
     uninstall_skills: () => snapshot((selection) => uninstallSkills(targets, selection)),
     save_skills_selection: async (args) => {
+      const previousSelection = await selectionStore.get();
       const selection = await selectionStore.set(args);
-      return { ...(await installSkills(targets, selection)), selection };
+      try {
+        return { ...(await installSkills(targets, selection)), selection };
+      } catch (error) {
+        await selectionStore.set(previousSelection);
+        throw error;
+      }
     },
   };
 }
