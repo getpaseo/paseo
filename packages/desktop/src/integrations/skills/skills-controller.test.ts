@@ -426,6 +426,30 @@ describe("skills controller", () => {
     await rm(readOnly.root, { recursive: true, force: true });
   });
 
+  it("does not automatically delete files preserved from a rolled-back add", async () => {
+    const previous: SkillSelection = { mode: "custom", skills: ["paseo"] };
+    const gated = createGatedUnwritableSelectionStore(previous);
+    const readOnly = await makeHarness(gated.store);
+    await readOnly.controller.install();
+
+    const save = readOnly.controller.save({
+      mode: "custom",
+      skills: ["paseo", "paseo-loop"],
+    });
+    await gated.persistenceStarted;
+    await writeUserFile(readOnly.targets, "paseo-loop", "notes/concurrent.md", "keep this");
+    gated.failPersistence();
+    await expect(save).rejects.toThrow("selection store is read-only");
+
+    await readOnly.controller.autoUpdate();
+    expect(await readUserFile(readOnly.targets, "paseo-loop", "notes/concurrent.md")).toEqual([
+      "keep this",
+      "keep this",
+      "keep this",
+    ]);
+    await rm(readOnly.root, { recursive: true, force: true });
+  });
+
   it("merges a deleted directory backup into files another writer recreated", async () => {
     const previous: SkillSelection = {
       mode: "custom",

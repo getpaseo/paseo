@@ -225,7 +225,12 @@ export async function autoUpdateInstalledSkills(
 ): Promise<SkillsStatus> {
   const status = await getSkillsStatus(targets, selection);
   if (status.state !== "drift") return status;
-  return applySkills(targets, selection, status);
+  // Automatic maintenance may repair selected skills, but removal is an
+  // interactive operation because managed directories can contain user files.
+  return applySkills(targets, selection, {
+    ...status,
+    ops: status.ops.filter((op) => op.kind !== "delete"),
+  });
 }
 
 export async function uninstallSkills(
