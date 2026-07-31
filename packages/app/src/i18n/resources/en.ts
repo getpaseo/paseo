@@ -312,6 +312,8 @@ export const en = {
     todo: {
       title: "Tasks",
       empty: "No tasks yet.",
+      archiveCompleted: "Dismiss completed tasks",
+      archiveCompletedTooltip: "Dismiss completed",
     },
     compaction: {
       loading: "Compacting...",

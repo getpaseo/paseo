@@ -316,6 +316,8 @@ export const ptBR: TranslationResources = {
     todo: {
       title: "Tarefas",
       empty: "Nenhuma tarefa ainda.",
+      archiveCompleted: "Descartar tarefas concluídas",
+      archiveCompletedTooltip: "Descartar concluídas",
     },
     compaction: {
       loading: "Compactando...",

@@ -315,6 +315,8 @@ export const ru: TranslationResources = {
     todo: {
       title: "Задачи",
       empty: "Заданий пока нет.",
+      archiveCompleted: "Скрыть выполненные задачи",
+      archiveCompletedTooltip: "Скрыть выполненные",
     },
     compaction: {
       loading: "Уплотнение...",

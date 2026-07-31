@@ -316,6 +316,8 @@ export const ja: TranslationResources = {
     todo: {
       title: "タスク",
       empty: "タスクがまだありません。",
+      archiveCompleted: "完了したタスクを閉じる",
+      archiveCompletedTooltip: "完了を閉じる",
     },
     compaction: {
       loading: "コンテキストを圧縮中...",

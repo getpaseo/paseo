@@ -313,6 +313,8 @@ export const zhCN: TranslationResources = {
     todo: {
       title: "任务",
       empty: "还没有任务。",
+      archiveCompleted: "隐藏已完成的任务",
+      archiveCompletedTooltip: "隐藏已完成的",
     },
     compaction: {
       loading: "正在压缩...",

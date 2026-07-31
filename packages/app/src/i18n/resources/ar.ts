@@ -313,6 +313,8 @@ export const ar: TranslationResources = {
     todo: {
       title: "المهام",
       empty: "لا توجد مهام حتى الآن.",
+      archiveCompleted: "تجاهل المهام المكتملة",
+      archiveCompletedTooltip: "تجاهل المكتملة",
     },
     compaction: {
       loading: "الضغط...",

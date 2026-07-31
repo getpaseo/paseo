@@ -316,6 +316,8 @@ export const es: TranslationResources = {
     todo: {
       title: "Tareas",
       empty: "Aún no hay tareas.",
+      archiveCompleted: "Descartar tareas completadas",
+      archiveCompletedTooltip: "Descartar completadas",
     },
     compaction: {
       loading: "Compactando...",
