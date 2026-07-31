@@ -1548,8 +1548,6 @@ export async function createPaseoDaemon(
               browserToolsBroker,
               hubRelationships,
             );
-            await hubRelationships.start();
-
             relayRuntime = createRelayRuntime({
               config: {
                 enabled: relayEnabled,
@@ -1569,6 +1567,7 @@ export async function createPaseoDaemon(
             daemonConfigStore.onFieldChange("relay.enabled", (value) => {
               relayRuntime?.setEnabled(value === true);
             });
+            await hubRelationships.start();
           };
 
           logAndResolve().then(resolve, reject);
