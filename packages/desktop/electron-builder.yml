@@ -29,7 +29,7 @@ extraResources:
     to: editor-target-icons
 publish:
   provider: github
-  owner: getpaseo
+  owner: yooztech
   repo: paseo
 mac:
   artifactName: "Paseo-${version}-${arch}.${ext}"

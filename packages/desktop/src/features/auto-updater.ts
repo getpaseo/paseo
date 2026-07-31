@@ -31,6 +31,16 @@ export {
   type AppUpdateInstallResult,
 };
 
+export function resolveElectronUpdateChannel(
+  currentVersion: string,
+  releaseChannel: AppReleaseChannel,
+): "latest" | "beta" | "fork" {
+  if (/^\d+\.\d+\.\d+-fork\.\d+$/.test(currentVersion)) {
+    return "fork";
+  }
+  return releaseChannel === "beta" ? "beta" : "latest";
+}
+
 let cachedStagingUserIdPromise: Promise<string> | null = null;
 
 export function shouldAdmitToRollout(args: {
@@ -89,14 +99,15 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
   private configured = false;
 
   configure(input: AppUpdateRuntimeConfiguration): void {
+    const updateChannel = resolveElectronUpdateChannel(app.getVersion(), input.releaseChannel);
     autoUpdater.autoDownload = true;
     autoUpdater.autoRunAppAfterInstall = true;
     // Paseo revalidates the current manifest before explicitly installing on quit.
     // Electron's built-in handler would install an older download without checking
     // whether a newer release has superseded it.
     autoUpdater.autoInstallOnAppQuit = false;
-    autoUpdater.allowPrerelease = input.releaseChannel === "beta";
-    autoUpdater.channel = input.releaseChannel === "beta" ? "beta" : "latest";
+    autoUpdater.allowPrerelease = updateChannel !== "latest";
+    autoUpdater.channel = updateChannel;
     autoUpdater.allowDowngrade = false;
     autoUpdater.isUserWithinRollout = async (info) => {
       try {
