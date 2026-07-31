@@ -146,7 +146,7 @@ describe("analyzeMaterialProgress", () => {
     });
   });
 
-  it("counts only the final assistant message from a completed turn", () => {
+  it("counts a completed turn's final message as a deliverable, not semantic success", () => {
     const entries = [
       entry(1, { type: "user_message", text: "answer" }),
       entry(2, { type: "assistant_message", text: "I am checking." }),
@@ -155,11 +155,20 @@ describe("analyzeMaterialProgress", () => {
     ];
 
     expect(analyzeMaterialProgress({ entries, turnOutcome: null }).state).toBe("warning");
+    expect(analyzeMaterialProgress({ entries, turnOutcome: "failed" }).state).toBe("warning");
     expect(analyzeMaterialProgress({ entries, turnOutcome: "canceled" }).state).toBe("warning");
     expect(analyzeMaterialProgress({ entries, turnOutcome: "completed" })).toMatchObject({
       state: "progressing",
       completedCompactionsSinceMaterialProgress: 0,
       lastMaterialProgressKind: "assistant_result",
+    });
+
+    const emptyFinalMessage = [...entries, entry(5, { type: "assistant_message", text: "   " })];
+    expect(
+      analyzeMaterialProgress({ entries: emptyFinalMessage, turnOutcome: "completed" }),
+    ).toMatchObject({
+      state: "warning",
+      lastMaterialProgressKind: null,
     });
   });
 });
