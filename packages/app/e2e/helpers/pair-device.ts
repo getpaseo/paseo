@@ -57,6 +57,14 @@ export async function prepareLocalPairingHost(
     };
   }, daemon.serverId);
 
+  await preparePairingHost(page, daemon, additionalHosts);
+}
+
+export async function preparePairingHost(
+  page: Page,
+  daemon: IsolatedHostDaemon | OutdatedDaemon,
+  additionalHosts: PairingHostInput[] = [],
+): Promise<void> {
   await seedSavedSettingsHosts(page, [
     {
       serverId: daemon.serverId,

@@ -155,6 +155,31 @@ try {
     assert.strictEqual(pairingPayload.relayEnabled, true, "pairing should use live relay state");
     assert.match(pairingPayload.url, /#offer=/, "pairing should use the live daemon offer");
 
+    const foreignHome = await mkdtemp(join(tmpdir(), "paseo-test-foreign-home-"));
+    try {
+      await writeFile(
+        join(foreignHome, "config.json"),
+        `${JSON.stringify({ daemon: { listen } }, null, 2)}\n`,
+        "utf-8",
+      );
+      const foreignPairing = await runLocalPaseo(
+        ["daemon", "pair", "--home", foreignHome, "--json"],
+        { PASEO_HOME: foreignHome },
+      );
+      assert.notStrictEqual(
+        foreignPairing.exitCode,
+        0,
+        "pairing should reject a daemon owned by another home",
+      );
+      assert(
+        foreignPairing.stderr.includes("different Paseo home"),
+        "pairing should explain the daemon identity mismatch",
+      );
+      assert(!foreignPairing.stdout.includes("#offer="), "pairing should not expose another offer");
+    } finally {
+      await rm(foreignHome, { recursive: true, force: true });
+    }
+
     const cleanup = await daemonCommand(["stop", "--force"]);
     assert.strictEqual(cleanup.exitCode, 0, "cleanup stop should succeed after IPC status");
     console.log("✓ daemon status probes live relay state over local IPC\n");

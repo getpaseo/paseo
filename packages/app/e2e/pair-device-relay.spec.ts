@@ -16,6 +16,7 @@ import {
   openRelaySecurityDocs,
   observePairingOfferRequests,
   prepareLocalPairingHost,
+  preparePairingHost,
   reloadAndOpenPairDevice,
   retryRelayAndExpectFailure,
   switchPairDeviceToHost,
@@ -89,6 +90,12 @@ test.describe("local device relay pairing", () => {
     const modal = page.getByTestId("open-project-pair-device-modal");
     await expect(modal.getByText("Enable relay?", { exact: true })).toBeVisible();
     await expect(modal.getByRole("button", { name: "Enable relay", exact: true })).toBeVisible();
+  });
+
+  test("opens relay consent in browser web", async ({ page }) => {
+    await preparePairingHost(page, relayOffDaemon);
+    await openPairDeviceModal(page);
+    await expectRelayConsent(page);
   });
 
   test("shows an actionable error when the daemon disconnects", async ({ page }) => {

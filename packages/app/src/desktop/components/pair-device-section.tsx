@@ -12,7 +12,6 @@ import { ExternalLink } from "@/components/ui/external-link";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useFetchQuery } from "@/data/query";
 import { daemonPairingOfferQueryKey } from "@/data/daemon-pairing";
-import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
@@ -34,7 +33,6 @@ export interface PairDeviceSectionProps {
 
 export function PairDeviceSection({ serverId, onClose }: PairDeviceSectionProps) {
   const { t } = useTranslation();
-  const showSection = shouldUseDesktopDaemon();
   const client = useHostRuntimeClient(serverId);
   const runtimeSnapshot = useHostRuntimeSnapshot(serverId);
   const isConnected = runtimeSnapshot?.connectionStatus === "online";
@@ -53,7 +51,7 @@ export function PairDeviceSection({ serverId, onClose }: PairDeviceSectionProps)
       if (!client) throw new Error(t("workspace.terminal.hostDisconnected"));
       return client.getDaemonPairingOffer();
     },
-    enabled: showSection && supportsPairingRpc && Boolean(client && isConnected),
+    enabled: supportsPairingRpc && Boolean(client && isConnected),
     dataShape: "value",
     staleTimeMs: 5 * 60 * 1000,
     retry: 1,
@@ -103,8 +101,6 @@ export function PairDeviceSection({ serverId, onClose }: PairDeviceSectionProps)
     () => (qrQuery.data ? { uri: qrQuery.data } : null),
     [qrQuery.data],
   );
-
-  if (!showSection) return null;
 
   return (
     <View testID="pair-device-content">

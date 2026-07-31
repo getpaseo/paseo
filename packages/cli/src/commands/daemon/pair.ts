@@ -1,7 +1,12 @@
 import { confirm, isCancel, log } from "@clack/prompts";
 import { Command } from "commander";
 import chalk from "chalk";
-import { generateLocalPairingOffer, loadConfig, resolvePaseoHome } from "@getpaseo/server";
+import {
+  generateLocalPairingOffer,
+  getOrCreateServerId,
+  loadConfig,
+  resolvePaseoHome,
+} from "@getpaseo/server";
 import { tryConnectToDaemon } from "../../utils/client.js";
 import { resolveLocalDaemonState } from "./local-daemon.js";
 import { addJsonOption } from "../../utils/command-options.js";
@@ -70,7 +75,8 @@ export async function resolveLocalPairingOffer(options: {
   enableRelay?: boolean;
 }): Promise<PairingOffer> {
   const state = resolveLocalDaemonState({ home: options.paseoHome });
-  const daemonOffer = await resolveDaemonPairingOffer(state.listen, options.enableRelay);
+  const serverId = getOrCreateServerId(state.home);
+  const daemonOffer = await resolveDaemonPairingOffer(state.listen, serverId, options.enableRelay);
   if (daemonOffer) return daemonOffer;
 
   if (state.running) {
@@ -98,6 +104,7 @@ export async function resolveLocalPairingOffer(options: {
 
 async function resolveDaemonPairingOffer(
   listen: string,
+  expectedServerId: string,
   enableRelay: boolean | undefined,
 ): Promise<PairingOffer | null> {
   const client = await tryConnectToDaemon({
@@ -108,6 +115,11 @@ async function resolveDaemonPairingOffer(
 
   try {
     const serverInfo = client.getLastServerInfoMessage();
+    if (serverInfo?.serverId.trim() !== expectedServerId) {
+      throw new Error(
+        "The reachable daemon belongs to a different Paseo home. Check --home or the daemon listen configuration.",
+      );
+    }
     if (serverInfo?.features?.daemonStatusRpc !== true) {
       throw new Error("Update the Paseo daemon before pairing from this command.");
     }
