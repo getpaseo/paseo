@@ -8,14 +8,14 @@ import {
   View,
   type ViewStyle,
 } from "react-native";
-import type { ProjectAppearance } from "@getpaseo/protocol/messages";
-import { deriveProjectIconColor, projectIconTextColor } from "@/projects/icon-colors";
+import { deriveProjectIconColor } from "@/utils/project-icon-color";
+
+const WHITE_TEXT = { color: "#ffffff" } as const;
 
 export function ProjectIconView({
   iconDataUri,
   initial,
   projectViewKey,
-  appearance,
   imageStyle,
   fallbackStyle,
   textStyle,
@@ -23,34 +23,23 @@ export function ProjectIconView({
   iconDataUri: string | null;
   initial: string;
   projectViewKey: string;
-  appearance?: ProjectAppearance | null;
   imageStyle: StyleProp<ImageStyle>;
   fallbackStyle: StyleProp<ViewStyle>;
   textStyle: StyleProp<TextStyle>;
 }) {
   const imageSource = useMemo(() => ({ uri: iconDataUri ?? "" }), [iconDataUri]);
-  const backgroundColor = appearance?.color ?? deriveProjectIconColor(projectViewKey);
-  const label = appearance?.icon.type === "custom" ? appearance.icon.text : initial;
   const fallbackStyles = useMemo(
-    () => [fallbackStyle, { backgroundColor }],
-    [backgroundColor, fallbackStyle],
+    () => [fallbackStyle, { backgroundColor: deriveProjectIconColor(projectViewKey) }],
+    [fallbackStyle, projectViewKey],
   );
-  const textStyles = useMemo(
-    () => [
-      textStyle,
-      backgroundColor === "transparent" ? null : { color: projectIconTextColor(backgroundColor) },
-    ],
-    [backgroundColor, textStyle],
-  );
+  const textStyles = useMemo(() => [textStyle, WHITE_TEXT], [textStyle]);
 
   if (iconDataUri) {
     return <Image source={imageSource} style={imageStyle} />;
   }
   return (
     <View style={fallbackStyles}>
-      <Text adjustsFontSizeToFit numberOfLines={1} style={textStyles}>
-        {label}
-      </Text>
+      <Text style={textStyles}>{initial}</Text>
     </View>
   );
 }

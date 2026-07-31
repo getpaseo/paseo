@@ -1,7 +1,7 @@
 import { useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueries, useQuery } from "@tanstack/react-query";
-import type { ProjectAppearance, ProjectIcon } from "@getpaseo/protocol/messages";
+import type { ProjectIcon } from "@getpaseo/protocol/messages";
 import { useHostFeatureMap } from "@/runtime/host-features";
 import {
   getHostRuntimeStore,
@@ -15,14 +15,18 @@ interface ProjectIconTarget {
   projectViewKey: string;
   projectId: string;
   iconWorkingDir: string;
-  projectAppearance?: ProjectAppearance | null;
+  customIconRevision?: string | null;
 }
 
+/**
+ * Daemons without custom-icon support only answer the legacy cwd lookup, which
+ * still serves their automatically discovered icons.
+ */
 export function resolveProjectIconLookup(
   target: Pick<ProjectIconTarget, "projectId" | "iconWorkingDir">,
-  supportsAppearance: boolean,
+  supportsCustomIcons: boolean,
 ): { kind: "project"; projectId: string } | { kind: "legacy"; cwd: string } {
-  return supportsAppearance
+  return supportsCustomIcons
     ? { kind: "project", projectId: target.projectId }
     : { kind: "legacy", cwd: target.iconWorkingDir };
 }
@@ -84,7 +88,7 @@ export function useProjectIcons(input: {
     () => [...new Set(input.projects.map((project) => project.serverId))],
     [input.projects],
   );
-  const supportsAppearance = useHostFeatureMap(serverIds, "projectAppearance");
+  const supportsCustomIcons = useHostFeatureMap(serverIds, "projectCustomIcon");
   const requests = useMemo(() => {
     const unique = new Map<string, ProjectIconTarget>();
     for (const project of input.projects) {
@@ -96,9 +100,11 @@ export function useProjectIcons(input: {
 
   const queries = useQueries({
     queries: requests.map((request) => {
-      const supports = supportsAppearance.get(request.serverId) === true;
-      const revision = request.projectAppearance?.revision ?? "automatic";
-      const lookup = resolveProjectIconLookup(request, supports);
+      const revision = request.customIconRevision ?? "automatic";
+      const lookup = resolveProjectIconLookup(
+        request,
+        supportsCustomIcons.get(request.serverId) === true,
+      );
       return {
         queryKey:
           lookup.kind === "project"
@@ -115,7 +121,6 @@ export function useProjectIcons(input: {
         },
         select: iconDataUri,
         enabled: Boolean(
-          request.projectAppearance?.icon.type !== "custom" &&
           getHostRuntimeStore().getClient(request.serverId) &&
           isHostRuntimeConnected(getHostRuntimeStore().getSnapshot(request.serverId)),
         ),

@@ -5,13 +5,12 @@ import { Pressable, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { StyleSheet } from "react-native-unistyles";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, ChevronDown, MoreVertical, Pencil, Plus, X } from "lucide-react-native";
+import { ArrowLeft, ChevronDown, MoreVertical, Pencil, Plus } from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { HostPicker as SharedHostPicker, HostStatusDotSlot } from "@/components/hosts/host-picker";
 import type {
   PaseoConfigRaw,
   PaseoConfigRevision,
-  ProjectAppearance,
   ProjectConfigRpcError,
 } from "@getpaseo/protocol/messages";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -27,13 +26,14 @@ import { ExternalLink } from "@/components/ui/external-link";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Switch } from "@/components/ui/switch";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
+import { ProjectEditSheet } from "@/components/project-edit-sheet";
 import { SettingsTextAreaCard } from "@/components/settings-textarea";
 import { SettingsGroup } from "@/screens/settings/settings-group";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { useProjects } from "@/hooks/use-projects";
+import type { ProjectEditFormSnapshot } from "@/projects/edit-form";
 import { useProjectIcons } from "@/projects/icons";
-import { ProjectAppearanceSection } from "@/screens/project-settings/appearance-section";
 import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
 import { useHostFeature } from "@/runtime/host-features";
 import { useToast } from "@/contexts/toast-context";
@@ -224,6 +224,14 @@ function ProjectSettingsBody({
   client,
   isHostGone,
 }: ProjectSettingsBodyProps) {
+  const { t } = useTranslation();
+  const [isEditSheetOpen, setIsEditSheetOpen] = useState(false);
+  const [editSessionId, setEditSessionId] = useState(0);
+  const openEditSheet = useCallback(() => {
+    setEditSessionId((id) => id + 1);
+    setIsEditSheetOpen(true);
+  }, []);
+  const closeEditSheet = useCallback(() => setIsEditSheetOpen(false), []);
   const queryKey = useMemo(
     () => ["project-config", selectedHost.serverId, selectedHost.repoRoot] as const,
     [selectedHost.serverId, selectedHost.repoRoot],
@@ -236,28 +244,8 @@ function ProjectSettingsBody({
   });
 
   const data = readQuery.data;
-  const supportsAppearance = useHostFeature(selectedHost.serverId, "projectAppearance");
-  const appearanceKey = `${selectedHost.serverId}:${selectedHost.projectAppearance?.revision ?? "automatic"}`;
-  const [colorPreview, setColorPreview] = useState<{
-    appearanceKey: string;
-    color: string | null;
-  } | null>(null);
-  const previewColor =
-    colorPreview?.appearanceKey === appearanceKey
-      ? colorPreview.color
-      : (selectedHost.projectAppearance?.color ?? null);
-  const previewAppearance = useMemo<ProjectAppearance>(
-    () => ({
-      icon: selectedHost.projectAppearance?.icon ?? { type: "automatic" },
-      color: previewColor,
-      revision: selectedHost.projectAppearance?.revision ?? "preview",
-    }),
-    [previewColor, selectedHost.projectAppearance],
-  );
-  const handleColorPreview = useCallback(
-    (color: string | null) => setColorPreview({ appearanceKey, color }),
-    [appearanceKey],
-  );
+  const supportsCustomIcon = useHostFeature(selectedHost.serverId, "projectCustomIcon");
+  const customIconRevision = selectedHost.customIconRevision ?? null;
   const projectIconTargets = useMemo(
     () => [
       {
@@ -265,19 +253,33 @@ function ProjectSettingsBody({
         projectViewKey: project.viewKey,
         projectId: selectedHost.projectId,
         iconWorkingDir: selectedHost.repoRoot,
-        projectAppearance: selectedHost.projectAppearance,
+        customIconRevision,
       },
     ],
     [
+      customIconRevision,
       project.viewKey,
       selectedHost.projectId,
-      selectedHost.projectAppearance,
       selectedHost.repoRoot,
       selectedHost.serverId,
     ],
   );
   const projectIcons = useProjectIcons({ projects: projectIconTargets });
   const projectIconDataUri = projectIcons.get(project.viewKey) ?? null;
+  const editSnapshot = useMemo<ProjectEditFormSnapshot>(
+    () => ({
+      projectName: selectedHost.projectName,
+      projectCustomName: selectedHost.projectCustomName,
+      hasCustomIcon: customIconRevision !== null,
+      currentIconDataUri: projectIconDataUri,
+    }),
+    [
+      customIconRevision,
+      projectIconDataUri,
+      selectedHost.projectCustomName,
+      selectedHost.projectName,
+    ],
+  );
   const loadedConfig: PaseoConfigRaw | null = data?.ok ? (data.config ?? {}) : null;
   const loadedRevision: PaseoConfigRevision | null = data?.ok ? data.revision : null;
   const readError: ProjectConfigRpcError | null = data && !data.ok ? data.error : null;
@@ -298,29 +300,36 @@ function ProjectSettingsBody({
             iconDataUri={projectIconDataUri}
             projectName={project.projectName}
             projectViewKey={project.viewKey}
-            appearance={previewAppearance}
           />
-          <ProjectNameEditor
-            key={`${selectedHost.serverId}:${selectedHost.projectId}`}
-            projectName={selectedHost.projectName}
-            projectCustomName={selectedHost.projectCustomName}
-            projectId={selectedHost.projectId}
-            client={client}
-          />
+          <Text style={styles.projectTitle} numberOfLines={1}>
+            {selectedHost.projectName}
+          </Text>
+          <Pressable
+            testID="project-edit-button"
+            accessibilityRole="button"
+            accessibilityLabel={t("settings.project.edit.title")}
+            onPress={openEditSheet}
+            hitSlop={8}
+            style={styles.editButton}
+          >
+            <Pencil size={ICON_SIZE} color={styles.iconColor.color} />
+          </Pressable>
         </View>
         <HostContext hosts={hosts} selectedHost={selectedHost} onSelectHost={onSelectHost} />
       </View>
 
-      {supportsAppearance ? (
-        <ProjectAppearanceSection
-          key={appearanceKey}
-          projectId={selectedHost.projectId}
-          serverId={selectedHost.serverId}
-          appearance={selectedHost.projectAppearance}
-          client={client}
-          onColorPreview={handleColorPreview}
-        />
-      ) : null}
+      <ProjectEditSheet
+        // A new instance per open seeds the form from the project as it stands now.
+        key={`${selectedHost.serverId}:${selectedHost.projectId}:${editSessionId}`}
+        visible={isEditSheetOpen}
+        onClose={closeEditSheet}
+        serverId={selectedHost.serverId}
+        projectId={selectedHost.projectId}
+        projectViewKey={project.viewKey}
+        client={client}
+        supportsCustomIcon={supportsCustomIcon}
+        snapshot={editSnapshot}
+      />
 
       {renderContent({
         readQuery,
@@ -864,155 +873,14 @@ function ResolveSpinnerColor(): string {
   return styles.spinnerColor.color;
 }
 
-interface ProjectNameEditorProps {
-  projectName: string;
-  projectCustomName: string | null;
-  projectId: string;
-  client: DaemonClient;
-}
-
-function ProjectNameEditor({
-  projectName,
-  projectCustomName,
-  projectId,
-  client,
-}: ProjectNameEditorProps) {
-  const { t } = useTranslation();
-  const queryClient = useQueryClient();
-  const toast = useToast();
-  const [isEditing, setIsEditing] = useState(false);
-  const [value, setValue] = useState(projectCustomName ?? "");
-
-  const renameMutation = useMutation({
-    mutationFn: (customName: string | null) => client.renameProject(projectId, customName),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
-      setIsEditing(false);
-      toast.show(t("settings.project.rename.renamedToast"), { variant: "success" });
-    },
-    onError: (error) => {
-      const message =
-        error instanceof Error ? error.message : t("settings.project.rename.errorFallback");
-      toast.show(message, { variant: "error" });
-    },
-  });
-
-  const handleStartEdit = useCallback(() => {
-    setValue(projectCustomName ?? "");
-    setIsEditing(true);
-  }, [projectCustomName]);
-
-  const handleCancel = useCallback(() => {
-    setIsEditing(false);
-    setValue(projectCustomName ?? "");
-  }, [projectCustomName]);
-
-  const handleSave = useCallback(() => {
-    const trimmed = value.trim();
-    const next = trimmed.length === 0 ? null : trimmed;
-    if (next === projectCustomName) {
-      setIsEditing(false);
-      return;
-    }
-    renameMutation.mutate(next);
-  }, [value, projectCustomName, renameMutation]);
-
-  const handleReset = useCallback(() => {
-    renameMutation.mutate(null);
-  }, [renameMutation]);
-
-  if (!isEditing) {
-    return (
-      <View
-        role="group"
-        accessibilityLabel={t("settings.project.rename.projectNameLabel")}
-        style={styles.nameEditorRow}
-      >
-        <Text style={styles.projectTitle} numberOfLines={1}>
-          {projectName}
-        </Text>
-        <Pressable
-          testID="project-name-edit-button"
-          accessibilityRole="button"
-          accessibilityLabel={t("settings.project.rename.renameLabel")}
-          onPress={handleStartEdit}
-          hitSlop={8}
-          style={styles.nameEditorIconButton}
-        >
-          <Pencil size={ICON_SIZE} color={styles.iconColor.color} />
-        </Pressable>
-        {projectCustomName ? (
-          <Pressable
-            testID="project-name-reset-button"
-            accessibilityRole="button"
-            accessibilityLabel={t("settings.project.rename.resetLabel")}
-            onPress={handleReset}
-            disabled={renameMutation.isPending}
-            hitSlop={8}
-            style={styles.nameEditorResetButton}
-          >
-            <Text style={styles.nameEditorResetText}>{t("settings.project.rename.reset")}</Text>
-          </Pressable>
-        ) : null}
-      </View>
-    );
-  }
-
-  return (
-    <View
-      role="group"
-      accessibilityLabel={t("settings.project.rename.projectNameLabel")}
-      style={styles.nameEditorRow}
-    >
-      <TextInput
-        testID="project-name-input"
-        accessibilityLabel={t("settings.project.rename.projectNameLabel")}
-        value={value}
-        onChangeText={setValue}
-        placeholder={projectName}
-        placeholderTextColor={styles.placeholderColor.color}
-        autoFocus
-        style={styles.nameEditorInput}
-        editable={!renameMutation.isPending}
-        onSubmitEditing={handleSave}
-        returnKeyType="done"
-      />
-      <Pressable
-        testID="project-name-save-button"
-        accessibilityRole="button"
-        accessibilityLabel={t("settings.project.rename.saveLabel")}
-        onPress={handleSave}
-        disabled={renameMutation.isPending}
-        hitSlop={8}
-        style={styles.nameEditorIconButton}
-      >
-        <Check size={ICON_SIZE} color={styles.iconColor.color} />
-      </Pressable>
-      <Pressable
-        testID="project-name-cancel-button"
-        accessibilityRole="button"
-        accessibilityLabel={t("settings.project.rename.cancelLabel")}
-        onPress={handleCancel}
-        disabled={renameMutation.isPending}
-        hitSlop={8}
-        style={styles.nameEditorIconButton}
-      >
-        <X size={ICON_SIZE} color={styles.iconColor.color} />
-      </Pressable>
-    </View>
-  );
-}
-
 function ProjectTitleIcon({
   iconDataUri,
   projectName,
   projectViewKey,
-  appearance,
 }: {
   iconDataUri: string | null;
   projectName: string;
   projectViewKey: string;
-  appearance: ProjectHostEntry["projectAppearance"];
 }) {
   const initial = projectName.trim().charAt(0).toUpperCase() || "?";
   return (
@@ -1020,7 +888,6 @@ function ProjectTitleIcon({
       iconDataUri={iconDataUri}
       initial={initial}
       projectViewKey={projectViewKey}
-      appearance={appearance}
       imageStyle={styles.titleIcon}
       fallbackStyle={styles.titleIconFallback}
       textStyle={styles.titleIconFallbackText}
@@ -1370,36 +1237,8 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.medium,
     flexShrink: 1,
   },
-  nameEditorRow: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    minWidth: 0,
-  },
-  nameEditorIconButton: {
+  editButton: {
     padding: theme.spacing[1],
-  },
-  nameEditorInput: {
-    flex: 1,
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.lg,
-    fontWeight: theme.fontWeight.medium,
-    paddingVertical: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface2,
-    minWidth: 0,
-  },
-  nameEditorResetButton: {
-    paddingVertical: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-  },
-  nameEditorResetText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
   },
   titleIcon: {
     width: 28,

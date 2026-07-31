@@ -505,7 +505,7 @@ export class WorkspaceDirectory {
         projectKey: project.projectKey ?? undefined,
         projectDisplayName: resolveProjectDisplayName(project),
         projectCustomName: project.customName ?? null,
-        projectAppearance: project.appearance ?? null,
+        projectCustomIconRevision: project.customIconRevision ?? null,
         projectRootPath: project.rootPath,
         projectKind: project.kind,
       }));

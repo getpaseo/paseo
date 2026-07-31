@@ -7,7 +7,7 @@ describe("project icon lookup", () => {
     iconWorkingDir: "/projects/paseo",
   };
 
-  it("uses the host-local project ID with appearance-capable daemons", () => {
+  it("uses the host-local project ID with custom-icon-capable daemons", () => {
     expect(resolveProjectIconLookup(target, true)).toEqual({
       kind: "project",
       projectId: "prj_host_local",

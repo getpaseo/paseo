@@ -34,7 +34,7 @@ export default function ProjectsScreen({ view }: ProjectsScreenProps) {
             projectViewKey: project.viewKey,
             projectId: host.projectId,
             iconWorkingDir: host.repoRoot,
-            projectAppearance: host.projectAppearance,
+            customIconRevision: host.customIconRevision,
           },
         ];
       }),
@@ -137,7 +137,6 @@ function ProjectRow({ project, isFirst, isSelected, iconDataUri }: ProjectRowPro
             iconDataUri={iconDataUri}
             projectName={projectName}
             projectViewKey={viewKey}
-            appearance={project.hosts[0]?.projectAppearance}
           />
         </View>
         <Text style={settingsStyles.rowTitle} numberOfLines={1}>
@@ -153,12 +152,10 @@ function ProjectRowIcon({
   iconDataUri,
   projectName,
   projectViewKey,
-  appearance,
 }: {
   iconDataUri: string | null;
   projectName: string;
   projectViewKey: string;
-  appearance: ProjectSummary["hosts"][number]["projectAppearance"];
 }) {
   const initial = projectName.trim().charAt(0).toUpperCase() || "?";
   return (
@@ -166,7 +163,6 @@ function ProjectRowIcon({
       iconDataUri={iconDataUri}
       initial={initial}
       projectViewKey={projectViewKey}
-      appearance={appearance}
       imageStyle={styles.iconImage}
       fallbackStyle={styles.iconFallback}
       textStyle={styles.iconFallbackText}

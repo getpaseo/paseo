@@ -62,7 +62,7 @@ import type {
   DirectorySuggestionsResponse,
   PaseoWorktreeListResponse,
   PaseoWorktreeArchiveResponse,
-  ProjectAppearance,
+  ProjectIconSource,
   ProjectIconResponse,
   ProjectIconGetResponse,
   ProjectAddResponse,
@@ -2529,25 +2529,16 @@ export class DaemonClient {
     return { customName: payload.customName };
   }
 
-  async setProjectAppearance(
+  async setProjectIcon(
     projectId: string,
-    input: Pick<ProjectAppearance, "icon" | "color">,
+    source: ProjectIconSource,
     requestId?: string,
-  ): Promise<ProjectAppearance> {
-    const payload =
-      await this.sendNamespacedCorrelatedSessionRequest<"project.appearance.set.response">({
-        requestId,
-        message: {
-          type: "project.appearance.set.request",
-          projectId,
-          icon: input.icon,
-          color: input.color,
-        },
-      });
-    if (!payload.accepted || !payload.appearance) {
-      throw new Error(payload.error ?? "setProjectAppearance rejected");
-    }
-    return payload.appearance;
+  ): Promise<void> {
+    const payload = await this.sendNamespacedCorrelatedSessionRequest<"project.icon.set.response">({
+      requestId,
+      message: { type: "project.icon.set.request", projectId, source },
+    });
+    if (!payload.accepted) throw new Error(payload.error ?? "setProjectIcon rejected");
   }
 
   async removeProject(

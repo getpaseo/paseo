@@ -432,7 +432,6 @@ function ProjectLeadingVisual({
   iconDataUri,
   workspace,
   projectViewKey,
-  appearance,
   chevron = null,
   showChevron = false,
   isArchiving = false,
@@ -441,7 +440,6 @@ function ProjectLeadingVisual({
   iconDataUri: string | null;
   workspace: SidebarWorkspaceEntry | null;
   projectViewKey: string;
-  appearance?: SidebarProjectHostTarget["projectAppearance"];
   chevron?: "expand" | "collapse" | null;
   showChevron?: boolean;
   isArchiving?: boolean;
@@ -470,7 +468,6 @@ function ProjectLeadingVisual({
           iconDataUri={iconDataUri}
           placeholderInitial={placeholderInitial}
           projectViewKey={projectViewKey}
-          appearance={appearance}
         />
       </View>
     );
@@ -481,7 +478,6 @@ function ProjectLeadingVisual({
       iconDataUri={iconDataUri}
       placeholderInitial={placeholderInitial}
       projectViewKey={projectViewKey}
-      appearance={appearance}
       isArchiving={isArchiving}
       shouldShowSyncedLoader={shouldShowSyncedLoader}
       activeWorkspace={activeWorkspace}
@@ -730,19 +726,16 @@ function ProjectIcon({
   iconDataUri,
   placeholderInitial,
   projectViewKey,
-  appearance,
 }: {
   iconDataUri: string | null;
   placeholderInitial: string;
   projectViewKey: string;
-  appearance?: SidebarProjectHostTarget["projectAppearance"];
 }) {
   return (
     <ProjectIconView
       iconDataUri={iconDataUri}
       initial={placeholderInitial}
       projectViewKey={projectViewKey}
-      appearance={appearance}
       imageStyle={styles.projectIcon}
       fallbackStyle={styles.projectIconFallback}
       textStyle={styles.projectIconFallbackText}
@@ -754,7 +747,6 @@ function ProjectLeadingVisualStatus({
   iconDataUri,
   placeholderInitial,
   projectViewKey,
-  appearance,
   isArchiving,
   shouldShowSyncedLoader,
   activeWorkspace,
@@ -762,7 +754,6 @@ function ProjectLeadingVisualStatus({
   iconDataUri: string | null;
   placeholderInitial: string;
   projectViewKey: string;
-  appearance?: SidebarProjectHostTarget["projectAppearance"];
   isArchiving: boolean;
   shouldShowSyncedLoader: boolean;
   activeWorkspace: SidebarWorkspaceEntry;
@@ -806,7 +797,6 @@ function ProjectLeadingVisualStatus({
         iconDataUri={iconDataUri}
         placeholderInitial={placeholderInitial}
         projectViewKey={projectViewKey}
-        appearance={appearance}
       />
       {dotColorStyle ? (
         <StatusDotOverlay
@@ -1051,7 +1041,6 @@ function ProjectHeaderRow({
           iconDataUri={iconDataUri}
           workspace={workspace}
           projectViewKey={project.viewKey}
-          appearance={project.hosts[0]?.projectAppearance}
           chevron={chevron}
           showChevron={isHovered && chevron !== null}
           isArchiving={isArchiving}

@@ -80,11 +80,7 @@ import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { ComposerAttachment } from "@/attachments/types";
 import { useDraftWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import type { MessagePayload } from "@/composer/types";
-import type {
-  AgentAttachment,
-  ForgeSearchItem,
-  ProjectAppearance,
-} from "@getpaseo/protocol/messages";
+import type { AgentAttachment, ForgeSearchItem } from "@getpaseo/protocol/messages";
 import type { CreatePaseoWorktreeInput } from "@getpaseo/client/internal/daemon-client";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tabs/model";
@@ -269,7 +265,6 @@ function ProjectPickerTrigger({
   label,
   projectViewKey,
   iconDataUri,
-  appearance,
   iconColor,
   iconSize,
 }: {
@@ -280,7 +275,6 @@ function ProjectPickerTrigger({
   label: string;
   projectViewKey: string | null;
   iconDataUri: string | null;
-  appearance?: ProjectAppearance | null;
   iconColor: string;
   iconSize: number;
 }) {
@@ -304,7 +298,6 @@ function ProjectPickerTrigger({
                 iconDataUri={iconDataUri}
                 initial={placeholderInitial}
                 projectViewKey={projectViewKey}
-                appearance={appearance}
                 imageStyle={styles.projectIcon}
                 fallbackStyle={styles.projectIconFallback}
                 textStyle={styles.projectIconFallbackText}
@@ -422,7 +415,6 @@ function ProjectOptionItem({
   testID,
   projectViewKey,
   iconDataUri,
-  appearance,
   label,
   description,
   selected,
@@ -433,7 +425,6 @@ function ProjectOptionItem({
   testID: string;
   projectViewKey: string;
   iconDataUri: string | null;
-  appearance?: ProjectAppearance | null;
   label: string;
   description: string | undefined;
   selected: boolean;
@@ -450,14 +441,13 @@ function ProjectOptionItem({
           iconDataUri={iconDataUri}
           initial={placeholderInitial}
           projectViewKey={projectViewKey}
-          appearance={appearance}
           imageStyle={styles.projectIcon}
           fallbackStyle={styles.projectIconFallback}
           textStyle={styles.projectIconFallbackText}
         />
       </View>
     ),
-    [appearance, iconDataUri, placeholderInitial, projectViewKey],
+    [iconDataUri, placeholderInitial, projectViewKey],
   );
 
   return (
@@ -558,9 +548,6 @@ function NewWorkspaceProjectPickerOption({
       testID={`new-workspace-project-picker-option-${project.viewKey}`}
       projectViewKey={project.viewKey}
       iconDataUri={projectIconDataByProjectViewKey.get(project.viewKey) ?? null}
-      appearance={
-        project.hosts.find((host) => host.serverId === selectedServerId)?.projectAppearance
-      }
       label={project.projectName}
       description={sourceDirectory}
       selected={selected}
@@ -1374,11 +1361,6 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
             ? (project.iconDataByProjectViewKey.get(project.selectedProject.viewKey) ?? null)
             : null
         }
-        appearance={
-          project.selectedProject?.hosts.find(
-            (projectHost) => projectHost.serverId === host.selectedServerId,
-          )?.projectAppearance
-        }
         iconColor={theme.colors.foregroundMuted}
         iconSize={theme.iconSize.sm}
       />
@@ -1604,7 +1586,7 @@ export function NewWorkspaceScreen({
             projectId: host.projectId,
             serverId: selectedServerId,
             iconWorkingDir,
-            projectAppearance: host.projectAppearance,
+            customIconRevision: host.customIconRevision,
           },
         ];
       }),

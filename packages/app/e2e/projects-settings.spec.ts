@@ -5,6 +5,7 @@ import { connectSeedClient, seedWorkspace } from "./helpers/seed-client";
 import {
   blockPaseoConfigWrites,
   bumpPaseoConfigOnDisk,
+  chooseProjectIconImage,
   clickReloadProjectSettings,
   clickRetryProjectSettingsSave,
   clickSaveProjectSettings,
@@ -15,26 +16,28 @@ import {
   expectHostPickerHidden,
   expectNoEditableTarget,
   expectNoProjectSettingsError,
-  expectProjectAppearanceSaved,
-  expectProjectAppearanceSaveFailed,
+  expectProjectEditFailed,
+  expectProjectEditName,
+  expectProjectEditSaved,
+  expectProjectEditsSaveDisabled,
   expectProjectSettingsError,
   expectProjectSettingsFormHidden,
   expectProjectSettingsFormVisible,
+  expectProjectTitle,
   expectSaveButtonDisabled,
   expectScriptRowCount,
   expectWriteFailedCalloutActions,
+  fillProjectIconUrl,
+  fillProjectName,
   installDaemonConnectionGate,
   installReadTransportFailure,
   navigateToProjectSettings,
+  openProjectEditSheet,
   openProjectSettings,
   openProjects,
   removeProjectScript,
   restorePaseoConfig,
-  saveProjectAppearance,
-  selectProjectIconMode,
-  setProjectColorTransparent,
-  setProjectCustomIcon,
-  setProjectFaviconUrl,
+  saveProjectEdits,
   unblockPaseoConfigWrites,
 } from "./helpers/project-settings";
 import { gotoAppShell } from "./helpers/app";
@@ -46,6 +49,12 @@ import {
 import { createTempGitRepo } from "./helpers/workspace";
 
 const updatedSetup = ["npm install", "npm run build"];
+
+// Smallest valid square PNG the daemon will accept as a custom project icon.
+const PNG_1X1 = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+  0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00,
+]);
 
 interface ProjectsSettingsProject {
   name: string;
@@ -223,31 +232,72 @@ test.describe("Projects settings", () => {
     await expectProjectConfigSaved(gitlabRemoteProject);
   });
 
-  test("user saves a custom project icon and transparent color", async ({
-    page,
-    editableProject,
-  }) => {
+  test("user renames a project from the edit sheet", async ({ page, editableProject }) => {
     await openProjects(page);
     await openProjectSettings(page, editableProject.name);
-    await selectProjectIconMode(page, "Custom");
-    await setProjectCustomIcon(page, "🚀");
-    await setProjectColorTransparent(page);
-    await saveProjectAppearance(page);
+    await openProjectEditSheet(page);
+    await fillProjectName(page, "Renamed project");
+    await saveProjectEdits(page);
 
-    await expectProjectAppearanceSaved(page);
+    await expectProjectEditSaved(page);
+    await expectProjectTitle(page, "Renamed project");
   });
 
-  test("project appearance keeps a rejected favicon URL actionable", async ({
+  test("reopening the edit sheet seeds from the saved project", async ({
     page,
     editableProject,
   }) => {
     await openProjects(page);
     await openProjectSettings(page, editableProject.name);
-    await selectProjectIconMode(page, "Favicon URL");
-    await setProjectFaviconUrl(page, "file:///etc/passwd");
-    await saveProjectAppearance(page);
+    await openProjectEditSheet(page);
+    await fillProjectName(page, "Renamed project");
+    await saveProjectEdits(page);
+    await expectProjectEditSaved(page);
 
-    await expectProjectAppearanceSaveFailed(page, "URL must use HTTP or HTTPS without credentials");
+    await openProjectEditSheet(page);
+
+    await expectProjectEditName(page, "Renamed project");
+    await expectProjectEditsSaveDisabled(page);
+  });
+
+  test("user picks a custom project icon from a file", async ({ page, editableProject }) => {
+    await openProjects(page);
+    await openProjectSettings(page, editableProject.name);
+    await openProjectEditSheet(page);
+    await chooseProjectIconImage(page, {
+      name: "logo.png",
+      mimeType: "image/png",
+      buffer: PNG_1X1,
+    });
+    await saveProjectEdits(page);
+
+    await expectProjectEditSaved(page);
+  });
+
+  test("user sets a project name and icon in one save", async ({ page, editableProject }) => {
+    await openProjects(page);
+    await openProjectSettings(page, editableProject.name);
+    await openProjectEditSheet(page);
+    await fillProjectName(page, "Both at once");
+    await chooseProjectIconImage(page, {
+      name: "logo.png",
+      mimeType: "image/png",
+      buffer: PNG_1X1,
+    });
+    await saveProjectEdits(page);
+
+    await expectProjectEditSaved(page);
+    await expectProjectTitle(page, "Both at once");
+  });
+
+  test("project edit keeps a rejected icon URL actionable", async ({ page, editableProject }) => {
+    await openProjects(page);
+    await openProjectSettings(page, editableProject.name);
+    await openProjectEditSheet(page);
+    await fillProjectIconUrl(page, "file:///etc/passwd");
+    await saveProjectEdits(page);
+
+    await expectProjectEditFailed(page, "URL must use HTTP or HTTPS without credentials");
   });
 });
 

@@ -2,7 +2,6 @@ import { promises as fs } from "node:fs";
 
 import type { Logger } from "pino";
 import { z } from "zod";
-import { ProjectAppearancePayloadSchema } from "@getpaseo/protocol/messages";
 
 import { writeJsonFileAtomic } from "./atomic-file.js";
 import { areEquivalentPaths } from "../utils/path.js";
@@ -30,7 +29,10 @@ const PersistedProjectRecordSchema = z.object({
     .nullable()
     .optional()
     .transform((value) => value ?? null),
-  appearance: ProjectAppearancePayloadSchema.nullable()
+  // Identifies the project's stored custom icon; null means automatic.
+  customIconRevision: z
+    .string()
+    .nullable()
     .optional()
     .transform((value) => value ?? null),
   createdAt: z.string(),
@@ -85,7 +87,6 @@ const PersistedWorkspaceRecordSchema = z.object({
     .transform((value) => value ?? null),
 });
 
-export type PersistedProjectAppearance = z.infer<typeof ProjectAppearancePayloadSchema>;
 export type PersistedProjectRecord = z.infer<typeof PersistedProjectRecordSchema>;
 export type PersistedWorkspaceRecord = z.infer<typeof PersistedWorkspaceRecordSchema>;
 
@@ -494,7 +495,7 @@ export function createPersistedProjectRecord(input: {
   displayName: string;
   customName?: string | null;
   projectKey?: string | null;
-  appearance?: PersistedProjectAppearance | null;
+  customIconRevision?: string | null;
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
@@ -503,7 +504,7 @@ export function createPersistedProjectRecord(input: {
     ...input,
     customName: input.customName ?? null,
     projectKey: input.projectKey ?? null,
-    appearance: input.appearance ?? null,
+    customIconRevision: input.customIconRevision ?? null,
     archivedAt: input.archivedAt ?? null,
   });
 }

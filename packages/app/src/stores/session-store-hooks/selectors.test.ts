@@ -56,7 +56,7 @@ function projectDescriptorFromTestWorkspace(workspace: WorkspaceDescriptor): Pro
     projectKey: workspace.projectId,
     projectDisplayName: workspace.projectDisplayName,
     projectCustomName: workspace.projectCustomName ?? null,
-    projectAppearance: workspace.projectAppearance ?? null,
+    projectCustomIconRevision: workspace.projectCustomIconRevision ?? null,
     projectRootPath: workspace.projectRootPath,
     projectKind: workspace.projectKind,
   };
@@ -349,7 +349,7 @@ describe("workspace structure composition", () => {
       projectKey: "project-a",
       projectDisplayName: "Project A",
       projectCustomName: null,
-      projectAppearance: null,
+      projectCustomIconRevision: null,
       projectRootPath: "/repo/a",
       projectKind: "git",
     };

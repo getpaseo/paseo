@@ -813,15 +813,12 @@ export const UpdateAgentRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
-export const ProjectAppearancePayloadSchema = z.object({
-  icon: z.discriminatedUnion("type", [
-    z.object({ type: z.literal("automatic") }),
-    z.object({ type: z.literal("favicon"), url: z.string() }),
-    z.object({ type: z.literal("custom"), text: z.string() }),
-  ]),
-  color: z.string().nullable(),
-  revision: z.string(),
-});
+// The daemon accepts only image bytes chosen or acquired by the client. It must
+// never fetch a user-provided URL on the host's network.
+export const ProjectIconSourceSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("automatic") }),
+  z.object({ type: z.literal("upload"), data: z.string() }),
+]);
 
 export const ProjectRenameRequestSchema = z.object({
   type: z.literal("project.rename.request"),
@@ -831,11 +828,10 @@ export const ProjectRenameRequestSchema = z.object({
   requestId: z.string(),
 });
 
-export const ProjectAppearanceSetRequestSchema = z.object({
-  type: z.literal("project.appearance.set.request"),
+export const ProjectIconSetRequestSchema = z.object({
+  type: z.literal("project.icon.set.request"),
   projectId: z.string(),
-  icon: ProjectAppearancePayloadSchema.shape.icon,
-  color: z.string().nullable(),
+  source: ProjectIconSourceSchema,
   requestId: z.string(),
 });
 
@@ -1533,13 +1529,12 @@ export const ProjectRenameResponseSchema = z.object({
   payload: ProjectRenameResponsePayloadSchema,
 });
 
-export const ProjectAppearanceSetResponseSchema = z.object({
-  type: z.literal("project.appearance.set.response"),
+export const ProjectIconSetResponseSchema = z.object({
+  type: z.literal("project.icon.set.response"),
   payload: z.object({
     requestId: z.string(),
     projectId: z.string(),
     accepted: z.boolean(),
-    appearance: ProjectAppearancePayloadSchema.nullable(),
     error: z.string().nullable(),
   }),
 });
@@ -2492,7 +2487,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CloseItemsRequestMessageSchema,
   UpdateAgentRequestMessageSchema,
   ProjectRenameRequestSchema,
-  ProjectAppearanceSetRequestSchema,
+  ProjectIconSetRequestSchema,
   ProjectRemoveRequestSchema,
   WorkspaceTitleSetRequestSchema,
   WorkspacePinSetRequestSchema,
@@ -2877,8 +2872,8 @@ export const ServerInfoStatusPayloadSchema = z
         stableProjectIdentity: z.boolean().optional(),
         // COMPAT(workspaceScriptManagement): added in v0.1.105, remove gate after 2027-01-10.
         workspaceScriptManagement: z.boolean().optional(),
-        // COMPAT(projectAppearance): added in v0.2.0, remove after 2027-01-20.
-        projectAppearance: z.boolean().optional(),
+        // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
+        projectCustomIcon: z.boolean().optional(),
       })
       .optional(),
   })
@@ -3145,8 +3140,9 @@ export const WorkspaceDescriptorPayloadSchema = z
     // value (customName) and projectCustomName mirrors the raw override so the
     // settings UI can prefill its input and offer a "reset" action.
     projectCustomName: z.string().nullable().optional(),
-    // COMPAT(projectAppearance): added in v0.2.0, remove after 2027-01-20.
-    projectAppearance: ProjectAppearancePayloadSchema.nullable().optional(),
+    // Identifies the project's stored custom icon; null means automatic.
+    // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
+    projectCustomIconRevision: z.string().nullable().optional(),
     projectRootPath: z.string(),
     workspaceDirectory: z.string().optional(),
     projectKind: z.enum(["git", "non_git", "directory"]),
@@ -3285,8 +3281,8 @@ export const WorkspaceProjectDescriptorPayloadSchema = z.object({
   projectKey: z.string().optional(),
   projectDisplayName: z.string(),
   projectCustomName: z.string().nullable().optional(),
-  // COMPAT(projectAppearance): added in v0.2.0, remove after 2027-01-20.
-  projectAppearance: ProjectAppearancePayloadSchema.nullable().optional(),
+  // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
+  projectCustomIconRevision: z.string().nullable().optional(),
   projectRootPath: z.string(),
   projectKind: z.enum(["git", "non_git", "directory"]),
 });
@@ -5310,7 +5306,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentRewindResponseMessageSchema,
   UpdateAgentResponseMessageSchema,
   ProjectRenameResponseSchema,
-  ProjectAppearanceSetResponseSchema,
+  ProjectIconSetResponseSchema,
   ProjectRemoveResponseSchema,
   WorkspaceTitleSetResponseSchema,
   WorkspacePinSetResponseSchema,
@@ -5496,7 +5492,7 @@ export type AgentDetachResponseMessage = z.infer<typeof AgentDetachResponseMessa
 export type AgentRewindResponseMessage = z.infer<typeof AgentRewindResponseMessageSchema>;
 export type UpdateAgentResponseMessage = z.infer<typeof UpdateAgentResponseMessageSchema>;
 export type ProjectRenameResponse = z.infer<typeof ProjectRenameResponseSchema>;
-export type ProjectAppearanceSetResponse = z.infer<typeof ProjectAppearanceSetResponseSchema>;
+export type ProjectIconSetResponse = z.infer<typeof ProjectIconSetResponseSchema>;
 export type ProjectRemoveResponse = z.infer<typeof ProjectRemoveResponseSchema>;
 export type WorkspaceTitleSetResponse = z.infer<typeof WorkspaceTitleSetResponseSchema>;
 export type WorkspaceTitleSetResponsePayload = z.infer<
@@ -5643,9 +5639,9 @@ export type LoopStopRequest = z.infer<typeof LoopStopRequestSchema>;
 export type ResumeAgentRequestMessage = z.infer<typeof ResumeAgentRequestMessageSchema>;
 export type DeleteAgentRequestMessage = z.infer<typeof DeleteAgentRequestMessageSchema>;
 export type UpdateAgentRequestMessage = z.infer<typeof UpdateAgentRequestMessageSchema>;
-export type ProjectAppearance = z.infer<typeof ProjectAppearancePayloadSchema>;
+export type ProjectIconSource = z.infer<typeof ProjectIconSourceSchema>;
 export type ProjectRenameRequest = z.infer<typeof ProjectRenameRequestSchema>;
-export type ProjectAppearanceSetRequest = z.infer<typeof ProjectAppearanceSetRequestSchema>;
+export type ProjectIconSetRequest = z.infer<typeof ProjectIconSetRequestSchema>;
 export type ProjectRemoveRequest = z.infer<typeof ProjectRemoveRequestSchema>;
 export type WorkspaceTitleSetRequest = z.infer<typeof WorkspaceTitleSetRequestSchema>;
 export type WorkspacePinSetRequest = z.infer<typeof WorkspacePinSetRequestSchema>;

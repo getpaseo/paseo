@@ -72,37 +72,59 @@ export async function clickReloadProjectSettings(page: Page): Promise<void> {
   await page.locator('[data-testid$="-callout"]').getByRole("button", { name: "Reload" }).click();
 }
 
-export async function selectProjectIconMode(
+// --- Project edit sheet (name + icon) ---
+
+export async function openProjectEditSheet(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Edit project", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Project name" })).toBeVisible();
+}
+
+export async function fillProjectName(page: Page, name: string): Promise<void> {
+  await page.getByRole("textbox", { name: "Project name" }).fill(name);
+}
+
+export async function chooseProjectIconImage(
   page: Page,
-  mode: "Automatic" | "Favicon URL" | "Custom",
+  file: { name: string; mimeType: string; buffer: Buffer },
 ): Promise<void> {
-  await page.getByRole("button", { name: /^Project icon \(/ }).click();
-  await page.getByRole("button", { name: mode, exact: true }).click();
+  const chooserPromise = page.waitForEvent("filechooser", { timeout: 10_000 });
+  await page.getByRole("button", { name: "Choose image" }).click();
+  await (await chooserPromise).setFiles([file]);
+  await expect(page.getByText(file.name, { exact: true })).toBeVisible();
 }
 
-export async function setProjectCustomIcon(page: Page, text: string): Promise<void> {
-  await page.getByRole("textbox", { name: "Text or emoji" }).fill(text);
+export async function fillProjectIconUrl(page: Page, url: string): Promise<void> {
+  await page.getByRole("textbox", { name: "Image or website URL" }).fill(url);
 }
 
-export async function setProjectFaviconUrl(page: Page, url: string): Promise<void> {
-  await page.getByRole("textbox", { name: "URL", exact: true }).fill(url);
+export async function useAutomaticProjectIcon(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Use automatic" }).click();
 }
 
-export async function setProjectColorTransparent(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Transparent", exact: true }).click();
+export async function saveProjectEdits(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Save changes" }).click();
 }
 
-export async function saveProjectAppearance(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Save appearance", exact: true }).click();
+export async function expectProjectEditName(page: Page, name: string): Promise<void> {
+  await expect(page.getByRole("textbox", { name: "Project name" })).toHaveValue(name);
 }
 
-export async function expectProjectAppearanceSaved(page: Page): Promise<void> {
-  await expect(page.getByTestId("app-toast-message")).toHaveText("Project appearance saved");
+export async function expectProjectEditsSaveDisabled(page: Page): Promise<void> {
+  await expect(page.getByRole("button", { name: "Save changes" })).toBeDisabled();
 }
 
-export async function expectProjectAppearanceSaveFailed(page: Page, detail: string): Promise<void> {
-  await expect(page.getByText("Couldn't save project appearance", { exact: true })).toBeVisible();
+export async function expectProjectEditSaved(page: Page): Promise<void> {
+  await expect(page.getByTestId("app-toast-message")).toHaveText("Project updated");
+}
+
+// The sheet keeps the user's input on a failed save so the value stays editable.
+export async function expectProjectEditFailed(page: Page, detail: string): Promise<void> {
   await expect(page.getByText(detail, { exact: true })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Project name" })).toBeVisible();
+}
+
+export async function expectProjectTitle(page: Page, projectName: string): Promise<void> {
+  await expect(page.getByRole("main").getByText(projectName, { exact: true })).toBeVisible();
 }
 
 // --- Error-state assertions ---

@@ -1,1 +1,0 @@
-export const MAX_PROJECT_ICON_TEXT_CHARACTERS = 8;

@@ -4,7 +4,6 @@ import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { resolve, sep } from "path";
 import { homedir } from "node:os";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
-import { MAX_PROJECT_ICON_TEXT_CHARACTERS } from "@getpaseo/protocol/project-appearance";
 import {
   serializeAgentStreamEvent,
   type AgentSnapshotPayload,
@@ -139,13 +138,11 @@ import {
 } from "./workspace-registry.js";
 import { wrapSpokenInput } from "./voice-config.js";
 import { isVoicePermissionAllowed } from "./voice-permission-policy.js";
-import { getProjectIcon } from "../utils/project-icon.js";
 import {
-  cacheProjectFavicon,
-  readCachedProjectFavicon,
-  removeCachedProjectFavicon,
-  serializeProjectAppearanceMutation,
-} from "../utils/project-appearance.js";
+  readProjectIcon,
+  removeProjectCustomIcon,
+  setProjectCustomIcon,
+} from "../utils/project-custom-icon.js";
 import { VoiceSession } from "./session/voice/voice-session.js";
 import { CheckoutSession } from "./session/checkout/checkout-session.js";
 import {
@@ -1942,8 +1939,8 @@ export class Session {
         return this.handleUpdateAgentRequest(msg.agentId, msg.name, msg.labels, msg.requestId);
       case "project.rename.request":
         return this.handleProjectRenameRequest(msg.projectId, msg.customName, msg.requestId);
-      case "project.appearance.set.request":
-        return this.handleProjectAppearanceSetRequest(msg);
+      case "project.icon.set.request":
+        return this.handleProjectIconSetRequest(msg);
       case "send_agent_message_request":
         return this.handleSendAgentMessageRequest(msg);
       case "wait_for_finish_request":
@@ -2677,64 +2674,21 @@ export class Session {
     }
   }
 
-  private async handleProjectAppearanceSetRequest(
-    request: Extract<SessionInboundMessage, { type: "project.appearance.set.request" }>,
+  private async handleProjectIconSetRequest(
+    request: Extract<SessionInboundMessage, { type: "project.icon.set.request" }>,
   ): Promise<void> {
     const { projectId, requestId } = request;
     try {
-      const color = request.color?.trim().toLowerCase() ?? null;
-      if (color && color !== "transparent" && !/^#[0-9a-f]{6}$/.test(color)) {
-        throw new Error("Color must be transparent or a hex value like #8b5cf6");
-      }
-
-      const { appearance, updated } = await serializeProjectAppearanceMutation(
+      const updated = await setProjectCustomIcon({
+        paseoHome: this.paseoHome,
         projectId,
-        async () => {
-          const existing = await this.projectRegistry.get(projectId);
-          if (!existing) throw new Error("Project not found");
-
-          let icon = request.icon;
-          if (icon.type === "custom") {
-            const text = icon.text.trim();
-            if (!text || Array.from(text).length > MAX_PROJECT_ICON_TEXT_CHARACTERS) {
-              throw new Error(
-                `Custom icon must be between 1 and ${MAX_PROJECT_ICON_TEXT_CHARACTERS} characters`,
-              );
-            }
-            icon = { type: "custom", text };
-          } else if (icon.type === "favicon") {
-            const url = icon.url.trim();
-            await cacheProjectFavicon({ paseoHome: this.paseoHome, projectId, url });
-            icon = { type: "favicon", url };
-          }
-
-          const nextAppearance = { icon, color, revision: uuidv4() };
-          const updatedAt = new Date().toISOString();
-          const nextProject = await this.projectRegistry.update(projectId, (current) => ({
-            ...current,
-            appearance: nextAppearance,
-            updatedAt,
-          }));
-          if (!nextProject) {
-            if (icon.type === "favicon") {
-              await removeCachedProjectFavicon({ paseoHome: this.paseoHome, projectId }).catch(
-                (error) => {
-                  this.sessionLogger.warn(
-                    { err: error, projectId },
-                    "Failed to clean up favicon for removed project",
-                  );
-                },
-              );
-            }
-            throw new Error("Project not found");
-          }
-          return { appearance: nextAppearance, updated: nextProject };
-        },
-      );
+        source: request.source,
+        projects: this.projectRegistry,
+      });
 
       this.emit({
-        type: "project.appearance.set.response",
-        payload: { requestId, projectId, accepted: true, appearance, error: null },
+        type: "project.icon.set.response",
+        payload: { requestId, projectId, accepted: true, error: null },
       });
       this.emitProjectUpdate({ kind: "upsert", project: updated });
 
@@ -2746,13 +2700,12 @@ export class Session {
       }
     } catch (error) {
       this.emit({
-        type: "project.appearance.set.response",
+        type: "project.icon.set.response",
         payload: {
           requestId,
           projectId,
           accepted: false,
-          appearance: null,
-          error: getErrorMessageOr(error, "Failed to update project appearance"),
+          error: getErrorMessageOr(error, "Failed to update project icon"),
         },
       });
     }
@@ -2763,12 +2716,7 @@ export class Session {
       const project = await this.projectRegistry.get(projectId);
       if (!project) throw new Error("Project not found");
 
-      let icon = null;
-      if (project.appearance?.icon.type === "favicon") {
-        icon = await readCachedProjectFavicon({ paseoHome: this.paseoHome, projectId });
-      } else if (project.appearance?.icon.type !== "custom") {
-        icon = await getProjectIcon(project.rootPath);
-      }
+      const icon = await readProjectIcon({ paseoHome: this.paseoHome, project });
       this.emit({
         type: "project.icon.get.response",
         payload: { projectId, icon, error: null, requestId },
@@ -2820,13 +2768,13 @@ export class Session {
         }
 
         await this.projectRegistry.remove(resolvedProjectId);
-        await removeCachedProjectFavicon({
+        await removeProjectCustomIcon({
           paseoHome: this.paseoHome,
           projectId: resolvedProjectId,
         }).catch((error) => {
           this.sessionLogger.warn(
             { err: error, projectId: resolvedProjectId },
-            "Failed to clean up removed project favicon",
+            "Failed to clean up removed project icon",
           );
         });
       } finally {
@@ -4335,7 +4283,7 @@ export class Session {
         ? resolveProjectDisplayName(resolvedProjectRecord)
         : workspace.projectId,
       projectCustomName: resolvedProjectRecord?.customName ?? null,
-      projectAppearance: resolvedProjectRecord?.appearance ?? null,
+      projectCustomIconRevision: resolvedProjectRecord?.customIconRevision ?? null,
       projectRootPath: resolvedProjectRecord?.rootPath ?? workspace.cwd,
       workspaceDirectory: workspace.cwd,
       projectKind: (resolvedProjectRecord?.kind ?? "directory") === "git" ? "git" : "non_git",
@@ -4422,7 +4370,7 @@ export class Session {
         ? resolveProjectDisplayName(projectRecord)
         : result.workspace.projectId,
       projectCustomName: projectRecord?.customName ?? null,
-      projectAppearance: projectRecord?.appearance ?? null,
+      projectCustomIconRevision: projectRecord?.customIconRevision ?? null,
       projectRootPath: projectRecord?.rootPath ?? result.repoRoot,
       workspaceDirectory: result.workspace.cwd,
       projectKind: projectRecord?.kind ?? "git",
@@ -4594,7 +4542,7 @@ export class Session {
       ...(project.projectKey ? { projectKey: project.projectKey } : {}),
       projectDisplayName: resolveProjectDisplayName(project),
       projectCustomName: project.customName ?? null,
-      projectAppearance: project.appearance ?? null,
+      projectCustomIconRevision: project.customIconRevision ?? null,
       projectRootPath: project.rootPath,
       projectKind: project.kind,
     };
