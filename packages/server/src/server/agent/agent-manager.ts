@@ -3364,64 +3364,83 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     broadcast: boolean,
   ): Promise<void> {
-    const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
-    const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
-    for await (const event of agent.session.streamHistory()) {
-      if (event.type === "timeline") {
-        if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
-          continue;
+    await this.withHistoryHydrationBarrier(agent.id, async () => {
+      const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
+      const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
+      for await (const event of agent.session.streamHistory()) {
+        if (event.type === "timeline") {
+          if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
+            continue;
+          }
+          historyEvents.push(event);
+        } else if (event.type === "provider_subagent") {
+          providerSubagentEvents.push(event);
         }
-        historyEvents.push(event);
-      } else if (event.type === "provider_subagent") {
-        providerSubagentEvents.push(event);
       }
-    }
 
-    this.agentStreamCoalescer.flushAndDiscard(agent.id);
-    await this.deleteCommittedTimeline(agent.id);
-    this.timelineStore.delete(agent.id);
-    this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
-    agent.historyPrimed = true;
-    this.failedHistoryHydrationAgentIds.delete(agent.id);
+      this.agentStreamCoalescer.flushAndDiscard(agent.id);
+      await this.deleteCommittedTimeline(agent.id);
+      this.timelineStore.delete(agent.id);
+      this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
+      agent.historyPrimed = true;
+      this.failedHistoryHydrationAgentIds.delete(agent.id);
 
-    for (const event of this.providerSubagents.deleteParent(agent.id)) {
-      if (broadcast) {
-        this.dispatch({ type: "provider_subagent", event });
+      for (const event of this.providerSubagents.deleteParent(agent.id)) {
+        if (broadcast) {
+          this.dispatch({ type: "provider_subagent", event });
+        }
       }
-    }
-    for (const event of providerSubagentEvents) {
-      const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
-      if (broadcast) {
-        this.dispatch({ type: "provider_subagent", event: update });
+      for (const event of providerSubagentEvents) {
+        const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+        if (broadcast) {
+          this.dispatch({ type: "provider_subagent", event: update });
+        }
       }
-    }
-    for (const event of historyEvents) {
-      const row = this.recordTimeline(
-        agent.id,
-        event.item,
-        event.timestamp ? { timestamp: event.timestamp } : undefined,
-      );
-      if (broadcast) {
-        this.dispatchStream(agent.id, event, {
-          seq: row.seq,
-          epoch: this.timelineStore.getEpoch(agent.id),
-          timestamp: row.timestamp,
-        });
+      for (const event of historyEvents) {
+        const row = this.recordTimeline(
+          agent.id,
+          event.item,
+          event.timestamp ? { timestamp: event.timestamp } : undefined,
+        );
+        if (broadcast) {
+          this.dispatchStream(agent.id, event, {
+            seq: row.seq,
+            epoch: this.timelineStore.getEpoch(agent.id),
+            timestamp: row.timestamp,
+          });
+        }
       }
+      this.touchUpdatedAt(agent);
+      this.emitState(agent);
+    });
+  }
+
+  private async withHistoryHydrationBarrier(
+    agentId: string,
+    hydrate: () => Promise<void>,
+  ): Promise<void> {
+    this.activeHistoryHydrationAgentIds.add(agentId);
+    try {
+      await this.drainSessionEvents(agentId);
+      await hydrate();
+    } finally {
+      this.activeHistoryHydrationAgentIds.delete(agentId);
+      const buffered = this.bufferedHistoryHydrationSessionEvents.get(agentId) ?? [];
+      this.bufferedHistoryHydrationSessionEvents.delete(agentId);
+      for (const event of buffered) {
+        this.enqueueSessionEvent(agentId, event);
+      }
+      await this.drainSessionEvents(agentId);
     }
-    this.touchUpdatedAt(agent);
-    this.emitState(agent);
   }
 
   private async primeTimelineFromLegacyProviderHistory(
     agent: ActiveManagedAgent,
     broadcast: boolean | (() => boolean),
   ): Promise<void> {
-    await this.drainSessionEvents(agent.id);
-    this.activeHistoryHydrationAgentIds.add(agent.id);
-    const timelineEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
-    const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
-    try {
+    await this.withHistoryHydrationBarrier(agent.id, async () => {
+      const timelineEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
+      const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
       agent.historyPrimed = true;
       try {
         for await (const event of agent.session.streamHistory()) {
@@ -3466,14 +3485,7 @@ export class AgentManager {
           });
         }
       }
-    } finally {
-      this.activeHistoryHydrationAgentIds.delete(agent.id);
-      const buffered = this.bufferedHistoryHydrationSessionEvents.get(agent.id) ?? [];
-      this.bufferedHistoryHydrationSessionEvents.delete(agent.id);
-      for (const event of buffered) {
-        this.enqueueSessionEvent(agent.id, event);
-      }
-    }
+    });
   }
 
   private notifyForegroundTurnWaiters(agentId: string, event: AgentStreamEvent): void {

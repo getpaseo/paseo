@@ -3055,6 +3055,94 @@ test("force provider hydration removes children absent from current history", as
   });
 });
 
+test("force provider hydration replays concurrent live events after the replacement history", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-force-interleave-"));
+  const historyStarted = deferred<void>();
+  const historyAllowed = deferred<void>();
+  let session: TestAgentSession | null = null;
+
+  class ForceInterleavedHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      historyStarted.resolve();
+      await historyAllowed.promise;
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: "historical request" },
+      };
+      yield {
+        type: "provider_subagent",
+        provider: "codex",
+        event: {
+          type: "upsert",
+          id: "force-interleaved-child",
+          title: "Historical child",
+          status: "running",
+        },
+      };
+    }
+  }
+
+  class ForceInterleavedHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new ForceInterleavedHistorySession(config);
+      return session;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ForceInterleavedHistoryClient() },
+    durableTimelineStore: new TestDurableTimelineStore(),
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000119",
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const hydration = manager.hydrateTimelineFromProvider(snapshot.id, {
+      force: true,
+      broadcast: true,
+    });
+    await historyStarted.promise;
+    session?.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "assistant_message", text: "live result during forced hydration" },
+    });
+    session?.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: {
+        type: "upsert",
+        id: "force-interleaved-child",
+        title: "Live child",
+        status: "completed",
+      },
+    });
+    historyAllowed.resolve();
+    await hydration;
+    await manager.flush();
+
+    expect(manager.getTimeline(snapshot.id)).toEqual([
+      { type: "user_message", text: "historical request" },
+      { type: "assistant_message", text: "live result during forced hydration" },
+    ]);
+    expect(manager.listProviderSubagents(snapshot.id)).toEqual([
+      expect.objectContaining({
+        id: "force-interleaved-child",
+        title: "Live child",
+        status: "completed",
+      }),
+    ]);
+  } finally {
+    historyAllowed.resolve();
+    await manager.closeAgent("00000000-0000-4000-8000-000000000119").catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("reloadAgentSession preserves current title when config title is unset", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-title-"));
   const storagePath = join(workdir, "agents");
@@ -4233,6 +4321,90 @@ test("successful history hydration orders buffered live events after recovered h
     expect((await manager.getTimelineRows(created.id)).map((row) => row.item)).toEqual(
       expectedItems,
     );
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("history hydration installs its live-event barrier before the first await", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-boundary-order-"));
+  const agentId = "00000000-0000-4000-8000-000000000149";
+  const durableTimelineStore = new TestDurableTimelineStore();
+  let session: TestAgentSession | null = null;
+
+  class BoundaryHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: "historical request" },
+      };
+      yield {
+        type: "provider_subagent",
+        provider: "codex",
+        event: {
+          type: "upsert",
+          id: "boundary-child",
+          title: "Historical child",
+          status: "running",
+        },
+      };
+    }
+  }
+
+  class BoundaryHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new BoundaryHistorySession(config);
+      return session;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new BoundaryHistoryClient() },
+    durableTimelineStore,
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const hydration = manager.hydrateTimelineFromProvider(created.id);
+    session?.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "assistant_message", text: "live result at hydration boundary" },
+    });
+    session?.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: {
+        type: "upsert",
+        id: "boundary-child",
+        title: "Live child",
+        status: "completed",
+      },
+    });
+    await hydration;
+    await manager.flush();
+
+    const expectedItems: AgentTimelineItem[] = [
+      { type: "user_message", text: "historical request" },
+      { type: "assistant_message", text: "live result at hydration boundary" },
+    ];
+    expect(manager.getTimeline(created.id)).toEqual(expectedItems);
+    expect((await manager.getTimelineRows(created.id)).map((row) => row.item)).toEqual(
+      expectedItems,
+    );
+    expect(manager.listProviderSubagents(created.id)).toEqual([
+      expect.objectContaining({
+        id: "boundary-child",
+        title: "Live child",
+        status: "completed",
+      }),
+    ]);
   } finally {
     await manager.closeAgent(agentId).catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
