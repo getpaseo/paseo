@@ -8252,6 +8252,12 @@ test("replaceAgentRun retains the existing agent when stale-session recovery reg
     lifecycle: "running",
     activeForegroundTurnId: null,
   });
+  const restartedStorage = new AgentStorage(storagePath, logger);
+  expect(await restartedStorage.get(snapshot.id)).toMatchObject({
+    id: snapshot.id,
+    lastStatus: "running",
+    persistence: { sessionId: originalSessionId },
+  });
   expect(staleSessionClosed).toBe(false);
 
   failRecoveredRegistration = false;

@@ -1246,9 +1246,8 @@ export class AgentManager {
     try {
       this.assertAcceptingAgentRegistrations();
 
-      const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
+      this.prepareAgentForClosure(existing, "agent reloaded");
       existingPreparedForClosure = true;
-      await this.persistSnapshot(closedExisting);
 
       if (rehydrateFromDisk) {
         // Wipe both durable and in-memory timeline so registerSession mints a
@@ -1288,14 +1287,6 @@ export class AgentManager {
         this.agents.set(agentId, existing);
         this.previousStatuses.set(agentId, existing.lifecycle);
         this.subscribeToSession(existing);
-        try {
-          await this.persistSnapshot(existing);
-        } catch (persistError) {
-          this.logger.warn(
-            { err: persistError, agentId },
-            "Failed to restore previous agent snapshot after reload failure",
-          );
-        }
         this.emitState(existing, { persist: false });
       }
       throw error;
