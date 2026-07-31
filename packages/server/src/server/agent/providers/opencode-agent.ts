@@ -422,6 +422,15 @@ function toTerminalTurnEvent(event: AgentStreamEvent): TerminalTurnEvent | null 
   return null;
 }
 
+function isOpenCodeMessageAbortedError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    error.name === "MessageAbortedError"
+  );
+}
+
 function isOpenCodeNotFoundError(error: unknown): boolean {
   return (
     typeof error === "object" &&
@@ -2687,12 +2696,7 @@ function appendOpenCodeSessionError(
   }
   resetOpenCodeTurnTrackingState(state);
   const error = event.properties.error;
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "name" in error &&
-    error.name === "MessageAbortedError"
-  ) {
+  if (isOpenCodeMessageAbortedError(error)) {
     events.push({
       type: "turn_canceled",
       provider: "opencode",
@@ -2928,6 +2932,8 @@ class OpenCodeAgentSession implements AgentSession {
   private eventStreamAbortController: AbortController | null = null;
   private eventStreamReady: Deferred<void> | null = null;
   private eventStreamTask: Promise<void> | null = null;
+  private foregroundKnownMessageIds: ReadonlySet<string> | null = null;
+  private foregroundNativeRequestDispatched = false;
   private closed = false;
   private readonly persistSession: boolean;
   private deletedFromProvider = false;
@@ -3150,12 +3156,26 @@ class OpenCodeAgentSession implements AgentSession {
 
     const turnId = this.createTurnId();
     this.turnState = { status: "running", turnId };
+    this.foregroundKnownMessageIds = null;
+    this.foregroundNativeRequestDispatched = false;
     this.notifySubscribers({ type: "turn_started", provider: "opencode" }, turnId);
 
+    const foregroundMessages = await this.readForegroundSessionMessages();
+    if (this.activeForegroundTurnId !== turnId) {
+      return { turnId };
+    }
+    this.foregroundKnownMessageIds = foregroundMessages
+      ? new Set(foregroundMessages.map((message) => message.info.id))
+      : null;
+
     const slashCommand = await this.resolveSlashCommandInvocation(prompt);
+    if (this.activeForegroundTurnId !== turnId) {
+      return { turnId };
+    }
     if (slashCommand) {
       if (slashCommand.commandName === "compact" || slashCommand.commandName === "summarize") {
         this.suppressAssistantMessagesUntilIdle.active = true;
+        this.foregroundNativeRequestDispatched = true;
         void this.client.session
           .summarize({
             sessionID: this.sessionId,
@@ -3192,6 +3212,7 @@ class OpenCodeAgentSession implements AgentSession {
 
       // command() is only dispatch acknowledgement. OpenCode session events are
       // the source of truth for when the command turn becomes idle or fails.
+      this.foregroundNativeRequestDispatched = true;
       void this.client.session
         .command({
           sessionID: this.sessionId,
@@ -3258,6 +3279,7 @@ class OpenCodeAgentSession implements AgentSession {
             this.config.systemPrompt,
             this.config.daemonAppendSystemPrompt,
           );
+          this.foregroundNativeRequestDispatched = true;
           const promptResponse = await this.client.session.promptAsync({
             sessionID: this.sessionId,
             directory: this.config.cwd,
@@ -3520,6 +3542,24 @@ class OpenCodeAgentSession implements AgentSession {
         }
         const activeTurnId = this.activeForegroundTurnId;
         if (activeTurnId) {
+          const reconciledEvent = await this.reconcileForegroundTurnAfterStreamEnd(
+            activeTurnId,
+            eventStreamAbortController.signal,
+          );
+          if (
+            eventStreamAbortController.signal.aborted ||
+            this.activeForegroundTurnId !== activeTurnId
+          ) {
+            return;
+          }
+          if (reconciledEvent) {
+            this.traceOpenCode("provider.opencode.event.terminal", {
+              turnId: activeTurnId,
+              type: reconciledEvent.type,
+            });
+            this.finishForegroundTurn(reconciledEvent, activeTurnId);
+            return;
+          }
           this.traceOpenCode("provider.opencode.turn.fail_eof", {
             turnId: activeTurnId,
             eventCount,
@@ -3554,6 +3594,109 @@ class OpenCodeAgentSession implements AgentSession {
           activeTurnId,
         );
       }
+    }
+  }
+
+  private async reconcileForegroundTurnAfterStreamEnd(
+    turnId: string,
+    signal: AbortSignal,
+  ): Promise<TerminalTurnEvent | null> {
+    if (
+      this.activeForegroundTurnId !== turnId ||
+      !this.foregroundNativeRequestDispatched ||
+      !this.foregroundKnownMessageIds
+    ) {
+      return null;
+    }
+
+    const [status, messages] = await Promise.all([
+      this.readForegroundSessionStatus(signal),
+      this.readForegroundSessionMessages(signal),
+    ]);
+    if (signal.aborted || this.activeForegroundTurnId !== turnId || messages === null) {
+      return null;
+    }
+
+    const turnMessages = messages.filter(
+      (message) => !this.foregroundKnownMessageIds?.has(message.info.id),
+    );
+    const assistantMessage = turnMessages
+      .filter((message) => message.info.role === "assistant")
+      .at(-1);
+    if (assistantMessage?.info.role === "assistant" && assistantMessage.info.error) {
+      return isOpenCodeMessageAbortedError(assistantMessage.info.error)
+        ? { type: "turn_canceled", provider: "opencode", reason: "interrupted" }
+        : {
+            type: "turn_failed",
+            provider: "opencode",
+            error: toDiagnosticErrorMessage(assistantMessage.info.error),
+          };
+    }
+
+    const completedAssistantMessage =
+      assistantMessage?.info.role === "assistant" &&
+      assistantMessage.info.time?.completed !== undefined;
+    if (!completedAssistantMessage && (status !== "idle" || turnMessages.length === 0)) {
+      return null;
+    }
+
+    const usage = hasNormalizedOpenCodeUsage(this.accumulatedUsage)
+      ? { ...this.accumulatedUsage }
+      : undefined;
+    const contextWindowMaxTokens = this.resolveSelectedModelContextWindowMaxTokens();
+    this.accumulatedUsage =
+      contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
+    return { type: "turn_completed", provider: "opencode", usage };
+  }
+
+  private async readForegroundSessionStatus(
+    signal?: AbortSignal,
+  ): Promise<"busy" | "retry" | "idle" | null> {
+    try {
+      const response = await this.client.session.status(
+        { directory: this.config.cwd },
+        signal ? { signal } : undefined,
+      );
+      if (response.error) {
+        return null;
+      }
+      const statuses = readOpenCodeRecord(response.data);
+      if (!statuses) {
+        return null;
+      }
+      const status = readOpenCodeRecord(statuses[this.sessionId]);
+      if (!status) {
+        return "idle";
+      }
+      const type = readNonEmptyString(status.type);
+      return type === "busy" || type === "retry" || type === "idle" ? type : null;
+    } catch (error) {
+      this.logger.debug(
+        { err: error, sessionId: this.sessionId },
+        "Failed to read OpenCode session status after event stream termination",
+      );
+      return null;
+    }
+  }
+
+  private async readForegroundSessionMessages(
+    signal?: AbortSignal,
+  ): Promise<OpenCodeSessionMessage[] | null> {
+    try {
+      const response = await this.client.session.messages(
+        {
+          sessionID: this.sessionId,
+          directory: this.config.cwd,
+        },
+        signal ? { signal } : undefined,
+      );
+      return response.error || !response.data ? null : response.data;
+    } catch (error) {
+      this.logger.debug(
+        { err: error, sessionId: this.sessionId },
+        "Failed to read OpenCode session messages",
+      );
+      return null;
     }
   }
 
@@ -3684,6 +3827,8 @@ class OpenCodeAgentSession implements AgentSession {
   private startAutonomousTurn(): string {
     const turnId = this.createTurnId();
     this.turnState = { status: "running", turnId };
+    this.foregroundKnownMessageIds = null;
+    this.foregroundNativeRequestDispatched = false;
     this.runningToolCalls.clear();
     this.subAgentsByCallId.clear();
     this.subAgentCallIdByChildSessionId.clear();
@@ -3715,6 +3860,8 @@ class OpenCodeAgentSession implements AgentSession {
     }
     this.pendingUserMessageText = null;
     this.pendingClientMessageId = null;
+    this.foregroundKnownMessageIds = null;
+    this.foregroundNativeRequestDispatched = false;
     this.turnState = { status: "idle" };
     this.abortController = null;
     this.notifySubscribers(event, turnId);
@@ -3727,6 +3874,8 @@ class OpenCodeAgentSession implements AgentSession {
     this.synthesizeInterruptedToolCalls(turnId);
     this.pendingUserMessageText = null;
     this.pendingClientMessageId = null;
+    this.foregroundKnownMessageIds = null;
+    this.foregroundNativeRequestDispatched = false;
     this.abortController = null;
     this.turnState = { status: "stopping", idle: createDeferred<void>() };
     this.notifySubscribers(
