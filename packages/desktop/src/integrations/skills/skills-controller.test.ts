@@ -547,6 +547,37 @@ describe("skills controller", () => {
     },
   );
 
+  it("finishes rollback when an external deletion leaves no live or staged path", async () => {
+    const previous: SkillSelection = {
+      mode: "custom",
+      skills: ["paseo", "paseo-loop"],
+    };
+    const next: SkillSelection = { mode: "custom", skills: ["paseo"] };
+    await harness.controller.save(previous);
+
+    const transaction = await beginSkillsTransaction(harness.targets, previous, next, [
+      { kind: "delete", name: "paseo-loop" },
+    ]);
+    const codexStage = (await readdir(harness.targets.codexDir)).find((entry) =>
+      entry.startsWith(".paseo-skills-transaction-"),
+    );
+    expect(codexStage).toBeDefined();
+    await rm(path.join(harness.targets.codexDir, codexStage!, "paseo-loop"), {
+      recursive: true,
+      force: true,
+    });
+
+    await transaction.rollback();
+
+    expect(await readUserFile(harness.targets, "paseo-loop", "SKILL.md")).toEqual([
+      "paseo-loop-v1",
+      "paseo-loop-v1",
+      null,
+    ]);
+    expect(await backupArtifacts(harness.targets)).toEqual([[], [], []]);
+    await expect(harness.controller.status()).resolves.toMatchObject({ selection: previous });
+  });
+
   it.skipIf(process.platform !== "linux")(
     "stages deletions when an agent skills root is on another filesystem",
     async () => {

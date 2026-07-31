@@ -288,9 +288,10 @@ async function restore(
   for (const entry of manifest.entries) {
     const backup = resolveBackupPath(transactionDir, entry.backupPath);
     if (backup !== null && !(await lstat(backup).catch(() => null))) {
-      // A crash may happen after the manifest is durable but before this delete
-      // path is atomically moved. Its live directory was never touched.
-      if (entry.kind === "delete" && (await lstat(entry.livePath).catch(() => null))) continue;
+      // Atomic rename leaves either the live path or its stage. If neither is
+      // present, an external actor deleted it; there is nothing this
+      // transaction can restore. Other captured entries still need rollback.
+      if (entry.kind === "delete") continue;
       throw new Error(`Skills transaction backup is missing: ${backup}`);
     }
     if (entry.kind === "delete") {
