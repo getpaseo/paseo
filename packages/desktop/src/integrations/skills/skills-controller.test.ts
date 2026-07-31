@@ -699,7 +699,7 @@ describe("skills controller", () => {
   });
 
   it.skipIf(process.platform === "win32")(
-    "surfaces committed transaction cleanup failure before another save",
+    "reports a committed save as successful when cleanup is deferred",
     async () => {
       const gated = createGatedSelectionStore({ mode: "all" });
       const blocked = await makeHarness(gated.store);
@@ -719,7 +719,7 @@ describe("skills controller", () => {
       await rm(parent, { force: true });
       await rename(movedParent, parent);
 
-      expect(outcome.ok).toBe(false);
+      expect(outcome.ok).toBe(true);
       expect(await gated.store.get()).toEqual(next);
       await blocked.controller.status();
       expect(await backupArtifacts(blocked.targets)).toEqual([[], [], []]);

@@ -129,7 +129,13 @@ export function createSkillsController({
           await transaction.rollback();
           throw error;
         }
-        await transaction.commit();
+        try {
+          await transaction.commit();
+        } catch {
+          // Selection and disk convergence are already durable. The owned
+          // manifest stays behind so the next serialized operation retries
+          // cleanup; reporting this save as failed would misstate its outcome.
+        }
         return { ...status, selection: next, confirmationRequired: null };
       }
 
