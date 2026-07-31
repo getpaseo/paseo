@@ -55,7 +55,12 @@ import { respondToAgentPermission } from "./agent/permission-response.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
 import type { LiveVoiceCoordinator } from "./live-voice/live-voice-coordinator.js";
 import type { LiveVoiceRouteBroker } from "./live-voice/live-voice-route-broker.js";
-import type { LiveVoiceToolExecutor } from "./live-voice/live-voice-tool-executor.js";
+import type {
+  LiveVoiceToolExecutionContext,
+  LiveVoiceToolExecutor,
+} from "./live-voice/live-voice-tool-executor.js";
+import type { LiveVoiceAgentNotifier } from "./live-voice/live-voice-agent-notifier.js";
+import { formatLiveVoiceAgentNotification } from "./live-voice/live-voice-agent-message.js";
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import { spawnWorkspaceScript } from "./worktree-bootstrap.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
@@ -550,6 +555,7 @@ export interface SessionOptions {
   liveVoiceCoordinator?: LiveVoiceCoordinator;
   liveVoiceRouteBroker?: LiveVoiceRouteBroker;
   liveVoiceToolExecutor?: LiveVoiceToolExecutor;
+  liveVoiceAgentNotifier?: LiveVoiceAgentNotifier;
   voiceBridge?: {
     registerVoiceSpeakHandler?: (agentId: string, handler: VoiceSpeakHandler) => void;
     unregisterVoiceSpeakHandler?: (agentId: string) => void;
@@ -760,6 +766,7 @@ export class Session {
   private readonly liveVoice: LiveVoiceCoordinator | undefined;
   private readonly liveVoiceRouteBroker: LiveVoiceRouteBroker | null;
   private readonly liveVoiceToolExecutor: LiveVoiceToolExecutor | null;
+  private readonly liveVoiceAgentNotifier: LiveVoiceAgentNotifier | null;
   private readonly checkoutSession: CheckoutSession;
   private readonly scheduleSession: ScheduleSession;
   private readonly providerCatalogSession: ProviderCatalogSession;
@@ -826,6 +833,7 @@ export class Session {
       liveVoiceCoordinator,
       liveVoiceRouteBroker,
       liveVoiceToolExecutor,
+      liveVoiceAgentNotifier,
       dictation,
       serverId,
       daemonVersion,
@@ -1144,6 +1152,7 @@ export class Session {
     this.liveVoice = liveVoiceCoordinator;
     this.liveVoiceRouteBroker = optionalService(liveVoiceRouteBroker);
     this.liveVoiceToolExecutor = optionalService(liveVoiceToolExecutor);
+    this.liveVoiceAgentNotifier = optionalService(liveVoiceAgentNotifier);
 
     this.subscribeToAgentEvents();
     this.subscribeToRegistryMutations();
@@ -2338,6 +2347,8 @@ export class Session {
         return undefined;
       case "voice.live.tool.execute.request":
         return this.handleLiveVoiceToolExecuteRequest(msg, source);
+      case "voice.live.agent.notify.request":
+        return this.handleLiveVoiceAgentNotifyRequest(msg, source);
       default:
         return undefined;
     }
@@ -2416,8 +2427,25 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "voice.live.tool.execute.request" }>,
     source?: object,
   ): Promise<void> {
+    const sourceKey = source ?? this;
+    const notifier = this.liveVoiceAgentNotifier;
+    // The report goes to the exact socket that asked for the work and carries no
+    // call identity: this daemon is not told which call the work belongs to, and
+    // must not learn it.
+    const executionContext: LiveVoiceToolExecutionContext = notifier
+      ? {
+          onBackgroundAgentStarted: ({ agentId }) => {
+            notifier.watch({
+              agentId,
+              requestId: msg.requestId,
+              sourceKey,
+              emit: (update) => this.emitForSource(update, source),
+            });
+          },
+        }
+      : {};
     const response = this.liveVoiceToolExecutor
-      ? await this.liveVoiceToolExecutor.execute(msg)
+      ? await this.liveVoiceToolExecutor.execute(msg, executionContext)
       : {
           type: "voice.live.tool.execute.response" as const,
           payload: {
@@ -2433,9 +2461,47 @@ export class Session {
     this.emitForSource(response, source);
   }
 
+  /**
+   * Speaks a work notification into a call this daemon hosts. The client is the
+   * only party that knows the routed work belongs to this call, so it is the
+   * client that asks — and the coordinator still checks that the asking socket
+   * owns the call it names.
+   */
+  private async handleLiveVoiceAgentNotifyRequest(
+    msg: Extract<SessionInboundMessage, { type: "voice.live.agent.notify.request" }>,
+    source?: object,
+  ): Promise<void> {
+    const coordinator = this.liveVoice;
+    const result = coordinator
+      ? await coordinator.say({
+          liveSessionId: msg.liveSessionId,
+          sourceKey: source ?? this,
+          text: formatLiveVoiceAgentNotification(msg.notification),
+        })
+      : ({
+          delivered: false,
+          errorCode: "unsupported",
+          errorMessage: "This daemon does not support live voice.",
+        } as const);
+    this.emitForSource(
+      {
+        type: "voice.live.agent.notify.response",
+        payload: {
+          requestId: msg.requestId,
+          delivered: result.delivered,
+          ...(result.delivered
+            ? {}
+            : { error: { code: result.errorCode, message: result.errorMessage } }),
+        },
+      },
+      source,
+    );
+  }
+
   /** Called at socket detach: a live voice call must not outlive its owner. */
   public releaseLiveVoiceForSource(source: object): void {
     this.liveVoice?.closeForSource(source);
+    this.liveVoiceAgentNotifier?.releaseForSource(source);
   }
 
   private dispatchAgentRewindMessage(
@@ -7931,6 +7997,7 @@ export class Session {
     this.sessionLogger.trace({}, "agent.session.lifecycle.cleanup");
     this.isCleanedUp = true;
     this.liveVoice?.closeForSession(this);
+    this.liveVoiceAgentNotifier?.releaseForSource(this);
 
     if (this.unsubscribeAgentEvents) {
       this.unsubscribeAgentEvents();

@@ -3,19 +3,33 @@ import {
   type DaemonClient,
 } from "@getpaseo/client/internal/daemon-client";
 import type {
+  VoiceLiveAgentNotification,
+  VoiceLiveAgentUpdate,
   VoiceLiveRouteError,
   VoiceLiveRouteHost,
   VoiceLiveRouteRequest,
   VoiceLiveToolResult,
 } from "@getpaseo/protocol/live-voice-routing";
+import {
+  forgetRoutedLiveVoiceWork,
+  forgetRoutedLiveVoiceWorkForSource,
+  getRoutedLiveVoiceWork,
+  trackRoutedLiveVoiceWork,
+} from "@/live-voice/live-voice-work-registry";
 
 type LiveVoiceRouteSourceClient = Pick<DaemonClient, "on" | "sendLiveVoiceRouteResponse">;
 
-interface LiveVoiceToolTargetClient {
+interface LiveVoiceHostClient {
   executeLiveVoiceTool(input: {
     toolName: string;
     arguments: Extract<VoiceLiveRouteRequest["operation"], { kind: "execute_tool" }>["arguments"];
-  }): Promise<VoiceLiveToolResult>;
+    requestId?: string;
+    notifyOnAgentFinish?: boolean;
+  }): Promise<{ toolResult: VoiceLiveToolResult; backgroundAgentId?: string }>;
+  notifyLiveVoiceAgentUpdate(input: {
+    liveSessionId: string;
+    notification: VoiceLiveAgentNotification;
+  }): Promise<{ delivered: boolean }>;
 }
 
 interface SavedHostSummary {
@@ -32,11 +46,12 @@ interface HostServerInfoSummary {
   version: string | null;
   features?: {
     liveVoiceToolExecution?: boolean;
+    liveVoiceAgentNotifications?: boolean;
   };
 }
 
 interface PinnedHostConnection {
-  client: LiveVoiceToolTargetClient;
+  client: LiveVoiceHostClient;
   release(): void;
 }
 
@@ -50,38 +65,113 @@ export interface LiveVoiceCrossHostRouterDeps {
 
 export interface MountLiveVoiceCrossHostRouterOptions {
   sourceServerId: string;
-  sourceClient: LiveVoiceRouteSourceClient;
+  sourceClient: LiveVoiceRouteSourceClient & { on: DaemonClient["on"] };
   deps: LiveVoiceCrossHostRouterDeps;
+  createRequestId?: () => string;
   onError?: (error: unknown) => void;
 }
 
 /**
- * Mounts the client-owned bridge between one Live Voice source daemon and the
- * app's saved host registry. The returned function only stops new requests;
- * already-pinned operations are allowed to finish and release their pin.
+ * Mounts the client-owned Live Voice bridge for one host. The host plays both
+ * parts: it is a *source* when it hosts the call (it asks the app to route), and
+ * a *target* when work runs on it (it reports how that work ended). Both legs
+ * are mounted here because both are the same trust boundary — the app.
+ *
+ * The returned function only stops new requests; already-pinned operations are
+ * allowed to finish and release their pin.
  */
 export function mountLiveVoiceCrossHostRouter(
   options: MountLiveVoiceCrossHostRouterOptions,
 ): () => void {
-  return options.sourceClient.on("voice.live.route.request", (request) => {
-    void handleLiveVoiceCrossHostRouteRequest({
-      sourceServerId: options.sourceServerId,
-      sourceClient: options.sourceClient,
+  const unsubscribeRouteRequests = options.sourceClient.on(
+    "voice.live.route.request",
+    (request) => {
+      void handleLiveVoiceCrossHostRouteRequest({
+        sourceServerId: options.sourceServerId,
+        sourceClient: options.sourceClient,
+        deps: options.deps,
+        ...(options.createRequestId ? { createRequestId: options.createRequestId } : {}),
+        request,
+      }).catch((error) => {
+        options.onError?.(error);
+      });
+    },
+  );
+  const unsubscribeAgentUpdates = options.sourceClient.on("voice.live.agent.update", (message) => {
+    void handleLiveVoiceAgentUpdate({
+      targetServerId: options.sourceServerId,
       deps: options.deps,
-      request,
+      message,
     }).catch((error) => {
       options.onError?.(error);
     });
   });
+  return () => {
+    forgetRoutedLiveVoiceWorkForSource(options.sourceServerId);
+    unsubscribeAgentUpdates();
+    unsubscribeRouteRequests();
+  };
+}
+
+/**
+ * Speaks a target host's report into the call it belongs to.
+ *
+ * Two things have to hold before a report can reach a call: the app must have
+ * made the routed call itself (the registry knows the requestId), and the user
+ * must still own that exact call on that exact source host. A report for a call
+ * that has ended is dropped, not spoken into whatever call came after it.
+ */
+export async function handleLiveVoiceAgentUpdate(input: {
+  targetServerId: string;
+  deps: LiveVoiceCrossHostRouterDeps;
+  message: VoiceLiveAgentUpdate;
+}): Promise<void> {
+  const { targetServerId, deps, message } = input;
+  const tracked = getRoutedLiveVoiceWork(message.payload.requestId);
+  if (!tracked) {
+    return;
+  }
+  if (tracked.targetServerId !== targetServerId) {
+    return;
+  }
+  if (!deps.isAuthorizedSourceCall(tracked.sourceServerId, tracked.liveSessionId)) {
+    return;
+  }
+  const pin = deps.pinActiveConnection(tracked.sourceServerId);
+  if (!pin) {
+    return;
+  }
+  const hostLabel = deps
+    .getSavedHosts()
+    .find((host) => host.serverId === targetServerId)
+    ?.label.trim();
+  try {
+    const delivery = await pin.client.notifyLiveVoiceAgentUpdate({
+      liveSessionId: tracked.liveSessionId,
+      notification: {
+        ...message.payload.notification,
+        // Only the app knows what the user calls this machine, and a call can
+        // reach several of them.
+        ...(hostLabel ? { hostLabel } : {}),
+      },
+    });
+    if (!delivery.delivered || message.payload.notification.reason !== "needs_permission") {
+      forgetRoutedLiveVoiceWork(message.payload.requestId);
+    }
+  } finally {
+    pin.release();
+  }
 }
 
 export async function handleLiveVoiceCrossHostRouteRequest(input: {
   sourceServerId: string;
   sourceClient: LiveVoiceRouteSourceClient;
   deps: LiveVoiceCrossHostRouterDeps;
+  createRequestId?: () => string;
   request: VoiceLiveRouteRequest;
 }): Promise<void> {
   const { sourceServerId, sourceClient, deps, request } = input;
+  const createRequestId = input.createRequestId ?? createDefaultRequestId;
   if (!deps.isAuthorizedSourceCall(sourceServerId, request.liveSessionId)) {
     sendFailure(sourceClient, request, {
       code: "unauthorized_source_call",
@@ -106,49 +196,70 @@ export async function handleLiveVoiceCrossHostRouteRequest(input: {
     return;
   }
 
-  const operation = request.operation;
-  const savedHost = deps.getSavedHosts().find((host) => host.serverId === operation.targetServerId);
-  if (!savedHost) {
-    sendFailure(sourceClient, request, {
-      code: "unknown_host",
-      message: "The requested target is not a saved host.",
-    });
-    return;
-  }
+  await handleLiveVoiceExecuteRouteRequest({
+    sourceServerId,
+    sourceClient,
+    deps,
+    request,
+    operation: request.operation,
+    createRequestId,
+  });
+}
 
-  const snapshot = deps.getHostRuntimeSnapshot(operation.targetServerId);
-  if (snapshot?.connectionStatus !== "online") {
-    sendFailure(sourceClient, request, {
-      code: "host_offline",
-      message: "The requested target host is offline.",
-      retryable: true,
-    });
-    return;
-  }
-
-  if (deps.getHostServerInfo(operation.targetServerId)?.features?.liveVoiceToolExecution !== true) {
-    sendFailure(sourceClient, request, {
-      code: "tool_execution_unsupported",
-      message: "Update the target host to use cross-host Live Voice tools.",
-    });
-    return;
-  }
-
-  const pin = deps.pinActiveConnection(operation.targetServerId);
+async function handleLiveVoiceExecuteRouteRequest(input: {
+  sourceServerId: string;
+  sourceClient: LiveVoiceRouteSourceClient;
+  deps: LiveVoiceCrossHostRouterDeps;
+  request: VoiceLiveRouteRequest;
+  operation: Extract<VoiceLiveRouteRequest["operation"], { kind: "execute_tool" }>;
+  createRequestId: () => string;
+}): Promise<void> {
+  const { sourceServerId, sourceClient, deps, request, operation, createRequestId } = input;
+  const pin = resolveLiveVoiceTargetPin({
+    deps,
+    sourceClient,
+    request,
+    targetServerId: operation.targetServerId,
+  });
   if (!pin) {
+    return;
+  }
+
+  const notifyOnAgentFinish = operation.notifyOnAgentFinish === true;
+  if (
+    notifyOnAgentFinish &&
+    (deps.getHostServerInfo(sourceServerId)?.features?.liveVoiceAgentNotifications !== true ||
+      deps.getHostServerInfo(operation.targetServerId)?.features?.liveVoiceAgentNotifications !==
+        true)
+  ) {
+    pin.release();
     sendFailure(sourceClient, request, {
-      code: "host_offline",
-      message: "The requested target host is offline.",
-      retryable: true,
+      code: "agent_notifications_unsupported",
+      message:
+        "Both the voice host and target host must be upgraded to report background agent updates.",
     });
     return;
+  }
+  const executeRequestId = createRequestId();
+  if (notifyOnAgentFinish) {
+    trackRoutedLiveVoiceWork({
+      requestId: executeRequestId,
+      sourceServerId,
+      targetServerId: operation.targetServerId,
+      liveSessionId: request.liveSessionId,
+    });
   }
 
   try {
-    const toolResult = await pin.client.executeLiveVoiceTool({
+    const execution = await pin.client.executeLiveVoiceTool({
       toolName: operation.toolName,
       arguments: operation.arguments,
+      requestId: executeRequestId,
+      ...(notifyOnAgentFinish ? { notifyOnAgentFinish: true } : {}),
     });
+    if (notifyOnAgentFinish && !execution.backgroundAgentId) {
+      forgetRoutedLiveVoiceWork(executeRequestId);
+    }
     sourceClient.sendLiveVoiceRouteResponse({
       type: "voice.live.route.response",
       payload: {
@@ -158,15 +269,69 @@ export async function handleLiveVoiceCrossHostRouteRequest(input: {
         result: {
           kind: "execute_tool",
           targetServerId: operation.targetServerId,
-          toolResult,
+          toolResult: execution.toolResult,
         },
       },
     });
   } catch (error) {
+    // The call never completed, so nothing on the target is watching for us.
+    forgetRoutedLiveVoiceWork(executeRequestId);
     sendFailure(sourceClient, request, normalizeExecutionError(error));
   } finally {
     pin.release();
   }
+}
+
+function resolveLiveVoiceTargetPin(input: {
+  deps: LiveVoiceCrossHostRouterDeps;
+  sourceClient: LiveVoiceRouteSourceClient;
+  request: VoiceLiveRouteRequest;
+  targetServerId: string;
+}): PinnedHostConnection | null {
+  const { deps, sourceClient, request, targetServerId } = input;
+  const savedHost = deps.getSavedHosts().find((host) => host.serverId === targetServerId);
+  if (!savedHost) {
+    sendFailure(sourceClient, request, {
+      code: "unknown_host",
+      message: "The requested target is not a saved host.",
+    });
+    return null;
+  }
+  if (deps.getHostRuntimeSnapshot(targetServerId)?.connectionStatus !== "online") {
+    sendFailure(sourceClient, request, {
+      code: "host_offline",
+      message: "The requested target host is offline.",
+      retryable: true,
+    });
+    return null;
+  }
+  const targetInfo = deps.getHostServerInfo(targetServerId);
+  if (targetInfo?.features?.liveVoiceToolExecution !== true) {
+    const targetVersion = normalizeOptionalString(targetInfo?.version);
+    sendFailure(sourceClient, request, {
+      code: "tool_execution_unsupported",
+      message: `${savedHost.label.trim() || savedHost.serverId}${
+        targetVersion ? ` is running Paseo ${targetVersion} and` : ""
+      } must be upgraded before Live Voice can run tools on it.`,
+    });
+    return null;
+  }
+  const pin = deps.pinActiveConnection(targetServerId);
+  if (!pin) {
+    sendFailure(sourceClient, request, {
+      code: "host_offline",
+      message: "The requested target host is offline.",
+      retryable: true,
+    });
+  }
+  return pin;
+}
+
+function createDefaultRequestId(): string {
+  const cryptoObject = globalThis.crypto as { randomUUID?: () => string } | undefined;
+  return typeof cryptoObject?.randomUUID === "function"
+    ? cryptoObject.randomUUID()
+    : `live-voice-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function sanitizeHost(
@@ -174,14 +339,35 @@ function sanitizeHost(
   deps: LiveVoiceCrossHostRouterDeps,
 ): VoiceLiveRouteHost {
   const info = deps.getHostServerInfo(host.serverId);
+  const online = deps.getHostRuntimeSnapshot(host.serverId)?.connectionStatus === "online";
+  const toolExecutionSupported = info?.features?.liveVoiceToolExecution === true;
+  const agentNotificationsSupported = info?.features?.liveVoiceAgentNotifications === true;
+  const compatibility = resolveHostCompatibility(
+    online,
+    toolExecutionSupported,
+    agentNotificationsSupported,
+  );
   return {
     serverId: host.serverId,
     label: host.label.trim() || host.serverId,
     hostname: normalizeOptionalString(info?.hostname),
     version: normalizeOptionalString(info?.version),
-    online: deps.getHostRuntimeSnapshot(host.serverId)?.connectionStatus === "online",
-    toolExecutionSupported: info?.features?.liveVoiceToolExecution === true,
+    online,
+    toolExecutionSupported,
+    compatibility,
+    agentNotificationsSupported,
   };
+}
+
+function resolveHostCompatibility(
+  online: boolean,
+  toolExecutionSupported: boolean,
+  agentNotificationsSupported: boolean,
+): VoiceLiveRouteHost["compatibility"] {
+  if (!online) {
+    return "offline";
+  }
+  return toolExecutionSupported && agentNotificationsSupported ? "ready" : "upgrade_required";
 }
 
 function normalizeOptionalString(value: string | null | undefined): string | null {

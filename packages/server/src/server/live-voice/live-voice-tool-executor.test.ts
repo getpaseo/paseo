@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import type { PaseoToolCatalog, PaseoToolRuntimeContext } from "../agent/tools/types.js";
 import { LiveVoiceToolExecutor } from "./live-voice-tool-executor.js";
 
@@ -44,6 +45,8 @@ describe("LiveVoiceToolExecutor", () => {
     const executor = new LiveVoiceToolExecutor({
       createCatalog: () =>
         ({
+          tools: new Map([["list_agents", {}]]),
+          getTool: () => undefined,
           executeTool: async () => {
             throw new Error("Paseo tool not found: made_up_tool");
           },
@@ -56,8 +59,8 @@ describe("LiveVoiceToolExecutor", () => {
         requestId: "execute-request-1",
         ok: false,
         error: {
-          code: "tool_execution_failed",
-          message: "Paseo tool not found: made_up_tool",
+          code: "tool_not_found",
+          message: "Paseo tool not found: made_up_tool. Discover tools before executing.",
           retryable: false,
         },
       },
@@ -115,5 +118,57 @@ describe("LiveVoiceToolExecutor", () => {
         },
       },
     });
+  });
+
+  it("classifies schema validation failures as invalid arguments", async () => {
+    const tool = { name: "list_agents" };
+    const executor = new LiveVoiceToolExecutor({
+      createCatalog: () =>
+        ({
+          tools: new Map([["list_agents", tool]]),
+          getTool: () => tool,
+          executeTool: async (_name: string, input: unknown) => {
+            z.object({ limit: z.number().int().positive() }).parse(input);
+            return { content: [] };
+          },
+        }) as unknown as PaseoToolCatalog,
+    });
+
+    await expect(
+      executor.execute({ ...request(), arguments: { limit: "many" } }),
+    ).resolves.toMatchObject({
+      payload: {
+        ok: false,
+        error: { code: "invalid_tool_arguments", retryable: false },
+      },
+    });
+  });
+  it("passes the background-work hook only when the caller asked to be told", async () => {
+    const runtimeContexts: PaseoToolRuntimeContext[] = [];
+    const onBackgroundAgentStarted = vi.fn();
+    const executor = new LiveVoiceToolExecutor({
+      createCatalog: (runtime) => {
+        runtimeContexts.push(runtime);
+        return {
+          executeTool: async () => {
+            runtime.onBackgroundAgentStarted?.({ agentId: "agent-1" });
+            return { content: [], structuredContent: { agentId: "agent-1" } };
+          },
+        } as unknown as PaseoToolCatalog;
+      },
+    });
+
+    const watched = await executor.execute(
+      { ...request(), toolName: "create_agent", notifyOnAgentFinish: true },
+      { onBackgroundAgentStarted },
+    );
+    await executor.execute(
+      { ...request(), toolName: "create_agent" },
+      { onBackgroundAgentStarted },
+    );
+
+    expect(onBackgroundAgentStarted).toHaveBeenCalledExactlyOnceWith({ agentId: "agent-1" });
+    expect(watched.payload).toMatchObject({ ok: true, backgroundAgentId: "agent-1" });
+    expect(runtimeContexts[1]).toEqual({});
   });
 });

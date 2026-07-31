@@ -12,6 +12,10 @@ initializing → idle → running → idle (or error → closed)
 
 Each live agent in `AgentManager` carries a `lastStatus` of `initializing`, `idle`, `running`, or `error`. `closed` is the persisted, resumable state for an agent record that has no live provider runtime. State transitions persist to disk and stream to subscribed clients via WebSocket.
 
+`idle` means the foreground agent turn ended and the agent can accept another prompt. It does not
+mean that external work mentioned by the agent—CI, a deployment, or another service—has completed.
+Track that work with a heartbeat, schedule, monitoring agent, or a service-specific status check.
+
 ## Runtime residency
 
 An unarchived agent may be `closed` without being deleted or archived. Closing releases its provider
@@ -70,6 +74,9 @@ open. Detach clears the parent and every open-tab label. The surviving child the
 normal root agent immediately, and closing its still-open tab archives it.
 
 Runtime ownership is resolved from explicit workspace ID and caller context, never from `cwd`. Workspace creation is a separate operation with `local | worktree` isolation; agent creation only selects an existing workspace.
+
+Top-level callers must pass an existing `workspaceId`. Agent-scoped callers may omit it to inherit
+the caller's workspace.
 
 Users can also detach an existing subagent from the subagents track. Detach is deliberately a manual lifecycle gesture, not an agent-facing MCP tool. It removes the parent and open-tab lifecycle labels: it does not stop, archive, move, or restart the agent. The agent keeps its current `cwd` and `workspaceId`, leaves the former parent's track, and behaves like a root agent for tab close, workspace activity, and future parent archive.
 

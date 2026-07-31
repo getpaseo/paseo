@@ -1,7 +1,10 @@
 import { describe, expect, test } from "vitest";
 
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
-import { withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
+import {
+  stripInternalPaseoMcpServerFromPersistence,
+  withRuntimePaseoMcpServer,
+} from "./runtime-mcp-config.js";
 
 const BASE_CONFIG: AgentSessionConfig = {
   provider: "claude",
@@ -47,5 +50,45 @@ describe("withRuntimePaseoMcpServer", () => {
     });
 
     expect(result.mcpServers).toBeUndefined();
+  });
+
+  test("strips the injected server from provider persistence metadata", () => {
+    const result = stripInternalPaseoMcpServerFromPersistence({
+      provider: "claude",
+      sessionId: "session-1",
+      nativeHandle: "session-1",
+      metadata: {
+        cwd: "/tmp/agent",
+        model: "test-model",
+        mcpServers: {
+          paseo: {
+            type: "http",
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+            headers: { Authorization: "Bearer sentinel-secret" },
+          },
+          userServer: {
+            type: "http",
+            url: "https://example.test/mcp",
+          },
+        },
+      },
+    });
+
+    expect(result).toEqual({
+      provider: "claude",
+      sessionId: "session-1",
+      nativeHandle: "session-1",
+      metadata: {
+        cwd: "/tmp/agent",
+        model: "test-model",
+        mcpServers: {
+          userServer: {
+            type: "http",
+            url: "https://example.test/mcp",
+          },
+        },
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("sentinel-secret");
   });
 });

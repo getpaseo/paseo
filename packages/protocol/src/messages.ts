@@ -61,6 +61,9 @@ import {
 } from "./browser-automation/rpc-schemas.js";
 import { BrowserAutomationHostCapabilitySchema } from "./browser-automation/capabilities.js";
 import {
+  VoiceLiveAgentNotifyRequestSchema,
+  VoiceLiveAgentNotifyResponseSchema,
+  VoiceLiveAgentUpdateSchema,
   VoiceLiveRouteRequestSchema,
   VoiceLiveRouteResponseSchema,
   VoiceLiveToolExecuteRequestSchema,
@@ -857,6 +860,12 @@ const AgentActiveTurnPayloadSchema = z.object({
   startedAt: z.string().nullable(),
 });
 
+export const AgentFailureSchema = z.object({
+  kind: z.enum(["authentication_required", "provider_error"]),
+  message: z.string(),
+  code: z.string().optional(),
+  diagnostic: z.string().optional(),
+});
 export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
   provider: AgentProviderSchema,
@@ -879,6 +888,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   runtimeInfo: AgentRuntimeInfoSchema.optional(),
   lastUsage: AgentUsageSchema.optional(),
   lastError: z.string().optional(),
+  lastFailure: AgentFailureSchema.optional(),
   title: z.string().nullable(),
   labels: z.record(z.string(), z.string()).default({}),
   requiresAttention: z.boolean().optional(),
@@ -894,6 +904,8 @@ export const AgentListItemPayloadSchema = z.object({
   id: z.string(),
   shortId: z.string(),
   title: z.string().nullable(),
+  workspaceId: z.string().optional(),
+  workspaceName: z.string().optional(),
   provider: AgentProviderSchema,
   model: z.string().nullable(),
   thinkingOptionId: z.string().nullable().optional(),
@@ -3161,6 +3173,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   VoiceLiveStopRequestSchema,
   VoiceLiveRouteResponseSchema,
   VoiceLiveToolExecuteRequestSchema,
+  VoiceLiveAgentNotifyRequestSchema,
   SendAgentMessageRequestSchema,
   WaitForFinishRequestSchema,
   DaemonGetStatusRequestSchema,
@@ -3653,6 +3666,10 @@ export const ServerInfoStatusPayloadSchema = z
         liveVoice: z.boolean().optional(),
         // COMPAT(liveVoiceToolExecution): added in v0.2.5, remove after 2027-01-30.
         liveVoiceToolExecution: z.boolean().optional(),
+        // COMPAT(liveVoiceAgentNotifications): added in v0.2.6, remove after
+        // 2027-02-28. Covers both legs: this daemon watches routed background
+        // work and reports it, and it speaks notifications into a call it hosts.
+        liveVoiceAgentNotifications: z.boolean().optional(),
       })
       .optional(),
   })
@@ -6605,6 +6622,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   VoiceLiveUpdateSchema,
   VoiceLiveRouteRequestSchema,
   VoiceLiveToolExecuteResponseSchema,
+  VoiceLiveAgentUpdateSchema,
+  VoiceLiveAgentNotifyResponseSchema,
   DaemonGetStatusResponseSchema,
   DaemonGetPairingOfferResponseSchema,
   DaemonConfigReloadResponseSchema,

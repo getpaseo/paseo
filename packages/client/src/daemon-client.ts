@@ -160,6 +160,7 @@ import type {
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type {
   LiveVoiceJsonObject,
+  VoiceLiveAgentNotification,
   VoiceLiveRouteRequest,
   VoiceLiveRouteResponse,
   VoiceLiveToolResult,
@@ -3563,7 +3564,13 @@ export class DaemonClient {
     toolName: string;
     arguments: LiveVoiceJsonObject;
     requestId?: string;
-  }): Promise<VoiceLiveToolResult> {
+    /**
+     * Ask this daemon to report how background work started by the tool ends.
+     * Reports arrive as `voice.live.agent.update` on this connection, carrying
+     * the same requestId.
+     */
+    notifyOnAgentFinish?: boolean;
+  }): Promise<{ toolResult: VoiceLiveToolResult; backgroundAgentId?: string }> {
     const payload =
       await this.sendNamespacedCorrelatedSessionRequest<"voice.live.tool.execute.response">({
         ...(input.requestId ? { requestId: input.requestId } : {}),
@@ -3571,6 +3578,7 @@ export class DaemonClient {
           type: "voice.live.tool.execute.request",
           toolName: input.toolName,
           arguments: input.arguments,
+          ...(input.notifyOnAgentFinish ? { notifyOnAgentFinish: true } : {}),
         },
         timeout: LIVE_VOICE_TOOL_EXECUTION_TIMEOUT_MS,
       });
@@ -3581,7 +3589,32 @@ export class DaemonClient {
         ...(payload.error.retryable !== undefined ? { retryable: payload.error.retryable } : {}),
       });
     }
-    return payload.toolResult;
+    return {
+      toolResult: payload.toolResult,
+      ...(payload.backgroundAgentId ? { backgroundAgentId: payload.backgroundAgentId } : {}),
+    };
+  }
+
+  /**
+   * Tell the daemon hosting a Live Voice call about work that just ended, so the
+   * voice model can say so. Only the client that owns the call may do this; the
+   * daemon rejects a liveSessionId this connection does not own.
+   */
+  async notifyLiveVoiceAgentUpdate(input: {
+    liveSessionId: string;
+    notification: VoiceLiveAgentNotification;
+    requestId?: string;
+  }): Promise<{ delivered: boolean }> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"voice.live.agent.notify.response">({
+        ...(input.requestId ? { requestId: input.requestId } : {}),
+        message: {
+          type: "voice.live.agent.notify.request",
+          liveSessionId: input.liveSessionId,
+          notification: input.notification,
+        },
+      });
+    return { delivered: payload.delivered };
   }
 
   /** Reply to a server-initiated Live Voice route request on this exact client. */

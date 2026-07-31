@@ -639,6 +639,7 @@ function serializeAgent(agent: Agent): StoredAgent {
     pendingPermissions: [],
     persistence: null,
     ...(agent.lastError ? { lastError: agent.lastError } : {}),
+    ...(agent.lastFailure ? { lastFailure: agent.lastFailure } : {}),
     title: agent.title,
     labels: agent.labels,
     requiresAttention: agent.requiresAttention ?? false,

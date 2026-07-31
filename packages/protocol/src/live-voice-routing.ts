@@ -22,6 +22,8 @@ export const VoiceLiveRouteHostSchema = z.object({
   version: z.string().nullable(),
   online: z.boolean(),
   toolExecutionSupported: z.boolean(),
+  compatibility: z.enum(["ready", "offline", "upgrade_required"]).optional(),
+  agentNotificationsSupported: z.boolean().optional(),
 });
 
 export const VoiceLiveRouteOperationSchema = z.discriminatedUnion("kind", [
@@ -33,6 +35,10 @@ export const VoiceLiveRouteOperationSchema = z.discriminatedUnion("kind", [
     targetServerId: z.string().min(1),
     toolName: z.string().min(1),
     arguments: LiveVoiceJsonObjectSchema,
+    // The source daemon can take delivery of a work notification for whatever
+    // this tool starts in the background. Optional so an older source daemon,
+    // which has nowhere to deliver one, simply omits it.
+    notifyOnAgentFinish: z.boolean().optional(),
   }),
 ]);
 
@@ -85,6 +91,53 @@ export const VoiceLiveToolExecuteRequestSchema = z.object({
   requestId: z.string().min(1),
   toolName: z.string().min(1),
   arguments: LiveVoiceJsonObjectSchema,
+  // Watch whatever background agent work this tool starts and push a
+  // `voice.live.agent.update` for it to this socket. The target daemon knows
+  // nothing about the call the work belongs to; correlation is the client's job.
+  notifyOnAgentFinish: z.boolean().optional(),
+});
+
+/**
+ * One completed piece of work started by a routed Live Voice tool call.
+ * `reason` stays `z.string()` so a newer daemon can report outcomes an older
+ * client has never heard of.
+ */
+export const VoiceLiveAgentNotificationSchema = z.object({
+  agentId: z.string().min(1),
+  title: z.string().min(1),
+  reason: z.string().min(1),
+  scope: z.literal("agent_turn").optional(),
+  turnId: z.string().min(1).optional(),
+  /** The agent's last assistant message, truncated. Null when it produced none. */
+  summary: z.string().nullable(),
+  /** Filled in by the client, which is the only party that knows host labels. */
+  hostLabel: z.string().min(1).optional(),
+});
+
+/** Target daemon -> the client socket that issued the routed tool call. */
+export const VoiceLiveAgentUpdateSchema = z.object({
+  type: z.literal("voice.live.agent.update"),
+  payload: z.object({
+    requestId: z.string().min(1),
+    notification: VoiceLiveAgentNotificationSchema,
+  }),
+});
+
+/** Client -> the source daemon hosting the call, to speak the notification. */
+export const VoiceLiveAgentNotifyRequestSchema = z.object({
+  type: z.literal("voice.live.agent.notify.request"),
+  requestId: z.string().min(1),
+  liveSessionId: z.string().min(1),
+  notification: VoiceLiveAgentNotificationSchema,
+});
+
+export const VoiceLiveAgentNotifyResponseSchema = z.object({
+  type: z.literal("voice.live.agent.notify.response"),
+  payload: z.object({
+    requestId: z.string().min(1),
+    delivered: z.boolean(),
+    error: VoiceLiveRouteErrorSchema.optional(),
+  }),
 });
 
 export const VoiceLiveToolExecuteResponseSchema = z.object({
@@ -94,6 +147,7 @@ export const VoiceLiveToolExecuteResponseSchema = z.object({
       requestId: z.string().min(1),
       ok: z.literal(true),
       toolResult: VoiceLiveToolResultSchema,
+      backgroundAgentId: z.string().min(1).optional(),
     }),
     z.object({
       requestId: z.string().min(1),
@@ -114,3 +168,7 @@ export type VoiceLiveRouteResult = z.infer<typeof VoiceLiveRouteResultSchema>;
 export type VoiceLiveRouteResponse = z.infer<typeof VoiceLiveRouteResponseSchema>;
 export type VoiceLiveToolExecuteRequest = z.infer<typeof VoiceLiveToolExecuteRequestSchema>;
 export type VoiceLiveToolExecuteResponse = z.infer<typeof VoiceLiveToolExecuteResponseSchema>;
+export type VoiceLiveAgentNotification = z.infer<typeof VoiceLiveAgentNotificationSchema>;
+export type VoiceLiveAgentUpdate = z.infer<typeof VoiceLiveAgentUpdateSchema>;
+export type VoiceLiveAgentNotifyRequest = z.infer<typeof VoiceLiveAgentNotifyRequestSchema>;
+export type VoiceLiveAgentNotifyResponse = z.infer<typeof VoiceLiveAgentNotifyResponseSchema>;

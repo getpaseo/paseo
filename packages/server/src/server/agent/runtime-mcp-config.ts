@@ -1,4 +1,8 @@
-import type { AgentSessionConfig, McpServerConfig } from "./agent-sdk-types.js";
+import type {
+  AgentPersistenceHandle,
+  AgentSessionConfig,
+  McpServerConfig,
+} from "./agent-sdk-types.js";
 
 const PASEO_MCP_SERVER_NAME = "paseo";
 const PASEO_MCP_PATHNAME = "/mcp/agents";
@@ -24,6 +28,34 @@ export function stripInternalPaseoMcpServer(config: AgentSessionConfig): AgentSe
     delete next.mcpServers;
   }
   return next;
+}
+
+/**
+ * Provider persistence is produced from the launch config by several adapters.
+ * The launch config contains the per-daemon Agent MCP bearer, so it must never
+ * be copied back into durable state or a client-facing agent snapshot.
+ */
+export function stripInternalPaseoMcpServerFromPersistence(
+  handle: AgentPersistenceHandle | null,
+): AgentPersistenceHandle | null {
+  if (!handle?.metadata) {
+    return handle;
+  }
+  const stripped = stripInternalPaseoMcpServer({
+    provider: handle.provider,
+    cwd: typeof handle.metadata.cwd === "string" ? handle.metadata.cwd : "",
+    ...handle.metadata,
+  } as AgentSessionConfig);
+  const metadata = { ...handle.metadata };
+  if (stripped.mcpServers) {
+    metadata.mcpServers = stripped.mcpServers;
+  } else {
+    delete metadata.mcpServers;
+  }
+  return {
+    ...handle,
+    metadata,
+  };
 }
 
 export function withRuntimePaseoMcpServer(params: {

@@ -76,6 +76,7 @@ import type {
   ProjectRegistry,
   WorkspaceRegistry,
 } from "../../workspace-registry.js";
+import { resolveWorkspaceDisplayName } from "../../workspace-registry.js";
 import { resolveWorktreeSourceCwd } from "../../workspace-source.js";
 import type { WorkspaceScriptsService } from "../../session/workspace-scripts/workspace-scripts-service.js";
 import {
@@ -149,6 +150,8 @@ export interface PaseoToolHostDependencies {
   resolveCallerContext?: (callerAgentId: string) => VoiceCallerContext | null;
   enableVoiceTools?: boolean;
   voiceOnly?: boolean;
+  /** See {@link PaseoToolRuntimeContext.onBackgroundAgentStarted}. */
+  onBackgroundAgentStarted?: (params: { agentId: string }) => void;
   logger: Logger;
 }
 
@@ -556,6 +559,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     callerAgentId,
     resolveSpeakHandler,
     resolveCallerContext,
+    onBackgroundAgentStarted,
     logger,
   } = options;
   const childLogger = logger.child({ module: "agent", component: "paseo-tool-catalog" });
@@ -1016,7 +1020,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       .min(1)
       .optional()
       .describe(
-        "Existing workspace id. Agent-scoped calls default to the caller workspace; top-level calls create a new local workspace when omitted.",
+        "Existing workspace id. Agent-scoped calls default to the caller workspace; top-level calls require this field.",
       ),
   };
   const agentToAgentInputSchema = {
@@ -1031,6 +1035,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   };
   const canonicalTopLevelInputSchema = {
     ...canonicalCreateAgentFields,
+    workspaceId: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Existing workspace id. Call list_workspaces or create_workspace first; top-level placement is never inferred.",
+      ),
     background: z
       .boolean()
       .optional()
@@ -1235,19 +1246,19 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     {
       title: "Create workspace",
       description:
-        "Create a workspace using an existing local checkout or a new Paseo-managed worktree.",
+        "Create a new workspace. Local placement requires path. Worktree placement requires exactly one source (path or projectId) and an explicit mode.",
       inputSchema: {
         isolation: z.enum(["local", "worktree"]),
         path: z
           .string()
           .optional()
-          .describe("Local directory or source checkout. Defaults to your current workspace."),
+          .describe("Explicit local directory or worktree source checkout."),
         projectId: z.string().optional().describe("Existing project id to own the workspace."),
         title: z.string().trim().min(1).optional(),
         mode: z
           .enum(["branch-off", "checkout-branch", "checkout-pr"])
           .optional()
-          .describe("Worktree creation mode. Defaults to branch-off."),
+          .describe("Required for worktree isolation."),
         worktreeSlug: z.string().trim().min(1).optional(),
         branchName: z
           .string()
@@ -1292,6 +1303,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     }) => {
       let workspace: PersistedWorkspaceRecord;
       if (isolation === "local") {
+        if (!path?.trim()) {
+          throw new Error("path is required for local workspace creation");
+        }
         const cwd = resolveScopedCwd(path, { required: true });
         assertOptionsAbsent(
           [
@@ -1310,6 +1324,14 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         }
         workspace = await options.createDirectoryWorkspace(cwd, title, projectId);
       } else {
+        if (!mode) {
+          throw new Error(
+            "mode is required for worktree isolation: branch-off, checkout-branch, or checkout-pr",
+          );
+        }
+        if ((path ? 1 : 0) + (projectId ? 1 : 0) !== 1) {
+          throw new Error("Worktree creation requires exactly one of path or projectId");
+        }
         let cwd =
           path !== undefined || !projectId ? resolveScopedCwd(path, { required: true }) : null;
         if (!cwd) {
@@ -1424,7 +1446,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     {
       title: "Create agent",
       description:
-        "Create an agent. Agent-scoped creation defaults to your workspace and creates your subagent. Top-level creation without workspaceId creates a new local workspace. Requires provider/model (for example codex/gpt-5.4) and an initial prompt. Do not guess; call list_providers and list_models first if uncertain.",
+        "Create an agent. Agent-scoped creation defaults to your workspace and creates your subagent. Top-level creation requires an explicit workspaceId from list_workspaces or create_workspace. Requires provider/model (for example codex/gpt-5.4) and an initial prompt. Do not guess; call list_providers and list_models first if uncertain.",
       inputSchema: createAgentInputSchema,
       outputSchema: {
         agentId: z.string(),
@@ -1524,6 +1546,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       }
 
       // Return immediately for async creation.
+      if (initialPromptStarted) {
+        onBackgroundAgentStarted?.({ agentId: snapshot.id });
+      }
       const currentSnapshot = agentManager.getAgent(snapshot.id) ?? snapshot;
       const guidance =
         callerAgentId && notifyOnFinish && initialPromptStarted
@@ -1655,7 +1680,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
 
   async function resolveCanonicalCreateAgentWorkspace(
     workspaceId?: string,
-    firstAgentContext?: FirstAgentContext,
+    _firstAgentContext?: FirstAgentContext,
   ): Promise<{
     cwd: string | undefined;
     workspaceId: string;
@@ -1668,14 +1693,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       return { cwd: resolved.cwd, workspaceId };
     }
     if (!callerAgentId) {
-      if (!options.ensureWorkspaceForCreate) {
-        throw new Error("Workspace creation is not configured");
-      }
-      const cwd = process.cwd();
-      return {
-        cwd,
-        workspaceId: await options.ensureWorkspaceForCreate(cwd, firstAgentContext),
-      };
+      throw new Error(
+        "workspaceId is required for top-level create_agent; call list_workspaces or create_workspace first",
+      );
     }
     const caller = resolveCallerAgent();
     if (!caller?.workspaceId) {
@@ -1946,6 +1966,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       }
 
       // Return immediately if background=true
+      onBackgroundAgentStarted?.({ agentId });
       // Re-fetch snapshot since the state may have changed
       const currentSnapshot = agentManager.getAgent(agentId);
 
@@ -2057,6 +2078,12 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       const liveIds = new Set(liveSnapshots.map((snapshot) => snapshot.id));
       const storedRecords = await agentStorage.list();
       const registeredProviderIds = new Set(providerSnapshotManager.listRegisteredProviderIds());
+      const workspaceNames = new Map<string, string>();
+      if (options.workspaceRegistry) {
+        for (const workspace of await options.workspaceRegistry.list()) {
+          workspaceNames.set(workspace.workspaceId, resolveWorkspaceDisplayName(workspace));
+        }
+      }
       const storedAgents = storedRecords
         .filter((record) => !record.internal && !liveIds.has(record.id))
         .filter((record) => includeArchived || !record.archivedAt)
@@ -2066,7 +2093,11 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         )
         .map((record) => buildStoredAgentPayload(record, registeredProviderIds));
       const agents = [...liveAgents, ...storedAgents]
-        .map(toAgentListItemPayload)
+        .map((agent) =>
+          toAgentListItemPayload(agent, {
+            workspaceName: agent.workspaceId ? workspaceNames.get(agent.workspaceId) : undefined,
+          }),
+        )
         .filter((agent) => !requestedCwd || isSameOrDescendantPath(requestedCwd, agent.cwd))
         .filter((agent) => !statusFilter || statusFilter.has(agent.status))
         .filter((agent) => !agent.archivedAt || resolveAgentListActivityTime(agent) >= sinceMs)
@@ -3171,6 +3202,55 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       return {
         content: [],
         structuredContent: ensureValidJson({ success: true }),
+      };
+    },
+  );
+
+  registerTool(
+    "list_paseo_tools",
+    {
+      title: "Discover Paseo tools",
+      description:
+        "List ordinary Paseo tools and their input schemas. Use toolName for one exact definition or query for a compact filtered catalog.",
+      inputSchema: {
+        toolName: z.string().trim().min(1).optional(),
+        query: z.string().trim().min(1).optional(),
+      },
+    },
+    async ({ toolName, query }) => {
+      const normalizedQuery = query?.toLowerCase();
+      const definitions = Array.from(tools.values())
+        .filter((tool) => tool.name !== "list_paseo_tools")
+        .filter((tool) => !toolName || tool.name === toolName)
+        .filter(
+          (tool) =>
+            !normalizedQuery ||
+            `${tool.name} ${tool.title ?? ""} ${tool.description}`
+              .toLowerCase()
+              .includes(normalizedQuery),
+        )
+        .sort((left, right) => left.name.localeCompare(right.name))
+        .slice(0, toolName ? 1 : 100)
+        .map((tool) => {
+          const inputSchema =
+            tool.inputSchema &&
+            typeof tool.inputSchema === "object" &&
+            typeof (tool.inputSchema as { safeParseAsync?: unknown }).safeParseAsync === "function"
+              ? (tool.inputSchema as z.ZodType)
+              : z.object((tool.inputSchema ?? {}) as z.ZodRawShape);
+          return {
+            name: tool.name,
+            title: tool.title ?? tool.name,
+            description: tool.description,
+            inputSchema: z.toJSONSchema(inputSchema),
+          };
+        });
+      if (toolName && definitions.length === 0) {
+        throw new Error(`Paseo tool not found: ${toolName}`);
+      }
+      return {
+        content: [],
+        structuredContent: ensureValidJson({ tools: definitions }),
       };
     },
   );

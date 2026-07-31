@@ -160,4 +160,80 @@ describe("Live Voice cross-host routing protocol", () => {
       }).success,
     ).toBe(false);
   });
+  test("keeps work notifications optional in both directions", () => {
+    // An older source daemon omits the flag; an older target ignores it.
+    expect(
+      VoiceLiveToolExecuteRequestSchema.parse({
+        type: "voice.live.tool.execute.request",
+        requestId: "execute-1",
+        toolName: "create_agent",
+        arguments: {},
+      }).notifyOnAgentFinish,
+    ).toBeUndefined();
+    expect(
+      VoiceLiveRouteRequestSchema.parse({
+        type: "voice.live.route.request",
+        requestId: "route-1",
+        liveSessionId: "live-1",
+        operation: {
+          kind: "execute_tool",
+          targetServerId: "target",
+          toolName: "create_agent",
+          arguments: {},
+        },
+      }).operation,
+    ).toEqual({
+      kind: "execute_tool",
+      targetServerId: "target",
+      toolName: "create_agent",
+      arguments: {},
+    });
+    expect(
+      ServerInfoStatusPayloadSchema.parse({
+        status: "server_info",
+        serverId: "server-1",
+        features: {},
+      }).features?.liveVoiceAgentNotifications,
+    ).toBeUndefined();
+  });
+
+  test("routes a work notification from the target push to the source request", () => {
+    const notification = {
+      agentId: "agent-1",
+      title: "Rebase main",
+      // Open on purpose, so a newer daemon can report an outcome this client
+      // has never heard of.
+      reason: "vanished",
+      summary: null,
+    };
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "voice.live.agent.update",
+        payload: { requestId: "execute-1", notification },
+      }),
+    ).toEqual({
+      type: "voice.live.agent.update",
+      payload: { requestId: "execute-1", notification },
+    });
+
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "voice.live.agent.notify.request",
+        requestId: "notify-1",
+        liveSessionId: "live-1",
+        notification: { ...notification, hostLabel: "Desktop" },
+      }),
+    ).toMatchObject({ liveSessionId: "live-1" });
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "voice.live.agent.notify.response",
+        payload: {
+          requestId: "notify-1",
+          delivered: false,
+          error: { code: "unknown_call", message: "no such call" },
+        },
+      }),
+    ).toMatchObject({ payload: { delivered: false } });
+  });
 });

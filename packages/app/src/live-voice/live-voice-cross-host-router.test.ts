@@ -1,5 +1,6 @@
-import { describe, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import type {
+  VoiceLiveAgentUpdate,
   VoiceLiveRouteRequest,
   VoiceLiveRouteResponse,
   VoiceLiveToolResult,
@@ -13,20 +14,18 @@ import {
   mountLiveVoiceCrossHostRouter,
   type LiveVoiceCrossHostRouterDeps,
 } from "./live-voice-cross-host-router";
+import { resetRoutedLiveVoiceWork } from "./live-voice-work-registry";
 
 function createSourceClient() {
-  let handler: ((request: LiveVoiceRouteRequestMessage) => void) | null = null;
+  const handlers = new Map<string, (message: never) => void>();
   const responses: VoiceLiveRouteResponse[] = [];
   return {
     responses,
     client: {
-      on(
-        _type: "voice.live.route.request",
-        nextHandler: (request: LiveVoiceRouteRequestMessage) => void,
-      ) {
-        handler = nextHandler;
+      on(type: string, nextHandler: (message: never) => void) {
+        handlers.set(type, nextHandler);
         return () => {
-          handler = null;
+          handlers.delete(type);
         };
       },
       sendLiveVoiceRouteResponse(response: VoiceLiveRouteResponse) {
@@ -34,24 +33,44 @@ function createSourceClient() {
       },
     } as unknown as Pick<DaemonClient, "on" | "sendLiveVoiceRouteResponse">,
     request(request: VoiceLiveRouteRequest) {
-      handler?.(request);
+      (
+        handlers.get("voice.live.route.request") as
+          | ((message: LiveVoiceRouteRequestMessage) => void)
+          | undefined
+      )?.(request);
+    },
+    agentUpdate(update: VoiceLiveAgentUpdate) {
+      (
+        handlers.get("voice.live.agent.update") as
+          | ((message: VoiceLiveAgentUpdate) => void)
+          | undefined
+      )?.(update);
     },
   };
 }
 
 function createDeps(input?: {
-  execute?: () => Promise<VoiceLiveToolResult>;
+  execute?: () => Promise<{ toolResult: VoiceLiveToolResult; backgroundAgentId?: string }>;
   authorized?: boolean;
   pinAvailable?: boolean;
   toolExecutionSupported?: boolean;
+  agentNotificationsSupported?: boolean;
+  sourceAgentNotificationsSupported?: boolean;
+  delivered?: boolean;
 }) {
   const release = vi.fn();
+  const notifyLiveVoiceAgentUpdate = vi.fn(async () => ({
+    delivered: input?.delivered !== false,
+  }));
   const executeLiveVoiceTool = vi.fn(
     input?.execute ??
       (async () => ({
-        content: [{ type: "text", text: "done" }],
-        structuredContent: { changed: true },
-        isError: false,
+        toolResult: {
+          content: [{ type: "text", text: "done" }],
+          structuredContent: { changed: true },
+          isError: false,
+        },
+        backgroundAgentId: "agent-1",
       })),
   );
   const deps: LiveVoiceCrossHostRouterDeps = {
@@ -70,19 +89,23 @@ function createDeps(input?: {
         liveVoiceToolExecution:
           serverId !== "offline" &&
           (serverId !== "target" || input?.toolExecutionSupported !== false),
+        liveVoiceAgentNotifications:
+          (serverId === "source"
+            ? input?.sourceAgentNotificationsSupported
+            : input?.agentNotificationsSupported) !== false,
       },
     }),
     pinActiveConnection: () =>
       input?.pinAvailable === false
         ? null
         : {
-            client: { executeLiveVoiceTool },
+            client: { executeLiveVoiceTool, notifyLiveVoiceAgentUpdate },
             release,
           },
     isAuthorizedSourceCall: (serverId, liveSessionId) =>
       input?.authorized !== false && serverId === "source" && liveSessionId === "live-1",
   };
-  return { deps, executeLiveVoiceTool, release };
+  return { deps, executeLiveVoiceTool, notifyLiveVoiceAgentUpdate, release };
 }
 
 function routeRequest(
@@ -98,6 +121,10 @@ function routeRequest(
 }
 
 describe("Live Voice cross-host router", () => {
+  beforeEach(() => {
+    resetRoutedLiveVoiceWork();
+  });
+
   test("lists only sanitized saved-host metadata", async () => {
     const source = createSourceClient();
     const { deps } = createDeps();
@@ -128,6 +155,8 @@ describe("Live Voice cross-host router", () => {
               version: null,
               online: true,
               toolExecutionSupported: true,
+              compatibility: "ready",
+              agentNotificationsSupported: true,
             },
             {
               serverId: "target",
@@ -136,6 +165,8 @@ describe("Live Voice cross-host router", () => {
               version: "0.2.5",
               online: true,
               toolExecutionSupported: true,
+              compatibility: "ready",
+              agentNotificationsSupported: true,
             },
             {
               serverId: "offline",
@@ -144,6 +175,8 @@ describe("Live Voice cross-host router", () => {
               version: null,
               online: false,
               toolExecutionSupported: false,
+              compatibility: "offline",
+              agentNotificationsSupported: true,
             },
           ],
         },
@@ -152,6 +185,33 @@ describe("Live Voice cross-host router", () => {
     expect(JSON.stringify(source.responses[0])).not.toContain("connections");
     expect(JSON.stringify(source.responses[0])).not.toContain("password");
     expect(JSON.stringify(source.responses[0])).not.toContain("daemonPublicKey");
+  });
+
+  test("marks a host without completion notifications as requiring an upgrade", async () => {
+    const source = createSourceClient();
+    const { deps } = createDeps({ agentNotificationsSupported: false });
+    mountLiveVoiceCrossHostRouter({
+      sourceServerId: "source",
+      sourceClient: source.client,
+      deps,
+    });
+
+    source.request(routeRequest({ kind: "list_hosts" }));
+    await vi.waitFor(() => expect(source.responses).toHaveLength(1));
+
+    expect(source.responses[0]?.payload).toMatchObject({
+      ok: true,
+      result: {
+        kind: "list_hosts",
+        hosts: expect.arrayContaining([
+          expect.objectContaining({
+            serverId: "target",
+            compatibility: "upgrade_required",
+            agentNotificationsSupported: false,
+          }),
+        ]),
+      },
+    });
   });
 
   test.each([
@@ -257,6 +317,7 @@ describe("Live Voice cross-host router", () => {
     expect(executeLiveVoiceTool).toHaveBeenCalledExactlyOnceWith({
       toolName: "list_agents",
       arguments: { status: "running" },
+      requestId: expect.any(String),
     });
     expect(release).toHaveBeenCalledTimes(1);
     expect(source.responses[0]?.payload).toEqual({
@@ -344,5 +405,221 @@ describe("Live Voice cross-host router", () => {
       },
     });
     expect(release).toHaveBeenCalledTimes(1);
+  });
+  async function routeBackgroundWork(input?: {
+    agentNotificationsSupported?: boolean;
+    authorized?: boolean;
+  }) {
+    const source = createSourceClient();
+    const harness = createDeps({
+      ...(input?.agentNotificationsSupported === false
+        ? { agentNotificationsSupported: false }
+        : {}),
+      ...(input?.authorized === false ? { authorized: false } : {}),
+    });
+    mountLiveVoiceCrossHostRouter({
+      sourceServerId: "source",
+      sourceClient: source.client,
+      deps: harness.deps,
+      createRequestId: () => "execute-1",
+    });
+    // The report comes back on the target host's own connection, where that
+    // host is mounted as a target rather than as the source of a call.
+    const target = createSourceClient();
+    mountLiveVoiceCrossHostRouter({
+      sourceServerId: "target",
+      sourceClient: target.client,
+      deps: harness.deps,
+    });
+    source.request(
+      routeRequest({
+        kind: "execute_tool",
+        targetServerId: "target",
+        toolName: "create_agent",
+        arguments: { background: true },
+        notifyOnAgentFinish: true,
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(source.responses).toHaveLength(1);
+    });
+    return { source, target, ...harness };
+  }
+
+  const AGENT_UPDATE: VoiceLiveAgentUpdate = {
+    type: "voice.live.agent.update",
+    payload: {
+      requestId: "execute-1",
+      notification: {
+        agentId: "agent-1",
+        title: "Fix the flaky test",
+        reason: "turn_completed",
+        scope: "agent_turn",
+        summary: "Removed the timing dependency.",
+      },
+    },
+  };
+
+  test("asks a capable target to report background work and speaks the report into the call", async () => {
+    const { target, executeLiveVoiceTool, notifyLiveVoiceAgentUpdate } =
+      await routeBackgroundWork();
+
+    expect(executeLiveVoiceTool).toHaveBeenCalledExactlyOnceWith({
+      toolName: "create_agent",
+      arguments: { background: true },
+      requestId: "execute-1",
+      notifyOnAgentFinish: true,
+    });
+
+    target.agentUpdate(AGENT_UPDATE);
+    await vi.waitFor(() => {
+      expect(notifyLiveVoiceAgentUpdate).toHaveBeenCalledTimes(1);
+    });
+    expect(notifyLiveVoiceAgentUpdate).toHaveBeenCalledWith({
+      liveSessionId: "live-1",
+      notification: {
+        agentId: "agent-1",
+        title: "Fix the flaky test",
+        reason: "turn_completed",
+        scope: "agent_turn",
+        summary: "Removed the timing dependency.",
+        // The app is the only party that knows what the user calls this machine.
+        hostLabel: "Desktop",
+      },
+    });
+  });
+
+  test("rejects requested notifications when either host cannot report", async () => {
+    const { source, executeLiveVoiceTool } = await routeBackgroundWork({
+      agentNotificationsSupported: false,
+    });
+
+    expect(executeLiveVoiceTool).not.toHaveBeenCalled();
+    expect(source.responses[0]?.payload).toMatchObject({
+      ok: false,
+      error: { code: "agent_notifications_unsupported" },
+    });
+  });
+
+  test("rejects requested notifications when the source host cannot receive them", async () => {
+    const source = createSourceClient();
+    const { deps, executeLiveVoiceTool } = createDeps({
+      sourceAgentNotificationsSupported: false,
+    });
+    mountLiveVoiceCrossHostRouter({
+      sourceServerId: "source",
+      sourceClient: source.client,
+      deps,
+      createRequestId: () => "execute-1",
+    });
+
+    source.request(
+      routeRequest({
+        kind: "execute_tool",
+        targetServerId: "target",
+        toolName: "create_agent",
+        arguments: { background: true },
+        notifyOnAgentFinish: true,
+      }),
+    );
+    await vi.waitFor(() => expect(source.responses).toHaveLength(1));
+
+    expect(executeLiveVoiceTool).not.toHaveBeenCalled();
+    expect(source.responses[0]?.payload).toMatchObject({
+      ok: false,
+      error: { code: "agent_notifications_unsupported" },
+    });
+  });
+
+  test("forgets correlation when the tool starts no background agent", async () => {
+    const source = createSourceClient();
+    const { deps, notifyLiveVoiceAgentUpdate } = createDeps({
+      execute: async () => ({
+        toolResult: { content: [], structuredContent: { agents: [] } },
+      }),
+    });
+    mountLiveVoiceCrossHostRouter({
+      sourceServerId: "source",
+      sourceClient: source.client,
+      deps,
+      createRequestId: () => "execute-1",
+    });
+    source.request(
+      routeRequest({
+        kind: "execute_tool",
+        targetServerId: "target",
+        toolName: "list_agents",
+        arguments: {},
+        notifyOnAgentFinish: true,
+      }),
+    );
+    await vi.waitFor(() => expect(source.responses).toHaveLength(1));
+
+    source.agentUpdate(AGENT_UPDATE);
+    await Promise.resolve();
+    expect(notifyLiveVoiceAgentUpdate).not.toHaveBeenCalled();
+  });
+
+  test("drops a report once the call it belongs to is no longer owned", async () => {
+    const source = createSourceClient();
+    let authorized = true;
+    const { deps, notifyLiveVoiceAgentUpdate } = createDeps();
+    const authorizingDeps: LiveVoiceCrossHostRouterDeps = {
+      ...deps,
+      isAuthorizedSourceCall: (serverId, liveSessionId) =>
+        authorized && serverId === "source" && liveSessionId === "live-1",
+    };
+    mountLiveVoiceCrossHostRouter({
+      sourceServerId: "source",
+      sourceClient: source.client,
+      deps: authorizingDeps,
+      createRequestId: () => "execute-1",
+    });
+    source.request(
+      routeRequest({
+        kind: "execute_tool",
+        targetServerId: "target",
+        toolName: "create_agent",
+        arguments: { background: true },
+        notifyOnAgentFinish: true,
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(source.responses).toHaveLength(1);
+    });
+
+    authorized = false;
+    source.agentUpdate(AGENT_UPDATE);
+    await Promise.resolve();
+    expect(notifyLiveVoiceAgentUpdate).not.toHaveBeenCalled();
+  });
+
+  test("ignores a report for work this client never routed", async () => {
+    const source = createSourceClient();
+    const { deps, notifyLiveVoiceAgentUpdate } = createDeps();
+    mountLiveVoiceCrossHostRouter({
+      sourceServerId: "source",
+      sourceClient: source.client,
+      deps,
+    });
+
+    source.agentUpdate({
+      ...AGENT_UPDATE,
+      payload: { ...AGENT_UPDATE.payload, requestId: "never-issued" },
+    });
+    await Promise.resolve();
+    expect(notifyLiveVoiceAgentUpdate).not.toHaveBeenCalled();
+  });
+
+  test("speaks a report only once", async () => {
+    const { target, notifyLiveVoiceAgentUpdate } = await routeBackgroundWork();
+
+    target.agentUpdate(AGENT_UPDATE);
+    await vi.waitFor(() => {
+      expect(notifyLiveVoiceAgentUpdate).toHaveBeenCalledTimes(1);
+    });
+    target.agentUpdate(AGENT_UPDATE);
+    await Promise.resolve();
+    expect(notifyLiveVoiceAgentUpdate).toHaveBeenCalledTimes(1);
   });
 });

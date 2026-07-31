@@ -40,6 +40,13 @@ export interface PaseoToolRuntimeContext {
   paseoToolPolicy?: ProviderPaseoToolsPolicy;
   enableVoiceTools?: boolean;
   voiceOnly?: boolean;
+  /**
+   * Called when a tool leaves an agent working in the background, so a caller
+   * that has no agent identity of its own (a routed Live Voice call) can still
+   * learn how that work ends. Tools own the knowledge of which of them start
+   * work; nothing outside has to guess from tool names or results.
+   */
+  onBackgroundAgentStarted?: (params: { agentId: string }) => void;
 }
 
 export type PaseoToolCatalogFactory = (

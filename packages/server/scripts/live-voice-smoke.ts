@@ -259,6 +259,25 @@ async function main(): Promise<void> {
       throw new Error("no voice.live.update {kind:'started'} reached the owning client");
     }
 
+    done = step("speaking a routed work notification into the call");
+    const notifyResult = await withTimeout(
+      "notifyLiveVoiceAgentUpdate",
+      client.notifyLiveVoiceAgentUpdate({
+        liveSessionId: accepted.liveSessionId,
+        notification: {
+          agentId: "smoke-agent",
+          title: "Smoke test session",
+          reason: "finished",
+          summary: "Renamed two files and ran the tests. Everything passed.",
+          hostLabel: "this machine",
+        },
+      }),
+    );
+    if (!notifyResult.delivered) {
+      throw new Error("the daemon did not accept the work notification");
+    }
+    done(await withTimeout("spoken notification", waitForSpokenNotification(page, updates)));
+
     done = step("stopping call");
     await withTimeout(
       "stopLiveVoice",
@@ -320,6 +339,37 @@ function assertPaseoContext(params: {
     throw new Error("the prompt does not tell the model it can act on Paseo");
   }
   return `host ${String(host.hostAgentId)}, ${instructions.length} chars of instructions, ${String(built.itemCount)} seeded items, ${String(built.agentCount)} sessions / ${String(built.workspaceCount)} workspaces, paseoTools=${String(built.paseoToolsAvailable)}`;
+}
+
+/**
+ * A notification is only worth anything if the model actually says it. The
+ * provider's `response.created` on the control channel is the earliest proof it
+ * decided to speak; the daemon's assistant transcript is the proof of what it
+ * said. Wait for whichever lands first and report both.
+ */
+async function waitForSpokenNotification(
+  page: Awaited<ReturnType<Awaited<ReturnType<typeof chromium.launch>>["newPage"]>>,
+  updates: VoiceLiveUpdate["payload"][],
+): Promise<string> {
+  const before = updates.length;
+  const deadline = Date.now() + 30_000;
+  let responded = false;
+  while (Date.now() < deadline) {
+    if (!responded) {
+      responded = await page.evaluate(() => {
+        const events = (window as unknown as Record<string, unknown>).__events as string[];
+        return events.some((raw) => raw.includes("response.created"));
+      });
+    }
+    const transcript = updates
+      .slice(before)
+      .find((update) => update.event.kind === "transcript" && update.event.role === "assistant");
+    if (transcript?.event.kind === "transcript") {
+      return `responded=${String(responded)}, said "${transcript.event.text.slice(0, 120)}"`;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`the model never spoke the notification (response.created=${String(responded)})`);
 }
 
 async function waitForClosedUpdate(updates: VoiceLiveUpdate["payload"][]): Promise<string> {

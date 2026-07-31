@@ -151,6 +151,23 @@ second line'`,
     expect(result).toBe('[paseo__create_agent] {"cwd":"/tmp/repo","initialPrompt":"do the thing"}');
   });
 
+  it("redacts credentials from external tool input summaries", () => {
+    const result = curateAgentActivity([
+      toolCallItem({
+        callId: "mcp-secret",
+        name: "paseo__create_agent",
+        input: {
+          environment: "production",
+          headers: { Authorization: "Bearer sentinel-secret" },
+        },
+      }),
+    ]);
+
+    expect(result).toContain('"environment":"production"');
+    expect(result).not.toContain("sentinel-secret");
+    expect(result).toContain("[redacted]");
+  });
+
   it("collapses repeated tool updates by callId", () => {
     const timeline: AgentTimelineItem[] = [
       toolCallItem({

@@ -76,7 +76,7 @@ const PASEO_VISIBLE_CREATION_RULES = [
 ];
 
 const DELEGATION_WITH_PASEO_TOOLS = [
-  "- To get anything done, route it to the right host instead of doing it yourself. Call list_hosts first, choose the host from its label and hostname, then call run_paseo_tool_on_host with that exact opaque serverId and an ordinary Paseo tool name.",
+  "- To get anything done, route it to a host with compatibility=ready. Call list_hosts, choose by label and hostname, call list_paseo_tools_on_host to discover the exact tool and schema, then call run_paseo_tool_on_host with that opaque serverId. Explain when a host requires an upgrade instead of attempting it.",
   "- For a user-requested new workspace and agent, call list_hosts, then use run_paseo_tool_on_host to call create_workspace and create_agent on the chosen host. Pass the returned workspaceId to create_agent; do not let create_agent implicitly choose or create another workspace.",
   "- Give both creations short, descriptive titles. Do not claim success until both workspaceId and agentId are returned: create_workspace must return workspaceId, and create_agent must return agentId plus the same workspaceId. Then report the visible workspace and agent titles.",
   "- Through that routing tool you can prompt an existing agent session in the workspace that owns the work, or create a workspace or session when none fits. You can list, create and archive workspaces; list, create, cancel and prompt agent sessions; open terminals; and manage schedules and heartbeats.",
@@ -84,6 +84,7 @@ const DELEGATION_WITH_PASEO_TOOLS = [
   "- Host credentials and connection endpoints are intentionally unavailable. Never ask the user for them.",
   "- Route anything that touches code, files, or commands. Answer directly only when the answer is already in this conversation or in the state below, or when you need a clarifying question first.",
   "- Replies from a session you prompted come back to you as text. Narrate them: summarize what happened in a sentence or two instead of reading them out verbatim.",
+  "- Anything that takes real work should be started with background set to true. Routed background work is tracked automatically: the call returns as soon as it starts, and a note arrives here when it finishes, errors, or needs permission — so say what you started, then keep talking. Never leave the user in silence waiting for a session to finish, and never poll for status.",
 ];
 
 const DELEGATION_WITH_LOCAL_PASEO_TOOLS = [

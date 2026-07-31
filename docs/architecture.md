@@ -151,8 +151,8 @@ socket alive across Home/screen lock; the physical-device checks and platform
 constraints are in [mobile-testing.md](mobile-testing.md).
 
 For clients advertising `live_voice_cross_host_router`, the hidden session gets
-only two routing tools: list the hosts visible to the owning app, and execute one
-ordinary top-level Paseo tool on a selected host. The route is:
+only routing tools: list compatible hosts, discover the ordinary tools and
+schemas on one host, and execute one selected tool. The route is:
 
 ```text
 hidden Live Voice host on A
@@ -161,6 +161,25 @@ hidden Live Voice host on A
   -> authenticated existing socket on B
   -> B's top-level Paseo tool catalog
 ```
+
+Work started that way runs longer than a sentence, so the route has a return
+leg. A routed tool call that leaves an agent working asks the target daemon to
+watch its current turn. Permission requests are nonterminal; when the turn
+completes or fails, the target reports to
+the socket that started it, the app matches that report to the call it made it
+for, and the source daemon appends the news to the running conversation
+(`thread/realtime/appendText`), which the model then says out loud.
+
+The target daemon is never told which call the work belongs to — it has no
+liveSessionId and can address no socket but the requesting one. The app holds the
+correlation, and the source daemon still checks that the socket asking it to
+speak owns the call it names. A report for a call that has ended is dropped
+rather than spoken into whatever call came after it.
+
+A turn-completed report does not claim that external work such as CI has
+finished. The spoken summary preserves any pending-work qualification from the
+agent. End-to-end monitoring remains an explicit heartbeat, schedule, monitoring
+agent, or service-specific check.
 
 The app is the authorization boundary because it already owns each saved host
 connection. Route messages contain only opaque server ids, sanitized host

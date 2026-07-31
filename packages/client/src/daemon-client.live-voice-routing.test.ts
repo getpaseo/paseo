@@ -113,13 +113,17 @@ describe("DaemonClient Live Voice cross-host routing", () => {
           structuredContent: { count: 1 },
           isError: false,
         },
+        backgroundAgentId: "agent-1",
       },
     });
 
     await expect(resultPromise).resolves.toEqual({
-      content: [{ type: "text", text: "one agent" }],
-      structuredContent: { count: 1 },
-      isError: false,
+      toolResult: {
+        content: [{ type: "text", text: "one agent" }],
+        structuredContent: { count: 1 },
+        isError: false,
+      },
+      backgroundAgentId: "agent-1",
     });
   });
 

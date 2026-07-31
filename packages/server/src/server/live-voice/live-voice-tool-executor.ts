@@ -6,9 +6,19 @@ import {
 } from "@getpaseo/protocol/live-voice-routing";
 import type { PaseoToolCatalogFactory } from "../agent/tools/types.js";
 import { ensureValidJson } from "../json-utils.js";
+import { ZodError } from "zod";
 
 export interface LiveVoiceToolExecutorOptions {
   createCatalog: PaseoToolCatalogFactory;
+}
+
+export interface LiveVoiceToolExecutionContext {
+  /**
+   * Supplied by the session that owns the requesting socket. Called when the
+   * routed tool leaves an agent working, so the session can report its outcome
+   * back to that socket and nowhere else.
+   */
+  onBackgroundAgentStarted?: (params: { agentId: string }) => void;
 }
 
 /**
@@ -23,9 +33,41 @@ export class LiveVoiceToolExecutor {
     this.createCatalog = options.createCatalog;
   }
 
-  async execute(request: VoiceLiveToolExecuteRequest): Promise<VoiceLiveToolExecuteResponse> {
+  async execute(
+    request: VoiceLiveToolExecuteRequest,
+    context: LiveVoiceToolExecutionContext = {},
+  ): Promise<VoiceLiveToolExecuteResponse> {
     try {
-      const catalog = await this.createCatalog({});
+      let backgroundAgentId: string | undefined;
+      const catalog = await this.createCatalog(
+        request.notifyOnAgentFinish === true && context.onBackgroundAgentStarted
+          ? {
+              onBackgroundAgentStarted: ({ agentId }) => {
+                backgroundAgentId = agentId;
+                context.onBackgroundAgentStarted?.({ agentId });
+              },
+            }
+          : {},
+      );
+      if (typeof catalog.getTool === "function" && !catalog.getTool(request.toolName)) {
+        const suggestions = Array.from(catalog.tools?.keys?.() ?? [])
+          .filter((name) => name.includes(request.toolName) || request.toolName.includes(name))
+          .slice(0, 5);
+        return VoiceLiveToolExecuteResponseSchema.parse({
+          type: "voice.live.tool.execute.response",
+          payload: {
+            requestId: request.requestId,
+            ok: false,
+            error: {
+              code: "tool_not_found",
+              message: suggestions.length
+                ? `Paseo tool not found: ${request.toolName}. Similar tools: ${suggestions.join(", ")}`
+                : `Paseo tool not found: ${request.toolName}. Discover tools before executing.`,
+              retryable: false,
+            },
+          },
+        });
+      }
       const toolResult = VoiceLiveToolResultSchema.parse(
         ensureValidJson(await catalog.executeTool(request.toolName, request.arguments)),
       );
@@ -35,6 +77,7 @@ export class LiveVoiceToolExecutor {
           requestId: request.requestId,
           ok: true,
           toolResult,
+          ...(backgroundAgentId ? { backgroundAgentId } : {}),
         },
       });
     } catch (error) {
@@ -44,7 +87,7 @@ export class LiveVoiceToolExecutor {
           requestId: request.requestId,
           ok: false,
           error: {
-            code: "tool_execution_failed",
+            code: error instanceof ZodError ? "invalid_tool_arguments" : "tool_execution_failed",
             message: error instanceof Error ? error.message : String(error),
             retryable: false,
           },
