@@ -4003,6 +4003,11 @@ test("a failed partial history hydration preserves persisted material progress",
         provider: "codex",
         item: { type: "assistant_message", text: "partial history" },
       };
+      this.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "live event during failed hydration" },
+      });
       throw new Error("provider history unavailable");
     }
   }
@@ -4063,7 +4068,9 @@ test("a failed partial history hydration preserves persisted material progress",
     await resumedManager.flush();
 
     expect(resumedManager.getAgent(created.id)?.historyPrimed).toBe(false);
-    expect(resumedManager.getTimeline(created.id)).toEqual([]);
+    expect(resumedManager.getTimeline(created.id)).toEqual([
+      { type: "assistant_message", text: "live event during failed hydration" },
+    ]);
     await expect(resumedManager.getMaterialProgressSnapshot(created.id)).resolves.toMatchObject({
       rows: null,
       persisted: {
@@ -4097,6 +4104,7 @@ test("a failed partial history hydration preserves persisted material progress",
       { cwd: workdir },
       created.id,
     );
+    expect(continuingManager.getTimeline(created.id)).toEqual([]);
     await continuingManager.hydrateTimelineFromProvider(created.id);
     await continuingManager.flush();
 
@@ -4147,6 +4155,86 @@ test("a failed partial history hydration preserves persisted material progress",
       ],
     });
   } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("successful history hydration orders buffered live events after recovered history", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-live-order-"));
+  const agentId = "00000000-0000-4000-8000-000000000148";
+  const durableTimelineStore = new TestDurableTimelineStore();
+
+  class InterleavedHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: "historical request" },
+      };
+      this.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: "live request" },
+      });
+      this.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "tool_call",
+          callId: "live-write-during-hydration",
+          name: "write",
+          status: "completed",
+          error: null,
+          detail: { type: "write", filePath: "live.txt", content: "live" },
+        },
+      });
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "historical result" },
+      };
+    }
+  }
+
+  class InterleavedHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new InterleavedHistorySession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new InterleavedHistoryClient() },
+    durableTimelineStore,
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.hydrateTimelineFromProvider(created.id);
+    await manager.flush();
+
+    const expectedItems: AgentTimelineItem[] = [
+      { type: "user_message", text: "historical request" },
+      { type: "assistant_message", text: "historical result" },
+      { type: "user_message", text: "live request" },
+      {
+        type: "tool_call",
+        callId: "live-write-during-hydration",
+        name: "write",
+        status: "completed",
+        error: null,
+        detail: { type: "write", filePath: "live.txt", content: "live" },
+      },
+    ];
+    expect(manager.getTimeline(created.id)).toEqual(expectedItems);
+    expect((await manager.getTimelineRows(created.id)).map((row) => row.item)).toEqual(
+      expectedItems,
+    );
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
   }
 });
