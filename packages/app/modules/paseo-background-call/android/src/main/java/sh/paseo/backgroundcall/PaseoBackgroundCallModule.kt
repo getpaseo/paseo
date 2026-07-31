@@ -3,6 +3,8 @@ package sh.paseo.backgroundcall
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
 import expo.modules.kotlin.functions.Queues
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -15,7 +17,11 @@ class PaseoBackgroundCallModule : Module() {
             val activity = requireNotNull(appContext.currentActivity) {
                 "A Live Voice background call must begin while Paseo is visible"
             }
-            check(activity.hasWindowFocus()) {
+            // An app-owned React Native Modal temporarily takes window focus while its
+            // selected action runs. The activity is still visible and Android permits
+            // the foreground-service start, so lifecycle state is the authority here.
+            val activityLifecycle = (activity as? LifecycleOwner)?.lifecycle
+            check(activityLifecycle?.currentState == Lifecycle.State.RESUMED) {
                 "A Live Voice background call must begin while Paseo is visible"
             }
 

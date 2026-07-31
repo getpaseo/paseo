@@ -282,7 +282,9 @@ describe("native live voice session", () => {
   });
 
   it("closes microphone capture when background-call activation fails", async () => {
-    backgroundCallLifetime.begin.mockRejectedValueOnce(new Error("foreground service refused"));
+    const refusal = new Error("foreground service refused");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    backgroundCallLifetime.begin.mockRejectedValueOnce(refusal);
 
     await expect(
       startLiveVoiceSession({
@@ -301,5 +303,10 @@ describe("native live voice session", () => {
     expect(nativeRtc.stream().track.stopped).toBe(true);
     expect(nativeRtc.stream().released).toBe(true);
     expect(backgroundCallLifetime.end).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      "[LiveVoice] Failed to establish background call lifetime",
+      refusal,
+    );
+    warn.mockRestore();
   });
 });

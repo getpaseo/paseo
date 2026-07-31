@@ -160,6 +160,7 @@ export async function startLiveVoiceSession(
         await beginLiveVoiceBackgroundCall();
         backgroundCallActive = true;
       } catch (error) {
+        console.warn("[LiveVoice] Failed to establish background call lifetime", error);
         throw new LiveVoiceSessionError(
           "background_unavailable",
           "Live Voice could not establish background audio support.",
