@@ -5,6 +5,7 @@ import {
   canCreateWorkspaceForHostProject,
   getHostProjectId,
   getHostProjectSourceDirectory,
+  getHostProjectWorktreeCapability,
   hostProjectFromRoute,
   resolveHydratedHostProject,
 } from "./host-project-model";
@@ -98,6 +99,20 @@ describe("host project lookups", () => {
         serverId: "host-a",
       }),
     ).toBe(hydratedProject);
+    expect(
+      getHostProjectWorktreeCapability({
+        project: routeProject!,
+        projects: [],
+        serverId: "host-a",
+      }),
+    ).toBe("pending");
+    expect(
+      getHostProjectWorktreeCapability({
+        project: routeProject!,
+        projects: [hydratedProject],
+        serverId: "host-a",
+      }),
+    ).toBe("unavailable");
   });
 
   test("builds an unhydrated route project around the routed project id", () => {

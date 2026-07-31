@@ -124,6 +124,20 @@ export function resolveHydratedHostProject(input: {
   );
 }
 
+export function getHostProjectWorktreeCapability(input: {
+  project: HostProjectListItem;
+  projects: readonly HostProjectListItem[];
+  serverId: string;
+}): "pending" | "available" | "unavailable" {
+  const hydratedProject = resolveHydratedHostProject(input);
+  if (!hydratedProject) {
+    return "pending";
+  }
+  return canCreateWorktreeForHostProject({ project: hydratedProject, serverId: input.serverId })
+    ? "available"
+    : "unavailable";
+}
+
 export function getHostProjectSourceDirectory(
   project: HostProjectListItem,
   serverId: string,

@@ -67,12 +67,11 @@ import { generateMessageId } from "@/types/stream";
 import { toErrorMessage } from "@/utils/error-messages";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import {
-  canCreateWorktreeForHostProject,
   getHostProjectSourceDirectory,
   getHostProjectId,
+  getHostProjectWorktreeCapability,
   hostProjectFromRoute,
   hostProjectFromWorkspace,
-  resolveHydratedHostProject,
   useHostProjects,
   type HostProjectListItem,
 } from "@/projects/host-projects";
@@ -1555,7 +1554,6 @@ export function NewWorkspaceScreen({
   }, [pickerSearchQuery]);
 
   const workspace = createdWorkspace;
-  const isPending = isNewWorkspacePending({ pendingAction, isDraftHandoffActive });
   const client = useHostRuntimeClient(selectedServerId);
   const isConnected = useHostRuntimeIsConnected(selectedServerId);
   const {
@@ -1640,15 +1638,17 @@ export function NewWorkspaceScreen({
   });
 
   const currentBranch = checkoutStatus?.currentBranch ?? null;
-  const hydratedSelectedProject = selectedProject
-    ? resolveHydratedHostProject({ project: selectedProject, projects, serverId: selectedServerId })
-    : null;
-  const projectCanCreateWorktree = hydratedSelectedProject
-    ? canCreateWorktreeForHostProject({
-        project: hydratedSelectedProject,
+  const projectWorktreeCapability = selectedProject
+    ? getHostProjectWorktreeCapability({
+        project: selectedProject,
+        projects,
         serverId: selectedServerId,
       })
-    : false;
+    : "unavailable";
+  const projectCanCreateWorktree = projectWorktreeCapability === "available";
+  const isPending =
+    isNewWorkspacePending({ pendingAction, isDraftHandoffActive }) ||
+    projectWorktreeCapability === "pending";
   const { effectiveIsolation, setIsolation, canCreateWorktree, showRefPicker } =
     useWorkspaceIsolation({
       supportsMultiplicity: supportsWorkspaceMultiplicity,
