@@ -229,16 +229,18 @@ async function mergeBackupDirectory(livePath: string, backupPath: string | null)
 
 async function restoreDeletedDirectory(livePath: string, backupPath: string | null): Promise<void> {
   if (backupPath === null) return;
+  const liveInfo = await lstat(livePath).catch(() => null);
+  if (liveInfo === null) {
+    await mkdir(path.dirname(livePath), { recursive: true });
+    await rename(backupPath, livePath);
+    return;
+  }
   const backupInfo = await lstat(backupPath);
   if (backupInfo.isDirectory() && !backupInfo.isSymbolicLink()) {
     await mergeBackupDirectory(livePath, backupPath);
     return;
   }
-  if (await lstat(livePath).catch(() => null)) {
-    throw new Error(`Cannot safely restore skill symlink over a recreated path: ${livePath}`);
-  }
-  await mkdir(path.dirname(livePath), { recursive: true });
-  await rename(backupPath, livePath);
+  throw new Error(`Cannot safely restore skill symlink over a recreated path: ${livePath}`);
 }
 
 async function restoreStagedEntry(

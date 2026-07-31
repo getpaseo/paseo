@@ -519,6 +519,34 @@ describe("skills controller", () => {
     expect(await isInstalled(harness.targets, "paseo-loop")).toBe(true);
   });
 
+  it.skipIf(process.platform === "win32")(
+    "renames an untouched staged deletion back with its inode and mode",
+    async () => {
+      const previous: SkillSelection = {
+        mode: "custom",
+        skills: ["paseo", "paseo-loop"],
+      };
+      const next: SkillSelection = { mode: "custom", skills: ["paseo"] };
+      await harness.controller.save(previous);
+      const livePaths = [
+        harness.targets.agentsDir,
+        harness.targets.claudeDir,
+        harness.targets.codexDir,
+      ].map((root) => path.join(root, "paseo-loop"));
+      for (const live of livePaths) await chmod(live, 0o700);
+      const before = await Promise.all(livePaths.map(lstat));
+
+      const transaction = await beginSkillsTransaction(harness.targets, previous, next, [
+        { kind: "delete", name: "paseo-loop" },
+      ]);
+      await transaction.rollback();
+
+      const after = await Promise.all(livePaths.map(lstat));
+      expect(after.map((entry) => entry.ino)).toEqual(before.map((entry) => entry.ino));
+      expect(after.map((entry) => entry.mode & 0o777)).toEqual([0o700, 0o700, 0o700]);
+    },
+  );
+
   it.skipIf(process.platform !== "linux")(
     "stages deletions when an agent skills root is on another filesystem",
     async () => {
