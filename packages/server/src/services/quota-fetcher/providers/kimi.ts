@@ -8,25 +8,14 @@ import type { ProviderUsage } from "../../../server/messages.js";
 import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
 import {
   ApiNumberSchema,
-  ApiOptionalStringSchema,
   fetchProviderApi,
-  toneFromUsedPct,
   unavailableUsage,
 } from "../usage.js";
+import { kimiUsageWindowsFromPayload } from "./kimi-usage.js";
 
 const KIMI_CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098";
 const KIMI_USAGE_URL = "https://api.kimi.com/coding/v1/usages";
 const KIMI_TOKEN_URL = "https://auth.kimi.com/api/oauth/token";
-
-const KimiUsageResponseSchema = z.object({
-  usage: z
-    .object({
-      limit: ApiOptionalStringSchema,
-      remaining: ApiOptionalStringSchema,
-      resetTime: ApiOptionalStringSchema,
-    })
-    .nullish(),
-});
 
 const KimiAuthSchema = z
   .object({
@@ -92,31 +81,14 @@ export class KimiQuotaProvider implements ProviderUsageFetcher {
       return unavailableUsage(this);
     }
 
-    const resp = KimiUsageResponseSchema.parse(await res.json());
-    const limit = resp.usage?.limit === undefined ? null : Number(resp.usage.limit);
-    const remaining = resp.usage?.remaining === undefined ? null : Number(resp.usage.remaining);
-    const hasFiniteLimit = typeof limit === "number" && Number.isFinite(limit) && limit > 0;
-    const hasFiniteRemaining = typeof remaining === "number" && Number.isFinite(remaining);
-    const usedPct =
-      hasFiniteLimit && hasFiniteRemaining
-        ? Math.max(0, Math.min(100, ((limit - remaining) / limit) * 100))
-        : null;
+    const windows = kimiUsageWindowsFromPayload(await res.json(), this.logger);
 
     return {
       providerId: this.providerId,
       displayName: this.displayName,
       status: "available",
       planLabel: null,
-      windows: [
-        {
-          id: "coding_usage",
-          label: "Coding usage",
-          usedPct,
-          remainingPct: usedPct === null ? null : Math.max(0, 100 - usedPct),
-          resetsAt: resp.usage?.resetTime ?? null,
-          tone: toneFromUsedPct(usedPct),
-        },
-      ],
+      windows,
       balances: [],
       details: [],
       error: null,
