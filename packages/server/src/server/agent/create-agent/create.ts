@@ -179,11 +179,17 @@ export async function createAgentCommand(
       ? await resolveSessionCreateAgent(dependencies, input)
       : await resolveMcpCreateAgent(dependencies, input);
 
-  const snapshot = await dependencies.agentManager.createAgent(
-    resolved.config,
-    undefined,
-    resolved.createOptions,
-  );
+  let snapshot: ManagedAgent;
+  try {
+    snapshot = await dependencies.agentManager.createAgent(
+      resolved.config,
+      undefined,
+      resolved.createOptions,
+    );
+  } catch (error) {
+    resolved.setupContinuation?.releaseWithoutStarting();
+    throw error;
+  }
 
   resolved.setupContinuation?.startAfterAgentCreate({
     agentId: snapshot.id,
@@ -251,52 +257,57 @@ async function resolveSessionCreateAgent(
   // this for the worktree path via cleanupCreatedWorktreeAfterFailedAgentCreate;
   // this is a pre-existing gap for directory-only workspace creates, not
   // introduced by this validation).
-  const resolvedCreateConfig = await dependencies.providerSnapshotManager.resolveCreateConfig({
-    cwd: builtSessionConfig.cwd,
-    provider: builtSessionConfig.provider,
-    requestedMode: builtSessionConfig.modeId,
-    featureValues: builtSessionConfig.featureValues,
-    parent: null,
-    unattended: false,
-  });
-  const sessionConfig: AgentSessionConfig = {
-    ...builtSessionConfig,
-    modeId: resolvedCreateConfig.modeId,
-    featureValues: resolvedCreateConfig.featureValues,
-  };
-  const prompt = buildAgentPrompt(trimmedPrompt ?? "", input.images, input.attachments);
-  const hasPromptContent = Array.isArray(prompt) ? prompt.length > 0 : prompt.length > 0;
-  const clientMessageId = normalizeClientMessageId(input.clientMessageId);
-  const runOptions: AgentRunOptions | undefined =
-    input.outputSchema || clientMessageId
-      ? {
-          ...(input.outputSchema ? { outputSchema: input.outputSchema } : {}),
-          ...(clientMessageId ? { clientMessageId } : {}),
-        }
-      : undefined;
-  const workspaceId = setupContinuation ? createdWorkspaceId : input.workspaceId;
+  try {
+    const resolvedCreateConfig = await dependencies.providerSnapshotManager.resolveCreateConfig({
+      cwd: builtSessionConfig.cwd,
+      provider: builtSessionConfig.provider,
+      requestedMode: builtSessionConfig.modeId,
+      featureValues: builtSessionConfig.featureValues,
+      parent: null,
+      unattended: false,
+    });
+    const sessionConfig: AgentSessionConfig = {
+      ...builtSessionConfig,
+      modeId: resolvedCreateConfig.modeId,
+      featureValues: resolvedCreateConfig.featureValues,
+    };
+    const prompt = buildAgentPrompt(trimmedPrompt ?? "", input.images, input.attachments);
+    const hasPromptContent = Array.isArray(prompt) ? prompt.length > 0 : prompt.length > 0;
+    const clientMessageId = normalizeClientMessageId(input.clientMessageId);
+    const runOptions: AgentRunOptions | undefined =
+      input.outputSchema || clientMessageId
+        ? {
+            ...(input.outputSchema ? { outputSchema: input.outputSchema } : {}),
+            ...(clientMessageId ? { clientMessageId } : {}),
+          }
+        : undefined;
+    const workspaceId = setupContinuation ? createdWorkspaceId : input.workspaceId;
 
-  return {
-    config: sessionConfig,
-    createOptions: {
-      labels: input.labels,
-      initialPrompt: trimmedPrompt,
-      env: input.env,
-      initialTitle: input.provisionalTitle,
-      // A legacy git/worktreeName worktree creates a fresh workspace, so the
-      // agent belongs to that workspace, not the source one. createdWorkspaceId
-      // is the freshly created worktree's workspace.
-      workspaceId: requireResolvedWorkspaceId(workspaceId),
-    },
-    prompt: hasPromptContent ? prompt : undefined,
-    runOptions,
-    setupContinuation,
-    background: true,
-    promptFailure: "throw",
-    promptLogger: dependencies.logger.child({
-      clientMessageId: resolveClientMessageId(input.clientMessageId),
-    }),
-  };
+    return {
+      config: sessionConfig,
+      createOptions: {
+        labels: input.labels,
+        initialPrompt: trimmedPrompt,
+        env: input.env,
+        initialTitle: input.provisionalTitle,
+        // A legacy git/worktreeName worktree creates a fresh workspace, so the
+        // agent belongs to that workspace, not the source one. createdWorkspaceId
+        // is the freshly created worktree's workspace.
+        workspaceId: requireResolvedWorkspaceId(workspaceId),
+      },
+      prompt: hasPromptContent ? prompt : undefined,
+      runOptions,
+      setupContinuation,
+      background: true,
+      promptFailure: "throw",
+      promptLogger: dependencies.logger.child({
+        clientMessageId: resolveClientMessageId(input.clientMessageId),
+      }),
+    };
+  } catch (error) {
+    setupContinuation?.releaseWithoutStarting();
+    throw error;
+  }
 }
 
 async function resolveMcpCreateAgent(

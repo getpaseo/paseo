@@ -1,15 +1,51 @@
 export class WorkspaceLifecycleCoordinator {
   private readonly setupTasks = new Map<string, Promise<void>>();
+  private readonly setupTasksByDirectory = new Map<string, Set<Promise<void>>>();
   private readonly archiveOperations = new Map<string, Promise<unknown>>();
+  private readonly directoryOperations = new Map<string, Promise<unknown>>();
 
-  trackWorkspaceSetup(workspaceId: string, task: Promise<void>): void {
+  trackWorkspaceSetup(workspaceId: string, task: Promise<void>, directoryPath?: string): void {
     this.setupTasks.set(workspaceId, task);
+    const directoryTasks = directoryPath
+      ? (this.setupTasksByDirectory.get(directoryPath) ?? new Set<Promise<void>>())
+      : null;
+    if (directoryPath && directoryTasks) {
+      directoryTasks.add(task);
+      this.setupTasksByDirectory.set(directoryPath, directoryTasks);
+    }
     const clearTask = () => {
       if (this.setupTasks.get(workspaceId) === task) {
         this.setupTasks.delete(workspaceId);
       }
+      if (directoryPath && directoryTasks) {
+        directoryTasks.delete(task);
+        if (directoryTasks.size === 0) {
+          this.setupTasksByDirectory.delete(directoryPath);
+        }
+      }
     };
     void task.then(clearTask, clearTask);
+  }
+
+  reserveWorkspaceSetup(workspaceId: string, directoryPath: string): WorkspaceSetupReservation {
+    let releaseReservation: (() => void) | null = null;
+    const reservationTask = new Promise<void>((resolve) => {
+      releaseReservation = resolve;
+    });
+    this.trackWorkspaceSetup(workspaceId, reservationTask, directoryPath);
+
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      releaseReservation?.();
+    };
+    return {
+      completeWith(task) {
+        void task.then(release, release);
+      },
+      release,
+    };
   }
 
   async waitForWorkspaceSetups(workspaceIds: Iterable<string>): Promise<void> {
@@ -35,6 +71,33 @@ export class WorkspaceLifecycleCoordinator {
     void task.then(clearTask, clearTask);
     return task;
   }
+
+  runDirectoryExclusive<T>(directoryPath: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.directoryOperations.get(directoryPath) ?? Promise.resolve();
+    const task = previous
+      .catch(() => undefined)
+      .then(async () => {
+        while (true) {
+          const setupTasks = Array.from(this.setupTasksByDirectory.get(directoryPath) ?? []);
+          if (setupTasks.length === 0) break;
+          await Promise.allSettled(setupTasks);
+        }
+        return operation();
+      });
+    this.directoryOperations.set(directoryPath, task);
+    const clearTask = () => {
+      if (this.directoryOperations.get(directoryPath) === task) {
+        this.directoryOperations.delete(directoryPath);
+      }
+    };
+    void task.then(clearTask, clearTask);
+    return task;
+  }
+}
+
+export interface WorkspaceSetupReservation {
+  completeWith(task: Promise<void>): void;
+  release(): void;
 }
 
 export const defaultWorkspaceLifecycleCoordinator = new WorkspaceLifecycleCoordinator();

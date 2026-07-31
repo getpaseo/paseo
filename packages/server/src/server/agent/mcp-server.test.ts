@@ -803,6 +803,7 @@ function createPaseoWorktreeForMcpTest(options: {
           startAfterAgentCreate: ({ agentId }) => {
             options.startedAgentSetupIds?.push(agentId);
           },
+          releaseWithoutStarting: () => {},
         },
       };
     }
@@ -2401,6 +2402,7 @@ describe("create_agent MCP tool", () => {
                 startAfterAgentCreate: ({ agentId }: { agentId: string }) => {
                   startedAgentSetupIds.push(agentId);
                 },
+                releaseWithoutStarting: () => {},
               },
             }
           : {}),

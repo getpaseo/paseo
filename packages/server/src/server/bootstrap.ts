@@ -1062,6 +1062,7 @@ export async function createPaseoDaemon(
         clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
         killTerminalsForWorkspace: (workspaceIdToKill) =>
           killTerminalsForWorkspace({ terminalManager, sessionLogger: logger }, workspaceIdToKill),
+        workspaceRegistry,
         sessionLogger: logger,
       },
       { scope: { kind: "workspace", workspaceId }, requestId },
@@ -1079,6 +1080,7 @@ export async function createPaseoDaemon(
     findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
     listActiveWorkspaces: listActiveWorkspacesExternal,
     archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
+    workspaceRegistry,
     emit: emitExternalSessionMessage,
     emitAgentRemove: () => undefined,
     emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
@@ -1176,6 +1178,7 @@ export async function createPaseoDaemon(
             },
             workspaceIdToKill,
           ),
+        workspaceRegistry,
         sessionLogger: logger,
       },
       {

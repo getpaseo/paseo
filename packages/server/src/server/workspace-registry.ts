@@ -34,6 +34,13 @@ const PersistedProjectRecordSchema = z.object({
   archivedAt: z.string().nullable(),
 });
 
+const PersistedWorkspaceCleanupPendingSchema = z.object({
+  directoryPath: z.string(),
+  teardownCwd: z.string(),
+  mainRepoRoot: z.string().nullable(),
+  paseoWorktreesRoot: z.string().nullable(),
+});
+
 const PersistedWorkspaceRecordSchema = z.object({
   workspaceId: z.string(),
   projectId: z.string(),
@@ -71,6 +78,9 @@ const PersistedWorkspaceRecordSchema = z.object({
     .transform((value) => value ?? null),
   isPaseoOwnedWorktree: z.boolean().default(false),
   mainRepoRoot: z.string().nullable().default(null),
+  cleanupPending: PersistedWorkspaceCleanupPendingSchema.nullable()
+    .optional()
+    .transform((value) => value ?? null),
   createdAt: z.string(),
   updatedAt: z.string(),
   archivedAt: z.string().nullable(),
@@ -83,6 +93,9 @@ const PersistedWorkspaceRecordSchema = z.object({
 
 export type PersistedProjectRecord = z.infer<typeof PersistedProjectRecordSchema>;
 export type PersistedWorkspaceRecord = z.infer<typeof PersistedWorkspaceRecordSchema>;
+export type PersistedWorkspaceCleanupPending = z.infer<
+  typeof PersistedWorkspaceCleanupPendingSchema
+>;
 
 export interface WorkspaceMutation {
   kind: "upsert" | "archive" | "remove";
@@ -503,6 +516,7 @@ export function createPersistedWorkspaceRecord(input: {
   baseBranch?: string | null;
   isPaseoOwnedWorktree?: boolean;
   mainRepoRoot?: string | null;
+  cleanupPending?: PersistedWorkspaceCleanupPending | null;
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
@@ -516,6 +530,7 @@ export function createPersistedWorkspaceRecord(input: {
     baseBranch: input.baseBranch ?? null,
     isPaseoOwnedWorktree: input.isPaseoOwnedWorktree ?? false,
     mainRepoRoot: input.mainRepoRoot ?? null,
+    cleanupPending: input.cleanupPending ?? null,
     archivedAt: input.archivedAt ?? null,
     pinnedAt: input.pinnedAt ?? null,
   });

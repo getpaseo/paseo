@@ -145,6 +145,7 @@ export type CreatePaseoWorktreeSetupContinuationInput =
 export interface AgentWorktreeSetupContinuation {
   kind: "agent";
   startAfterAgentCreate: (input: { agentId: string }) => void;
+  releaseWithoutStarting: () => void;
 }
 
 export type CreatePaseoWorktreeWorkflowResult = CreatePaseoWorktreeResult & {
@@ -642,10 +643,18 @@ export async function createPaseoWorktreeWorkflow(
         }).then(resolveSetup, resolveSetup);
       }, 0);
     });
-    lifecycleCoordinator.trackWorkspaceSetup(workspace.workspaceId, setupTask);
+    lifecycleCoordinator.trackWorkspaceSetup(
+      workspace.workspaceId,
+      setupTask,
+      createdWorktree.worktree.worktreePath,
+    );
   }
 
   if (setupContinuation.kind === "agent") {
+    const reservation = lifecycleCoordinator.reserveWorkspaceSetup(
+      workspace.workspaceId,
+      createdWorktree.worktree.worktreePath,
+    );
     return {
       ...createdWorktree,
       setupContinuation: {
@@ -663,9 +672,10 @@ export async function createPaseoWorktreeWorkflow(
               setupContinuation.emitLiveTimelineItem({ agentId, item }),
             logger: setupContinuation.logger,
           });
-          lifecycleCoordinator.trackWorkspaceSetup(workspace.workspaceId, setupTask);
+          reservation.completeWith(setupTask);
           void setupTask;
         },
+        releaseWithoutStarting: reservation.release,
       },
     };
   }

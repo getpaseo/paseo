@@ -19,6 +19,10 @@ import {
   resolveWorkspaceIdAtPath,
 } from "./workspace-archive-service.js";
 import { WorkspaceLifecycleCoordinator } from "./workspace-lifecycle-coordinator.js";
+import {
+  createPersistedWorkspaceRecord,
+  FileBackedWorkspaceRegistry,
+} from "./workspace-registry.js";
 
 const cleanupPaths: string[] = [];
 
@@ -273,6 +277,96 @@ describe("archiveByScope", () => {
     const [firstResult, secondResult] = await Promise.all([first, second]);
     expect(secondResult).toEqual(firstResult);
     expect(deps.archiveWorkspaceRecord).toHaveBeenCalledTimes(1);
+  });
+
+  test("archives sibling workspace records separately while serializing shared cleanup", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "concurrent-siblings");
+    const workspaceA = "ws-concurrent-sibling-a";
+    const workspaceB = "ws-concurrent-sibling-b";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        { workspaceId: workspaceA, cwd: worktree.worktreePath, kind: "worktree" },
+        { workspaceId: workspaceB, cwd: worktree.worktreePath, kind: "worktree" },
+      ],
+    });
+    deps.lifecycleCoordinator = new WorkspaceLifecycleCoordinator();
+    deps.archiveWorkspaceRecord = vi.fn(deps.archiveWorkspaceRecord);
+
+    const [resultA, resultB] = await Promise.all([
+      archiveByScope(deps, {
+        scope: { kind: "workspace", workspaceId: workspaceA },
+        requestId: "req-concurrent-sibling-a",
+      }),
+      archiveByScope(deps, {
+        scope: { kind: "workspace", workspaceId: workspaceB },
+        requestId: "req-concurrent-sibling-b",
+      }),
+    ]);
+
+    expect(resultA.archivedWorkspaceIds).toEqual([workspaceA]);
+    expect(resultB.archivedWorkspaceIds).toEqual([workspaceB]);
+    expect(deps.archiveWorkspaceRecord).toHaveBeenCalledTimes(2);
+    expect(deps.archiveWorkspaceRecord).toHaveBeenCalledWith(workspaceA);
+    expect(deps.archiveWorkspaceRecord).toHaveBeenCalledWith(workspaceB);
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+  });
+
+  test("holds final owner recheck and deletion behind sibling setup reservation", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "reserved-sibling");
+    const workspaceId = "ws-reserved-target";
+    const siblingWorkspaceId = "ws-reserved-sibling";
+    const lifecycleCoordinator = new WorkspaceLifecycleCoordinator();
+    const reservation = lifecycleCoordinator.reserveWorkspaceSetup(
+      siblingWorkspaceId,
+      worktree.worktreePath,
+    );
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+        },
+      ],
+    });
+    deps.lifecycleCoordinator = lifecycleCoordinator;
+    const originalArchiveWorkspaceRecord = deps.archiveWorkspaceRecord;
+    let markRecordArchived: (() => void) | undefined;
+    const recordArchived = new Promise<void>((resolveArchived) => {
+      markRecordArchived = resolveArchived;
+    });
+    deps.archiveWorkspaceRecord = async (id: string) => {
+      await originalArchiveWorkspaceRecord(id);
+      deps.activeWorkspaces.push({
+        workspaceId: siblingWorkspaceId,
+        cwd: path.join(worktree.worktreePath, "packages", "app"),
+        kind: "worktree",
+        worktreeRoot: worktree.worktreePath,
+        isPaseoOwnedWorktree: true,
+      });
+      markRecordArchived?.();
+    };
+
+    const archiveTask = archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-reserved-sibling",
+    });
+    await recordArchived;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(existsSync(worktree.worktreePath)).toBe(true);
+
+    reservation.release();
+    const result = await archiveTask;
+    expect(result.removedDirectory).toBe(false);
+    expect(existsSync(worktree.worktreePath)).toBe(true);
   });
 
   test("workspace scope archives the record and removes the directory on last reference", async () => {
@@ -662,6 +756,87 @@ describe("archiveByScope", () => {
     expect(result.archivedWorkspaceIds).not.toContain(workspaceA);
     expect(result.removedDirectory).toBe(false);
     expect(existsSync(worktree.worktreePath)).toBe(true);
+  });
+
+  test("retries persisted physical cleanup after the workspace record is archived", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    writeFileSync(
+      path.join(repoDir, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          teardown: [
+            "node -e \"const fs=require('fs');const marker=process.env.PASEO_SOURCE_CHECKOUT_PATH+'/cleanup-retry.marker';if(!fs.existsSync(marker)){fs.writeFileSync(marker,'retry');process.exit(1)}\"",
+          ],
+        },
+      }),
+    );
+    execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "retry cleanup"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "cleanup-retry");
+    const workspaceId = "ws-cleanup-retry";
+    const registry = new FileBackedWorkspaceRegistry(
+      path.join(tempDir, "workspaces.json"),
+      createLogger(),
+    );
+    await registry.initialize();
+    const timestamp = new Date().toISOString();
+    await registry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId,
+        projectId: "project-cleanup-retry",
+        cwd: worktree.worktreePath,
+        kind: "worktree",
+        displayName: "Cleanup retry",
+        worktreeRoot: worktree.worktreePath,
+        isPaseoOwnedWorktree: true,
+        mainRepoRoot: repoDir,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+      ],
+    });
+    deps.workspaceRegistry = registry;
+    const archiveActiveRecord = deps.archiveWorkspaceRecord;
+    deps.archiveWorkspaceRecord = async (id: string) => {
+      await archiveActiveRecord(id);
+      await registry.archive(id, new Date().toISOString());
+    };
+
+    const firstResult = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-cleanup-retry-first",
+    });
+    expect(firstResult.removedDirectory).toBe(false);
+    expect((await registry.get(workspaceId))?.archivedAt).not.toBeNull();
+    expect((await registry.get(workspaceId))?.cleanupPending).toMatchObject({
+      directoryPath: worktree.worktreePath,
+      teardownCwd: worktree.worktreePath,
+    });
+    expect(existsSync(worktree.worktreePath)).toBe(true);
+
+    const retryResult = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-cleanup-retry-second",
+    });
+    expect(retryResult.removedDirectory).toBe(true);
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+    expect((await registry.get(workspaceId))?.cleanupPending).toBeNull();
   });
 
   test("workspace scope with unknown workspace id is a clean no-op", async () => {

@@ -36,7 +36,11 @@ function fakeWorktreeCreator(args: { repoRoot: string; createdWorkspaceId: strin
       workspace: { workspaceId: args.createdWorkspaceId, cwd: workspaceCwd },
       repoRoot: args.repoRoot,
       created: true,
-      setupContinuation: { kind: "agent" as const, startAfterAgentCreate: () => {} },
+      setupContinuation: {
+        kind: "agent" as const,
+        startAfterAgentCreate: () => {},
+        releaseWithoutStarting: () => {},
+      },
     }) as unknown as CreatePaseoWorktreeWorkflowResult;
 }
 
@@ -120,6 +124,89 @@ test("session create validates the requested mode against the provider's modes",
     }),
   );
   expect(createAgent).not.toHaveBeenCalled();
+});
+
+test.each([
+  ["validation failure", new Error("invalid provider mode")],
+  [
+    "validation abort",
+    Object.assign(new Error("provider resolution aborted"), { name: "AbortError" }),
+  ],
+])("session create releases setup reservation after %s", async (_caseName, failure) => {
+  const releaseWithoutStarting = vi.fn();
+  const startAfterAgentCreate = vi.fn();
+  const stub = createProviderSnapshotManagerStub();
+  stub.resolveCreateConfig.mockRejectedValue(failure);
+  const dependencies: Parameters<typeof createAgentCommand>[0] = {
+    agentManager: {
+      createAgent: vi.fn(),
+    } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
+    agentStorage: {} as Parameters<typeof createAgentCommand>[0]["agentStorage"],
+    logger: createTestLogger(),
+    providerSnapshotManager: stub.manager,
+  };
+
+  await expect(
+    createAgentCommand(dependencies, {
+      kind: "session",
+      config: { provider: "opencode", cwd: "/tmp/paseo-create-test" },
+      workspaceId: "ws-source",
+      labels: {},
+      provisionalTitle: null,
+      firstAgentContext: { attachments: [] },
+      buildSessionConfig: async (config) => ({
+        sessionConfig: config,
+        setupContinuation: {
+          kind: "agent",
+          startAfterAgentCreate,
+          releaseWithoutStarting,
+        },
+        createdWorkspaceId: "ws-created",
+      }),
+    }),
+  ).rejects.toThrow(failure.message);
+
+  expect(releaseWithoutStarting).toHaveBeenCalledOnce();
+  expect(startAfterAgentCreate).not.toHaveBeenCalled();
+});
+
+test("session create releases setup reservation when agent creation fails", async () => {
+  const releaseWithoutStarting = vi.fn();
+  const startAfterAgentCreate = vi.fn();
+  const createFailure = new Error("agent creation failed");
+  const dependencies: Parameters<typeof createAgentCommand>[0] = {
+    agentManager: {
+      createAgent: vi.fn(async () => {
+        throw createFailure;
+      }),
+    } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
+    agentStorage: {} as Parameters<typeof createAgentCommand>[0]["agentStorage"],
+    logger: createTestLogger(),
+    providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+  };
+
+  await expect(
+    createAgentCommand(dependencies, {
+      kind: "session",
+      config: { provider: "codex", cwd: "/tmp/paseo-create-test" },
+      workspaceId: "ws-source",
+      labels: {},
+      provisionalTitle: null,
+      firstAgentContext: { attachments: [] },
+      buildSessionConfig: async (config) => ({
+        sessionConfig: config,
+        setupContinuation: {
+          kind: "agent",
+          startAfterAgentCreate,
+          releaseWithoutStarting,
+        },
+        createdWorkspaceId: "ws-created",
+      }),
+    }),
+  ).rejects.toThrow(createFailure.message);
+
+  expect(releaseWithoutStarting).toHaveBeenCalledOnce();
+  expect(startAfterAgentCreate).not.toHaveBeenCalled();
 });
 
 test("session create applies the resolved mode from the provider create config", async () => {
@@ -264,7 +351,11 @@ test("session create stamps the new worktree's workspaceId when a setup continua
         firstAgentContext: { attachments: [] },
         buildSessionConfig: async (config) => ({
           sessionConfig: config,
-          setupContinuation: { kind: "agent", startAfterAgentCreate: () => {} },
+          setupContinuation: {
+            kind: "agent",
+            startAfterAgentCreate: () => {},
+            releaseWithoutStarting: () => {},
+          },
           createdWorkspaceId: "ws-new-worktree",
         }),
       },

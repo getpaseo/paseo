@@ -489,6 +489,7 @@ describe("create worktree setup boundary", () => {
       expect(trackWorkspaceSetup).toHaveBeenCalledWith(
         result.workspace.workspaceId,
         expect.any(Promise),
+        result.worktree.worktreePath,
       );
       await lifecycleCoordinator.waitForWorkspaceSetups([result.workspace.workspaceId]);
     } finally {
@@ -565,6 +566,64 @@ describe("create worktree setup boundary", () => {
         });
       });
       expect(liveItems).toEqual([]);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("reserves agent setup before returning and releases an unused continuation", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const lifecycleCoordinator = new WorkspaceLifecycleCoordinator();
+    const operation = vi.fn();
+
+    try {
+      const result = await createPaseoWorktreeWorkflow(
+        {
+          paseoHome,
+          createPaseoWorktree: createPaseoWorktreeForTest({ paseoHome }),
+          warmWorkspaceGitData: async () => {},
+          autoNameWorkspaceBranchForFirstAgent: () => {},
+          emitWorkspaceUpdateForWorkspaceId: async () => {},
+          cacheWorkspaceSetupSnapshot: () => {},
+          emit: () => {},
+          sessionLogger: createLogger(),
+          terminalManager: null,
+          archiveWorkspaceRecord: async () => {},
+          serviceProxy: null,
+          scriptRuntimeStore: null,
+          getDaemonTcpPort: null,
+          getDaemonTcpHost: null,
+          onScriptsChanged: null,
+          lifecycleCoordinator,
+        },
+        {
+          cwd: repoDir,
+          worktreeSlug: "agent-setup-reservation",
+          runSetup: false,
+          paseoHome,
+        },
+        {
+          setupContinuation: {
+            kind: "agent",
+            terminalManager: null,
+            appendTimelineItem: async () => true,
+            emitLiveTimelineItem: async () => true,
+            logger: createLogger(),
+          },
+        },
+      );
+
+      const directoryTask = lifecycleCoordinator.runDirectoryExclusive(
+        result.worktree.worktreePath,
+        async () => operation(),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(operation).not.toHaveBeenCalled();
+
+      result.setupContinuation?.releaseWithoutStarting();
+      await directoryTask;
+      expect(operation).toHaveBeenCalledOnce();
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
