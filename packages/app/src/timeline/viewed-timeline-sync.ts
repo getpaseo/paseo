@@ -33,6 +33,7 @@ export interface ViewedTimelineSync extends ViewedTimelineUiBridge {
   setActive(active: boolean): void;
   setConnected(connected: boolean): void;
   setDeliveryMode(mode: TimelineDeliveryMode): void;
+  reconcileAgent(agentId: string): void;
   recoverGap(agentId: string, cursor: { epoch: string; endSeq: number }): void;
   dispose(): void;
 }
@@ -95,9 +96,9 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
   const sources = new Map<string, string[]>();
   const catchUps = new Map<string, CatchUpState>();
   const catchUpGenerations = new Map<string, number>();
-  // Recovery owed but not runnable yet: disconnected, unacknowledged, or parked behind a tail.
+  // Authoritative fetch owed but not runnable yet: disconnected, unacknowledged, or parked.
   // Acknowledgement and tail completion are the only drain points.
-  const pendingGaps = new Map<string, ProjectedTimelineForwardFetchPlan>();
+  const pendingCatchUps = new Map<string, ProjectedTimelineForwardFetchPlan>();
   const lingeringRemovals = new Map<string, () => void>();
   const visibilityCatchUpPending = new Set<string>();
   const visibilityCatchUpErrors = new Set<string>();
@@ -145,7 +146,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     catchUpGenerations.set(agentId, (catchUpGenerations.get(agentId) ?? 0) + 1);
     catchUps.get(agentId)?.cancelRetry?.();
     catchUps.delete(agentId);
-    pendingGaps.delete(agentId);
+    pendingCatchUps.delete(agentId);
   };
 
   const fetchUntilCurrent = async (
@@ -182,9 +183,9 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
         throw new Error(`Timeline page for ${agentId} hasNewer without an end cursor`);
       }
       catchUps.set(agentId, { generation, status: "complete" });
-      const pendingGap = pendingGaps.get(agentId);
-      if (pendingGap) {
-        startCatchUp(agentId, { request: pendingGap, supersede: true });
+      const pendingCatchUp = pendingCatchUps.get(agentId);
+      if (pendingCatchUp) {
+        startCatchUp(agentId, { request: pendingCatchUp, supersede: true });
         return;
       }
       setVisibilityCatchUpReady(agentId);
@@ -211,14 +212,14 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
   ) => {
     const { request, supersede = false } = options;
     if (!connected || !isDesired(agentId) || !isAcknowledged(agentId)) {
-      if (request) pendingGaps.set(agentId, request);
+      if (request) pendingCatchUps.set(agentId, request);
       return;
     }
     const nextRequest = request ?? planTimelineTailFetch();
     const current = catchUps.get(agentId);
     const decision = decideCatchUp({ current, request: nextRequest, supersede });
     if (decision === "keep-and-park") {
-      pendingGaps.set(agentId, nextRequest);
+      pendingCatchUps.set(agentId, nextRequest);
       return;
     }
     if (decision === "keep") {
@@ -228,14 +229,17 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     const generation = (catchUpGenerations.get(agentId) ?? 0) + 1;
     catchUpGenerations.set(agentId, generation);
     catchUps.set(agentId, { generation, status: "running", request: nextRequest });
-    pendingGaps.delete(agentId);
+    pendingCatchUps.delete(agentId);
     void fetchUntilCurrent(agentId, generation, nextRequest);
   };
 
   const startAcknowledgedCatchUps = () => {
     for (const agentId of acknowledged) {
-      const gap = pendingGaps.get(agentId);
-      startCatchUp(agentId, { request: gap, supersede: Boolean(gap) });
+      const pendingCatchUp = pendingCatchUps.get(agentId);
+      startCatchUp(agentId, {
+        request: pendingCatchUp,
+        supersede: Boolean(pendingCatchUp),
+      });
     }
   };
 
@@ -444,6 +448,15 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       notifyListeners();
       if (deliveryMode === "selective" && connected) void reconcileMembership();
       else if (connected) startAcknowledgedCatchUps();
+    },
+    reconcileAgent(agentId) {
+      if (!isDesired(agentId)) return;
+      const request = planTimelineTailFetch();
+      if (catchUps.get(agentId)?.status === "running") {
+        pendingCatchUps.set(agentId, request);
+        return;
+      }
+      startCatchUp(agentId, { request, supersede: true });
     },
     recoverGap(agentId, cursor) {
       if (!isDesired(agentId)) return;

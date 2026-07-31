@@ -201,6 +201,39 @@ test("a gap absorbed by a running tail is recovered after the tail completes", a
   await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
 });
 
+test("an idle reconciliation waits for an in-flight tail and fetches a fresh snapshot", async () => {
+  const world = new TimelineWorld();
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  const membership = await world.nextMembership();
+  membership.succeed();
+  const initialTail = await world.nextFetch("agent-a");
+
+  world.sync.reconcileAgent("agent-a");
+
+  world.expectNoPendingFetch();
+  initialTail.respond({ hasNewer: false });
+
+  const reconciliation = await world.nextFetch("agent-a");
+  expect(reconciliation.request).toEqual({
+    direction: "tail",
+    limit: 40,
+    projection: "projected",
+  });
+  reconciliation.respond({ hasNewer: false });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+});
+
+test("does not reconcile an agent outside the viewed membership", () => {
+  const world = new TimelineWorld();
+  world.sync.setConnected(true);
+
+  world.sync.reconcileAgent("agent-a");
+
+  world.expectNoPendingFetch();
+  world.expectNoPendingMembership();
+});
+
 test("unchanged visible-set publication does not cancel paged catch-up", async () => {
   const world = new TimelineWorld();
   world.sync.setConnected(true);

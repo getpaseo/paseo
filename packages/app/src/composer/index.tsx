@@ -41,7 +41,7 @@ import {
 } from "@/composer/agent-controls";
 import { ContextWindowMeter } from "@/components/context-window-meter";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
-import { useSessionStore } from "@/stores/session-store";
+import { selectAgentTurnPresentation, useSessionStore } from "@/stores/session-store";
 import { useFilePicker } from "@/hooks/use-file-picker";
 import { useFileDrop } from "@/components/file-drop/use-file-drop";
 import type { DroppedItem } from "@/components/file-drop/types";
@@ -913,16 +913,14 @@ function ComposerCancelButton({
 interface ComposerCancelButtonSlotProps extends ComposerCancelButtonProps {
   isAgentRunning: boolean;
   hasSendableContent: boolean;
-  isProcessing: boolean;
 }
 
 function ComposerCancelButtonSlot({
   isAgentRunning,
   hasSendableContent,
-  isProcessing,
   ...rest
 }: ComposerCancelButtonSlotProps) {
-  if (!isAgentRunning || hasSendableContent || isProcessing) return null;
+  if (!isAgentRunning || hasSendableContent) return null;
   return <ComposerCancelButton {...rest} />;
 }
 
@@ -943,7 +941,6 @@ interface ComposerRightControlsSlotProps extends ComposerVoiceModeButtonProps {
   hasAgent: boolean;
   isAgentRunning: boolean;
   hasSendableContent: boolean;
-  isProcessing: boolean;
   isCompact: boolean;
   cancelButton: ReactElement;
 }
@@ -953,7 +950,6 @@ function ComposerRightControlsSlot({
   hasAgent,
   isAgentRunning,
   hasSendableContent,
-  isProcessing,
   isCompact,
   cancelButton,
   ...voiceProps
@@ -961,7 +957,7 @@ function ComposerRightControlsSlot({
   const hideVoiceForCompactInput = isCompact && hasSendableContent;
   const showVoiceModeButton =
     !isVoiceModeForAgent && hasAgent && !isAgentRunning && !hideVoiceForCompactInput;
-  const shouldShowCancelButton = isAgentRunning && !hasSendableContent && !isProcessing;
+  const shouldShowCancelButton = isAgentRunning && !hasSendableContent;
   if (!showVoiceModeButton && !shouldShowCancelButton) return null;
   return (
     <View style={styles.rightControls}>
@@ -1300,7 +1296,10 @@ export function Composer({
     onSubmitMessageRef.current = onSubmitMessage;
   }, [onSubmitMessage]);
 
-  const isAgentRunning = agentState.status === "running";
+  const hasActiveTurn = useSessionStore(
+    (state) => selectAgentTurnPresentation(state.sessions[serverId], agentId).isActive,
+  );
+  const isAgentRunning = agentState.status === "running" || hasActiveTurn;
   const hasAgent = agentState.status !== null;
 
   const queueWriter = useMemo<QueueWriter>(
@@ -1697,7 +1696,6 @@ export function Composer({
       <ComposerCancelButtonSlot
         isAgentRunning={isAgentRunning}
         hasSendableContent={hasSendableContent}
-        isProcessing={isProcessing}
         buttonIconSize={buttonIconSize}
         cancelButtonStyle={cancelButtonStyle}
         handleCancelAgent={handleCancelAgent}
@@ -1716,7 +1714,6 @@ export function Composer({
       isAgentRunning,
       isCancellingAgent,
       isConnected,
-      isProcessing,
       t,
     ],
   );
@@ -1728,7 +1725,6 @@ export function Composer({
         hasAgent={hasAgent}
         isAgentRunning={isAgentRunning}
         hasSendableContent={hasSendableContent}
-        isProcessing={isProcessing}
         isCompact={isCompactLayout}
         buttonIconSize={buttonIconSize}
         handleToggleRealtimeVoice={handleToggleRealtimeVoice}
@@ -1749,7 +1745,6 @@ export function Composer({
       isAgentRunning,
       isConnected,
       isCompactLayout,
-      isProcessing,
       isVoiceModeForAgent,
       isVoiceSwitching,
       realtimeVoiceButtonStyle,

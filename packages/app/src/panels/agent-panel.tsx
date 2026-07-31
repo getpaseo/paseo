@@ -26,7 +26,6 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 import { SidebarCallout } from "@/components/sidebar-callout";
 import { Composer } from "@/composer";
 import { getActiveMessageSubmissions } from "@/composer/submission/model";
-import { resolveTurnPresentation, TURN_LIVENESS_IDLE } from "@/timeline/turn-liveness";
 import { RewindComposerRestoreProvider } from "@/components/rewind/composer-restore";
 import { getProviderIcon } from "@/components/provider-icons";
 import {
@@ -73,7 +72,12 @@ import { WorkspaceDraftAgentTab } from "@/composer/draft/workspace-tab";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { buildDraftStoreKey, generateDraftId } from "@/stores/draft-keys";
 import { usePanelStore } from "@/stores/panel-store";
-import { selectAgentTimelineState, type Agent, useSessionStore } from "@/stores/session-store";
+import {
+  selectAgentTimelineState,
+  selectAgentTurnPresentation,
+  type Agent,
+  useSessionStore,
+} from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import type { Theme } from "@/styles/theme";
@@ -318,6 +322,7 @@ function useAgentPanelDescriptor(
         pendingPermissionCount: agent?.pendingPermissions.length ?? 0,
         requiresAttention: agent?.requiresAttention ?? false,
         attentionReason: agent?.attentionReason ?? null,
+        isTurnActive: selectAgentTurnPresentation(session, target.agentId).isActive,
       };
     }),
   );
@@ -333,7 +338,7 @@ function useAgentPanelDescriptor(
     icon,
     statusBucket: descriptorState.status
       ? deriveSidebarStateBucket({
-          status: descriptorState.status,
+          status: descriptorState.isTurnActive ? "running" : descriptorState.status,
           pendingPermissionCount: descriptorState.pendingPermissionCount,
           requiresAttention: descriptorState.requiresAttention,
           attentionReason: descriptorState.attentionReason,
@@ -1298,14 +1303,12 @@ const AgentStreamSection = memo(function AgentStreamSection({
       ? getActiveMessageSubmissions(state.sessions[serverId]?.messageSubmissions.get(agentId))
       : EMPTY_MESSAGE_SUBMISSIONS,
   );
-  const turnLiveness = useSessionStore((state) =>
-    agentId
-      ? (state.sessions[serverId]?.agentTurnLiveness.get(agentId) ?? TURN_LIVENESS_IDLE)
-      : TURN_LIVENESS_IDLE,
-  );
-  const turnPresentation = useMemo(
-    () => resolveTurnPresentation(turnLiveness, pendingMessageSubmissions),
-    [pendingMessageSubmissions, turnLiveness],
+  const turnPresentation = useSessionStore(
+    useShallow((state) =>
+      agentId
+        ? selectAgentTurnPresentation(state.sessions[serverId], agentId)
+        : { isActive: false, startedAt: null },
+    ),
   );
   const streamItems = streamItemsRaw ?? EMPTY_STREAM_ITEMS;
   const pendingPermissionList = useStoreWithEqualityFn(

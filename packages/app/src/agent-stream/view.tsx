@@ -243,7 +243,7 @@ export interface AgentStreamViewProps {
   streamHead?: StreamItem[];
   pendingPermissions: Map<string, PendingPermission>;
   pendingMessageSubmissions?: readonly PendingMessageSubmission[];
-  turnPresentation?: TurnPresentation;
+  turnPresentation: TurnPresentation;
   routeBottomAnchorRequest?: BottomAnchorRouteRequest | null;
   isAuthoritativeHistoryReady?: boolean;
   toast?: ToastApi | null;
@@ -271,7 +271,6 @@ const AGENT_CAPABILITY_FLAG_KEYS: (keyof AgentCapabilityFlags)[] = [
 
 const EMPTY_STREAM_HEAD: StreamItem[] = [];
 const EMPTY_PENDING_MESSAGE_SUBMISSIONS: readonly PendingMessageSubmission[] = [];
-const IDLE_TURN_PRESENTATION: TurnPresentation = { isActive: false, startedAt: null };
 const GROUPED_TOOL_CALL_DETAIL_MAX_HEIGHT = 200;
 
 function buildChatHistoryAttachment(input: {
@@ -335,7 +334,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       streamHead: providedStreamHead,
       pendingPermissions,
       pendingMessageSubmissions = EMPTY_PENDING_MESSAGE_SUBMISSIONS,
-      turnPresentation = IDLE_TURN_PRESENTATION,
+      turnPresentation,
       routeBottomAnchorRequest = null,
       isAuthoritativeHistoryReady = true,
       toast,

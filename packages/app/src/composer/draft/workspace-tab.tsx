@@ -15,6 +15,7 @@ import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { useDraftAgentCreateFlow, type DraftCreateAttempt } from "@/composer/draft/create-flow";
+import { resolveTurnPresentation, TURN_LIVENESS_IDLE } from "@/timeline/turn-liveness";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-draft-agent-config";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
@@ -542,6 +543,10 @@ export function WorkspaceDraftAgentTab({
       onCreated(result);
     },
   });
+  const turnPresentation = useMemo(
+    () => resolveTurnPresentation(TURN_LIVENESS_IDLE, pendingMessageSubmissions),
+    [pendingMessageSubmissions],
+  );
   useCommandCenterActions({
     sourceId: `draft:${serverId}:${tabId}`,
     enabled: isPaneFocused && !isSubmitting,
@@ -645,6 +650,7 @@ export function WorkspaceDraftAgentTab({
               context={draftAgent}
               streamItems={submittedStreamItems}
               pendingMessageSubmissions={pendingMessageSubmissions}
+              turnPresentation={turnPresentation}
               pendingPermissions={EMPTY_PENDING_PERMISSIONS}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
             />

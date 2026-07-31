@@ -63,7 +63,8 @@ Focus alone does not mutate timeline state; the tail response is compared with t
 authoritative range first.
 
 - The same epoch and `window.maxSeq` is an exact display no-op. The app advances synchronization
-  bookkeeping without replacing timeline arrays, preserving an upward-scrolled viewport.
+  bookkeeping and reconciles canonical submission identities without replacing timeline arrays,
+  preserving an upward-scrolled viewport.
 - When the page overlaps or is adjacent to the local end cursor, only projected items newer than
   that cursor are applied. Already-covered rows are not replayed.
 - A true middle gap, epoch change, or rewind atomically replaces stale canonical history with the
@@ -162,10 +163,12 @@ Turn liveness has one client-side owner. `turn_started` opens the turn; ordered 
 turn during hydration or after a selective stream subscription lapses, but an ordinary idle directory
 update does not close one or settle a submission because it can arrive before the terminal stream
 event. A completed timeline resume commits the response's coherent agent snapshot and closes any open
-turn not backed by newer sequence evidence. Disconnect and replica removal are the destructive close
-boundaries. Footer activity is the owned turn state unioned with unsettled submissions, and its running
-start time comes from lifecycle/submission evidence rather than whichever timeline rows happen to be
-mounted.
+turn not backed by newer sequence evidence. An accepted running-to-idle directory transition requests
+that resume for a viewed agent; it does not close liveness itself. This gives missed terminal events and
+canonical prompt acknowledgements one convergence boundary without making directory delivery order an
+authority for the footer. Disconnect and replica removal are the destructive close boundaries. Footer
+activity is the owned turn state unioned with unsettled submissions, and its running start time comes
+from lifecycle/submission evidence rather than whichever timeline rows happen to be mounted.
 
 Canonical submitted user rows carry the provider's `messageId` and Paseo's optional
 `clientMessageId`. The user-message producer reconciles them by `clientMessageId`, adds provider

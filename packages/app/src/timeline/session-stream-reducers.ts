@@ -760,6 +760,27 @@ function applyAcceptedForwardTimelineUnits(params: {
   return { tail, head, acknowledgedClientMessageIds: [...acknowledgedClientMessageIds] };
 }
 
+function deriveCanonicalAcknowledgements(params: {
+  units: TimelineUnit[];
+  epoch: string;
+  currentTail: StreamItem[];
+  currentHead: StreamItem[];
+}): string[] {
+  let tail = params.currentTail;
+  let head = params.currentHead;
+  const acknowledged = new Set<string>();
+  for (const unit of params.units) {
+    if (unit.event.type !== "timeline" || unit.event.item.type !== "user_message") continue;
+    const applied = applyCanonicalForwardUnit({ tail, head, unit, epoch: params.epoch });
+    tail = applied.tail;
+    head = applied.head;
+    for (const clientMessageId of applied.acknowledgedClientMessageIds) {
+      acknowledged.add(clientMessageId);
+    }
+  }
+  return [...acknowledged];
+}
+
 function applyTimelineIncrementalPath(args: {
   timelineUnits: TimelineUnit[];
   payload: ProcessTimelineResponseInput["payload"];
@@ -949,7 +970,12 @@ export function processTimelineResponse(
       cursorChanged: false,
       older: "unchanged",
       sideEffects: [],
-      acknowledgedClientMessageIds: [],
+      acknowledgedClientMessageIds: deriveCanonicalAcknowledgements({
+        units: timelineUnits,
+        epoch: payload.epoch,
+        currentTail,
+        currentHead,
+      }),
     };
   } else if (replace || resumeTailPolicy.kind === "replace") {
     const isResumeReplacement = resumeTailPolicy.kind === "replace";

@@ -74,7 +74,7 @@ function createDirectory(serverId: string): {
   serverIds.add(serverId);
   const client = new FakeDirectoryClient();
   const directory = new DirectorySync(serverId, {
-    drainQueuedAgentMessage: () => undefined,
+    onAgentStoppedRunning: () => undefined,
     markAgentLoading: () => undefined,
     markAgentReady: () => undefined,
     markAgentError: () => undefined,

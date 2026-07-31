@@ -45,6 +45,8 @@ interface TurnFrame {
   attachment: ElementFrame;
   footerRow: ElementFrame;
   spinner: ElementFrame;
+  agentTab: ElementFrame;
+  tabProgress: ElementFrame;
   interruptControl: ElementFrame;
   composer: ElementFrame & { value: string | null };
   contentChildren: ContentChildFrame[];
@@ -199,6 +201,15 @@ async function recordTurnFrames(page: Page, prompt: string): Promise<void> {
     };
     const findImageAttachment = (row: Element | undefined) =>
       row?.querySelector('[role="button"][aria-label="Open image attachment"]');
+    const findAgentTabState = () => {
+      const agentTab = Array.from(
+        document.querySelectorAll('[data-testid^="workspace-tab-agent_"]'),
+      ).find((candidate) => isVisible(candidate));
+      return {
+        agentTab,
+        tabProgress: agentTab?.querySelector('[role="progressbar"][aria-label="Agent running"]'),
+      };
+    };
     const sample = () => {
       const viewport = Array.from(
         document.querySelectorAll('[data-testid="agent-chat-scroll"]'),
@@ -221,6 +232,7 @@ async function recordTurnFrames(page: Page, prompt: string): Promise<void> {
       ).find((candidate) =>
         /stop agent|canceling agent/i.test(candidate.getAttribute("aria-label") ?? ""),
       );
+      const { agentTab, tabProgress } = findAgentTabState();
       const scrollFrame = snapshot(viewport);
       const contentChildren = Array.from(viewport?.firstElementChild?.children ?? []).map(
         (child, index): ContentChildFrame =>
@@ -239,6 +251,8 @@ async function recordTurnFrames(page: Page, prompt: string): Promise<void> {
         attachment: snapshot(attachment, viewport),
         footerRow: snapshot(footerRow, viewport, spinner.painted),
         spinner,
+        agentTab: snapshot(agentTab),
+        tabProgress: snapshot(tabProgress),
         interruptControl: snapshot(interrupt),
         composer: {
           ...snapshot(composerRoot ?? composer),
@@ -278,7 +292,10 @@ async function waitForRecordedFrames(
           return frames.filter((frame) => {
             if (input.predicate === "user-visible") return frame.userRow.visible;
             return (
-              frame.interruptControl.painted && frame.footerRow.painted && frame.spinner.painted
+              frame.interruptControl.painted &&
+              frame.footerRow.painted &&
+              frame.spinner.painted &&
+              frame.tabProgress.painted
             );
           }).length;
         },
@@ -416,6 +433,14 @@ function collectElementViolations(
       reason: "working spinner was not painted",
     },
     {
+      passes: hasPaintedLayout(frame.tabProgress),
+      reason: "selected tab running indicator was not painted",
+    },
+    {
+      passes: hasPaintedLayout(frame.interruptControl),
+      reason: "interrupt control was not painted",
+    },
+    {
       passes: [hasPaintedLayout(frame.composer), frame.composer.value === ""].every(Boolean),
       reason: "composer was not painted and empty",
     },
@@ -483,7 +508,8 @@ function expectAtomicIdleToRunningTransition(frames: TurnFrame[]): void {
       index >= first &&
       frame.interruptControl.painted &&
       frame.footerRow.painted &&
-      frame.spinner.painted,
+      frame.spinner.painted &&
+      frame.tabProgress.painted,
   );
   const transition = frames.slice(first);
   const baseline = transition[0];
@@ -519,6 +545,45 @@ function expectAtomicIdleToRunningTransition(frames: TurnFrame[]): void {
   expect(
     violations,
     `transition violations:\n${violations.map(({ frame, reason }) => `frame ${frame}: ${reason}`).join("\n")}\n\nframe record:\n${formatFrames(frames, [failure, running])}`,
+  ).toEqual([]);
+}
+
+function expectAtomicFirstPromptTransition(frames: TurnFrame[]): void {
+  expectRowContinuity(frames);
+  const first = frames.findIndex((frame) => hasPaintedLayout(frame.userRow));
+  const transition = frames.slice(first);
+  const violations: FrameViolation[] = [];
+  for (const [offset, frame] of transition.entries()) {
+    const index = first + offset;
+    violations.push(
+      ...violationsForChecks(index, [
+        {
+          passes: hasPaintedLayout(frame.footerRow),
+          reason: "footer was not painted with the first prompt",
+        },
+        {
+          passes: hasPaintedLayout(frame.spinner),
+          reason: "working spinner was not painted with the first prompt",
+        },
+        {
+          passes: hasPaintedLayout(frame.composer) && frame.composer.value === "",
+          reason: "composer was not painted and empty with the first prompt",
+        },
+        {
+          passes: !frame.agentTab.mounted || hasPaintedLayout(frame.tabProgress),
+          reason: "created agent tab appeared without running state",
+        },
+        {
+          passes: !frame.agentTab.mounted || hasPaintedLayout(frame.interruptControl),
+          reason: "created agent appeared without its interrupt control",
+        },
+      ]),
+    );
+  }
+  const failure = violations[0]?.frame ?? Math.max(first, 0);
+  expect(
+    violations,
+    `transition violations:\n${violations.map(({ frame, reason }) => `frame ${frame}: ${reason}`).join("\n")}\n\nframe record:\n${formatFrames(frames, failure)}`,
   ).toEqual([]);
 }
 
@@ -593,7 +658,7 @@ test("keeps the first prompt of a new agent in place through authoritative hydra
     await expect(submittedRow).toBeVisible();
     await gate.waitForAgentStreamItem("user_message");
     await recordPaintsFor(page, 80);
-    expectRowContinuity(await stopTurnFrameRecording(page));
+    expectAtomicFirstPromptTransition(await stopTurnFrameRecording(page));
   } finally {
     await workspace.cleanup();
   }

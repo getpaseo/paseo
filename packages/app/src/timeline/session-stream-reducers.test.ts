@@ -250,7 +250,8 @@ const baseStreamInput: ProcessAgentStreamEventInput = {
 
 describe("processTimelineResponse", () => {
   it("discards an unchanged resume tail without replacing timeline state", () => {
-    const currentTail = [makeAssistantItem("existing tail", "existing-tail")];
+    const submitted = makeSubmittedUserMessage("local prompt", "client-message");
+    const currentTail = [submitted, makeAssistantItem("existing tail", "existing-tail")];
     const currentHead = [makeAssistantItem("existing head", "existing-head")];
 
     const result = processTimelineResponse({
@@ -264,7 +265,18 @@ describe("processTimelineResponse", () => {
         window: { minSeq: 1, maxSeq: 40, nextSeq: 41 },
         startCursor: { seq: 1 },
         endCursor: { seq: 40 },
-        entries: [makeTimelineEntry(1, "existing tail", "assistant_message", 40)],
+        entries: [
+          {
+            ...makeTimelineEntry(1, "provider prompt", "user_message"),
+            item: {
+              type: "user_message",
+              text: "provider prompt",
+              messageId: "provider-message",
+              clientMessageId: "client-message",
+            },
+          },
+          makeTimelineEntry(2, "existing tail", "assistant_message", 40),
+        ],
       },
     });
 
@@ -272,6 +284,7 @@ describe("processTimelineResponse", () => {
     expect(result.tail).toBe(currentTail);
     expect(result.head).toBe(currentHead);
     expect(result.cursorChanged).toBe(false);
+    expect(result.acknowledgedClientMessageIds).toEqual(["client-message"]);
     expect(result.sideEffects).toEqual([{ type: "flush_pending_updates" }]);
   });
 

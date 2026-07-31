@@ -631,6 +631,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       }
 
       if (result.commit === "discard") {
+        if (result.acknowledgedClientMessageIds.length > 0) {
+          setAgentStreamState(serverId, agentId, {
+            acknowledgedClientMessageIds: result.acknowledgedClientMessageIds,
+          });
+        }
         markAgentHistorySynchronized(serverId, agentId);
       } else {
         applyAgentTimelineResponseState(serverId, agentId, {
@@ -664,6 +669,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       markAgentHistorySynchronized,
       recoverTimelineGap,
       serverId,
+      setAgentStreamState,
       setInitializingAgents,
     ],
   );
@@ -730,6 +736,14 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   useEffect(() => {
     viewedTimelineSyncRef.current?.setConnected(isConnected);
   }, [isConnected]);
+
+  useEffect(
+    () =>
+      getHostRuntimeStore().subscribeAgentStoppedRunning(serverId, (agentId) => {
+        viewedTimelineSyncRef.current?.reconcileAgent(agentId);
+      }),
+    [serverId],
+  );
 
   // Daemon message handlers - directly update Zustand store
   useEffect(() => {

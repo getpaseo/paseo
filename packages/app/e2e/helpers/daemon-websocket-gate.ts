@@ -184,8 +184,24 @@ export async function installDaemonWebSocketGate(page: Page) {
   const clientRequestCounts = new Map<string, number>();
   const timelineRequestCounts = new Map<string, number>();
   const serverMessageCounts = new Map<string, number>();
+  const agentStreamEventCounts = new Map<string, number>();
   const agentStreamItemCounts = new Map<string, number>();
   const serverMessageWaiters = new Set<() => void>();
+
+  const recordServerMessage = (message: ClientRequest | null): void => {
+    const messageType = typeof message?.type === "string" ? message.type : null;
+    const itemType = readAgentStreamItemType(message);
+    const eventType = readAgentStreamEventType(message);
+    if (messageType)
+      serverMessageCounts.set(messageType, (serverMessageCounts.get(messageType) ?? 0) + 1);
+    if (itemType)
+      agentStreamItemCounts.set(itemType, (agentStreamItemCounts.get(itemType) ?? 0) + 1);
+    if (eventType)
+      agentStreamEventCounts.set(eventType, (agentStreamEventCounts.get(eventType) ?? 0) + 1);
+    if (!messageType && !itemType && !eventType) return;
+    for (const resolve of serverMessageWaiters) resolve();
+    serverMessageWaiters.clear();
+  };
 
   await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
     if (!acceptingConnections) {
@@ -258,23 +274,7 @@ export async function installDaemonWebSocketGate(page: Page) {
         forceTimelineEpochReset && serverMessage?.type === "fetch_agent_timeline_response";
       outboundMessage = forceTimelineReset(outboundMessage, shouldForceTimelineReset);
       if (shouldForceTimelineReset) forceTimelineEpochReset = false;
-      if (typeof serverMessage?.type === "string") {
-        serverMessageCounts.set(
-          serverMessage.type,
-          (serverMessageCounts.get(serverMessage.type) ?? 0) + 1,
-        );
-        for (const resolve of serverMessageWaiters) resolve();
-        serverMessageWaiters.clear();
-      }
-      const agentStreamItemType = readAgentStreamItemType(serverMessage);
-      if (agentStreamItemType) {
-        agentStreamItemCounts.set(
-          agentStreamItemType,
-          (agentStreamItemCounts.get(agentStreamItemType) ?? 0) + 1,
-        );
-        for (const resolve of serverMessageWaiters) resolve();
-        serverMessageWaiters.clear();
-      }
+      recordServerMessage(serverMessage);
       if (shouldHoldServerMessage(serverMessage, heldServerMessageType, heldAgentUpdate)) {
         heldServerMessage = { browser: ws, message: outboundMessage };
         resolveHeldServerMessage?.();
@@ -469,6 +469,11 @@ export async function installDaemonWebSocketGate(page: Page) {
     },
     async waitForAgentStreamItem(type: string, count = 1): Promise<void> {
       while ((agentStreamItemCounts.get(type) ?? 0) < count) {
+        await new Promise<void>((resolve) => serverMessageWaiters.add(resolve));
+      }
+    },
+    async waitForAgentStreamEvent(type: string, count = 1): Promise<void> {
+      while ((agentStreamEventCounts.get(type) ?? 0) < count) {
         await new Promise<void>((resolve) => serverMessageWaiters.add(resolve));
       }
     },

@@ -35,6 +35,17 @@ export async function expectRunningAgentChrome(page: Page, title: string): Promi
   await expectInlineWorkingIndicator(page);
 }
 
+export async function expectAgentSurfacesIdle(page: Page, title: string): Promise<void> {
+  const tab = page.getByRole("button", { name: title, exact: true });
+
+  await expect(tab).toBeVisible({ timeout: 30_000 });
+  await expect(tab.getByRole("progressbar", { name: "Agent running" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /stop agent|canceling agent/i })).toHaveCount(0);
+  await expect(page.getByTestId("turn-working-indicator")).toHaveCount(0);
+  await expect(page.getByTestId("turn-working-elapsed")).toHaveCount(0);
+  await expectTurnCopyButton(page);
+}
+
 export async function expectTurnCopyButton(page: Page): Promise<void> {
   await expect(page.getByRole("button", { name: "Copy turn" }).first()).toBeVisible({
     timeout: 30_000,

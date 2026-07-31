@@ -15,6 +15,7 @@ import {
 import {
   acceptMessageSubmission,
   beginMessageSubmission,
+  getActiveMessageSubmissions,
   observeMessageSubmissionCanonical,
   rejectMessageSubmission,
   type MessageSubmissionRecord,
@@ -54,7 +55,10 @@ import {
 } from "@/utils/workspace-agent-activity";
 import {
   applyTurnLivenessTransition,
+  resolveTurnPresentation,
+  TURN_LIVENESS_IDLE,
   type TurnLiveness,
+  type TurnPresentation,
   type TurnLivenessTransition,
 } from "@/timeline/turn-liveness";
 
@@ -375,6 +379,16 @@ export function selectAgentTimelineState(
     };
   }
   return items.length > 0 ? { status: "painted", items } : { status: "cold" };
+}
+
+export function selectAgentTurnPresentation(
+  session: SessionState | undefined,
+  agentId: string,
+): TurnPresentation {
+  return resolveTurnPresentation(
+    session?.agentTurnLiveness.get(agentId) ?? TURN_LIVENESS_IDLE,
+    getActiveMessageSubmissions(session?.messageSubmissions.get(agentId)),
+  );
 }
 
 export type WorkspaceRestoreStatus = "restoring" | "failed" | "needs-host-upgrade";

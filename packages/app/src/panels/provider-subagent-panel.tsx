@@ -20,6 +20,7 @@ import type { PendingPermission } from "@/types/shared";
 import type { StreamItem } from "@/types/stream";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
+import type { TurnPresentation } from "@/timeline/turn-liveness";
 
 const EMPTY_PERMISSIONS = new Map<string, PendingPermission>();
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
@@ -158,6 +159,10 @@ function ProviderSubagentPanel() {
     }),
     [isLoadingOlder, loadOlder, progressKey, timeline?.hasOlder],
   );
+  const turnPresentation = useMemo<TurnPresentation>(
+    () => ({ isActive: descriptor?.status === "running", startedAt: null }),
+    [descriptor?.status],
+  );
 
   if (serverInfo && !supported) {
     return (
@@ -175,6 +180,7 @@ function ProviderSubagentPanel() {
         context={streamContext}
         streamItems={timeline?.tail ?? EMPTY_STREAM_ITEMS}
         streamHead={timeline?.head ?? EMPTY_STREAM_ITEMS}
+        turnPresentation={turnPresentation}
         pendingPermissions={EMPTY_PERMISSIONS}
         isAuthoritativeHistoryReady
         onOpenWorkspaceFile={openFileInWorkspace}
