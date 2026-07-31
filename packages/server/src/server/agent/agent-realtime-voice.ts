@@ -41,6 +41,13 @@ export interface AgentRealtimeVoiceStartParams {
   includeStartupContext?: boolean;
 }
 
+/** A conversation item appended to a call that is already running. */
+export interface AgentRealtimeVoiceAppendTextParams {
+  text: string;
+  /** Defaults to the provider's own default (`user`) when omitted. */
+  role?: "user" | "developer" | "assistant";
+}
+
 /**
  * The subset of a provider session needed to run a realtime voice call. Only
  * providers whose session implements all of it can host Live Voice.
@@ -48,6 +55,12 @@ export interface AgentRealtimeVoiceStartParams {
 export interface AgentRealtimeVoiceSession {
   realtimeStart(params: AgentRealtimeVoiceStartParams): Promise<void>;
   realtimeStop(): Promise<void>;
+  /**
+   * Puts text into the running conversation from outside it. This is how the
+   * daemon tells the voice model about something that happened while the user
+   * was not speaking.
+   */
+  realtimeAppendText(params: AgentRealtimeVoiceAppendTextParams): Promise<void>;
   subscribeRealtimeEvents(callback: (event: AgentRealtimeVoiceEvent) => void): () => void;
 }
 
@@ -57,6 +70,7 @@ export function asAgentRealtimeVoiceSession(session: unknown): AgentRealtimeVoic
   if (
     typeof candidate.realtimeStart !== "function" ||
     typeof candidate.realtimeStop !== "function" ||
+    typeof candidate.realtimeAppendText !== "function" ||
     typeof candidate.subscribeRealtimeEvents !== "function"
   ) {
     return null;

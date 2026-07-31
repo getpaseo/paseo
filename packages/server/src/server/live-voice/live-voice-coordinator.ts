@@ -262,6 +262,44 @@ export class LiveVoiceCoordinator {
     }
   }
 
+  /**
+   * Speaks something into a running call from outside the conversation. The
+   * caller must be the socket that owns the call: a client may only put words
+   * in the mouth of its own call, never another client's.
+   */
+  async say(params: {
+    liveSessionId: string;
+    sourceKey: object;
+    text: string;
+  }): Promise<{ delivered: true } | { delivered: false; errorCode: string; errorMessage: string }> {
+    const call = this.calls.get(params.liveSessionId);
+    if (!call || call.owner.sourceKey !== params.sourceKey) {
+      return {
+        delivered: false,
+        errorCode: "unknown_call",
+        errorMessage: "This client does not own a live voice call with that id.",
+      };
+    }
+    if (call.state !== "active" || !call.provider) {
+      return {
+        delivered: false,
+        errorCode: "call_not_active",
+        errorMessage: "The live voice call is not active.",
+      };
+    }
+    try {
+      await call.provider.realtimeAppendText({ text: params.text, role: "developer" });
+      return { delivered: true };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        { err: error, liveSessionId: call.liveSessionId },
+        "live_voice.say.append_failed",
+      );
+      return { delivered: false, errorCode: "append_failed", errorMessage };
+    }
+  }
+
   stop(params: { liveSessionId: string }): void {
     const call = this.calls.get(params.liveSessionId);
     // A stop for an already-closed call is a no-op; the caller still gets a
