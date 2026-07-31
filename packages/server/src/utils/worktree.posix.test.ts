@@ -21,6 +21,7 @@ import {
   type CreateWorktreeOptions,
   type WorktreeConfig,
 } from "./worktree";
+import { MAX_WORKTREE_SETUP_TOTAL_OUTPUT_BYTES } from "./worktree-setup-output.js";
 import type { PaseoConfig } from "@getpaseo/protocol/paseo-config-schema";
 import { getPaseoWorktreeMetadataPath } from "./worktree-metadata.js";
 import { execFileSync } from "child_process";
@@ -798,6 +799,37 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(progressEvents.some((event) => event.type === "output")).toBe(true);
       expect(progressEvents.some((event) => event.type === "command_completed")).toBe(true);
     });
+
+    it("bounds retained output across noisy setup commands and reports exact omitted bytes", async () => {
+      const outputBytesPerStream = Buffer.byteLength("prefix--suffix") + 70_000;
+      const noisyCommand =
+        "node -e \"process.stdout.write('prefix-' + 'x'.repeat(70000) + '-suffix'); process.stderr.write('prefix-' + 'y'.repeat(70000) + '-suffix')\"";
+      writeFileSync(
+        join(repoDir, "paseo.json"),
+        JSON.stringify({ worktree: { setup: Array.from({ length: 5 }, () => noisyCommand) } }),
+      );
+
+      const results = await runWorktreeSetupCommands({
+        worktreePath: repoDir,
+        branchName: "main",
+        cleanupOnFailure: false,
+      });
+
+      expect(results).toHaveLength(5);
+      let retainedOutputBytes = 0;
+      for (const result of results) {
+        for (const output of [result.stdout, result.stderr]) {
+          const marker = output.match(/\n\.\.\.<(\d+) bytes omitted>\.\.\.\n/);
+          expect(marker).not.toBeNull();
+          const retained = output.replace(marker?.[0] ?? "", "");
+          expect(Number(marker?.[1])).toBe(outputBytesPerStream - Buffer.byteLength(retained));
+          expect(retained).toContain("prefix-");
+          expect(retained).toContain("-suffix");
+          retainedOutputBytes += Buffer.byteLength(output);
+        }
+      }
+      expect(retainedOutputBytes).toBeLessThanOrEqual(MAX_WORKTREE_SETUP_TOTAL_OUTPUT_BYTES);
+    }, 15_000);
 
     it("reuses persisted worktree runtime port across resolutions", async () => {
       const result = await createLegacyWorktreeForTest({

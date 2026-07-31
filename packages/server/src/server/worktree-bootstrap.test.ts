@@ -5,7 +5,11 @@ import { join } from "path";
 import { tmpdir } from "os";
 
 import type { AgentTimelineItem } from "./agent/agent-sdk-types.js";
-import { runAsyncWorktreeBootstrap, spawnWorkspaceScript } from "./worktree-bootstrap.js";
+import {
+  createWorktreeSetupProgressCoalescer,
+  runAsyncWorktreeBootstrap,
+  spawnWorkspaceScript,
+} from "./worktree-bootstrap.js";
 import { ensureWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { ScriptRouteStore } from "./script-proxy.js";
 import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
@@ -16,6 +20,42 @@ import {
 } from "../utils/worktree.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { TerminalSession } from "../terminal/terminal.js";
+
+describe("worktree setup progress coalescing", () => {
+  it("keeps only the latest pending update while an emission is in flight", async () => {
+    let releaseFirstEmission: (() => void) | null = null;
+    let markFirstEmissionStarted: (() => void) | null = null;
+    const firstEmissionGate = new Promise<void>((resolve) => {
+      releaseFirstEmission = resolve;
+    });
+    const firstEmissionStarted = new Promise<void>((resolve) => {
+      markFirstEmissionStarted = resolve;
+    });
+    const emittedVersions: number[] = [];
+    let version = 0;
+    const progress = createWorktreeSetupProgressCoalescer({
+      emit: async () => {
+        emittedVersions.push(version);
+        if (emittedVersions.length === 1) {
+          markFirstEmissionStarted?.();
+          await firstEmissionGate;
+        }
+      },
+    });
+
+    progress.schedule();
+    await firstEmissionStarted;
+    for (let nextVersion = 1; nextVersion <= 1_000; nextVersion += 1) {
+      version = nextVersion;
+      progress.schedule();
+    }
+
+    expect(emittedVersions).toEqual([0]);
+    releaseFirstEmission?.();
+    await progress.flush();
+    expect(emittedVersions).toEqual([0, 1_000]);
+  });
+});
 
 interface CreateAgentWorktreeTestOptions {
   cwd: string;
@@ -142,7 +182,7 @@ describe("runAsyncWorktreeBootstrap", () => {
     }
   });
 
-  it("truncates each command output to 64kb in the middle", async () => {
+  it("truncates each command output to 64kb with an exact omitted-byte count", async () => {
     const largeOutputCommand =
       "node -e \"process.stdout.write('prefix-'); process.stdout.write('x'.repeat(70000)); process.stdout.write('-suffix')\"";
     writeFileSync(
@@ -194,12 +234,14 @@ describe("runAsyncWorktreeBootstrap", () => {
     expect(persistedSetupItem.detail.truncated).toBe(true);
     expect(persistedSetupItem.detail.log).toContain("prefix-");
     expect(persistedSetupItem.detail.log).toContain("-suffix");
-    expect(persistedSetupItem.detail.log).toContain("...<output truncated in the middle>...");
+    expect(persistedSetupItem.detail.log).toMatch(/\.\.\.<\d+ bytes omitted>\.\.\./);
     expect(persistedSetupItem.detail.commands[0]?.log).toContain("prefix-");
     expect(persistedSetupItem.detail.commands[0]?.log).toContain("-suffix");
-    expect(persistedSetupItem.detail.commands[0]?.log).toContain(
-      "...<output truncated in the middle>...",
-    );
+    const commandLog = persistedSetupItem.detail.commands[0]?.log ?? "";
+    const marker = commandLog.match(/\n\.\.\.<(\d+) bytes omitted>\.\.\.\n/);
+    expect(marker).not.toBeNull();
+    const retained = commandLog.replace(marker?.[0] ?? "", "");
+    expect(Number(marker?.[1])).toBe(70_014 - Buffer.byteLength(retained));
   });
 
   it("waits for terminal output before sending bootstrap commands", async () => {

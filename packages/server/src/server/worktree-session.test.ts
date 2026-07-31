@@ -13,9 +13,14 @@ import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import pino, { type Logger } from "pino";
 
-import type { SessionOutboundMessage, WorkspaceDescriptorPayload } from "./messages.js";
+import type {
+  SessionOutboundMessage,
+  WorkspaceDescriptorPayload,
+  WorkspaceSetupSnapshot,
+} from "./messages.js";
 import {
   buildAgentSessionConfig,
+  cacheWorkspaceSetupSnapshot,
   createPaseoWorktreeWorkflow,
   handlePaseoWorktreeArchiveRequest,
   handlePaseoWorktreeListRequest,
@@ -23,6 +28,7 @@ import {
   runWorktreeSetupInBackground,
   handleCreatePaseoWorktreeRequest,
   handleWorkspaceSetupStatusRequest,
+  MAX_WORKSPACE_SETUP_SNAPSHOTS,
 } from "./worktree-session.js";
 import {
   createWorktree as createWorktreePrimitive,
@@ -1377,6 +1383,29 @@ describe("runWorktreeSetupInBackground", () => {
         snapshot: null,
       },
     });
+  });
+
+  test("evicts the oldest setup snapshot when the shared cache reaches its bound", () => {
+    const snapshots = new Map<string, WorkspaceSetupSnapshot>();
+    const snapshot: WorkspaceSetupSnapshot = {
+      status: "completed",
+      detail: {
+        type: "worktree_setup",
+        worktreePath: "/repo/worktree",
+        branchName: "feature",
+        log: "done",
+        commands: [],
+      },
+      error: null,
+    };
+
+    for (let index = 0; index <= MAX_WORKSPACE_SETUP_SNAPSHOTS; index += 1) {
+      cacheWorkspaceSetupSnapshot(snapshots, `ws-${index}`, snapshot);
+    }
+
+    expect(snapshots).toHaveLength(MAX_WORKSPACE_SETUP_SNAPSHOTS);
+    expect(snapshots.has("ws-0")).toBe(false);
+    expect(snapshots.has(`ws-${MAX_WORKSPACE_SETUP_SNAPSHOTS}`)).toBe(true);
   });
 });
 

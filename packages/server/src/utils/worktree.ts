@@ -1,5 +1,3 @@
-import { execFile } from "child_process";
-import { promisify } from "util";
 import { existsSync, mkdirSync, realpathSync, rmSync, statSync } from "fs";
 import { copyFile, rm, stat } from "fs/promises";
 import { join, basename, dirname, isAbsolute, resolve, sep } from "path";
@@ -36,10 +34,15 @@ import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 import { expandTilde, getRealpathAwareRelativePath, isPathInsideRoot } from "./path.js";
+import {
+  appendWorktreeSetupOutput,
+  createWorktreeSetupOutputAccumulator,
+  getWorktreeSetupCommandOutputLimit,
+  renderWorktreeSetupOutput,
+} from "./worktree-setup-output.js";
 
 export { slugify, validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 
-const execFileAsync = promisify(execFile);
 const READ_ONLY_GIT_ENV = {
   GIT_OPTIONAL_LOCKS: "0",
 } as const;
@@ -410,50 +413,19 @@ export function processCarriageReturns(text: string): string {
   return output.join("");
 }
 
-async function execSetupCommand(
-  command: string,
-  options: { cwd: string; env: NodeJS.ProcessEnv },
-): Promise<WorktreeSetupCommandResult> {
-  const startedAt = Date.now();
-  const shellInvocation = buildStringCommandShellInvocation({ command });
-  try {
-    const { stdout, stderr } = await execFileAsync(shellInvocation.shell, shellInvocation.args, {
-      cwd: options.cwd,
-      env: options.env,
-    });
-    return {
-      command,
-      cwd: options.cwd,
-      stdout: stdout ?? "",
-      stderr: stderr ?? "",
-      exitCode: 0,
-      durationMs: Date.now() - startedAt,
-    };
-  } catch (error) {
-    const execErr = error as { stdout?: string; stderr?: string; code?: unknown } | undefined;
-    return {
-      command,
-      cwd: options.cwd,
-      stdout: execErr?.stdout ?? "",
-      stderr: execErr?.stderr ?? (error instanceof Error ? error.message : String(error)),
-      exitCode: typeof execErr?.code === "number" ? execErr.code : null,
-      durationMs: Date.now() - startedAt,
-    };
-  }
-}
-
 async function execSetupCommandStreamed(options: {
   command: string;
   cwd: string;
   env: NodeJS.ProcessEnv;
   index: number;
   total: number;
+  maxOutputBytes: number;
   onEvent?: (event: WorktreeSetupCommandProgressEvent) => void;
 }): Promise<WorktreeSetupCommandResult> {
   return new Promise((resolvePromise) => {
     const startedAt = Date.now();
-    const stdoutChunks: string[] = [];
-    const stderrChunks: string[] = [];
+    const stdoutAccumulator = createWorktreeSetupOutputAccumulator(options.maxOutputBytes);
+    const stderrAccumulator = createWorktreeSetupOutputAccumulator(options.maxOutputBytes);
     let settled = false;
 
     const emitOutput = (stream: "stdout" | "stderr", chunk: string) => {
@@ -462,9 +434,9 @@ async function execSetupCommandStreamed(options: {
         return;
       }
       if (stream === "stdout") {
-        stdoutChunks.push(text);
+        appendWorktreeSetupOutput(stdoutAccumulator, text);
       } else {
-        stderrChunks.push(text);
+        appendWorktreeSetupOutput(stderrAccumulator, text);
       }
       options.onEvent?.({
         type: "output",
@@ -482,11 +454,19 @@ async function execSetupCommandStreamed(options: {
         return;
       }
       settled = true;
+      const combinedBytes = stdoutAccumulator.totalBytes + stderrAccumulator.totalBytes;
+      const stdoutOutputBytes =
+        combinedBytes === 0
+          ? 0
+          : Math.floor((options.maxOutputBytes * stdoutAccumulator.totalBytes) / combinedBytes);
+      const stderrOutputBytes = options.maxOutputBytes - stdoutOutputBytes;
+      const stdout = renderWorktreeSetupOutput(stdoutAccumulator, stdoutOutputBytes).text;
+      const stderr = renderWorktreeSetupOutput(stderrAccumulator, stderrOutputBytes).text;
       const result: WorktreeSetupCommandResult = {
         command: options.command,
         cwd: options.cwd,
-        stdout: stdoutChunks.join(""),
-        stderr: stderrChunks.join(""),
+        stdout,
+        stderr,
         exitCode,
         durationMs: Date.now() - startedAt,
       };
@@ -638,20 +618,17 @@ export async function runWorktreeSetupCommands(options: {
   const setupEnv = createStringCommandShellEnv(createExternalProcessEnv(process.env, runtimeEnv));
 
   const results: WorktreeSetupCommandResult[] = [];
+  const maxOutputBytes = getWorktreeSetupCommandOutputLimit(setupCommands.length);
   for (const [index, cmd] of setupCommands.entries()) {
-    const result = options.onEvent
-      ? await execSetupCommandStreamed({
-          command: cmd,
-          cwd: options.worktreePath,
-          env: setupEnv,
-          index: index + 1,
-          total: setupCommands.length,
-          onEvent: options.onEvent,
-        })
-      : await execSetupCommand(cmd, {
-          cwd: options.worktreePath,
-          env: setupEnv,
-        });
+    const result = await execSetupCommandStreamed({
+      command: cmd,
+      cwd: options.worktreePath,
+      env: setupEnv,
+      index: index + 1,
+      total: setupCommands.length,
+      maxOutputBytes,
+      onEvent: options.onEvent,
+    });
     results.push(result);
 
     if (result.exitCode !== 0) {
@@ -762,10 +739,15 @@ export async function runWorktreeTeardownCommands(options: {
   );
 
   const results: WorktreeTeardownCommandResult[] = [];
-  for (const cmd of teardownCommands) {
-    const result = await execSetupCommand(cmd, {
+  const maxOutputBytes = getWorktreeSetupCommandOutputLimit(teardownCommands.length);
+  for (const [index, cmd] of teardownCommands.entries()) {
+    const result = await execSetupCommandStreamed({
+      command: cmd,
       cwd: teardownCwd,
       env: teardownEnv,
+      index: index + 1,
+      total: teardownCommands.length,
+      maxOutputBytes,
     });
     results.push(result);
 

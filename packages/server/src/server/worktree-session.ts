@@ -18,6 +18,7 @@ import {
   applyWorktreeSetupProgressEvent,
   buildWorktreeSetupDetail,
   createWorktreeSetupProgressAccumulator,
+  createWorktreeSetupProgressCoalescer,
   getWorktreeSetupProgressResults,
 } from "./worktree-bootstrap.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
@@ -163,6 +164,24 @@ export type CreatePaseoWorktreeWorkflowFn = (
 interface HandleWorkspaceSetupStatusRequestDependencies {
   emit: EmitSessionMessage;
   workspaceSetupSnapshots: ReadonlyMap<string, WorkspaceSetupSnapshot>;
+}
+
+export const MAX_WORKSPACE_SETUP_SNAPSHOTS = 100;
+
+export function cacheWorkspaceSetupSnapshot(
+  snapshots: Map<string, WorkspaceSetupSnapshot>,
+  workspaceId: string,
+  snapshot: WorkspaceSetupSnapshot,
+): void {
+  snapshots.delete(workspaceId);
+  snapshots.set(workspaceId, snapshot);
+  while (snapshots.size > MAX_WORKSPACE_SETUP_SNAPSHOTS) {
+    const oldestWorkspaceId = snapshots.keys().next().value;
+    if (oldestWorkspaceId === undefined) {
+      break;
+    }
+    snapshots.delete(oldestWorkspaceId);
+  }
 }
 
 interface HandleCreatePaseoWorktreeRequestDependencies {
@@ -741,6 +760,15 @@ export async function runWorktreeSetupInBackground(
       },
     });
   };
+  const runningProgress = createWorktreeSetupProgressCoalescer({
+    emit: () => emitSetupProgress("running", null),
+    onError: (error) => {
+      dependencies.sessionLogger.warn(
+        { err: error, workspaceId },
+        "Failed to emit worktree setup progress",
+      );
+    },
+  });
 
   try {
     try {
@@ -773,9 +801,10 @@ export async function runWorktreeSetupInBackground(
             runtimeEnv,
             onEvent: (event) => {
               applyWorktreeSetupProgressEvent(progressAccumulator, event);
-              emitSetupProgress("running", null);
+              runningProgress.schedule();
             },
           });
+          await runningProgress.flush();
           emitSetupProgress("completed", null);
         }
       }
@@ -783,6 +812,7 @@ export async function runWorktreeSetupInBackground(
       if (error instanceof WorktreeSetupError) {
         setupResults = error.results;
       }
+      await runningProgress.flush();
       const message = error instanceof Error ? error.message : String(error);
       emitSetupProgress("failed", message);
 

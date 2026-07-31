@@ -31,6 +31,13 @@ import {
   refreshWorkspaceServicePort,
 } from "./workspace-service-port-registry.js";
 import type { PaseoServicePortAllocation } from "@getpaseo/protocol/paseo-config-schema";
+import {
+  appendWorktreeSetupOutput,
+  createWorktreeSetupOutputAccumulator,
+  getWorktreeSetupCommandOutputLimit,
+  renderWorktreeSetupOutput,
+  type WorktreeSetupOutputAccumulator,
+} from "../utils/worktree-setup-output.js";
 
 export interface WorktreeBootstrapTerminalResult {
   name: string | null;
@@ -54,120 +61,117 @@ export interface RunAsyncWorktreeBootstrapOptions {
   logger?: Logger;
 }
 
-const MAX_WORKTREE_SETUP_COMMAND_OUTPUT_BYTES = 64 * 1024;
-const WORKTREE_SETUP_TRUNCATION_MARKER = "\n...<output truncated in the middle>...\n";
 const WORKTREE_BOOTSTRAP_TERMINAL_READY_TIMEOUT_MS = 1_500;
-
-interface MiddleTruncationAccumulator {
-  totalBytes: number;
-  head: string;
-  tail: string;
-  truncated: boolean;
-}
-
-export type WorktreeSetupOutputAccumulator = MiddleTruncationAccumulator;
+const WORKTREE_SETUP_PROGRESS_EMIT_INTERVAL_MS = 100;
 export interface WorktreeSetupProgressAccumulator {
   resultsByIndex: Map<number, WorktreeSetupCommandResult>;
   outputAccumulatorsByIndex: Map<number, WorktreeSetupOutputAccumulator>;
 }
 
-function byteLength(text: string): number {
-  return Buffer.byteLength(text, "utf8");
+export interface WorktreeSetupProgressCoalescerOptions {
+  emit: () => unknown | Promise<unknown>;
+  onError?: (error: unknown) => void;
 }
 
-function sliceFirstBytes(text: string, maxBytes: number): string {
-  if (maxBytes <= 0 || text.length === 0) {
-    return "";
-  }
-  const bytes = Buffer.from(text, "utf8");
-  if (bytes.length <= maxBytes) {
-    return text;
-  }
-  return bytes.subarray(0, maxBytes).toString("utf8");
+export interface WorktreeSetupProgressCoalescer {
+  schedule: () => void;
+  flush: () => Promise<void>;
 }
 
-function sliceLastBytes(text: string, maxBytes: number): string {
-  if (maxBytes <= 0 || text.length === 0) {
-    return "";
-  }
-  const bytes = Buffer.from(text, "utf8");
-  if (bytes.length <= maxBytes) {
-    return text;
-  }
-  return bytes.subarray(bytes.length - maxBytes).toString("utf8");
-}
+export function createWorktreeSetupProgressCoalescer(
+  options: WorktreeSetupProgressCoalescerOptions,
+): WorktreeSetupProgressCoalescer {
+  let pending = false;
+  let flushing = false;
+  let lastStartedAt: number | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let inFlight: Promise<void> | null = null;
 
-export function createWorktreeSetupOutputAccumulator(): WorktreeSetupOutputAccumulator {
-  return {
-    totalBytes: 0,
-    head: "",
-    tail: "",
-    truncated: false,
+  const handleError = (error: unknown) => {
+    try {
+      options.onError?.(error);
+    } catch {
+      // Progress reporting must not fail setup, including a failing error reporter.
+    }
   };
-}
 
-function getHeadTailBudgets(maxBytes: number): { headBytes: number; tailBytes: number } {
-  const markerBytes = byteLength(WORKTREE_SETUP_TRUNCATION_MARKER);
-  const availableBytes = Math.max(0, maxBytes - markerBytes);
-  const headBytes = Math.floor(availableBytes / 2);
-  const tailBytes = availableBytes - headBytes;
-  return { headBytes, tailBytes };
-}
-
-export function appendWorktreeSetupOutputAccumulator(
-  accumulator: WorktreeSetupOutputAccumulator,
-  chunk: string,
-): void {
-  if (!chunk) {
-    return;
-  }
-  accumulator.totalBytes += byteLength(chunk);
-
-  if (!accumulator.truncated) {
-    const combined = `${accumulator.head}${chunk}`;
-    if (byteLength(combined) <= MAX_WORKTREE_SETUP_COMMAND_OUTPUT_BYTES) {
-      accumulator.head = combined;
+  const startOrSchedule = () => {
+    if (!pending || inFlight || timer) {
       return;
     }
-    const { headBytes, tailBytes } = getHeadTailBudgets(MAX_WORKTREE_SETUP_COMMAND_OUTPUT_BYTES);
-    accumulator.head = sliceFirstBytes(combined, headBytes);
-    accumulator.tail = sliceLastBytes(combined, tailBytes);
-    accumulator.truncated = true;
-    return;
-  }
 
-  const { tailBytes } = getHeadTailBudgets(MAX_WORKTREE_SETUP_COMMAND_OUTPUT_BYTES);
-  accumulator.tail = sliceLastBytes(`${accumulator.tail}${chunk}`, tailBytes);
+    const elapsedMs = lastStartedAt === null ? Infinity : Date.now() - lastStartedAt;
+    const delayMs = flushing
+      ? 0
+      : Math.max(0, WORKTREE_SETUP_PROGRESS_EMIT_INTERVAL_MS - elapsedMs);
+    if (delayMs > 0) {
+      timer = setTimeout(() => {
+        timer = null;
+        startOrSchedule();
+      }, delayMs);
+      return;
+    }
+
+    pending = false;
+    lastStartedAt = Date.now();
+    let emitted: unknown | Promise<unknown>;
+    try {
+      emitted = options.emit();
+    } catch (error) {
+      handleError(error);
+      emitted = undefined;
+    }
+    const emission = Promise.resolve(emitted).catch(handleError);
+    let current: Promise<void>;
+    current = emission.then(() => {
+      if (inFlight === current) {
+        inFlight = null;
+        startOrSchedule();
+      }
+      return undefined;
+    });
+    inFlight = current;
+  };
+
+  const waitForIdle = async (): Promise<void> => {
+    startOrSchedule();
+    const current = inFlight;
+    if (!current) {
+      return;
+    }
+    await current;
+    if (pending || inFlight) {
+      await waitForIdle();
+    }
+  };
+
+  return {
+    schedule: () => {
+      pending = true;
+      startOrSchedule();
+    },
+    flush: async () => {
+      flushing = true;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      try {
+        await waitForIdle();
+      } finally {
+        flushing = false;
+      }
+    },
+  };
 }
 
 function truncateTextInMiddle(
   text: string,
   maxBytes: number,
 ): { text: string; truncated: boolean } {
-  if (maxBytes <= 0 || !text) {
-    return { text: "", truncated: text.length > 0 };
-  }
-  if (byteLength(text) <= maxBytes) {
-    return { text, truncated: false };
-  }
-  const { headBytes, tailBytes } = getHeadTailBudgets(maxBytes);
-  return {
-    text: `${sliceFirstBytes(text, headBytes)}${WORKTREE_SETUP_TRUNCATION_MARKER}${sliceLastBytes(text, tailBytes)}`,
-    truncated: true,
-  };
-}
-
-function renderMiddleTruncationAccumulator(accumulator: MiddleTruncationAccumulator): {
-  text: string;
-  truncated: boolean;
-} {
-  if (!accumulator.truncated) {
-    return { text: accumulator.head, truncated: false };
-  }
-  return {
-    text: `${accumulator.head}${WORKTREE_SETUP_TRUNCATION_MARKER}${accumulator.tail}`,
-    truncated: true,
-  };
+  const accumulator = createWorktreeSetupOutputAccumulator(maxBytes);
+  appendWorktreeSetupOutput(accumulator, text);
+  return renderWorktreeSetupOutput(accumulator);
 }
 
 function formatDurationMs(durationMs: number): string {
@@ -231,10 +235,10 @@ function buildWorktreeSetupCommandLog(input: {
   const { index, result, outputAccumulatorsByIndex } = input;
   const accumulator = outputAccumulatorsByIndex?.get(index);
   const rendered = accumulator
-    ? renderMiddleTruncationAccumulator(accumulator)
+    ? renderWorktreeSetupOutput(accumulator)
     : truncateTextInMiddle(
         `${result.stdout ?? ""}${result.stderr ?? ""}`,
-        MAX_WORKTREE_SETUP_COMMAND_OUTPUT_BYTES,
+        getWorktreeSetupCommandOutputLimit(1),
       );
 
   return {
@@ -267,8 +271,8 @@ export function applyWorktreeSetupProgressEvent(
   if (event.type === "output") {
     const outputAccumulator =
       accumulator.outputAccumulatorsByIndex.get(event.index) ??
-      createWorktreeSetupOutputAccumulator();
-    appendWorktreeSetupOutputAccumulator(outputAccumulator, event.chunk);
+      createWorktreeSetupOutputAccumulator(getWorktreeSetupCommandOutputLimit(event.total));
+    appendWorktreeSetupOutput(outputAccumulator, event.chunk);
     accumulator.outputAccumulatorsByIndex.set(event.index, outputAccumulator);
     accumulator.resultsByIndex.set(event.index, {
       ...baseResult,
@@ -602,34 +606,27 @@ export async function runAsyncWorktreeBootstrap(
   const emitLiveTimelineItem = options.emitLiveTimelineItem;
   const progressAccumulator = createWorktreeSetupProgressAccumulator();
   const workspaceCwd = options.workspaceCwd ?? options.worktree.worktreePath;
-  let liveEmitQueue = Promise.resolve();
-
-  const queueLiveRunningEmit = () => {
-    if (!emitLiveTimelineItem) {
-      return;
-    }
-    const runningResults = getWorktreeSetupProgressResults(progressAccumulator);
-    liveEmitQueue = liveEmitQueue.then(async () => {
-      try {
-        await emitLiveTimelineItem(
-          buildSetupTimelineItem({
-            callId: setupCallId,
-            status: "running",
-            worktree: options.worktree,
-            results: runningResults,
-            outputAccumulatorsByIndex: progressAccumulator.outputAccumulatorsByIndex,
-            errorMessage: null,
-          }),
-        );
-      } catch (error) {
-        options.logger?.warn(
-          { err: error, agentId: options.agentId },
-          "Failed to emit live worktree setup timeline update",
-        );
-      }
-      return;
-    });
-  };
+  const liveProgress = emitLiveTimelineItem
+    ? createWorktreeSetupProgressCoalescer({
+        emit: () =>
+          emitLiveTimelineItem(
+            buildSetupTimelineItem({
+              callId: setupCallId,
+              status: "running",
+              worktree: options.worktree,
+              results: getWorktreeSetupProgressResults(progressAccumulator),
+              outputAccumulatorsByIndex: progressAccumulator.outputAccumulatorsByIndex,
+              errorMessage: null,
+            }),
+          ),
+        onError: (error) => {
+          options.logger?.warn(
+            { err: error, agentId: options.agentId },
+            "Failed to emit live worktree setup timeline update",
+          );
+        },
+      })
+    : null;
 
   try {
     runtimeEnv = await resolveWorktreeRuntimeEnv({
@@ -648,10 +645,10 @@ export async function runAsyncWorktreeBootstrap(
       runtimeEnv,
       onEvent: (event) => {
         applyWorktreeSetupProgressEvent(progressAccumulator, event);
-        queueLiveRunningEmit();
+        liveProgress?.schedule();
       },
     });
-    await liveEmitQueue;
+    await liveProgress?.flush();
 
     const completed = await options.appendTimelineItem(
       buildSetupTimelineItem({
@@ -670,7 +667,7 @@ export async function runAsyncWorktreeBootstrap(
     if (error instanceof WorktreeSetupError) {
       setupResults = error.results;
     }
-    await liveEmitQueue;
+    await liveProgress?.flush();
     const message = error instanceof Error ? error.message : String(error);
     await options.appendTimelineItem(
       buildSetupTimelineItem({
