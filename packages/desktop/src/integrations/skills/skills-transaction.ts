@@ -5,6 +5,7 @@ import {
   mkdir,
   readdir,
   readFile,
+  readlink,
   realpath,
   rename,
   rm,
@@ -214,18 +215,60 @@ async function copyStagedEntry(source: string, target: string): Promise<void> {
   });
 }
 
-async function mergeBackupDirectory(livePath: string, backupPath: string | null): Promise<void> {
-  if (backupPath === null) return;
+async function mergeBackupDirectory(livePath: string, backupPath: string | null): Promise<boolean> {
+  if (backupPath === null) return false;
   const liveInfo = await lstat(livePath).catch(() => null);
   const destination = liveInfo?.isSymbolicLink() ? await realpath(livePath) : livePath;
   await mkdir(destination, { recursive: true });
-  await cp(backupPath, destination, {
-    recursive: true,
-    force: false,
-    errorOnExist: false,
-    preserveTimestamps: true,
-    verbatimSymlinks: true,
-  });
+  let hasConflict = false;
+
+  async function mergeMissing(sourceDir: string, destinationDir: string): Promise<void> {
+    for (const entry of await readdir(sourceDir, { withFileTypes: true })) {
+      const source = path.join(sourceDir, entry.name);
+      const target = path.join(destinationDir, entry.name);
+      const sourceInfo = await lstat(source);
+      const targetInfo = await lstat(target).catch(() => null);
+      if (targetInfo === null) {
+        await copyStagedEntry(source, target);
+        continue;
+      }
+      if (
+        sourceInfo.isDirectory() &&
+        !sourceInfo.isSymbolicLink() &&
+        targetInfo.isDirectory() &&
+        !targetInfo.isSymbolicLink()
+      ) {
+        if ((sourceInfo.mode & 0o777) !== (targetInfo.mode & 0o777)) hasConflict = true;
+        await mergeMissing(source, target);
+        continue;
+      }
+      if (sourceInfo.isFile() && targetInfo.isFile()) {
+        const [sourceContents, targetContents] = await Promise.all([
+          readFile(source),
+          readFile(target),
+        ]);
+        if (
+          !sourceContents.equals(targetContents) ||
+          (sourceInfo.mode & 0o777) !== (targetInfo.mode & 0o777)
+        ) {
+          hasConflict = true;
+        }
+        continue;
+      }
+      if (sourceInfo.isSymbolicLink() && targetInfo.isSymbolicLink()) {
+        const [sourceTarget, targetTarget] = await Promise.all([
+          readlink(source),
+          readlink(target),
+        ]);
+        if (sourceTarget !== targetTarget) hasConflict = true;
+        continue;
+      }
+      hasConflict = true;
+    }
+  }
+
+  await mergeMissing(backupPath, destination);
+  return hasConflict;
 }
 
 async function quarantineStagedEntry(
@@ -265,7 +308,8 @@ async function restoreDeletedDirectory(
   }
   const backupInfo = await lstat(backupPath);
   if (backupInfo.isDirectory() && !backupInfo.isSymbolicLink() && (await isDirectory(livePath))) {
-    await mergeBackupDirectory(livePath, backupPath);
+    const hasConflict = await mergeBackupDirectory(livePath, backupPath);
+    if (hasConflict) await quarantineStagedEntry(transactionDir, livePath, backupPath);
     return;
   }
   // A concurrent writer recreated the path with an incompatible type. Keep its
@@ -287,6 +331,7 @@ async function restoreStagedEntry(
 }
 
 async function undoSyncedDirectory(
+  transactionDir: string,
   livePath: string,
   backupPath: string | null,
   expectedFiles: ReadonlyMap<string, Buffer>,
@@ -302,7 +347,10 @@ async function undoSyncedDirectory(
   // Sync can prune files that an older managed-files manifest owned. Restore
   // missing staged entries with their type and metadata, but never overwrite a
   // path another writer recreated.
-  await mergeBackupDirectory(livePath, backupPath);
+  const hasConflict = await mergeBackupDirectory(livePath, backupPath);
+  if (hasConflict && backupPath !== null) {
+    await quarantineStagedEntry(transactionDir, livePath, backupPath);
+  }
   if ((await readdir(livePath).catch(() => [])).length === 0) {
     await rm(livePath, { recursive: true, force: true });
   }
@@ -350,7 +398,7 @@ async function restore(
       expected = await expectedSyncedFiles(targets.sourceDir, name);
       expectedByName.set(name, expected);
     }
-    await undoSyncedDirectory(entry.livePath, backup, expected);
+    await undoSyncedDirectory(transactionDir, entry.livePath, backup, expected);
   }
 }
 

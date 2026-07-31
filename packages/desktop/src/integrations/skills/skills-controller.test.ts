@@ -614,6 +614,41 @@ describe("skills controller", () => {
     await expect(harness.controller.status()).resolves.toMatchObject({ selection: previous });
   });
 
+  it("quarantines staged files that collide with a recreated directory", async () => {
+    const previous: SkillSelection = {
+      mode: "custom",
+      skills: ["paseo", "paseo-loop"],
+    };
+    const next: SkillSelection = { mode: "custom", skills: ["paseo"] };
+    await harness.controller.save(previous);
+    await writeUserFile(harness.targets, "paseo-loop", "notes/mine.md", "staged notes");
+
+    const transaction = await beginSkillsTransaction(harness.targets, previous, next, [
+      { kind: "delete", name: "paseo-loop" },
+    ]);
+    const live = path.join(harness.targets.codexDir, "paseo-loop");
+    await mkdir(path.join(live, "notes"), { recursive: true });
+    await writeFile(path.join(live, "SKILL.md"), "external skill");
+    await writeFile(path.join(live, "notes", "mine.md"), "external notes");
+
+    await transaction.rollback();
+
+    expect(await readFile(path.join(live, "SKILL.md"), "utf8")).toBe("external skill");
+    expect(await readFile(path.join(live, "notes", "mine.md"), "utf8")).toBe("external notes");
+    const recovered = (await readdir(harness.targets.codexDir)).find((entry) =>
+      entry.startsWith(".paseo-skills-recovered-paseo-loop-"),
+    );
+    expect(recovered).toBeDefined();
+    expect(
+      await readFile(path.join(harness.targets.codexDir, recovered!, "SKILL.md"), "utf8"),
+    ).toBe("paseo-loop-v1");
+    expect(
+      await readFile(path.join(harness.targets.codexDir, recovered!, "notes", "mine.md"), "utf8"),
+    ).toBe("staged notes");
+    expect(await backupArtifacts(harness.targets)).toEqual([[], [], []]);
+    await expect(harness.controller.status()).resolves.toMatchObject({ selection: previous });
+  });
+
   it("preserves incompatible live paths while rolling back adds and updates", async () => {
     const previous: SkillSelection = { mode: "custom", skills: ["paseo"] };
     const next: SkillSelection = {
