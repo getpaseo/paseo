@@ -2532,6 +2532,24 @@ const x = 1;
     expect(await readPullRequestLookupTargetFromFacts(workspaceDir, paseoHome)).toMatchObject({
       headRef: "new-change",
     });
+
+    execFileSync(
+      "git",
+      ["remote", "add", "enterprise-fork", "git@github.acme.internal:contributor/repo.git"],
+      {
+        cwd: repoDir,
+      },
+    );
+    execFileSync("git", ["config", "branch.new-change.remote", "enterprise-fork"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["config", "branch.new-change.merge", "refs/heads/old-change"], {
+      cwd: repoDir,
+    });
+    expect(await readPullRequestLookupTargetFromFacts(workspaceDir, paseoHome)).toMatchObject({
+      headRef: "old-change",
+      headRepositoryOwner: "contributor",
+    });
   });
 
   it("does not apply ambiguous legacy PR metadata to a suffixed branch", async () => {

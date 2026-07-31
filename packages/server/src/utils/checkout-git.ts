@@ -1705,7 +1705,7 @@ function buildInitialPullRequestLookupTarget(input: {
     parseBranchMergeHeadRef(input.branchMergeRef),
   );
   if (hasConfiguredBranchTarget) {
-    return buildPullRequestLookupTargetFromBranchConfig({
+    const configuredTarget = buildPullRequestLookupTargetFromBranchConfig({
       currentBranch: input.currentBranch,
       branchRemoteName: input.branchRemoteName,
       branchMergeRef: input.branchMergeRef,
@@ -1713,6 +1713,27 @@ function buildInitialPullRequestLookupTarget(input: {
       originRemoteUrl: input.originRemoteUrl,
       resolvedBaseRef: input.resolvedBaseRef,
     });
+    const trackedHeadRef = parseBranchMergeHeadRef(input.branchMergeRef);
+    const metadataTarget = buildPullRequestLookupTargetFromMetadata(
+      input.metadata,
+      input.currentBranch,
+    );
+    // The cloud-host parser cannot derive an owner for Enterprise remotes. A
+    // branch-bound hint may supplement that owner only when its head still
+    // agrees with the explicit tracking configuration.
+    if (
+      trackedHeadRef &&
+      !parseGitHubRepoFromRemote(input.branchRemoteUrl ?? "") &&
+      !configuredTarget.headRepositoryOwner &&
+      metadataTarget?.headRef === trackedHeadRef &&
+      metadataTarget.headRepositoryOwner
+    ) {
+      return {
+        headRef: trackedHeadRef,
+        headRepositoryOwner: metadataTarget.headRepositoryOwner,
+      };
+    }
+    return configuredTarget;
   }
 
   return (
