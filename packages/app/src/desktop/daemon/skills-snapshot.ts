@@ -13,6 +13,11 @@ export interface SkillsSnapshot {
   ops: SkillOp[];
   /** Every skill the host currently bundles, sorted. The selectable catalog. */
   available: string[];
+  /**
+   * Skills with a directory in at least one agent home. An `add` op only means
+   * "missing from at least one target", so it cannot stand in for this.
+   */
+  installed: string[];
   selection: SkillSelection;
 }
 
@@ -62,14 +67,27 @@ function parseSkillSelection(value: unknown): SkillSelection {
   return { mode: "all" };
 }
 
+function selectedSkills(selection: SkillSelection, available: readonly string[]): string[] {
+  if (selection.mode === "all") return [...available];
+  const chosen = new Set(selection.skills);
+  return available.filter((name) => chosen.has(name));
+}
+
 export function parseSkillsSnapshot(raw: unknown): SkillsSnapshot {
   if (!isRecord(raw)) {
     throw new Error("Unexpected skills status response.");
   }
+  const available = parseSkillNames(raw.available);
+  const selection = parseSkillSelection(raw.selection);
   return {
     state: parseSkillsState(raw.state),
     ops: Array.isArray(raw.ops) ? raw.ops.map(parseSkillOp) : [],
-    available: parseSkillNames(raw.available),
-    selection: parseSkillSelection(raw.selection),
+    available,
+    // A host that predates this field cannot say what is on disk. Assume the
+    // saved selection is, so removing a skill still asks before deleting it.
+    installed: Array.isArray(raw.installed)
+      ? parseSkillNames(raw.installed)
+      : selectedSkills(selection, available),
+    selection,
   };
 }

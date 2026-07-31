@@ -104,6 +104,7 @@ describe("skills controller", () => {
         { kind: "add", name: "paseo-loop" },
       ],
       available: BUNDLED_SKILLS,
+      installed: [],
       selection: { mode: "all" },
     });
   });
@@ -113,6 +114,7 @@ describe("skills controller", () => {
       state: "up-to-date",
       ops: [],
       available: BUNDLED_SKILLS,
+      installed: BUNDLED_SKILLS,
       selection: { mode: "all" },
     });
     expect(await isInstalled(harness.targets, "paseo-advisor")).toBe(true);
@@ -128,6 +130,7 @@ describe("skills controller", () => {
       state: "up-to-date",
       ops: [],
       available: BUNDLED_SKILLS,
+      installed: ["paseo", "paseo-loop"],
       selection: { mode: "custom", skills: ["paseo", "paseo-loop"] },
     });
     expect(await isInstalled(harness.targets, "paseo")).toBe(true);
@@ -155,12 +158,14 @@ describe("skills controller", () => {
       state: "not-installed",
       ops: [{ kind: "add", name: "paseo" }],
       available: BUNDLED_SKILLS,
+      installed: [],
       selection: { mode: "custom", skills: ["paseo"] },
     });
     expect(afterReinstall).toEqual({
       state: "up-to-date",
       ops: [],
       available: BUNDLED_SKILLS,
+      installed: ["paseo"],
       selection: { mode: "custom", skills: ["paseo"] },
     });
     expect(await isInstalled(harness.targets, "paseo")).toBe(true);
@@ -179,6 +184,7 @@ describe("skills controller", () => {
       state: "not-installed",
       ops: [],
       available: BUNDLED_SKILLS,
+      installed: [],
       selection: { mode: "custom", skills: [] },
     });
     expect(await isInstalled(harness.targets, "paseo")).toBe(false);
@@ -193,6 +199,7 @@ describe("skills controller", () => {
       state: "up-to-date",
       ops: [],
       available: BUNDLED_SKILLS,
+      installed: BUNDLED_SKILLS,
       selection: { mode: "all" },
     });
     expect(await isInstalled(harness.targets, "paseo-advisor")).toBe(true);
@@ -209,6 +216,7 @@ describe("skills controller", () => {
       state: "drift",
       ops: [{ kind: "add", name: "paseo" }],
       available: BUNDLED_SKILLS,
+      installed: ["paseo"],
       selection: { mode: "custom", skills: ["paseo"] },
     });
   });
@@ -223,6 +231,7 @@ describe("skills controller", () => {
       state: "not-installed",
       ops: BUNDLED_SKILLS.map((name) => ({ kind: "add", name })),
       available: BUNDLED_SKILLS,
+      installed: [],
       selection: { mode: "all" },
     });
   });
@@ -240,6 +249,7 @@ describe("skills controller", () => {
       state: "up-to-date",
       ops: [],
       available: BUNDLED_SKILLS,
+      installed: ["paseo"],
       selection: { mode: "custom", skills: ["paseo"] },
     });
     expect(await installedEverywhere(readOnly.targets)).toEqual([["paseo"], ["paseo"], ["paseo"]]);
@@ -266,6 +276,7 @@ describe("skills controller", () => {
       state: "up-to-date",
       ops: [],
       available: BUNDLED_SKILLS,
+      installed: ["paseo"],
       selection: { mode: "custom", skills: ["paseo"] },
     });
   });
@@ -278,6 +289,7 @@ describe("skills controller", () => {
       state: "up-to-date",
       ops: [],
       available: BUNDLED_SKILLS,
+      installed: ["paseo"],
       selection: { mode: "custom", skills: ["paseo"] },
     });
   });

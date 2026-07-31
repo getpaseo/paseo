@@ -48,6 +48,19 @@ export interface SkillsSandboxOptions {
   blockAgentsDir?: boolean;
   /** Converge and commit this selection before the app loads, through the real controller. */
   installed?: SkillSelection;
+  /**
+   * Leaves a skill installed in one agent home only, the way a partial install
+   * or a hand-deleted directory leaves it.
+   */
+  keepOnlyIn?: { skill: string; target: SkillTargetName };
+}
+
+export type SkillTargetName = "agents" | "claude" | "codex";
+
+function targetDir(targets: SkillTargets, target: SkillTargetName): string {
+  if (target === "agents") return targets.agentsDir;
+  if (target === "claude") return targets.claudeDir;
+  return targets.codexDir;
 }
 
 export async function createSkillsSandbox(
@@ -73,6 +86,14 @@ export async function createSkillsSandbox(
       resolveTargets: () => targets,
       selectionStore: createSkillSelectionStore({ userDataPath }),
     }).save(options.installed);
+  }
+
+  if (options.keepOnlyIn) {
+    const kept = targetDir(targets, options.keepOnlyIn.target);
+    for (const dir of [targets.agentsDir, targets.claudeDir, targets.codexDir]) {
+      if (dir === kept) continue;
+      await rm(path.join(dir, options.keepOnlyIn.skill), { recursive: true, force: true });
+    }
   }
 
   if (options.blockAgentsDir) {
@@ -251,6 +272,16 @@ export async function expectRemovalWarning(page: Page, skills: string[]): Promis
 
 export async function expectNoRemovalWarning(page: Page): Promise<void> {
   expect(await page.evaluate(() => window.__capturedDialogCall)).toBeUndefined();
+}
+
+export async function expectSkillPresentIn(
+  sandbox: SkillsSandbox,
+  target: SkillTargetName,
+  skill: string,
+): Promise<void> {
+  await expect
+    .poll(() => readInstalledSkills(targetDir(sandbox.targets, target)), { timeout: 15_000 })
+    .toContain(skill);
 }
 
 export async function expectSkillsInstalled(

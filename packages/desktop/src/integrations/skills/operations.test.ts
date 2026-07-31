@@ -127,6 +127,28 @@ describe("getSkillsStatus", () => {
     expect(status.available).toEqual(["paseo", "paseo-advisor", "paseo-loop"]);
   });
 
+  it("reports a skill present in only one target as installed", async () => {
+    await writeCurrentBundle(sandbox.targets.sourceDir);
+    await writeOnDiskSkill(sandbox.targets.claudeDir, "paseo", { "SKILL.md": "paseo-v1" });
+
+    const status = await getSkillsStatus(sandbox.targets, ALL_SKILLS);
+
+    // `add` means "missing from at least one target", so it cannot answer
+    // "is there a directory here to delete". `installed` answers that.
+    expect(status.installed).toEqual(["paseo"]);
+    expect(status.ops).toEqual([
+      { kind: "add", name: "paseo" },
+      { kind: "add", name: "paseo-loop" },
+    ]);
+  });
+
+  it("reports legacy skill directories left on disk as installed", async () => {
+    await writeCurrentBundle(sandbox.targets.sourceDir);
+    await writeOnDiskSkill(sandbox.targets.agentsDir, "paseo-chat", { "SKILL.md": "chat-old" });
+
+    expect((await getSkillsStatus(sandbox.targets, ALL_SKILLS)).installed).toEqual(["paseo-chat"]);
+  });
+
   it("returns not-installed when only user-personal skill dirs exist (the live bug)", async () => {
     await writeCurrentBundle(sandbox.targets.sourceDir);
     for (const name of ["unslop", "tdd", "devbox"]) {
@@ -153,6 +175,7 @@ describe("getSkillsStatus", () => {
       state: "up-to-date",
       ops: [],
       available: ["paseo", "paseo-loop"],
+      installed: ["paseo", "paseo-loop"],
     });
   });
 
@@ -179,6 +202,7 @@ describe("getSkillsStatus", () => {
       state: "up-to-date",
       ops: [],
       available: ["paseo", "paseo-loop"],
+      installed: ["paseo", "paseo-loop"],
     });
   });
 
@@ -272,6 +296,7 @@ describe("custom skill selection", () => {
       state: "up-to-date",
       ops: [],
       available: ["paseo", "paseo-advisor", "paseo-loop"],
+      installed: ["paseo", "paseo-loop"],
     });
     expect(await installedIn(sandbox.targets, "paseo")).toEqual([true, true, true]);
     expect(await installedIn(sandbox.targets, "paseo-loop")).toEqual([true, true, true]);
@@ -287,6 +312,7 @@ describe("custom skill selection", () => {
       state: "up-to-date",
       ops: [],
       available: ["paseo", "paseo-advisor", "paseo-loop"],
+      installed: ["paseo"],
     });
   });
 
@@ -329,6 +355,7 @@ describe("custom skill selection", () => {
       state: "not-installed",
       ops: [],
       available: ["paseo", "paseo-advisor", "paseo-loop"],
+      installed: [],
     });
     expect(await installedIn(sandbox.targets, "paseo")).toEqual([false, false, false]);
     expect(await installedIn(sandbox.targets, "paseo-loop")).toEqual([false, false, false]);
@@ -341,6 +368,7 @@ describe("custom skill selection", () => {
       state: "up-to-date",
       ops: [],
       available: ["paseo", "paseo-advisor", "paseo-loop"],
+      installed: ["paseo"],
     });
     expect(await installedIn(sandbox.targets, "not-a-skill")).toEqual([false, false, false]);
   });
@@ -377,6 +405,7 @@ describe("installSkills / updateSkills", () => {
       state: "up-to-date",
       ops: [],
       available: ["paseo", "paseo-loop"],
+      installed: ["paseo", "paseo-loop"],
     });
     for (const name of ["paseo", "paseo-loop"]) {
       expect(
@@ -405,6 +434,7 @@ describe("installSkills / updateSkills", () => {
       state: "up-to-date",
       ops: [],
       available: ["paseo", "paseo-loop"],
+      installed: ["paseo", "paseo-loop"],
     });
     expect(
       await fs.readFile(path.join(sandbox.targets.agentsDir, "paseo", "SKILL.md"), "utf-8"),
@@ -445,6 +475,7 @@ describe("installSkills / updateSkills", () => {
       state: "up-to-date",
       ops: [],
       available: ["paseo", "paseo-loop"],
+      installed: ["paseo", "paseo-loop"],
     });
     expect(
       await fs.readFile(
@@ -516,6 +547,7 @@ describe("installSkills / updateSkills", () => {
         { kind: "add", name: "paseo-loop" },
       ],
       available: ["paseo", "paseo-loop"],
+      installed: [],
     });
     expect(await installedIn(sandbox.targets, "paseo")).toEqual([false, false, false]);
   });

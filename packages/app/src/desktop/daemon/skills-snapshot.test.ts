@@ -11,6 +11,7 @@ describe("parseSkillsSnapshot", () => {
           { kind: "delete", name: "paseo-chat" },
         ],
         available: ["paseo", "paseo-loop"],
+        installed: ["paseo"],
         selection: { mode: "custom", skills: ["paseo", "paseo-loop"] },
       }),
     ).toEqual({
@@ -20,8 +21,44 @@ describe("parseSkillsSnapshot", () => {
         { kind: "delete", name: "paseo-chat" },
       ],
       available: ["paseo", "paseo-loop"],
+      installed: ["paseo"],
       selection: { mode: "custom", skills: ["paseo", "paseo-loop"] },
     });
+  });
+
+  it("parses the installed skills the host reports", () => {
+    expect(
+      parseSkillsSnapshot({
+        state: "drift",
+        ops: [{ kind: "add", name: "paseo-loop" }],
+        available: ["paseo", "paseo-loop"],
+        installed: ["paseo-loop", 7],
+        selection: { mode: "all" },
+      }).installed,
+    ).toEqual(["paseo-loop"]);
+  });
+
+  it("assumes the saved selection is installed when the host does not report it", () => {
+    // An older host has no `installed` field. Assuming the selection is on disk
+    // keeps the destructive confirmation firing rather than silently skipping it.
+    expect(
+      parseSkillsSnapshot({
+        state: "up-to-date",
+        ops: [],
+        available: ["paseo", "paseo-advisor", "paseo-loop"],
+        selection: { mode: "custom", skills: ["paseo", "paseo-loop"] },
+      }).installed,
+    ).toEqual(["paseo", "paseo-loop"]);
+  });
+
+  it("assumes every bundled skill is installed for an all selection from an older host", () => {
+    expect(
+      parseSkillsSnapshot({
+        state: "up-to-date",
+        ops: [],
+        available: ["paseo", "paseo-loop"],
+      }).installed,
+    ).toEqual(["paseo", "paseo-loop"]);
   });
 
   it("reads a snapshot with no saved selection as all skills", () => {
@@ -29,6 +66,7 @@ describe("parseSkillsSnapshot", () => {
       state: "up-to-date",
       ops: [],
       available: ["paseo"],
+      installed: ["paseo"],
       selection: { mode: "all" },
     });
   });
@@ -45,6 +83,7 @@ describe("parseSkillsSnapshot", () => {
       state: "up-to-date",
       ops: [],
       available: ["paseo", "paseo-loop"],
+      installed: ["paseo"],
       selection: { mode: "custom", skills: ["paseo"] },
     });
   });

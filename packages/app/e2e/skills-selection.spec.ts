@@ -13,6 +13,7 @@ import {
   expectSavedSkillSelection,
   expectSaveErrorKeepsSheetOpen,
   expectSelectedSkills,
+  expectSkillPresentIn,
   expectSkillSelectionOpen,
   expectSkillsInstalled,
   openSkillsIntegrations,
@@ -142,6 +143,25 @@ test.describe("Removing an installed skill", () => {
     await expectRemovalWarning(page, ["paseo-loop"]);
     await expectSkillsInstalled(skills, ["paseo", "paseo-advisor"]);
     await expectSelectedSkills(page, ["paseo", "paseo-advisor"]);
+  });
+
+  test("warns for a skill installed in only one agent directory", async ({ page, startSkills }) => {
+    const skills = await startSkills({
+      installed: { mode: "all" },
+      keepOnlyIn: { skill: "paseo-loop", target: "claude" },
+      confirmRemoval: false,
+    });
+    await gotoAppShell(page);
+    await openSkillsIntegrations(page);
+
+    await openSkillSelection(page);
+    await chooseCustomSkills(page, ["paseo", "paseo-advisor"]);
+    await saveSkillSelection(page);
+
+    await expectRemovalWarning(page, ["paseo-loop"]);
+    await expectSkillSelectionOpen(page);
+    await expectSkillPresentIn(skills, "claude", "paseo-loop");
+    await expectSavedSkillSelection(skills, { mode: "all" });
   });
 
   test("adding a skill saves without a warning", async ({ page, startSkills }) => {

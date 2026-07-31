@@ -18,6 +18,12 @@ export interface SkillsStatus {
   ops: SkillOp[];
   /** Every skill the bundle currently ships, sorted. The selectable catalog. */
   available: string[];
+  /**
+   * Managed skills with a directory in at least one agent home, sorted. An `add`
+   * op means "missing from at least one target", so it cannot answer whether
+   * there is anything on disk to delete — this can.
+   */
+  installed: string[];
 }
 
 export interface SkillTargets {
@@ -118,6 +124,10 @@ function hasInstalledPaseoSkill(disks: readonly TargetSkills[]): boolean {
   return disks.some((disk) => disk.size > 0);
 }
 
+function installedSkillNames(disks: readonly TargetSkills[], names: readonly string[]): string[] {
+  return names.filter((name) => disks.some((disk) => disk.has(name)));
+}
+
 function bundleFilesMatch(bundle: SkillFiles, disk: SkillFiles): boolean {
   for (const [rel, sha] of bundle) {
     if (disk.get(rel) !== sha) return false;
@@ -149,10 +159,11 @@ export async function getSkillsStatus(
   ]);
   const disks = [agentsDisk, claudeDisk, codexDisk];
   const ops = diff(bundle, disks, names, resolveDesiredSkills(selection, available));
+  const installed = installedSkillNames(disks, names);
 
-  if (!hasInstalledPaseoSkill(disks)) return { state: "not-installed", ops, available };
-  if (ops.length === 0) return { state: "up-to-date", ops, available };
-  return { state: "drift", ops, available };
+  if (!hasInstalledPaseoSkill(disks)) return { state: "not-installed", ops, available, installed };
+  if (ops.length === 0) return { state: "up-to-date", ops, available, installed };
+  return { state: "drift", ops, available, installed };
 }
 
 async function applySkills(

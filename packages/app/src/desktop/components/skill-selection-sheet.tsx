@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { settingsStyles } from "@/styles/settings";
 import type { Theme } from "@/styles/theme";
 import { confirmDialog } from "@/utils/confirm-dialog";
-import type { SkillOp, SkillSelection } from "@/desktop/daemon/desktop-daemon";
+import type { SkillSelection } from "@/desktop/daemon/desktop-daemon";
 
 const ThemedCheck = withUnistyles(Check);
 const checkedIconMapping = (theme: Theme) => ({ color: theme.colors.accentForeground });
@@ -18,7 +18,7 @@ interface SkillSelectionSheetProps {
   visible: boolean;
   available: readonly string[];
   selection: SkillSelection;
-  ops: readonly SkillOp[];
+  installed: readonly string[];
   isSaving: boolean;
   onSave: (selection: SkillSelection) => Promise<void>;
   onClose: () => void;
@@ -29,24 +29,25 @@ function isSkillSelected(draft: SkillSelection, name: string): boolean {
 }
 
 /**
- * Which skill directories Save would delete. A skill the host still has to
- * install is not on disk yet, so turning it off deletes nothing and must not
- * raise a warning.
+ * Which skill directories Save would delete. This reads the host's installed
+ * list rather than inferring from pending operations: an `add` op only means a
+ * skill is missing from at least one agent home, so a skill present in one of
+ * them would look absent and get deleted with no warning.
  */
 export function skillsRemovedBySave({
   saved,
   draft,
   available,
-  ops,
+  installed,
 }: {
   saved: SkillSelection;
   draft: SkillSelection;
   available: readonly string[];
-  ops: readonly SkillOp[];
+  installed: readonly string[];
 }): string[] {
-  const notOnDisk = new Set(ops.filter((op) => op.kind === "add").map((op) => op.name));
+  const onDisk = new Set(installed);
   return available.filter(
-    (name) => isSkillSelected(saved, name) && !isSkillSelected(draft, name) && !notOnDisk.has(name),
+    (name) => isSkillSelected(saved, name) && !isSkillSelected(draft, name) && onDisk.has(name),
   );
 }
 
@@ -58,7 +59,7 @@ export function SkillSelectionSheet({
   visible,
   available,
   selection,
-  ops,
+  installed,
   isSaving,
   onSave,
   onClose,
@@ -94,8 +95,8 @@ export function SkillSelectionSheet({
   }, []);
 
   const removedSkills = useMemo(
-    () => skillsRemovedBySave({ saved: selection, draft, available, ops }),
-    [available, draft, ops, selection],
+    () => skillsRemovedBySave({ saved: selection, draft, available, installed }),
+    [available, draft, installed, selection],
   );
 
   const handleSave = useCallback(() => {
