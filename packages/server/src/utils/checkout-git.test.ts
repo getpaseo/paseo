@@ -2587,6 +2587,50 @@ const x = 1;
     expect(lookupTarget).not.toHaveProperty("headRepositoryOwner");
   });
 
+  it("does not apply a legacy fork hint to an ownerless branch with the same head", async () => {
+    execFileSync("git", ["branch", "contributor/old-change"], { cwd: repoDir });
+    execFileSync("git", ["branch", "old-change"], { cwd: repoDir });
+    const workspaceDir = join(paseoHome, "worktrees", "repo", "legacy-fork-worktree");
+    mkdirSync(join(paseoHome, "worktrees", "repo"), { recursive: true });
+    execFileSync("git", ["worktree", "add", workspaceDir, "contributor/old-change"], {
+      cwd: repoDir,
+    });
+    writePaseoWorktreeMetadata(workspaceDir, {
+      baseRefName: "main",
+      changeRequestLookupTarget: {
+        headRef: "old-change",
+        headRepositoryOwner: "contributor",
+        changeRequestNumber: 41,
+      },
+    });
+    const requestedTargets: RequestedPullRequestTarget[] = [];
+    const forge = createGitHubServiceRecordingPullRequestTargets({ requestedTargets });
+
+    const forkFacts = await getCheckoutSnapshotFacts(workspaceDir, { paseoHome });
+    await getPullRequestStatus(
+      workspaceDir,
+      forge,
+      { force: true, reason: "legacy-fork-branch" },
+      { paseoHome, facts: forkFacts },
+    );
+    expect(requestedTargets.at(-1)).toMatchObject({
+      headRef: "old-change",
+      headRepositoryOwner: "contributor",
+    });
+
+    execFileSync("git", ["checkout", "old-change"], { cwd: workspaceDir });
+    const ownerlessFacts = await getCheckoutSnapshotFacts(workspaceDir, { paseoHome });
+    await getPullRequestStatus(
+      workspaceDir,
+      forge,
+      { force: true, reason: "ownerless-same-head" },
+      { paseoHome, facts: ownerlessFacts },
+    );
+
+    expect(requestedTargets.at(-1)).toMatchObject({ headRef: "old-change" });
+    expect(requestedTargets.at(-1)).not.toHaveProperty("headRepositoryOwner");
+  });
+
   it("recognizes a normalized GitHub owner branch from legacy Enterprise metadata", async () => {
     execFileSync("git", ["remote", "add", "origin", "git@github.acme.internal:base/repo.git"], {
       cwd: repoDir,

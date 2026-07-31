@@ -67,13 +67,15 @@ export function getPaseoWorktreeChangeRequestHintForBranch(
 
   // COMPAT(change-request-local-branch): metadata before v0.2.5 omitted the
   // local binding; remove after 2027-07-31.
-  const canonicalBranches = new Set([target.headRef]);
+  const canonicalBranches = new Set<string>();
   if (target.headRepositoryOwner) {
     canonicalBranches.add(`${target.headRepositoryOwner}/${target.headRef}`);
     const normalizedOwner = normalizeLegacyGitHubOwnerForBranch(target.headRepositoryOwner);
     if (normalizedOwner) {
       canonicalBranches.add(`${normalizedOwner}/${target.headRef}`);
     }
+  } else {
+    canonicalBranches.add(target.headRef);
   }
   return canonicalBranches.has(currentBranch) ? target : null;
 }
