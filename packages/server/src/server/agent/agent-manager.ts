@@ -3409,23 +3409,13 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     broadcast: boolean | (() => boolean),
   ): Promise<void> {
-    const deferredBroadcast = typeof broadcast === "function";
-    const timelineEvents: Array<{
-      event: Extract<AgentStreamEvent, { type: "timeline" }>;
-      row: AgentTimelineRow;
-    }> = [];
-    const providerSubagentEvents: AgentManagerEvent[] = [];
+    const timelineEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
+    const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
     agent.historyPrimed = true;
     try {
       for await (const event of agent.session.streamHistory()) {
         if (event.type === "provider_subagent") {
-          const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
-          const managerEvent: AgentManagerEvent = { type: "provider_subagent", event: update };
-          if (deferredBroadcast) {
-            providerSubagentEvents.push(managerEvent);
-          } else if (broadcast) {
-            this.dispatch(managerEvent);
-          }
+          providerSubagentEvents.push(event);
           continue;
         }
         if (event.type !== "timeline") {
@@ -3434,40 +3424,36 @@ export class AgentManager {
         if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
           continue;
         }
-        const row = this.recordTimeline(
-          agent.id,
-          event.item,
-          event.timestamp ? { timestamp: event.timestamp } : undefined,
-        );
-        if (deferredBroadcast) {
-          timelineEvents.push({ event, row });
-        } else if (broadcast) {
-          this.dispatchStream(agent.id, event, {
-            seq: row.seq,
-            epoch: this.timelineStore.getEpoch(agent.id),
-            timestamp: row.timestamp,
-          });
-        }
+        timelineEvents.push(event);
       }
       this.failedHistoryHydrationAgentIds.delete(agent.id);
     } catch {
       agent.historyPrimed = false;
       this.failedHistoryHydrationAgentIds.add(agent.id);
       // ignore history failures
-    }
-
-    if (typeof broadcast !== "function" || !broadcast()) {
       return;
     }
+
+    const shouldBroadcast = typeof broadcast === "function" ? broadcast() : broadcast;
     for (const event of providerSubagentEvents) {
-      this.dispatch(event);
+      const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+      if (shouldBroadcast) {
+        this.dispatch({ type: "provider_subagent", event: update });
+      }
     }
-    for (const { event, row } of timelineEvents) {
-      this.dispatchStream(agent.id, event, {
-        seq: row.seq,
-        epoch: this.timelineStore.getEpoch(agent.id),
-        timestamp: row.timestamp,
-      });
+    for (const event of timelineEvents) {
+      const row = this.recordTimeline(
+        agent.id,
+        event.item,
+        event.timestamp ? { timestamp: event.timestamp } : undefined,
+      );
+      if (shouldBroadcast) {
+        this.dispatchStream(agent.id, event, {
+          seq: row.seq,
+          epoch: this.timelineStore.getEpoch(agent.id),
+          timestamp: row.timestamp,
+        });
+      }
     }
   }
 

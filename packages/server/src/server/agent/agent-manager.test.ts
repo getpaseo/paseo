@@ -4063,9 +4063,7 @@ test("a failed partial history hydration preserves persisted material progress",
     await resumedManager.flush();
 
     expect(resumedManager.getAgent(created.id)?.historyPrimed).toBe(false);
-    expect(resumedManager.getTimeline(created.id)).toEqual([
-      { type: "assistant_message", text: "partial history" },
-    ]);
+    expect(resumedManager.getTimeline(created.id)).toEqual([]);
     await expect(resumedManager.getMaterialProgressSnapshot(created.id)).resolves.toMatchObject({
       rows: null,
       persisted: {
