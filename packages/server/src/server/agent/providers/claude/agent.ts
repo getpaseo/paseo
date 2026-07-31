@@ -39,6 +39,7 @@ import {
   CLAUDE_ULTRACODE_THINKING_OPTION_ID,
   parseClaudeCodeVersion,
   resolveClaudeDisabledThinkingForModel,
+  resolveClaudeWireModelId,
 } from "./model-manifest.js";
 import { parsePartialJsonObject } from "./partial-json.js";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
@@ -2270,7 +2271,10 @@ class ClaudeAgentSession implements AgentSession {
     const normalizedModelId =
       typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
     const activeQuery = await this.ensureQuery();
-    await activeQuery.setModel(normalizedModelId ?? undefined);
+    const wireModelId = normalizedModelId
+      ? (resolveClaudeWireModelId(normalizedModelId) ?? normalizedModelId)
+      : null;
+    await activeQuery.setModel(wireModelId ?? undefined);
     this.config.model = normalizedModelId ?? undefined;
     this.reconcileThinkingOptionForModel(normalizedModelId);
     if (!claudeModelSupportsFastMode(this.config.model) && this.config.featureValues?.fast_mode) {
@@ -3025,6 +3029,19 @@ class ClaudeAgentSession implements AgentSession {
     });
   }
 
+  /**
+   * Pin the model on the SDK options. Callers keep seeing the catalog ID, while Claude Code
+   * receives the wire ID so 1M-context catalog entries actually open a 1M window on
+   * non-first-party upstreams instead of silently falling back to 200K.
+   */
+  private applyModelToOptions(options: ClaudeOptions): void {
+    const catalogModel = this.config.model ?? options.model;
+    this.lastOptionsModel = catalogModel ?? null;
+    if (catalogModel) {
+      options.model = resolveClaudeWireModelId(catalogModel) ?? catalogModel;
+    }
+  }
+
   private async buildOptions(): Promise<ClaudeOptions> {
     const { thinking, effort, ultracode } = this.resolveThinkingConfig();
     const appendedSystemPrompt = this.buildAppendedSystemPrompt();
@@ -3091,10 +3108,7 @@ class ClaudeAgentSession implements AgentSession {
       base.mcpServers = this.normalizeMcpServers(this.config.mcpServers);
     }
 
-    if (this.config.model) {
-      base.model = this.config.model;
-    }
-    this.lastOptionsModel = base.model ?? null;
+    this.applyModelToOptions(base);
     if (this.claudeSessionId && !this.pendingFreshSessionId) {
       base.resume = this.claudeSessionId;
     }

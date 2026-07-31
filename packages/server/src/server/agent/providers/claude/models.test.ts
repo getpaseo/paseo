@@ -12,6 +12,7 @@ import {
   normalizeClaudeManifestModelId,
   parseClaudeCodeVersion,
   resolveClaudeDisabledThinkingForModel,
+  resolveClaudeWireModelId,
 } from "./model-manifest.js";
 import { findClaudeModel, getClaudeModels, normalizeClaudeRuntimeModelId } from "./models.js";
 
@@ -437,6 +438,42 @@ describe("Claude Opus 5 catalog", () => {
       supported: true,
       fallbackThinkingOptionId: "low",
     });
+  });
+});
+
+describe("resolveClaudeWireModelId", () => {
+  it("requests the 1M window for the single Opus 5 catalog entry", () => {
+    expect(resolveClaudeWireModelId("claude-opus-5")).toBe("claude-opus-5[1m]");
+  });
+
+  it("leaves an explicit [1m] selection untouched", () => {
+    expect(resolveClaudeWireModelId("claude-opus-5[1m]")).toBe("claude-opus-5[1m]");
+    expect(resolveClaudeWireModelId("claude-sonnet-5[1m]")).toBe("claude-sonnet-5[1m]");
+  });
+
+  it("keeps 200K entries on their user-selected window", () => {
+    expect(resolveClaudeWireModelId("claude-sonnet-5")).toBe("claude-sonnet-5");
+    expect(resolveClaudeWireModelId("claude-fable-5")).toBe("claude-fable-5");
+    expect(resolveClaudeWireModelId("claude-opus-4-8")).toBe("claude-opus-4-8");
+    expect(resolveClaudeWireModelId("claude-haiku-4-5")).toBe("claude-haiku-4-5");
+  });
+
+  it("passes through non-catalog model strings unchanged", () => {
+    expect(resolveClaudeWireModelId("glm-5.1")).toBe("glm-5.1");
+    expect(resolveClaudeWireModelId("us.anthropic.claude-opus-4-8")).toBe(
+      "us.anthropic.claude-opus-4-8",
+    );
+  });
+
+  it("returns null for empty input", () => {
+    expect(resolveClaudeWireModelId(null)).toBeNull();
+    expect(resolveClaudeWireModelId(undefined)).toBeNull();
+    expect(resolveClaudeWireModelId("   ")).toBeNull();
+  });
+
+  it("round-trips back to the catalog ID through runtime normalization", () => {
+    const wireModelId = resolveClaudeWireModelId("claude-opus-5");
+    expect(normalizeClaudeRuntimeModelId(wireModelId)).toBe("claude-opus-5");
   });
 });
 
