@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
@@ -11,6 +11,7 @@ import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-
 import { settingsStyles } from "@/styles/settings";
 import {
   areMetadataCustomEndpointDraftsEqual,
+  buildMetadataCustomEndpointFieldResetKey,
   createMetadataCustomEndpointPatch,
   getMetadataCustomEndpointCardState,
   readMetadataCustomEndpointFromConfig,
@@ -27,19 +28,23 @@ interface DiscoveredModel {
 function ModelSuggestionChip({
   model,
   selected,
+  disabled,
   onSelect,
 }: {
   model: DiscoveredModel;
   selected: boolean;
+  disabled?: boolean;
   onSelect: (modelId: string) => void;
 }) {
   const handlePress = useCallback(() => {
+    if (disabled) return;
     onSelect(model.id);
-  }, [model.id, onSelect]);
+  }, [disabled, model.id, onSelect]);
 
   return (
     <Pressable
       onPress={handlePress}
+      disabled={disabled}
       style={[styles.suggestionChip, selected ? styles.suggestionChipSelected : null]}
       testID={`host-page-metadata-custom-endpoint-model-option-${model.id}`}
     >
@@ -59,16 +64,28 @@ export function MetadataCustomEndpointCard({ serverId }: { serverId: string }) {
   const client = useHostRuntimeClient(serverId);
 
   const persisted = useMemo(() => readMetadataCustomEndpointFromConfig(config), [config]);
+  const fieldResetKey = useMemo(
+    () => buildMetadataCustomEndpointFieldResetKey(persisted),
+    [persisted],
+  );
   const [draft, setDraft] = useState<MetadataCustomEndpointDraft>(persisted);
+  const [seededFieldResetKey, setSeededFieldResetKey] = useState(fieldResetKey);
+  // Bumped when a model chip is selected so the uncontrolled model input remounts.
+  const [modelFieldEpoch, setModelFieldEpoch] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [discoveryStatus, setDiscoveryStatus] = useState<MetadataModelDiscoveryStatus>("idle");
   const [models, setModels] = useState<DiscoveredModel[]>([]);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
 
-  useEffect(() => {
+  // Keep draft aligned with the persisted snapshot before paint when config
+  // reloads. AdaptiveTextInput remounts on fieldResetKey and must seed from
+  // the same snapshot, not a stale draft from the previous render.
+  if (fieldResetKey !== seededFieldResetKey) {
+    setSeededFieldResetKey(fieldResetKey);
     setDraft(persisted);
-  }, [persisted]);
+    setModelFieldEpoch(0);
+  }
 
   const cardState = getMetadataCustomEndpointCardState({
     isConnected,
@@ -95,6 +112,7 @@ export function MetadataCustomEndpointCard({ serverId }: { serverId: string }) {
 
   const handleSelectModel = useCallback((modelId: string) => {
     setDraft((current) => ({ ...current, model: modelId }));
+    setModelFieldEpoch((current) => current + 1);
     setSaveError(null);
   }, []);
 
@@ -186,10 +204,12 @@ export function MetadataCustomEndpointCard({ serverId }: { serverId: string }) {
         <View style={styles.fields}>
           <Field label={t("settings.host.orchestration.metadataEndpoint.baseUrlLabel")}>
             <FormTextInput
-              value={draft.baseUrl}
+              initialValue={draft.baseUrl}
+              resetKey={fieldResetKey}
               onChangeText={handleBaseUrlChange}
               autoCapitalize="none"
               autoCorrect={false}
+              editable={!isSaving}
               placeholder={t("settings.host.orchestration.metadataEndpoint.baseUrlPlaceholder")}
               testID="host-page-metadata-custom-endpoint-base-url"
             />
@@ -197,11 +217,13 @@ export function MetadataCustomEndpointCard({ serverId }: { serverId: string }) {
 
           <Field label={t("settings.host.orchestration.metadataEndpoint.apiKeyLabel")}>
             <FormTextInput
-              value={draft.apiKey}
+              initialValue={draft.apiKey}
+              resetKey={fieldResetKey}
               onChangeText={handleApiKeyChange}
               autoCapitalize="none"
               autoCorrect={false}
               secureTextEntry
+              editable={!isSaving}
               placeholder={t("settings.host.orchestration.metadataEndpoint.apiKeyPlaceholder")}
               testID="host-page-metadata-custom-endpoint-api-key"
             />
@@ -209,10 +231,12 @@ export function MetadataCustomEndpointCard({ serverId }: { serverId: string }) {
 
           <Field label={t("settings.host.orchestration.metadataEndpoint.modelLabel")}>
             <FormTextInput
-              value={draft.model}
+              initialValue={draft.model}
+              resetKey={`${fieldResetKey}:model:${modelFieldEpoch}`}
               onChangeText={handleModelChange}
               autoCapitalize="none"
               autoCorrect={false}
+              editable={!isSaving}
               placeholder={t("settings.host.orchestration.metadataEndpoint.modelPlaceholder")}
               testID="host-page-metadata-custom-endpoint-model"
             />
@@ -225,6 +249,7 @@ export function MetadataCustomEndpointCard({ serverId }: { serverId: string }) {
                   key={model.id}
                   model={model}
                   selected={draft.model === model.id}
+                  disabled={isSaving}
                   onSelect={handleSelectModel}
                 />
               ))}
@@ -253,7 +278,9 @@ export function MetadataCustomEndpointCard({ serverId }: { serverId: string }) {
               variant="outline"
               size="sm"
               onPress={handleRefreshModels}
-              disabled={discoveryStatus === "loading" || draft.baseUrl.trim().length === 0}
+              disabled={
+                isSaving || discoveryStatus === "loading" || draft.baseUrl.trim().length === 0
+              }
               testID="host-page-metadata-custom-endpoint-refresh-models"
             >
               {discoveryStatus === "loading"

@@ -1237,8 +1237,15 @@ export class AgentManager {
     const launchContext = await this.buildLaunchContext(agentId, client, storedConfig.cwd);
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
 
+    // Hot reloads (voice toggle, config swap) must not park Codex Goals.
+    // Full disk rehydrate (user "Reload agent") keeps the default pause-on-resume.
     const session = handle
-      ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
+      ? await client.resumeSession(
+          handle,
+          providerLaunchConfig,
+          launchContext,
+          rehydrateFromDisk ? undefined : { pauseActiveGoals: false },
+        )
       : await client.createSession(providerLaunchConfig, launchContext);
 
     let handedToRegistration = false;

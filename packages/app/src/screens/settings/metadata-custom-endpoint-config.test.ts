@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import {
   areMetadataCustomEndpointDraftsEqual,
+  buildMetadataCustomEndpointFieldResetKey,
   createMetadataCustomEndpointPatch,
   getMetadataCustomEndpointCardState,
   readMetadataCustomEndpointFromConfig,
@@ -92,5 +93,49 @@ describe("metadata custom endpoint config helpers", () => {
     };
     expect(areMetadataCustomEndpointDraftsEqual(draft, { ...draft })).toBe(true);
     expect(areMetadataCustomEndpointDraftsEqual(draft, { ...draft, model: "other" })).toBe(false);
+  });
+
+  test("builds a stable field reset key from the persisted snapshot", () => {
+    const saved = {
+      enabled: true,
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "sk-test",
+      model: "llama3",
+    };
+    expect(buildMetadataCustomEndpointFieldResetKey(saved)).toBe(
+      buildMetadataCustomEndpointFieldResetKey({ ...saved }),
+    );
+    expect(buildMetadataCustomEndpointFieldResetKey(saved)).not.toBe(
+      buildMetadataCustomEndpointFieldResetKey({ ...saved, model: "other" }),
+    );
+    expect(buildMetadataCustomEndpointFieldResetKey(saved)).not.toBe(
+      buildMetadataCustomEndpointFieldResetKey({
+        enabled: false,
+        baseUrl: "",
+        apiKey: "",
+        model: "",
+      }),
+    );
+  });
+
+  test("reads saved customEndpoint values after a config reload", () => {
+    expect(
+      readMetadataCustomEndpointFromConfig({
+        metadataGeneration: {
+          providers: [],
+          customEndpoint: {
+            enabled: true,
+            baseUrl: "http://127.0.0.1:11434/v1",
+            apiKey: "sk-test",
+            model: "llama3",
+          },
+        },
+      } as never),
+    ).toEqual({
+      enabled: true,
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "sk-test",
+      model: "llama3",
+    });
   });
 });

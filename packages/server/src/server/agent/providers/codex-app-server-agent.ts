@@ -126,6 +126,8 @@ function isCodexAlreadyUnarchivedError(error: unknown, threadId: string): boolea
 
 const TURN_START_TIMEOUT_MS = 90 * 1000;
 const INTERRUPT_TIMEOUT_MS = 2_000;
+// Pause-on-resume must not hang connect() if app-server ignores the RPC.
+const GOAL_PAUSE_TIMEOUT_MS = 10_000;
 const CODEX_PROVIDER = "codex" as const;
 // Codex treats most app-server client names as the model-request originator.
 // This reserved Codex name is non-originating, so requests keep Codex's default
@@ -3183,6 +3185,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     private readonly autoReviewEnabled: boolean = false,
     private readonly agentId?: string,
     private readonly initialResumePurpose: "interactive" | "history" = "interactive",
+    private readonly pauseActiveGoalsOnResume: boolean = true,
   ) {
     this.logger = logger.child({
       module: "agent",
@@ -3240,6 +3243,19 @@ export class CodexAppServerAgentSession implements AgentSession {
         await this.ensureThreadLoaded({
           allowArchivedHistory: this.initialResumePurpose === "history",
         });
+        // Codex Goals can keep working after a native thread/resume, outside
+        // Paseo's turn/start path (so status stays idle while events stream,
+        // and mode presets like Full Access never apply). Pause on interactive
+        // reconnect so daemon restart does not auto-continue Goal sessions.
+        // Hot reloads (voice/config swap) pass pauseActiveGoals: false.
+        // Users re-enable with /goal resume or by setting a new objective.
+        if (
+          this.goalsEnabled &&
+          this.initialResumePurpose === "interactive" &&
+          this.pauseActiveGoalsOnResume
+        ) {
+          await this.pauseActiveGoalAfterResume();
+        }
         await this.loadPersistedHistory();
       }
 
@@ -4396,6 +4412,30 @@ export class CodexAppServerAgentSession implements AgentSession {
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown error";
       return `Failed to compact context: ${message}`;
+    }
+  }
+
+  private async pauseActiveGoalAfterResume(): Promise<void> {
+    if (!this.client || !this.currentThreadId || !this.goalsEnabled) {
+      return;
+    }
+    try {
+      await this.client.request(
+        "thread/goal/set",
+        {
+          threadId: this.currentThreadId,
+          status: "paused",
+        },
+        GOAL_PAUSE_TIMEOUT_MS,
+      );
+    } catch (error) {
+      // No active goal, older Codex builds, or goal already paused — reconnect
+      // should still succeed for history/timeline loads. Log at warn so a
+      // real pause failure is visible when Goals still auto-continue.
+      this.logger.warn(
+        { err: error, threadId: this.currentThreadId },
+        "Codex goal pause after resume skipped",
+      );
     }
   }
 
@@ -6360,6 +6400,7 @@ export class CodexAppServerAgentClient implements AgentClient {
     };
     const goalsEnabled = await this.resolveGoalsEnabled();
     const autoReviewEnabled = await this.resolveAutoReviewEnabled();
+    const purpose = options?.purpose ?? "interactive";
     const session = new CodexAppServerAgentSession(
       merged,
       handle,
@@ -6371,7 +6412,8 @@ export class CodexAppServerAgentClient implements AgentClient {
       goalsEnabled,
       autoReviewEnabled,
       launchContext?.agentId,
-      options?.purpose ?? "interactive",
+      purpose,
+      options?.pauseActiveGoals !== false,
     );
     await session.connect();
     return session;
