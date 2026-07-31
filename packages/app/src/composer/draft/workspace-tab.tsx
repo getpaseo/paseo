@@ -110,7 +110,7 @@ function resolveDraftModeIdOverride(input: {
   selectedMode: string;
 }): { modeId: string } | Record<string, never> {
   const { autoSubmitConfig, modeOptionIds, selectedMode } = input;
-  if (autoSubmitConfig?.modeId) {
+  if (autoSubmitConfig?.modeId && modeOptionIds.includes(autoSubmitConfig.modeId)) {
     return { modeId: autoSubmitConfig.modeId };
   }
   const reconciled = reconcileSelectedMode(modeOptionIds, selectedMode);
@@ -126,7 +126,10 @@ function resolveDraftModeId(input: {
   selectedMode: string;
 }): string | null {
   const { autoSubmitConfig, modeOptionIds, selectedMode } = input;
-  if (autoSubmitConfig?.modeId !== undefined) {
+  if (
+    autoSubmitConfig?.modeId !== undefined &&
+    (autoSubmitConfig.modeId === null || modeOptionIds.includes(autoSubmitConfig.modeId))
+  ) {
     return autoSubmitConfig.modeId;
   }
   const reconciled = reconcileSelectedMode(modeOptionIds, selectedMode);
@@ -149,7 +152,7 @@ async function submitDraftCreateRequest(input: {
   composerState: {
     selectedProvider: string | null;
     selectedMode: string;
-    modeOptions: readonly { id: string }[];
+    modeOptions: readonly { id: string; disabledReason?: string }[];
     effectiveModelId: string | null;
     effectiveThinkingOptionId: string | null;
     featureValues: Record<string, unknown> | undefined;
@@ -182,7 +185,9 @@ async function submitDraftCreateRequest(input: {
   }
   const modeIdOverride = resolveDraftModeIdOverride({
     autoSubmitConfig,
-    modeOptionIds: composerState.modeOptions.map((mode) => mode.id),
+    modeOptionIds: composerState.modeOptions
+      .filter((mode) => mode.disabledReason === undefined)
+      .map((mode) => mode.id),
     selectedMode: composerState.selectedMode,
   });
   const config = buildWorkspaceDraftAgentConfig({
@@ -221,7 +226,7 @@ function buildDraftAgentSnapshot(input: {
   composerState: {
     effectiveModelId: string | null;
     effectiveThinkingOptionId: string | null;
-    modeOptions: readonly { id: string }[];
+    modeOptions: readonly { id: string; disabledReason?: string }[];
     selectedMode: string;
     selectedProvider: string | null;
     agentControls: { features?: Agent["features"] };
@@ -236,7 +241,9 @@ function buildDraftAgentSnapshot(input: {
     autoSubmitConfig?.thinkingOptionId ?? (composerState.effectiveThinkingOptionId || null);
   const modeId = resolveDraftModeId({
     autoSubmitConfig,
-    modeOptionIds: composerState.modeOptions.map((mode) => mode.id),
+    modeOptionIds: composerState.modeOptions
+      .filter((mode) => mode.disabledReason === undefined)
+      .map((mode) => mode.id),
     selectedMode: composerState.selectedMode,
   });
   const provider = autoSubmitConfig?.provider ?? composerState.selectedProvider;

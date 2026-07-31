@@ -19,4 +19,37 @@ describe("getNextActiveIndex", () => {
     expect(getNextActiveIndex({ currentIndex: 2, itemCount: 3, key: "ArrowDown" })).toBe(0);
     expect(getNextActiveIndex({ currentIndex: 0, itemCount: 3, key: "ArrowUp" })).toBe(2);
   });
+
+  it("skips disabled items in both directions", () => {
+    const isDisabled = (index: number) => index === 1;
+
+    expect(
+      getNextActiveIndex({ currentIndex: 0, itemCount: 3, key: "ArrowDown", isDisabled }),
+    ).toBe(2);
+    expect(getNextActiveIndex({ currentIndex: 2, itemCount: 3, key: "ArrowUp", isDisabled })).toBe(
+      0,
+    );
+  });
+
+  it("skips disabled boundary items when choosing the initial item", () => {
+    const isDisabled = (index: number) => index === 0 || index === 2;
+
+    expect(
+      getNextActiveIndex({ currentIndex: -1, itemCount: 3, key: "ArrowDown", isDisabled }),
+    ).toBe(1);
+    expect(getNextActiveIndex({ currentIndex: -1, itemCount: 3, key: "ArrowUp", isDisabled })).toBe(
+      1,
+    );
+  });
+
+  it("returns -1 when every item is disabled", () => {
+    expect(
+      getNextActiveIndex({
+        currentIndex: -1,
+        itemCount: 3,
+        key: "ArrowDown",
+        isDisabled: () => true,
+      }),
+    ).toBe(-1);
+  });
 });

@@ -596,6 +596,7 @@ function ScheduleTargetFields({
         id: option.id,
         value: option.id,
         label: option.label,
+        disabledReason: option.disabledReason,
       })),
     [state.modeOptions],
   );

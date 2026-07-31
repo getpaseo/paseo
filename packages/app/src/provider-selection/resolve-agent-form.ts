@@ -191,17 +191,23 @@ function resolvePreferredModeId(input: {
   // Saved modes are user intent. Provider create config validates unknown modes
   // at submission time, so background form resolution should not erase them.
   const initialModeId = normalizeSelectedModeId(input.initialModeId);
-  if (initialModeId) return initialModeId;
+  const modes = input.providerDef?.modes ?? [];
+  const isDisabledMode = (modeId: string) =>
+    modes.some((mode) => mode.id === modeId && mode.disabledReason !== undefined);
+  if (initialModeId && !isDisabledMode(initialModeId)) return initialModeId;
 
   const preferredModeId = normalizeSelectedModeId(input.preferredModeId);
-  if (preferredModeId) return preferredModeId;
+  if (preferredModeId && !isDisabledMode(preferredModeId)) return preferredModeId;
 
   const defaultModeId = input.providerDef?.defaultModeId;
-  const modes = input.providerDef?.modes ?? [];
-  if (defaultModeId && (modes.length === 0 || modes.some((mode) => mode.id === defaultModeId))) {
+  const enabledModes = modes.filter((mode) => mode.disabledReason === undefined);
+  if (
+    defaultModeId &&
+    (modes.length === 0 || enabledModes.some((mode) => mode.id === defaultModeId))
+  ) {
     return defaultModeId;
   }
-  return modes[0]?.id ?? "";
+  return enabledModes[0]?.id ?? "";
 }
 
 export function mergeSelectedComposerPreferences(args: {

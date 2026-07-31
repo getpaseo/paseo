@@ -448,6 +448,30 @@ describe("resolveFormState", () => {
     expect(resolved.thinkingOptionId).toBe("");
   });
 
+  it("falls back from a preferred mode disabled by the host", () => {
+    const rootClaudeDefinition: AgentProviderDefinition = {
+      ...TEST_CLAUDE_DEFINITION,
+      modes: TEST_CLAUDE_DEFINITION.modes.map((mode) =>
+        mode.id === "bypassPermissions"
+          ? { ...mode, disabledReason: "Unavailable while Paseo runs as root" }
+          : mode,
+      ),
+    };
+    const resolved = resolveFormState(
+      undefined,
+      {
+        provider: "claude",
+        providerPreferences: { claude: { mode: "bypassPermissions" } },
+      },
+      null,
+      INITIAL_USER_MODIFIED,
+      makeState({ provider: "claude" }).form,
+      makeProviderMap(rootClaudeDefinition),
+    );
+
+    expect(resolved.modeId).toBe("default");
+  });
+
   it("auto-selects the model's default thinking option when model is preferred but thinking is not", () => {
     const resolved = resolveFormState(
       undefined,

@@ -45,7 +45,6 @@ import {
 import { getNextActiveIndex } from "./combobox-keyboard";
 import {
   buildVisibleComboboxOptions,
-  getComboboxFallbackIndex,
   orderVisibleComboboxOptions,
   shouldShowCustomComboboxOption,
 } from "./combobox-options";
@@ -519,8 +518,14 @@ function computeDesktopPosition(input: DesktopPositionInput): DesktopPositionRes
   };
 }
 
-function advanceActiveIndex(itemCount: number, key: "ArrowDown" | "ArrowUp") {
-  return (currentIndex: number) => getNextActiveIndex({ currentIndex, itemCount, key });
+function advanceActiveIndex(options: ComboboxOption[], key: "ArrowDown" | "ArrowUp") {
+  return (currentIndex: number) =>
+    getNextActiveIndex({
+      currentIndex,
+      itemCount: options.length,
+      key,
+      isDisabled: (index) => Boolean(options[index]?.disabledReason),
+    });
 }
 
 type DesktopKey = "ArrowDown" | "ArrowUp" | "Enter" | "Escape";
@@ -536,13 +541,24 @@ interface DesktopKeyHandlerInput {
 }
 
 function handleDesktopArrowKey(input: DesktopKeyHandlerInput, key: "ArrowDown" | "ArrowUp") {
-  input.setActiveIndex(advanceActiveIndex(input.orderedVisibleOptions.length, key));
+  input.setActiveIndex(advanceActiveIndex(input.orderedVisibleOptions, key));
 }
 
 function handleDesktopEnterKey(input: DesktopKeyHandlerInput) {
   if (input.orderedVisibleOptions.length === 0) return;
   const { activeIndex, orderedVisibleOptions } = input;
-  const index = activeIndex >= 0 && activeIndex < orderedVisibleOptions.length ? activeIndex : 0;
+  const index =
+    activeIndex >= 0 &&
+    activeIndex < orderedVisibleOptions.length &&
+    !orderedVisibleOptions[activeIndex]?.disabledReason
+      ? activeIndex
+      : getNextActiveIndex({
+          currentIndex: -1,
+          itemCount: orderedVisibleOptions.length,
+          key: "ArrowDown",
+          isDisabled: (candidate) => Boolean(orderedVisibleOptions[candidate]?.disabledReason),
+        });
+  if (index < 0) return;
   input.handleSelect(orderedVisibleOptions[index].id);
 }
 
@@ -903,13 +919,17 @@ function resolveInitialActiveIndex(
   value: string,
 ): number {
   if (orderedVisibleOptions.length === 0) return -1;
-  const fallbackIndex = getComboboxFallbackIndex(
-    orderedVisibleOptions.length,
-    effectiveOptionsPosition,
-  );
+  const fallbackIndex = getNextActiveIndex({
+    currentIndex: -1,
+    itemCount: orderedVisibleOptions.length,
+    key: effectiveOptionsPosition === "above-search" ? "ArrowUp" : "ArrowDown",
+    isDisabled: (index) => Boolean(orderedVisibleOptions[index]?.disabledReason),
+  });
   if (normalizedSearch) return fallbackIndex;
   const selectedIndex = orderedVisibleOptions.findIndex((opt) => opt.id === value);
-  return selectedIndex >= 0 ? selectedIndex : fallbackIndex;
+  return selectedIndex >= 0 && !orderedVisibleOptions[selectedIndex]?.disabledReason
+    ? selectedIndex
+    : fallbackIndex;
 }
 
 type BottomSheetVisibility = ReturnType<typeof useIsolatedBottomSheetVisibility>;
@@ -1504,10 +1524,11 @@ export function Combobox({
 
   const handleSelect = useCallback(
     (id: string) => {
+      if (orderedVisibleOptions.find((option) => option.id === id)?.disabledReason) return;
       onSelect(id);
       runIfSelected(keepOpenOnSelect, handleClose);
     },
-    [handleClose, keepOpenOnSelect, onSelect],
+    [handleClose, keepOpenOnSelect, onSelect, orderedVisibleOptions],
   );
 
   const handleSubmitSearch = useCallback(
