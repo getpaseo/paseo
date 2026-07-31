@@ -2815,15 +2815,28 @@ function getOpenCodeEventSessionId(event: OpenCodeEvent): string | null {
   );
 }
 
-function isOpenCodeTerminalEvent(event: OpenCodeEvent, sessionId: string): boolean {
-  if (event.type === "session.idle" || event.type === "session.error") {
-    return event.properties.sessionID === sessionId;
+function getOpenCodeRunnerStatusFromEvent(
+  event: OpenCodeEvent,
+  sessionId: string,
+): OpenCodeRunnerStatus | null {
+  if (getOpenCodeEventSessionId(event) !== sessionId) {
+    return null;
   }
-  return (
-    event.type === "session.status" &&
-    event.properties.sessionID === sessionId &&
-    event.properties.status.type === "idle"
-  );
+  if (event.type === "session.status") {
+    return event.properties.status.type;
+  }
+  if (event.type === "session.idle" || event.type === "session.error") {
+    return "idle";
+  }
+  return null;
+}
+
+function isOpenCodeRunnerActive(status: OpenCodeRunnerStatus): boolean {
+  return status === "busy" || status === "retry";
+}
+
+function isOpenCodeTerminalEvent(event: OpenCodeEvent, sessionId: string): boolean {
+  return getOpenCodeRunnerStatusFromEvent(event, sessionId) === "idle";
 }
 
 function isOpenCodeProviderInternalEvent(event: AgentStreamEvent): boolean {
@@ -2938,6 +2951,7 @@ class OpenCodeAgentSession implements AgentSession {
    */
   private abortSettlement: Promise<void> = Promise.resolve();
   private externalStatusReconciliationStarted = false;
+  private runnerStatusRevision = 0;
   private readonly runningToolCalls = new Map<string, ToolCallTimelineItem>();
   private subAgentsByCallId = new Map<string, OpenCodeSubAgentActivityState>();
   private subAgentCallIdByChildSessionId = new Map<string, string>();
@@ -3416,7 +3430,13 @@ class OpenCodeAgentSession implements AgentSession {
 
   private async reconcileExternalRunnerStatus(): Promise<void> {
     await this.ensureEventStreamReady();
-    if ((await this.readProviderRunnerStatus()) !== "busy" || this.turnState.status !== "idle") {
+    const observedRevision = this.runnerStatusRevision;
+    const runnerStatus = await this.readProviderRunnerStatus();
+    if (
+      this.runnerStatusRevision !== observedRevision ||
+      this.turnState.status !== "idle" ||
+      !isOpenCodeRunnerActive(runnerStatus)
+    ) {
       return;
     }
     this.startAutonomousTurn();
@@ -3680,6 +3700,7 @@ class OpenCodeAgentSession implements AgentSession {
     if (!event) {
       return;
     }
+    this.observeRunnerStatusEvent(event);
     if (this.discardEventWhileStopping(event, eventCount)) {
       return;
     }
@@ -3762,20 +3783,20 @@ class OpenCodeAgentSession implements AgentSession {
     }
   }
 
+  private observeRunnerStatusEvent(event: OpenCodeEvent): void {
+    if (getOpenCodeRunnerStatusFromEvent(event, this.sessionId) !== null) {
+      this.runnerStatusRevision += 1;
+    }
+  }
+
   private shouldStartAutonomousTurn(event: OpenCodeEvent): boolean {
     if (this.turnState.status !== "idle") {
       return false;
     }
-    if (getOpenCodeEventSessionId(event) !== this.sessionId) {
-      return false;
-    }
-    return this.isAutonomousWakeBoundary(event);
-  }
-
-  private isAutonomousWakeBoundary(event: OpenCodeEvent): boolean {
     // Message records are mutable and can be patched after the runner stops.
     // Only OpenCode's execution status is authoritative for autonomous activity.
-    return event.type === "session.status" && event.properties.status.type === "busy";
+    const runnerStatus = getOpenCodeRunnerStatusFromEvent(event, this.sessionId);
+    return runnerStatus !== null && isOpenCodeRunnerActive(runnerStatus);
   }
 
   private startAutonomousTurn(): string {

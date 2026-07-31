@@ -3293,49 +3293,102 @@ describe("OpenCode provider subagent contract", () => {
     );
   });
 
-  test("reconciles an adopted child that was already busy before attachment", async () => {
+  test.each(["busy", "retry"] as const)(
+    "reconciles an adopted child that was already %s before attachment",
+    async (runnerStatus) => {
+      const { child, childClient, parent } = await createAdoptedChildSession((client) => {
+        client.sessionStatusResponse = {
+          data: { ses_child_external: { type: runnerStatus } },
+        };
+      });
+      const completed = createTestDeferred<void>();
+      const events: AgentStreamEvent[] = [];
+      try {
+        child.subscribe((event) => {
+          events.push(event);
+          if (event.type === "turn_completed") {
+            completed.resolve();
+          }
+        });
+
+        await vi.waitFor(() => {
+          expect(events).toContainEqual({
+            type: "turn_started",
+            provider: "opencode",
+            turnId: "opencode-turn-0",
+          });
+        });
+        for (const event of assistantTurnEvents({
+          sessionId: "ses_child_external",
+          text: "already-running child says hi",
+        })) {
+          childClient.emitEvent(event);
+        }
+
+        await completed.promise;
+
+        expect(childClient.calls.sessionStatus).toEqual([{ directory: "/workspace/repo" }]);
+        expect(turnEventSignatures(events)).toEqual([
+          ["turn_started", "opencode-turn-0"],
+          ["timeline", "opencode-turn-0"],
+          ["turn_completed", "opencode-turn-0"],
+        ]);
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: "timeline",
+            item: expect.objectContaining({ text: "already-running child says hi" }),
+          }),
+        );
+      } finally {
+        await child.close();
+        await parent.close();
+      }
+    },
+  );
+
+  test("ignores a stale busy snapshot after the live stream reaches idle", async () => {
+    const statusStarted = createTestDeferred<void>();
+    const releaseStatus = createTestDeferred<void>();
     const { child, childClient, parent } = await createAdoptedChildSession((client) => {
-      client.sessionStatusResponse = {
-        data: { ses_child_external: { type: "busy" } },
+      client.sessionStatusImplementation = async () => {
+        statusStarted.resolve();
+        await releaseStatus.promise;
+        return { data: { ses_child_external: { type: "busy" } } };
       };
     });
-    const completed = createTestDeferred<void>();
-    const started = createTestDeferred<void>();
+    const idleConsumed = createTestDeferred<void>();
     const events: AgentStreamEvent[] = [];
     try {
       child.subscribe((event) => {
         events.push(event);
-        if (event.type === "turn_started") {
-          started.resolve();
-        }
-        if (event.type === "turn_completed") {
-          completed.resolve();
+        if (event.type === "provider_subagent") {
+          idleConsumed.resolve();
         }
       });
 
-      await started.promise;
-      for (const event of assistantTurnEvents({
-        sessionId: "ses_child_external",
-        text: "already-running child says hi",
-      })) {
-        childClient.emitEvent(event);
-      }
+      await statusStarted.promise;
+      childClient.emitEvent({
+        type: "session.idle",
+        properties: { sessionID: "ses_child_external" },
+      });
+      childClient.emitEvent({
+        type: "session.created",
+        properties: {
+          info: {
+            id: "ses_child_idle_drain_marker",
+            parentID: "ses_child_external",
+            title: "Idle drain marker",
+          },
+        },
+      });
+      await idleConsumed.promise;
 
-      await completed.promise;
+      releaseStatus.resolve();
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
-      expect(childClient.calls.sessionStatus).toEqual([{ directory: "/workspace/repo" }]);
-      expect(turnEventSignatures(events)).toEqual([
-        ["turn_started", "opencode-turn-0"],
-        ["timeline", "opencode-turn-0"],
-        ["turn_completed", "opencode-turn-0"],
-      ]);
-      expect(events).toContainEqual(
-        expect.objectContaining({
-          type: "timeline",
-          item: expect.objectContaining({ text: "already-running child says hi" }),
-        }),
-      );
+      expect(events.some((event) => event.type === "turn_started")).toBe(false);
     } finally {
+      releaseStatus.resolve();
       await child.close();
       await parent.close();
     }
