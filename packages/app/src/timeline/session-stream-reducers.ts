@@ -4,6 +4,7 @@ import type { AssistantMessageItem, StreamItem } from "@/types/stream";
 import type { TurnLivenessTransition } from "@/timeline/turn-liveness";
 import {
   applyStreamEvent,
+  createUserMessage,
   flushHeadToTail,
   hydrateStreamState,
   isAgentToolCallItem,
@@ -1092,6 +1093,55 @@ interface TimelineSequencingGateResult {
   sideEffects: AgentStreamReducerSideEffect[];
 }
 
+function applyCanonicalUserMessageRevision(input: {
+  event: AgentStreamEventPayload;
+  seq: number | undefined;
+  epoch: string | undefined;
+  timestamp: Date;
+  currentTail: StreamItem[];
+  currentHead: StreamItem[];
+  currentCursor: TimelineCursor | undefined;
+}): ReturnType<typeof upsertUserMessageAcrossStream> | null {
+  const { event, seq, epoch, currentCursor } = input;
+  if (
+    event.type !== "timeline" ||
+    event.item.type !== "user_message" ||
+    !event.item.clientMessageId ||
+    !event.item.messageId ||
+    typeof seq !== "number" ||
+    typeof epoch !== "string" ||
+    currentCursor?.epoch !== epoch ||
+    seq > currentCursor.endSeq
+  ) {
+    return null;
+  }
+  const clientMessageId = event.item.clientMessageId;
+  const existing = [...input.currentTail, ...input.currentHead].find(
+    (item) =>
+      item.kind === "user_message" &&
+      item.clientMessageId === clientMessageId &&
+      item.timelineCursor?.epoch === epoch &&
+      item.timelineCursor.seq === seq,
+  );
+  if (!existing || existing.kind !== "user_message") {
+    return null;
+  }
+  return upsertUserMessageAcrossStream({
+    tail: input.currentTail,
+    head: input.currentHead,
+    message: createUserMessage({
+      id: existing.id,
+      clientMessageId,
+      messageId: event.item.messageId,
+      text: event.item.text,
+      timestamp: input.timestamp,
+      timelineCursor: { epoch, seq },
+    }),
+    insert: "none",
+    presentation: "existing",
+  });
+}
+
 export interface ProcessAgentStreamEventsInput {
   events: AgentStreamReducerEvent[];
   currentTail: StreamItem[];
@@ -1208,6 +1258,30 @@ export function processAgentStreamEvent(
     timestamp,
     hasAuthoritativeBaseline = true,
   } = input;
+
+  const revision = applyCanonicalUserMessageRevision({
+    event,
+    seq,
+    epoch,
+    timestamp,
+    currentTail,
+    currentHead,
+    currentCursor,
+  });
+  if (revision) {
+    return {
+      tail: revision.tail,
+      head: revision.head,
+      changedTail: revision.changedTail,
+      changedHead: revision.changedHead,
+      cursor: null,
+      cursorChanged: false,
+      acknowledgedClientMessageIds: revision.location?.message.clientMessageId
+        ? [revision.location.message.clientMessageId]
+        : [],
+      sideEffects: [],
+    };
+  }
 
   const sequencing = processTimelineSequencingGate({
     event,
@@ -1417,42 +1491,28 @@ interface StreamStatePatch {
 
 export function deriveAgentStreamTurnLiveness(
   events: readonly AgentStreamReducerEvent[],
-): TurnLivenessTransition | undefined {
-  let transition: TurnLivenessTransition | undefined;
-  let shouldRestart = false;
-  let restartStartedAt: Date | null = null;
-  for (const { event, timestamp, seq, epoch } of events) {
+): TurnLivenessTransition[] {
+  const transitions: TurnLivenessTransition[] = [];
+  for (const { event, timestamp } of events) {
     if (event.type === "turn_started") {
-      if (shouldRestart) restartStartedAt ??= timestamp;
-      transition =
-        typeof seq === "number" && typeof epoch === "string"
-          ? {
-              type: restartStartedAt ? "stream_restart" : "stream_open",
-              startedAt: restartStartedAt ?? timestamp,
-              evidence: { epoch, seq },
-            }
-          : { type: "directory_running", startedAt: timestamp };
+      transitions.push({
+        type: "stream_open",
+        turn: { turnId: event.turnId ?? null, startedAt: timestamp },
+      });
     } else if (
       event.type === "turn_completed" ||
       event.type === "turn_failed" ||
       event.type === "turn_canceled"
     ) {
-      transition = { type: "stream_close" };
-      shouldRestart = true;
-      restartStartedAt = null;
+      transitions.push({ type: "stream_close", turnId: event.turnId ?? null });
     }
   }
-  return transition;
+  return transitions;
 }
 
 export interface CreateSessionAgentStreamReducerQueueInput {
   serverId: string;
   setAgentStreamState: (serverId: string, agentId: string, state: StreamStatePatch) => void;
-  applyAgentTurnLiveness: (
-    serverId: string,
-    agentId: string,
-    transition: TurnLivenessTransition,
-  ) => void;
   setAgentTimelineCursor: (
     serverId: string,
     state: (prev: Map<string, TimelineCursor>) => Map<string, TimelineCursor>,
@@ -1471,13 +1531,7 @@ function cancelAgentStreamReducerFlush(id: number) {
 export function createSessionAgentStreamReducerQueue(
   input: CreateSessionAgentStreamReducerQueueInput,
 ): AgentStreamReducerQueue {
-  const {
-    serverId,
-    setAgentStreamState,
-    applyAgentTurnLiveness,
-    setAgentTimelineCursor,
-    recoverTimelineGap,
-  } = input;
+  const { serverId, setAgentStreamState, setAgentTimelineCursor, recoverTimelineGap } = input;
 
   return createAgentStreamReducerQueue({
     getSnapshot: (agentId) => {
@@ -1491,7 +1545,6 @@ export function createSessionAgentStreamReducerQueue(
       };
     },
     commit: (agentId, result, events) => {
-      const turnLiveness = deriveAgentStreamTurnLiveness(events);
       if (
         result.changedTail ||
         result.changedHead ||
@@ -1505,10 +1558,6 @@ export function createSessionAgentStreamReducerQueue(
             : {}),
         });
       }
-      if (turnLiveness) {
-        applyAgentTurnLiveness(serverId, agentId, turnLiveness);
-      }
-
       if (result.cursorChanged && result.cursor) {
         const nextCursor = result.cursor;
         const lastEvent = events.at(-1);

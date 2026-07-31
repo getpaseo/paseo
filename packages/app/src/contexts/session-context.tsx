@@ -14,6 +14,7 @@ import { prefetchProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { generateMessageId, type StreamItem } from "@/types/stream";
 import {
   createSessionAgentStreamReducerQueue,
+  deriveAgentStreamTurnLiveness,
   processTimelineResponse,
   type ProcessTimelineResponseOutput,
   type TimelineReducerSideEffect,
@@ -619,17 +620,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         return;
       }
 
-      if (shouldMarkAuthoritativeHistoryApplied && payload.agent) {
-        applyAgentTurnLiveness(serverId, agentId, {
-          type: "resume_snapshot",
-          status: payload.agent.status,
-          startedAt: payload.agent.lastUserMessageAt
-            ? new Date(payload.agent.lastUserMessageAt)
-            : null,
-          coverage: { epoch: payload.epoch, seq: payload.window.maxSeq },
-        });
-      }
-
       if (result.commit === "discard") {
         if (result.acknowledgedClientMessageIds.length > 0) {
           setAgentStreamState(serverId, agentId, {
@@ -665,7 +655,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     },
     [
       applyAgentTimelineResponseState,
-      applyAgentTurnLiveness,
       markAgentHistorySynchronized,
       recoverTimelineGap,
       serverId,
@@ -750,7 +739,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     const agentStreamReducerQueue = createSessionAgentStreamReducerQueue({
       serverId,
       setAgentStreamState,
-      applyAgentTurnLiveness,
       setAgentTimelineCursor,
       recoverTimelineGap,
     });
@@ -767,6 +755,12 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         event.type === "turn_canceled"
       ) {
         voiceRuntime?.onTurnEvent(serverId, agentId, event.type);
+      }
+      const turnLiveness = deriveAgentStreamTurnLiveness([
+        { event: streamEvent, seq, epoch, timestamp: parsedTimestamp },
+      ]);
+      if (turnLiveness.length > 0) {
+        applyAgentTurnLiveness(serverId, agentId, turnLiveness);
       }
       agentStreamReducerQueue.enqueue(agentId, {
         event: streamEvent,

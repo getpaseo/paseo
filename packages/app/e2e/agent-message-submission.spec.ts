@@ -3,8 +3,10 @@ import { expect, test as baseTest } from "./fixtures";
 import {
   awaitToolCall,
   expectAgentIdle,
+  expectAgentReadyToInterrupt,
   expectAgentSurfacesIdle,
   expectRunningAgentChrome,
+  expectVisibleAgentSurfacesIdle,
 } from "./helpers/agent-stream";
 import { gateNextAgentMessage } from "./helpers/agent-message-gate";
 import {
@@ -14,6 +16,7 @@ import {
   expectAttachmentPill,
   expectComposerVisible,
   cancelAgent,
+  composerLocator,
   fillComposerDraft,
   sendDraftToQueue,
   startRunningMockAgent,
@@ -670,6 +673,201 @@ async function completeDraftCreateSubmission(
 }
 
 test.describe("Agent message submission", () => {
+  test("settles an immediately interrupted first prompt", async ({ page }, testInfo) => {
+    const workspace = await seedWorkspace({
+      repoPrefix: `submission-immediate-interrupt-${testInfo.workerIndex}-`,
+    });
+    const prompt = "Withhold synthetic user message until interrupted.";
+    try {
+      await openWorkspaceDraft(page, workspace.workspaceId);
+      await selectModel(page, "one-minute-stream");
+
+      await submitMessage(page, prompt);
+      await expectAgentReadyToInterrupt(page);
+      await page.getByRole("button", { name: "Stop agent", exact: true }).click();
+
+      const submittedPrompt = page.getByTestId("user-message").filter({ hasText: prompt });
+      await expect(submittedPrompt).toHaveCount(1);
+      await expect(submittedPrompt).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
+      await expect(page.getByText("(end of synthetic stream)", { exact: true })).toHaveCount(0);
+      await expectVisibleAgentSurfacesIdle(page);
+      await expectComposerEditable(page);
+
+      await page.reload();
+      await expect(submittedPrompt).toHaveCount(1);
+      await expect(submittedPrompt).toHaveAttribute("aria-busy", "false");
+      await expectVisibleAgentSurfacesIdle(page);
+      await expectComposerEditable(page);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("keeps one canonical prompt when the provider echoes before accepting", async ({
+    page,
+  }, testInfo) => {
+    const workspace = await seedWorkspace({
+      repoPrefix: `submission-echo-before-accept-${testInfo.workerIndex}-`,
+    });
+    const prompt = "Emit synthetic user message before accepting turn.";
+    try {
+      await openWorkspaceDraft(page, workspace.workspaceId);
+      await selectModel(page, "one-minute-stream");
+
+      await submitMessage(page, prompt);
+      await expectAgentReadyToInterrupt(page);
+      await page.getByRole("button", { name: "Stop agent", exact: true }).click();
+      await expectVisibleAgentSurfacesIdle(page);
+
+      await page.reload();
+      const submittedPrompt = page.getByTestId("user-message").filter({ hasText: prompt });
+      await expect(submittedPrompt).toHaveCount(1);
+      await expect(submittedPrompt).toHaveAttribute("aria-busy", "false");
+      await expectVisibleAgentSurfacesIdle(page);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("enriches a visible prompt when the provider identity arrives later", async ({
+    page,
+  }, testInfo) => {
+    const workspace = await seedWorkspace({
+      repoPrefix: `submission-late-provider-identity-${testInfo.workerIndex}-`,
+    });
+    const prompt = "Delay synthetic user message by 2000ms.";
+    try {
+      await openWorkspaceDraft(page, workspace.workspaceId);
+      await selectModel(page, "one-minute-stream");
+
+      await submitMessage(page, prompt);
+      const submittedPrompt = page.getByTestId("user-message").filter({ hasText: prompt });
+      await expect(submittedPrompt).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
+      const marker = `late-provider-identity-${Date.now()}`;
+      await submittedPrompt.evaluate((element, value) => {
+        element.dataset.lateProviderIdentity = value;
+      }, marker);
+
+      await submittedPrompt.hover();
+      await expect(submittedPrompt.getByTestId("rewind-menu-trigger")).toBeVisible({
+        timeout: 5_000,
+      });
+      await expect(page.locator(`[data-late-provider-identity="${marker}"]`)).toBeVisible();
+      await page.getByRole("button", { name: "Stop agent", exact: true }).click();
+      await expectVisibleAgentSurfacesIdle(page);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("keeps one prompt when its provider echo crosses the bounded tail", async ({
+    page,
+  }, testInfo) => {
+    const workspace = await seedWorkspace({
+      repoPrefix: `submission-echo-past-tail-${testInfo.workerIndex}-`,
+    });
+    const prompt = "Emit 205 assistant messages before synthetic user message.";
+    try {
+      await openWorkspaceDraft(page, workspace.workspaceId);
+      await selectModel(page, "one-minute-stream");
+
+      await submitMessage(page, prompt);
+      const submittedPrompt = page.getByTestId("user-message").filter({ hasText: prompt });
+      await expect(submittedPrompt).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
+      await expectVisibleAgentSurfacesIdle(page);
+      await page.reload();
+
+      await expect(submittedPrompt).toHaveCount(0);
+      await scrollTimelineUntilOlderHistoryIsReachable(page, prompt);
+      await expect(submittedPrompt).toHaveCount(1);
+      await expect(submittedPrompt).toHaveAttribute("aria-busy", "false");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("keeps one Stop action while submitting into a running agent", async ({ page }) => {
+    const gate = await installDaemonWebSocketGate(page);
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: "submission-running-action-",
+      title: "Running submission action",
+      model: "one-minute-stream",
+    });
+    try {
+      await openAgentRoute(page, agent);
+      await expectComposerVisible(page);
+      await submitMessage(page, "Keep running while the next prompt is submitted.");
+      await expectAgentReadyToInterrupt(page);
+
+      gate.holdNextClientRequest("send_agent_message_request");
+      await fillComposerDraft(page, "Replace the running turn without duplicating its action.");
+      await expect(
+        page.getByRole("button", { name: "Send and interrupt", exact: true }),
+      ).toHaveCount(1);
+      await expect(page.getByRole("button", { name: "Stop agent", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Interrupt agent", exact: true })).toHaveCount(
+        0,
+      );
+      await composerLocator(page).press("Enter");
+      await gate.waitForHeldClientRequest();
+
+      await expect(page.getByRole("button", { name: "Stop agent", exact: true })).toHaveCount(1);
+      await expect(page.getByRole("button", { name: "Interrupt agent", exact: true })).toHaveCount(
+        0,
+      );
+
+      gate.releaseHeldClientRequest();
+    } finally {
+      gate.restore();
+      await agent.cleanup();
+    }
+  });
+
+  test("makes the next queued turn interruptible after cancellation settles", async ({ page }) => {
+    const title = "Queued turn after interrupt";
+    const secondPrompt = "Run the queued turn after interruption.";
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: "submission-queued-after-interrupt-",
+      title,
+      model: "one-minute-stream",
+    });
+    try {
+      const gate = await installDaemonWebSocketGate(page);
+      await openAgentRoute(page, agent);
+      await expectComposerVisible(page);
+      await submitMessage(page, "Keep running until the queued turn is ready.");
+      await expectAgentReadyToInterrupt(page);
+      await queueMessage(page, secondPrompt);
+      await expect(page.getByRole("button", { name: "Send queued message now" })).toBeVisible();
+
+      gate.holdNextServerMessage("cancel_agent_response");
+      await page.getByRole("button", { name: "Stop agent", exact: true }).click();
+      await gate.waitForHeldServerMessage();
+
+      await expect(page.getByTestId("user-message").filter({ hasText: secondPrompt })).toHaveCount(
+        1,
+      );
+      await expectRunningAgentChrome(page, title);
+      await expectAgentReadyToInterrupt(page);
+
+      gate.holdNextClientRequest("cancel_agent_request");
+      await page.getByRole("button", { name: "Stop agent", exact: true }).click();
+      await gate.waitForHeldClientRequest();
+      await expect(
+        page.getByRole("button", { name: "Canceling agent", exact: true }),
+      ).toBeVisible();
+
+      gate.releaseHeldServerMessage();
+      await expect(
+        page.getByRole("button", { name: "Canceling agent", exact: true }),
+      ).toBeVisible();
+      gate.releaseHeldClientRequest();
+      await expectVisibleAgentSurfacesIdle(page);
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
   test("shows every agent surface idle after interrupting a submitted turn", async ({ page }) => {
     const title = "Interrupted submission";
     const agent = await seedMockAgentWorkspace({

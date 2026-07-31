@@ -138,41 +138,46 @@ footer, and permanently drops attachments because the daemon does not echo them 
 A submitted prompt is one `UserMessageItem` row. That row is the authoritative local presentation:
 its stable identity, text, timestamp, images, and attachments do not change when the provider
 acknowledges it. Submission lifecycle is a separate record keyed by agent, not another row shape.
-The transaction registry records RPC acceptance and provider acknowledgement independently for
-agent-scoped sends. Provider acknowledgement exists solely so a later transport error cannot roll
-back a prompt already observed canonically; it does not own whether the local presentation remains
-visible.
+The transaction registry exists only until the daemon accepts or rejects the send. An accepted RPC
+settles it because capable daemons guarantee the prompt is already durable. Canonical acknowledgement
+can arrive first and prevents a later transport error from rolling back a prompt already observed.
 
-The daemon's accepted response already waits for the correlated run start, but its response and the
-canonical submitted row reach client state independently and may arrive in either order. The
-transaction therefore records RPC acceptance and provider acknowledgement as separate phases. RPC
-acceptance marks the record accepted unless provider acknowledgement already arrived; canonical
-acknowledgement marks the record acknowledged unless RPC acceptance already arrived. Only the second
-authority removes the transaction. Directory status never settles a submission. Overlapping sends
-settle independently rather than collapsing to one newest pending message.
+The daemon's accepted response waits for the correlated run start and guarantees that the canonical
+submitted row has been recorded. It publishes the accepted turn's liveness before that row, so the
+client applies authoritative activity before retiring optimistic activity on RPC acceptance. Timeline
+render batching does not delay lifecycle application. Directory status never settles a submission.
+Overlapping sends settle independently rather than collapsing to one newest pending message.
 
 Daemons advertising `server_info.features.canonicalSubmittedPrompts` guarantee that every accepted
 prompt carrying a client message id is recorded and streamed as a canonical `user_message` with that
 same id. This includes daemon-handled commands that do not allocate a foreground turn; their submitted
-row is recorded before handler output. The app creates two-phase submission records only for hosts with
-this capability. Older hosts keep the shipped untracked optimistic-row behavior and roll that row back
-on RPC rejection.
+row is recorded before handler output. The app tracks submission transactions only for hosts with this
+capability. Older hosts keep the shipped untracked optimistic-row behavior and roll that row back on RPC
+rejection.
 
-Turn liveness has one client-side owner. `turn_started` opens the turn; ordered `turn_completed`,
-`turn_failed`, and `turn_canceled` events close it. A running directory transition may seed an open
-turn during hydration or after a selective stream subscription lapses, but an ordinary idle directory
-update does not close one or settle a submission because it can arrive before the terminal stream
-event. A completed timeline resume commits the response's coherent agent snapshot and closes any open
-turn not backed by newer sequence evidence. An accepted running-to-idle directory transition requests
-that resume for a viewed agent; it does not close liveness itself. This gives missed terminal events and
-canonical prompt acknowledgements one convergence boundary without making directory delivery order an
-authority for the footer. Disconnect and replica removal are the destructive close boundaries. Footer
-activity is the owned turn state unioned with unsettled submissions, and its running start time comes
-from lifecycle/submission evidence rather than whichever timeline rows happen to be mounted.
+Turn activity has one client-side replica. Lifecycle events can attach `turnId`, and agent snapshots can
+expose `activeTurn: { turnId, startedAt } | null`. An identified terminal cannot close a different
+identified turn; an unnamed legacy terminal can close the current turn. Snapshots, stream events,
+cancellation requests, and every visible surface update the same per-agent record. The snapshot covers
+both user-started foreground turns and autonomous provider turns;
+foreground control ownership remains a separate daemon concern. Cancellation request identity is stored
+with that record rather than in a React component, so an old request cannot clear a newer one. Submissions
+remain a separate pre-turn registry and retire on canonical acknowledgement.
 
-Canonical submitted user rows carry the provider's `messageId` and Paseo's optional
-`clientMessageId`. The user-message producer reconciles them by `clientMessageId`, adds provider
-identity to the existing row, and keeps the local presentation in its original timeline slot.
+The compatibility boundary for older daemons is snapshot normalization: running/idle status becomes an
+anonymous active turn or idle state once, and downstream code consumes the same activity shape. The app
+does not combine anonymous lifecycle events, timestamps, timeline rows, and resume coverage to infer a
+second running state. Disconnect and replica removal remain destructive close boundaries. Running time
+comes from the daemon snapshot/event or the pending submission, never from whichever timeline rows happen
+to be mounted.
+
+The daemon records one canonical submitted user row with Paseo's `clientMessageId` as soon as the
+provider accepts the turn. A correlated provider echo enriches that same sequence with its provider
+`messageId`; it never appends a second source row. The row's identity and pagination position are
+therefore independent of provider notification timing. A late echo is streamed as a revision at the
+original sequence; clients apply it only to the already-covered row with the same client identity.
+An immediately interrupted turn remains
+canonical even when the provider never emits its echo.
 Content matching is limited to the dated compatibility path for daemon timelines created before
 that field existed. Canonical ingestion may match only an explicit unreconciled local candidate;
 the draft-create handoff is the one boundary that also permits the legacy canonical twin to have

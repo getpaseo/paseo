@@ -7,7 +7,6 @@ import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import {
   appendSubmittedUserMessage,
   handoffCreatedAgentUserMessageToStream,
-  isUnreconciledLocalUserMessage,
   removeSubmittedUserMessage,
   type StreamItem,
   type UserMessageItem,
@@ -117,6 +116,7 @@ export interface Agent {
   id: string;
   provider: AgentProvider;
   status: AgentLifecycleStatus;
+  activeTurn: { turnId: string | null; startedAt: Date | null } | null;
   createdAt: Date;
   updatedAt: Date;
   lastUserMessageAt: Date | null;
@@ -525,8 +525,10 @@ interface SessionStoreActions {
   applyAgentTurnLiveness: (
     serverId: string,
     agentId: string,
-    transition: TurnLivenessTransition,
+    transition: TurnLivenessTransition | readonly TurnLivenessTransition[],
   ) => void;
+  beginAgentCancellation: (serverId: string, agentId: string) => number;
+  settleAgentCancellation: (serverId: string, agentId: string, requestId: number) => void;
   clearAgentTurnLiveness: (serverId: string) => void;
   beginAgentMessageSubmission: (
     serverId: string,
@@ -547,7 +549,6 @@ interface SessionStoreActions {
     serverId: string,
     agentId: string,
     message: UserMessageItem,
-    trackSubmission: boolean,
   ) => boolean;
   clearAgentStreamHead: (serverId: string, agentId: string) => void;
   setAgentTimelineCursor: (
@@ -749,6 +750,7 @@ function isSessionServerInfoUnchanged(input: {
 
 export const useSessionStore = create<SessionStore>()(
   subscribeWithSelector((set, get) => {
+    let nextCancellationRequestId = 0;
     const commitActivityUpdates: AgentLastActivityCommitter = (updates) => {
       set((prev) => {
         let nextActivity: Map<string, Date> | null = null;
@@ -1188,6 +1190,23 @@ export const useSessionStore = create<SessionStore>()(
         });
       },
 
+      beginAgentCancellation: (serverId, agentId) => {
+        nextCancellationRequestId += 1;
+        const requestId = nextCancellationRequestId;
+        get().applyAgentTurnLiveness(serverId, agentId, {
+          type: "cancellation_started",
+          requestId,
+        });
+        return requestId;
+      },
+
+      settleAgentCancellation: (serverId, agentId, requestId) => {
+        get().applyAgentTurnLiveness(serverId, agentId, {
+          type: "cancellation_settled",
+          requestId,
+        });
+      },
+
       clearAgentTurnLiveness: (serverId) => {
         set((prev) => {
           const session = prev.sessions[serverId];
@@ -1313,7 +1332,7 @@ export const useSessionStore = create<SessionStore>()(
         return outcome;
       },
 
-      handoffCreatedAgentUserMessage: (serverId, agentId, message, trackSubmission) => {
+      handoffCreatedAgentUserMessage: (serverId, agentId, message) => {
         let didHandoff = false;
         set((prev) => {
           const session = prev.sessions[serverId];
@@ -1338,28 +1357,6 @@ export const useSessionStore = create<SessionStore>()(
           const nextHead = result.changedHead
             ? new Map(session.agentStreamHead).set(agentId, result.head)
             : session.agentStreamHead;
-          const clientMessageId = message.clientMessageId;
-          let messageSubmissions = session.messageSubmissions;
-          if (
-            trackSubmission &&
-            clientMessageId &&
-            [...result.tail, ...result.head].some(
-              (item) =>
-                item.kind === "user_message" &&
-                item.clientMessageId === clientMessageId &&
-                isUnreconciledLocalUserMessage(item),
-            )
-          ) {
-            const currentSubmissions = session.messageSubmissions.get(agentId) ?? [];
-            const accepted = acceptMessageSubmission(
-              beginMessageSubmission(currentSubmissions, {
-                clientMessageId,
-                submittedAt: message.timestamp,
-              }),
-              clientMessageId,
-            );
-            messageSubmissions = new Map(session.messageSubmissions).set(agentId, accepted);
-          }
           didHandoff = true;
 
           return {
@@ -1370,7 +1367,6 @@ export const useSessionStore = create<SessionStore>()(
                 ...session,
                 agentStreamTail: nextTail,
                 agentStreamHead: nextHead,
-                messageSubmissions,
               },
             },
           };

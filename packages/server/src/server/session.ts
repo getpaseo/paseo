@@ -1644,7 +1644,8 @@ export class Session {
   private async buildAgentPayload(agent: ManagedAgent): Promise<AgentSnapshotPayload> {
     const storedRecord = await this.agentStorage.get(agent.id);
     const title = storedRecord?.title ?? null;
-    const payload = toAgentPayload(agent, { title });
+    const currentAgent = this.agentManager.getAgent(agent.id) ?? agent;
+    const payload = toAgentPayload(currentAgent, { title });
     const storedUpdatedAt = storedRecord ? resolveStoredAgentPayloadUpdatedAt(storedRecord) : null;
     if (storedUpdatedAt) {
       const liveUpdatedAt = Date.parse(payload.updatedAt);
@@ -2360,7 +2361,7 @@ export class Session {
       },
     });
 
-    this.agentUpdates.removeAgent(agentId);
+    await this.agentUpdates.removeAgent(agentId);
 
     if (knownWorkspaceId) {
       await this.emitWorkspaceUpdateForWorkspaceId(knownWorkspaceId);

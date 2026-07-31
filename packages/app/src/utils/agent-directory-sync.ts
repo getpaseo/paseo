@@ -65,29 +65,22 @@ function upsertAgentDirectoryReplica(
 
 export function upsertAgentReplica(serverId: string, agent: Agent): Agent {
   let acceptedAgent = agent;
-  let previousAgent: Agent | undefined;
   useSessionStore.getState().setAgents(serverId, (current) => {
     const currentAgent = current.get(agent.id);
-    previousAgent = currentAgent;
     acceptedAgent = acceptAgentDirectoryUpdate(currentAgent, agent);
     if (acceptedAgent === currentAgent) return current;
     const next = new Map(current);
     next.set(agent.id, acceptedAgent);
     return next;
   });
-  seedAgentTurnLivenessFromDirectory(serverId, previousAgent, acceptedAgent);
+  applyAgentTurnSnapshot(serverId, acceptedAgent);
   return acceptedAgent;
 }
 
-function seedAgentTurnLivenessFromDirectory(
-  serverId: string,
-  previousAgent: Agent | undefined,
-  agent: Agent,
-): void {
-  if (previousAgent?.status === "running" || agent.status !== "running") return;
+function applyAgentTurnSnapshot(serverId: string, agent: Agent): void {
   useSessionStore.getState().applyAgentTurnLiveness(serverId, agent.id, {
-    type: "directory_running",
-    startedAt: agent.lastUserMessageAt,
+    type: "snapshot",
+    activeTurn: agent.activeTurn,
   });
 }
 
@@ -188,8 +181,6 @@ export function replaceFetchedAgentDirectory(input: {
 }): { agents: Map<string, Agent> } {
   const { agents: fetchedAgents, pendingPermissions } = buildAgentDirectoryState(input);
   const store = useSessionStore.getState();
-  const previousAgents = store.sessions[input.serverId]?.agents ?? new Map<string, Agent>();
-
   for (const agent of fetchedAgents.values()) {
     if (agent.archivedAt) {
       clearArchiveAgentPending({ queryClient, serverId: input.serverId, agentId: agent.id });
@@ -198,7 +189,7 @@ export function replaceFetchedAgentDirectory(input: {
 
   store.setAgents(input.serverId, fetchedAgents);
   for (const agent of fetchedAgents.values()) {
-    seedAgentTurnLivenessFromDirectory(input.serverId, previousAgents.get(agent.id), agent);
+    applyAgentTurnSnapshot(input.serverId, agent);
   }
   store.setAgentDetails(input.serverId, (prev) => {
     let next: Map<string, Agent> | null = null;

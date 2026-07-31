@@ -25,6 +25,14 @@ interface HeldAgentUpdate {
   status: string;
 }
 
+interface HeldServerMessage {
+  browser: WebSocketRoute;
+  message: string | Buffer;
+  key: string;
+  agentStreamFollowers: Array<string | Buffer>;
+  blockedAgentId?: string;
+}
+
 function readSessionMessage(message: string | Buffer): ClientRequest | null {
   if (typeof message !== "string") return null;
   try {
@@ -111,6 +119,14 @@ function readAgentStreamEventType(message: ClientRequest | null): string | null 
   return typeof event?.type === "string" ? event.type : null;
 }
 
+function readAgentStreamAgentId(message: ClientRequest | null): string | null {
+  if (message?.type !== "agent_stream" || !message.payload || typeof message.payload !== "object") {
+    return null;
+  }
+  const agentId = (message.payload as { agentId?: unknown }).agentId;
+  return typeof agentId === "string" ? agentId : null;
+}
+
 function readAgentStreamItemType(message: ClientRequest | null): string | null {
   if (message?.type !== "agent_stream" || !message.payload || typeof message.payload !== "object") {
     return null;
@@ -138,13 +154,20 @@ function shouldSuppressServerMessage(input: {
   return Boolean(eventType && input.agentStreamEventTypes.has(eventType));
 }
 
-function shouldHoldServerMessage(
-  message: ClientRequest | null,
-  messageType: string | null,
-  agentUpdate: HeldAgentUpdate | null,
-): boolean {
-  if (message?.type === messageType) return true;
-  if (message?.type !== "agent_update" || !agentUpdate) return false;
+function serverMessageKey(type: string): string {
+  return `message:${type}`;
+}
+
+function agentStreamEventKey(type: string): string {
+  return `agent-stream-event:${type}`;
+}
+
+function agentUpdateKey(agentId: string, status: string): string {
+  return `agent-update:${agentId}:${status}`;
+}
+
+function matchesAgentUpdate(message: ClientRequest | null, agentUpdate: HeldAgentUpdate): boolean {
+  if (message?.type !== "agent_update") return false;
   const payload = message.payload;
   if (
     !payload ||
@@ -167,10 +190,9 @@ export async function installDaemonWebSocketGate(page: Page) {
   let heldClientRequestType: string | null = null;
   let heldClientRequest: { server: WebSocketRoute; message: string | Buffer } | null = null;
   let resolveHeldClientRequest: (() => void) | null = null;
-  let heldServerMessageType: string | null = null;
-  let heldAgentUpdate: HeldAgentUpdate | null = null;
-  let heldServerMessage: { browser: WebSocketRoute; message: string | Buffer } | null = null;
-  let resolveHeldServerMessage: (() => void) | null = null;
+  const pendingServerMessageHolds = new Map<string, (message: ClientRequest | null) => boolean>();
+  const heldServerMessages: HeldServerMessage[] = [];
+  const heldServerMessageWaiters = new Set<() => void>();
   const suppressedServerMessageTypes = new Set<string>();
   const suppressedAgentStreamEventTypes = new Set<string>();
   const suppressedAgentStreamItemTypes = new Set<string>();
@@ -275,22 +297,42 @@ export async function installDaemonWebSocketGate(page: Page) {
       outboundMessage = forceTimelineReset(outboundMessage, shouldForceTimelineReset);
       if (shouldForceTimelineReset) forceTimelineEpochReset = false;
       recordServerMessage(serverMessage);
-      if (shouldHoldServerMessage(serverMessage, heldServerMessageType, heldAgentUpdate)) {
-        heldServerMessage = { browser: ws, message: outboundMessage };
-        resolveHeldServerMessage?.();
-        resolveHeldServerMessage = null;
+      const suppressed = shouldSuppressServerMessage({
+        message: serverMessage,
+        messageTypes: suppressedServerMessageTypes,
+        agentStreamEventTypes: suppressedAgentStreamEventTypes,
+        agentStreamItemTypes: suppressedAgentStreamItemTypes,
+        suppressAgentStream,
+      });
+      const agentStreamAgentId = readAgentStreamAgentId(serverMessage);
+      const blockedAgentStream = agentStreamAgentId
+        ? heldServerMessages.find((held) => held.blockedAgentId === agentStreamAgentId)
+        : undefined;
+      if (blockedAgentStream) {
+        if (!suppressed) blockedAgentStream.agentStreamFollowers.push(outboundMessage);
         return;
       }
-      if (
-        shouldSuppressServerMessage({
-          message: serverMessage,
-          messageTypes: suppressedServerMessageTypes,
-          agentStreamEventTypes: suppressedAgentStreamEventTypes,
-          agentStreamItemTypes: suppressedAgentStreamItemTypes,
-          suppressAgentStream,
-        })
-      )
+      const matchedHold = Array.from(pendingServerMessageHolds).find(([, matches]) =>
+        matches(serverMessage),
+      );
+      if (matchedHold) {
+        const [key] = matchedHold;
+        pendingServerMessageHolds.delete(key);
+        heldServerMessages.push({
+          browser: ws,
+          message: outboundMessage,
+          key,
+          agentStreamFollowers: [],
+          blockedAgentId:
+            readAgentStreamEventType(serverMessage) === "turn_started"
+              ? (agentStreamAgentId ?? undefined)
+              : undefined,
+        });
+        for (const resolve of heldServerMessageWaiters) resolve();
+        heldServerMessageWaiters.clear();
         return;
+      }
+      if (suppressed) return;
       try {
         ws.send(outboundMessage);
       } catch {
@@ -334,27 +376,67 @@ export async function installDaemonWebSocketGate(page: Page) {
       heldClientRequestType = null;
     },
     holdNextServerMessage(type: string): void {
-      heldServerMessageType = type;
-      heldAgentUpdate = null;
-      heldServerMessage = null;
+      pendingServerMessageHolds.set(serverMessageKey(type), (message) => message?.type === type);
     },
     holdNextAgentUpdate(agentId: string, status: string): void {
-      heldServerMessageType = null;
-      heldAgentUpdate = { agentId, status };
-      heldServerMessage = null;
+      const heldAgentUpdate = { agentId, status };
+      pendingServerMessageHolds.set(agentUpdateKey(agentId, status), (message) =>
+        matchesAgentUpdate(message, heldAgentUpdate),
+      );
     },
-    waitForHeldServerMessage(): Promise<void> {
-      if (heldServerMessage) return Promise.resolve();
-      return new Promise<void>((resolve) => {
-        resolveHeldServerMessage = resolve;
-      });
+    holdNextAgentStreamEvent(type: string): void {
+      pendingServerMessageHolds.set(
+        agentStreamEventKey(type),
+        (message) => readAgentStreamEventType(message) === type,
+      );
     },
-    releaseHeldServerMessage(): void {
+    async waitForHeldServerMessage(type?: string): Promise<void> {
+      const key = type ? serverMessageKey(type) : null;
+      while (!heldServerMessages.some((message) => key === null || message.key === key)) {
+        await new Promise<void>((resolve) => heldServerMessageWaiters.add(resolve));
+      }
+    },
+    releaseHeldServerMessage(type?: string): void {
+      const key = type ? serverMessageKey(type) : null;
+      const index = heldServerMessages.findIndex((message) => key === null || message.key === key);
+      const [heldServerMessage] = index >= 0 ? heldServerMessages.splice(index, 1) : [];
       if (!heldServerMessage) throw new Error("No held server message to release");
       heldServerMessage.browser.send(heldServerMessage.message);
-      heldServerMessage = null;
-      heldServerMessageType = null;
-      heldAgentUpdate = null;
+      for (const follower of heldServerMessage.agentStreamFollowers) {
+        heldServerMessage.browser.send(follower);
+      }
+    },
+    async waitForHeldAgentUpdate(agentId: string, status: string): Promise<void> {
+      const key = agentUpdateKey(agentId, status);
+      while (!heldServerMessages.some((message) => message.key === key)) {
+        await new Promise<void>((resolve) => heldServerMessageWaiters.add(resolve));
+      }
+    },
+    releaseHeldAgentUpdate(agentId: string, status: string): void {
+      const key = agentUpdateKey(agentId, status);
+      const index = heldServerMessages.findIndex((message) => message.key === key);
+      const [heldServerMessage] = index >= 0 ? heldServerMessages.splice(index, 1) : [];
+      if (!heldServerMessage) throw new Error("No held agent update to release");
+      heldServerMessage.browser.send(heldServerMessage.message);
+      for (const follower of heldServerMessage.agentStreamFollowers) {
+        heldServerMessage.browser.send(follower);
+      }
+    },
+    async waitForHeldAgentStreamEvent(type: string): Promise<void> {
+      const key = agentStreamEventKey(type);
+      while (!heldServerMessages.some((message) => message.key === key)) {
+        await new Promise<void>((resolve) => heldServerMessageWaiters.add(resolve));
+      }
+    },
+    releaseHeldAgentStreamEvent(type: string): void {
+      const key = agentStreamEventKey(type);
+      const index = heldServerMessages.findIndex((message) => message.key === key);
+      const [heldServerMessage] = index >= 0 ? heldServerMessages.splice(index, 1) : [];
+      if (!heldServerMessage) throw new Error("No held agent stream event to release");
+      heldServerMessage.browser.send(heldServerMessage.message);
+      for (const follower of heldServerMessage.agentStreamFollowers) {
+        heldServerMessage.browser.send(follower);
+      }
     },
     requestTimelineTail(agentId: string): void {
       if (!latestServer) throw new Error("No daemon WebSocket is connected");
@@ -373,6 +455,7 @@ export async function installDaemonWebSocketGate(page: Page) {
       );
     },
     getHeldTimelineLastItemType(): string | null {
+      const heldServerMessage = heldServerMessages[0];
       if (!heldServerMessage) throw new Error("No held server message to inspect");
       const response = readSessionMessage(heldServerMessage.message);
       const payload = response?.payload;
@@ -383,6 +466,7 @@ export async function installDaemonWebSocketGate(page: Page) {
       return typeof last?.item?.type === "string" ? last.item.type : null;
     },
     truncateHeldTimelineAfterLast(itemType: string): void {
+      const heldServerMessage = heldServerMessages[0];
       if (!heldServerMessage || typeof heldServerMessage.message !== "string") {
         throw new Error("No held text server message to truncate");
       }

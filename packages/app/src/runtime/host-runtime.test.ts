@@ -2697,6 +2697,12 @@ describe("HostRuntimeStore", () => {
       }).agent;
       const staleAgent: Agent = {
         ...stale,
+        activeTurn: stale.activeTurn
+          ? {
+              turnId: stale.activeTurn.turnId,
+              startedAt: stale.activeTurn.startedAt ? new Date(stale.activeTurn.startedAt) : null,
+            }
+          : null,
         serverId: host.serverId,
         createdAt: new Date(stale.createdAt),
         updatedAt: new Date(stale.updatedAt),

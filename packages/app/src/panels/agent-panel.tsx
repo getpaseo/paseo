@@ -1298,16 +1298,18 @@ const AgentStreamSection = memo(function AgentStreamSection({
   const streamItemsRaw = useSessionStore((state) =>
     agentId ? state.sessions[serverId]?.agentStreamTail?.get(agentId) : undefined,
   );
-  const pendingMessageSubmissions = useSessionStore((state) =>
-    agentId
-      ? getActiveMessageSubmissions(state.sessions[serverId]?.messageSubmissions.get(agentId))
-      : EMPTY_MESSAGE_SUBMISSIONS,
+  const pendingMessageSubmissions = useSessionStore(
+    useShallow((state) =>
+      agentId
+        ? getActiveMessageSubmissions(state.sessions[serverId]?.messageSubmissions.get(agentId))
+        : EMPTY_MESSAGE_SUBMISSIONS,
+    ),
   );
   const turnPresentation = useSessionStore(
     useShallow((state) =>
       agentId
         ? selectAgentTurnPresentation(state.sessions[serverId], agentId)
-        : { isActive: false, startedAt: null },
+        : { isActive: false, isCancelling: false, startedAt: null, turnId: null },
     ),
   );
   const streamItems = streamItemsRaw ?? EMPTY_STREAM_ITEMS;

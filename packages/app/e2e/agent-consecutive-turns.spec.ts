@@ -48,6 +48,7 @@ interface TurnFrame {
   agentTab: ElementFrame;
   tabProgress: ElementFrame;
   interruptControl: ElementFrame;
+  primaryActionCount: number;
   composer: ElementFrame & { value: string | null };
   contentChildren: ContentChildFrame[];
   scroll: ElementFrame & {
@@ -56,6 +57,22 @@ interface TurnFrame {
     scrollHeight: number | null;
   };
 }
+
+interface ActivityCheckpoint {
+  row: boolean;
+  stop: boolean;
+  footer: boolean;
+  tabProgress: boolean;
+  elapsed: boolean;
+}
+
+interface ActivityOracleState {
+  phase: "waiting" | "observing" | "complete";
+  checkpoints: ActivityCheckpoint[];
+  observer: MutationObserver;
+}
+
+type RunningReleaseOrder = "turn-before-response" | "response-before-turn" | "snapshot-before-turn";
 
 const FIRST_PROMPT_IMAGE = {
   name: "first-prompt.png",
@@ -69,6 +86,7 @@ const FIRST_PROMPT_IMAGE = {
 declare global {
   interface Window {
     __consecutiveTurnFrames?: { active: boolean; frames: TurnFrame[] };
+    __activityContinuityOracle?: ActivityOracleState;
   }
 }
 
@@ -210,6 +228,13 @@ async function recordTurnFrames(page: Page, prompt: string): Promise<void> {
         tabProgress: agentTab?.querySelector('[role="progressbar"][aria-label="Agent running"]'),
       };
     };
+    const countPrimaryActions = (composerRoot: Element | null | undefined) =>
+      Array.from(composerRoot?.querySelectorAll('[role="button"][aria-label]') ?? []).filter(
+        (candidate) =>
+          /stop agent|canceling agent|interrupt agent|send message|send and interrupt|queue message/i.test(
+            candidate.getAttribute("aria-label") ?? "",
+          ) && isVisible(candidate),
+      ).length;
     const sample = () => {
       const viewport = Array.from(
         document.querySelectorAll('[data-testid="agent-chat-scroll"]'),
@@ -232,6 +257,7 @@ async function recordTurnFrames(page: Page, prompt: string): Promise<void> {
       ).find((candidate) =>
         /stop agent|canceling agent/i.test(candidate.getAttribute("aria-label") ?? ""),
       );
+      const primaryActionCount = countPrimaryActions(composerRoot);
       const { agentTab, tabProgress } = findAgentTabState();
       const scrollFrame = snapshot(viewport);
       const contentChildren = Array.from(viewport?.firstElementChild?.children ?? []).map(
@@ -254,6 +280,7 @@ async function recordTurnFrames(page: Page, prompt: string): Promise<void> {
         agentTab: snapshot(agentTab),
         tabProgress: snapshot(tabProgress),
         interruptControl: snapshot(interrupt),
+        primaryActionCount,
         composer: {
           ...snapshot(composerRoot ?? composer),
           value:
@@ -310,6 +337,87 @@ async function recordPaintsFor(page: Page, durationMs: number): Promise<void> {
   await expect
     .poll(() => page.evaluate(() => window.__consecutiveTurnFrames?.frames.at(-1)?.at ?? 0))
     .toBeGreaterThanOrEqual(until);
+}
+
+async function installActivityContinuityOracle(page: Page, prompt: string): Promise<void> {
+  await page.evaluate((promptText) => {
+    const isVisible = (element: Element | null) => Boolean(element?.checkVisibility());
+    const snapshot = (): ActivityCheckpoint => {
+      const visibleAgentTab = Array.from(
+        document.querySelectorAll('[data-testid^="workspace-tab-agent_"]'),
+      ).find((candidate) => isVisible(candidate));
+      return {
+        row: Array.from(document.querySelectorAll('[data-testid="user-message"]')).some(
+          (candidate) => candidate.textContent?.includes(promptText),
+        ),
+        stop: isVisible(document.querySelector('[role="button"][aria-label="Stop agent"]')),
+        footer: isVisible(document.querySelector('[data-testid="turn-working-indicator"]')),
+        tabProgress: isVisible(
+          visibleAgentTab?.querySelector('[role="progressbar"][aria-label="Agent running"]') ??
+            null,
+        ),
+        elapsed: isVisible(document.querySelector('[data-testid="turn-working-elapsed"]')),
+      };
+    };
+    const state = {
+      phase: "waiting" as ActivityOracleState["phase"],
+      checkpoints: [] as ActivityCheckpoint[],
+      observer: null as unknown as MutationObserver,
+    };
+    const observeCommit = () => {
+      const checkpoint = snapshot();
+      if (state.phase === "waiting" && checkpoint.row) {
+        state.phase = "observing";
+      }
+      if (state.phase !== "observing") return;
+      state.checkpoints.push(checkpoint);
+      if (checkpoint.elapsed) {
+        state.phase = "complete";
+        state.observer.disconnect();
+      }
+    };
+    state.observer = new MutationObserver(observeCommit);
+    window.__activityContinuityOracle = state;
+    state.observer.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      characterData: true,
+    });
+  }, prompt);
+}
+
+async function waitForActivityOracleArmed(page: Page): Promise<void> {
+  await expect
+    .poll(() => page.evaluate(() => window.__activityContinuityOracle?.phase ?? "missing"))
+    .not.toBe("waiting");
+}
+
+async function readActivityContinuityOracle(page: Page): Promise<ActivityCheckpoint[]> {
+  return page.evaluate(() => {
+    const state = window.__activityContinuityOracle;
+    if (!state) throw new Error("Activity continuity oracle was never installed");
+    state.observer.disconnect();
+    return state.checkpoints;
+  });
+}
+
+function expectActivityContinuity(checkpoints: ActivityCheckpoint[]): void {
+  const incompleteActivityCheckpoints = checkpoints.filter(
+    (checkpoint) => !checkpoint.stop || !checkpoint.footer || !checkpoint.tabProgress,
+  );
+  expect(checkpoints[0]?.row, "activity oracle never armed on the optimistic row").toBe(true);
+  expect(
+    incompleteActivityCheckpoints,
+    `activity oracle observed row without full activity cluster:\n${JSON.stringify(incompleteActivityCheckpoints, null, 2)}\n\nall checkpoints:\n${JSON.stringify(checkpoints, null, 2)}`,
+  ).toEqual([]);
+  expect(
+    checkpoints.slice(0, -1).filter((checkpoint) => checkpoint.elapsed),
+    `activity oracle observed elapsed before its authoritative disarm checkpoint:\n${JSON.stringify(checkpoints, null, 2)}`,
+  ).toEqual([]);
+  expect(checkpoints.at(-1)?.elapsed, "activity oracle never observed authoritative elapsed").toBe(
+    true,
+  );
 }
 
 async function stopTurnFrameRecording(page: Page): Promise<TurnFrame[]> {
@@ -439,6 +547,10 @@ function collectElementViolations(
     {
       passes: hasPaintedLayout(frame.interruptControl),
       reason: "interrupt control was not painted",
+    },
+    {
+      passes: frame.primaryActionCount === 1,
+      reason: `expected one primary action, found ${frame.primaryActionCount}`,
     },
     {
       passes: [hasPaintedLayout(frame.composer), frame.composer.value === ""].every(Boolean),
@@ -590,36 +702,76 @@ function expectAtomicFirstPromptTransition(frames: TurnFrame[]): void {
 async function recordDelayedRunningTransition(
   page: Page,
   agent: MockAgentWorkspace,
-): Promise<TurnFrame[]> {
+  releaseOrder: RunningReleaseOrder,
+): Promise<{ frames: TurnFrame[]; checkpoints: ActivityCheckpoint[] }> {
   const gate = await installDaemonWebSocketGate(page);
   await openAgentRoute(page, { workspaceId: agent.workspaceId, agentId: agent.agentId });
   await expectAgentIdle(page);
   await expect(page.getByRole("button", { name: "Copy turn" })).toHaveCount(1);
 
   const prompt = "Second prompt keeps streaming.";
+  gate.holdNextAgentStreamEvent("turn_started");
   gate.holdNextAgentUpdate(agent.agentId, "running");
+  gate.holdNextServerMessage("send_agent_message_response");
   gate.setAgentStreamItemSuppressed("assistant_message", true);
   await recordTurnFrames(page, prompt);
+  await installActivityContinuityOracle(page, prompt);
   await submitMessage(page, prompt);
-  await gate.waitForHeldServerMessage();
+  await Promise.all([
+    gate.waitForHeldAgentStreamEvent("turn_started"),
+    gate.waitForHeldAgentUpdate(agent.agentId, "running"),
+    gate.waitForHeldServerMessage("send_agent_message_response"),
+  ]);
 
-  let released = false;
+  let turnReleased = false;
+  let snapshotReleased = false;
+  let responseReleased = false;
   try {
     await expect(page.getByTestId("user-message").filter({ hasText: prompt })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Message agent..." }).first()).toHaveValue("");
-    await Promise.all([
-      gate.waitForAgentStreamItem("user_message"),
-      gate.waitForServerMessage("send_agent_message_response"),
-    ]);
-    await recordPaintsFor(page, 80);
-    gate.releaseHeldServerMessage();
-    released = true;
+    await gate.waitForAgentStreamItem("user_message");
+    await waitForActivityOracleArmed(page);
+    const elapsedBeforeAuthoritative = await page.getByTestId("turn-working-elapsed").count();
+
+    if (releaseOrder === "turn-before-response") {
+      gate.releaseHeldAgentStreamEvent("turn_started");
+      turnReleased = true;
+      await expect(page.getByTestId("turn-working-elapsed")).toBeVisible();
+      gate.releaseHeldServerMessage("send_agent_message_response");
+      responseReleased = true;
+      gate.releaseHeldAgentUpdate(agent.agentId, "running");
+      snapshotReleased = true;
+    } else if (releaseOrder === "response-before-turn") {
+      gate.releaseHeldServerMessage("send_agent_message_response");
+      responseReleased = true;
+      await recordPaintsFor(page, 80);
+      gate.releaseHeldAgentStreamEvent("turn_started");
+      turnReleased = true;
+      await expect(page.getByTestId("turn-working-elapsed")).toBeVisible();
+      gate.releaseHeldAgentUpdate(agent.agentId, "running");
+      snapshotReleased = true;
+    } else {
+      gate.releaseHeldServerMessage("send_agent_message_response");
+      responseReleased = true;
+      await recordPaintsFor(page, 80);
+      gate.releaseHeldAgentUpdate(agent.agentId, "running");
+      snapshotReleased = true;
+      await expect(page.getByTestId("turn-working-elapsed")).toBeVisible();
+      gate.releaseHeldAgentStreamEvent("turn_started");
+      turnReleased = true;
+    }
+
     await waitForRecordedFrames(page, "turn-running", 3);
     const frames = await stopTurnFrameRecording(page);
+    const checkpoints = await readActivityContinuityOracle(page);
+    expectActivityContinuity(checkpoints);
+    expect(elapsedBeforeAuthoritative).toBe(0);
     gate.setAgentStreamItemSuppressed("assistant_message", false);
-    return frames;
+    return { frames, checkpoints };
   } finally {
-    if (!released) gate.releaseHeldServerMessage();
+    if (!turnReleased) gate.releaseHeldAgentStreamEvent("turn_started");
+    if (!snapshotReleased) gate.releaseHeldAgentUpdate(agent.agentId, "running");
+    if (!responseReleased) gate.releaseHeldServerMessage("send_agent_message_response");
     gate.setAgentStreamItemSuppressed("assistant_message", false);
   }
 }
@@ -664,10 +816,38 @@ test("keeps the first prompt of a new agent in place through authoritative hydra
   }
 });
 
-test("commits a follow-up prompt and running footer in one painted frame", async ({
+test("keeps follow-up activity continuous when turn starts before response", async ({
   page,
   streamingAgent,
 }) => {
-  const frames = await recordDelayedRunningTransition(page, streamingAgent);
+  const { frames } = await recordDelayedRunningTransition(
+    page,
+    streamingAgent,
+    "turn-before-response",
+  );
+  expectAtomicIdleToRunningTransition(frames);
+});
+
+test("keeps follow-up activity continuous when response arrives before running state", async ({
+  page,
+  streamingAgent,
+}) => {
+  const { frames } = await recordDelayedRunningTransition(
+    page,
+    streamingAgent,
+    "response-before-turn",
+  );
+  expectAtomicIdleToRunningTransition(frames);
+});
+
+test("keeps follow-up activity continuous when snapshot opens before turn event", async ({
+  page,
+  streamingAgent,
+}) => {
+  const { frames } = await recordDelayedRunningTransition(
+    page,
+    streamingAgent,
+    "snapshot-before-turn",
+  );
   expectAtomicIdleToRunningTransition(frames);
 });

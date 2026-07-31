@@ -250,6 +250,22 @@ function parseUserMessageDelayMs(prompt: AgentPromptInput): number {
   return Number.isSafeInteger(delayMs) ? Math.min(delayMs, 2_000) : 0;
 }
 
+function shouldWithholdUserMessageUntilInterrupt(prompt: AgentPromptInput): boolean {
+  return /withhold synthetic user message until interrupted/i.test(promptToText(prompt));
+}
+
+function shouldEmitUserMessageBeforeTurnAcceptance(prompt: AgentPromptInput): boolean {
+  return /emit synthetic user message before accepting turn/i.test(promptToText(prompt));
+}
+
+function parseAssistantMessagesBeforeUserMessage(prompt: AgentPromptInput): number | null {
+  const match = /emit (\d+) assistant messages before synthetic user message/i.exec(
+    promptToText(prompt),
+  );
+  const count = Number(match?.[1]);
+  return Number.isSafeInteger(count) && count > 0 ? Math.min(count, 500) : null;
+}
+
 function parseLargeAgentStreamPayloadPrompt(
   prompt: AgentPromptInput,
 ): LargeAgentStreamPayloadRequest | null {
@@ -687,9 +703,7 @@ export class MockLoadTestAgentSession implements AgentSession {
         this.schedule(turn, 0);
       }
     };
-    const userMessageId = randomUUID();
-    const userMessageDelayMs = parseUserMessageDelayMs(prompt);
-    const userMessageTimer = setTimeout(() => {
+    const emitUserMessage = () => {
       if (this.activeTurn?.turnId !== turnId) {
         return;
       }
@@ -701,10 +715,44 @@ export class MockLoadTestAgentSession implements AgentSession {
         item: {
           type: "user_message",
           text: promptToText(prompt),
-          messageId: userMessageId,
+          messageId: randomUUID(),
           ...(options?.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
         },
       });
+    };
+    if (shouldEmitUserMessageBeforeTurnAcceptance(prompt)) {
+      emitUserMessage();
+      scheduleTurn();
+      return { turnId };
+    }
+    if (shouldWithholdUserMessageUntilInterrupt(prompt)) {
+      return { turnId };
+    }
+    const assistantMessagesBeforeUserMessage = parseAssistantMessagesBeforeUserMessage(prompt);
+    if (assistantMessagesBeforeUserMessage !== null) {
+      turn.timer = setTimeout(async () => {
+        if (this.activeTurn !== turn) return;
+        this.emitTurnStarted(turn);
+        for (let index = 0; index < assistantMessagesBeforeUserMessage; index += 1) {
+          this.emitTimeline(turnId, {
+            type: "assistant_message",
+            text: `Synthetic pre-echo message ${index + 1}`,
+            messageId: `${turn.assistantMessageId}-${index + 1}`,
+          });
+          await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+          if (this.activeTurn !== turn) return;
+        }
+        emitUserMessage();
+        await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+        if (this.activeTurn !== turn) return;
+        this.finishTurnWithText(turn, "Synthetic pre-echo stream complete");
+      }, 0);
+      turn.timer.unref?.();
+      return { turnId };
+    }
+    const userMessageDelayMs = parseUserMessageDelayMs(prompt);
+    const userMessageTimer = setTimeout(() => {
+      emitUserMessage();
       if (userMessageDelayMs > 0) scheduleTurn();
     }, userMessageDelayMs);
     userMessageTimer.unref?.();

@@ -134,22 +134,29 @@ function makeSubmittedUserMessage(
 describe("deriveAgentStreamTurnLiveness", () => {
   it("tracks start through every terminal turn event", () => {
     const started = makeStreamReducerEvent(
-      { type: "turn_started", provider: "claude" } as AgentStreamEventPayload,
+      { type: "turn_started", provider: "claude", turnId: "turn-1" },
       1,
     );
-    expect(deriveAgentStreamTurnLiveness([started])).toEqual({
-      type: "stream_open",
-      startedAt: started.timestamp,
-      evidence: { epoch: "epoch-1", seq: 1 },
-    });
+    expect(deriveAgentStreamTurnLiveness([started])).toEqual([
+      {
+        type: "stream_open",
+        turn: { turnId: "turn-1", startedAt: started.timestamp },
+      },
+    ]);
     for (const event of [
       { type: "turn_completed", provider: "claude" },
       { type: "turn_failed", provider: "claude", error: "failed" },
       { type: "turn_canceled", provider: "claude", reason: "canceled" },
     ] as AgentStreamEventPayload[]) {
-      expect(deriveAgentStreamTurnLiveness([started, makeStreamReducerEvent(event, 2)])).toEqual({
-        type: "stream_close",
-      });
+      expect(
+        deriveAgentStreamTurnLiveness([
+          started,
+          makeStreamReducerEvent({ ...event, turnId: "turn-1" } as AgentStreamEventPayload, 2),
+        ]),
+      ).toEqual([
+        { type: "stream_open", turn: { turnId: "turn-1", startedAt: started.timestamp } },
+        { type: "stream_close", turnId: "turn-1" },
+      ]);
     }
   });
 
@@ -158,7 +165,7 @@ describe("deriveAgentStreamTurnLiveness", () => {
       deriveAgentStreamTurnLiveness([
         makeStreamReducerEvent(makeAssistantTimelineEvent("still working"), 1),
       ]),
-    ).toBeUndefined();
+    ).toEqual([]);
 
     expect(
       deriveAgentStreamTurnLiveness([
@@ -167,24 +174,26 @@ describe("deriveAgentStreamTurnLiveness", () => {
           2,
         ),
       ]),
-    ).toEqual({ type: "stream_close" });
+    ).toEqual([{ type: "stream_close", turnId: null }]);
   });
 
   it("restarts timing when a terminal event and the next start share one reducer batch", () => {
     const completed = makeStreamReducerEvent(
-      { type: "turn_completed", provider: "claude" } as AgentStreamEventPayload,
+      { type: "turn_completed", provider: "claude", turnId: "turn-1" },
       2,
     );
     const restarted = makeStreamReducerEvent(
-      { type: "turn_started", provider: "claude" } as AgentStreamEventPayload,
+      { type: "turn_started", provider: "claude", turnId: "turn-2" },
       3,
     );
 
-    expect(deriveAgentStreamTurnLiveness([completed, restarted])).toEqual({
-      type: "stream_restart",
-      startedAt: restarted.timestamp,
-      evidence: { epoch: "epoch-1", seq: 3 },
-    });
+    expect(deriveAgentStreamTurnLiveness([completed, restarted])).toEqual([
+      { type: "stream_close", turnId: "turn-1" },
+      {
+        type: "stream_open",
+        turn: { turnId: "turn-2", startedAt: restarted.timestamp },
+      },
+    ]);
   });
 });
 
@@ -3138,6 +3147,48 @@ describe("processAgentStreamEvent", () => {
     expect(result.cursorChanged).toBe(false);
     expect(result.changedTail).toBe(false);
     expect(result.changedHead).toBe(false);
+    expect(result.sideEffects).toEqual([]);
+  });
+
+  it("applies a same-sequence provider identity revision to its canonical prompt", () => {
+    const canonical = createUserMessage({
+      id: "canonical-prompt",
+      clientMessageId: "client-message-1",
+      text: "Revise this prompt",
+      timestamp: new Date(1000),
+      timelineCursor: { epoch: "epoch-1", seq: 5 },
+    });
+    const currentHead = [makeAssistantItem("Still streaming")];
+
+    const result = processAgentStreamEvent({
+      ...baseStreamInput,
+      currentTail: [canonical],
+      currentHead,
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 8 },
+      event: {
+        type: "timeline",
+        provider: "claude",
+        item: {
+          type: "user_message",
+          text: "Revise this prompt",
+          clientMessageId: "client-message-1",
+          messageId: "provider-message-1",
+        },
+      },
+      seq: 5,
+      epoch: "epoch-1",
+    });
+
+    expect(result.tail).toEqual([
+      expect.objectContaining({
+        id: "canonical-prompt",
+        clientMessageId: "client-message-1",
+        messageId: "provider-message-1",
+        timelineCursor: { epoch: "epoch-1", seq: 5 },
+      }),
+    ]);
+    expect(result.head).toBe(currentHead);
+    expect(result.cursorChanged).toBe(false);
     expect(result.sideEffects).toEqual([]);
   });
 

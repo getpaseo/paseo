@@ -45,15 +45,12 @@ function createUntrackedMessageSubmissionWriter(serverId: string): MessageSubmis
   };
 }
 
-/**
- * Binds message submission presentation to a host session. Capable hosts use the tracked
- * two-phase lifecycle; older hosts preserve the untracked optimistic-row behavior.
- */
 export function createMessageSubmissionWriter(serverId: string): MessageSubmissionWriter {
-  const supportsCanonicalSubmittedPrompts =
+  const supportsTrackedMessageSubmissions =
     useSessionStore.getState().sessions[serverId]?.serverInfo?.features
       ?.canonicalSubmittedPrompts === true;
-  if (!supportsCanonicalSubmittedPrompts) {
+  if (!supportsTrackedMessageSubmissions) {
+    // COMPAT(canonicalSubmittedPrompts): added in v0.2.6; remove the gate after 2027-01-31 once daemon floor >= v0.2.6.
     return createUntrackedMessageSubmissionWriter(serverId);
   }
   return {
@@ -71,10 +68,5 @@ export function handoffCreatedAgentMessageSubmission(
   agentId: string,
   message: UserMessageItem,
 ): boolean {
-  const supportsCanonicalSubmittedPrompts =
-    useSessionStore.getState().sessions[serverId]?.serverInfo?.features
-      ?.canonicalSubmittedPrompts === true;
-  return useSessionStore
-    .getState()
-    .handoffCreatedAgentUserMessage(serverId, agentId, message, supportsCanonicalSubmittedPrompts);
+  return useSessionStore.getState().handoffCreatedAgentUserMessage(serverId, agentId, message);
 }

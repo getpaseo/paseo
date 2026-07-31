@@ -99,7 +99,7 @@ function applyAgentStatus(input: {
 }
 
 describe("turn liveness authority", () => {
-  it("seeds from a running directory transition without closing from directory idle", () => {
+  it("normalizes old-daemon status into the shared activity replica", () => {
     const serverId = "server-turn-liveness";
     const agentId = "agent-1";
     const startedAt = "2026-07-27T10:00:01.000Z";
@@ -114,6 +114,13 @@ describe("turn liveness authority", () => {
       updatedAt: "2026-07-27T10:00:02.000Z",
       lastUserMessageAt: startedAt,
     });
+    expect(store.getSession(serverId)?.agentTurnLiveness.get(agentId)).toEqual({
+      phase: "open",
+      turnId: null,
+      startedAt: new Date(startedAt),
+      cancellationRequestId: null,
+    });
+
     applyAgentStatus({
       serverId,
       agentId,
@@ -121,11 +128,7 @@ describe("turn liveness authority", () => {
       updatedAt: "2026-07-27T10:00:03.000Z",
     });
 
-    expect(store.getSession(serverId)?.agentTurnLiveness.get(agentId)).toEqual({
-      phase: "open",
-      startedAt: new Date(startedAt),
-      evidence: null,
-    });
+    expect(store.getSession(serverId)?.agentTurnLiveness.has(agentId)).toBe(false);
     store.clearSession(serverId);
   });
 });
@@ -155,8 +158,8 @@ describe("message submission authority", () => {
       {
         clientMessageId,
         submittedAt: new Date("2026-07-27T10:00:00.000Z"),
-        rpcAccepted: false,
         providerAcknowledged: false,
+        rpcSettled: false,
       },
     ]);
     store.clearSession(serverId);

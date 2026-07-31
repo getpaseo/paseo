@@ -167,6 +167,31 @@ export class InMemoryAgentTimelineStore {
     return this.requireState(agentId).rows.map(cloneRow);
   }
 
+  getSubmittedUserMessage(agentId: string, clientMessageId: string): AgentTimelineRow | null {
+    const row = this.requireState(agentId).rows.find(
+      (candidate) =>
+        candidate.item.type === "user_message" &&
+        candidate.item.clientMessageId === clientMessageId,
+    );
+    return row ? cloneRow(row) : null;
+  }
+
+  enrichSubmittedUserMessage(
+    agentId: string,
+    clientMessageId: string,
+    enrichment: { messageId: string },
+  ): AgentTimelineRow | null {
+    const state = this.requireState(agentId);
+    const row = state.rows.find(
+      (candidate) =>
+        candidate.item.type === "user_message" &&
+        candidate.item.clientMessageId === clientMessageId,
+    );
+    if (!row || row.item.type !== "user_message") return null;
+    row.item = { ...row.item, messageId: enrichment.messageId };
+    return cloneRow(row);
+  }
+
   getEpoch(agentId: string): string {
     return this.requireState(agentId).epoch;
   }

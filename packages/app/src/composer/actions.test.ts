@@ -291,7 +291,6 @@ describe("cancelComposerAgent", () => {
     isAgentRunning: boolean;
     isCancellingAgent: boolean;
     isConnected: boolean;
-    onCancelFailed: (error: unknown) => void;
   } {
     const canceledIds: string[] = [];
     return {
@@ -305,53 +304,45 @@ describe("cancelComposerAgent", () => {
       isAgentRunning: true,
       isCancellingAgent: false,
       isConnected: true,
-      onCancelFailed: () => undefined,
     };
   }
 
-  it("issues a cancel and reports true when the agent is running, connected, and not already canceling", () => {
+  it("returns the cancel request when the agent is running, connected, and not already canceling", async () => {
     const input = baseInput();
     const result = cancelComposerAgent(input);
-    expect(result).toBe(true);
+    expect(result).not.toBeNull();
+    await result;
     expect(input.client.canceledIds).toEqual(["agent"]);
   });
 
-  it("reports a rejected cancel so the composer can leave its canceling state", async () => {
+  it("returns a rejected cancel request to the composer", async () => {
     const cancellationError = new Error("Provider rejected the interrupt");
-    const failures: unknown[] = [];
     const input = baseInput();
     input.client.cancelAgent = async () => {
       throw cancellationError;
     };
 
-    const result = cancelComposerAgent({
-      ...input,
-      onCancelFailed: (error: unknown) => failures.push(error),
-    });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(result).toBe(true);
-    expect(failures).toEqual([cancellationError]);
+    await expect(cancelComposerAgent(input)).rejects.toBe(cancellationError);
   });
 
   it("does nothing when the agent is not running", () => {
     const input = baseInput();
     const result = cancelComposerAgent({ ...input, isAgentRunning: false });
-    expect(result).toBe(false);
+    expect(result).toBeNull();
     expect(input.client.canceledIds).toEqual([]);
   });
 
   it("does nothing when the agent is already being canceled", () => {
     const input = baseInput();
     const result = cancelComposerAgent({ ...input, isCancellingAgent: true });
-    expect(result).toBe(false);
+    expect(result).toBeNull();
     expect(input.client.canceledIds).toEqual([]);
   });
 
   it("does nothing when disconnected or the client is null", () => {
     const input = baseInput();
-    expect(cancelComposerAgent({ ...input, isConnected: false })).toBe(false);
-    expect(cancelComposerAgent({ ...input, client: null })).toBe(false);
+    expect(cancelComposerAgent({ ...input, isConnected: false })).toBeNull();
+    expect(cancelComposerAgent({ ...input, client: null })).toBeNull();
     expect(input.client.canceledIds).toEqual([]);
   });
 });

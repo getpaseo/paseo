@@ -25,7 +25,7 @@ describe("message submission transactions", () => {
     expect(getSendingClientMessageIds(both)).toEqual(["client-1", "client-2"]);
   });
 
-  it("removes only the provider-acknowledged transaction on RPC acceptance", () => {
+  it("settles only the accepted transaction on RPC acceptance", () => {
     const both = beginMessageSubmission(
       beginMessageSubmission([], { clientMessageId: "client-1", submittedAt }),
       { clientMessageId: "client-2", submittedAt },
@@ -36,37 +36,27 @@ describe("message submission transactions", () => {
       {
         clientMessageId: "client-2",
         submittedAt,
-        rpcAccepted: false,
         providerAcknowledged: false,
+        rpcSettled: false,
       },
     ]);
   });
 
-  it("keeps an accepted RPC active until canonical acknowledgement", () => {
+  it("keeps activity until an accepted RPC's canonical row is observed", () => {
     const sending = beginMessageSubmission([], { clientMessageId: "client-1", submittedAt });
     const accepted = acceptMessageSubmission(sending, "client-1");
 
-    expect(getActiveMessageSubmissions(accepted)).toHaveLength(1);
-    expect(accepted[0].rpcAccepted).toBe(true);
-  });
-
-  it("does not settle RPC acceptance from directory running status", () => {
-    const sending = beginMessageSubmission([], { clientMessageId: "client-1", submittedAt });
-
-    expect(acceptMessageSubmission(sending, "client-1")).toEqual([
+    expect(accepted).toEqual([
       {
         clientMessageId: "client-1",
         submittedAt,
-        rpcAccepted: true,
         providerAcknowledged: false,
+        rpcSettled: true,
       },
     ]);
-  });
-
-  it("settles an accepted RPC when provider acknowledgement arrives after running was missed", () => {
-    const sending = beginMessageSubmission([], { clientMessageId: "client-1", submittedAt });
-    const accepted = acceptMessageSubmission(sending, "client-1");
-
+    expect(getActiveMessageSubmissions(accepted).map((item) => item.clientMessageId)).toEqual([
+      "client-1",
+    ]);
     expect(observeMessageSubmissionCanonical(accepted, ["client-1"])).toEqual([]);
   });
 
@@ -81,14 +71,14 @@ describe("message submission transactions", () => {
       {
         clientMessageId: "client-1",
         submittedAt,
-        rpcAccepted: false,
         providerAcknowledged: true,
+        rpcSettled: false,
       },
       {
         clientMessageId: "client-2",
         submittedAt,
-        rpcAccepted: false,
         providerAcknowledged: false,
+        rpcSettled: false,
       },
     ]);
     expect(getSendingClientMessageIds(observed)).toEqual(["client-2"]);

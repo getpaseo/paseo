@@ -160,7 +160,12 @@ function ProviderSubagentPanel() {
     [isLoadingOlder, loadOlder, progressKey, timeline?.hasOlder],
   );
   const turnPresentation = useMemo<TurnPresentation>(
-    () => ({ isActive: descriptor?.status === "running", startedAt: null }),
+    () => ({
+      isActive: descriptor?.status === "running",
+      isCancelling: false,
+      startedAt: null,
+      turnId: null,
+    }),
     [descriptor?.status],
   );
 

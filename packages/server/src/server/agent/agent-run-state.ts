@@ -13,6 +13,8 @@ export interface ForegroundTurnWaiter {
 export interface PendingForegroundRun {
   token: string;
   kind: "foreground";
+  clientMessageId: string | null;
+  stagedEvents: AgentStreamEvent[];
   turnId: string | null;
   started: boolean;
   settled: boolean;
@@ -40,8 +42,8 @@ export interface ForegroundRunAgentState {
 export class AgentRunState {
   private readonly runs = new Map<string, TrackedAgentRun>();
 
-  createPendingRun(agentId: string): PendingForegroundRun {
-    const pendingRun = createPendingForegroundRun();
+  createPendingRun(agentId: string, clientMessageId?: string): PendingForegroundRun {
+    const pendingRun = createPendingForegroundRun(clientMessageId ?? null);
     this.runs.set(agentId, pendingRun);
     return pendingRun;
   }
@@ -69,7 +71,12 @@ export class AgentRunState {
       return current;
     }
 
-    const run = createTrackedRun({ kind: "autonomous", turnId, started: true });
+    const run: AutonomousAgentRun = {
+      ...createTrackedRunState(),
+      kind: "autonomous",
+      turnId,
+      started: true,
+    };
     this.runs.set(agentId, run);
     return run;
   }
@@ -258,32 +265,29 @@ export class ForegroundTurnStream {
   }
 }
 
-function createPendingForegroundRun(): PendingForegroundRun {
-  return createTrackedRun({ kind: "foreground", turnId: null, started: false });
+function createPendingForegroundRun(clientMessageId: string | null): PendingForegroundRun {
+  return {
+    ...createTrackedRunState(),
+    kind: "foreground",
+    turnId: null,
+    started: false,
+    clientMessageId,
+    stagedEvents: [],
+  };
 }
 
-function createTrackedRun(input: {
-  kind: "foreground";
-  turnId: null;
-  started: false;
-}): PendingForegroundRun;
-function createTrackedRun(input: {
-  kind: "autonomous";
-  turnId: string | null;
-  started: true;
-}): AutonomousAgentRun;
-function createTrackedRun(
-  input:
-    | { kind: "foreground"; turnId: null; started: false }
-    | { kind: "autonomous"; turnId: string | null; started: true },
-): TrackedAgentRun {
+function createTrackedRunState(): {
+  token: string;
+  settled: boolean;
+  settledPromise: Promise<void>;
+  resolveSettled: () => void;
+} {
   let resolveSettled!: () => void;
   const settledPromise = new Promise<void>((resolvePromise) => {
     resolveSettled = resolvePromise;
   });
   return {
     token: randomUUID(),
-    ...input,
     settled: false,
     settledPromise,
     resolveSettled,

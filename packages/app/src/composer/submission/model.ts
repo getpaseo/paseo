@@ -4,8 +4,8 @@ export interface PendingMessageSubmission {
 }
 
 export type MessageSubmissionRecord = PendingMessageSubmission & {
-  rpcAccepted: boolean;
   providerAcknowledged: boolean;
+  rpcSettled: boolean;
 };
 
 const EMPTY_MESSAGE_SUBMISSIONS: readonly MessageSubmissionRecord[] = [];
@@ -13,7 +13,9 @@ const EMPTY_MESSAGE_SUBMISSIONS: readonly MessageSubmissionRecord[] = [];
 export function getActiveMessageSubmissions(
   submissions: readonly MessageSubmissionRecord[] | null | undefined,
 ): readonly PendingMessageSubmission[] {
-  return submissions ?? EMPTY_MESSAGE_SUBMISSIONS;
+  return (submissions ?? EMPTY_MESSAGE_SUBMISSIONS).filter(
+    (submission) => !submission.providerAcknowledged,
+  );
 }
 
 export function getSendingClientMessageIds(
@@ -38,7 +40,7 @@ export function beginMessageSubmission(
   if (submissions.some((submission) => submission.clientMessageId === input.clientMessageId)) {
     throw new Error(`Message submission already exists: ${input.clientMessageId}`);
   }
-  return [...submissions, { ...input, rpcAccepted: false, providerAcknowledged: false }];
+  return [...submissions, { ...input, providerAcknowledged: false, rpcSettled: false }];
 }
 
 export function acceptMessageSubmission(
@@ -49,13 +51,14 @@ export function acceptMessageSubmission(
     (submission) => submission.clientMessageId === clientMessageId,
   );
   if (index < 0) return submissions as MessageSubmissionRecord[];
-  if (submissions[index].providerAcknowledged) {
+  const submission = submissions[index];
+  if (submission.providerAcknowledged) {
     return submissions.filter((_, submissionIndex) => submissionIndex !== index);
   }
-  if (submissions[index].rpcAccepted) return submissions as MessageSubmissionRecord[];
-  const next = submissions.slice();
-  next[index] = { ...next[index], rpcAccepted: true };
-  return next;
+  if (submission.rpcSettled) return submissions as MessageSubmissionRecord[];
+  return submissions.map((item, submissionIndex) =>
+    submissionIndex === index ? { ...item, rpcSettled: true } : item,
+  );
 }
 
 export function observeMessageSubmissionCanonical(
@@ -70,7 +73,7 @@ export function observeMessageSubmissionCanonical(
       return [submission];
     }
     changed = true;
-    return submission.rpcAccepted ? [] : [{ ...submission, providerAcknowledged: true }];
+    return submission.rpcSettled ? [] : [{ ...submission, providerAcknowledged: true }];
   });
   return changed ? next : (submissions as MessageSubmissionRecord[]);
 }
@@ -84,7 +87,7 @@ export function rejectMessageSubmission(
     return { outcome: "unknown", submissions: submissions as MessageSubmissionRecord[] };
   }
   return {
-    outcome: submission.providerAcknowledged || submission.rpcAccepted ? "accepted" : "rejected",
+    outcome: submission.providerAcknowledged ? "accepted" : "rejected",
     submissions: submissions.filter((item) => item.clientMessageId !== clientMessageId),
   };
 }
