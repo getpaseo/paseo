@@ -109,7 +109,12 @@ export function createSkillsController({
       const transaction = await beginSkillsTransaction(targets, previous, next, plan.ops);
       let status: SkillsStatus;
       try {
-        status = await installSkills(targets, next, plan);
+        status = await installSkills(targets, next, {
+          ...plan,
+          // beginSkillsTransaction atomically staged these directories. Running
+          // removeSkill afterward would delete a path another writer recreated.
+          ops: plan.ops.filter((op) => op.kind !== "delete"),
+        });
       } catch (error) {
         await transaction.rollback();
         throw error;

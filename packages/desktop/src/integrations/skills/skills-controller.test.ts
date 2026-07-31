@@ -455,6 +455,29 @@ describe("skills controller", () => {
     await rm(readOnly.root, { recursive: true, force: true });
   });
 
+  it("atomically stages a deletion before another writer can recreate its path", async () => {
+    const previous: SkillSelection = {
+      mode: "custom",
+      skills: ["paseo", "paseo-loop"],
+    };
+    const next: SkillSelection = { mode: "custom", skills: ["paseo"] };
+    await harness.controller.save(previous);
+
+    const transaction = await beginSkillsTransaction(harness.targets, previous, next, [
+      { kind: "delete", name: "paseo-loop" },
+    ]);
+
+    expect(await isInstalled(harness.targets, "paseo-loop")).toBe(false);
+    await writeUserFile(harness.targets, "paseo-loop", "notes/concurrent.md", "keep this");
+    await transaction.rollback();
+    expect(await readUserFile(harness.targets, "paseo-loop", "notes/concurrent.md")).toEqual([
+      "keep this",
+      "keep this",
+      "keep this",
+    ]);
+    expect(await isInstalled(harness.targets, "paseo-loop")).toBe(true);
+  });
+
   it.skipIf(process.platform === "win32")(
     "restores a user-added symlink when deletion rolls back",
     async () => {

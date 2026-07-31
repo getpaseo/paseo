@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { cp, lstat, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -235,6 +235,9 @@ async function restore(
   for (const entry of manifest.entries) {
     const backup = entry.backupPath && path.join(transactionDir, entry.backupPath);
     if (backup !== null && !(await isDirectory(backup))) {
+      // A crash may happen after the manifest is durable but before this delete
+      // path is atomically moved. Its live directory was never touched.
+      if (entry.kind === "delete" && (await isDirectory(entry.livePath))) continue;
       throw new Error(`Skills transaction backup is missing: ${backup}`);
     }
     if (entry.kind === "delete") {
@@ -334,11 +337,13 @@ export async function beginSkillsTransaction(
           continue;
         }
         const backupPath = path.join(BACKUP_DIRNAME, String(rootIndex), name);
-        await cp(livePath, path.join(transactionDir, backupPath), {
-          recursive: true,
-          preserveTimestamps: true,
-          verbatimSymlinks: true,
-        });
+        if (op.kind !== "delete") {
+          await cp(livePath, path.join(transactionDir, backupPath), {
+            recursive: true,
+            preserveTimestamps: true,
+            verbatimSymlinks: true,
+          });
+        }
         entries.push({ livePath, kind: op.kind, backupPath });
       }
     }
@@ -353,6 +358,30 @@ export async function beginSkillsTransaction(
   } catch (error) {
     // Nothing has been converged yet, so failing to stage means failing the save
     // before it touches anything.
+    await discard();
+    throw error;
+  }
+
+  try {
+    // A confirmed delete is the atomic move into staging itself. Any writer
+    // holding the old directory keeps writing into the staged inode; any writer
+    // recreating the old path remains live and is merged on rollback. The later
+    // convergence plan deliberately omits deletes.
+    for (const entry of entries) {
+      if (entry.kind !== "delete" || entry.backupPath === null) continue;
+      const backup = path.join(transactionDir, entry.backupPath);
+      await mkdir(path.dirname(backup), { recursive: true });
+      await rename(entry.livePath, backup);
+    }
+  } catch (error) {
+    await restore(targets, transactionDir, {
+      owner: MANIFEST_OWNER,
+      version: 1,
+      phase: "converging",
+      previousSelection,
+      nextSelection,
+      entries,
+    });
     await discard();
     throw error;
   }
