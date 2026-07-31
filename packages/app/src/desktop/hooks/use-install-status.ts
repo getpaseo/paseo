@@ -10,6 +10,7 @@ import {
   shouldUseDesktopDaemon,
   type InstallStatus,
   type SkillSelection,
+  type SkillsSaveResult,
   type SkillsSnapshot,
   uninstallSkills,
   updateSkills,
@@ -89,7 +90,10 @@ export interface SkillsStatusHookResult {
   install: () => Promise<void>;
   update: () => Promise<void>;
   uninstall: () => Promise<void>;
-  saveSelection: (selection: SkillSelection) => Promise<void>;
+  saveSelection: (
+    selection: SkillSelection,
+    confirmedRemovals?: readonly string[],
+  ) => Promise<SkillsSaveResult>;
 }
 
 export function useSkillsStatus(): SkillsStatusHookResult {
@@ -154,8 +158,13 @@ export function useSkillsStatus(): SkillsStatusHookResult {
     onSuccess: setStatus,
   });
 
-  const saveSelectionMutation = useMutation<SkillsSnapshot, Error, SkillSelection>({
-    mutationFn: saveSkillsSelection,
+  const saveSelectionMutation = useMutation<
+    SkillsSaveResult,
+    Error,
+    { selection: SkillSelection; confirmedRemovals: readonly string[] }
+  >({
+    mutationFn: ({ selection, confirmedRemovals }) =>
+      saveSkillsSelection(selection, confirmedRemovals),
     onError: (error) => {
       reportError({
         error,
@@ -189,9 +198,8 @@ export function useSkillsStatus(): SkillsStatusHookResult {
   }, [uninstallMutation]);
 
   const saveSelection = useCallback(
-    async (selection: SkillSelection) => {
-      await saveSelectionMutation.mutateAsync(selection);
-    },
+    async (selection: SkillSelection, confirmedRemovals: readonly string[] = []) =>
+      saveSelectionMutation.mutateAsync({ selection, confirmedRemovals }),
     [saveSelectionMutation],
   );
 

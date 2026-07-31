@@ -13,6 +13,7 @@ import {
   expectSavedSkillSelection,
   expectSaveErrorKeepsSheetOpen,
   expectSelectedSkills,
+  expectSkillChoices,
   expectSkillFilePresent,
   expectSkillPresentIn,
   expectSkillSelectionOpen,
@@ -191,6 +192,50 @@ test.describe("Removing an installed skill", () => {
     await expectSkillSelectionOpen(page);
     await expectSkillFilePresent(skills, "claude", "paseo-loop", "notes/mine.md");
     await expectSavedSkillSelection(skills, { mode: "custom", skills: ["paseo"] });
+  });
+
+  test("warns about a directory that appears after the sheet was opened", async ({
+    page,
+    startSkills,
+  }) => {
+    const skills = await startSkills({
+      installed: { mode: "custom", skills: ["paseo"] },
+      confirmRemoval: false,
+    });
+    await gotoAppShell(page);
+    await openSkillsIntegrations(page);
+    await openSkillSelection(page);
+
+    // Nothing to delete when the sheet opened; the host looks again at save time.
+    await skills.placeSkillOnDisk("paseo-loop", "claude");
+    await toggleSkill(page, "paseo-advisor");
+    await saveSkillSelection(page);
+
+    await expectRemovalWarning(page, ["paseo-loop"]);
+    await expectSkillSelectionOpen(page);
+    await expectSkillPresentIn(skills, "claude", "paseo-loop");
+    await expectSavedSkillSelection(skills, { mode: "custom", skills: ["paseo"] });
+  });
+
+  test("keeps draft choices when fresher status arrives while the sheet is open", async ({
+    page,
+    startSkills,
+  }) => {
+    const skills = await startSkills({ installed: { mode: "all" }, confirmRemoval: false });
+    await gotoAppShell(page);
+    await openSkillsIntegrations(page);
+    await openSkillSelection(page);
+    await chooseCustomSkills(page, ["paseo", "paseo-advisor"]);
+
+    // Another window commits a different selection. Saving picks that up, so the
+    // sheet is handed a selection it did not start from while an edit is open.
+    await skills.commitSelectionExternally({ mode: "custom", skills: ["paseo", "paseo-loop"] }, [
+      "paseo-advisor",
+    ]);
+    await saveSkillSelection(page);
+    await expectRemovalWarning(page, ["paseo-loop"]);
+
+    await expectSkillChoices(page, ["paseo", "paseo-advisor"]);
   });
 
   test("adding a skill saves without a warning", async ({ page, startSkills }) => {

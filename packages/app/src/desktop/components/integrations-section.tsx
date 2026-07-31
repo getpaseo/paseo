@@ -233,7 +233,6 @@ export function IntegrationsSection() {
           visible={isChoosingSkills}
           available={skillsStatus.available}
           selection={skillsStatus.selection}
-          installed={skillsStatus.installed}
           isSaving={isSkillsWorking}
           onSave={saveSkillSelection}
           onClose={handleCloseSkillSelection}

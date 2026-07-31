@@ -73,6 +73,26 @@ function selectedSkills(selection: SkillSelection, available: readonly string[])
   return available.filter((name) => chosen.has(name));
 }
 
+export interface SkillsSaveResult extends SkillsSnapshot {
+  /**
+   * Non-null when the host refused the save because these directories would be
+   * deleted. Confirm the names with the user and retry with them.
+   */
+  confirmationRequired: { removals: string[] } | null;
+}
+
+export function parseSkillsSaveResult(raw: unknown): SkillsSaveResult {
+  const snapshot = parseSkillsSnapshot(raw);
+  const required =
+    isRecord(raw) && isRecord(raw.confirmationRequired)
+      ? parseSkillNames(raw.confirmationRequired.removals)
+      : [];
+  return {
+    ...snapshot,
+    confirmationRequired: required.length > 0 ? { removals: required } : null,
+  };
+}
+
 export function parseSkillsSnapshot(raw: unknown): SkillsSnapshot {
   if (!isRecord(raw)) {
     throw new Error("Unexpected skills status response.");

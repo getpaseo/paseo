@@ -1,8 +1,10 @@
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { invokeDesktopCommand } from "@/desktop/electron/invoke";
 import {
+  parseSkillsSaveResult,
   parseSkillsSnapshot,
   type SkillSelection,
+  type SkillsSaveResult,
   type SkillsSnapshot,
 } from "@/desktop/daemon/skills-snapshot";
 
@@ -254,6 +256,7 @@ export async function installCli(): Promise<InstallStatus> {
 export type {
   SkillOp,
   SkillSelection,
+  SkillsSaveResult,
   SkillsSnapshot,
   SkillsState,
 } from "@/desktop/daemon/skills-snapshot";
@@ -274,6 +277,14 @@ export async function uninstallSkills(): Promise<SkillsSnapshot> {
   return parseSkillsSnapshot(await invokeDesktopCommand("uninstall_skills"));
 }
 
-export async function saveSkillsSelection(selection: SkillSelection): Promise<SkillsSnapshot> {
-  return parseSkillsSnapshot(await invokeDesktopCommand("save_skills_selection", selection));
+export async function saveSkillsSelection(
+  selection: SkillSelection,
+  confirmedRemovals: readonly string[] = [],
+): Promise<SkillsSaveResult> {
+  return parseSkillsSaveResult(
+    await invokeDesktopCommand("save_skills_selection", {
+      ...selection,
+      confirmedRemovals: [...confirmedRemovals],
+    }),
+  );
 }

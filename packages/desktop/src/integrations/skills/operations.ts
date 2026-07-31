@@ -206,8 +206,10 @@ async function applySkills(
 export async function installSkills(
   targets: SkillTargets,
   selection: SkillSelection,
+  /** Apply exactly this plan instead of rescanning, so a confirmed plan is the applied plan. */
+  plan?: SkillsStatus,
 ): Promise<SkillsStatus> {
-  return applySkills(targets, selection);
+  return applySkills(targets, selection, plan);
 }
 
 export async function updateSkills(

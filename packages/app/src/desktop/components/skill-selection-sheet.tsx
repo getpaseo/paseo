@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -9,8 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { settingsStyles } from "@/styles/settings";
 import type { Theme } from "@/styles/theme";
 import { confirmDialog } from "@/utils/confirm-dialog";
-import { skillsRemovedBySave } from "@/desktop/components/skill-removal";
-import type { SkillSelection } from "@/desktop/daemon/desktop-daemon";
+import type { SkillSelection, SkillsSaveResult } from "@/desktop/daemon/desktop-daemon";
 
 const ThemedCheck = withUnistyles(Check);
 const checkedIconMapping = (theme: Theme) => ({ color: theme.colors.accentForeground });
@@ -19,9 +18,11 @@ interface SkillSelectionSheetProps {
   visible: boolean;
   available: readonly string[];
   selection: SkillSelection;
-  installed: readonly string[];
   isSaving: boolean;
-  onSave: (selection: SkillSelection) => Promise<void>;
+  onSave: (
+    selection: SkillSelection,
+    confirmedRemovals?: readonly string[],
+  ) => Promise<SkillsSaveResult>;
   onClose: () => void;
 }
 
@@ -37,7 +38,6 @@ export function SkillSelectionSheet({
   visible,
   available,
   selection,
-  installed,
   isSaving,
   onSave,
   onClose,
@@ -45,10 +45,14 @@ export function SkillSelectionSheet({
   const { t } = useTranslation();
   const [draft, setDraft] = useState<SkillSelection>(selection);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const wasVisible = useRef(visible);
 
-  // Reopening starts from what is saved, so a cancelled edit leaves nothing behind.
+  // Seeded when the sheet opens, not whenever a background status refresh hands
+  // back a new selection object — that would throw away edits in progress.
   useEffect(() => {
-    if (!visible) return;
+    const opening = visible && !wasVisible.current;
+    wasVisible.current = visible;
+    if (!opening) return;
     setDraft(selection);
     setSaveError(null);
   }, [selection, visible]);
@@ -72,36 +76,38 @@ export function SkillSelectionSheet({
     });
   }, []);
 
-  const removedSkills = useMemo(
-    () => skillsRemovedBySave({ draft, available, installed }),
-    [available, draft, installed],
-  );
-
   const handleSave = useCallback(() => {
     void (async () => {
       setSaveError(null);
-      // Removing a skill deletes its directory in every agent home, including
-      // anything the user put inside it, so it is confirmed like any other
-      // destructive action. Adding skills and re-saving the same set do not ask.
-      if (removedSkills.length > 0) {
-        const confirmed = await confirmDialog({
-          title: t("settings.integrations.skills.removeTitle"),
-          message: t("settings.integrations.skills.removeMessage", {
-            skills: removedSkills.join(", "),
-          }),
-          confirmLabel: t("settings.integrations.actions.remove"),
-          destructive: true,
-        });
-        if (!confirmed) return;
-      }
       try {
-        await onSave(draft);
+        // The host refuses a save that would delete directories it was not told
+        // about, and answers with the names it found when it looked. Asking it
+        // is the only way the question and the deletion cannot drift apart.
+        const attempt = await onSave(draft);
+        if (attempt.confirmationRequired) {
+          const confirmed = await confirmDialog({
+            title: t("settings.integrations.skills.removeTitle"),
+            message: t("settings.integrations.skills.removeMessage", {
+              skills: attempt.confirmationRequired.removals.join(", "),
+            }),
+            confirmLabel: t("settings.integrations.actions.remove"),
+            destructive: true,
+          });
+          if (!confirmed) return;
+          const retry = await onSave(draft, attempt.confirmationRequired.removals);
+          // Something else changed the directories again while the dialog was
+          // up. Ask about the new list rather than deleting it unannounced.
+          if (retry.confirmationRequired) {
+            setSaveError(t("settings.integrations.skills.saveFailed"));
+            return;
+          }
+        }
         onClose();
       } catch {
         setSaveError(t("settings.integrations.skills.saveFailed"));
       }
     })();
-  }, [draft, onClose, onSave, removedSkills, t]);
+  }, [draft, onClose, onSave, t]);
 
   const header = useMemo<SheetHeader>(
     () => ({ title: t("settings.integrations.skills.choose") }),

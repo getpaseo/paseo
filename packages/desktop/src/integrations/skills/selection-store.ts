@@ -28,7 +28,7 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error;
 }
 
-function coerceSkillNames(value: unknown): string[] {
+export function coerceSkillNames(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   const names = value
     .filter((entry): entry is string => typeof entry === "string")

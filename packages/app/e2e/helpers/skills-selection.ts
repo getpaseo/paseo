@@ -36,6 +36,13 @@ export interface SkillsSandbox {
   targets: SkillTargets;
   userDataPath: string;
   bundledSkills: string[];
+  /** Writes a managed skill directory the way an external tool would. */
+  placeSkillOnDisk: (skill: string, target: SkillTargetName) => Promise<void>;
+  /** Commits a selection through the real controller, as another window would. */
+  commitSelectionExternally: (
+    selection: SkillSelection,
+    confirmedRemovals?: readonly string[],
+  ) => Promise<void>;
   cleanup: () => Promise<void>;
 }
 
@@ -123,6 +130,17 @@ export async function createSkillsSandbox(
     targets,
     userDataPath,
     bundledSkills,
+    placeSkillOnDisk: async (skill, target) => {
+      const dir = path.join(targetDir(targets, target), skill);
+      await mkdir(dir, { recursive: true });
+      await writeFile(path.join(dir, "SKILL.md"), `# ${skill}\n`, "utf8");
+    },
+    commitSelectionExternally: async (selection, confirmedRemovals = []) => {
+      await createSkillsController({
+        resolveTargets: () => targets,
+        selectionStore: createSkillSelectionStore({ userDataPath }),
+      }).save({ ...selection, confirmedRemovals: [...confirmedRemovals] });
+    },
     cleanup: () => rm(root, { recursive: true, force: true }),
   };
 }

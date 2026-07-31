@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseSkillsSnapshot } from "./skills-snapshot";
+import { parseSkillsSaveResult, parseSkillsSnapshot } from "./skills-snapshot";
 
 describe("parseSkillsSnapshot", () => {
   it("parses a full snapshot from the desktop command surface", () => {
@@ -86,6 +86,31 @@ describe("parseSkillsSnapshot", () => {
       installed: ["paseo"],
       selection: { mode: "custom", skills: ["paseo"] },
     });
+  });
+
+  it("reads the removals the host wants confirmed", () => {
+    expect(
+      parseSkillsSaveResult({
+        state: "up-to-date",
+        ops: [],
+        available: ["paseo", "paseo-loop"],
+        installed: ["paseo", "paseo-loop"],
+        selection: { mode: "all" },
+        confirmationRequired: { removals: ["paseo-loop", 7] },
+      }).confirmationRequired,
+    ).toEqual({ removals: ["paseo-loop"] });
+  });
+
+  it("treats a save with no confirmation request as applied", () => {
+    expect(
+      parseSkillsSaveResult({
+        state: "up-to-date",
+        ops: [],
+        available: ["paseo"],
+        installed: ["paseo"],
+        selection: { mode: "all" },
+      }).confirmationRequired,
+    ).toBeNull();
   });
 
   it("rejects a response that is not an object", () => {
