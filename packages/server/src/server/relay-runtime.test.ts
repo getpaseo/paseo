@@ -39,4 +39,26 @@ describe("RelayRuntime", () => {
     await vi.waitFor(() => expect(stops[0]).toHaveBeenCalledOnce());
     expect(runtime.getConfig().enabled).toBe(false);
   });
+
+  test("keeps relay disabled when transport startup fails", () => {
+    const runtime = createRelayRuntime({
+      config: {
+        enabled: false,
+        endpoint: "invalid-endpoint",
+        publicEndpoint: "invalid-endpoint",
+        useTls: false,
+        publicUseTls: false,
+      },
+      logger: pino({ level: "silent" }),
+      attachSocket: async () => undefined,
+      serverId: "relay-runtime-test",
+      daemonKeyPair: generateKeyPair(),
+      startTransport: () => {
+        throw new Error("Invalid relay endpoint");
+      },
+    });
+
+    expect(() => runtime.setEnabled(true)).toThrow("Invalid relay endpoint");
+    expect(runtime.getConfig().enabled).toBe(false);
+  });
 });

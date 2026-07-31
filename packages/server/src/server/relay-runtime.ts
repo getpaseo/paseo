@@ -37,27 +37,24 @@ export function createRelayRuntime(options: RelayRuntimeOptions): RelayRuntime {
 
   function start(): void {
     if (transport) return;
-    try {
-      transport = startTransport({
-        logger: options.logger,
-        attachSocket: options.attachSocket,
-        relayEndpoint: config.endpoint,
-        relayUseTls: config.useTls,
-        serverId: options.serverId,
-        daemonKeyPair: options.daemonKeyPair,
-      });
-    } catch (error) {
-      options.logger.error({ err: error }, "Failed to start relay transport");
-    }
+    transport = startTransport({
+      logger: options.logger,
+      attachSocket: options.attachSocket,
+      relayEndpoint: config.endpoint,
+      relayUseTls: config.useTls,
+      serverId: options.serverId,
+      daemonKeyPair: options.daemonKeyPair,
+    });
   }
 
   function setEnabled(enabled: boolean): void {
     if (config.enabled === enabled) return;
-    config = { ...config, enabled };
     if (enabled) {
       start();
+      config = { ...config, enabled: true };
       return;
     }
+    config = { ...config, enabled: false };
     const current = transport;
     transport = null;
     void current?.stop().catch((error) => {

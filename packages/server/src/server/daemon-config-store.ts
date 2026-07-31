@@ -27,6 +27,11 @@ export interface DaemonConfigChangeDetails {
 type ConfigListener = (config: MutableDaemonConfig, details: DaemonConfigChangeDetails) => void;
 type FieldChangeHandler = (value: unknown) => void;
 
+interface AppliedFieldChange {
+  handler: FieldChangeHandler;
+  previousValue: unknown;
+}
+
 function getLogger(logger: LoggerLike | undefined): LoggerLike | undefined {
   return logger?.child({ module: "daemon-config-store" });
 }
@@ -209,24 +214,32 @@ export class DaemonConfigStore {
       return this.current;
     }
 
-    // Persist before updating in-memory state so that if persistence fails,
-    // runtime and disk stay consistent.
-    this.persistConfig(next, removedProviders);
-    if (!configChanged) {
-      return this.current;
-    }
+    const persistedBeforePatch = this.persistConfig(next, removedProviders);
+    if (!configChanged) return this.current;
 
+    const previous = this.current;
+    const appliedFieldChanges: AppliedFieldChange[] = [];
     this.current = next;
-
-    for (const path of changedFieldPaths) {
-      const handlers = this.fieldChangeHandlers.get(path);
-      if (!handlers) {
-        continue;
+    try {
+      for (const path of changedFieldPaths) {
+        const handlers = this.fieldChangeHandlers.get(path);
+        if (!handlers) {
+          continue;
+        }
+        const value = getValueAtPath(next, path);
+        const previousValue = getValueAtPath(previous, path);
+        for (const handler of handlers) {
+          appliedFieldChanges.push({ handler, previousValue });
+          handler(value);
+        }
       }
-      const value = getValueAtPath(next, path);
-      for (const handler of handlers) {
-        handler(value);
+    } catch (error) {
+      this.current = previous;
+      for (const change of appliedFieldChanges.toReversed()) {
+        change.handler(change.previousValue);
       }
+      savePersistedConfig(this.paseoHome, persistedBeforePatch, this.logger);
+      throw error;
     }
 
     const changeDetails: DaemonConfigChangeDetails = { removedProviders };
@@ -261,7 +274,10 @@ export class DaemonConfigStore {
     };
   }
 
-  private persistConfig(config: MutableDaemonConfig, removeProviders: readonly string[]): void {
+  private persistConfig(
+    config: MutableDaemonConfig,
+    removeProviders: readonly string[],
+  ): PersistedConfig {
     const persisted = loadPersistedConfig(this.paseoHome, this.logger);
     const nextPersisted = mergeMutableConfigIntoPersistedConfig({
       persisted,
@@ -270,6 +286,7 @@ export class DaemonConfigStore {
       persistRelayEnabled: this.relayEnabledMutable,
     });
     savePersistedConfig(this.paseoHome, nextPersisted, this.logger);
+    return persisted;
   }
 }
 

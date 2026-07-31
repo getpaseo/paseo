@@ -85,6 +85,32 @@ describe("DaemonConfigStore", () => {
     expect(loadPersistedConfig(paseoHome).daemon?.relay?.enabled).toBe(true);
   });
 
+  test("rolls back config when a field transition fails", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+    store.onFieldChange("relay.enabled", (enabled) => {
+      if (enabled === true) {
+        throw new Error("Relay transport failed to start");
+      }
+    });
+
+    expect(() => store.patch({ relay: { enabled: true } })).toThrow(
+      "Relay transport failed to start",
+    );
+    expect(store.get().relay?.enabled).toBe(false);
+    expect(loadPersistedConfig(paseoHome).daemon?.relay?.enabled).toBe(false);
+  });
+
   test("rejects relay patches when a launch override owns the setting", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);

@@ -128,22 +128,24 @@ export async function reloadAndOpenPairDevice(page: Page): Promise<void> {
   await openPairDeviceModal(page);
 }
 
-export async function enableRelayAndExpectFailure(page: Page): Promise<void> {
+export async function enableRelayAndExpectFailure(
+  page: Page,
+  expectedError = "Relay is controlled by a daemon launch override",
+): Promise<void> {
   await page.getByRole("button", { name: "Enable relay", exact: true }).click();
   const modal = page.getByTestId("host-page-pair-device-card");
-  await expect(modal.getByRole("alert")).toContainText(
-    "Relay is controlled by a daemon launch override",
-  );
+  await expect(modal.getByRole("alert")).toContainText(expectedError);
   await expect(modal.getByRole("button", { name: "Retry", exact: true })).toBeEnabled();
   await expect(modal.getByRole("textbox", { name: "Pairing link" })).toHaveCount(0);
 }
 
-export async function retryRelayAndExpectFailure(page: Page): Promise<void> {
+export async function retryRelayAndExpectFailure(
+  page: Page,
+  expectedError = "Relay is controlled by a daemon launch override",
+): Promise<void> {
   const modal = page.getByTestId("host-page-pair-device-card");
   await modal.getByRole("button", { name: "Retry", exact: true }).click();
-  await expect(modal.getByRole("alert")).toContainText(
-    "Relay is controlled by a daemon launch override",
-  );
+  await expect(modal.getByRole("alert")).toContainText(expectedError);
   await expect(modal.getByRole("button", { name: "Retry", exact: true })).toBeEnabled();
 }
 
