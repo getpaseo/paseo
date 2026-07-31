@@ -3102,7 +3102,14 @@ class OpenCodeAgentSession implements AgentSession {
     // A failed abort is decisive on its own, so let it reject this wait without
     // leaving the still-running observation unhandled.
     void providerIdle.catch(() => undefined);
-    await Promise.all([this.abortSettlement, providerIdle]);
+    let observed = this.abortSettlement;
+    await Promise.all([observed, providerIdle]);
+    // Stop can issue a further abort while we waited, and the settlement is
+    // replaced rather than mutated, so drain until what we observed is current.
+    while (this.abortSettlement !== observed) {
+      observed = this.abortSettlement;
+      await observed;
+    }
   }
 
   private async waitUntilProviderIdle(): Promise<void> {

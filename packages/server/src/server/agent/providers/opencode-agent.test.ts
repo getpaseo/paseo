@@ -2302,6 +2302,52 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
+  test("keeps a waiting replacement behind an abort issued while it waits", async () => {
+    const { parent: session, openCode } = await createParentSession("ses_stop_during_wait");
+    const settleFirstAbort = createTestDeferred<void>();
+    const settleSecondAbort = createTestDeferred<void>();
+    openCode.sessionPromptAsyncEvents = [];
+    openCode.sessionAbortImplementation = async () => {
+      await (openCode.calls.sessionAbort.length === 1
+        ? settleFirstAbort.promise
+        : settleSecondAbort.promise);
+      return { data: true };
+    };
+
+    let replacement: Promise<{ turnId: string }> | undefined;
+    try {
+      await session.startTurn("first");
+      const firstStop = session.interrupt();
+      void firstStop.catch(() => undefined);
+      await vi.waitFor(() => expect(openCode.calls.sessionAbort).toHaveLength(1));
+
+      replacement = session.startTurn("replacement");
+      openCode.emitEvent({
+        type: "session.idle",
+        properties: { sessionID: "ses_stop_during_wait" },
+      });
+
+      const secondStop = session.interrupt();
+      void secondStop.catch(() => undefined);
+      await vi.waitFor(() => expect(openCode.calls.sessionAbort).toHaveLength(2));
+
+      settleFirstAbort.resolve();
+      await firstStop;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
+
+      settleSecondAbort.resolve();
+      await secondStop;
+      await replacement;
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
+    } finally {
+      settleFirstAbort.resolve();
+      settleSecondAbort.resolve();
+      await replacement?.catch(() => undefined);
+      await session.close();
+    }
+  });
+
   test("keeps a replacement behind an abort left in flight by an earlier stop", async () => {
     const { parent: session, openCode } = await createParentSession("ses_carried_abort");
     const settleFirstAbort = createTestDeferred<void>();
