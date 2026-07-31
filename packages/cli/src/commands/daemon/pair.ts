@@ -18,6 +18,15 @@ export interface PairCommandDependencies {
   confirmRelay: typeof confirmRelayPairing;
   printDirectGuidance: typeof printDirectConnectionGuidance;
   isInteractive: () => boolean;
+  output: PairCommandOutput;
+}
+
+export interface PairCommandOutput {
+  columns: number | undefined;
+  writeStdout(message: string): void;
+  writeStderr(message: string): void;
+  setExitCode(code: number): void;
+  success(message: string): void;
 }
 
 export interface PairingOffer {
@@ -28,6 +37,24 @@ export interface PairingOffer {
 
 const PAIRING_DAEMON_RPC_TIMEOUT_MS = 1500;
 const RELAY_DOCS_URL = "https://paseo.sh/docs/security";
+
+function createProcessOutput(): PairCommandOutput {
+  return {
+    columns: process.stdout.columns,
+    writeStdout(message) {
+      process.stdout.write(message);
+    },
+    writeStderr(message) {
+      process.stderr.write(message);
+    },
+    setExitCode(code) {
+      process.exitCode = code;
+    },
+    success(message) {
+      log.success(message);
+    },
+  };
+}
 
 export function pairCommand(): Command {
   return addJsonOption(new Command("pair").description("Print the daemon pairing QR code and link"))
@@ -135,6 +162,7 @@ export async function runPairCommand(
     confirmRelay: confirmRelayPairing,
     printDirectGuidance: printDirectConnectionGuidance,
     isInteractive: () => Boolean(process.stdin.isTTY && process.stdout.isTTY),
+    output: createProcessOutput(),
     ...dependencyOverrides,
   };
 
@@ -149,21 +177,25 @@ export async function runPairCommand(
     const shouldEnable = await dependencies.confirmRelay();
     if (!shouldEnable) {
       dependencies.printDirectGuidance();
-      console.error(chalk.yellow("No pairing QR was created."));
-      process.exitCode = 1;
+      dependencies.output.writeStderr(`${chalk.yellow("No pairing QR was created.")}\n`);
+      dependencies.output.setExitCode(1);
       return;
     }
     pairing = await dependencies.resolveOffer({ paseoHome, enableRelay: true });
-    log.success("Relay enabled");
+    dependencies.output.success("Relay enabled");
   }
 
-  outputPairingResult(pairing, options);
+  outputPairingResult(pairing, options, dependencies.output);
 }
 
-function outputPairingResult(pairing: PairingOffer, options: PairOptions): void {
+function outputPairingResult(
+  pairing: PairingOffer,
+  options: PairOptions,
+  output: PairCommandOutput,
+): void {
   if (!pairing.relayEnabled || !pairing.url) {
     if (options.json) {
-      process.stderr.write(
+      output.writeStderr(
         `${JSON.stringify({
           code: "RELAY_DISABLED",
           message: "Relay pairing is disabled for this daemon.",
@@ -171,15 +203,15 @@ function outputPairingResult(pairing: PairingOffer, options: PairOptions): void 
         })}\n`,
       );
     } else {
-      console.error(chalk.red("Relay pairing is disabled for this daemon."));
-      console.error(chalk.yellow("Run paseo daemon pair --relay to enable it."));
+      output.writeStderr(`${chalk.red("Relay pairing is disabled for this daemon.")}\n`);
+      output.writeStderr(`${chalk.yellow("Run paseo daemon pair --relay to enable it.")}\n`);
     }
-    process.exitCode = 1;
+    output.setExitCode(1);
     return;
   }
 
   if (options.json) {
-    process.stdout.write(
+    output.writeStdout(
       `${JSON.stringify(
         { relayEnabled: pairing.relayEnabled, url: pairing.url, qr: pairing.qr },
         null,
@@ -189,11 +221,11 @@ function outputPairingResult(pairing: PairingOffer, options: PairOptions): void 
     return;
   }
 
-  process.stdout.write(
+  output.writeStdout(
     formatPairingInstructions({
       url: pairing.url,
       qr: pairing.qr,
-      columns: process.stdout.columns,
+      columns: output.columns,
     }),
   );
 }

@@ -13,7 +13,6 @@ import {
   expectRelayConsent,
   openPairDeviceModal,
   openPairDeviceFromHome,
-  openRemotePairDeviceDeepLink,
   openRelaySecurityDocs,
   observePairingOfferRequests,
   prepareLocalPairingHost,
@@ -107,7 +106,7 @@ test.describe("local device relay pairing", () => {
     }
   });
 
-  test("returns to Connections when the host picker leaves the local daemon", async ({ page }) => {
+  test("pairs a device through the selected remote host", async ({ page }) => {
     await prepareLocalPairingHost(page, relayOffDaemon, [
       {
         serverId: relayEnabledDaemon.serverId,
@@ -116,17 +115,8 @@ test.describe("local device relay pairing", () => {
       },
     ]);
     await switchPairDeviceToHost(page, relayEnabledDaemon.serverId);
-  });
-
-  test("redirects a remote Pair Device deep link to Connections", async ({ page }) => {
-    await prepareLocalPairingHost(page, relayOffDaemon, [
-      {
-        serverId: relayEnabledDaemon.serverId,
-        label: "Remote pairing host",
-        endpoint: `127.0.0.1:${relayEnabledDaemon.port}`,
-      },
-    ]);
-    await openRemotePairDeviceDeepLink(page, relayEnabledDaemon.serverId);
+    await openPairDeviceModal(page);
+    await expectPairingOffer(page);
   });
 
   test("enables relay live and keeps the saved offer after reload", async ({ page }) => {

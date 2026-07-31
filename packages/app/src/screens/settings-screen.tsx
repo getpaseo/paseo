@@ -163,19 +163,13 @@ interface HostSectionItem {
   id: HostSectionSlug;
   labelKey: string;
   icon: ComponentType<{ size: number; color: string }>;
-  localOnly?: boolean;
 }
 
 const HOST_SECTION_ITEMS: HostSectionItem[] = [
   { id: "host", labelKey: "settings.hostSections.host", icon: Server },
   { id: "projects", labelKey: "settings.hostSections.projects", icon: FolderGit2 },
   { id: "connections", labelKey: "settings.hostSections.connections", icon: Network },
-  {
-    id: "pair-device",
-    labelKey: "openProject.tiles.pairDevice.title",
-    icon: Smartphone,
-    localOnly: true,
-  },
+  { id: "pair-device", labelKey: "openProject.tiles.pairDevice.title", icon: Smartphone },
   { id: "agents", labelKey: "settings.hostSections.agents", icon: Bot },
   { id: "workspaces", labelKey: "settings.hostSections.workspaces", icon: FolderGit2 },
   { id: "providers", labelKey: "settings.hostSections.providers", icon: Boxes },
@@ -1016,9 +1010,7 @@ function SettingsSidebar({
             onAddHost={onAddHost}
             enableBuiltInDaemonOption={enableBuiltInDaemonOption}
           />
-          {HOST_SECTION_ITEMS.filter(
-            (item) => !item.localOnly || activeHostServerId === localServerId,
-          ).map((item) => (
+          {HOST_SECTION_ITEMS.map((item) => (
             <SidebarHostSectionButton
               key={item.id}
               itemId={item.id}
@@ -1275,16 +1267,14 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
       if (view.kind !== "host") {
         return;
       }
-      const section: HostSectionSlug =
-        view.section === "pair-device" && serverId !== localServerId ? "connections" : view.section;
-      const target = buildSettingsHostSectionRoute(serverId, section);
+      const target = buildSettingsHostSectionRoute(serverId, view.section);
       if (isCompactLayout) {
         router.push(target);
       } else {
         router.replace(target);
       }
     },
-    [isCompactLayout, localServerId, router, view],
+    [isCompactLayout, router, view],
   );
 
   const handleSelectHostSection = useCallback(

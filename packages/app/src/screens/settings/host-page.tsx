@@ -254,13 +254,9 @@ export function HostConnectionsPage({ serverId }: { serverId: string }) {
 export function HostPairDevicePage({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
   const host = useHostProfile(serverId);
-  const isLocalDaemon = useIsLocalDaemon(serverId);
 
   if (!host) {
     return <HostNotFound />;
-  }
-  if (!isLocalDaemon) {
-    return null;
   }
 
   return (
