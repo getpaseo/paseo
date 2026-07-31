@@ -76,6 +76,8 @@ export async function installDaemonWebSocketGate(page: Page) {
   const clientRequestCounts = new Map<string, number>();
   const subscribedFilePaths = new Set<string>();
   const fileSubscriptionWaiters = new Map<string, () => void>();
+  const observedFileUpdates = new Set<string>();
+  const fileUpdateWaiters = new Map<string, () => void>();
   let fileReadPathToHold: string | null = null;
   let heldFileReads: Array<() => void> = [];
   let resolveHeldFileRead: (() => void) | null = null;
@@ -84,6 +86,19 @@ export async function installDaemonWebSocketGate(page: Page) {
   let heldReadyFileUpdate: (() => void) | null = null;
   let resolveHeldReadyFileUpdate: (() => void) | null = null;
   let heldReadyFileUpdatePromise = Promise.resolve();
+  const recordFileUpdate = (message: ServerMessage): void => {
+    if (
+      message.type !== "fs.file.update" ||
+      typeof message.payload?.version?.status !== "string" ||
+      typeof message.payload.version.path !== "string"
+    ) {
+      return;
+    }
+    const key = `${message.payload.version.path}:${message.payload.version.status}`;
+    observedFileUpdates.add(key);
+    fileUpdateWaiters.get(key)?.();
+    fileUpdateWaiters.delete(key);
+  };
 
   await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
     if (!acceptingConnections) {
@@ -134,6 +149,7 @@ export async function installDaemonWebSocketGate(page: Page) {
         fileSubscriptionWaiters.get(path)?.();
         fileSubscriptionWaiters.delete(path);
       }
+      if (serverMessage) recordFileUpdate(serverMessage);
       if (
         serverMessage?.type === "fs.file.update" &&
         serverMessage.payload?.version?.status === "ready" &&
@@ -156,6 +172,11 @@ export async function installDaemonWebSocketGate(page: Page) {
     waitForFileSubscription(path: string): Promise<void> {
       if (subscribedFilePaths.has(path)) return Promise.resolve();
       return new Promise((resolve) => fileSubscriptionWaiters.set(path, resolve));
+    },
+    waitForFileUpdate(path: string, status: "ready" | "missing" | "error"): Promise<void> {
+      const key = `${path}:${status}`;
+      if (observedFileUpdates.has(key)) return Promise.resolve();
+      return new Promise((resolve) => fileUpdateWaiters.set(key, resolve));
     },
     holdFileReads(path: string): void {
       fileReadPathToHold = path;

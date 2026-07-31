@@ -38,7 +38,7 @@ export function useLiveFile(input: {
 
   const snapshot = useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot);
   return {
-    file: snapshot.file,
+    file: snapshot.observation?.status === "ready" ? snapshot.observation.file : null,
     error: snapshot.read.status === "error" ? snapshot.read.error : null,
     isFetching: snapshot.read.status === "pending",
     isRetrying: snapshot.read.status === "pending" && snapshot.read.requested,

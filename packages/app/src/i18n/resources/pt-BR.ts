@@ -1186,6 +1186,7 @@ export const ptBR: TranslationResources = {
         installFailed: "Não foi possível instalar as skills de orquestração.",
         updateFailed: "Não foi possível atualizar as skills de orquestração.",
         uninstallFailed: "Não foi possível desinstalar as skills de orquestração.",
+        saveSelectionFailed: "Não foi possível salvar a seleção de skills de orquestração.",
       },
     },
   },
@@ -1896,6 +1897,16 @@ export const ptBR: TranslationResources = {
         uninstallTitle: "Desinstalar Paseo skills?",
         uninstallMessage:
           "Remove todas as skills de orquestração do Paseo de ~/.agents, ~/.claude e ~/.codex.",
+        choose: "Escolher skills",
+        chooseAll: "Todas as skills",
+        chooseAllHint:
+          "Mantenha instaladas todas as skills incluídas, inclusive as adicionadas depois.",
+        chooseList: "Skills incluídas",
+        chooseEmpty: "Esta versão não inclui skills.",
+        removeTitle: "Remover as skills desmarcadas?",
+        removeMessage:
+          "{{skills}} serão excluídas de ~/.agents, ~/.claude e ~/.codex. Tudo o que você adicionou dentro dessas pastas de skills também é excluído.",
+        saveFailed: "Não foi possível salvar sua seleção de skills.",
       },
       actions: {
         install: "Instalar",
@@ -1903,7 +1914,10 @@ export const ptBR: TranslationResources = {
         installed: "Instalado",
         update: "Atualizar",
         working: "Trabalhando...",
+        remove: "Remover",
         uninstall: "Desinstalar",
+        save: "Salvar",
+        saving: "Salvando...",
       },
       operations: {
         add: "Adicionar skill",
