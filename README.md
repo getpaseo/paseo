@@ -64,7 +64,7 @@ You need at least one agent CLI installed and configured with your credentials:
 
 Download it from [paseo.sh/download](https://paseo.sh/download) or the [GitHub releases page](https://github.com/getpaseo/paseo/releases). Open the app and the daemon starts automatically. Nothing else to install.
 
-To connect from your phone, open **Settings → your host → Connections → Pair a device**.
+To connect from your phone, open **Settings → your host → Pair Device**.
 
 ### CLI / headless
 

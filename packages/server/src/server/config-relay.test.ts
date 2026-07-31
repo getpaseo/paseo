@@ -46,6 +46,19 @@ describe("daemon relay config", () => {
     expect(config.relayEnabledMutable).toBe(false);
   });
 
+  test.each(["", "treu"])(
+    "ignores invalid relay override %j without locking config",
+    async (value) => {
+      const home = await createPaseoHome({
+        version: 1,
+        daemon: { relay: { enabled: false } },
+      });
+      const config = loadConfig(home, { env: { PASEO_RELAY_ENABLED: value } });
+      expect(config.relayEnabled).toBe(false);
+      expect(config.relayEnabledMutable).toBe(true);
+    },
+  );
+
   test("loads relay TLS from env, persisted config, and hosted relay fallback", async () => {
     const persistedHome = await createPaseoHome({
       version: 1,
