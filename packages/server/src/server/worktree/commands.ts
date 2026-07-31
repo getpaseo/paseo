@@ -110,6 +110,8 @@ export type ArchiveCommandResult =
   | {
       ok: true;
       removedAgents: string[];
+      removedDirectory: boolean;
+      cleanupPending: boolean;
     }
   | {
       ok: false;
@@ -122,8 +124,21 @@ export async function archiveCommand(
   dependencies: ArchiveCommandDependencies,
   input: ArchiveCommandInput,
 ): Promise<ArchiveCommandResult> {
-  const targetPath = await resolveArchiveTarget(dependencies, input);
   const scope = input.scope ?? "workspace";
+  if (scope === "workspace" && input.workspaceId) {
+    const result = await archiveByScope(dependencies, {
+      scope: { kind: "workspace", workspaceId: input.workspaceId },
+      requestId: input.requestId,
+    });
+    return {
+      ok: true,
+      removedAgents: result.archivedAgentIds,
+      removedDirectory: result.removedDirectory,
+      cleanupPending: result.cleanupPendingWorkspaceIds.length > 0,
+    };
+  }
+
+  const targetPath = await resolveArchiveTarget(dependencies, input);
   const ownership = await isPaseoOwnedWorktreeCwd(targetPath, {
     paseoHome: dependencies.paseoHome,
     worktreesRoot: dependencies.paseoWorktreesBaseRoot,
@@ -147,6 +162,8 @@ export async function archiveCommand(
     return {
       ok: true,
       removedAgents: result.archivedAgentIds,
+      removedDirectory: result.removedDirectory,
+      cleanupPending: result.cleanupPendingWorkspaceIds.length > 0,
     };
   }
 
@@ -161,6 +178,8 @@ export async function archiveCommand(
     return {
       ok: true,
       removedAgents: [],
+      removedDirectory: false,
+      cleanupPending: false,
     };
   }
 
@@ -172,6 +191,8 @@ export async function archiveCommand(
   return {
     ok: true,
     removedAgents: result.archivedAgentIds,
+    removedDirectory: result.removedDirectory,
+    cleanupPending: result.cleanupPendingWorkspaceIds.length > 0,
   };
 }
 

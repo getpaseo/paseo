@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 
 import type { Logger } from "pino";
 
@@ -9,10 +9,15 @@ import type { WorkspaceGitService } from "./workspace-git-service.js";
 import type { ForgeService } from "../services/forge-service.js";
 import {
   deletePaseoWorktree,
+  getPaseoWorktreesRoot,
   isPaseoOwnedWorktreeCwd,
   runWorktreeTeardownCommands,
   WorktreeTeardownError,
 } from "../utils/worktree.js";
+import {
+  ensurePaseoWorktreeIncarnationId,
+  readPaseoWorktreeIncarnationId,
+} from "../utils/worktree-metadata.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type {
   PersistedWorkspaceCleanupPending,
@@ -71,6 +76,7 @@ export interface ArchiveResult {
   archivedAgentIds: string[];
   archivedWorkspaceIds: string[];
   removedDirectory: boolean;
+  cleanupPendingWorkspaceIds: string[];
 }
 
 export interface ArchiveByScopeRequest {
@@ -125,7 +131,6 @@ export async function archiveByScope(
   dependencies: ArchiveDependencies,
   request: ArchiveByScopeRequest,
 ): Promise<ArchiveResult> {
-  const initialTarget = await resolveArchiveTarget(dependencies, request.scope);
   const lifecycleCoordinator =
     dependencies.lifecycleCoordinator ?? defaultWorkspaceLifecycleCoordinator;
   const operationKey =
@@ -134,11 +139,40 @@ export async function archiveByScope(
       : `worktree:${resolve(request.scope.targetPath)}`;
 
   return lifecycleCoordinator.runArchive(operationKey, async () => {
-    await lifecycleCoordinator.waitForWorkspaceSetups(initialTarget.workspaceIds);
-    const refreshedTarget = await resolveArchiveTarget(dependencies, request.scope);
-    const target = mergeArchiveTargets(initialTarget, refreshedTarget);
-    return archiveResolvedTarget(dependencies, lifecycleCoordinator, request, target);
+    const initialTarget = await resolveArchiveTarget(dependencies, request.scope);
+    const archiveOperation = async () => {
+      await lifecycleCoordinator.waitForWorkspaceSetups(initialTarget.workspaceIds);
+      let refreshedTarget = await resolveArchiveTarget(dependencies, request.scope);
+      await lifecycleCoordinator.waitForWorkspaceSetups(refreshedTarget.workspaceIds);
+      refreshedTarget = await resolveArchiveTarget(dependencies, request.scope);
+      const target = mergeArchiveTargets(initialTarget, refreshedTarget);
+      return archiveResolvedTarget(dependencies, lifecycleCoordinator, request, target);
+    };
+    const mutationRoot =
+      (await resolveWorktreeMutationRoot(dependencies, initialTarget.backing)) ??
+      (request.scope.kind === "worktree" ? dirname(resolve(request.scope.targetPath)) : null);
+    return mutationRoot
+      ? lifecycleCoordinator.runWorktreeMutationExclusive(mutationRoot, archiveOperation)
+      : archiveOperation();
   });
+}
+
+async function resolveWorktreeMutationRoot(
+  dependencies: Pick<ArchiveDependencies, "paseoHome" | "paseoWorktreesBaseRoot">,
+  backing: BackingDirectory | null,
+): Promise<string | null> {
+  if (!backing?.isPaseoOwnedWorktree) return null;
+  if (backing.paseoWorktreesRoot) return resolve(backing.paseoWorktreesRoot);
+  if (backing.mainRepoRoot) {
+    return resolve(
+      await getPaseoWorktreesRoot(
+        backing.mainRepoRoot,
+        dependencies.paseoHome,
+        dependencies.paseoWorktreesBaseRoot,
+      ),
+    );
+  }
+  return dirname(backing.path);
 }
 
 function mergeArchiveTargets(initial: ArchiveTarget, refreshed: ArchiveTarget): ArchiveTarget {
@@ -204,10 +238,16 @@ async function archiveResolvedTarget(
       );
     }
 
+    const cleanupPendingWorkspaceIds = await getCleanupPendingWorkspaceIds(
+      dependencies,
+      target,
+    );
+
     return {
       archivedAgentIds: Array.from(archivedAgents),
       archivedWorkspaceIds,
       removedDirectory,
+      cleanupPendingWorkspaceIds,
     };
   } finally {
     if (targetWorkspaceIds.length > 0) {
@@ -439,6 +479,31 @@ async function maybeRemoveDirectoryExclusive(
     return false;
   }
 
+  const initialIncarnationState = await compareCleanupIncarnation(
+    dependencies,
+    backing,
+    pendingCleanupTargets,
+  );
+  if (initialIncarnationState !== "match") {
+    if (initialIncarnationState === "mismatch") {
+      await clearPendingCleanup(dependencies, pendingCleanupTargets);
+    }
+    return false;
+  }
+
+  const activeBeforeTeardown = await dependencies.listActiveWorkspaces();
+  if (
+    !(await isDirectoryUnreferenced(
+      activeBeforeTeardown,
+      backing.path,
+      new Set(archivedWorkspaceIds),
+      dependencies,
+    ))
+  ) {
+    await clearPendingCleanup(dependencies, pendingCleanupTargets);
+    return false;
+  }
+
   const teardownCwds = uniqueFilesystemPaths(
     pendingCleanupTargets.map((pendingCleanupTarget) => pendingCleanupTarget.teardownCwd),
   );
@@ -460,6 +525,18 @@ async function maybeRemoveDirectoryExclusive(
       return false;
     }
     throw error;
+  }
+
+  const finalIncarnationState = await compareCleanupIncarnation(
+    dependencies,
+    backing,
+    pendingCleanupTargets,
+  );
+  if (finalIncarnationState !== "match") {
+    if (finalIncarnationState === "mismatch") {
+      await clearPendingCleanup(dependencies, pendingCleanupTargets);
+    }
+    return false;
   }
 
   const remainingActive = await dependencies.listActiveWorkspaces();
@@ -499,6 +576,40 @@ async function maybeRemoveDirectoryExclusive(
   }
 }
 
+async function compareCleanupIncarnation(
+  dependencies: Pick<ArchiveDependencies, "sessionLogger">,
+  backing: BackingDirectory,
+  pendingCleanupTargets: PendingCleanupTarget[],
+): Promise<"match" | "mismatch" | "unverifiable"> {
+  const expectedIncarnations = new Set(
+    pendingCleanupTargets
+      .map((target) => target.worktreeIncarnationId)
+      .filter((value): value is string => value !== null),
+  );
+  if (
+    expectedIncarnations.size !== 1 ||
+    pendingCleanupTargets.some((target) => !target.worktreeIncarnationId)
+  ) {
+    dependencies.sessionLogger?.warn(
+      { targetPath: backing.path },
+      "Refusing path-only or conflicting persisted worktree cleanup",
+    );
+    return "unverifiable";
+  }
+  let currentIncarnationId: string | null = null;
+  try {
+    currentIncarnationId = readPaseoWorktreeIncarnationId(backing.path);
+  } catch (error) {
+    dependencies.sessionLogger?.warn(
+      { err: error, targetPath: backing.path },
+      "Could not verify persisted worktree cleanup incarnation",
+    );
+    return "unverifiable";
+  }
+  if (currentIncarnationId === null) return "unverifiable";
+  return expectedIncarnations.has(currentIncarnationId) ? "match" : "mismatch";
+}
+
 interface PendingCleanupTarget extends PersistedWorkspaceCleanupPending {
   workspaceId: string | null;
 }
@@ -511,6 +622,10 @@ async function persistTargetCleanupPending(
   const workspaceRegistry = dependencies.workspaceRegistry;
   if (!backing?.isPaseoOwnedWorktree || !workspaceRegistry) return;
 
+  const worktreeIncarnationId = existsSync(backing.path)
+    ? ensurePaseoWorktreeIncarnationId(backing.path)
+    : null;
+
   await Promise.all(
     target.teardownTargets.flatMap((teardownTarget) =>
       teardownTarget.workspaceId
@@ -522,6 +637,7 @@ async function persistTargetCleanupPending(
                 teardownCwd: teardownTarget.cwd,
                 mainRepoRoot: backing.mainRepoRoot,
                 paseoWorktreesRoot: backing.paseoWorktreesRoot,
+                worktreeIncarnationId,
               },
             })),
           ]
@@ -554,6 +670,14 @@ async function listPendingCleanupTargets(
   }
 
   const archivedWorkspaceIdSet = new Set(archivedWorkspaceIds);
+  let fallbackIncarnationId: string | null = null;
+  if (target.backing && existsSync(target.backing.path)) {
+    try {
+      fallbackIncarnationId = readPaseoWorktreeIncarnationId(target.backing.path);
+    } catch {
+      fallbackIncarnationId = null;
+    }
+  }
   return target.teardownTargets
     .filter(
       (teardownTarget) =>
@@ -566,6 +690,7 @@ async function listPendingCleanupTargets(
       teardownCwd: teardownTarget.cwd,
       mainRepoRoot: target.backing?.mainRepoRoot ?? null,
       paseoWorktreesRoot: target.backing?.paseoWorktreesRoot ?? null,
+      worktreeIncarnationId: fallbackIncarnationId,
     }));
 }
 
@@ -609,6 +734,7 @@ async function clearCleanupPendingForUnarchivedTargets(
               teardownCwd: teardownTarget.cwd,
               mainRepoRoot: target.backing?.mainRepoRoot ?? null,
               paseoWorktreesRoot: target.backing?.paseoWorktreesRoot ?? null,
+              worktreeIncarnationId: null,
             },
           ]
         : [],
@@ -648,15 +774,7 @@ export async function archiveWorkspaceContents(
     archivedAgents.add(agent.id);
   }
 
-  let storedRecords: StoredAgentRecord[] = [];
-  try {
-    storedRecords = await dependencies.agentStorage.list();
-  } catch (error) {
-    dependencies.sessionLogger?.warn(
-      { err: error, workspaceId },
-      "Failed to list stored agents during workspace archive; continuing",
-    );
-  }
+  const storedRecords: StoredAgentRecord[] = await dependencies.agentStorage.list();
   const liveAgentIds = new Set(liveAgents.map((agent) => agent.id));
   const matchingStoredRecords = storedRecords.filter(
     (record) => record.workspaceId === workspaceId,
@@ -666,7 +784,7 @@ export async function archiveWorkspaceContents(
   }
 
   const archivedAt = new Date().toISOString();
-  const archiveResults = await Promise.allSettled([
+  await Promise.all([
     ...liveAgents.map((agent) => dependencies.agentManager.archiveAgent(agent.id)),
     ...matchingStoredRecords
       .filter((record) => !liveAgentIds.has(record.id) && !record.archivedAt)
@@ -674,13 +792,14 @@ export async function archiveWorkspaceContents(
     dependencies.killTerminalsForWorkspace(workspaceId),
   ]);
 
-  for (const result of archiveResults) {
-    if (result.status === "rejected") {
-      dependencies.sessionLogger?.warn(
-        { err: result.reason, workspaceId },
-        "Workspace archive teardown step failed; continuing",
-      );
-    }
+  const remainingLiveAgents = dependencies.agentManager
+    .listAgents()
+    .filter((agent) => agent.workspaceId === workspaceId);
+  const remainingStoredAgents = (await dependencies.agentStorage.list()).filter(
+    (record) => record.workspaceId === workspaceId && !record.archivedAt,
+  );
+  if (remainingLiveAgents.length > 0 || remainingStoredAgents.length > 0) {
+    throw new Error(`Workspace ownership remains after archive: ${workspaceId}`);
   }
 
   return archivedAgents;
@@ -714,20 +833,16 @@ export async function killTerminalsForWorkspace(
     return;
   }
 
+  const listWorkspaceTerminals = async () =>
+    (
+      await Promise.all(
+        terminalManager
+          .listDirectories()
+          .map((terminalCwd) => terminalManager.getTerminals(terminalCwd, { workspaceId })),
+      )
+    ).flat().filter((terminal) => terminal.workspaceId === workspaceId);
   const terminalIds: string[] = [];
-  const terminalLists = await Promise.all(
-    terminalManager.listDirectories().map(async (terminalCwd) => {
-      try {
-        return await terminalManager.getTerminals(terminalCwd, { workspaceId });
-      } catch (error) {
-        dependencies.sessionLogger.warn(
-          { err: error, cwd: terminalCwd },
-          "Failed to enumerate workspace terminals during archive",
-        );
-        return [];
-      }
-    }),
-  );
+  const terminalLists = [await listWorkspaceTerminals()];
   for (const terminals of terminalLists) {
     for (const terminal of terminals) {
       if (terminal.workspaceId === workspaceId) {
@@ -736,26 +851,33 @@ export async function killTerminalsForWorkspace(
     }
   }
 
-  if (terminalIds.length === 0) {
-    return;
-  }
-
-  await Promise.allSettled(
+  await Promise.all(
     terminalIds.map(async (terminalId) => {
-      try {
-        dependencies.detachTerminalStream?.(terminalId, { emitExit: true });
-        await terminalManager.killTerminalAndWait(terminalId, {
-          gracefulTimeoutMs: 2000,
-          forceTimeoutMs: 1500,
-        });
-      } catch (error) {
-        dependencies.sessionLogger.warn(
-          { err: error, terminalId },
-          "Terminal kill escalation failed during archive; proceeding anyway",
-        );
-      }
+      dependencies.detachTerminalStream?.(terminalId, { emitExit: true });
+      await terminalManager.killTerminalAndWait(terminalId, {
+        gracefulTimeoutMs: 2000,
+        forceTimeoutMs: 1500,
+      });
     }),
   );
+  if ((await listWorkspaceTerminals()).length > 0) {
+    throw new Error(`Workspace terminals remain after archive: ${workspaceId}`);
+  }
+}
+
+async function getCleanupPendingWorkspaceIds(
+  dependencies: Pick<ArchiveDependencies, "workspaceRegistry">,
+  target: ArchiveTarget,
+): Promise<string[]> {
+  if (!dependencies.workspaceRegistry || !target.backing) return [];
+  const matchesBacking = createRealpathAwarePathMatcher(target.backing.path);
+  return (await dependencies.workspaceRegistry.list())
+    .filter(
+      (workspace) =>
+        workspace.cleanupPending !== null &&
+        matchesBacking(workspace.cleanupPending.directoryPath),
+    )
+    .map((workspace) => workspace.workspaceId);
 }
 
 // Archiving the last workspace of a project leaves the project record active.

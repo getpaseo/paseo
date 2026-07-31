@@ -463,6 +463,10 @@ describe("create worktree setup boundary", () => {
     const paseoHome = path.join(tempDir, ".paseo");
     const lifecycleCoordinator = new WorkspaceLifecycleCoordinator();
     const trackWorkspaceSetup = vi.spyOn(lifecycleCoordinator, "trackWorkspaceSetup");
+    const runWorktreeMutationExclusive = vi.spyOn(
+      lifecycleCoordinator,
+      "runWorktreeMutationExclusive",
+    );
 
     try {
       const result = await createPaseoWorktreeWorkflow(
@@ -497,6 +501,7 @@ describe("create worktree setup boundary", () => {
         expect.any(Promise),
         result.worktree.worktreePath,
       );
+      expect(runWorktreeMutationExclusive).toHaveBeenCalledOnce();
       await lifecycleCoordinator.waitForWorkspaceSetups([result.workspace.workspaceId]);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
@@ -2252,8 +2257,6 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
     await handlePaseoWorktreeArchiveRequest(deps, {
       type: "paseo_worktree_archive_request",
       requestId: "req-delete-flag-second",
-      worktreePath: sharedCwd,
-      repoRoot: repoDir,
       workspaceId: workspaceB,
       scope: "workspace",
       deleteWorktreeFromDisk: true,

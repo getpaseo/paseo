@@ -39,6 +39,12 @@ const PersistedWorkspaceCleanupPendingSchema = z.object({
   teardownCwd: z.string(),
   mainRepoRoot: z.string().nullable(),
   paseoWorktreesRoot: z.string().nullable(),
+  // COMPAT(cleanupIncarnation): legacy path-only cleanup records fail closed.
+  worktreeIncarnationId: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
 });
 
 const PersistedWorkspaceRecordSchema = z.object({

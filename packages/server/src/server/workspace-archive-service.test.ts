@@ -839,6 +839,108 @@ describe("archiveByScope", () => {
     expect((await registry.get(workspaceId))?.cleanupPending).toBeNull();
   });
 
+  test("a persisted cleanup retry cannot remove a newer worktree incarnation at the same path", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    writeFileSync(
+      path.join(repoDir, "paseo.json"),
+      JSON.stringify({ worktree: { teardown: ["node -e \"process.exit(1)\""] } }),
+    );
+    execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "fail teardown"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+    const paseoHome = path.join(tempDir, ".paseo");
+    const slug = "reused-incarnation";
+    const firstWorktree = await createPaseoOwnedWorktree(repoDir, paseoHome, slug);
+    const workspaceId = "ws-reused-incarnation-a";
+    const registry = new FileBackedWorkspaceRegistry(
+      path.join(tempDir, "workspaces.json"),
+      createLogger(),
+    );
+    await registry.initialize();
+    const timestamp = new Date().toISOString();
+    await registry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId,
+        projectId: "project-reused-incarnation",
+        cwd: firstWorktree.worktreePath,
+        kind: "worktree",
+        displayName: "Old incarnation",
+        worktreeRoot: firstWorktree.worktreePath,
+        isPaseoOwnedWorktree: true,
+        mainRepoRoot: repoDir,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: firstWorktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: firstWorktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+      ],
+    });
+    deps.workspaceRegistry = registry;
+    const archiveActiveRecord = deps.archiveWorkspaceRecord;
+    deps.archiveWorkspaceRecord = async (id: string) => {
+      await archiveActiveRecord(id);
+      await registry.archive(id, new Date().toISOString());
+    };
+
+    const firstResult = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-reused-incarnation-first",
+    });
+    expect(firstResult.cleanupPendingWorkspaceIds).toEqual([workspaceId]);
+
+    execFileSync("git", ["worktree", "remove", firstWorktree.worktreePath, "--force"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+    execFileSync("git", ["branch", "-D", slug], { cwd: repoDir, stdio: "pipe" });
+    const replacementWorktree = await createPaseoOwnedWorktree(repoDir, paseoHome, slug);
+
+    const retryResult = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-reused-incarnation-retry",
+    });
+    expect(retryResult.removedDirectory).toBe(false);
+    expect(existsSync(replacementWorktree.worktreePath)).toBe(true);
+    expect((await registry.get(workspaceId))?.cleanupPending).toBeNull();
+  });
+
+  test("workspace teardown failure keeps the record active and prevents recursive deletion", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "strict-teardown");
+    const workspaceId = "ws-strict-teardown";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [{ workspaceId, cwd: worktree.worktreePath, kind: "worktree" }],
+    });
+    deps.killTerminalsForWorkspace = vi.fn(async () => {
+      throw new Error("terminal still owned");
+    });
+    deps.archiveWorkspaceRecord = vi.fn(deps.archiveWorkspaceRecord);
+
+    const result = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-strict-teardown",
+    });
+
+    expect(result.archivedWorkspaceIds).toEqual([]);
+    expect(result.removedDirectory).toBe(false);
+    expect(deps.archiveWorkspaceRecord).not.toHaveBeenCalled();
+    expect(existsSync(worktree.worktreePath)).toBe(true);
+  });
+
   test("workspace scope with unknown workspace id is a clean no-op", async () => {
     const { tempDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
@@ -982,6 +1084,11 @@ describe("archiveByScope", () => {
     const liveAgentId = "agent-live";
     const targetStoredAgentId = "agent-stored-target";
     const otherStoredAgentId = "agent-stored-other";
+    const liveAgents = [{ id: liveAgentId, workspaceId: targetWorkspaceId }] as ManagedAgent[];
+    const storedRecords = [
+      { id: targetStoredAgentId, workspaceId: targetWorkspaceId, archivedAt: null },
+      { id: otherStoredAgentId, workspaceId: otherWorkspaceId, archivedAt: null },
+    ] as StoredAgentRecord[];
 
     const deps = createArchiveDeps({
       paseoHome,
@@ -990,22 +1097,24 @@ describe("archiveByScope", () => {
       ],
     });
     deps.agentManager = {
-      listAgents: () => [{ id: liveAgentId, workspaceId: targetWorkspaceId }] as ManagedAgent[],
+      listAgents: () => liveAgents,
       archiveAgent: vi.fn(async (agentId: string) => {
         deps.archivedAgentIds.push(agentId);
+        liveAgents.splice(
+          liveAgents.findIndex((agent) => agent.id === agentId),
+          1,
+        );
         return { archivedAt: new Date().toISOString() };
       }),
-      archiveSnapshot: vi.fn(async (agentId: string, _archivedAt: string) => {
+      archiveSnapshot: vi.fn(async (agentId: string, archivedAt: string) => {
         deps.archivedSnapshotIds.push(agentId);
+        const record = storedRecords.find((candidate) => candidate.id === agentId);
+        if (record) record.archivedAt = archivedAt;
         return {};
       }),
     };
     deps.agentStorage = {
-      list: async () =>
-        [
-          { id: targetStoredAgentId, workspaceId: targetWorkspaceId, archivedAt: null },
-          { id: otherStoredAgentId, workspaceId: otherWorkspaceId, archivedAt: null },
-        ] as StoredAgentRecord[],
+      list: async () => storedRecords,
     } as Pick<AgentStorage, "list">;
 
     const result = await archiveByScope(deps, {

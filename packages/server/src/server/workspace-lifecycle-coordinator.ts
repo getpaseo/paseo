@@ -3,6 +3,7 @@ export class WorkspaceLifecycleCoordinator {
   private readonly setupTasksByDirectory = new Map<string, Set<Promise<void>>>();
   private readonly archiveOperations = new Map<string, Promise<unknown>>();
   private readonly directoryOperations = new Map<string, Promise<unknown>>();
+  private readonly worktreeMutationOperations = new Map<string, Promise<unknown>>();
 
   trackWorkspaceSetup(workspaceId: string, task: Promise<void>, directoryPath?: string): void {
     this.setupTasks.set(workspaceId, task);
@@ -88,6 +89,19 @@ export class WorkspaceLifecycleCoordinator {
     const clearTask = () => {
       if (this.directoryOperations.get(directoryPath) === task) {
         this.directoryOperations.delete(directoryPath);
+      }
+    };
+    void task.then(clearTask, clearTask);
+    return task;
+  }
+
+  runWorktreeMutationExclusive<T>(worktreesRoot: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.worktreeMutationOperations.get(worktreesRoot) ?? Promise.resolve();
+    const task = previous.catch(() => undefined).then(operation);
+    this.worktreeMutationOperations.set(worktreesRoot, task);
+    const clearTask = () => {
+      if (this.worktreeMutationOperations.get(worktreesRoot) === task) {
+        this.worktreeMutationOperations.delete(worktreesRoot);
       }
     };
     void task.then(clearTask, clearTask);

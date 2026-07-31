@@ -1357,6 +1357,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         workspaceId: z.string(),
         archivedAgentIds: z.array(z.string()),
         removedDirectory: z.boolean(),
+        cleanupPending: z.boolean(),
       },
     },
     async ({ workspaceId }) => {
@@ -1385,6 +1386,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           workspaceId,
           archivedAgentIds: result.archivedAgentIds,
           removedDirectory: result.removedDirectory,
+          cleanupPending: result.cleanupPendingWorkspaceIds.length > 0,
         }),
       };
     },

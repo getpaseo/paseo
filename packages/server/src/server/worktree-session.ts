@@ -1,5 +1,5 @@
 import type { Logger } from "pino";
-import { basename } from "node:path";
+import { basename, resolve } from "node:path";
 
 import type { AgentSessionConfig } from "./agent/agent-sdk-types.js";
 import {
@@ -28,6 +28,7 @@ import type { CheckoutExistingBranchResult } from "../utils/checkout-git.js";
 import { expandTilde } from "../utils/path.js";
 import {
   getWorktreeSetupCommands,
+  getPaseoWorktreesRoot,
   resolveWorktreeRuntimeEnv,
   runWorktreeSetupCommands,
   slugify,
@@ -512,6 +513,8 @@ export async function handlePaseoWorktreeArchiveRequest(
       payload: {
         success: true,
         removedAgents: result.removedAgents,
+        removedDirectory: result.removedDirectory,
+        cleanupPending: result.cleanupPending,
         error: null,
         requestId,
       },
@@ -615,91 +618,99 @@ export async function createPaseoWorktreeWorkflow(
     setupContinuation?: CreatePaseoWorktreeSetupContinuationInput;
   },
 ): Promise<CreatePaseoWorktreeWorkflowResult> {
-  const createdWorktree = await dependencies.createPaseoWorktree(
-    {
-      ...input,
-      runSetup: false,
-      paseoHome: input.paseoHome ?? dependencies.paseoHome,
-      worktreesRoot: input.worktreesRoot ?? dependencies.worktreesRoot,
-    },
-    options?.resolveDefaultBranch
-      ? { resolveDefaultBranch: options.resolveDefaultBranch }
-      : undefined,
-  );
-  const slug = basename(createdWorktree.worktree.worktreePath);
-  const workspace = createdWorktree.workspace;
-  const setupContinuation = options?.setupContinuation ?? { kind: "workspace" };
   const lifecycleCoordinator =
     dependencies.lifecycleCoordinator ?? defaultWorkspaceLifecycleCoordinator;
+  const worktreesRoot = await getPaseoWorktreesRoot(
+    input.cwd,
+    input.paseoHome ?? dependencies.paseoHome,
+    input.worktreesRoot ?? dependencies.worktreesRoot,
+  );
 
-  setTimeout(() => {
-    if (input.firstAgentContext) {
-      dependencies.autoNameWorkspaceBranchForFirstAgent({
-        workspace,
-        firstAgentContext: input.firstAgentContext,
+  return lifecycleCoordinator.runWorktreeMutationExclusive(resolve(worktreesRoot), async () => {
+    const createdWorktree = await dependencies.createPaseoWorktree(
+      {
+        ...input,
+        runSetup: false,
+        paseoHome: input.paseoHome ?? dependencies.paseoHome,
+        worktreesRoot: input.worktreesRoot ?? dependencies.worktreesRoot,
+      },
+      options?.resolveDefaultBranch
+        ? { resolveDefaultBranch: options.resolveDefaultBranch }
+        : undefined,
+    );
+    const slug = basename(createdWorktree.worktree.worktreePath);
+    const workspace = createdWorktree.workspace;
+    const setupContinuation = options?.setupContinuation ?? { kind: "workspace" };
+
+    setTimeout(() => {
+      if (input.firstAgentContext) {
+        dependencies.autoNameWorkspaceBranchForFirstAgent({
+          workspace,
+          firstAgentContext: input.firstAgentContext,
+        });
+      }
+      void dependencies.warmWorkspaceGitData(workspace).catch((error) => {
+        dependencies.sessionLogger.warn(
+          { err: error, workspaceId: workspace.workspaceId },
+          "Failed to warm workspace git data after creating worktree",
+        );
       });
-    }
-    void dependencies.warmWorkspaceGitData(workspace).catch((error) => {
-      dependencies.sessionLogger.warn(
-        { err: error, workspaceId: workspace.workspaceId },
-        "Failed to warm workspace git data after creating worktree",
-      );
-    });
-  }, 0);
+    }, 0);
 
-  if (setupContinuation.kind === "workspace") {
-    const setupTask = new Promise<void>((resolveSetup) => {
-      setTimeout(() => {
-        void runWorktreeSetupInBackground(dependencies, {
-          requestCwd: input.cwd,
-          repoRoot: createdWorktree.repoRoot,
-          workspaceId: workspace.workspaceId,
-          worktree: createdWorktree.worktree,
-          shouldBootstrap: createdWorktree.created,
-          slug,
-          worktreePath: createdWorktree.worktree.worktreePath,
-          workspaceCwd: workspace.cwd,
-        }).then(resolveSetup, resolveSetup);
-      }, 0);
-    });
-    lifecycleCoordinator.trackWorkspaceSetup(
-      workspace.workspaceId,
-      setupTask,
-      createdWorktree.worktree.worktreePath,
-    );
-  }
-
-  if (setupContinuation.kind === "agent") {
-    const reservation = lifecycleCoordinator.reserveWorkspaceSetup(
-      workspace.workspaceId,
-      createdWorktree.worktree.worktreePath,
-    );
-    return {
-      ...createdWorktree,
-      setupContinuation: {
-        kind: "agent",
-        startAfterAgentCreate: ({ agentId }) => {
-          const setupTask = runAsyncWorktreeBootstrap({
-            agentId,
+    if (setupContinuation.kind === "workspace") {
+      const setupTask = new Promise<void>((resolveSetup) => {
+        setTimeout(() => {
+          void runWorktreeSetupInBackground(dependencies, {
+            requestCwd: input.cwd,
+            repoRoot: createdWorktree.repoRoot,
             workspaceId: workspace.workspaceId,
             worktree: createdWorktree.worktree,
-            workspaceCwd: workspace.cwd,
             shouldBootstrap: createdWorktree.created,
-            terminalManager: setupContinuation.terminalManager,
-            appendTimelineItem: (item) => setupContinuation.appendTimelineItem({ agentId, item }),
-            emitLiveTimelineItem: (item) =>
-              setupContinuation.emitLiveTimelineItem({ agentId, item }),
-            logger: setupContinuation.logger,
-          });
-          reservation.completeWith(setupTask);
-          void setupTask;
-        },
-        releaseWithoutStarting: reservation.release,
-      },
-    };
-  }
+            slug,
+            worktreePath: createdWorktree.worktree.worktreePath,
+            workspaceCwd: workspace.cwd,
+          }).then(resolveSetup, resolveSetup);
+        }, 0);
+      });
+      lifecycleCoordinator.trackWorkspaceSetup(
+        workspace.workspaceId,
+        setupTask,
+        createdWorktree.worktree.worktreePath,
+      );
+    }
 
-  return createdWorktree;
+    if (setupContinuation.kind === "agent") {
+      const reservation = lifecycleCoordinator.reserveWorkspaceSetup(
+        workspace.workspaceId,
+        createdWorktree.worktree.worktreePath,
+      );
+      return {
+        ...createdWorktree,
+        setupContinuation: {
+          kind: "agent",
+          startAfterAgentCreate: ({ agentId }) => {
+            const setupTask = runAsyncWorktreeBootstrap({
+              agentId,
+              workspaceId: workspace.workspaceId,
+              worktree: createdWorktree.worktree,
+              workspaceCwd: workspace.cwd,
+              shouldBootstrap: createdWorktree.created,
+              terminalManager: setupContinuation.terminalManager,
+              appendTimelineItem: (item) => setupContinuation.appendTimelineItem({ agentId, item }),
+              emitLiveTimelineItem: (item) =>
+                setupContinuation.emitLiveTimelineItem({ agentId, item }),
+              logger: setupContinuation.logger,
+            });
+            reservation.completeWith(setupTask);
+            void setupTask;
+          },
+          releaseWithoutStarting: reservation.release,
+        },
+      };
+    }
+
+    return createdWorktree;
+  });
 }
 
 export async function handleWorkspaceSetupStatusRequest(
