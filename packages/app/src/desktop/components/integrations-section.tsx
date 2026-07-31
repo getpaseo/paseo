@@ -170,7 +170,7 @@ export function IntegrationsSection() {
       ? "up-to-date"
       : (skillsStatus?.state ?? null);
   const hasSelectedSkills =
-    skillsStatus?.selection.mode === "all" ||
+    (skillsStatus?.selection.mode === "all" && skillsStatus.available.length > 0) ||
     (skillsStatus?.selection.mode === "custom" &&
       skillsStatus.selection.skills.some((name) => skillsStatus.available.includes(name)));
 
