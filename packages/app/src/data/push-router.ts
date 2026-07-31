@@ -410,6 +410,9 @@ function applyDaemonConfigStatus(input: {
     daemonConfigQueryKey(input.serverId),
     payload.config,
   );
+  void input.queryClient.invalidateQueries({
+    queryKey: daemonPairingOfferQueryKey(input.serverId),
+  });
 }
 
 function applyCheckoutDiffUpdate(input: {

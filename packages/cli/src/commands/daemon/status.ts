@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { getOrCreateServerId, findExecutable, execCommand } from "@getpaseo/server";
 import { connectToDaemon } from "../../utils/client.js";
 import type { CommandOptions, ListResult, OutputSchema } from "../../output/index.js";
-import { resolveLocalDaemonState, resolveTcpHostFromListen } from "./local-daemon.js";
+import { resolveLocalDaemonState } from "./local-daemon.js";
 import { resolveNodePathFromPid } from "./runtime-toolchain.js";
 
 const DAEMON_STATUS_PROBE_TIMEOUT_MS = 1500;
@@ -384,7 +384,7 @@ export async function runStatusCommand(
 ): Promise<StatusResult> {
   const home = typeof options.home === "string" ? options.home : undefined;
   const state = resolveLocalDaemonState({ home });
-  const host = resolveTcpHostFromListen(state.listen);
+  const daemonTarget = state.listen.trim();
 
   const owner = resolveOwnerLabel(state.pidInfo?.uid, state.pidInfo?.hostname);
   let daemonNode = await resolveDaemonNodeLabel(state);
@@ -401,8 +401,8 @@ export async function runStatusCommand(
     note = `Stale PID file found for PID ${state.pidInfo.pid}`;
   }
 
-  if (host) {
-    const probe = await probeDaemonOverWebsocket({ host, state });
+  if (daemonTarget) {
+    const probe = await probeDaemonOverWebsocket({ host: daemonTarget, state });
     ({
       connectedDaemon,
       localDaemon,
@@ -421,8 +421,6 @@ export async function runStatusCommand(
       relayStatus,
       note,
     }));
-  } else {
-    note = appendNote(note, "Daemon is configured for unix socket listen; API probe skipped");
   }
 
   const cliVersion = resolveCliVersion();

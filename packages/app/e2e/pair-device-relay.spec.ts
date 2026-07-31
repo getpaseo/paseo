@@ -1,5 +1,6 @@
 import { expect, test } from "./fixtures";
 import { startIsolatedHostDaemon, type IsolatedHostDaemon } from "./helpers/isolated-host-daemon";
+import { connectDaemonClient } from "./helpers/daemon-client-loader";
 import {
   closePairDeviceModal,
   declineRelay,
@@ -18,6 +19,12 @@ import {
   retryRelayAndExpectFailure,
   switchPairDeviceToHost,
 } from "./helpers/pair-device";
+
+interface RelayConfigDaemonClient {
+  close(): Promise<void>;
+  connect(): Promise<void>;
+  patchDaemonConfig(config: { relay: { enabled: boolean } }): Promise<unknown>;
+}
 
 test.describe("local device relay pairing", () => {
   let relayOffDaemon: IsolatedHostDaemon;
@@ -122,6 +129,26 @@ test.describe("local device relay pairing", () => {
     await prepareLocalPairingHost(page, relayEnabledDaemon);
     await openPairDeviceModal(page);
     await expectPairingOffer(page);
+  });
+
+  test("refreshes the mounted offer when another client disables relay", async ({ page }) => {
+    const daemon = await startIsolatedHostDaemon("pair-device-live-config-push", {
+      mutableRelay: { enabled: true },
+    });
+    const client = await connectDaemonClient<RelayConfigDaemonClient>({
+      clientIdPrefix: "pair-device-live-config-push",
+      port: daemon.port,
+    });
+    try {
+      await prepareLocalPairingHost(page, daemon);
+      await openPairDeviceModal(page);
+      await expectPairingOffer(page);
+      await client.patchDaemonConfig({ relay: { enabled: false } });
+      await expectRelayConsent(page);
+    } finally {
+      await client.close();
+      await daemon.close();
+    }
   });
 
   test("asks for a host update when live relay config is unsupported", async ({

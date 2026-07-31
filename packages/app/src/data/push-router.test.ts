@@ -147,6 +147,8 @@ describe("server data push router", () => {
     const queryClient = new QueryClient();
     const fake = createFakeClient();
     const serverId = "server-1";
+    const pairingOfferKey = daemonPairingOfferQueryKey(serverId);
+    queryClient.setQueryData(pairingOfferKey, { relayEnabled: true, url: "https://pairing" });
     const unmount = mountServerDataPushRouter({ client: fake.client, queryClient, serverId });
 
     fake.emit(providerUpdate("2026-01-01T00:00:00.000Z"));
@@ -161,6 +163,7 @@ describe("server data push router", () => {
       requestId: "providers_snapshot_update",
     });
     expect(queryClient.getQueryData(daemonConfigQueryKey(serverId))).toEqual(daemonConfig);
+    expect(queryClient.getQueryState(pairingOfferKey)?.isInvalidated).toBe(true);
 
     unmount();
     fake.emit(providerUpdate("2026-01-01T00:00:01.000Z"));

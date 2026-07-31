@@ -12,6 +12,7 @@
  * - daemon status --json outputs valid JSON
  * - daemon stop handles daemon not running gracefully
  * - daemon restart starts the daemon and can be cleaned up
+ * - daemon status probes the live relay state over local IPC
  */
 
 import assert from "node:assert";
@@ -122,6 +123,27 @@ try {
     const cleanup = await daemonCommand(["stop", "--force"]);
     assert.strictEqual(cleanup.exitCode, 0, "cleanup stop should succeed after restart");
     console.log("✓ daemon restart starts and stop cleanup succeeds\n");
+  }
+
+  // Test 8: status uses the running daemon as relay authority over local IPC
+  {
+    console.log("Test 8: daemon status probes live relay state over local IPC");
+    const listen =
+      process.platform === "win32"
+        ? `\\\\.\\pipe\\paseo-status-${process.pid}-${Date.now()}`
+        : join(paseoHome, "status.sock");
+    const start = await daemonCommand(["start", "--listen", listen, "--relay"]);
+    assert.strictEqual(start.exitCode, 0, `IPC daemon should start: ${start.stderr}`);
+
+    const status = await daemonCommand(["status", "--json"]);
+    assert.strictEqual(status.exitCode, 0, `IPC daemon status should succeed: ${status.stderr}`);
+    const payload = JSON.parse(status.stdout);
+    assert.strictEqual(payload.connectedDaemon, "reachable", "IPC daemon should be reachable");
+    assert.notStrictEqual(payload.relay, "disabled", "status should use live relay state");
+
+    const cleanup = await daemonCommand(["stop", "--force"]);
+    assert.strictEqual(cleanup.exitCode, 0, "cleanup stop should succeed after IPC status");
+    console.log("✓ daemon status probes live relay state over local IPC\n");
   }
 } finally {
   // Best-effort daemon cleanup in case assertions fail before explicit stop.
