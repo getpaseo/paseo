@@ -3620,9 +3620,7 @@ class OpenCodeAgentSession implements AgentSession {
     const turnMessages = messages.filter(
       (message) => !this.foregroundKnownMessageIds?.has(message.info.id),
     );
-    const assistantMessage = turnMessages
-      .filter((message) => message.info.role === "assistant")
-      .at(-1);
+    const assistantMessage = turnMessages.findLast((message) => message.info.role === "assistant");
     if (assistantMessage?.info.role === "assistant" && assistantMessage.info.error) {
       return isOpenCodeMessageAbortedError(assistantMessage.info.error)
         ? { type: "turn_canceled", provider: "opencode", reason: "interrupted" }
@@ -3644,8 +3642,7 @@ class OpenCodeAgentSession implements AgentSession {
       ? { ...this.accumulatedUsage }
       : undefined;
     const contextWindowMaxTokens = this.resolveSelectedModelContextWindowMaxTokens();
-    this.accumulatedUsage =
-      contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
+    this.accumulatedUsage = contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
     return { type: "turn_completed", provider: "opencode", usage };
   }
 

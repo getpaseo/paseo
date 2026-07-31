@@ -200,6 +200,31 @@ function persistedAssistantMessage(params: {
   };
 }
 
+function terminalTurnEvents(events: AgentStreamEvent[]): AgentStreamEvent[] {
+  return events.filter(
+    (event) =>
+      event.type === "turn_completed" ||
+      event.type === "turn_failed" ||
+      event.type === "turn_canceled",
+  );
+}
+
+function eventsWithType(
+  events: AgentStreamEvent[],
+  type: AgentStreamEvent["type"],
+): AgentStreamEvent[] {
+  return events.filter((event) => event.type === type);
+}
+
+async function* sessionIdleStream(releaseIdle: ReturnType<typeof createTestDeferred<void>>) {
+  yield { type: "server.connected", properties: {} };
+  await releaseIdle.promise;
+  yield {
+    type: "session.idle",
+    properties: { sessionID: "ses_eof_reconciliation" },
+  };
+}
+
 async function createControlledEofTurn(): Promise<{
   parent: Awaited<ReturnType<OpenCodeAgentClient["createSession"]>>;
   openCode: TestOpenCodeClient;
@@ -209,22 +234,19 @@ async function createControlledEofTurn(): Promise<{
 }> {
   const streamEnd = createTestDeferred<void>();
   const previousMessage = persistedAssistantMessage({ id: "msg_previous", completed: 2 });
-  const { parent, openCode } = await createParentSession(
-    "ses_eof_reconciliation",
-    (client) => {
-      client.sessionPromptAsyncEvents = [];
-      client.sessionMessagesResponse = { data: [previousMessage] };
-      client.globalEventImplementation = async (options) => {
-        const signal = (options as { signal: AbortSignal }).signal;
-        return {
-          stream: (async function* () {
-            yield { type: "server.connected", properties: {} };
-            await Promise.race([streamEnd.promise, waitForAbort(signal)]);
-          })(),
-        };
+  const { parent, openCode } = await createParentSession("ses_eof_reconciliation", (client) => {
+    client.sessionPromptAsyncEvents = [];
+    client.sessionMessagesResponse = { data: [previousMessage] };
+    client.globalEventImplementation = async (options) => {
+      const signal = (options as { signal: AbortSignal }).signal;
+      return {
+        stream: (async function* () {
+          yield { type: "server.connected", properties: {} };
+          await Promise.race([streamEnd.promise, waitForAbort(signal)]);
+        })(),
       };
-    },
-  );
+    };
+  });
   const events: AgentStreamEvent[] = [];
   parent.subscribe((event) => events.push(event));
   await parent.startTurn("hello");
@@ -1614,36 +1636,26 @@ describe("OpenCode adapter startTurn error handling", () => {
       }),
       expected: { type: "turn_canceled", provider: "opencode", reason: "interrupted" },
     },
-  ])(
-    "reconciles a persisted $label turn when the event stream ends",
-    async (testCase) => {
-      const { parent, openCode, events, endStream, previousMessage } =
-        await createControlledEofTurn();
-      openCode.sessionStatusResponse = { data: testCase.status };
-      openCode.sessionMessagesResponse = { data: [previousMessage, testCase.message] };
+  ])("reconciles a persisted $label turn when the event stream ends", async (testCase) => {
+    const { parent, openCode, events, endStream, previousMessage } =
+      await createControlledEofTurn();
+    openCode.sessionStatusResponse = { data: testCase.status };
+    openCode.sessionMessagesResponse = { data: [previousMessage, testCase.message] };
 
-      try {
-        endStream();
-        await vi.waitFor(() => {
-          expect(
-            events.filter(
-              (event) =>
-                event.type === "turn_completed" ||
-                event.type === "turn_failed" ||
-                event.type === "turn_canceled",
-            ),
-          ).toEqual([expect.objectContaining(testCase.expected)]);
-        });
-        expect(openCode.calls.sessionStatus).toEqual([{ directory: "/workspace/repo" }]);
-        expect(openCode.calls.sessionMessages).toEqual([
-          { sessionID: "ses_eof_reconciliation", directory: "/workspace/repo" },
-          { sessionID: "ses_eof_reconciliation", directory: "/workspace/repo" },
-        ]);
-      } finally {
-        await parent.close();
-      }
-    },
-  );
+    try {
+      endStream();
+      await vi.waitFor(() => {
+        expect(terminalTurnEvents(events)).toEqual([expect.objectContaining(testCase.expected)]);
+      });
+      expect(openCode.calls.sessionStatus).toEqual([{ directory: "/workspace/repo" }]);
+      expect(openCode.calls.sessionMessages).toEqual([
+        { sessionID: "ses_eof_reconciliation", directory: "/workspace/repo" },
+        { sessionID: "ses_eof_reconciliation", directory: "/workspace/repo" },
+      ]);
+    } finally {
+      await parent.close();
+    }
+  });
 
   test("keeps the existing EOF failure when persisted state does not resolve the active turn", async () => {
     const { parent, openCode, events, endStream, previousMessage } =
@@ -1654,14 +1666,14 @@ describe("OpenCode adapter startTurn error handling", () => {
     try {
       endStream();
       await vi.waitFor(() => {
-        expect(events.filter((event) => event.type === "turn_failed")).toEqual([
+        expect(eventsWithType(events, "turn_failed")).toEqual([
           expect.objectContaining({
             type: "turn_failed",
             error: "OpenCode event stream ended before the turn reached a terminal state",
           }),
         ]);
       });
-      expect(events.some((event) => event.type === "turn_completed")).toBe(false);
+      expect(eventsWithType(events, "turn_completed")).toEqual([]);
     } finally {
       await parent.close();
     }
@@ -1669,22 +1681,12 @@ describe("OpenCode adapter startTurn error handling", () => {
 
   test("does not duplicate a terminal event when the event stream ends after session idle", async () => {
     const releaseIdle = createTestDeferred<void>();
-    const { parent, openCode } = await createParentSession(
-      "ses_eof_reconciliation",
-      (client) => {
-        client.sessionPromptAsyncEvents = [];
-        client.globalEventImplementation = async () => ({
-          stream: (async function* () {
-            yield { type: "server.connected", properties: {} };
-            await releaseIdle.promise;
-            yield {
-              type: "session.idle",
-              properties: { sessionID: "ses_eof_reconciliation" },
-            };
-          })(),
-        });
-      },
-    );
+    const { parent, openCode } = await createParentSession("ses_eof_reconciliation", (client) => {
+      client.sessionPromptAsyncEvents = [];
+      client.globalEventImplementation = async () => ({
+        stream: sessionIdleStream(releaseIdle),
+      });
+    });
     const events: AgentStreamEvent[] = [];
     parent.subscribe((event) => events.push(event));
 
@@ -1692,7 +1694,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       await parent.startTurn("hello");
       releaseIdle.resolve();
       await vi.waitFor(() => {
-        expect(events.filter((event) => event.type === "turn_completed")).toHaveLength(1);
+        expect(eventsWithType(events, "turn_completed")).toHaveLength(1);
       });
       expect(openCode.calls.sessionStatus).toEqual([]);
       expect(openCode.calls.sessionMessages).toHaveLength(1);
@@ -1707,14 +1709,7 @@ describe("OpenCode adapter startTurn error handling", () => {
 
     await parent.close();
 
-    expect(
-      events.filter(
-        (event) =>
-          event.type === "turn_completed" ||
-          event.type === "turn_failed" ||
-          event.type === "turn_canceled",
-      ),
-    ).toEqual([]);
+    expect(terminalTurnEvents(events)).toEqual([]);
     expect(openCode.calls.sessionStatus).toEqual([]);
     expect(openCode.calls.sessionMessages).toHaveLength(1);
   });
