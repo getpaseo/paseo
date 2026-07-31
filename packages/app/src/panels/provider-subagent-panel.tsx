@@ -15,6 +15,7 @@ import {
   refreshProviderSubagents,
   useProviderSubagentStore,
 } from "@/subagents/provider-store";
+import { buildSubagentPaneDetails } from "@/subagents/track-presentation";
 import { useTranslation } from "react-i18next";
 import type { PendingPermission } from "@/types/shared";
 import type { StreamItem } from "@/types/stream";
@@ -45,10 +46,14 @@ function useProviderSubagentDescriptor(
     (state) => state.sessions[context.serverId]?.agents.get(target.parentAgentId)?.provider,
   );
   const provider = descriptor?.provider ?? parentProvider ?? "agent";
-  const label = descriptor?.title?.trim() || descriptor?.description?.trim() || "Subagent";
+  // The task names the tab; the subagent type is supporting detail beside the provider.
+  const subagentType = descriptor?.title?.trim();
+  const label = descriptor?.description?.trim() || subagentType || "Subagent";
+  const providerLabel = `${formatProviderLabel(provider)} subagent`;
   return {
     label,
-    subtitle: `${formatProviderLabel(provider)} subagent`,
+    subtitle:
+      subagentType && subagentType !== label ? `${subagentType} · ${providerLabel}` : providerLabel,
     tooltip: label,
     titleState: descriptor ? "ready" : "loading",
     icon: getProviderIcon(provider),
@@ -164,8 +169,17 @@ function ProviderSubagentPanel() {
     );
   }
 
+  const details = buildSubagentPaneDetails(descriptor);
+
   return (
     <View style={styles.container} testID="provider-subagent-panel">
+      {details ? (
+        <View style={styles.detailsHeader}>
+          <Text style={styles.detailsText} numberOfLines={1} testID="provider-subagent-details">
+            {details}
+          </Text>
+        </View>
+      ) : null}
       <AgentStreamView
         agentId={streamId}
         serverId={serverId}
@@ -184,6 +198,13 @@ function ProviderSubagentPanel() {
 
 const styles = StyleSheet.create((theme) => ({
   container: { flex: 1 },
+  detailsHeader: {
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[2],
+    borderBottomWidth: theme.borderWidth[1],
+    borderBottomColor: theme.colors.border,
+  },
+  detailsText: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.xs },
   unsupported: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
   unsupportedText: { color: theme.colors.foregroundMuted, textAlign: "center" },
 }));

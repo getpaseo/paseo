@@ -259,6 +259,7 @@ describe("selectSubagentsForParent", () => {
         id: "child",
         provider: "claude",
         title: "Review child",
+        description: null,
         status: "running",
         requiresAttention: true,
         createdAt,
@@ -266,6 +267,7 @@ describe("selectSubagentsForParent", () => {
     ]);
     expect(Object.keys(rows[0] ?? {}).sort()).toEqual([
       "createdAt",
+      "description",
       "id",
       "kind",
       "provider",

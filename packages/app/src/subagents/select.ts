@@ -11,6 +11,8 @@ export interface PaseoSubagentRow {
   id: Agent["id"];
   provider: Agent["provider"];
   title: Agent["title"];
+  /** Managed agents have a real title, so the union's task line is always absent for them. */
+  description: null;
   status: Agent["status"];
   requiresAttention: Agent["requiresAttention"];
   createdAt: Agent["createdAt"];
@@ -21,7 +23,15 @@ export interface ProviderSubagentRow {
   id: string;
   parentAgentId: string;
   provider: ProviderSubagentDescriptorPayload["provider"];
+  // `title` is the subagent type ("Explore", "general-purpose") and repeats across a fan-out;
+  // `description` is the task it was given. Both are carried so presentation can choose which
+  // one names the row — collapsing them here is what makes every row read alike.
   title: string | null;
+  description: string | null;
+  // Observed from the subagent itself. Null means "not observed yet" and must render as nothing,
+  // never as the parent agent's model or thinking setting.
+  model: string | null;
+  effort: string | null;
   status: ProviderSubagentDescriptorPayload["status"];
   requiresAttention: boolean;
   createdAt: Date;
@@ -46,6 +56,7 @@ function toSubagentRow(agent: Agent): SubagentRow {
     id: agent.id,
     provider: agent.provider,
     title: agent.title,
+    description: null,
     status: agent.status,
     requiresAttention: agent.requiresAttention,
     createdAt: agent.createdAt,
@@ -97,7 +108,10 @@ export function selectProviderSubagentsForParent(
       id: subagent.id,
       parentAgentId: subagent.parentAgentId,
       provider: subagent.provider,
-      title: subagent.title ?? subagent.description,
+      title: subagent.title,
+      description: subagent.description,
+      model: subagent.model ?? null,
+      effort: subagent.effort ?? null,
       status: subagent.status,
       requiresAttention: subagent.status === "failed",
       createdAt: new Date(subagent.createdAt),

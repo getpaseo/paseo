@@ -3558,6 +3558,22 @@ export const ProviderSubagentDescriptorPayloadSchema = z.object({
   updatedAt: z.string(),
   toolCallId: z.string().nullable(),
   cwd: z.string().nullable().optional(),
+  // Observed from the subagent itself, never inherited from the parent: a provider can swap
+  // models mid-flight (overload and refusal fallback) and silently downgrade effort for the
+  // selected model. Absent means "not observed yet" and renders as blank rather than as the
+  // parent's setting. Open strings, since new model ids and effort levels ship ahead of schemas.
+  model: z.string().nullable().optional(),
+  effort: z.string().nullable().optional(),
+  // Cost of the child's own work. `totalTokens` and `toolUses` climb while it runs;
+  // `durationMs` is authoritative only once it finishes.
+  usage: z
+    .object({
+      totalTokens: z.number().optional(),
+      toolUses: z.number().optional(),
+      durationMs: z.number().optional(),
+    })
+    .nullable()
+    .optional(),
 });
 
 export type ProviderSubagentDescriptorPayload = z.infer<

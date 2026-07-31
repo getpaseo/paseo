@@ -204,6 +204,11 @@ function SubagentsTrackRow({
             <Text style={styles.rowLabel} numberOfLines={1}>
               {displayLabel}
             </Text>
+            {presentation.subtitle ? (
+              <Text style={styles.rowSubtitle} numberOfLines={1}>
+                {presentation.subtitle}
+              </Text>
+            ) : null}
             {row.kind === "paseo" ? (
               <SubagentRowActions
                 rowId={row.id}
@@ -390,6 +395,14 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
+  },
+  // The subagent type sits inline beside the task so the track stays one row per subagent.
+  // Primary vs secondary is foreground vs foregroundMuted, per docs/design.md.
+  rowSubtitle: {
+    flexShrink: 1,
+    minWidth: 0,
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
   },
   actionClusterVisible: {
     flexDirection: "row",
