@@ -100,6 +100,19 @@ function createGitRepo(): { tempDir: string; repoDir: string } {
   });
   return { tempDir, repoDir };
 }
+function removeManagedAgentById(agents: ManagedAgent[], agentId: string): void {
+  const index = agents.findIndex((agent) => agent.id === agentId);
+  if (index !== -1) {
+    agents.splice(index, 1);
+  }
+}
+
+function findStoredAgentById(
+  records: StoredAgentRecord[],
+  agentId: string,
+): StoredAgentRecord | undefined {
+  return records.find((record) => record.id === agentId);
+}
 
 async function createPaseoOwnedWorktree(
   repoDir: string,
@@ -843,7 +856,7 @@ describe("archiveByScope", () => {
     const { tempDir, repoDir } = createGitRepo();
     writeFileSync(
       path.join(repoDir, "paseo.json"),
-      JSON.stringify({ worktree: { teardown: ["node -e \"process.exit(1)\""] } }),
+      JSON.stringify({ worktree: { teardown: ['node -e "process.exit(1)"'] } }),
     );
     execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
     execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "fail teardown"], {
@@ -1100,15 +1113,12 @@ describe("archiveByScope", () => {
       listAgents: () => liveAgents,
       archiveAgent: vi.fn(async (agentId: string) => {
         deps.archivedAgentIds.push(agentId);
-        liveAgents.splice(
-          liveAgents.findIndex((agent) => agent.id === agentId),
-          1,
-        );
+        removeManagedAgentById(liveAgents, agentId);
         return { archivedAt: new Date().toISOString() };
       }),
       archiveSnapshot: vi.fn(async (agentId: string, archivedAt: string) => {
         deps.archivedSnapshotIds.push(agentId);
-        const record = storedRecords.find((candidate) => candidate.id === agentId);
+        const record = findStoredAgentById(storedRecords, agentId);
         if (record) record.archivedAt = archivedAt;
         return {};
       }),

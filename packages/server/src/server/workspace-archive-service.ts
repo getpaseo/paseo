@@ -238,10 +238,7 @@ async function archiveResolvedTarget(
       );
     }
 
-    const cleanupPendingWorkspaceIds = await getCleanupPendingWorkspaceIds(
-      dependencies,
-      target,
-    );
+    const cleanupPendingWorkspaceIds = await getCleanupPendingWorkspaceIds(dependencies, target);
 
     return {
       archivedAgentIds: Array.from(archivedAgents),
@@ -844,7 +841,9 @@ export async function killTerminalsForWorkspace(
           .listDirectories()
           .map((terminalCwd) => terminalManager.getTerminals(terminalCwd, { workspaceId })),
       )
-    ).flat().filter((terminal) => terminal.workspaceId === workspaceId);
+    )
+      .flat()
+      .filter((terminal) => terminal.workspaceId === workspaceId);
   const terminalIds: string[] = [];
   const terminalLists = [await listWorkspaceTerminals()];
   for (const terminals of terminalLists) {
@@ -878,8 +877,7 @@ async function getCleanupPendingWorkspaceIds(
   return (await dependencies.workspaceRegistry.list())
     .filter(
       (workspace) =>
-        workspace.cleanupPending !== null &&
-        matchesBacking(workspace.cleanupPending.directoryPath),
+        workspace.cleanupPending !== null && matchesBacking(workspace.cleanupPending.directoryPath),
     )
     .map((workspace) => workspace.workspaceId);
 }
