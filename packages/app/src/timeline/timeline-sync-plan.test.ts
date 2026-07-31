@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
 import {
   isTimelineCatchUpComplete,
+  isTimelineResumeSnapshotAuthoritative,
   planTimelineOlderFetch,
   planTimelineTailFetch,
 } from "./timeline-sync-plan";
@@ -32,5 +33,29 @@ describe("timeline sync planning", () => {
     expect(isTimelineCatchUpComplete({ direction: "after", hasNewer: false, error: null })).toBe(
       true,
     );
+  });
+
+  test("only tail and completed forward pages carry an authoritative resume snapshot", () => {
+    expect(
+      isTimelineResumeSnapshotAuthoritative({
+        direction: "tail",
+        hasNewer: false,
+        error: null,
+      }),
+    ).toBe(true);
+    expect(
+      isTimelineResumeSnapshotAuthoritative({
+        direction: "after",
+        hasNewer: false,
+        error: null,
+      }),
+    ).toBe(true);
+    expect(
+      isTimelineResumeSnapshotAuthoritative({
+        direction: "before",
+        hasNewer: false,
+        error: null,
+      }),
+    ).toBe(false);
   });
 });

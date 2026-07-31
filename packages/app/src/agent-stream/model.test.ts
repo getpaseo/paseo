@@ -36,6 +36,7 @@ describe("buildAgentStreamRenderModel", () => {
 
     const model = buildAgentStreamRenderModel({
       isTurnActive: true,
+      activeTurnStartedAt: tail.at(-2)?.timestamp ?? null,
       tail,
       head,
       platform: "web",
@@ -54,6 +55,7 @@ describe("buildAgentStreamRenderModel", () => {
 
     const model = buildAgentStreamRenderModel({
       isTurnActive: true,
+      activeTurnStartedAt: tail[0]?.timestamp ?? null,
       tail,
       head,
       platform: "web",
@@ -72,6 +74,7 @@ describe("buildAgentStreamRenderModel", () => {
 
     const first = buildAgentStreamRenderModel({
       isTurnActive: true,
+      activeTurnStartedAt: tail[0]?.timestamp ?? null,
       tail,
       head: firstHead,
       platform: "native",
@@ -79,6 +82,7 @@ describe("buildAgentStreamRenderModel", () => {
     });
     const second = buildAgentStreamRenderModel({
       isTurnActive: true,
+      activeTurnStartedAt: tail[0]?.timestamp ?? null,
       tail,
       head: secondHead,
       platform: "native",
@@ -96,6 +100,7 @@ describe("buildAgentStreamRenderModel", () => {
 
     const model = buildAgentStreamRenderModel({
       isTurnActive: true,
+      activeTurnStartedAt: tail[0]?.timestamp ?? null,
       tail,
       head,
       platform: "web",
@@ -112,6 +117,7 @@ describe("buildAgentStreamRenderModel", () => {
 
     const model = buildAgentStreamRenderModel({
       isTurnActive: false,
+      activeTurnStartedAt: null,
       tail,
       head,
       platform: "web",
@@ -131,6 +137,7 @@ describe("buildAgentStreamRenderModel", () => {
 
     const model = buildAgentStreamRenderModel({
       isTurnActive: false,
+      activeTurnStartedAt: null,
       tail,
       head: [],
       platform: "native",
@@ -150,6 +157,7 @@ describe("buildAgentStreamRenderModel", () => {
 
     const model = buildAgentStreamRenderModel({
       isTurnActive: false,
+      activeTurnStartedAt: null,
       tail,
       head: [],
       platform: "web",

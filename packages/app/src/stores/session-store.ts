@@ -52,6 +52,11 @@ import {
   buildWorkspaceAgentActivityIndex,
   type WorkspaceAgentActivity,
 } from "@/utils/workspace-agent-activity";
+import {
+  applyTurnLivenessTransition,
+  type TurnLiveness,
+  type TurnLivenessTransition,
+} from "@/timeline/turn-liveness";
 
 // Re-export types that were in session-context
 export type MessageEntry =
@@ -404,7 +409,7 @@ export interface SessionState {
   // Stream state (head/tail model)
   agentStreamTail: Map<string, StreamItem[]>;
   agentStreamHead: Map<string, StreamItem[]>;
-  activeAgentTurns: Set<string>;
+  agentTurnLiveness: Map<string, TurnLiveness>;
   messageSubmissions: Map<string, MessageSubmissionRecord[]>;
   agentTimelineCursor: Map<string, AgentTimelineCursorState>;
   agentTimelineHasOlder: Map<string, boolean>;
@@ -500,10 +505,15 @@ interface SessionStoreActions {
     state: {
       tail?: StreamItem[];
       head?: StreamItem[];
-      turnActive?: boolean;
       acknowledgedClientMessageIds?: readonly string[];
     },
   ) => void;
+  applyAgentTurnLiveness: (
+    serverId: string,
+    agentId: string,
+    transition: TurnLivenessTransition,
+  ) => void;
+  clearAgentTurnLiveness: (serverId: string) => void;
   beginAgentMessageSubmission: (
     serverId: string,
     agentId: string,
@@ -638,18 +648,6 @@ type SessionStore = SessionStoreState & SessionStoreActions;
 
 const agentLastActivityCoalescer = createAgentLastActivityCoalescer();
 
-function updateActiveAgentTurn(
-  activeAgentTurns: ReadonlySet<string>,
-  agentId: string,
-  active: boolean,
-): Set<string> {
-  if (activeAgentTurns.has(agentId) === active) return activeAgentTurns as Set<string>;
-  const next = new Set(activeAgentTurns);
-  if (active) next.add(agentId);
-  else next.delete(agentId);
-  return next;
-}
-
 // Helper to create initial session state
 function createInitialSessionState(
   serverId: string,
@@ -671,7 +669,7 @@ function createInitialSessionState(
     currentAssistantMessage: "",
     agentStreamTail: new Map(),
     agentStreamHead: new Map(),
-    activeAgentTurns: new Set(),
+    agentTurnLiveness: new Map(),
     messageSubmissions: new Map(),
     agentTimelineCursor: new Map(),
     agentTimelineHasOlder: new Map(),
@@ -1094,7 +1092,6 @@ export const useSessionStore = create<SessionStore>()(
           let nextHead = session.agentStreamHead;
           let changedTail = false;
           let changedHead = false;
-          let activeAgentTurns = session.activeAgentTurns;
 
           if (state.tail !== undefined) {
             const existingTail = session.agentStreamTail.get(agentId);
@@ -1121,10 +1118,6 @@ export const useSessionStore = create<SessionStore>()(
             }
           }
 
-          if (state.turnActive !== undefined) {
-            activeAgentTurns = updateActiveAgentTurn(activeAgentTurns, agentId, state.turnActive);
-          }
-
           const currentSubmissions = session.messageSubmissions.get(agentId) ?? [];
           const observedSubmissions = observeMessageSubmissionCanonical(
             currentSubmissions,
@@ -1132,12 +1125,7 @@ export const useSessionStore = create<SessionStore>()(
           );
           const changedSubmissions = observedSubmissions !== currentSubmissions;
 
-          if (
-            !changedTail &&
-            !changedHead &&
-            !changedSubmissions &&
-            activeAgentTurns === session.activeAgentTurns
-          ) {
+          if (!changedTail && !changedHead && !changedSubmissions) {
             return prev;
           }
 
@@ -1159,9 +1147,42 @@ export const useSessionStore = create<SessionStore>()(
                 ...session,
                 agentStreamTail: nextTail,
                 agentStreamHead: nextHead,
-                activeAgentTurns,
                 messageSubmissions,
               },
+            },
+          };
+        });
+      },
+
+      applyAgentTurnLiveness: (serverId, agentId, transition) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) return prev;
+          const agentTurnLiveness = applyTurnLivenessTransition(
+            session.agentTurnLiveness,
+            agentId,
+            transition,
+          );
+          if (agentTurnLiveness === session.agentTurnLiveness) return prev;
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, agentTurnLiveness },
+            },
+          };
+        });
+      },
+
+      clearAgentTurnLiveness: (serverId) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session || session.agentTurnLiveness.size === 0) return prev;
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, agentTurnLiveness: new Map() },
             },
           };
         });
@@ -1591,14 +1612,7 @@ export const useSessionStore = create<SessionStore>()(
             return prev;
           }
           const nextAgents = typeof agents === "function" ? agents(session.agents) : agents;
-          let activeAgentTurns = session.activeAgentTurns;
-          for (const [agentId, agent] of nextAgents) {
-            const previousAgent = session.agents.get(agentId);
-            if (previousAgent?.status !== "running" && agent.status === "running") {
-              activeAgentTurns = updateActiveAgentTurn(activeAgentTurns, agentId, true);
-            }
-          }
-          if (session.agents === nextAgents && activeAgentTurns === session.activeAgentTurns) {
+          if (session.agents === nextAgents) {
             return prev;
           }
           return {
@@ -1608,7 +1622,6 @@ export const useSessionStore = create<SessionStore>()(
               [serverId]: {
                 ...session,
                 agents: nextAgents,
-                activeAgentTurns,
                 workspaceAgentActivity: buildWorkspaceAgentActivityIndex(
                   nextAgents,
                   session.workspaceAgentActivity,

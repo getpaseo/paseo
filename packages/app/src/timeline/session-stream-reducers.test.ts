@@ -8,7 +8,7 @@ import {
 } from "@/types/stream";
 import {
   createAgentStreamReducerQueue,
-  deriveAgentStreamTurnActivity,
+  deriveAgentStreamTurnLiveness,
   processTimelineResponse,
   processAgentStreamEvent,
   processAgentStreamEvents,
@@ -131,40 +131,60 @@ function makeSubmittedUserMessage(
   });
 }
 
-describe("deriveAgentStreamTurnActivity", () => {
+describe("deriveAgentStreamTurnLiveness", () => {
   it("tracks start through every terminal turn event", () => {
     const started = makeStreamReducerEvent(
       { type: "turn_started", provider: "claude" } as AgentStreamEventPayload,
       1,
     );
-    expect(deriveAgentStreamTurnActivity([started])).toBe(true);
+    expect(deriveAgentStreamTurnLiveness([started])).toEqual({
+      type: "stream_open",
+      startedAt: started.timestamp,
+      evidence: { epoch: "epoch-1", seq: 1 },
+    });
     for (const event of [
       { type: "turn_completed", provider: "claude" },
       { type: "turn_failed", provider: "claude", error: "failed" },
       { type: "turn_canceled", provider: "claude", reason: "canceled" },
     ] as AgentStreamEventPayload[]) {
-      expect(deriveAgentStreamTurnActivity([started, makeStreamReducerEvent(event, 2)])).toBe(
-        false,
-      );
+      expect(deriveAgentStreamTurnLiveness([started, makeStreamReducerEvent(event, 2)])).toEqual({
+        type: "stream_close",
+      });
     }
   });
 
   it("keeps an open turn without stream lifecycle and closes it on an ordered terminal event", () => {
-    let hasOpenTurn = true;
-    hasOpenTurn =
-      deriveAgentStreamTurnActivity([
+    expect(
+      deriveAgentStreamTurnLiveness([
         makeStreamReducerEvent(makeAssistantTimelineEvent("still working"), 1),
-      ]) ?? hasOpenTurn;
-    expect(hasOpenTurn).toBe(true);
+      ]),
+    ).toBeUndefined();
 
-    hasOpenTurn =
-      deriveAgentStreamTurnActivity([
+    expect(
+      deriveAgentStreamTurnLiveness([
         makeStreamReducerEvent(
           { type: "turn_completed", provider: "claude" } as AgentStreamEventPayload,
           2,
         ),
-      ]) ?? hasOpenTurn;
-    expect(hasOpenTurn).toBe(false);
+      ]),
+    ).toEqual({ type: "stream_close" });
+  });
+
+  it("restarts timing when a terminal event and the next start share one reducer batch", () => {
+    const completed = makeStreamReducerEvent(
+      { type: "turn_completed", provider: "claude" } as AgentStreamEventPayload,
+      2,
+    );
+    const restarted = makeStreamReducerEvent(
+      { type: "turn_started", provider: "claude" } as AgentStreamEventPayload,
+      3,
+    );
+
+    expect(deriveAgentStreamTurnLiveness([completed, restarted])).toEqual({
+      type: "stream_restart",
+      startedAt: restarted.timestamp,
+      evidence: { epoch: "epoch-1", seq: 3 },
+    });
   });
 });
 

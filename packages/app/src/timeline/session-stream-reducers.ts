@@ -1,6 +1,7 @@
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
 import type { AssistantMessageItem, StreamItem } from "@/types/stream";
+import type { TurnLivenessTransition } from "@/timeline/turn-liveness";
 import {
   applyStreamEvent,
   flushHeadToTail,
@@ -1385,30 +1386,47 @@ export function createAgentStreamReducerQueue(
 interface StreamStatePatch {
   tail?: StreamItem[];
   head?: StreamItem[];
-  turnActive?: boolean;
   acknowledgedClientMessageIds?: readonly string[];
 }
 
-export function deriveAgentStreamTurnActivity(
+export function deriveAgentStreamTurnLiveness(
   events: readonly AgentStreamReducerEvent[],
-): boolean | undefined {
-  let active: boolean | undefined;
-  for (const { event } of events) {
-    if (event.type === "turn_started") active = true;
-    else if (
+): TurnLivenessTransition | undefined {
+  let transition: TurnLivenessTransition | undefined;
+  let shouldRestart = false;
+  let restartStartedAt: Date | null = null;
+  for (const { event, timestamp, seq, epoch } of events) {
+    if (event.type === "turn_started") {
+      if (shouldRestart) restartStartedAt ??= timestamp;
+      transition =
+        typeof seq === "number" && typeof epoch === "string"
+          ? {
+              type: restartStartedAt ? "stream_restart" : "stream_open",
+              startedAt: restartStartedAt ?? timestamp,
+              evidence: { epoch, seq },
+            }
+          : { type: "directory_running", startedAt: timestamp };
+    } else if (
       event.type === "turn_completed" ||
       event.type === "turn_failed" ||
       event.type === "turn_canceled"
     ) {
-      active = false;
+      transition = { type: "stream_close" };
+      shouldRestart = true;
+      restartStartedAt = null;
     }
   }
-  return active;
+  return transition;
 }
 
 export interface CreateSessionAgentStreamReducerQueueInput {
   serverId: string;
   setAgentStreamState: (serverId: string, agentId: string, state: StreamStatePatch) => void;
+  applyAgentTurnLiveness: (
+    serverId: string,
+    agentId: string,
+    transition: TurnLivenessTransition,
+  ) => void;
   setAgentTimelineCursor: (
     serverId: string,
     state: (prev: Map<string, TimelineCursor>) => Map<string, TimelineCursor>,
@@ -1427,7 +1445,13 @@ function cancelAgentStreamReducerFlush(id: number) {
 export function createSessionAgentStreamReducerQueue(
   input: CreateSessionAgentStreamReducerQueueInput,
 ): AgentStreamReducerQueue {
-  const { serverId, setAgentStreamState, setAgentTimelineCursor, recoverTimelineGap } = input;
+  const {
+    serverId,
+    setAgentStreamState,
+    applyAgentTurnLiveness,
+    setAgentTimelineCursor,
+    recoverTimelineGap,
+  } = input;
 
   return createAgentStreamReducerQueue({
     getSnapshot: (agentId) => {
@@ -1441,21 +1465,22 @@ export function createSessionAgentStreamReducerQueue(
       };
     },
     commit: (agentId, result, events) => {
-      const turnActive = deriveAgentStreamTurnActivity(events);
+      const turnLiveness = deriveAgentStreamTurnLiveness(events);
       if (
         result.changedTail ||
         result.changedHead ||
-        turnActive !== undefined ||
         result.acknowledgedClientMessageIds.length > 0
       ) {
         setAgentStreamState(serverId, agentId, {
           ...(result.changedTail ? { tail: result.tail } : {}),
           ...(result.changedHead ? { head: result.head } : {}),
-          ...(turnActive === undefined ? {} : { turnActive }),
           ...(result.acknowledgedClientMessageIds.length > 0
             ? { acknowledgedClientMessageIds: result.acknowledgedClientMessageIds }
             : {}),
         });
+      }
+      if (turnLiveness) {
+        applyAgentTurnLiveness(serverId, agentId, turnLiveness);
       }
 
       if (result.cursorChanged && result.cursor) {

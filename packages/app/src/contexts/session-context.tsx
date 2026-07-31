@@ -19,7 +19,7 @@ import {
   type TimelineReducerSideEffect,
 } from "@/timeline/session-stream-reducers";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
-import { isTimelineCatchUpComplete } from "@/timeline/timeline-sync-plan";
+import { isTimelineResumeSnapshotAuthoritative } from "@/timeline/timeline-sync-plan";
 import {
   createViewedTimelineSync,
   type TimelineDeliveryMode,
@@ -347,6 +347,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const setAgentStreamTail = useSessionStore((state) => state.setAgentStreamTail);
   const setAgentStreamHead = useSessionStore((state) => state.setAgentStreamHead);
   const setAgentStreamState = useSessionStore((state) => state.setAgentStreamState);
+  const applyAgentTurnLiveness = useSessionStore((state) => state.applyAgentTurnLiveness);
+  const clearAgentTurnLiveness = useSessionStore((state) => state.clearAgentTurnLiveness);
   const clearAgentStreamHead = useSessionStore((state) => state.clearAgentStreamHead);
   const setAgentTimelineCursor = useSessionStore((state) => state.setAgentTimelineCursor);
   const setInitializingAgents = useSessionStore((state) => state.setInitializingAgents);
@@ -553,12 +555,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     () =>
       client.subscribeConnectionStatus((connection) => {
         if (connection.status === "connected") return;
-        const activeAgentTurns = useSessionStore.getState().sessions[serverId]?.activeAgentTurns;
-        for (const agentId of activeAgentTurns ?? []) {
-          setAgentStreamState(serverId, agentId, { turnActive: false });
-        }
+        clearAgentTurnLiveness(serverId);
       }),
-    [client, serverId, setAgentStreamState],
+    [clearAgentTurnLiveness, client, serverId],
   );
 
   const applyWorkspaceSetupProgress = useCallback(
@@ -577,13 +576,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     ) => {
       const agentId = payload.agentId;
       const initKey = getInitKey(serverId, agentId);
-      const catchUpComplete = isTimelineCatchUpComplete({
+      const shouldMarkAuthoritativeHistoryApplied = isTimelineResumeSnapshotAuthoritative({
         direction: payload.direction,
         hasNewer: payload.hasNewer,
         error: payload.error,
       });
-      const shouldMarkAuthoritativeHistoryApplied =
-        payload.direction === "tail" || (payload.direction === "after" && catchUpComplete);
 
       // Read current store state
       const session = useSessionStore.getState().sessions[serverId];
@@ -622,6 +619,17 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         return;
       }
 
+      if (shouldMarkAuthoritativeHistoryApplied && payload.agent) {
+        applyAgentTurnLiveness(serverId, agentId, {
+          type: "resume_snapshot",
+          status: payload.agent.status,
+          startedAt: payload.agent.lastUserMessageAt
+            ? new Date(payload.agent.lastUserMessageAt)
+            : null,
+          coverage: { epoch: payload.epoch, seq: payload.window.maxSeq },
+        });
+      }
+
       if (result.commit === "discard") {
         markAgentHistorySynchronized(serverId, agentId);
       } else {
@@ -652,6 +660,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     },
     [
       applyAgentTimelineResponseState,
+      applyAgentTurnLiveness,
       markAgentHistorySynchronized,
       recoverTimelineGap,
       serverId,
@@ -727,6 +736,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     const agentStreamReducerQueue = createSessionAgentStreamReducerQueue({
       serverId,
       setAgentStreamState,
+      applyAgentTurnLiveness,
       setAgentTimelineCursor,
       recoverTimelineGap,
     });
@@ -1088,6 +1098,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     setAgentStreamTail,
     setAgentStreamHead,
     setAgentStreamState,
+    applyAgentTurnLiveness,
     clearAgentStreamHead,
     setAgentTimelineCursor,
     setInitializingAgents,

@@ -65,15 +65,30 @@ function upsertAgentDirectoryReplica(
 
 export function upsertAgentReplica(serverId: string, agent: Agent): Agent {
   let acceptedAgent = agent;
+  let previousAgent: Agent | undefined;
   useSessionStore.getState().setAgents(serverId, (current) => {
     const currentAgent = current.get(agent.id);
+    previousAgent = currentAgent;
     acceptedAgent = acceptAgentDirectoryUpdate(currentAgent, agent);
     if (acceptedAgent === currentAgent) return current;
     const next = new Map(current);
     next.set(agent.id, acceptedAgent);
     return next;
   });
+  seedAgentTurnLivenessFromDirectory(serverId, previousAgent, acceptedAgent);
   return acceptedAgent;
+}
+
+function seedAgentTurnLivenessFromDirectory(
+  serverId: string,
+  previousAgent: Agent | undefined,
+  agent: Agent,
+): void {
+  if (previousAgent?.status === "running" || agent.status !== "running") return;
+  useSessionStore.getState().applyAgentTurnLiveness(serverId, agent.id, {
+    type: "directory_running",
+    startedAt: agent.lastUserMessageAt,
+  });
 }
 
 export function replaceAgentPendingPermissions(serverId: string, agent: Agent): void {
@@ -114,7 +129,7 @@ export function removeAgentDirectoryReplica(serverId: string, agentId: string): 
   store.setAgentAuthoritativeHistoryApplied(serverId, agentId, false);
   store.setAgentStreamTail(serverId, removeKey);
   store.clearAgentStreamHead(serverId, agentId);
-  store.setAgentStreamState(serverId, agentId, { turnActive: false });
+  store.applyAgentTurnLiveness(serverId, agentId, { type: "destructive_close" });
   useSessionStore.setState((state) => {
     if (!state.agentLastActivity.has(agentId)) return state;
     const agentLastActivity = new Map(state.agentLastActivity);
@@ -173,6 +188,7 @@ export function replaceFetchedAgentDirectory(input: {
 }): { agents: Map<string, Agent> } {
   const { agents: fetchedAgents, pendingPermissions } = buildAgentDirectoryState(input);
   const store = useSessionStore.getState();
+  const previousAgents = store.sessions[input.serverId]?.agents ?? new Map<string, Agent>();
 
   for (const agent of fetchedAgents.values()) {
     if (agent.archivedAt) {
@@ -181,6 +197,9 @@ export function replaceFetchedAgentDirectory(input: {
   }
 
   store.setAgents(input.serverId, fetchedAgents);
+  for (const agent of fetchedAgents.values()) {
+    seedAgentTurnLivenessFromDirectory(input.serverId, previousAgents.get(agent.id), agent);
+  }
   store.setAgentDetails(input.serverId, (prev) => {
     let next: Map<string, Agent> | null = null;
     for (const agentId of fetchedAgents.keys()) {

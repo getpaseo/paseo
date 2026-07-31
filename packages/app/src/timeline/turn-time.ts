@@ -13,6 +13,7 @@ export interface StreamTurnTiming {
 
 export function deriveStreamTurnTiming(params: {
   isTurnActive: boolean;
+  activeTurnStartedAt: Date | null;
   tail: StreamItem[];
   head: StreamItem[];
 }): StreamTurnTiming {
@@ -59,7 +60,7 @@ export function deriveStreamTurnTiming(params: {
     visitItem(item);
   }
 
-  const runningStartedAt = params.isTurnActive ? currentUserAt : null;
+  const runningStartedAt = params.isTurnActive ? params.activeTurnStartedAt : null;
   if (!params.isTurnActive) {
     flushCompletedTurn();
   }

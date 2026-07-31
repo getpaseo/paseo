@@ -157,11 +157,15 @@ row is recorded before handler output. The app creates two-phase submission reco
 this capability. Older hosts keep the shipped untracked optimistic-row behavior and roll that row back
 on RPC rejection.
 
-Turn liveness is the union of an unsettled submission and an open stream turn. `turn_started` opens the
-turn; ordered `turn_completed`, `turn_failed`, and `turn_canceled` events close it. A running directory
-transition may seed or raise an open turn during hydration or after a selective stream subscription
-lapses, but directory status never closes one or settles a submission. Disconnect and replica removal
-are the other destructive close boundaries.
+Turn liveness has one client-side owner. `turn_started` opens the turn; ordered `turn_completed`,
+`turn_failed`, and `turn_canceled` events close it. A running directory transition may seed an open
+turn during hydration or after a selective stream subscription lapses, but an ordinary idle directory
+update does not close one or settle a submission because it can arrive before the terminal stream
+event. A completed timeline resume commits the response's coherent agent snapshot and closes any open
+turn not backed by newer sequence evidence. Disconnect and replica removal are the destructive close
+boundaries. Footer activity is the owned turn state unioned with unsettled submissions, and its running
+start time comes from lifecycle/submission evidence rather than whichever timeline rows happen to be
+mounted.
 
 Canonical submitted user rows carry the provider's `messageId` and Paseo's optional
 `clientMessageId`. The user-message producer reconciles them by `clientMessageId`, adds provider

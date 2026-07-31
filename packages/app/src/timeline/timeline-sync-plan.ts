@@ -71,3 +71,12 @@ export function isTimelineCatchUpComplete(input: {
 
   return input.direction !== "after" || !input.hasNewer;
 }
+
+export function isTimelineResumeSnapshotAuthoritative(input: {
+  direction: "tail" | "before" | "after";
+  hasNewer: boolean;
+  error: string | null;
+}): boolean {
+  if (input.error || input.direction === "before") return false;
+  return input.direction === "tail" || !input.hasNewer;
+}

@@ -27,6 +27,7 @@ describe("deriveStreamTurnTiming", () => {
 
     const timing = deriveStreamTurnTiming({
       isTurnActive: true,
+      activeTurnStartedAt: submittedAt,
       tail: [],
       head: [user("submitted", submittedAt)],
     });
@@ -40,6 +41,7 @@ describe("deriveStreamTurnTiming", () => {
 
     const timing = deriveStreamTurnTiming({
       isTurnActive: true,
+      activeTurnStartedAt: secondUserAt,
       tail: [
         user("u1", firstUserAt),
         assistant("a1", new Date("2026-05-15T00:00:05.000Z")),
@@ -58,6 +60,7 @@ describe("deriveStreamTurnTiming", () => {
 
     const timing = deriveStreamTurnTiming({
       isTurnActive: false,
+      activeTurnStartedAt: null,
       tail: [
         user("u1", userAt),
         assistant("a1", assistantAt),
@@ -80,6 +83,7 @@ describe("deriveStreamTurnTiming", () => {
 
     const timing = deriveStreamTurnTiming({
       isTurnActive: false,
+      activeTurnStartedAt: null,
       tail: [
         user("u1", userAt),
         assistant("a1", firstAssistantAt),

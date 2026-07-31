@@ -26,6 +26,7 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 import { SidebarCallout } from "@/components/sidebar-callout";
 import { Composer } from "@/composer";
 import { getActiveMessageSubmissions } from "@/composer/submission/model";
+import { resolveTurnPresentation, TURN_LIVENESS_IDLE } from "@/timeline/turn-liveness";
 import { RewindComposerRestoreProvider } from "@/components/rewind/composer-restore";
 import { getProviderIcon } from "@/components/provider-icons";
 import {
@@ -1297,8 +1298,14 @@ const AgentStreamSection = memo(function AgentStreamSection({
       ? getActiveMessageSubmissions(state.sessions[serverId]?.messageSubmissions.get(agentId))
       : EMPTY_MESSAGE_SUBMISSIONS,
   );
-  const hasActiveTurn = useSessionStore((state) =>
-    agentId ? state.sessions[serverId]?.activeAgentTurns.has(agentId) === true : false,
+  const turnLiveness = useSessionStore((state) =>
+    agentId
+      ? (state.sessions[serverId]?.agentTurnLiveness.get(agentId) ?? TURN_LIVENESS_IDLE)
+      : TURN_LIVENESS_IDLE,
+  );
+  const turnPresentation = useMemo(
+    () => resolveTurnPresentation(turnLiveness, pendingMessageSubmissions),
+    [pendingMessageSubmissions, turnLiveness],
   );
   const streamItems = streamItemsRaw ?? EMPTY_STREAM_ITEMS;
   const pendingPermissionList = useStoreWithEqualityFn(
@@ -1340,7 +1347,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
       isAuthoritativeHistoryReady={hasAppliedAuthoritativeHistory}
       toast={toast}
       pendingMessageSubmissions={pendingMessageSubmissions}
-      hasActiveTurn={hasActiveTurn}
+      turnPresentation={turnPresentation}
       onOpenWorkspaceFile={onOpenWorkspaceFile}
     />
   );

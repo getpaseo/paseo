@@ -7,7 +7,6 @@ import {
   normalizeWorkspaceDescriptor,
   selectAgentTimelineState,
   useSessionStore,
-  type Agent,
   type WorkspaceDescriptor,
 } from "./session-store";
 import type { StreamItem } from "../types/stream";
@@ -40,37 +39,6 @@ afterEach(() => {
 
 function initializeTestSession(): void {
   useSessionStore.getState().initializeSession("test-server", null as unknown as DaemonClient);
-}
-
-function createAgent(status: Agent["status"]): Agent {
-  const timestamp = new Date("2026-07-30T10:00:00.000Z");
-  return {
-    serverId: "test-server",
-    id: "agent-1",
-    provider: "codex",
-    status,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-    lastUserMessageAt: null,
-    lastActivityAt: timestamp,
-    capabilities: {
-      supportsStreaming: true,
-      supportsSessionPersistence: true,
-      supportsDynamicModes: true,
-      supportsMcpServers: true,
-      supportsReasoningStream: true,
-      supportsToolInvocations: true,
-    },
-    currentModeId: null,
-    availableModes: [],
-    pendingPermissions: [],
-    persistence: null,
-    title: "Agent",
-    cwd: "/repo",
-    model: null,
-    parentAgentId: null,
-    labels: {},
-  };
 }
 
 function getTestSessionReferences() {
@@ -165,24 +133,26 @@ describe("agent timeline state", () => {
     });
   });
 
-  it("lets a later running directory transition raise but never lower an open turn", () => {
+  it("stores turn liveness transitions without duplicating their policy", () => {
     initializeTestSession();
     const store = useSessionStore.getState();
-    store.setAgents("test-server", new Map([["agent-1", createAgent("idle")]]));
-    store.applyAgentTimelineResponseState("test-server", "agent-1", {
-      items: [],
-      head: [],
-      range: null,
-      older: "none",
-      synchronized: true,
-      acknowledgedClientMessageIds: [],
+    store.applyAgentTurnLiveness("test-server", "agent-1", {
+      type: "directory_running",
+      startedAt: null,
+    });
+    expect(store.getSession("test-server")?.agentTurnLiveness.get("agent-1")).toEqual({
+      phase: "open",
+      startedAt: null,
+      evidence: null,
     });
 
-    store.setAgents("test-server", new Map([["agent-1", createAgent("running")]]));
-    expect(store.getSession("test-server")?.activeAgentTurns.has("agent-1")).toBe(true);
-
-    store.setAgents("test-server", new Map([["agent-1", createAgent("idle")]]));
-    expect(store.getSession("test-server")?.activeAgentTurns.has("agent-1")).toBe(true);
+    store.applyAgentTurnLiveness("test-server", "agent-1", {
+      type: "resume_snapshot",
+      status: "idle",
+      startedAt: null,
+      coverage: { epoch: "epoch-1", seq: 40 },
+    });
+    expect(store.getSession("test-server")?.agentTurnLiveness.has("agent-1")).toBe(false);
   });
 });
 
