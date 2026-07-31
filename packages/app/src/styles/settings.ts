@@ -11,13 +11,6 @@ export const settingsStyles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[3],
     marginLeft: theme.spacing[1],
   },
-  sectionTitle: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
-    marginBottom: theme.spacing[3],
-    marginLeft: theme.spacing[1],
-  },
   sectionHeaderTitle: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
