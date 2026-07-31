@@ -623,7 +623,7 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     install_cli: () => installCli(),
     get_cli_install_status: () => getCliInstallStatus(),
     ...createSkillsCommandHandlers({
-      targets: getSkillTargets(),
+      resolveTargets: getSkillTargets,
       selectionStore: getSkillSelectionStore(),
     }),
   };

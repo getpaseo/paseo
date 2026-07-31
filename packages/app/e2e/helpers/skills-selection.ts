@@ -81,7 +81,7 @@ export async function createSkillsSandbox(
  */
 export async function serveRealSkillsCommands(page: Page, sandbox: SkillsSandbox): Promise<void> {
   const handlers = createSkillsCommandHandlers({
-    targets: sandbox.targets,
+    resolveTargets: () => sandbox.targets,
     selectionStore: createSkillSelectionStore({ userDataPath: sandbox.userDataPath }),
   });
 

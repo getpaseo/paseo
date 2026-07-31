@@ -8,7 +8,7 @@ import {
   uninstallSkills,
   updateSkills,
 } from "./operations.js";
-import type { SkillSelectionStore } from "./selection-store.js";
+import { coerceSkillSelection, type SkillSelectionStore } from "./selection-store.js";
 
 /** Everything the settings UI needs to render skills in one round trip. */
 export interface SkillsSnapshot extends SkillsStatus {
@@ -16,33 +16,34 @@ export interface SkillsSnapshot extends SkillsStatus {
 }
 
 export function createSkillsCommandHandlers({
-  targets,
+  resolveTargets,
   selectionStore,
 }: {
-  targets: SkillTargets;
+  // Resolved per command, not at wiring time: the bundle path depends on how the
+  // app was packaged, which is not knowable when handlers are registered.
+  resolveTargets: () => SkillTargets;
   selectionStore: SkillSelectionStore;
 }): Record<string, DesktopCommandHandler> {
   async function snapshot(
-    apply: (selection: SkillSelection) => Promise<SkillsStatus>,
+    apply: (targets: SkillTargets, selection: SkillSelection) => Promise<SkillsStatus>,
   ): Promise<SkillsSnapshot> {
     const selection = await selectionStore.get();
-    return { ...(await apply(selection)), selection };
+    return { ...(await apply(resolveTargets(), selection)), selection };
   }
 
   return {
-    get_skills_status: () => snapshot((selection) => getSkillsStatus(targets, selection)),
-    install_skills: () => snapshot((selection) => installSkills(targets, selection)),
-    update_skills: () => snapshot((selection) => updateSkills(targets, selection)),
-    uninstall_skills: () => snapshot((selection) => uninstallSkills(targets, selection)),
+    get_skills_status: () => snapshot(getSkillsStatus),
+    install_skills: () => snapshot(installSkills),
+    update_skills: () => snapshot(updateSkills),
+    uninstall_skills: () => snapshot(uninstallSkills),
     save_skills_selection: async (args) => {
-      const previousSelection = await selectionStore.get();
-      const selection = await selectionStore.set(args);
-      try {
-        return { ...(await installSkills(targets, selection)), selection };
-      } catch (error) {
-        await selectionStore.set(previousSelection);
-        throw error;
-      }
+      // Converge before persisting. A save that cannot reach disk must leave no
+      // preference behind, or the UI reports a failure while the next status
+      // read and the next startup act on a selection the user never got.
+      const selection = coerceSkillSelection(args);
+      const status = await installSkills(resolveTargets(), selection);
+      await selectionStore.set(selection);
+      return { ...status, selection };
     },
   };
 }

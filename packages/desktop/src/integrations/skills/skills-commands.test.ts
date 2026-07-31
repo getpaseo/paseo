@@ -29,7 +29,7 @@ async function makeHarness(): Promise<Harness> {
     await writeFile(path.join(targets.sourceDir, name, "SKILL.md"), `${name}-v1`);
   }
   const handlers = createSkillsCommandHandlers({
-    targets,
+    resolveTargets: () => targets,
     selectionStore: createSkillSelectionStore({ userDataPath: path.join(root, "user-data") }),
   });
   return {
