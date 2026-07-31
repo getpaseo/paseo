@@ -1,5 +1,16 @@
 import { createHash, randomUUID } from "node:crypto";
-import { cp, lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  cp,
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -204,8 +215,10 @@ async function copyStagedEntry(source: string, target: string): Promise<void> {
 
 async function mergeBackupDirectory(livePath: string, backupPath: string | null): Promise<void> {
   if (backupPath === null) return;
-  await mkdir(livePath, { recursive: true });
-  await cp(backupPath, livePath, {
+  const liveInfo = await lstat(livePath).catch(() => null);
+  const destination = liveInfo?.isSymbolicLink() ? await realpath(livePath) : livePath;
+  await mkdir(destination, { recursive: true });
+  await cp(backupPath, destination, {
     recursive: true,
     force: false,
     errorOnExist: false,
@@ -346,6 +359,14 @@ export async function beginSkillsTransaction(
   ops: readonly SkillOp[],
 ): Promise<SkillsTransaction> {
   const roots = [targets.agentsDir, targets.claudeDir, targets.codexDir];
+  const seenRoots = new Set<string>();
+  const uniqueRoots: Array<{ root: string; rootIndex: number }> = [];
+  for (const [rootIndex, root] of roots.entries()) {
+    const identity = await realpath(root).catch(() => path.resolve(root));
+    if (seenRoots.has(identity)) continue;
+    seenRoots.add(identity);
+    uniqueRoots.push({ root, rootIndex });
+  }
   // Staged next to the skills tree rather than inside it: same filesystem, so a
   // restore is a local copy, and never a directory a skill scan walks into.
   const transactionDir = path.join(path.dirname(roots[0]!), `${TRANSACTION_PREFIX}${randomUUID()}`);
@@ -366,11 +387,12 @@ export async function beginSkillsTransaction(
   });
 
   try {
-    for (const [rootIndex, root] of roots.entries()) {
+    for (const { root, rootIndex } of uniqueRoots) {
       for (const op of ops) {
         const name = op.name;
         const livePath = path.join(root, name);
-        if (!(await isDirectory(livePath))) {
+        const liveInfo = await lstat(livePath).catch(() => null);
+        if (liveInfo === null || !(await isDirectory(livePath))) {
           entries.push({ livePath, kind: op.kind, backupPath: null });
           continue;
         }
@@ -379,7 +401,8 @@ export async function beginSkillsTransaction(
             ? path.join(root, path.basename(transactionDir), name)
             : path.join(BACKUP_DIRNAME, String(rootIndex), name);
         if (op.kind !== "delete") {
-          await cp(livePath, resolveBackupPath(transactionDir, backupPath)!, {
+          const captureSource = liveInfo.isSymbolicLink() ? await realpath(livePath) : livePath;
+          await cp(captureSource, resolveBackupPath(transactionDir, backupPath)!, {
             recursive: true,
             preserveTimestamps: true,
             verbatimSymlinks: true,

@@ -538,6 +538,54 @@ describe("skills controller", () => {
   );
 
   it.skipIf(process.platform === "win32")(
+    "restores updates made through a relative skill-directory symlink",
+    async () => {
+      const selection: SkillSelection = { mode: "custom", skills: ["paseo"] };
+      const gated = createGatedUnwritableSelectionStore(selection);
+      const readOnly = await makeHarness(gated.store);
+      await readOnly.controller.install();
+      const shared = path.join(readOnly.root, "home", "shared", "paseo");
+      await mkdir(shared, { recursive: true });
+      await writeFile(path.join(shared, "SKILL.md"), "paseo-v1");
+      const live = path.join(readOnly.targets.claudeDir, "paseo");
+      await rm(live, { recursive: true, force: true });
+      await symlink(path.relative(readOnly.targets.claudeDir, shared), live, "dir");
+      await writeFile(path.join(readOnly.targets.sourceDir, "paseo", "SKILL.md"), "paseo-v2");
+
+      const save = readOnly.controller.save(selection);
+      await gated.persistenceStarted;
+      gated.failPersistence();
+      await expect(save).rejects.toThrow("selection store is read-only");
+
+      expect((await lstat(live)).isSymbolicLink()).toBe(true);
+      expect(await readFile(path.join(shared, "SKILL.md"), "utf8")).toBe("paseo-v1");
+      await rm(readOnly.root, { recursive: true, force: true });
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "stages one deletion when two agent roots alias the same directory",
+    async () => {
+      await harness.controller.install();
+      await rm(harness.targets.claudeDir, { recursive: true, force: true });
+      await symlink(
+        path.relative(path.dirname(harness.targets.claudeDir), harness.targets.agentsDir),
+        harness.targets.claudeDir,
+        "dir",
+      );
+
+      const result = await harness.controller.save({
+        mode: "custom",
+        skills: ["paseo", "paseo-advisor"],
+        confirmedRemovals: ["paseo-loop"],
+      });
+
+      expect(result.confirmationRequired).toBeNull();
+      expect(await isInstalled(harness.targets, "paseo-loop")).toBe(false);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
     "restores a user-added symlink when deletion rolls back",
     async () => {
       const previous: SkillSelection = {
