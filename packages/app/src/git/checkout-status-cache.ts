@@ -46,7 +46,7 @@ export async function ensureCheckoutStatus({
   serverId: string;
   cwd: string;
 }): Promise<CheckoutStatusPayload> {
-  return await queryClient.ensureQueryData({
+  return await queryClient.fetchQuery({
     queryKey: checkoutStatusQueryKey(serverId, cwd),
     queryFn: () => fetchCheckoutStatus({ client, serverId, cwd }),
     staleTime: Infinity,

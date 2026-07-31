@@ -136,6 +136,25 @@ describe("ensureCheckoutStatus", () => {
     expect(second).toEqual(fetched);
     expect(client.getCheckoutStatus).toHaveBeenCalledExactlyOnceWith(cwd);
   });
+
+  it("awaits a refetch when the canonical cached status was invalidated", async () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      checkoutStatusQueryKey(serverId, cwd),
+      checkoutStatus({ currentBranch: "feature/stale" }),
+    );
+    await queryClient.invalidateQueries({
+      queryKey: checkoutStatusQueryKey(serverId, cwd),
+      refetchType: "none",
+    });
+    const fetched = checkoutStatus({ currentBranch: "feature/current" });
+    const client = { getCheckoutStatus: vi.fn(async () => fetched) };
+
+    const result = await ensureCheckoutStatus({ queryClient, client, serverId, cwd });
+
+    expect(result.currentBranch).toBe("feature/current");
+    expect(client.getCheckoutStatus).toHaveBeenCalledExactlyOnceWith(cwd);
+  });
 });
 
 describe("applyCheckoutStatusUpdateFromEvent", () => {
