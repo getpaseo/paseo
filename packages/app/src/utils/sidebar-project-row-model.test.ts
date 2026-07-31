@@ -18,6 +18,7 @@ function workspace(overrides: Partial<SidebarWorkspaceEntry> = {}): SidebarWorks
     projectViewKey: "project-1",
     projectName: "paseo",
     workspaceDirectory: "/repo",
+    workspaceDirectoryLabel: "/repo",
     projectKind: "git",
     workspaceKind: "checkout",
     name: "paseo",
@@ -32,7 +33,6 @@ function workspace(overrides: Partial<SidebarWorkspaceEntry> = {}): SidebarWorks
     hasRunningScripts: false,
     statusEnteredAt: null,
     ...overrides,
-    paseoWorktreeRoot: overrides.paseoWorktreeRoot ?? null,
     archivingAt: overrides.archivingAt ?? null,
   };
 }

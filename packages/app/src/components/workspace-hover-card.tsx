@@ -41,7 +41,6 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { FloatingSurface } from "@/components/ui/floating";
 import { isWeb } from "@/constants/platform";
 import { useHosts } from "@/runtime/host-runtime";
-import { getWorkspaceHoverCardDirectoryLabel } from "@/components/workspace-hover-card-model";
 
 interface Rect {
   x: number;
@@ -214,7 +213,6 @@ function WorkspaceHoverCardContent({
   contentRef: React.RefObject<View | null>;
 }): ReactElement | null {
   const { t } = useTranslation();
-  const cwdDisplay = getWorkspaceHoverCardDirectoryLabel(workspace);
   const bottomSheetInternal = useBottomSheetModalInternal(true);
   const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
   const [contentSize, setContentSize] = useState<{ width: number; height: number } | null>(null);
@@ -297,11 +295,11 @@ function WorkspaceHoverCardContent({
               testID="hover-card-workspace-branch"
             />
           ) : null}
-          {cwdDisplay ? (
+          {workspace.workspaceDirectoryLabel ? (
             <CopyableInfoRow
               icon={ThemedFolder}
-              value={cwdDisplay}
-              copyValue={workspace.workspaceDirectory ?? ""}
+              value={workspace.workspaceDirectoryLabel}
+              copyValue={workspace.workspaceDirectory}
               copyLabel={t("workspace.hoverCard.copyPath")}
               testID="hover-card-workspace-cwd"
             />

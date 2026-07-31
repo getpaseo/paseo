@@ -56,15 +56,17 @@ async function openWorkspaceHoverCard(page: import("@playwright/test").Page, wor
   return hoverCard;
 }
 
+interface PaseoOwnedWorktree {
+  projectName: string;
+  workspaceId: string;
+  worktreeSlug: string;
+}
+
 async function withPaseoOwnedWorktree(
-  run: (workspace: {
-    projectName: string;
-    workspaceId: string;
-    worktreeName: string;
-  }) => Promise<void>,
+  run: (workspace: PaseoOwnedWorktree) => Promise<void>,
 ): Promise<void> {
   const project = await seedWorkspace({ repoPrefix: "sidebar-hover-owned-worktree-" });
-  const worktreeName = "hover-card-owned-worktree";
+  const worktreeSlug = "hover-card-owned-worktree";
 
   try {
     const created = await project.client.createWorkspace({
@@ -72,18 +74,18 @@ async function withPaseoOwnedWorktree(
         kind: "worktree",
         cwd: project.repoPath,
         projectId: project.projectId,
-        worktreeSlug: worktreeName,
+        worktreeSlug,
       },
     });
     if (!created.workspace) {
       throw new Error(created.error ?? "Failed to create Paseo-owned worktree");
     }
-    expect(path.basename(created.workspace.workspaceDirectory)).toBe(worktreeName);
+    expect(path.basename(created.workspace.workspaceDirectory)).toBe(worktreeSlug);
 
     await run({
       projectName: path.basename(project.repoPath),
       workspaceId: created.workspace.id,
-      worktreeName,
+      worktreeSlug,
     });
   } finally {
     await project.cleanup();
@@ -198,12 +200,12 @@ test.describe("Sidebar workspace list", () => {
   });
 
   test("Paseo-owned worktree hover card shows the worktree directory name", async ({ page }) => {
-    await withPaseoOwnedWorktree(async ({ projectName, workspaceId, worktreeName }) => {
+    await withPaseoOwnedWorktree(async ({ projectName, workspaceId, worktreeSlug }) => {
       await gotoAppShell(page);
       await waitForSidebarProject(page, projectName);
       await openWorkspaceHoverCard(page, workspaceId);
 
-      await expect(page.getByTestId("hover-card-workspace-cwd")).toHaveText(worktreeName);
+      await expect(page.getByTestId("hover-card-workspace-cwd")).toHaveText(worktreeSlug);
     });
   });
 });

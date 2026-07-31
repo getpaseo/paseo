@@ -64,49 +64,24 @@ describe("createSidebarWorkspaceEntry forge threading", () => {
   });
 });
 
-describe("createSidebarWorkspaceEntry worktree ownership", () => {
-  it("threads the exact Paseo-owned worktree root", () => {
+describe("createSidebarWorkspaceEntry workspace directory label", () => {
+  it("uses the daemon-provided slug for a Paseo-owned worktree", () => {
     const descriptor = workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42");
     descriptor.workspaceDirectory = "/worktrees/feature/packages/app";
-    descriptor.project = {
-      projectKey: "project",
-      projectName: "repo",
-      checkout: {
-        cwd: descriptor.workspaceDirectory,
-        isGit: true,
-        currentBranch: "feature",
-        remoteUrl: null,
-        worktreeRoot: "/worktrees/feature",
-        isPaseoOwnedWorktree: true,
-        mainRepoRoot: "/repo",
-      },
-    };
+    descriptor.worktreeSlug = "feature";
 
     const entry = createSidebarWorkspaceEntry({ serverId: "srv", workspace: descriptor });
 
-    expect(entry.paseoWorktreeRoot).toBe("/worktrees/feature");
+    expect(entry.workspaceDirectoryLabel).toBe("feature");
   });
 
-  it("does not treat an external Git worktree as Paseo-owned", () => {
+  it("shortens the workspace path when the daemon omits a worktree slug", () => {
     const descriptor = workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42");
-    descriptor.project = {
-      projectKey: "project",
-      projectName: "repo",
-      checkout: {
-        cwd: "/external/feature",
-        isGit: true,
-        currentBranch: "feature",
-        remoteUrl: null,
-        worktreeRoot: "/external/feature",
-        isPaseoOwnedWorktree: false,
-        mainRepoRoot: "/repo",
-      },
-    };
+    descriptor.workspaceDirectory = "/home/alice/external/feature";
 
     const entry = createSidebarWorkspaceEntry({ serverId: "srv", workspace: descriptor });
 
-    expect(entry.workspaceKind).toBe("worktree");
-    expect(entry.paseoWorktreeRoot).toBeNull();
+    expect(entry.workspaceDirectoryLabel).toBe("~/external/feature");
   });
 });
 
