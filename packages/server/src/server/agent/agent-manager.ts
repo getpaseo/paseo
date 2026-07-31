@@ -638,6 +638,8 @@ export class AgentManager {
   private readonly activeHistoryHydrationAgentIds = new Set<string>();
   private readonly bufferedHistoryHydrationSessionEvents = new Map<string, AgentStreamEvent[]>();
   private readonly historyHydrationTails = new Map<string, Promise<void>>();
+  private readonly durableTimelineMutationTails = new Map<string, Promise<void>>();
+  private readonly closingAgentIds = new Set<string>();
   private readonly runs = new AgentRunState();
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
@@ -1439,12 +1441,14 @@ export class AgentManager {
       return existing;
     }
 
+    this.closingAgentIds.add(agentId);
     const close = this.closeAgentRuntime(agentId);
     this.inFlightAgentCloses.set(agentId, close);
     const clearClose = () => {
       if (this.inFlightAgentCloses.get(agentId) === close) {
         this.inFlightAgentCloses.delete(agentId);
       }
+      this.closingAgentIds.delete(agentId);
     };
     void close.then(clearClose, clearClose);
     return close;
@@ -1464,6 +1468,7 @@ export class AgentManager {
       },
       "agent.manager.close.start",
     );
+    await this.historyHydrationTails.get(agentId)?.catch(() => undefined);
     await this.drainSessionEvents(agentId);
     this.cancelRunningProviderSubagents(agentId);
     const closedAgent = this.prepareAgentForClosure(agent, "agent closed");
@@ -2468,6 +2473,9 @@ export class AgentManager {
     agentId: string,
     options?: HydrateTimelineOptions,
   ): Promise<void> {
+    if (this.closingAgentIds.has(agentId)) {
+      throw new Error(`Cannot hydrate agent '${agentId}' while it is closing`);
+    }
     const agent = this.requireSessionAgent(agentId);
     await this.hydrateTimelineFromLegacyProviderHistory(agent, options);
   }
@@ -2509,7 +2517,9 @@ export class AgentManager {
     if (!this.durableTimelineStore) {
       return;
     }
-    await this.durableTimelineStore.deleteAgent(agentId);
+    await this.queueDurableTimelineMutation(agentId, () =>
+      this.durableTimelineStore!.deleteAgent(agentId),
+    );
   }
 
   async deleteAgentState(agentId: string): Promise<void> {
@@ -3454,6 +3464,9 @@ export class AgentManager {
     broadcast: boolean | (() => boolean),
   ): Promise<void> {
     await this.withHistoryHydrationBarrier(agent.id, async () => {
+      if (agent.historyPrimed) {
+        return;
+      }
       const timelineEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
       const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
       agent.historyPrimed = true;
@@ -4145,8 +4158,9 @@ export class AgentManager {
     if (!this.durableTimelineStore) {
       return;
     }
-    const task = this.durableTimelineStore
-      .bulkInsert(agentId, [row])
+    const task = this.queueDurableTimelineMutation(agentId, () =>
+      this.durableTimelineStore!.bulkInsert(agentId, [row]),
+    )
       .then(() => undefined)
       .catch((err) => {
         this.logger.error(
@@ -4164,13 +4178,36 @@ export class AgentManager {
     if (!this.durableTimelineStore || rows.length === 0) {
       return;
     }
-    const task = this.durableTimelineStore.bulkInsert(agentId, rows).catch((err) => {
+    const task = this.queueDurableTimelineMutation(agentId, () =>
+      this.durableTimelineStore!.bulkInsert(agentId, rows),
+    ).catch((err) => {
       this.logger.error(
         { err, agentId, rowCount: rows.length },
         "Failed to seed durable timeline store",
       );
     });
     this.trackBackgroundTask(task);
+  }
+
+  private queueDurableTimelineMutation(
+    agentId: string,
+    mutate: () => Promise<void>,
+  ): Promise<void> {
+    const previous = this.durableTimelineMutationTails.get(agentId);
+    const current = (async () => {
+      if (previous) {
+        await previous.catch(() => undefined);
+      }
+      await mutate();
+    })();
+    this.durableTimelineMutationTails.set(agentId, current);
+    const clear = () => {
+      if (this.durableTimelineMutationTails.get(agentId) === current) {
+        this.durableTimelineMutationTails.delete(agentId);
+      }
+    };
+    void current.then(clear, clear);
+    return current;
   }
 
   private trackBackgroundTask(task: Promise<void>): void {
