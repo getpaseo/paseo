@@ -1451,22 +1451,21 @@ function ActiveAgentComposer({
     serverId,
     parentAgentId: agentId,
   });
-  const activeTodoList = useStoreWithEqualityFn(
+  const activeTodoItems = useStoreWithEqualityFn(
     useSessionStore,
     (state) => {
       const tail = state.sessions[serverId]?.agentStreamTail?.get(agentId);
-      if (!tail) return null;
+      if (!tail) return [];
       for (let i = tail.length - 1; i >= 0; i--) {
         const item = tail[i];
         if (item.kind === "todo_list") {
-          return { items: item.items, snapshotKey: item.id };
+          return item.items;
         }
       }
-      return null;
+      return [];
     },
     shallow,
   );
-  const activeTodoItems = activeTodoList?.items ?? [];
   const canDetachSubagents = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.agentDetach === true,
   );
@@ -1574,7 +1573,7 @@ function ActiveAgentComposer({
 
   return (
     <ReanimatedAnimated.View style={inputAreaStyle} onLayout={onInputAreaLayout}>
-      <TaskListCard items={activeTodoItems} snapshotKey={activeTodoList?.snapshotKey} />
+      <TaskListCard items={activeTodoItems} />
       <SubagentsTrack
         rows={subagentRows}
         onOpenSubagent={handleOpenSubagent}
