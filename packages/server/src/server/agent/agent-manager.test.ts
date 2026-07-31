@@ -3859,11 +3859,9 @@ test("an unhydrated resumed agent exposes its persisted material progress", asyn
     idFactory: () => agentId,
   });
 
-  const created = await firstManager.createAgent(
-    { provider: "codex", cwd: workdir },
-    undefined,
-    { workspaceId: undefined },
-  );
+  const created = await firstManager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
   await firstManager.appendTimelineItem(created.id, {
     type: "user_message",
     text: "persist this result",
