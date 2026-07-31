@@ -153,8 +153,8 @@ try {
       throw new Error(payload.error ?? `addProject returned no project for ${projectName}`);
     }
     projectIds.push(payload.project.id);
+    await writeFile(process.env.PROJECT_IDS_FILE, JSON.stringify(projectIds));
   }
-  await writeFile(process.env.PROJECT_IDS_FILE, JSON.stringify(projectIds));
 } finally {
   await client.close().catch(() => undefined);
 }
