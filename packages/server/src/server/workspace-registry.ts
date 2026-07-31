@@ -80,6 +80,11 @@ const PersistedWorkspaceRecordSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   archivedAt: z.string().nullable(),
+  autoArchivedChangeRequestUrl: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
   pinnedAt: z
     .string()
     .nullable()
@@ -99,6 +104,10 @@ export interface WorkspaceMutation {
 
 export interface WorkspaceMutationContext {
   expectsInitialAgent?: boolean;
+}
+
+export interface WorkspaceArchiveContext {
+  autoArchivedChangeRequestUrl?: string;
 }
 
 export interface ProjectMutation {
@@ -140,7 +149,11 @@ export interface WorkspaceRegistry {
     updater: (record: PersistedWorkspaceRecord) => PersistedWorkspaceRecord,
   ): Promise<PersistedWorkspaceRecord | null>;
   upsert(record: PersistedWorkspaceRecord, context?: WorkspaceMutationContext): Promise<void>;
-  archive(workspaceId: string, archivedAt: string): Promise<void>;
+  archive(
+    workspaceId: string,
+    archivedAt: string,
+    context?: WorkspaceArchiveContext,
+  ): Promise<void>;
   remove(workspaceId: string): Promise<void>;
   /** Central lifecycle seam for daemon-global workspace observers. */
   subscribeToMutations?(
@@ -471,8 +484,19 @@ export class FileBackedWorkspaceRegistry
     });
   }
 
-  override async archive(workspaceId: string, archivedAt: string): Promise<void> {
-    const workspace = await this.archiveIfPresent(workspaceId, archivedAt);
+  override async archive(
+    workspaceId: string,
+    archivedAt: string,
+    context?: WorkspaceArchiveContext,
+  ): Promise<void> {
+    const workspace = await super.update(workspaceId, (existing) => ({
+      ...existing,
+      updatedAt: archivedAt,
+      archivedAt,
+      ...(context?.autoArchivedChangeRequestUrl
+        ? { autoArchivedChangeRequestUrl: context.autoArchivedChangeRequestUrl }
+        : {}),
+    }));
     if (!workspace) return;
     await this.notifyMutation({ kind: "archive", workspaceId, workspace });
   }
@@ -528,6 +552,7 @@ export function createPersistedWorkspaceRecord(input: {
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
+  autoArchivedChangeRequestUrl?: string | null;
   pinnedAt?: string | null;
 }): PersistedWorkspaceRecord {
   return PersistedWorkspaceRecordSchema.parse({
@@ -539,6 +564,7 @@ export function createPersistedWorkspaceRecord(input: {
     isPaseoOwnedWorktree: input.isPaseoOwnedWorktree ?? false,
     mainRepoRoot: input.mainRepoRoot ?? null,
     archivedAt: input.archivedAt ?? null,
+    autoArchivedChangeRequestUrl: input.autoArchivedChangeRequestUrl ?? null,
     pinnedAt: input.pinnedAt ?? null,
   });
 }
