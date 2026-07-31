@@ -3037,14 +3037,14 @@ class OpenCodeAgentSession implements AgentSession {
   async interrupt(): Promise<void> {
     const turnId = this.activeForegroundTurnId;
     this.abortController?.abort();
-    const stop = this.beginStop(turnId);
+    const abort = this.issueStop(turnId);
     // COMPAT(opencodeSlowAbort): OpenCode 1.14.42+ blocks session.abort until
     // the running tool actually stops, which can be tens of seconds for
     // long-running tools. Cap the wait so the user-visible cancel lands
     // quickly while still giving OpenCode a chance to confirm the abort
     // cleanly. Drop the timeout once upstream returns abort acknowledgement
     // before tool teardown.
-    const settledAbort = stop.abort.then(
+    const settledAbort = abort.then(
       () => undefined,
       (error: unknown) => error,
     );
@@ -3805,22 +3805,21 @@ class OpenCodeAgentSession implements AgentSession {
     return this.turnState.status === "stopping" && this.turnState.stop === stop;
   }
 
-  private beginStop(turnId: string | null): OpenCodeStop {
+  /** Stops the session runner and returns the abort this Stop issued. */
+  private issueStop(turnId: string | null): Promise<void> {
     if (this.turnState.status === "stopping") {
       // Stop pressed again during a stop retries that same stop. There is one
       // runner per session, so a second boundary would race the first — and
       // after a failed abort, a fresh one is both the only proof that can still
       // acknowledge the canceled turn and the only way out of fail-closed.
-      const stop = this.turnState.stop;
-      stop.abort = this.issueOwnedAbort(stop);
-      return stop;
+      return this.issueOwnedAbort(this.turnState.stop);
     }
     const stop: OpenCodeStop = {
       pendingCancellationTurnId: turnId,
       terminal: createDeferred<void>(),
       abort: Promise.resolve(),
     };
-    stop.abort = this.issueOwnedAbort(stop);
+    const abort = this.issueOwnedAbort(stop);
     if (turnId) {
       this.synthesizeInterruptedToolCalls(turnId);
       // An idle session has no run to observe, so only abort settlement gates
@@ -3830,14 +3829,25 @@ class OpenCodeAgentSession implements AgentSession {
     this.pendingUserMessageText = null;
     this.pendingClientMessageId = null;
     this.abortController = null;
-    return stop;
+    return abort;
   }
 
+  /**
+   * Issues one more session-scoped abort for this stop and returns it.
+   *
+   * The stop's settlement accumulates every abort it has issued: a request still
+   * in flight can land on a replacement run just as easily as the newest one, so
+   * reuse waits for all of them. Only the newest may hold the gate closed — an
+   * older failure is precisely what pressing Stop again exists to recover from.
+   */
   private issueOwnedAbort(stop: OpenCodeStop): Promise<void> {
+    const alreadyIssued = stop.abort.catch(() => undefined);
     const abort = this.runOwnedAbort(stop.pendingCancellationTurnId);
-    this.abortSettlement = abort;
-    // Cancellation is acknowledged only once the stop is proven: either an owned
-    // abort succeeded, or the provider published the canceled run's terminal.
+    stop.abort = Promise.all([alreadyIssued, abort]).then(() => undefined);
+    this.abortSettlement = stop.abort;
+    void this.abortSettlement.catch(() => undefined);
+    // Cancellation is acknowledged as soon as an owned abort succeeds, or when
+    // the provider publishes the canceled run's terminal.
     void abort.then(
       () => this.acknowledgeCancellation(stop),
       () => undefined,

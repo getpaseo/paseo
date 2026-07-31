@@ -2302,6 +2302,46 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
+  test("keeps a replacement behind an earlier Stop's abort that is still in flight", async () => {
+    const { parent: session, openCode } = await createParentSession("ses_overlapping_stops");
+    const settleFirstAbort = createTestDeferred<void>();
+    openCode.sessionPromptAsyncEvents = [];
+    openCode.sessionAbortImplementation = async () => {
+      if (openCode.calls.sessionAbort.length === 1) {
+        await settleFirstAbort.promise;
+      }
+      return { data: true };
+    };
+
+    let replacement: Promise<{ turnId: string }> | undefined;
+    try {
+      await session.startTurn("first");
+      const firstStop = session.interrupt();
+      void firstStop.catch(() => undefined);
+      await vi.waitFor(() => expect(openCode.calls.sessionAbort).toHaveLength(1));
+
+      await session.interrupt();
+      expect(openCode.calls.sessionAbort).toHaveLength(2);
+      openCode.emitEvent({
+        type: "session.idle",
+        properties: { sessionID: "ses_overlapping_stops" },
+      });
+
+      replacement = session.startTurn("replacement");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
+
+      settleFirstAbort.resolve();
+      await firstStop;
+      await replacement;
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
+    } finally {
+      settleFirstAbort.resolve();
+      await replacement?.catch(() => undefined);
+      await session.close();
+    }
+  });
+
   test("does not retry an owned abort after the session closes", async () => {
     const { parent: session, openCode } = await createParentSession("ses_close_pending_abort");
     const settleOwnedAbort = createTestDeferred<void>();
