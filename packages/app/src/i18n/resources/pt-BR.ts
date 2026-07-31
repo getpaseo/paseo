@@ -318,6 +318,9 @@ export const ptBR: TranslationResources = {
       empty: "Nenhuma tarefa ainda.",
       archiveCompleted: "Descartar tarefas concluídas",
       archiveCompletedTooltip: "Descartar concluídas",
+      tasksDoneAll: "{{count}} tarefas concluídas",
+      tasksRemaining: "{{count}} tarefas",
+      tasksProgress: "{{completed}}/{{total}} tarefas concluídas",
     },
     compaction: {
       loading: "Compactando...",

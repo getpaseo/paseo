@@ -318,6 +318,9 @@ export const ja: TranslationResources = {
       empty: "タスクがまだありません。",
       archiveCompleted: "完了したタスクを閉じる",
       archiveCompletedTooltip: "完了を閉じる",
+      tasksDoneAll: "{{count}}タスク完了",
+      tasksRemaining: "{{count}}タスク",
+      tasksProgress: "{{completed}}/{{total}}タスク完了",
     },
     compaction: {
       loading: "コンテキストを圧縮中...",

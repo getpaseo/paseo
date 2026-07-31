@@ -314,6 +314,9 @@ export const en = {
       empty: "No tasks yet.",
       archiveCompleted: "Dismiss completed tasks",
       archiveCompletedTooltip: "Dismiss completed",
+      tasksDoneAll: "{{count}} tasks done",
+      tasksRemaining: "{{count}} tasks",
+      tasksProgress: "{{completed}}/{{total}} tasks done",
     },
     compaction: {
       loading: "Compacting...",

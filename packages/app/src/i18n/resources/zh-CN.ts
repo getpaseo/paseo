@@ -315,6 +315,9 @@ export const zhCN: TranslationResources = {
       empty: "还没有任务。",
       archiveCompleted: "隐藏已完成的任务",
       archiveCompletedTooltip: "隐藏已完成的",
+      tasksDoneAll: "已完成 {{count}} 项任务",
+      tasksRemaining: "{{count}} 项任务",
+      tasksProgress: "已完成 {{completed}}/{{total}} 项任务",
     },
     compaction: {
       loading: "正在压缩...",

@@ -318,6 +318,9 @@ export const es: TranslationResources = {
       empty: "Aún no hay tareas.",
       archiveCompleted: "Descartar tareas completadas",
       archiveCompletedTooltip: "Descartar completadas",
+      tasksDoneAll: "{{count}} tareas hechas",
+      tasksRemaining: "{{count}} tareas",
+      tasksProgress: "{{completed}}/{{total}} tareas hechas",
     },
     compaction: {
       loading: "Compactando...",

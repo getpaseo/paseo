@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
 import { Archive, Check, ChevronDown, ChevronRight, Square } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -63,33 +63,18 @@ export const TaskListCard = memo(function TaskListCard({
   onDismissCompleted,
 }: TaskListCardProps) {
   const [expanded, setExpanded] = useState(false);
-  const dismissedRef = useRef(new Set<string>());
-  const [, forceUpdate] = useState(0);
+  const [allDismissed, setAllDismissed] = useState(false);
+
+  const { t } = useTranslation();
 
   const toggleExpanded = useCallback(() => {
     setExpanded((current) => !current);
   }, []);
 
   const handleDismissCompleted = useCallback(() => {
-    for (const item of items) {
-      if (item.completed) {
-        dismissedRef.current.add(item.text);
-      }
-    }
-    forceUpdate((n) => n + 1);
+    setAllDismissed(true);
     onDismissCompleted?.();
-  }, [items, onDismissCompleted]);
-
-  const visibleItems = items.filter((item) => !dismissedRef.current.has(item.text));
-
-  const completedCount = visibleItems.filter((item) => item.completed).length;
-
-  const headerLabel = useMemo(() => {
-    if (visibleItems.length === 0) return "";
-    if (completedCount === visibleItems.length) return `${visibleItems.length} tasks done`;
-    if (completedCount === 0) return `${visibleItems.length} tasks`;
-    return `${completedCount}/${visibleItems.length} tasks done`;
-  }, [visibleItems, completedCount]);
+  }, [onDismissCompleted]);
 
   const surfaceStyle = useMemo(
     () => [styles.surface, expanded && styles.surfaceExpanded],
@@ -109,8 +94,22 @@ export const TaskListCard = memo(function TaskListCard({
     [],
   );
 
-  if (visibleItems.length === 0) {
+  if (allDismissed || items.length === 0) {
     return null;
+  }
+
+  const completedCount = items.filter((item) => item.completed).length;
+
+  let headerLabel: string;
+  if (completedCount === items.length) {
+    headerLabel = t("message.todo.tasksDoneAll", { count: items.length });
+  } else if (completedCount === 0) {
+    headerLabel = t("message.todo.tasksRemaining", { count: items.length });
+  } else {
+    headerLabel = t("message.todo.tasksProgress", {
+      completed: completedCount,
+      total: items.length,
+    });
   }
 
   return (
@@ -133,7 +132,7 @@ export const TaskListCard = memo(function TaskListCard({
                 {headerLabel}
               </Text>
             </Pressable>
-            {completedCount === visibleItems.length && visibleItems.length > 0 ? (
+            {completedCount === items.length && items.length > 0 ? (
               <View style={styles.headerAction}>
                 <ArchiveCompletedButton onPress={handleDismissCompleted} />
               </View>
@@ -146,7 +145,7 @@ export const TaskListCard = memo(function TaskListCard({
               showsVerticalScrollIndicator={false}
               nestedScrollEnabled
             >
-              {visibleItems.map((item) => (
+              {items.map((item) => (
                 <View key={item.text} style={styles.row}>
                   <TaskCheckbox completed={item.completed} />
                   <Text

@@ -315,6 +315,9 @@ export const ar: TranslationResources = {
       empty: "لا توجد مهام حتى الآن.",
       archiveCompleted: "تجاهل المهام المكتملة",
       archiveCompletedTooltip: "تجاهل المكتملة",
+      tasksDoneAll: "{{count}} مهام منجزة",
+      tasksRemaining: "{{count}} مهام",
+      tasksProgress: "{{completed}}/{{total}} مهام منجزة",
     },
     compaction: {
       loading: "الضغط...",

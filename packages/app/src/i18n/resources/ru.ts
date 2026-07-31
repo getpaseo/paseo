@@ -317,6 +317,9 @@ export const ru: TranslationResources = {
       empty: "Заданий пока нет.",
       archiveCompleted: "Скрыть выполненные задачи",
       archiveCompletedTooltip: "Скрыть выполненные",
+      tasksDoneAll: "{{count}} задач выполнено",
+      tasksRemaining: "{{count}} задач",
+      tasksProgress: "{{completed}}/{{total}} задач выполнено",
     },
     compaction: {
       loading: "Уплотнение...",

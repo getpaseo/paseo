@@ -319,6 +319,9 @@ export const fr: TranslationResources = {
       empty: "Aucune tâche pour l'instant.",
       archiveCompleted: "Ignorer les tâches terminées",
       archiveCompletedTooltip: "Ignorer les terminées",
+      tasksDoneAll: "{{count}} tâches terminées",
+      tasksRemaining: "{{count}} tâches",
+      tasksProgress: "{{completed}}/{{total}} tâches terminées",
     },
     compaction: {
       loading: "Compactage...",
