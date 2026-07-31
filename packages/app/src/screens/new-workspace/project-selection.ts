@@ -1,4 +1,5 @@
 import {
+  getHostProjectId,
   resolveEquivalentHostProjectCandidate,
   resolveExactHostProjectCandidate,
   type HostProjectListItem,
@@ -115,6 +116,31 @@ function refreshSelectionProject(
   };
 }
 
+function resolveManualOriginProject(
+  selection: ProjectSelection,
+  context: ProjectSelectionContext,
+): HostProjectListItem | null {
+  if (selection.source !== "manual") {
+    return null;
+  }
+
+  const exactOriginProject = resolveExactHostProjectCandidate({
+    candidate: selection.originProject,
+    projects: context.projects,
+    serverId: context.selectedServerId,
+  });
+  if (exactOriginProject) {
+    return exactOriginProject;
+  }
+
+  const originBelongsToSelectedHost =
+    getHostProjectId(selection.originProject, context.selectedServerId) !== null;
+  return originBelongsToSelectedHost &&
+    context.shouldPreserveMissingProject(selection.originProject)
+    ? selection.originProject
+    : null;
+}
+
 function shouldResetHydratedInitialSelection(
   selection: ProjectSelection,
   context: ProjectSelectionContext,
@@ -139,13 +165,9 @@ export function resolveProjectSelection(
   }
 
   if (selection.source === "manual") {
-    const exactOriginProject = resolveExactHostProjectCandidate({
-      candidate: selection.originProject,
-      projects: context.projects,
-      serverId: context.selectedServerId,
-    });
-    if (exactOriginProject) {
-      return exactOriginProject;
+    const originProject = resolveManualOriginProject(selection, context);
+    if (originProject) {
+      return originProject;
     }
   }
 
@@ -198,16 +220,12 @@ export function reconcileProjectSelection(
   }
 
   if (current.source === "manual") {
-    const exactOriginProject = resolveExactHostProjectCandidate({
-      candidate: current.originProject,
-      projects: context.projects,
-      serverId: context.selectedServerId,
-    });
-    if (exactOriginProject) {
+    const originProject = resolveManualOriginProject(current, context);
+    if (originProject) {
       return {
         ...current,
-        project: exactOriginProject,
-        originProject: exactOriginProject,
+        project: originProject,
+        originProject,
       };
     }
   }

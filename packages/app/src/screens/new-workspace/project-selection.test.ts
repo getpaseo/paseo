@@ -411,6 +411,52 @@ describe("reconcileProjectSelection", () => {
     expect(resolveProjectSelection(resolvedDestination, archiveGap)).toBe(destination);
   });
 
+  it("preserves the exact origin clone during its pending archive gap", () => {
+    const selected = {
+      ...project("shared", "host-a"),
+      viewKey: "view:host-a:selected",
+      workspaceKeys: ["host-a:workspace"],
+      hosts: [
+        {
+          serverId: "host-a",
+          projectId: "prj_b",
+          iconWorkingDir: "/work/selected",
+          canCreateWorktree: true,
+        },
+      ],
+    };
+    const sibling = {
+      ...selected,
+      viewKey: "view:host-a:sibling",
+      workspaceKeys: [],
+      hosts: [{ ...selected.hosts[0]!, projectId: "prj_a", iconWorkingDir: "/work/sibling" }],
+    };
+    const destination = project("shared", "host-b");
+    const current: ProjectSelection = {
+      contextKey: "",
+      project: selected,
+      originProject: selected,
+      source: "manual",
+    };
+    const destinationHost = context({
+      selectedServerId: "host-b",
+      initialProject: destination,
+      projects: [destination],
+    });
+    const resolvedDestination = reconcileProjectSelection(current, destinationHost);
+    const archiveGap = context({
+      selectedServerId: "host-a",
+      initialProject: sibling,
+      projects: [sibling],
+      shouldPreserveMissingProject: (candidate) => candidate === selected,
+    });
+
+    const preservedOrigin = reconcileProjectSelection(resolvedDestination, archiveGap);
+
+    expect(preservedOrigin.project).toBe(selected);
+    expect(resolveProjectSelection(preservedOrigin, archiveGap)).toBe(selected);
+  });
+
   it("falls back when the only equivalent project is not selectable", () => {
     const selected = project("shared", "host-a");
     const unselectableEquivalent = {
