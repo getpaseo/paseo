@@ -326,7 +326,7 @@ export function createWorkspaceProvisioningService(deps: {
   async function resolveRestoredAutoArchiveChangeRequestUrl(
     workspace: PersistedWorkspaceRecord,
   ): Promise<string | null> {
-    if (!workspace.archivedAt || workspace.autoArchivedChangeRequestUrl) {
+    if (!workspace.archivedAt) {
       return workspace.autoArchivedChangeRequestUrl;
     }
     const snapshot = await workspaceGitService.getSnapshot(workspace.cwd, {
@@ -334,7 +334,9 @@ export function createWorkspaceProvisioningService(deps: {
       includeForge: true,
       reason: "workspace-restore-auto-archive-latch",
     });
-    return snapshot.forge.pullRequest?.isMerged ? snapshot.forge.pullRequest.url : null;
+    return snapshot.forge.pullRequest?.isMerged
+      ? snapshot.forge.pullRequest.url
+      : workspace.autoArchivedChangeRequestUrl;
   }
 
   async function ensureWorkspaceRecordUnarchived(

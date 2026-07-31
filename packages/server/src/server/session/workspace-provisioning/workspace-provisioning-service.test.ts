@@ -404,6 +404,30 @@ test("ensureWorkspaceRecordUnarchived acknowledges a merged change request for a
   });
 });
 
+test("ensureWorkspaceRecordUnarchived refreshes the latch for a different merged change request", async () => {
+  const repo = path.join(tmpDir, "repo");
+  const previousChangeRequestUrl = "https://github.com/getpaseo/paseo/pull/2713";
+  const currentChangeRequestUrl = "https://github.com/getpaseo/paseo/pull/2714";
+  gitRoots.add(repo);
+  const created = await provisioning.findOrCreateWorkspaceForDirectory(repo);
+  await workspaceRegistry.archive(created.workspaceId, ARCHIVED_AT, {
+    autoArchivedChangeRequestUrl: previousChangeRequestUrl,
+  });
+  const archivedWorkspace = await workspaceRegistry.get(created.workspaceId);
+  restoredMergedChangeRequestUrl = currentChangeRequestUrl;
+
+  const unarchived = await provisioning.ensureWorkspaceRecordUnarchived(archivedWorkspace!);
+
+  expect(unarchived).toMatchObject({
+    archivedAt: null,
+    autoArchivedChangeRequestUrl: currentChangeRequestUrl,
+  });
+  expect(await workspaceRegistry.get(created.workspaceId)).toMatchObject({
+    archivedAt: null,
+    autoArchivedChangeRequestUrl: currentChangeRequestUrl,
+  });
+});
+
 test("does not unarchive either record when checkout refresh fails", async () => {
   const repo = path.join(tmpDir, "repo");
   gitRoots.add(repo);
