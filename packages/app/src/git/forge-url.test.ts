@@ -29,6 +29,21 @@ describe("buildForgeBranchTreeUrl", () => {
     ).toBe("https://gitlab.com/group/sub/repo/-/tree/main");
   });
 
+  it("uses the configured Iceveil GitLab web port", () => {
+    expect(
+      buildForgeBranchTreeUrl("gitlab", {
+        remoteUrl: "git@gitlab.iceveil.com:group/repo.git",
+        branch: "main",
+      }),
+    ).toBe("https://gitlab.iceveil.com:38443/group/repo/-/tree/main");
+    expect(
+      buildForgeBranchTreeUrl("gitlab", {
+        remoteUrl: "https://gitlab.iceveil.com:38443/group/repo.git",
+        branch: "main",
+      }),
+    ).toBe("https://gitlab.iceveil.com:38443/group/repo/-/tree/main");
+  });
+
   it("uses the Gitea-family /src/branch/ infix", () => {
     expect(
       buildForgeBranchTreeUrl("gitea", {

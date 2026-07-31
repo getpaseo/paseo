@@ -53,6 +53,8 @@ export interface ForgeDefinition {
    * recognized at runtime by the adapter's host probe, not by this field.
    */
   cloudHosts?: string[];
+  /** Web authorities for known hosts that require a non-default browser origin. */
+  webAuthorities?: Record<string, string>;
 }
 
 export const FORGE_DEFINITIONS: ForgeDefinition[] = [
@@ -78,6 +80,7 @@ export const FORGE_DEFINITIONS: ForgeDefinition[] = [
     signIn: { cli: "glab", command: "glab auth login", hostnameFlag: "--hostname" },
     // YOOZ DOWNSTREAM(sync): keep Iceveil's self-hosted GitLab on the direct GitLab path.
     cloudHosts: ["gitlab.com", "gitlab.iceveil.com"],
+    webAuthorities: { "gitlab.iceveil.com": "gitlab.iceveil.com:38443" },
   },
   {
     id: "gitea",
