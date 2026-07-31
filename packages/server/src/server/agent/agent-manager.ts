@@ -73,6 +73,9 @@ import {
   type ProviderSubagentDescriptor,
   type ProviderSubagentStoreEvent,
 } from "./provider-subagents/store.js";
+import { analyzeMaterialProgress } from "./material-progress.js";
+import { projectTimelineRows } from "./timeline-projection.js";
+import type { MaterialProgressPayload } from "../messages.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -280,6 +283,14 @@ type AttentionState =
       attentionTimestamp: Date;
     };
 
+type AgentTurnOutcome = "completed" | "failed" | "canceled";
+
+export interface MaterialProgressSnapshot {
+  rows: AgentTimelineRow[] | null;
+  turnOutcome: AgentTurnOutcome | null;
+  persisted: MaterialProgressPayload | null;
+}
+
 function resolveInitialAttention(input: AttentionState | undefined): AttentionState {
   if (input == null || !input.requiresAttention) {
     return { requiresAttention: false };
@@ -331,6 +342,7 @@ interface ManagedAgentBase {
   lastUserMessageAt: Date | null;
   lastUsage?: AgentUsage;
   lastError?: string;
+  lastTurnOutcome?: AgentTurnOutcome | null;
   attention: AttentionState;
   foregroundTurnWaiters: Set<ForegroundTurnWaiter>;
   finalizedForegroundTurnIds: Set<string>;
@@ -971,6 +983,45 @@ export class AgentManager {
     return this.timelineStore.getRows(id);
   }
 
+  async getMaterialProgressSnapshot(
+    id: string,
+    limit = 1_000,
+  ): Promise<MaterialProgressSnapshot> {
+    const live = this.agents.get(id);
+    if (live && this.timelineStore.has(id)) {
+      const timeline = this.timelineStore.fetch(id, { direction: "tail", limit });
+      const rowsUnavailable =
+        (timeline.rows.length === 0 && !live.historyPrimed) ||
+        (timeline.hasOlder && !timeline.rows.some((row) => row.item.type === "user_message"));
+      const record = rowsUnavailable ? await this.registry?.get(id) : null;
+      return {
+        rows: rowsUnavailable ? null : timeline.rows,
+        turnOutcome: live.lastTurnOutcome ?? null,
+        persisted: record?.materialProgress ?? null,
+      };
+    }
+
+    let timeline: AgentTimelineFetchResult | null = null;
+    if (this.durableTimelineStore) {
+      timeline = await this.durableTimelineStore.fetchCommitted(id, {
+        direction: "tail",
+        limit,
+      });
+    } else if (this.timelineStore.has(id)) {
+      timeline = this.timelineStore.fetch(id, { direction: "tail", limit });
+    }
+    const record = await this.registry?.get(id);
+    return {
+      rows:
+        timeline === null ||
+        (timeline.hasOlder && !timeline.rows.some((row) => row.item.type === "user_message"))
+          ? null
+          : timeline.rows,
+      turnOutcome: record?.lastTurnOutcome ?? null,
+      persisted: record?.materialProgress ?? null,
+    };
+  }
+
   fetchTimeline(id: string, options?: AgentTimelineFetchOptions): AgentTimelineFetchResult {
     this.requireAgent(id);
     return this.timelineStore.fetch(id, options);
@@ -1061,6 +1112,7 @@ export class AgentManager {
       labels?: Record<string, string>;
       workspaceId?: string;
       owner?: AgentOwner;
+      lastTurnOutcome?: AgentTurnOutcome | null;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -1080,6 +1132,7 @@ export class AgentManager {
       labels?: Record<string, string>;
       workspaceId?: string;
       owner?: AgentOwner;
+      lastTurnOutcome?: AgentTurnOutcome | null;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -1224,6 +1277,7 @@ export class AgentManager {
     const preservedHistoryPrimed = existing.historyPrimed;
     const preservedLastUsage = existing.lastUsage;
     const preservedLastError = existing.lastError;
+    const preservedLastTurnOutcome = existing.lastTurnOutcome;
     const preservedAttention = existing.attention;
     const handle = existing.persistence;
     const provider = handle?.provider ?? existing.provider;
@@ -1275,6 +1329,7 @@ export class AgentManager {
         historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
         lastUsage: preservedLastUsage,
         lastError: preservedLastError,
+        lastTurnOutcome: preservedLastTurnOutcome,
         attention: preservedAttention,
       });
     } finally {
@@ -1423,8 +1478,10 @@ export class AgentManager {
       throw new Error("Agent storage is not configured");
     }
 
+    const materialProgress = this.buildPersistedMaterialProgress(agent);
     await this.registry.applySnapshot(agent, {
       internal: agent.internal,
+      ...(materialProgress ? { materialProgress } : {}),
     });
     const stored = await this.registry.get(agentId);
     if (!stored) {
@@ -1531,6 +1588,7 @@ export class AgentManager {
         lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
         lastUsage: undefined,
         lastError: record.lastError ?? undefined,
+        lastTurnOutcome: record.lastTurnOutcome,
         attention: { requiresAttention: false },
         internal: record.internal,
         labels: record.labels,
@@ -2007,6 +2065,7 @@ export class AgentManager {
       }
       agent.activeForegroundTurnId = turnId;
       agent.lifecycle = "running";
+      agent.lastTurnOutcome = null;
       this.touchUpdatedAt(agent);
       this.emitState(agent);
       this.logger.trace(
@@ -2671,6 +2730,7 @@ export class AgentManager {
       historyPrimed?: boolean;
       lastUsage?: AgentUsage;
       lastError?: string;
+      lastTurnOutcome?: AgentTurnOutcome | null;
       attention?: AttentionState;
       initialTitle?: string | null;
       publishWhenReady?: boolean;
@@ -2811,6 +2871,7 @@ export class AgentManager {
           historyPrimed?: boolean;
           lastUsage?: AgentUsage;
           lastError?: string;
+          lastTurnOutcome?: AgentTurnOutcome | null;
           attention?: AttentionState;
           persistence?: AgentPersistenceHandle;
           workspaceId?: string;
@@ -2850,6 +2911,7 @@ export class AgentManager {
       lastUserMessageAt: options?.lastUserMessageAt ?? null,
       lastUsage: options?.lastUsage,
       lastError: options?.lastError,
+      lastTurnOutcome: options?.lastTurnOutcome,
       attention: resolveInitialAttention(options?.attention),
       internal: config.internal ?? false,
       labels: options?.labels ?? {},
@@ -3066,7 +3128,29 @@ export class AgentManager {
     if (agent.internal) {
       return;
     }
-    await this.registry.applySnapshot(agent, options);
+    const materialProgress = this.buildPersistedMaterialProgress(agent);
+    await this.registry.applySnapshot(agent, {
+      ...options,
+      ...(materialProgress ? { materialProgress } : {}),
+    });
+  }
+
+  private buildPersistedMaterialProgress(agent: ManagedAgent): MaterialProgressPayload | undefined {
+    const timeline = this.timelineStore.has(agent.id)
+      ? this.timelineStore.fetch(agent.id, { direction: "tail", limit: 1_000 })
+      : null;
+    if (timeline?.rows.length === 0 && !agent.historyPrimed) {
+      return undefined;
+    }
+    const rows =
+      timeline === null ||
+      (timeline.hasOlder && !timeline.rows.some((row) => row.item.type === "user_message"))
+        ? null
+        : timeline.rows;
+    return analyzeMaterialProgress({
+      entries: rows === null ? null : projectTimelineRows({ rows, mode: "projected" }),
+      turnOutcome: agent.lastTurnOutcome ?? null,
+    });
   }
 
   private requireRegistry(): AgentStorage {
@@ -3564,6 +3648,7 @@ export class AgentManager {
     // data accumulated during streaming isn't lost when the provider omits
     // it from the completion event.
     agent.lastError = undefined;
+    agent.lastTurnOutcome = "completed";
     if (!isForegroundEvent && agent.lifecycle !== "idle" && !agent.pendingReplacement) {
       (agent as ActiveManagedAgent).lifecycle = "idle";
       this.emitState(agent);
@@ -3598,6 +3683,7 @@ export class AgentManager {
       agent.lifecycle = "error";
     }
     agent.lastError = event.error;
+    agent.lastTurnOutcome = "failed";
     await this.appendSystemErrorTimelineMessage(
       agent,
       event.provider,
@@ -3638,6 +3724,7 @@ export class AgentManager {
       agent.lifecycle = "idle";
     }
     agent.lastError = undefined;
+    agent.lastTurnOutcome = "canceled";
     this.resolvePendingPermissionsForAgent(agent, event.provider, options, "Interrupted");
     if (!isForegroundEvent) {
       this.emitState(agent);
@@ -3650,6 +3737,7 @@ export class AgentManager {
     isForegroundEvent: boolean;
   }): void {
     const { agent, eventTurnId, isForegroundEvent } = params;
+    agent.lastTurnOutcome = null;
     this.logger.trace(
       {
         agentId: agent.id,

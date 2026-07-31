@@ -75,6 +75,7 @@ import type {
   AgentTimelineFetchDirection,
   AgentTimelineFetchResult,
   ManagedAgent,
+  MaterialProgressSnapshot,
 } from "./agent/agent-manager.js";
 import { createAgentCommand } from "./agent/create-agent/create.js";
 import { resolveCreateAgentIntent, type CreateAgentIntent } from "./agent/create-agent/intent.js";
@@ -101,6 +102,7 @@ import {
   type TimelineProjectionEntry,
   type TimelineProjectionMode,
 } from "./agent/timeline-projection.js";
+import { analyzeMaterialProgress } from "./agent/material-progress.js";
 import { buildAgentForkContextAttachment } from "./agent/activity-curator.js";
 import { buildAgentPrompt } from "./agent/prompt-attachments.js";
 import type { StructuredGenerationDaemonConfig } from "./agent/structured-generation-providers.js";
@@ -3956,7 +3958,9 @@ export class Session {
     const live = this.agentManager.getAgent(agentId);
     if (live) {
       const payload = await this.buildAgentPayload(live);
-      return this.isProviderVisibleToClient(payload.provider) ? payload : null;
+      return this.isProviderVisibleToClient(payload.provider)
+        ? await this.attachMaterialProgress(payload)
+        : null;
     }
 
     const record = await this.agentStorage.get(agentId);
@@ -3964,7 +3968,41 @@ export class Session {
       return null;
     }
     const payload = this.buildStoredAgentPayload(record);
-    return this.isProviderVisibleToClient(payload.provider) ? payload : null;
+    return this.isProviderVisibleToClient(payload.provider)
+      ? await this.attachMaterialProgress(payload)
+      : null;
+  }
+
+  private async attachMaterialProgress(
+    payload: AgentSnapshotPayload,
+  ): Promise<AgentSnapshotPayload> {
+    let entries: TimelineProjectionEntry[] | null = null;
+    let turnOutcome: MaterialProgressSnapshot["turnOutcome"] = null;
+    let persisted = payload.materialProgress ?? null;
+    try {
+      const snapshot = await this.agentManager.getMaterialProgressSnapshot(payload.id);
+      entries =
+        snapshot.rows === null
+          ? null
+          : projectTimelineRows({ rows: snapshot.rows, mode: "projected" });
+      turnOutcome = snapshot.turnOutcome;
+      persisted = snapshot.persisted ?? persisted;
+    } catch (error) {
+      this.sessionLogger.debug(
+        { err: error, agentId: payload.id },
+        "Material progress timeline is unavailable",
+      );
+    }
+    return {
+      ...payload,
+      materialProgress:
+        entries === null && persisted
+          ? persisted
+          : analyzeMaterialProgress({
+              entries,
+              turnOutcome,
+            }),
+    };
   }
 
   private async resolveDelegationRootWorkspaceId(agentId: string): Promise<string | null> {
