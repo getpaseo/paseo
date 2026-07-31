@@ -95,7 +95,7 @@ function submittedPromptText(prompt: AgentPromptInput): string {
     return prompt;
   }
   return prompt
-    .flatMap((block) => (block.type === "text" ? [block.text] : []))
+    .flatMap((block) => (block.type === "text" && !("mimeType" in block) ? [block.text] : []))
     .join("\n")
     .trim();
 }

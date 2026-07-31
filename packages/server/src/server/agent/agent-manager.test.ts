@@ -8183,9 +8183,20 @@ test("authoritative timeline includes provider-emitted submitted user prompt", a
       workspaceId: undefined,
     });
 
-    await manager.runAgent(snapshot.id, "hello from composer", {
-      clientMessageId: "msg-client-1",
-    });
+    await manager.runAgent(
+      snapshot.id,
+      [
+        {
+          type: "text",
+          mimeType: "text/plain",
+          contextKind: "chat_history",
+          title: "Chat history",
+          text: "<chat-history-summary>hidden fork history</chat-history-summary>",
+        },
+        { type: "text", text: "hello from composer" },
+      ],
+      { clientMessageId: "msg-client-1" },
+    );
 
     const liveEvents = events.filter(
       (event): event is Extract<AgentManagerEvent, { type: "agent_stream" }> =>
