@@ -109,6 +109,11 @@ export function SkillSelectionSheet({
     })();
   }, [draft, onClose, onSave, t]);
 
+  const handleDismiss = useCallback(() => {
+    if (isSaving) return;
+    onClose();
+  }, [isSaving, onClose]);
+
   const header = useMemo<SheetHeader>(
     () => ({ title: t("settings.integrations.skills.choose") }),
     [t],
@@ -120,7 +125,7 @@ export function SkillSelectionSheet({
         <Button
           style={styles.footerButton}
           variant="secondary"
-          onPress={onClose}
+          onPress={handleDismiss}
           disabled={isSaving}
         >
           {t("common.actions.cancel")}
@@ -138,7 +143,7 @@ export function SkillSelectionSheet({
         </Button>
       </View>
     ),
-    [handleSave, isSaving, onClose, t],
+    [handleDismiss, handleSave, isSaving, t],
   );
 
   const allSkills = draft.mode === "all";
@@ -147,7 +152,7 @@ export function SkillSelectionSheet({
     <AdaptiveModalSheet
       header={header}
       visible={visible}
-      onClose={onClose}
+      onClose={handleDismiss}
       footer={footer}
       testID="skill-selection-sheet"
     >

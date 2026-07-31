@@ -169,6 +169,9 @@ export function IntegrationsSection() {
     skillsStatus?.state === "drift" && skillMaintenanceOps.length === 0
       ? "up-to-date"
       : (skillsStatus?.state ?? null);
+  const hasSelectedSkills =
+    skillsStatus?.selection.mode === "all" ||
+    (skillsStatus?.selection.mode === "custom" && skillsStatus.selection.skills.length > 0);
 
   return (
     <SettingsSection title={t("settings.integrations.title")} trailing={trailing}>
@@ -224,13 +227,15 @@ export function IntegrationsSection() {
               disabled={skillsStatus === null || isSkillsWorking}
               accessibilityLabel={t("settings.integrations.skills.choose")}
             />
-            <SkillsActions
-              state={skillsState}
-              isWorking={isSkillsWorking}
-              onInstall={handleInstallSkills}
-              onUpdate={handleUpdateSkills}
-              onUninstall={handleUninstallSkills}
-            />
+            {hasSelectedSkills ? (
+              <SkillsActions
+                state={skillsState}
+                isWorking={isSkillsWorking}
+                onInstall={handleInstallSkills}
+                onUpdate={handleUpdateSkills}
+                onUninstall={handleUninstallSkills}
+              />
+            ) : null}
           </View>
         </View>
       </View>

@@ -116,6 +116,39 @@ test.describe("Choosing installed skills", () => {
     await expectSaveErrorKeepsSheetOpen(page);
     await expectSkillsInstalled(skills, []);
   });
+
+  test("an empty selection does not offer an Install action that cannot install anything", async ({
+    page,
+    startSkills,
+  }) => {
+    await startSkills({ installed: { mode: "all" }, confirmRemoval: true });
+    await gotoAppShell(page);
+    await openSkillsIntegrations(page);
+
+    await openSkillSelection(page);
+    await chooseCustomSkills(page, []);
+    await saveSkillSelection(page);
+
+    // The remaining Install action belongs to the command-line integration.
+    await expect(page.getByRole("button", { name: "Install", exact: true })).toHaveCount(1);
+    await expect(page.getByRole("button", { name: "Choose skills", exact: true })).toBeVisible();
+  });
+
+  test("cannot dismiss the sheet while Save is pending", async ({ page, startSkills }) => {
+    const skills = await startSkills({ holdSave: true });
+    await gotoAppShell(page);
+    await openSkillsIntegrations(page);
+    await openSkillSelection(page);
+    await chooseCustomSkills(page, ["paseo"]);
+
+    await saveSkillSelection(page);
+    await skills.waitForHeldSave();
+    await page.keyboard.press("Escape");
+    await expectSkillSelectionOpen(page);
+
+    skills.releaseHeldSave();
+    await expect(page.getByRole("switch", { name: "All skills", exact: true })).toHaveCount(0);
+  });
 });
 
 test.describe("Removing an installed skill", () => {

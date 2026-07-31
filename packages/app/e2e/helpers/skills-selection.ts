@@ -43,6 +43,12 @@ export interface SkillsSandbox {
     selection: SkillSelection,
     confirmedRemovals?: readonly string[],
   ) => Promise<void>;
+  /** Waits until a held save reaches the desktop command boundary. */
+  waitForHeldSave: () => Promise<void>;
+  /** Releases a save held at the desktop command boundary. */
+  releaseHeldSave: () => void;
+  /** Test-only command-boundary gate used to keep the renderer in its pending state. */
+  holdSaveResponse?: () => Promise<void>;
   cleanup: () => Promise<void>;
 }
 
@@ -66,6 +72,8 @@ export interface SkillsSandboxOptions {
    * the saved preference does not mention.
    */
   placeOnDisk?: { skill: string; target: SkillTargetName; files: Record<string, string> };
+  /** Holds the save response so dismissal behavior can be asserted while pending. */
+  holdSave?: boolean;
 }
 
 export type SkillTargetName = "agents" | "claude" | "codex";
@@ -79,6 +87,14 @@ function targetDir(targets: SkillTargets, target: SkillTargetName): string {
 export async function createSkillsSandbox(
   options: SkillsSandboxOptions = {},
 ): Promise<SkillsSandbox> {
+  let releaseHeldSave: (() => void) | null = null;
+  let markSaveHeld: (() => void) | null = null;
+  const heldSave = new Promise<void>((resolve) => {
+    markSaveHeld = resolve;
+  });
+  const saveRelease = new Promise<void>((resolve) => {
+    releaseHeldSave = resolve;
+  });
   const bundledSkills = options.bundledSkills ?? ["paseo", "paseo-advisor", "paseo-loop"];
   const root = await mkdtemp(path.join(os.tmpdir(), "paseo-e2e-skills-"));
   const targets: SkillTargets = {
@@ -141,6 +157,14 @@ export async function createSkillsSandbox(
         selectionStore: createSkillSelectionStore({ userDataPath }),
       }).save({ ...selection, confirmedRemovals: [...confirmedRemovals] });
     },
+    waitForHeldSave: () => heldSave,
+    releaseHeldSave: () => releaseHeldSave?.(),
+    holdSaveResponse: options.holdSave
+      ? async () => {
+          markSaveHeld?.();
+          await saveRelease;
+        }
+      : undefined,
     cleanup: () => rm(root, { recursive: true, force: true }),
   };
 }
@@ -172,7 +196,11 @@ export async function serveRealSkillsCommands(page: Page, sandbox: SkillsSandbox
     async (command: string, args: Record<string, unknown> | null) => {
       const handler = handlers[command];
       if (!handler) throw new Error(`Unknown skills command: ${command}`);
-      return await handler(args ?? undefined);
+      const result = await handler(args ?? undefined);
+      if (command === "save_skills_selection") {
+        await sandbox.holdSaveResponse?.();
+      }
+      return result;
     },
   );
 
