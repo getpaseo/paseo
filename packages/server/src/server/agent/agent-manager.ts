@@ -134,6 +134,18 @@ function formatProviderList(providers: readonly string[]): string {
   return providers.length > 0 ? providers.join(", ") : "none";
 }
 
+function materialProgressRows(
+  timeline: AgentTimelineFetchResult | null,
+  historyPrimed = true,
+): AgentTimelineRow[] | null {
+  if (timeline === null) return null;
+  if (timeline.rows.length === 0 && !historyPrimed) return null;
+  if (timeline.hasOlder && !timeline.rows.some((row) => row.item.type === "user_message")) {
+    return null;
+  }
+  return timeline.rows;
+}
+
 function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
   const config: AgentSessionConfig = {
     provider: record.provider,
@@ -983,19 +995,14 @@ export class AgentManager {
     return this.timelineStore.getRows(id);
   }
 
-  async getMaterialProgressSnapshot(
-    id: string,
-    limit = 1_000,
-  ): Promise<MaterialProgressSnapshot> {
+  async getMaterialProgressSnapshot(id: string, limit = 1_000): Promise<MaterialProgressSnapshot> {
     const live = this.agents.get(id);
     if (live && this.timelineStore.has(id)) {
       const timeline = this.timelineStore.fetch(id, { direction: "tail", limit });
-      const rowsUnavailable =
-        (timeline.rows.length === 0 && !live.historyPrimed) ||
-        (timeline.hasOlder && !timeline.rows.some((row) => row.item.type === "user_message"));
-      const record = rowsUnavailable ? await this.registry?.get(id) : null;
+      const rows = materialProgressRows(timeline, live.historyPrimed);
+      const record = rows === null ? await this.registry?.get(id) : null;
       return {
-        rows: rowsUnavailable ? null : timeline.rows,
+        rows,
         turnOutcome: live.lastTurnOutcome ?? null,
         persisted: record?.materialProgress ?? null,
       };
@@ -1012,11 +1019,7 @@ export class AgentManager {
     }
     const record = await this.registry?.get(id);
     return {
-      rows:
-        timeline === null ||
-        (timeline.hasOlder && !timeline.rows.some((row) => row.item.type === "user_message"))
-          ? null
-          : timeline.rows,
+      rows: materialProgressRows(timeline),
       turnOutcome: record?.lastTurnOutcome ?? null,
       persisted: record?.materialProgress ?? null,
     };
