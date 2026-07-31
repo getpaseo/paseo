@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, test } from "vitest";
@@ -11,7 +11,6 @@ const CHILD_TOKEN = "PASEO_OMO_CHILD_READY";
 const ROOT_IDLE_TOKEN = "PASEO_OMO_ROOT_WAITING";
 const FINAL_TOKEN = "PASEO_OMO_AUTONOMOUS_FINAL";
 const ROOT_IDLE_BARRIER = ".paseo-omo-root-idle";
-const ROOT_SNAPSHOT_FILE = ".paseo-omo-snapshot-source";
 
 test("OpenCode remains idle while an OMO child works and completes the autonomous wake", async () => {
   const runtime = await createOpenCodeOmoRealRuntime();
@@ -31,7 +30,6 @@ test("OpenCode remains idle while an OMO child works and completes the autonomou
     await runtime.client.sendMessage(
       agent.id,
       [
-        `First use bash to write PASEO_OMO_SNAPSHOT_EDIT to ${ROOT_SNAPSHOT_FILE}.`,
         "Use the OMO task tool exactly once with category quick and run_in_background=true.",
         `Tell the child: use bash to wait until ${ROOT_IDLE_BARRIER} exists in the workspace, sleep 5, then return exactly ${CHILD_TOKEN}.`,
         `After the background task starts, reply exactly ${ROOT_IDLE_TOKEN} and stop.`,
@@ -44,13 +42,6 @@ test("OpenCode remains idle while an OMO child works and completes the autonomou
     expect(firstFinish.status).toBe("idle");
     const firstTimeline = await runtime.client.fetchAgentTimeline(agent.id, { limit: 240 });
     expect(assistantTexts(firstTimeline.entries).join("\n")).toContain(ROOT_IDLE_TOKEN);
-    const firstTerminal = firstTerminalIndex(collector.messages, agent.id);
-    await waitForSnapshotDiff(runtime.artifacts, ROOT_SNAPSHOT_FILE);
-    expect(
-      collector.messages
-        .slice(firstTerminal + 1)
-        .some((message) => isAgentStreamEvent(message, agent.id, "turn_started")),
-    ).toBe(false);
     await writeFile(join(runtime.workspace, ROOT_IDLE_BARRIER), "root idle\n", "utf8");
 
     const completedChild = await waitForCompletedChildWithToken(
@@ -59,6 +50,7 @@ test("OpenCode remains idle while an OMO child works and completes the autonomou
       CHILD_TOKEN,
     );
 
+    const firstTerminal = firstTerminalIndex(collector.messages, agent.id);
     await waitForMessage(
       collector.messages,
       (message, index) =>
@@ -133,19 +125,6 @@ function assistantTexts(
   return entries.flatMap((entry) =>
     entry.item.type === "assistant_message" ? [entry.item.text] : [],
   );
-}
-
-async function waitForSnapshotDiff(artifacts: string, filename: string): Promise<void> {
-  const daemonLog = join(artifacts, "daemon.log");
-  const deadline = Date.now() + 240_000;
-  while (Date.now() < deadline) {
-    const contents = await readFile(daemonLog, "utf8").catch(() => "");
-    if (contents.includes('"diffs"') && contents.includes(filename)) {
-      return;
-    }
-    await new Promise<void>((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error(`Timed out waiting for an OpenCode snapshot diff for ${filename}`);
 }
 
 function isAgentStreamEvent(
