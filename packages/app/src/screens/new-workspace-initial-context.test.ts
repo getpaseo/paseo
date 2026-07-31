@@ -8,11 +8,12 @@ import {
 
 function projectFor(serverId: string, key = "project"): HostProjectListItem {
   return {
+    viewKey: `view:${serverId}:${key}`,
     projectKey: key,
     projectName: key,
     projectKind: "git",
     iconWorkingDir: `/work/${key}`,
-    hosts: [{ serverId, iconWorkingDir: `/work/${key}`, canCreateWorktree: true }],
+    hosts: [{ serverId, projectId: key, iconWorkingDir: `/work/${key}`, canCreateWorktree: true }],
     workspaceKeys: [],
   };
 }

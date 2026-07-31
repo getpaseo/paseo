@@ -202,7 +202,7 @@ vi.mock("@/hooks/use-projects", () => ({
 }));
 
 vi.mock("@/projects/project-icons", () => ({
-  useProjectIconDataByProjectKey: () => new Map(),
+  useProjectIconDataByProjectViewKey: () => new Map(),
 }));
 
 import ProjectsScreen from "./projects-screen";
@@ -221,6 +221,9 @@ function workspaceSummary(overrides: Partial<WorkspaceSummary> = {}): WorkspaceS
 function hostEntry(overrides: Partial<ProjectHostEntry> = {}): ProjectHostEntry {
   return {
     serverId: "host-a",
+    projectId: "project-a",
+    projectName: "Project",
+    projectCustomName: null,
     serverName: "alpha",
     isOnline: true,
     repoRoot: "/home/me/proj",
@@ -236,7 +239,7 @@ function project(overrides: Partial<ProjectSummary> = {}): ProjectSummary {
     overrides.totalWorkspaceCount ?? hosts.reduce((sum, host) => sum + host.workspaceCount, 0);
   const onlineHostCount = overrides.onlineHostCount ?? hosts.filter((h) => h.isOnline).length;
   return {
-    projectKey: "remote:github.com/acme/app",
+    viewKey: "remote:github.com/acme/app",
     projectName: "acme/app",
     hosts,
     totalWorkspaceCount,
@@ -290,7 +293,9 @@ describe("ProjectsScreen", () => {
     vi.unstubAllGlobals();
   });
 
-  function render(view: { kind: "projects" } | { kind: "project"; projectKey: string }) {
+  function render(
+    view: { kind: "projects" } | { kind: "project"; serverId: string; projectId: string },
+  ) {
     act(() => {
       root?.render(<ProjectsScreen view={view} />);
     });
@@ -318,7 +323,7 @@ describe("ProjectsScreen", () => {
 
   it("navigates to the project detail route when the row is pressed", () => {
     setProjectsState({
-      projects: [project({ projectKey: "remote:github.com/acme/app" })],
+      projects: [project({ viewKey: "remote:github.com/acme/app" })],
     });
 
     render({ kind: "projects" });
@@ -329,12 +334,12 @@ describe("ProjectsScreen", () => {
     });
 
     expect(navigate).toHaveBeenCalledTimes(1);
-    expect(navigate).toHaveBeenCalledWith("/settings/projects/remote%3Agithub.com%2Facme%2Fapp");
+    expect(navigate).toHaveBeenCalledWith("/settings/projects/host-a/project-a");
   });
 
   it("does not render a kebab menu on the row", () => {
     setProjectsState({
-      projects: [project({ projectKey: "remote:github.com/acme/app" })],
+      projects: [project({ viewKey: "remote:github.com/acme/app" })],
     });
 
     render({ kind: "projects" });
@@ -383,16 +388,16 @@ describe("ProjectsScreen", () => {
   it("highlights the selected row when the active view targets a project", () => {
     setProjectsState({
       projects: [
-        project({ projectKey: "remote:github.com/acme/app" }),
+        project({ viewKey: "remote:github.com/acme/app" }),
         project({
-          projectKey: "remote:github.com/acme/other",
+          viewKey: "remote:github.com/acme/other",
           projectName: "acme/other",
           githubUrl: "https://github.com/acme/other",
         }),
       ],
     });
 
-    render({ kind: "project", projectKey: "remote:github.com/acme/app" });
+    render({ kind: "project", serverId: "host-a", projectId: "project-a" });
 
     const selected = findRow(container!, "remote:github.com/acme/app");
     const other = findRow(container!, "remote:github.com/acme/other");

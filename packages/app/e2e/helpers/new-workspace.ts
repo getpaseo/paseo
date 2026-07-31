@@ -3,6 +3,7 @@ import type { DaemonClient as InternalDaemonClient } from "@getpaseo/client/inte
 import { decodeWorkspaceIdFromPathSegment } from "@/utils/host-routes";
 import { connectDaemonClient } from "./daemon-client-loader";
 import { daemonWsRoutePattern } from "./daemon-port";
+import { projectEquivalenceViewKey } from "./project-view-key";
 import { expectWorkspaceHeader } from "./workspace-ui";
 
 type NewWorkspaceDaemonClient = Pick<
@@ -18,6 +19,7 @@ type NewWorkspaceDaemonClient = Pick<
   | "getPaseoWorktreeList"
   | "getDaemonConfig"
   | "inspectWorkspaceRecovery"
+  | "listProjects"
   | "on"
   | "patchDaemonConfig"
   | "removeProject"
@@ -29,6 +31,7 @@ type WorkspaceDescriptor = NonNullable<CreateWorkspacePayload["workspace"]>;
 
 export interface OpenedProject {
   workspaceId: string;
+  projectId: string;
   projectKey: string;
   projectDisplayName: string;
   workspaceName: string;
@@ -45,10 +48,19 @@ function requireWorkspace(payload: WorkspacePayload) {
   return payload.workspace;
 }
 
-function openedProjectFromWorkspace(workspace: WorkspaceDescriptor): OpenedProject {
+async function openedProjectFromWorkspace(
+  client: NewWorkspaceDaemonClient,
+  workspace: WorkspaceDescriptor,
+): Promise<OpenedProject> {
+  const payload = await client.listProjects();
+  const project = payload.projects.find((candidate) => candidate.projectId === workspace.projectId);
+  if (!project?.projectKey) {
+    throw new Error(`Project ${workspace.projectId} has no project key`);
+  }
   return {
     workspaceId: workspace.id,
-    projectKey: workspace.projectId,
+    projectId: workspace.projectId,
+    projectKey: project.projectKey,
     projectDisplayName: workspace.projectDisplayName,
     workspaceName: workspace.name,
     workspaceDirectory: workspace.workspaceDirectory,
@@ -107,7 +119,7 @@ export async function openProjectViaDaemon(
       source: { kind: "directory", path: repoPath },
     }),
   );
-  return openedProjectFromWorkspace(workspace);
+  return openedProjectFromWorkspace(client, workspace);
 }
 
 export async function archiveWorkspaceFromDaemon(
@@ -149,18 +161,19 @@ export async function createWorktreeViaDaemon(
     worktreeSlug: input.slug,
   });
   const workspace = requireWorkspace(payload);
-  return openedProjectFromWorkspace(workspace);
+  return openedProjectFromWorkspace(client, workspace);
 }
 
 export async function openNewWorkspaceComposer(
   page: Page,
   input: { projectKey: string; projectDisplayName: string },
 ): Promise<void> {
-  const projectRow = page.getByTestId(`sidebar-project-row-${input.projectKey}`).first();
+  const projectViewKey = projectEquivalenceViewKey(input.projectKey);
+  const projectRow = page.getByTestId(`sidebar-project-row-${projectViewKey}`).first();
   await expect(projectRow).toBeVisible({ timeout: 30_000 });
   await projectRow.hover();
 
-  const button = page.getByTestId(`sidebar-project-new-worktree-${input.projectKey}`).first();
+  const button = page.getByTestId(`sidebar-project-new-worktree-${projectViewKey}`).first();
   await expect(button).toBeVisible({ timeout: 30_000 });
   await button.click();
 
@@ -205,8 +218,10 @@ export async function expectNewWorkspaceDraft(page: Page, draft: string): Promis
 }
 
 export async function selectNewWorkspaceHost(page: Page, hostLabel: string): Promise<void> {
-  await page.getByTestId("host-picker-trigger").click();
-  await page.getByText(hostLabel, { exact: true }).click();
+  const trigger = page.getByTestId("host-picker-trigger");
+  await trigger.click();
+  await page.getByRole("button", { name: hostLabel, exact: true }).click();
+  await expect(trigger).toContainText(hostLabel);
 }
 
 export async function submitNewWorkspacePrompt(
@@ -233,13 +248,14 @@ export async function clickNewWorkspaceButton(
 
 export async function selectNewWorkspaceProject(
   page: Page,
-  input: { projectKey: string; projectDisplayName: string },
+  input: { projectKey: string; projectDisplayName: string; projectViewKey?: string },
 ): Promise<void> {
   const trigger = page.getByTestId("new-workspace-project-picker-trigger");
   await expect(trigger).toBeVisible({ timeout: 30_000 });
   await trigger.click();
 
-  const option = page.getByTestId(`new-workspace-project-picker-option-${input.projectKey}`);
+  const projectViewKey = input.projectViewKey ?? projectEquivalenceViewKey(input.projectKey);
+  const option = page.getByTestId(`new-workspace-project-picker-option-${projectViewKey}`);
   await expect(option).toBeVisible({ timeout: 30_000 });
   await option.click();
 

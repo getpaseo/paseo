@@ -566,10 +566,14 @@ export function buildProjectsSettingsRoute() {
   return "/settings/projects" as const;
 }
 
-export function buildProjectSettingsRoute(projectKey: string) {
-  const normalized = trimNonEmpty(projectKey);
-  if (!normalized) {
-    throw new Error("buildProjectSettingsRoute requires a non-empty projectKey");
+export function buildProjectSettingsRoute(serverId: string, projectId: string) {
+  if (!serverId.trim() || !projectId.trim()) {
+    throw new Error("buildProjectSettingsRoute requires a serverId and projectId");
   }
-  return `/settings/projects/${encodeSegment(normalized)}` as const;
+  return `/settings/projects/${encodeSegment(serverId)}/${encodeSegment(projectId)}` as const;
+}
+
+export function normalizeProjectSettingsRouteId(value: string | string[] | undefined): string {
+  const id = Array.isArray(value) ? value[0] : value;
+  return typeof id === "string" ? id : "";
 }

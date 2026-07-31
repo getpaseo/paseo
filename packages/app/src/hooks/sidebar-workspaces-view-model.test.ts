@@ -78,20 +78,26 @@ function project(input: {
   projectKind?: WorkspaceStructureProject["projectKind"];
   iconWorkingDir?: string;
   workspaceKeys: string[];
-  hosts?: WorkspaceStructureProject["hosts"];
+  hosts?: Array<
+    Omit<WorkspaceStructureProject["hosts"][number], "projectId"> & { projectId?: string }
+  >;
 }): WorkspaceStructureProject {
   return {
+    viewKey: input.projectKey,
     projectKey: input.projectKey,
     projectName: input.projectName ?? input.projectKey,
     projectKind: input.projectKind ?? "git",
     iconWorkingDir: input.iconWorkingDir ?? input.projectKey,
-    hosts: input.hosts ?? [
-      {
-        serverId: "srv",
-        iconWorkingDir: input.iconWorkingDir ?? input.projectKey,
-        canCreateWorktree: true,
-      },
-    ],
+    hosts: Array.from(
+      input.hosts ?? [
+        {
+          serverId: "srv",
+          iconWorkingDir: input.iconWorkingDir ?? input.projectKey,
+          canCreateWorktree: true,
+        },
+      ],
+      (host) => Object.assign({}, host, { projectId: host.projectId ?? input.projectKey }),
+    ),
     workspaceKeys: input.workspaceKeys,
   };
 }
@@ -222,7 +228,7 @@ describe("buildSidebarProjectsFromStructure", () => {
       ],
     });
 
-    expect(projects.map((entry) => entry.projectKey)).toEqual(["project-b", "project-a"]);
+    expect(projects.map((entry) => entry.viewKey)).toEqual(["project-b", "project-a"]);
   });
 
   it("preserves the structure hook workspace order", () => {
@@ -322,10 +328,20 @@ describe("shared sidebar workspace model", () => {
     ]);
     expect(model.projects).toEqual([
       expect.objectContaining({
-        projectKey: "getpaseo/paseo",
+        viewKey: "getpaseo/paseo",
         hosts: [
-          { serverId: "host-a", iconWorkingDir: "/repo/getpaseo/paseo", canCreateWorktree: true },
-          { serverId: "host-b", iconWorkingDir: "/repo/getpaseo/paseo", canCreateWorktree: true },
+          {
+            serverId: "host-a",
+            projectId: "getpaseo/paseo",
+            iconWorkingDir: "/repo/getpaseo/paseo",
+            canCreateWorktree: true,
+          },
+          {
+            serverId: "host-b",
+            projectId: "getpaseo/paseo",
+            iconWorkingDir: "/repo/getpaseo/paseo",
+            canCreateWorktree: true,
+          },
         ],
         workspaces: [
           expect.objectContaining({
@@ -351,7 +367,7 @@ describe("shared sidebar workspace model", () => {
       ["host-a:main", "done", "main"],
       ["host-b:feature", "running", "feature/status-flow"],
     ]);
-    expect(model.projectNamesByKey).toEqual(new Map([["getpaseo/paseo", "getpaseo/paseo"]]));
+    expect(model.projectNamesByViewKey).toEqual(new Map([["getpaseo/paseo", "getpaseo/paseo"]]));
   });
 
   it("preserves unchanged row identities when another workspace updates", () => {
@@ -400,6 +416,35 @@ describe("shared sidebar workspace model", () => {
 
     expect(nextEntries.get("srv:one")).toBe(previousEntries.get("srv:one"));
     expect(nextEntries.get("srv:two")).not.toBe(previousEntries.get("srv:two"));
+  });
+
+  it("keeps a structurally disambiguated project key in status entries", () => {
+    const projectKey = "host:srv:project:prj_a";
+    const model = buildSidebarWorkspacePlacementModel({
+      projects: [project({ projectKey, projectName: "Clone A", workspaceKeys: ["srv:clone-a"] })],
+    });
+    const entries = buildSidebarWorkspaceEntries({
+      placements: model.workspaces,
+      sessions: [
+        {
+          serverId: "srv",
+          workspaceAgentActivity: new Map(),
+          workspaces: new Map([
+            [
+              "clone-a",
+              workspace({
+                id: "clone-a",
+                name: "main",
+                projectId: "prj_a",
+                projectDisplayName: "acme/app",
+              }),
+            ],
+          ]),
+        },
+      ],
+    });
+
+    expect(entries.get("srv:clone-a")?.projectViewKey).toBe(projectKey);
   });
 });
 
@@ -485,8 +530,8 @@ describe("computeSidebarOrderUpdates", () => {
 
     expect(updates.projectOrder).toEqual(["project-a", "project-b"]);
     expect(updates.workspaceOrders).toEqual([
-      { projectKey: "project-a", order: ["srv:ws-2", "srv:ws-1"] },
-      { projectKey: "project-b", order: ["srv:ws-3"] },
+      { projectViewKey: "project-a", order: ["srv:ws-2", "srv:ws-1"] },
+      { projectViewKey: "project-b", order: ["srv:ws-3"] },
     ]);
   });
 
@@ -506,7 +551,7 @@ describe("computeSidebarOrderUpdates", () => {
 
     expect(updates.workspaceOrders).toEqual([
       {
-        projectKey: "project-a",
+        projectViewKey: "project-a",
         order: ["srv:newest", "srv:newer", "srv:old-b", "srv:old-a"],
       },
     ]);

@@ -3,9 +3,15 @@ import { existsSync, realpathSync } from "fs";
 import { open as openFile, readFile, stat as statFile } from "fs/promises";
 import { TTLCache } from "@isaacs/ttlcache";
 import type { CheckoutCommit, CheckoutCommitFile } from "@getpaseo/protocol/messages";
+import { parseGitHubRemoteIdentity, parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
+import { maxBase64EncryptedPlaintextByteLength } from "@getpaseo/relay";
 import type { Logger } from "pino";
 import type { ParsedDiffFile } from "../server/utils/diff-highlighter.js";
-import { parseAndHighlightDiff } from "../server/utils/diff-highlighter.js";
+import {
+  highlightDiffWithFileContent,
+  parseAndHighlightDiff,
+  parseDiff,
+} from "../server/utils/diff-highlighter.js";
 import { parseGitHubRepoFromRemote } from "../server/workspace-git-metadata.js";
 import { createGitHubService } from "../services/github-service.js";
 import type {
@@ -23,7 +29,12 @@ import {
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { runGitCommand } from "./run-git-command.js";
 import { isPaseoOwnedWorktreeCwd, resolvePaseoWorktreesBaseRoot } from "./worktree.js";
-import { type PaseoWorktreeMetadata, readPaseoWorktreeMetadata } from "./worktree-metadata.js";
+import {
+  getPaseoWorktreeChangeRequestHintForBranch,
+  type PaseoWorktreeMetadata,
+  readPaseoWorktreeMetadata,
+  rebindPaseoWorktreeChangeRequestHint,
+} from "./worktree-metadata.js";
 const READ_ONLY_GIT_ENV = {
   GIT_OPTIONAL_LOCKS: "0",
   LC_ALL: "C",
@@ -583,6 +594,7 @@ function buildGitDiffArgs(args: { ignoreWhitespace?: boolean; extra: string[] })
 }
 
 const TRACKED_DIFF_NUMSTAT_MAX_BYTES = 2 * 1024 * 1024; // 2MB
+const TRACKED_DIFF_BATCH_SIZE = 8;
 const EMPTY_TREE_OBJECT_ID = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 function isUnbornHeadDiffError(error: unknown): boolean {
@@ -759,10 +771,9 @@ export type CheckoutStatusGit = CheckoutStatusGitNonPaseo | CheckoutStatusGitPas
 
 export type CheckoutStatusResult = CheckoutStatus | CheckoutStatusGit;
 
-export interface CheckoutDiffResult {
-  diff: string;
-  structured?: ParsedDiffFile[];
-}
+export type CheckoutDiffResult =
+  | { diff: string; structured?: ParsedDiffFile[]; diffTooLarge?: false }
+  | { diff: ""; structured: []; diffTooLarge: true };
 
 export interface CheckoutDiffCompare {
   mode: "uncommitted" | "base";
@@ -817,6 +828,22 @@ function isNotGitRepositoryError(error: unknown): boolean {
 async function requireGitRepo(cwd: string): Promise<void> {
   try {
     await runGitCommand(["rev-parse", "--git-dir"], { cwd, envOverlay: READ_ONLY_GIT_ENV });
+  } catch {
+    throw new NotGitRepoError(cwd);
+  }
+}
+
+async function requireGitWorktreeRoot(cwd: string): Promise<string> {
+  try {
+    const { stdout } = await runGitCommand(["rev-parse", "--show-toplevel"], {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+    });
+    const worktreeRoot = parseGitRevParsePath(stdout);
+    if (!worktreeRoot) {
+      throw new Error("Git returned no worktree root");
+    }
+    return worktreeRoot;
   } catch {
     throw new NotGitRepoError(cwd);
   }
@@ -1032,7 +1059,7 @@ export async function renameCurrentBranch(
   cwd: string,
   newName: string,
 ): Promise<{ previousBranch: string | null; currentBranch: string | null }> {
-  await requireGitRepo(cwd);
+  const worktreeRoot = await requireGitWorktreeRoot(cwd);
 
   const previousBranch = await getCurrentBranch(cwd);
   if (!previousBranch || previousBranch === "HEAD") {
@@ -1045,6 +1072,9 @@ export async function renameCurrentBranch(
   });
 
   const currentBranch = await getCurrentBranch(cwd);
+  if (currentBranch) {
+    rebindPaseoWorktreeChangeRequestHint(worktreeRoot, previousBranch, currentBranch);
+  }
   return { previousBranch, currentBranch };
 }
 
@@ -1595,22 +1625,25 @@ function buildPullRequestLookupTargetFromBranchConfig(
   input: PullRequestLookupTargetBranchConfig,
 ): PullRequestStatusLookupTarget {
   const trackedHeadRef = parseBranchMergeHeadRef(input.branchMergeRef);
-  if (!input.branchRemoteName || !trackedHeadRef || trackedHeadRef === input.currentBranch) {
+  if (!input.branchRemoteName || !trackedHeadRef) {
     return { headRef: input.currentBranch };
   }
 
-  const remoteRepo = input.branchRemoteUrl
-    ? parseGitHubRepoFromRemote(input.branchRemoteUrl)
-    : null;
-  const originRepo = input.originRemoteUrl
-    ? parseGitHubRepoFromRemote(input.originRemoteUrl)
-    : null;
-  const isSameRepo = Boolean(remoteRepo && originRepo && remoteRepo === originRepo);
+  const remoteRepo = parseRepositoryIdentityFromRemote(input.branchRemoteUrl);
+  const originRepo = parseRepositoryIdentityFromRemote(input.originRemoteUrl);
+  const isSameRepo = areSameGitHubRepository(remoteRepo, originRepo);
   const headRepositoryOwner = remoteRepo && !isSameRepo ? remoteRepo.split("/")[0] : null;
   const normalizedBaseRef = input.resolvedBaseRef
     ? normalizeLocalBranchRefName(input.resolvedBaseRef)
     : null;
-  if (trackedHeadRef === normalizedBaseRef && !headRepositoryOwner) {
+  if (
+    trackedHeadRef === normalizedBaseRef &&
+    !doesLocalBranchNameIdentifyTrackedHead(
+      input.currentBranch,
+      trackedHeadRef,
+      headRepositoryOwner,
+    )
+  ) {
     return { headRef: input.currentBranch };
   }
 
@@ -1622,6 +1655,34 @@ function buildPullRequestLookupTargetFromBranchConfig(
     headRef: trackedHeadRef,
     ...(headRepositoryOwner ? { headRepositoryOwner } : {}),
   };
+}
+
+function parseRepositoryIdentityFromRemote(remoteUrl: string | null): string | null {
+  if (!remoteUrl) {
+    return null;
+  }
+  const location = parseGitRemoteLocation(remoteUrl);
+  return location ? (parseGitHubRemoteIdentity(location.path)?.repo ?? null) : null;
+}
+
+function areSameGitHubRepository(left: string | null, right: string | null): boolean {
+  return Boolean(left && right && left.toLowerCase() === right.toLowerCase());
+}
+
+function doesLocalBranchNameIdentifyTrackedHead(
+  currentBranch: string,
+  trackedHeadRef: string,
+  headRepositoryOwner: string | null,
+): boolean {
+  if (currentBranch === trackedHeadRef) {
+    return true;
+  }
+  if (!headRepositoryOwner) {
+    return false;
+  }
+  return [headRepositoryOwner, headRepositoryOwner.toLowerCase()].some(
+    (owner) => currentBranch === `${owner}/${trackedHeadRef}`,
+  );
 }
 
 function buildPullRequestLookupTargetFromPushConfig(
@@ -1636,7 +1697,7 @@ function buildPullRequestLookupTargetFromPushConfig(
   const originRepo = input.originRemoteUrl
     ? parseGitHubRepoFromRemote(input.originRemoteUrl)
     : null;
-  const isSameRepo = Boolean(remoteRepo && originRepo && remoteRepo === originRepo);
+  const isSameRepo = areSameGitHubRepository(remoteRepo, originRepo);
   const headRepositoryOwner = remoteRepo && !isSameRepo ? remoteRepo.split("/")[0] : null;
   const normalizedBaseRef = input.resolvedBaseRef
     ? normalizeLocalBranchRefName(input.resolvedBaseRef)
@@ -1653,8 +1714,9 @@ function buildPullRequestLookupTargetFromPushConfig(
 
 function buildPullRequestLookupTargetFromMetadata(
   metadata: PaseoWorktreeMetadata | null,
+  currentBranch: string,
 ): PullRequestStatusLookupTarget | null {
-  const target = metadata?.changeRequestLookupTarget;
+  const target = getPaseoWorktreeChangeRequestHintForBranch(metadata, currentBranch);
   if (!target) {
     return null;
   }
@@ -1677,8 +1739,22 @@ function buildInitialPullRequestLookupTarget(input: {
     return null;
   }
 
+  const hasConfiguredBranchTarget = Boolean(
+    input.branchRemoteName && parseBranchMergeHeadRef(input.branchMergeRef),
+  );
+  if (hasConfiguredBranchTarget) {
+    return buildPullRequestLookupTargetFromBranchConfig({
+      currentBranch: input.currentBranch,
+      branchRemoteName: input.branchRemoteName,
+      branchMergeRef: input.branchMergeRef,
+      branchRemoteUrl: input.branchRemoteUrl,
+      originRemoteUrl: input.originRemoteUrl,
+      resolvedBaseRef: input.resolvedBaseRef,
+    });
+  }
+
   return (
-    buildPullRequestLookupTargetFromMetadata(input.metadata) ??
+    buildPullRequestLookupTargetFromMetadata(input.metadata, input.currentBranch) ??
     buildPullRequestLookupTargetFromBranchConfig({
       currentBranch: input.currentBranch,
       branchRemoteName: input.branchRemoteName,
@@ -1823,6 +1899,37 @@ export async function getCheckoutSnapshotFacts(
 
 const PER_FILE_DIFF_MAX_BYTES = 1024 * 1024; // 1MB
 const TOTAL_DIFF_MAX_BYTES = 2 * 1024 * 1024; // 2MB
+const RELAY_MAX_FRAME_BYTES = 32 * 1024 * 1024;
+const CHECKOUT_DIFF_FRAME_HEADROOM_BYTES = 1024 * 1024;
+// Temporary until diffs load lazily per file. The Paseo relay's 32 MiB frame limit is
+// binding: string frames are encrypted and base64-encoded. Reserve 1 MiB plaintext for
+// the surrounding WebSocket JSON envelope after inverting that exact wire expansion.
+export const CHECKOUT_DIFF_MAX_STRUCTURED_BYTES =
+  maxBase64EncryptedPlaintextByteLength(RELAY_MAX_FRAME_BYTES) - CHECKOUT_DIFF_FRAME_HEADROOM_BYTES;
+
+interface StructuredDiffAccumulator {
+  files: ParsedDiffFile[];
+  serializedBytes: number;
+}
+
+function createStructuredDiffAccumulator(): StructuredDiffAccumulator {
+  return { files: [], serializedBytes: Buffer.byteLength("[]", "utf8") };
+}
+
+function appendStructuredFile(
+  structured: StructuredDiffAccumulator,
+  file: ParsedDiffFile,
+): boolean {
+  const separatorBytes = structured.files.length > 0 ? 1 : 0;
+  const fileBytes = Buffer.byteLength(JSON.stringify(file), "utf8");
+  const nextBytes = structured.serializedBytes + separatorBytes + fileBytes;
+  if (nextBytes > CHECKOUT_DIFF_MAX_STRUCTURED_BYTES) {
+    return false;
+  }
+  structured.files.push(file);
+  structured.serializedBytes = nextBytes;
+  return true;
+}
 const UNTRACKED_BINARY_SNIFF_BYTES = 16 * 1024;
 
 async function isLikelyBinaryFile(absolutePath: string): Promise<boolean> {
@@ -2543,27 +2650,62 @@ export function warmCheckoutShortstatInBackground(
 interface AppendStructuredTrackedDiffsInput {
   cwd: string;
   trackedChanges: CheckoutFileChange[];
-  trackedChangeByPath: Map<string, CheckoutFileChange>;
   trackedNumstatByPath: Map<string, FileStat>;
   trackedPlaceholderByPath: Map<string, { status: "binary" | "too_large"; stat: FileStat }>;
   trackedDiffText: string;
   refsForDiff: CheckoutDiffRefs;
   ignoreWhitespace: boolean;
-  structured: ParsedDiffFile[];
-  appendDiff: (text: string) => void;
+  structured: StructuredDiffAccumulator;
   appendTrackedPlaceholderComment: (
     change: CheckoutFileChange,
     status: "binary" | "too_large",
   ) => void;
 }
 
+async function buildHighlightedTrackedDiffFile(input: {
+  cwd: string;
+  change: CheckoutFileChange;
+  parsedFile: ParsedDiffFile;
+  refsForDiff: CheckoutDiffRefs;
+}): Promise<ParsedDiffFile> {
+  const { cwd, change, parsedFile, refsForDiff } = input;
+  const refPath = change.oldPath ?? change.path;
+  const [oldFileContent, newFileContent] = await Promise.all([
+    change.isNew ? null : readGitFileContentAtRef(cwd, refsForDiff.baseRef, refPath),
+    refsForDiff.targetRef ? readGitFileContentAtRef(cwd, refsForDiff.targetRef, change.path) : null,
+  ]);
+  const highlightedFile = await highlightDiffWithFileContent(parsedFile, cwd, {
+    oldFileContent,
+    newFileContent,
+  });
+  return {
+    ...highlightedFile,
+    path: change.path,
+    isNew: change.isNew,
+    isDeleted: change.isDeleted,
+    status: "ok",
+  };
+}
+
+function isWhitespaceOnlyTrackedChange(input: {
+  change: CheckoutFileChange;
+  stat: FileStat;
+  ignoreWhitespace: boolean;
+}): boolean {
+  const { change, stat, ignoreWhitespace } = input;
+  return (
+    ignoreWhitespace &&
+    change.status.startsWith("M") &&
+    (!stat || (!stat.isBinary && stat.additions === 0 && stat.deletions === 0))
+  );
+}
+
 async function appendStructuredTrackedDiffs(
   input: AppendStructuredTrackedDiffsInput,
-): Promise<void> {
+): Promise<boolean> {
   const {
     cwd,
     trackedChanges,
-    trackedChangeByPath,
     trackedNumstatByPath,
     trackedPlaceholderByPath,
     trackedDiffText,
@@ -2573,36 +2715,19 @@ async function appendStructuredTrackedDiffs(
     appendTrackedPlaceholderComment,
   } = input;
 
-  const parsedTrackedFiles =
-    trackedDiffText.length > 0
-      ? await parseAndHighlightDiff(trackedDiffText, cwd, {
-          getOldFileContent: async (file) => {
-            const change = trackedChangeByPath.get(file.path);
-            if (!change || change.isNew) {
-              return null;
-            }
-            const refPath = change.oldPath ?? change.path;
-            return readGitFileContentAtRef(cwd, refsForDiff.baseRef, refPath);
-          },
-          getNewFileContent: async (file) => {
-            if (!refsForDiff.targetRef) {
-              return null;
-            }
-            return readGitFileContentAtRef(cwd, refsForDiff.targetRef, file.path);
-          },
-        })
-      : [];
+  const parsedTrackedFiles = trackedDiffText.length > 0 ? parseDiff(trackedDiffText) : [];
   const parsedTrackedByPath = new Map(parsedTrackedFiles.map((file) => [file.path, file]));
 
   for (const change of trackedChanges) {
     const placeholder = trackedPlaceholderByPath.get(change.path);
     if (placeholder) {
-      structured.push(
-        buildPlaceholderParsedDiffFile(change, {
-          status: placeholder.status,
-          stat: placeholder.stat,
-        }),
-      );
+      const file = buildPlaceholderParsedDiffFile(change, {
+        status: placeholder.status,
+        stat: placeholder.stat,
+      });
+      if (!appendStructuredFile(structured, file)) {
+        return false;
+      }
       appendTrackedPlaceholderComment(change, placeholder.status);
       continue;
     }
@@ -2610,28 +2735,26 @@ async function appendStructuredTrackedDiffs(
     const stat = trackedNumstatByPath.get(change.path) ?? null;
     const parsedFile = parsedTrackedByPath.get(change.path);
     if (parsedFile) {
-      structured.push({
-        ...parsedFile,
-        path: change.path,
-        isNew: change.isNew,
-        isDeleted: change.isDeleted,
-        status: "ok",
+      const file = await buildHighlightedTrackedDiffFile({
+        cwd,
+        change,
+        parsedFile,
+        refsForDiff,
       });
+      if (!appendStructuredFile(structured, file)) {
+        return false;
+      }
       continue;
     }
 
     // `git diff -w --name-status` can still report a modified path even when the
     // whitespace-filtered patch and numstat are both empty. Skip emitting a
     // structured placeholder in that case so whitespace-only edits truly disappear.
-    if (
-      ignoreWhitespace &&
-      change.status.startsWith("M") &&
-      (!stat || (!stat.isBinary && stat.additions === 0 && stat.deletions === 0))
-    ) {
+    if (isWhitespaceOnlyTrackedChange({ change, stat, ignoreWhitespace })) {
       continue;
     }
 
-    structured.push({
+    const file = {
       path: change.path,
       isNew: change.isNew,
       isDeleted: change.isDeleted,
@@ -2639,8 +2762,13 @@ async function appendStructuredTrackedDiffs(
       deletions: stat?.deletions ?? 0,
       hunks: [],
       status: "ok",
-    });
+    } satisfies ParsedDiffFile;
+    if (!appendStructuredFile(structured, file)) {
+      return false;
+    }
   }
+
+  return true;
 }
 
 interface ProcessUntrackedChangeInput {
@@ -2648,11 +2776,11 @@ interface ProcessUntrackedChangeInput {
   change: CheckoutFileChange;
   ignoreWhitespace: boolean;
   includeStructured: boolean;
-  structured: ParsedDiffFile[];
+  structured: StructuredDiffAccumulator;
   appendDiff: (text: string) => void;
 }
 
-async function processUntrackedChange(input: ProcessUntrackedChangeInput): Promise<void> {
+async function processUntrackedChange(input: ProcessUntrackedChangeInput): Promise<boolean> {
   const { cwd, change, ignoreWhitespace, includeStructured, structured, appendDiff } = input;
   const { text, truncated, stat } = await getUntrackedDiffText(cwd, change, ignoreWhitespace);
 
@@ -2664,19 +2792,33 @@ async function processUntrackedChange(input: ProcessUntrackedChangeInput): Promi
     } else {
       appendDiff(text);
     }
-    return;
+    return true;
   }
 
   if (stat?.isBinary) {
-    structured.push(buildPlaceholderParsedDiffFile(change, { status: "binary", stat }));
+    if (
+      !appendStructuredFile(
+        structured,
+        buildPlaceholderParsedDiffFile(change, { status: "binary", stat }),
+      )
+    ) {
+      return false;
+    }
     appendDiff(`# ${change.path}: binary diff omitted\n`);
-    return;
+    return true;
   }
 
   if (truncated) {
-    structured.push(buildPlaceholderParsedDiffFile(change, { status: "too_large", stat }));
+    if (
+      !appendStructuredFile(
+        structured,
+        buildPlaceholderParsedDiffFile(change, { status: "too_large", stat }),
+      )
+    ) {
+      return false;
+    }
     appendDiff(`# ${change.path}: diff too large omitted\n`);
-    return;
+    return true;
   }
 
   appendDiff(text);
@@ -2692,13 +2834,14 @@ async function processUntrackedChange(input: ProcessUntrackedChangeInput): Promi
       hunks: [],
     } satisfies ParsedDiffFile);
 
-  structured.push({
+  const file = {
     ...parsedFile,
     path: change.path,
     isNew: change.isNew,
     isDeleted: change.isDeleted,
     status: "ok",
-  });
+  } satisfies ParsedDiffFile;
+  return appendStructuredFile(structured, file);
 }
 
 interface ProcessTrackedChangesInput {
@@ -2710,7 +2853,6 @@ interface ProcessTrackedChangesInput {
 }
 
 interface ProcessTrackedChangesResult {
-  trackedChangeByPath: Map<string, CheckoutFileChange>;
   trackedNumstatByPath: Map<string, FileStat>;
   trackedPlaceholderByPath: Map<string, { status: "binary" | "too_large"; stat: FileStat }>;
   trackedDiffText: string;
@@ -2720,7 +2862,6 @@ async function processTrackedChanges(
   input: ProcessTrackedChangesInput,
 ): Promise<ProcessTrackedChangesResult> {
   const { cwd, refsForDiff, trackedChanges, ignoreWhitespace, appendDiff } = input;
-  const trackedChangeByPath = new Map(trackedChanges.map((change) => [change.path, change]));
   const trackedNumstatByPath =
     trackedChanges.length > 0
       ? await getTrackedNumstatByPath(cwd, refsForDiff, ignoreWhitespace)
@@ -2742,9 +2883,10 @@ async function processTrackedChanges(
 
   let trackedDiffText = "";
   let trackedDiffBytes = 0;
-  if (trackedDiffPaths.length > 0) {
+  for (let start = 0; start < trackedDiffPaths.length; start += TRACKED_DIFF_BATCH_SIZE) {
+    const paths = trackedDiffPaths.slice(start, start + TRACKED_DIFF_BATCH_SIZE);
     const trackedDiffs = await Promise.all(
-      trackedDiffPaths.map((path) =>
+      paths.map((path) =>
         getTrackedDiffTextForPath({
           cwd,
           refsForDiff,
@@ -2754,7 +2896,6 @@ async function processTrackedChanges(
       ),
     );
 
-    const visibleTrackedDiffs: string[] = [];
     for (const fileDiff of trackedDiffs) {
       if (fileDiff.truncated) {
         trackedPlaceholderByPath.set(fileDiff.path, {
@@ -2772,15 +2913,12 @@ async function processTrackedChanges(
         continue;
       }
       trackedDiffBytes += diffBytes;
-      visibleTrackedDiffs.push(fileDiff.text);
+      trackedDiffText += fileDiff.text;
     }
-
-    trackedDiffText = visibleTrackedDiffs.join("");
-    appendDiff(trackedDiffText);
   }
+  appendDiff(trackedDiffText);
 
   return {
-    trackedChangeByPath,
     trackedNumstatByPath,
     trackedPlaceholderByPath,
     trackedDiffText,
@@ -2840,7 +2978,7 @@ export async function getCheckoutDiff(
     return a.path < b.path ? -1 : 1;
   });
 
-  const structured: ParsedDiffFile[] = [];
+  const structured = createStructuredDiffAccumulator();
   let diffText = "";
   let diffBytes = 0;
   const appendDiff = (text: string) => {
@@ -2881,19 +3019,20 @@ export async function getCheckoutDiff(
   };
 
   if (compare.includeStructured) {
-    await appendStructuredTrackedDiffs({
+    const didAppendTrackedDiffs = await appendStructuredTrackedDiffs({
       cwd,
       trackedChanges,
-      trackedChangeByPath: trackedDiff.trackedChangeByPath,
       trackedNumstatByPath: trackedDiff.trackedNumstatByPath,
       trackedPlaceholderByPath: trackedDiff.trackedPlaceholderByPath,
       trackedDiffText: trackedDiff.trackedDiffText,
       refsForDiff: effectiveRefsForDiff,
       ignoreWhitespace,
       structured,
-      appendDiff,
       appendTrackedPlaceholderComment,
     });
+    if (!didAppendTrackedDiffs) {
+      return { diff: "", structured: [], diffTooLarge: true };
+    }
   } else {
     for (const change of trackedChanges) {
       const placeholder = trackedDiff.trackedPlaceholderByPath.get(change.path);
@@ -2907,7 +3046,7 @@ export async function getCheckoutDiff(
     if (diffBytes >= TOTAL_DIFF_MAX_BYTES) {
       break;
     }
-    await processUntrackedChange({
+    const didAppendUntrackedDiff = await processUntrackedChange({
       cwd,
       change,
       ignoreWhitespace,
@@ -2915,10 +3054,13 @@ export async function getCheckoutDiff(
       structured,
       appendDiff,
     });
+    if (!didAppendUntrackedDiff) {
+      return { diff: "", structured: [], diffTooLarge: true };
+    }
   }
 
   if (compare.includeStructured) {
-    return { diff: diffText, structured };
+    return { diff: diffText, structured: structured.files };
   }
   return { diff: diffText };
 }

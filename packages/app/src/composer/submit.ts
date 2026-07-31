@@ -51,7 +51,7 @@ export async function submitAgentInput<TAttachment>(
     return "queued";
   }
 
-  // Clear immediately so the submitted timeline row and composer state stay in sync.
+  // Clear immediately so optimistic stream updates and composer state stay in sync.
   if (shouldClearOnSubmit) {
     input.setUserInput("");
     input.setAttachments([]);

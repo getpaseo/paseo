@@ -45,7 +45,7 @@ function projectOptionId(projectId: string): string {
 function computeProjectOptionData(projects: readonly HostProjectListItem[]) {
   const projectByOptionId = new Map<string, HostProjectListItem>();
   const options = projects.map((project) => {
-    const id = projectOptionId(project.projectKey);
+    const id = projectOptionId(project.viewKey);
     projectByOptionId.set(id, project);
     return { id, label: project.projectName };
   });
@@ -104,15 +104,14 @@ export function useNewWorkspaceProjectPicker({
     [allowAllProjects, lastActiveProject, routeProject, selectableProjects, selectedServerId],
   );
 
-  const routeProjectKey = routeProject?.projectKey ?? null;
+  const routeProjectViewKey = routeProject?.viewKey ?? null;
   const selectionContextKey = createProjectSelectionContextKey({
     selectedServerId,
-    routeProjectKey,
+    routeProjectViewKey,
     allowAllProjects,
   });
   const manualSelectionContextKey = createManualProjectSelectionContextKey({
-    selectedServerId,
-    routeProjectKey,
+    routeProjectViewKey,
   });
   const shouldPreserveMissingProject = useCallback(
     (project: HostProjectListItem) =>
@@ -126,6 +125,7 @@ export function useNewWorkspaceProjectPicker({
     () => ({
       contextKey: selectionContextKey,
       manualContextKey: manualSelectionContextKey,
+      selectedServerId,
       initialProject,
       initialProjectSource: resolveInitialProjectSelectionSource({
         initialProject,
@@ -143,6 +143,7 @@ export function useNewWorkspaceProjectPicker({
       manualSelectionContextKey,
       routeProject,
       selectableProjects,
+      selectedServerId,
       selectionContextKey,
       shouldPreserveMissingProject,
     ],
@@ -168,8 +169,8 @@ export function useNewWorkspaceProjectPicker({
       if (!allowAllProjects && !project.hosts.some((host) => host.canCreateWorktree)) return;
       setProjectSelection({
         contextKey: manualSelectionContextKey,
-        projectKey: project.projectKey,
         project,
+        originProject: project,
         source: "manual",
       });
     },
@@ -183,7 +184,7 @@ export function useNewWorkspaceProjectPicker({
       : null,
     projectPickerOptions,
     projectByOptionId,
-    selectedProjectOptionId: selectedProject ? projectOptionId(selectedProject.projectKey) : "",
+    selectedProjectOptionId: selectedProject ? projectOptionId(selectedProject.viewKey) : "",
     projectTriggerLabel: selectedProject?.projectName ?? "Choose project",
     handleSelectProjectOption,
   };

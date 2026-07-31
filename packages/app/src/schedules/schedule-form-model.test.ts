@@ -54,7 +54,7 @@ function target(input: {
     optionId: buildProjectOptionId(input.serverId, input.projectKey),
     serverId: input.serverId,
     serverName: input.serverId === "host-a" ? "Host A" : "Host B",
-    projectKey: input.projectKey,
+    projectViewKey: input.projectKey,
     projectName: input.projectName,
     cwd: input.cwd,
     isGit: input.isGit ?? true,
@@ -585,6 +585,28 @@ describe("schedule form model", () => {
           testID: "schedule-project-option-project-c",
         },
       ],
+    });
+  });
+
+  it("hydrates an edited schedule's project label when its host targets arrive", () => {
+    const form = open({
+      mode: "edit",
+      schedule: scheduleOnHost({
+        serverId: "host-b",
+        serverName: "Host B",
+        cwd: "/repo/b",
+        model: "model-b",
+      }),
+      defaults: { serverId: null, projectTargets: [], preferences: {} },
+    });
+
+    expect(form.getState().projectDisplay).toEqual({ label: "/repo/b" });
+
+    form.applyProjectTargets(PROJECT_TARGETS);
+
+    expect(form.getState()).toMatchObject({
+      projectDisplay: { label: "Project B" },
+      selectedProjectOptionId: buildProjectOptionId("host-b", "project-b"),
     });
   });
 

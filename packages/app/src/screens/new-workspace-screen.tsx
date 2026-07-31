@@ -66,12 +66,13 @@ import { toErrorMessage } from "@/utils/error-messages";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import {
   getHostProjectSourceDirectory,
+  getHostProjectId,
   hostProjectFromRoute,
   hostProjectFromWorkspace,
   useHostProjects,
   type HostProjectListItem,
 } from "@/projects/host-projects";
-import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
+import { useProjectIconDataByProjectViewKey } from "@/projects/project-icons";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { ComposerAttachment } from "@/attachments/types";
 import { useDraftWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
@@ -272,7 +273,7 @@ function ProjectPickerTrigger({
   disabled,
   badgePressableStyle,
   label,
-  projectKey,
+  projectViewKey,
   iconDataUri,
   iconColor,
   iconSize,
@@ -282,7 +283,7 @@ function ProjectPickerTrigger({
   disabled: boolean;
   badgePressableStyle: React.ComponentProps<typeof Pressable>["style"];
   label: string;
-  projectKey: string | null;
+  projectViewKey: string | null;
   iconDataUri: string | null;
   iconColor: string;
   iconSize: number;
@@ -302,11 +303,11 @@ function ProjectPickerTrigger({
           accessibilityLabel="Workspace project"
         >
           <View style={styles.badgeIconBox}>
-            {projectKey ? (
+            {projectViewKey ? (
               <ProjectIconView
                 iconDataUri={iconDataUri}
                 initial={placeholderInitial}
-                projectKey={projectKey}
+                projectViewKey={projectViewKey}
                 imageStyle={styles.projectIcon}
                 fallbackStyle={styles.projectIconFallback}
                 textStyle={styles.projectIconFallbackText}
@@ -422,7 +423,7 @@ function IsolationOptionItem({
 
 function ProjectOptionItem({
   testID,
-  projectKey,
+  projectViewKey,
   iconDataUri,
   label,
   description,
@@ -432,7 +433,7 @@ function ProjectOptionItem({
   onPress,
 }: {
   testID: string;
-  projectKey: string;
+  projectViewKey: string;
   iconDataUri: string | null;
   label: string;
   description: string | undefined;
@@ -449,14 +450,14 @@ function ProjectOptionItem({
         <ProjectIconView
           iconDataUri={iconDataUri}
           initial={placeholderInitial}
-          projectKey={projectKey}
+          projectViewKey={projectViewKey}
           imageStyle={styles.projectIcon}
           fallbackStyle={styles.projectIconFallback}
           textStyle={styles.projectIconFallbackText}
         />
       </View>
     ),
-    [iconDataUri, placeholderInitial, projectKey],
+    [iconDataUri, placeholderInitial, projectViewKey],
   );
 
   return (
@@ -532,7 +533,7 @@ function NewWorkspaceProjectPickerOption({
   active,
   onPress,
   projectByOptionId,
-  projectIconDataByProjectKey,
+  projectIconDataByProjectViewKey,
   selectedServerId,
   isPending,
   supportsWorkspaceMultiplicity,
@@ -542,7 +543,7 @@ function NewWorkspaceProjectPickerOption({
   active: boolean;
   onPress: () => void;
   projectByOptionId: Map<string, HostProjectListItem>;
-  projectIconDataByProjectKey: Map<string, string | null>;
+  projectIconDataByProjectViewKey: Map<string, string | null>;
   selectedServerId: string;
   isPending: boolean;
   supportsWorkspaceMultiplicity: boolean;
@@ -554,9 +555,9 @@ function NewWorkspaceProjectPickerOption({
 
   return (
     <ProjectOptionItem
-      testID={`new-workspace-project-picker-option-${project.projectKey}`}
-      projectKey={project.projectKey}
-      iconDataUri={projectIconDataByProjectKey.get(project.projectKey) ?? null}
+      testID={`new-workspace-project-picker-option-${project.viewKey}`}
+      projectViewKey={project.viewKey}
+      iconDataUri={projectIconDataByProjectViewKey.get(project.viewKey) ?? null}
       label={project.projectName}
       description={sourceDirectory}
       selected={selected}
@@ -823,6 +824,8 @@ async function createMultiplicityWorkspace(input: {
   serverId: string;
   createFailedMessage: string;
 }): Promise<ReturnType<typeof normalizeWorkspaceDescriptor>> {
+  const projectId = getHostProjectId(input.project, input.serverId);
+  if (!projectId) throw new Error("Project is not available on the selected host");
   const isWorktree = input.isolation === "worktree";
   const checkoutRequest = isWorktree
     ? resolveCheckoutRequest(input.selectedItem, input.currentBranch)
@@ -836,14 +839,14 @@ async function createMultiplicityWorkspace(input: {
       ? {
           kind: "worktree",
           cwd: input.sourceDirectory,
-          projectId: input.project.projectKey,
+          projectId,
           worktreeSlug: createNameId(),
           ...checkoutRequest,
         }
       : {
           kind: "directory",
           path: input.sourceDirectory,
-          projectId: input.project.projectKey,
+          projectId,
         },
     ...(firstAgentContext ? { firstAgentContext } : {}),
   });
@@ -1302,7 +1305,7 @@ interface NewWorkspaceFormStackInput {
     options: ComboboxOptionType[];
     triggerLabel: string;
     selectedProject: HostProjectListItem | null;
-    iconDataByProjectKey: Map<string, string | null>;
+    iconDataByProjectViewKey: Map<string, string | null>;
     selectedOptionId: string;
     onSelect: (id: string) => void;
     onAddProject: () => void;
@@ -1366,10 +1369,10 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
         disabled={isPending}
         badgePressableStyle={badgePressableStyle}
         label={project.triggerLabel}
-        projectKey={project.selectedProject?.projectKey ?? null}
+        projectViewKey={project.selectedProject?.viewKey ?? null}
         iconDataUri={
           project.selectedProject
-            ? (project.iconDataByProjectKey.get(project.selectedProject.projectKey) ?? null)
+            ? (project.iconDataByProjectViewKey.get(project.selectedProject.viewKey) ?? null)
             : null
         }
         iconColor={theme.colors.foregroundMuted}
@@ -1411,6 +1414,8 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
       >
         <Pressable
           ref={host.anchorRef}
+          accessibilityRole="button"
+          accessibilityLabel="Host"
           onPress={host.open}
           disabled={isPending || host.allHosts.length === 0}
           style={badgePressableStyle}
@@ -1587,12 +1592,12 @@ export function NewWorkspaceScreen({
         if (!iconWorkingDir) {
           return [];
         }
-        return [{ projectKey: project.projectKey, serverId: selectedServerId, iconWorkingDir }];
+        return [{ projectViewKey: project.viewKey, serverId: selectedServerId, iconWorkingDir }];
       }),
     [projects, selectedServerId],
   );
 
-  const projectIconDataByProjectKey = useProjectIconDataByProjectKey({
+  const projectIconDataByProjectViewKey = useProjectIconDataByProjectViewKey({
     projects: projectIconTargets,
   });
   const draftKey = buildNewWorkspaceDraftKey(draftId);
@@ -1889,16 +1894,20 @@ export function NewWorkspaceScreen({
       }
       const checkoutRequest = resolveCheckoutRequest(selectedItem, currentBranch);
       const firstAgentContext = buildFirstAgentContext(input);
+      const hostProjectId = getHostProjectId(selectedProject, selectedServerId);
+      if (!hostProjectId) {
+        throw new Error("Project is not available on the selected host");
+      }
 
       return {
         cwd: selectedSourceDirectory,
-        projectId: selectedProject.projectKey,
+        projectId: hostProjectId,
         worktreeSlug: createNameId(),
         ...(firstAgentContext ? { firstAgentContext } : {}),
         ...checkoutRequest,
       };
     },
-    [currentBranch, selectedItem, selectedProject, selectedSourceDirectory],
+    [currentBranch, selectedItem, selectedProject, selectedServerId, selectedSourceDirectory],
   );
 
   const ensureWorkspace = useCallback(
@@ -2030,7 +2039,7 @@ export function NewWorkspaceScreen({
       <NewWorkspaceProjectPickerOption
         {...props}
         projectByOptionId={projectByOptionId}
-        projectIconDataByProjectKey={projectIconDataByProjectKey}
+        projectIconDataByProjectViewKey={projectIconDataByProjectViewKey}
         selectedServerId={selectedServerId}
         isPending={isPending}
         supportsWorkspaceMultiplicity={supportsWorkspaceMultiplicity}
@@ -2039,7 +2048,7 @@ export function NewWorkspaceScreen({
     [
       isPending,
       projectByOptionId,
-      projectIconDataByProjectKey,
+      projectIconDataByProjectViewKey,
       selectedServerId,
       supportsWorkspaceMultiplicity,
     ],
@@ -2084,7 +2093,7 @@ export function NewWorkspaceScreen({
       options: projectPickerOptions,
       triggerLabel: projectTriggerLabel,
       selectedProject,
-      iconDataByProjectKey: projectIconDataByProjectKey,
+      iconDataByProjectViewKey: projectIconDataByProjectViewKey,
       selectedOptionId: selectedProjectOptionId,
       onSelect: handleSelectProjectOption,
       onAddProject: handleAddProject,

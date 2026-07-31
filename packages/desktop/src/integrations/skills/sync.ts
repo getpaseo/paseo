@@ -107,6 +107,31 @@ async function pruneEmptyParentDirs(rootDir: string, rels: readonly string[]): P
   }
 }
 
+async function assertManagedPathsStayInsideSkill(rootDir: string, rels: readonly string[]) {
+  for (const rel of rels) {
+    const normalized = path.normalize(rel);
+    if (
+      path.isAbsolute(normalized) ||
+      normalized === ".." ||
+      normalized.startsWith(`..${path.sep}`)
+    ) {
+      throw new Error(`Cannot sync managed path outside skill directory: ${rel}`);
+    }
+    let current = rootDir;
+    for (const segment of normalized.split(path.sep)) {
+      current = path.join(current, segment);
+      const info = await fs.lstat(current).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      });
+      if (info === null) break;
+      if (info.isSymbolicLink()) {
+        throw new Error(`Cannot sync through symbolic link: ${current}`);
+      }
+    }
+  }
+}
+
 async function syncDirectoryFiles(srcDir: string, dstDir: string): Promise<number> {
   const files = await listFilesRecursive(srcDir);
   const srcFileSet = new Set(files);
@@ -114,7 +139,13 @@ async function syncDirectoryFiles(srcDir: string, dstDir: string): Promise<numbe
   for (const rel of files) {
     srcHashes[rel] = await hashFile(path.join(srcDir, rel));
   }
+  await assertManagedPathsStayInsideSkill(dstDir, [MANAGED_FILES_MANIFEST]);
   const previousManifest = await readManagedFilesManifest(dstDir);
+  await assertManagedPathsStayInsideSkill(dstDir, [
+    MANAGED_FILES_MANIFEST,
+    ...files,
+    ...Object.keys(previousManifest?.files ?? {}),
+  ]);
   let changed = 0;
   for (const rel of files) {
     if (await writeFileIfChanged(path.join(srcDir, rel), path.join(dstDir, rel))) {

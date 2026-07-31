@@ -3914,8 +3914,8 @@ describe("Codex app-server provider", () => {
         },
         actions: [
           expect.objectContaining({
-            id: "reject",
-            label: "Reject",
+            id: "dismiss",
+            label: "Dismiss",
             behavior: "deny",
           }),
           expect.objectContaining({
@@ -3977,6 +3977,216 @@ describe("Codex app-server provider", () => {
         },
       }),
     });
+  });
+
+  test("replaces a pending synthetic plan approval when a later plan completes", () => {
+    const session = createSession({
+      featureValues: { plan_mode: true },
+    });
+
+    asInternals(session).handleNotification("turn/started", {
+      turn: { id: "turn-plan-first" },
+    });
+    asInternals(session).handleNotification("turn/plan/updated", {
+      plan: [{ step: "Implement the first plan", status: "pending" }],
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      turn: { status: "completed", error: null },
+    });
+
+    asInternals(session).handleNotification("turn/started", {
+      turn: { id: "turn-plan-second" },
+    });
+    asInternals(session).handleNotification("turn/plan/updated", {
+      plan: [{ step: "Implement the revised plan", status: "pending" }],
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      turn: { status: "completed", error: null },
+    });
+
+    expect(session.getPendingPermissions()).toEqual([
+      expect.objectContaining({
+        kind: "plan",
+        input: { plan: "- Implement the revised plan" },
+      }),
+    ]);
+  });
+
+  test("dismisses a pending synthetic plan approval after a new prompt is accepted", async () => {
+    const session = createSession({
+      featureValues: { plan_mode: true },
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("turn/started", {
+      turn: { id: "turn-plan-pending" },
+    });
+    asInternals(session).handleNotification("turn/plan/updated", {
+      plan: [{ step: "Implement the original plan", status: "pending" }],
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      turn: { status: "completed", error: null },
+    });
+    const pendingPlan = session.getPendingPermissions()[0];
+    expect(pendingPlan).toBeDefined();
+
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({
+      request: async (method) => {
+        if (method === "thread/loaded/list") return { data: ["test-thread"] };
+        if (method === "turn/start") return {};
+        throw new Error(`Unexpected request: ${method}`);
+      },
+    });
+
+    await session.startTurn("Revise the plan to include tests");
+
+    expect(session.getPendingPermissions()).toEqual([]);
+    expect(events).toContainEqual({
+      type: "permission_resolved",
+      provider: "codex",
+      requestId: pendingPlan!.id,
+      resolution: {
+        behavior: "deny",
+        message: "Dismissed by a new prompt",
+      },
+    });
+  });
+
+  test("makes the old plan non-actionable while a new prompt is being prepared", async () => {
+    const session = createSession({
+      featureValues: { plan_mode: true },
+    });
+
+    asInternals(session).handleNotification("turn/started", {
+      turn: { id: "turn-plan-pending" },
+    });
+    asInternals(session).handleNotification("turn/plan/updated", {
+      plan: [{ step: "Implement the original plan", status: "pending" }],
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      turn: { status: "completed", error: null },
+    });
+    const pendingPlan = session.getPendingPermissions()[0];
+    expect(pendingPlan).toBeDefined();
+
+    let continuePromptSetup: (() => void) | undefined;
+    let markPromptSetupStarted: (() => void) | undefined;
+    const promptSetupStarted = new Promise<void>((resolve) => {
+      markPromptSetupStarted = resolve;
+    });
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({
+      request: async (method) => {
+        if (method === "thread/loaded/list") {
+          markPromptSetupStarted?.();
+          await new Promise<void>((resolve) => {
+            continuePromptSetup = resolve;
+          });
+          return { data: ["test-thread"] };
+        }
+        if (method === "turn/start") return {};
+        throw new Error(`Unexpected request: ${method}`);
+      },
+    });
+
+    const startTurn = session.startTurn("Revise the plan");
+    await promptSetupStarted;
+
+    expect(session.getPendingPermissions()).toEqual([]);
+    await expect(
+      session.respondToPermission(pendingPlan!.id, {
+        behavior: "allow",
+        selectedActionId: "implement",
+      }),
+    ).rejects.toThrow(
+      `No pending Codex app-server permission request with id '${pendingPlan!.id}'`,
+    );
+
+    continuePromptSetup?.();
+    await startTurn;
+  });
+
+  test("does not dismiss a new plan approval emitted while a prompt is being accepted", async () => {
+    const session = createSession({
+      featureValues: { plan_mode: true },
+    });
+
+    asInternals(session).handleNotification("turn/started", {
+      turn: { id: "turn-plan-pending" },
+    });
+    asInternals(session).handleNotification("turn/plan/updated", {
+      plan: [{ step: "Implement the original plan", status: "pending" }],
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      turn: { status: "completed", error: null },
+    });
+
+    let acceptPrompt: (() => void) | undefined;
+    let markPromptRequested: (() => void) | undefined;
+    const promptRequested = new Promise<void>((resolve) => {
+      markPromptRequested = resolve;
+    });
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({
+      request: async (method) => {
+        if (method === "thread/loaded/list") return { data: ["test-thread"] };
+        if (method === "turn/start") {
+          markPromptRequested?.();
+          return await new Promise<void>((resolve) => {
+            acceptPrompt = resolve;
+          });
+        }
+        throw new Error(`Unexpected request: ${method}`);
+      },
+    });
+
+    const startTurn = session.startTurn("Revise the plan");
+    await promptRequested;
+    asInternals(session).handleNotification("turn/plan/updated", {
+      plan: [{ step: "Implement the newer plan", status: "pending" }],
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      turn: { status: "completed", error: null },
+    });
+    acceptPrompt?.();
+    await startTurn;
+
+    expect(session.getPendingPermissions()).toEqual([
+      expect.objectContaining({ input: { plan: "- Implement the newer plan" } }),
+    ]);
+  });
+
+  test("keeps a synthetic plan dismissed when a new prompt is rejected", async () => {
+    const session = createSession({
+      featureValues: { plan_mode: true },
+    });
+
+    asInternals(session).handleNotification("turn/started", {
+      turn: { id: "turn-plan-pending" },
+    });
+    asInternals(session).handleNotification("turn/plan/updated", {
+      plan: [{ step: "Implement the original plan", status: "pending" }],
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      turn: { status: "completed", error: null },
+    });
+    const pendingPlan = session.getPendingPermissions()[0];
+    expect(pendingPlan).toBeDefined();
+
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({
+      request: async (method) => {
+        if (method === "thread/loaded/list") return { data: ["test-thread"] };
+        if (method === "turn/start") throw new Error("Prompt rejected");
+        throw new Error(`Unexpected request: ${method}`);
+      },
+    });
+
+    await expect(session.startTurn("Revise the plan")).rejects.toThrow("Prompt rejected");
+
+    expect(session.getPendingPermissions()).toEqual([]);
   });
 
   test("emits imageView paths with spaces as valid assistant markdown images", () => {

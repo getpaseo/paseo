@@ -66,6 +66,16 @@ export const fr: TranslationResources = {
       modelGroupLabel: "Modèle",
       modelSearchKeywords:
         "changer de modèle modifier le modèle définir le modèle sélectionner le modèle",
+      thinkingGroupLabel: "Raisonnement",
+      thinkingSearchKeywords: "raisonnement effort réflexion",
+      modeGroupLabel: "Mode",
+      modeSearchKeywords: "accès permission approbation mode",
+      planModeGroupLabel: "Mode plan",
+      planModeSearchKeywords: "plan planification mode plan",
+      fastModeGroupLabel: "Rapide",
+      fastModeSearchKeywords: "rapide vitesse faible latence",
+      settingOn: "Activé",
+      settingOff: "Désactivé",
     },
   },
   composer: {
@@ -794,6 +804,8 @@ export const fr: TranslationResources = {
         closeChangesTab: "Fermer l'onglet Modifications",
         binaryFile: "Fichier binaire",
         tooLarge: "Diff trop grand pour être affiché",
+        previewTooLargeTitle: "Ce diff est trop volumineux pour être prévisualisé",
+        previewTooLargeDescription: "Réduisez la comparaison pour la prévisualiser ici",
         unified: "Différentiel unifié",
         split: "Différent côte à côte",
         switchToUnified: "Passer au diff unifié",
@@ -1200,6 +1212,8 @@ export const fr: TranslationResources = {
         installFailed: "Impossible d'installer les compétences d'orchestration.",
         updateFailed: "Impossible de mettre à jour les compétences d'orchestration.",
         uninstallFailed: "Impossible de désinstaller les compétences d'orchestration.",
+        saveSelectionFailed:
+          "Impossible d'enregistrer la sélection des compétences d'orchestration.",
       },
     },
   },
@@ -1535,7 +1549,9 @@ export const fr: TranslationResources = {
         cursor: "Ligne {{line}}, colonne {{column}}",
         preview: "Aperçu",
         source: "Source",
-        unavailableTitle: "Fichier indisponible sur le disque",
+        deletedTitle: "Fichier supprimé du disque",
+        checkFailedTitle: "Impossible de vérifier le fichier sur le disque",
+        preservedDescription: "La copie ouverte est conservée.",
         conflictDescription: "Le contenu local a été conservé. Choisissez la version à garder.",
         overwrite: "Écraser",
         reload: "Recharger",
@@ -1911,6 +1927,16 @@ export const fr: TranslationResources = {
         uninstallTitle: "Désinstaller les compétencesPaseo?",
         uninstallMessage:
           "Supprime toutes les compétences d'orchestrationPaseode ~/.agents, ~/.claude, ~/.codex.",
+        choose: "Choisir les compétences",
+        chooseAll: "Toutes les compétences",
+        chooseAllHint:
+          "Gardez installées toutes les compétences fournies, y compris celles ajoutées plus tard.",
+        chooseList: "Compétences fournies",
+        chooseEmpty: "Cette version ne fournit aucune compétence.",
+        removeTitle: "Supprimer les compétences décochées ?",
+        removeMessage:
+          "{{skills}} seront supprimées de ~/.agents, ~/.claude et ~/.codex. Tout ce que vous avez ajouté dans ces dossiers de compétences est également supprimé.",
+        saveFailed: "Impossible d'enregistrer votre sélection de compétences.",
       },
       actions: {
         install: "Installer",
@@ -1918,7 +1944,10 @@ export const fr: TranslationResources = {
         installed: "Installé",
         update: "Mise à jour",
         working: "Fonctionnement...",
+        remove: "Supprimer",
         uninstall: "Désinstaller",
+        save: "Enregistrer",
+        saving: "Enregistrement...",
       },
       operations: {
         add: "Ajouter une compétence",

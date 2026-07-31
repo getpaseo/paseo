@@ -155,7 +155,7 @@ export function CompactModelSheet({
         sizeContentToCurrentSnapPoint={usesBottomSheet}
         footer={compactFooter}
         footerContainerStyle={usesBottomSheet ? styles.compactFooterContainer : undefined}
-        contentContainerStyle={styles.sheetBody}
+        contentStyle={styles.sheetBody}
         testID="agent-controls-model-sheet"
       >
         <View

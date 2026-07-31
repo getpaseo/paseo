@@ -100,6 +100,8 @@ try {
         "10m",
         "--provider",
         "codex/gpt-5.4",
+        "--thinking",
+        "high",
         "--json",
       ],
       { timeout: 30000 },
@@ -113,6 +115,7 @@ try {
     const inspectedJson = JSON.parse(inspected.stdout);
     assert.strictEqual(inspectedJson.target.config.provider, "codex");
     assert.strictEqual(inspectedJson.target.config.model, "gpt-5.4");
+    assert.strictEqual(inspectedJson.target.config.thinkingOptionId, "high");
 
     const deleted = await ctx.paseo(["schedule", "delete", createdJson.id, "--json"]);
     assert.strictEqual(deleted.exitCode, 0, deleted.stderr);

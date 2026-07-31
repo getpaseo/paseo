@@ -31,7 +31,7 @@ import { SettingsGroup } from "@/screens/settings/settings-group";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { useProjects } from "@/hooks/use-projects";
-import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
+import { useProjectIconDataByProjectViewKey } from "@/projects/project-icons";
 import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
 import { useToast } from "@/contexts/toast-context";
 import { confirmDialog } from "@/utils/confirm-dialog";
@@ -46,6 +46,10 @@ import {
 } from "@/utils/project-config-form";
 import { buildProjectsSettingsRoute } from "@/utils/host-routes";
 import type { ProjectHostEntry, ProjectSummary } from "@/utils/projects";
+import { getProjectHostEntry, getProjectSummaryForHostProject } from "@/utils/projects";
+import { useSessionStore } from "@/stores/session-store";
+import { selectProjectIdForServer } from "@/stores/session-store-hooks/selectors";
+import { resolveProjectSettingsHostTarget } from "@/screens/project-settings-host-selection";
 
 const SCRIPT_SERVICE_TYPE = "service";
 
@@ -84,27 +88,46 @@ const WORKTREE_DOCS_URL = "https://paseo.sh/docs/worktrees";
 type ReadProjectConfigData = Awaited<ReturnType<DaemonClient["readProjectConfig"]>>;
 
 export interface ProjectSettingsScreenProps {
-  projectKey: string;
+  serverId: string;
+  projectId: string;
 }
 
-export default function ProjectSettingsScreen({ projectKey }: ProjectSettingsScreenProps) {
+export default function ProjectSettingsScreen({ serverId, projectId }: ProjectSettingsScreenProps) {
   const { projects } = useProjects();
   const project = useMemo(
-    () => projects.find((entry) => entry.projectKey === projectKey),
-    [projects, projectKey],
+    () => getProjectSummaryForHostProject(projects, serverId, projectId),
+    [projectId, projects, serverId],
   );
   const editableHosts = useMemo(() => filterEditableHosts(project), [project]);
-
-  const [selectedServerId, setSelectedServerId] = useState<string>(
-    () => editableHosts[0]?.serverId ?? "",
+  const routeKey = `${serverId}:${projectId}`;
+  const routeHost = getProjectHostEntry(project, serverId, projectId);
+  const defaultHost = routeHost?.isOnline ? routeHost : editableHosts[0];
+  const [hostSelection, setHostSelection] = useState({
+    routeKey: "",
+    serverId: "",
+    projectId: "",
+  });
+  const selectedTarget = resolveProjectSettingsHostTarget({
+    routeKey,
+    editableHosts,
+    defaultHost,
+    selection: hostSelection,
+  });
+  const selectedServerId = selectedTarget?.serverId ?? "";
+  const selectedProjectId = selectedTarget?.projectId ?? "";
+  const setSelectedServerId = useCallback(
+    (targetServerId: string) => {
+      const targetProjectId = selectProjectIdForServer(useSessionStore.getState(), {
+        sourceServerId: serverId,
+        projectId,
+        targetServerId,
+      });
+      if (targetProjectId) {
+        setHostSelection({ routeKey, serverId: targetServerId, projectId: targetProjectId });
+      }
+    },
+    [projectId, routeKey, serverId],
   );
-
-  useEffect(() => {
-    const stillValid = editableHosts.some((host) => host.serverId === selectedServerId);
-    if (!stillValid) {
-      setSelectedServerId(editableHosts[0]?.serverId ?? "");
-    }
-  }, [editableHosts, selectedServerId]);
 
   const selectedSnapshot = useHostRuntimeSnapshot(selectedServerId);
   const isHostGone =
@@ -112,7 +135,7 @@ export default function ProjectSettingsScreen({ projectKey }: ProjectSettingsScr
     (selectedSnapshot?.connectionStatus === "offline" ||
       selectedSnapshot?.connectionStatus === "error");
 
-  const selectedHost = editableHosts.find((host) => host.serverId === selectedServerId);
+  const selectedHost = getProjectHostEntry(project, selectedServerId, selectedProjectId);
   const client = useHostRuntimeClient(selectedHost?.serverId ?? "");
 
   if (!project || editableHosts.length === 0 || !selectedHost || !client) {
@@ -210,16 +233,16 @@ function ProjectSettingsBody({
     () => [
       {
         serverId: selectedHost.serverId,
-        projectKey: project.projectKey,
+        projectViewKey: project.viewKey,
         iconWorkingDir: selectedHost.repoRoot,
       },
     ],
-    [project.projectKey, selectedHost.repoRoot, selectedHost.serverId],
+    [project.viewKey, selectedHost.repoRoot, selectedHost.serverId],
   );
-  const projectIconDataByKey = useProjectIconDataByProjectKey({
+  const projectIconDataByKey = useProjectIconDataByProjectViewKey({
     projects: projectIconTargets,
   });
-  const projectIconDataUri = projectIconDataByKey.get(project.projectKey) ?? null;
+  const projectIconDataUri = projectIconDataByKey.get(project.viewKey) ?? null;
   const loadedConfig: PaseoConfigRaw | null = data?.ok ? (data.config ?? {}) : null;
   const loadedRevision: PaseoConfigRevision | null = data?.ok ? data.revision : null;
   const readError: ProjectConfigRpcError | null = data && !data.ok ? data.error : null;
@@ -231,7 +254,7 @@ function ProjectSettingsBody({
   const hasMultipleHosts = hosts.length > 1;
 
   return (
-    <View style={styles.body}>
+    <View role="main" style={styles.body}>
       <BackToProjectsButton />
 
       <View style={styles.headerBlock}>
@@ -239,9 +262,15 @@ function ProjectSettingsBody({
           <ProjectTitleIcon
             iconDataUri={projectIconDataUri}
             projectName={project.projectName}
-            projectKey={project.projectKey}
+            projectViewKey={project.viewKey}
           />
-          <ProjectNameEditor project={project} client={client} />
+          <ProjectNameEditor
+            key={`${selectedHost.serverId}:${selectedHost.projectId}`}
+            projectName={selectedHost.projectName}
+            projectCustomName={selectedHost.projectCustomName}
+            projectId={selectedHost.projectId}
+            client={client}
+          />
         </View>
         <HostContext hosts={hosts} selectedHost={selectedHost} onSelectHost={onSelectHost} />
       </View>
@@ -789,19 +818,26 @@ function ResolveSpinnerColor(): string {
 }
 
 interface ProjectNameEditorProps {
-  project: ProjectSummary;
+  projectName: string;
+  projectCustomName: string | null;
+  projectId: string;
   client: DaemonClient;
 }
 
-function ProjectNameEditor({ project, client }: ProjectNameEditorProps) {
+function ProjectNameEditor({
+  projectName,
+  projectCustomName,
+  projectId,
+  client,
+}: ProjectNameEditorProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const toast = useToast();
   const [isEditing, setIsEditing] = useState(false);
-  const [value, setValue] = useState(project.projectCustomName ?? "");
+  const [value, setValue] = useState(projectCustomName ?? "");
 
   const renameMutation = useMutation({
-    mutationFn: (customName: string | null) => client.renameProject(project.projectKey, customName),
+    mutationFn: (customName: string | null) => client.renameProject(projectId, customName),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       setIsEditing(false);
@@ -815,24 +851,24 @@ function ProjectNameEditor({ project, client }: ProjectNameEditorProps) {
   });
 
   const handleStartEdit = useCallback(() => {
-    setValue(project.projectCustomName ?? "");
+    setValue(projectCustomName ?? "");
     setIsEditing(true);
-  }, [project.projectCustomName]);
+  }, [projectCustomName]);
 
   const handleCancel = useCallback(() => {
     setIsEditing(false);
-    setValue(project.projectCustomName ?? "");
-  }, [project.projectCustomName]);
+    setValue(projectCustomName ?? "");
+  }, [projectCustomName]);
 
   const handleSave = useCallback(() => {
     const trimmed = value.trim();
     const next = trimmed.length === 0 ? null : trimmed;
-    if (next === (project.projectCustomName ?? null)) {
+    if (next === projectCustomName) {
       setIsEditing(false);
       return;
     }
     renameMutation.mutate(next);
-  }, [value, project.projectCustomName, renameMutation]);
+  }, [value, projectCustomName, renameMutation]);
 
   const handleReset = useCallback(() => {
     renameMutation.mutate(null);
@@ -840,12 +876,17 @@ function ProjectNameEditor({ project, client }: ProjectNameEditorProps) {
 
   if (!isEditing) {
     return (
-      <View style={styles.nameEditorRow}>
+      <View
+        role="group"
+        accessibilityLabel={t("settings.project.rename.projectNameLabel")}
+        style={styles.nameEditorRow}
+      >
         <Text style={styles.projectTitle} numberOfLines={1}>
-          {project.projectName}
+          {projectName}
         </Text>
         <Pressable
           testID="project-name-edit-button"
+          accessibilityRole="button"
           accessibilityLabel={t("settings.project.rename.renameLabel")}
           onPress={handleStartEdit}
           hitSlop={8}
@@ -853,9 +894,10 @@ function ProjectNameEditor({ project, client }: ProjectNameEditorProps) {
         >
           <Pencil size={ICON_SIZE} color={styles.iconColor.color} />
         </Pressable>
-        {project.projectCustomName ? (
+        {projectCustomName ? (
           <Pressable
             testID="project-name-reset-button"
+            accessibilityRole="button"
             accessibilityLabel={t("settings.project.rename.resetLabel")}
             onPress={handleReset}
             disabled={renameMutation.isPending}
@@ -870,13 +912,17 @@ function ProjectNameEditor({ project, client }: ProjectNameEditorProps) {
   }
 
   return (
-    <View style={styles.nameEditorRow}>
+    <View
+      role="group"
+      accessibilityLabel={t("settings.project.rename.projectNameLabel")}
+      style={styles.nameEditorRow}
+    >
       <TextInput
         testID="project-name-input"
         accessibilityLabel={t("settings.project.rename.projectNameLabel")}
         value={value}
         onChangeText={setValue}
-        placeholder={project.projectName}
+        placeholder={projectName}
         placeholderTextColor={styles.placeholderColor.color}
         autoFocus
         style={styles.nameEditorInput}
@@ -886,6 +932,7 @@ function ProjectNameEditor({ project, client }: ProjectNameEditorProps) {
       />
       <Pressable
         testID="project-name-save-button"
+        accessibilityRole="button"
         accessibilityLabel={t("settings.project.rename.saveLabel")}
         onPress={handleSave}
         disabled={renameMutation.isPending}
@@ -896,6 +943,7 @@ function ProjectNameEditor({ project, client }: ProjectNameEditorProps) {
       </Pressable>
       <Pressable
         testID="project-name-cancel-button"
+        accessibilityRole="button"
         accessibilityLabel={t("settings.project.rename.cancelLabel")}
         onPress={handleCancel}
         disabled={renameMutation.isPending}
@@ -911,18 +959,18 @@ function ProjectNameEditor({ project, client }: ProjectNameEditorProps) {
 function ProjectTitleIcon({
   iconDataUri,
   projectName,
-  projectKey,
+  projectViewKey,
 }: {
   iconDataUri: string | null;
   projectName: string;
-  projectKey: string;
+  projectViewKey: string;
 }) {
   const initial = projectName.trim().charAt(0).toUpperCase() || "?";
   return (
     <ProjectIconView
       iconDataUri={iconDataUri}
       initial={initial}
-      projectKey={projectKey}
+      projectViewKey={projectViewKey}
       imageStyle={styles.titleIcon}
       fallbackStyle={styles.titleIconFallback}
       textStyle={styles.titleIconFallbackText}
@@ -982,6 +1030,7 @@ function HostPicker({ hosts, selectedHost, onSelectHost }: HostPickerProps) {
     >
       <Pressable
         ref={triggerRef}
+        accessibilityRole="button"
         accessibilityLabel={t("settings.project.switchHost")}
         testID="host-picker"
         style={styles.hostIndicator}

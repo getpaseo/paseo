@@ -208,6 +208,14 @@ export class CheckoutDiffManager {
           ? { force: true, reason: options.reason ?? "checkout-diff-refresh" }
           : undefined,
       );
+      if (diffResult.diffTooLarge) {
+        return {
+          cwd,
+          files: [],
+          diffTooLarge: true,
+          error: toCheckoutError(new Error("Diff too large to display")),
+        };
+      }
       const files = [...(diffResult.structured ?? [])];
       files.sort((a, b) => {
         if (a.path === b.path) return 0;
