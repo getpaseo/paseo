@@ -387,7 +387,7 @@ export function selectAgentTurnPresentation(
 ): TurnPresentation {
   return resolveTurnPresentation(
     session?.agentTurnLiveness.get(agentId) ?? TURN_LIVENESS_IDLE,
-    getActiveMessageSubmissions(session?.messageSubmissions.get(agentId)),
+    getActiveMessageSubmissions(session?.messageSubmissions.get(agentId)).length > 0,
   );
 }
 
@@ -1237,7 +1237,7 @@ export const useSessionStore = create<SessionStore>()(
           });
           const submissions = beginMessageSubmission(
             session.messageSubmissions.get(agentId) ?? [],
-            { clientMessageId: message.clientMessageId, submittedAt: message.timestamp },
+            { clientMessageId: message.clientMessageId },
           );
           const messageSubmissions = new Map(session.messageSubmissions);
           messageSubmissions.set(agentId, submissions);

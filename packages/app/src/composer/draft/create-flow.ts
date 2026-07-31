@@ -159,7 +159,6 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
     return [
       {
         clientMessageId: machine.attempt.clientMessageId,
-        submittedAt: machine.attempt.timestamp,
       },
     ];
   }, [machine]);

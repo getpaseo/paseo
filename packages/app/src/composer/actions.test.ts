@@ -215,7 +215,6 @@ function createFakeStream(initialHead: Map<string, StreamItem[]> = new Map()): F
         ...stream,
         submissions: beginMessageSubmission(current.submissions, {
           clientMessageId: message.clientMessageId!,
-          submittedAt: message.timestamp,
         }),
       });
     },

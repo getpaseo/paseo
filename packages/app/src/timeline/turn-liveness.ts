@@ -56,9 +56,8 @@ export interface TurnPresentation {
 
 export function resolveTurnPresentation(
   liveness: TurnLiveness,
-  submissions: readonly { clientMessageId: string; submittedAt: Date }[],
+  hasActiveSubmission: boolean,
 ): TurnPresentation {
-  const latestSubmission = submissions.at(-1);
   if (liveness.phase === "open") {
     return {
       isActive: true,
@@ -68,7 +67,7 @@ export function resolveTurnPresentation(
     };
   }
   return {
-    isActive: latestSubmission !== undefined,
+    isActive: hasActiveSubmission,
     isCancelling: liveness.cancellationRequestId !== null,
     startedAt: null,
     turnId: null,

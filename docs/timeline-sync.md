@@ -138,15 +138,17 @@ footer, and permanently drops attachments because the daemon does not echo them 
 A submitted prompt is one `UserMessageItem` row. That row is the authoritative local presentation:
 its stable identity, text, timestamp, images, and attachments do not change when the provider
 acknowledges it. Submission lifecycle is a separate record keyed by agent, not another row shape.
-The transaction registry exists only until the daemon accepts or rejects the send. An accepted RPC
-settles it because capable daemons guarantee the prompt is already durable. Canonical acknowledgement
-can arrive first and prevents a later transport error from rolling back a prompt already observed.
+The transaction registry records two independent settlement facts: canonical acknowledgement and RPC
+settlement. Canonical acknowledgement retires optimistic activity immediately. When both facts are
+known, whichever arrives second deletes the record. A canonical acknowledgement that arrives first
+prevents a later transport error from rolling back a prompt already observed.
 
 The daemon's accepted response waits for the correlated run start and guarantees that the canonical
 submitted row has been recorded. It publishes the accepted turn's liveness before that row, so the
-client applies authoritative activity before retiring optimistic activity on RPC acceptance. Timeline
-render batching does not delay lifecycle application. Directory status never settles a submission.
-Overlapping sends settle independently rather than collapsing to one newest pending message.
+client applies authoritative activity before canonical acknowledgement retires optimistic activity.
+Timeline render batching does not delay lifecycle application. Directory status never settles a
+submission. Overlapping sends settle independently rather than collapsing to one newest pending
+message.
 
 Daemons advertising `server_info.features.canonicalSubmittedPrompts` guarantee that every accepted
 prompt carrying a client message id is recorded and streamed as a canonical `user_message` with that
@@ -167,9 +169,9 @@ remain a separate pre-turn registry and retire on canonical acknowledgement.
 The compatibility boundary for older daemons is snapshot normalization: running/idle status becomes an
 anonymous active turn or idle state once, and downstream code consumes the same activity shape. The app
 does not combine anonymous lifecycle events, timestamps, timeline rows, and resume coverage to infer a
-second running state. Disconnect and replica removal remain destructive close boundaries. Running time
-comes from the daemon snapshot/event or the pending submission, never from whichever timeline rows happen
-to be mounted.
+second running state. Disconnect and replica removal remain destructive close boundaries. Elapsed time
+comes only from turn liveness, never from submission records or whichever timeline rows happen to be
+mounted.
 
 The daemon records one canonical submitted user row with Paseo's `clientMessageId` as soon as the
 provider accepts the turn. A correlated provider echo enriches that same sequence with its provider

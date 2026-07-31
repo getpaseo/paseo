@@ -1,6 +1,5 @@
 export interface PendingMessageSubmission {
   clientMessageId: string;
-  submittedAt: Date;
 }
 
 export type MessageSubmissionRecord = PendingMessageSubmission & {

@@ -545,7 +545,7 @@ export function WorkspaceDraftAgentTab({
     },
   });
   const turnPresentation = useMemo(
-    () => resolveTurnPresentation(TURN_LIVENESS_IDLE, pendingMessageSubmissions),
+    () => resolveTurnPresentation(TURN_LIVENESS_IDLE, pendingMessageSubmissions.length > 0),
     [pendingMessageSubmissions],
   );
   useCommandCenterActions({

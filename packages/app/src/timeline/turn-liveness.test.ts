@@ -68,11 +68,7 @@ describe("turn activity", () => {
   });
 
   it("keeps submission-only activity untimed", () => {
-    expect(
-      resolveTurnPresentation(TURN_LIVENESS_IDLE, [
-        { clientMessageId: "message-1", submittedAt: startedAt },
-      ]),
-    ).toEqual({
+    expect(resolveTurnPresentation(TURN_LIVENESS_IDLE, true)).toEqual({
       isActive: true,
       isCancelling: false,
       startedAt: null,

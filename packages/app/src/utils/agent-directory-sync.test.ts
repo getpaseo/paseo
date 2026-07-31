@@ -157,7 +157,6 @@ describe("message submission authority", () => {
     expect(useSessionStore.getState().sessions[serverId]?.messageSubmissions.get(agentId)).toEqual([
       {
         clientMessageId,
-        submittedAt: new Date("2026-07-27T10:00:00.000Z"),
         providerAcknowledged: false,
         rpcSettled: false,
       },
