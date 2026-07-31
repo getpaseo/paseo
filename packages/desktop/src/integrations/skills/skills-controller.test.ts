@@ -578,6 +578,40 @@ describe("skills controller", () => {
     await expect(harness.controller.status()).resolves.toMatchObject({ selection: previous });
   });
 
+  it("quarantines a staged directory when an external file takes its live path", async () => {
+    const previous: SkillSelection = {
+      mode: "custom",
+      skills: ["paseo", "paseo-loop"],
+    };
+    const next: SkillSelection = { mode: "custom", skills: ["paseo"] };
+    await harness.controller.save(previous);
+    await writeUserFile(harness.targets, "paseo-loop", "notes/mine.md", "keep this");
+
+    const transaction = await beginSkillsTransaction(harness.targets, previous, next, [
+      { kind: "delete", name: "paseo-loop" },
+    ]);
+    const live = path.join(harness.targets.codexDir, "paseo-loop");
+    await writeFile(live, "external replacement");
+
+    await transaction.rollback();
+
+    expect(await readFile(live, "utf8")).toBe("external replacement");
+    const recovered = (await readdir(harness.targets.codexDir)).find((entry) =>
+      entry.startsWith(".paseo-skills-recovered-"),
+    );
+    expect(recovered).toBeDefined();
+    expect(
+      await readFile(path.join(harness.targets.codexDir, recovered!, "notes", "mine.md"), "utf8"),
+    ).toBe("keep this");
+    expect(await readUserFile(harness.targets, "paseo-loop", "notes/mine.md")).toEqual([
+      "keep this",
+      "keep this",
+      null,
+    ]);
+    expect(await backupArtifacts(harness.targets)).toEqual([[], [], []]);
+    await expect(harness.controller.status()).resolves.toMatchObject({ selection: previous });
+  });
+
   it.skipIf(process.platform !== "linux")(
     "stages deletions when an agent skills root is on another filesystem",
     async () => {

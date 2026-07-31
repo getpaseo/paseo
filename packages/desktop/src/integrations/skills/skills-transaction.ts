@@ -53,6 +53,7 @@ interface CapturedDirectory {
 const MANIFEST_OWNER = "paseo-skills-transaction";
 const MANIFEST_FILENAME = "transaction.json";
 const TRANSACTION_PREFIX = ".paseo-skills-transaction-";
+const RECOVERED_PREFIX = ".paseo-skills-recovered-";
 const BACKUP_DIRNAME = "backup";
 const MANAGED_FILES_MANIFEST = ".paseo-managed-files.json";
 
@@ -227,6 +228,19 @@ async function mergeBackupDirectory(livePath: string, backupPath: string | null)
   });
 }
 
+async function quarantineStagedEntry(livePath: string, backupPath: string): Promise<void> {
+  const transactionId = path.basename(path.dirname(backupPath)).replace(TRANSACTION_PREFIX, "");
+  const base = path.join(
+    path.dirname(livePath),
+    `${RECOVERED_PREFIX}${path.basename(livePath)}-${transactionId}`,
+  );
+  let destination = base;
+  for (let suffix = 1; await lstat(destination).catch(() => null); suffix += 1) {
+    destination = `${base}-${suffix}`;
+  }
+  await rename(backupPath, destination);
+}
+
 async function restoreDeletedDirectory(livePath: string, backupPath: string | null): Promise<void> {
   if (backupPath === null) return;
   const liveInfo = await lstat(livePath).catch(() => null);
@@ -236,11 +250,14 @@ async function restoreDeletedDirectory(livePath: string, backupPath: string | nu
     return;
   }
   const backupInfo = await lstat(backupPath);
-  if (backupInfo.isDirectory() && !backupInfo.isSymbolicLink()) {
+  if (backupInfo.isDirectory() && !backupInfo.isSymbolicLink() && (await isDirectory(livePath))) {
     await mergeBackupDirectory(livePath, backupPath);
     return;
   }
-  throw new Error(`Cannot safely restore skill symlink over a recreated path: ${livePath}`);
+  // A concurrent writer recreated the path with an incompatible type. Keep its
+  // entry live and move the staged original outside transaction cleanup so
+  // neither side is overwritten and later controller operations can proceed.
+  await quarantineStagedEntry(livePath, backupPath);
 }
 
 async function restoreStagedEntry(
