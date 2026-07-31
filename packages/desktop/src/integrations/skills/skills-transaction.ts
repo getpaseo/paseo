@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -152,15 +152,6 @@ async function listAllFiles(rootDir: string): Promise<string[]> {
   return files;
 }
 
-async function readFiles(rootDir: string | null): Promise<Map<string, Buffer>> {
-  const files = new Map<string, Buffer>();
-  if (rootDir === null) return files;
-  for (const rel of await listAllFiles(rootDir)) {
-    files.set(rel, await readFile(path.join(rootDir, rel)));
-  }
-  return files;
-}
-
 async function expectedSyncedFiles(sourceDir: string, name: string): Promise<Map<string, Buffer>> {
   const skillDir = path.join(sourceDir, name);
   const files = new Map<string, Buffer>();
@@ -177,25 +168,43 @@ async function expectedSyncedFiles(sourceDir: string, name: string): Promise<Map
   return files;
 }
 
-async function writeRestoredFile(target: string, contents: Buffer): Promise<void> {
+async function copyStagedEntry(source: string, target: string): Promise<void> {
+  const info = await lstat(source);
   await mkdir(path.dirname(target), { recursive: true });
-  await writeFile(target, contents);
+  await cp(source, target, {
+    recursive: info.isDirectory(),
+    preserveTimestamps: true,
+    verbatimSymlinks: true,
+  });
 }
 
-async function mergeDeletedDirectory(
-  livePath: string,
-  backupFiles: ReadonlyMap<string, Buffer>,
+async function mergeBackupDirectory(livePath: string, backupPath: string | null): Promise<void> {
+  if (backupPath === null) return;
+  await mkdir(livePath, { recursive: true });
+  await cp(backupPath, livePath, {
+    recursive: true,
+    force: false,
+    errorOnExist: false,
+    preserveTimestamps: true,
+    verbatimSymlinks: true,
+  });
+}
+
+async function restoreStagedEntry(
+  liveRoot: string,
+  backupRoot: string | null,
+  rel: string,
 ): Promise<void> {
-  for (const [rel, contents] of backupFiles) {
-    const target = path.join(livePath, rel);
-    if (await stat(target).catch(() => null)) continue;
-    await writeRestoredFile(target, contents);
-  }
+  const live = path.join(liveRoot, rel);
+  const backup = backupRoot && path.join(backupRoot, rel);
+  await rm(live, { recursive: true, force: true });
+  if (backup === null || !(await lstat(backup).catch(() => null))) return;
+  await copyStagedEntry(backup, live);
 }
 
 async function undoSyncedDirectory(
   livePath: string,
-  backupFiles: ReadonlyMap<string, Buffer>,
+  backupPath: string | null,
   expectedFiles: ReadonlyMap<string, Buffer>,
 ): Promise<void> {
   for (const rel of await listAllFiles(livePath)) {
@@ -203,15 +212,14 @@ async function undoSyncedDirectory(
     const current = await readFile(target).catch(() => null);
     const expected = expectedFiles.get(rel);
     if (current === null || expected === undefined || !current.equals(expected)) continue;
-    const previous = backupFiles.get(rel);
-    if (previous) await writeRestoredFile(target, previous);
-    else await rm(target, { force: true });
+    await restoreStagedEntry(livePath, backupPath, rel);
   }
 
   // Sync can prune files that an older managed-files manifest owned. Restore
-  // missing pre-save files, but never overwrite a path another writer recreated.
-  await mergeDeletedDirectory(livePath, backupFiles);
-  if ((await listAllFiles(livePath)).length === 0) {
+  // missing staged entries with their type and metadata, but never overwrite a
+  // path another writer recreated.
+  await mergeBackupDirectory(livePath, backupPath);
+  if ((await readdir(livePath).catch(() => [])).length === 0) {
     await rm(livePath, { recursive: true, force: true });
   }
 }
@@ -229,9 +237,8 @@ async function restore(
     if (backup !== null && !(await isDirectory(backup))) {
       throw new Error(`Skills transaction backup is missing: ${backup}`);
     }
-    const backupFiles = await readFiles(backup);
     if (entry.kind === "delete") {
-      await mergeDeletedDirectory(entry.livePath, backupFiles);
+      await mergeBackupDirectory(entry.livePath, backup);
       continue;
     }
     const name = path.basename(entry.livePath);
@@ -240,7 +247,7 @@ async function restore(
       expected = await expectedSyncedFiles(targets.sourceDir, name);
       expectedByName.set(name, expected);
     }
-    await undoSyncedDirectory(entry.livePath, backupFiles, expected);
+    await undoSyncedDirectory(entry.livePath, backup, expected);
   }
 }
 
@@ -327,7 +334,11 @@ export async function beginSkillsTransaction(
           continue;
         }
         const backupPath = path.join(BACKUP_DIRNAME, String(rootIndex), name);
-        await cp(livePath, path.join(transactionDir, backupPath), { recursive: true });
+        await cp(livePath, path.join(transactionDir, backupPath), {
+          recursive: true,
+          preserveTimestamps: true,
+          verbatimSymlinks: true,
+        });
         entries.push({ livePath, kind: op.kind, backupPath });
       }
     }

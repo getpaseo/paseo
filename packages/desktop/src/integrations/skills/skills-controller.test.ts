@@ -1,4 +1,16 @@
-import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  readlink,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { access } from "node:fs/promises";
 import { watch } from "node:fs/promises";
 import os from "node:os";
@@ -442,6 +454,89 @@ describe("skills controller", () => {
     ]);
     await rm(readOnly.root, { recursive: true, force: true });
   });
+
+  it.skipIf(process.platform === "win32")(
+    "restores a user-added symlink when deletion rolls back",
+    async () => {
+      const previous: SkillSelection = {
+        mode: "custom",
+        skills: ["paseo", "paseo-loop"],
+      };
+      const gated = createGatedUnwritableSelectionStore(previous);
+      const readOnly = await makeHarness(gated.store);
+      await readOnly.controller.install();
+      for (const root of [
+        readOnly.targets.agentsDir,
+        readOnly.targets.claudeDir,
+        readOnly.targets.codexDir,
+      ]) {
+        const notes = path.join(root, "paseo-loop", "notes");
+        await mkdir(notes, { recursive: true });
+        await writeFile(path.join(notes, "before.md"), "target");
+        await symlink("before.md", path.join(notes, "latest.md"));
+      }
+
+      const save = readOnly.controller.save({
+        mode: "custom",
+        skills: ["paseo"],
+        confirmedRemovals: ["paseo-loop"],
+      });
+      await gated.persistenceStarted;
+      gated.failPersistence();
+      await expect(save).rejects.toThrow("selection store is read-only");
+
+      for (const root of [
+        readOnly.targets.agentsDir,
+        readOnly.targets.claudeDir,
+        readOnly.targets.codexDir,
+      ]) {
+        const restored = path.join(root, "paseo-loop", "notes", "latest.md");
+        expect((await lstat(restored)).isSymbolicLink()).toBe(true);
+        expect(await readlink(restored)).toBe("before.md");
+      }
+      await rm(readOnly.root, { recursive: true, force: true });
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "restores executable permissions when deletion rolls back",
+    async () => {
+      const previous: SkillSelection = {
+        mode: "custom",
+        skills: ["paseo", "paseo-loop"],
+      };
+      const gated = createGatedUnwritableSelectionStore(previous);
+      const readOnly = await makeHarness(gated.store);
+      await readOnly.controller.install();
+      await writeUserFile(readOnly.targets, "paseo-loop", "hooks/run.sh", "#!/bin/sh\n");
+      for (const root of [
+        readOnly.targets.agentsDir,
+        readOnly.targets.claudeDir,
+        readOnly.targets.codexDir,
+      ]) {
+        await chmod(path.join(root, "paseo-loop", "hooks", "run.sh"), 0o751);
+      }
+
+      const save = readOnly.controller.save({
+        mode: "custom",
+        skills: ["paseo"],
+        confirmedRemovals: ["paseo-loop"],
+      });
+      await gated.persistenceStarted;
+      gated.failPersistence();
+      await expect(save).rejects.toThrow("selection store is read-only");
+
+      for (const root of [
+        readOnly.targets.agentsDir,
+        readOnly.targets.claudeDir,
+        readOnly.targets.codexDir,
+      ]) {
+        const restored = await lstat(path.join(root, "paseo-loop", "hooks", "run.sh"));
+        expect(restored.mode & 0o777).toBe(0o751);
+      }
+      await rm(readOnly.root, { recursive: true, force: true });
+    },
+  );
 
   it("leaves no backup artifacts behind after a successful save", async () => {
     await harness.controller.save({ mode: "custom", skills: ["paseo"] });
