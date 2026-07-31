@@ -2,13 +2,7 @@ import { existsSync } from "node:fs";
 import { expect, test, type Page } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
 import { clickSessionRow, expectSessionRowArchived, openSessions } from "./helpers/archive-tab";
-import {
-  cloneGithubRepoDefaultBranchOnly,
-  createTempGithubRepo,
-  hasGithubAuth,
-  type GhDefaultBranchClone,
-  type GhRepoFixture,
-} from "./helpers/github-fixtures";
+import { cloneGithubRepoDefaultBranchOnly, createTempGithubRepo } from "./helpers/github-fixtures";
 import {
   archiveWorkspaceFromDaemon,
   connectNewWorkspaceDaemonClient,
@@ -17,14 +11,8 @@ import { connectSeedClient } from "./helpers/seed-client";
 import { getServerId } from "./helpers/server-id";
 import { waitForSidebarHydration, waitForWorkspaceInSidebar } from "./helpers/workspace-ui";
 
-const GITHUB_AUTH = hasGithubAuth();
-
 test.describe("Auto-archive after pull request merge", () => {
   test.describe.configure({ retries: 0, timeout: 180_000 });
-
-  test.beforeEach(() => {
-    test.skip(!GITHUB_AUTH, "Requires GitHub authentication (gh auth login)");
-  });
 
   test("manual restore latches and keeps a merged pull request workspace active", async ({
     page,
@@ -58,19 +46,28 @@ interface MergedPullRequestScenario {
 }
 
 async function createMergedPullRequestScenario(): Promise<MergedPullRequestScenario> {
-  const repo = await createTempGithubRepo({
-    category: "auto-archive-latch",
-    prs: [{ title: "Auto-archive latch", state: "merged" }],
-  });
-  const checkout = await cloneGithubRepoDefaultBranchOnly(repo);
-  const workspaceClient = await connectNewWorkspaceDaemonClient();
-  const agentClient = await connectSeedClient();
-  const previousConfig = await workspaceClient.getDaemonConfig();
-  let workspaceDirectory: string | undefined;
-  let projectId: string | undefined;
-  await workspaceClient.patchDaemonConfig({ autoArchiveAfterMerge: false });
+  const cleanups: Array<() => Promise<unknown>> = [];
 
   try {
+    const repo = await createTempGithubRepo({
+      category: "auto-archive-latch",
+      prs: [{ title: "Auto-archive latch", state: "merged" }],
+    });
+    cleanups.push(() => repo.cleanup());
+    const checkout = await cloneGithubRepoDefaultBranchOnly(repo);
+    cleanups.push(() => checkout.cleanup());
+    const workspaceClient = await connectNewWorkspaceDaemonClient();
+    cleanups.push(() => workspaceClient.close());
+    const agentClient = await connectSeedClient();
+    cleanups.push(() => agentClient.close());
+    const previousConfig = await workspaceClient.getDaemonConfig();
+    await workspaceClient.patchDaemonConfig({ autoArchiveAfterMerge: false });
+    cleanups.push(() =>
+      workspaceClient.patchDaemonConfig({
+        autoArchiveAfterMerge: previousConfig.config.autoArchiveAfterMerge,
+      }),
+    );
+
     const pullRequest = repo.prs[0];
     if (!pullRequest) {
       throw new Error("Expected the merged pull request fixture");
@@ -90,8 +87,8 @@ async function createMergedPullRequestScenario(): Promise<MergedPullRequestScena
     }
 
     const workspace = created.workspace;
-    workspaceDirectory = workspace.workspaceDirectory;
-    projectId = workspace.projectId;
+    cleanups.push(() => workspaceClient.removeProject(workspace.projectId));
+    cleanups.push(() => archiveWorkspaceFromDaemon(workspaceClient, workspace.workspaceDirectory));
     const agentTitle = `Auto-archive latch ${Date.now()}`;
     const agent = await agentClient.createAgent({
       provider: "mock",
@@ -143,60 +140,20 @@ async function createMergedPullRequestScenario(): Promise<MergedPullRequestScena
           )
           .toBe("active");
       },
-      cleanup: async () => {
-        await workspaceClient
-          .patchDaemonConfig({
-            autoArchiveAfterMerge: previousConfig.config.autoArchiveAfterMerge,
-          })
-          .catch(() => undefined);
-        await archiveWorkspaceFromDaemon(workspaceClient, workspace.workspaceDirectory).catch(
-          () => undefined,
-        );
-        await workspaceClient.removeProject(workspace.projectId).catch(() => undefined);
-        await agentClient.close().catch(() => undefined);
-        await workspaceClient.close().catch(() => undefined);
-        await checkout.cleanup().catch(() => undefined);
-        await repo.cleanup().catch(() => undefined);
-      },
+      cleanup: () => runScenarioCleanups(cleanups),
     };
   } catch (error) {
-    await cleanupFailedScenario({
-      repo,
-      checkout,
-      workspaceClient,
-      agentClient,
-      autoArchiveAfterMerge: previousConfig.config.autoArchiveAfterMerge,
-      workspaceDirectory,
-      projectId,
-    });
+    await runScenarioCleanups(cleanups);
     throw error;
   }
 }
 
-async function cleanupFailedScenario(input: {
-  repo: GhRepoFixture;
-  checkout: GhDefaultBranchClone;
-  workspaceClient: Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
-  agentClient: Awaited<ReturnType<typeof connectSeedClient>>;
-  autoArchiveAfterMerge: boolean;
-  workspaceDirectory?: string;
-  projectId?: string;
-}): Promise<void> {
-  await input.workspaceClient
-    .patchDaemonConfig({ autoArchiveAfterMerge: input.autoArchiveAfterMerge })
-    .catch(() => undefined);
-  if (input.workspaceDirectory) {
-    await archiveWorkspaceFromDaemon(input.workspaceClient, input.workspaceDirectory).catch(
-      () => undefined,
-    );
+async function runScenarioCleanups(cleanups: Array<() => Promise<unknown>>): Promise<void> {
+  while (cleanups.length > 0) {
+    await cleanups
+      .pop()?.()
+      .catch(() => undefined);
   }
-  if (input.projectId) {
-    await input.workspaceClient.removeProject(input.projectId).catch(() => undefined);
-  }
-  await input.agentClient.close().catch(() => undefined);
-  await input.workspaceClient.close().catch(() => undefined);
-  await input.checkout.cleanup().catch(() => undefined);
-  await input.repo.cleanup().catch(() => undefined);
 }
 
 async function openArchivedWorkspaceFromHistory(page: Page, agentTitle: string): Promise<void> {
