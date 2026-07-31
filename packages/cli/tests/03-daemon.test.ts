@@ -184,6 +184,30 @@ try {
     assert.strictEqual(cleanup.exitCode, 0, "cleanup stop should succeed after IPC status");
     console.log("✓ daemon status probes live relay state over local IPC\n");
   }
+
+  // Test 9: --relay accepts an already-enabled persisted relay while stopped
+  {
+    console.log("Test 9: daemon pair --relay accepts persisted relay while stopped");
+    const configPath = join(paseoHome, "config.json");
+    const config = JSON.parse(await readFile(configPath, "utf-8"));
+    config.daemon = {
+      ...config.daemon,
+      relay: { ...config.daemon?.relay, enabled: true },
+    };
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
+
+    const pairing = await daemonCommand(["pair", "--relay", "--json"]);
+
+    assert.strictEqual(
+      pairing.exitCode,
+      0,
+      `persisted relay pairing should succeed while stopped: ${pairing.stderr}`,
+    );
+    const payload = JSON.parse(pairing.stdout);
+    assert.strictEqual(payload.relayEnabled, true, "pairing should preserve persisted relay state");
+    assert.match(payload.url, /#offer=/, "pairing should include the offline offer");
+    console.log("✓ daemon pair --relay accepts persisted relay while stopped\n");
+  }
 } finally {
   // Best-effort daemon cleanup in case assertions fail before explicit stop.
   await daemonCommand(["stop", "--force"]);

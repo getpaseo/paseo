@@ -85,11 +85,11 @@ export async function resolveLocalPairingOffer(options: {
     );
   }
 
-  if (options.enableRelay) {
+  const config = loadConfig(options.paseoHome);
+  if (options.enableRelay && !config.relayEnabled) {
     throw new Error("Start the daemon before enabling relay for pairing.");
   }
 
-  const config = loadConfig(options.paseoHome);
   return generateLocalPairingOffer({
     paseoHome: options.paseoHome,
     relayEnabled: config.relayEnabled,
