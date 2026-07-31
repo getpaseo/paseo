@@ -3650,9 +3650,7 @@ class OpenCodeAgentSession implements AgentSession {
       this.sessionTotalCostUsd = maxFiniteNumber(this.sessionTotalCostUsd, persistedSessionTotal);
     }
     const usageOptions =
-      this.sessionTotalCostUsd === undefined
-        ? {}
-        : { totalCostUsd: this.sessionTotalCostUsd };
+      this.sessionTotalCostUsd === undefined ? {} : { totalCostUsd: this.sessionTotalCostUsd };
     mergeOpenCodeStepFinishUsage(this.accumulatedUsage, assistantMessage.info, usageOptions);
     const usage = hasNormalizedOpenCodeUsage(this.accumulatedUsage)
       ? { ...this.accumulatedUsage }
