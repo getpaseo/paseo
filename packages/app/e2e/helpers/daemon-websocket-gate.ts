@@ -23,6 +23,11 @@ interface ClientRequest {
 interface ServerMessage {
   type?: unknown;
   payload?: {
+    kind?: unknown;
+    agent?: {
+      id?: unknown;
+      status?: unknown;
+    };
     initial?: {
       path?: unknown;
     };
@@ -65,6 +70,15 @@ function directoryForRequest(request: ClientRequest): keyof DirectoryBootstrapCo
   return null;
 }
 
+function isStoppedAgentUpdate(message: ServerMessage | null, agentId: string | null): boolean {
+  return (
+    message?.type === "agent_update" &&
+    message.payload?.kind === "upsert" &&
+    message.payload.agent?.id === agentId &&
+    message.payload.agent.status !== "running"
+  );
+}
+
 export async function installDaemonWebSocketGate(page: Page) {
   let acceptingConnections = true;
   const activeSockets = new Set<WebSocketRoute>();
@@ -84,6 +98,23 @@ export async function installDaemonWebSocketGate(page: Page) {
   let heldReadyFileUpdate: (() => void) | null = null;
   let resolveHeldReadyFileUpdate: (() => void) | null = null;
   let heldReadyFileUpdatePromise = Promise.resolve();
+  let stoppedAgentUpdateIdToHold: string | null = null;
+  let heldStoppedAgentUpdate: (() => void) | null = null;
+  let resolveHeldStoppedAgentUpdate: (() => void) | null = null;
+  let heldStoppedAgentUpdatePromise = Promise.resolve();
+
+  const recordFileSubscription = (message: ServerMessage | null): void => {
+    if (
+      message?.type !== "fs.file.subscribe.response" ||
+      typeof message.payload?.initial?.path !== "string"
+    ) {
+      return;
+    }
+    const path = message.payload.initial.path;
+    subscribedFilePaths.add(path);
+    fileSubscriptionWaiters.get(path)?.();
+    fileSubscriptionWaiters.delete(path);
+  };
 
   await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
     if (!acceptingConnections) {
@@ -126,14 +157,14 @@ export async function installDaemonWebSocketGate(page: Page) {
       if (!acceptingConnections) return;
       const serverMessage = readServerMessage(message);
       if (
-        serverMessage?.type === "fs.file.subscribe.response" &&
-        typeof serverMessage.payload?.initial?.path === "string"
+        isStoppedAgentUpdate(serverMessage, stoppedAgentUpdateIdToHold) &&
+        !heldStoppedAgentUpdate
       ) {
-        const path = serverMessage.payload.initial.path;
-        subscribedFilePaths.add(path);
-        fileSubscriptionWaiters.get(path)?.();
-        fileSubscriptionWaiters.delete(path);
+        heldStoppedAgentUpdate = () => ws.send(message);
+        resolveHeldStoppedAgentUpdate?.();
+        return;
       }
+      recordFileSubscription(serverMessage);
       if (
         serverMessage?.type === "fs.file.update" &&
         serverMessage.payload?.version?.status === "ready" &&
@@ -189,6 +220,23 @@ export async function installDaemonWebSocketGate(page: Page) {
       heldReadyFileUpdate = null;
       readyFileUpdatePathToHold = null;
       resolveHeldReadyFileUpdate = null;
+      forward?.();
+    },
+    holdNextStoppedAgentUpdate(agentId: string): void {
+      stoppedAgentUpdateIdToHold = agentId;
+      heldStoppedAgentUpdate = null;
+      heldStoppedAgentUpdatePromise = new Promise((resolve) => {
+        resolveHeldStoppedAgentUpdate = resolve;
+      });
+    },
+    waitForHeldStoppedAgentUpdate(): Promise<void> {
+      return heldStoppedAgentUpdatePromise;
+    },
+    releaseHeldStoppedAgentUpdate(): void {
+      const forward = heldStoppedAgentUpdate;
+      heldStoppedAgentUpdate = null;
+      stoppedAgentUpdateIdToHold = null;
+      resolveHeldStoppedAgentUpdate = null;
       forward?.();
     },
     async drop(): Promise<void> {

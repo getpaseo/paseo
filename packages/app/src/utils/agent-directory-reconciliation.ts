@@ -1,10 +1,10 @@
 import type { FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
-import type { Agent } from "@/stores/session-store";
+import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import type { AgentDirectoryDelta } from "./agent-directory-sync";
 import { acceptAgentDirectoryUpdate } from "./agent-directory-update-policy";
 
 export function reconcileAgentDirectory(input: {
-  previous: ReadonlyMap<string, Agent>;
+  previous: ReadonlyMap<string, Pick<AgentSnapshotPayload, "status">>;
   snapshot: FetchAgentsEntry[];
   deltas: readonly AgentDirectoryDelta[];
 }): { entries: FetchAgentsEntry[]; stoppedRunningAgentIds: string[] } {

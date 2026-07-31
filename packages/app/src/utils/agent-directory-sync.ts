@@ -18,11 +18,10 @@ export type AgentDirectoryDelta = Extract<
 
 export function applyAgentDirectoryDelta(input: { serverId: string; delta: AgentDirectoryDelta }): {
   agentId: string;
-  stoppedRunning: boolean;
 } {
   if (input.delta.kind === "remove") {
     removeAgentDirectoryReplica(input.serverId, input.delta.agentId);
-    return { agentId: input.delta.agentId, stoppedRunning: false };
+    return { agentId: input.delta.agentId };
   }
   return upsertAgentDirectoryReplica(input.serverId, input.delta);
 }
@@ -32,7 +31,7 @@ type AgentUpsertDelta = Extract<AgentDirectoryDelta, { kind: "upsert" }>;
 function upsertAgentDirectoryReplica(
   serverId: string,
   delta: AgentUpsertDelta,
-): { agentId: string; stoppedRunning: boolean } {
+): { agentId: string } {
   const normalized = normalizeAgentSnapshot(delta.agent, serverId);
   const session = useSessionStore.getState().sessions[serverId];
   const previousAgent =
@@ -59,7 +58,6 @@ function upsertAgentDirectoryReplica(
   useSessionStore.getState().setAgentLastActivity(acceptedAgent.id, acceptedAgent.lastActivityAt);
   return {
     agentId: acceptedAgent.id,
-    stoppedRunning: previousAgent?.status === "running" && acceptedAgent.status !== "running",
   };
 }
 

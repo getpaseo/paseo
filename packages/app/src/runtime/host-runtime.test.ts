@@ -8,6 +8,8 @@ import type {
 import type { ConnectionOffer } from "@getpaseo/protocol/connection-offer";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
+import type { AttachmentStore } from "@/attachments/types";
+import { __setAttachmentStoreForTests } from "@/attachments/store";
 import type { HostConnection, HostProfile } from "@/types/host-connection";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
@@ -35,6 +37,7 @@ class FakeDaemonClient {
     Awaited<ReturnType<DaemonClient["fetchAgents"]>> | ReturnType<DaemonClient["fetchAgents"]>
   > = [];
   public sentAgentMessages: Array<Parameters<DaemonClient["sendAgentMessage"]>> = [];
+  private completedAgentMessageSends = 0;
   public sendAgentMessageFailures: Error[] = [];
   public sendAgentMessageResponses: Promise<void>[] = [];
   private agentUpdateListeners = new Set<
@@ -43,6 +46,7 @@ class FakeDaemonClient {
   private fetchWaiters = new Set<() => void>();
   private agentListenerWaiters = new Set<() => void>();
   private sentMessageWaiters = new Set<() => void>();
+  private completedSentMessageWaiters = new Set<() => void>();
 
   on(
     type: "agent_update",
@@ -83,10 +87,15 @@ class FakeDaemonClient {
   async sendAgentMessage(...args: Parameters<DaemonClient["sendAgentMessage"]>): Promise<void> {
     this.sentAgentMessages.push(args);
     for (const waiter of this.sentMessageWaiters) waiter();
-    const response = this.sendAgentMessageResponses.shift();
-    if (response) await response;
-    const failure = this.sendAgentMessageFailures.shift();
-    if (failure) throw failure;
+    try {
+      const response = this.sendAgentMessageResponses.shift();
+      if (response) await response;
+      const failure = this.sendAgentMessageFailures.shift();
+      if (failure) throw failure;
+    } finally {
+      this.completedAgentMessageSends += 1;
+      for (const waiter of this.completedSentMessageWaiters) waiter();
+    }
   }
 
   async waitForSentMessages(count: number): Promise<void> {
@@ -98,6 +107,18 @@ class FakeDaemonClient {
         resolve();
       };
       this.sentMessageWaiters.add(waiter);
+    });
+  }
+
+  async waitForCompletedSentMessages(count: number): Promise<void> {
+    if (this.completedAgentMessageSends >= count) return;
+    await new Promise<void>((resolve) => {
+      const waiter = () => {
+        if (this.completedAgentMessageSends < count) return;
+        this.completedSentMessageWaiters.delete(waiter);
+        resolve();
+      };
+      this.completedSentMessageWaiters.add(waiter);
     });
   }
 
@@ -202,6 +223,7 @@ class FakeDaemonClient {
 
 afterEach(() => {
   vi.useRealTimers();
+  __setAttachmentStoreForTests(null);
   delete (globalThis as Record<string, unknown>).__PASEO_INITIAL_DAEMON_CONNECTION__;
   delete (globalThis as { window?: unknown }).window;
 });
@@ -258,6 +280,21 @@ async function waitForDirectoryReady(store: HostRuntimeStore, serverId: string):
       if (store.getSnapshot(serverId)?.agentDirectoryStatus !== "ready") return;
       unsubscribe();
       resolve();
+    });
+  });
+}
+
+function applyOptimisticTurnCompleted(serverId: string, agentId: string, timestamp: string): void {
+  const store = useSessionStore.getState();
+  store.setAgents(serverId, (current) => {
+    const currentAgent = current.get(agentId);
+    if (!currentAgent) throw new Error(`Missing agent ${agentId}`);
+    const completedAt = new Date(timestamp);
+    return new Map(current).set(agentId, {
+      ...currentAgent,
+      status: "idle",
+      updatedAt: completedAt,
+      lastActivityAt: completedAt,
     });
   });
 }
@@ -2259,6 +2296,111 @@ describe("HostRuntimeStore", () => {
     useSessionStore.getState().clearSession(host.serverId);
   });
 
+  it("drains one queued message per authoritative turn completion in FIFO order", async () => {
+    const host = makeHost({
+      serverId: "srv_queued_fifo",
+      connections: [{ id: "direct:lan:6767", type: "directTcp", endpoint: "lan:6767" }],
+    });
+    const fakeClient = new FakeDaemonClient();
+    fakeClient.setConnectionState({ status: "connected" });
+    const agentEntry = makeFetchAgentsEntry({
+      id: "agent",
+      cwd: "/repo",
+      updatedAt: "2026-07-12T10:00:00.000Z",
+    });
+    fakeClient.fetchAgentsResponses.push(
+      makeFetchAgentsPayload({
+        entries: [{ ...agentEntry, agent: { ...agentEntry.agent, status: "running" } }],
+      }),
+    );
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async () => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: null,
+        }),
+        getClientId: async () => "cid_queued_fifo",
+      },
+    });
+    const sessionStore = useSessionStore.getState();
+    sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    sessionStore.setQueuedMessages(
+      host.serverId,
+      new Map([
+        [
+          "agent",
+          [
+            { id: "message-first", text: "first queued", attachments: [] },
+            { id: "message-second", text: "second queued", attachments: [] },
+          ],
+        ],
+      ]),
+    );
+    store.syncHosts([host]);
+    await waitForDirectoryReady(store, host.serverId);
+
+    applyOptimisticTurnCompleted(host.serverId, "agent", "2026-07-12T10:01:00.000Z");
+    fakeClient.agentUpdate({
+      kind: "upsert",
+      agent: {
+        ...agentEntry.agent,
+        status: "idle",
+        updatedAt: "2026-07-12T10:02:00.000Z",
+      },
+      project: agentEntry.project,
+    });
+    await vi.waitFor(() => expect(fakeClient.sentAgentMessages).toHaveLength(1));
+    await vi.waitFor(() => {
+      expect(
+        useSessionStore.getState().sessions[host.serverId]?.queuedMessages.get("agent"),
+      ).toEqual([{ id: "message-second", text: "second queued", attachments: [] }]);
+    });
+    expect(fakeClient.sentAgentMessages).toHaveLength(1);
+    expect(fakeClient.sentAgentMessages[0]).toEqual([
+      "agent",
+      "first queued",
+      { messageId: "message-first", attachments: [] },
+    ]);
+    await fakeClient.waitForCompletedSentMessages(1);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    fakeClient.agentUpdate({
+      kind: "upsert",
+      agent: {
+        ...agentEntry.agent,
+        status: "running",
+        updatedAt: "2026-07-12T10:03:00.000Z",
+      },
+      project: agentEntry.project,
+    });
+    expect(fakeClient.sentAgentMessages).toHaveLength(1);
+
+    applyOptimisticTurnCompleted(host.serverId, "agent", "2026-07-12T10:04:00.000Z");
+    fakeClient.agentUpdate({
+      kind: "upsert",
+      agent: {
+        ...agentEntry.agent,
+        status: "idle",
+        updatedAt: "2026-07-12T10:05:00.000Z",
+      },
+      project: agentEntry.project,
+    });
+    await vi.waitFor(() => expect(fakeClient.sentAgentMessages).toHaveLength(2));
+
+    expect(fakeClient.sentAgentMessages).toEqual([
+      ["agent", "first queued", { messageId: "message-first", attachments: [] }],
+      ["agent", "second queued", { messageId: "message-second", attachments: [] }],
+    ]);
+    expect(useSessionStore.getState().sessions[host.serverId]?.queuedMessages.get("agent")).toEqual(
+      [],
+    );
+
+    store.syncHosts([]);
+    useSessionStore.getState().clearSession(host.serverId);
+  });
+
   it("restores an automatically drained message when sending fails", async () => {
     const host = makeHost({ serverId: "srv_failed_queue_drain" });
     const fakeClient = new FakeDaemonClient();
@@ -2409,6 +2551,139 @@ describe("HostRuntimeStore", () => {
         headRefName: "fix",
       },
     ]);
+    sessionStore.clearSession(host.serverId);
+  });
+
+  it("preserves images, uploaded files, and Forge attachments when draining a queue", async () => {
+    const host = makeHost({ serverId: "srv_queue_attachments" });
+    const fakeClient = new FakeDaemonClient();
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async () => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: null,
+        }),
+        getClientId: async () => "cid_queue_attachments",
+      },
+    });
+    const sessionStore = useSessionStore.getState();
+    sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    sessionStore.updateSessionServerInfo(host.serverId, {
+      serverId: host.serverId,
+      hostname: null,
+      version: "0.1.106",
+      features: { forgeSearch: true },
+    });
+    __setAttachmentStoreForTests({
+      storageType: "web-indexeddb",
+      async save() {
+        throw new Error("not used in this test");
+      },
+      async encodeBase64({ attachment }) {
+        return `${attachment.id}:base64`;
+      },
+      async resolvePreviewUrl() {
+        throw new Error("not used in this test");
+      },
+      async delete() {},
+      async garbageCollect() {},
+    } satisfies AttachmentStore);
+    sessionStore.setQueuedMessages(
+      host.serverId,
+      new Map([
+        [
+          "agent",
+          [
+            {
+              id: "queued-modern-attachments",
+              text: "review these",
+              attachments: [
+                {
+                  kind: "image" as const,
+                  metadata: {
+                    id: "image-1",
+                    mimeType: "image/png",
+                    storageType: "web-indexeddb" as const,
+                    storageKey: "image-1",
+                    fileName: "screenshot.png",
+                    byteSize: 128,
+                    createdAt: 1,
+                  },
+                },
+                {
+                  kind: "file" as const,
+                  attachment: {
+                    type: "uploaded_file" as const,
+                    id: "file-1",
+                    fileName: "context.json",
+                    mimeType: "application/json",
+                    size: 42,
+                    path: "/tmp/context.json",
+                  },
+                },
+                {
+                  kind: "forge_change_request" as const,
+                  item: {
+                    kind: "change_request" as const,
+                    forge: "gitlab" as const,
+                    projectPath: "acme/repo",
+                    number: 42,
+                    title: "Queue fix",
+                    url: "https://gitlab.com/acme/repo/-/merge_requests/42",
+                    state: "open" as const,
+                    body: "Details",
+                    labels: [],
+                    baseRefName: "main",
+                    headRefName: "fix/queue",
+                  },
+                },
+              ],
+            },
+          ],
+        ],
+      ]),
+    );
+
+    store.drainQueuedAgentMessage(host.serverId, "agent");
+    await fakeClient.waitForCompletedSentMessages(1);
+
+    expect(fakeClient.sentAgentMessages).toEqual([
+      [
+        "agent",
+        "review these",
+        {
+          messageId: "queued-modern-attachments",
+          images: [{ data: "image-1:base64", mimeType: "image/png" }],
+          attachments: [
+            {
+              type: "uploaded_file",
+              id: "file-1",
+              fileName: "context.json",
+              mimeType: "application/json",
+              size: 42,
+              path: "/tmp/context.json",
+            },
+            {
+              type: "forge_change_request",
+              mimeType: "application/paseo-forge-change-request",
+              forge: "gitlab",
+              projectPath: "acme/repo",
+              number: 42,
+              title: "Queue fix",
+              url: "https://gitlab.com/acme/repo/-/merge_requests/42",
+              body: "Details",
+              baseRefName: "main",
+              headRefName: "fix/queue",
+            },
+          ],
+        },
+      ],
+    ]);
+    expect(useSessionStore.getState().sessions[host.serverId]?.queuedMessages.get("agent")).toEqual(
+      [],
+    );
     sessionStore.clearSession(host.serverId);
   });
 

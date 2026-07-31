@@ -174,6 +174,7 @@ export async function selectGithubOption(
 }
 
 export interface MockAgentSetup {
+  agentId: string;
   client: SeedDaemonClient;
   repo: Awaited<ReturnType<typeof createTempGitRepo>>;
   cleanup: () => Promise<void>;
@@ -209,6 +210,7 @@ export async function startRunningMockAgent(
     timeout: 30_000,
   });
   return {
+    agentId: agent.id,
     client,
     repo,
     cleanup: async () => {

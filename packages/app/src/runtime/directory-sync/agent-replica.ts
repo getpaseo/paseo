@@ -4,6 +4,7 @@ import { clearArchiveAgentPending } from "@/hooks/use-archive-agent";
 import { queryClient } from "@/data/query-client";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
+import { acceptAgentDirectoryUpdate } from "@/utils/agent-directory-update-policy";
 import {
   applyAgentDirectoryDelta,
   type AgentDirectoryDelta,
@@ -20,14 +21,24 @@ export interface AgentLifecycleToken {
   readonly version: number;
 }
 
+interface AuthoritativeAgentState {
+  status: AgentSnapshotPayload["status"];
+  updatedAt: Date | string;
+  lastUsage?: AgentSnapshotPayload["lastUsage"];
+  archivedAt?: Date | string | null;
+}
+
 export class AgentDirectoryReplica {
   private readonly lifecycleVersions = new Map<string, number>();
-  private readonly members = new Set<string>();
+  private readonly authoritativeAgents = new Map<string, AuthoritativeAgentState>();
 
   constructor(
     private readonly serverId: string,
     private readonly onStoppedRunning: (agentId: string) => void,
-  ) {}
+  ) {
+    const existing = useSessionStore.getState().sessions[serverId]?.agents ?? new Map();
+    for (const [agentId, agent] of existing) this.authoritativeAgents.set(agentId, agent);
+  }
 
   captureTimeline(agentId: string): AgentLifecycleToken {
     return { agentId, version: this.lifecycleVersions.get(agentId) ?? 0 };
@@ -35,7 +46,7 @@ export class AgentDirectoryReplica {
 
   submitTimelineAgent(token: AgentLifecycleToken, payload: AgentSnapshotPayload): boolean {
     if (
-      !this.members.has(token.agentId) ||
+      !this.authoritativeAgents.has(token.agentId) ||
       token.version !== (this.lifecycleVersions.get(token.agentId) ?? 0)
     ) {
       return false;
@@ -59,46 +70,58 @@ export class AgentDirectoryReplica {
   }
 
   applyDelta(delta: AgentDirectoryDelta): void {
-    const before = this.members.has(delta.kind === "remove" ? delta.agentId : delta.agent.id);
-    const result = applyAgentDirectoryDelta({ serverId: this.serverId, delta });
     if (delta.kind === "remove") {
-      this.members.delete(delta.agentId);
+      applyAgentDirectoryDelta({ serverId: this.serverId, delta });
+      this.authoritativeAgents.delete(delta.agentId);
       this.advance(delta.agentId);
-    } else {
-      this.members.add(delta.agent.id);
-      if (!before) this.advance(delta.agent.id);
+      return;
     }
-    if (result.stoppedRunning) this.onStoppedRunning(result.agentId);
+
+    const previous = this.authoritativeAgents.get(delta.agent.id);
+    const accepted = acceptAgentDirectoryUpdate(previous, delta.agent);
+    applyAgentDirectoryDelta({ serverId: this.serverId, delta });
+    this.authoritativeAgents.set(delta.agent.id, accepted);
+    if (!previous) this.advance(delta.agent.id);
+    if (previous?.status === "running" && accepted.status !== "running" && !accepted.archivedAt) {
+      this.onStoppedRunning(delta.agent.id);
+    }
   }
 
   commitSnapshot(
     entries: FetchAgentsEntry[],
     deltas: readonly AgentDirectoryDelta[],
   ): Map<string, Agent> {
-    const previous = useSessionStore.getState().sessions[this.serverId]?.agents ?? new Map();
+    const previous = this.authoritativeAgents;
     const reconciled = reconcileAgentDirectory({ previous, snapshot: entries, deltas });
     const nextIds = new Set(reconciled.entries.map((entry) => entry.agent.id));
-    for (const agentId of this.members) {
+    for (const agentId of this.authoritativeAgents.keys()) {
       if (!nextIds.has(agentId)) this.advance(agentId);
     }
     for (const agentId of nextIds) {
-      if (!this.members.has(agentId)) this.advance(agentId);
+      if (!this.authoritativeAgents.has(agentId)) this.advance(agentId);
     }
-    for (const agentId of previous.keys()) {
+    const replicaAgents = useSessionStore.getState().sessions[this.serverId]?.agents ?? new Map();
+    for (const agentId of replicaAgents.keys()) {
       if (!nextIds.has(agentId)) removeAgentDirectoryReplica(this.serverId, agentId);
     }
-    this.members.clear();
-    for (const agentId of nextIds) this.members.add(agentId);
+    this.authoritativeAgents.clear();
+    for (const { agent } of reconciled.entries) this.authoritativeAgents.set(agent.id, agent);
     const { agents } = replaceFetchedAgentDirectory({
       serverId: this.serverId,
       entries: reconciled.entries,
     });
-    for (const agentId of reconciled.stoppedRunningAgentIds) this.onStoppedRunning(agentId);
+    for (const agentId of reconciled.stoppedRunningAgentIds) {
+      if (!this.authoritativeAgents.get(agentId)?.archivedAt) this.onStoppedRunning(agentId);
+    }
     return agents;
   }
 
   archive(agentId: string, archivedAt: string): void {
     this.advance(agentId);
+    const authoritative = this.authoritativeAgents.get(agentId);
+    if (authoritative) {
+      this.authoritativeAgents.set(agentId, { ...authoritative, archivedAt });
+    }
     useSessionStore.getState().setAgents(this.serverId, (current) => {
       const agent = current.get(agentId);
       if (!agent) return current;
@@ -110,7 +133,7 @@ export class AgentDirectoryReplica {
   }
 
   remove(agentId: string): void {
-    this.members.delete(agentId);
+    this.authoritativeAgents.delete(agentId);
     this.advance(agentId);
     removeAgentDirectoryReplica(this.serverId, agentId);
   }

@@ -211,7 +211,7 @@ describe("replaceFetchedAgentDirectory", () => {
     store.flushAgentLastActivity();
     setAgentArchiving({ queryClient, serverId, agentId, isArchiving: true });
 
-    const staleResult = applyAgentDirectoryDelta({
+    applyAgentDirectoryDelta({
       serverId,
       delta: {
         kind: "upsert",
@@ -236,7 +236,6 @@ describe("replaceFetchedAgentDirectory", () => {
       status: agent?.status,
       usage: agent?.lastUsage,
       workspaceId: agent?.workspaceId,
-      stoppedRunning: staleResult.stoppedRunning,
       permissions: Array.from(state.sessions[serverId]?.pendingPermissions.values() ?? []).map(
         ({ request }) => request.id,
       ),
@@ -247,7 +246,6 @@ describe("replaceFetchedAgentDirectory", () => {
       status: "running",
       usage: { inputTokens: 20, outputTokens: 8 },
       workspaceId: "legacy-workspace",
-      stoppedRunning: false,
       permissions: ["current-permission"],
       archivePending: true,
       activity: "2026-07-12T11:00:00.000Z",
