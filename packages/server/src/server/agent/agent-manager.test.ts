@@ -14,6 +14,7 @@ import {
   type ManagedAgent,
 } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
+import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { toAgentPayload } from "./agent-projections.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { formatSystemNotificationPrompt } from "./agent-prompt.js";
@@ -40,6 +41,12 @@ import type {
 } from "./agent-sdk-types.js";
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
+import type {
+  AgentTimelineFetchOptions,
+  AgentTimelineFetchResult,
+  AgentTimelineRow,
+  AgentTimelineStore,
+} from "./agent-timeline-store-types.js";
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -55,6 +62,79 @@ function deferred<T>(): Deferred<T> {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+function timelineRow(seq: number, item: AgentTimelineItem): AgentTimelineRow {
+  return {
+    seq,
+    timestamp: new Date(Date.UTC(2026, 6, 31, 0, 0, 0, seq)).toISOString(),
+    item,
+  };
+}
+
+class TestDurableTimelineStore implements AgentTimelineStore {
+  private readonly store = new InMemoryAgentTimelineStore();
+  afterNextFetch: (() => Promise<void>) | null = null;
+
+  async appendCommitted(
+    agentId: string,
+    item: AgentTimelineItem,
+    options?: { timestamp?: string },
+  ): Promise<AgentTimelineRow> {
+    this.ensure(agentId);
+    return this.store.append(agentId, item, options);
+  }
+
+  async fetchCommitted(
+    agentId: string,
+    options?: AgentTimelineFetchOptions,
+  ): Promise<AgentTimelineFetchResult> {
+    this.ensure(agentId);
+    const result = this.store.fetch(agentId, options);
+    const afterFetch = this.afterNextFetch;
+    this.afterNextFetch = null;
+    await afterFetch?.();
+    return result;
+  }
+
+  async getLatestCommittedSeq(agentId: string): Promise<number> {
+    this.ensure(agentId);
+    return this.store.getRows(agentId).at(-1)?.seq ?? 0;
+  }
+
+  async getCommittedRows(agentId: string): Promise<AgentTimelineRow[]> {
+    this.ensure(agentId);
+    return this.store.getRows(agentId);
+  }
+
+  async getLastItem(agentId: string): Promise<AgentTimelineItem | null> {
+    this.ensure(agentId);
+    return this.store.getLastItem(agentId);
+  }
+
+  async getLastAssistantMessage(agentId: string): Promise<string | null> {
+    this.ensure(agentId);
+    return this.store.getLastAssistantMessage(agentId);
+  }
+
+  async deleteAgent(agentId: string): Promise<void> {
+    if (this.store.has(agentId)) this.store.delete(agentId);
+  }
+
+  async bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void> {
+    const existingRows = this.store.has(agentId) ? this.store.getRows(agentId) : [];
+    const bySeq = new Map(existingRows.map((row) => [row.seq, row]));
+    for (const row of rows) bySeq.set(row.seq, row);
+    const mergedRows = [...bySeq.values()].sort((left, right) => left.seq - right.seq);
+    this.store.initialize(agentId, {
+      rows: mergedRows,
+      nextSeq: (mergedRows.at(-1)?.seq ?? 0) + 1,
+    });
+  }
+
+  private ensure(agentId: string): void {
+    if (!this.store.has(agentId)) this.store.initialize(agentId);
+  }
 }
 
 function waitForAgentLifecycle(
@@ -3839,7 +3919,10 @@ test("getTimelineRows falls back to the in-memory timeline when no durable store
   ]);
 
   await expect(manager.getMaterialProgressSnapshot(snapshot.id, 1)).resolves.toMatchObject({
-    rows: null,
+    rows: [
+      { seq: 1, item: { type: "assistant_message", text: "row one" } },
+      { seq: 2, item: { type: "assistant_message", text: "row two" } },
+    ],
   });
 
   await manager.closeAgent(snapshot.id);
@@ -3900,6 +3983,265 @@ test("an unhydrated resumed agent exposes its persisted material progress", asyn
 
   await resumedManager.closeAgent(created.id);
   rmSync(workdir, { recursive: true, force: true });
+});
+
+test("a resumed agent with an empty live timeline derives progress from its durable tail", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-material-progress-durable-resume-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const durableTimelineStore = new TestDurableTimelineStore();
+  const agentId = "00000000-0000-4000-8000-000000000142";
+  const firstManager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await firstManager.createAgent(
+      { provider: "codex", cwd: workdir },
+      undefined,
+      { workspaceId: undefined },
+    );
+    await firstManager.closeAgent(created.id);
+    await durableTimelineStore.bulkInsert(created.id, [
+      timelineRow(1, { type: "user_message", text: "deliver this" }),
+      timelineRow(2, {
+        type: "tool_call",
+        callId: "write-durable-resume",
+        name: "write",
+        status: "completed",
+        error: null,
+        detail: { type: "write", filePath: "durable.txt", content: "done" },
+      }),
+    ]);
+
+    const stored = await storage.get(created.id);
+    expect(stored?.persistence).toBeTruthy();
+    await storage.upsert({
+      ...stored!,
+      materialProgress: {
+        state: "warning",
+        completedCompactionsSinceMaterialProgress: 1,
+        lastMaterialProgressAt: null,
+        lastMaterialProgressKind: null,
+        reason: "Stale stored classification.",
+      },
+    });
+
+    const resumedManager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      registry: storage,
+      durableTimelineStore,
+      logger,
+    });
+    await resumedManager.resumeAgentFromPersistence(
+      stored!.persistence!,
+      { cwd: workdir },
+      created.id,
+    );
+
+    expect(resumedManager.getTimeline(created.id)).toEqual([]);
+    await expect(resumedManager.getMaterialProgressSnapshot(created.id)).resolves.toMatchObject({
+      rows: [
+        { seq: 1, item: { type: "user_message", text: "deliver this" } },
+        {
+          seq: 2,
+          item: {
+            type: "tool_call",
+            detail: { type: "write", filePath: "durable.txt" },
+          },
+        },
+      ],
+      persisted: {
+        state: "progressing",
+        lastMaterialProgressKind: "write",
+      },
+    });
+    expect((await storage.get(created.id))?.materialProgress).toMatchObject({
+      state: "progressing",
+      lastMaterialProgressKind: "write",
+    });
+
+    await resumedManager.appendTimelineItem(created.id, {
+      type: "compaction",
+      status: "completed",
+    });
+    await expect(resumedManager.getMaterialProgressSnapshot(created.id)).resolves.toMatchObject({
+      rows: [
+        { seq: 1, item: { type: "user_message" } },
+        { seq: 2, item: { type: "tool_call" } },
+        { seq: 3, item: { type: "compaction" } },
+      ],
+      persisted: {
+        state: "warning",
+        lastMaterialProgressKind: "write",
+      },
+    });
+
+    await resumedManager.closeAgent(created.id);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("material progress pages beyond the durable 1000-row tail to the current continuation", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-material-progress-durable-paging-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const durableTimelineStore = new TestDurableTimelineStore();
+  const agentId = "00000000-0000-4000-8000-000000000143";
+  const firstManager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await firstManager.createAgent(
+      { provider: "codex", cwd: workdir },
+      undefined,
+      { workspaceId: undefined },
+    );
+    await firstManager.closeAgent(created.id);
+
+    const durableRows: AgentTimelineRow[] = [
+      timelineRow(1, { type: "user_message", text: "previous continuation" }),
+      timelineRow(2, { type: "compaction", status: "completed" }),
+      timelineRow(3, { type: "user_message", text: "current continuation" }),
+      timelineRow(4, {
+        type: "tool_call",
+        callId: "write-before-tail",
+        name: "write",
+        status: "completed",
+        error: null,
+        detail: { type: "write", filePath: "paged.txt", content: "done" },
+      }),
+    ];
+    for (let seq = 5; seq <= 1_004; seq += 1) {
+      durableRows.push(timelineRow(seq, { type: "reasoning", text: `reasoning ${seq}` }));
+    }
+    await durableTimelineStore.bulkInsert(created.id, durableRows);
+
+    const stored = await storage.get(created.id);
+    expect(stored?.persistence).toBeTruthy();
+    await storage.upsert({
+      ...stored!,
+      materialProgress: {
+        state: "warning",
+        completedCompactionsSinceMaterialProgress: 1,
+        lastMaterialProgressAt: null,
+        lastMaterialProgressKind: null,
+        reason: "Classification to replace after complete paging.",
+      },
+    });
+
+    const resumedManager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      registry: storage,
+      durableTimelineStore,
+      logger,
+    });
+    await resumedManager.resumeAgentFromPersistence(
+      stored!.persistence!,
+      { cwd: workdir },
+      created.id,
+    );
+
+    expect(resumedManager.getTimeline(created.id)).toEqual([]);
+    const snapshot = await resumedManager.getMaterialProgressSnapshot(created.id);
+    expect(snapshot.rows).toHaveLength(1_002);
+    expect(snapshot.rows?.[0]).toMatchObject({
+      seq: 3,
+      item: { type: "user_message", text: "current continuation" },
+    });
+    expect(snapshot.persisted).toMatchObject({
+      state: "progressing",
+      lastMaterialProgressKind: "write",
+    });
+    expect((await storage.get(created.id))?.materialProgress).toMatchObject({
+      state: "progressing",
+      lastMaterialProgressKind: "write",
+    });
+
+    await resumedManager.closeAgent(created.id);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a delayed material progress write cannot overwrite a newer continuation", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-material-progress-write-order-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const durableTimelineStore = new TestDurableTimelineStore();
+  const agentId = "00000000-0000-4000-8000-000000000144";
+  const firstManager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await firstManager.createAgent(
+      { provider: "codex", cwd: workdir },
+      undefined,
+      { workspaceId: undefined },
+    );
+    await firstManager.closeAgent(created.id);
+    await durableTimelineStore.bulkInsert(created.id, [
+      timelineRow(1, { type: "user_message", text: "old continuation" }),
+      timelineRow(2, { type: "compaction", status: "completed" }),
+    ]);
+
+    const stored = await storage.get(created.id);
+    const resumedManager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      registry: storage,
+      durableTimelineStore,
+      logger,
+    });
+    await resumedManager.resumeAgentFromPersistence(
+      stored!.persistence!,
+      { cwd: workdir },
+      created.id,
+    );
+
+    const delayedFetchStarted = deferred<void>();
+    const releaseDelayedFetch = deferred<void>();
+    durableTimelineStore.afterNextFetch = async () => {
+      delayedFetchStarted.resolve(undefined);
+      await releaseDelayedFetch.promise;
+    };
+    const olderPersist = resumedManager.appendTimelineItem(created.id, {
+      type: "reasoning",
+      text: "old continuation still running",
+    });
+    await delayedFetchStarted.promise;
+
+    const userPersist = resumedManager.appendTimelineItem(created.id, {
+      type: "user_message",
+      text: "new continuation",
+    });
+    const writePersist = resumedManager.appendTimelineItem(created.id, {
+      type: "tool_call",
+      callId: "write-new-continuation",
+      name: "write",
+      status: "completed",
+      error: null,
+      detail: { type: "write", filePath: "new.txt", content: "new" },
+    });
+    releaseDelayedFetch.resolve(undefined);
+    await Promise.all([olderPersist, userPersist, writePersist]);
+
+    expect((await storage.get(created.id))?.materialProgress).toMatchObject({
+      state: "progressing",
+      lastMaterialProgressKind: "write",
+    });
+    await resumedManager.closeAgent(created.id);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("persists terminal outcomes and clears the previous outcome when a new turn starts", async () => {

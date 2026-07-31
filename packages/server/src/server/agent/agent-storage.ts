@@ -142,7 +142,7 @@ export class AgentStorage {
     agentId: string,
     buildRecord: (existing: StoredAgentRecord | null) => StoredAgentRecord,
   ): Promise<void> {
-    const prev = this.pendingWrites.get(agentId) ?? Promise.resolve();
+    const prev = (this.pendingWrites.get(agentId) ?? Promise.resolve()).catch(() => undefined);
     const next = prev.then(async () => {
       if (this.deleting.has(agentId)) {
         return undefined;
@@ -253,12 +253,12 @@ export class AgentStorage {
 
   async setTitle(agentId: string, title: string): Promise<void> {
     await this.load();
-    await this.waitForPendingWrite(agentId);
-    const record = await this.get(agentId);
-    if (!record) {
-      throw new Error(`Agent ${agentId} not found`);
-    }
-    await this.upsert({ ...record, title });
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) {
+        throw new Error(`Agent ${agentId} not found`);
+      }
+      return { ...existing, title };
+    });
   }
 
   async flush(): Promise<void> {
@@ -410,9 +410,6 @@ export class AgentStorage {
     this.daemonExecutionKeysByAgentId.delete(agentId);
   }
 
-  private async waitForPendingWrite(agentId: string): Promise<void> {
-    await (this.pendingWrites.get(agentId) ?? Promise.resolve()).catch(() => undefined);
-  }
 }
 
 function projectDirNameFromCwd(cwd: string): string {

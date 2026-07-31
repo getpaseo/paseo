@@ -104,6 +104,11 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 | `internal`           | `boolean?`                               | Whether this is a system-internal agent (loop workers, etc.)                                                                                                                                                                                                                                                                                                                        |
 | `archivedAt`         | `string?` (ISO 8601)                     | Soft-delete timestamp                                                                                                                                                                                                                                                                                                                                                               |
 
+`materialProgress.lastMaterialProgressKind: "assistant_result"` means a completed turn ended
+with a non-empty assistant message. It records a terminal deliverable, not whether the answer was
+semantically correct or the user's wider goal succeeded. Final messages from failed or canceled
+turns are non-material; completed edits and writes remain material independently of that boundary.
+
 ### Nested: SerializableConfig
 
 | Field              | Type                       | Description                  |

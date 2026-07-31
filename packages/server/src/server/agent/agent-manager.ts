@@ -79,6 +79,8 @@ import type { MaterialProgressPayload } from "../messages.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
+const MATERIAL_PROGRESS_PAGE_SIZE = 1_000;
+const MATERIAL_PROGRESS_MAX_SCAN_ROWS = 10_000;
 const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: false,
   supportsSessionPersistence: true,
@@ -130,20 +132,59 @@ interface TimeoutOptions {
   onLateError?: (error: unknown) => void;
 }
 
+interface PersistSnapshotOptions {
+  title?: string | null;
+  internal?: boolean;
+  includeInternal?: boolean;
+}
+
 function formatProviderList(providers: readonly string[]): string {
   return providers.length > 0 ? providers.join(", ") : "none";
 }
 
-function materialProgressRows(
-  timeline: AgentTimelineFetchResult | null,
-  historyPrimed = true,
-): AgentTimelineRow[] | null {
-  if (timeline === null) return null;
-  if (timeline.rows.length === 0 && !historyPrimed) return null;
-  if (timeline.hasOlder && !timeline.rows.some((row) => row.item.type === "user_message")) {
+type FetchOlderMaterialProgressRows = (
+  options: AgentTimelineFetchOptions,
+) => Promise<AgentTimelineFetchResult>;
+
+function currentContinuationRows(rows: readonly AgentTimelineRow[]): AgentTimelineRow[] {
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    if (rows[index]?.item.type === "user_message") return rows.slice(index);
+  }
+  return [...rows];
+}
+
+async function pageMaterialProgressRows(
+  initialPage: AgentTimelineFetchResult,
+  fetchOlder: FetchOlderMaterialProgressRows,
+): Promise<AgentTimelineRow[] | null> {
+  let page = initialPage;
+  let rows = [...page.rows];
+  while (page.hasOlder && !rows.some((row) => row.item.type === "user_message")) {
+    const firstRow = rows[0];
+    const remainingCapacity = MATERIAL_PROGRESS_MAX_SCAN_ROWS - rows.length;
+    if (!firstRow || remainingCapacity <= 0) return null;
+
+    const olderPage = await fetchOlder({
+      direction: "before",
+      cursor: { epoch: page.epoch, seq: firstRow.seq },
+      limit: Math.min(MATERIAL_PROGRESS_PAGE_SIZE, remainingCapacity),
+    });
+    if (
+      olderPage.epoch !== page.epoch ||
+      olderPage.reset ||
+      olderPage.staleCursor ||
+      olderPage.gap ||
+      olderPage.rows.length === 0
+    ) {
+      return null;
+    }
+    rows = [...olderPage.rows, ...rows];
+    page = olderPage;
+  }
+  if (!rows.some((row) => row.item.type === "user_message") && rows[0]?.seq !== 1) {
     return null;
   }
-  return timeline.rows;
+  return currentContinuationRows(rows);
 }
 
 function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
@@ -587,6 +628,7 @@ export class AgentManager {
   private readonly providerSubagents = new ProviderSubagentStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
+  private readonly snapshotPersistenceTails = new Map<string, Promise<void>>();
   private readonly runs = new AgentRunState();
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
@@ -997,30 +1039,16 @@ export class AgentManager {
 
   async getMaterialProgressSnapshot(id: string, limit = 1_000): Promise<MaterialProgressSnapshot> {
     const live = this.agents.get(id);
-    if (live && this.timelineStore.has(id)) {
-      const timeline = this.timelineStore.fetch(id, { direction: "tail", limit });
-      const rows = materialProgressRows(timeline, live.historyPrimed);
-      const record = rows === null ? await this.registry?.get(id) : null;
-      return {
-        rows,
-        turnOutcome: live.lastTurnOutcome ?? null,
-        persisted: record?.materialProgress ?? null,
-      };
-    }
-
-    let timeline: AgentTimelineFetchResult | null = null;
-    if (this.durableTimelineStore) {
-      timeline = await this.durableTimelineStore.fetchCommitted(id, {
-        direction: "tail",
+    const [rows, record] = await Promise.all([
+      this.resolveMaterialProgressRows(id, {
         limit,
-      });
-    } else if (this.timelineStore.has(id)) {
-      timeline = this.timelineStore.fetch(id, { direction: "tail", limit });
-    }
-    const record = await this.registry?.get(id);
+        historyPrimed: live?.historyPrimed,
+      }),
+      this.registry?.get(id),
+    ]);
     return {
-      rows: materialProgressRows(timeline),
-      turnOutcome: record?.lastTurnOutcome ?? null,
+      rows,
+      turnOutcome: live?.lastTurnOutcome ?? record?.lastTurnOutcome ?? null,
       persisted: record?.materialProgress ?? null,
     };
   }
@@ -1481,10 +1509,9 @@ export class AgentManager {
       throw new Error("Agent storage is not configured");
     }
 
-    const materialProgress = this.buildPersistedMaterialProgress(agent);
-    await this.registry.applySnapshot(agent, {
+    await this.persistSnapshot(agent, {
       internal: agent.internal,
-      ...(materialProgress ? { materialProgress } : {}),
+      includeInternal: true,
     });
     const stored = await this.registry.get(agentId);
     if (!stored) {
@@ -3120,40 +3147,113 @@ export class AgentManager {
     return explicitTitle ?? fallbackTitle;
   }
 
-  private async persistSnapshot(
-    agent: ManagedAgent,
-    options?: { title?: string | null; internal?: boolean },
-  ): Promise<void> {
+  private persistSnapshot(agent: ManagedAgent, options?: PersistSnapshotOptions): Promise<void> {
     if (!this.registry) {
-      return;
+      return Promise.resolve();
     }
     // Don't persist internal agents - they're ephemeral system tasks
-    if (agent.internal) {
-      return;
+    if (agent.internal && !options?.includeInternal) {
+      return Promise.resolve();
     }
-    const materialProgress = this.buildPersistedMaterialProgress(agent);
-    await this.registry.applySnapshot(agent, {
-      ...options,
+    const previous = (this.snapshotPersistenceTails.get(agent.id) ?? Promise.resolve()).catch(
+      () => undefined,
+    );
+    const next = previous.then(() => this.writeSnapshot(agent, options));
+    const tracked = next.finally(() => {
+      if (this.snapshotPersistenceTails.get(agent.id) === tracked) {
+        this.snapshotPersistenceTails.delete(agent.id);
+      }
+    });
+    this.snapshotPersistenceTails.set(agent.id, tracked);
+    return tracked;
+  }
+
+  private async writeSnapshot(
+    agent: ManagedAgent,
+    options?: PersistSnapshotOptions,
+  ): Promise<void> {
+    const registry = this.registry;
+    if (!registry) return;
+
+    const materialProgress = await this.buildPersistedMaterialProgress(agent);
+    await registry.applySnapshot(agent, {
+      ...(options?.title !== undefined ? { title: options.title } : {}),
+      ...(options?.internal !== undefined ? { internal: options.internal } : {}),
       ...(materialProgress ? { materialProgress } : {}),
     });
   }
 
-  private buildPersistedMaterialProgress(agent: ManagedAgent): MaterialProgressPayload | undefined {
-    const timeline = this.timelineStore.has(agent.id)
-      ? this.timelineStore.fetch(agent.id, { direction: "tail", limit: 1_000 })
-      : null;
-    if (timeline?.rows.length === 0 && !agent.historyPrimed) {
-      return undefined;
-    }
-    const rows =
-      timeline === null ||
-      (timeline.hasOlder && !timeline.rows.some((row) => row.item.type === "user_message"))
-        ? null
-        : timeline.rows;
+  private async buildPersistedMaterialProgress(
+    agent: ManagedAgent,
+  ): Promise<MaterialProgressPayload | undefined> {
+    const rows = await this.resolveMaterialProgressRows(agent.id, {
+      limit: MATERIAL_PROGRESS_PAGE_SIZE,
+      historyPrimed: agent.historyPrimed,
+    });
+    // Omitting the override makes AgentStorage preserve the last trustworthy classification.
+    if (rows === null) return undefined;
     return analyzeMaterialProgress({
-      entries: rows === null ? null : projectTimelineRows({ rows, mode: "projected" }),
+      entries: projectTimelineRows({ rows, mode: "projected" }),
       turnOutcome: agent.lastTurnOutcome ?? null,
     });
+  }
+
+  private async resolveMaterialProgressRows(
+    agentId: string,
+    options: { limit: number; historyPrimed?: boolean },
+  ): Promise<AgentTimelineRow[] | null> {
+    const limit = Math.max(1, Math.min(Math.floor(options.limit), MATERIAL_PROGRESS_PAGE_SIZE));
+    if (this.timelineStore.has(agentId)) {
+      const livePage = this.timelineStore.fetch(agentId, { direction: "tail", limit });
+      if (livePage.rows.length > 0) {
+        const liveRows = await pageMaterialProgressRows(livePage, async (fetchOptions) =>
+          this.timelineStore.fetch(agentId, fetchOptions),
+        );
+        if (liveRows !== null) return liveRows;
+
+        const durableRows = await this.resolveDurableMaterialProgressRows(agentId, limit);
+        if (durableRows === null) return null;
+        const firstLiveSeq = livePage.rows[0]?.seq;
+        const olderDurableRows = durableRows.filter((row) => row.seq < (firstLiveSeq ?? 0));
+        if (
+          firstLiveSeq === undefined ||
+          olderDurableRows[olderDurableRows.length - 1]?.seq !== firstLiveSeq - 1
+        ) {
+          return null;
+        }
+        return currentContinuationRows([...olderDurableRows, ...livePage.rows]);
+      }
+
+      const durableRows = await this.resolveDurableMaterialProgressRows(agentId, limit);
+      if (durableRows && durableRows.length > 0) return durableRows;
+      if (livePage.window.nextSeq > 1 || options.historyPrimed === false) return null;
+      return [];
+    }
+
+    return await this.resolveDurableMaterialProgressRows(agentId, limit);
+  }
+
+  private async resolveDurableMaterialProgressRows(
+    agentId: string,
+    limit: number,
+  ): Promise<AgentTimelineRow[] | null> {
+    const durableTimelineStore = this.durableTimelineStore;
+    if (!durableTimelineStore) return null;
+    try {
+      const durablePage = await durableTimelineStore.fetchCommitted(agentId, {
+        direction: "tail",
+        limit,
+      });
+      return await pageMaterialProgressRows(durablePage, (fetchOptions) =>
+        durableTimelineStore.fetchCommitted(agentId, fetchOptions),
+      );
+    } catch (error) {
+      this.logger.debug(
+        { err: error, agentId },
+        "Durable material progress timeline is unavailable",
+      );
+      return null;
+    }
   }
 
   private requireRegistry(): AgentStorage {

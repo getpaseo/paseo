@@ -342,6 +342,75 @@ describe("AgentStorage", () => {
     expect(persisted?.title).toBe("Fix Login Bug");
   });
 
+  test("setTitle started before a newer snapshot cannot overwrite its material progress", async () => {
+    const agentId = "agent-title-progress-race";
+    await storage.applySnapshot(createManagedAgent({ id: agentId }), {
+      materialProgress: {
+        state: "warning",
+        completedCompactionsSinceMaterialProgress: 1,
+        lastMaterialProgressAt: null,
+        lastMaterialProgressKind: null,
+        reason: "One compaction completed without later material progress.",
+      },
+    });
+
+    let releasePendingWrite: (() => void) | null = null;
+    const pendingWrite = new Promise<void>((resolve) => {
+      releasePendingWrite = resolve;
+    });
+    const storageInternals = storage as unknown as {
+      pendingWrites: Map<string, Promise<void>>;
+    };
+    storageInternals.pendingWrites.set(agentId, pendingWrite);
+
+    const titleWrite = storage.setTitle(agentId, "Final title");
+    const newerSnapshot = storage.applySnapshot(
+      createManagedAgent({
+        id: agentId,
+        updatedAt: new Date("2026-07-31T00:02:00.000Z"),
+      }),
+      {
+        materialProgress: {
+          state: "progressing",
+          completedCompactionsSinceMaterialProgress: 0,
+          lastMaterialProgressAt: "2026-07-31T00:01:00.000Z",
+          lastMaterialProgressKind: "write",
+          reason: "Material progress followed the latest user message.",
+        },
+      },
+    );
+    releasePendingWrite?.();
+
+    await Promise.all([titleWrite, newerSnapshot]);
+    expect(await storage.get(agentId)).toMatchObject({
+      title: "Final title",
+      materialProgress: {
+        state: "progressing",
+        lastMaterialProgressKind: "write",
+      },
+    });
+  });
+
+  test("setTitle still runs after an earlier queued write fails", async () => {
+    const agentId = "agent-title-after-failure";
+    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+
+    let rejectFailedWrite: ((reason: Error) => void) | null = null;
+    const failedWrite = new Promise<void>((_resolve, reject) => {
+      rejectFailedWrite = reject;
+    });
+    const storageInternals = storage as unknown as {
+      pendingWrites: Map<string, Promise<void>>;
+    };
+    storageInternals.pendingWrites.set(agentId, failedWrite);
+
+    const titleWrite = storage.setTitle(agentId, "Recovered title");
+    rejectFailedWrite?.(new Error("simulated earlier write failure"));
+
+    await expect(titleWrite).resolves.toBeUndefined();
+    expect((await storage.get(agentId))?.title).toBe("Recovered title");
+  });
+
   test("setTitle throws when the agent record does not exist", async () => {
     await expect(storage.setTitle("missing-agent", "Impossible")).rejects.toThrow(
       "Agent missing-agent not found",
