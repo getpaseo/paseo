@@ -22,6 +22,19 @@ export async function expectInlineWorkingIndicator(page: Page): Promise<void> {
   await expect(page.getByTestId("turn-working-indicator")).toBeVisible({ timeout: 30_000 });
 }
 
+export async function expectRunningAgentChrome(page: Page, title: string): Promise<void> {
+  const tab = page.getByRole("button", { name: title, exact: true });
+
+  await expect(tab).toBeVisible({ timeout: 30_000 });
+  await expect(tab.getByRole("progressbar", { name: "Agent running" })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.getByRole("button", { name: /stop agent|canceling agent/i })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expectInlineWorkingIndicator(page);
+}
+
 export async function expectTurnCopyButton(page: Page): Promise<void> {
   await expect(page.getByRole("button", { name: "Copy turn" }).first()).toBeVisible({
     timeout: 30_000,
