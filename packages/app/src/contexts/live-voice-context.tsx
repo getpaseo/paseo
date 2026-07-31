@@ -19,6 +19,7 @@ import {
 } from "@/live-voice/live-voice-runtime";
 import type { LiveVoiceSessionMode } from "@/live-voice/live-voice-session";
 import { registerLiveVoiceRouteAuthority } from "@/live-voice/live-voice-route-authority";
+import { attachLiveVoiceCues } from "@/live-voice/live-voice-cues";
 
 interface LiveVoiceContextValue extends LiveVoiceSnapshot {
   start: (serverId: string, sessionMode?: LiveVoiceSessionMode) => Promise<void>;
@@ -114,6 +115,11 @@ export function LiveVoiceProvider({ children }: LiveVoiceProviderProps) {
   const runtime = runtimeRef.current;
 
   useEffect(() => registerLiveVoiceRouteAuthority(runtime), [runtime]);
+
+  // Declared before the destroy effect below so React detaches the cues first:
+  // tearing the provider down ends the call, and that end is not a transition
+  // the user should hear.
+  useEffect(() => attachLiveVoiceCues(runtime), [runtime]);
 
   // A Live Voice call holds the microphone and an open peer connection, so losing
   // the daemon connection has to tear it down locally. Two distinct losses: the
