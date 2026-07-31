@@ -8035,26 +8035,26 @@ test("replaceAgentRun succeeds when foreground turn terminal event is never deli
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
   const allowSecondRunToEnd = deferred<void>();
+  let staleSessionClosed = false;
+  let resumedSessionCreated = false;
 
-  // Session where the first foreground turn never emits a terminal event
-  // (simulates the claude-agent pendingInterruptAbort suppression bug),
-  // and interrupt() does not produce events either.
+  // Session where the first foreground turn never emits a terminal event and
+  // interrupt() does not produce events either.
   class StaleForegroundSession extends TestAgentSession {
+    private providerTurnIsStillActive = false;
+
     override async startTurn(): Promise<{ turnId: string }> {
+      if (this.providerTurnIsStillActive) {
+        throw new Error("A foreground turn is already active");
+      }
       this.interrupted = false;
+      this.providerTurnIsStillActive = true;
       const turnId = `turn-${++this.turnIdCounter}`;
-      const turnNum = this.turnIdCounter;
 
       setTimeout(async () => {
         this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
-        if (turnNum === 1) {
-          // First turn: emit turn_started but NEVER emit a terminal event.
-          // This simulates the provider suppressing the result.
-        } else {
-          // Subsequent turns: complete normally
-          await allowSecondRunToEnd.promise;
-          this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
-        }
+        // The provider accepts cancel but never settles this turn, so a new
+        // prompt on the same session is rejected as still active.
       }, 0);
       return { turnId };
     }
@@ -8063,11 +8063,38 @@ test("replaceAgentRun succeeds when foreground turn terminal event is never deli
       this.interrupted = true;
       // No events produced — the terminal event was suppressed
     }
+
+    override async close(): Promise<void> {
+      staleSessionClosed = true;
+    }
+  }
+
+  class RecoveredForegroundSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = "turn-recovered";
+      setTimeout(async () => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        await allowSecondRunToEnd.promise;
+        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      }, 0);
+      return { turnId };
+    }
   }
 
   class StaleForegroundClient extends TestAgentClient {
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
       return new StaleForegroundSession(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      resumedSessionCreated = true;
+      return new RecoveredForegroundSession({
+        provider: "codex",
+        cwd: config?.cwd ?? workdir,
+      });
     }
   }
 
@@ -8096,9 +8123,9 @@ test("replaceAgentRun succeeds when foreground turn terminal event is never deli
   expect(beforeReplace?.lifecycle).toBe("running");
   expect(beforeReplace?.activeForegroundTurnId).toBe("turn-1");
 
-  // Replace the hung run. cancelAgentRun will time out after 2s because
-  // no terminal event arrives. After the fix, it should force-clear the
-  // stale foreground state so streamAgent can proceed.
+  // Replace the hung run. Cancellation times out because no terminal event
+  // arrives. Paseo must recreate the provider session before starting the
+  // replacement because the original session still rejects new foreground turns.
   const secondRun = await manager.replaceAgentRun(snapshot.id, "replacement prompt");
   const collectedEvents: AgentStreamEvent[] = [];
   const secondRunDrain = (async () => {
@@ -8113,6 +8140,8 @@ test("replaceAgentRun succeeds when foreground turn terminal event is never deli
   await secondRunDrain;
   await firstRunDrain;
 
+  expect(staleSessionClosed).toBe(true);
+  expect(resumedSessionCreated).toBe(true);
   expect(collectedEvents.some((e) => e.type === "turn_completed")).toBe(true);
   expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("idle");
   expect(manager.getAgent(snapshot.id)?.activeForegroundTurnId).toBeNull();

@@ -108,7 +108,7 @@ export class AgentRunCancellationError extends Error {
 
 export type AgentRunCancellationResult =
   | { status: "not_running" }
-  | { status: "settled" }
+  | { status: "settled"; forced?: boolean }
   | { status: "refused" };
 
 interface PreparedSessionConfig {
@@ -2106,7 +2106,10 @@ export class AgentManager {
     this.emitState(agent);
 
     try {
-      await this.cancelAgentRunBefore(agentId, "replace");
+      const cancellation = await this.cancelAgentRunBefore(agentId, "replace");
+      if (cancellation.status === "settled" && cancellation.forced) {
+        await this.reloadAgentSessionInternal(agentId);
+      }
       return this.streamAgent(agentId, prompt, options);
     } catch (error) {
       const latest = this.agents.get(agentId);
@@ -2279,6 +2282,7 @@ export class AgentManager {
       return { status: settlement === "completed" ? "settled" : "refused" };
     }
 
+    let forced = false;
     if (settlement === "timed_out" && run.turnId) {
       this.logger.warn(
         { agentId, turnId: run.turnId, kind: run.kind },
@@ -2291,6 +2295,7 @@ export class AgentManager {
         turnId: run.turnId,
       });
       await run.settledPromise;
+      forced = true;
     } else if (settlement === "timed_out" && run.kind === "autonomous") {
       this.logger.warn(
         { agentId, kind: run.kind },
@@ -2301,6 +2306,7 @@ export class AgentManager {
         provider: agent.provider,
         reason: "interrupted",
       });
+      forced = true;
     }
 
     if (agent.pendingPermissions.size > 0) {
@@ -2308,17 +2314,18 @@ export class AgentManager {
       this.touchUpdatedAt(agent);
       this.emitState(agent);
     }
-    return { status: "settled" };
+    return forced ? { status: "settled", forced: true } : { status: "settled" };
   }
 
   private async cancelAgentRunBefore(
     agentId: string,
     action: "reload" | "replace" | "rewind",
-  ): Promise<void> {
+  ): Promise<AgentRunCancellationResult> {
     const result = await this.cancelAgentRun(agentId);
     if (result.status === "refused") {
       throw new AgentRunCancellationError(agentId, action);
     }
+    return result;
   }
 
   private async interruptSession(session: AgentSession, agentId: string): Promise<boolean> {
