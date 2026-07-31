@@ -730,6 +730,37 @@ describe("skills controller", () => {
     expect(await backupArtifacts(harness.targets)).toEqual([[], [], []]);
   });
 
+  it("preserves a directory that replaces a captured file before recovery", async () => {
+    const previous: SkillSelection = { mode: "custom", skills: ["paseo"] };
+    const next: SkillSelection = {
+      mode: "custom",
+      skills: ["paseo", "paseo-advisor"],
+    };
+    await harness.controller.save(previous);
+    const live = path.join(harness.targets.agentsDir, "paseo");
+    await rm(live, { recursive: true, force: true });
+    await writeFile(live, "captured file");
+
+    await beginSkillsTransaction(harness.targets, previous, next, [
+      { kind: "update", name: "paseo" },
+    ]);
+    await rm(live, { force: true });
+    await mkdir(live, { recursive: true });
+    await writeFile(path.join(live, "external.md"), "external directory");
+
+    await expect(harness.controller.status()).resolves.toMatchObject({ selection: previous });
+
+    expect(await readFile(path.join(live, "external.md"), "utf8")).toBe("external directory");
+    const recovered = (await readdir(path.dirname(harness.targets.agentsDir))).find((entry) =>
+      entry.startsWith(".paseo-skills-recovered-paseo-"),
+    );
+    expect(recovered).toBeDefined();
+    expect(
+      await readFile(path.join(path.dirname(harness.targets.agentsDir), recovered!), "utf8"),
+    ).toBe("captured file");
+    expect(await backupArtifacts(harness.targets)).toEqual([[], [], []]);
+  });
+
   it.skipIf(process.platform !== "linux")(
     "stages deletions when an agent skills root is on another filesystem",
     async () => {

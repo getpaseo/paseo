@@ -420,6 +420,13 @@ async function restore(
     }
     const backupInfo = backup && (await lstat(backup).catch(() => null));
     if (backupInfo && !backupInfo.isDirectory()) {
+      if (liveInfo !== null && (await isDirectory(entry.livePath))) {
+        // The captured file was replaced by a directory after the transaction
+        // started. Preserve the external tree and quarantine the captured entry
+        // instead of recursively deleting the replacement during recovery.
+        await quarantineStagedEntry(transactionDir, entry.livePath, backup);
+        continue;
+      }
       await restoreStagedEntry(entry.livePath, backup, ".");
       continue;
     }
