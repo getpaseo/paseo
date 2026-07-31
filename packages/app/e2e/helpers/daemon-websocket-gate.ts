@@ -18,6 +18,21 @@ interface ClientRequest {
   subscribe?: unknown;
   page?: { cursor?: unknown };
   payload?: unknown;
+  mode?: unknown;
+  path?: unknown;
+}
+
+interface ServerMessage {
+  type?: unknown;
+  payload?: {
+    initial?: {
+      path?: unknown;
+    };
+    version?: {
+      status?: unknown;
+      path?: unknown;
+    };
+  };
 }
 
 interface HeldAgentUpdate {
@@ -34,9 +49,8 @@ interface HeldServerMessage {
 }
 
 function readSessionMessage(message: string | Buffer): ClientRequest | null {
-  if (typeof message !== "string") return null;
   try {
-    const envelope = JSON.parse(message) as {
+    const envelope = JSON.parse(typeof message === "string" ? message : message.toString()) as {
       type?: unknown;
       message?: ClientRequest;
     };
@@ -180,6 +194,27 @@ function matchesAgentUpdate(message: ClientRequest | null, agentUpdate: HeldAgen
   return agent?.id === agentUpdate.agentId && agent.status === agentUpdate.status;
 }
 
+function recordClientRequest(
+  request: ClientRequest | null,
+  clientRequestCounts: Map<string, number>,
+  timelineRequestCounts: Map<string, number>,
+  directoryStarts: DirectoryRequestStartCounts,
+): void {
+  if (typeof request?.type !== "string") return;
+  clientRequestCounts.set(request.type, (clientRequestCounts.get(request.type) ?? 0) + 1);
+  if (request.type === "fetch_agent_timeline_request" && typeof request.direction === "string") {
+    timelineRequestCounts.set(
+      request.direction,
+      (timelineRequestCounts.get(request.direction) ?? 0) + 1,
+    );
+  }
+  const directory = directoryForRequest(request);
+  if (!directory) return;
+  const subscription = request.subscribe === undefined ? "unsubscribed" : "subscribed";
+  directoryStarts[subscription][directory] += 1;
+  directoryStarts.total[directory] += 1;
+}
+
 export async function installDaemonWebSocketGate(page: Page) {
   let acceptingConnections = true;
   let reconnectWithFreshClient = false;
@@ -209,6 +244,31 @@ export async function installDaemonWebSocketGate(page: Page) {
   const agentStreamEventCounts = new Map<string, number>();
   const agentStreamItemCounts = new Map<string, number>();
   const serverMessageWaiters = new Set<() => void>();
+  const subscribedFilePaths = new Set<string>();
+  const fileSubscriptionWaiters = new Map<string, () => void>();
+  const observedFileUpdates = new Set<string>();
+  const fileUpdateWaiters = new Map<string, () => void>();
+  let fileReadPathToHold: string | null = null;
+  let heldFileReads: Array<() => void> = [];
+  let resolveHeldFileRead: (() => void) | null = null;
+  let heldFileReadPromise = Promise.resolve();
+  let readyFileUpdatePathToHold: string | null = null;
+  let heldReadyFileUpdate: (() => void) | null = null;
+  let resolveHeldReadyFileUpdate: (() => void) | null = null;
+  let heldReadyFileUpdatePromise = Promise.resolve();
+  const recordFileUpdate = (message: ServerMessage): void => {
+    if (
+      message.type !== "fs.file.update" ||
+      typeof message.payload?.version?.status !== "string" ||
+      typeof message.payload.version.path !== "string"
+    ) {
+      return;
+    }
+    const key = `${message.payload.version.path}:${message.payload.version.status}`;
+    observedFileUpdates.add(key);
+    fileUpdateWaiters.get(key)?.();
+    fileUpdateWaiters.delete(key);
+  };
 
   const recordServerMessage = (message: ClientRequest | null): void => {
     const messageType = typeof message?.type === "string" ? message.type : null;
@@ -223,6 +283,78 @@ export async function installDaemonWebSocketGate(page: Page) {
     if (!messageType && !itemType && !eventType) return;
     for (const resolve of serverMessageWaiters) resolve();
     serverMessageWaiters.clear();
+  };
+
+  const observeFileMessage = (message: ServerMessage | null): void => {
+    if (
+      message?.type === "fs.file.subscribe.response" &&
+      typeof message.payload?.initial?.path === "string"
+    ) {
+      const path = message.payload.initial.path;
+      subscribedFilePaths.add(path);
+      fileSubscriptionWaiters.get(path)?.();
+      fileSubscriptionWaiters.delete(path);
+    }
+    if (message) recordFileUpdate(message);
+  };
+
+  const holdServerMessage = (input: {
+    browser: WebSocketRoute;
+    message: string | Buffer;
+    parsed: ClientRequest | null;
+  }): boolean => {
+    const agentId = readAgentStreamAgentId(input.parsed);
+    const blocked = agentId
+      ? heldServerMessages.find((held) => held.blockedAgentId === agentId)
+      : undefined;
+    const suppressed = shouldSuppressServerMessage({
+      message: input.parsed,
+      messageTypes: suppressedServerMessageTypes,
+      agentStreamEventTypes: suppressedAgentStreamEventTypes,
+      agentStreamItemTypes: suppressedAgentStreamItemTypes,
+      suppressAgentStream,
+    });
+    if (blocked) {
+      if (!suppressed) blocked.agentStreamFollowers.push(input.message);
+      return true;
+    }
+    const matchedHold = Array.from(pendingServerMessageHolds).find(([, matches]) =>
+      matches(input.parsed),
+    );
+    if (!matchedHold) return suppressed;
+    const [key] = matchedHold;
+    pendingServerMessageHolds.delete(key);
+    heldServerMessages.push({
+      browser: input.browser,
+      message: input.message,
+      key,
+      agentStreamFollowers: [],
+      blockedAgentId:
+        readAgentStreamEventType(input.parsed) === "turn_started"
+          ? (agentId ?? undefined)
+          : undefined,
+    });
+    for (const resolve of heldServerMessageWaiters) resolve();
+    heldServerMessageWaiters.clear();
+    return true;
+  };
+
+  const holdReadyFileUpdate = (
+    browser: WebSocketRoute,
+    message: string | Buffer,
+    fileMessage: ServerMessage | null,
+  ): boolean => {
+    if (
+      fileMessage?.type !== "fs.file.update" ||
+      fileMessage.payload?.version?.status !== "ready" ||
+      fileMessage.payload.version.path !== readyFileUpdatePathToHold ||
+      heldReadyFileUpdate
+    ) {
+      return false;
+    }
+    heldReadyFileUpdate = () => browser.send(message);
+    resolveHeldReadyFileUpdate?.();
+    return true;
   };
 
   await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
@@ -248,28 +380,20 @@ export async function installDaemonWebSocketGate(page: Page) {
         }
       }
       const request = readClientRequest(message);
-      if (typeof request?.type === "string") {
-        clientRequestCounts.set(request.type, (clientRequestCounts.get(request.type) ?? 0) + 1);
-        if (
-          request.type === "fetch_agent_timeline_request" &&
-          typeof request.direction === "string"
-        ) {
-          timelineRequestCounts.set(
-            request.direction,
-            (timelineRequestCounts.get(request.direction) ?? 0) + 1,
-          );
-        }
-        const directory = directoryForRequest(request);
-        if (directory) {
-          const subscription = request.subscribe === undefined ? "unsubscribed" : "subscribed";
-          directoryStarts[subscription][directory] += 1;
-          directoryStarts.total[directory] += 1;
-        }
-      }
+      recordClientRequest(request, clientRequestCounts, timelineRequestCounts, directoryStarts);
       if (request?.type === heldClientRequestType) {
         heldClientRequest = { server, message };
         resolveHeldClientRequest?.();
         resolveHeldClientRequest = null;
+        return;
+      }
+      if (
+        request?.type === "file_explorer_request" &&
+        request.mode === "file" &&
+        request.path === fileReadPathToHold
+      ) {
+        heldFileReads.push(() => server.send(message));
+        resolveHeldFileRead?.();
         return;
       }
       try {
@@ -282,6 +406,8 @@ export async function installDaemonWebSocketGate(page: Page) {
     server.onMessage((message) => {
       if (!acceptingConnections) return;
       const serverMessage = readSessionMessage(message);
+      const fileMessage = serverMessage as ServerMessage | null;
+      observeFileMessage(fileMessage);
       let outboundMessage = stripAssistantMessageId(
         message,
         stripAssistantMessageIds,
@@ -297,42 +423,9 @@ export async function installDaemonWebSocketGate(page: Page) {
       outboundMessage = forceTimelineReset(outboundMessage, shouldForceTimelineReset);
       if (shouldForceTimelineReset) forceTimelineEpochReset = false;
       recordServerMessage(serverMessage);
-      const suppressed = shouldSuppressServerMessage({
-        message: serverMessage,
-        messageTypes: suppressedServerMessageTypes,
-        agentStreamEventTypes: suppressedAgentStreamEventTypes,
-        agentStreamItemTypes: suppressedAgentStreamItemTypes,
-        suppressAgentStream,
-      });
-      const agentStreamAgentId = readAgentStreamAgentId(serverMessage);
-      const blockedAgentStream = agentStreamAgentId
-        ? heldServerMessages.find((held) => held.blockedAgentId === agentStreamAgentId)
-        : undefined;
-      if (blockedAgentStream) {
-        if (!suppressed) blockedAgentStream.agentStreamFollowers.push(outboundMessage);
+      if (holdServerMessage({ browser: ws, message: outboundMessage, parsed: serverMessage }))
         return;
-      }
-      const matchedHold = Array.from(pendingServerMessageHolds).find(([, matches]) =>
-        matches(serverMessage),
-      );
-      if (matchedHold) {
-        const [key] = matchedHold;
-        pendingServerMessageHolds.delete(key);
-        heldServerMessages.push({
-          browser: ws,
-          message: outboundMessage,
-          key,
-          agentStreamFollowers: [],
-          blockedAgentId:
-            readAgentStreamEventType(serverMessage) === "turn_started"
-              ? (agentStreamAgentId ?? undefined)
-              : undefined,
-        });
-        for (const resolve of heldServerMessageWaiters) resolve();
-        heldServerMessageWaiters.clear();
-        return;
-      }
-      if (suppressed) return;
+      if (holdReadyFileUpdate(ws, outboundMessage, fileMessage)) return;
       try {
         ws.send(outboundMessage);
       } catch {
@@ -342,6 +435,49 @@ export async function installDaemonWebSocketGate(page: Page) {
   });
 
   return {
+    waitForFileSubscription(path: string): Promise<void> {
+      if (subscribedFilePaths.has(path)) return Promise.resolve();
+      return new Promise((resolve) => fileSubscriptionWaiters.set(path, resolve));
+    },
+    waitForFileUpdate(path: string, status: "ready" | "missing" | "error"): Promise<void> {
+      const key = `${path}:${status}`;
+      if (observedFileUpdates.has(key)) return Promise.resolve();
+      return new Promise((resolve) => fileUpdateWaiters.set(key, resolve));
+    },
+    holdFileReads(path: string): void {
+      fileReadPathToHold = path;
+      heldFileReads = [];
+      heldFileReadPromise = new Promise((resolve) => {
+        resolveHeldFileRead = resolve;
+      });
+    },
+    waitForHeldFileRead(): Promise<void> {
+      return heldFileReadPromise;
+    },
+    releaseHeldFileRead(): void {
+      const forwards = heldFileReads;
+      heldFileReads = [];
+      fileReadPathToHold = null;
+      resolveHeldFileRead = null;
+      for (const forward of forwards) forward();
+    },
+    holdNextReadyFileUpdate(path: string): void {
+      readyFileUpdatePathToHold = path;
+      heldReadyFileUpdate = null;
+      heldReadyFileUpdatePromise = new Promise((resolve) => {
+        resolveHeldReadyFileUpdate = resolve;
+      });
+    },
+    waitForHeldReadyFileUpdate(): Promise<void> {
+      return heldReadyFileUpdatePromise;
+    },
+    releaseHeldReadyFileUpdate(): void {
+      const forward = heldReadyFileUpdate;
+      heldReadyFileUpdate = null;
+      readyFileUpdatePathToHold = null;
+      resolveHeldReadyFileUpdate = null;
+      forward?.();
+    },
     async drop(): Promise<void> {
       acceptingConnections = false;
       const sockets = Array.from(activeSockets);

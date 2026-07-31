@@ -6,7 +6,7 @@ import type {
 } from "@getpaseo/protocol/agent-types";
 import type { ScheduleCadence, ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 import type { FormPreferences } from "@/create-agent-preferences/preferences";
-import { formatThinkingOptionLabel } from "@/composer/agent-controls/utils";
+import { formatThinkingOptionLabel } from "@/agent-controls/labels";
 import {
   buildSelectableProviderSelectorProviders,
   type ProviderSelectorProvider,
@@ -602,6 +602,11 @@ function updateDerivedState(input: {
     ...input.state,
     hosts: [...input.hosts],
     projectOptions: buildProjectOptions(input.targets, input.state.selectedServerId),
+    projectDisplay: resolveProjectDisplay({
+      targets: input.targets,
+      serverId: input.state.selectedServerId,
+      cwd: input.state.workingDir,
+    }),
     selectedProjectOptionId: projectTarget?.optionId ?? input.state.selectedProjectOptionId,
     selectedModelDisplay: resolveModelDisplay({
       entries: input.providerEntries,

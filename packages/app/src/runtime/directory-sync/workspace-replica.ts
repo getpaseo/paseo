@@ -1,9 +1,9 @@
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import {
-  normalizeEmptyProjectDescriptor,
+  normalizeProjectDescriptor,
   normalizeWorkspaceDescriptor,
   useSessionStore,
-  type EmptyProjectDescriptor,
+  type ProjectDescriptor,
   type WorkspaceDescriptor,
 } from "@/stores/session-store";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
@@ -20,7 +20,7 @@ type ProjectDirectoryDelta = Extract<SessionOutboundMessage, { type: "project.up
 
 export interface WorkspaceDirectorySnapshot {
   workspaces: Map<string, WorkspaceDescriptor>;
-  emptyProjects: Map<string, EmptyProjectDescriptor>;
+  projects: Map<string, ProjectDescriptor>;
 }
 
 function applyProjectDelta(
@@ -28,28 +28,26 @@ function applyProjectDelta(
   delta: ProjectDirectoryDelta,
 ): void {
   if (delta.kind === "remove") {
-    snapshot.emptyProjects.delete(delta.projectId);
+    snapshot.projects.delete(delta.projectId);
     for (const [workspaceId, workspace] of snapshot.workspaces) {
       if (workspace.projectId === delta.projectId) snapshot.workspaces.delete(workspaceId);
     }
     return;
   }
 
-  const project = normalizeEmptyProjectDescriptor(delta.project);
-  let hasAttachedWorkspace = false;
+  const project = normalizeProjectDescriptor(delta.project);
+  snapshot.projects.set(project.projectId, project);
   for (const [workspaceId, workspace] of snapshot.workspaces) {
     if (workspace.projectId !== project.projectId) continue;
-    hasAttachedWorkspace = true;
     snapshot.workspaces.set(workspaceId, {
       ...workspace,
       projectDisplayName: project.projectDisplayName,
       projectCustomName: project.projectCustomName,
+      projectCustomIconRevision: project.projectCustomIconRevision,
       projectRootPath: project.projectRootPath,
       projectKind: project.projectKind,
     });
   }
-  if (hasAttachedWorkspace) snapshot.emptyProjects.delete(project.projectId);
-  else snapshot.emptyProjects.set(project.projectId, project);
 }
 
 export class WorkspaceDirectoryReplica {
@@ -75,7 +73,7 @@ export class WorkspaceDirectoryReplica {
     const session = useSessionStore.getState().sessions[this.serverId];
     return {
       workspaces: new Map(session?.workspaces),
-      emptyProjects: new Map(session?.emptyProjects),
+      projects: new Map(session?.projects),
     };
   }
 
@@ -84,7 +82,7 @@ export class WorkspaceDirectoryReplica {
     deltas: readonly WorkspaceDirectoryDelta[],
   ): WorkspaceDirectorySnapshot {
     const workspaces = new Map(snapshot.workspaces);
-    const emptyProjects = new Map(snapshot.emptyProjects);
+    const projects = new Map(snapshot.projects);
     for (const [workspaceId, workspace] of workspaces) {
       if (shouldSuppressWorkspaceForLocalArchive({ serverId: this.serverId, workspace })) {
         workspaces.delete(workspaceId);
@@ -92,16 +90,18 @@ export class WorkspaceDirectoryReplica {
     }
     for (const delta of deltas) {
       if ("projectId" in delta || "project" in delta) {
-        applyProjectDelta({ workspaces, emptyProjects }, delta);
+        applyProjectDelta({ workspaces, projects }, delta);
         continue;
       }
       if (delta.kind === "remove") {
         workspaces.delete(delta.id);
         if (delta.emptyProject) {
-          const project = normalizeEmptyProjectDescriptor(delta.emptyProject);
-          emptyProjects.set(project.projectId, project);
+          const project = normalizeProjectDescriptor(delta.emptyProject);
+          projects.set(project.projectId, project);
         }
-        if (delta.removedProjectId) emptyProjects.delete(delta.removedProjectId);
+        if (delta.removedProjectId) {
+          projects.delete(delta.removedProjectId);
+        }
         continue;
       }
       const workspace = normalizeWorkspaceDescriptor(delta.workspace);
@@ -109,16 +109,15 @@ export class WorkspaceDirectoryReplica {
         workspaces.delete(workspace.id);
       } else {
         workspaces.set(workspace.id, workspace);
-        emptyProjects.delete(workspace.projectId);
       }
     }
-    return { workspaces, emptyProjects };
+    return { workspaces, projects };
   }
 
   private commit(snapshot: WorkspaceDirectorySnapshot, removedWorkspaceIds: string[]): void {
     const store = useSessionStore.getState();
     store.setWorkspaces(this.serverId, snapshot.workspaces);
-    store.setEmptyProjects(this.serverId, snapshot.emptyProjects.values());
+    store.setProjects(this.serverId, snapshot.projects.values());
     for (const workspaceId of removedWorkspaceIds) {
       clearWorkspaceArchivePending({ serverId: this.serverId, workspaceId });
       useWorkspaceSetupStore.getState().removeWorkspace({ serverId: this.serverId, workspaceId });

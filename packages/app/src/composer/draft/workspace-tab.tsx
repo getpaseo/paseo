@@ -24,9 +24,7 @@ import { useCreateFlowStore } from "@/stores/create-flow-store";
 import type { Agent } from "@/stores/session-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
-import { useCommandCenterActions } from "@/command-center/provider";
-import { buildModelChoiceContributions } from "@/command-center/model-contributions";
-import { getCommandCenterProviderIcon } from "@/command-center/provider-icon";
+import { useAgentControlCommandCenterActions } from "@/command-center/agent-control-registration";
 import { encodeImages } from "@/utils/encode-images";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
@@ -380,27 +378,17 @@ export function WorkspaceDraftAgentTab({
     throw new Error("Workspace draft composer state is required");
   }
 
-  const draftModelActions = useMemo(
-    () =>
-      buildModelChoiceContributions({
-        serverId,
-        providers: composerState.modelSelectorProviders,
-        selectedProvider: composerState.selectedProvider,
-        selectedModelId: composerState.effectiveModelId || null,
-        groupLabel: t("shell.commandCenter.modelGroupLabel"),
-        searchKeywords: t("shell.commandCenter.modelSearchKeywords"),
-        getIcon: getCommandCenterProviderIcon,
-        select: composerState.setProviderAndModelFromUser,
-      }),
-    [
-      composerState.effectiveModelId,
-      composerState.modelSelectorProviders,
-      composerState.selectedProvider,
-      composerState.setProviderAndModelFromUser,
-      serverId,
-      t,
-    ],
-  );
+  const draftProvider = composerState.selectedProvider;
+  const draftProviderDefinitions = composerState.providerDefinitions;
+  const draftThinkingOptions = composerState.availableThinkingOptions;
+  const draftSelectedThinkingId = composerState.selectedThinkingOptionId;
+  const draftSetThinkingOption = composerState.setThinkingOptionFromUser;
+  const draftModeOptions = composerState.modeOptions;
+  const draftSelectedMode = composerState.selectedMode;
+  const draftSetMode = composerState.setModeFromUser;
+  const draftFeatures = composerState.agentControls.features;
+  const draftOnSetFeature = composerState.agentControls.onSetFeature;
+
   const clearDraftInput = draftInput.clear;
   const setDraftText = draftInput.setText;
   const setDraftAttachments = draftInput.setAttachments;
@@ -548,12 +536,36 @@ export function WorkspaceDraftAgentTab({
     () => resolveTurnPresentation(TURN_LIVENESS_IDLE, pendingMessageSubmissions.length > 0),
     [pendingMessageSubmissions],
   );
-  useCommandCenterActions({
+  useAgentControlCommandCenterActions({
     sourceId: `draft:${serverId}:${tabId}`,
     enabled: isPaneFocused && !isSubmitting,
-    actions: draftModelActions,
+    controls: {
+      serverId,
+      ownerKey: tabId,
+      provider: draftProvider,
+      providerDefinitions: draftProviderDefinitions,
+      models: {
+        providers: composerState.modelSelectorProviders,
+        selectedProvider: draftProvider,
+        selectedModelId: composerState.effectiveModelId,
+        select: composerState.setProviderAndModelFromUser,
+      },
+      thinking: {
+        options: draftThinkingOptions,
+        selectedId: draftSelectedThinkingId,
+        select: draftSetThinkingOption,
+      },
+      modes: {
+        options: draftModeOptions,
+        selectedId: draftSelectedMode,
+        select: draftSetMode,
+      },
+      features: {
+        list: draftFeatures,
+        set: draftOnSetFeature,
+      },
+    },
   });
-
   const isReadyForPendingAutoSubmit = Boolean(
     pendingAutoSubmit &&
     draftInput.isHydrated &&

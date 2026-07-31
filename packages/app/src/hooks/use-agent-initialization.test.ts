@@ -116,7 +116,7 @@ describe("ensureAgentIsInitialized", () => {
     useSessionStore.getState().restoreSessionReplica(serverId, {
       agents: new Map(),
       workspaces: new Map(),
-      emptyProjects: new Map(),
+      projects: new Map(),
       timeline: {
         agentId,
         items: [

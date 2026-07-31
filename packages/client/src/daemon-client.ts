@@ -62,7 +62,9 @@ import type {
   DirectorySuggestionsResponse,
   PaseoWorktreeListResponse,
   PaseoWorktreeArchiveResponse,
+  ProjectIconSource,
   ProjectIconResponse,
+  ProjectIconGetResponse,
   ProjectAddResponse,
   ProjectCreateDirectoryResponse,
   OpenProjectResponseMessage,
@@ -678,6 +680,10 @@ export type FetchWorkspacesOptions = Omit<FetchWorkspacesRequest, "type" | "requ
 };
 export type FetchWorkspacesEntry = FetchWorkspacesPayload["entries"][number];
 export type FetchWorkspacesPageInfo = FetchWorkspacesPayload["pageInfo"];
+export type ProjectListPayload = Extract<
+  SessionOutboundMessage,
+  { type: "project.list.response" }
+>["payload"];
 export interface CreateChatRoomOptions {
   name: string;
   purpose?: string | null;
@@ -2092,6 +2098,24 @@ export class DaemonClient {
     });
   }
 
+  async listProjects(requestId?: string): Promise<ProjectListPayload> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "project.list.request",
+      requestId: resolvedRequestId,
+    });
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "project.list.response") return null;
+        if (msg.payload.requestId !== resolvedRequestId) return null;
+        return msg.payload;
+      },
+    });
+  }
+
   async openProject(cwd: string, requestId?: string): Promise<OpenProjectPayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
@@ -2503,6 +2527,18 @@ export class DaemonClient {
       throw new Error(payload.error ?? "renameProject rejected");
     }
     return { customName: payload.customName };
+  }
+
+  async setProjectIcon(
+    projectId: string,
+    source: ProjectIconSource,
+    requestId?: string,
+  ): Promise<void> {
+    const payload = await this.sendNamespacedCorrelatedSessionRequest<"project.icon.set.response">({
+      requestId,
+      message: { type: "project.icon.set.request", projectId, source },
+    });
+    if (!payload.accepted) throw new Error(payload.error ?? "setProjectIcon rejected");
   }
 
   async removeProject(
@@ -3490,6 +3526,7 @@ export class DaemonClient {
         cwd: payload.cwd,
         files: payload.files,
         error: payload.error,
+        diffTooLarge: payload.diffTooLarge,
         requestId: payload.requestId,
       };
     } finally {
@@ -4270,6 +4307,16 @@ export class DaemonClient {
         cwd,
       },
       responseType: "project_icon_response",
+    });
+  }
+
+  async getProjectIcon(
+    projectId: string,
+    requestId?: string,
+  ): Promise<ProjectIconGetResponse["payload"]> {
+    return this.sendNamespacedCorrelatedSessionRequest<"project.icon.get.response">({
+      requestId,
+      message: { type: "project.icon.get.request", projectId },
     });
   }
 

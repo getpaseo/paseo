@@ -14,7 +14,6 @@ export interface GithubRepositoryChoice {
   cloneUrl: string;
   cloneProtocol?: "https" | "ssh";
   description: string | null;
-  visibility: string | null;
   updatedAt: string | null;
 }
 

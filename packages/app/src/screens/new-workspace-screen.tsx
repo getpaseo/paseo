@@ -8,7 +8,7 @@ import ReanimatedAnimated from "react-native-reanimated";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { createNameId } from "mnemonic-id";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, Folder, FolderPlus, GitBranch, GitPullRequest } from "lucide-react-native";
 import { Composer } from "@/composer";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
@@ -31,6 +31,8 @@ import { HEADER_INNER_HEIGHT, MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "
 import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
+import { useCheckoutStatusQuery } from "@/git/use-status-query";
+import { ensureCheckoutStatus } from "@/git/checkout-status-cache";
 import {
   useHostRuntimeClient,
   useHostRuntimeConnectionStatuses,
@@ -66,12 +68,14 @@ import { toErrorMessage } from "@/utils/error-messages";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import {
   getHostProjectSourceDirectory,
+  getHostProjectId,
+  getWorktreeSupportForHostProject,
   hostProjectFromRoute,
   hostProjectFromWorkspace,
   useHostProjects,
   type HostProjectListItem,
 } from "@/projects/host-projects";
-import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
+import { useProjectIcons } from "@/projects/icons";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { ComposerAttachment } from "@/attachments/types";
 import { useDraftWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
@@ -86,7 +90,7 @@ import {
   remapDraftCwdToWorkspace,
 } from "./new-workspace-fork-context";
 import {
-  pickerItemToCheckoutRequest,
+  resolveCheckoutRequest,
   type PickerCheckoutRequest,
   type PickerItem,
 } from "./new-workspace-picker-item";
@@ -107,19 +111,6 @@ const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.for
 const addProjectIcon = (
   <ThemedFolderPlus size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
 );
-
-function resolveCheckoutRequest(
-  selectedItem: PickerItem | null,
-  currentBranch: string | null,
-): PickerCheckoutRequest | undefined {
-  const selectedCheckoutRequest = pickerItemToCheckoutRequest(selectedItem);
-  if (selectedCheckoutRequest) return selectedCheckoutRequest;
-  if (!currentBranch) return undefined;
-  return {
-    action: "branch-off",
-    refName: currentBranch,
-  };
-}
 
 function useIsNewWorkspaceDraftHandoffActive(input: {
   draftId: string | undefined;
@@ -272,7 +263,7 @@ function ProjectPickerTrigger({
   disabled,
   badgePressableStyle,
   label,
-  projectKey,
+  projectViewKey,
   iconDataUri,
   iconColor,
   iconSize,
@@ -282,7 +273,7 @@ function ProjectPickerTrigger({
   disabled: boolean;
   badgePressableStyle: React.ComponentProps<typeof Pressable>["style"];
   label: string;
-  projectKey: string | null;
+  projectViewKey: string | null;
   iconDataUri: string | null;
   iconColor: string;
   iconSize: number;
@@ -302,11 +293,11 @@ function ProjectPickerTrigger({
           accessibilityLabel="Workspace project"
         >
           <View style={styles.badgeIconBox}>
-            {projectKey ? (
+            {projectViewKey ? (
               <ProjectIconView
                 iconDataUri={iconDataUri}
                 initial={placeholderInitial}
-                projectKey={projectKey}
+                projectViewKey={projectViewKey}
                 imageStyle={styles.projectIcon}
                 fallbackStyle={styles.projectIconFallback}
                 textStyle={styles.projectIconFallbackText}
@@ -422,7 +413,7 @@ function IsolationOptionItem({
 
 function ProjectOptionItem({
   testID,
-  projectKey,
+  projectViewKey,
   iconDataUri,
   label,
   description,
@@ -432,7 +423,7 @@ function ProjectOptionItem({
   onPress,
 }: {
   testID: string;
-  projectKey: string;
+  projectViewKey: string;
   iconDataUri: string | null;
   label: string;
   description: string | undefined;
@@ -449,14 +440,14 @@ function ProjectOptionItem({
         <ProjectIconView
           iconDataUri={iconDataUri}
           initial={placeholderInitial}
-          projectKey={projectKey}
+          projectViewKey={projectViewKey}
           imageStyle={styles.projectIcon}
           fallbackStyle={styles.projectIconFallback}
           textStyle={styles.projectIconFallbackText}
         />
       </View>
     ),
-    [iconDataUri, placeholderInitial, projectKey],
+    [iconDataUri, placeholderInitial, projectViewKey],
   );
 
   return (
@@ -532,7 +523,7 @@ function NewWorkspaceProjectPickerOption({
   active,
   onPress,
   projectByOptionId,
-  projectIconDataByProjectKey,
+  projectIconDataByProjectViewKey,
   selectedServerId,
   isPending,
   supportsWorkspaceMultiplicity,
@@ -542,7 +533,7 @@ function NewWorkspaceProjectPickerOption({
   active: boolean;
   onPress: () => void;
   projectByOptionId: Map<string, HostProjectListItem>;
-  projectIconDataByProjectKey: Map<string, string | null>;
+  projectIconDataByProjectViewKey: Map<string, string | null>;
   selectedServerId: string;
   isPending: boolean;
   supportsWorkspaceMultiplicity: boolean;
@@ -554,16 +545,17 @@ function NewWorkspaceProjectPickerOption({
 
   return (
     <ProjectOptionItem
-      testID={`new-workspace-project-picker-option-${project.projectKey}`}
-      projectKey={project.projectKey}
-      iconDataUri={projectIconDataByProjectKey.get(project.projectKey) ?? null}
+      testID={`new-workspace-project-picker-option-${project.viewKey}`}
+      projectViewKey={project.viewKey}
+      iconDataUri={projectIconDataByProjectViewKey.get(project.viewKey) ?? null}
       label={project.projectName}
       description={sourceDirectory}
       selected={selected}
       active={active}
       disabled={
         isPending ||
-        (!supportsWorkspaceMultiplicity && !project.hosts.some((host) => host.canCreateWorktree))
+        (!supportsWorkspaceMultiplicity &&
+          !project.hosts.some((host) => host.worktreeSupport !== "unsupported"))
       }
       onPress={onPress}
     />
@@ -696,21 +688,20 @@ interface WorkspaceIsolationState {
   showRefPicker: boolean;
 }
 
-// Worktree isolation only makes sense for a git checkout. The effective isolation
-// falls back to local whenever the selected directory isn't git so the flow
-// never submits an impossible request.
+// Preserve the user's worktree choice while route metadata is provisional. Once
+// the authoritative placement arrives, unsupported projects fall back to local.
 function useWorkspaceIsolation(input: {
   supportsMultiplicity: boolean;
-  selectedIsGit: boolean;
+  worktreeSupport: "supported" | "unsupported" | "unknown";
 }): WorkspaceIsolationState {
-  const { supportsMultiplicity, selectedIsGit } = input;
+  const { supportsMultiplicity, worktreeSupport } = input;
   // The last isolation choice is remembered alongside the other New Workspace
   // form preferences (provider, model, mode). A manual in-screen pick overrides
   // the remembered default until the screen remounts.
   const { preferences, updatePreferences } = useFormPreferences();
   const [manualIsolation, setManualIsolation] = useState<"local" | "worktree" | null>(null);
   const isolation = manualIsolation ?? preferences.isolation ?? "local";
-  const canCreateWorktree = supportsMultiplicity && selectedIsGit;
+  const canCreateWorktree = supportsMultiplicity && worktreeSupport !== "unsupported";
   const isWorktree = isolation === "worktree" && canCreateWorktree;
 
   const setIsolation = useCallback(
@@ -811,8 +802,7 @@ async function createMultiplicityWorkspace(input: {
   isolation: "local" | "worktree";
   project: HostProjectListItem;
   sourceDirectory: string;
-  selectedItem: PickerItem | null;
-  currentBranch: string | null;
+  checkoutRequest: PickerCheckoutRequest | undefined;
   withInitialAgent: boolean;
   prompt: string;
   attachments: AgentAttachment[];
@@ -823,10 +813,9 @@ async function createMultiplicityWorkspace(input: {
   serverId: string;
   createFailedMessage: string;
 }): Promise<ReturnType<typeof normalizeWorkspaceDescriptor>> {
+  const projectId = getHostProjectId(input.project, input.serverId);
+  if (!projectId) throw new Error("Project is not available on the selected host");
   const isWorktree = input.isolation === "worktree";
-  const checkoutRequest = isWorktree
-    ? resolveCheckoutRequest(input.selectedItem, input.currentBranch)
-    : undefined;
   const firstAgentContext = buildFirstAgentContext({
     prompt: input.prompt,
     attachments: input.attachments,
@@ -836,14 +825,14 @@ async function createMultiplicityWorkspace(input: {
       ? {
           kind: "worktree",
           cwd: input.sourceDirectory,
-          projectId: input.project.projectKey,
+          projectId,
           worktreeSlug: createNameId(),
-          ...checkoutRequest,
+          ...input.checkoutRequest,
         }
       : {
           kind: "directory",
           path: input.sourceDirectory,
-          projectId: input.project.projectKey,
+          projectId,
         },
     ...(firstAgentContext ? { firstAgentContext } : {}),
   });
@@ -1302,7 +1291,7 @@ interface NewWorkspaceFormStackInput {
     options: ComboboxOptionType[];
     triggerLabel: string;
     selectedProject: HostProjectListItem | null;
-    iconDataByProjectKey: Map<string, string | null>;
+    iconDataByProjectViewKey: Map<string, string | null>;
     selectedOptionId: string;
     onSelect: (id: string) => void;
     onAddProject: () => void;
@@ -1366,10 +1355,10 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
         disabled={isPending}
         badgePressableStyle={badgePressableStyle}
         label={project.triggerLabel}
-        projectKey={project.selectedProject?.projectKey ?? null}
+        projectViewKey={project.selectedProject?.viewKey ?? null}
         iconDataUri={
           project.selectedProject
-            ? (project.iconDataByProjectKey.get(project.selectedProject.projectKey) ?? null)
+            ? (project.iconDataByProjectViewKey.get(project.selectedProject.viewKey) ?? null)
             : null
         }
         iconColor={theme.colors.foregroundMuted}
@@ -1411,6 +1400,8 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
       >
         <Pressable
           ref={host.anchorRef}
+          accessibilityRole="button"
+          accessibilityLabel="Host"
           onPress={host.open}
           disabled={isPending || host.allHosts.length === 0}
           style={badgePressableStyle}
@@ -1513,6 +1504,7 @@ export function NewWorkspaceScreen({
   displayName: displayNameProp,
   draftId,
 }: NewWorkspaceScreenProps) {
+  const queryClient = useQueryClient();
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
@@ -1562,7 +1554,6 @@ export function NewWorkspaceScreen({
   }, [pickerSearchQuery]);
 
   const workspace = createdWorkspace;
-  const isPending = isNewWorkspacePending({ pendingAction, isDraftHandoffActive });
   const client = useHostRuntimeClient(selectedServerId);
   const isConnected = useHostRuntimeIsConnected(selectedServerId);
   const {
@@ -1587,12 +1578,22 @@ export function NewWorkspaceScreen({
         if (!iconWorkingDir) {
           return [];
         }
-        return [{ projectKey: project.projectKey, serverId: selectedServerId, iconWorkingDir }];
+        const host = project.hosts.find((candidate) => candidate.serverId === selectedServerId);
+        if (!host) return [];
+        return [
+          {
+            projectViewKey: project.viewKey,
+            projectId: host.projectId,
+            serverId: selectedServerId,
+            iconWorkingDir,
+            customIconRevision: host.customIconRevision,
+          },
+        ];
       }),
     [projects, selectedServerId],
   );
 
-  const projectIconDataByProjectKey = useProjectIconDataByProjectKey({
+  const projectIconDataByProjectViewKey = useProjectIcons({
     projects: projectIconTargets,
   });
   const draftKey = buildNewWorkspaceDraftKey(draftId);
@@ -1641,27 +1642,20 @@ export function NewWorkspaceScreen({
   const hasSelectedSourceDirectory = selectedSourceDirectory !== null;
   const pickerQueryEnabled = pickerOpen && clientReady && hasSelectedSourceDirectory;
 
-  const checkoutStatusQuery = useQuery({
-    queryKey: ["checkout-status", selectedServerId, selectedSourceDirectory],
-    queryFn: async () => {
-      if (!selectedSourceDirectory) {
-        throw new Error("Choose a project");
-      }
-      const connectedClient = withConnectedClient();
-      return connectedClient.getCheckoutStatus(selectedSourceDirectory);
-    },
-    enabled: clientReady && hasSelectedSourceDirectory,
-    staleTime: Infinity,
-    refetchOnMount: false,
-    refetchOnReconnect: false,
-    refetchOnWindowFocus: false,
+  const { status: checkoutStatus } = useCheckoutStatusQuery({
+    serverId: selectedServerId,
+    cwd: selectedSourceDirectory ?? "",
   });
 
-  const currentBranch = checkoutStatusQuery.data?.currentBranch ?? null;
+  const currentBranch = checkoutStatus?.currentBranch ?? null;
+  const worktreeSupport = selectedProject
+    ? getWorktreeSupportForHostProject({ project: selectedProject, serverId: selectedServerId })
+    : "unsupported";
+  const isPending = isNewWorkspacePending({ pendingAction, isDraftHandoffActive });
   const { effectiveIsolation, setIsolation, canCreateWorktree, showRefPicker } =
     useWorkspaceIsolation({
       supportsMultiplicity: supportsWorkspaceMultiplicity,
-      selectedIsGit: checkoutStatusQuery.data?.isGit === true,
+      worktreeSupport,
     });
 
   const branchSuggestionsQuery = useQuery({
@@ -1880,6 +1874,7 @@ export function NewWorkspaceScreen({
       cwd: string;
       prompt: string;
       attachments: AgentAttachment[];
+      checkoutRequest: PickerCheckoutRequest | undefined;
     }): CreatePaseoWorktreeInput => {
       if (!selectedProject) {
         throw new Error("Choose a project");
@@ -1887,18 +1882,21 @@ export function NewWorkspaceScreen({
       if (!selectedSourceDirectory) {
         throw new Error("Choose a host for this project");
       }
-      const checkoutRequest = resolveCheckoutRequest(selectedItem, currentBranch);
       const firstAgentContext = buildFirstAgentContext(input);
+      const hostProjectId = getHostProjectId(selectedProject, selectedServerId);
+      if (!hostProjectId) {
+        throw new Error("Project is not available on the selected host");
+      }
 
       return {
         cwd: selectedSourceDirectory,
-        projectId: selectedProject.projectKey,
+        projectId: hostProjectId,
         worktreeSlug: createNameId(),
         ...(firstAgentContext ? { firstAgentContext } : {}),
-        ...checkoutRequest,
+        ...input.checkoutRequest,
       };
     },
-    [currentBranch, selectedItem, selectedProject, selectedSourceDirectory],
+    [selectedProject, selectedServerId, selectedSourceDirectory],
   );
 
   const ensureWorkspace = useCallback(
@@ -1917,14 +1915,26 @@ export function NewWorkspaceScreen({
       if (!selectedSourceDirectory) {
         throw new Error("Choose a host for this project");
       }
+      const connectedClient = withConnectedClient();
+      const createsWorktree = !supportsWorkspaceMultiplicity || effectiveIsolation === "worktree";
+      const checkoutRequest = createsWorktree
+        ? resolveCheckoutRequest(
+            selectedItem,
+            await ensureCheckoutStatus({
+              queryClient,
+              client: connectedClient,
+              serverId: selectedServerId,
+              cwd: selectedSourceDirectory,
+            }),
+          )
+        : undefined;
       const normalizedWorkspace = supportsWorkspaceMultiplicity
         ? await createMultiplicityWorkspace({
-            client: withConnectedClient(),
+            client: connectedClient,
             isolation: effectiveIsolation,
             project: selectedProject,
             sourceDirectory: selectedSourceDirectory,
-            selectedItem,
-            currentBranch,
+            checkoutRequest,
             withInitialAgent: input.withInitialAgent,
             prompt: input.prompt,
             attachments: input.attachments,
@@ -1933,8 +1943,8 @@ export function NewWorkspaceScreen({
             createFailedMessage: t("newWorkspace.errors.createWorktreeFailed"),
           })
         : await createAndMergeWorkspace({
-            client: withConnectedClient(),
-            createInput: buildCreateWorktreeInput(input),
+            client: connectedClient,
+            createInput: buildCreateWorktreeInput({ ...input, checkoutRequest }),
             mergeWorkspaces,
             serverId: selectedServerId,
             createFailedMessage: t("newWorkspace.errors.createWorktreeFailed"),
@@ -1945,9 +1955,9 @@ export function NewWorkspaceScreen({
     [
       buildCreateWorktreeInput,
       createdWorkspace,
-      currentBranch,
       effectiveIsolation,
       mergeWorkspaces,
+      queryClient,
       selectedItem,
       selectedProject,
       selectedServerId,
@@ -2030,7 +2040,7 @@ export function NewWorkspaceScreen({
       <NewWorkspaceProjectPickerOption
         {...props}
         projectByOptionId={projectByOptionId}
-        projectIconDataByProjectKey={projectIconDataByProjectKey}
+        projectIconDataByProjectViewKey={projectIconDataByProjectViewKey}
         selectedServerId={selectedServerId}
         isPending={isPending}
         supportsWorkspaceMultiplicity={supportsWorkspaceMultiplicity}
@@ -2039,7 +2049,7 @@ export function NewWorkspaceScreen({
     [
       isPending,
       projectByOptionId,
-      projectIconDataByProjectKey,
+      projectIconDataByProjectViewKey,
       selectedServerId,
       supportsWorkspaceMultiplicity,
     ],
@@ -2084,7 +2094,7 @@ export function NewWorkspaceScreen({
       options: projectPickerOptions,
       triggerLabel: projectTriggerLabel,
       selectedProject,
-      iconDataByProjectKey: projectIconDataByProjectKey,
+      iconDataByProjectViewKey: projectIconDataByProjectViewKey,
       selectedOptionId: selectedProjectOptionId,
       onSelect: handleSelectProjectOption,
       onAddProject: handleAddProject,

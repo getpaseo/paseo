@@ -9,7 +9,7 @@ import {
 } from "@/runtime/host-runtime";
 import {
   useSessionStore,
-  type EmptyProjectDescriptor,
+  type ProjectDescriptor,
   type WorkspaceDescriptor,
 } from "@/stores/session-store";
 import { buildProjects, type ProjectHost, type ProjectSummary } from "@/utils/projects";
@@ -24,7 +24,7 @@ export interface ProjectHostReplica {
   serverId: string;
   serverName: string;
   workspaces: WorkspaceDescriptor[];
-  emptyProjects: EmptyProjectDescriptor[];
+  projects: ProjectDescriptor[];
 }
 
 export interface ProjectHostRuntimeState {
@@ -87,7 +87,7 @@ function selectProjectHostReplicas(
         serverId: host.serverId,
         serverName: host.label,
         workspaces: Array.from(session?.workspaces.values() ?? []),
-        emptyProjects: Array.from(session?.emptyProjects.values() ?? []),
+        projects: Array.from(session?.projects.values() ?? []),
       };
     });
 }
@@ -106,7 +106,7 @@ export function deriveProjectsFromReplica(input: {
       serverName: replica.serverName,
       isOnline: runtimeState?.isOnline ?? false,
       workspaces: replica.workspaces,
-      emptyProjects: replica.emptyProjects,
+      projects: replica.projects,
     };
   });
   const hostErrors = input.replicas.flatMap((replica) => {

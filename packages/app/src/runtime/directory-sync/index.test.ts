@@ -5,10 +5,12 @@ import { useSessionStore } from "@/stores/session-store";
 import { DirectoryRefreshSupersededError, DirectorySync } from "./index";
 
 type WorkspaceFetchResult = Awaited<ReturnType<DaemonClient["fetchWorkspaces"]>>;
+type ProjectListResult = Awaited<ReturnType<DaemonClient["listProjects"]>>;
 
 class FakeDirectoryClient {
   fetchAgentsCalls = 0;
   fetchWorkspacesCalls = 0;
+  listProjectsCalls = 0;
   private pendingWorkspaceFetch: Promise<WorkspaceFetchResult> | null = null;
   private readonly handlers = new Map<
     SessionOutboundMessage["type"],
@@ -61,6 +63,22 @@ class FakeDirectoryClient {
       entries: [],
       emptyProjects: [],
       pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+    };
+  }
+
+  async listProjects(): Promise<ProjectListResult> {
+    this.listProjectsCalls += 1;
+    return {
+      requestId: "projects",
+      projects: [
+        {
+          projectId: "project-1",
+          projectKey: "remote:github.com/acme/app",
+          projectDisplayName: "acme/app",
+          projectRootPath: "/repo/app",
+          projectKind: "git",
+        },
+      ],
     };
   }
 }
@@ -116,6 +134,28 @@ describe("DirectorySync session readiness", () => {
 
     expect(client.fetchWorkspacesCalls).toBe(1);
     expect(useSessionStore.getState().sessions[serverId]?.hasHydratedWorkspaces).toBe(true);
+    directory.dispose();
+  });
+
+  it("fetches the project descriptor channel when the daemon advertises it", async () => {
+    const serverId = "project-list";
+    const { client, directory } = createDirectory(serverId);
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, client as unknown as DaemonClient, 1);
+    store.updateSessionServerInfo(serverId, {
+      serverId,
+      hostname: null,
+      version: "test",
+      features: { workspaceMultiplicity: true, projectList: true },
+    });
+
+    await directory.refreshWorkspaces();
+
+    expect(client.listProjectsCalls).toBe(1);
+    expect(useSessionStore.getState().sessions[serverId]?.projects.get("project-1")).toMatchObject({
+      projectId: "project-1",
+      projectKey: "remote:github.com/acme/app",
+    });
     directory.dispose();
   });
 
@@ -200,17 +240,14 @@ describe("DirectorySync session readiness", () => {
     });
     await refresh;
 
-    const emptyProjects = useSessionStore.getState().sessions[serverId]?.emptyProjects;
-    expect(Array.from(emptyProjects?.keys() ?? [])).toEqual([
-      "snapshot-project",
-      "workspace-project",
-    ]);
-    expect(emptyProjects?.get("snapshot-project")).toMatchObject({
+    const projects = useSessionStore.getState().sessions[serverId]?.projects;
+    expect(Array.from(projects?.keys() ?? [])).toEqual(["snapshot-project", "workspace-project"]);
+    expect(projects?.get("snapshot-project")).toMatchObject({
       projectDisplayName: "Renamed during hydration",
       projectRootPath: "/moved/snapshot-project",
       projectKind: "directory",
     });
-    expect(emptyProjects?.get("workspace-project")).toMatchObject({
+    expect(projects?.get("workspace-project")).toMatchObject({
       projectDisplayName: "Project from workspace update",
     });
     directory.dispose();
@@ -247,7 +284,7 @@ describe("DirectorySync session readiness", () => {
 
     expect(useSessionStore.getState().sessions[serverId]?.hasHydratedWorkspaces).toBe(true);
     expect(
-      useSessionStore.getState().sessions[serverId]?.emptyProjects.get("early-project"),
+      useSessionStore.getState().sessions[serverId]?.projects.get("early-project"),
     ).toMatchObject({
       projectDisplayName: "Early project",
       projectRootPath: "/repo/early-project",

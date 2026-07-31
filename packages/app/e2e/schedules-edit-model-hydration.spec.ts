@@ -163,6 +163,7 @@ test.describe("Schedules", () => {
       port: fakePort,
       serverId: fakeHost.serverId,
       workspace: fakeHost.workspace,
+      project: fakeHost,
       schedules: [
         buildFakeHostSchedule({
           id: scheduleId,

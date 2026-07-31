@@ -48,4 +48,19 @@ describe("parseGitRemoteLocation port", () => {
   it("has no port for an scp-form remote", () => {
     expect(parseGitRemoteLocation("git@host.example.com:team/repo.git")?.port).toBeUndefined();
   });
+
+  it("omits an explicitly written default port", () => {
+    expect(parseGitRemoteLocation("ssh://git@github.com:22/acme/repo.git")).toEqual(
+      parseGitRemoteLocation("ssh://git@github.com/acme/repo.git"),
+    );
+  });
+
+  it("reads a scheme remote as a URL rather than scp form", () => {
+    expect(parseGitRemoteLocation("ssh://git@example.com:2222/acme/repo.git")).toEqual({
+      transport: "ssh",
+      host: "example.com",
+      port: "2222",
+      path: "acme/repo",
+    });
+  });
 });
