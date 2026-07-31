@@ -1111,16 +1111,22 @@ describe("HostRuntimeController", () => {
     expect((initialClient as unknown as FakeDaemonClient).isDisposed()).toBe(true);
   });
 
-  it("still surfaces a pinned client's transport failure", async () => {
+  it("surfaces a pinned client's transport failure without replacing it", async () => {
     const direct: HostConnection = {
       id: "direct:lan:6767",
       type: "directTcp",
       endpoint: "lan:6767",
     };
+    const relay: HostConnection = {
+      id: "relay:relay.paseo.sh:443",
+      type: "relay",
+      relayEndpoint: "relay.paseo.sh:443",
+      daemonPublicKeyB64: "pk_test",
+    };
     const client = makeConnectedProbeClient(10);
     const controller = new HostRuntimeController({
-      host: makeHost({ connections: [direct], preferredConnectionId: direct.id }),
-      deps: makeDeps({ [direct.id]: 10 }, []),
+      host: makeHost({ connections: [direct, relay], preferredConnectionId: direct.id }),
+      deps: makeDeps({ [direct.id]: new Error("offline"), [relay.id]: 5 }, []),
     });
 
     await controller.start({
@@ -1140,6 +1146,11 @@ describe("HostRuntimeController", () => {
       lastError: "socket failed",
       client,
     });
+
+    await controller.runProbeCycleNow();
+    expect(controller.getSnapshot().client).toBe(client);
+    expect(controller.getSnapshot().activeConnectionId).toBe(direct.id);
+
     pin?.release();
   });
 

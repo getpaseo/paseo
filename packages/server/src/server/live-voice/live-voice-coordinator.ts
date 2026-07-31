@@ -70,13 +70,11 @@ export interface LiveVoiceUpdate {
 }
 
 /**
- * Identifies the client that owns a call. `sessionKey` is the client session and
- * `sourceKey` the individual socket within it, so a socket detaching tears down
- * only its own calls while a whole session going away tears down all of them.
+ * Identifies the reconnectable client session that owns a call. The media path
+ * can remain active while a mobile client's physical control socket is absent.
  */
 export interface LiveVoiceOwner {
   readonly sessionKey: object;
-  readonly sourceKey: object;
 }
 
 export interface LiveVoiceStartRequest {
@@ -166,7 +164,7 @@ class LiveVoiceUnsupportedError extends Error {
  * each one spawns its own hidden host session to run the realtime conversation
  * on, so concurrent calls from different clients never share a codex thread
  * (codex silently replaces an existing realtime session when a second
- * `thread/realtime/start` lands on the same thread). One call per client socket.
+ * `thread/realtime/start` lands on the same thread). One call per client session.
  */
 export class LiveVoiceCoordinator {
   private readonly calls = new Map<string, LiveVoiceCall>();
@@ -193,7 +191,7 @@ export class LiveVoiceCoordinator {
   }
 
   async start(request: LiveVoiceStartRequest): Promise<LiveVoiceStartResult> {
-    if (this.findCallForSource(request.owner.sourceKey)) {
+    if (this.findCallForSession(request.owner.sessionKey)) {
       return {
         accepted: false,
         errorCode: "busy",
@@ -202,7 +200,7 @@ export class LiveVoiceCoordinator {
     }
 
     // Registered synchronously — everything above is sync, so no second start
-    // from the same socket can interleave before the map entry exists, and a
+    // from the same client session can interleave before the map entry exists, and a
     // close arriving while the host spawns finds a call to close.
     const call: LiveVoiceCall = {
       liveSessionId: randomUUID(),
@@ -264,16 +262,16 @@ export class LiveVoiceCoordinator {
 
   /**
    * Speaks something into a running call from outside the conversation. The
-   * caller must be the socket that owns the call: a client may only put words
+   * caller must be the client session that owns the call: a client may only put words
    * in the mouth of its own call, never another client's.
    */
   async say(params: {
     liveSessionId: string;
-    sourceKey: object;
+    sessionKey: object;
     text: string;
   }): Promise<{ delivered: true } | { delivered: false; errorCode: string; errorMessage: string }> {
     const call = this.calls.get(params.liveSessionId);
-    if (!call || call.owner.sourceKey !== params.sourceKey) {
+    if (!call || call.owner.sessionKey !== params.sessionKey) {
       return {
         delivered: false,
         errorCode: "unknown_call",
@@ -310,15 +308,6 @@ export class LiveVoiceCoordinator {
     this.close(call, "requested");
   }
 
-  /** Immediate teardown when the owning socket detaches. No retention grace. */
-  closeForSource(sourceKey: object): void {
-    for (const call of Array.from(this.calls.values())) {
-      if (call.owner.sourceKey === sourceKey) {
-        this.close(call, "owner_disconnected");
-      }
-    }
-  }
-
   /** Teardown when the whole client session goes away. */
   closeForSession(sessionKey: object): void {
     for (const call of Array.from(this.calls.values())) {
@@ -341,6 +330,15 @@ export class LiveVoiceCoordinator {
     return this.calls.has(liveSessionId);
   }
 
+  hasActiveCallForSession(sessionKey: object): boolean {
+    for (const call of this.calls.values()) {
+      if (call.owner.sessionKey === sessionKey) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   dispose(): void {
     this.unsubscribeAgentClosing();
     for (const call of Array.from(this.calls.values())) {
@@ -349,9 +347,9 @@ export class LiveVoiceCoordinator {
     }
   }
 
-  private findCallForSource(sourceKey: object): LiveVoiceCall | null {
+  private findCallForSession(sessionKey: object): LiveVoiceCall | null {
     for (const call of this.calls.values()) {
-      if (call.owner.sourceKey === sourceKey) {
+      if (call.owner.sessionKey === sessionKey) {
         return call;
       }
     }
@@ -395,7 +393,7 @@ export class LiveVoiceCoordinator {
       call.unregisterRoute = this.routeBroker.register({
         hostAgentId,
         liveSessionId: call.liveSessionId,
-        sourceKey: call.owner.sourceKey,
+        sourceKey: call.owner.sessionKey,
         send: request.sendRouteRequest,
       });
     }

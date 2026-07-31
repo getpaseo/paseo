@@ -1263,7 +1263,7 @@ export class HostRuntimeController {
   }
 
   private isActiveClientPinnedForProbe(expectedProbeVersion: number | undefined): boolean {
-    if (expectedProbeVersion === undefined || this.snapshot.connectionStatus !== "online") {
+    if (expectedProbeVersion === undefined) {
       return false;
     }
     const client = this.activeClient;

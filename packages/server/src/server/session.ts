@@ -2343,7 +2343,7 @@ export class Session {
         this.handleLiveVoiceStopRequest(msg, source);
         return undefined;
       case "voice.live.route.response":
-        this.liveVoiceRouteBroker?.receiveResponse(msg, source ?? this);
+        this.liveVoiceRouteBroker?.receiveResponse(msg, this);
         return undefined;
       case "voice.live.tool.execute.request":
         return this.handleLiveVoiceToolExecuteRequest(msg, source);
@@ -2371,24 +2371,26 @@ export class Session {
       });
       return;
     }
-    const ownerSourceKey = source ?? this;
+    const capabilitySourceKey = source ?? this;
     const crossHostRoutingAvailable = this.supportsForSource(
       CLIENT_CAPS.liveVoiceCrossHostRouter,
-      ownerSourceKey,
+      capabilitySourceKey,
     );
-    // The source socket owns the call: updates go only to it, its detach tears
-    // the call down immediately, and it may hold only one call at a time.
+    // The reconnectable client session owns the call. Android may suspend the
+    // control socket while its native WebRTC media path and foreground service
+    // remain healthy, so updates and routed requests follow the session across
+    // socket replacement.
     const result = await coordinator.start({
       offerSdp: msg.offerSdp,
       ...(msg.voice ? { voice: msg.voice } : {}),
-      owner: { sessionKey: this, sourceKey: ownerSourceKey },
+      owner: { sessionKey: this },
       emit: (update) => {
-        this.emitForSource({ type: "voice.live.update", payload: update }, source);
+        this.emit({ type: "voice.live.update", payload: update });
       },
       ...(crossHostRoutingAvailable
         ? {
             sendRouteRequest: (request) => {
-              this.emitForSource(request, source);
+              this.emit(request);
             },
           }
         : {}),
@@ -2464,8 +2466,8 @@ export class Session {
   /**
    * Speaks a work notification into a call this daemon hosts. The client is the
    * only party that knows the routed work belongs to this call, so it is the
-   * client that asks — and the coordinator still checks that the asking socket
-   * owns the call it names.
+   * client that asks — and the coordinator still checks that the asking client
+   * session owns the call it names.
    */
   private async handleLiveVoiceAgentNotifyRequest(
     msg: Extract<SessionInboundMessage, { type: "voice.live.agent.notify.request" }>,
@@ -2475,7 +2477,7 @@ export class Session {
     const result = coordinator
       ? await coordinator.say({
           liveSessionId: msg.liveSessionId,
-          sourceKey: source ?? this,
+          sessionKey: this,
           text: formatLiveVoiceAgentNotification(msg.notification),
         })
       : ({
@@ -2498,10 +2500,13 @@ export class Session {
     );
   }
 
-  /** Called at socket detach: a live voice call must not outlive its owner. */
-  public releaseLiveVoiceForSource(source: object): void {
-    this.liveVoice?.closeForSource(source);
+  /** Release work that really is scoped to one physical socket. */
+  public releaseLiveVoiceSocketResources(source: object): void {
     this.liveVoiceAgentNotifier?.releaseForSource(source);
+  }
+
+  public hasActiveLiveVoiceCall(): boolean {
+    return this.liveVoice?.hasActiveCallForSession(this) ?? false;
   }
 
   private dispatchAgentRewindMessage(
