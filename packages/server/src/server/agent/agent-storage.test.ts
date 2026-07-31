@@ -296,6 +296,34 @@ describe("AgentStorage", () => {
     expect(recordAfterSnapshot?.archivedAt).toBe(archivedAt);
   });
 
+  test("concurrent snapshots preserve a newly derived material progress signal", async () => {
+    const agentId = "agent-material-progress";
+    await storage.initialize();
+
+    const withMaterialProgress = storage.applySnapshot(createManagedAgent({ id: agentId }), {
+      materialProgress: {
+        state: "progressing",
+        completedCompactionsSinceMaterialProgress: 0,
+        lastMaterialProgressAt: "2026-07-31T00:00:00.000Z",
+        lastMaterialProgressKind: "write",
+        reason: "Material progress followed the latest user message.",
+      },
+    });
+    const genericSnapshot = storage.applySnapshot(
+      createManagedAgent({
+        id: agentId,
+        updatedAt: new Date("2026-07-31T00:01:00.000Z"),
+      }),
+    );
+
+    await Promise.all([withMaterialProgress, genericSnapshot]);
+
+    expect((await storage.get(agentId))?.materialProgress).toMatchObject({
+      state: "progressing",
+      lastMaterialProgressKind: "write",
+    });
+  });
+
   test("stores titles independently of snapshots", async () => {
     await storage.applySnapshot(
       createManagedAgent({

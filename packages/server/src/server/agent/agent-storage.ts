@@ -4,7 +4,12 @@ import { z } from "zod";
 import type { Logger } from "pino";
 
 import { writeJsonFileAtomic } from "../atomic-file.js";
-import { AgentFeatureSchema, AgentStatusSchema } from "../messages.js";
+import {
+  AgentFeatureSchema,
+  AgentStatusSchema,
+  MaterialProgressPayloadSchema,
+  type MaterialProgressPayload,
+} from "../messages.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
@@ -60,6 +65,8 @@ const STORED_AGENT_SCHEMA = z.object({
   features: z.array(AgentFeatureSchema).optional(),
   persistence: PERSISTENCE_HANDLE_SCHEMA,
   lastError: z.string().nullable().optional(),
+  lastTurnOutcome: z.enum(["completed", "failed", "canceled"]).nullable().optional(),
+  materialProgress: MaterialProgressPayloadSchema.optional(),
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
@@ -128,13 +135,20 @@ export class AgentStorage {
   }
 
   private queueRecordWrite(record: StoredAgentRecord): Promise<void> {
-    const agentId = record.id;
+    return this.queueRecordMutation(record.id, () => record);
+  }
+
+  private queueRecordMutation(
+    agentId: string,
+    buildRecord: (existing: StoredAgentRecord | null) => StoredAgentRecord,
+  ): Promise<void> {
     const prev = this.pendingWrites.get(agentId) ?? Promise.resolve();
     const next = prev.then(async () => {
       if (this.deleting.has(agentId)) {
         return undefined;
       }
 
+      const record = buildRecord(this.cache.get(agentId) ?? null);
       await this.writeRecord(record);
       return undefined;
     });
@@ -204,28 +218,37 @@ export class AgentStorage {
 
   async applySnapshot(
     agent: ManagedAgent,
-    options?: { title?: string | null; internal?: boolean },
+    options?: {
+      title?: string | null;
+      internal?: boolean;
+      materialProgress?: MaterialProgressPayload;
+    },
   ): Promise<void> {
     await this.load();
-    await this.waitForPendingWrite(agent.id);
-    const existing = (await this.get(agent.id)) ?? null;
     const hasTitleOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "title");
     const hasInternalOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "internal");
-    const record = toStoredAgentRecord(agent, {
-      title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
-      createdAt: existing?.createdAt,
-      internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
-    });
+    const hasMaterialProgressOverride =
+      options !== undefined && Object.prototype.hasOwnProperty.call(options, "materialProgress");
+    await this.queueRecordMutation(agent.id, (existing) => {
+      const record = toStoredAgentRecord(agent, {
+        title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
+        createdAt: existing?.createdAt,
+        internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
+        materialProgress: hasMaterialProgressOverride
+          ? options?.materialProgress
+          : existing?.materialProgress,
+      });
 
-    // Preserve soft-delete/archive status across snapshot flushes.
-    // `archivedAt` is not part of the ManagedAgent snapshot, so a naive projection
-    // would wipe it during normal persistence (including on daemon restart).
-    if (existing && existing.archivedAt !== undefined) {
-      record.archivedAt = existing.archivedAt;
-    }
-    await this.upsert(record);
+      // Preserve soft-delete/archive status across snapshot flushes.
+      // `archivedAt` is not part of the ManagedAgent snapshot, so a naive projection
+      // would wipe it during normal persistence (including on daemon restart).
+      if (existing && existing.archivedAt !== undefined) {
+        record.archivedAt = existing.archivedAt;
+      }
+      return record;
+    });
   }
 
   async setTitle(agentId: string, title: string): Promise<void> {

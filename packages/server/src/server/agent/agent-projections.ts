@@ -1,6 +1,7 @@
 import type {
   AgentListItemPayload,
   AgentSnapshotPayload,
+  MaterialProgressPayload,
   RecentProviderSessionDescriptorPayload,
 } from "../messages.js";
 import type { SerializableAgentConfig, StoredAgentRecord } from "./agent-storage.js";
@@ -26,6 +27,7 @@ interface ProjectionOptions {
   title?: string | null;
   createdAt?: string;
   internal?: boolean;
+  materialProgress?: MaterialProgressPayload;
 }
 
 interface RecentProviderSessionProjectionOptions {
@@ -87,6 +89,8 @@ export function toStoredAgentRecord(
     features: normalizeFeatures(agent.features),
     persistence,
     lastError: agent.lastError ?? undefined,
+    ...(agent.lastTurnOutcome ? { lastTurnOutcome: agent.lastTurnOutcome } : {}),
+    ...(options?.materialProgress ? { materialProgress: options.materialProgress } : {}),
     requiresAttention: agent.attention.requiresAttention,
     attentionReason: agent.attention.requiresAttention ? agent.attention.attentionReason : null,
     attentionTimestamp: agent.attention.requiresAttention
@@ -236,6 +240,7 @@ export function buildStoredAgentPayload(
     attentionTimestamp: record.attentionTimestamp ?? null,
     archivedAt: record.archivedAt ?? null,
     labels: normalizeLabels(record.labels),
+    ...(record.materialProgress ? { materialProgress: record.materialProgress } : {}),
     ...(providerAvailable ? {} : { providerUnavailable: true }),
   };
 }

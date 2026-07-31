@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "patches": [
+    {
+      "id": "paseo-v025-material-progress-inspect",
+      "category": "stable-core-observability",
+      "base": {
+        "tag": "v0.2.5",
+        "commit": "6fc491e6220fba6543bbbe4bf1b1f58cfe59228b"
+      },
+      "tests": [
+        "packages/protocol/src/material-progress-schema.test.ts",
+        "packages/server/src/server/agent/material-progress.test.ts",
+        "packages/server/src/server/agent/agent-manager.test.ts",
+        "packages/server/src/server/material-progress.e2e.test.ts",
+        "packages/cli/src/commands/agent/inspect.test.ts"
+      ],
+      "upstreamable": true,
+      "dropCondition": "Remove when the official stable release exposes equivalent singular agent material-progress inspection with persisted terminal-turn semantics.",
+      "deployedReceipt": null,
+      "deployedAt": null
+    }
+  ]
+}

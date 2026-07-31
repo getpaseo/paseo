@@ -3837,6 +3837,142 @@ test("getTimelineRows falls back to the in-memory timeline when no durable store
       },
     },
   ]);
+
+  await expect(manager.getMaterialProgressSnapshot(snapshot.id, 1)).resolves.toMatchObject({
+    rows: null,
+  });
+
+  await manager.closeAgent(snapshot.id);
+  const retained = await manager.getMaterialProgressSnapshot(snapshot.id);
+  expect(retained.rows).toHaveLength(2);
+  expect(retained.turnOutcome).toBeNull();
+});
+
+test("an unhydrated resumed agent exposes its persisted material progress", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-material-progress-resume-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentId = "00000000-0000-4000-8000-000000000141";
+  const firstManager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    idFactory: () => agentId,
+  });
+
+  const created = await firstManager.createAgent(
+    { provider: "codex", cwd: workdir },
+    undefined,
+    { workspaceId: undefined },
+  );
+  await firstManager.appendTimelineItem(created.id, {
+    type: "user_message",
+    text: "persist this result",
+  });
+  await firstManager.appendTimelineItem(created.id, {
+    type: "tool_call",
+    callId: "write-1",
+    name: "write",
+    status: "completed",
+    error: null,
+    detail: { type: "write", filePath: "result.txt", content: "durable" },
+  });
+  await firstManager.closeAgent(created.id);
+
+  const record = await storage.get(created.id);
+  expect(record?.persistence).toBeTruthy();
+
+  const resumedManager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  await resumedManager.resumeAgentFromPersistence(
+    record!.persistence!,
+    { cwd: workdir },
+    created.id,
+  );
+
+  await expect(resumedManager.getMaterialProgressSnapshot(created.id)).resolves.toMatchObject({
+    rows: null,
+    persisted: {
+      state: "progressing",
+      lastMaterialProgressKind: "write",
+    },
+  });
+
+  await resumedManager.closeAgent(created.id);
+  rmSync(workdir, { recursive: true, force: true });
+});
+
+test("persists terminal outcomes and clears the previous outcome when a new turn starts", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-turn-outcome-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let nextTurn = 0;
+  const session = new (class extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      nextTurn += 1;
+      return { turnId: `held-turn-${nextTurn}` };
+    }
+  })({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000139",
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    const firstRunning = waitForAgentLifecycle(manager, agent.id, "running");
+    const firstTurn = (async () => {
+      for await (const _event of manager.streamAgent(agent.id, "first turn")) {
+        // Consume through the terminal event so the managed run settles.
+      }
+    })();
+    await firstRunning;
+    session.pushEvent({
+      type: "turn_completed",
+      provider: "codex",
+      turnId: "held-turn-1",
+    });
+    await firstTurn;
+    await manager.flush();
+    expect((await manager.getMaterialProgressSnapshot(agent.id)).turnOutcome).toBe("completed");
+    expect((await storage.get(agent.id))?.lastTurnOutcome).toBe("completed");
+
+    const secondRunning = waitForAgentLifecycle(manager, agent.id, "running");
+    const secondTurn = (async () => {
+      for await (const _event of manager.streamAgent(agent.id, "second turn")) {
+        // Consume through the terminal event so the managed run settles.
+      }
+    })();
+    await secondRunning;
+    await manager.flush();
+    expect((await manager.getMaterialProgressSnapshot(agent.id)).turnOutcome).toBeNull();
+    expect((await storage.get(agent.id))?.lastTurnOutcome ?? null).toBeNull();
+
+    session.pushEvent({
+      type: "turn_canceled",
+      provider: "codex",
+      turnId: "held-turn-2",
+      reason: "test interruption",
+    });
+    await secondTurn;
+    await manager.flush();
+    expect((await manager.getMaterialProgressSnapshot(agent.id)).turnOutcome).toBe("canceled");
+    expect((await storage.get(agent.id))?.lastTurnOutcome).toBe("canceled");
+  } finally {
+    await manager.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("getAgent does not expose committed history internals once manager owns the seam", async () => {
