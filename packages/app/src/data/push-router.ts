@@ -7,6 +7,7 @@ import type {
 import { agentCommandsQueryRoot } from "@/hooks/agent-commands-query";
 import { orderCheckoutDiffFiles } from "@/git/diff-order";
 import { daemonConfigQueryKey } from "@/data/daemon-config";
+import { daemonPairingOfferQueryKey } from "@/data/daemon-pairing";
 import { providersSnapshotQueryKey, providersSnapshotQueryRoot } from "@/data/providers-snapshot";
 
 type ProvidersSnapshotUpdateMessage = Extract<
@@ -103,6 +104,12 @@ const RECONNECT_REPAIR_POLICIES: ReconnectRepairPolicy[] = [
     domain: "daemonConfig",
     invalidate: ({ queryClient, serverId }) => {
       void queryClient.invalidateQueries({ queryKey: daemonConfigQueryKey(serverId) });
+    },
+  },
+  {
+    domain: "daemonPairingOffer",
+    invalidate: ({ queryClient, serverId }) => {
+      void queryClient.invalidateQueries({ queryKey: daemonPairingOfferQueryKey(serverId) });
     },
   },
   {

@@ -109,6 +109,38 @@ describe("DaemonConfigStore", () => {
     );
   });
 
+  test("unrelated patches do not persist a one-launch relay override", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const persisted = loadPersistedConfig(paseoHome);
+    writeFileSync(
+      path.join(paseoHome, "config.json"),
+      `${JSON.stringify({
+        ...persisted,
+        daemon: { ...persisted.daemon, relay: { enabled: false } },
+      })}\n`,
+    );
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        relay: { enabled: true },
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+      { relayEnabledMutable: false },
+    );
+
+    store.patch({ browserTools: { enabled: true } });
+
+    expect(loadPersistedConfig(paseoHome).daemon?.relay?.enabled).toBe(false);
+  });
+
   test("patch persists provider enabled flags into config.json", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);

@@ -7,7 +7,7 @@
  *
  * Tests:
  * - daemon --help shows subcommands
- * - daemon pair prints a local pairing link without requiring a running daemon
+ * - daemon pair does not create a relay offer without explicit consent
  * - daemon status reports stopped when daemon not running
  * - daemon status --json outputs valid JSON
  * - daemon stop handles daemon not running gracefully
@@ -44,14 +44,17 @@ try {
     console.log("✓ daemon --help shows subcommands\n");
   }
 
-  // Test 2: daemon pair works without daemon process
+  // Test 2: non-interactive pairing keeps relay disabled by default
   {
-    console.log("Test 2: daemon pair prints local pairing URL");
+    console.log("Test 2: daemon pair requires explicit relay consent");
     const result = await daemonCommand(["pair"]);
-    assert.strictEqual(result.exitCode, 0, "daemon pair should succeed");
-    assert(result.stdout.includes("Scan to pair:"), "output should include scan header");
-    assert(result.stdout.includes("#offer="), "output should include pairing offer fragment");
-    console.log("✓ daemon pair prints local pairing URL\n");
+    assert.strictEqual(result.exitCode, 1, "daemon pair should require relay consent");
+    assert(
+      result.stderr.includes("Relay pairing is disabled"),
+      "output should explain that relay pairing is disabled",
+    );
+    assert(!result.stdout.includes("#offer="), "output should not include a pairing offer");
+    console.log("✓ daemon pair requires explicit relay consent\n");
   }
 
   // Test 3: daemon status reports stopped when daemon not running
@@ -65,16 +68,17 @@ try {
     console.log("✓ daemon status reports stopped when not running\n");
   }
 
-  // Test 4: daemon pair --json outputs valid JSON
+  // Test 4: daemon pair --json exposes the machine-readable disabled state
   {
-    console.log("Test 4: daemon pair --json outputs JSON");
+    console.log("Test 4: daemon pair --json reports relay disabled");
     const result = await daemonCommand(["pair", "--json"]);
-    assert.strictEqual(result.exitCode, 0, "daemon pair --json should succeed");
-    const pairing = JSON.parse(result.stdout);
-    assert.strictEqual(pairing.relayEnabled, true, "pairing should report relay enabled");
-    assert.match(pairing.url, /#offer=/, "pairing URL should include offer fragment");
-    assert.strictEqual(typeof pairing.qr, "string", "pairing should include QR content");
-    console.log("✓ daemon pair --json outputs valid JSON\n");
+    assert.strictEqual(result.exitCode, 1, "daemon pair --json should require relay consent");
+    const errorLine = result.stderr.split("\n").find((line) => line.startsWith("{"));
+    assert(errorLine, "stderr should include a structured error");
+    const error = JSON.parse(errorLine);
+    assert.strictEqual(error.code, "RELAY_DISABLED", "error should identify relay state");
+    assert(!result.stdout.includes("#offer="), "output should not include a pairing offer");
+    console.log("✓ daemon pair --json reports relay disabled\n");
   }
 
   // Test 5: daemon status --json outputs valid JSON

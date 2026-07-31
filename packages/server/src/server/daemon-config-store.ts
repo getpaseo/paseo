@@ -267,6 +267,7 @@ export class DaemonConfigStore {
       persisted,
       mutable: config,
       removeProviders,
+      persistRelayEnabled: this.relayEnabledMutable,
     });
     savePersistedConfig(this.paseoHome, nextPersisted, this.logger);
   }
@@ -276,8 +277,9 @@ function mergeMutableConfigIntoPersistedConfig(params: {
   persisted: PersistedConfig;
   mutable: MutableDaemonConfig;
   removeProviders: readonly string[];
+  persistRelayEnabled: boolean;
 }): PersistedConfig {
-  const { persisted, mutable, removeProviders } = params;
+  const { persisted, mutable, removeProviders, persistRelayEnabled } = params;
   if (!mutable.relay) {
     throw new Error("Mutable daemon config is missing relay state");
   }
@@ -318,10 +320,14 @@ function mergeMutableConfigIntoPersistedConfig(params: {
     ...persisted,
     daemon: {
       ...persisted.daemon,
-      relay: {
-        ...persisted.daemon?.relay,
-        enabled: mutable.relay.enabled,
-      },
+      ...(persistRelayEnabled
+        ? {
+            relay: {
+              ...persisted.daemon?.relay,
+              enabled: mutable.relay.enabled,
+            },
+          }
+        : {}),
       mcp: {
         ...persisted.daemon?.mcp,
         injectIntoAgents: mutable.mcp.injectIntoAgents,

@@ -11,9 +11,10 @@ import { Button } from "@/components/ui/button";
 import { ExternalLink } from "@/components/ui/external-link";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useFetchQuery } from "@/data/query";
+import { daemonPairingOfferQueryKey } from "@/data/daemon-pairing";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
-import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 
 const RELAY_DOCS_URL = "https://paseo.sh/docs/security";
@@ -35,13 +36,17 @@ export function PairDeviceSection({ serverId, onClose }: PairDeviceSectionProps)
   const { t } = useTranslation();
   const showSection = shouldUseDesktopDaemon();
   const client = useHostRuntimeClient(serverId);
-  const isConnected = useHostRuntimeIsConnected(serverId);
+  const runtimeSnapshot = useHostRuntimeSnapshot(serverId);
+  const isConnected = runtimeSnapshot?.connectionStatus === "online";
+  const isDisconnected =
+    runtimeSnapshot?.connectionStatus === "offline" ||
+    runtimeSnapshot?.connectionStatus === "error";
   const { patchConfig } = useDaemonConfig(serverId);
   const [copied, setCopied] = useState(false);
   const canConfigureRelay = client?.getLastServerInfoMessage()?.features?.relayConfig === true;
 
   const pairingQuery = useFetchQuery({
-    queryKey: ["daemon-pairing-offer", serverId],
+    queryKey: daemonPairingOfferQueryKey(serverId),
     queryFn: async () => {
       if (!client) throw new Error(t("workspace.terminal.hostDisconnected"));
       return client.getDaemonPairingOffer();
@@ -103,6 +108,7 @@ export function PairDeviceSection({ serverId, onClose }: PairDeviceSectionProps)
     <View testID="pair-device-content">
       <PairDeviceBody
         isPending={pairingQuery.isPending}
+        isDisconnected={isDisconnected}
         error={pairingQuery.error}
         offer={pairingQuery.data}
         canConfigureRelay={canConfigureRelay}
@@ -122,6 +128,7 @@ export function PairDeviceSection({ serverId, onClose }: PairDeviceSectionProps)
 
 interface PairDeviceBodyProps {
   isPending: boolean;
+  isDisconnected: boolean;
   error: Error | null;
   offer: { relayEnabled: boolean; url: string } | undefined;
   canConfigureRelay: boolean;
@@ -138,6 +145,11 @@ interface PairDeviceBodyProps {
 
 function PairDeviceBody(props: PairDeviceBodyProps) {
   const { t } = useTranslation();
+  if (props.isDisconnected) {
+    return (
+      <OfferLoadError message={t("workspace.terminal.hostDisconnected")} onRetry={props.onRetry} />
+    );
+  }
   if (props.isPending) {
     return <Text style={styles.stateLine}>{t("pairing.device.loadingOffer")}</Text>;
   }

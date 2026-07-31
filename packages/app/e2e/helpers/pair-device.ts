@@ -2,11 +2,25 @@ import { expect, type Page } from "@playwright/test";
 import type { IsolatedHostDaemon } from "./isolated-host-daemon";
 import type { OutdatedDaemon } from "./daemon-update";
 import { openSettings, gotoAppShell } from "./app";
-import { openSettingsHost, openSettingsHostSection, seedSavedSettingsHosts } from "./settings";
+import {
+  openSettingsHost,
+  openSettingsHostSection,
+  seedSavedSettingsHosts,
+  selectSettingsHost,
+} from "./settings";
+import { expectAppRoute } from "./route-assertions";
+import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
+
+interface PairingHostInput {
+  serverId: string;
+  label: string;
+  endpoint: string;
+}
 
 export async function prepareLocalPairingHost(
   page: Page,
   daemon: IsolatedHostDaemon | OutdatedDaemon,
+  additionalHosts: PairingHostInput[] = [],
 ): Promise<void> {
   await page.addInitScript((localServerId) => {
     (window as unknown as { paseoDesktop: unknown }).paseoDesktop = {
@@ -49,6 +63,7 @@ export async function prepareLocalPairingHost(
       label: "Local pairing host",
       endpoint: "port" in daemon ? `127.0.0.1:${daemon.port}` : daemon.endpoint,
     },
+    ...additionalHosts,
   ]);
   await gotoAppShell(page);
   await openSettings(page);
@@ -150,6 +165,19 @@ export async function expectRelayUpdateRequired(page: Page): Promise<void> {
   ).toBeVisible();
   await expect(modal.getByRole("button", { name: "Enable relay", exact: true })).toHaveCount(0);
   await expect(modal.getByRole("textbox", { name: "Pairing link" })).toHaveCount(0);
+}
+
+export async function expectPairingDisconnected(page: Page): Promise<void> {
+  const modal = page.getByTestId("host-page-pair-device-card");
+  await expect(modal.getByRole("alert")).toContainText("Host is not connected");
+  await expect(modal.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+}
+
+export async function switchPairDeviceToHost(page: Page, serverId: string): Promise<void> {
+  await selectSettingsHost(page, serverId);
+  await expectAppRoute(page, buildSettingsHostSectionRoute(serverId, "connections"));
+  await expect(page.getByTestId("host-page-connections-card")).toBeVisible();
+  await expect(page.getByTestId("host-page-pair-device-row")).toHaveCount(0);
 }
 
 export async function openRelaySecurityDocs(page: Page): Promise<void> {

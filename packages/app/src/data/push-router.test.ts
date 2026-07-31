@@ -4,6 +4,7 @@ import type { MutableDaemonConfig, SessionOutboundMessage } from "@getpaseo/prot
 import { checkoutDiffQueryKey } from "@/git/query-keys";
 import { buildTerminalsQueryKey } from "@/screens/workspace/terminals/state";
 import { daemonConfigQueryKey } from "@/data/daemon-config";
+import { daemonPairingOfferQueryKey } from "@/data/daemon-pairing";
 import { providersSnapshotQueryKey } from "@/data/providers-snapshot";
 import {
   checkoutDiffPushRoute,
@@ -503,12 +504,14 @@ describe("server data push router", () => {
     const otherServerId = "server-2";
     const providerKey = providersSnapshotQueryKey(serverId);
     const daemonConfigKey = daemonConfigQueryKey(serverId);
+    const pairingOfferKey = daemonPairingOfferQueryKey(serverId);
     const diffKey = checkoutDiffQueryKey(serverId, "/repo", "uncommitted", undefined, false);
     const terminalKey = buildTerminalsQueryKey(serverId, "/repo", "workspace-a");
     const otherProviderKey = providersSnapshotQueryKey(otherServerId);
 
     queryClient.setQueryData(providerKey, { entries: [], generatedAt: "now", requestId: "p" });
     queryClient.setQueryData(daemonConfigKey, daemonConfig);
+    queryClient.setQueryData(pairingOfferKey, { relayEnabled: false, url: "" });
     queryClient.setQueryData(diffKey, { cwd: "/repo", files: [], error: null, requestId: "d" });
     queryClient.setQueryData(terminalKey, { cwd: "/repo", terminals: [], requestId: "t" });
     queryClient.setQueryData(otherProviderKey, {
@@ -521,6 +524,7 @@ describe("server data push router", () => {
 
     expect(queryClient.getQueryState(providerKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(daemonConfigKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(pairingOfferKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(diffKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(terminalKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(otherProviderKey)?.isInvalidated).toBe(false);

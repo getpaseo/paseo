@@ -1275,7 +1275,8 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
       if (view.kind !== "host") {
         return;
       }
-      const section: HostSectionSlug = view.section;
+      const section: HostSectionSlug =
+        view.section === "pair-device" && serverId !== localServerId ? "connections" : view.section;
       const target = buildSettingsHostSectionRoute(serverId, section);
       if (isCompactLayout) {
         router.push(target);
@@ -1283,7 +1284,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
         router.replace(target);
       }
     },
-    [isCompactLayout, router, view],
+    [isCompactLayout, localServerId, router, view],
   );
 
   const handleSelectHostSection = useCallback(
