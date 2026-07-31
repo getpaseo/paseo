@@ -2856,6 +2856,27 @@ const x = 1;
     expect(lookupTarget?.headSha).toMatch(/^[0-9a-f]{40}$/);
   });
 
+  it("keeps the local branch lookup when a fork tracks the upstream base branch", async () => {
+    execFileSync("git", ["checkout", "-b", "local-feature"], { cwd: repoDir });
+    execFileSync("git", ["remote", "add", "origin", "git@github.com:contributor/paseo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["remote", "add", "upstream", "https://github.com/getpaseo/paseo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["config", "branch.local-feature.remote", "upstream"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["config", "branch.local-feature.merge", "refs/heads/main"], {
+      cwd: repoDir,
+    });
+
+    const lookupTarget = await readPullRequestLookupTargetFromFacts(repoDir, paseoHome);
+
+    expect(lookupTarget).toMatchObject({ headRef: "local-feature" });
+    expect(lookupTarget).not.toHaveProperty("headRepositoryOwner");
+  });
+
   it("treats differently cased Enterprise remotes as the same repository", async () => {
     execFileSync("git", ["checkout", "-b", "local-feature"], { cwd: repoDir });
     execFileSync("git", ["remote", "add", "origin", "git@github.acme.internal:Acme/Repo.git"], {

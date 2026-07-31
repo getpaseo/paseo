@@ -1636,7 +1636,14 @@ function buildPullRequestLookupTargetFromBranchConfig(
   const normalizedBaseRef = input.resolvedBaseRef
     ? normalizeLocalBranchRefName(input.resolvedBaseRef)
     : null;
-  if (trackedHeadRef === normalizedBaseRef && !headRepositoryOwner) {
+  if (
+    trackedHeadRef === normalizedBaseRef &&
+    !doesLocalBranchNameIdentifyTrackedHead(
+      input.currentBranch,
+      trackedHeadRef,
+      headRepositoryOwner,
+    )
+  ) {
     return { headRef: input.currentBranch };
   }
 
@@ -1660,6 +1667,22 @@ function parseRepositoryIdentityFromRemote(remoteUrl: string | null): string | n
 
 function areSameGitHubRepository(left: string | null, right: string | null): boolean {
   return Boolean(left && right && left.toLowerCase() === right.toLowerCase());
+}
+
+function doesLocalBranchNameIdentifyTrackedHead(
+  currentBranch: string,
+  trackedHeadRef: string,
+  headRepositoryOwner: string | null,
+): boolean {
+  if (currentBranch === trackedHeadRef) {
+    return true;
+  }
+  if (!headRepositoryOwner) {
+    return false;
+  }
+  return [headRepositoryOwner, headRepositoryOwner.toLowerCase()].some(
+    (owner) => currentBranch === `${owner}/${trackedHeadRef}`,
+  );
 }
 
 function buildPullRequestLookupTargetFromPushConfig(
