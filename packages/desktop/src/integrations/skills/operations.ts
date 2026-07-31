@@ -62,6 +62,11 @@ function managedSkillNames(available: readonly string[]): string[] {
   return [...new Set([...available, ...LEGACY_SKILL_NAMES])].sort(compareStrings);
 }
 
+/** The names a convergence may create, replace, or delete. */
+export async function listManagedSkillNames(sourceDir: string): Promise<string[]> {
+  return managedSkillNames(await listBundledSkills(sourceDir));
+}
+
 function resolveDesiredSkills(
   selection: SkillSelection,
   available: readonly string[],

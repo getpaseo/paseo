@@ -9,6 +9,7 @@ import {
   updateSkills,
 } from "./operations.js";
 import { coerceSkillSelection, type SkillSelectionStore } from "./selection-store.js";
+import { beginSkillsTransaction, discardOrphanedSkillStaging } from "./skills-transaction.js";
 
 /** Everything the settings UI needs to render skills in one round trip. */
 export interface SkillsSnapshot extends SkillsStatus {
@@ -60,18 +61,20 @@ export function createSkillsController({
 
   async function saveSelection(input: unknown): Promise<SkillsSnapshot> {
     const targets = resolveTargets();
-    const committed = await selectionStore.get();
     const next = coerceSkillSelection(input);
+    // Convergence deletes whole skill directories, so the only way a failed save
+    // can leave the machine as Cancel would is to hold the exact directories
+    // first. Re-installing the committed selection would rebuild the bundled
+    // files and lose whatever the user had put inside them.
+    await discardOrphanedSkillStaging(targets);
+    const transaction = await beginSkillsTransaction(targets);
     try {
       const status = await installSkills(targets, next);
       await selectionStore.set(next);
+      await transaction.commit();
       return { ...status, selection: next };
     } catch (error) {
-      // Nothing was committed, so leave the machine as Cancel would: put the
-      // managed directories back to what the committed selection describes.
-      // Best effort — if the disk is broken enough that this fails too, the
-      // original failure is still what the user needs to see.
-      await installSkills(targets, committed).catch(() => undefined);
+      await transaction.rollback();
       throw error;
     }
   }

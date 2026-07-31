@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { access } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -63,6 +63,41 @@ async function installedSkills(dir: string): Promise<string[]> {
 
 async function installedEverywhere(targets: SkillTargets): Promise<string[][]> {
   return Promise.all([targets.agentsDir, targets.claudeDir, targets.codexDir].map(installedSkills));
+}
+
+async function writeUserFile(
+  targets: SkillTargets,
+  skill: string,
+  relativePath: string,
+  contents: string,
+): Promise<void> {
+  for (const dir of [targets.agentsDir, targets.claudeDir, targets.codexDir]) {
+    const file = path.join(dir, skill, relativePath);
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, contents);
+  }
+}
+
+async function readUserFile(
+  targets: SkillTargets,
+  skill: string,
+  relativePath: string,
+): Promise<Array<string | null>> {
+  return Promise.all(
+    [targets.agentsDir, targets.claudeDir, targets.codexDir].map((dir) =>
+      readFile(path.join(dir, skill, relativePath), "utf8").catch(() => null),
+    ),
+  );
+}
+
+/** Anything the transaction staged and failed to clean up sits beside the skills tree. */
+async function backupArtifacts(targets: SkillTargets): Promise<string[][]> {
+  return Promise.all(
+    [targets.agentsDir, targets.claudeDir, targets.codexDir].map(async (dir) => {
+      const entries = await readdir(path.dirname(dir)).catch(() => []);
+      return entries.filter((entry) => entry !== path.basename(dir)).sort();
+    }),
+  );
 }
 
 /** Puts a regular file where the agents skills tree goes, so convergence fails with ENOTDIR. */
@@ -236,24 +271,45 @@ describe("skills controller", () => {
     });
   });
 
-  it("puts the managed directories back when the selection cannot be committed", async () => {
-    const store = createUnwritableSelectionStore({ mode: "custom", skills: ["paseo"] });
+  it("restores deleted directories byte for byte when the selection cannot be committed", async () => {
+    const store = createUnwritableSelectionStore({
+      mode: "custom",
+      skills: ["paseo", "paseo-loop"],
+    });
     const readOnly = await makeHarness(store);
     await readOnly.controller.install();
+    await writeUserFile(readOnly.targets, "paseo-loop", "notes/mine.md", "hand written");
 
-    await expect(readOnly.controller.save({ mode: "all" })).rejects.toThrow(
-      "selection store is read-only",
-    );
+    // Deselects paseo-loop and adds paseo-advisor, then fails to commit.
+    await expect(
+      readOnly.controller.save({ mode: "custom", skills: ["paseo", "paseo-advisor"] }),
+    ).rejects.toThrow("selection store is read-only");
 
     expect(await readOnly.controller.status()).toEqual({
       state: "up-to-date",
       ops: [],
       available: BUNDLED_SKILLS,
-      installed: ["paseo"],
-      selection: { mode: "custom", skills: ["paseo"] },
+      installed: ["paseo", "paseo-loop"],
+      selection: { mode: "custom", skills: ["paseo", "paseo-loop"] },
     });
-    expect(await installedEverywhere(readOnly.targets)).toEqual([["paseo"], ["paseo"], ["paseo"]]);
+    expect(await installedEverywhere(readOnly.targets)).toEqual([
+      ["paseo", "paseo-loop"],
+      ["paseo", "paseo-loop"],
+      ["paseo", "paseo-loop"],
+    ]);
+    expect(await readUserFile(readOnly.targets, "paseo-loop", "notes/mine.md")).toEqual([
+      "hand written",
+      "hand written",
+      "hand written",
+    ]);
+    expect(await backupArtifacts(readOnly.targets)).toEqual([[], [], []]);
     await rm(readOnly.root, { recursive: true, force: true });
+  });
+
+  it("leaves no backup artifacts behind after a successful save", async () => {
+    await harness.controller.save({ mode: "custom", skills: ["paseo"] });
+
+    expect(await backupArtifacts(harness.targets)).toEqual([[], [], []]);
   });
 
   it("serializes startup convergence with an interactive save", async () => {
