@@ -1668,6 +1668,7 @@ export const fr: TranslationResources = {
       vimHint: "S’applique aux fichiers source sur le web et le bureau.",
     },
     hostSections: {
+      projects: "Projets",
       connections: "Relations",
       agents: "Agents",
       workspaces: "Workspaces",
@@ -2177,10 +2178,8 @@ export const fr: TranslationResources = {
       },
     },
     project: {
-      noEditableTarget:
-        "Nous n'avons pas de copie modifiable de ce projet sur aucun hôte connecté.",
+      noEditableTarget: "Ce projet n'est pas modifiable sur cet hôte.",
       backToProjects: "Retour aux projets",
-      switchHost: "Changer d'hôte",
       edit: {
         title: "Modifier le projet",
         name: "Nom",
@@ -2196,7 +2195,6 @@ export const fr: TranslationResources = {
         invalidTitle: "paseo.json n'a pas pu être analysé",
         invalidDescription: "Corrigez le fichier sur le disque, puis rechargez.",
         missingTitle: "Cet hôte n'a pas ce projet",
-        missingWithHosts: "Basculez vers un autre hôte ci-dessus ou rechargez.",
         missingSingleHost: "L'hôte sélectionné n'a aucune trace de ce projet.",
         transportTitle: "Impossible de charger paseo.json",
         transportFallback: "L'hôte n'a pas répondu.",

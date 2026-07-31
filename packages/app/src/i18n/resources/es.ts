@@ -1664,6 +1664,7 @@ export const es: TranslationResources = {
       vimHint: "Se aplica a archivos fuente en web y escritorio.",
     },
     hostSections: {
+      projects: "Proyectos",
       connections: "Conexiones",
       agents: "Agents",
       workspaces: "Workspaces",
@@ -2173,9 +2174,8 @@ export const es: TranslationResources = {
       },
     },
     project: {
-      noEditableTarget: "No tenemos una copia editable de este proyecto en ningún host conectado.",
+      noEditableTarget: "Este proyecto no se puede editar en este host.",
       backToProjects: "Volver a proyectos",
-      switchHost: "Cambiar de anfitrión",
       edit: {
         title: "Editar proyecto",
         name: "Nombre",
@@ -2191,7 +2191,6 @@ export const es: TranslationResources = {
         invalidTitle: "paseo.json no se pudo analizar",
         invalidDescription: "Fije el archivo en el disco y luego vuelva a cargarlo.",
         missingTitle: "Este anfitrión no tiene este proyecto",
-        missingWithHosts: "Cambie a otro host de arriba o vuelva a cargar.",
         missingSingleHost: "El anfitrión seleccionado no tiene registro de este proyecto.",
         transportTitle: "No se pudo cargar paseo.json",
         transportFallback: "El anfitrión no respondió.",

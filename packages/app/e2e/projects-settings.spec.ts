@@ -12,8 +12,7 @@ import {
   corruptPaseoConfig,
   editWorktreeSetup,
   expectEmptyScriptList,
-  expectHostIndicatorVisible,
-  expectHostPickerHidden,
+  expectProjectHostContextHidden,
   expectNoEditableTarget,
   expectNoProjectSettingsError,
   expectProjectEditFailed,
@@ -24,6 +23,7 @@ import {
   expectProjectSettingsFormHidden,
   expectProjectSettingsFormVisible,
   expectProjectTitle,
+  expectProjectSettingsHistoryRoundTrip,
   expectSaveButtonDisabled,
   expectScriptRowCount,
   expectWriteFailedCalloutActions,
@@ -37,6 +37,7 @@ import {
   openProjects,
   removeProjectScript,
   restorePaseoConfig,
+  returnToProjectsList,
   saveProjectEdits,
   unblockPaseoConfigWrites,
 } from "./helpers/project-settings";
@@ -218,6 +219,15 @@ test.describe("Projects settings", () => {
     await editWorktreeSetup(page, updatedSetup);
     await clickSaveProjectSettings(page);
     await expectProjectConfigSaved(editableProject);
+  });
+
+  test("project navigation stays inside the selected host", async ({ page, editableProject }) => {
+    await openProjects(page);
+    await openProjectSettings(page, editableProject.name);
+    await expectProjectHostContextHidden(page);
+    await returnToProjectsList(page);
+    await openProjectSettings(page, editableProject.name);
+    await expectProjectSettingsHistoryRoundTrip(page, editableProject.name);
   });
 
   test("user edits worktree setup on a non-GitHub remote project", async ({
@@ -406,15 +416,14 @@ test.describe("Projects settings — error UX", () => {
     await expectNoEditableTarget(page);
   });
 
-  test("single-host project renders static host indicator, not a picker chip", async ({
+  test("project detail does not render a second host selector", async ({
     page,
     editableProject,
   }) => {
     await openProjects(page);
     await openProjectSettings(page, editableProject.name);
 
-    await expectHostIndicatorVisible(page);
-    await expectHostPickerHidden(page);
+    await expectProjectHostContextHidden(page);
   });
 
   test("script removal via kebab menu removes the row from the form", async ({

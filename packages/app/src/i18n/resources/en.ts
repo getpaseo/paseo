@@ -1632,6 +1632,7 @@ export const en = {
       vimHint: "Applies to source files on web and desktop.",
     },
     hostSections: {
+      projects: "Projects",
       connections: "Connections",
       agents: "Agents",
       workspaces: "Workspaces",
@@ -2133,9 +2134,8 @@ export const en = {
       },
     },
     project: {
-      noEditableTarget: "We don't have an editable copy of this project on any connected host.",
+      noEditableTarget: "This project isn't editable on this host.",
       backToProjects: "Back to projects",
-      switchHost: "Switch host",
       edit: {
         title: "Edit project",
         name: "Name",
@@ -2151,7 +2151,6 @@ export const en = {
         invalidTitle: "paseo.json couldn't be parsed",
         invalidDescription: "Fix the file on disk, then reload.",
         missingTitle: "This host doesn't have this project",
-        missingWithHosts: "Switch to another host above, or reload.",
         missingSingleHost: "The selected host has no record of this project.",
         transportTitle: "Couldn't load paseo.json",
         transportFallback: "The host didn't respond.",

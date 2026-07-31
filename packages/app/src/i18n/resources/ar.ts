@@ -1621,6 +1621,7 @@ export const ar: TranslationResources = {
       vimHint: "تنطبق على ملفات المصدر في الويب وسطح المكتب.",
     },
     hostSections: {
+      projects: "المشاريع",
       connections: "اتصالات",
       agents: "Agents",
       workspaces: "Workspaces",
@@ -2121,9 +2122,8 @@ export const ar: TranslationResources = {
       },
     },
     project: {
-      noEditableTarget: "ليس لدينا نسخة قابلة للتحرير من هذا المشروع على أي مضيف متصل.",
+      noEditableTarget: "هذا المشروع غير متاح للتحرير على هذا المضيف.",
       backToProjects: "العودة إلى المشاريع",
-      switchHost: "تبديل المضيف",
       edit: {
         title: "تعديل المشروع",
         name: "الاسم",
@@ -2139,7 +2139,6 @@ export const ar: TranslationResources = {
         invalidTitle: "تعذر تحليل paseo.json",
         invalidDescription: "قم بإصلاح الملف على القرص، ثم أعد تحميله.",
         missingTitle: "هذا المضيف ليس لديه هذا المشروع",
-        missingWithHosts: "قم بالتبديل إلى مضيف آخر أعلاه، أو أعد التحميل.",
         missingSingleHost: "المضيف المحدد ليس لديه سجل لهذا المشروع.",
         transportTitle: "تعذر تحميل paseo.json",
         transportFallback: "المضيف لم يستجب.",

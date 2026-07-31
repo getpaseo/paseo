@@ -1,13 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { StyleSheet } from "react-native-unistyles";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronDown, MoreVertical, Pencil, Plus } from "lucide-react-native";
+import { ArrowLeft, MoreVertical, Pencil, Plus } from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
-import { HostPicker as SharedHostPicker, HostStatusDotSlot } from "@/components/hosts/host-picker";
 import type {
   PaseoConfigRaw,
   PaseoConfigRevision,
@@ -54,9 +53,6 @@ import {
   type ProjectHostEntry,
   type ProjectSummary,
 } from "@/utils/projects";
-import { useSessionStore } from "@/stores/session-store";
-import { selectProjectIdForServer } from "@/stores/session-store-hooks/selectors";
-import { resolveProjectSettingsHostTarget } from "@/screens/project-settings-host-selection";
 
 const SCRIPT_SERVICE_TYPE = "service";
 
@@ -105,82 +101,47 @@ export default function ProjectSettingsScreen({ serverId, projectId }: ProjectSe
     () => getProjectSummaryForHostProject(projects, serverId, projectId),
     [projectId, projects, serverId],
   );
-  const editableHosts = useMemo(() => filterEditableHosts(project), [project]);
-  const routeKey = `${serverId}:${projectId}`;
-  const routeHost = getProjectHostEntry(project, serverId, projectId);
-  const defaultHost = routeHost?.isOnline ? routeHost : editableHosts[0];
-  const [hostSelection, setHostSelection] = useState({
-    routeKey: "",
-    serverId: "",
-    projectId: "",
-  });
-  const selectedTarget = resolveProjectSettingsHostTarget({
-    routeKey,
-    editableHosts,
-    defaultHost,
-    selection: hostSelection,
-  });
-  const selectedServerId = selectedTarget?.serverId ?? "";
-  const selectedProjectId = selectedTarget?.projectId ?? "";
-  const setSelectedServerId = useCallback(
-    (targetServerId: string) => {
-      const targetProjectId = selectProjectIdForServer(useSessionStore.getState(), {
-        sourceServerId: serverId,
-        projectId,
-        targetServerId,
-      });
-      if (targetProjectId) {
-        setHostSelection({ routeKey, serverId: targetServerId, projectId: targetProjectId });
-      }
-    },
-    [projectId, routeKey, serverId],
-  );
-
-  const selectedSnapshot = useHostRuntimeSnapshot(selectedServerId);
+  const selectedHost = getProjectHostEntry(project, serverId, projectId);
+  const selectedSnapshot = useHostRuntimeSnapshot(serverId);
   const isHostGone =
-    Boolean(selectedServerId) &&
+    Boolean(serverId) &&
     (selectedSnapshot?.connectionStatus === "offline" ||
       selectedSnapshot?.connectionStatus === "error");
 
-  const selectedHost = getProjectHostEntry(project, selectedServerId, selectedProjectId);
-  const client = useHostRuntimeClient(selectedHost?.serverId ?? "");
+  const client = useHostRuntimeClient(serverId);
+  const canEdit =
+    selectedHost?.isOnline === true &&
+    selectedHost.serverId.trim().length > 0 &&
+    selectedHost.repoRoot.trim().length > 0;
 
-  if (!project || editableHosts.length === 0 || !selectedHost || !client) {
-    return <NoEditableTarget />;
+  if (!project || !selectedHost || !client || !canEdit) {
+    return <NoEditableTarget serverId={serverId} />;
   }
 
   return (
     <ProjectSettingsBody
       project={project}
-      hosts={editableHosts}
       selectedHost={selectedHost}
-      onSelectHost={setSelectedServerId}
       client={client}
       isHostGone={isHostGone}
     />
   );
 }
 
-function filterEditableHosts(project: ProjectSummary | undefined): ProjectHostEntry[] {
-  if (!project) return [];
-  return project.hosts.filter(
-    (host) => host.isOnline && host.serverId.trim().length > 0 && host.repoRoot.trim().length > 0,
-  );
+function navigateBackToProjects(serverId: string) {
+  router.navigate(buildProjectsSettingsRoute(serverId));
 }
 
-function navigateBackToProjects() {
-  router.navigate(buildProjectsSettingsRoute());
-}
-
-function NoEditableTarget() {
+function NoEditableTarget({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
+  const handleBack = useCallback(() => navigateBackToProjects(serverId), [serverId]);
   return (
     <View style={styles.noTargetContainer}>
-      <BackToProjectsButton />
+      <BackToProjectsButton serverId={serverId} />
       <Text style={styles.noTargetText}>{t("settings.project.noEditableTarget")}</Text>
       <Button
         testID="project-settings-back-button"
-        onPress={navigateBackToProjects}
+        onPress={handleBack}
         variant="secondary"
         size="md"
       >
@@ -190,13 +151,14 @@ function NoEditableTarget() {
   );
 }
 
-function BackToProjectsButton() {
+function BackToProjectsButton({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
+  const handleBack = useCallback(() => navigateBackToProjects(serverId), [serverId]);
   return (
     <Button
       testID="project-settings-back-link"
       accessibilityLabel={t("settings.project.backToProjects")}
-      onPress={navigateBackToProjects}
+      onPress={handleBack}
       variant="ghost"
       size="sm"
       leftIcon={ArrowLeft}
@@ -209,18 +171,14 @@ function BackToProjectsButton() {
 
 interface ProjectSettingsBodyProps {
   project: ProjectSummary;
-  hosts: ProjectHostEntry[];
   selectedHost: ProjectHostEntry;
-  onSelectHost: (serverId: string) => void;
   client: DaemonClient;
   isHostGone: boolean;
 }
 
 function ProjectSettingsBody({
   project,
-  hosts,
   selectedHost,
-  onSelectHost,
   client,
   isHostGone,
 }: ProjectSettingsBodyProps) {
@@ -288,17 +246,15 @@ function ProjectSettingsBody({
     void readQuery.refetch();
   }, [readQuery]);
 
-  const hasMultipleHosts = hosts.length > 1;
-
   return (
     <View role="main" style={styles.body}>
-      <BackToProjectsButton />
+      <BackToProjectsButton serverId={selectedHost.serverId} />
 
       <View style={styles.headerBlock}>
         <View style={styles.titleRow}>
           <ProjectTitleIcon
             iconDataUri={projectIconDataUri}
-            projectName={project.projectName}
+            projectName={selectedHost.projectName}
             projectViewKey={project.viewKey}
           />
           <Text style={styles.projectTitle} numberOfLines={1}>
@@ -315,7 +271,6 @@ function ProjectSettingsBody({
             <Pencil size={ICON_SIZE} color={styles.iconColor.color} />
           </Pressable>
         </View>
-        <HostContext hosts={hosts} selectedHost={selectedHost} onSelectHost={onSelectHost} />
       </View>
 
       <ProjectEditSheet
@@ -340,7 +295,6 @@ function ProjectSettingsBody({
         queryKey,
         client,
         onReload: handleReload,
-        hasMultipleHosts,
         isHostGone,
       })}
     </View>
@@ -356,7 +310,6 @@ interface RenderContentInput {
   queryKey: readonly [string, string, string];
   client: DaemonClient;
   onReload: () => void;
-  hasMultipleHosts: boolean;
   isHostGone: boolean;
 }
 
@@ -369,7 +322,6 @@ function renderContent({
   queryKey,
   client,
   onReload,
-  hasMultipleHosts,
   isHostGone,
 }: RenderContentInput) {
   if (readQuery.isLoading) {
@@ -381,29 +333,15 @@ function renderContent({
   }
 
   if (readQuery.isError) {
-    return (
-      <ReadFailureCallout
-        kind="transport"
-        error={readQuery.error}
-        onReload={onReload}
-        hasMultipleHosts={hasMultipleHosts}
-      />
-    );
+    return <ReadFailureCallout kind="transport" error={readQuery.error} onReload={onReload} />;
   }
 
   if (readError) {
-    return (
-      <ReadFailureCallout
-        kind={readError.code}
-        error={null}
-        onReload={onReload}
-        hasMultipleHosts={hasMultipleHosts}
-      />
-    );
+    return <ReadFailureCallout kind={readError.code} error={null} onReload={onReload} />;
   }
 
   if (isHostGone) {
-    return <NoEditableTarget />;
+    return <NoEditableTarget serverId={selectedHost.serverId} />;
   }
 
   if (!loadedConfig) {
@@ -437,15 +375,13 @@ interface ReadFailureCalloutProps {
   kind: "transport" | ProjectConfigRpcError["code"];
   error: unknown;
   onReload: () => void;
-  hasMultipleHosts: boolean;
 }
 
-function ReadFailureCallout({ kind, error, onReload, hasMultipleHosts }: ReadFailureCalloutProps) {
+function ReadFailureCallout({ kind, error, onReload }: ReadFailureCalloutProps) {
   const { t } = useTranslation();
   const { testID, title, description } = resolveReadFailureCopy({
     kind,
     error,
-    hasMultipleHosts,
     t,
   });
   return (
@@ -462,7 +398,6 @@ function ReadFailureCallout({ kind, error, onReload, hasMultipleHosts }: ReadFai
 function resolveReadFailureCopy(input: {
   kind: ReadFailureCalloutProps["kind"];
   error: unknown;
-  hasMultipleHosts: boolean;
   t: TFunction;
 }): { testID: string; title: string; description: string } {
   if (input.kind === "invalid_project_config") {
@@ -476,9 +411,7 @@ function resolveReadFailureCopy(input: {
     return {
       testID: "project-not-found-callout",
       title: input.t("settings.project.readFailures.missingTitle"),
-      description: input.hasMultipleHosts
-        ? input.t("settings.project.readFailures.missingWithHosts")
-        : input.t("settings.project.readFailures.missingSingleHost"),
+      description: input.t("settings.project.readFailures.missingSingleHost"),
     };
   }
   if (input.kind === "transport") {
@@ -895,74 +828,6 @@ function ProjectTitleIcon({
   );
 }
 
-interface HostContextProps {
-  hosts: ProjectHostEntry[];
-  selectedHost: ProjectHostEntry;
-  onSelectHost: (serverId: string) => void;
-}
-
-function HostContext({ hosts, selectedHost, onSelectHost }: HostContextProps) {
-  if (hosts.length > 1) {
-    return <HostPicker hosts={hosts} selectedHost={selectedHost} onSelectHost={onSelectHost} />;
-  }
-  return (
-    <View testID="host-indicator" style={styles.hostIndicator}>
-      <HostStatusDotSlot serverId={selectedHost.serverId} />
-      <Text style={styles.hostName} numberOfLines={1}>
-        {selectedHost.serverName}
-      </Text>
-    </View>
-  );
-}
-
-interface HostPickerProps {
-  hosts: ProjectHostEntry[];
-  selectedHost: ProjectHostEntry;
-  onSelectHost: (serverId: string) => void;
-}
-
-function HostPicker({ hosts, selectedHost, onSelectHost }: HostPickerProps) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  const triggerRef = useRef<View | null>(null);
-  const hostOptions = useMemo(
-    () => hosts.map((host) => ({ serverId: host.serverId, label: host.serverName })),
-    [hosts],
-  );
-  const handleOpen = useCallback(() => setOpen(true), []);
-  const hostOptionTestID = useCallback((serverId: string) => `host-picker-item-${serverId}`, []);
-  return (
-    <SharedHostPicker
-      hosts={hostOptions}
-      value={selectedHost.serverId}
-      onSelect={onSelectHost}
-      open={open}
-      onOpenChange={setOpen}
-      anchorRef={triggerRef}
-      searchable={false}
-      title={t("settings.project.switchHost")}
-      desktopPlacement="bottom-start"
-      desktopMinWidth={240}
-      hostOptionTestID={hostOptionTestID}
-    >
-      <Pressable
-        ref={triggerRef}
-        accessibilityRole="button"
-        accessibilityLabel={t("settings.project.switchHost")}
-        testID="host-picker"
-        style={styles.hostIndicator}
-        onPress={handleOpen}
-      >
-        <HostStatusDotSlot serverId={selectedHost.serverId} />
-        <Text style={styles.hostName} numberOfLines={1}>
-          {selectedHost.serverName}
-        </Text>
-        <ChevronDown size={ICON_SIZE} color={styles.chevronColor.color} />
-      </Pressable>
-    </SharedHostPicker>
-  );
-}
-
 interface MetadataPromptSectionProps {
   promptKey: MetadataPromptKey;
   value: string;
@@ -1258,22 +1123,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   iconColor: {
     color: theme.colors.foregroundMuted,
-  },
-  hostIndicator: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[1],
-    borderRadius: theme.borderRadius.lg,
-    alignSelf: "flex-start",
-    minWidth: 0,
-  },
-  hostName: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    flexShrink: 1,
-    minWidth: 0,
   },
   centered: {
     flex: 1,

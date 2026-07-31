@@ -1655,6 +1655,7 @@ export const ru: TranslationResources = {
       vimHint: "Применяется к исходным файлам в веб- и настольной версии.",
     },
     hostSections: {
+      projects: "Проекты",
       connections: "Соединения",
       agents: "Agents",
       workspaces: "Workspaces",
@@ -2161,10 +2162,8 @@ export const ru: TranslationResources = {
       },
     },
     project: {
-      noEditableTarget:
-        "У нас нет редактируемой копии этого проекта ни на одном подключенном хосте.",
+      noEditableTarget: "Этот проект нельзя редактировать на этом хосте.",
       backToProjects: "Вернуться к проектам",
-      switchHost: "Сменить хост",
       edit: {
         title: "Изменить проект",
         name: "Название",
@@ -2180,7 +2179,6 @@ export const ru: TranslationResources = {
         invalidTitle: "paseo.json не удалось разобрать",
         invalidDescription: "Исправьте файл на диске, затем перезагрузите.",
         missingTitle: "У этого хоста нет этого проекта",
-        missingWithHosts: "Переключитесь на другой хост выше или перезагрузите компьютер.",
         missingSingleHost: "У выбранного хоста нет записей об этом проекте.",
         transportTitle: "Не удалось загрузить paseo.json.",
         transportFallback: "Хозяин не ответил.",

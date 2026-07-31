@@ -1637,6 +1637,7 @@ export const ja: TranslationResources = {
       vimHint: "Web とデスクトップのソースファイルに適用されます。",
     },
     hostSections: {
+      projects: "プロジェクト",
       connections: "接続",
       agents: "エージェント",
       workspaces: "ワークスペース",
@@ -2143,10 +2144,8 @@ export const ja: TranslationResources = {
       },
     },
     project: {
-      noEditableTarget:
-        "接続されているホストのどれにもこのプロジェクトの編集可能なコピーがありません。",
+      noEditableTarget: "このホストではこのプロジェクトを編集できません。",
       backToProjects: "プロジェクトに戻る",
-      switchHost: "ホストを切り替え",
       edit: {
         title: "プロジェクトを編集",
         name: "名前",
@@ -2162,7 +2161,6 @@ export const ja: TranslationResources = {
         invalidTitle: "paseo.jsonを解析できませんでした",
         invalidDescription: "ディスク上のファイルを修正してから再読み込みしてください。",
         missingTitle: "このホストにはこのプロジェクトがありません",
-        missingWithHosts: "上で別のホストに切り替えるか、再読み込みしてください。",
         missingSingleHost: "選択したホストにはこのプロジェクトの記録がありません。",
         transportTitle: "paseo.jsonを読み込めませんでした",
         transportFallback: "ホストが応答しませんでした。",

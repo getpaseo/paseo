@@ -4,6 +4,8 @@ import { expect, type Page } from "@playwright/test";
 import type { WebSocketRoute } from "@playwright/test";
 import { gotoAppShell, openSettings } from "./app";
 import { daemonWsRoutePattern } from "./daemon-port";
+import { getServerId } from "./server-id";
+import { buildProjectsSettingsRoute } from "@/utils/host-routes";
 
 type WebSocketMessage = string | Buffer;
 
@@ -33,8 +35,8 @@ function getSessionMessage(message: WebSocketMessage): Record<string, unknown> |
 export async function openProjects(page: Page): Promise<void> {
   await gotoAppShell(page);
   await openSettings(page);
-  await page.getByTestId("settings-projects").click();
-  await expect(page).toHaveURL(/\/settings\/projects$/);
+  await page.getByRole("button", { name: "Projects", exact: true }).click();
+  await expect(page).toHaveURL(buildProjectsSettingsRoute(getServerId()));
 }
 
 export async function openProjectSettings(page: Page, projectName: string): Promise<void> {
@@ -46,6 +48,21 @@ export async function openProjectSettings(page: Page, projectName: string): Prom
 
 export async function navigateToProjectSettings(page: Page, projectName: string): Promise<void> {
   await page.getByRole("button", { name: `Edit ${projectName}`, exact: true }).click();
+}
+
+export async function returnToProjectsList(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Back to projects", exact: true }).click();
+  await expect(page).toHaveURL(buildProjectsSettingsRoute(getServerId()));
+}
+
+export async function expectProjectSettingsHistoryRoundTrip(
+  page: Page,
+  projectName: string,
+): Promise<void> {
+  await page.goBack();
+  await expect(page).toHaveURL(buildProjectsSettingsRoute(getServerId()));
+  await page.goForward();
+  await expectProjectTitle(page, projectName);
 }
 
 // --- Form interactions ---
@@ -176,13 +193,8 @@ export async function expectNoEditableTarget(page: Page): Promise<void> {
   await expect(page.getByTestId("project-settings-back-button")).toBeVisible({ timeout: 30_000 });
 }
 
-// --- Host-section assertions ---
-
-export async function expectHostIndicatorVisible(page: Page): Promise<void> {
-  await expect(page.getByTestId("host-indicator")).toBeVisible();
-}
-
-export async function expectHostPickerHidden(page: Page): Promise<void> {
+export async function expectProjectHostContextHidden(page: Page): Promise<void> {
+  await expect(page.getByTestId("host-indicator")).not.toBeVisible();
   await expect(page.getByTestId("host-picker")).not.toBeVisible();
 }
 

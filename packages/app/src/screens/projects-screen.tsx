@@ -10,41 +10,46 @@ import { useProjects, type ProjectHostError } from "@/hooks/use-projects";
 import { useProjectIcons } from "@/projects/icons";
 import { settingsStyles } from "@/styles/settings";
 import { buildProjectSettingsRoute } from "@/utils/host-routes";
-import { getProjectSummaryForHostProject, type ProjectSummary } from "@/utils/projects";
+import type { ProjectHostEntry, ProjectSummary } from "@/utils/projects";
 
 interface ProjectsScreenProps {
-  view: { kind: "projects" } | { kind: "project"; serverId: string; projectId: string };
+  serverId: string;
 }
 
-export default function ProjectsScreen({ view }: ProjectsScreenProps) {
+interface HostProject {
+  project: ProjectSummary;
+  host: ProjectHostEntry;
+}
+
+export default function ProjectsScreen({ serverId }: ProjectsScreenProps) {
   const { t } = useTranslation();
   const { projects, hostErrors, isLoading } = useProjects();
-  const selectedProjectViewKey =
-    view.kind === "project"
-      ? (getProjectSummaryForHostProject(projects, view.serverId, view.projectId)?.viewKey ?? null)
-      : null;
+  const hostProjects = useMemo<HostProject[]>(
+    () =>
+      projects.flatMap((project) =>
+        project.hosts
+          .filter((host) => host.serverId === serverId)
+          .map((host) => ({ project, host })),
+      ),
+    [projects, serverId],
+  );
+  const scopedErrors = hostErrors.filter((error) => error.serverId === serverId);
   const iconTargets = useMemo(
     () =>
-      projects.flatMap((project) => {
-        const host = project.hosts[0];
-        if (!host) return [];
-        return [
-          {
-            serverId: host.serverId,
-            projectViewKey: project.viewKey,
-            projectId: host.projectId,
-            iconWorkingDir: host.repoRoot,
-            customIconRevision: host.customIconRevision,
-          },
-        ];
-      }),
-    [projects],
+      hostProjects.map(({ project, host }) => ({
+        serverId: host.serverId,
+        projectViewKey: project.viewKey,
+        projectId: host.projectId,
+        iconWorkingDir: host.repoRoot,
+        customIconRevision: host.customIconRevision,
+      })),
+    [hostProjects],
   );
   const iconDataByProjectViewKey = useProjectIcons({
     projects: iconTargets,
   });
 
-  if (isLoading && projects.length === 0) {
+  if (isLoading && hostProjects.length === 0) {
     return (
       <View style={styles.centered} testID="projects-list">
         <LoadingSpinner size="large" color={styles.spinnerColor.color} />
@@ -52,7 +57,7 @@ export default function ProjectsScreen({ view }: ProjectsScreenProps) {
     );
   }
 
-  if (projects.length === 0) {
+  if (hostProjects.length === 0) {
     return (
       <View style={styles.centered} testID="projects-list">
         <Text style={styles.emptyText}>{t("sidebar.project.empty.title")}</Text>
@@ -62,14 +67,14 @@ export default function ProjectsScreen({ view }: ProjectsScreenProps) {
 
   return (
     <View testID="projects-list">
-      {hostErrors.length > 0 ? <HostErrorsBanner errors={hostErrors} /> : null}
+      {scopedErrors.length > 0 ? <HostErrorsBanner errors={scopedErrors} /> : null}
       <View style={settingsStyles.card}>
-        {projects.map((project, index) => (
+        {hostProjects.map(({ project, host }, index) => (
           <ProjectRow
-            key={project.viewKey}
+            key={host.projectId}
             project={project}
+            host={host}
             isFirst={index === 0}
-            isSelected={selectedProjectViewKey === project.viewKey}
             iconDataUri={iconDataByProjectViewKey.get(project.viewKey) ?? null}
           />
         ))}
@@ -96,30 +101,29 @@ function HostErrorsBanner({ errors }: { errors: ProjectHostError[] }) {
 
 interface ProjectRowProps {
   project: ProjectSummary;
+  host: ProjectHostEntry;
   isFirst: boolean;
-  isSelected: boolean;
   iconDataUri: string | null;
 }
 
-function ProjectRow({ project, isFirst, isSelected, iconDataUri }: ProjectRowProps) {
+function ProjectRow({ project, host, isFirst, iconDataUri }: ProjectRowProps) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
-  const { viewKey, projectName } = project;
-  const target = project.hosts[0];
+  const { viewKey } = project;
+  const { projectName } = host;
   const handleNavigate = useCallback(() => {
-    if (target) router.navigate(buildProjectSettingsRoute(target.serverId, target.projectId));
-  }, [target]);
+    router.navigate(buildProjectSettingsRoute(host.serverId, host.projectId));
+  }, [host.projectId, host.serverId]);
 
   const rowStyle = useCallback(
     ({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
       settingsStyles.row,
       !isFirst && settingsStyles.rowBorder,
       styles.row,
-      isSelected && styles.rowSelected,
-      hovered && !isSelected && styles.rowHovered,
+      hovered && styles.rowHovered,
       pressed && styles.rowPressed,
     ],
-    [isFirst, isSelected],
+    [isFirst],
   );
 
   return (
@@ -129,7 +133,6 @@ function ProjectRow({ project, isFirst, isSelected, iconDataUri }: ProjectRowPro
       accessibilityRole="button"
       accessibilityLabel={t("settings.projectList.editProject", { projectName })}
       testID={`project-row-${viewKey}`}
-      data-selected={isSelected ? "true" : "false"}
     >
       <View style={styles.rowMain}>
         <View style={styles.leading}>
@@ -208,9 +211,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   rowPressed: {
     backgroundColor: theme.colors.surface3,
-  },
-  rowSelected: {
-    backgroundColor: theme.colors.surfaceSidebarHover,
   },
   leading: {
     width: 16,

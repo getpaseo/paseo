@@ -1602,6 +1602,7 @@ export const zhCN: TranslationResources = {
       vimHint: "适用于网页和桌面端的源文件。",
     },
     hostSections: {
+      projects: "项目",
       connections: "连接",
       agents: "Agents",
       workspaces: "Workspaces",
@@ -2095,9 +2096,8 @@ export const zhCN: TranslationResources = {
       },
     },
     project: {
-      noEditableTarget: "任何已连接 Host 上都没有这个 Project 的可编辑副本。",
+      noEditableTarget: "此项目无法在这个 Host 上编辑。",
       backToProjects: "返回 Projects",
-      switchHost: "切换 Host",
       edit: {
         title: "编辑 Project",
         name: "名称",
@@ -2113,7 +2113,6 @@ export const zhCN: TranslationResources = {
         invalidTitle: "无法解析 paseo.json",
         invalidDescription: "修复磁盘上的文件，然后重新加载。",
         missingTitle: "这个 Host 没有这个 Project",
-        missingWithHosts: "切换到上方其他 Host，或重新加载。",
         missingSingleHost: "所选 Host 没有这个 Project 的记录。",
         transportTitle: "无法加载 paseo.json",
         transportFallback: "Host 没有响应。",
