@@ -122,6 +122,7 @@ test.describe("Model B sidebar shape", () => {
       repoPrefix: "model-b-status-active-",
       title: "Working workspace",
       initialPrompt: "stay busy",
+      model: "one-minute-stream",
     });
 
     try {
