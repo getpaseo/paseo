@@ -26,6 +26,8 @@ function TaskCheckbox({ completed }: { completed: boolean }) {
 
 interface TaskListCardProps {
   items: TodoEntry[];
+  /** Stable identity for this snapshot. Used as the dismissal key when provided. */
+  snapshotKey?: string;
   onDismissCompleted?: () => void;
 }
 
@@ -60,12 +62,16 @@ const ArchiveCompletedButton = memo(function ArchiveCompletedButton({
 
 export const TaskListCard = memo(function TaskListCard({
   items,
+  snapshotKey,
   onDismissCompleted,
 }: TaskListCardProps) {
   const [expanded, setExpanded] = useState(false);
-  // Track which snapshot was dismissed by its text content hash.
-  // When the agent sends a new todo list the fingerprint changes and
-  // the card becomes visible again automatically.
+  // When snapshotKey is provided (agent-panel active card), dismissal targets that
+  // stable identity directly. Without it (timeline entries), fall back to content hash.
+  const currentFingerprint = useMemo(
+    () => items.map((i) => `${i.text}:${i.completed}`).join("|"),
+    [items],
+  );
   const [dismissedKey, setDismissedKey] = useState<string | null>(null);
 
   const { t } = useTranslation();
@@ -75,9 +81,9 @@ export const TaskListCard = memo(function TaskListCard({
   }, []);
 
   const handleDismissCompleted = useCallback(() => {
-    setDismissedKey(items.map((i) => `${i.text}:${i.completed}`).join("|"));
+    setDismissedKey(snapshotKey ?? currentFingerprint);
     onDismissCompleted?.();
-  }, [items, onDismissCompleted]);
+  }, [snapshotKey, currentFingerprint, onDismissCompleted]);
 
   const surfaceStyle = useMemo(
     () => [styles.surface, expanded && styles.surfaceExpanded],
@@ -98,7 +104,8 @@ export const TaskListCard = memo(function TaskListCard({
   );
 
   if (
-    dismissedKey === items.map((i) => `${i.text}:${i.completed}`).join("|") ||
+    (snapshotKey != null && dismissedKey === snapshotKey) ||
+    (!snapshotKey && dismissedKey === currentFingerprint) ||
     items.length === 0
   ) {
     return null;
