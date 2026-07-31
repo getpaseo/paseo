@@ -10,6 +10,11 @@ interface CreatedAgentTimelineGate {
   waitForForwardedResponse(): Promise<void>;
 }
 
+export interface AgentTimelineResponseGate {
+  release(): void;
+  waitForDelayedResponse(): Promise<void>;
+}
+
 function parseWebSocketJson(message: WebSocketMessage): unknown {
   const rawMessage = typeof message === "string" ? message : message.toString("utf8");
   try {
@@ -116,5 +121,55 @@ export async function delayCreatedAgentInitialTailResponse(
     waitForCreatedAgent: () => createdAgentSeen,
     waitForDelayedResponse: () => delayedResponse,
     waitForForwardedResponse: () => forwardedResponse,
+  };
+}
+
+export async function delayAgentOlderTimelineResponse(
+  page: Page,
+  agentId: string,
+): Promise<AgentTimelineResponseGate> {
+  let releaseRequested = false;
+  let delayedResponseSeen = false;
+  const delayedForwards: Array<() => void> = [];
+  let resolveDelayedResponse: (() => void) | null = null;
+  const delayedResponse = new Promise<void>((resolve) => {
+    resolveDelayedResponse = resolve;
+  });
+
+  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((message) => {
+      server.send(message);
+    });
+    server.onMessage((message) => {
+      const sessionMessage = getSessionMessage(message);
+      const payload = sessionMessage ? getPayload(sessionMessage) : null;
+      if (
+        !delayedResponseSeen &&
+        sessionMessage?.type === "fetch_agent_timeline_response" &&
+        payload?.agentId === agentId &&
+        payload.direction === "before"
+      ) {
+        delayedResponseSeen = true;
+        resolveDelayedResponse?.();
+        if (releaseRequested) {
+          ws.send(message);
+          return;
+        }
+        delayedForwards.push(() => ws.send(message));
+        return;
+      }
+      ws.send(message);
+    });
+  });
+
+  return {
+    release() {
+      releaseRequested = true;
+      for (const forward of delayedForwards.splice(0)) {
+        forward();
+      }
+    },
+    waitForDelayedResponse: () => delayedResponse,
   };
 }

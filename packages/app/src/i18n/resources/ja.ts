@@ -775,6 +775,8 @@ export const ja: TranslationResources = {
         closeChangesTab: "変更タブを閉じる",
         binaryFile: "バイナリファイル",
         tooLarge: "差分が大きすぎて表示できません",
+        previewTooLargeTitle: "この差分は大きすぎるためプレビューできません",
+        previewTooLargeDescription: "比較範囲を狭めると、ここでプレビューできます",
         unified: "ユニファイド差分",
         split: "左右比較",
         switchToUnified: "ユニファイド差分に切り替え",
@@ -919,6 +921,8 @@ export const ja: TranslationResources = {
         openSettings: "プロジェクト設定を開く",
         openNewWindow: "新しいウィンドウで開く",
         openNewWindowFailed: "新しいウィンドウを開けませんでした",
+        openFolder: "Open in file manager",
+        openFolderFailed: "Couldn't open folder",
         remove: "プロジェクトを削除",
         removing: "削除中...",
       },
@@ -1169,6 +1173,7 @@ export const ja: TranslationResources = {
         installFailed: "オーケストレーションスキルをインストールできません。",
         updateFailed: "オーケストレーションスキルを更新できません。",
         uninstallFailed: "オーケストレーションスキルをアンインストールできません。",
+        saveSelectionFailed: "オーケストレーションスキルの選択を保存できません。",
       },
     },
   },
@@ -1503,7 +1508,9 @@ export const ja: TranslationResources = {
         cursor: "{{line}} 行、{{column}} 列",
         preview: "プレビュー",
         source: "ソース",
-        unavailableTitle: "ディスク上のファイルを利用できません",
+        deletedTitle: "ファイルはディスク上から削除されました",
+        checkFailedTitle: "ディスク上のファイルを確認できませんでした",
+        preservedDescription: "開いているコピーは保持されています。",
         conflictDescription: "ローカルの内容は保持されています。残すバージョンを選択してください。",
         overwrite: "上書き",
         reload: "再読み込み",
@@ -1847,6 +1854,7 @@ export const ja: TranslationResources = {
         sendMessage: "メッセージを送信",
         queueMessage: "メッセージをキューに追加",
         muteUnmuteVoiceMode: "音声モードのミュートを切り替え",
+        switchProject: "プロジェクトを切り替え",
       },
       helpNotes: {
         showKeyboardShortcuts:
@@ -1874,6 +1882,16 @@ export const ja: TranslationResources = {
         uninstallTitle: "Paseoスキルをアンインストールしますか？",
         uninstallMessage:
           "~/.agents、~/.claude、~/.codexからすべてのPaseoオーケストレーションスキルを削除します。",
+        choose: "スキルを選択",
+        chooseAll: "すべてのスキル",
+        chooseAllHint:
+          "後から追加されるものも含め、バンドルされたスキルをすべてインストールしたままにします。",
+        chooseList: "バンドルされたスキル",
+        chooseEmpty: "このビルドにはスキルが含まれていません。",
+        removeTitle: "選択を外したスキルを削除しますか？",
+        removeMessage:
+          "{{skills}} を ~/.agents、~/.claude、~/.codex から削除します。それらのスキルフォルダー内に追加したものもすべて削除されます。",
+        saveFailed: "スキルの選択を保存できませんでした。",
       },
       actions: {
         install: "インストール",
@@ -1881,7 +1899,10 @@ export const ja: TranslationResources = {
         installed: "インストール済み",
         update: "更新",
         working: "処理中...",
+        remove: "削除",
         uninstall: "アンインストール",
+        save: "保存",
+        saving: "保存中...",
       },
       operations: {
         add: "スキルを追加",

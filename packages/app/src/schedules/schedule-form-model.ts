@@ -602,6 +602,11 @@ function updateDerivedState(input: {
     ...input.state,
     hosts: [...input.hosts],
     projectOptions: buildProjectOptions(input.targets, input.state.selectedServerId),
+    projectDisplay: resolveProjectDisplay({
+      targets: input.targets,
+      serverId: input.state.selectedServerId,
+      cwd: input.state.workingDir,
+    }),
     selectedProjectOptionId: projectTarget?.optionId ?? input.state.selectedProjectOptionId,
     selectedModelDisplay: resolveModelDisplay({
       entries: input.providerEntries,

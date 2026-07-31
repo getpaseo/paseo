@@ -53,8 +53,8 @@ test.describe("Model B sidebar shape", () => {
 
       // Both projects are expandable parents — the non-git one is NOT flattened
       // into a bare workspace link.
-      await expect(projectRow(page, gitProject.projectId)).toBeVisible({ timeout: 30_000 });
-      await expect(projectRow(page, nonGitProject.projectId)).toBeVisible({ timeout: 30_000 });
+      await expect(projectRow(page, gitProject.projectKey)).toBeVisible({ timeout: 30_000 });
+      await expect(projectRow(page, nonGitProject.projectKey)).toBeVisible({ timeout: 30_000 });
 
       // Each parent shows both of its workspace rows underneath.
       await expect(workspaceRow(page, gitProject.workspaceId)).toBeVisible({ timeout: 30_000 });
@@ -65,12 +65,12 @@ test.describe("Model B sidebar shape", () => {
       // Both projects show a per-row New workspace icon (revealed on hover): the
       // git project can branch off a worktree, and the non-git project can add
       // another workspace because the host supports workspaceMultiplicity.
-      await projectRow(page, gitProject.projectId).hover();
-      await expect(projectNewWorktreeIcon(page, gitProject.projectId)).toBeVisible({
+      await projectRow(page, gitProject.projectKey).hover();
+      await expect(projectNewWorktreeIcon(page, gitProject.projectKey)).toBeVisible({
         timeout: 30_000,
       });
-      await projectRow(page, nonGitProject.projectId).hover();
-      await expect(projectNewWorktreeIcon(page, nonGitProject.projectId)).toBeVisible({
+      await projectRow(page, nonGitProject.projectKey).hover();
+      await expect(projectNewWorktreeIcon(page, nonGitProject.projectKey)).toBeVisible({
         timeout: 30_000,
       });
 

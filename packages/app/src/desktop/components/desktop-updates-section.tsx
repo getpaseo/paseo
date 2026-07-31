@@ -1,5 +1,6 @@
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, { type ReactElement, useCallback, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Text, View } from "react-native";
+import { Alert, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -421,7 +422,7 @@ export function LocalDaemonSection() {
     >
       {isLoading || isLoadingSettings ? (
         <View style={[settingsStyles.card, styles.loadingCard]}>
-          <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
+          <LoadingSpinner size="small" color={theme.colors.foregroundMuted} />
         </View>
       ) : (
         <>

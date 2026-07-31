@@ -79,6 +79,7 @@ export function useWorkingDiff({
   const {
     files,
     payloadError: diffPayloadError,
+    diffTooLarge,
     isLoading: isDiffLoading,
   } = useCheckoutDiffQuery({
     serverId,
@@ -123,6 +124,7 @@ export function useWorkingDiff({
     selectBase,
     files,
     diffPayloadError,
+    diffTooLarge,
     isDiffLoading,
     reviewActions,
     reviewAttachment,

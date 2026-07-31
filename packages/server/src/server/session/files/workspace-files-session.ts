@@ -21,7 +21,7 @@ import {
   getDownloadableFileInfo,
   listDirectoryEntries,
   readExplorerFile,
-  readExplorerFileBytes,
+  streamExplorerFile,
   writeExplorerFile,
 } from "../../file-explorer/service.js";
 import { workspaceFileObserver, type FileObserver } from "../../file-explorer/observer.js";
@@ -34,8 +34,8 @@ import { getProjectIcon } from "../../../utils/project-icon.js";
  * — old clients without a binary channel fall back to inline JSON file content.
  */
 export interface WorkspaceFilesSessionHost {
-  emit(msg: SessionOutboundMessage): void;
-  emitBinary(frame: Uint8Array): void;
+  emit(msg: SessionOutboundMessage, source?: object): void;
+  emitBinary(frame: Uint8Array, source?: object): Promise<void>;
   hasBinaryChannel(): boolean;
 }
 
@@ -136,22 +136,25 @@ export class WorkspaceFilesSession {
     this.fileSubscriptions.clear();
   }
 
-  async handleFileExplorerRequest(request: FileExplorerRequest): Promise<void> {
+  async handleFileExplorerRequest(request: FileExplorerRequest, source?: object): Promise<void> {
     const { cwd: workspaceCwd, path: requestedPath = ".", mode, requestId } = request;
     const cwd = workspaceCwd.trim();
     if (!cwd) {
-      this.host.emit({
-        type: "file_explorer_response",
-        payload: {
-          cwd: workspaceCwd,
-          path: requestedPath,
-          mode,
-          directory: null,
-          file: null,
-          error: "cwd is required",
-          requestId,
+      this.host.emit(
+        {
+          type: "file_explorer_response",
+          payload: {
+            cwd: workspaceCwd,
+            path: requestedPath,
+            mode,
+            directory: null,
+            file: null,
+            error: "cwd is required",
+            requestId,
+          },
         },
-      });
+        source,
+      );
       return;
     }
 
@@ -162,69 +165,77 @@ export class WorkspaceFilesSession {
           relativePath: requestedPath,
         });
 
-        this.host.emit({
-          type: "file_explorer_response",
-          payload: {
-            cwd,
-            path: directory.path,
-            mode,
-            directory,
-            file: null,
-            error: null,
-            requestId,
+        this.host.emit(
+          {
+            type: "file_explorer_response",
+            payload: {
+              cwd,
+              path: directory.path,
+              mode,
+              directory,
+              file: null,
+              error: null,
+              requestId,
+            },
           },
-        });
+          source,
+        );
       } else {
         if (request.acceptBinary && this.host.hasBinaryChannel()) {
-          const file = await readExplorerFileBytes({
-            root: cwd,
-            relativePath: requestedPath,
+          await streamExplorerFile({ root: cwd, relativePath: requestedPath }, async (file) => {
+            await this.host.emitBinary(
+              encodeFileTransferFrame({
+                opcode: FileTransferOpcode.FileBegin,
+                requestId,
+                metadata: {
+                  mime: file.mimeType,
+                  size: file.size,
+                  encoding: file.encoding,
+                  modifiedAt: file.modifiedAt,
+                  revision: file.revision,
+                },
+              }),
+              source,
+            );
+            for await (const chunk of file.chunks) {
+              await this.host.emitBinary(
+                encodeFileTransferFrame({
+                  opcode: FileTransferOpcode.FileChunk,
+                  requestId,
+                  payload: chunk,
+                }),
+                source,
+              );
+            }
+            await this.host.emitBinary(
+              encodeFileTransferFrame({
+                opcode: FileTransferOpcode.FileEnd,
+                requestId,
+              }),
+              source,
+            );
           });
-
-          this.host.emitBinary(
-            encodeFileTransferFrame({
-              opcode: FileTransferOpcode.FileBegin,
-              requestId,
-              metadata: {
-                mime: file.mimeType,
-                size: file.size,
-                encoding: file.encoding,
-                modifiedAt: file.modifiedAt,
-                revision: file.revision,
-              },
-            }),
-          );
-          this.host.emitBinary(
-            encodeFileTransferFrame({
-              opcode: FileTransferOpcode.FileChunk,
-              requestId,
-              payload: file.bytes,
-            }),
-          );
-          this.host.emitBinary(
-            encodeFileTransferFrame({
-              opcode: FileTransferOpcode.FileEnd,
-              requestId,
-            }),
-          );
         } else {
           const file = await readExplorerFile({
             root: cwd,
             relativePath: requestedPath,
           });
 
-          this.host.emit({
-            type: "file_explorer_response",
-            payload: {
-              cwd,
-              path: file.path,
-              mode,
-              directory: null,
-              file,
-              error: null,
-              requestId,
+          this.host.emit(
+            {
+              type: "file_explorer_response",
+              payload: {
+                cwd,
+                path: file.path,
+                mode,
+                directory: null,
+                file,
+                error: null,
+                requestId,
+              },
             },
-          });
+            source,
+          );
         }
       }
     } catch (error) {
@@ -232,18 +243,21 @@ export class WorkspaceFilesSession {
         { err: error, cwd, path: requestedPath },
         `Failed to fulfill file explorer request for workspace ${cwd}`,
       );
-      this.host.emit({
-        type: "file_explorer_response",
-        payload: {
-          cwd,
-          path: requestedPath,
-          mode,
-          directory: null,
-          file: null,
-          error: getErrorMessage(error),
-          requestId,
+      this.host.emit(
+        {
+          type: "file_explorer_response",
+          payload: {
+            cwd,
+            path: requestedPath,
+            mode,
+            directory: null,
+            file: null,
+            error: getErrorMessage(error),
+            requestId,
+          },
         },
-      });
+        source,
+      );
     }
   }
 

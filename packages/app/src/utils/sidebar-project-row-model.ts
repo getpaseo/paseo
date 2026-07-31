@@ -2,6 +2,7 @@ import type { SidebarProjectEntry } from "@/hooks/use-sidebar-workspaces-list";
 
 export interface SidebarProjectHostTarget {
   serverId: string;
+  projectId: string;
   iconWorkingDir: string;
 }
 
@@ -18,16 +19,16 @@ export interface SidebarProjectSectionRowModel {
 export type SidebarProjectRowModel = SidebarProjectSectionRowModel;
 
 const EMPTY_MULTIPLICITY_MAP: ReadonlyMap<string, boolean> = new Map();
-
 function hostTarget(input: {
   serverId: string;
+  projectId: string;
   iconWorkingDir: string;
 }): SidebarProjectHostTarget | null {
   const iconWorkingDir = input.iconWorkingDir.trim();
   if (!input.serverId || !iconWorkingDir) {
     return null;
   }
-  return { serverId: input.serverId, iconWorkingDir };
+  return { serverId: input.serverId, projectId: input.projectId, iconWorkingDir };
 }
 
 export function resolveSidebarProjectIconTarget(
@@ -55,6 +56,14 @@ export function resolveSidebarProjectIconTargets(
   });
 }
 
+export function resolveSidebarProjectLocalPath(
+  project: SidebarProjectEntry,
+  localServerId: string | null,
+): string {
+  if (!localServerId) return "";
+  return project.hosts.find((host) => host.serverId === localServerId)?.iconWorkingDir.trim() ?? "";
+}
+
 // A project can host a brand-new workspace on a host when that host can create a
 // git worktree (git projects) OR the host supports running multiple independent
 // workspaces per directory (`workspaceMultiplicity`), which is what lets non-git
@@ -70,9 +79,7 @@ function resolveNewWorkspaceTarget(
       continue;
     }
     const target = hostTarget(host);
-    if (target) {
-      return target;
-    }
+    if (target) return target;
   }
   return null;
 }

@@ -133,6 +133,7 @@ describe("createWebStreamStrategy", () => {
             onNearHistoryStart: vi.fn(),
             isLoadingOlderHistory: false,
             hasOlderHistory: false,
+            olderHistoryProgressKey: null,
             scrollEnabled: true,
             listStyle: null,
             baseListContentContainerStyle: null,
@@ -176,6 +177,7 @@ describe("createWebStreamStrategy", () => {
       onNearHistoryStart: vi.fn(),
       isLoadingOlderHistory: false,
       hasOlderHistory: false,
+      olderHistoryProgressKey: null,
       scrollEnabled: true,
       listStyle: null,
       baseListContentContainerStyle: null,
@@ -231,6 +233,7 @@ describe("createWebStreamStrategy", () => {
           onNearHistoryStart: vi.fn(),
           isLoadingOlderHistory: false,
           hasOlderHistory: false,
+          olderHistoryProgressKey: null,
           scrollEnabled: true,
           listStyle: null,
           baseListContentContainerStyle: null,
@@ -314,6 +317,7 @@ describe("createWebStreamStrategy", () => {
             onNearHistoryStart,
             isLoadingOlderHistory: false,
             hasOlderHistory: true,
+            olderHistoryProgressKey: "epoch-1:20",
             scrollEnabled: true,
             listStyle: null,
             baseListContentContainerStyle: null,
@@ -321,10 +325,6 @@ describe("createWebStreamStrategy", () => {
           })}
         </>,
       );
-    });
-
-    await act(async () => {
-      await new Promise((resolve) => requestAnimationFrame(resolve));
     });
 
     const scrollContainer = container.querySelector('[data-testid="agent-chat-scroll"]');
@@ -335,11 +335,109 @@ describe("createWebStreamStrategy", () => {
     Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 1200 });
     Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 64 });
 
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
+
+    expect(onNearHistoryStart).not.toHaveBeenCalled();
+
     act(() => {
+      scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
       scrollContainer?.dispatchEvent(new Event("scroll"));
     });
 
     expect(onNearHistoryStart).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
+    });
+
+    expect(onNearHistoryStart).toHaveBeenCalledTimes(2);
+  });
+
+  it("waits for bottom anchoring before evaluating a delayed initial tail", async () => {
+    HTMLElement.prototype.scrollTo = vi.fn(function (
+      this: HTMLElement,
+      options?: ScrollToOptions | number,
+      y?: number,
+    ) {
+      const top = typeof options === "object" ? (options.top ?? 0) : (y ?? 0);
+      Object.defineProperty(this, "scrollTop", { configurable: true, value: top });
+    });
+    const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
+    const viewportRef = React.createRef<StreamViewportHandle>();
+    const onNearHistoryStart = vi.fn();
+    const renderInput = {
+      agentId: "agent",
+      boundary: {
+        hasVirtualizedHistory: false,
+        hasMountedHistory: false,
+        hasLiveHead: false,
+      },
+      renderers: createRenderers(vi.fn()),
+      listEmptyComponent: null,
+      viewportRef,
+      routeBottomAnchorRequest: null,
+      isAuthoritativeHistoryReady: true,
+      onNearBottomChange: vi.fn(),
+      onNearHistoryStart,
+      isLoadingOlderHistory: false,
+      hasOlderHistory: false,
+      olderHistoryProgressKey: null,
+      scrollEnabled: true,
+      listStyle: null,
+      baseListContentContainerStyle: null,
+      forwardListContentContainerStyle: null,
+    };
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        strategy.render({
+          ...renderInput,
+          segments: { historyVirtualized: [], historyMounted: [], liveHead: [] },
+        }),
+      );
+    });
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
+
+    const scrollContainer = container.querySelector('[data-testid="agent-chat-scroll"]');
+    if (!(scrollContainer instanceof HTMLElement)) {
+      throw new Error("Expected agent chat scroll container");
+    }
+    Object.defineProperty(scrollContainer, "clientHeight", { configurable: true, value: 400 });
+    Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 1200 });
+    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 0 });
+
+    act(() => {
+      root?.render(
+        strategy.render({
+          ...renderInput,
+          segments: {
+            historyVirtualized: [],
+            historyMounted: [userMessage(1), userMessage(2)],
+            liveHead: [],
+          },
+          boundary: {
+            hasVirtualizedHistory: false,
+            hasMountedHistory: true,
+            hasLiveHead: false,
+          },
+          hasOlderHistory: true,
+          olderHistoryProgressKey: "epoch-1:20",
+        }),
+      );
+    });
+
+    expect(onNearHistoryStart).not.toHaveBeenCalled();
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
+    expect(onNearHistoryStart).not.toHaveBeenCalled();
   });
 
   it("keeps initial route entry anchored when delayed route readiness arrives before user scroll", async () => {
@@ -378,6 +476,7 @@ describe("createWebStreamStrategy", () => {
       onNearHistoryStart: vi.fn(),
       isLoadingOlderHistory: false,
       hasOlderHistory: false,
+      olderHistoryProgressKey: null,
       scrollEnabled: true,
       listStyle: null,
       baseListContentContainerStyle: null,
@@ -485,6 +584,7 @@ describe("createWebStreamStrategy", () => {
       onNearHistoryStart: vi.fn(),
       isLoadingOlderHistory: false,
       hasOlderHistory: false,
+      olderHistoryProgressKey: null,
       scrollEnabled: true,
       listStyle: null,
       baseListContentContainerStyle: null,
@@ -581,6 +681,7 @@ describe("createWebStreamStrategy", () => {
       onNearHistoryStart: vi.fn(),
       isLoadingOlderHistory: false,
       hasOlderHistory: false,
+      olderHistoryProgressKey: null,
       scrollEnabled: true,
       listStyle: null,
       baseListContentContainerStyle: null,
@@ -679,6 +780,7 @@ describe("createWebStreamStrategy", () => {
       onNearHistoryStart: vi.fn(),
       isLoadingOlderHistory: false,
       hasOlderHistory: false,
+      olderHistoryProgressKey: null,
       scrollEnabled: true,
       listStyle: null,
       baseListContentContainerStyle: null,

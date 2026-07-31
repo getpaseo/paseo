@@ -786,6 +786,8 @@ export const ptBR: TranslationResources = {
         closeChangesTab: "Fechar a aba Alterações",
         binaryFile: "Arquivo binário",
         tooLarge: "Diff grande demais para exibir",
+        previewTooLargeTitle: "Este diff é grande demais para visualizar",
+        previewTooLargeDescription: "Reduza a comparação para visualizá-la aqui",
         unified: "Diff unificado",
         split: "Diff lado a lado",
         switchToUnified: "Alternar para diff unificado",
@@ -930,6 +932,8 @@ export const ptBR: TranslationResources = {
         openSettings: "Abrir configurações do projeto",
         openNewWindow: "Abrir em nova janela",
         openNewWindowFailed: "Não foi possível abrir uma nova janela",
+        openFolder: "Open in file manager",
+        openFolderFailed: "Couldn't open folder",
         remove: "Remover projeto",
         removing: "Removendo...",
       },
@@ -1182,6 +1186,7 @@ export const ptBR: TranslationResources = {
         installFailed: "Não foi possível instalar as skills de orquestração.",
         updateFailed: "Não foi possível atualizar as skills de orquestração.",
         uninstallFailed: "Não foi possível desinstalar as skills de orquestração.",
+        saveSelectionFailed: "Não foi possível salvar a seleção de skills de orquestração.",
       },
     },
   },
@@ -1516,7 +1521,9 @@ export const ptBR: TranslationResources = {
         cursor: "Linha {{line}}, coluna {{column}}",
         preview: "Prévia",
         source: "Fonte",
-        unavailableTitle: "Arquivo indisponível no disco",
+        deletedTitle: "Arquivo excluído do disco",
+        checkFailedTitle: "Não foi possível verificar o arquivo no disco",
+        preservedDescription: "A cópia aberta foi preservada.",
         conflictDescription: "O conteúdo local foi preservado. Escolha qual versão manter.",
         overwrite: "Sobrescrever",
         reload: "Recarregar",
@@ -1862,6 +1869,7 @@ export const ptBR: TranslationResources = {
         sendMessage: "Enviar mensagem",
         queueMessage: "Enfileirar mensagem",
         muteUnmuteVoiceMode: "Silenciar/ativar modo de voz",
+        switchProject: "Trocar projeto",
       },
       helpNotes: {
         showKeyboardShortcuts:
@@ -1889,6 +1897,16 @@ export const ptBR: TranslationResources = {
         uninstallTitle: "Desinstalar Paseo skills?",
         uninstallMessage:
           "Remove todas as skills de orquestração do Paseo de ~/.agents, ~/.claude e ~/.codex.",
+        choose: "Escolher skills",
+        chooseAll: "Todas as skills",
+        chooseAllHint:
+          "Mantenha instaladas todas as skills incluídas, inclusive as adicionadas depois.",
+        chooseList: "Skills incluídas",
+        chooseEmpty: "Esta versão não inclui skills.",
+        removeTitle: "Remover as skills desmarcadas?",
+        removeMessage:
+          "{{skills}} serão excluídas de ~/.agents, ~/.claude e ~/.codex. Tudo o que você adicionou dentro dessas pastas de skills também é excluído.",
+        saveFailed: "Não foi possível salvar sua seleção de skills.",
       },
       actions: {
         install: "Instalar",
@@ -1896,7 +1914,10 @@ export const ptBR: TranslationResources = {
         installed: "Instalado",
         update: "Atualizar",
         working: "Trabalhando...",
+        remove: "Remover",
         uninstall: "Desinstalar",
+        save: "Salvar",
+        saving: "Salvando...",
       },
       operations: {
         add: "Adicionar skill",

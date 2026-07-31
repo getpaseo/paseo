@@ -38,6 +38,7 @@ import {
 } from "@/runtime/host-runtime";
 import type { HostProfile } from "@/types/host-connection";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
+import { seedSessionWorkspaces } from "@/test/seed-session";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
@@ -164,9 +165,7 @@ function initializeSidebarState(workspaces: WorkspaceDescriptor[]): void {
   act(() => {
     setHostProfiles([makeHost()]);
     useSessionStore.getState().initializeSession(SERVER_ID, null as unknown as DaemonClient);
-    useSessionStore
-      .getState()
-      .setWorkspaces(SERVER_ID, new Map(workspaces.map((entry) => [entry.id, entry])));
+    seedSessionWorkspaces(SERVER_ID, new Map(workspaces.map((entry) => [entry.id, entry])));
     useSessionStore.getState().setHasHydratedWorkspaces(SERVER_ID, true);
     useSidebarOrderStore.setState({
       projectOrder: ["project-a", "project-b"],

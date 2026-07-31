@@ -33,6 +33,7 @@ try {
     assert.strictEqual(result.exitCode, 0, "agent update --help should exit 0");
     assert(result.stdout.includes("--name"), "help should mention --name flag");
     assert(result.stdout.includes("--label"), "help should mention --label flag");
+    assert(result.stdout.includes("--thinking"), "help should mention --thinking flag");
     assert(result.stdout.includes("--host"), "help should mention --host option");
     assert(result.stdout.includes("<id>"), "help should mention required id argument");
     console.log("✓ agent update --help shows options\n");
@@ -102,6 +103,30 @@ try {
     assert.strictEqual(result.exitCode, 0, "agent --help should exit 0");
     assert(result.stdout.includes("update"), "help should mention update subcommand");
     console.log("✓ agent --help shows update subcommand\n");
+  }
+
+  // Test 7: agent update accepts thinking as an update field
+  {
+    console.log("Test 7: agent update accepts thinking as an update field");
+    const result =
+      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo agent update abc123 --thinking high`.nothrow();
+    const output = result.stdout + result.stderr;
+    assert(!output.includes("Nothing to update"), "should treat --thinking as an update field");
+    console.log("✓ agent update accepts thinking as an update field\n");
+  }
+
+  // Test 8: thinking cannot be combined with metadata updates
+  {
+    console.log("Test 8: thinking cannot be combined with metadata updates");
+    const result =
+      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo agent update abc123 --name renamed --thinking high`.nothrow();
+    assert.notStrictEqual(result.exitCode, 0, "should reject a combined update");
+    const output = result.stdout + result.stderr;
+    assert(
+      output.includes("--thinking cannot be combined with --name or --label"),
+      "should explain that thinking and metadata updates are separate operations",
+    );
+    console.log("✓ thinking cannot be combined with metadata updates\n");
   }
 } finally {
   // Clean up temp directory

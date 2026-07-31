@@ -17,7 +17,14 @@ function project(projectKey: string, serverId = "host"): HostProjectListItem {
     projectName: projectKey,
     projectKind: "git",
     iconWorkingDir: `/work/${projectKey}`,
-    hosts: [{ serverId, iconWorkingDir: `/work/${projectKey}`, canCreateWorktree: true }],
+    hosts: [
+      {
+        serverId,
+        projectId: projectKey,
+        iconWorkingDir: `/work/${projectKey}`,
+        canCreateWorktree: true,
+      },
+    ],
     workspaceKeys: [],
   };
 }
@@ -111,6 +118,46 @@ describe("reconcileProjectSelection", () => {
     });
   });
 
+  it("adopts a routed project's hydrated cross-host key", () => {
+    const routedProject = {
+      ...project("local-project-id"),
+      hosts: [
+        {
+          serverId: "host",
+          projectId: "local-project-id",
+          iconWorkingDir: "/work/project",
+          canCreateWorktree: true,
+        },
+      ],
+    };
+    const hydratedProject = {
+      ...project("remote:github.com/acme/project"),
+      hosts: [
+        {
+          serverId: "host",
+          projectId: "local-project-id",
+          iconWorkingDir: "/work/project",
+          canCreateWorktree: false,
+        },
+      ],
+    };
+    const current = createProjectSelection(
+      context({ initialProject: routedProject, projects: [], routeProject: routedProject }),
+    );
+    const hydratedContext = context({
+      initialProject: hydratedProject,
+      projects: [hydratedProject],
+      routeProject: routedProject,
+    });
+
+    expect(reconcileProjectSelection(current, hydratedContext)).toEqual({
+      contextKey: "host:",
+      projectKey: hydratedProject.projectKey,
+      project: hydratedProject,
+      source: "initial",
+    });
+  });
+
   it("stores hydrated project snapshots before archive gaps", () => {
     const routeProject = project("route-project");
     const hydratedProject: HostProjectListItem = {
@@ -182,6 +229,17 @@ describe("reconcileProjectSelection", () => {
     });
 
     expect(reconcileProjectSelection(current, afterRememberedHydration)).toEqual(current);
+  });
+
+  it("preserves an opaque project key ending in whitespace", () => {
+    const selected = project("host:project ");
+    const current = createProjectSelection(
+      context({ initialProject: selected, projects: [selected] }),
+    );
+    const currentContext = context({ initialProject: selected, projects: [selected] });
+
+    expect(resolveProjectSelection(current, currentContext)).toEqual(selected);
+    expect(reconcileProjectSelection(current, currentContext)).toEqual(current);
   });
 
   it("resets fallback selection when host project capability changes", () => {
