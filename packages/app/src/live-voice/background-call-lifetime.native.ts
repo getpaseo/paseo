@@ -1,15 +1,24 @@
-import { requireNativeModule } from "expo-modules-core";
+import { requireOptionalNativeModule } from "expo-modules-core";
 
 interface PaseoBackgroundCallModule {
   begin(): Promise<void>;
   end(): Promise<void>;
 }
 
+function getOptionalBackgroundCallModule(): PaseoBackgroundCallModule | null {
+  return requireOptionalNativeModule<PaseoBackgroundCallModule>("PaseoBackgroundCall");
+}
+
 function getBackgroundCallModule(): PaseoBackgroundCallModule {
-  // `requireNativeModule` throws when an OTA bundle is newer than the installed
-  // binary. Resolve it only when Live Voice starts so the rest of the app can
-  // still launch on binaries that predate this native module.
-  return requireNativeModule<PaseoBackgroundCallModule>("PaseoBackgroundCall");
+  const backgroundCallModule = getOptionalBackgroundCallModule();
+  if (!backgroundCallModule) {
+    throw new Error("Live Voice background mode is unavailable in this app binary");
+  }
+  return backgroundCallModule;
+}
+
+export function isLiveVoiceBackgroundCallSupported(): boolean {
+  return getOptionalBackgroundCallModule() !== null;
 }
 
 export async function beginLiveVoiceBackgroundCall(): Promise<void> {

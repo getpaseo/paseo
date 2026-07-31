@@ -14,6 +14,7 @@ import type {
 import {
   beginLiveVoiceBackgroundCall,
   endLiveVoiceBackgroundCall,
+  isLiveVoiceBackgroundCallSupported,
 } from "./background-call-lifetime";
 import {
   LiveVoiceSessionError,
@@ -35,7 +36,7 @@ const SUSTAINED_DISCONNECT_MS = 8_000;
 const EVENT_CHANNEL_LABEL = "oai-events";
 
 export const isLiveVoiceSessionSupported = true;
-export const isLiveVoiceBackgroundSessionSupported = true;
+export const isLiveVoiceBackgroundSessionSupported = isLiveVoiceBackgroundCallSupported();
 
 // `react-native-webrtc` implements EventTarget methods at runtime, but its
 // published declaration output omits the inherited methods. Use the typed

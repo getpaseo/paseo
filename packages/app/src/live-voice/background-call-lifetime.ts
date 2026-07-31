@@ -1,3 +1,7 @@
+export function isLiveVoiceBackgroundCallSupported(): boolean {
+  return false;
+}
+
 export function beginLiveVoiceBackgroundCall(): Promise<void> {
   return Promise.resolve();
 }

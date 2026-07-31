@@ -127,6 +127,7 @@ const nativeRtc = vi.hoisted(() => {
 });
 
 const backgroundCallLifetime = vi.hoisted(() => ({
+  isSupported: vi.fn(() => true),
   begin: vi.fn(async () => {
     nativeRtc.trace.push("beginBackgroundCall");
   }),
@@ -143,15 +144,24 @@ vi.mock("react-native-webrtc", () => ({
 vi.mock("./background-call-lifetime", () => ({
   beginLiveVoiceBackgroundCall: backgroundCallLifetime.begin,
   endLiveVoiceBackgroundCall: backgroundCallLifetime.end,
+  isLiveVoiceBackgroundCallSupported: backgroundCallLifetime.isSupported,
 }));
 
-import { LiveVoiceSessionError, startLiveVoiceSession } from "./live-voice-session.native";
+import {
+  isLiveVoiceBackgroundSessionSupported,
+  LiveVoiceSessionError,
+  startLiveVoiceSession,
+} from "./live-voice-session.native";
 
 describe("native live voice session", () => {
   beforeEach(() => {
     nativeRtc.reset();
     backgroundCallLifetime.begin.mockClear();
     backgroundCallLifetime.end.mockClear();
+  });
+
+  it("advertises background mode when the native lifetime module is installed", () => {
+    expect(isLiveVoiceBackgroundSessionSupported).toBe(true);
   });
 
   it("negotiates the required WebRTC offer and owns native audio cleanup", async () => {
