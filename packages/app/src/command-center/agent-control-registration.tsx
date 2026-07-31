@@ -18,6 +18,7 @@ import type { ProviderSelectorProvider } from "@/provider-selection/provider-sel
 import {
   buildAgentControlContributions,
   buildAgentControlContributionLabels,
+  type AgentControlContributionSource,
 } from "./agent-control-contributions";
 import { getCommandCenterIcon } from "./icon";
 import { useCommandCenterActions } from "./provider";
@@ -38,7 +39,7 @@ export interface AgentControlCommandCenterSource {
     selectedId: string | null | undefined;
     select(optionId: string): void | Promise<void>;
   };
-  modes: {
+  modes?: {
     options: readonly AgentMode[];
     selectedId: string | null | undefined;
     select(modeId: string): void | Promise<void>;
@@ -60,6 +61,23 @@ function resolveDefaultModeId(
   return (
     providerDefinitions.find((definition) => definition.id === provider)?.defaultModeId ?? null
   );
+}
+
+function buildModeContributionSource(
+  options: readonly AgentMode[] | undefined,
+  selectedId: string | null | undefined,
+  select: ((modeId: string) => void | Promise<void>) | undefined,
+  defaultModeId: string | null,
+): Pick<AgentControlContributionSource, "modes"> {
+  if (!options || !select) return {};
+  return {
+    modes: {
+      options,
+      selectedId: selectedId ?? null,
+      defaultModeId,
+      select,
+    },
+  };
 }
 
 export function useAgentControlCommandCenterActions(input: {
@@ -98,12 +116,12 @@ export function useAgentControlCommandCenterActions(input: {
           selectedId: thinking.selectedId ?? null,
           select: thinking.select,
         },
-        modes: {
-          options: modes.options,
-          selectedId: modes.selectedId ?? null,
-          defaultModeId: resolveDefaultModeId(controls.provider, controls.providerDefinitions),
-          select: modes.select,
-        },
+        ...buildModeContributionSource(
+          modes?.options,
+          modes?.selectedId,
+          modes?.select,
+          resolveDefaultModeId(controls.provider, controls.providerDefinitions),
+        ),
         features: {
           list: features.set ? (features.list ?? []) : [],
           set: features.set ?? ignoreAgentFeatureChange,
@@ -120,9 +138,9 @@ export function useAgentControlCommandCenterActions(input: {
       models.select,
       models.selectedModelId,
       models.selectedProvider,
-      modes.options,
-      modes.select,
-      modes.selectedId,
+      modes?.options,
+      modes?.select,
+      modes?.selectedId,
       thinking.options,
       thinking.select,
       thinking.selectedId,

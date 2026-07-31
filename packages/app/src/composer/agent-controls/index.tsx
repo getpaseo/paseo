@@ -42,7 +42,11 @@ import {
   useFormPreferences,
 } from "@/hooks/use-form-preferences";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
-import { AgentModeControl, type AgentModeControlValue } from "@/composer/agent-controls/mode-control";
+import {
+  AgentModeControl,
+  useLiveAgentModeControl,
+  type AgentModeControlValue,
+} from "@/composer/agent-controls/mode-control";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type {
@@ -63,8 +67,6 @@ import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
 import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
 import { useAgentControlCommandCenterActions } from "@/command-center/agent-control-registration";
-import { runLiveAgentControlChange } from "./live-change";
-import { useLiveAgentModeSelection } from "./use-live-agent-mode";
 import { isNative } from "@/constants/platform";
 import {
   resolveComposerControlDensity,
@@ -84,6 +86,8 @@ interface AgentControlOption {
 }
 
 type AgentControlSelector = "provider" | "mode" | "model" | "thinking" | `feature-${string}`;
+
+const EMPTY_AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [];
 
 interface ControlledAgentControlsProps {
   provider: string;
@@ -159,6 +163,19 @@ function findOptionLabel(
   }
   const selected = options.find((option) => option.id === selectedId);
   return selected?.label ?? fallback;
+}
+
+function toCommandCenterModes(modeControl: AgentModeControlValue | null) {
+  if (!modeControl) return undefined;
+  return {
+    options: modeControl.modeOptions,
+    selectedId: modeControl.selectedModeId,
+    select: modeControl.onSelectMode,
+  };
+}
+
+function getModeProviderDefinitions(modeControl: AgentModeControlValue | null) {
+  return modeControl?.providerDefinitions ?? EMPTY_AGENT_PROVIDER_DEFINITIONS;
 }
 
 function getFeatureIconColor(
@@ -1414,25 +1431,9 @@ export const AgentControls = memo(function AgentControls({
   );
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const toast = useToast();
-  const liveMode = useLiveAgentModeSelection(serverId, agentId);
-  const modeControl = useMemo<AgentModeControlValue | null>(() => {
-    if (!liveMode.provider || liveMode.options.length === 0) return null;
-    return {
-      provider: liveMode.provider,
-      providerDefinitions: liveMode.providerDefinitions,
-      modeOptions: liveMode.options,
-      selectedModeId: liveMode.selectedId,
-      onSelectMode: liveMode.select,
-      disabled: !liveMode.canSelect,
-    };
-  }, [
-    liveMode.canSelect,
-    liveMode.options,
-    liveMode.provider,
-    liveMode.providerDefinitions,
-    liveMode.select,
-    liveMode.selectedId,
-  ]);
+  const modeControl = useLiveAgentModeControl(serverId, agentId);
+  const commandCenterModes = toCommandCenterModes(modeControl);
+  const modeProviderDefinitions = getModeProviderDefinitions(modeControl);
 
   const {
     entries: snapshotEntries,
@@ -1503,17 +1504,14 @@ export const AgentControls = memo(function AgentControls({
         return;
       }
       try {
-        await runLiveAgentControlChange({
-          apply: () => client.setAgentModel(agentId, modelId),
-          persist: () =>
-            updatePreferences((current) =>
-              mergeProviderPreferences({
-                preferences: current,
-                provider: agentProvider,
-                updates: { model: modelId },
-              }),
-            ),
-        });
+        await client.setAgentModel(agentId, modelId);
+        await updatePreferences((current) =>
+          mergeProviderPreferences({
+            preferences: current,
+            provider: agentProvider,
+            updates: { model: modelId },
+          }),
+        );
       } catch (error) {
         console.warn("[AgentControls] setAgentModel or persist preference failed", error);
         toast.error(toErrorMessage(error));
@@ -1538,63 +1536,59 @@ export const AgentControls = memo(function AgentControls({
   );
 
   const handleSelectThinkingOption = useCallback(
-    async (thinkingOptionId: string) => {
+    (thinkingOptionId: string) => {
       if (!client || !agentProvider) {
         return;
       }
-      try {
-        await runLiveAgentControlChange({
-          apply: () => client.setAgentThinkingOption(agentId, thinkingOptionId),
-          onApplied: (notice) => showProviderNoticeToast(toast, notice),
-          persist: async () => {
-            if (!activeModelId) return;
-            await updatePreferences((current) =>
-              mergeProviderPreferences({
-                preferences: current,
-                provider: agentProvider,
-                updates: {
-                  model: activeModelId,
-                  thinkingByModel: {
-                    [activeModelId]: thinkingOptionId,
-                  },
-                },
-              }),
-            );
-          },
+      if (activeModelId) {
+        void updatePreferences((current) =>
+          mergeProviderPreferences({
+            preferences: current,
+            provider: agentProvider,
+            updates: {
+              model: activeModelId,
+              thinkingByModel: {
+                [activeModelId]: thinkingOptionId,
+              },
+            },
+          }),
+        ).catch((error) => {
+          console.warn("[AgentControls] persist thinking preference failed", error);
         });
-      } catch (error) {
-        console.warn("[AgentControls] set thinking or persist preference failed", error);
-        toast.error(toErrorMessage(error));
       }
+      void client
+        .setAgentThinkingOption(agentId, thinkingOptionId)
+        .then((notice) => showProviderNoticeToast(toast, notice))
+        .catch((error) => {
+          console.warn("[AgentControls] setAgentThinkingOption failed", error);
+          toast.error(toErrorMessage(error));
+        });
     },
     [activeModelId, agentId, agentProvider, client, toast, updatePreferences],
   );
 
   const handleSetFeature = useCallback(
-    async (featureId: string, value: unknown) => {
+    (featureId: string, value: unknown) => {
       if (!client || !agentProvider) {
         return;
       }
-      try {
-        await runLiveAgentControlChange({
-          apply: () => client.setAgentFeature(agentId, featureId, value),
-          persist: () =>
-            updatePreferences((current) =>
-              mergeProviderPreferences({
-                preferences: current,
-                provider: agentProvider,
-                updates: {
-                  featureValues: {
-                    [featureId]: value,
-                  },
-                },
-              }),
-            ),
-        });
-      } catch (error) {
-        console.warn("[AgentControls] set feature or persist preference failed", error);
+      void updatePreferences((current) =>
+        mergeProviderPreferences({
+          preferences: current,
+          provider: agentProvider,
+          updates: {
+            featureValues: {
+              [featureId]: value,
+            },
+          },
+        }),
+      ).catch((error) => {
+        console.warn("[AgentControls] persist feature preference failed", error);
+      });
+      void client.setAgentFeature(agentId, featureId, value).catch((error) => {
+        console.warn("[AgentControls] setAgentFeature failed", error);
         toast.error(toErrorMessage(error));
-      }
+      });
     },
     [agentId, agentProvider, client, toast, updatePreferences],
   );
@@ -1606,7 +1600,7 @@ export const AgentControls = memo(function AgentControls({
       serverId,
       ownerKey: agentId,
       provider: agentProvider,
-      providerDefinitions: liveMode.providerDefinitions,
+      providerDefinitions: modeProviderDefinitions,
       models: {
         providers: agentModelSelectorProviders,
         selectedProvider: agentProvider,
@@ -1618,11 +1612,7 @@ export const AgentControls = memo(function AgentControls({
         selectedId: modelSelection.selectedThinkingId,
         select: handleSelectThinkingOption,
       },
-      modes: {
-        options: liveMode.options,
-        selectedId: liveMode.selectedId,
-        select: liveMode.select,
-      },
+      modes: commandCenterModes,
       features: {
         list: agent?.features,
         set: handleSetFeature,

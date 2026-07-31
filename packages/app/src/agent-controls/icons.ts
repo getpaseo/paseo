@@ -51,6 +51,15 @@ export function getAgentModeIcon(
   return (icon ? MODE_ICONS[icon] : undefined) ?? Bot;
 }
 
+export function getAgentModeOptionIcon(
+  provider: string,
+  modeId: string,
+  providerDefinitions: AgentProviderDefinition[],
+): AgentControlIcon | undefined {
+  const icon = getModeVisuals(provider, modeId, providerDefinitions)?.icon;
+  return icon ? MODE_ICONS[icon] : undefined;
+}
+
 export function getAgentFeatureIcon(icon?: string): AgentControlIcon {
   return (icon ? FEATURE_ICONS[icon] : undefined) ?? Settings2;
 }

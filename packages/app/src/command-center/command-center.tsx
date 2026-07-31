@@ -405,8 +405,9 @@ const ResultRow = memo(function ResultRow({ result, active, onSelect }: ResultRo
     result.kind === "contribution" && result.contribution.presentation.kind === "choice"
       ? result.contribution.presentation
       : null;
+  const accessibilityLabel = choice?.path.join(" › ");
   const accessibilityState = useMemo(
-    () => (choice ? { selected: choice.selected } : undefined),
+    () => (isNative && choice ? { selected: choice.selected } : undefined),
     [choice],
   );
   const style = useCallback(
@@ -427,8 +428,9 @@ const ResultRow = memo(function ResultRow({ result, active, onSelect }: ResultRo
       style={style}
       onPress={press}
       accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
       accessibilityState={accessibilityState}
-      aria-selected={choice?.selected}
+      aria-pressed={isWeb ? choice?.selected : undefined}
       testID={choice?.testId}
     >
       <ResultContent result={result} />

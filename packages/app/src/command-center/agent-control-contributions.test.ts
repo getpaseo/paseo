@@ -74,7 +74,7 @@ function makeSource(
     provider?: string | null;
     models?: Partial<AgentControlContributionSource["models"]>;
     thinking?: Partial<AgentControlContributionSource["thinking"]>;
-    modes?: Partial<AgentControlContributionSource["modes"]>;
+    modes?: Partial<NonNullable<AgentControlContributionSource["modes"]>>;
     features?: Partial<AgentControlContributionSource["features"]>;
   } = {},
 ): AgentControlContributionSource {
@@ -129,6 +129,21 @@ const CLAUDE_MODES: AgentMode[] = [
 ];
 
 describe("Command Center agent-control contributions", () => {
+  it("omits mode-derived choices when no mode control is available", () => {
+    const contributions = buildAgentControlContributions({
+      ...makeSource({
+        models: { providers: [provider({ id: "claude", label: "Claude" })] },
+        features: { list: [toggleFeature("plan_mode", true)] },
+      }),
+      modes: undefined,
+    });
+
+    const groups = contributions.map((contribution) => contribution.group);
+    expect(groups).toContain("models");
+    expect(groups).toContain("plan-mode");
+    expect(groups).not.toContain("modes");
+  });
+
   it("builds unique cross-provider model choices and skips unavailable or empty models", () => {
     const selections: string[] = [];
     const contributions = buildAgentControlContributions(

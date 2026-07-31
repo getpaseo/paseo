@@ -99,7 +99,7 @@ export interface AgentControlContributionSource {
     selectedId: string | null;
     select(optionId: string): void | Promise<void>;
   };
-  modes: {
+  modes?: {
     options: readonly AgentMode[];
     selectedId: string | null;
     defaultModeId: string | null;
@@ -195,18 +195,21 @@ function buildThinkingGroup(source: AgentControlContributionSource): CommandCent
 }
 
 function buildModeGroup(source: AgentControlContributionSource): CommandCenterChoiceGroup {
-  const choices = source.modes.options
-    .filter((mode) => !isPlanningAgentMode(mode))
-    .map(
-      (mode): CommandCenterChoice => ({
-        id: mode.id,
-        path: [formatAgentModeLabel(mode)],
-        icon: source.icons.mode(mode.id),
-        selected: mode.id === source.modes.selectedId,
-        testId: `command-center-mode-${source.serverId}:${source.ownerKey}:${mode.id}`,
-        select: () => source.modes.select(mode.id),
-      }),
-    );
+  const modes = source.modes;
+  const choices = modes
+    ? modes.options
+        .filter((mode) => !isPlanningAgentMode(mode))
+        .map(
+          (mode): CommandCenterChoice => ({
+            id: mode.id,
+            path: [formatAgentModeLabel(mode)],
+            icon: source.icons.mode(mode.id),
+            selected: mode.id === modes.selectedId,
+            testId: `command-center-mode-${source.serverId}:${source.ownerKey}:${mode.id}`,
+            select: () => modes.select(mode.id),
+          }),
+        )
+    : [];
   return {
     id: "modes",
     rank: GROUP_RANK.modes,
@@ -252,17 +255,18 @@ function buildPlanModeGroup(source: AgentControlContributionSource): CommandCent
       turnOn: () => source.features.set(PLAN_MODE_FEATURE_ID, true),
       turnOff: () => source.features.set(PLAN_MODE_FEATURE_ID, false),
     });
-  } else {
-    const planMode = source.modes.options.find(isPlanningAgentMode);
-    const offModeId = resolveNonPlanningModeId(source.modes.options, source.modes.defaultModeId);
+  } else if (source.modes) {
+    const modes = source.modes;
+    const planMode = modes.options.find(isPlanningAgentMode);
+    const offModeId = resolveNonPlanningModeId(modes.options, modes.defaultModeId);
     if (planMode && offModeId) {
       choices = toggleChoices({
         source,
         key: "plan",
         icon: source.icons.planMode,
-        isOn: source.modes.selectedId === planMode.id,
-        turnOn: () => source.modes.select(planMode.id),
-        turnOff: () => source.modes.select(offModeId),
+        isOn: modes.selectedId === planMode.id,
+        turnOn: () => modes.select(planMode.id),
+        turnOff: () => modes.select(offModeId),
       });
     }
   }

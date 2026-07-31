@@ -2,6 +2,8 @@ import { useCallback, useMemo, useRef, useState, type ReactElement } from "react
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useShallow } from "zustand/shallow";
+import { useStoreWithEqualityFn } from "zustand/traditional";
 import { type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -15,9 +17,16 @@ import { resolveNextAgentModeId } from "@/composer/agent-controls/mode";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { useComposerControlLayout } from "@/composer/agent-controls/layout-context";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
+import { useSessionStore } from "@/stores/session-store";
+import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import { mergeProviderPreferences, useFormPreferences } from "@/hooks/use-form-preferences";
+import { resolveProviderDefinition } from "@/utils/provider-definitions";
+import { useToast } from "@/contexts/toast-context";
+import { toErrorMessage } from "@/utils/error-messages";
+import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
 import type { AgentMode } from "@getpaseo/protocol/agent-types";
 import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
-import { getAgentModeIcon } from "@/agent-controls/icons";
+import { getAgentModeIcon, getAgentModeOptionIcon } from "@/agent-controls/icons";
 interface ModeComboboxOptionProps {
   option: ComboboxOption;
   selected: boolean;
@@ -37,9 +46,9 @@ function ModeComboboxOption({
   providerDefinitions,
   iconColor,
 }: ModeComboboxOptionProps) {
-  const IconComponent = getAgentModeIcon(provider, option.id, providerDefinitions);
+  const IconComponent = getAgentModeOptionIcon(provider, option.id, providerDefinitions);
   const leadingSlot = useMemo(
-    () => <IconComponent size={16} color={iconColor} />,
+    () => (IconComponent ? <IconComponent size={16} color={iconColor} /> : null),
     [IconComponent, iconColor],
   );
   return (
@@ -225,6 +234,79 @@ export function AgentModeControl({
       />
     </>
   );
+}
+
+const EMPTY_MODES: AgentMode[] = [];
+
+function compareAvailableModes(a: AgentMode[], b: AgentMode[]): boolean {
+  return a === b || JSON.stringify(a) === JSON.stringify(b);
+}
+
+export function useLiveAgentModeControl(
+  serverId: string,
+  agentId: string,
+): AgentModeControlValue | null {
+  const slice = useSessionStore(
+    useShallow((state) => {
+      const agent = state.sessions[serverId]?.agents?.get(agentId);
+      if (!agent) return null;
+      return {
+        provider: agent.provider,
+        cwd: agent.cwd,
+        currentModeId: agent.currentModeId,
+      };
+    }),
+  );
+  const availableModes = useStoreWithEqualityFn(
+    useSessionStore,
+    (state) => state.sessions[serverId]?.agents?.get(agentId)?.availableModes ?? EMPTY_MODES,
+    compareAvailableModes,
+  );
+  const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
+  const { updatePreferences } = useFormPreferences();
+  const toast = useToast();
+  const { entries: snapshotEntries } = useProvidersSnapshot(serverId, { cwd: slice?.cwd });
+
+  const providerDefinitions = useMemo<AgentProviderDefinition[]>(() => {
+    if (!slice?.provider) return [];
+    const definition = resolveProviderDefinition(slice.provider, snapshotEntries);
+    return definition ? [definition] : [];
+  }, [slice?.provider, snapshotEntries]);
+
+  const handleSelectMode = useCallback(
+    (modeId: string) => {
+      if (!client || !slice?.provider) return;
+      void updatePreferences((current) =>
+        mergeProviderPreferences({
+          preferences: current,
+          provider: slice.provider,
+          updates: { mode: modeId || undefined },
+        }),
+      ).catch((error) => {
+        console.warn("[AgentModeControl] persist mode preference failed", error);
+      });
+      void client
+        .setAgentMode(agentId, modeId)
+        .then((notice) => showProviderNoticeToast(toast, notice))
+        .catch((error) => {
+          console.warn("[AgentModeControl] setAgentMode failed", error);
+          toast.error(toErrorMessage(error));
+        });
+    },
+    [agentId, client, slice?.provider, toast, updatePreferences],
+  );
+
+  return useMemo(() => {
+    if (!slice || availableModes.length === 0) return null;
+    return {
+      provider: slice.provider,
+      providerDefinitions,
+      modeOptions: availableModes,
+      selectedModeId: slice.currentModeId,
+      onSelectMode: handleSelectMode,
+      disabled: !client,
+    };
+  }, [availableModes, client, handleSelectMode, providerDefinitions, slice]);
 }
 
 const styles = StyleSheet.create((theme) => ({
