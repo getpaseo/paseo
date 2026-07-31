@@ -263,6 +263,13 @@ async function probeDaemonOverWebsocket(args: {
       version: p.available ? null : (p.error ?? null),
       source: "daemon" as const,
     }));
+    const relayStatus =
+      statusPayload.relay == null
+        ? undefined
+        : selectRelayStatus({
+            persisted: relayConfigFromLocalState(state),
+            live: statusPayload.relay,
+          });
 
     if (!state.running) {
       return {
@@ -270,6 +277,7 @@ async function probeDaemonOverWebsocket(args: {
         daemonVersion: statusPayload.version ?? daemonVersion,
         daemonNodeOverride: statusPayload.nodePath,
         daemonProviders,
+        relayStatus,
         note: state.pidInfo
           ? `Connected daemon is reachable at ${host} even though local daemon PID ${state.pidInfo.pid} is stale`
           : `Connected daemon is reachable at ${host} but no local daemon PID file was found`,
@@ -281,13 +289,7 @@ async function probeDaemonOverWebsocket(args: {
       daemonVersion: statusPayload.version ?? daemonVersion,
       daemonNodeOverride: statusPayload.nodePath,
       daemonProviders,
-      relayStatus:
-        statusPayload.relay == null
-          ? undefined
-          : selectRelayStatus({
-              persisted: relayConfigFromLocalState(state),
-              live: statusPayload.relay,
-            }),
+      relayStatus,
     };
   } catch {
     return {

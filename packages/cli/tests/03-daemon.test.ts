@@ -16,7 +16,7 @@
  */
 
 import assert from "node:assert";
-import { mkdtemp, rm } from "fs/promises";
+import { mkdtemp, readFile, rm, unlink, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { runLocalPaseo } from "./helpers/local-cli.ts";
@@ -135,10 +135,19 @@ try {
     const start = await daemonCommand(["start", "--listen", listen, "--relay"]);
     assert.strictEqual(start.exitCode, 0, `IPC daemon should start: ${start.stderr}`);
 
+    const configPath = join(paseoHome, "config.json");
+    const config = JSON.parse(await readFile(configPath, "utf-8"));
+    config.daemon = { ...config.daemon, listen };
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
+    const pidPath = join(paseoHome, "paseo.pid");
+    const pidContents = await readFile(pidPath, "utf-8");
+    await unlink(pidPath);
     const status = await daemonCommand(["status", "--json"]);
+    await writeFile(pidPath, pidContents, "utf-8");
     assert.strictEqual(status.exitCode, 0, `IPC daemon status should succeed: ${status.stderr}`);
     const payload = JSON.parse(status.stdout);
     assert.strictEqual(payload.connectedDaemon, "reachable", "IPC daemon should be reachable");
+    assert.strictEqual(payload.localDaemon, "stopped", "missing PID should report stopped locally");
     assert.notStrictEqual(payload.relay, "disabled", "status should use live relay state");
 
     const cleanup = await daemonCommand(["stop", "--force"]);
