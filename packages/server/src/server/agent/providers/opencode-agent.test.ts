@@ -2262,6 +2262,46 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
+  test("acknowledges the canceled turn when a repeated Stop finally aborts", async () => {
+    const { parent: session, openCode } = await createParentSession("ses_retried_stop");
+    const events: AgentStreamEvent[] = [];
+    openCode.sessionPromptAsyncEvents = [];
+    openCode.sessionAbortImplementation = async () => {
+      if (openCode.calls.sessionAbort.length <= 2) {
+        throw new Error("abort failed");
+      }
+      return { data: true };
+    };
+    session.subscribe((event) => events.push(event));
+
+    try {
+      await session.startTurn("still running upstream");
+      await expect(session.interrupt()).rejects.toThrow("abort failed");
+      expect(events.map((event) => event.type)).toEqual(["turn_started"]);
+
+      await session.interrupt();
+
+      expect(openCode.calls.sessionAbort).toHaveLength(3);
+      expect(events).toContainEqual({
+        type: "turn_canceled",
+        provider: "opencode",
+        reason: "interrupted",
+        turnId: "opencode-turn-0",
+      });
+
+      openCode.emitEvent({
+        type: "session.idle",
+        properties: { sessionID: "ses_retried_stop" },
+      });
+      await expect(session.startTurn("replacement")).resolves.toEqual({
+        turnId: "opencode-turn-1",
+      });
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
+    } finally {
+      await session.close();
+    }
+  });
+
   test("does not retry an owned abort after the session closes", async () => {
     const { parent: session, openCode } = await createParentSession("ses_close_pending_abort");
     const settleOwnedAbort = createTestDeferred<void>();

@@ -2777,8 +2777,11 @@ interface OpenCodeStop {
   pendingCancellationTurnId: string | null;
   /** Resolves when the canceled run publishes its authoritative terminal. */
   readonly terminal: Deferred<void>;
-  /** Resolves when the owned abort settles; rejects when it and its retry fail. */
-  readonly abort: Promise<void>;
+  /**
+   * Settlement of the abort this stop currently owns; rejects when it and its
+   * retry fail. A repeated Stop replaces it rather than opening a second stop.
+   */
+  abort: Promise<void>;
 }
 
 function unwrapOpenCodeGlobalEvent(event: unknown): OpenCodeEvent | null {
@@ -3803,29 +3806,43 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private beginStop(turnId: string | null): OpenCodeStop {
-    const terminal = createDeferred<void>();
-    const abort = this.runOwnedAbort(turnId);
-    void abort.catch(() => undefined);
-    this.abortSettlement = abort;
+    if (this.turnState.status === "stopping") {
+      // Stop pressed again during a stop retries that same stop. There is one
+      // runner per session, so a second boundary would race the first — and
+      // after a failed abort, a fresh one is both the only proof that can still
+      // acknowledge the canceled turn and the only way out of fail-closed.
+      const stop = this.turnState.stop;
+      stop.abort = this.issueOwnedAbort(stop);
+      return stop;
+    }
+    const stop: OpenCodeStop = {
+      pendingCancellationTurnId: turnId,
+      terminal: createDeferred<void>(),
+      abort: Promise.resolve(),
+    };
+    stop.abort = this.issueOwnedAbort(stop);
     if (turnId) {
       this.synthesizeInterruptedToolCalls(turnId);
+      // An idle session has no run to observe, so only abort settlement gates
+      // reuse there. A running one also owes the canceled run's terminal.
+      this.turnState = { status: "stopping", stop };
     }
     this.pendingUserMessageText = null;
     this.pendingClientMessageId = null;
     this.abortController = null;
-    const stop: OpenCodeStop = { pendingCancellationTurnId: turnId, terminal, abort };
-    if (turnId) {
-      // An idle session has no run to observe, so only abort settlement gates
-      // reuse there. A running one also owes the canceled run's terminal.
-      this.turnState = { status: "stopping", stop };
-      // Cancellation is acknowledged only once the stop is proven: either the
-      // owned abort succeeded, or the provider published the run's terminal.
-      void abort.then(
-        () => this.acknowledgeCancellation(stop),
-        () => undefined,
-      );
-    }
     return stop;
+  }
+
+  private issueOwnedAbort(stop: OpenCodeStop): Promise<void> {
+    const abort = this.runOwnedAbort(stop.pendingCancellationTurnId);
+    this.abortSettlement = abort;
+    // Cancellation is acknowledged only once the stop is proven: either an owned
+    // abort succeeded, or the provider published the canceled run's terminal.
+    void abort.then(
+      () => this.acknowledgeCancellation(stop),
+      () => undefined,
+    );
+    return abort;
   }
 
   private acknowledgeCancellation(stop: OpenCodeStop): void {
