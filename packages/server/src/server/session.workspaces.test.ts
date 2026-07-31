@@ -5526,7 +5526,7 @@ test("archive_workspace_request archives a worktree-kind workspace and removes t
 
   const workspaceId = "ws-worktree-kind-archive";
   const projectId = "proj-worktree-kind-archive";
-  const workspace = createPersistedWorkspaceRecord({
+  let workspace = createPersistedWorkspaceRecord({
     workspaceId,
     projectId,
     cwd: worktree.worktreePath,
@@ -5578,8 +5578,12 @@ test("archive_workspace_request archives a worktree-kind workspace and removes t
   };
   session.workspaceRegistry.get = async () => workspace;
   session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.update = async (_id, updater) => {
+    workspace = updater(workspace);
+    return workspace;
+  };
   session.workspaceRegistry.archive = async (_id: string, archivedAt: string) => {
-    workspace.archivedAt = archivedAt;
+    workspace = { ...workspace, archivedAt, updatedAt: archivedAt };
   };
   session.projectRegistry.list = async () => [project];
 

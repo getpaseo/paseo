@@ -621,6 +621,10 @@ async function persistTargetCleanupPending(
   const backing = target.backing;
   const workspaceRegistry = dependencies.workspaceRegistry;
   if (!backing?.isPaseoOwnedWorktree || !workspaceRegistry) return;
+  // A target reconstructed from an archived record's cleanupPending state has
+  // no active workspace ids. Its incarnation is the authority for this retry:
+  // never rebind that stale cleanup intent to whatever now occupies the path.
+  const activeTargetWorkspaceIds = new Set(target.workspaceIds);
 
   const worktreeIncarnationId = existsSync(backing.path)
     ? ensurePaseoWorktreeIncarnationId(backing.path)
@@ -628,7 +632,7 @@ async function persistTargetCleanupPending(
 
   await Promise.all(
     target.teardownTargets.flatMap((teardownTarget) =>
-      teardownTarget.workspaceId
+      teardownTarget.workspaceId && activeTargetWorkspaceIds.has(teardownTarget.workspaceId)
         ? [
             workspaceRegistry.update(teardownTarget.workspaceId, (workspace) => ({
               ...workspace,

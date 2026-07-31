@@ -399,7 +399,7 @@ describe("archiveByScope", () => {
     expect(existsSync(worktree.worktreePath)).toBe(false);
   });
 
-  test("workspace scope runs teardown while keeping a directory referenced by a sibling", async () => {
+  test("workspace scope skips teardown while a sibling still references the directory", async () => {
     const { tempDir, repoDir } = createGitRepo();
     writeFileSync(
       path.join(repoDir, "paseo.json"),
@@ -440,7 +440,7 @@ describe("archiveByScope", () => {
       removedDirectory: false,
     });
     expect(existsSync(worktree.worktreePath)).toBe(true);
-    expect(readFileSync(path.join(repoDir, "shared-teardown.log"), "utf8")).toBe("ok");
+    expect(existsSync(path.join(repoDir, "shared-teardown.log"))).toBe(false);
   });
 
   test("workspace scope keeps a worktree for an active workspace in a subdirectory", async () => {
