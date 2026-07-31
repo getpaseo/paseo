@@ -16,6 +16,7 @@ const LIVE_REPLY_MARKER = "LIVE_ONLY_REPLY_MARKER";
 const HISTORY_USER_MARKER = "HISTORY_ONLY_USER_MARKER";
 const HISTORY_ASSISTANT_MARKER = "HISTORY_ONLY_ASSISTANT_MARKER";
 const HISTORY_SIDECHAIN_MARKER = "HISTORY_ONLY_SIDECHAIN_MARKER";
+const ORPHAN_SIDECHAIN_MARKER = "ORPHAN_SIDECHAIN_MARKER";
 
 function buildSdkQueryMock() {
   const events = [
@@ -160,6 +161,20 @@ describe("ClaudeAgentSession history replay regression", () => {
             id: "history-child-message",
             role: "assistant",
             content: [{ type: "text", text: HISTORY_SIDECHAIN_MARKER }],
+          },
+        }),
+        JSON.stringify({
+          type: "assistant",
+          isSidechain: true,
+          agentId: "orphan-child",
+          uuid: "orphan-child-message",
+          timestamp: "2026-07-12T10:00:02.000Z",
+          sessionId: "history-session",
+          cwd,
+          message: {
+            id: "orphan-child-message",
+            role: "assistant",
+            content: [{ type: "text", text: ORPHAN_SIDECHAIN_MARKER }],
           },
         }),
         JSON.stringify({
@@ -326,6 +341,20 @@ describe("ClaudeAgentSession history replay regression", () => {
         status: "completed",
       }),
     });
+    expect(historyEvents).not.toContainEqual({
+      type: "provider_subagent",
+      provider: "claude",
+      event: expect.objectContaining({ id: "orphan-child" }),
+    });
+    expect(
+      historyEvents.some(
+        (event) =>
+          event.type === "provider_subagent" &&
+          event.event.type === "timeline" &&
+          event.event.item.type === "assistant_message" &&
+          event.event.item.text.includes(ORPHAN_SIDECHAIN_MARKER),
+      ),
+    ).toBe(false);
   });
 
   test("listCommands includes rewind command", async () => {
