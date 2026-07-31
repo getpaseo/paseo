@@ -35,12 +35,8 @@ import { isWeb } from "@/constants/platform";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useLiveFile } from "./live-file/hook";
 import { FilePanelBar } from "./bar";
-import {
-  FileEditorModel,
-  getFileConflictCallout,
-  type FileConflictCallout,
-  type FileEditorFile,
-} from "./editor/model";
+import { FileEditorModel, getFileConflictCallout, type FileConflictCallout } from "./editor/model";
+import { createFileObservationSource } from "./editor/observation-source";
 import { FileEditorView } from "./editor/view";
 import type { FileConflictAlertState } from "./conflict-alert";
 import type { LiveFileModel } from "./live-file/model";
@@ -667,25 +663,6 @@ function EditableFilePane({
   const [vimMode, setVimMode] = useState<string | null>(settings.vimKeybindings ? "NORMAL" : null);
   const session = useMemo(
     () => ({
-      async read(): Promise<FileEditorFile> {
-        const file = await client.readFile(cwd, path);
-        const decodedFile = explorerFileFromReadResult(file);
-        if (decodedFile.kind !== "text" || decodedFile.content === undefined) {
-          throw new Error("File is no longer text.");
-        }
-        return {
-          content: decodedFile.content,
-          hasBom: decodedFile.hasBom,
-          version: {
-            status: "ready",
-            cwd,
-            path,
-            size: file.size,
-            modifiedAt: file.modifiedAt,
-            revision: file.revision,
-          },
-        };
-      },
       write(input: { content: string; expectedModifiedAt: string; expectedRevision?: string }) {
         return client.writeFile({ cwd, path, ...input });
       },
@@ -703,14 +680,16 @@ function EditableFilePane({
           path,
           size: preview.size,
           modifiedAt: preview.modifiedAt,
+          revision: preview.revision,
         },
       },
       session,
     });
   });
   useEffect(() => {
-    model.connectFileVersions(liveFile);
-    return () => model.disconnectFileVersions();
+    const source = createFileObservationSource(liveFile);
+    model.connectFileObservations(source);
+    return () => model.disconnectFileObservations();
   }, [liveFile, model]);
   const snapshot = useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot);
   const suspendPendingSave = useCallback(() => model.suspendAutosave(), [model]);

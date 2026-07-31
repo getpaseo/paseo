@@ -4,6 +4,11 @@ import { expect, test, type Page } from "./fixtures";
 import { expectFileTabOpen, openFileExplorer, openFileFromExplorer } from "./helpers/file-explorer";
 import type { WithWorkspace } from "./helpers/with-workspace";
 import { installDaemonWebSocketGate } from "./helpers/daemon-websocket-gate";
+import {
+  expectFileCalloutWasRendered,
+  expectNoFileCalloutWasRendered,
+  recordFileCallouts,
+} from "./helpers/file-callouts";
 
 function visibleEditor(page: Page) {
   return page.getByTestId("file-source-editor").filter({ visible: true }).locator(".cm-content");
@@ -61,10 +66,11 @@ async function replaceFileAfterDeletionWasObserved(input: {
   gate.holdFileReads(relativePath);
   await unlink(filePath);
   await gate.waitForHeldFileRead();
+  await expect(fileCallout(page)).toHaveCount(0);
+  gate.releaseHeldFileRead();
   await expectOnlyFileCallout(page, "File deleted on disk");
   gate.holdNextReadyFileUpdate(relativePath);
   await writeFile(filePath, content, "utf8");
-  gate.releaseHeldFileRead();
   await gate.waitForHeldReadyFileUpdate();
   await expect.poll(() => readFile(filePath, "utf8")).toBe(content);
 }
@@ -103,7 +109,96 @@ async function expectDirtyConflictCanReload(page: Page): Promise<void> {
   await expect(fileCallout(page)).toHaveCount(0);
 }
 
+async function restoreFileAfterWatcherObservedTemporaryAbsence(input: {
+  gate: Awaited<ReturnType<typeof installDaemonWebSocketGate>>;
+  filePath: string;
+  relativePath: string;
+}): Promise<void> {
+  const parkedPath = `${input.filePath}.saving`;
+  input.gate.holdFileReads(input.relativePath);
+  await rename(input.filePath, parkedPath);
+  await input.gate.waitForFileUpdate(input.relativePath, "missing");
+  await input.gate.waitForHeldFileRead();
+  await writeFile(input.filePath, await readFile(parkedPath));
+  await unlink(parkedPath);
+  input.gate.releaseHeldFileRead();
+}
+
 test.describe("Workspace file change conflicts", () => {
+  test("a temporary write gap never renders a disk-change callout", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const gate = await installDaemonWebSocketGate(page);
+    const relativePath = "temporary-gap.ts";
+    const filePath = await openTrackedFile(page, withWorkspace, {
+      prefix: "file-temporary-gap-",
+      relativePath,
+      content: "const preserved = true;\n",
+    });
+    await gate.waitForFileSubscription(relativePath);
+    await recordFileCallouts(page);
+
+    await restoreFileAfterWatcherObservedTemporaryAbsence({ gate, filePath, relativePath });
+    await replaceEditorText(page, "const local = true;\n");
+
+    await expect.poll(() => readFile(filePath, "utf8")).toContain("const local = true;");
+    await expect(fileCallout(page)).toHaveCount(0);
+    await expectNoFileCalloutWasRendered(page);
+  });
+
+  test("an identical atomic rewrite never renders a disk-change callout", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const gate = await installDaemonWebSocketGate(page);
+    const relativePath = "identical-rewrite.ts";
+    const content = "const preserved = true;\n";
+    const filePath = await openTrackedFile(page, withWorkspace, {
+      prefix: "file-identical-rewrite-",
+      relativePath,
+      content,
+    });
+    await gate.waitForFileSubscription(relativePath);
+    await recordFileCallouts(page);
+
+    gate.holdNextReadyFileUpdate(relativePath);
+    await writeFile(`${filePath}.tmp`, content, "utf8");
+    await rename(`${filePath}.tmp`, filePath);
+    await gate.waitForHeldReadyFileUpdate();
+    await replaceEditorText(page, "const local = true;\n");
+    gate.releaseHeldReadyFileUpdate();
+
+    await expect.poll(() => readFile(filePath, "utf8")).toContain("const local = true;");
+    await expect(fileCallout(page)).toHaveCount(0);
+    await expectNoFileCalloutWasRendered(page);
+  });
+
+  test("a save watcher refresh never replays the pre-save buffer", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const gate = await installDaemonWebSocketGate(page);
+    const relativePath = "save-refresh.ts";
+    const filePath = await openTrackedFile(page, withWorkspace, {
+      prefix: "file-save-refresh-",
+      relativePath,
+      content: "const before = true;\n",
+    });
+    await gate.waitForFileSubscription(relativePath);
+    await recordFileCallouts(page);
+    gate.holdFileReads(relativePath);
+
+    await replaceEditorText(page, "const saved = true;\n");
+    await expect.poll(() => readFile(filePath, "utf8")).toContain("const saved = true;");
+    await gate.waitForHeldFileRead();
+
+    await expect(visibleEditor(page)).toContainText("const saved = true;");
+    await expect(fileCallout(page)).toHaveCount(0);
+    await expectNoFileCalloutWasRendered(page);
+    gate.releaseHeldFileRead();
+  });
+
   test("a clean file replaced on disk offers one working reload action", async ({
     page,
     withWorkspace,
@@ -122,8 +217,8 @@ test.describe("Workspace file change conflicts", () => {
       relativePath: "inventory.md",
       content: "# After\n",
     });
-    await expectCleanReplacementCanReload(page);
     gate.releaseHeldReadyFileUpdate();
+    await expectCleanReplacementCanReload(page);
   });
 
   test("a deleted file shows one explanatory notice and no resolution actions", async ({
@@ -136,8 +231,10 @@ test.describe("Workspace file change conflicts", () => {
       content: "# Present\n",
     });
     await expect(filePane(page).getByText("Present", { exact: true })).toBeVisible();
+    await recordFileCallouts(page);
     await unlink(filePath);
     await expectDeletedFileNotice(page);
+    await expectFileCalloutWasRendered(page, "File deleted on disk");
   });
 
   test("a file check error offers a working retry", async ({ page, withWorkspace }) => {

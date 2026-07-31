@@ -117,6 +117,50 @@ async function waitForRead(
 }
 
 describe("LiveFileModel", () => {
+  it("does not publish a missing candidate when the following read succeeds", async () => {
+    const session = new TestLiveFileSession();
+    const model = new LiveFileModel();
+    model.open({
+      session,
+      target: { cwd: "/workspace", path: "file.ts" },
+      liveUpdates: true,
+    });
+    await waitForRead(session, 1);
+    session.reads[0].resolve(file());
+    await vi.waitFor(() => expect(model.getObservation()).toMatchObject({ status: "ready" }));
+    const publishedStatuses: string[] = [];
+    model.subscribe(() => {
+      const observation = model.getObservation();
+      if (observation) publishedStatuses.push(observation.status);
+    });
+
+    session.emit({ status: "missing", cwd: "/workspace", path: "file.ts" });
+    await waitForRead(session, 2);
+    session.reads[1].resolve(file());
+    await vi.waitFor(() => expect(model.getSnapshot().read).toEqual({ status: "idle" }));
+
+    expect(publishedStatuses).not.toContain("missing");
+  });
+
+  it("publishes missing when the following read also fails", async () => {
+    const session = new TestLiveFileSession();
+    const model = new LiveFileModel();
+    model.open({
+      session,
+      target: { cwd: "/workspace", path: "file.ts" },
+      liveUpdates: true,
+    });
+    await waitForRead(session, 1);
+    session.reads[0].resolve(file());
+    await vi.waitFor(() => expect(model.getObservation()?.status).toBe("ready"));
+
+    session.emit({ status: "missing", cwd: "/workspace", path: "file.ts" });
+    await waitForRead(session, 2);
+    session.reads[1].reject(new Error("File not found."));
+
+    await vi.waitFor(() => expect(model.getObservation()?.status).toBe("missing"));
+  });
+
   it("recovers only from a read begun after a missing observation", async () => {
     const session = new TestLiveFileSession();
     const model = new LiveFileModel();
@@ -127,7 +171,7 @@ describe("LiveFileModel", () => {
     });
     await waitForRead(session, 1);
     session.reads[0].resolve(file());
-    await vi.waitFor(() => expect(model.getSnapshot().file).toEqual(file()));
+    await vi.waitFor(() => expect(model.getObservation()).toMatchObject({ status: "ready" }));
 
     model.refresh();
     await waitForRead(session, 2);
@@ -135,14 +179,17 @@ describe("LiveFileModel", () => {
     session.reads[1].resolve(file("revision-2", "two"));
 
     await waitForRead(session, 3);
-    expect(model.getSnapshot().version?.status).toBe("missing");
+    expect(model.getObservation()?.status).toBe("ready");
     expect(model.getSnapshot().read).toEqual({ status: "pending", requested: true });
 
     session.reads[2].resolve(file("revision-2", "two"));
     await vi.waitFor(() => {
       expect(model.getSnapshot()).toMatchObject({
-        version: { status: "ready", revision: "revision-2" },
-        file: { revision: "revision-2" },
+        observation: {
+          status: "ready",
+          version: { revision: "revision-2" },
+          file: { revision: "revision-2" },
+        },
         read: { status: "idle" },
       });
     });
@@ -158,7 +205,7 @@ describe("LiveFileModel", () => {
     });
     await waitForRead(session, 1);
     session.reads[0].resolve(file());
-    await vi.waitFor(() => expect(model.getSnapshot().file).toEqual(file()));
+    await vi.waitFor(() => expect(model.getObservation()).toMatchObject({ status: "ready" }));
 
     session.emit({
       status: "error",
@@ -172,7 +219,7 @@ describe("LiveFileModel", () => {
 
     await vi.waitFor(() => {
       expect(model.getSnapshot()).toMatchObject({
-        version: { status: "error", error: "Requested path is not a file" },
+        observation: { status: "error", error: "Requested path is not a file" },
         read: { status: "error", error: "File unavailable." },
       });
     });
@@ -195,7 +242,7 @@ describe("LiveFileModel", () => {
     session.subscription.resolve({ initial: ready("revision-1"), unsubscribe() {} });
 
     await waitForRead(session, 1);
-    expect(model.getVersion()).toMatchObject({ status: "ready", revision: "revision-2" });
+    expect(model.getObservation()).toBeNull();
   });
 
   it("retries a failed subscription when the user refreshes", async () => {
@@ -210,7 +257,7 @@ describe("LiveFileModel", () => {
     expect(session.subscribeAttempts).toBe(1);
 
     session.reads[0].resolve(file());
-    await vi.waitFor(() => expect(model.getVersion()?.status).toBe("ready"));
+    await vi.waitFor(() => expect(model.getObservation()?.status).toBe("ready"));
     model.refresh();
 
     await waitForRead(session, 2);
@@ -247,8 +294,7 @@ describe("LiveFileModel", () => {
     await Promise.resolve();
 
     expect(model.getSnapshot()).toEqual({
-      file: null,
-      version: null,
+      observation: null,
       read: { status: "idle" },
     });
   });
