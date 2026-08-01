@@ -292,3 +292,79 @@ test("unexpected exit fails an autonomous Codex turn", async () => {
     rmSync(workdir, { recursive: true, force: true });
   }
 });
+
+test("provider permissions do not survive an unexpected exit and reconnect", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-process-permission-exit-"));
+  const exitedAppServer = createFakeCodexAppServer();
+  const replacementAppServer = createFakeCodexAppServer();
+  const manager = new AgentManager({
+    clients: {
+      codex: new ProcessExitCodexClient([exitedAppServer, replacementAppServer]),
+    },
+    logger,
+  });
+  let agentId: string | null = null;
+
+  try {
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, modeId: "auto", model: "gpt-5.4" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    agentId = agent.id;
+
+    const failedRun = manager.runAgent(agent.id, "run a command");
+    const failedTurnStart = await exitedAppServer.waitForTurnStart();
+    const failedThreadId = String(failedTurnStart.threadId);
+    exitedAppServer.startsTurn({ threadId: failedThreadId, turnId: "native-turn-1" });
+    exitedAppServer.requestCommandApproval({
+      itemId: "stale-command",
+      threadId: failedThreadId,
+      turnId: "native-turn-1",
+      command: "git status",
+      cwd: workdir,
+      reason: "confirm command",
+    });
+    await expect
+      .poll(() => manager.getPendingPermissions(agent.id).map((request) => request.id))
+      .toEqual(["permission-stale-command"]);
+
+    exitedAppServer.child.emit("exit", 17, null);
+
+    await expect(failedRun).rejects.toThrow("Codex app-server exited with code 17");
+    expect(manager.getPendingPermissions(agent.id)).toEqual([]);
+
+    const recoveredRun = manager.runAgent(agent.id, "continue after reconnect");
+    const recoveredTurnStart = await replacementAppServer.waitForTurnStart();
+    const recoveredThreadId = String(recoveredTurnStart.threadId);
+    replacementAppServer.startsTurn({
+      threadId: recoveredThreadId,
+      turnId: "native-turn-2",
+    });
+    replacementAppServer.requestCommandApproval({
+      itemId: "new-command",
+      threadId: recoveredThreadId,
+      turnId: "native-turn-2",
+      command: "git diff",
+      cwd: workdir,
+      reason: "confirm command",
+    });
+    await expect
+      .poll(() => manager.getPendingPermissions(agent.id).map((request) => request.id))
+      .toEqual(["permission-new-command"]);
+
+    await manager.respondToPermission(agent.id, "permission-new-command", {
+      behavior: "allow",
+    });
+
+    expect(manager.getPendingPermissions(agent.id)).toEqual([]);
+    replacementAppServer.completeTurn({ threadId: recoveredThreadId });
+    await expect(recoveredRun).resolves.toMatchObject({ sessionId: "thread-1" });
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+  } finally {
+    if (agentId && manager.getAgent(agentId)) {
+      await manager.closeAgent(agentId);
+    }
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
