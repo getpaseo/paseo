@@ -52,14 +52,14 @@ describe("applyClaudeBackgroundSystemMessage", () => {
     expect(result.tasks.map((t) => t.taskId)).toEqual(["s1"]);
   });
 
-  it("enriches status and output file from task_notification", () => {
+  it("drops terminal task_notification rows from the live set", () => {
     const store = new BackgroundTaskStore();
     store.replaceLiveSet(
       PARENT,
       [{ taskId: "s1", type: "shell", description: "npm run dev" }],
       "2026-08-01T00:00:00.000Z",
     );
-    applyClaudeBackgroundSystemMessage(
+    const result = applyClaudeBackgroundSystemMessage(
       store,
       PARENT,
       {
@@ -72,8 +72,9 @@ describe("applyClaudeBackgroundSystemMessage", () => {
       },
       "2026-08-01T00:00:01.000Z",
     );
-    expect(store.get(PARENT, "s1")?.outputFile).toBe("/tmp/s1.log");
-    expect(store.get(PARENT, "s1")?.status).toBe("stopped");
+    expect(result.changed).toBe(true);
+    expect(result.tasks).toEqual([]);
+    expect(store.get(PARENT, "s1")).toBeNull();
   });
 
   it("task_started merges without wiping other live shell tasks", () => {
@@ -108,6 +109,18 @@ describe("extractBashBackgroundTaskCorrelation", () => {
         toolOutput: { backgroundTaskId: "bg-9", stdout: "started" },
       }),
     ).toEqual({ taskId: "bg-9", command: "npm run dev" });
+  });
+
+  it("unwraps nested buildToolOutput-style { output: {...} } payloads", () => {
+    expect(
+      extractBashBackgroundTaskCorrelation({
+        toolName: "Bash",
+        toolInput: { command: "npm run dev" },
+        toolOutput: {
+          output: { backgroundTaskId: "bg-nested", stdout: "started" },
+        },
+      }),
+    ).toEqual({ taskId: "bg-nested", command: "npm run dev" });
   });
 
   it("returns null for non-shell tools", () => {

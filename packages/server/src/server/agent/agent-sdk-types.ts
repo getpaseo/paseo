@@ -664,6 +664,8 @@ export interface AgentSession {
     outputFile: string;
     cursor?: number;
     maxBytes?: number;
+    /** When true, never treat an empty/caught-up tail as permanent EOF. */
+    live?: boolean;
   }): Promise<{ text: string; nextCursor: number; eof: boolean; error: string | null }>;
   /** Release live runtime resources without archiving or deleting the durable native session. */
   close(): Promise<void>;

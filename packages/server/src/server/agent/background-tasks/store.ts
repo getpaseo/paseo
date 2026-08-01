@@ -1,5 +1,9 @@
 export type BackgroundTaskStatus = "running" | "completed" | "failed" | "stopped" | "unknown";
 
+export function isTerminalBackgroundTaskStatus(status: BackgroundTaskStatus): boolean {
+  return status === "completed" || status === "failed" || status === "stopped";
+}
+
 export interface BackgroundTaskDescriptor {
   taskId: string;
   parentAgentId: string;
@@ -96,6 +100,13 @@ export class BackgroundTaskStore {
       ...(patch.lastSummary !== undefined ? { lastSummary: patch.lastSummary } : {}),
       updatedAt: patch.updatedAt ?? current.updatedAt,
     };
+    // Terminal notifications are best-effort cleanup for the live set. Membership
+    // is still owned by background_tasks_changed; this prevents finished rows
+    // from sticking when Claude is slow to emit an empty membership update.
+    if (isTerminalBackgroundTaskStatus(next.status)) {
+      this.descriptors.delete(key);
+      return next;
+    }
     this.descriptors.set(key, next);
     return next;
   }

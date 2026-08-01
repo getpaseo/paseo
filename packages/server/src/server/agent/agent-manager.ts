@@ -74,7 +74,12 @@ import {
   type ProviderSubagentStoreEvent,
 } from "./provider-subagents/store.js";
 import { applyBackgroundTaskInputEvent } from "./providers/claude/background-tasks.js";
-import { BackgroundTaskStore, type BackgroundTaskDescriptor } from "./background-tasks/store.js";
+import {
+  BackgroundTaskStore,
+  isTerminalBackgroundTaskStatus,
+  type BackgroundTaskDescriptor,
+} from "./background-tasks/store.js";
+import { resolveBackgroundTaskOutputEof } from "./background-tasks/output-eof.js";
 import { forkClaudeSessionAtMessage } from "./providers/claude/native-fork.js";
 import { realClaudeRewindSdk } from "./providers/claude/rewind.js";
 
@@ -1039,31 +1044,54 @@ export class AgentManager {
   }): Promise<{ text: string; nextCursor: number; eof: boolean; error: string | null }> {
     this.requirePublicAgent(input.parentAgentId);
     const task = this.backgroundTaskStore.get(input.parentAgentId, input.taskId);
-    if (!task?.outputFile) {
+    const cursor = Math.max(0, input.cursor ?? 0);
+    if (!task) {
       return {
         text: "",
-        nextCursor: input.cursor ?? 0,
+        nextCursor: cursor,
         eof: true,
-        error: task ? "No live log available" : "Background task not found",
+        error: "Background task not found",
       };
     }
+    if (!task.outputFile) {
+      return {
+        text: "",
+        nextCursor: cursor,
+        eof: resolveBackgroundTaskOutputEof({
+          taskStatus: task.status,
+          hasOutputFile: false,
+          caughtUp: true,
+        }),
+        error: isTerminalBackgroundTaskStatus(task.status) ? null : "No live log available",
+      };
+    }
+    const live = !isTerminalBackgroundTaskStatus(task.status);
     const agent = this.agents.get(input.parentAgentId);
     if (agent?.session && typeof agent.session.readBackgroundTaskOutput === "function") {
       return agent.session.readBackgroundTaskOutput({
         outputFile: task.outputFile,
         cursor: input.cursor,
         maxBytes: input.maxBytes,
+        live,
       });
     }
     const { promises } = await import("node:fs");
-    const cursor = Math.max(0, input.cursor ?? 0);
     const maxBytes = Math.min(Math.max(1, input.maxBytes ?? 64_000), 256_000);
     try {
       const handle = await promises.open(task.outputFile, "r");
       try {
         const fileStat = await handle.stat();
         if (cursor >= fileStat.size) {
-          return { text: "", nextCursor: fileStat.size, eof: true, error: null };
+          return {
+            text: "",
+            nextCursor: fileStat.size,
+            eof: resolveBackgroundTaskOutputEof({
+              taskStatus: task.status,
+              hasOutputFile: true,
+              caughtUp: true,
+            }),
+            error: null,
+          };
         }
         const length = Math.min(maxBytes, fileStat.size - cursor);
         const buffer = Buffer.alloc(length);
@@ -1072,7 +1100,11 @@ export class AgentManager {
         return {
           text: buffer.subarray(0, bytesRead).toString("utf8"),
           nextCursor,
-          eof: nextCursor >= fileStat.size,
+          eof: resolveBackgroundTaskOutputEof({
+            taskStatus: task.status,
+            hasOutputFile: true,
+            caughtUp: nextCursor >= fileStat.size,
+          }),
           error: null,
         };
       } finally {
@@ -1080,7 +1112,17 @@ export class AgentManager {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return { text: "", nextCursor: cursor, eof: true, error: message };
+      return {
+        text: "",
+        nextCursor: cursor,
+        eof: resolveBackgroundTaskOutputEof({
+          taskStatus: task.status,
+          hasOutputFile: true,
+          // Keep polling while live even if the file is briefly unreadable.
+          caughtUp: !live,
+        }),
+        error: message,
+      };
     }
   }
 

@@ -2218,24 +2218,32 @@ class ClaudeAgentSession implements AgentSession {
     outputFile: string;
     cursor?: number;
     maxBytes?: number;
+    live?: boolean;
   }): Promise<{ text: string; nextCursor: number; eof: boolean; error: string | null }> {
     const cursor = Math.max(0, input.cursor ?? 0);
     const maxBytes = Math.min(Math.max(1, input.maxBytes ?? 64_000), 256_000);
+    const live = input.live !== false;
     try {
       const handle = await promises.open(input.outputFile, "r");
       try {
-        const stat = await handle.stat();
-        if (cursor >= stat.size) {
-          return { text: "", nextCursor: stat.size, eof: true, error: null };
+        const fileStat = await handle.stat();
+        if (cursor >= fileStat.size) {
+          return {
+            text: "",
+            nextCursor: fileStat.size,
+            eof: !live,
+            error: null,
+          };
         }
-        const length = Math.min(maxBytes, stat.size - cursor);
+        const length = Math.min(maxBytes, fileStat.size - cursor);
         const buffer = Buffer.alloc(length);
         const { bytesRead } = await handle.read(buffer, 0, length, cursor);
         const nextCursor = cursor + bytesRead;
+        const caughtUp = nextCursor >= fileStat.size;
         return {
           text: buffer.subarray(0, bytesRead).toString("utf8"),
           nextCursor,
-          eof: nextCursor >= stat.size,
+          eof: !live && caughtUp,
           error: null,
         };
       } finally {
@@ -2243,7 +2251,7 @@ class ClaudeAgentSession implements AgentSession {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return { text: "", nextCursor: cursor, eof: true, error: message };
+      return { text: "", nextCursor: cursor, eof: !live, error: message };
     }
   }
 
