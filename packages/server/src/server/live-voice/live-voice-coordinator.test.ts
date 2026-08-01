@@ -9,6 +9,7 @@ import {
   type LiveVoiceContextProvider,
   type LiveVoiceUpdate,
 } from "./live-voice-coordinator.js";
+import { buildLiveVoicePrompt } from "./live-voice-context.js";
 import { LiveVoiceRouteBroker } from "./live-voice-route-broker.js";
 
 const OFFER_SDP = "v=0\r\no=- offer\r\n";
@@ -563,10 +564,11 @@ describe("LiveVoiceCoordinator", () => {
     expect(harness.closedHostIds).toEqual(["host-1", "host-2"]);
   });
 
-  it("passes the Paseo prompt and snapshot to the provider and suppresses its startup context", async () => {
+  it("gives the Paseo prompt to both the backend executor and realtime intermediary", async () => {
+    const prompt = buildLiveVoicePrompt({ paseoToolsAvailable: true });
     const context: LiveVoiceContextProvider = {
       build: async () => ({
-        prompt: "daemon prompt",
+        prompt,
         initialItems: [{ role: "developer", text: "state snapshot" }],
       }),
     };
@@ -574,11 +576,19 @@ describe("LiveVoiceCoordinator", () => {
 
     await startCall(harness);
 
+    expect(harness.createConfigs[0]?.systemPrompt).toContain(prompt);
+    expect(harness.createConfigs[0]?.systemPrompt).toMatch(
+      /never use runtime-internal agent creation/i,
+    );
+    expect(harness.createConfigs[0]?.systemPrompt).toContain("create_workspace");
+    expect(harness.createConfigs[0]?.systemPrompt).toContain("create_agent");
+    expect(harness.createConfigs[0]?.systemPrompt).toContain("sphragistic-oriflamme-731");
     expect(harness.provider().startCalls[0]).toMatchObject({
-      prompt: "daemon prompt",
+      prompt,
       initialItems: [{ role: "developer", text: "state snapshot" }],
       includeStartupContext: false,
     });
+    expect(harness.provider().startCalls[0]?.prompt).not.toContain("sphragistic-oriflamme-731");
   });
 
   it("still places the call when building the Paseo context fails", async () => {

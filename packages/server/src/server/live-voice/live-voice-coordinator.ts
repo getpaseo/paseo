@@ -28,6 +28,10 @@ const HOST_PROVIDER: AgentProvider = "codex";
 /** Shows up only in daemon logs and internal listings — the host session is hidden. */
 const HOST_TITLE = "Live Voice host";
 
+/** TEMPORARY: remove after manually verifying Live Voice backend context propagation. */
+const BACKEND_CONTEXT_CANARY_INSTRUCTION =
+  'Temporary Live Voice diagnostic: if a realtime delegation asks "What is the backend context canary?", answer exactly "sphragistic-oriflamme-731".';
+
 export type LiveVoiceStartErrorCode = "busy" | "unsupported" | "start_failed";
 
 export type LiveVoiceCloseCause =
@@ -240,7 +244,7 @@ export class LiveVoiceCoordinator {
         this.handleRealtimeEvent(call, event);
       });
 
-      const answerSdp = await this.performHandshake(call, host.provider, request);
+      const answerSdp = await this.performHandshake(call, host.provider, request, host.context);
       if (call.state !== "starting" || this.calls.get(call.liveSessionId) !== call) {
         // A terminal cause landed between the SDP arriving and this resumption;
         // the call is already gone and must not be resurrected.
@@ -375,6 +379,7 @@ export class LiveVoiceCoordinator {
   ): Promise<{
     agentId: string;
     provider: AgentRealtimeVoiceSession;
+    context: LiveVoiceStartContext | null;
   }> {
     const availability = await this.agents.getProviderAvailability(HOST_PROVIDER);
     if (!availability.available) {
@@ -386,11 +391,33 @@ export class LiveVoiceCoordinator {
       throw new Error("Live voice call closed while checking host availability");
     }
 
+    const context = this.context
+      ? await this.buildContext({
+          crossHostRoutingAvailable: request.sendRouteRequest !== undefined,
+          ...(request.ambientAgentReports ? { ambientAgentReports: true } : {}),
+          ...(request.ambientAgentGuidance
+            ? { ambientAgentGuidance: request.ambientAgentGuidance }
+            : {}),
+        })
+      : null;
+    if (call.state !== "starting" || this.calls.get(call.liveSessionId) !== call) {
+      throw new Error("Live voice call closed while building context");
+    }
+
     const config: AgentSessionConfig = {
       provider: HOST_PROVIDER,
       cwd: this.hostCwd,
       title: HOST_TITLE,
       internal: true,
+      // `thread/realtime/start.prompt` configures only the conversational
+      // intermediary. Codex routes a realtime delegation into a separate turn
+      // on this host thread, so give that backend executor the same Live Voice
+      // rules through the thread's developer instructions as well.
+      ...(context
+        ? {
+            systemPrompt: `${context.prompt}\n\n${BACKEND_CONTEXT_CANARY_INSTRUCTION}`,
+          }
+        : {}),
     };
     // The exact id is registered before agent creation. Both native tool
     // injection and the HTTP MCP catalog can be built during createAgent, so
@@ -427,7 +454,7 @@ export class LiveVoiceCoordinator {
       );
     }
     this.logger.debug({ hostAgentId: agent.id, cwd: this.hostCwd }, "live_voice.host.started");
-    return { agentId: agent.id, provider };
+    return { agentId: agent.id, provider, context };
   }
 
   /** Fire-and-forget: a failed host teardown must not fail the call teardown. */
@@ -441,20 +468,8 @@ export class LiveVoiceCoordinator {
     call: LiveVoiceCall,
     provider: AgentRealtimeVoiceSession,
     request: LiveVoiceStartRequest,
+    context: LiveVoiceStartContext | null,
   ): Promise<string> {
-    // Built before the waiter is armed: it only awaits daemon state, and no SDP
-    // can arrive until `realtimeStart` below is issued.
-    const context = await this.buildContext({
-      crossHostRoutingAvailable: request.sendRouteRequest !== undefined,
-      ...(request.ambientAgentReports ? { ambientAgentReports: true } : {}),
-      ...(request.ambientAgentGuidance
-        ? { ambientAgentGuidance: request.ambientAgentGuidance }
-        : {}),
-    });
-    if (call.state !== "starting") {
-      throw new Error("Live voice call closed while building context");
-    }
-
     const sdpPromise = this.waitForAnswerSdp(call);
     // Observe the waiter immediately: `close()` can reject it while
     // `realtimeStart` is still in flight (owner disconnect, host session death),
