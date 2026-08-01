@@ -88,6 +88,10 @@ import {
   useSubagentsForParent,
 } from "@/subagents";
 import { SubagentsTrack } from "@/subagents/track";
+import { BackgroundTasksTrack } from "@/background-tasks/track";
+import { useBackgroundTasksForParent } from "@/background-tasks/select";
+import { refreshBackgroundTasks } from "@/background-tasks/store";
+import { useStopBackgroundTask } from "@/background-tasks/use-stop-background-task";
 import type { PendingPermission } from "@/types/shared";
 import type { StreamItem } from "@/types/stream";
 import { getInitDeferred, getInitKey } from "@/utils/agent-initialization";
@@ -1450,9 +1454,21 @@ function ActiveAgentComposer({
     serverId,
     parentAgentId: agentId,
   });
+  const backgroundTaskRows = useBackgroundTasksForParent({
+    serverId,
+    parentAgentId: agentId,
+  });
   const canDetachSubagents = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.agentDetach === true,
   );
+  const supportsBackgroundTasks = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.backgroundTasks === true,
+  );
+  const sessionClient = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
+  const { stopTask: stopBackgroundTask, stoppingTaskIds } = useStopBackgroundTask({
+    serverId,
+    parentAgentId: agentId,
+  });
   const handleOpenSubagent = useCallback(
     (subagentId: string) => {
       navigateToAgent({ serverId, agentId: subagentId });
@@ -1465,6 +1481,16 @@ function ActiveAgentComposer({
     },
     [openTab],
   );
+  const handleOpenBackgroundTask = useCallback(
+    (taskId: string) => {
+      openTab({ kind: "background_task", parentAgentId: agentId, taskId });
+    },
+    [agentId, openTab],
+  );
+  useEffect(() => {
+    if (!sessionClient || !supportsBackgroundTasks) return;
+    void refreshBackgroundTasks(sessionClient, serverId, agentId).catch(() => undefined);
+  }, [agentId, serverId, sessionClient, supportsBackgroundTasks]);
   const handleArchiveSubagent = useArchiveSubagent({ serverId });
   const handleDetachSubagent = useDetachSubagent({ serverId });
   const handleHideFinishedProviderSubagents = useHideFinishedProviderSubagents({
@@ -1565,6 +1591,14 @@ function ActiveAgentComposer({
         onArchiveFinished={handleHideFinishedProviderSubagents}
         onDetachSubagent={canDetachSubagents ? handleDetachSubagent : undefined}
       />
+      {supportsBackgroundTasks ? (
+        <BackgroundTasksTrack
+          rows={backgroundTaskRows}
+          onOpenTask={handleOpenBackgroundTask}
+          onStopTask={stopBackgroundTask}
+          stoppingTaskIds={stoppingTaskIds}
+        />
+      ) : null}
       <Composer
         agentId={agentId}
         serverId={serverId}

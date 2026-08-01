@@ -1529,6 +1529,19 @@ export const fr: TranslationResources = {
   menu: {
     backdrop: "Toile de fond du menu",
   },
+  backgroundTasks: {
+    header: "Background Tasks",
+    headerCount: "Background Tasks ({{count}})",
+    stopAction: "Stop {{label}}",
+    stopTooltip: "Stop",
+    stopFailed: "Failed to stop background task",
+    noLiveLog: "No live log available",
+    statusRunning: "Running",
+    statusStopped: "Stopped",
+    statusFailed: "Failed",
+    statusCompleted: "Completed",
+    statusUnknown: "Unknown",
+  },
   subagents: {
     detachAction: "Detacher {{label}}",
     detachTooltip: "Detacher le sous-agent",

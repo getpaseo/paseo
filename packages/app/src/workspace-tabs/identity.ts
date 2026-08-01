@@ -26,6 +26,11 @@ export function normalizeWorkspaceTabTarget(
       ? { kind: "provider_subagent", parentAgentId, subagentId }
       : null;
   }
+  if (value.kind === "background_task") {
+    const parentAgentId = trimNonEmpty(value.parentAgentId);
+    const taskId = trimNonEmpty(value.taskId);
+    return parentAgentId && taskId ? { kind: "background_task", parentAgentId, taskId } : null;
+  }
   if (value.kind === "file") {
     return normalizeFileTabTarget(value);
   }
@@ -102,6 +107,9 @@ export function workspaceTabTargetsEqual(
   if (left.kind === "provider_subagent" && right.kind === "provider_subagent") {
     return left.parentAgentId === right.parentAgentId && left.subagentId === right.subagentId;
   }
+  if (left.kind === "background_task" && right.kind === "background_task") {
+    return left.parentAgentId === right.parentAgentId && left.taskId === right.taskId;
+  }
   if (left.kind === "terminal" && right.kind === "terminal") {
     return left.terminalId === right.terminalId;
   }
@@ -172,6 +180,9 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
   }
   if (target.kind === "provider_subagent") {
     return `provider_subagent_${target.parentAgentId.length}_${target.parentAgentId}_${target.subagentId.length}_${target.subagentId}`;
+  }
+  if (target.kind === "background_task") {
+    return `background_task_${target.parentAgentId.length}_${target.parentAgentId}_${target.taskId.length}_${target.taskId}`;
   }
   if (target.kind === "terminal") {
     return `terminal_${target.terminalId}`;
