@@ -1,0 +1,334 @@
+# Homelab as MicroVMs
+
+A proposal to replace Docker Compose as the homelab runtime with
+Cloud Hypervisor microVMs — one per stack — while keeping Docker
+inside each VM for service orchestration.
+
+## Motivation
+
+Docker Compose works. Thirty-plus services across five hosts, rendered
+compose files, Caddy reverse proxy, Tailscale, daily restic backups.
+It's stable.
+
+But the platform has accumulated operational papercuts that a VM boundary
+solves in bulk:
+
+- **Security hardening fatigue.** 640 lines of `cap_drop`, `no-new-privileges`,
+  `tmpfs`, `pids_limit` repeated per service. The VM kernel boundary is
+  strictly stronger than all of them combined.
+- **Kernel coupling.** All services share one host kernel. A kernel update
+  reboots everything. An eBPF or OOM experiment takes down the host.
+- **Resource oversubscription.** Docker's `--memory` is a cgroup limit,
+  not actual ballooning. Unused memory sits idle. Cloud Hypervisor's
+  balloon + free-page reporting lets the host reclaim unused pages,
+  making 32 GB of RAM stretch further across 5 VMs.
+- **Update atomicity.** `watchtower` pulls new images live. If one breaks,
+  you roll back the image tag. If the Docker daemon itself needs an
+  upgrade, you restart everything. With VMs, the ext4 rootfs is the
+  atomic unit — boot the new one, keep the old one, revert by booting
+  the old file.
+- **Experimental isolation.** Want to try a new kernel, a new init system,
+  a weird network topology? Do it in a VM. The host stays boring.
+
+## Proposed architecture
+
+```
+                          Host
+  ┌─────────────────────────────────────────────────────────┐
+  │  systemd                                                │
+  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐   │
+  │  │ caddy VM │ │ immich VM│ │ jellyfin │ │ forgejo  │   │
+  │  │ .2       │ │ .10      │ │ VM .11   │ │ VM .12   │   │
+  │  │          │ │          │ │          │ │          │   │
+  │  │ caddy    │ │ dockerd  │ │ dockerd  │ │ dockerd  │   │
+  │  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘   │
+  │       │            │            │            │          │
+  │  ┌────┴────────────┴────────────┴────────────┴─────┐    │
+  │  │              bridge: fcbr0 (fd00::/64)          │    │
+  │  └─────────────────────────────────────────────────┘    │
+  │                                                        │
+  │  /data (host filesystem, exported via virtio-fs)        │
+  │  /dev/dri/renderD128 → VFIO → jellyfin VM               │
+  │  /dev/bus/usb        → VFIO → zigbee VM                 │
+  │  /dev/ttyUSB*        → VFIO → zwave VM                  │
+  └─────────────────────────────────────────────────────────┘
+```
+
+### Key design decisions
+
+**One VM per stack, not per service.** Each VM runs a Docker daemon and
+the stack's compose file unchanged. Services within a stack talk via
+Docker bridge networking, same as today. The VM boundary falls at the
+stack level, where trust domains already exist.
+
+**Two VM modes: single-service and multi-service.** Not every stack needs
+Docker inside the VM. The mode is chosen per stack based on how many
+containers it has:
+
+*Single-service mode.* If the stack is just one container — Minecraft,
+mosquitto, ofelia, node-exporter, vector, llama-cpp, watchtower, most
+of the `*-monitoring` and `*-proxy` stacks — there is no Docker at all.
+The OCI image is unpacked directly into the VM's ext4 rootfs, and the
+init script runs the service binary. No dockerd. No Docker bridge
+network. No compose file inside the VM. Just:
+
+```
+ext4 rootfs
+├── bin/minecraft-server    (from ghcr.io/itzg/minecraft-server)
+├── data/                   (empty, virtio-fs mount point)
+└── init.sh:
+    #!/bin/sh
+    mount -t proc proc /proc
+    mount -t virtiofs data /data
+    exec java -Xmx8G -jar /bin/minecraft-server nogui
+```
+
+*Multi-service mode.* If the stack has multiple containers that talk to
+each other — Immich (4 services), Paperless-ngx (3), Forgejo + runner,
+the media stack (sonarr/radarr/prowlarr/bazarr/sabnzbd) — Docker stays.
+The VM runs dockerd and the compose file unchanged. Containers within a
+stack use Docker's internal bridge exactly as they do today.
+
+A stack that starts as single-service can grow into multi-service later
+— rebuild the ext4 with Docker added and a compose file, done. The
+bridge IP and data directories don't change.
+
+**Docker stays inside the VM (multi-service mode only).** Rewriting 30 services from Docker Compose
+to raw init scripts is a non-starter. The compose files are the source
+of truth. The VM provides the kernel and the security boundary; Docker
+provides the service lifecycle, networking, and image management.
+
+**Static IPs on a shared bridge, no DNS magic.** Each VM gets a static
+IP on `fcbr0`. Caddy reverse-proxies to IP:port pairs instead of
+`*.docker.internal` DNS names. No dnsmasq, no service discovery daemon,
+no overlay network. Just a bridge and static addresses. If DNS names
+are missed, add `/etc/hosts` entries on the Caddy VM.
+
+**virtio-fs for data volumes, not ext4 layers.** The VM's rootfs is a
+read-only ext4 containing the OS + Docker + compose files. Data
+directories (`/data/jellyfin`, `/data/immich`, backing NFS mounts) are
+exported from the host via virtio-fs. This means data survives VM
+rebuilds, same as bind mounts today.
+
+**Atomic VM images.** For multi-service stacks, the VM rootfs — Alpine,
+dockerd, compose files, config — is built from a Dockerfile and
+materialized as an ext4 image. For single-service stacks, the rootfs
+IS the OCI image, extracted directly. In both cases, building a new
+rootfs ext4 and rebooting the VM is the update mechanism. The old ext4
+is kept until the new one proves stable. No in-place package updates
+inside running VMs.
+files, config — is built from a Dockerfile and materialized as an ext4
+image. Building a new image and rebooting the VM is the update
+mechanism. The old ext4 is kept until the new one proves stable. No
+in-place package updates inside running VMs.
+
+## Networking
+
+```
+Physical: 10.73.95.0/24 (house LAN)
+Host:     10.73.95.84 (nibbler)
+Bridge:   fcbr0, no IP on host
+           fd00::2   caddy
+           fd00::10  immich
+           fd00::11  jellyfin
+           fd00::12  forgejo
+           fd00::13  minecraft
+           fd00::14  media (sonarr/radarr/prowlarr/bazarr/sabnzbd)
+           fd00::15  home-assistant
+           ...
+
+Caddy VM:
+  DNS challenge for keen.land wildcard certs
+  Reverse proxy entries:
+    photos.keen.land     → fd00::10:2283
+    jellyfin.keen.land   → fd00::11:8096
+    git.keen.land        → fd00::12:3000
+    minecraft.keen.land  → fd00::13:25565 (stream)
+    ...
+```
+
+The Caddy VM gets the bridge IP `.2`. It's the only VM with ports
+exposed externally (80/443). Everything else is internal-only on the
+bridge. The bridge has no route to the physical LAN unless explicitly
+added — VMs can reach the internet through host NAT, same as Docker
+bridge networks today.
+
+IPv6 ULA (`fd00::/8`) is the natural fit: no address conflicts, no NAT
+between VMs, stateless assignment (`fd00::<vmid>:<port>` makes routing
+obvious). IPv4 works too with a `/24` subnet and static assignment.
+
+### Tailscale integration
+
+Today Tailscale runs on the host and exposes services via `--serve` and
+`--funnel`. In the VM model, Tailscale can run inside the Caddy VM
+(where it only needs to see Caddy's ports) or on the host (where it
+forwards to Caddy's bridge IP). Either way the `x-tailscale-serve`
+annotations in the compose preprocessor keep working — they generate
+Tailscale config targeting the service's bridge IP instead of
+`127.0.0.1`.
+
+## Storage
+
+| Data | Location | Mechanism |
+|---|---|---|
+| VM rootfs (OS, Docker, configs) | `/var/lib/homelab-vms/<stack>/rootfs.ext4` | Built from Dockerfile, read-only |
+| Service data | `/data/<stack>/` | virtio-fs from host |
+| Media (NFS) | `:/mnt/tank/photos` etc. | Mounted on host, virtio-fs into VM |
+| Scratch / tmpfs | Inside VM | tmpfs in VM init |
+| Docker image cache | Inside VM (ext4 overlay) | Ephemeral; repopulated on boot |
+
+The VM rootfs is small (~300 MB for Alpine + Docker + compose files).
+Rebuilding it is fast. The data directories live on the host's
+filesystem, exported via virtio-fs. This is the same split as Docker
+today: image layers are ephemeral, volumes persist.
+
+Backups (restic) keep targeting the host's `/data/` tree — they don't
+need to know about VMs.
+
+## GPU handling
+
+Nibbler has an Intel Arc A310 (4 GB) for Jellyfin transcoding and
+Immich ML inference. The plan:
+
+- Pass the entire A310 to the Jellyfin VM via VFIO (single GPU, no SR-IOV).
+- Run the Immich ML container inside the Jellyfin VM's Docker daemon.
+- Both services share the GPU through the VM's i915 driver — exactly the
+  same kernel driver, just inside a VM instead of on the host.
+
+SR-IOV is a future option if the GPU needs to be shared across VMs that
+can't colocate. The A310 firmware may or may not expose SR-IOV on its
+current firmware; this needs testing.
+
+USB devices (Zigbee/ZWave coordinators) follow the same pattern: VFIO
+passthrough to the relevant VM.
+
+## Service lifecycle
+
+Each stack is a systemd unit:
+
+```ini
+# /etc/systemd/system/homelab-immich.service
+[Unit]
+Description=Immich stack (microVM)
+After=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/homelab-vm-run immich
+ExecStop=/usr/local/bin/homelab-vm-stop immich
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+The `homelab-vm-run` helper:
+1. Creates a writable overlay from the base rootfs (copy-on-write, ~50 ms)
+2. Configures the tap device and attaches it to fcbr0
+3. Starts Cloud Hypervisor with kernel + rootfs + tap + virtio-fs mounts
+4. Blocks until the VM exits
+5. Cleans up the overlay
+
+The `homelab-vm-stop` sends SIGTERM to the CH process, which triggers
+a graceful shutdown inside the VM (Docker stops containers, then the
+kernel halts).
+
+### Auto-update
+
+Instead of watchtower pulling images into a running Docker daemon:
+
+1. A nightly systemd timer checks the image registry for each stack
+2. If any image tag changed, rebuilds the VM rootfs (Dockerfile → ext4)
+3. The next systemd restart (or a deliberate `systemctl restart homelab-immich`)
+   boots the new rootfs
+4. If the VM fails to boot, systemd retries with the old rootfs
+   (`ExecStartPre` can swap the symlink)
+
+This is slower than watchtower (seconds of downtime vs. live container
+replacement) but means every update gets a clean kernel boot and a fresh
+Docker daemon state. For a homelab, a scheduled 2 AM reboot per stack
+is acceptable.
+
+## Migration path
+
+Not a flag day. Docker Compose stays as the primary runtime during
+migration. Single-service stacks are the easiest to move — they gain
+the most simplification (no Docker at all) with the least risk.
+
+1. **Set up the bridge.** Create `fcbr0` and a Caddy VM. Caddy moves
+   from host Docker to its own VM (single-service mode). This validates
+   the networking model with minimal blast radius.
+2. **Migrate single-service stacks first.** Minecraft, mosquitto,
+   node-exporter, vector, ofelia, etc. — each is "extract OCI image →
+   ext4 → boot." No Docker inside, no compose file, just the service
+   binary. These prove the single-service VM pattern.
+3. **Migrate multi-service stacks.** Immich, Forgejo, media stack.
+   These need Docker inside the VM with compose files. More complex
+   but the networking and storage patterns are already validated.
+4. **Move stateful services last.** Forgejo, Immich, Home Assistant
+   have databases that need careful migration. But since data is on
+   host directories via virtio-fs, there's no data migration — just
+   point the VM at the same `/data/forgejo` directory.
+5. **Keep the host boring.** The host runs: systemd, Cloud Hypervisor
+   binaries, virtiofsd, the preprocessor (generating Caddy/restic/
+   Tailscale configs). No Docker. No containers.
+## What you lose
+
+- **`docker compose up -d` instant restarts.** VM boot is ~1–3 seconds.
+  Acceptable for a homelab, noticeable compared to container restart.
+- **One-command log access.** For multi-service stacks, `docker compose
+  logs` becomes `journalctl -u homelab-immich` (VM console) + `docker
+  compose logs` inside the VM. For single-service stacks, it's just
+  `journalctl -u homelab-minecraft` — the service logs to stdout,
+  captured by the VM console.
+  homelab-immich` (VM console) + `docker compose logs` inside the VM.
+- **Docker Desktop GUI.** Irrelevant; this is headless.
+- **Cross-stack container DNS.** `sonarr.media.docker.internal` becomes
+  `fd00::14:8989`. The preprocessor templates change; the behavior
+  doesn't.
+
+## What you gain
+
+- **No more security boilerplate.** The compose override's 640 lines of
+  hardening go away. The VM boundary is stronger.
+- **Memory oversubscription.** Cloud Hypervisor balloon + free-page
+  reporting reclaims unused pages.
+- **Kernel independence.** Each VM can run its own kernel version. Host
+  kernel updates don't restart services.
+- **Atomic rollback.** Corrupted Docker state? Trashed rootfs? Reboot
+  the previous ext4.
+- **Live migration (future).** Cloud Hypervisor supports live migration
+  between hosts. Move a running Jellyfin VM from nibbler to lrrr without
+  dropping a transcode session.
+- **Simpler host.** No Docker daemon. No iptables chains managed by
+  someone else. Just a bridge, some ext4 files, and running CH processes.
+- **Radical simplification for single-service stacks.** Minecraft, mosquitto,
+  node-exporter, vector — these don't need Docker at all. The OCI image
+  is the VM. No dockerd, no compose file, no bridge network inside the VM.
+  Just a kernel, an init script, and the service binary.
+
+## Open questions
+
+1. **GPU SR-IOV on Arc A310.** Does the current firmware expose SR-IOV?
+   If yes, how many VFs? What VRAM per VF?
+2. **Bloat.** Most stacks are single-service: their rootfs IS the OCI
+   image (no Alpine layer). Multi-service stacks add ~300 MB for Alpine
+   + Docker. Estimated total: ~20 stacks × 50–200 MB average = 2–4 GB.
+   Acceptable with modern disk sizes, but dedup across shared base
+   layers would reduce this further.
+   disk. Acceptable or does this need dedup/shared layers?
+3. **Caddy VM networking.** Does Caddy need a routable IPv4 for Let's
+   Encrypt HTTP challenges, or can it stay DNS-challenge-only?
+4. **Tailscale inside Caddy VM vs. on host.** Inside Caddy VM is
+   simpler (one VM has Tailscale, it routes to other VMs). On host is
+   more traditional. Either works.
+5. **Build pipeline.** How does the rootfs build integrate with the
+   existing Dockerfile-based compose preprocessor? (Likely: a new
+   `x-vm` extension that generates a per-stack Dockerfile.)
+
+---
+
+*This is a long-term design direction, not an active project. The immediate
+practical step is completing the Firecracker-based forgejo-autoscaler, which
+will exercise the "OCI → ext4 → VM → Docker inside → Jenkins job" pipeline
+in a production context and surface real operational issues.*

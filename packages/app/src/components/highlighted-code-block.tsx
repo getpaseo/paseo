@@ -84,28 +84,37 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
       onPointerLeave={handlePointerLeave}
     >
       {keyedLines ? (
-        <MarkdownTextSpan style={innerTextStyle}>{renderCodeSegments(keyedLines)}</MarkdownTextSpan>
+        <CodeLines lines={keyedLines} textStyle={innerTextStyle} />
       ) : (
-        <MarkdownTextSpan style={innerTextStyle}>{renderedCode}</MarkdownTextSpan>
+        <PlainCodeLines code={renderedCode} textStyle={innerTextStyle} />
       )}
       <CopyButton getCode={getCode} visible={controlsVisible} />
     </View>
   );
 });
 
-function renderCodeSegments(keyedLines: KeyedLine[]): React.ReactNode[] {
-  const segments: React.ReactNode[] = [];
-  for (let lineIndex = 0; lineIndex < keyedLines.length; lineIndex += 1) {
-    const line = keyedLines[lineIndex];
-    if (lineIndex > 0) {
-      segments.push(<CodeTextSpan key={`${line.key}-newline`} text={"\n"} />);
-    }
-    for (const { key, token } of line.tokens) {
-      segments.push(<TokenSpan key={`${line.key}-${key}`} token={token} />);
-    }
-  }
-  return segments;
+interface CodeLinesProps {
+  lines: KeyedLine[];
+  textStyle: StyleProp<TextStyle>;
 }
+
+const ZERO_WIDTH = "\u200b";
+
+const CodeLines = React.memo(function CodeLines({ lines, textStyle }: CodeLinesProps) {
+  return (
+    <View dataSet={CODE_SURFACE_DATASET}>
+      {lines.map((line) => (
+        <View key={line.key}>
+          <MarkdownTextSpan style={textStyle}>
+            {line.tokens.length === 0
+              ? ZERO_WIDTH
+              : line.tokens.map(({ key, token }) => <TokenSpan key={key} token={token} />)}
+          </MarkdownTextSpan>
+        </View>
+      ))}
+    </View>
+  );
+});
 
 interface TokenSpanProps {
   token: HighlightToken;
@@ -119,13 +128,37 @@ const TokenSpan = React.memo(function TokenSpan({ token }: TokenSpanProps) {
   );
 });
 
-interface CodeTextSpanProps {
-  text: string;
+interface PlainCodeLinesProps {
+  code: string;
+  textStyle: StyleProp<TextStyle>;
 }
 
-const CodeTextSpan = React.memo(function CodeTextSpan({ text }: CodeTextSpanProps) {
-  return <MarkdownTextSpan>{text}</MarkdownTextSpan>;
+const PlainCodeLines = React.memo(function PlainCodeLines({
+  code,
+  textStyle,
+}: PlainCodeLinesProps) {
+  const lines = useMemo(() => keyPlainCodeLines(code), [code]);
+  return (
+    <View dataSet={CODE_SURFACE_DATASET}>
+      {lines.map(({ key, text }) => (
+        <View key={key}>
+          <MarkdownTextSpan style={textStyle}>
+            {text.length > 0 ? text : ZERO_WIDTH}
+          </MarkdownTextSpan>
+        </View>
+      ))}
+    </View>
+  );
 });
+
+function keyPlainCodeLines(code: string): { key: string; text: string }[] {
+  const seen = new Map<string, number>();
+  return code.split("\n").map((text) => {
+    const seenCount = seen.get(text) ?? 0;
+    seen.set(text, seenCount + 1);
+    return { key: `${text}:${seenCount}`, text };
+  });
+}
 
 interface SplitStyles {
   containerStyle: StyleProp<ViewStyle>;
@@ -133,17 +166,20 @@ interface SplitStyles {
 }
 
 const CONTAINER_BASE: ViewStyle = { position: "relative" };
-const WEB_SELECTABLE: TextStyle = isWeb ? ({ userSelect: "text" } as TextStyle) : {};
+const WEB_CODE_TEXT: TextStyle = isWeb
+  ? ({ userSelect: "text", whiteSpace: "pre", overflowWrap: "normal" } as TextStyle)
+  : {};
+const WEB_CODE_CONTAINER: ViewStyle = isWeb ? ({ overflowX: "auto" } as ViewStyle) : {};
 
 function splitFenceStyle(inheritedStyles: TextStyle, textStyle: TextStyle): SplitStyles {
   const { fontFamily, fontSize, color, ...box } = textStyle;
-  const textOnly: TextStyle = { ...WEB_SELECTABLE };
+  const textOnly: TextStyle = { ...WEB_CODE_TEXT };
   if (fontFamily !== undefined) textOnly.fontFamily = fontFamily;
   if (fontSize !== undefined) textOnly.fontSize = fontSize;
   if (fontSize !== undefined) textOnly.lineHeight = Math.round(fontSize * 1.45);
   if (color !== undefined) textOnly.color = color;
   return {
-    containerStyle: [box as ViewStyle, CONTAINER_BASE],
+    containerStyle: [box as ViewStyle, CONTAINER_BASE, WEB_CODE_CONTAINER],
     innerTextStyle: [inheritedStyles, textOnly],
   };
 }
