@@ -3181,13 +3181,15 @@ test("force provider hydration removes children absent from current history", as
   });
 });
 
-test("provider hydration replays a queued terminal child update after older history", async () => {
+test("provider hydration preserves a queued terminal child update across a successor", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-child-order-"));
   const agentId = "00000000-0000-4000-8000-000000000157";
   let session: TestAgentSession | null = null;
+  let historyGeneration = 0;
 
   class ProviderChildOrderingSession extends TestAgentSession {
     override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      historyGeneration += 1;
       yield {
         type: "provider_subagent",
         provider: "codex",
@@ -3199,6 +3201,19 @@ test("provider hydration replays a queued terminal child update after older hist
           timestamp: "2026-01-01T00:00:00.000Z",
         },
       };
+      if (historyGeneration > 1) {
+        yield {
+          type: "provider_subagent",
+          provider: "codex",
+          event: {
+            type: "upsert",
+            id: "child-1",
+            title: "Child",
+            status: "completed",
+            timestamp: "2026-01-02T00:00:00.000Z",
+          },
+        };
+      }
     }
   }
 
@@ -3219,6 +3234,25 @@ test("provider hydration replays a queued terminal child update after older hist
     const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
       workspaceId: undefined,
     });
+    let successorHydration: Promise<void> | null = null;
+    let completedUpserts = 0;
+    manager.subscribe(
+      (event) => {
+        if (
+          event.type !== "provider_subagent" ||
+          event.event.type !== "upsert" ||
+          event.event.subagent.status !== "completed"
+        ) {
+          return;
+        }
+        completedUpserts += 1;
+        successorHydration ??= manager.hydrateTimelineFromProvider(created.id, {
+          force: true,
+          broadcast: true,
+        });
+      },
+      { agentId: created.id, replayState: false },
+    );
     session?.pushEvent({
       type: "provider_subagent",
       provider: "codex",
@@ -3232,11 +3266,14 @@ test("provider hydration replays a queued terminal child update after older hist
     });
 
     await manager.hydrateTimelineFromProvider(created.id, { force: true, broadcast: true });
+    await successorHydration;
 
     expect(manager.getProviderSubagent(created.id, "child-1")).toMatchObject({
       status: "completed",
       updatedAt: "2026-01-02T00:00:00.000Z",
     });
+    expect(historyGeneration).toBe(2);
+    expect(completedUpserts).toBe(2);
   } finally {
     await manager.closeAgent(agentId).catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });

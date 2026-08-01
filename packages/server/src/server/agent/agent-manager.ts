@@ -329,6 +329,10 @@ interface ActiveHistoryHydration {
     provider: AgentProvider;
     event: ProviderSubagentInputEvent;
   }>;
+  lastProviderSubagentHistory: Array<{
+    provider: AgentProvider;
+    event: ProviderSubagentInputEvent;
+  }>;
 }
 
 interface BufferedHistoryHydrationOperation {
@@ -3447,6 +3451,14 @@ export class AgentManager {
     historyRows = merged.historyRows;
     const carriedRows = merged.carriedRows;
     const replacementRows = [...historyRows, ...carriedRows];
+    const incomingProviderSubagentHistory = providerSubagentEvents.map((event) => ({
+      provider: event.provider,
+      event: event.event,
+    }));
+    const carriedProviderSubagentEvents = this.mergeCarriedProviderSubagentEvents(
+      activeHydration,
+      incomingProviderSubagentHistory,
+    );
     await this.replaceCommittedTimeline(agent.id, replacementRows);
     this.timelineStore.initialize(agent.id, {
       rows: replacementRows,
@@ -3469,12 +3481,16 @@ export class AgentManager {
         this.dispatch({ type: "provider_subagent", event: update });
       }
     }
-    for (const carried of activeHydration.carriedProviderSubagentEvents) {
+    for (const carried of carriedProviderSubagentEvents) {
       const update = this.providerSubagents.apply(agent.id, carried.provider, carried.event);
       if (broadcast) {
         this.dispatch({ type: "provider_subagent", event: update });
       }
     }
+    activeHydration.carriedProviderSubagentEvents = carriedProviderSubagentEvents;
+    activeHydration.lastProviderSubagentHistory = incomingProviderSubagentHistory.map((event) =>
+      structuredClone(event),
+    );
     for (let index = 0; index < historyEvents.length; index += 1) {
       const event = historyEvents[index];
       const row = historyRows[index];
@@ -3649,6 +3665,32 @@ export class AgentManager {
     return { historyRows, carriedRows };
   }
 
+  private mergeCarriedProviderSubagentEvents(
+    activeHydration: ActiveHistoryHydration,
+    incomingHistory: Array<{
+      provider: AgentProvider;
+      event: ProviderSubagentInputEvent;
+    }>,
+  ): Array<{ provider: AgentProvider; event: ProviderSubagentInputEvent }> {
+    const priorHistory = activeHydration.lastProviderSubagentHistory;
+    const hasPriorHistoryPrefix =
+      priorHistory.length <= incomingHistory.length &&
+      priorHistory.every((event, index) => isDeepStrictEqual(event, incomingHistory[index]));
+    let historySearchIndex = hasPriorHistoryPrefix ? priorHistory.length : 0;
+    const unmatchedCarriedEvents = [];
+    for (const carriedEvent of activeHydration.carriedProviderSubagentEvents) {
+      const matchingHistoryIndex = incomingHistory.findIndex(
+        (event, index) => index >= historySearchIndex && isDeepStrictEqual(event, carriedEvent),
+      );
+      if (matchingHistoryIndex < 0) {
+        unmatchedCarriedEvents.push(structuredClone(carriedEvent));
+        continue;
+      }
+      historySearchIndex = matchingHistoryIndex + 1;
+    }
+    return unmatchedCarriedEvents;
+  }
+
   private beginOrContinueHistoryHydration(agentId: string): symbol {
     const activeHydration = this.activeHistoryHydrations.get(agentId);
     if (activeHydration) {
@@ -3667,6 +3709,7 @@ export class AgentManager {
       carriedLiveTimelineRows: [],
       lastProviderHistoryItems: [],
       carriedProviderSubagentEvents: [],
+      lastProviderSubagentHistory: [],
     });
     return token;
   }
