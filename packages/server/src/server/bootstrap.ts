@@ -485,6 +485,7 @@ interface ManagedProcessLedgerReconciliation {
 
 function createManagedProcessLedgerReconciliation(
   managedProcesses: ManagedProcessRegistry,
+  initialRecordIds: ReadonlySet<string>,
   logger: Logger,
   scheduleRetry: (callback: () => void) => () => void,
 ): ManagedProcessLedgerReconciliation {
@@ -492,17 +493,8 @@ function createManagedProcessLedgerReconciliation(
   let disposed = false;
   let started = false;
   let cancelRetry: (() => void) | null = null;
-  let unresolvedRecordIds = new Set<string>();
+  let unresolvedRecordIds = new Set(initialRecordIds);
   let inFlight: Promise<void> | null = null;
-
-  const initialRecords = managedProcesses
-    .list({ signal: abortController.signal })
-    .catch((error) => {
-      if (!abortController.signal.aborted) {
-        logger.warn({ err: error }, "Failed to capture managed helper process bootstrap ledger");
-      }
-      return [];
-    });
 
   const reconcile = async () => {
     if (disposed) {
@@ -567,18 +559,9 @@ function createManagedProcessLedgerReconciliation(
         return;
       }
       started = true;
-      void trackReconciliation(
-        initialRecords.then((records) => {
-          if (disposed) {
-            return;
-          }
-          unresolvedRecordIds = new Set(records.map((record) => record.id));
-          if (disposed || unresolvedRecordIds.size === 0) {
-            return;
-          }
-          return reconcile();
-        }),
-      );
+      if (unresolvedRecordIds.size > 0) {
+        void runReconcile();
+      }
     },
     async stop() {
       if (!disposed) {
@@ -591,7 +574,7 @@ function createManagedProcessLedgerReconciliation(
         }
         cancelRetry = null;
       }
-      await Promise.allSettled([inFlight ?? initialRecords]);
+      await Promise.allSettled(inFlight ? [inFlight] : []);
     },
   };
 }
@@ -654,6 +637,19 @@ export async function createPaseoDaemon(
   const bootstrapStart = performance.now();
   const elapsed = () => `${(performance.now() - bootstrapStart).toFixed(0)}ms`;
   const daemonVersion = config.daemonVersion ?? resolveDaemonVersion(import.meta.url);
+  const managedProcesses = createBootstrapManagedProcessRegistry(config, logger);
+  // Fix the cleanup scope before any daemon-owned service can create helpers.
+  // A later broad list could include helpers owned by this daemon generation.
+  let initialManagedProcessRecordIds: Set<string>;
+  try {
+    initialManagedProcessRecordIds = new Set(
+      (await managedProcesses.list()).map((record) => record.id),
+    );
+  } catch (error) {
+    throw new Error("Failed to capture managed helper processes before daemon startup", {
+      cause: error,
+    });
+  }
   const daemonConfigStore = new DaemonConfigStore(
     config.paseoHome,
     createInitialMutableDaemonConfig(config),
@@ -665,9 +661,9 @@ export async function createPaseoDaemon(
 
   const serverId = getOrCreateServerId(config.paseoHome, { logger });
   const daemonKeyPair = await loadOrCreateDaemonKeyPair(config.paseoHome, logger);
-  const managedProcesses = createBootstrapManagedProcessRegistry(config, logger);
   const managedProcessReconciliation = createManagedProcessLedgerReconciliation(
     managedProcesses,
+    initialManagedProcessRecordIds,
     logger,
     dependencies.scheduleManagedProcessReapRetry ?? scheduleManagedProcessReapRetry,
   );
