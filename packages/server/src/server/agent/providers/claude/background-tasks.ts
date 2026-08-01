@@ -153,27 +153,21 @@ export function applyBackgroundTaskInputEvent(
   if (event.kind === "replace") {
     const before = store.list(parentAgentId);
     const tasks = store.replaceLiveSet(parentAgentId, event.tasks, event.at || nowIso);
-    const changed =
-      before.length !== tasks.length ||
-      before.some((row, index) => {
-        const next = tasks[index];
-        return (
-          !next ||
-          row.taskId !== next.taskId ||
-          row.description !== next.description ||
-          row.type !== next.type
-        );
-      });
-    return { changed: changed || before.length !== tasks.length, tasks };
+    return {
+      changed: JSON.stringify(before) !== JSON.stringify(tasks),
+      tasks,
+    };
   }
 
+  const before = store.list(parentAgentId);
   const updated = store.enrich(parentAgentId, event.taskId, {
     ...event.patch,
     updatedAt: event.patch.updatedAt ?? event.at ?? nowIso,
   });
+  const tasks = store.list(parentAgentId);
   return {
-    changed: updated !== null,
-    tasks: store.list(parentAgentId),
+    changed: updated !== null || JSON.stringify(before) !== JSON.stringify(tasks),
+    tasks,
   };
 }
 
@@ -209,6 +203,40 @@ export function mapClaudeBackgroundSystemMessage(
   }
 }
 
+function collectToolOutputRecords(toolOutput: unknown): Record<string, unknown>[] {
+  const records: Record<string, unknown>[] = [];
+  const push = (value: unknown) => {
+    const record = asRecord(value);
+    if (record) {
+      records.push(record);
+      return;
+    }
+    if (typeof value === "string") {
+      try {
+        const parsed = JSON.parse(value) as unknown;
+        const parsedRecord = asRecord(parsed);
+        if (parsedRecord) records.push(parsedRecord);
+      } catch {
+        // not JSON
+      }
+    }
+  };
+  push(toolOutput);
+  const top = asRecord(toolOutput);
+  if (top?.output !== undefined) {
+    push(top.output);
+  }
+  return records;
+}
+
+function readBackgroundTaskId(record: Record<string, unknown>): string | null {
+  return (
+    toNonEmptyString(record.backgroundTaskId) ??
+    toNonEmptyString(record.background_task_id) ??
+    toNonEmptyString(record.task_id)
+  );
+}
+
 export function extractBashBackgroundTaskCorrelation(input: {
   toolName: string | null | undefined;
   toolInput: unknown;
@@ -222,19 +250,18 @@ export function extractBashBackgroundTaskCorrelation(input: {
     name === "bash_code_execution";
   if (!isShell) return null;
 
-  const output = asRecord(input.toolOutput);
-  const taskId =
-    toNonEmptyString(output?.backgroundTaskId) ??
-    toNonEmptyString(output?.background_task_id) ??
-    toNonEmptyString(output?.task_id);
+  const outputRecords = collectToolOutputRecords(input.toolOutput);
+  let taskId: string | null = null;
+  let commandFromOutput: string | null = null;
+  for (const record of outputRecords) {
+    taskId ??= readBackgroundTaskId(record);
+    commandFromOutput ??=
+      toNonEmptyString(record.command) ?? toNonEmptyString(asRecord(record.input)?.command);
+  }
   if (!taskId) return null;
 
   const toolInput = asRecord(input.toolInput);
-  const command =
-    toNonEmptyString(toolInput?.command) ??
-    toNonEmptyString(output?.command) ??
-    toNonEmptyString(asRecord(output?.input)?.command);
-
+  const command = toNonEmptyString(toolInput?.command) ?? commandFromOutput;
   return { taskId, command };
 }
 

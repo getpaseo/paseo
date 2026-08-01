@@ -47,6 +47,24 @@ describe("BackgroundTaskStore", () => {
     expect(store.enrich(PARENT, "missing", { command: "x" })).toBeNull();
   });
 
+  it("removes tasks from the live set on terminal status enrichment", () => {
+    const store = new BackgroundTaskStore();
+    store.replaceLiveSet(
+      PARENT,
+      [{ taskId: "s1", type: "shell", description: "dev" }],
+      "2026-08-01T00:00:00.000Z",
+    );
+    const updated = store.enrich(PARENT, "s1", {
+      status: "stopped",
+      outputFile: "/tmp/out.txt",
+      updatedAt: "2026-08-01T00:00:05.000Z",
+    });
+    expect(updated?.status).toBe("stopped");
+    expect(updated?.outputFile).toBe("/tmp/out.txt");
+    expect(store.get(PARENT, "s1")).toBeNull();
+    expect(store.list(PARENT)).toEqual([]);
+  });
+
   it("preserves enrichment across replace for the same task id", () => {
     const store = new BackgroundTaskStore();
     store.replaceLiveSet(
