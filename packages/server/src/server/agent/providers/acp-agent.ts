@@ -963,11 +963,12 @@ export class ACPAgentClient implements AgentClient {
     });
   }
 
-  async isAvailable(): Promise<boolean> {
+  async isAvailable(options?: { signal?: AbortSignal }): Promise<boolean> {
     try {
-      await this.resolveLaunchCommand();
+      await this.resolveLaunchCommand(options);
       return true;
     } catch {
+      options?.signal?.throwIfAborted();
       return false;
     }
   }
@@ -1227,12 +1228,14 @@ export class ACPAgentClient implements AgentClient {
     }
   }
 
-  protected async resolveLaunchCommand(): Promise<{ command: string; args: string[] }> {
+  protected async resolveLaunchCommand(options?: {
+    signal?: AbortSignal;
+  }): Promise<{ command: string; args: string[] }> {
     const prefix = await resolveProviderLaunch({
       commandConfig: this.runtimeSettings?.command,
       defaultBinary: this.defaultCommand[0],
     });
-    const availability = await checkProviderLaunchAvailable(prefix);
+    const availability = await checkProviderLaunchAvailable(prefix, undefined, options);
     if (!availability.available) {
       throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
     }

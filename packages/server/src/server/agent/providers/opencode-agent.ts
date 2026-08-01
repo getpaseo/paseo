@@ -1541,12 +1541,12 @@ export class OpenCodeAgentClient implements AgentClient {
     }
   }
 
-  async isAvailable(): Promise<boolean> {
+  async isAvailable(options?: { signal?: AbortSignal }): Promise<boolean> {
     const launch = await resolveProviderLaunch({
       commandConfig: this.runtimeSettings?.command,
       defaultBinary: "opencode",
     });
-    const availability = await checkProviderLaunchAvailable(launch);
+    const availability = await checkProviderLaunchAvailable(launch, undefined, options);
     return availability.available;
   }
 

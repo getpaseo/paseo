@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -79,7 +79,12 @@ describe("default provider availability", () => {
     const codexExe = join(codexBinDir, "codex.exe");
     mkdirSync(emptyPathDir, { recursive: true });
     mkdirSync(codexBinDir, { recursive: true });
-    copyFileSync(process.execPath, codexExe);
+    if (originalPlatform === "win32") {
+      copyFileSync(process.execPath, codexExe);
+    } else {
+      writeFileSync(codexExe, "#!/bin/sh\necho codex 1.0\n");
+      chmodSync(codexExe, 0o755);
+    }
     Object.defineProperty(process, "platform", { value: "win32", writable: true });
     process.env.LOCALAPPDATA = root;
     isolatePathTo(emptyPathDir);

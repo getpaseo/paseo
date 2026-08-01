@@ -447,7 +447,10 @@ function codexMicrosoftStorePackageRoot(): string | null {
   return path.join(localAppData, "Packages");
 }
 
-export async function findCodexMicrosoftStoreBinary(): Promise<string | null> {
+export async function findCodexMicrosoftStoreBinary(options?: {
+  signal?: AbortSignal;
+}): Promise<string | null> {
+  options?.signal?.throwIfAborted();
   if (process.platform !== "win32") {
     return null;
   }
@@ -461,8 +464,10 @@ export async function findCodexMicrosoftStoreBinary(): Promise<string | null> {
   try {
     entries = await fs.readdir(packageRoot, { withFileTypes: true });
   } catch {
+    options?.signal?.throwIfAborted();
     return null;
   }
+  options?.signal?.throwIfAborted();
 
   const codexPackages = entries
     .filter((entry) => entry.isDirectory() && entry.name.startsWith("OpenAI.Codex_"))
@@ -470,6 +475,7 @@ export async function findCodexMicrosoftStoreBinary(): Promise<string | null> {
     .sort();
 
   for (const packageName of codexPackages) {
+    options?.signal?.throwIfAborted();
     const candidate = path.join(
       packageRoot,
       packageName,
@@ -480,7 +486,7 @@ export async function findCodexMicrosoftStoreBinary(): Promise<string | null> {
       "bin",
       "codex.exe",
     );
-    if (await probeExecutable(candidate)) {
+    if (await probeExecutable(candidate, { signal: options?.signal })) {
       return candidate;
     }
   }
@@ -488,8 +494,13 @@ export async function findCodexMicrosoftStoreBinary(): Promise<string | null> {
   return null;
 }
 
-export async function findDefaultCodexBinary(): Promise<string | null> {
-  return (await findExecutable("codex")) ?? (await findCodexMicrosoftStoreBinary());
+export async function findDefaultCodexBinary(options?: {
+  signal?: AbortSignal;
+}): Promise<string | null> {
+  return (
+    (await findExecutable("codex", { signal: options?.signal })) ??
+    (await findCodexMicrosoftStoreBinary(options))
+  );
 }
 
 async function resolveCodexLaunchPrefix(runtimeSettings?: ProviderRuntimeSettings): Promise<{
@@ -522,11 +533,18 @@ async function resolveCodexLaunch(
   });
 }
 
-async function checkCodexLaunchAvailable(launch: ResolvedProviderLaunch) {
-  return checkProviderLaunchAvailable(launch, {
-    command: "codex",
-    resolvePath: findDefaultCodexBinary,
-  });
+async function checkCodexLaunchAvailable(
+  launch: ResolvedProviderLaunch,
+  options: { signal?: AbortSignal } = {},
+) {
+  return checkProviderLaunchAvailable(
+    launch,
+    {
+      command: "codex",
+      resolvePath: findDefaultCodexBinary,
+    },
+    options,
+  );
 }
 
 function resolveCodexHomeDir(): string {
@@ -6527,9 +6545,9 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
   }
 
-  async isAvailable(): Promise<boolean> {
+  async isAvailable(options?: { signal?: AbortSignal }): Promise<boolean> {
     const launch = await resolveCodexLaunch(this.runtimeSettings);
-    const availability = await checkCodexLaunchAvailable(launch);
+    const availability = await checkCodexLaunchAvailable(launch, options);
     return availability.available;
   }
 

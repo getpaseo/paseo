@@ -12,30 +12,53 @@ const require = createRequire(import.meta.url);
 const which = require("which") as Which;
 const PROBE_TIMEOUT_MS = 2000;
 
+export interface ExecutableResolutionOptions {
+  probeTimeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new Error("Executable resolution aborted");
+  }
+}
+
 function hasPathSeparator(value: string): boolean {
   return value.includes("/") || value.includes("\\");
 }
 
-async function enumerateCandidates(name: string): Promise<string[]> {
+async function enumerateCandidates(name: string, signal?: AbortSignal): Promise<string[]> {
+  throwIfAborted(signal);
   if (process.platform !== "win32" && existsSync("/usr/bin/which")) {
-    return enumerateCandidatesViaSystemWhich(name);
+    return enumerateCandidatesViaSystemWhich(name, signal);
   }
-  return enumerateCandidatesViaLibrary(name);
+  return enumerateCandidatesViaLibrary(name, signal);
 }
 
-async function enumerateCandidatesViaSystemWhich(name: string): Promise<string[]> {
+async function enumerateCandidatesViaSystemWhich(
+  name: string,
+  signal?: AbortSignal,
+): Promise<string[]> {
   try {
     const { stdout } = await execCommand("/usr/bin/which", ["-a", name], {
       timeout: 3000,
       killSignal: "SIGKILL",
+      signal,
     });
     return Array.from(new Set(stdout.trim().split("\n").filter(Boolean)));
   } catch {
+    throwIfAborted(signal);
     return [];
   }
 }
 
-async function enumerateCandidatesViaLibrary(name: string): Promise<string[]> {
+async function enumerateCandidatesViaLibrary(
+  name: string,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  throwIfAborted(signal);
   let candidates: string[];
   try {
     candidates = await which(name, { all: true });
@@ -46,6 +69,7 @@ async function enumerateCandidatesViaLibrary(name: string): Promise<string[]> {
     }
     throw error;
   }
+  throwIfAborted(signal);
 
   const seen = new Set<string>();
   return candidates.filter((candidate) => {
@@ -59,17 +83,24 @@ async function enumerateCandidatesViaLibrary(name: string): Promise<string[]> {
 
 export async function probeExecutable(
   executablePath: string,
-  timeoutMs = PROBE_TIMEOUT_MS,
+  options: number | ExecutableResolutionOptions = PROBE_TIMEOUT_MS,
 ): Promise<boolean> {
+  const timeoutMs =
+    typeof options === "number" ? options : (options.probeTimeoutMs ?? PROBE_TIMEOUT_MS);
+  const signal = typeof options === "number" ? undefined : options.signal;
+  throwIfAborted(signal);
   try {
     await execCommand(executablePath, ["--version"], {
       timeout: timeoutMs,
       killSignal: "SIGKILL",
       maxBuffer: 64 * 1024,
       shell: isWindowsCommandScript(executablePath),
+      signal,
     });
+    throwIfAborted(signal);
     return true;
   } catch (error) {
+    throwIfAborted(signal);
     return classifyProbeError(error);
   }
 }
@@ -110,8 +141,12 @@ export function executableExists(
 
 export async function findExecutable(
   name: string,
-  probeTimeoutMs = PROBE_TIMEOUT_MS,
+  options: number | ExecutableResolutionOptions = PROBE_TIMEOUT_MS,
 ): Promise<string | null> {
+  const probeTimeoutMs =
+    typeof options === "number" ? options : (options.probeTimeoutMs ?? PROBE_TIMEOUT_MS);
+  const signal = typeof options === "number" ? undefined : options.signal;
+  throwIfAborted(signal);
   const trimmed = name.trim();
   if (!trimmed) {
     return null;
@@ -119,26 +154,31 @@ export async function findExecutable(
 
   if (process.platform === "win32") {
     return windowsExecutableResolution.find(trimmed, {
-      enumeratePathCandidates: enumerateCandidates,
+      enumeratePathCandidates: (candidate) => enumerateCandidates(candidate, signal),
       probeExecutable,
       exists: existsSync,
       probeTimeoutMs,
+      signal,
     });
   }
 
   if (hasPathSeparator(trimmed)) {
-    return (await probeExecutable(trimmed, probeTimeoutMs)) ? trimmed : null;
+    return (await probeExecutable(trimmed, { probeTimeoutMs, signal })) ? trimmed : null;
   }
 
-  const candidates = await enumerateCandidates(trimmed);
+  const candidates = await enumerateCandidates(trimmed, signal);
   for (const candidate of candidates) {
-    if (await probeExecutable(candidate, probeTimeoutMs)) {
+    throwIfAborted(signal);
+    if (await probeExecutable(candidate, { probeTimeoutMs, signal })) {
       return candidate;
     }
   }
   return null;
 }
 
-export async function isCommandAvailable(command: string): Promise<boolean> {
-  return (await findExecutable(command)) !== null;
+export async function isCommandAvailable(
+  command: string,
+  options: ExecutableResolutionOptions = {},
+): Promise<boolean> {
+  return (await findExecutable(command, options)) !== null;
 }

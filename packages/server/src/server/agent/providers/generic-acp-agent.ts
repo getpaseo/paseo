@@ -88,9 +88,9 @@ export class GenericACPAgentClient extends ACPAgentClient {
     };
   }
 
-  override async isAvailable(): Promise<boolean> {
+  override async isAvailable(options?: { signal?: AbortSignal }): Promise<boolean> {
     const launch = await this.resolveConfiguredLaunch();
-    const availability = await checkProviderLaunchAvailable(launch);
+    const availability = await checkProviderLaunchAvailable(launch, undefined, options);
     return availability.available;
   }
 

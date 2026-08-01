@@ -48,7 +48,7 @@ export interface ProviderLaunchAvailability {
 
 export interface ProviderLaunchDefault {
   command: string;
-  resolvePath?: () => Promise<string | null>;
+  resolvePath?: (options?: { signal?: AbortSignal }) => Promise<string | null>;
 }
 
 function normalizeLaunchDefault(
@@ -60,8 +60,8 @@ function normalizeLaunchDefault(
   return defaultBinary;
 }
 
-async function resolveLaunchPath(command: string): Promise<string | null> {
-  const found = await findExecutable(command);
+async function resolveLaunchPath(command: string, signal?: AbortSignal): Promise<string | null> {
+  const found = await findExecutable(command, { signal });
   if (found) {
     return found;
   }
@@ -73,10 +73,11 @@ async function resolveLaunchPath(command: string): Promise<string | null> {
 
 async function resolveDefaultLaunchPath(
   defaultBinary: ProviderLaunchDefault,
+  signal?: AbortSignal,
 ): Promise<string | null> {
   return defaultBinary.resolvePath
-    ? await defaultBinary.resolvePath()
-    : await resolveLaunchPath(defaultBinary.command);
+    ? await defaultBinary.resolvePath({ signal })
+    : await resolveLaunchPath(defaultBinary.command, signal);
 }
 
 export interface ResolveProviderLaunchOptions {
@@ -112,11 +113,12 @@ export async function resolveProviderLaunch({
 export async function checkProviderLaunchAvailable(
   launch: ResolvedProviderLaunch,
   defaultBinary?: ProviderLaunchDefault,
+  options: { signal?: AbortSignal } = {},
 ): Promise<ProviderLaunchAvailability> {
   const resolvedPath =
     defaultBinary && launch.source !== "override"
-      ? await resolveDefaultLaunchPath(defaultBinary)
-      : await resolveLaunchPath(launch.command);
+      ? await resolveDefaultLaunchPath(defaultBinary, options.signal)
+      : await resolveLaunchPath(launch.command, options.signal);
   return {
     available: resolvedPath !== null,
     resolvedPath,

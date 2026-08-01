@@ -3,10 +3,14 @@ import { extname, join } from "node:path";
 
 interface WindowsFindExecutableOptions {
   enumeratePathCandidates: (name: string) => Promise<string[]>;
-  probeExecutable: (executablePath: string, timeoutMs: number) => Promise<boolean>;
+  probeExecutable: (
+    executablePath: string,
+    options: { probeTimeoutMs: number; signal?: AbortSignal },
+  ) => Promise<boolean>;
   exists: (path: string) => boolean;
   localAppData?: string;
   probeTimeoutMs: number;
+  signal?: AbortSignal;
 }
 
 interface WindowsExecutableExistsOptions {
@@ -47,11 +51,13 @@ function enumerateWingetPackageCandidates(
 }
 
 async function find(input: string, options: WindowsFindExecutableOptions): Promise<string | null> {
+  options.signal?.throwIfAborted();
   if (hasPathSeparator(input)) {
     return findFirstProbeable(enumerateLiteralPathCandidates(input), options);
   }
 
   const pathCandidates = await options.enumeratePathCandidates(input);
+  options.signal?.throwIfAborted();
   const wingetCandidates = enumerateWingetPackageCandidates(
     input,
     options.localAppData ?? process.env.LOCALAPPDATA,
@@ -66,6 +72,7 @@ async function findFirstProbeable(
 ): Promise<string | null> {
   const seen = new Set<string>();
   for (const candidate of candidates) {
+    options.signal?.throwIfAborted();
     if (seen.has(candidate)) {
       continue;
     }
@@ -73,7 +80,12 @@ async function findFirstProbeable(
     if (!options.exists(candidate)) {
       continue;
     }
-    if (await options.probeExecutable(candidate, options.probeTimeoutMs)) {
+    if (
+      await options.probeExecutable(candidate, {
+        probeTimeoutMs: options.probeTimeoutMs,
+        signal: options.signal,
+      })
+    ) {
       return candidate;
     }
   }
