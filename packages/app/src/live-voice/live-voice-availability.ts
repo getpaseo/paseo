@@ -35,6 +35,9 @@ export function useLiveVoiceHostAvailability(): LiveVoiceHostAvailability[] {
           version: serverInfo?.version ?? null,
           // COMPAT(liveVoice): added in v0.2.5, drop the gate when floor >= v0.2.5.
           supportsLiveVoice: serverInfo ? serverInfo.features?.liveVoice === true : null,
+          // COMPAT(agentPaseoTools): added in v0.2.6. Missing means an older
+          // Live Voice daemon whose start response remains authoritative.
+          paseoToolsEnabled: serverInfo ? serverInfo.features?.agentPaseoTools !== false : null,
         };
       }),
     [connectionStatuses, hosts, serverInfos],

@@ -1753,6 +1753,7 @@ export const en = {
       connecting: "Connecting to hosts. Live voice will appear when one is ready.",
       offline: "No hosts are online. Connect to a host to use live voice.",
       upgrade: "Connected hosts do not advertise live voice. Update their daemons.",
+      toolsDisabled: "Enable Paseo tools in this host's settings to use live voice.",
     },
     settings: {
       title: "Live voice",

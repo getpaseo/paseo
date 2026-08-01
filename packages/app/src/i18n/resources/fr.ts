@@ -1793,6 +1793,8 @@ export const fr: TranslationResources = {
       connecting: "Connexion aux hôtes. La voix en direct apparaîtra lorsqu’un hôte sera prêt.",
       offline: "Aucun hôte n’est en ligne. Connectez-en un pour utiliser la voix en direct.",
       upgrade: "Les hôtes connectés n’annoncent pas la voix en direct. Mettez à jour leurs démons.",
+      toolsDisabled:
+        "Activez les outils Paseo dans les réglages de cet hôte pour utiliser la voix en direct.",
     },
     settings: {
       title: "Voix en direct",

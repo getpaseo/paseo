@@ -3684,6 +3684,9 @@ export const ServerInfoStatusPayloadSchema = z
         agentConfigApply: z.boolean().optional(),
         // COMPAT(liveVoice): added in v0.2.5, remove after 2027-01-30.
         liveVoice: z.boolean().optional(),
+        // COMPAT(agentPaseoTools): added in v0.2.6, remove after 2027-02-28.
+        // Reports whether newly launched agents receive Paseo's own tools.
+        agentPaseoTools: z.boolean().optional(),
         // COMPAT(liveVoiceToolExecution): added in v0.2.5, remove after 2027-01-30.
         liveVoiceToolExecution: z.boolean().optional(),
         // COMPAT(liveVoiceAgentNotifications): added in v0.2.6, remove after

@@ -1760,6 +1760,8 @@ export const ja: TranslationResources = {
       connecting: "ホストに接続中です。準備ができるとライブ音声が表示されます。",
       offline: "オンラインのホストがありません。ライブ音声を使うにはホストに接続してください。",
       upgrade: "接続中のホストはライブ音声に対応していません。デーモンを更新してください。",
+      toolsDisabled:
+        "ライブ音声を使用するには、このホストの設定で Paseo ツールを有効にしてください。",
     },
     settings: {
       title: "ライブ音声",

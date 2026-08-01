@@ -11,6 +11,7 @@ function host(overrides: Partial<LiveVoiceHostAvailability> = {}): LiveVoiceHost
     connectionStatus: "online",
     version: "0.2.5",
     supportsLiveVoice: true,
+    paseoToolsEnabled: true,
     ...overrides,
   };
 }
@@ -60,6 +61,17 @@ describe("resolveLiveVoiceAvailability", () => {
     expect(availability).toEqual({ kind: "available", hosts: [capable] });
   });
 
+  it("admits an older Live Voice daemon that does not advertise the tools setting", () => {
+    const olderCompatibleHost = host({ paseoToolsEnabled: null });
+
+    expect(
+      resolveLiveVoiceAvailability({
+        isPlatformSupported: true,
+        hosts: [olderCompatibleHost],
+      }),
+    ).toEqual({ kind: "available", hosts: [olderCompatibleHost] });
+  });
+
   it("identifies connected daemons that need an upgrade", () => {
     const oldDaemon = host({ version: "0.2.4", supportsLiveVoice: false });
     const availability = resolveLiveVoiceAvailability({
@@ -71,6 +83,40 @@ describe("resolveLiveVoiceAvailability", () => {
       kind: "unavailable",
       reason: "host_upgrade_required",
       hosts: [oldDaemon],
+    });
+  });
+
+  it("requires Paseo tools on an otherwise-capable host", () => {
+    const toolsDisabled = host({ paseoToolsEnabled: false });
+    const availability = resolveLiveVoiceAvailability({
+      isPlatformSupported: true,
+      hosts: [toolsDisabled],
+    });
+
+    expect(availability).toEqual({
+      kind: "unavailable",
+      reason: "paseo_tools_disabled",
+      hosts: [toolsDisabled],
+    });
+  });
+
+  it("prefers enabling tools on a capable host over upgrading another host", () => {
+    const toolsDisabled = host({ paseoToolsEnabled: false });
+    const oldDaemon = host({
+      serverId: "host-b",
+      version: "0.2.4",
+      supportsLiveVoice: false,
+    });
+
+    expect(
+      resolveLiveVoiceAvailability({
+        isPlatformSupported: true,
+        hosts: [oldDaemon, toolsDisabled],
+      }),
+    ).toEqual({
+      kind: "unavailable",
+      reason: "paseo_tools_disabled",
+      hosts: [oldDaemon, toolsDisabled],
     });
   });
 

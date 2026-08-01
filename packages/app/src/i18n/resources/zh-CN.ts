@@ -1722,6 +1722,7 @@ export const zhCN: TranslationResources = {
       connecting: "正在连接主机。主机就绪后即可使用实时语音。",
       offline: "没有在线主机。请连接主机以使用实时语音。",
       upgrade: "已连接的主机未声明支持实时语音。请更新其守护进程。",
+      toolsDisabled: "请在此主机的设置中启用 Paseo 工具，以使用实时语音。",
     },
     settings: {
       title: "实时语音",

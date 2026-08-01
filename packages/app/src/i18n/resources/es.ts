@@ -1789,6 +1789,8 @@ export const es: TranslationResources = {
       connecting: "Conectando a los hosts. La voz en directo aparecerá cuando uno esté listo.",
       offline: "No hay hosts conectados. Conecta uno para usar la voz en directo.",
       upgrade: "Los hosts conectados no anuncian voz en directo. Actualiza sus daemons.",
+      toolsDisabled:
+        "Activa las herramientas de Paseo en la configuración de este host para usar la voz en directo.",
     },
     settings: {
       title: "Voz en vivo",

@@ -1775,6 +1775,8 @@ export const ptBR: TranslationResources = {
       connecting: "Conectando aos hosts. A voz ao vivo aparecerá quando um estiver pronto.",
       offline: "Nenhum host está online. Conecte-se a um host para usar a voz ao vivo.",
       upgrade: "Os hosts conectados não anunciam voz ao vivo. Atualize seus daemons.",
+      toolsDisabled:
+        "Ative as ferramentas do Paseo nas configurações deste host para usar a voz ao vivo.",
     },
     settings: {
       title: "Voz ao vivo",

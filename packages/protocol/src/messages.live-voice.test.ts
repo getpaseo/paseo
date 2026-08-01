@@ -10,13 +10,21 @@ import {
 
 describe("live voice messages", () => {
   test("keeps the capability optional for older server info payloads", () => {
+    const oldServer = ServerInfoStatusPayloadSchema.parse({
+      status: "server_info",
+      serverId: "server-1",
+      features: {},
+    });
+
+    expect(oldServer.features?.liveVoice).toBeUndefined();
+    expect(oldServer.features?.agentPaseoTools).toBeUndefined();
     expect(
       ServerInfoStatusPayloadSchema.parse({
         status: "server_info",
         serverId: "server-1",
-        features: {},
-      }).features?.liveVoice,
-    ).toBeUndefined();
+        features: { liveVoice: true, agentPaseoTools: false },
+      }).features,
+    ).toMatchObject({ liveVoice: true, agentPaseoTools: false });
   });
 
   test("parses a start request with and without an explicit voice", () => {

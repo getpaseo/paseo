@@ -115,6 +115,7 @@ function createHarness(options?: {
   capabilities?: { readonly [capability: string]: boolean | undefined };
   availability?: { available: boolean; error?: string | null };
   availabilityGate?: Promise<unknown>;
+  paseoToolsAvailable?: boolean;
   createAgentError?: Error;
   /** Resolves before `createAgent` returns, so tests can close mid-spawn. */
   createAgentGate?: Promise<unknown>;
@@ -137,6 +138,7 @@ function createHarness(options?: {
   };
   const coordinator = new LiveVoiceCoordinator({
     agents: {
+      hasPaseoMcpInjection: () => options?.paseoToolsAvailable ?? true,
       getProviderAvailability: async () => {
         if (options?.availabilityGate) {
           await options.availabilityGate;
@@ -323,6 +325,17 @@ describe("LiveVoiceCoordinator", () => {
       errorMessage: expect.stringContaining("codex CLI not installed"),
     });
     // Nothing was spawned, so nothing needs tearing down.
+    expect(harness.createConfigs).toEqual([]);
+  });
+
+  it("requires Paseo tools before starting a call", async () => {
+    const harness = createHarness({ paseoToolsAvailable: false });
+
+    expect(await startCall(harness)).toEqual({
+      accepted: false,
+      errorCode: "paseo_tools_disabled",
+      errorMessage: "Enable Paseo tools in this host's settings to use Live Voice.",
+    });
     expect(harness.createConfigs).toEqual([]);
   });
 

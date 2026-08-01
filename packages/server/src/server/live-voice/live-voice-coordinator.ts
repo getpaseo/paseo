@@ -32,7 +32,11 @@ const HOST_TITLE = "Live Voice host";
 const BACKEND_CONTEXT_CANARY_INSTRUCTION =
   'Temporary Live Voice diagnostic: if a realtime delegation asks "What is the backend context canary?", answer exactly "sphragistic-oriflamme-731".';
 
-export type LiveVoiceStartErrorCode = "busy" | "unsupported" | "start_failed";
+export type LiveVoiceStartErrorCode =
+  | "busy"
+  | "unsupported"
+  | "paseo_tools_disabled"
+  | "start_failed";
 
 export type LiveVoiceCloseCause =
   | "requested"
@@ -109,6 +113,7 @@ export interface LiveVoiceHostAgent {
  * it structurally; tests supply a minimal fake.
  */
 export interface LiveVoiceAgentSource {
+  hasPaseoMcpInjection(): boolean;
   getProviderAvailability(
     provider: AgentProvider,
   ): Promise<{ available: boolean; error?: string | null }>;
@@ -169,6 +174,17 @@ export interface LiveVoiceCoordinatorOptions {
 /** Start failure that means this daemon cannot host live voice at all. */
 class LiveVoiceUnsupportedError extends Error {
   readonly name = "LiveVoiceUnsupportedError";
+}
+
+/** Start refusal for a user-actionable daemon setting, distinct from provider support. */
+class LiveVoicePaseoToolsDisabledError extends Error {
+  readonly name = "LiveVoicePaseoToolsDisabledError";
+}
+
+function resolveStartErrorCode(error: unknown): LiveVoiceStartErrorCode {
+  if (error instanceof LiveVoiceUnsupportedError) return "unsupported";
+  if (error instanceof LiveVoicePaseoToolsDisabledError) return "paseo_tools_disabled";
+  return "start_failed";
 }
 
 /**
@@ -266,7 +282,7 @@ export class LiveVoiceCoordinator {
       );
       return {
         accepted: false,
-        errorCode: error instanceof LiveVoiceUnsupportedError ? "unsupported" : "start_failed",
+        errorCode: resolveStartErrorCode(error),
         errorMessage,
       };
     }
@@ -381,6 +397,11 @@ export class LiveVoiceCoordinator {
     provider: AgentRealtimeVoiceSession;
     context: LiveVoiceStartContext | null;
   }> {
+    if (!this.agents.hasPaseoMcpInjection()) {
+      throw new LiveVoicePaseoToolsDisabledError(
+        "Enable Paseo tools in this host's settings to use Live Voice.",
+      );
+    }
     const availability = await this.agents.getProviderAvailability(HOST_PROVIDER);
     if (!availability.available) {
       throw new LiveVoiceUnsupportedError(

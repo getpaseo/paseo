@@ -6,6 +6,7 @@ const UNAVAILABLE_MESSAGE_KEYS: Record<LiveVoiceUnavailableReason, string> = {
   hosts_connecting: "liveVoice.unavailable.connecting",
   hosts_offline: "liveVoice.unavailable.offline",
   host_upgrade_required: "liveVoice.unavailable.upgrade",
+  paseo_tools_disabled: "liveVoice.unavailable.toolsDisabled",
 };
 
 /** The one short human sentence for why live voice cannot start right now. */

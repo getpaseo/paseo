@@ -6,6 +6,8 @@ export interface LiveVoiceHostAvailability {
   connectionStatus: HostRuntimeConnectionStatus;
   version: string | null;
   supportsLiveVoice: boolean | null;
+  /** Missing on older compatible daemons, which the policy continues to admit. */
+  paseoToolsEnabled: boolean | null;
 }
 
 export type LiveVoiceUnavailableReason =
@@ -13,7 +15,8 @@ export type LiveVoiceUnavailableReason =
   | "no_hosts"
   | "hosts_connecting"
   | "hosts_offline"
-  | "host_upgrade_required";
+  | "host_upgrade_required"
+  | "paseo_tools_disabled";
 
 export type LiveVoiceAvailability =
   | {
@@ -39,13 +42,23 @@ export function resolveLiveVoiceAvailability(input: {
   }
 
   const availableHosts = hosts.filter(
-    (host) => host.connectionStatus === "online" && host.supportsLiveVoice === true,
+    (host) =>
+      host.connectionStatus === "online" &&
+      host.supportsLiveVoice === true &&
+      host.paseoToolsEnabled !== false,
   );
   if (availableHosts.length > 0) {
     return { kind: "available", hosts: availableHosts };
   }
 
   const onlineHosts = hosts.filter((host) => host.connectionStatus === "online");
+  const toolsDisabled = onlineHosts.some(
+    (host) => host.supportsLiveVoice === true && host.paseoToolsEnabled === false,
+  );
+  if (toolsDisabled) {
+    return { kind: "unavailable", reason: "paseo_tools_disabled", hosts };
+  }
+
   const needsUpgrade = onlineHosts.some((host) => host.supportsLiveVoice === false);
   if (needsUpgrade) {
     return { kind: "unavailable", reason: "host_upgrade_required", hosts };

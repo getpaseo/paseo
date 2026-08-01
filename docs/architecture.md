@@ -144,6 +144,11 @@ travel directly between the app's WebRTC peer and OpenAI. The app never receives
 or stores an OpenAI API key for this path: Codex uses its existing
 ChatGPT-subscription authentication to establish the realtime session.
 
+Live Voice requires **Enable Paseo tools** on its host. The app excludes hosts
+that advertise the setting as off, and the daemon rejects the start request as
+the authority. Do not offer a talk-only fallback: the hidden session exists to
+inspect and control Paseo, and without those tools it cannot fulfill that role.
+
 The exact source socket owns the call. The app pins that host connection so
 adaptive direct/relay selection cannot replace it mid-call, and a socket loss
 still tears the call down immediately. Native background audio keeps the peer and
