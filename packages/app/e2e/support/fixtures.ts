@@ -42,11 +42,14 @@ const test = metroTest.extend<
     projectPickerFixture: TrackedProjectPickerFixture;
     withWorkspace: WithWorkspace;
   },
-  { e2eWorker: void; e2eWorkerClient: SeedDaemonClient }
+  { e2eForkProviders: string[]; e2eWorker: void; e2eWorkerClient: SeedDaemonClient }
 >({
+  e2eForkProviders: [[], { scope: "worker", option: true }],
   e2eWorker: [
-    async ({}, provide, workerInfo) => {
-      const worker = await startE2EWorker(workerInfo.workerIndex);
+    async ({ e2eForkProviders }, provide, workerInfo) => {
+      const worker = await startE2EWorker(workerInfo.workerIndex, {
+        forkProviders: e2eForkProviders,
+      });
       try {
         await provide();
       } finally {

@@ -7,7 +7,7 @@ import { expectComposerEditable, submitMessage } from "./composer";
 import { connectSeedClient, type SeedDaemonClient } from "./seed-client";
 import { getServerId } from "./server-id";
 
-export type RewindFlowProvider = "claude" | "codex" | "opencode" | "pi";
+export type RewindFlowProvider = "claude" | "codex" | "kimi" | "opencode" | "pi";
 export type RewindFlowMode = "conversation" | "files" | "both";
 
 export interface AgentHandle {
@@ -54,6 +54,8 @@ function fullAccessConfig(provider: RewindFlowProvider): ProviderLaunchConfig {
         modeId: "build",
         featureValues: { auto_accept: true },
       };
+    case "kimi":
+      return { provider, modeId: "default", featureValues: { auto_accept: true } };
     case "pi":
       return {
         provider,
@@ -156,6 +158,8 @@ export async function launchAgent(input: {
   mode: "full-access";
   providerConfig?: {
     model?: string;
+    modeId?: string;
+    featureValues?: Record<string, unknown>;
     extra?: { codex?: { features?: { multi_agent_v2?: boolean } } };
   };
 }): Promise<AgentHandle> {
