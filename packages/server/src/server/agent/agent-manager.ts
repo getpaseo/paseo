@@ -586,6 +586,8 @@ export class AgentManager {
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
+  private readonly retainedAgentRuntimeCleanups = new Set<AgentSession>();
+  private retainedAgentRuntimeCleanupRetry: Promise<void> | null = null;
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
@@ -640,7 +642,7 @@ export class AgentManager {
   }
 
   registerClient(provider: AgentProvider, client: AgentClient): void {
-    client.configureRuntimeCapacityController?.(this.runtimeCapacity);
+    this.configureClientRuntimeCapacity(provider, client);
     this.clients.set(provider, client);
   }
 
@@ -648,6 +650,16 @@ export class AgentManager {
     providerDefinitions: ProviderEnabledMap;
     clients: ProviderClientMap;
   }): void {
+    const clients = Object.entries(input.clients).filter(
+      (entry): entry is [AgentProvider, AgentClient] => entry[1] !== undefined,
+    );
+    for (const [provider, client] of clients) {
+      this.assertClientRuntimeCapacityInjection(provider, client);
+    }
+    for (const [provider, client] of clients) {
+      this.configureClientRuntimeCapacity(provider, client);
+    }
+
     this.providerEnabled.clear();
     for (const [provider, definition] of Object.entries(input.providerDefinitions)) {
       if (definition) {
@@ -656,12 +668,25 @@ export class AgentManager {
     }
 
     this.clients.clear();
-    for (const [provider, client] of Object.entries(input.clients)) {
-      if (client) {
-        client.configureRuntimeCapacityController?.(this.runtimeCapacity);
-        this.clients.set(provider, client);
-      }
+    for (const [provider, client] of clients) {
+      this.clients.set(provider, client);
     }
+  }
+
+  private assertClientRuntimeCapacityInjection(provider: AgentProvider, client: AgentClient): void {
+    if (
+      client.managesRuntimeCapacityAtSource &&
+      typeof client.configureRuntimeCapacityController !== "function"
+    ) {
+      throw new Error(
+        `Provider '${provider}' claims source-managed runtime capacity without configureRuntimeCapacityController`,
+      );
+    }
+  }
+
+  private configureClientRuntimeCapacity(provider: AgentProvider, client: AgentClient): void {
+    this.assertClientRuntimeCapacityInjection(provider, client);
+    client.configureRuntimeCapacityController?.(this.runtimeCapacity);
   }
 
   getRegisteredProviderIds(): AgentProvider[] {
@@ -4005,31 +4030,49 @@ export class AgentManager {
   }
 
   private async closeTrackedAgentRuntime(session: AgentSession): Promise<void> {
-    await session.close();
-    this.runtimeCapacity.release(session);
+    try {
+      await session.close();
+      this.runtimeCapacity.release(session);
+      this.retainedAgentRuntimeCleanups.delete(session);
+    } catch (error) {
+      this.retainedAgentRuntimeCleanups.add(session);
+      throw error;
+    }
+  }
+
+  private async retryRetainedAgentRuntimeCleanups(): Promise<void> {
+    if (this.retainedAgentRuntimeCleanupRetry) {
+      await this.retainedAgentRuntimeCleanupRetry;
+      return;
+    }
+    if (this.retainedAgentRuntimeCleanups.size === 0) {
+      return;
+    }
+
+    const retry = Promise.all(
+      Array.from(this.retainedAgentRuntimeCleanups, async (session) => {
+        try {
+          await this.closeTrackedAgentRuntime(session);
+        } catch (error) {
+          this.logger.warn({ err: error }, "Failed to retry retained agent runtime cleanup");
+        }
+      }),
+    ).then(() => undefined);
+    this.retainedAgentRuntimeCleanupRetry = retry;
+    try {
+      await retry;
+    } finally {
+      if (this.retainedAgentRuntimeCleanupRetry === retry) {
+        this.retainedAgentRuntimeCleanupRetry = null;
+      }
+    }
   }
 
   private trackAgentRegistrationOperation<T>(
     operation: (reservation: AgentRuntimeCapacityReservation) => Promise<T>,
     provider?: AgentProvider,
   ): Promise<T> {
-    let reservation: AgentRuntimeCapacityReservation;
-    try {
-      this.assertAcceptingAgentRegistrations();
-      reservation = this.clients.get(provider ?? "")?.managesRuntimeCapacityAtSource
-        ? UNMANAGED_AGENT_RUNTIME_RESERVATION
-        : this.runtimeCapacity.reserve();
-    } catch (error) {
-      return Promise.reject(error);
-    }
-
-    let result: Promise<T>;
-    try {
-      result = operation(reservation).finally(() => reservation.release());
-    } catch (error) {
-      reservation.release();
-      return Promise.reject(error);
-    }
+    const result = this.runAgentRegistrationOperation(operation, provider);
     const settled = result.then(
       () => undefined,
       () => undefined,
@@ -4040,6 +4083,23 @@ export class AgentManager {
       return undefined;
     });
     return result;
+  }
+
+  private async runAgentRegistrationOperation<T>(
+    operation: (reservation: AgentRuntimeCapacityReservation) => Promise<T>,
+    provider?: AgentProvider,
+  ): Promise<T> {
+    this.assertAcceptingAgentRegistrations();
+    await this.retryRetainedAgentRuntimeCleanups();
+    this.assertAcceptingAgentRegistrations();
+    const reservation = this.clients.get(provider ?? "")?.managesRuntimeCapacityAtSource
+      ? UNMANAGED_AGENT_RUNTIME_RESERVATION
+      : this.runtimeCapacity.reserve();
+    try {
+      return await operation(reservation);
+    } finally {
+      reservation.release();
+    }
   }
 
   /**
@@ -4056,6 +4116,7 @@ export class AgentManager {
    */
   async flushForShutdown(): Promise<void> {
     await this.flushTasks({ includeAgentRegistrations: true });
+    await this.retryRetainedAgentRuntimeCleanups();
   }
 
   private async flushTasks(options: { includeAgentRegistrations: boolean }): Promise<void> {

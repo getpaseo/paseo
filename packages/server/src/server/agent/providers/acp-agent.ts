@@ -752,6 +752,9 @@ export class ACPAgentClient implements AgentClient {
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   protected readonly terminateProcess: ProcessTerminator;
   private runtimeCapacity: AgentRuntimeCapacityController | null = null;
+  private readonly retainedSessionCleanups = new Set<ACPAgentSession>();
+  private readonly retainedProbeCleanups = new Set<UninitializedACPProcess>();
+  private retainedRuntimeCleanupRetry: Promise<void> | null = null;
 
   constructor(options: ACPAgentClientOptions) {
     this.provider = options.provider;
@@ -787,10 +790,21 @@ export class ACPAgentClient implements AgentClient {
     this.runtimeCapacity = controller;
   }
 
+  async shutdown(): Promise<void> {
+    await this.retryRetainedRuntimeCleanups();
+    const retained = this.retainedSessionCleanups.size + this.retainedProbeCleanups.size;
+    if (retained > 0) {
+      throw new Error(
+        `Failed to close ${retained} retained ACP runtime${retained === 1 ? "" : "s"}`,
+      );
+    }
+  }
+
   async createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
+    await this.retryRetainedRuntimeCleanups();
     this.assertProvider(config);
     const session = new ACPAgentSession(
       { ...config, provider: this.provider },
@@ -820,8 +834,13 @@ export class ACPAgentClient implements AgentClient {
         runtimeCapacity: this.runtimeCapacity ?? undefined,
       },
     );
-    await session.initializeNewSession();
-    return session;
+    try {
+      await session.initializeNewSession();
+      return session;
+    } catch (error) {
+      this.retainedSessionCleanups.add(session);
+      throw error;
+    }
   }
 
   async resumeSession(
@@ -829,6 +848,7 @@ export class ACPAgentClient implements AgentClient {
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
+    await this.retryRetainedRuntimeCleanups();
     if (handle.provider !== this.provider) {
       throw new Error(`Cannot resume ${handle.provider} handle with ${this.provider} provider`);
     }
@@ -871,8 +891,13 @@ export class ACPAgentClient implements AgentClient {
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
       runtimeCapacity: this.runtimeCapacity ?? undefined,
     });
-    await session.initializeResumedSession();
-    return session;
+    try {
+      await session.initializeResumedSession();
+      return session;
+    } catch (error) {
+      this.retainedSessionCleanups.add(session);
+      throw error;
+    }
   }
 
   async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
@@ -1027,12 +1052,13 @@ export class ACPAgentClient implements AgentClient {
       probe.initialize = initialize;
       return initializedProbe;
     } catch (error) {
-      await this.terminateRuntime(transport.child);
+      await this.closeProbe(probe);
       throw error;
     }
   }
 
   protected async spawnTransport(launchEnv?: Record<string, string>): Promise<ACPProcessTransport> {
+    await this.retryRetainedRuntimeCleanups();
     const { command, args } = await this.resolveLaunchCommand();
     const child = spawnCapacityTrackedACPProcess(this.runtimeCapacity, () =>
       spawnProcess(command, args, {
@@ -1139,8 +1165,47 @@ export class ACPAgentClient implements AgentClient {
       if (probe.initialize?.agentCapabilities?.sessionCapabilities?.close) {
         // No active session to close here; ignore capability.
       }
-    } finally {
       await this.terminateRuntime(probe.child);
+      this.retainedProbeCleanups.delete(probe);
+    } catch (error) {
+      this.retainedProbeCleanups.add(probe);
+      throw error;
+    }
+  }
+
+  private async retryRetainedRuntimeCleanups(): Promise<void> {
+    if (this.retainedRuntimeCleanupRetry) {
+      await this.retainedRuntimeCleanupRetry;
+      return;
+    }
+    if (this.retainedSessionCleanups.size === 0 && this.retainedProbeCleanups.size === 0) {
+      return;
+    }
+
+    const retry = Promise.all([
+      ...Array.from(this.retainedSessionCleanups, async (session) => {
+        try {
+          await session.close();
+          this.retainedSessionCleanups.delete(session);
+        } catch (error) {
+          this.logger.warn({ err: error }, "Failed to retry retained ACP session cleanup");
+        }
+      }),
+      ...Array.from(this.retainedProbeCleanups, async (probe) => {
+        try {
+          await this.closeProbe(probe);
+        } catch (error) {
+          this.logger.warn({ err: error }, "Failed to retry retained ACP probe cleanup");
+        }
+      }),
+    ]).then(() => undefined);
+    this.retainedRuntimeCleanupRetry = retry;
+    try {
+      await retry;
+    } finally {
+      if (this.retainedRuntimeCleanupRetry === retry) {
+        this.retainedRuntimeCleanupRetry = null;
+      }
     }
   }
 
@@ -1253,7 +1318,7 @@ export class ACPAgentClient implements AgentClient {
       if (transport) {
         const cleanupStartedAt = Date.now();
         try {
-          await this.terminateRuntime(transport.child);
+          await this.closeProbe(transport);
           rows.push({
             label: "ACP cleanup",
             value: `ok (${formatDurationMs(cleanupStartedAt)})`,
@@ -1368,6 +1433,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private activeForegroundTurnId: string | null = null;
   private fallbackAssistantMessageId: string | null = null;
   private closed = false;
+  private closePromise: Promise<void> | null = null;
   private historyPending = false;
   private replayingHistory = false;
   private bootstrapThreadEventPending = false;
@@ -1521,7 +1587,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
-    if (this.closed) {
+    if (this.closed || this.closePromise) {
       throw new Error(`${this.provider} session is closed`);
     }
     if (!this.connection || !this.sessionId) {
@@ -2080,8 +2146,24 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (this.closed) {
       return;
     }
-    this.closed = true;
+    if (this.closePromise) {
+      await this.closePromise;
+      return;
+    }
 
+    const close = this.closeOnce();
+    this.closePromise = close;
+    try {
+      await close;
+      this.closed = true;
+    } finally {
+      if (this.closePromise === close) {
+        this.closePromise = null;
+      }
+    }
+  }
+
+  private async closeOnce(): Promise<void> {
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
     this.settleCommandsReady();
 
@@ -2388,7 +2470,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       stderrChunks.push(chunk.toString());
     });
     child.once("exit", (code, signal) => {
-      if (this.closed) {
+      if (this.closed || this.closePromise) {
         return;
       }
       if (this.activeForegroundTurnId) {

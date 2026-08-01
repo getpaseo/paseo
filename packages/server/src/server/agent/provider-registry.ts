@@ -487,6 +487,7 @@ function wrapClientProvider(
       : undefined,
     isAvailable: () => inner.isAvailable(),
     getDiagnostic: inner.getDiagnostic?.bind(inner),
+    shutdown: inner.shutdown?.bind(inner),
   };
 }
 

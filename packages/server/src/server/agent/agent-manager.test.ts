@@ -860,6 +860,30 @@ test("lets a source-managed provider admit normal agent creation without double 
   await manager.closeAgent(second.id);
 });
 
+test("rejects source-managed provider registration without capacity controller injection", () => {
+  class InvalidSourceManagedClient extends TestAgentClient {
+    readonly managesRuntimeCapacityAtSource = true as const;
+  }
+
+  const invalid = new InvalidSourceManagedClient("cursor");
+  expect(
+    () =>
+      new AgentManager({
+        clients: { cursor: invalid },
+        logger,
+        maxActiveAgentRuntimes: 1,
+      }),
+  ).toThrow(
+    "Provider 'cursor' claims source-managed runtime capacity without configureRuntimeCapacityController",
+  );
+
+  const manager = new AgentManager({ clients: {}, logger, maxActiveAgentRuntimes: 1 });
+  expect(() => manager.registerClient("cursor", invalid)).toThrow(
+    "Provider 'cursor' claims source-managed runtime capacity without configureRuntimeCapacityController",
+  );
+  expect(manager.getRegisteredProviderIds()).toEqual([]);
+});
+
 test("applies host runtime capacity before fallback draft discovery starts a session", async () => {
   class DraftDiscoveryClient extends TestAgentClient {
     createSessionCalls = 0;
@@ -1110,7 +1134,7 @@ test("keeps a runtime charged until provider close completes", async () => {
   await manager.closeAgent(replacement.id);
 });
 
-test("keeps failed registration cleanup charged when provider close fails", async () => {
+test("retries failed registration cleanup before admitting a replacement runtime", async () => {
   const root = mkdtempSync(join(tmpdir(), "agent-manager-capacity-close-failure-"));
   class FailFirstSnapshotStorage extends AgentStorage {
     private shouldFail = true;
@@ -1126,20 +1150,30 @@ test("keeps failed registration cleanup charged when provider close fails", asyn
       await super.applySnapshot(agent, options);
     }
   }
-  class FailedCloseClient extends TestAgentClient {
+  class RetryableCloseClient extends TestAgentClient {
     createSessionCalls = 0;
+    firstSessionCloseCalls = 0;
 
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
       this.createSessionCalls += 1;
+      if (this.createSessionCalls !== 1) {
+        return new TestAgentSession(config);
+      }
+      const recordClose = () => {
+        this.firstSessionCloseCalls += 1;
+        return this.firstSessionCloseCalls;
+      };
       return new (class extends TestAgentSession {
         override async close(): Promise<void> {
-          throw new Error("provider close failed");
+          if (recordClose() === 1) {
+            throw new Error("provider close failed");
+          }
         }
       })(config);
     }
   }
 
-  const client = new FailedCloseClient();
+  const client = new RetryableCloseClient();
   const storage = new FailFirstSnapshotStorage(join(root, "agents"), logger);
   const manager = new AgentManager({
     clients: { codex: client },
@@ -1156,18 +1190,52 @@ test("keeps failed registration cleanup charged when provider close fails", asyn
         { workspaceId: undefined },
       ),
     ).rejects.toThrow("snapshot failed");
-    await expect(
-      manager.createAgent(
-        { provider: "codex", cwd: root },
-        "00000000-0000-4000-8000-000000000078",
-        { workspaceId: undefined },
-      ),
-    ).rejects.toMatchObject({ name: "AgentRuntimeCapacityError", live: 1, reserved: 0 });
-    expect(client.createSessionCalls).toBe(1);
+    expect(client.firstSessionCloseCalls).toBe(1);
+
+    const replacement = await manager.createAgent(
+      { provider: "codex", cwd: root },
+      "00000000-0000-4000-8000-000000000078",
+      { workspaceId: undefined },
+    );
+    expect(client.firstSessionCloseCalls).toBe(2);
+    expect(client.createSessionCalls).toBe(2);
+    await manager.closeAgent(replacement.id);
   } finally {
     await storage.flush().catch(() => undefined);
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("shutdown retries a retained agent runtime cleanup", async () => {
+  let closeCalls = 0;
+  class RetryableCloseClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override async close(): Promise<void> {
+          closeCalls += 1;
+          if (closeCalls === 1) {
+            throw new Error("provider close failed");
+          }
+        }
+      })(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new RetryableCloseClient() },
+    logger,
+    maxActiveAgentRuntimes: 1,
+  });
+  const agent = await manager.createAgent(
+    { provider: "codex", cwd: process.cwd() },
+    "00000000-0000-4000-8000-000000000076",
+    { workspaceId: undefined },
+  );
+
+  await expect(manager.closeAgent(agent.id)).rejects.toThrow("provider close failed");
+  manager.prepareForShutdown();
+  await manager.flushForShutdown();
+  expect(closeCalls).toBe(2);
 });
 
 test("keeps timed-out reload runtimes charged until their late close completes", async () => {

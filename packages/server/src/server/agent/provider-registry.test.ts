@@ -48,6 +48,7 @@ const mockState = vi.hoisted(() => {
     cursorListCommandConfigs: [] as AgentSessionConfig[],
     cursorListFeaturesConfigs: [] as AgentSessionConfig[],
     cursorCapacityControllers: [] as AgentRuntimeCapacityController[],
+    cursorShutdownCalls: 0,
     reset() {
       this.constructorArgs.claude = [];
       this.constructorArgs.codex = [];
@@ -62,6 +63,7 @@ const mockState = vi.hoisted(() => {
       this.cursorListCommandConfigs = [];
       this.cursorListFeaturesConfigs = [];
       this.cursorCapacityControllers = [];
+      this.cursorShutdownCalls = 0;
     },
   };
 });
@@ -392,6 +394,10 @@ vi.mock("./providers/cursor-acp-agent.js", () => ({
 
     configureRuntimeCapacityController(controller: AgentRuntimeCapacityController): void {
       mockState.cursorCapacityControllers.push(controller);
+    }
+
+    async shutdown(): Promise<void> {
+      mockState.cursorShutdownCalls += 1;
     }
 
     async listCommands(config: AgentSessionConfig): Promise<AgentSlashCommand[]> {
@@ -783,6 +789,8 @@ test("wrapped cursor client preserves source runtime capacity admission", async 
   ]);
   expect(client.managesRuntimeCapacityAtSource).toBe(true);
   expect(mockState.cursorCapacityControllers).toEqual([controller]);
+  await client.shutdown?.();
+  expect(mockState.cursorShutdownCalls).toBe(1);
 });
 
 test("traecli provider extending acp uses TraeACPAgentClient", () => {

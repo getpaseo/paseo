@@ -50,7 +50,11 @@ import {
 import { parseKiroExtensionCommands } from "./kiro-acp-agent.js";
 import { transformPiModels } from "./pi/agent.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
-import type { AgentCapabilityFlags, AgentPersistenceHandle } from "../agent-sdk-types.js";
+import type {
+  AgentCapabilityFlags,
+  AgentPersistenceHandle,
+  AgentRuntimeCapacityController,
+} from "../agent-sdk-types.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { buildStringCommandShellInvocation } from "../../../utils/string-command-shell.js";
 import { asInternals } from "../../test-utils/class-mocks.js";
@@ -129,7 +133,10 @@ interface ACPConfiguredOverrideInternals {
   applyConfiguredOverrides(): Promise<void>;
 }
 
-function createSession(terminateProcess?: ProcessTerminator): ACPAgentSession {
+function createSession(
+  terminateProcess?: ProcessTerminator,
+  runtimeCapacity?: AgentRuntimeCapacityController,
+): ACPAgentSession {
   return new ACPAgentSession(
     {
       provider: "claude-acp",
@@ -149,6 +156,7 @@ function createSession(terminateProcess?: ProcessTerminator): ACPAgentSession {
         supportsToolInvocations: true,
       },
       ...(terminateProcess ? { terminateProcess } : {}),
+      ...(runtimeCapacity ? { runtimeCapacity } : {}),
     },
   );
 }
@@ -2878,6 +2886,30 @@ describe("ACPAgentSession close() tree-kill", () => {
     expect(child.kill).not.toHaveBeenCalled();
   });
 
+  test("close() remains retryable until main process termination is proven", async () => {
+    let terminationAttempts = 0;
+    const terminate: ProcessTerminator = async () => {
+      terminationAttempts += 1;
+      return terminationAttempts === 1 ? "kill-timeout" : "terminated";
+    };
+    const runtimeCapacity = new HostAgentRuntimeCapacityController(1);
+    const session = createSession(terminate, runtimeCapacity);
+    const internals = asInternals<ACPCloseInternals>(session);
+    const child = createTerminalChildStub();
+    runtimeCapacity.reserve().track(child);
+    internals.child = child;
+    internals.connection = null;
+    internals.sessionId = null;
+
+    await expect(session.close()).rejects.toThrow(
+      "ACP process termination did not report process exit",
+    );
+    await expect(session.close()).resolves.toBeUndefined();
+    expect(terminationAttempts).toBe(2);
+    const replacement = runtimeCapacity.reserve();
+    replacement.release();
+  });
+
   test("close() terminates running terminal child processes", async () => {
     const terminator = new FakeTerminator();
     const session = createSession(terminator.terminate);
@@ -3100,7 +3132,7 @@ describe("ACPAgentClient probe cleanup", () => {
     await second.close();
   });
 
-  test("retains ACP subprocess capacity when termination cannot prove exit", async () => {
+  test("retries retained ACP probe cleanup before the next admission", async () => {
     class CapacityTestClient extends ACPAgentClient {
       protected override async resolveLaunchCommand() {
         return { command: "test-acp", args: [] };
@@ -3116,21 +3148,67 @@ describe("ACPAgentClient probe cleanup", () => {
       }
     }
 
-    const child = createProbeChildStub();
-    const spawn = vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
+    const firstChild = createProbeChildStub();
+    const secondChild = createProbeChildStub();
+    const spawn = vi
+      .spyOn(spawnUtils, "spawnProcess")
+      .mockReturnValueOnce(firstChild)
+      .mockReturnValueOnce(secondChild);
+    let terminationAttempts = 0;
     const client = new CapacityTestClient({
       provider: "claude-acp",
       logger: createTestLogger(),
       defaultCommand: ["claude", "--acp"],
-      terminateProcess: async () => "kill-timeout",
+      terminateProcess: async () => {
+        terminationAttempts += 1;
+        return terminationAttempts === 1 ? "kill-timeout" : "terminated";
+      },
     });
     client.configureRuntimeCapacityController(new HostAgentRuntimeCapacityController(1));
 
     await expect(client.startAndCloseProbe()).rejects.toThrow(
       "ACP process termination did not report process exit",
     );
-    await expect(client.startAndCloseProbe()).rejects.toBeInstanceOf(AgentRuntimeCapacityError);
+    await expect(client.startAndCloseProbe()).resolves.toBeUndefined();
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(terminationAttempts).toBe(3);
+  });
+
+  test("shutdown retries retained ACP probe cleanup", async () => {
+    class CapacityTestClient extends ACPAgentClient {
+      protected override async resolveLaunchCommand() {
+        return { command: "test-acp", args: [] };
+      }
+
+      async startAndCloseProbe(): Promise<void> {
+        const transport = await this.spawnTransport();
+        await this.closeProbe({
+          child: transport.child,
+          connection: transport.connection,
+          stderrChunks: transport.stderrChunks,
+        });
+      }
+    }
+
+    const spawn = vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(createProbeChildStub());
+    let terminationAttempts = 0;
+    const client = new CapacityTestClient({
+      provider: "claude-acp",
+      logger: createTestLogger(),
+      defaultCommand: ["claude", "--acp"],
+      terminateProcess: async () => {
+        terminationAttempts += 1;
+        return terminationAttempts === 1 ? "kill-timeout" : "terminated";
+      },
+    });
+    client.configureRuntimeCapacityController(new HostAgentRuntimeCapacityController(1));
+
+    await expect(client.startAndCloseProbe()).rejects.toThrow(
+      "ACP process termination did not report process exit",
+    );
+    await expect(client.shutdown()).resolves.toBeUndefined();
     expect(spawn).toHaveBeenCalledTimes(1);
+    expect(terminationAttempts).toBe(2);
   });
 });
 
