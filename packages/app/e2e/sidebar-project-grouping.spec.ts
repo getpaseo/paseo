@@ -9,11 +9,11 @@ import {
   expectProjectWorkspaceCountForHost,
   expectSeparateProjects,
   openGroupedProjectSettings,
+  openProjectsForSettingsHost,
   openProjectDirectory,
   openProjectDirectoryWithHosts,
   renameProject,
   selectWorkspaceHost,
-  switchProjectSettingsHost,
 } from "./helpers/project-grouping";
 import { type IsolatedHostDaemon, startIsolatedHostDaemon } from "./helpers/isolated-host-daemon";
 import { connectSeedClient, type SeedDaemonClient } from "./helpers/seed-client";
@@ -380,10 +380,18 @@ test.describe("Sidebar project grouping", () => {
 
   test("renames only the selected host's grouped project", async ({ page, crossHostProject }) => {
     await openScenario(page, crossHostProject);
-    await openGroupedProjectSettings(page, GROUPED_PROJECT_NAME);
+    await openGroupedProjectSettings(page, {
+      serverId: getServerId(),
+      projectName: GROUPED_PROJECT_NAME,
+    });
     await renameProject(page, "Primary-only project name");
     await expectProjectSettingsName(page, "Primary-only project name");
-    await switchProjectSettingsHost(page, SECONDARY_HOST_LABEL);
+    const secondaryHost = crossHostProject.hosts[0];
+    if (!secondaryHost) throw new Error("Expected a secondary host");
+    await openProjectsForSettingsHost(page, {
+      serverId: secondaryHost.serverId,
+      projectName: GROUPED_PROJECT_NAME,
+    });
     await expectProjectSettingsName(page, GROUPED_PROJECT_NAME);
   });
 

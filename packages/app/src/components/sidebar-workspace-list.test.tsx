@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import React from "react";
 import type { ReactElement } from "react";
+import { createProjectViewKey } from "@/projects/workspace-structure";
 
 vi.hoisted(() => {
   (globalThis as unknown as { __DEV__: boolean }).__DEV__ = false;
@@ -196,7 +197,7 @@ function ProjectHeaderProbe({
   project: SidebarProjectEntry;
   counts: RenderCounts;
 }): null {
-  incrementRecord(counts.headers, project.projectKey);
+  incrementRecord(counts.headers, project.viewKey);
   return null;
 }
 
@@ -232,7 +233,7 @@ function ProjectActiveProbe({
     activeSelection?.serverId === serverId &&
     project.workspaces.some((entry) => entry.workspaceId === activeSelection.workspaceId);
   void isActive;
-  incrementRecord(counts.projectSelection, project.projectKey);
+  incrementRecord(counts.projectSelection, project.viewKey);
   return null;
 }
 
@@ -260,7 +261,7 @@ function SidebarFrameProbe({ counts }: { counts: RenderCounts }): ReactElement {
   return (
     <>
       {projects.map((project) => (
-        <div key={project.projectKey}>
+        <div key={project.viewKey}>
           <ProjectHeaderProbe project={project} counts={counts} />
           <ProjectActiveProbe serverId={SERVER_ID} project={project} counts={counts} />
           {project.workspaces.map((entry) => (
@@ -453,8 +454,8 @@ describe("sidebar workspace render isolation", () => {
 
     expect(counts.frame).toBe(1);
     expect(counts.projectSelection).toEqual({
-      "project-a": 1,
-      "project-b": 1,
+      [createProjectViewKey({ kind: "equivalence", projectKey: "project-a" })]: 1,
+      [createProjectViewKey({ kind: "equivalence", projectKey: "project-b" })]: 1,
     });
     expect(counts.rowSelection).toEqual({
       "a-main": 1,

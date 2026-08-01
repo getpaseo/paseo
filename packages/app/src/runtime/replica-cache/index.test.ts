@@ -94,7 +94,16 @@ function seedSession(): void {
   store.setAgents(SERVER_ID, new Map([["agent-1", agent("agent-1")]]));
   store.setWorkspaces(
     SERVER_ID,
-    new Map([["workspace-1", normalizeWorkspaceDescriptor(workspace())]]),
+    new Map([
+      [
+        "workspace-1",
+        normalizeWorkspaceDescriptor({
+          ...workspace(),
+          workspaceKind: "worktree",
+          worktreeSlug: "owned-worktree",
+        }),
+      ],
+    ]),
   );
   store.setProjects(SERVER_ID, [
     normalizeProjectDescriptor({
@@ -172,6 +181,7 @@ describe("ReplicaCache", () => {
     expect(Array.from(session?.projects.keys() ?? [])).toEqual(["project-1"]);
     expect(session?.agents.get("agent-1")?.updatedAt).toBeInstanceOf(Date);
     expect(session?.workspaces.get("workspace-1")?.statusEnteredAt).toBeInstanceOf(Date);
+    expect(session?.workspaces.get("workspace-1")?.worktreeSlug).toBe("owned-worktree");
     expect(session?.agentStreamTail.get("agent-1")).toEqual([message("message-1", "Cached")]);
     expect(session?.agentAuthoritativeHistoryApplied.get("agent-1")).toBe(true);
     expect(session?.agentTimelineCursor.get("agent-1")).toEqual({

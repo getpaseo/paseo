@@ -7,3 +7,8 @@ export async function openCommandCenter(page: Page): Promise<Locator> {
   await expect(panel).toBeVisible({ timeout: 30_000 });
   return panel;
 }
+
+export async function closeCommandCenter(page: Page): Promise<void> {
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("command-center-panel")).not.toBeVisible();
+}

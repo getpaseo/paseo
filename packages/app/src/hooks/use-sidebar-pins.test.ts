@@ -10,7 +10,7 @@ function placement(workspaceKey: string): SidebarWorkspacePlacement {
     workspaceKey,
     serverId: "s1",
     workspaceId: workspaceKey,
-    projectKey: "p1",
+    projectViewKey: "p1",
     projectName: "Project 1",
     projectKind: "git",
     workspaceKind: "worktree",
@@ -20,7 +20,7 @@ function placement(workspaceKey: string): SidebarWorkspacePlacement {
 
 function project(projectKey: string, workspaces: SidebarWorkspacePlacement[]): SidebarProjectEntry {
   return {
-    projectKey,
+    viewKey: projectKey,
     projectName: projectKey,
     projectKind: "git",
     iconWorkingDir: "",

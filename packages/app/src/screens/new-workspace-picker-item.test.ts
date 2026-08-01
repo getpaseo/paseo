@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
-import { pickerItemToCheckoutRequest, type PickerItem } from "./new-workspace-picker-item";
+import type { CheckoutStatusPayload } from "@/git/checkout-status-cache";
+import {
+  pickerItemToCheckoutRequest,
+  resolveCheckoutRequest,
+  type PickerItem,
+} from "./new-workspace-picker-item";
 
 const prItem: ForgeSearchItem = {
   kind: "change_request",
@@ -80,5 +85,33 @@ describe("pickerItemToCheckoutRequest", () => {
         projectPath: "acme/repo",
       },
     });
+  });
+});
+
+describe("resolveCheckoutRequest", () => {
+  const checkoutStatus = {
+    currentBranch: "feature/current",
+  } as CheckoutStatusPayload;
+
+  it("branches from the loaded current branch when nothing was picked", () => {
+    expect(resolveCheckoutRequest(null, checkoutStatus)).toEqual({
+      action: "branch-off",
+      refName: "feature/current",
+    });
+  });
+
+  it("prefers an explicit picker selection", () => {
+    expect(
+      resolveCheckoutRequest({ kind: "branch", name: "feature/picked" }, checkoutStatus),
+    ).toEqual({
+      action: "branch-off",
+      refName: "feature/picked",
+    });
+  });
+
+  it("preserves the server-default intent for a detached checkout", () => {
+    expect(
+      resolveCheckoutRequest(null, { ...checkoutStatus, currentBranch: null }),
+    ).toBeUndefined();
   });
 });
