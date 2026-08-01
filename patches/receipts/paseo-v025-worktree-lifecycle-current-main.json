@@ -11,14 +11,14 @@
     "upstreamMainCommit": "70ed70d36e2eabd3876a22931954319ec202c902",
     "mergeCommit": "e5e5d607ea8e14dd874c3db4ce095634a9da7092",
     "mergeTree": "529add05cfc1424c287d576f27d8194f37503c35",
-    "headCommit": "4bc441a334c61c17fd15f6e5936d1a4f6ce8b915",
-    "headTree": "1cf3144fc288f9dc398bc3954846a4e6bd85004f",
+    "headCommit": "5e17fcf769cb855326683413cdcd9b3cbe82ba43",
+    "headTree": "e83f37f06eeb44d5b87ff30d5ca18c0d25288f5b",
     "firstParent": "bfdb6ed4a8668e05826effd3f8b1a18dbf74c9b2",
     "secondParent": "70ed70d36e2eabd3876a22931954319ec202c902"
   },
   "verification": {
-    "commit": "4bc441a334c61c17fd15f6e5936d1a4f6ce8b915",
-    "completedAt": "2026-08-01T02:05:35Z",
+    "commit": "5e17fcf769cb855326683413cdcd9b3cbe82ba43",
+    "completedAt": "2026-08-01T02:18:00Z",
     "commands": [
       "npm run build --workspace packages/protocol",
       "cd packages/server && npx vitest run src/server/agent/create-agent-lifecycle-dispatch.test.ts src/server/agent/create-agent/create.test.ts src/server/agent/mcp-server.test.ts src/server/session.workspace-git-watch.test.ts src/server/session.workspaces.test.ts",
@@ -39,6 +39,12 @@
       "npm run typecheck --workspace packages/server",
       "oxlint <16 changed lifecycle source and test files>",
       "oxfmt --check <16 changed lifecycle source and test files>",
+      "git diff --check",
+      "vitest run packages/server/src/server/agent/create-agent-lifecycle-dispatch.test.ts packages/server/src/server/agent/create-agent/create.test.ts packages/server/src/server/agent/mcp-server.test.ts packages/server/src/terminal/terminal-session-controller.test.ts packages/server/src/server/auto-archive-on-merge/archive-if-safe.test.ts packages/server/src/server/workspace-archive-service.test.ts packages/server/src/server/workspace-cleanup-retry-service.test.ts packages/server/src/server/worktree-session.test.ts packages/server/src/server/session.workspaces.test.ts packages/server/src/server/schedule/service.test.ts packages/server/src/utils/worktree.posix.test.ts --fileParallelism=false",
+      "npm run build --workspace packages/server",
+      "npm run typecheck --workspace packages/server",
+      "oxlint <7 cleanup retry source and test files>",
+      "oxfmt --check <7 cleanup retry source and test files>",
       "git diff --check"
     ],
     "result": {
@@ -55,6 +61,11 @@
       "archiveFailureTruthfulnessTests": "75 passed",
       "automatedCleanupRetryTests": "388 passed, 4 skipped",
       "autonomousCleanupOwner": "non-blocking startup and shutdown; startup and mutation-driven retry; rotating incarnation-grouped worktree batches; bounded cycle and capped backoff; cancellable timers",
+      "cleanupOnlyRetryRepairTests": "434 passed, 5 skipped across 11 lifecycle files",
+      "cleanupOnlyRetryBoundary": "exact persisted directory and incarnation only; never invokes normal workspace or agent archive scope; stale cleanup cannot archive a live replacement at a reused path",
+      "cleanupRetryShutdown": "stop aborts and awaits the owned active cycle; hanging teardown subprocess trees are terminated before shutdown completes",
+      "cleanupOnlyRetryBuildAndTypecheck": "passed",
+      "cleanupOnlyRetryLintAndFormat": "0 warnings, 0 errors; formatting and diff checks passed",
       "allWorkspaceTypecheck": "unchanged app errors: DaemonClient lacks setProjectIcon/getProjectIcon on this stable-derived branch"
     }
   }

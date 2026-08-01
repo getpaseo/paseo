@@ -67,6 +67,8 @@
         "persisted cleanup is retried autonomously at startup and after mutation without another agent event",
         "cleanup retries group sibling obligations by incarnation-bound worktree path before deletion",
         "cleanup retry cycles use bounded work with capped backoff and cancellable timers",
+        "cleanup retries use an exact cleanup-only path and incarnation boundary and cannot archive a live replacement at a reused path",
+        "shutdown aborts and awaits the active cleanup cycle and terminates a hanging teardown subprocess tree before returning",
         "replacement worktree incarnations archive independently of stale cleanup intents",
         "auto-archive retries after transient failure and cancellation observes rejection",
         "setup output is bounded while preserving the final diagnostic tail"
@@ -98,8 +100,8 @@
       },
       "currentMainIntegration": {
         "upstreamMainCommit": "70ed70d36e2eabd3876a22931954319ec202c902",
-        "verifiedHeadCommit": "4bc441a334c61c17fd15f6e5936d1a4f6ce8b915",
-        "verifiedHeadTree": "1cf3144fc288f9dc398bc3954846a4e6bd85004f",
+        "verifiedHeadCommit": "5e17fcf769cb855326683413cdcd9b3cbe82ba43",
+        "verifiedHeadTree": "e83f37f06eeb44d5b87ff30d5ca18c0d25288f5b",
         "receipt": "patches/receipts/paseo-v025-worktree-lifecycle-current-main.json"
       },
       "upstreamable": true,
