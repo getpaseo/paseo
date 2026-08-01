@@ -13,13 +13,19 @@ import {
 
 interface PendingAgentInitialization {
   promise: Promise<ManagedAgent>;
-  options: { broadcastTimeline: boolean };
+  options: PendingAgentInitializationOptions;
+}
+
+interface PendingAgentInitializationOptions {
+  broadcastTimeline: boolean;
+  broadcastDelivered: boolean;
 }
 
 const pendingAgentInitializations = new Map<string, PendingAgentInitialization>();
 
 export type AgentLoaderManager = Pick<
   AgentManager,
+  | "broadcastTimeline"
   | "createAgent"
   | "getAgent"
   | "getRegisteredProviderIds"
@@ -68,11 +74,16 @@ export async function ensureAgentLoaded(
   const inflight = pendingAgentInitializations.get(agentId);
   if (inflight) {
     inflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
-    return inflight.promise;
+    const agent = await inflight.promise;
+    deliverLateTimelineBroadcast(agentId, deps.agentManager, inflight.options);
+    return agent;
   }
 
   const existing = deps.agentManager.getAgent(agentId);
   if (existing) {
+    if (deps.broadcastTimeline === true) {
+      deps.agentManager.broadcastTimeline(agentId);
+    }
     return existing;
   }
 
@@ -84,11 +95,14 @@ export async function ensureAgentLoaded(
   const laterInflight = pendingAgentInitializations.get(agentId);
   if (laterInflight) {
     laterInflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
-    return laterInflight.promise;
+    const agent = await laterInflight.promise;
+    deliverLateTimelineBroadcast(agentId, deps.agentManager, laterInflight.options);
+    return agent;
   }
 
   const pendingOptions = {
     broadcastTimeline: deps.broadcastTimeline === true,
+    broadcastDelivered: false,
   };
   const initPromise = (async () => {
     const record = await deps.agentStorage.get(agentId);
@@ -111,7 +125,7 @@ export async function ensureAgentLoaded(
         agentId,
         {
           ...extractTimestamps(record),
-          historyBroadcast: () => pendingOptions.broadcastTimeline,
+          historyBroadcast: () => consumeTimelineBroadcast(pendingOptions),
         },
         record.archivedAt ? { purpose: "history" } : undefined,
       );
@@ -133,7 +147,7 @@ export async function ensureAgentLoaded(
 
     if (!handle) {
       await deps.agentManager.hydrateTimelineFromProvider(agentId, {
-        broadcast: () => pendingOptions.broadcastTimeline,
+        broadcast: () => consumeTimelineBroadcast(pendingOptions),
       });
     }
     return deps.agentManager.getAgent(agentId) ?? snapshot;
@@ -143,11 +157,31 @@ export async function ensureAgentLoaded(
   pendingAgentInitializations.set(agentId, pending);
 
   try {
-    return await initPromise;
+    const agent = await initPromise;
+    deliverLateTimelineBroadcast(agentId, deps.agentManager, pendingOptions);
+    return agent;
   } finally {
     const current = pendingAgentInitializations.get(agentId);
     if (current === pending) {
       pendingAgentInitializations.delete(agentId);
     }
+  }
+}
+
+function consumeTimelineBroadcast(options: PendingAgentInitializationOptions): boolean {
+  if (!options.broadcastTimeline || options.broadcastDelivered) {
+    return false;
+  }
+  options.broadcastDelivered = true;
+  return true;
+}
+
+function deliverLateTimelineBroadcast(
+  agentId: string,
+  agentManager: AgentLoaderManager,
+  options: PendingAgentInitializationOptions,
+): void {
+  if (consumeTimelineBroadcast(options)) {
+    agentManager.broadcastTimeline(agentId);
   }
 }

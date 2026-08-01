@@ -197,6 +197,7 @@ function buildRunOutput(params: {
 
 type ScheduleAgentManager = Pick<
   AgentManager,
+  | "broadcastTimeline"
   | "createAgent"
   | "getAgent"
   | "getRegisteredProviderIds"

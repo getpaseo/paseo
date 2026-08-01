@@ -192,9 +192,15 @@ interface HydrateTimelineOptions {
 
 interface ActiveHistoryHydration {
   token: symbol;
+  session: AgentSession;
   bufferedOperations: BufferedHistoryHydrationOperation[];
   historyReadStarted: boolean;
   historyOverlapItems: AgentTimelineItem[];
+}
+
+interface HistoryHydrationTail {
+  agent: ActiveManagedAgent;
+  promise: Promise<void>;
 }
 
 interface BufferedHistoryHydrationOperation {
@@ -580,7 +586,7 @@ export class AgentManager {
   private readonly providerSubagents = new ProviderSubagentStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
-  private readonly historyHydrationTails = new Map<string, Promise<void>>();
+  private readonly historyHydrationTails = new Map<string, HistoryHydrationTail>();
   private readonly activeHistoryHydrations = new Map<string, ActiveHistoryHydration>();
   private readonly coalescerHistoryHydrationTokens = new Map<string, symbol>();
   private readonly runs = new AgentRunState();
@@ -1146,7 +1152,7 @@ export class AgentManager {
       launchContext,
       resumeOptions,
     );
-    const hydrationToken = this.beginOrContinueHistoryHydration(resolvedAgentId);
+    this.beginOrContinueHistoryHydration(resolvedAgentId, session);
     try {
       await this.registerSession(session, storedConfig, resolvedAgentId, {
         ...options,
@@ -1155,12 +1161,13 @@ export class AgentManager {
       await this.hydrateTimelineFromProvider(resolvedAgentId, {
         broadcast: options?.historyBroadcast,
       });
-      return { ...this.requireAgent(resolvedAgentId) };
-    } catch (error) {
-      const activeHydration = this.activeHistoryHydrations.get(resolvedAgentId);
-      if (activeHydration?.token === hydrationToken) {
-        this.activeHistoryHydrations.delete(resolvedAgentId);
+      const resumed = this.requireSessionAgent(resolvedAgentId);
+      if (resumed.session !== session) {
+        throw new Error(`Agent ${resolvedAgentId} was replaced while resuming`);
       }
+      return { ...resumed };
+    } catch (error) {
+      this.invalidateHistoryHydration(resolvedAgentId, session, "agent resume failed");
       throw error;
     }
   }
@@ -2421,15 +2428,19 @@ export class AgentManager {
     agentId: string,
     options?: HydrateTimelineOptions,
   ): Promise<void> {
-    const previous = (this.historyHydrationTails.get(agentId) ?? Promise.resolve()).catch(
-      () => undefined,
-    );
+    const agent = this.requireSessionAgent(agentId);
+    const previousTail = this.historyHydrationTails.get(agentId);
+    const previous = (
+      previousTail?.agent === agent ? previousTail.promise : Promise.resolve()
+    ).catch(() => undefined);
     let hydration!: Promise<void>;
-    const ownsLatestTail = () => this.historyHydrationTails.get(agentId) === hydration;
+    let hydrationTail!: HistoryHydrationTail;
+    const ownsLatestTail = () => this.historyHydrationTails.get(agentId) === hydrationTail;
     hydration = previous.then(() =>
-      this.runSerializedHistoryHydration(agentId, options, ownsLatestTail),
+      this.runSerializedHistoryHydration(agent, options, ownsLatestTail),
     );
-    this.historyHydrationTails.set(agentId, hydration);
+    hydrationTail = { agent, promise: hydration };
+    this.historyHydrationTails.set(agentId, hydrationTail);
     let hydrationError: unknown;
     let hydrationFailed = false;
     try {
@@ -2442,16 +2453,16 @@ export class AgentManager {
       // that shared gate still owns uncommitted live writes. Follow the latest per-agent tail to
       // a stable endpoint, while preserving this caller's own success/failure result.
       while (true) {
-        const latestHydration = this.historyHydrationTails.get(agentId);
-        if (!latestHydration || latestHydration === hydration) {
+        const latestTail = this.historyHydrationTails.get(agentId);
+        if (!latestTail || latestTail === hydrationTail || latestTail.agent !== agent) {
           break;
         }
-        await latestHydration.catch(() => undefined);
-        if (this.historyHydrationTails.get(agentId) === latestHydration) {
+        await latestTail.promise.catch(() => undefined);
+        if (this.historyHydrationTails.get(agentId) === latestTail) {
           break;
         }
       }
-      if (this.historyHydrationTails.get(agentId) === hydration) {
+      if (this.historyHydrationTails.get(agentId) === hydrationTail) {
         this.historyHydrationTails.delete(agentId);
       }
     }
@@ -2462,26 +2473,42 @@ export class AgentManager {
   }
 
   private async runSerializedHistoryHydration(
-    agentId: string,
+    agent: ActiveManagedAgent,
     options: HydrateTimelineOptions | undefined,
     ownsLatestTail: () => boolean,
   ): Promise<void> {
-    await this.drainSessionEvents(agentId);
-    const hydrationToken = this.beginOrContinueHistoryHydration(agentId);
+    await this.drainSessionEvents(agent.id);
+    if (this.agents.get(agent.id) !== agent) {
+      return;
+    }
+    const hydrationToken = this.beginOrContinueHistoryHydration(agent.id, agent.session);
     try {
       // Capture output already waiting in the coalescer at this exact boundary. When another
       // hydration is queued, the same gate remains active and this flush places between-call
       // output after earlier buffered work but before the next provider history read.
-      this.agentStreamCoalescer.flushAndDiscard(agentId);
-      const agent = this.requireSessionAgent(agentId);
+      this.agentStreamCoalescer.flushAndDiscard(agent.id);
       await this.hydrateTimelineFromLegacyProviderHistory(agent, options);
     } finally {
       // A queued successor inherits the gate and buffered operations. Only the latest hydration
       // performs the final release; writers that have not already linearized remain gated across
       // the handoff so they cannot escape into the between-promises microtask window.
       if (ownsLatestTail()) {
-        await this.releaseHistoryHydration(agentId, hydrationToken, ownsLatestTail);
+        await this.releaseHistoryHydration(agent.id, agent.session, hydrationToken, ownsLatestTail);
       }
+    }
+  }
+
+  broadcastTimeline(agentId: string): void {
+    const agent = this.requireSessionAgent(agentId);
+    for (const subagent of this.providerSubagents.list(agentId)) {
+      this.dispatch({ type: "provider_subagent", event: { type: "upsert", subagent } });
+    }
+    for (const row of this.timelineStore.getRows(agentId)) {
+      this.dispatchStream(
+        agentId,
+        { type: "timeline", provider: agent.provider, item: row.item, timestamp: row.timestamp },
+        { seq: row.seq, epoch: this.timelineStore.getEpoch(agentId), timestamp: row.timestamp },
+      );
     }
   }
 
@@ -2793,6 +2820,8 @@ export class AgentManager {
     },
   ): Promise<ManagedAgent> {
     let registered = false;
+    let published = false;
+    let managed: ActiveManagedAgent | null = null;
     try {
       this.assertAcceptingAgentRegistrations();
       const resolvedAgentId = validateAgentId(agentId, "registerSession");
@@ -2812,7 +2841,7 @@ export class AgentManager {
         options,
       });
 
-      const managed = this.buildManagedAgentForRegister({
+      managed = this.buildManagedAgentForRegister({
         resolvedAgentId,
         session,
         config,
@@ -2834,6 +2863,7 @@ export class AgentManager {
       this.assertAgentRegistrationActive(managed);
       if (!options?.publishWhenReady) {
         this.emitState(managed, { persist: false });
+        published = true;
       }
 
       await this.refreshSessionState(managed, { emit: false });
@@ -2843,10 +2873,23 @@ export class AgentManager {
       await this.persistSnapshot(managed);
       this.assertAgentRegistrationActive(managed);
       this.emitState(managed, { persist: false });
+      published = true;
       this.subscribeToSession(managed);
       return { ...managed };
     } catch (error) {
       if (!registered) {
+        await this.closeUnregisteredSession(session);
+      } else if (managed && this.agents.get(managed.id) === managed) {
+        const closedAgent = this.prepareAgentForClosure(managed, "agent registration failed");
+        await this.persistSnapshot(closedAgent).catch((rollbackError: unknown) => {
+          this.logger.warn(
+            { err: rollbackError, agentId: managed?.id },
+            "Failed to persist failed agent registration rollback",
+          );
+        });
+        if (published) {
+          this.emitClosedAgent(closedAgent, { persist: false });
+        }
         await this.closeUnregisteredSession(session);
       }
       throw error;
@@ -2989,6 +3032,7 @@ export class AgentManager {
     cancelReason: string,
   ): ManagedAgentClosed {
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
+    this.invalidateHistoryHydration(agent.id, agent.session, cancelReason);
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);
     if (agent.unsubscribeSession) {
@@ -3031,19 +3075,22 @@ export class AgentManager {
     if (agent.unsubscribeSession) {
       return;
     }
-    const agentId = agent.id;
     const unsubscribe = agent.session.subscribe((event: AgentStreamEvent) => {
-      this.enqueueSessionEvent(agentId, event);
+      this.enqueueSessionEvent(agent, event);
     });
     agent.unsubscribeSession = unsubscribe;
   }
 
-  private enqueueSessionEvent(agentId: string, event: AgentStreamEvent): void {
+  private enqueueSessionEvent(agent: ActiveManagedAgent, event: AgentStreamEvent): void {
+    const agentId = agent.id;
+    if (this.agents.get(agentId) !== agent) {
+      return;
+    }
     const activeHydration = this.activeHistoryHydrations.get(agentId);
-    if (activeHydration) {
+    if (activeHydration?.session === agent.session) {
       activeHydration.bufferedOperations.push({
         kind: "session_event",
-        run: async () => this.processSessionEvent(agentId, event, activeHydration.token),
+        run: async () => this.processSessionEvent(agent, event, activeHydration.token),
         overlapItem:
           !activeHydration.historyReadStarted &&
           event.type === "timeline" &&
@@ -3066,7 +3113,7 @@ export class AgentManager {
     const previous = this.sessionEventTails.get(agentId) ?? Promise.resolve();
     const next = previous
       .catch(() => undefined)
-      .then(async () => this.processSessionEvent(agentId, event))
+      .then(async () => this.processSessionEvent(agent, event))
       .catch((err) => {
         this.logger.error(
           { err, agentId, eventType: event.type },
@@ -3084,25 +3131,25 @@ export class AgentManager {
   }
 
   private async processSessionEvent(
-    agentId: string,
+    agent: ActiveManagedAgent,
     event: AgentStreamEvent,
     historyHydrationToken?: symbol,
   ): Promise<void> {
-    const current = this.agents.get(agentId);
-    if (!current || current.session == null) {
+    const current = this.agents.get(agent.id);
+    if (current !== agent) {
       return;
     }
     this.logger.trace(
       {
-        agentId,
+        agentId: agent.id,
         provider: event.provider,
-        sessionId: current.persistence?.sessionId ?? undefined,
+        sessionId: agent.persistence?.sessionId ?? undefined,
         turnId: getAgentStreamEventTurnId(event),
         event,
       },
       "agent.manager.dequeue",
     );
-    await this.dispatchSessionEvent(current, event, historyHydrationToken);
+    await this.dispatchSessionEvent(agent, event, historyHydrationToken);
   }
 
   /**
@@ -3304,8 +3351,15 @@ export class AgentManager {
       }
     }
 
+    if (this.agents.get(agent.id) !== agent) {
+      return;
+    }
+
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     await this.deleteCommittedTimeline(agent.id);
+    if (this.agents.get(agent.id) !== agent) {
+      return;
+    }
     this.timelineStore.delete(agent.id);
     this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
     agent.historyPrimed = true;
@@ -3348,7 +3402,7 @@ export class AgentManager {
     let historyAvailable = true;
     agent.historyPrimed = true;
     const activeHydration = this.activeHistoryHydrations.get(agent.id);
-    if (activeHydration) {
+    if (activeHydration?.session === agent.session) {
       activeHydration.historyReadStarted = true;
     }
     try {
@@ -3371,8 +3425,12 @@ export class AgentManager {
       // ignore history failures
     }
 
+    if (this.agents.get(agent.id) !== agent) {
+      return;
+    }
+
     if (historyAvailable) {
-      if (activeHydration) {
+      if (activeHydration?.session === agent.session) {
         activeHydration.historyOverlapItems.push(
           ...timelineEvents
             .map((event) => event.item)
@@ -3403,14 +3461,15 @@ export class AgentManager {
     }
   }
 
-  private beginOrContinueHistoryHydration(agentId: string): symbol {
+  private beginOrContinueHistoryHydration(agentId: string, session: AgentSession): symbol {
     const activeHydration = this.activeHistoryHydrations.get(agentId);
-    if (activeHydration) {
+    if (activeHydration?.session === session) {
       return activeHydration.token;
     }
     const token = Symbol(agentId);
     this.activeHistoryHydrations.set(agentId, {
       token,
+      session,
       bufferedOperations: [],
       historyReadStarted: false,
       historyOverlapItems: [],
@@ -3446,12 +3505,17 @@ export class AgentManager {
 
   private async releaseHistoryHydration(
     agentId: string,
+    session: AgentSession,
     token: symbol,
     stillOwnsTail: () => boolean,
   ): Promise<void> {
     const activeHydration = this.activeHistoryHydrations.get(agentId);
-    if (!activeHydration || activeHydration.token !== token) {
-      throw new Error(`Agent ${agentId} history hydration ownership was lost`);
+    if (
+      !activeHydration ||
+      activeHydration.session !== session ||
+      activeHydration.token !== token
+    ) {
+      return;
     }
 
     // Keep the gate installed until every operation that arrived during replacement has
@@ -3500,10 +3564,26 @@ export class AgentManager {
       // There is no await between this final check and gate removal. A concurrent writer either
       // joined the buffer above or observes a fully completed replacement and writes afterward.
       if (this.activeHistoryHydrations.get(agentId) !== activeHydration) {
-        throw new Error(`Agent ${agentId} history hydration ownership was lost`);
+        return;
       }
       this.activeHistoryHydrations.delete(agentId);
       return;
+    }
+  }
+
+  private invalidateHistoryHydration(agentId: string, session: AgentSession, reason: string): void {
+    const activeHydration = this.activeHistoryHydrations.get(agentId);
+    if (activeHydration?.session === session) {
+      this.activeHistoryHydrations.delete(agentId);
+      const error = new Error(`Agent ${agentId} ${reason} during history hydration`);
+      for (const operation of activeHydration.bufferedOperations) {
+        operation.reject?.(error);
+      }
+      activeHydration.bufferedOperations.length = 0;
+    }
+    const tail = this.historyHydrationTails.get(agentId);
+    if (tail?.agent.session === session) {
+      this.historyHydrationTails.delete(agentId);
     }
   }
 

@@ -17,7 +17,11 @@ import { AgentStorage } from "./agent-storage.js";
 import { toAgentPayload } from "./agent-projections.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { formatSystemNotificationPrompt } from "./agent-prompt.js";
-import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent-loading.js";
+import {
+  ensureAgentLoaded,
+  ensureUnarchivedAgentLoaded,
+  type AgentLoaderManager,
+} from "./agent-loading.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
 import type {
   AgentClient,
@@ -2832,9 +2836,10 @@ test("reloadAgentSession preserves timeline and does not force history replay", 
 });
 
 async function expectResumeHistoryOverlap(params: {
-  item: AgentTimelineItem;
-  expectedCount: number;
-  emitAfterHistoryReadStarts?: boolean;
+  historyItems: AgentTimelineItem[];
+  subscriptionItems: AgentTimelineItem[];
+  expectedItems: AgentTimelineItem[];
+  afterHistoryReadItems?: AgentTimelineItem[];
 }): Promise<void> {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-resume-history-overlap-"));
   const agentId = randomUUID();
@@ -2842,15 +2847,19 @@ async function expectResumeHistoryOverlap(params: {
   class OverlappingHistorySession extends TestAgentSession {
     override subscribe(callback: (event: AgentStreamEvent) => void): () => void {
       const unsubscribe = super.subscribe(callback);
-      callback({ type: "timeline", provider: "codex", item: params.item });
+      for (const item of params.subscriptionItems) {
+        callback({ type: "timeline", provider: "codex", item });
+      }
       return unsubscribe;
     }
 
     override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-      if (params.emitAfterHistoryReadStarts) {
-        this.pushEvent({ type: "timeline", provider: "codex", item: params.item });
+      for (const item of params.afterHistoryReadItems ?? []) {
+        this.pushEvent({ type: "timeline", provider: "codex", item });
       }
-      yield { type: "timeline", provider: "codex", item: params.item };
+      for (const item of params.historyItems) {
+        yield { type: "timeline", provider: "codex", item };
+      }
     }
   }
 
@@ -2877,9 +2886,7 @@ async function expectResumeHistoryOverlap(params: {
       agentId,
     );
 
-    expect(manager.getTimeline(agentId)).toEqual(
-      Array.from({ length: params.expectedCount }, () => params.item),
-    );
+    expect(manager.getTimeline(agentId)).toEqual(params.expectedItems);
   } finally {
     await manager.closeAgent(agentId).catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
@@ -2887,39 +2894,247 @@ async function expectResumeHistoryOverlap(params: {
 }
 
 test("resume hydration deduplicates the same message emitted by subscribe and history", async () => {
+  const item = {
+    type: "assistant_message",
+    text: "persisted reply",
+    messageId: "message-1",
+  } as const;
   await expectResumeHistoryOverlap({
-    item: { type: "assistant_message", text: "persisted reply", messageId: "message-1" },
-    expectedCount: 1,
+    historyItems: [item],
+    subscriptionItems: [item],
+    expectedItems: [item],
   });
 });
 
 test("resume hydration deduplicates the same tool call emitted by subscribe and history", async () => {
+  const item = {
+    type: "tool_call",
+    callId: "call-1",
+    name: "read",
+    status: "completed",
+    error: null,
+    detail: { type: "plain_text", text: "persisted result" },
+  } as const;
   await expectResumeHistoryOverlap({
-    item: {
-      type: "tool_call",
-      callId: "call-1",
-      name: "read",
-      status: "completed",
-      error: null,
-      detail: { type: "plain_text", text: "persisted result" },
-    },
-    expectedCount: 1,
+    historyItems: [item],
+    subscriptionItems: [item],
+    expectedItems: [item],
   });
 });
 
 test("resume hydration deduplicates the same compaction emitted by subscribe and history", async () => {
+  const item = {
+    type: "compaction",
+    status: "completed",
+    trigger: "auto",
+    preTokens: 12_000,
+  } as const;
   await expectResumeHistoryOverlap({
-    item: { type: "compaction", status: "completed", trigger: "auto", preTokens: 12_000 },
-    expectedCount: 1,
+    historyItems: [item],
+    subscriptionItems: [item],
+    expectedItems: [item],
   });
 });
 
 test("resume hydration preserves the same message emitted after history reading starts", async () => {
+  const item = { type: "assistant_message", text: "same content", messageId: "message-2" } as const;
   await expectResumeHistoryOverlap({
-    item: { type: "assistant_message", text: "same content", messageId: "message-2" },
-    expectedCount: 2,
-    emitAfterHistoryReadStarts: true,
+    historyItems: [item],
+    subscriptionItems: [],
+    afterHistoryReadItems: [item],
+    expectedItems: [item, item],
   });
+});
+
+test("resume hydration deduplicates a user message emitted by subscribe and history", async () => {
+  const item = { type: "user_message", text: "persisted prompt" } as const;
+  await expectResumeHistoryOverlap({
+    historyItems: [item],
+    subscriptionItems: [item],
+    expectedItems: [item],
+  });
+});
+
+test("resume hydration reconciles multiple overlap items in history order", async () => {
+  const first = { type: "user_message", text: "first" } as const;
+  const second = { type: "assistant_message", text: "second", messageId: "second" } as const;
+  await expectResumeHistoryOverlap({
+    historyItems: [first, second],
+    subscriptionItems: [first, second],
+    expectedItems: [first, second],
+  });
+});
+
+test("resume hydration preserves the non-overlapping part of a buffered sequence", async () => {
+  const first = { type: "user_message", text: "first" } as const;
+  const historyOnly = { type: "assistant_message", text: "history", messageId: "history" } as const;
+  const liveOnly = { type: "assistant_message", text: "live", messageId: "live" } as const;
+  await expectResumeHistoryOverlap({
+    historyItems: [first, historyOnly],
+    subscriptionItems: [first, liveOnly],
+    expectedItems: [first, historyOnly, liveOnly],
+  });
+});
+
+test("resume hydration consumes only the matching number of repeated items", async () => {
+  const item = { type: "assistant_message", text: "repeated", messageId: "same" } as const;
+  await expectResumeHistoryOverlap({
+    historyItems: [item],
+    subscriptionItems: [item, item],
+    expectedItems: [item, item],
+  });
+});
+
+test("resume hydration reconciles the same events when subscription order differs", async () => {
+  const first = { type: "user_message", text: "first" } as const;
+  const second = { type: "assistant_message", text: "second", messageId: "second" } as const;
+  await expectResumeHistoryOverlap({
+    historyItems: [first, second],
+    subscriptionItems: [second, first],
+    expectedItems: [first, second],
+  });
+});
+
+test("resume hydration preserves same-content events with distinct identities", async () => {
+  const history = { type: "assistant_message", text: "same", messageId: "history" } as const;
+  const live = { type: "assistant_message", text: "same", messageId: "live" } as const;
+  await expectResumeHistoryOverlap({
+    historyItems: [history],
+    subscriptionItems: [live],
+    expectedItems: [history, live],
+  });
+});
+
+test("closing a resume drops old history and buffered events before reusing the agent id", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-resume-generation-fence-"));
+  const agentId = randomUUID();
+  const historyStarted = deferred<void>();
+  const historyAllowed = deferred<void>();
+  let resumedSession: TestAgentSession | null = null;
+
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      resumedSession = new (class extends TestAgentSession {
+        override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+          historyStarted.resolve();
+          await historyAllowed.promise;
+          yield {
+            type: "timeline",
+            provider: "codex",
+            item: { type: "assistant_message", text: "old history", messageId: "old-history" },
+          };
+        }
+      })({ provider: "codex", cwd: config?.cwd ?? workdir });
+      return resumedSession;
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+
+  try {
+    const resume = manager.resumeAgentFromPersistence(
+      { provider: "codex", sessionId: "old-session", metadata: { cwd: workdir } },
+      undefined,
+      agentId,
+    );
+    await historyStarted.promise;
+    resumedSession?.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "assistant_message", text: "old buffered", messageId: "old-buffered" },
+    });
+
+    await manager.closeAgent(agentId);
+    const replacement = await manager.createAgent({ provider: "codex", cwd: workdir }, agentId, {
+      workspaceId: undefined,
+    });
+    await manager.appendTimelineItem(replacement.id, {
+      type: "assistant_message",
+      text: "replacement",
+      messageId: "replacement",
+    });
+    historyAllowed.resolve();
+
+    await expect(resume).rejects.toThrow(`Agent ${agentId} was replaced while resuming`);
+    expect(manager.getTimeline(agentId)).toEqual([
+      { type: "assistant_message", text: "replacement", messageId: "replacement" },
+    ]);
+  } finally {
+    historyAllowed.resolve();
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("failed resumed registration rolls back the live agent and rejects gated writers", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-resume-registration-rollback-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentId = randomUUID();
+  const runtimeInfoStarted = deferred<void>();
+  const runtimeInfoAllowed = deferred<void>();
+  let sessionClosed = false;
+
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override async getRuntimeInfo() {
+          runtimeInfoStarted.resolve();
+          await runtimeInfoAllowed.promise;
+          return super.getRuntimeInfo();
+        }
+
+        override subscribe(): () => void {
+          throw new Error("subscription failed");
+        }
+
+        override async close(): Promise<void> {
+          sessionClosed = true;
+        }
+      })({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+
+  try {
+    const resume = manager.resumeAgentFromPersistence(
+      { provider: "codex", sessionId: "failed-session", metadata: { cwd: workdir } },
+      undefined,
+      agentId,
+    );
+    await runtimeInfoStarted.promise;
+    const bufferedWriter = manager
+      .appendTimelineItem(agentId, {
+        type: "assistant_message",
+        text: "must reject",
+      })
+      .catch((error: unknown) => error);
+    runtimeInfoAllowed.resolve();
+
+    await expect(resume).rejects.toThrow("subscription failed");
+    expect(await bufferedWriter).toEqual(
+      expect.objectContaining({ message: expect.stringContaining("agent registration failed") }),
+    );
+    await storage.flush();
+    expect({
+      agent: manager.getAgent(agentId),
+      sessionClosed,
+      record: await storage.get(agentId),
+    }).toMatchObject({
+      agent: null,
+      sessionClosed: true,
+      record: { lastStatus: "closed" },
+    });
+  } finally {
+    runtimeInfoAllowed.resolve();
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("reloadAgentSession clears provider children before rehydrating from disk", async () => {
@@ -8438,8 +8653,6 @@ test("ensureUnarchivedAgentLoaded fences an archived agent after joining a share
 test("a shared agent load upgrades provider history hydration to broadcast", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-shared-load-broadcast-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
-  const historyStarted = deferred<void>();
-  const historyAllowed = deferred<void>();
   const client = new (class extends TestAgentClient {
     override async resumeSession(
       _handle: AgentPersistenceHandle,
@@ -8447,8 +8660,6 @@ test("a shared agent load upgrades provider history hydration to broadcast", asy
     ): Promise<AgentSession> {
       return new (class extends TestAgentSession {
         override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-          historyStarted.resolve();
-          await historyAllowed.promise;
           yield {
             type: "timeline",
             provider: "codex",
@@ -8459,6 +8670,42 @@ test("a shared agent load upgrades provider history hydration to broadcast", asy
     }
   })();
   const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  let broadcastingLoad: Promise<ManagedAgent> | null = null;
+  let loaderManager!: AgentLoaderManager;
+  loaderManager = {
+    broadcastTimeline: manager.broadcastTimeline.bind(manager),
+    createAgent: manager.createAgent.bind(manager),
+    getAgent: manager.getAgent.bind(manager),
+    getRegisteredProviderIds: manager.getRegisteredProviderIds.bind(manager),
+    hydrateTimelineFromProvider: manager.hydrateTimelineFromProvider.bind(manager),
+    waitForAgentClose: manager.waitForAgentClose.bind(manager),
+    resumeAgentFromPersistence: async (...args) => {
+      const [handle, overrides, agentId, options, resumeOptions] = args;
+      const requestedBroadcast = options?.historyBroadcast;
+      return manager.resumeAgentFromPersistence(
+        handle,
+        overrides,
+        agentId,
+        {
+          ...options,
+          historyBroadcast: () => {
+            const sampled =
+              typeof requestedBroadcast === "function"
+                ? requestedBroadcast()
+                : (requestedBroadcast ?? false);
+            broadcastingLoad ??= ensureAgentLoaded(agentId ?? "", {
+              agentManager: loaderManager,
+              agentStorage: storage,
+              broadcastTimeline: true,
+              logger,
+            });
+            return sampled;
+          },
+        },
+        resumeOptions,
+      );
+    },
+  };
 
   try {
     const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
@@ -8470,32 +8717,26 @@ test("a shared agent load upgrades provider history hydration to broadcast", asy
     manager.subscribe((event) => events.push(event), { agentId: agent.id, replayState: false });
 
     const quietLoad = ensureAgentLoaded(agent.id, {
-      agentManager: manager,
+      agentManager: loaderManager,
       agentStorage: storage,
       logger,
     });
-    await historyStarted.promise;
-    const broadcastingLoad = ensureAgentLoaded(agent.id, {
-      agentManager: manager,
-      agentStorage: storage,
-      broadcastTimeline: true,
-      logger,
-    });
-    historyAllowed.resolve();
-    await Promise.all([quietLoad, broadcastingLoad]);
+    await quietLoad;
+    if (!broadcastingLoad) {
+      throw new Error("expected the late broadcasting loader to join");
+    }
+    await broadcastingLoad;
 
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        type: "agent_stream",
-        agentId: agent.id,
-        event: expect.objectContaining({
-          type: "timeline",
-          item: { type: "assistant_message", text: "Recovered history" },
-        }),
-      }),
-    );
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "agent_stream" &&
+          event.event.type === "timeline" &&
+          event.event.item.type === "assistant_message" &&
+          event.event.item.text === "Recovered history",
+      ),
+    ).toHaveLength(1);
   } finally {
-    historyAllowed.resolve();
     await manager.flush().catch(() => undefined);
     await storage.flush().catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });

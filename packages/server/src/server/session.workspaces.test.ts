@@ -4944,7 +4944,8 @@ test("refresh_agent_request leaves workspace archival independent when its direc
   session.agentManager.getAgent = () => managed;
   session.interruptAgentIfRunning = async () => undefined;
   session.agentManager.reloadAgentSession = async () => managed;
-  session.agentManager.hydrateTimelineFromProvider = async () => undefined;
+  const hydrateTimelineFromProvider = vi.fn().mockResolvedValue(undefined);
+  session.agentManager.hydrateTimelineFromProvider = hydrateTimelineFromProvider;
   session.agentManager.getTimeline = () => [];
   session.agentUpdates.forwardLiveAgent = async () => undefined;
 
@@ -4964,6 +4965,8 @@ test("refresh_agent_request leaves workspace archival independent when its direc
   expect(workspaces.get(workspaceId)?.archivedAt).toBe("2026-03-10T00:00:00.000Z");
   expect(projects.get(cwd)?.archivedAt).toBe("2026-03-10T00:00:00.000Z");
   expect(unarchivedWorkspaceIds).toEqual([]);
+  expect(hydrateTimelineFromProvider).toHaveBeenCalledOnce();
+  expect(hydrateTimelineFromProvider).toHaveBeenCalledWith(agentId, { broadcast: true });
   expect(findByType(emitted, "rpc_error")).toBeUndefined();
 });
 

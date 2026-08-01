@@ -5636,6 +5636,9 @@ describe("agent snapshot MCP serialization", () => {
     expect(resumeCall?.[3]).toEqual(
       expect.objectContaining({ historyBroadcast: expect.any(Function) }),
     );
+    const historyBroadcast = resumeCall?.[3]?.historyBroadcast;
+    expect(typeof historyBroadcast).toBe("function");
+    expect(typeof historyBroadcast === "function" ? historyBroadcast() : true).toBe(false);
     expect(spies.agentManager.hydrateTimelineFromProvider).not.toHaveBeenCalled();
   });
 
