@@ -8823,7 +8823,6 @@ test("workspace auto-name replaces the unchanged prompt title", async () => {
 });
 
 test("workspace auto-name uses the backing root for a nested worktree", async () => {
-  vi.useFakeTimers();
   const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "workspace-auto-name-rejected-")));
   const repoDir = path.join(tempDir, "repo");
   mkdirSync(repoDir);
@@ -8894,7 +8893,10 @@ test("workspace auto-name uses the backing root for a nested worktree", async ()
       workspace,
       firstAgentContext: { prompt: "Fix checkout title" },
     });
-    await vi.runAllTimersAsync();
+    // This integration path performs real Git discovery after the 0ms
+    // scheduling boundary. Keep it on the real clock so draining fake timers
+    // cannot advance the command's 30s timeout ahead of process closure.
+    await vi.waitFor(() => expect(emittedCwds).toEqual([workspaceCwd]));
 
     expect(generateCalls).toBe(1);
     expect(stored.get(workspace.workspaceId)).toMatchObject({
@@ -8916,7 +8918,6 @@ test("workspace auto-name uses the backing root for a nested worktree", async ()
     expect(gitMutations).toEqual([]);
     expect(emittedCwds).toEqual([workspaceCwd]);
   } finally {
-    vi.useRealTimers();
     rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
