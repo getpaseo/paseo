@@ -1,12 +1,10 @@
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 
-export type AgentTimelineRowDelivery = "awaiting_provider_identity";
-
 export interface AgentTimelineRow {
   seq: number;
   timestamp: string;
   item: AgentTimelineItem;
-  readonly delivery?: AgentTimelineRowDelivery;
+  readonly providerMessageId?: string;
 }
 
 export interface AgentTimelineCursor {

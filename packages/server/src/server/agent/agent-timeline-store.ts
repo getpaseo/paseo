@@ -176,10 +176,10 @@ export class InMemoryAgentTimelineStore {
     return row ? cloneRow(row) : null;
   }
 
-  finalizeSubmittedUserMessage(
+  enrichSubmittedUserMessage(
     agentId: string,
     clientMessageId: string,
-    identity?: { messageId: string },
+    providerMessageId: string,
   ): AgentTimelineRow | null {
     const state = this.requireState(agentId);
     const index = state.rows.findIndex(
@@ -188,16 +188,12 @@ export class InMemoryAgentTimelineStore {
         candidate.item.clientMessageId === clientMessageId,
     );
     const row = state.rows[index];
-    if (!row || row.item.type !== "user_message" || row.delivery !== "awaiting_provider_identity") {
+    if (!row || row.item.type !== "user_message") {
       return null;
     }
-    const finalized: AgentTimelineRow = {
-      seq: row.seq,
-      timestamp: row.timestamp,
-      item: identity ? { ...row.item, messageId: identity.messageId } : row.item,
-    };
-    state.rows[index] = finalized;
-    return cloneRow(finalized);
+    const enriched: AgentTimelineRow = { ...row, providerMessageId };
+    state.rows[index] = enriched;
+    return cloneRow(enriched);
   }
 
   getEpoch(agentId: string): string {
@@ -268,14 +264,14 @@ export class InMemoryAgentTimelineStore {
   append(
     agentId: string,
     item: AgentTimelineItem,
-    options?: { timestamp?: string; delivery?: AgentTimelineRow["delivery"] },
+    options?: { timestamp?: string; providerMessageId?: string },
   ): AgentTimelineRow {
     const state = this.requireState(agentId);
     const row: AgentTimelineRow = {
       seq: state.nextSeq,
       timestamp: options?.timestamp ?? new Date().toISOString(),
       item,
-      ...(options?.delivery ? { delivery: options.delivery } : {}),
+      ...(options?.providerMessageId ? { providerMessageId: options.providerMessageId } : {}),
     };
     state.nextSeq += 1;
     state.rows.push(row);

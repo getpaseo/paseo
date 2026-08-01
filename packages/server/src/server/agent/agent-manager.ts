@@ -61,7 +61,6 @@ import {
   AgentStreamCoalescer,
 } from "./agent-stream-coalescer.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
-import { AWAITING_PROVIDER_IDENTITY_DELIVERY } from "./submitted-prompt-delivery.js";
 import { AgentRunState, type ForegroundTurnWaiter } from "./agent-run-state.js";
 import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
@@ -186,7 +185,6 @@ export type AgentManagerEvent =
       seq?: number;
       epoch?: string;
       timestamp?: string;
-      delivery?: AgentTimelineRow["delivery"];
     };
 
 export type AgentSubscriber = (event: AgentManagerEvent) => void;
@@ -2082,8 +2080,7 @@ export class AgentManager {
         : undefined;
       if (options?.clientMessageId) {
         this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, {
-          awaitProviderIdentity: true,
-          messageId:
+          providerMessageId:
             stagedSubmittedPromptEcho?.item.type === "user_message"
               ? stagedSubmittedPromptEcho.item.messageId
               : undefined,
@@ -2493,11 +2490,23 @@ export class AgentManager {
 
     const lock = this.runs.createPendingRun(agentId);
     try {
+      const submittedRow = this.timelineStore
+        .getRows(agentId)
+        .find(
+          (row) =>
+            row.item.type === "user_message" &&
+            row.item.messageId === messageId &&
+            row.item.clientMessageId === messageId,
+        );
+      if (submittedRow && !submittedRow.providerMessageId) {
+        throw new Error("Cannot rewind before the provider acknowledges the submitted prompt");
+      }
+      const providerMessageId = submittedRow?.providerMessageId ?? messageId;
       this.logger.info(
         { agentId, provider: agent.provider, messageId, mode },
         "agent.rewind.start",
       );
-      await invokeRewindCapability(agent.session, { messageId, mode });
+      await invokeRewindCapability(agent.session, { messageId: providerMessageId, mode });
       if (mode !== "files") {
         await this.hydrateTimelineFromProvider(agentId, { force: true, broadcast: true });
       }
@@ -3433,13 +3442,6 @@ export class AgentManager {
       return false;
     }
 
-    this.finalizeSubmittedPromptBeforeTimeline(
-      agent,
-      event,
-      options?.fromHistory === true,
-      isForegroundEvent,
-    );
-
     // Only update timestamp for live events, not history replay
     if (!options?.fromHistory) {
       this.touchUpdatedAt(agent);
@@ -3457,9 +3459,6 @@ export class AgentManager {
         eventTurnId,
         options?.fromHistory === true,
       );
-      if (isForegroundEvent && terminalDisposition !== "stale") {
-        this.finalizeSubmittedPrompt(agent, event);
-      }
     }
 
     const flags: StreamEventFlags = { shouldDispatchEvent: true, shouldNotifyWaiters: true };
@@ -3680,7 +3679,7 @@ export class AgentManager {
     if (
       event.item.type === "user_message" &&
       event.item.clientMessageId &&
-      this.reconcileSubmittedPromptEcho(agent, event, event.item)
+      this.reconcileSubmittedPromptEcho(agent, event.item)
     ) {
       flags.shouldDispatchEvent = false;
       flags.shouldNotifyWaiters = false;
@@ -3911,9 +3910,9 @@ export class AgentManager {
     item: AgentTimelineItem,
     provider: AgentProvider,
     turnId?: string,
-    delivery?: AgentTimelineRow["delivery"],
+    options?: { providerMessageId?: string },
   ): AgentStreamEvent {
-    const row = this.recordTimeline(agentId, item, delivery ? { delivery } : undefined);
+    const row = this.recordTimeline(agentId, item, options);
     const event: AgentStreamEvent = {
       type: "timeline",
       item,
@@ -3924,7 +3923,6 @@ export class AgentManager {
       seq: row.seq,
       epoch: this.timelineStore.getEpoch(agentId),
       timestamp: row.timestamp,
-      ...(row.delivery ? { delivery: row.delivery } : {}),
     });
 
     if (
@@ -3946,7 +3944,7 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     prompt: AgentPromptInput,
     clientMessageId: string,
-    options?: { awaitProviderIdentity: boolean; messageId: string | undefined },
+    options?: { providerMessageId?: string },
   ): void {
     if (this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId)) {
       return;
@@ -3957,89 +3955,28 @@ export class AgentManager {
       type: "user_message",
       text: submittedPromptText(prompt),
       clientMessageId,
-      ...(options?.messageId ? { messageId: options.messageId } : {}),
+      messageId: clientMessageId,
     };
-    const delivery =
-      options?.awaitProviderIdentity === true && options.messageId === undefined
-        ? AWAITING_PROVIDER_IDENTITY_DELIVERY
-        : undefined;
-    this.recordAndDispatchTimelineItem(agent.id, item, agent.provider, undefined, delivery);
+    this.recordAndDispatchTimelineItem(agent.id, item, agent.provider, undefined, options);
   }
 
   private reconcileSubmittedPromptEcho(
     agent: ActiveManagedAgent,
-    event: Extract<AgentStreamEvent, { type: "timeline" }>,
     item: Extract<AgentTimelineItem, { type: "user_message" }>,
   ): AgentTimelineRow | null {
     const { clientMessageId, messageId } = item;
     if (!clientMessageId) return null;
     const existing = this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId);
     if (!existing || existing.item.type !== "user_message") return null;
-    this.finalizeSubmittedPrompt(agent, event, clientMessageId, messageId);
+    if (messageId) {
+      const enriched = this.timelineStore.enrichSubmittedUserMessage(
+        agent.id,
+        clientMessageId,
+        messageId,
+      );
+      if (enriched) this.enqueueDurableTimelineUpdate(agent.id, enriched);
+    }
     return existing;
-  }
-
-  private finalizeSubmittedPromptBeforeTimeline(
-    agent: ActiveManagedAgent,
-    event: AgentStreamEvent,
-    fromHistory: boolean,
-    isForegroundEvent: boolean,
-  ): void {
-    if (fromHistory || !isForegroundEvent || event.type !== "timeline") return;
-    const item = event.item;
-    if (item.type === "user_message") {
-      if (isSystemInjectedEnvelope(item.text)) return;
-      if (
-        item.clientMessageId &&
-        this.timelineStore.getSubmittedUserMessage(agent.id, item.clientMessageId)
-      ) {
-        return;
-      }
-    }
-    this.finalizeSubmittedPrompt(agent, event);
-  }
-
-  private finalizeSubmittedPrompt(
-    agent: ActiveManagedAgent,
-    event: AgentStreamEvent,
-    correlatedClientMessageId?: string,
-    messageId?: string,
-  ): void {
-    let clientMessageId = correlatedClientMessageId;
-    if (!clientMessageId) {
-      const pending = this.timelineStore
-        .getRows(agent.id)
-        .findLast(
-          (row) =>
-            row.delivery === AWAITING_PROVIDER_IDENTITY_DELIVERY &&
-            row.item.type === "user_message",
-        );
-      clientMessageId =
-        pending?.item.type === "user_message" ? pending.item.clientMessageId : undefined;
-    }
-    if (!clientMessageId) return;
-    const row = this.timelineStore.finalizeSubmittedUserMessage(
-      agent.id,
-      clientMessageId,
-      messageId ? { messageId } : undefined,
-    );
-    if (!row) return;
-    this.enqueueDurableTimelineUpdate(agent.id, row);
-    const turnId = getAgentStreamEventTurnId(event);
-    this.dispatchStream(
-      agent.id,
-      {
-        type: "timeline",
-        item: row.item,
-        provider: event.provider,
-        ...(turnId ? { turnId } : {}),
-      },
-      {
-        seq: row.seq,
-        epoch: this.timelineStore.getEpoch(agent.id),
-        timestamp: row.timestamp,
-      },
-    );
   }
 
   private async appendSystemErrorTimelineMessage(
@@ -4099,7 +4036,7 @@ export class AgentManager {
   private recordTimeline(
     agentId: string,
     item: AgentTimelineItem,
-    options?: { timestamp?: string; delivery?: AgentTimelineRow["delivery"] },
+    options?: { timestamp?: string; providerMessageId?: string },
   ): AgentTimelineRow {
     item = limitAgentTimelineItemContent(item);
     const row = this.timelineStore.append(agentId, item, options);
@@ -4304,7 +4241,6 @@ export class AgentManager {
       seq?: number;
       epoch?: string;
       timestamp?: string;
-      delivery?: AgentTimelineRow["delivery"];
     },
   ): void {
     if (event.type === "timeline") {

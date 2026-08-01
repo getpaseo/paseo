@@ -4781,8 +4781,8 @@ test("replaceAgentRun stays running when a stale old terminal arrives before the
         (row) =>
           row.item.type === "user_message" &&
           row.item.clientMessageId === "replacement-client-message",
-      )?.delivery,
-  ).toBe("awaiting_provider_identity");
+      )?.item,
+  ).toMatchObject({ messageId: "replacement-client-message" });
   allowSecondTurnToComplete.resolve();
   await firstRunDrain;
   await secondRunDrain;
@@ -8146,12 +8146,9 @@ test("provider user_message is recorded from the live stream", async () => {
   // Provider's user_message should be recorded (no canonical to dedup against)
   expect(userMessages).toHaveLength(1);
   expect(userMessages[0].text).toBe("continuation prompt");
-  expect(
-    manager.fetchTimeline(snapshot.id, { direction: "tail", limit: 0 }).rows[0]?.delivery,
-  ).toBeUndefined();
 });
 
-test("authoritative timeline includes provider-emitted submitted user prompt", async () => {
+test("canonical submitted prompt keeps wire identity while rewind resolves provider identity", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-submitted-prompt-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -8159,63 +8156,57 @@ test("authoritative timeline includes provider-emitted submitted user prompt", a
   class SubmittedUserMessageSession extends TestAgentSession {
     override readonly capabilities = {
       ...TEST_CAPABILITIES,
-      supportsRewindConversation: true,
+      supportsRewindFiles: true,
     };
-    private turnCount = 0;
+    readonly rewindMessageIds: string[] = [];
 
     override async startTurn(
       prompt: AgentPromptInput,
       options?: AgentRunOptions,
     ): Promise<{ turnId: string }> {
-      this.turnCount += 1;
-      const turnId = `turn-submitted-user-message-${this.turnCount}`;
+      const turnId = "turn-submitted-user-message";
       const text = typeof prompt === "string" ? prompt : "";
-      const publishProviderIdentity = () => {
+      setTimeout(() => {
         this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
-        if (this.turnCount !== 3 && this.turnCount !== 5) {
-          this.pushEvent({
-            type: "timeline",
-            provider: this.provider,
-            turnId,
-            item: {
-              type: "user_message",
-              text,
-              ...(this.turnCount === 4 ? {} : { messageId: `provider-message-${this.turnCount}` }),
-              clientMessageId: options?.clientMessageId,
-            },
-          });
-        }
-        if (this.turnCount === 1) {
-          this.pushEvent({
-            type: "timeline",
-            provider: this.provider,
-            turnId,
-            item: { type: "assistant_message", text: "provider output after identity" },
-          });
-        } else if (this.turnCount === 3) {
-          this.pushEvent({
-            type: "timeline",
-            provider: this.provider,
-            turnId,
-            item: { type: "assistant_message", text: "provider output without echo" },
-          });
-        }
+        this.pushEvent({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: { type: "assistant_message", text: "output before provider echo" },
+        });
+        this.pushEvent({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: {
+            type: "user_message",
+            text,
+            messageId: "provider-message-1",
+            clientMessageId: options?.clientMessageId,
+          },
+        });
         this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
-      };
-      if (this.turnCount === 2) publishProviderIdentity();
-      else setTimeout(publishProviderIdentity, 0);
+      }, 0);
       return { turnId };
+    }
+
+    override async revertFiles({ messageId }: { messageId: string }): Promise<void> {
+      this.rewindMessageIds.push(messageId);
     }
   }
 
   class SubmittedUserMessageClient extends TestAgentClient {
+    session: SubmittedUserMessageSession | null = null;
+
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-      return new SubmittedUserMessageSession(config);
+      this.session = new SubmittedUserMessageSession(config);
+      return this.session;
     }
   }
 
+  const client = new SubmittedUserMessageClient();
   const manager = new AgentManager({
-    clients: { codex: new SubmittedUserMessageClient() },
+    clients: { codex: client },
     registry: storage,
     logger,
     idFactory: () => "00000000-0000-4000-8000-000000000402",
@@ -8231,7 +8222,6 @@ test("authoritative timeline includes provider-emitted submitted user prompt", a
         {
           type: item.type,
           seq: event.seq,
-          delivery: event.delivery,
           ...(item.type === "user_message"
             ? {
                 text: item.text,
@@ -8248,106 +8238,47 @@ test("authoritative timeline includes provider-emitted submitted user prompt", a
       workspaceId: undefined,
     });
 
-    await manager.runAgent(
-      snapshot.id,
-      [
-        {
-          type: "text",
-          mimeType: "text/plain",
-          contextKind: "chat_history",
-          title: "Chat history",
-          text: "<chat-history-summary>hidden fork history</chat-history-summary>",
-        },
-        { type: "text", text: "hello from composer" },
-      ],
-      { clientMessageId: "msg-client-1" },
-    );
+    await manager.runAgent(snapshot.id, "hello from composer", { clientMessageId: "msg-client-1" });
 
     expect(streamEvents()).toEqual([
       { type: "turn_started" },
       {
         type: "user_message",
         seq: 1,
-        delivery: "awaiting_provider_identity",
         text: "hello from composer",
         clientMessageId: "msg-client-1",
-        messageId: undefined,
+        messageId: "msg-client-1",
       },
-      {
-        type: "user_message",
-        seq: 1,
-        delivery: undefined,
-        text: "hello from composer",
-        clientMessageId: "msg-client-1",
-        messageId: "provider-message-1",
-      },
-      { type: "assistant_message", seq: 2, delivery: undefined },
+      { type: "assistant_message", seq: 2 },
       { type: "turn_completed" },
     ]);
 
     const timeline = manager.fetchTimeline(snapshot.id, { direction: "tail", limit: 20 }).rows;
-    expect(timeline.map((row) => [row.seq, row.delivery, row.item])).toEqual([
-      [
-        1,
-        undefined,
-        {
+    expect(timeline).toEqual([
+      {
+        seq: 1,
+        timestamp: expect.any(String),
+        providerMessageId: "provider-message-1",
+        item: {
           type: "user_message",
           text: "hello from composer",
-          messageId: "provider-message-1",
+          messageId: "msg-client-1",
           clientMessageId: "msg-client-1",
         },
-      ],
-      [2, undefined, { type: "assistant_message", text: "provider output after identity" }],
-    ]);
-
-    events.length = 0;
-    await manager.runAgent(snapshot.id, "staged identity", {
-      clientMessageId: "msg-client-2",
-    });
-    expect(streamEvents().filter((event) => event.type === "user_message")).toEqual([
+      },
       {
-        type: "user_message",
-        seq: 3,
-        delivery: undefined,
-        text: "staged identity",
-        messageId: "provider-message-2",
-        clientMessageId: "msg-client-2",
+        seq: 2,
+        timestamp: expect.any(String),
+        item: { type: "assistant_message", text: "output before provider echo" },
       },
     ]);
 
-    events.length = 0;
-    await manager.runAgent(snapshot.id, "output without echo", {
-      clientMessageId: "msg-client-3",
-    });
-    expect(streamEvents()).toEqual([
-      { type: "turn_started" },
-      expect.objectContaining({
-        type: "user_message",
-        seq: 4,
-        delivery: "awaiting_provider_identity",
-      }),
-      expect.objectContaining({ type: "user_message", seq: 4, delivery: undefined }),
-      { type: "assistant_message", seq: 5, delivery: undefined },
-      { type: "turn_completed" },
+    await manager.rewind(snapshot.id, "msg-client-1", "files");
+    await manager.rewind(snapshot.id, "provider-native-message", "files");
+    expect(client.session?.rewindMessageIds).toEqual([
+      "provider-message-1",
+      "provider-native-message",
     ]);
-
-    for (const [prompt, clientMessageId, seq] of [
-      ["echo without identity", "msg-client-4", 6],
-      ["terminal without echo", "msg-client-5", 7],
-    ] as const) {
-      events.length = 0;
-      await manager.runAgent(snapshot.id, prompt, { clientMessageId });
-      expect(streamEvents()).toEqual([
-        { type: "turn_started" },
-        expect.objectContaining({
-          type: "user_message",
-          seq,
-          delivery: "awaiting_provider_identity",
-        }),
-        expect.objectContaining({ type: "user_message", seq, delivery: undefined }),
-        { type: "turn_completed" },
-      ]);
-    }
   } finally {
     await manager.flush().catch(() => undefined);
     await storage.flush().catch(() => undefined);
@@ -8419,6 +8350,7 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
         type: "user_message",
         text: "/handled",
         clientMessageId: "msg-client-daemon-handled",
+        messageId: "msg-client-daemon-handled",
       },
       { type: "assistant_message", text: "Handled by the daemon" },
     ]);
@@ -8429,10 +8361,10 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
         type: "user_message",
         text: "/handled",
         clientMessageId: "msg-client-daemon-handled",
+        messageId: "msg-client-daemon-handled",
       },
       { type: "assistant_message", text: "Handled by the daemon" },
     ]);
-    expect(timeline.every((row) => row.delivery === undefined)).toBe(true);
   } finally {
     await manager.flush().catch(() => undefined);
     await storage.flush().catch(() => undefined);

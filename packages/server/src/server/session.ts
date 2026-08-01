@@ -76,11 +76,6 @@ import type {
   AgentTimelineFetchResult,
   ManagedAgent,
 } from "./agent/agent-manager.js";
-import {
-  projectSubmittedPromptTimeline,
-  selectSubmittedPromptTimelinePage,
-  shouldDeliverSubmittedPromptRow,
-} from "./agent/submitted-prompt-delivery.js";
 import { createAgentCommand } from "./agent/create-agent/create.js";
 import { resolveCreateAgentIntent, type CreateAgentIntent } from "./agent/create-agent/intent.js";
 import {
@@ -1064,16 +1059,6 @@ export class Session {
     serializedEvent: Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"]["event"],
   ): void {
     if (this.clientCapabilitiesBySource.size === 0 || !this.onMessageToSource) {
-      if (
-        serializedEvent.type === "timeline" &&
-        !shouldDeliverSubmittedPromptRow(
-          event.delivery,
-          serializedEvent.item,
-          this.supports(CLIENT_CAPS.canonicalSubmittedPromptRevisions),
-        )
-      ) {
-        return;
-      }
       if (this.usesSelectiveTimelineDelivery() && serializedEvent.type === "attention_required") {
         this.emit({
           type: "agent_attention_required",
@@ -1099,16 +1084,6 @@ export class Session {
 
     for (const [source, capabilities] of this.clientCapabilitiesBySource) {
       const supportsSelectiveDelivery = capabilities.has(CLIENT_CAPS.selectiveAgentTimeline);
-      if (
-        serializedEvent.type === "timeline" &&
-        !shouldDeliverSubmittedPromptRow(
-          event.delivery,
-          serializedEvent.item,
-          capabilities.has(CLIENT_CAPS.canonicalSubmittedPromptRevisions),
-        )
-      ) {
-        continue;
-      }
       if (supportsSelectiveDelivery && serializedEvent.type === "attention_required") {
         this.onMessageToSource(source, {
           type: "agent_attention_required",
@@ -6182,34 +6157,13 @@ export class Session {
         cursor,
         limit: pageLimit,
       });
-      const supportsSubmittedPromptRevisions = source
-        ? this.supportsForSource(CLIENT_CAPS.canonicalSubmittedPromptRevisions, source)
-        : this.supports(CLIENT_CAPS.canonicalSubmittedPromptRevisions);
-      let fetchedFullTimeline: AgentTimelineFetchResult | undefined;
-      if (!supportsSubmittedPromptRevisions) {
-        fetchedFullTimeline =
-          direction === "tail" && pageLimit === 0
-            ? fetchedControlTimeline
-            : this.agentManager.fetchTimeline(msg.agentId, { direction: "tail", limit: 0 });
-      }
-      const fullTimeline = fetchedFullTimeline
-        ? projectSubmittedPromptTimeline(fetchedFullTimeline)
-        : undefined;
-      const controlTimeline = fullTimeline
-        ? selectSubmittedPromptTimelinePage(fullTimeline, fetchedControlTimeline, {
-            direction,
-            cursor,
-            limit: pageLimit,
-          })
-        : fetchedControlTimeline;
       const selectedTimeline = this.selectTimelineProjection({
         agentId: msg.agentId,
         projection,
-        controlTimeline,
+        controlTimeline: fetchedControlTimeline,
         direction,
         ...(cursor ? { cursor } : {}),
         pageLimit,
-        ...(fullTimeline ? { fullTimeline } : {}),
       });
       const startCursor =
         selectedTimeline.startSeq !== null
@@ -6230,9 +6184,9 @@ export class Session {
             direction,
             projection,
             epoch: selectedTimeline.timeline.epoch,
-            reset: controlTimeline.reset,
-            staleCursor: controlTimeline.staleCursor,
-            gap: controlTimeline.gap,
+            reset: fetchedControlTimeline.reset,
+            staleCursor: fetchedControlTimeline.staleCursor,
+            gap: fetchedControlTimeline.gap,
             window: selectedTimeline.timeline.window,
             startCursor,
             endCursor,
