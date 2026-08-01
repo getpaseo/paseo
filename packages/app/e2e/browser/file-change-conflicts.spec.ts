@@ -1,14 +1,18 @@
 import { mkdir, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { expect, test, type Page } from "./fixtures";
-import { expectFileTabOpen, openFileExplorer, openFileFromExplorer } from "./helpers/file-explorer";
-import type { WithWorkspace } from "./helpers/with-workspace";
-import { installDaemonWebSocketGate } from "./helpers/daemon-websocket-gate";
+import { expect, test, type Page } from "../support/fixtures";
+import {
+  expectFileTabOpen,
+  openFileExplorer,
+  openFileFromExplorer,
+} from "../support/helpers/file-explorer";
+import type { WithWorkspace } from "../support/helpers/with-workspace";
+import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import {
   expectFileCalloutWasRendered,
   expectNoFileCalloutWasRendered,
   recordFileCallouts,
-} from "./helpers/file-callouts";
+} from "../support/helpers/file-callouts";
 
 function visibleEditor(page: Page) {
   return page.getByTestId("file-source-editor").filter({ visible: true }).locator(".cm-content");

@@ -1,4 +1,4 @@
-import { test as base } from "./fixtures";
+import { test as base } from "../support/fixtures";
 import {
   appendSettledTimelineTurns,
   createNearTenMegabyteAssistantPng,
@@ -13,8 +13,8 @@ import {
   sendFollowUpAndExpectVisibleResponse,
   switchAwayAndBackWithoutImageInstability,
   userPagesUntilAssistantImageRenders,
-} from "./helpers/assistant-images";
-import { seedWorkspace, type SeededWorkspace } from "./helpers/seed-client";
+} from "../support/helpers/assistant-images";
+import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 
 const test = base.extend<{ imageWorkspace: SeededWorkspace }>({
   imageWorkspace: async ({ page: _page }, provide) => {

@@ -2,21 +2,21 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promis
 import os from "node:os";
 import path from "node:path";
 import { expect, type Page } from "@playwright/test";
-import { buildOpenProjectRoute } from "@/utils/host-routes";
-import { openSettings } from "./app";
-import { injectDesktopBridge } from "./desktop-updates";
-import { getServerId } from "./server-id";
-import { openCompactSettings, openSettingsSection } from "./settings";
+import { buildOpenProjectRoute } from "../../../app/src/utils/host-routes";
+import { openSettings } from "../../../app/e2e/support/helpers/app";
+import { installDesktopRuntime } from "./runtime";
+import { getServerId } from "../../../app/e2e/support/helpers/server-id";
+import {
+  openCompactSettings,
+  openSettingsSection,
+} from "../../../app/e2e/support/helpers/settings";
 // The desktop skills module is the real command surface: the same handlers the
 // Electron main process registers, running against a temp bundle and temp user
 // data. Nothing about persistence or convergence is simulated in the browser.
-import type {
-  SkillSelection,
-  SkillTargets,
-} from "../../../desktop/src/integrations/skills/operations.js";
-import { createSkillSelectionStore } from "../../../desktop/src/integrations/skills/selection-store.js";
-import { createSkillsCommandHandlers } from "../../../desktop/src/integrations/skills/skills-commands.js";
-import { createSkillsController } from "../../../desktop/src/integrations/skills/skills-controller.js";
+import type { SkillSelection, SkillTargets } from "../../src/integrations/skills/operations.js";
+import { createSkillSelectionStore } from "../../src/integrations/skills/selection-store.js";
+import { createSkillsCommandHandlers } from "../../src/integrations/skills/skills-commands.js";
+import { createSkillsController } from "../../src/integrations/skills/skills-controller.js";
 
 const SKILL_COMMANDS = [
   "get_skills_status",
@@ -187,7 +187,7 @@ export async function expectSavedSkillSelection(
 
 /**
  * Routes the skills desktop commands to the real handlers in Node, leaving every
- * other command on the injected desktop bridge. Call after `injectDesktopBridge`
+ * other command on the injected desktop bridge. Call after `installDesktopRuntime`
  * and before navigation.
  */
 export async function serveRealSkillsCommands(page: Page, sandbox: SkillsSandbox): Promise<void> {
@@ -232,7 +232,7 @@ export async function startSkillsSandbox(
   options: SkillsSandboxOptions = {},
 ): Promise<SkillsSandbox> {
   const sandbox = await createSkillsSandbox(options);
-  await injectDesktopBridge(page, { serverId: getServerId(), confirmShouldAccept: false });
+  await installDesktopRuntime(page, { serverId: getServerId(), confirmShouldAccept: false });
   await serveRealSkillsCommands(page, sandbox);
   return sandbox;
 }

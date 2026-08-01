@@ -1,5 +1,5 @@
-import { test } from "./fixtures";
-import { gotoAppShell } from "./helpers/app";
+import { test } from "../support/fixtures";
+import { gotoAppShell } from "../support/helpers/app";
 import {
   expectCommandCenterToRemainAtTheTop,
   expectPrimaryCommandCenterActions,
@@ -8,8 +8,8 @@ import {
   expectWorkspaceResultsToBeLimitedUntilSearch,
   observeCommandCenterScroll,
   openCommandCenterWithKeyboard,
-} from "./helpers/command-center-scroll";
-import { seedWorkspace } from "./helpers/seed-client";
+} from "../support/helpers/command-center-scroll";
+import { seedWorkspace } from "../support/helpers/seed-client";
 
 test.use({
   userAgent:

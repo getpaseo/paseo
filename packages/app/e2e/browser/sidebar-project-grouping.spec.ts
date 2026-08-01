@@ -14,7 +14,6 @@ import {
   openProjectDirectoryWithHosts,
   renameProject,
   selectWorkspaceHost,
-  switchProjectSettingsHost,
 } from "../support/helpers/project-grouping";
 import {
   type IsolatedHostDaemon,

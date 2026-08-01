@@ -1,9 +1,9 @@
 import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { expect, test } from "./fixtures";
-import { submitMessage } from "./helpers/composer";
-import { cleanupRewindFlow, launchAgent, type AgentHandle } from "./helpers/rewind-flow";
+import { expect, test } from "../support/fixtures";
+import { submitMessage } from "../support/helpers/composer";
+import { cleanupRewindFlow, launchAgent, type AgentHandle } from "../support/helpers/rewind-flow";
 
 test.describe("Codex out-of-band commands", () => {
   test.setTimeout(300_000);

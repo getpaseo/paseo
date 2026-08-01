@@ -10,7 +10,7 @@ import {
   expectAgentIdle,
   expectInlineWorkingIndicator,
   expectTurnCopyButton,
-} from "./helpers/agent-stream";
+} from "../support/helpers/agent-stream";
 import {
   expectReconnectingToastGone,
   expectReconnectingToastVisible,

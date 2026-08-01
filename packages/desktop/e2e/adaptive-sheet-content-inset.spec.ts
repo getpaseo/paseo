@@ -1,18 +1,18 @@
-import { expect, test, type Page } from "./fixtures";
-import { gotoAppShell } from "./helpers/app";
+import { expect, test, type Page } from "../../app/e2e/support/fixtures";
+import { gotoAppShell } from "../../app/e2e/support/helpers/app";
 import {
   readRails,
   readSheetHeaderRails,
   readVerticalGap,
   waitForSettledPosition,
-} from "./helpers/sheet-layout";
+} from "../../app/e2e/support/helpers/sheet-layout";
 import {
   openCompactSkillsIntegrations,
   openSkillSelection,
   openSkillsIntegrations,
   startSkillsSandbox,
   type SkillsSandbox,
-} from "./helpers/skills-selection";
+} from "./support/skills-selection";
 
 const COMPACT_VIEWPORT = { width: 390, height: 844 };
 const DESKTOP_VIEWPORT = { width: 1280, height: 900 };

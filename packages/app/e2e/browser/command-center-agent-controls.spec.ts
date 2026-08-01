@@ -1,5 +1,5 @@
-import { test } from "./fixtures";
-import { closeCommandCenter, openCommandCenter } from "./helpers/command-center";
+import { test } from "../support/fixtures";
+import { closeCommandCenter, openCommandCenter } from "../support/helpers/command-center";
 import {
   applyCommandCenterAgentControls,
   chooseCommandCenterAgentControl,
@@ -8,11 +8,11 @@ import {
   expectWorkspaceAgentConfiguration,
   submitDraftAgent,
   waitForDraftComposer,
-} from "./helpers/command-center-agent-controls";
-import { clickNewChat, gotoWorkspace } from "./helpers/launcher";
-import { openAgentRoute, seedMockAgentWorkspace } from "./helpers/mock-agent";
-import { seedWorkspace } from "./helpers/seed-client";
-import { getServerId } from "./helpers/server-id";
+} from "../support/helpers/command-center-agent-controls";
+import { clickNewChat, gotoWorkspace } from "../support/helpers/launcher";
+import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import { seedWorkspace } from "../support/helpers/seed-client";
+import { getServerId } from "../support/helpers/server-id";
 
 const CREATE_AGENT_PREFERENCES_KEY = "@paseo:create-agent-preferences";
 

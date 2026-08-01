@@ -1,17 +1,20 @@
-import { expect, test as base } from "./fixtures";
-import { openProjectDirectoryWithHosts } from "./helpers/project-grouping";
-import { projectPlacementViewKey } from "./helpers/project-view-key";
-import { type IsolatedHostDaemon, startIsolatedHostDaemon } from "./helpers/isolated-host-daemon";
+import { expect, test as base } from "../support/fixtures";
+import { openProjectDirectoryWithHosts } from "../support/helpers/project-grouping";
+import { projectPlacementViewKey } from "../support/helpers/project-view-key";
+import {
+  type IsolatedHostDaemon,
+  startIsolatedHostDaemon,
+} from "../support/helpers/isolated-host-daemon";
 import {
   expectNewWorkspaceProjectSelected,
   openGlobalNewWorkspaceComposer,
   selectNewWorkspaceHost,
   selectNewWorkspaceProject,
-} from "./helpers/new-workspace";
-import { connectSeedClient, type SeedDaemonClient } from "./helpers/seed-client";
-import { getServerId } from "./helpers/server-id";
-import { switchWorkspaceViaSidebar } from "./helpers/workspace-ui";
-import { createTempGitRepo } from "./helpers/workspace";
+} from "../support/helpers/new-workspace";
+import { connectSeedClient, type SeedDaemonClient } from "../support/helpers/seed-client";
+import { getServerId } from "../support/helpers/server-id";
+import { switchWorkspaceViaSidebar } from "../support/helpers/workspace-ui";
+import { createTempGitRepo } from "../support/helpers/workspace";
 
 const PRIMARY_HOST_LABEL = "Primary host";
 const SECONDARY_HOST_LABEL = "Secondary host";

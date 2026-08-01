@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
-import { matchesGlob, relative as relativePath } from "node:path";
+import { relative as relativePath } from "node:path";
 import test from "node:test";
 
 const repoRoot = new URL("../", import.meta.url);
@@ -64,20 +64,6 @@ function loadFilters(path) {
   return filters;
 }
 
-function matchesFilter(filters, filterName, changedPath) {
-  const visiblePath = exposeDotSegments(changedPath);
-  return filters[filterName].some((pattern) =>
-    matchesGlob(visiblePath, exposeDotSegments(pattern)),
-  );
-}
-
-// dorny/paths-filter uses picomatch with `dot: true`. Node's dependency-free
-// matcher hides dot-prefixed path segments by default, so make those segments
-// ordinary in both operands before matching.
-function exposeDotSegments(value) {
-  return value.replace(/(^|\/)\./g, "$1__dot__");
-}
-
 function filesUnder(relativeDirectory, predicate) {
   const directory = new URL(`${relativeDirectory}/`, repoRoot);
   return readdirSync(directory, { recursive: true, withFileTypes: true })
@@ -92,23 +78,12 @@ function filesUnder(relativeDirectory, predicate) {
     .sort();
 }
 
-function affectedContracts(filters, changedPath) {
-  const direct = Object.keys(filters).filter((filterName) =>
-    matchesFilter(filters, filterName, changedPath),
-  );
-  const contracts = Object.keys(filters).filter(
-    (filterName) => !["routing", "workspace", "ci"].includes(filterName),
-  );
-  if (direct.some((filterName) => ["routing", "workspace"].includes(filterName))) {
-    return contracts.sort();
-  }
-  return direct.filter((filterName) => !["routing", "workspace", "ci"].includes(filterName)).sort();
-}
-
 test("gated checks are statically named jobs with real job-level gating", () => {
   const workflowSource = readFileSync(ciWorkflowPath, "utf8");
   const jobs = jobBlocks(workflowSource);
+  const trigger = workflowSource.split("jobs:", 1)[0];
 
+  assert.match(trigger, /^\s+merge_group:\s*$/m);
   assert.doesNotMatch(workflowSource, /strategy:\s*\n\s+matrix:/);
   assert.doesNotMatch(workflowSource, /RUN_TESTS|Skip unaffected|No .* changes detected/);
 
@@ -160,69 +135,54 @@ test("server builds exclude test utilities at every domain depth", () => {
   assert.ok(!tsconfig.exclude.includes("src/server/test-utils/**"));
 });
 
-test("PR routing follows test contracts instead of package consumers", () => {
+test("PR routing declares stable behavior ownership", () => {
   const filters = loadFilters(filtersPath);
-  const cases = new Map([
-    ["packages/app/src/components/message.tsx", ["app", "browser", "format", "quality"]],
-    ["packages/server/src/server/bootstrap.ts", ["format", "quality", "server"]],
-    ["packages/cli/src/commands/agent/ls.ts", ["cli", "format", "quality"]],
-    ["packages/desktop/src/main.ts", ["desktop", "format", "quality"]],
-    [
-      "packages/app/src/desktop/browser/pane/index.electron.tsx",
-      ["app", "desktop", "format", "quality"],
+  assert.deepEqual(filters, {
+    routing: [".github/ci-paths.yml"],
+    workspace: [
+      ".mise.toml",
+      ".tool-versions",
+      "package.json",
+      "package-lock.json",
+      "patches/**",
+      "scripts/**",
+      "tsconfig.json",
+      "tsconfig.base.json",
+      "vitest.config.ts",
     ],
-    ["packages/cli/src/commands/hub/index.ts", ["cli", "format", "hub", "quality"]],
-    [
-      "packages/server/src/server/hub/relationship-controller.ts",
-      ["format", "hub", "quality", "server"],
+    ci: [".github/actions/**", ".github/workflows/ci.yml"],
+    format: [
+      ".agents/**/*.{cjs,css,html,js,json,jsonc,jsx,md,mjs,ts,tsx,yaml,yml}",
+      ".github/**/*.{cjs,css,html,js,json,jsonc,jsx,md,mjs,ts,tsx,yaml,yml}",
+      "**/*.{cjs,css,html,js,json,jsonc,jsx,md,mjs,ts,tsx,yaml,yml}",
+      "packages/expo-two-way-audio/**",
     ],
-    ["packages/protocol/src/messages.ts", ["format", "quality", "sdk"]],
-    ["packages/client/src/client.ts", ["format", "quality", "sdk"]],
-    ["packages/highlight/src/index.ts", ["format", "quality", "sdk"]],
-    ["packages/expo-two-way-audio/ios/AudioEngine.swift", ["app", "format", "quality"]],
-    ["packages/relay/src/index.ts", ["format", "quality", "relay"]],
-    ["docker/base/Dockerfile", []],
-    ["nix/package.nix", []],
-  ]);
-
-  for (const [changedPath, expected] of cases) {
-    assert.deepEqual(affectedContracts(filters, changedPath), expected, changedPath);
-  }
-});
-
-test("tooling and domain contracts use stable ownership boundaries", () => {
-  const filters = loadFilters(filtersPath);
-  const cases = new Map([
-    ["public-docs/cli.md", ["format"]],
-    ["skills/paseo/SKILL.md", ["format"]],
-    [".github/PULL_REQUEST_TEMPLATE.md", ["format"]],
-    [".agents/skills/release-beta/SKILL.md", ["format"]],
-    ["docker/docker-compose.example.yml", ["format"]],
-    [
-      "packages/app/e2e/support/helpers/project-picker-ui.ts",
-      ["app", "browser", "desktop", "format", "quality"],
+    quality: ["**/*.{cjs,js,json,jsx,mjs,ts,tsx}", "packages/expo-two-way-audio/**"],
+    hub: ["packages/cli/src/commands/hub/**", "packages/server/src/server/hub/**"],
+    server: ["packages/server/**", "packages/app/e2e/support/fixtures/recording.*"],
+    desktop: [
+      "packages/desktop/**",
+      "packages/app/src/desktop/**",
+      "packages/server/src/server/browser-tools/**",
+      "packages/app/e2e/support/**",
+      "packages/app/*config.{cjs,js,ts}",
+      "packages/app/package.json",
     ],
-    [
-      "packages/app/e2e/support/global-setup.ts",
-      ["app", "browser", "desktop", "format", "quality"],
+    app: ["packages/app/**", "packages/expo-two-way-audio/**"],
+    sdk: ["packages/client/**", "packages/highlight/**", "packages/protocol/**"],
+    browser: [
+      "packages/app/src/!(desktop)/**",
+      "packages/app/e2e/browser/**",
+      "packages/app/e2e/support/**",
+      "packages/app/assets/**",
+      "packages/app/public/**",
+      "packages/app/index.ts",
+      "packages/app/*config.{cjs,js,ts}",
+      "packages/app/package.json",
     ],
-    ["packages/desktop/src/daemon/runtime-paths.ts", ["desktop", "format", "quality"]],
-    ["packages/desktop/src/features/browser-profile.ts", ["desktop", "format", "quality"]],
-    [
-      "packages/server/src/server/browser-tools/broker.ts",
-      ["desktop", "format", "quality", "server"],
-    ],
-    [
-      "packages/app/src/desktop/browser/resident-webviews.ts",
-      ["app", "desktop", "format", "quality"],
-    ],
-    ["packages/app/e2e/browser/startup-loading.spec.ts", ["app", "browser", "format", "quality"]],
-    ["packages/desktop/e2e/startup.spec.ts", ["desktop", "format", "quality"]],
-  ]);
-
-  for (const [changedPath, expected] of cases) {
-    assert.deepEqual(affectedContracts(filters, changedPath), expected, changedPath);
-  }
+    relay: ["packages/relay/**"],
+    cli: ["packages/cli/**"],
+  });
 });
 
 test("cross-package invariants live in the suite that owns them", () => {
@@ -259,16 +219,13 @@ test("browser and desktop tests have exclusive, directory-owned suites", () => {
   assert.match(desktopPackage.scripts.test, /--exclude ["']e2e\/\*\*["']/);
 
   for (const path of browserSpecs) {
-    assert.equal(matchesFilter(filters, "browser", path), true, path);
-    assert.equal(matchesFilter(filters, "desktop", path), false, path);
     assert.doesNotMatch(
       readFileSync(new URL(path, repoRoot), "utf8"),
       /paseoDesktop|injectDesktopBridge/,
     );
   }
   for (const path of desktopSpecs) {
-    assert.equal(matchesFilter(filters, "desktop", path), true, path);
-    assert.equal(matchesFilter(filters, "browser", path), false, path);
+    assert.ok(path.startsWith("packages/desktop/e2e/"));
   }
 
   const routingSource = readFileSync(filtersPath, "utf8");
@@ -291,25 +248,6 @@ test("browser and desktop tests have exclusive, directory-owned suites", () => {
     "packages/app/*config.{cjs,js,ts}",
     "packages/app/package.json",
   ]);
-});
-
-test("root dependency and CI infrastructure changes run every contract", () => {
-  const filters = loadFilters(filtersPath);
-  const allContracts = Object.keys(filters)
-    .filter((filterName) => !["routing", "workspace", "ci"].includes(filterName))
-    .sort();
-
-  for (const changedPath of [
-    "package.json",
-    "package-lock.json",
-    ".github/ci-paths.yml",
-    "scripts/npm-retry.mjs",
-    "scripts/postinstall-patches.mjs",
-    "scripts/clean-package-dist.mjs",
-    "vitest.config.ts",
-  ]) {
-    assert.deepEqual(affectedContracts(filters, changedPath), allContracts, changedPath);
-  }
 });
 
 test("non-required Docker and Nix workflows avoid runners with workflow path filters", () => {

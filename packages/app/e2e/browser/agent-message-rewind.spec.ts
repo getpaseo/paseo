@@ -1,13 +1,13 @@
 import type { Locator } from "@playwright/test";
-import { expect, test, type Page } from "./fixtures";
-import { expectAgentIdle, expectAgentReadyToInterrupt } from "./helpers/agent-stream";
+import { expect, test, type Page } from "../support/fixtures";
+import { expectAgentIdle, expectAgentReadyToInterrupt } from "../support/helpers/agent-stream";
 import {
   cancelAgent,
   expectComposerDraft,
   expectComposerVisible,
   submitMessage,
-} from "./helpers/composer";
-import { openAgentRoute, seedMockAgentWorkspace } from "./helpers/mock-agent";
+} from "../support/helpers/composer";
+import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
 async function completeSubmittedTurn(
   page: Page,

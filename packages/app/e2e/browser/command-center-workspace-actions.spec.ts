@@ -1,14 +1,14 @@
-import { test } from "./fixtures";
-import { gotoAppShell } from "./helpers/app";
-import { openCommandCenter } from "./helpers/command-center";
+import { test } from "../support/fixtures";
+import { gotoAppShell } from "../support/helpers/app";
+import { openCommandCenter } from "../support/helpers/command-center";
 import {
   createTerminalFromCommandCenter,
   expectDefaultWorkspaceActions,
   expectWorkspaceActionsAvailableThroughSearch,
   makeWorkspacePrimaryGitActionCommit,
   openWorkspaceFromCommandCenter,
-} from "./helpers/command-center-workspace-actions";
-import { seedWorkspace } from "./helpers/seed-client";
+} from "../support/helpers/command-center-workspace-actions";
+import { seedWorkspace } from "../support/helpers/seed-client";
 
 test("workspace actions use the Git policy and dispatch through the active workspace", async ({
   page,

@@ -1,15 +1,25 @@
 import { existsSync } from "node:fs";
-import { expect, test, type Page } from "./fixtures";
-import { gotoAppShell } from "./helpers/app";
-import { clickSessionRow, expectSessionRowArchived, openSessions } from "./helpers/archive-tab";
-import { cloneGithubRepoDefaultBranchOnly, createTempGithubRepo } from "./helpers/github-fixtures";
+import { expect, test, type Page } from "../support/fixtures";
+import { gotoAppShell } from "../support/helpers/app";
+import {
+  clickSessionRow,
+  expectSessionRowArchived,
+  openSessions,
+} from "../support/helpers/archive-tab";
+import {
+  cloneGithubRepoDefaultBranchOnly,
+  createTempGithubRepo,
+} from "../support/helpers/github-fixtures";
 import {
   archiveWorkspaceFromDaemon,
   connectNewWorkspaceDaemonClient,
-} from "./helpers/new-workspace";
-import { connectSeedClient } from "./helpers/seed-client";
-import { getServerId } from "./helpers/server-id";
-import { waitForSidebarHydration, waitForWorkspaceInSidebar } from "./helpers/workspace-ui";
+} from "../support/helpers/new-workspace";
+import { connectSeedClient } from "../support/helpers/seed-client";
+import { getServerId } from "../support/helpers/server-id";
+import {
+  waitForSidebarHydration,
+  waitForWorkspaceInSidebar,
+} from "../support/helpers/workspace-ui";
 
 test.describe("Auto-archive after pull request merge", () => {
   test.describe.configure({ retries: 0, timeout: 180_000 });

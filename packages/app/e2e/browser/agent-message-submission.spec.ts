@@ -1,5 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
-import { expect, test as baseTest } from "./fixtures";
+import { expect, test as baseTest } from "../support/fixtures";
 import {
   awaitToolCall,
   expectAgentIdle,
@@ -7,8 +7,8 @@ import {
   expectAgentSurfacesIdle,
   expectRunningAgentChrome,
   expectVisibleAgentSurfacesIdle,
-} from "./helpers/agent-stream";
-import { gateNextAgentMessage } from "./helpers/agent-message-gate";
+} from "../support/helpers/agent-stream";
+import { gateNextAgentMessage } from "../support/helpers/agent-message-gate";
 import {
   attachImageFromMenu,
   expectComposerDraft,
@@ -21,26 +21,26 @@ import {
   sendDraftToQueue,
   startRunningMockAgent,
   submitMessage,
-} from "./helpers/composer";
-import { openAgentRoute, seedMockAgentWorkspace } from "./helpers/mock-agent";
-import { seedWorkspace } from "./helpers/seed-client";
-import { waitForWorkspaceTabsVisible } from "./helpers/workspace-tabs";
-import { getServerId } from "./helpers/server-id";
+} from "../support/helpers/composer";
+import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import { seedWorkspace } from "../support/helpers/seed-client";
+import { waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
+import { getServerId } from "../support/helpers/server-id";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
-import { delayBrowserAgentCreatedStatus } from "./helpers/new-workspace";
-import { installDaemonWebSocketGate } from "./helpers/daemon-websocket-gate";
-import { selectModel } from "./helpers/app";
+import { delayBrowserAgentCreatedStatus } from "../support/helpers/new-workspace";
+import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
+import { selectModel } from "../support/helpers/app";
 import {
   scrollTimelineToNewestLoadedEdge,
   scrollTimelineUntilOlderHistoryIsReachable,
-} from "./helpers/timeline-pagination";
+} from "../support/helpers/timeline-pagination";
 import {
   appendSettledTimelineTurns,
   createSettledMockAgent,
   createSmallAssistantPng,
   emitSettledAssistantImage,
   expectAssistantImageRendered,
-} from "./helpers/assistant-images";
+} from "../support/helpers/assistant-images";
 
 const IMAGE = {
   name: "message-submission.png",

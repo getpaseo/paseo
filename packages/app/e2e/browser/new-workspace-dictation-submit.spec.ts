@@ -1,9 +1,12 @@
-import { expect, test, type Page } from "./fixtures";
-import { gotoAppShell } from "./helpers/app";
-import { daemonWsRoutePattern } from "./helpers/daemon-port";
-import { openNewWorkspaceComposer, selectWorkspaceIsolation } from "./helpers/new-workspace";
-import { seedWorkspace } from "./helpers/seed-client";
-import { waitForSidebarHydration } from "./helpers/workspace-ui";
+import { expect, test, type Page } from "../support/fixtures";
+import { gotoAppShell } from "../support/helpers/app";
+import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
+import {
+  openNewWorkspaceComposer,
+  selectWorkspaceIsolation,
+} from "../support/helpers/new-workspace";
+import { seedWorkspace } from "../support/helpers/seed-client";
+import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
 type WebSocketMessage = string | Buffer;
 

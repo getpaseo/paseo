@@ -1,8 +1,8 @@
-import { test as base } from "./fixtures";
+import { test as base } from "../../app/e2e/support/fixtures";
 import { expect } from "@playwright/test";
-import { gotoAppShell } from "./helpers/app";
-import { injectDesktopBridge } from "./helpers/desktop-updates";
-import { getServerId } from "./helpers/server-id";
+import { gotoAppShell } from "../../app/e2e/support/helpers/app";
+import { installDesktopRuntime } from "./support/runtime";
+import { getServerId } from "../../app/e2e/support/helpers/server-id";
 import {
   cancelSkillSelection,
   chooseAllSkills,
@@ -26,7 +26,7 @@ import {
   serveRealSkillsCommands,
   type SkillsSandbox,
   type SkillsSandboxOptions,
-} from "./helpers/skills-selection";
+} from "./support/skills-selection";
 
 interface SkillsSandboxSetup extends SkillsSandboxOptions {
   /** What the desktop confirm dialog answers when the removal warning fires. */
@@ -44,7 +44,7 @@ const test = base.extend<{ startSkills: StartSkills }>({
     await provide(async (setup = {}) => {
       const { confirmRemoval, ...options } = setup;
       const sandbox = await createSkillsSandbox(options);
-      await injectDesktopBridge(page, {
+      await installDesktopRuntime(page, {
         serverId: getServerId(),
         confirmShouldAccept: confirmRemoval ?? false,
       });

@@ -75,11 +75,14 @@ describe("wire schema compatibility", () => {
     ]);
   });
 
-  test("server info accepts legacy feature payloads without stable project identity", () => {
+  test("server info strips unknown legacy features while accepting former turn identity", () => {
     const parsed = ServerInfoStatusPayloadSchema.parse({
       status: "server_info",
       serverId: "legacy-server",
-      features: { workspaceGithubClone: true },
+      features: {
+        workspaceGithubClone: true,
+        agentTurnIdentity: true,
+      },
     });
 
     expect(parsed).toEqual({
@@ -87,7 +90,7 @@ describe("wire schema compatibility", () => {
       serverId: "legacy-server",
       hostname: null,
       version: null,
-      features: {},
+      features: { agentTurnIdentity: true },
     });
   });
 

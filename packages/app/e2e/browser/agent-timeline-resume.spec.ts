@@ -1,5 +1,5 @@
-import { test } from "./fixtures";
-import { installDaemonWebSocketGate } from "./helpers/daemon-websocket-gate";
+import { test } from "../support/fixtures";
+import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import {
   expectTimelinePresentationUnchanged,
   expectTimelinePromptNotMounted,
@@ -9,14 +9,14 @@ import {
   scrollTimelinePromptIntoView,
   scrollTimelineUntilOlderHistoryIsReachable,
   seedLongMockAgentTimeline,
-} from "./helpers/timeline-pagination";
+} from "../support/helpers/timeline-pagination";
 import {
   commitTimelineTurnsWhileDisconnected,
   disconnectViewedTimeline,
   expectOneTailCheckWithoutCatchUpPages,
   rememberTimelineRequestCounts,
   restoreViewedTimelineWithHeldTail,
-} from "./helpers/timeline-resume";
+} from "../support/helpers/timeline-resume";
 
 test.describe("Agent timeline resume", () => {
   test("a long disconnected run lands as one latest-tail update", async ({ page }) => {

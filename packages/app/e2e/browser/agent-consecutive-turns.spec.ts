@@ -1,20 +1,20 @@
 import type { Page } from "@playwright/test";
-import { expect, test as baseTest } from "./fixtures";
-import { expectAgentIdle } from "./helpers/agent-stream";
+import { expect, test as baseTest } from "../support/fixtures";
+import { expectAgentIdle } from "../support/helpers/agent-stream";
 import {
   attachImageFromMenu,
   expectAttachmentPill,
   expectComposerVisible,
   submitMessage,
-} from "./helpers/composer";
-import { clickNewChat, gotoWorkspace } from "./helpers/launcher";
-import { seedWorkspace } from "./helpers/seed-client";
+} from "../support/helpers/composer";
+import { clickNewChat, gotoWorkspace } from "../support/helpers/launcher";
+import { seedWorkspace } from "../support/helpers/seed-client";
 import {
   openAgentRoute,
   seedMockAgentWorkspace,
   type MockAgentWorkspace,
-} from "./helpers/mock-agent";
-import { installDaemonWebSocketGate } from "./helpers/daemon-websocket-gate";
+} from "../support/helpers/mock-agent";
+import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 
 interface FrameRect {
   top: number;
