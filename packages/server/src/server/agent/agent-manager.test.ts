@@ -3063,6 +3063,277 @@ test("force provider hydration commits history before releasing interleaved live
   }
 });
 
+test("force provider hydration preserves a direct timeline append during replacement", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-force-direct-append-"));
+  const agentId = "00000000-0000-4000-8000-000000000152";
+  const historyEntered = deferred<void>();
+  const releaseHistory = deferred<void>();
+  const appendedItem: AgentTimelineItem = {
+    type: "tool_call",
+    callId: "background-worktree-setup",
+    name: "worktree_setup",
+    status: "completed",
+    error: null,
+    detail: {
+      type: "worktree_setup",
+      worktreePath: "/tmp/managed-worktree",
+      branchName: "test/hydration-barrier",
+      log: "ready",
+      commands: [],
+    },
+  };
+
+  class BlockingHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      historyEntered.resolve();
+      await releaseHistory.promise;
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: "replacement history" },
+      };
+    }
+  }
+  class BlockingHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new BlockingHistorySession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new BlockingHistoryClient() },
+    logger,
+    idFactory: () => agentId,
+  });
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const hydration = manager.hydrateTimelineFromProvider(created.id, { force: true });
+    await historyEntered.promise;
+
+    let appendSettled = false;
+    const append = manager.appendTimelineItem(created.id, appendedItem).finally(() => {
+      appendSettled = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(appendSettled).toBe(false);
+
+    releaseHistory.resolve();
+    await Promise.all([hydration, append]);
+    expect(manager.getTimeline(created.id)).toEqual([
+      { type: "user_message", text: "replacement history" },
+      appendedItem,
+    ]);
+  } finally {
+    releaseHistory.resolve();
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("force provider hydration preserves out-of-band timeline output during replacement", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-force-out-of-band-"));
+  const agentId = "00000000-0000-4000-8000-000000000153";
+  const historyEntered = deferred<void>();
+  const releaseHistory = deferred<void>();
+  const outOfBandEmitted = deferred<void>();
+
+  class OutOfBandHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      historyEntered.resolve();
+      await releaseHistory.promise;
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: "replacement history" },
+      };
+    }
+
+    override tryHandleOutOfBand(): ReturnType<NonNullable<AgentSession["tryHandleOutOfBand"]>> {
+      return {
+        run: async ({ emit }) => {
+          emit({
+            type: "timeline",
+            provider: "codex",
+            item: { type: "assistant_message", text: "out-of-band result" },
+          });
+          outOfBandEmitted.resolve();
+        },
+      };
+    }
+  }
+  class OutOfBandHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new OutOfBandHistorySession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new OutOfBandHistoryClient() },
+    logger,
+    idFactory: () => agentId,
+  });
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const hydration = manager.hydrateTimelineFromProvider(created.id, { force: true });
+    await historyEntered.promise;
+    expect(manager.tryRunOutOfBand(created.id, { text: "/goal pause" })).toBe(true);
+    await outOfBandEmitted.promise;
+
+    releaseHistory.resolve();
+    await hydration;
+    expect(manager.getTimeline(created.id)).toEqual([
+      { type: "user_message", text: "replacement history" },
+      { type: "assistant_message", text: "out-of-band result" },
+    ]);
+  } finally {
+    releaseHistory.resolve();
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  { outcome: "success" as const, error: null },
+  { outcome: "failure" as const, error: new Error("provider history failed") },
+])("force hydration flushes all coalesced items before $outcome completion", async ({ error }) => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-force-coalesced-"));
+  const agentId = randomUUID();
+  const liveItems: AgentTimelineItem[] = [
+    { type: "assistant_message", text: "live assistant" },
+    { type: "reasoning", text: "live reasoning" },
+    {
+      type: "tool_call",
+      callId: "live-running-tool",
+      name: "bash",
+      status: "running",
+      error: null,
+      detail: { type: "shell", command: "git status" },
+    },
+    { type: "user_message", text: "live boundary after coalesced output" },
+  ];
+
+  class CoalescedHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      for (const item of liveItems) {
+        this.pushEvent({ type: "timeline", provider: "codex", item });
+      }
+      if (error) {
+        throw error;
+      }
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: "replacement history" },
+      };
+    }
+  }
+  class CoalescedHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new CoalescedHistorySession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new CoalescedHistoryClient() },
+    logger,
+    idFactory: () => agentId,
+    agentStreamCoalesceWindowMs: 60_000,
+  });
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.appendTimelineItem(created.id, {
+      type: "user_message",
+      text: "preexisting timeline",
+    });
+
+    const hydration = manager.hydrateTimelineFromProvider(created.id, { force: true });
+    if (error) {
+      await expect(hydration).rejects.toThrow(error.message);
+      expect(manager.getTimeline(created.id)).toEqual([
+        { type: "user_message", text: "preexisting timeline" },
+        ...liveItems,
+      ]);
+    } else {
+      await hydration;
+      expect(manager.getTimeline(created.id)).toEqual([
+        { type: "user_message", text: "replacement history" },
+        ...liveItems,
+      ]);
+    }
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("an immediate second force hydration cannot inherit a late coalescer flush", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-force-late-flush-"));
+  const agentId = "00000000-0000-4000-8000-000000000156";
+  const secondHistoryEntered = deferred<void>();
+  const releaseSecondHistory = deferred<void>();
+  let historyCalls = 0;
+
+  class SequentialHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      historyCalls += 1;
+      if (historyCalls === 1) {
+        this.pushEvent({
+          type: "timeline",
+          provider: "codex",
+          item: { type: "assistant_message", text: "live during first force" },
+        });
+      } else {
+        secondHistoryEntered.resolve();
+        await releaseSecondHistory.promise;
+      }
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: `history ${historyCalls}` },
+      };
+    }
+  }
+  class SequentialHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new SequentialHistorySession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new SequentialHistoryClient() },
+    logger,
+    idFactory: () => agentId,
+    agentStreamCoalesceWindowMs: 60_000,
+  });
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.hydrateTimelineFromProvider(created.id, { force: true });
+    expect(manager.getTimeline(created.id)).toEqual([
+      { type: "user_message", text: "history 1" },
+      { type: "assistant_message", text: "live during first force" },
+    ]);
+
+    const second = manager.hydrateTimelineFromProvider(created.id, { force: true });
+    await secondHistoryEntered.promise;
+    releaseSecondHistory.resolve();
+    await second;
+
+    expect(manager.getTimeline(created.id)).toEqual([{ type: "user_message", text: "history 2" }]);
+  } finally {
+    releaseSecondHistory.resolve();
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("concurrent forced history hydrations serialize per agent", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-force-serialization-"));
   const agentId = "00000000-0000-4000-8000-000000000151";

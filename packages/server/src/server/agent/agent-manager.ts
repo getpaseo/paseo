@@ -191,7 +191,14 @@ interface HydrateTimelineOptions {
 
 interface ActiveHistoryHydration {
   token: symbol;
-  bufferedEvents: AgentStreamEvent[];
+  bufferedOperations: BufferedHistoryHydrationOperation[];
+}
+
+interface BufferedHistoryHydrationOperation {
+  kind: "session_event" | "timeline_writer";
+  run: () => Promise<void>;
+  resolve?: () => void;
+  reject?: (error: unknown) => void;
 }
 
 export type ImportablePersistedAgentQueryOptions = ListImportableSessionsOptions & {
@@ -303,6 +310,7 @@ interface StreamEventFlags {
 
 interface HandleStreamEventOptions {
   fromHistory?: boolean;
+  historyHydrationToken?: symbol;
 }
 
 interface ManagedAgentBase {
@@ -570,6 +578,7 @@ export class AgentManager {
   private readonly sessionEventTails = new Map<string, Promise<void>>();
   private readonly historyHydrationTails = new Map<string, Promise<void>>();
   private readonly activeHistoryHydrations = new Map<string, ActiveHistoryHydration>();
+  private readonly coalescerHistoryHydrationTokens = new Map<string, symbol>();
   private readonly runs = new AgentRunState();
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
@@ -613,8 +622,19 @@ export class AgentManager {
       windowMs: options.agentStreamCoalesceWindowMs ?? AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS,
       timers: { setTimeout, clearTimeout },
       onFlush: ({ agentId, item, provider, turnId }) => {
-        const event = this.recordAndDispatchTimelineItem(agentId, item, provider, turnId);
-        this.notifyForegroundTurnWaiters(agentId, event);
+        void this.runOrBufferTimelineWriter(
+          agentId,
+          async () => {
+            const event = this.recordAndDispatchTimelineItem(agentId, item, provider, turnId);
+            this.notifyForegroundTurnWaiters(agentId, event);
+          },
+          this.coalescerHistoryHydrationTokens.get(agentId),
+        ).catch((err) => {
+          this.logger.error(
+            { err, agentId, itemType: item.type },
+            "Failed to persist coalesced timeline item",
+          );
+        });
       },
     });
     this.updateProviderRegistry({
@@ -1890,12 +1910,19 @@ export class AgentManager {
       // Persist timeline items so they show up in fetchAgentTimeline; broadcast
       // for live subscribers. Other event types are broadcast only.
       if (event.type === "timeline") {
-        this.touchUpdatedAt(agent);
-        const row = this.recordTimeline(agent.id, event.item);
-        this.dispatchStream(agent.id, event, {
-          seq: row.seq,
-          epoch: this.timelineStore.getEpoch(agent.id),
-          timestamp: row.timestamp,
+        void this.runOrBufferTimelineWriter(agent.id, async () => {
+          this.touchUpdatedAt(agent);
+          const row = this.recordTimeline(agent.id, event.item);
+          this.dispatchStream(agent.id, event, {
+            seq: row.seq,
+            epoch: this.timelineStore.getEpoch(agent.id),
+            timestamp: row.timestamp,
+          });
+        }).catch((err) => {
+          this.logger.error(
+            { err, agentId: agent.id, itemType: event.item.type },
+            "Failed to persist out-of-band timeline item",
+          );
         });
         return;
       }
@@ -1919,22 +1946,24 @@ export class AgentManager {
   async appendTimelineItem(agentId: string, item: AgentTimelineItem): Promise<void> {
     const agent = this.requireAgent(agentId);
     item = limitAgentTimelineItemContent(item);
-    this.touchUpdatedAt(agent);
-    const row = this.recordTimeline(agentId, item);
-    this.dispatchStream(
-      agentId,
-      {
-        type: "timeline",
-        item,
-        provider: agent.provider,
-      },
-      {
-        seq: row.seq,
-        epoch: this.timelineStore.getEpoch(agentId),
-        timestamp: row.timestamp,
-      },
-    );
-    await this.persistSnapshot(agent);
+    await this.runOrBufferTimelineWriter(agentId, async () => {
+      this.touchUpdatedAt(agent);
+      const row = this.recordTimeline(agentId, item);
+      this.dispatchStream(
+        agentId,
+        {
+          type: "timeline",
+          item,
+          provider: agent.provider,
+        },
+        {
+          seq: row.seq,
+          epoch: this.timelineStore.getEpoch(agentId),
+          timestamp: row.timestamp,
+        },
+      );
+      await this.persistSnapshot(agent);
+    });
   }
 
   async emitLiveTimelineItem(agentId: string, item: AgentTimelineItem): Promise<void> {
@@ -2948,7 +2977,10 @@ export class AgentManager {
   private enqueueSessionEvent(agentId: string, event: AgentStreamEvent): void {
     const activeHydration = this.activeHistoryHydrations.get(agentId);
     if (activeHydration) {
-      activeHydration.bufferedEvents.push(event);
+      activeHydration.bufferedOperations.push({
+        kind: "session_event",
+        run: async () => this.processSessionEvent(agentId, event, activeHydration.token),
+      });
       return;
     }
     this.logger.trace(
@@ -2964,27 +2996,7 @@ export class AgentManager {
     const previous = this.sessionEventTails.get(agentId) ?? Promise.resolve();
     const next = previous
       .catch(() => undefined)
-      .then(async () => {
-        const current = this.agents.get(agentId);
-        if (!current) {
-          return;
-        }
-        if (current.session == null) {
-          return;
-        }
-        this.logger.trace(
-          {
-            agentId,
-            provider: event.provider,
-            sessionId: current.persistence?.sessionId ?? undefined,
-            turnId: getAgentStreamEventTurnId(event),
-            event,
-          },
-          "agent.manager.dequeue",
-        );
-        await this.dispatchSessionEvent(current, event);
-        return;
-      })
+      .then(async () => this.processSessionEvent(agentId, event))
       .catch((err) => {
         this.logger.error(
           { err, agentId, eventType: event.type },
@@ -2999,6 +3011,28 @@ export class AgentManager {
         this.sessionEventTails.delete(agentId);
       }
     });
+  }
+
+  private async processSessionEvent(
+    agentId: string,
+    event: AgentStreamEvent,
+    historyHydrationToken?: symbol,
+  ): Promise<void> {
+    const current = this.agents.get(agentId);
+    if (!current || current.session == null) {
+      return;
+    }
+    this.logger.trace(
+      {
+        agentId,
+        provider: event.provider,
+        sessionId: current.persistence?.sessionId ?? undefined,
+        turnId: getAgentStreamEventTurnId(event),
+        event,
+      },
+      "agent.manager.dequeue",
+    );
+    await this.dispatchSessionEvent(current, event, historyHydrationToken);
   }
 
   /**
@@ -3022,6 +3056,7 @@ export class AgentManager {
   private async dispatchSessionEvent(
     agent: ActiveManagedAgent,
     event: AgentStreamEvent,
+    historyHydrationToken?: symbol,
   ): Promise<void> {
     if (event.type === "provider_subagent") {
       const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
@@ -3042,7 +3077,11 @@ export class AgentManager {
       "agent.manager.dispatch_session_event",
     );
 
-    const shouldNotifyWaiters = await this.handleStreamEvent(agent, event);
+    const shouldNotifyWaiters = await this.handleStreamEvent(
+      agent,
+      event,
+      historyHydrationToken ? { historyHydrationToken } : undefined,
+    );
 
     if (!shouldNotifyWaiters) {
       return;
@@ -3300,7 +3339,7 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} already has an active history hydration`);
     }
     const token = Symbol(agentId);
-    this.activeHistoryHydrations.set(agentId, { token, bufferedEvents: [] });
+    this.activeHistoryHydrations.set(agentId, { token, bufferedOperations: [] });
     return token;
   }
 
@@ -3310,11 +3349,82 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} history hydration ownership was lost`);
     }
 
-    this.activeHistoryHydrations.delete(agentId);
-    for (const event of activeHydration.bufferedEvents) {
-      this.enqueueSessionEvent(agentId, event);
-    }
+    // Keep the gate installed until every operation that arrived during replacement has
+    // committed. Replayed session events may create coalesced timeline writes, which route back
+    // through this same per-agent gate and are drained by the loop before public completion.
     await this.drainSessionEvents(agentId);
+    while (true) {
+      const operation = activeHydration.bufferedOperations.shift();
+      if (operation) {
+        try {
+          await operation.run();
+          operation.resolve?.();
+        } catch (err) {
+          operation.reject?.(err);
+          this.logger.error(
+            { err, agentId, operationKind: operation.kind },
+            "Failed to replay operation buffered during history hydration",
+          );
+        }
+        continue;
+      }
+
+      this.flushCoalescedTimelineItems(agentId, token);
+      if (activeHydration.bufferedOperations.length > 0) {
+        continue;
+      }
+
+      // There is no await between this final check and gate removal. A concurrent writer either
+      // joined the buffer above or observes a fully completed replacement and writes afterward.
+      if (this.activeHistoryHydrations.get(agentId) !== activeHydration) {
+        throw new Error(`Agent ${agentId} history hydration ownership was lost`);
+      }
+      this.activeHistoryHydrations.delete(agentId);
+      return;
+    }
+  }
+
+  private runOrBufferTimelineWriter(
+    agentId: string,
+    run: () => Promise<void> | void,
+    historyHydrationToken?: symbol,
+  ): Promise<void> {
+    const activeHydration = this.activeHistoryHydrations.get(agentId);
+    if (!activeHydration || activeHydration.token === historyHydrationToken) {
+      try {
+        return Promise.resolve(run());
+      } catch (err) {
+        return Promise.reject(err);
+      }
+    }
+
+    return new Promise<void>((promiseResolve, promiseReject) => {
+      activeHydration.bufferedOperations.push({
+        kind: "timeline_writer",
+        run: async () => run(),
+        resolve: promiseResolve,
+        reject: promiseReject,
+      });
+    });
+  }
+
+  private flushCoalescedTimelineItems(agentId: string, historyHydrationToken?: symbol): void {
+    if (!historyHydrationToken) {
+      this.agentStreamCoalescer.flushFor(agentId);
+      return;
+    }
+
+    const previousToken = this.coalescerHistoryHydrationTokens.get(agentId);
+    this.coalescerHistoryHydrationTokens.set(agentId, historyHydrationToken);
+    try {
+      this.agentStreamCoalescer.flushFor(agentId);
+    } finally {
+      if (previousToken) {
+        this.coalescerHistoryHydrationTokens.set(agentId, previousToken);
+      } else {
+        this.coalescerHistoryHydrationTokens.delete(agentId);
+      }
+    }
   }
 
   private notifyForegroundTurnWaiters(agentId: string, event: AgentStreamEvent): void {
@@ -3370,7 +3480,7 @@ export class AgentManager {
         this.traceCoalescerBuffered(agent, event, eventTurnId);
         return false;
       }
-      this.agentStreamCoalescer.flushFor(agent.id);
+      this.flushCoalescedTimelineItems(agent.id, options?.historyHydrationToken);
     }
 
     const flags: StreamEventFlags = { shouldDispatchEvent: true, shouldNotifyWaiters: true };
