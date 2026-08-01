@@ -92,6 +92,32 @@ describe("analyzeMaterialProgress", () => {
     });
   });
 
+  it("does not inherit a previous continuation's compactions after a new turn is accepted", () => {
+    const previousContinuation = [
+      entry(1, { type: "user_message", text: "old continuation" }),
+      entry(2, { type: "compaction", status: "completed" }),
+      entry(3, { type: "compaction", status: "completed" }),
+    ];
+
+    expect(
+      analyzeMaterialProgress({ entries: previousContinuation, turnOutcome: null }),
+    ).toMatchObject({ state: "stalled" });
+
+    expect(
+      analyzeMaterialProgress({
+        entries: previousContinuation,
+        turnOutcome: null,
+        continuationBoundarySeq: 4,
+      }),
+    ).toEqual({
+      state: "none",
+      completedCompactionsSinceMaterialProgress: 0,
+      lastMaterialProgressAt: null,
+      lastMaterialProgressKind: null,
+      reason: "No material progress has been recorded for the current continuation.",
+    });
+  });
+
   it("uses only the latest user continuation and completion sequence", () => {
     const completedWrite = entry(2, {
       type: "tool_call",

@@ -66,6 +66,7 @@ const STORED_AGENT_SCHEMA = z.object({
   persistence: PERSISTENCE_HANDLE_SCHEMA,
   lastError: z.string().nullable().optional(),
   lastTurnOutcome: z.enum(["completed", "failed", "canceled"]).nullable().optional(),
+  materialProgressContinuationBoundarySeq: z.number().int().positive().nullable().optional(),
   materialProgress: MaterialProgressPayloadSchema.optional(),
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),

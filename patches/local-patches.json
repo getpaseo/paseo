@@ -43,11 +43,13 @@
         "reports none when history or a current continuation is unavailable",
         "treats completed edits and writes as material progress",
         "warns after one compaction and stalls after two",
+        "does not inherit a previous continuation's compactions after a new turn is accepted",
         "uses only the latest user continuation and completion sequence",
         "does not count read-only tools or commentary as material progress",
         "counts a completed turn's final message as a deliverable, not semantic success",
         "fetch agent exposes a backward-compatible material progress signal",
         "fetch agent preserves material progress after the live worker is collected",
+        "fetch agent does not inherit a previous stall after a new turn is accepted",
         "fetch agent preserves material progress after archive discards the live timeline",
         "fetch agent restores material progress after daemon restart"
       ],

@@ -4051,6 +4051,7 @@ export class Session {
   ): Promise<AgentSnapshotPayload> {
     let entries: TimelineProjectionEntry[] | null = null;
     let turnOutcome: MaterialProgressSnapshot["turnOutcome"] = null;
+    let continuationBoundarySeq: number | null = null;
     let persisted = payload.materialProgress ?? null;
     try {
       const snapshot = await this.agentManager.getMaterialProgressSnapshot(payload.id);
@@ -4059,6 +4060,7 @@ export class Session {
           ? null
           : projectTimelineRows({ rows: snapshot.rows, mode: "projected" });
       turnOutcome = snapshot.turnOutcome;
+      continuationBoundarySeq = snapshot.continuationBoundarySeq;
       persisted = snapshot.persisted ?? persisted;
     } catch (error) {
       this.sessionLogger.debug(
@@ -4074,6 +4076,7 @@ export class Session {
           : analyzeMaterialProgress({
               entries,
               turnOutcome,
+              continuationBoundarySeq,
             }),
     };
   }

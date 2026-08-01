@@ -4245,7 +4245,20 @@ test("persists terminal outcomes and clears the previous outcome when a new turn
   const session = new (class extends TestAgentSession {
     override async startTurn(): Promise<{ turnId: string }> {
       nextTurn += 1;
-      return { turnId: `held-turn-${nextTurn}` };
+      const turnId = `held-turn-${nextTurn}`;
+      if (nextTurn === 2) {
+        // OpenCode can publish accepted-start and timeline events before startTurn resolves.
+        // The post-resolution manager path must not move the boundary past those events.
+        this.pushEvent({ type: "turn_started", provider: "codex", turnId });
+        this.pushEvent({
+          type: "timeline",
+          provider: "codex",
+          turnId,
+          item: { type: "reasoning", text: "provider accepted the continuation" },
+        });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      return { turnId };
     }
   })({ provider: "codex", cwd: workdir });
   const client = new (class extends TestAgentClient {
@@ -4282,6 +4295,19 @@ test("persists terminal outcomes and clears the previous outcome when a new turn
     expect((await manager.getMaterialProgressSnapshot(agent.id)).turnOutcome).toBe("completed");
     expect((await storage.get(agent.id))?.lastTurnOutcome).toBe("completed");
 
+    await manager.appendTimelineItem(agent.id, {
+      type: "user_message",
+      text: "previous continuation",
+    });
+    await manager.appendTimelineItem(agent.id, {
+      type: "compaction",
+      status: "completed",
+    });
+    await manager.appendTimelineItem(agent.id, {
+      type: "compaction",
+      status: "completed",
+    });
+
     const secondRunning = waitForAgentLifecycle(manager, agent.id, "running");
     const secondTurn = (async () => {
       for await (const _event of manager.streamAgent(agent.id, "second turn")) {
@@ -4290,7 +4316,13 @@ test("persists terminal outcomes and clears the previous outcome when a new turn
     })();
     await secondRunning;
     await manager.flush();
-    expect((await manager.getMaterialProgressSnapshot(agent.id)).turnOutcome).toBeNull();
+    const secondTurnSnapshot = await manager.getMaterialProgressSnapshot(agent.id);
+    expect(secondTurnSnapshot.turnOutcome).toBeNull();
+    expect(secondTurnSnapshot.continuationBoundarySeq).toBe(4);
+    expect(await storage.get(agent.id)).toMatchObject({
+      materialProgressContinuationBoundarySeq: 4,
+      materialProgress: { state: "none" },
+    });
     expect((await storage.get(agent.id))?.lastTurnOutcome ?? null).toBeNull();
 
     const staleRecord = await storage.get(agent.id);

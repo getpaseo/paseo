@@ -346,6 +346,7 @@ type AgentTurnOutcome = "completed" | "failed" | "canceled";
 export interface MaterialProgressSnapshot {
   rows: AgentTimelineRow[] | null;
   turnOutcome: AgentTurnOutcome | null;
+  continuationBoundarySeq: number | null;
   persisted: MaterialProgressPayload | null;
 }
 
@@ -401,6 +402,9 @@ interface ManagedAgentBase {
   lastUsage?: AgentUsage;
   lastError?: string;
   lastTurnOutcome?: AgentTurnOutcome | null;
+  materialProgressContinuationBoundarySeq?: number | null;
+  materialProgressContinuationActive?: boolean;
+  materialProgressContinuationTurnId?: string | null;
   attention: AttentionState;
   foregroundTurnWaiters: Set<ForegroundTurnWaiter>;
   finalizedForegroundTurnIds: Set<string>;
@@ -1054,6 +1058,9 @@ export class AgentManager {
     return {
       rows,
       turnOutcome: live ? (live.lastTurnOutcome ?? null) : (record?.lastTurnOutcome ?? null),
+      continuationBoundarySeq: live
+        ? (live.materialProgressContinuationBoundarySeq ?? null)
+        : (record?.materialProgressContinuationBoundarySeq ?? null),
       persisted: record?.materialProgress ?? null,
     };
   }
@@ -1149,6 +1156,7 @@ export class AgentManager {
       workspaceId?: string;
       owner?: AgentOwner;
       lastTurnOutcome?: AgentTurnOutcome | null;
+      materialProgressContinuationBoundarySeq?: number | null;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -1169,6 +1177,7 @@ export class AgentManager {
       workspaceId?: string;
       owner?: AgentOwner;
       lastTurnOutcome?: AgentTurnOutcome | null;
+      materialProgressContinuationBoundarySeq?: number | null;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -1314,6 +1323,8 @@ export class AgentManager {
     const preservedLastUsage = existing.lastUsage;
     const preservedLastError = existing.lastError;
     const preservedLastTurnOutcome = existing.lastTurnOutcome;
+    const preservedMaterialProgressContinuationBoundarySeq =
+      existing.materialProgressContinuationBoundarySeq;
     const preservedAttention = existing.attention;
     const handle = existing.persistence;
     const provider = handle?.provider ?? existing.provider;
@@ -1366,6 +1377,7 @@ export class AgentManager {
         lastUsage: preservedLastUsage,
         lastError: preservedLastError,
         lastTurnOutcome: preservedLastTurnOutcome,
+        materialProgressContinuationBoundarySeq: preservedMaterialProgressContinuationBoundarySeq,
         attention: preservedAttention,
       });
     } finally {
@@ -1624,6 +1636,7 @@ export class AgentManager {
         lastUsage: undefined,
         lastError: record.lastError ?? undefined,
         lastTurnOutcome: record.lastTurnOutcome,
+        materialProgressContinuationBoundarySeq: record.materialProgressContinuationBoundarySeq,
         attention: { requiresAttention: false },
         internal: record.internal,
         labels: record.labels,
@@ -2100,9 +2113,12 @@ export class AgentManager {
       }
       agent.activeForegroundTurnId = turnId;
       agent.lifecycle = "running";
-      agent.lastTurnOutcome = null;
+      this.beginMaterialProgressContinuation(agent, turnId);
+      turnStream = this.runs.createTurnStream(turnId);
+      this.runs.addWaiter(agent, turnStream.waiter);
       this.touchUpdatedAt(agent);
-      this.emitState(agent);
+      await this.persistSnapshot(agent);
+      this.emitState(agent, { persist: false });
       this.logger.trace(
         {
           agentId,
@@ -2114,9 +2130,6 @@ export class AgentManager {
         },
         "agent.manager.stream.start",
       );
-
-      turnStream = this.runs.createTurnStream(turnId);
-      this.runs.addWaiter(agent, turnStream.waiter);
 
       try {
         for await (const event of turnStream.events(isTurnTerminalEvent)) {
@@ -2766,6 +2779,7 @@ export class AgentManager {
       lastUsage?: AgentUsage;
       lastError?: string;
       lastTurnOutcome?: AgentTurnOutcome | null;
+      materialProgressContinuationBoundarySeq?: number | null;
       attention?: AttentionState;
       initialTitle?: string | null;
       publishWhenReady?: boolean;
@@ -2907,6 +2921,7 @@ export class AgentManager {
           lastUsage?: AgentUsage;
           lastError?: string;
           lastTurnOutcome?: AgentTurnOutcome | null;
+          materialProgressContinuationBoundarySeq?: number | null;
           attention?: AttentionState;
           persistence?: AgentPersistenceHandle;
           workspaceId?: string;
@@ -2915,19 +2930,20 @@ export class AgentManager {
       | undefined;
   }): ActiveManagedAgent {
     const { resolvedAgentId, session, config, now, durableTimelineHasRows, options } = params;
+    const resolvedOptions = options ?? {};
     return {
       id: resolvedAgentId,
       provider: config.provider,
       cwd: config.cwd,
-      workspaceId: options?.workspaceId,
-      owner: options?.owner,
+      workspaceId: resolvedOptions.workspaceId,
+      owner: resolvedOptions.owner,
       session,
       capabilities: session.capabilities,
       config,
       runtimeInfo: undefined,
       lifecycle: "initializing",
-      createdAt: options?.createdAt ?? now,
-      updatedAt: options?.updatedAt ?? now,
+      createdAt: resolvedOptions.createdAt ?? now,
+      updatedAt: resolvedOptions.updatedAt ?? now,
       availableModes: [],
       currentModeId: null,
       pendingPermissions: new Map<string, AgentPermissionRequest>(),
@@ -2939,17 +2955,21 @@ export class AgentManager {
       finalizedForegroundTurnIds: new Set<string>(),
       unsubscribeSession: null,
       persistence: attachPersistenceCwd(
-        options?.persistence ?? session.describePersistence(),
+        resolvedOptions.persistence ?? session.describePersistence(),
         config.cwd,
       ),
-      historyPrimed: options?.historyPrimed ?? durableTimelineHasRows,
-      lastUserMessageAt: options?.lastUserMessageAt ?? null,
-      lastUsage: options?.lastUsage,
-      lastError: options?.lastError,
-      lastTurnOutcome: options?.lastTurnOutcome,
-      attention: resolveInitialAttention(options?.attention),
+      historyPrimed: resolvedOptions.historyPrimed ?? durableTimelineHasRows,
+      lastUserMessageAt: resolvedOptions.lastUserMessageAt ?? null,
+      lastUsage: resolvedOptions.lastUsage,
+      lastError: resolvedOptions.lastError,
+      lastTurnOutcome: resolvedOptions.lastTurnOutcome,
+      materialProgressContinuationBoundarySeq:
+        resolvedOptions.materialProgressContinuationBoundarySeq,
+      materialProgressContinuationActive: false,
+      materialProgressContinuationTurnId: null,
+      attention: resolveInitialAttention(resolvedOptions.attention),
       internal: config.internal ?? false,
-      labels: options?.labels ?? {},
+      labels: resolvedOptions.labels ?? {},
     } as ActiveManagedAgent;
   }
 
@@ -3200,6 +3220,7 @@ export class AgentManager {
     return analyzeMaterialProgress({
       entries: projectTimelineRows({ rows, mode: "projected" }),
       turnOutcome: agent.lastTurnOutcome ?? null,
+      continuationBoundarySeq: agent.materialProgressContinuationBoundarySeq ?? null,
     });
   }
 
@@ -3671,8 +3692,7 @@ export class AgentManager {
         this.onStreamTurnCanceled({ agent, event, eventTurnId, isForegroundEvent, options });
         return undefined;
       case "turn_started":
-        this.onStreamTurnStarted({ agent, eventTurnId, isForegroundEvent });
-        return undefined;
+        return this.onStreamTurnStarted({ agent, eventTurnId, isForegroundEvent, options });
       case "permission_requested":
         this.onStreamPermissionRequested(agent, event);
         return undefined;
@@ -3757,6 +3777,7 @@ export class AgentManager {
     // it from the completion event.
     agent.lastError = undefined;
     agent.lastTurnOutcome = "completed";
+    this.endMaterialProgressContinuation(agent);
     if (!isForegroundEvent && agent.lifecycle !== "idle" && !agent.pendingReplacement) {
       (agent as ActiveManagedAgent).lifecycle = "idle";
       this.emitState(agent);
@@ -3792,6 +3813,7 @@ export class AgentManager {
     }
     agent.lastError = event.error;
     agent.lastTurnOutcome = "failed";
+    this.endMaterialProgressContinuation(agent);
     await this.appendSystemErrorTimelineMessage(
       agent,
       event.provider,
@@ -3833,19 +3855,25 @@ export class AgentManager {
     }
     agent.lastError = undefined;
     agent.lastTurnOutcome = "canceled";
+    this.endMaterialProgressContinuation(agent);
     this.resolvePendingPermissionsForAgent(agent, event.provider, options, "Interrupted");
     if (!isForegroundEvent) {
       this.emitState(agent);
     }
   }
 
-  private onStreamTurnStarted(params: {
+  private async onStreamTurnStarted(params: {
     agent: ActiveManagedAgent;
     eventTurnId: string | undefined;
     isForegroundEvent: boolean;
-  }): void {
-    const { agent, eventTurnId, isForegroundEvent } = params;
-    agent.lastTurnOutcome = null;
+    options: HandleStreamEventOptions | undefined;
+  }): Promise<void> {
+    const { agent, eventTurnId, isForegroundEvent, options } = params;
+    if (options?.fromHistory) {
+      agent.lastTurnOutcome = null;
+      return;
+    }
+    this.beginMaterialProgressContinuation(agent, eventTurnId);
     this.logger.trace(
       {
         agentId: agent.id,
@@ -3860,8 +3888,37 @@ export class AgentManager {
     if (!isForegroundEvent) {
       this.runs.trackAutonomousRun(agent.id, eventTurnId ?? null);
       agent.lifecycle = "running";
-      this.emitState(agent);
+      await this.persistSnapshot(agent);
+      this.emitState(agent, { persist: false });
+      return;
     }
+    await this.persistSnapshot(agent);
+  }
+
+  private beginMaterialProgressContinuation(
+    agent: ActiveManagedAgent,
+    turnId: string | undefined,
+  ): void {
+    if (agent.materialProgressContinuationActive) {
+      if (!agent.materialProgressContinuationTurnId && turnId) {
+        agent.materialProgressContinuationTurnId = turnId;
+      }
+      agent.lastTurnOutcome = null;
+      return;
+    }
+
+    agent.materialProgressContinuationBoundarySeq = this.timelineStore.fetch(agent.id, {
+      direction: "tail",
+      limit: 1,
+    }).window.nextSeq;
+    agent.materialProgressContinuationActive = true;
+    agent.materialProgressContinuationTurnId = turnId ?? null;
+    agent.lastTurnOutcome = null;
+  }
+
+  private endMaterialProgressContinuation(agent: ActiveManagedAgent): void {
+    agent.materialProgressContinuationActive = false;
+    agent.materialProgressContinuationTurnId = null;
   }
 
   private onStreamPermissionRequested(

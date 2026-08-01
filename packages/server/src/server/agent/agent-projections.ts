@@ -90,6 +90,11 @@ export function toStoredAgentRecord(
     persistence,
     lastError: agent.lastError ?? undefined,
     ...(agent.lastTurnOutcome ? { lastTurnOutcome: agent.lastTurnOutcome } : {}),
+    ...(agent.materialProgressContinuationBoundarySeq != null
+      ? {
+          materialProgressContinuationBoundarySeq: agent.materialProgressContinuationBoundarySeq,
+        }
+      : {}),
     ...(options?.materialProgress ? { materialProgress: options.materialProgress } : {}),
     requiresAttention: agent.attention.requiresAttention,
     attentionReason: agent.attention.requiresAttention ? agent.attention.attentionReason : null,

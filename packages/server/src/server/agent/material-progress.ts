@@ -5,6 +5,11 @@ import type { TimelineProjectionEntry } from "./timeline-projection.js";
 export interface AnalyzeMaterialProgressInput {
   entries: readonly TimelineProjectionEntry[] | null;
   turnOutcome: "completed" | "failed" | "canceled" | null;
+  /**
+   * Manager-owned sequence at which the currently accepted continuation begins.
+   * Older persisted agents omit it and retain the latest-user-message fallback.
+   */
+  continuationBoundarySeq?: number | null;
 }
 
 type MaterialProgressKind = NonNullable<MaterialProgressPayload["lastMaterialProgressKind"]>;
@@ -44,6 +49,21 @@ function orderedEntries(entries: readonly TimelineProjectionEntry[]): TimelinePr
   );
 }
 
+function currentContinuation(
+  ordered: readonly TimelineProjectionEntry[],
+  continuationBoundarySeq: number | null | undefined,
+): TimelineProjectionEntry[] | null {
+  if (continuationBoundarySeq != null) {
+    return ordered.filter((entry) => entry.seqEnd >= continuationBoundarySeq);
+  }
+
+  let latestUserIndex = -1;
+  for (let index = 0; index < ordered.length; index += 1) {
+    if (ordered[index]?.item.type === "user_message") latestUserIndex = index;
+  }
+  return latestUserIndex < 0 ? null : ordered.slice(latestUserIndex + 1);
+}
+
 function noProgress(reason: string): MaterialProgressPayload {
   return {
     state: "none",
@@ -68,17 +88,13 @@ function materialKind(
 export function analyzeMaterialProgress({
   entries,
   turnOutcome,
+  continuationBoundarySeq,
 }: AnalyzeMaterialProgressInput): MaterialProgressPayload {
   if (entries === null) return noProgress("Timeline history is unavailable.");
 
   const ordered = orderedEntries(entries);
-  let latestUserIndex = -1;
-  for (let index = 0; index < ordered.length; index += 1) {
-    if (ordered[index]?.item.type === "user_message") latestUserIndex = index;
-  }
-  if (latestUserIndex < 0) return noProgress("No current continuation is available.");
-
-  const continuation = ordered.slice(latestUserIndex + 1);
+  const continuation = currentContinuation(ordered, continuationBoundarySeq);
+  if (continuation === null) return noProgress("No current continuation is available.");
   let finalAssistantIndex = -1;
   if (turnOutcome === "completed") {
     for (let index = 0; index < continuation.length; index += 1) {

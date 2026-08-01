@@ -112,6 +112,7 @@ export function extractTimestamps(record: StoredAgentRecord): {
   workspaceId?: string;
   owner?: StoredAgentRecord["owner"];
   lastTurnOutcome?: StoredAgentRecord["lastTurnOutcome"];
+  materialProgressContinuationBoundarySeq?: StoredAgentRecord["materialProgressContinuationBoundarySeq"];
 } {
   return {
     createdAt: new Date(record.createdAt),
@@ -121,6 +122,7 @@ export function extractTimestamps(record: StoredAgentRecord): {
     workspaceId: record.workspaceId,
     owner: record.owner,
     lastTurnOutcome: record.lastTurnOutcome,
+    materialProgressContinuationBoundarySeq: record.materialProgressContinuationBoundarySeq,
   };
 }
 
