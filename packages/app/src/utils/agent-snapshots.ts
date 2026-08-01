@@ -42,8 +42,9 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     : null;
   const archivedAt = snapshot.archivedAt ? new Date(snapshot.archivedAt) : null;
   const parentAgentId = getParentAgentIdFromLabels(snapshot.labels);
-  // COMPAT(agentTurnIdentity): old daemons expose only status. Normalize that legacy
-  // signal once so the rest of the app consumes one activity shape.
+  // COMPAT(agentTurnIdentity): added in v0.2.6, remove after 2027-01-31 once daemon floor >= v0.2.6.
+  // Old daemons expose only status. Normalize that legacy signal once so the rest
+  // of the app consumes one activity shape.
   const activeTurn = normalizeActiveTurn(snapshot, lastUserMessageAt);
 
   return {
