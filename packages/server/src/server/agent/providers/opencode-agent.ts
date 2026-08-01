@@ -2815,7 +2815,12 @@ function createDeferred<T>(): Deferred<T> {
 
 type OpenCodeTurnState =
   | { status: "idle" }
-  | { status: "running"; turnId: string; observation: "trusted" | "quarantined" }
+  | {
+      status: "running";
+      turnId: string;
+      submission: "pending" | "dispatched" | "accepted";
+      observation: "trusted" | "quarantined";
+    }
   | { status: "stopping"; stop: OpenCodeStop };
 
 type OpenCodeRunnerStatus = "idle" | "busy" | "retry";
@@ -3380,7 +3385,12 @@ class OpenCodeAgentSession implements AgentSession {
     }
 
     const turnId = this.createTurnId();
-    this.turnState = { status: "running", turnId, observation: "trusted" };
+    this.turnState = {
+      status: "running",
+      turnId,
+      submission: "pending",
+      observation: "trusted",
+    };
     this.foregroundOwnership = { status: "inactive" };
     this.notifySubscribers({ type: "turn_started", provider: "opencode" }, turnId);
 
@@ -3390,7 +3400,7 @@ class OpenCodeAgentSession implements AgentSession {
     }
     const startingTotalCostUsd = this.sessionTotalCostUsd;
     const foregroundMessages = await this.readForegroundSessionMessages(turnAbortController.signal);
-    if (this.isForegroundTurnCanceled(turnId, turnAbortController.signal)) {
+    if (!this.markForegroundSubmissionDispatched(turnId, turnAbortController.signal)) {
       return { turnId };
     }
     this.foregroundOwnership = foregroundMessages
@@ -3895,10 +3905,14 @@ class OpenCodeAgentSession implements AgentSession {
     if (this.activeForegroundTurnId !== turnId) {
       return null;
     }
+    if (!this.isForegroundSubmissionDispatched(turnId)) {
+      return "reconnect";
+    }
     const runnerBoundary = await this.readRunnerBoundaryAfterStreamEnd(
       turnId,
       signal,
       expectedRunnerStatusRevision,
+      !this.isForegroundSubmissionAccepted(turnId),
     );
     if (runnerBoundary === null) {
       return null;
@@ -4002,6 +4016,7 @@ class OpenCodeAgentSession implements AgentSession {
     turnId: string,
     signal: AbortSignal,
     expectedRunnerStatusRevision?: number,
+    failClosedWhenStatusUnavailable = false,
   ): Promise<"idle" | "reconnect" | null> {
     try {
       const runnerStatus = await this.readProviderRunnerStatus(signal);
@@ -4023,7 +4038,7 @@ class OpenCodeAgentSession implements AgentSession {
         { err: error, sessionId: this.sessionId, turnId },
         "Failed to confirm the OpenCode runner stopped after event stream EOF",
       );
-      return "reconnect";
+      return failClosedWhenStatusUnavailable ? null : "reconnect";
     }
   }
 
@@ -4260,6 +4275,9 @@ class OpenCodeAgentSession implements AgentSession {
       return;
     }
     this.observeRunnerStatusEvent(event);
+    if (turnId && this.discardEventBeforeSubmissionAcceptance(event, eventCount, turnId)) {
+      return;
+    }
     if (this.discardEventWhileStopping(event, eventCount)) {
       return;
     }
@@ -4280,6 +4298,9 @@ class OpenCodeAgentSession implements AgentSession {
     if (this.discardQuarantinedForegroundEvents({ event, eventCount, foregroundEvents, turnId })) {
       return;
     }
+    if (turnId && this.emitUnacceptedPermissionRequests(event, foregroundEvents, turnId)) {
+      return;
+    }
     if (!turnId && this.shouldStartAutonomousTurn(event, foregroundEvents)) {
       const runnerStatus = getOpenCodeRunnerStatusFromEvent(event, this.sessionId);
       turnId = this.startAutonomousTurn(
@@ -4295,6 +4316,7 @@ class OpenCodeAgentSession implements AgentSession {
       });
       return;
     }
+    this.acceptForegroundSubmissionFromEvent(event, turnId);
     this.promoteForegroundOwnership(event);
     this.traceOpenCode("provider.opencode.parsed_event", {
       turnId,
@@ -4304,7 +4326,11 @@ class OpenCodeAgentSession implements AgentSession {
       events: foregroundEvents,
     });
 
-    for (const e of foregroundEvents) {
+    this.emitForegroundEvents(foregroundEvents, turnId);
+  }
+
+  private emitForegroundEvents(events: readonly AgentStreamEvent[], turnId: string): void {
+    for (const e of events) {
       if (this.activeForegroundTurnId !== turnId) {
         this.traceOpenCode("provider.opencode.parsed_event.skip_active", { turnId, type: e.type });
         return;
@@ -4323,6 +4349,21 @@ class OpenCodeAgentSession implements AgentSession {
       }
       this.notifySubscribers(e, turnId);
     }
+  }
+
+  private emitUnacceptedPermissionRequests(
+    event: OpenCodeEvent,
+    foregroundEvents: readonly AgentStreamEvent[],
+    turnId: string,
+  ): boolean {
+    if (
+      this.isForegroundSubmissionAccepted(turnId) ||
+      (event.type !== "permission.asked" && event.type !== "question.asked")
+    ) {
+      return false;
+    }
+    this.emitBackgroundPermissionRequests(foregroundEvents);
+    return true;
   }
 
   private async consumeQuarantinedForegroundEvent(params: {
@@ -4414,6 +4455,59 @@ class OpenCodeAgentSession implements AgentSession {
     return true;
   }
 
+  private discardEventWhileSubmissionPending(
+    event: OpenCodeEvent,
+    eventCount: number,
+    turnId: string,
+  ): boolean {
+    if (
+      this.turnState.status !== "running" ||
+      this.turnState.turnId !== turnId ||
+      this.turnState.submission !== "pending" ||
+      getOpenCodeEventSessionId(event) !== this.sessionId ||
+      event.type === "permission.asked" ||
+      event.type === "question.asked"
+    ) {
+      return false;
+    }
+    this.traceOpenCode("provider.opencode.event.skip", {
+      n: eventCount,
+      reason: "foreground_submission_pending",
+      type: event.type,
+    });
+    return true;
+  }
+
+  private discardEventBeforeSubmissionAcceptance(
+    event: OpenCodeEvent,
+    eventCount: number,
+    turnId: string,
+  ): boolean {
+    return (
+      this.discardEventWhileSubmissionPending(event, eventCount, turnId) ||
+      this.discardTerminalUntilSubmissionAccepted(event, eventCount, turnId)
+    );
+  }
+
+  private discardTerminalUntilSubmissionAccepted(
+    event: OpenCodeEvent,
+    eventCount: number,
+    turnId: string,
+  ): boolean {
+    if (
+      this.isForegroundSubmissionAccepted(turnId) ||
+      !isOpenCodeTerminalEvent(event, this.sessionId)
+    ) {
+      return false;
+    }
+    this.traceOpenCode("provider.opencode.event.skip", {
+      n: eventCount,
+      reason: "foreground_submission_unaccepted",
+      type: event.type,
+    });
+    return true;
+  }
+
   private emitBackgroundPermissionRequests(events: readonly AgentStreamEvent[]): void {
     for (const event of events) {
       if (event.type === "permission_requested") {
@@ -4491,11 +4585,43 @@ class OpenCodeAgentSession implements AgentSession {
       initiatingMessageId,
       startingTotalCostUsd: ownership.startingTotalCostUsd,
     };
+    this.markForegroundSubmissionAccepted();
+  }
+
+  private acceptForegroundSubmissionFromEvent(event: OpenCodeEvent, turnId: string): void {
+    if (
+      !this.isForegroundSubmissionDispatched(turnId) ||
+      event.type !== "message.updated" ||
+      event.properties.info.sessionID !== this.sessionId
+    ) {
+      return;
+    }
+    const ownership = this.foregroundOwnership;
+    if (ownership.status !== "baseline") {
+      return;
+    }
+    const messageId = event.properties.info.id;
+    const parentId =
+      event.properties.info.role === "assistant"
+        ? readNonEmptyString(event.properties.info.parentID)
+        : null;
+    if (
+      ownership.knownMessageIds.has(messageId) ||
+      (parentId && ownership.knownMessageIds.has(parentId))
+    ) {
+      return;
+    }
+    this.markForegroundSubmissionAccepted();
   }
 
   private startAutonomousTurn(runnerBoundaryReached: boolean): string {
     const turnId = this.createTurnId();
-    this.turnState = { status: "running", turnId, observation: "trusted" };
+    this.turnState = {
+      status: "running",
+      turnId,
+      submission: "accepted",
+      observation: "trusted",
+    };
     this.foregroundOwnership = {
       status: "unowned",
       runnerBoundaryReached,
@@ -4509,6 +4635,36 @@ class OpenCodeAgentSession implements AgentSession {
     this.abortController = new AbortController();
     this.notifySubscribers({ type: "turn_started", provider: "opencode" }, turnId);
     return turnId;
+  }
+
+  private markForegroundSubmissionDispatched(turnId: string, signal: AbortSignal): boolean {
+    if (signal.aborted || this.turnState.status !== "running" || this.turnState.turnId !== turnId) {
+      return false;
+    }
+    this.turnState = { ...this.turnState, submission: "dispatched" };
+    return true;
+  }
+
+  private isForegroundSubmissionDispatched(turnId: string): boolean {
+    return (
+      this.turnState.status === "running" &&
+      this.turnState.turnId === turnId &&
+      this.turnState.submission !== "pending"
+    );
+  }
+
+  private markForegroundSubmissionAccepted(): void {
+    if (this.turnState.status === "running" && this.turnState.submission === "dispatched") {
+      this.turnState = { ...this.turnState, submission: "accepted" };
+    }
+  }
+
+  private isForegroundSubmissionAccepted(turnId: string): boolean {
+    return (
+      this.turnState.status === "running" &&
+      this.turnState.turnId === turnId &&
+      this.turnState.submission === "accepted"
+    );
   }
 
   private quarantineForegroundObservation(turnId: string): void {

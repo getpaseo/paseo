@@ -276,8 +276,32 @@ async function* sessionIdleStream(releaseIdle: ReturnType<typeof createTestDefer
   yield { type: "server.connected", properties: {} };
   await releaseIdle.promise;
   yield {
+    type: "message.updated",
+    properties: {
+      info: {
+        id: "msg_session_idle_stream_user",
+        sessionID: "ses_eof_reconciliation",
+        role: "user",
+      },
+    },
+  };
+  yield {
     type: "session.idle",
     properties: { sessionID: "ses_eof_reconciliation" },
+  };
+}
+
+async function* gatedGlobalIdleStream(
+  releaseIdle: ReturnType<typeof createTestDeferred<void>>,
+  sessionId: string,
+) {
+  await releaseIdle.promise;
+  yield {
+    directory: "/tmp/test",
+    payload: {
+      type: "session.idle",
+      properties: { sessionID: sessionId },
+    },
   };
 }
 
@@ -1404,6 +1428,7 @@ describe("OpenCode adapter startTurn error handling", () => {
   test("dynamically adds injected MCP servers without config-backed connect", async () => {
     const runtime = new TestOpenCodeHarness();
     const openCodeClient = new TestOpenCodeClient();
+    openCodeClient.sessionPromptAsyncEvents = assistantTurnEvents();
     runtime.enqueueClient(openCodeClient);
     const cwd = tmpCwd();
     const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
@@ -1553,6 +1578,7 @@ describe("OpenCode adapter startTurn error handling", () => {
         }),
       },
       session: {
+        messages: vi.fn().mockResolvedValue({ data: [] }),
         promptAsync: vi.fn().mockImplementation(async () => {
           eventsGate.resolve();
           return { data: {}, error: undefined };
@@ -1661,6 +1687,7 @@ describe("OpenCode adapter startTurn error handling", () => {
         }),
       },
       session: {
+        messages: vi.fn().mockResolvedValue({ data: [] }),
         promptAsync: vi.fn().mockImplementation(async () => {
           eventsGate.resolve();
           return { data: {}, error: undefined };
@@ -2437,6 +2464,348 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
+  test.each([
+    {
+      label: "idle before a prompt",
+      prompt: "continue after the baseline",
+      staleBoundary: {
+        type: "session.idle",
+        properties: { sessionID: "ses_pending_submission" },
+      },
+      acceptedBoundary: {
+        type: "session.idle",
+        properties: { sessionID: "ses_pending_submission" },
+      },
+      expectedPromptCalls: 1,
+      expectedCommandCalls: 0,
+      expectedTerminalType: "turn_completed",
+    },
+    {
+      label: "idle before a command",
+      prompt: "/review staged changes",
+      staleBoundary: {
+        type: "session.idle",
+        properties: { sessionID: "ses_pending_submission" },
+      },
+      acceptedBoundary: {
+        type: "session.idle",
+        properties: { sessionID: "ses_pending_submission" },
+      },
+      expectedPromptCalls: 0,
+      expectedCommandCalls: 1,
+      expectedTerminalType: "turn_completed",
+    },
+    {
+      label: "error before a prompt",
+      prompt: "continue after the stale error",
+      staleBoundary: {
+        type: "session.error",
+        properties: {
+          sessionID: "ses_pending_submission",
+          error: { name: "UnknownError", data: { message: "stale failure" } },
+        },
+      },
+      acceptedBoundary: {
+        type: "session.error",
+        properties: {
+          sessionID: "ses_pending_submission",
+          error: { name: "UnknownError", data: { message: "accepted failure" } },
+        },
+      },
+      expectedPromptCalls: 1,
+      expectedCommandCalls: 0,
+      expectedTerminalType: "turn_failed",
+    },
+  ])("ignores stale root $label until submission is accepted", async (testCase) => {
+    const baselineRequested = createTestDeferred<void>();
+    const baselineResponse = createTestDeferred<{ data: unknown[] }>();
+    const drainMarkerConsumed = createTestDeferred<void>();
+    const { parent, openCode } = await createParentSession("ses_pending_submission", (client) => {
+      client.commandListResponse = {
+        data: [{ name: "review", description: "Test command", source: "command" }],
+      };
+      client.sessionPromptAsyncEvents = [];
+      client.sessionCommandEvents = [];
+      client.sessionMessagesImplementation = async () => {
+        baselineRequested.resolve();
+        return await baselineResponse.promise;
+      };
+    });
+    const events: AgentStreamEvent[] = [];
+    parent.subscribe((event) => {
+      events.push(event);
+      if (
+        event.type === "provider_subagent" &&
+        event.event.type === "upsert" &&
+        event.event.id === "ses_pending_submission_drain"
+      ) {
+        drainMarkerConsumed.resolve();
+      }
+    });
+
+    try {
+      const startTurn = parent.startTurn(testCase.prompt);
+      await baselineRequested.promise;
+      expect(openCode.calls.sessionPromptAsync).toEqual([]);
+      expect(openCode.calls.sessionCommand).toEqual([]);
+
+      openCode.emitEvent(testCase.staleBoundary);
+      openCode.emitEvent({
+        type: "session.created",
+        properties: {
+          info: {
+            id: "ses_pending_submission_drain",
+            parentID: "ses_pending_submission",
+            title: "Pending submission drain marker",
+            directory: "/workspace/repo",
+          },
+        },
+      });
+      await drainMarkerConsumed.promise;
+
+      expect(terminalTurnEvents(events)).toEqual([]);
+      expect(openCode.calls.sessionPromptAsync).toEqual([]);
+      expect(openCode.calls.sessionCommand).toEqual([]);
+
+      baselineResponse.resolve({ data: [] });
+      await expect(startTurn).resolves.toEqual({ turnId: "opencode-turn-0" });
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(testCase.expectedPromptCalls);
+      expect(openCode.calls.sessionCommand).toHaveLength(testCase.expectedCommandCalls);
+      expect(terminalTurnEvents(events)).toEqual([]);
+
+      openCode.emitEvent({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "msg_pending_submission_user",
+            sessionID: "ses_pending_submission",
+            role: "user",
+          },
+        },
+      });
+      openCode.emitEvent(testCase.acceptedBoundary);
+
+      await vi.waitFor(() => {
+        expect(terminalTurnEvents(events)).toEqual([
+          expect.objectContaining({
+            type: testCase.expectedTerminalType,
+            provider: "opencode",
+          }),
+        ]);
+      });
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(testCase.expectedPromptCalls);
+      expect(openCode.calls.sessionCommand).toHaveLength(testCase.expectedCommandCalls);
+    } finally {
+      baselineResponse.resolve({ data: [] });
+      await parent.close();
+    }
+  });
+
+  test.each([
+    {
+      label: "idle",
+      staleBoundary: {
+        type: "session.idle",
+        properties: { sessionID: "ses_buffered_stale_terminal" },
+      },
+    },
+    {
+      label: "error",
+      staleBoundary: {
+        type: "session.error",
+        properties: {
+          sessionID: "ses_buffered_stale_terminal",
+          error: { name: "UnknownError", data: { message: "stale failure" } },
+        },
+      },
+    },
+  ])("ignores a stale $label buffered before dispatch but consumed afterward", async (testCase) => {
+    const baselineRequested = createTestDeferred<void>();
+    const baselineResponse = createTestDeferred<{ data: unknown[] }>();
+    const childHydrationStarted = createTestDeferred<void>();
+    const releaseChildHydration = createTestDeferred<void>();
+    const streamDrained = createTestDeferred<void>();
+    const { parent, openCode } = await createParentSession(
+      "ses_buffered_stale_terminal",
+      (client) => {
+        client.sessionPromptAsyncEvents = [];
+        client.sessionMessagesImplementation = async () => {
+          baselineRequested.resolve();
+          return await baselineResponse.promise;
+        };
+        client.sessionChildrenImplementation = async () => {
+          childHydrationStarted.resolve();
+          await releaseChildHydration.promise;
+          return { data: [] };
+        };
+      },
+    );
+    const events: AgentStreamEvent[] = [];
+    parent.subscribe((event) => {
+      events.push(event);
+      if (
+        event.type === "provider_subagent" &&
+        event.event.type === "upsert" &&
+        event.event.id === "ses_buffered_stale_terminal_drain"
+      ) {
+        streamDrained.resolve();
+      }
+    });
+
+    try {
+      const startTurn = parent.startTurn("continue after the buffered terminal");
+      await Promise.all([baselineRequested.promise, childHydrationStarted.promise]);
+
+      openCode.emitEvent({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "msg_unrelated_stream_blocker",
+            sessionID: "ses_unrelated_stream_blocker",
+            role: "assistant",
+          },
+        },
+      });
+      openCode.emitEvent(testCase.staleBoundary);
+
+      baselineResponse.resolve({ data: [] });
+      await expect(startTurn).resolves.toEqual({ turnId: "opencode-turn-0" });
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
+
+      releaseChildHydration.resolve();
+      openCode.emitEvent({
+        type: "session.created",
+        properties: {
+          info: {
+            id: "ses_buffered_stale_terminal_drain",
+            parentID: "ses_buffered_stale_terminal",
+            title: "Buffered terminal drain marker",
+            directory: "/workspace/repo",
+          },
+        },
+      });
+      await streamDrained.promise;
+
+      expect(terminalTurnEvents(events)).toEqual([]);
+      openCode.emitEvent({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "msg_buffered_stale_terminal_user",
+            sessionID: "ses_buffered_stale_terminal",
+            role: "user",
+          },
+        },
+      });
+      openCode.emitEvent({
+        type: "session.idle",
+        properties: { sessionID: "ses_buffered_stale_terminal" },
+      });
+
+      await vi.waitFor(() => {
+        expect(terminalTurnEvents(events)).toEqual([
+          expect.objectContaining({ type: "turn_completed", provider: "opencode" }),
+        ]);
+      });
+    } finally {
+      baselineResponse.resolve({ data: [] });
+      releaseChildHydration.resolve();
+      await parent.close();
+    }
+  });
+
+  test("keeps root permission and question requests actionable during the baseline read", async () => {
+    const baselineRequested = createTestDeferred<void>();
+    const baselineResponse = createTestDeferred<{ data: unknown[] }>();
+    const streamDrained = createTestDeferred<void>();
+    const { parent, openCode } = await createParentSession(
+      "ses_pending_actionable_requests",
+      (client) => {
+        client.sessionPromptAsyncEvents = [];
+        client.sessionMessagesImplementation = async () => {
+          baselineRequested.resolve();
+          return await baselineResponse.promise;
+        };
+      },
+    );
+    const events: AgentStreamEvent[] = [];
+    parent.subscribe((event) => {
+      events.push(event);
+      if (
+        event.type === "provider_subagent" &&
+        event.event.type === "upsert" &&
+        event.event.id === "ses_pending_actionable_requests_drain"
+      ) {
+        streamDrained.resolve();
+      }
+    });
+
+    try {
+      const startTurn = parent.startTurn("continue after the actionable requests");
+      await baselineRequested.promise;
+
+      openCode.emitEvent({
+        type: "permission.asked",
+        properties: {
+          id: "perm_pending_submission",
+          sessionID: "ses_pending_actionable_requests",
+          permission: "bash",
+          patterns: ["npm test"],
+          metadata: { command: "npm test", cwd: "/workspace/repo" },
+        },
+      });
+      openCode.emitEvent({
+        type: "question.asked",
+        properties: {
+          id: "question_pending_submission",
+          sessionID: "ses_pending_actionable_requests",
+          questions: [
+            {
+              question: "Which path?",
+              header: "Path",
+              options: [{ label: "A", description: "Choose A" }],
+            },
+          ],
+        },
+      });
+      openCode.emitEvent({
+        type: "session.created",
+        properties: {
+          info: {
+            id: "ses_pending_actionable_requests_drain",
+            parentID: "ses_pending_actionable_requests",
+            title: "Actionable request drain marker",
+            directory: "/workspace/repo",
+          },
+        },
+      });
+      await streamDrained.promise;
+
+      expect(parent.getPendingPermissions()).toEqual([
+        expect.objectContaining({ id: "perm_pending_submission", kind: "tool" }),
+        expect.objectContaining({ id: "question_pending_submission", kind: "question" }),
+      ]);
+      const permissionEvents = eventsWithType(events, "permission_requested");
+      expect(permissionEvents).toEqual([
+        expect.objectContaining({
+          request: expect.objectContaining({ id: "perm_pending_submission" }),
+        }),
+        expect.objectContaining({
+          request: expect.objectContaining({ id: "question_pending_submission" }),
+        }),
+      ]);
+      expect(permissionEvents.every((event) => !("turnId" in event))).toBe(true);
+      expect(terminalTurnEvents(events)).toEqual([]);
+
+      baselineResponse.resolve({ data: [] });
+      await expect(startTurn).resolves.toEqual({ turnId: "opencode-turn-0" });
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
+    } finally {
+      baselineResponse.resolve({ data: [] });
+      await parent.close();
+    }
+  });
+
   test("reconnects without completing when EOF finds an intermediate step while the runner is busy", async () => {
     const firstStreamEnd = createTestDeferred<void>();
     const replacementStreamReady = createTestDeferred<void>();
@@ -2963,6 +3332,52 @@ describe("OpenCode adapter startTurn error handling", () => {
     } finally {
       streamEnd.resolve();
       await parent.close();
+    }
+  });
+
+  test("fails once instead of reconnecting when EOF arrives before submission acceptance", async () => {
+    const eventsGate = createTestDeferred<void>();
+    let subscriptionCount = 0;
+    const fakeClient = {
+      global: {
+        event: vi.fn().mockImplementation(async () => {
+          subscriptionCount += 1;
+          if (subscriptionCount > 1) {
+            throw new Error("unexpected event stream reconnect");
+          }
+          return {
+            stream: gatedGlobalIdleStream(eventsGate, "ses_unaccepted_eof"),
+          };
+        }),
+      },
+      session: {
+        messages: vi.fn().mockResolvedValue({ error: { message: "baseline unavailable" } }),
+        promptAsync: vi.fn().mockImplementation(async () => {
+          eventsGate.resolve();
+          return { data: {}, error: undefined };
+        }),
+        status: vi.fn().mockRejectedValue(new Error("status unavailable")),
+      },
+    } as never;
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_unaccepted_eof",
+      createTestLogger(),
+    );
+
+    try {
+      const turn = await collectTurnEvents(streamSession(session, "hello"));
+
+      expect(turn.turnCompleted).toBe(false);
+      expect(turn.turnFailed).toBe(true);
+      expect(turn.error).toBe(
+        "OpenCode event stream ended before the turn reached a terminal state",
+      );
+      expect(subscriptionCount).toBe(1);
+    } finally {
+      eventsGate.resolve();
+      await session.close();
     }
   });
 
@@ -5431,6 +5846,11 @@ describe("OpenCode provider subagent contract", () => {
   test("ignores post-idle historical tool mutations for an adopted child", async () => {
     const { child, childClient, parent } = await createAdoptedChildSession((client) => {
       client.sessionPromptAsyncEvents = [
+        ...userMessageEvents({
+          sessionId: "ses_child_external",
+          messageId: "msg_next_real_prompt",
+          text: "next real prompt",
+        }),
         { type: "session.idle", properties: { sessionID: "ses_child_external" } },
       ];
     });
