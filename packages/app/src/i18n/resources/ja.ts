@@ -2394,4 +2394,12 @@ export const ja: TranslationResources = {
       },
     },
   },
+  interactionLock: {
+    banner: "読み取り専用 · 監視中",
+    unlock: "ロック解除",
+    lock: "画面をロック",
+    unlockMenu: "画面ロックを解除",
+    lockedA11y: "操作ロック中です。操作するには解除してください。",
+    lockedToast: "このエージェントを操作するにはロックを解除してください",
+  },
 } as const;

@@ -2344,4 +2344,12 @@ export const zhCN: TranslationResources = {
       },
     },
   },
+  interactionLock: {
+    banner: "只读 · 监视中",
+    unlock: "解锁",
+    lock: "锁定屏幕",
+    unlockMenu: "解锁屏幕",
+    lockedA11y: "交互已锁定。请解锁后再操作。",
+    lockedToast: "请先解锁以控制此代理",
+  },
 };

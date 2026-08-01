@@ -2383,6 +2383,14 @@ export const en = {
       },
     },
   },
+  interactionLock: {
+    banner: "Read-only · monitoring",
+    unlock: "Unlock",
+    lock: "Lock screen",
+    unlockMenu: "Unlock screen",
+    lockedA11y: "Interaction lock on. Unlock to interact.",
+    lockedToast: "Unlock to control this agent",
+  },
 } as const;
 
 type WidenStringLeaves<T> = {

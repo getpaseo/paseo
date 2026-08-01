@@ -35,6 +35,7 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 import { SidebarCallout } from "@/components/sidebar-callout";
 import { Composer } from "@/composer";
 import { RewindComposerRestoreProvider } from "@/components/rewind/composer-restore";
+import { useInteractionLocked } from "@/stores/interaction-lock-store";
 import { getProviderIcon } from "@/components/provider-icons";
 import {
   ToastViewport,
@@ -1500,6 +1501,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
     }
     return new Map(pendingPermissionList.map((permission) => [permission.key, permission]));
   }, [pendingPermissionList]);
+  const interactionLocked = useInteractionLocked();
 
   return (
     <AgentStreamView
@@ -1515,6 +1517,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
       toast={toast}
       onOpenWorkspaceFile={onOpenWorkspaceFile}
       onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
+      readOnly={interactionLocked}
     />
   );
 });

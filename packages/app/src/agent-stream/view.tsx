@@ -128,6 +128,7 @@ function renderLiveAuxiliaryNode(input: {
 function renderPendingPermissionsNode(input: {
   pendingPermissions: PendingPermission[];
   client: DaemonClient | null;
+  readOnly?: boolean;
 }): ReactNode {
   if (input.pendingPermissions.length === 0) {
     return null;
@@ -135,7 +136,12 @@ function renderPendingPermissionsNode(input: {
   return (
     <View style={stylesheet.permissionsContainer}>
       {input.pendingPermissions.map((permission) => (
-        <PermissionRequestCard key={permission.key} permission={permission} client={input.client} />
+        <PermissionRequestCard
+          key={permission.key}
+          permission={permission}
+          client={input.client}
+          readOnly={input.readOnly === true}
+        />
       ))}
     </View>
   );
@@ -934,8 +940,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         renderPendingPermissionsNode({
           pendingPermissions: pendingPermissionItems,
           client,
+          readOnly,
         }),
-      [client, pendingPermissionItems],
+      [client, pendingPermissionItems, readOnly],
     );
     const turnFooterNode = useMemo(
       () =>
@@ -1311,9 +1318,11 @@ function PermissionActionButton({
 function PermissionRequestCard({
   permission,
   client,
+  readOnly = false,
 }: {
   permission: PendingPermission;
   client: DaemonClient | null;
+  readOnly?: boolean;
 }) {
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
@@ -1450,6 +1459,16 @@ function PermissionRequestCard({
         onRespond={handleResponse}
         isResponding={isResponding}
       />
+    );
+  }
+
+  if (readOnly) {
+    return (
+      <View style={permissionStyles.container}>
+        <Text style={permissionStyles.title}>{title}</Text>
+        {description ? <Text style={permissionStyles.description}>{description}</Text> : null}
+        <Text style={permissionStyles.question}>{t("interactionLock.lockedToast")}</Text>
+      </View>
     );
   }
 
