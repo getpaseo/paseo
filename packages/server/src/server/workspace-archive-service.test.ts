@@ -280,6 +280,63 @@ describe("archiveByScope", () => {
     });
   });
 
+  test("waits for ownership on a sibling discovered during final target refresh", async () => {
+    const { tempDir } = createGitRepo();
+    const workspaceCwd = path.join(tempDir, "shared-checkout");
+    mkdirSync(workspaceCwd);
+    const workspaceA = "ws-refresh-closure-a";
+    const workspaceB = "ws-refresh-closure-b";
+    const lifecycleCoordinator = new WorkspaceLifecycleCoordinator();
+    const ownershipReservation = lifecycleCoordinator.reserveWorkspaceOwnershipMutation(workspaceB);
+    const deps = createArchiveDeps({
+      paseoHome: path.join(tempDir, ".paseo"),
+      activeWorkspaces: [{ workspaceId: workspaceA, cwd: workspaceCwd, kind: "local_checkout" }],
+    });
+    deps.lifecycleCoordinator = lifecycleCoordinator;
+    deps.archiveWorkspaceRecord = vi.fn(deps.archiveWorkspaceRecord);
+    const listActiveWorkspaces = deps.listActiveWorkspaces;
+    let activeReadCount = 0;
+    deps.listActiveWorkspaces = async () => {
+      activeReadCount += 1;
+      if (activeReadCount === 2) {
+        deps.activeWorkspaces.push({
+          workspaceId: workspaceB,
+          cwd: workspaceCwd,
+          kind: "local_checkout",
+        });
+      }
+      return listActiveWorkspaces();
+    };
+    let markLateOwnershipWaitStarted: (() => void) | undefined;
+    const lateOwnershipWaitStarted = new Promise<void>((resolveWait) => {
+      markLateOwnershipWaitStarted = resolveWait;
+    });
+    const waitForWorkspaceOwnershipMutations =
+      lifecycleCoordinator.waitForWorkspaceOwnershipMutations.bind(lifecycleCoordinator);
+    vi.spyOn(lifecycleCoordinator, "waitForWorkspaceOwnershipMutations").mockImplementation(
+      async (workspaceIds) => {
+        if (Array.from(workspaceIds).includes(workspaceB)) {
+          markLateOwnershipWaitStarted?.();
+        }
+        await waitForWorkspaceOwnershipMutations(workspaceIds);
+      },
+    );
+
+    const archiveTask = archiveByScope(deps, {
+      scope: { kind: "worktree", targetPath: workspaceCwd },
+      requestId: "req-refresh-closure",
+    });
+
+    await lateOwnershipWaitStarted;
+    expect(deps.archiveWorkspaceRecord).not.toHaveBeenCalled();
+    ownershipReservation.release();
+
+    await expect(archiveTask).resolves.toMatchObject({
+      archivedWorkspaceIds: expect.arrayContaining([workspaceA, workspaceB]),
+    });
+    expect(deps.archiveWorkspaceRecord).toHaveBeenCalledTimes(2);
+  });
+
   test("coalesces simultaneous archive requests for the same backing directory", async () => {
     const { tempDir } = createGitRepo();
     const workspaceId = "ws-simultaneous";

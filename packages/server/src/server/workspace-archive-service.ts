@@ -148,16 +148,26 @@ export async function archiveByScope(
       initialTarget.workspaceIds,
     );
     const archiveOperation = async () => {
-      await lifecycleCoordinator.waitForWorkspaceSetups(initialTarget.workspaceIds);
-      await lifecycleCoordinator.waitForWorkspaceOwnershipMutations(initialTarget.workspaceIds);
-      let refreshedTarget = await resolveArchiveTarget(dependencies, request.scope);
-      archiveReservation.add(refreshedTarget.workspaceIds);
-      await lifecycleCoordinator.waitForWorkspaceSetups(refreshedTarget.workspaceIds);
-      await lifecycleCoordinator.waitForWorkspaceOwnershipMutations(refreshedTarget.workspaceIds);
-      refreshedTarget = await resolveArchiveTarget(dependencies, request.scope);
-      archiveReservation.add(refreshedTarget.workspaceIds);
-      const target = mergeArchiveTargets(initialTarget, refreshedTarget);
-      return archiveResolvedTarget(dependencies, lifecycleCoordinator, request, target);
+      const closureWorkspaceIds = new Set(initialTarget.workspaceIds);
+      let target = initialTarget;
+      while (true) {
+        await lifecycleCoordinator.waitForWorkspaceSetups(closureWorkspaceIds);
+        await lifecycleCoordinator.waitForWorkspaceOwnershipMutations(closureWorkspaceIds);
+
+        const refreshedTarget = await resolveArchiveTarget(dependencies, request.scope);
+        archiveReservation.add(refreshedTarget.workspaceIds);
+        target = mergeArchiveTargets(target, refreshedTarget);
+
+        const newlyDiscoveredWorkspaceIds = refreshedTarget.workspaceIds.filter(
+          (workspaceId) => !closureWorkspaceIds.has(workspaceId),
+        );
+        if (newlyDiscoveredWorkspaceIds.length === 0) {
+          return archiveResolvedTarget(dependencies, lifecycleCoordinator, request, target);
+        }
+        for (const workspaceId of newlyDiscoveredWorkspaceIds) {
+          closureWorkspaceIds.add(workspaceId);
+        }
+      }
     };
     try {
       const mutationRoot =
