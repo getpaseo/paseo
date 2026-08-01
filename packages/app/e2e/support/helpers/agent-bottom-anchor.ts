@@ -111,8 +111,34 @@ export async function scrollChatAwayFromBottom(
   if (!box) {
     throw new Error("Agent chat scroll container is not visible");
   }
+  const wheelSettled = scroll.evaluate(
+    (root: Element) =>
+      new Promise<void>((resolve) => {
+        root.addEventListener(
+          "wheel",
+          () => {
+            const scrollElement = root as HTMLElement;
+            let previousOffset = scrollElement.scrollTop;
+            let stableFrames = 0;
+            const sample = () => {
+              const currentOffset = scrollElement.scrollTop;
+              stableFrames = Math.abs(currentOffset - previousOffset) <= 0.5 ? stableFrames + 1 : 0;
+              previousOffset = currentOffset;
+              if (stableFrames >= 3) {
+                resolve();
+                return;
+              }
+              requestAnimationFrame(sample);
+            };
+            requestAnimationFrame(sample);
+          },
+          { once: true },
+        );
+      }),
+  );
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.wheel(0, input.deltaY);
+  await wheelSettled;
 
   await expect
     .poll(async () => {
