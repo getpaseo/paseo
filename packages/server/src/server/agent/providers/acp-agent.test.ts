@@ -1229,7 +1229,7 @@ describe("ACPAgentSession Zed parity", () => {
     });
   });
 
-  test("cancels ACP responses whose selected action conflicts with their behavior", async () => {
+  test("preserves ACP permission requests when the selected action conflicts with its behavior", async () => {
     const session = createSessionWithConfig({ provider: "generic-acp" });
     const events: AgentStreamEvent[] = [];
 
@@ -1257,12 +1257,21 @@ describe("ACPAgentSession Zed parity", () => {
       throw new Error("Expected permission request");
     }
 
+    await expect(
+      session.respondToPermission(requested.request.id, {
+        behavior: "deny",
+        selectedActionId: "allow-once",
+      }),
+    ).rejects.toThrow("does not match 'deny' behavior");
+    expect(session.getPendingPermissions()).toHaveLength(1);
+
     await session.respondToPermission(requested.request.id, {
       behavior: "deny",
-      selectedActionId: "allow-once",
+      selectedActionId: "reject-once",
     });
-
-    await expect(permission).resolves.toEqual({ outcome: { outcome: "cancelled" } });
+    await expect(permission).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "reject-once" },
+    });
   });
 
   test("auto-accepts ACP permission requests when the shared feature is enabled", async () => {

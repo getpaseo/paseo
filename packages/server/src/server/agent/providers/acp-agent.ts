@@ -2053,8 +2053,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       throw new Error(`No pending permission request with id '${requestId}'`);
     }
 
-    this.pendingPermissions.delete(requestId);
     const selectedOption = selectPermissionOption(pending.options, response);
+    if (response.selectedActionId && !selectedOption) {
+      throw new Error(
+        `ACP permission action '${response.selectedActionId}' does not exist or does not match '${response.behavior}' behavior`,
+      );
+    }
+
+    this.pendingPermissions.delete(requestId);
     pending.resolve(
       selectedOption
         ? {
