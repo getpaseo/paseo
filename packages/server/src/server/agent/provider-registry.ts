@@ -350,13 +350,14 @@ function mergeModelAdditions(
 export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession): AgentSession {
   return {
     provider,
+    baseProvider: inner.baseProvider ?? inner.provider,
     id: inner.id,
     capabilities: inner.capabilities,
     get features() {
       return inner.features;
     },
     run: (prompt, options) => inner.run(prompt, options),
-    startTurn: (prompt, options) => inner.startTurn(prompt, options),
+    startTurn: (prompt, options, admission) => inner.startTurn(prompt, options, admission),
     subscribe: (callback) => inner.subscribe((event) => callback(mapStreamEvent(provider, event))),
     async *streamHistory() {
       for await (const event of inner.streamHistory()) {
@@ -371,7 +372,7 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     respondToPermission: (requestId, response) => inner.respondToPermission(requestId, response),
     describePersistence: () => mapPersistenceHandle(provider, inner.describePersistence()),
     interrupt: () => inner.interrupt(),
-    close: () => inner.close(),
+    close: (options) => inner.close(options),
     listCommands: inner.listCommands?.bind(inner),
     setModel: inner.setModel?.bind(inner),
     setThinkingOption: inner.setThinkingOption?.bind(inner),

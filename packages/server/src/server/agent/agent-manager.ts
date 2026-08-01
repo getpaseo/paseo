@@ -15,6 +15,7 @@ import { z } from "zod";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 
 import {
+  AgentTurnStartRejectedError,
   getAgentStreamEventTurnId,
   type AgentCapabilityFlags,
   type AgentClient,
@@ -35,9 +36,11 @@ import {
   type AgentRunResult,
   type AgentRuntimeCapacityReservation,
   type AgentSession,
+  type AgentSessionCloseOptions,
   type AgentSessionConfig,
   type AgentStreamEvent,
   type AgentTimelineItem,
+  type AgentTurnAdmission,
   type AgentUsage,
   type AgentRuntimeInfo,
   type ImportedTimelineEntry,
@@ -150,8 +153,31 @@ interface TimeoutOptions {
   onLateError?: (error: unknown) => void;
 }
 
+interface OpenCodeStopBoundaryRecovery {
+  cancellationReason: "interrupted" | "agent closed" | null;
+  admitted: boolean;
+  abortController: AbortController;
+  finished: Promise<void>;
+  resolveFinished: () => void;
+}
+
+type OpenCodeStopBoundaryRetryResult =
+  | { status: "started"; turnId: string }
+  | {
+      status: "canceled";
+      event: Extract<AgentStreamEvent, { type: "turn_canceled" }>;
+    };
+
 function formatProviderList(providers: readonly string[]): string {
   return providers.length > 0 ? providers.join(", ") : "none";
+}
+
+function isRecoverableOpenCodeStopBoundaryError(session: AgentSession, error: unknown): boolean {
+  return (
+    (session.baseProvider ?? session.provider) === "opencode" &&
+    error instanceof AgentTurnStartRejectedError &&
+    error.reason === "previous_turn_still_stopping"
+  );
 }
 
 function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
@@ -431,6 +457,24 @@ type ActiveManagedAgent =
 type LiveManagedAgent = ActiveManagedAgent;
 type AgentLabelPatch = Record<string, string | null>;
 
+interface AgentReplacementRegistration {
+  agent: LiveManagedAgent;
+  preservePendingRun: boolean;
+  installed: boolean;
+}
+
+type ForegroundTurnStartResult =
+  | {
+      status: "started";
+      agent: ActiveManagedAgent;
+      isReplacement: boolean;
+      turnId: string;
+    }
+  | {
+      status: "canceled";
+      event: Extract<AgentStreamEvent, { type: "turn_canceled" }>;
+    };
+
 function attachManagedTurnIdentity(
   agent: ActiveManagedAgent,
   event: AgentStreamEvent,
@@ -634,6 +678,7 @@ export class AgentManager {
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
   private readonly retainedAgentRuntimeCleanups = new Set<AgentSession>();
   private retainedAgentRuntimeCleanupRetry: Promise<void> | null = null;
+  private readonly openCodeStopBoundaryRecoveries = new Map<string, OpenCodeStopBoundaryRecovery>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
@@ -753,6 +798,12 @@ export class AgentManager {
 
   prepareForShutdown(): void {
     this.acceptingAgentRegistrations = false;
+    for (const recovery of this.openCodeStopBoundaryRecoveries.values()) {
+      if (!recovery.admitted) {
+        recovery.cancellationReason ??= "agent closed";
+        recovery.abortController.abort();
+      }
+    }
   }
 
   setPaseoToolsEnabled(enabled: boolean): void {
@@ -1338,10 +1389,13 @@ export class AgentManager {
     agentId: string,
     overrides?: Partial<AgentSessionConfig>,
     options?: { rehydrateFromDisk?: boolean },
+    preservePendingRun = false,
+    resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
+    resumeOptions?.signal?.throwIfAborted();
     let existing = this.requireSessionAgent(agentId);
-    if (this.hasInFlightRun(agentId)) {
+    if (this.hasInFlightRun(agentId) && !preservePendingRun) {
       await this.cancelAgentRunBefore(agentId, "reload");
       existing = this.requireSessionAgent(agentId);
     }
@@ -1363,20 +1417,14 @@ export class AgentManager {
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
 
     const session = handle
-      ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
+      ? await client.resumeSession(handle, providerLaunchConfig, launchContext, resumeOptions)
       : await client.createSession(providerLaunchConfig, launchContext);
     this.trackStartedAgentRuntime(session, reservation);
 
     let handedToRegistration = false;
     try {
+      resumeOptions?.signal?.throwIfAborted();
       this.assertAcceptingAgentRegistrations();
-
-      const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
-      try {
-        await this.persistSnapshot(closedExisting);
-      } finally {
-        await this.closeReloadedSession(existing.session, agentId);
-      }
 
       if (rehydrateFromDisk) {
         // Wipe both durable and in-memory timeline so registerSession mints a
@@ -1391,18 +1439,33 @@ export class AgentManager {
 
       // Preserve existing labels and timeline during reload.
       handedToRegistration = true;
-      return this.registerSession(session, storedConfig, agentId, {
-        labels: existing.labels,
-        workspaceId: existing.workspaceId,
-        owner: existing.owner,
-        createdAt: existing.createdAt,
-        updatedAt: existing.updatedAt,
-        lastUserMessageAt: existing.lastUserMessageAt,
-        historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
-        lastUsage: preservedLastUsage,
-        lastError: preservedLastError,
-        attention: preservedAttention,
-      });
+      const replacementRegistration: AgentReplacementRegistration = {
+        agent: existing,
+        preservePendingRun,
+        installed: false,
+      };
+      const replacement = await this.registerReplacementSession(
+        existing,
+        replacementRegistration,
+        () =>
+          this.registerSession(session, storedConfig, agentId, {
+            labels: existing.labels,
+            workspaceId: existing.workspaceId,
+            owner: existing.owner,
+            createdAt: existing.createdAt,
+            updatedAt: existing.updatedAt,
+            lastUserMessageAt: existing.lastUserMessageAt,
+            historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
+            lastUsage: preservedLastUsage,
+            lastError: preservedLastError,
+            attention: preservedAttention,
+            replaceExisting: replacementRegistration,
+            registrationSignal: resumeOptions?.signal,
+          }),
+      );
+      resumeOptions?.signal?.throwIfAborted();
+      this.assertAcceptingAgentRegistrations();
+      return replacement;
     } finally {
       if (!handedToRegistration) {
         await this.closeUnregisteredSession(session);
@@ -1410,10 +1473,25 @@ export class AgentManager {
     }
   }
 
+  private async registerReplacementSession(
+    existing: LiveManagedAgent,
+    replacementRegistration: AgentReplacementRegistration,
+    register: () => Promise<ManagedAgent>,
+  ): Promise<ManagedAgent> {
+    try {
+      return await register();
+    } finally {
+      if (replacementRegistration.installed) {
+        await this.closeReloadedSession(existing.session, existing.id);
+      }
+    }
+  }
+
   private async closeReloadedSession(session: AgentSession, agentId: string): Promise<void> {
+    const abortController = new AbortController();
     try {
       const result = await this.waitWithTimeout({
-        operation: this.closeTrackedAgentRuntime(session),
+        operation: this.closeTrackedAgentRuntime(session, { signal: abortController.signal }),
         timeoutMs: this.rescueTimeouts.reloadSessionCloseMs,
         onLateError: (error) => {
           this.logger.warn(
@@ -1424,6 +1502,7 @@ export class AgentManager {
       });
 
       if (result === "timed_out") {
+        abortController.abort();
         this.logger.warn(
           { agentId, timeoutMs: this.rescueTimeouts.reloadSessionCloseMs },
           "Timed out closing previous session during refresh",
@@ -1432,6 +1511,22 @@ export class AgentManager {
     } catch (error) {
       this.logger.warn({ err: error, agentId }, "Failed to close previous session during refresh");
     }
+  }
+
+  private reloadAgentSessionPreservingPendingRun(
+    agentId: string,
+    recovery: OpenCodeStopBoundaryRecovery,
+  ): Promise<ManagedAgent> {
+    const provider = this.agents.get(agentId)?.provider;
+    return this.trackAgentRegistrationOperation(
+      (reservation) =>
+        this.reloadAgentSessionInternal(reservation, agentId, undefined, undefined, true, {
+          signal: recovery.abortController.signal,
+          isolateProviderGeneration: true,
+        }),
+      provider,
+      recovery.abortController.signal,
+    );
   }
 
   private async waitWithTimeout(options: TimeoutOptions): Promise<TimeoutResult> {
@@ -1470,7 +1565,10 @@ export class AgentManager {
       return existing;
     }
 
-    const close = this.closeAgentRuntime(agentId);
+    const recovery = this.cancelOpenCodeStopBoundaryRecovery(agentId, "agent closed");
+    const close = recovery
+      ? this.closeAgentAfterStopBoundaryRecovery(agentId, recovery)
+      : this.closeAgentRuntime(agentId);
     this.inFlightAgentCloses.set(agentId, close);
     const clearClose = () => {
       if (this.inFlightAgentCloses.get(agentId) === close) {
@@ -1479,6 +1577,16 @@ export class AgentManager {
     };
     void close.then(clearClose, clearClose);
     return close;
+  }
+
+  private async closeAgentAfterStopBoundaryRecovery(
+    agentId: string,
+    recovery: OpenCodeStopBoundaryRecovery,
+  ): Promise<void> {
+    await this.waitForOpenCodeStopBoundaryRecovery(agentId, recovery);
+    if (this.agents.has(agentId)) {
+      await this.closeAgentRuntime(agentId);
+    }
   }
 
   private async closeAgentRuntime(agentId: string): Promise<void> {
@@ -2107,31 +2215,27 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} already has an active run`);
     }
 
-    const agent = existingAgent;
-    const isReplacement = agent.pendingReplacement;
+    let agent = existingAgent;
     agent.lastError = undefined;
 
     const pendingRun = this.runs.createPendingRun(agentId);
 
     const streamForwarder = async function* streamForwarder(this: AgentManager) {
-      let turnId: string;
       let turnStream: ReturnType<AgentRunState["createTurnStream"]> | null = null;
-      try {
-        const result = await agent.session.startTurn(prompt, options);
-        turnId = result.turnId;
-      } catch (error) {
-        agent.pendingReplacement = false;
-        const errorMsg = error instanceof Error ? error.message : "Failed to start turn";
-        await this.handleStreamEvent(agent, {
-          type: "turn_failed",
-          provider: agent.provider,
-          error: errorMsg,
-        });
-        this.finalizeForegroundTurn(agent);
-        this.runs.settleForegroundRun(agentId, pendingRun.token);
-        throw error;
+      const started = await this.startForegroundTurn({
+        agentId,
+        agent,
+        prompt,
+        runOptions: options,
+        pendingRunToken: pendingRun.token,
+      });
+      if (started.status === "canceled") {
+        yield started.event;
+        return;
       }
 
+      agent = started.agent;
+      const { isReplacement, turnId } = started;
       if (isReplacement) {
         agent.pendingReplacement = false;
       }
@@ -2213,6 +2317,85 @@ export class AgentManager {
     }.call(this);
 
     return streamForwarder;
+  }
+
+  private async startForegroundTurn(options: {
+    agentId: string;
+    agent: ActiveManagedAgent;
+    prompt: AgentPromptInput;
+    runOptions: AgentRunOptions | undefined;
+    pendingRunToken: string;
+  }): Promise<ForegroundTurnStartResult> {
+    let agent = options.agent;
+    let isReplacement = agent.pendingReplacement;
+    try {
+      try {
+        const result = await agent.session.startTurn(options.prompt, options.runOptions);
+        return { status: "started", agent, isReplacement, turnId: result.turnId };
+      } catch (initialError) {
+        if (!isRecoverableOpenCodeStopBoundaryError(agent.session, initialError)) {
+          throw initialError;
+        }
+
+        // This typed rejection is emitted only before OpenCode submits the
+        // prompt, so replacing the owned runtime and retrying once cannot
+        // duplicate provider work.
+        this.logger.warn(
+          {
+            err: initialError,
+            agentId: options.agentId,
+            provider: agent.provider,
+            sessionId: agent.persistence?.sessionId ?? undefined,
+          },
+          "OpenCode stop boundary did not settle; reloading the agent session before retry",
+        );
+
+        const recovery = this.beginOpenCodeStopBoundaryRecovery(options.agentId);
+        try {
+          agent = await this.reloadAgentForOpenCodeStopBoundary({
+            agentId: options.agentId,
+            previousAgent: agent,
+            recovery,
+          });
+          isReplacement = agent.pendingReplacement;
+          const cancellationEvent = await this.applyOpenCodeStopBoundaryCancellation({
+            agentId: options.agentId,
+            agent,
+            pendingRunToken: options.pendingRunToken,
+            recovery,
+          });
+          if (cancellationEvent) {
+            return { status: "canceled", event: cancellationEvent };
+          }
+
+          const retry = await this.startOpenCodeStopBoundaryRetry({
+            agentId: options.agentId,
+            agent,
+            prompt: options.prompt,
+            runOptions: options.runOptions,
+            pendingRunToken: options.pendingRunToken,
+            recovery,
+          });
+          if (retry.status === "canceled") {
+            return retry;
+          }
+          return { status: "started", agent, isReplacement, turnId: retry.turnId };
+        } finally {
+          this.finishOpenCodeStopBoundaryRecovery(options.agentId, recovery);
+        }
+      }
+    } catch (error) {
+      agent.pendingReplacement = false;
+      const errorMsg = error instanceof Error ? error.message : "Failed to start turn";
+      await this.handleStreamEvent(agent, {
+        type: "turn_failed",
+        provider: agent.provider,
+        error: errorMsg,
+      });
+      this.finalizeForegroundTurn(agent);
+      this.runs.settleForegroundRun(options.agentId, options.pendingRunToken);
+      throw error;
+    }
   }
 
   private finalizeForegroundTurn(agent: ActiveManagedAgent, turnId?: string): void {
@@ -2451,6 +2634,13 @@ export class AgentManager {
   }
 
   async cancelAgentRun(agentId: string): Promise<AgentRunCancellationResult> {
+    const recovery = this.cancelOpenCodeStopBoundaryRecovery(agentId, "interrupted");
+    if (recovery) {
+      return (await this.waitForOpenCodeStopBoundaryRecovery(agentId, recovery))
+        ? { status: "settled" }
+        : { status: "refused" };
+    }
+
     const agent = this.requireSessionAgent(agentId);
     const run =
       this.runs.getRun(agentId) ??
@@ -2501,6 +2691,166 @@ export class AgentManager {
       this.emitState(agent);
     }
     return { status: "settled" };
+  }
+
+  private beginOpenCodeStopBoundaryRecovery(agentId: string): OpenCodeStopBoundaryRecovery {
+    let resolveFinished!: () => void;
+    const recovery: OpenCodeStopBoundaryRecovery = {
+      cancellationReason: null,
+      admitted: false,
+      abortController: new AbortController(),
+      finished: new Promise<void>((resolvePromise) => {
+        resolveFinished = resolvePromise;
+      }),
+      resolveFinished: () => resolveFinished(),
+    };
+    this.openCodeStopBoundaryRecoveries.set(agentId, recovery);
+    return recovery;
+  }
+
+  private admitOpenCodeStopBoundaryRecovery(
+    agentId: string,
+    pendingRunToken: string,
+    recovery: OpenCodeStopBoundaryRecovery,
+  ): void {
+    if (this.openCodeStopBoundaryRecoveries.get(agentId) !== recovery) {
+      throw new Error(`OpenCode stop-boundary recovery ownership was lost for agent ${agentId}`);
+    }
+    if (recovery.cancellationReason) {
+      throw new Error(`OpenCode stop-boundary retry canceled: ${recovery.cancellationReason}`);
+    }
+    this.runs.acceptPendingRun(agentId, pendingRunToken);
+    recovery.admitted = true;
+  }
+
+  private async startOpenCodeStopBoundaryRetry(options: {
+    agentId: string;
+    agent: ActiveManagedAgent;
+    prompt: AgentPromptInput;
+    runOptions: AgentRunOptions | undefined;
+    pendingRunToken: string;
+    recovery: OpenCodeStopBoundaryRecovery;
+  }): Promise<OpenCodeStopBoundaryRetryResult> {
+    const pendingRun = this.runs.getPendingRun(options.agentId);
+    if (!pendingRun || pendingRun.token !== options.pendingRunToken) {
+      throw new Error(`Pending foreground run ownership was lost for agent ${options.agentId}`);
+    }
+    const admission: AgentTurnAdmission = {
+      admit: () =>
+        this.admitOpenCodeStopBoundaryRecovery(
+          options.agentId,
+          options.pendingRunToken,
+          options.recovery,
+        ),
+    };
+    try {
+      const result = await Promise.race([
+        options.agent.session.startTurn(options.prompt, options.runOptions, admission),
+        pendingRun.acceptedTerminalPromise.then((event) => {
+          const turnId = getAgentStreamEventTurnId(event);
+          if (!turnId) {
+            throw new Error(
+              `Accepted foreground terminal has no turn ID for agent ${options.agentId}`,
+            );
+          }
+          return { turnId };
+        }),
+      ]);
+      return { status: "started", turnId: result.turnId };
+    } catch (error) {
+      const cancellationEvent = await this.applyOpenCodeStopBoundaryCancellation({
+        agentId: options.agentId,
+        agent: options.agent,
+        pendingRunToken: options.pendingRunToken,
+        recovery: options.recovery,
+      });
+      if (!cancellationEvent) {
+        throw error;
+      }
+      return { status: "canceled", event: cancellationEvent };
+    }
+  }
+
+  private async reloadAgentForOpenCodeStopBoundary(options: {
+    agentId: string;
+    previousAgent: ActiveManagedAgent;
+    recovery: OpenCodeStopBoundaryRecovery;
+  }): Promise<ActiveManagedAgent> {
+    try {
+      await this.reloadAgentSessionPreservingPendingRun(options.agentId, options.recovery);
+      return this.requireSessionAgent(options.agentId);
+    } catch (error) {
+      if (!options.recovery.cancellationReason) {
+        throw error;
+      }
+      return this.agents.get(options.agentId)?.session
+        ? this.requireSessionAgent(options.agentId)
+        : options.previousAgent;
+    }
+  }
+
+  private async applyOpenCodeStopBoundaryCancellation(options: {
+    agentId: string;
+    agent: ActiveManagedAgent;
+    pendingRunToken: string;
+    recovery: OpenCodeStopBoundaryRecovery;
+  }): Promise<Extract<AgentStreamEvent, { type: "turn_canceled" }> | null> {
+    const reason = options.recovery.cancellationReason;
+    if (!reason) {
+      return null;
+    }
+
+    this.runs.settleForegroundRun(options.agentId, options.pendingRunToken);
+    const event: Extract<AgentStreamEvent, { type: "turn_canceled" }> = {
+      type: "turn_canceled",
+      provider: options.agent.provider,
+      reason,
+    };
+    if (this.agents.get(options.agentId) === options.agent) {
+      await this.handleStreamEvent(options.agent, event);
+    }
+    return event;
+  }
+
+  private cancelOpenCodeStopBoundaryRecovery(
+    agentId: string,
+    reason: OpenCodeStopBoundaryRecovery["cancellationReason"],
+  ): OpenCodeStopBoundaryRecovery | null {
+    const recovery = this.openCodeStopBoundaryRecoveries.get(agentId);
+    if (!recovery || recovery.admitted) {
+      return null;
+    }
+    recovery.cancellationReason ??= reason;
+    recovery.abortController.abort();
+    return recovery;
+  }
+
+  private async waitForOpenCodeStopBoundaryRecovery(
+    agentId: string,
+    recovery: OpenCodeStopBoundaryRecovery,
+  ): Promise<boolean> {
+    const result = await this.waitWithTimeout({
+      operation: recovery.finished,
+      timeoutMs: this.rescueTimeouts.reloadSessionCloseMs,
+    });
+    if (result === "completed") {
+      return true;
+    }
+    this.logger.warn(
+      { agentId, timeoutMs: this.rescueTimeouts.reloadSessionCloseMs },
+      "Timed out draining canceled OpenCode stop-boundary recovery",
+    );
+    return false;
+  }
+
+  private finishOpenCodeStopBoundaryRecovery(
+    agentId: string,
+    recovery: OpenCodeStopBoundaryRecovery,
+  ): void {
+    if (this.openCodeStopBoundaryRecoveries.get(agentId) === recovery) {
+      this.openCodeStopBoundaryRecoveries.delete(agentId);
+    }
+    recovery.resolveFinished();
   }
 
   private async cancelAgentRunBefore(
@@ -2864,35 +3214,33 @@ export class AgentManager {
     session: AgentSession,
     config: AgentSessionConfig,
     agentId: string,
-    options:
-      | {
-          createdAt?: Date;
-          updatedAt?: Date;
-          lastUserMessageAt?: Date | null;
-          labels?: Record<string, string>;
-          timeline?: AgentTimelineItem[];
-          timelineRows?: AgentTimelineRow[];
-          timelineNextSeq?: number;
-          persistence?: AgentPersistenceHandle;
-          historyPrimed?: boolean;
-          lastUsage?: AgentUsage;
-          lastError?: string;
-          attention?: AttentionState;
-          initialTitle?: string | null;
-          publishWhenReady?: boolean;
-          workspaceId?: string;
-          owner?: AgentOwner;
-        }
-      | undefined,
+    options?: {
+      createdAt?: Date;
+      updatedAt?: Date;
+      lastUserMessageAt?: Date | null;
+      labels?: Record<string, string>;
+      timeline?: AgentTimelineItem[];
+      timelineRows?: AgentTimelineRow[];
+      timelineNextSeq?: number;
+      persistence?: AgentPersistenceHandle;
+      historyPrimed?: boolean;
+      lastUsage?: AgentUsage;
+      lastError?: string;
+      attention?: AttentionState;
+      initialTitle?: string | null;
+      publishWhenReady?: boolean;
+      workspaceId?: string;
+      owner?: AgentOwner;
+      replaceExisting?: AgentReplacementRegistration;
+      registrationSignal?: AbortSignal;
+    },
   ): Promise<ManagedAgent> {
     let registered = false;
-    let resolvedAgentId = agentId;
+    let resolvedAgentId: string | null = null;
     try {
       this.assertAcceptingAgentRegistrations();
       resolvedAgentId = validateAgentId(agentId, "registerSession");
-      if (this.agents.has(resolvedAgentId)) {
-        throw new Error(`Agent with id ${resolvedAgentId} already exists`);
-      }
+      this.assertSessionRegistrationSlot(resolvedAgentId, options?.replaceExisting);
       const initialPersistedTitle = await this.resolveInitialPersistedTitle(
         resolvedAgentId,
         config,
@@ -2916,7 +3264,8 @@ export class AgentManager {
       });
 
       this.assertAcceptingAgentRegistrations();
-      this.agents.set(resolvedAgentId, managed);
+      options?.registrationSignal?.throwIfAborted();
+      this.commitSessionRegistration(resolvedAgentId, managed, options?.replaceExisting);
       registered = true;
       // Initialize previousStatus to track transitions
       this.previousStatuses.set(resolvedAgentId, managed.lifecycle);
@@ -2940,14 +3289,66 @@ export class AgentManager {
       this.subscribeToSession(managed);
       return { ...managed };
     } catch (error) {
-      const installedAgent = this.agents.get(resolvedAgentId);
-      if (registered && installedAgent?.session === session) {
-        this.prepareAgentForClosure(installedAgent, "agent registration failed");
-        await this.closeUnregisteredSession(session);
-      } else if (!registered) {
-        await this.closeUnregisteredSession(session);
-      }
+      await this.cleanupFailedSessionRegistration({
+        registered,
+        resolvedAgentId,
+        session,
+        replacement: options?.replaceExisting,
+      });
       throw error;
+    }
+  }
+
+  private assertSessionRegistrationSlot(
+    agentId: string,
+    replacement?: AgentReplacementRegistration,
+  ): void {
+    const existing = this.agents.get(agentId);
+    if (existing && existing !== replacement?.agent) {
+      throw new Error(`Agent with id ${agentId} already exists`);
+    }
+    if (!existing && replacement) {
+      throw new Error(`Agent ${agentId} was removed before replacement registration`);
+    }
+  }
+
+  private commitSessionRegistration(
+    agentId: string,
+    agent: LiveManagedAgent,
+    replacement?: AgentReplacementRegistration,
+  ): void {
+    this.assertSessionRegistrationSlot(agentId, replacement);
+    if (replacement) {
+      this.prepareAgentForClosure(replacement.agent, "agent reloaded", {
+        preservePendingRun: replacement.preservePendingRun,
+      });
+    }
+    this.agents.set(agentId, agent);
+    if (replacement) {
+      replacement.installed = true;
+    }
+  }
+
+  private async cleanupFailedSessionRegistration(params: {
+    registered: boolean;
+    resolvedAgentId: string | null;
+    session: AgentSession;
+    replacement?: AgentReplacementRegistration;
+  }): Promise<void> {
+    const registeredAgent = params.resolvedAgentId ? this.agents.get(params.resolvedAgentId) : null;
+    if (params.registered && registeredAgent?.session === params.session) {
+      this.prepareAgentForClosure(
+        registeredAgent,
+        "agent registration failed",
+        params.replacement
+          ? { preservePendingRun: params.replacement.preservePendingRun }
+          : undefined,
+      );
+      await this.closeUnregisteredSession(params.session);
+      return;
+    }
+    if (!params.registered) {
+      await this.closeUnregisteredSession(params.session);
     }
   }
 
@@ -3087,6 +3488,7 @@ export class AgentManager {
   private prepareAgentForClosure(
     agent: LiveManagedAgent,
     cancelReason: string,
+    options?: { preservePendingRun?: boolean },
   ): ManagedAgentClosed {
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     this.agents.delete(agent.id);
@@ -3095,13 +3497,15 @@ export class AgentManager {
       agent.unsubscribeSession();
       agent.unsubscribeSession = null;
     }
-    this.runs.cancelWaiters(agent, (turnId) => ({
-      type: "turn_canceled",
-      provider: agent.provider,
-      reason: cancelReason,
-      turnId,
-    }));
-    this.runs.clearAgentRun(agent.id);
+    if (!options?.preservePendingRun) {
+      this.runs.cancelWaiters(agent, (turnId) => ({
+        type: "turn_canceled",
+        provider: agent.provider,
+        reason: cancelReason,
+        turnId,
+      }));
+      this.runs.clearAgentRun(agent.id);
+    }
     return {
       ...agent,
       lifecycle: "closed",
@@ -3151,9 +3555,7 @@ export class AgentManager {
       },
       "agent.manager.enqueue",
     );
-    const pendingRun = this.runs.getPendingRun(agentId);
-    if (pendingRun && !pendingRun.started) {
-      pendingRun.stagedEvents.push(event);
+    if (this.runs.stagePendingEvent(agentId, event)) {
       return;
     }
     const previous = this.sessionEventTails.get(agentId) ?? Promise.resolve();
@@ -4271,9 +4673,12 @@ export class AgentManager {
     reservation.track(session);
   }
 
-  private async closeTrackedAgentRuntime(session: AgentSession): Promise<void> {
+  private async closeTrackedAgentRuntime(
+    session: AgentSession,
+    options?: AgentSessionCloseOptions,
+  ): Promise<void> {
     try {
-      await session.close();
+      await session.close(options);
       this.runtimeCapacity.release(session);
       this.retainedAgentRuntimeCleanups.delete(session);
     } catch (error) {
@@ -4313,12 +4718,21 @@ export class AgentManager {
   private trackAgentRegistrationOperation<T>(
     operation: (reservation: AgentRuntimeCapacityReservation) => Promise<T>,
     provider?: AgentProvider,
+    signal?: AbortSignal,
   ): Promise<T> {
     const result = this.runAgentRegistrationOperation(operation, provider);
-    const settled = result.then(
-      () => undefined,
-      () => undefined,
-    );
+    const settled = new Promise<void>((resolvePromise) => {
+      const finish = () => {
+        signal?.removeEventListener("abort", finish);
+        resolvePromise();
+      };
+      if (signal?.aborted) {
+        finish();
+        return;
+      }
+      signal?.addEventListener("abort", finish, { once: true });
+      void result.then(finish, finish);
+    });
     this.agentRegistrationTasks.add(settled);
     void settled.then(() => {
       this.agentRegistrationTasks.delete(settled);

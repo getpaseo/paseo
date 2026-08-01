@@ -18,6 +18,7 @@ import type { Logger } from "pino";
 import { z } from "zod";
 
 import {
+  AgentTurnStartRejectedError,
   getAgentStreamEventTurnId,
   type AgentCapabilityFlags,
   type AgentClient,
@@ -35,11 +36,14 @@ import {
   type AgentRunResult,
   type AgentRuntimeCapacityController,
   type AgentRuntimeInfo,
+  type AgentResumeSessionOptions,
   type AgentSession,
+  type AgentSessionCloseOptions,
   type AgentSessionConfig,
   type AgentSlashCommand,
   type AgentStreamEvent,
   type AgentTimelineItem,
+  type AgentTurnAdmission,
   type AgentUsage,
   type FetchCatalogOptions,
   type ImportableProviderSession,
@@ -69,6 +73,7 @@ import { execCommand } from "../../../utils/spawn.js";
 import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
 import {
   OpenCodeServerManager,
+  type OpenCodeServerAcquisition,
   type OpenCodeServerManagerLike,
 } from "./opencode/server-manager.js";
 import { resolveOpenCodeHomeDir } from "./opencode/paths.js";
@@ -437,14 +442,18 @@ async function abortOpenCodeSession(params: {
   sessionId: string;
   directory: string;
   logger: Logger;
+  signal?: AbortSignal;
 }): Promise<void> {
-  const { client, sessionId, directory, logger } = params;
+  const { client, sessionId, directory, logger, signal } = params;
 
   try {
-    const response = await client.session.abort({
-      sessionID: sessionId,
-      directory,
-    });
+    const response = await client.session.abort(
+      {
+        sessionID: sessionId,
+        directory,
+      },
+      { signal },
+    );
     if (response.error && !isOpenCodeNotFoundError(response.error)) {
       logger.warn(
         {
@@ -1346,7 +1355,9 @@ export class OpenCodeAgentClient implements AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ): Promise<AgentSession> {
+    options?.signal?.throwIfAborted();
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
     const cwd = overrides?.cwd ?? metadata.cwd;
     if (!cwd) {
@@ -1360,15 +1371,11 @@ export class OpenCodeAgentClient implements AgentClient {
       cwd,
     };
     const openCodeConfig = this.assertConfig(config);
-    const registeredServerUrl = getOpenCodeChildSessionServerUrl(handle.sessionId);
-    const registeredAcquisition = registeredServerUrl
-      ? this.serverManager.acquireExisting(registeredServerUrl)
-      : null;
-    const acquisition =
-      registeredAcquisition ??
-      (launchContext?.env
-        ? await this.serverManager.acquireDedicated(launchContext.env)
-        : await this.serverManager.acquireCurrent());
+    const { acquisition, registered } = await this.acquireServerForResume({
+      sessionId: handle.sessionId,
+      launchContext,
+      options,
+    });
     const { url } = acquisition.server;
     const client = this.createOpenCodeClient({
       baseUrl: url,
@@ -1376,7 +1383,9 @@ export class OpenCodeAgentClient implements AgentClient {
     });
 
     try {
-      await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
+      options?.signal?.throwIfAborted();
+      await this.populateModelContextWindowCache(client, openCodeConfig.cwd, options?.signal);
+      options?.signal?.throwIfAborted();
 
       return new OpenCodeAgentSession(
         openCodeConfig,
@@ -1388,12 +1397,40 @@ export class OpenCodeAgentClient implements AgentClient {
         undefined,
         launchContext?.agentId,
         url,
-        registeredAcquisition !== null,
+        registered,
       );
     } catch (error) {
       await acquisition.release();
       throw error;
     }
+  }
+
+  private async acquireServerForResume(input: {
+    sessionId: string;
+    launchContext?: AgentLaunchContext;
+    options?: AgentResumeSessionOptions;
+  }): Promise<{ acquisition: OpenCodeServerAcquisition; registered: boolean }> {
+    if (!input.options?.isolateProviderGeneration) {
+      const registeredServerUrl = getOpenCodeChildSessionServerUrl(input.sessionId);
+      const registeredAcquisition = registeredServerUrl
+        ? this.serverManager.acquireExisting(registeredServerUrl)
+        : null;
+      if (registeredAcquisition) {
+        return { acquisition: registeredAcquisition, registered: true };
+      }
+    }
+    if (input.launchContext?.env) {
+      return {
+        acquisition: await this.serverManager.acquireDedicated(input.launchContext.env),
+        registered: false,
+      };
+    }
+    return {
+      acquisition: input.options?.isolateProviderGeneration
+        ? await this.serverManager.acquireNew()
+        : await this.serverManager.acquireCurrent(),
+      registered: false,
+    };
   }
 
   async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
@@ -1697,8 +1734,11 @@ export class OpenCodeAgentClient implements AgentClient {
   private async populateModelContextWindowCache(
     client: OpencodeClient,
     cwd: string,
+    signal?: AbortSignal,
   ): Promise<void> {
-    const response = await openCodeMetadataLimit(() => client.provider.list({ directory: cwd }));
+    const response = await openCodeMetadataLimit(() =>
+      client.provider.list({ directory: cwd }, { signal }),
+    );
     if (response.error || !response.data) {
       return;
     }
@@ -2767,8 +2807,14 @@ function createDeferred<T>(): Deferred<T> {
 
 type OpenCodeTurnState =
   | { status: "idle" }
+  | { status: "starting"; start: OpenCodeTurnStart }
   | { status: "running"; turnId: string }
   | { status: "stopping"; stop: OpenCodeStop };
+
+interface OpenCodeTurnStart {
+  readonly generation: number;
+  canceled: boolean;
+}
 
 type OpenCodeRunnerStatus = "idle" | "busy" | "retry";
 
@@ -2951,6 +2997,7 @@ class OpenCodeAgentSession implements AgentSession {
   private availableModesCache: AgentMode[] | null = null;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private nextTurnOrdinal = 0;
+  private nextTurnStartGeneration = 0;
   private turnState: OpenCodeTurnState = { status: "idle" };
   /**
    * Settlement of every session-scoped abort issued so far. It outlives the stop
@@ -3055,6 +3102,7 @@ class OpenCodeAgentSession implements AgentSession {
 
   async interrupt(): Promise<void> {
     const turnId = this.activeForegroundTurnId;
+    this.cancelStartingTurn();
     this.abortController?.abort();
     const abort = this.issueStop(turnId);
     // COMPAT(opencodeSlowAbort): OpenCode 1.14.42+ blocks session.abort until
@@ -3139,11 +3187,28 @@ class OpenCodeAgentSession implements AgentSession {
     if (this.turnState.status !== "stopping") {
       return;
     }
-    await withTimeout(
-      this.observeProviderStopBoundary(this.turnState.stop),
-      OPENCODE_PENDING_ABORT_START_TIMEOUT_MS,
-      "OpenCode previous turn to stop",
-    );
+
+    const stop = this.turnState.stop;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        this.observeProviderStopBoundary(stop),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => {
+            reject(
+              new AgentTurnStartRejectedError(
+                "previous_turn_still_stopping",
+                "OpenCode previous turn to stop",
+              ),
+            );
+          }, OPENCODE_PENDING_ABORT_START_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+    }
   }
 
   private async observeProviderStopBoundary(stop: OpenCodeStop): Promise<void> {
@@ -3210,24 +3275,73 @@ class OpenCodeAgentSession implements AgentSession {
     return statusType;
   }
 
-  async startTurn(
-    prompt: AgentPromptInput,
-    options?: AgentRunOptions,
-  ): Promise<{ turnId: string }> {
+  private assertTurnStartActive(start: OpenCodeTurnStart): void {
+    if (this.turnState.status === "running") {
+      throw new Error("A foreground turn became active before prompt submission");
+    }
+    if (this.turnState.status === "stopping") {
+      throw new AgentTurnStartRejectedError(
+        "previous_turn_still_stopping",
+        "OpenCode is still stopping the previous turn",
+      );
+    }
+    if (
+      this.closed ||
+      start.canceled ||
+      this.turnState.status === "idle" ||
+      (this.turnState.status === "starting" && this.turnState.start.generation !== start.generation)
+    ) {
+      throw new Error("OpenCode turn start was canceled before prompt submission");
+    }
+  }
+
+  private assertTurnCanStart(): void {
     if (this.turnState.status === "running") {
       throw new Error("A foreground turn is already active");
     }
+    if (this.turnState.status === "starting") {
+      throw new Error("A foreground turn is already starting");
+    }
+  }
+
+  private cleanupFailedTurnStart(start: OpenCodeTurnStart, abortController: AbortController): void {
+    if (
+      this.turnState.status === "starting" &&
+      this.turnState.start.generation === start.generation
+    ) {
+      this.turnState = { status: "idle" };
+    }
+    if (this.abortController === abortController) {
+      this.abortController = null;
+    }
+    this.pendingUserMessageText = null;
+    this.pendingClientMessageId = null;
+  }
+
+  async startTurn(
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+    admission?: AgentTurnAdmission,
+  ): Promise<{ turnId: string }> {
+    this.assertTurnCanStart();
     await this.awaitRunnerQuiescence();
     if (this.turnState.status !== "idle") {
-      throw new Error("OpenCode is still stopping the previous turn");
+      throw new AgentTurnStartRejectedError(
+        "previous_turn_still_stopping",
+        "OpenCode is still stopping the previous turn",
+      );
     }
 
     this.runningToolCalls.clear();
     this.subAgentsByCallId.clear();
     this.subAgentCallIdByChildSessionId.clear();
+    const turnStart: OpenCodeTurnStart = {
+      generation: this.nextTurnStartGeneration++,
+      canceled: false,
+    };
+    this.turnState = { status: "starting", start: turnStart };
     const turnAbortController = new AbortController();
     this.abortController = turnAbortController;
-    await this.ensureMcpServersConfigured();
     const contextWindowMaxTokens = this.resolveSelectedModelContextWindowMaxTokens();
     this.accumulatedUsage = contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
 
@@ -3240,12 +3354,16 @@ class OpenCodeAgentSession implements AgentSession {
     const effectiveVariant = thinkingOptionId ?? undefined;
     const effectiveMode = resolveOpenCodeRuntimeAgentId(this.currentMode);
 
+    let slashCommand: { commandName: string; args?: string } | null;
     try {
+      await this.ensureMcpServersConfigured();
       await this.ensureEventStreamReady();
+      slashCommand = await this.resolveSlashCommandInvocation(prompt);
+      this.assertTurnStartActive(turnStart);
+      admission?.admit();
+      this.assertTurnStartActive(turnStart);
     } catch (error) {
-      if (this.abortController === turnAbortController) {
-        this.abortController = null;
-      }
+      this.cleanupFailedTurnStart(turnStart, turnAbortController);
       throw error;
     }
 
@@ -3253,7 +3371,6 @@ class OpenCodeAgentSession implements AgentSession {
     this.turnState = { status: "running", turnId };
     this.notifySubscribers({ type: "turn_started", provider: "opencode" }, turnId);
 
-    const slashCommand = await this.resolveSlashCommandInvocation(prompt);
     if (slashCommand) {
       if (slashCommand.commandName === "compact" || slashCommand.commandName === "summarize") {
         this.suppressAssistantMessagesUntilIdle.active = true;
@@ -3798,7 +3915,7 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private shouldStartAutonomousTurn(event: OpenCodeEvent): boolean {
-    if (this.turnState.status !== "idle") {
+    if (this.turnState.status !== "idle" && this.turnState.status !== "starting") {
       return false;
     }
     // Message records are mutable and can be patched after the runner stops.
@@ -3808,6 +3925,9 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private startAutonomousTurn(): string {
+    if (this.turnState.status === "starting") {
+      this.turnState.start.canceled = true;
+    }
     const turnId = this.createTurnId();
     this.turnState = { status: "running", turnId };
     this.runningToolCalls.clear();
@@ -3848,6 +3968,14 @@ class OpenCodeAgentSession implements AgentSession {
 
   private isStopping(stop: OpenCodeStop): boolean {
     return this.turnState.status === "stopping" && this.turnState.stop === stop;
+  }
+
+  private cancelStartingTurn(): void {
+    if (this.turnState.status !== "starting") {
+      return;
+    }
+    this.turnState.start.canceled = true;
+    this.turnState = { status: "idle" };
   }
 
   /** Stops the session runner and returns the abort this Stop issued. */
@@ -4155,13 +4283,14 @@ class OpenCodeAgentSession implements AgentSession {
     };
   }
 
-  async close(): Promise<void> {
+  async close(options?: AgentSessionCloseOptions): Promise<void> {
     try {
       // Flip closed before clearing subscribers so any event the SDK delivers
       // after the abort (between here and subscribers.clear) is swallowed by
       // notifySubscribers instead of bubbling through provider-runner as an
       // unhandled rejection in whichever test the daemon hops to next.
       this.closed = true;
+      this.cancelStartingTurn();
       this.abortController?.abort();
       const eventStreamTask = this.eventStreamTask;
       this.eventStreamAbortController?.abort();
@@ -4182,6 +4311,7 @@ class OpenCodeAgentSession implements AgentSession {
         sessionId: this.sessionId,
         directory: this.config.cwd,
         logger: this.logger,
+        signal: options?.signal,
       });
       await this.deleteProviderSessionIfEphemeral();
       this.turnState = { status: "idle" };

@@ -30,17 +30,21 @@ import type {
   AgentRunOptions,
   AgentRunResult,
   AgentRuntimeCapacityController,
+  AgentResumeSessionOptions,
   AgentSession,
+  AgentSessionCloseOptions,
   AgentSessionConfig,
   AgentSlashCommand,
   AgentStreamEvent,
   AgentTimelineItem,
+  AgentTurnAdmission,
   ImportProviderSessionInput,
   ImportProviderSessionContext,
   ResolveAgentDefaultModeInput,
 } from "./agent-sdk-types.js";
+import { AgentTurnStartRejectedError } from "./agent-sdk-types.js";
 import type { PaseoToolCatalog } from "./tools/types.js";
-import type { ProviderDefinition } from "./provider-registry.js";
+import { wrapSessionProvider, type ProviderDefinition } from "./provider-registry.js";
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -403,7 +407,7 @@ class EnvProbeAgentClient extends TestAgentClient {
 }
 
 class TestAgentSession implements AgentSession {
-  readonly provider = "codex" as const;
+  readonly provider: AgentProvider;
   readonly capabilities = TEST_CAPABILITIES;
   readonly id = randomUUID();
   private runtimeModel: string | null = null;
@@ -411,7 +415,9 @@ class TestAgentSession implements AgentSession {
   private turnIdCounter = 0;
   private interrupted = false;
 
-  constructor(private readonly config: AgentSessionConfig) {}
+  constructor(private readonly config: AgentSessionConfig) {
+    this.provider = config.provider;
+  }
 
   async run(): Promise<AgentRunResult> {
     return {
@@ -520,7 +526,7 @@ interface ControlledInterruptFixture {
   manager: AgentManager;
   session: ControlledInterruptSession;
   startForegroundRun(): Promise<void>;
-  cleanup(): void;
+  cleanup(): Promise<void>;
 }
 
 async function createControlledInterruptFixture(options: {
@@ -540,9 +546,10 @@ async function createControlledInterruptFixture(options: {
       return session;
     }
   })();
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
   const manager = new AgentManager({
     clients: { codex: client },
-    registry: new AgentStorage(join(workdir, "agents"), logger),
+    registry: storage,
     logger,
     rescueTimeouts: { interruptSessionMs: 10 },
     idFactory: () => options.agentId,
@@ -564,7 +571,11 @@ async function createControlledInterruptFixture(options: {
       })();
       await manager.waitForAgentRunStart(agent.id);
     },
-    cleanup: () => rmSync(workdir, { recursive: true, force: true }),
+    async cleanup() {
+      await manager.flush();
+      await storage.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    },
   };
 }
 
@@ -1542,6 +1553,96 @@ test("reload closes both sessions when the closed snapshot cannot be persisted",
   }
 });
 
+test("close during reload registration prevents replacement resurrection", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-close-before-commit-"));
+  const readStarted = deferred<void>();
+  const readAllowed = deferred<void>();
+
+  class HeldRegistrationStorage extends AgentStorage {
+    holdNextRead = false;
+
+    override async get(agentId: string): Promise<StoredAgentRecord | null> {
+      if (this.holdNextRead) {
+        this.holdNextRead = false;
+        readStarted.resolve();
+        await readAllowed.promise;
+      }
+      return super.get(agentId);
+    }
+  }
+
+  class ReloadClient extends TestAgentClient {
+    originalSessionCloseCount = 0;
+    replacementSessionClosed = false;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const recordOriginalClosed = () => {
+        this.originalSessionCloseCount += 1;
+      };
+      return new (class extends TestAgentSession {
+        override async close(): Promise<void> {
+          recordOriginalClosed();
+        }
+      })(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      const recordReplacementClosed = () => {
+        this.replacementSessionClosed = true;
+      };
+      return new (class extends TestAgentSession {
+        override async close(): Promise<void> {
+          recordReplacementClosed();
+        }
+      })({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  }
+
+  const storage = new HeldRegistrationStorage(join(workdir, "agents"), logger);
+  const client = new ReloadClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    await storage.flush();
+    storage.holdNextRead = true;
+
+    const reload = manager.reloadAgentSession(agent.id);
+    await readStarted.promise;
+    await manager.closeAgent(agent.id);
+    expect(manager.getAgent(agent.id)).toBeNull();
+    expect(await storage.get(agent.id)).toMatchObject({ lastStatus: "closed" });
+    readAllowed.resolve();
+
+    await expect(reload).rejects.toThrow(
+      `Agent ${agent.id} was removed before replacement registration`,
+    );
+    expect(client.originalSessionCloseCount).toBe(1);
+    expect(client.replacementSessionClosed).toBe(true);
+    expect(manager.getAgent(agent.id)).toBeNull();
+    expect(await storage.get(agent.id)).toMatchObject({ lastStatus: "closed" });
+  } finally {
+    readAllowed.resolve();
+    if (agentId && manager.getAgent(agentId)) {
+      await manager.closeAgent(agentId);
+    }
+    await manager.flush();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("normalizeConfig injects the provider default model when omitted", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
@@ -2121,6 +2222,960 @@ test("reloadAgentSession completes when the previous session close hangs", async
   }
 });
 
+test("streamAgent reloads one stuck OpenCode runtime and retries the same unsent prompt once", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-opencode-stop-recovery-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const rejection = new AgentTurnStartRejectedError(
+    "previous_turn_still_stopping",
+    "OpenCode previous turn to stop",
+  );
+
+  class RecordingSession extends TestAgentSession {
+    readonly calls: Array<{ prompt: AgentPromptInput; options: AgentRunOptions | undefined }> = [];
+
+    constructor(
+      config: AgentSessionConfig,
+      private readonly failure?: Error,
+    ) {
+      super(config);
+    }
+
+    override async startTurn(
+      prompt: AgentPromptInput,
+      options?: AgentRunOptions,
+    ): Promise<{ turnId: string }> {
+      this.calls.push({ prompt, options });
+      if (this.failure) {
+        throw this.failure;
+      }
+      return await super.startTurn();
+    }
+  }
+
+  class RecoveringClient extends TestAgentClient {
+    readonly stuckSession = new RecordingSession({ provider: "opencode", cwd: workdir }, rejection);
+    readonly recoveredSession = new RecordingSession({ provider: "opencode", cwd: workdir });
+    readonly resumeHandles: AgentPersistenceHandle[] = [];
+
+    constructor() {
+      super("opencode");
+    }
+
+    override async createSession(): Promise<AgentSession> {
+      return this.stuckSession;
+    }
+
+    override async resumeSession(handle: AgentPersistenceHandle): Promise<AgentSession> {
+      this.resumeHandles.push(handle);
+      return this.recoveredSession;
+    }
+  }
+
+  const client = new RecoveringClient();
+  const manager = new AgentManager({
+    clients: { opencode: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000304",
+  });
+  const prompt: AgentPromptInput = [
+    { type: "text", text: "continue preserved work" },
+    { type: "image", data: "base64-image", mimeType: "image/png" },
+  ];
+  const options: AgentRunOptions = {
+    clientMessageId: "preserved-message-id",
+    outputSchema: { type: "object", properties: { result: { type: "string" } } },
+  };
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "opencode", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    const stream = manager.streamAgent(snapshot.id, prompt, options);
+    const drain = (async () => {
+      for await (const _event of stream) {
+        // Drain the recovered turn to its terminal event.
+      }
+    })();
+    await manager.waitForAgentRunStart(snapshot.id);
+    await drain;
+
+    expect(client.stuckSession.calls).toEqual([{ prompt, options }]);
+    expect(client.stuckSession.calls[0]?.prompt).toBe(prompt);
+    expect(client.stuckSession.calls[0]?.options).toBe(options);
+    expect(client.resumeHandles).toEqual([
+      expect.objectContaining({ provider: "opencode", sessionId: client.stuckSession.id }),
+    ]);
+    expect(client.recoveredSession.calls).toEqual([{ prompt, options }]);
+    expect(client.recoveredSession.calls[0]?.prompt).toBe(prompt);
+    expect(client.recoveredSession.calls[0]?.options).toBe(options);
+    expect(manager.getAgent(snapshot.id)).toMatchObject({
+      lifecycle: "idle",
+      lastError: undefined,
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("OpenCode recovery isolates the replacement from a never-closing old session", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-opencode-isolated-recovery-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const closeStarted = deferred<void>();
+  let oldCloseAborted = false;
+
+  class RejectingSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      throw new AgentTurnStartRejectedError(
+        "previous_turn_still_stopping",
+        "OpenCode previous turn to stop",
+      );
+    }
+
+    override async close(options?: AgentSessionCloseOptions): Promise<void> {
+      closeStarted.resolve();
+      await new Promise<void>((resolvePromise) => {
+        options?.signal?.addEventListener(
+          "abort",
+          () => {
+            oldCloseAborted = true;
+            resolvePromise();
+          },
+          { once: true },
+        );
+      });
+    }
+  }
+
+  class IsolatedRecoveryClient extends TestAgentClient {
+    readonly oldSession = new RejectingSession({ provider: "opencode", cwd: workdir });
+    readonly replacement = new TestAgentSession({ provider: "opencode", cwd: workdir });
+    resumeOptions: AgentResumeSessionOptions | undefined;
+
+    constructor() {
+      super("opencode");
+    }
+
+    override async createSession(): Promise<AgentSession> {
+      return this.oldSession;
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      _config?: Partial<AgentSessionConfig>,
+      _launchContext?: AgentLaunchContext,
+      options?: AgentResumeSessionOptions,
+    ): Promise<AgentSession> {
+      this.resumeOptions = options;
+      return this.replacement;
+    }
+  }
+
+  const client = new IsolatedRecoveryClient();
+  const manager = new AgentManager({
+    clients: { opencode: client },
+    registry: storage,
+    logger,
+    rescueTimeouts: { reloadSessionCloseMs: 10 },
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "opencode", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    await expect(manager.runAgent(agent.id, "retry on an isolated runtime")).resolves.toBeDefined();
+    await closeStarted.promise;
+
+    expect(client.resumeOptions?.isolateProviderGeneration).toBe(true);
+    expect(oldCloseAborted).toBe(true);
+    expect(client.resumeOptions?.signal?.aborted).toBe(false);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("Stop during the OpenCode recovery handoff retains the replacement agent", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-opencode-atomic-handoff-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const closeStarted = deferred<void>();
+  const closeAllowed = deferred<void>();
+
+  class RejectingSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      throw new AgentTurnStartRejectedError(
+        "previous_turn_still_stopping",
+        "OpenCode previous turn to stop",
+      );
+    }
+
+    override async close(): Promise<void> {
+      closeStarted.resolve();
+      await closeAllowed.promise;
+    }
+  }
+
+  class HandoffClient extends TestAgentClient {
+    readonly oldSession = new RejectingSession({ provider: "opencode", cwd: workdir });
+    readonly replacement = new TestAgentSession({ provider: "opencode", cwd: workdir });
+
+    constructor() {
+      super("opencode");
+    }
+
+    override async createSession(): Promise<AgentSession> {
+      return this.oldSession;
+    }
+
+    override async resumeSession(): Promise<AgentSession> {
+      return this.replacement;
+    }
+  }
+
+  const client = new HandoffClient();
+  const manager = new AgentManager({
+    clients: { opencode: client },
+    registry: storage,
+    logger,
+    rescueTimeouts: { reloadSessionCloseMs: 1_000 },
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "opencode", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const events: AgentStreamEvent[] = [];
+    const drain = (async () => {
+      for await (const event of manager.streamAgent(agent.id, "cancel during handoff")) {
+        events.push(event);
+      }
+    })();
+    await closeStarted.promise;
+
+    const stop = manager.cancelAgentRun(agent.id);
+    expect(manager.getAgent(agent.id)).toMatchObject({ lifecycle: "idle" });
+    closeAllowed.resolve();
+
+    await expect(stop).resolves.toEqual({ status: "settled" });
+    await drain;
+    expect(events).toContainEqual({
+      type: "turn_canceled",
+      provider: "opencode",
+      reason: "interrupted",
+    });
+    expect(manager.getAgent(agent.id)).toMatchObject({ lifecycle: "idle" });
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
+    await expect(manager.runAgent(agent.id, "follow up after Stop")).resolves.toEqual(
+      expect.objectContaining({
+        sessionId: client.replacement.id,
+        canceled: false,
+      }),
+    );
+  } finally {
+    closeAllowed.resolve();
+    await manager.flush();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("derived OpenCode providers use stop-boundary recovery", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-derived-opencode-recovery-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const derivedProvider = "team-opencode";
+
+  class RejectingSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      throw new AgentTurnStartRejectedError(
+        "previous_turn_still_stopping",
+        "OpenCode previous turn to stop",
+      );
+    }
+  }
+
+  class DerivedOpenCodeClient extends TestAgentClient {
+    resumeCount = 0;
+
+    constructor() {
+      super(derivedProvider);
+    }
+
+    override async createSession(): Promise<AgentSession> {
+      return wrapSessionProvider(
+        derivedProvider,
+        new RejectingSession({ provider: "opencode", cwd: workdir }),
+      );
+    }
+
+    override async resumeSession(): Promise<AgentSession> {
+      this.resumeCount += 1;
+      return wrapSessionProvider(
+        derivedProvider,
+        new TestAgentSession({ provider: "opencode", cwd: workdir }),
+      );
+    }
+  }
+
+  const client = new DerivedOpenCodeClient();
+  const manager = new AgentManager({
+    clients: { [derivedProvider]: client },
+    registry: storage,
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent(
+      { provider: derivedProvider, cwd: workdir },
+      undefined,
+      {
+        workspaceId: undefined,
+      },
+    );
+
+    await expect(manager.runAgent(agent.id, "recover the derived provider")).resolves.toBeDefined();
+    expect(client.resumeCount).toBe(1);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      provider: derivedProvider,
+      lifecycle: "idle",
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test.each(["stop", "close", "shutdown"] as const)(
+  "%s does not hang on a never-settling OpenCode recovery",
+  async (control) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-opencode-stuck-recovery-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const resumeStarted = deferred<void>();
+    let recoverySignal: AbortSignal | undefined;
+
+    class RejectingSession extends TestAgentSession {
+      override async startTurn(): Promise<{ turnId: string }> {
+        throw new AgentTurnStartRejectedError(
+          "previous_turn_still_stopping",
+          "OpenCode previous turn to stop",
+        );
+      }
+    }
+
+    class NeverSettlingRecoveryClient extends TestAgentClient {
+      constructor() {
+        super("opencode");
+      }
+
+      override async createSession(): Promise<AgentSession> {
+        return new RejectingSession({ provider: "opencode", cwd: workdir });
+      }
+
+      override async resumeSession(
+        _handle: AgentPersistenceHandle,
+        _config?: Partial<AgentSessionConfig>,
+        _launchContext?: AgentLaunchContext,
+        options?: AgentResumeSessionOptions,
+      ): Promise<AgentSession> {
+        recoverySignal = options?.signal;
+        resumeStarted.resolve();
+        return await new Promise<AgentSession>(() => {});
+      }
+    }
+
+    const manager = new AgentManager({
+      clients: { opencode: new NeverSettlingRecoveryClient() },
+      registry: storage,
+      logger,
+      rescueTimeouts: { reloadSessionCloseMs: 10 },
+    });
+
+    try {
+      const agent = await manager.createAgent({ provider: "opencode", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      const run = manager.runAgent(agent.id, "never submit this retry");
+      void run.catch(() => undefined);
+      await resumeStarted.promise;
+
+      if (control === "stop") {
+        await expect(manager.cancelAgentRun(agent.id)).resolves.toEqual({ status: "refused" });
+      } else if (control === "close") {
+        await expect(manager.closeAgent(agent.id)).resolves.toBeUndefined();
+        expect(manager.getAgent(agent.id)).toBeNull();
+      } else {
+        manager.prepareForShutdown();
+        await expect(manager.flushForShutdown()).resolves.toBeUndefined();
+      }
+      expect(recoverySignal?.aborted).toBe(true);
+    } finally {
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test("streamAgent reports a second typed OpenCode stop rejection without another reload", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-opencode-stop-retry-limit-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const firstRejection = new AgentTurnStartRejectedError(
+    "previous_turn_still_stopping",
+    "first runtime is still stopping",
+  );
+  const secondRejection = new AgentTurnStartRejectedError(
+    "previous_turn_still_stopping",
+    "second runtime is still stopping",
+  );
+
+  class RejectingSession extends TestAgentSession {
+    attempts = 0;
+
+    constructor(
+      config: AgentSessionConfig,
+      private readonly rejection: AgentTurnStartRejectedError,
+    ) {
+      super(config);
+    }
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      this.attempts += 1;
+      throw this.rejection;
+    }
+  }
+
+  class TwiceRejectingClient extends TestAgentClient {
+    readonly firstSession = new RejectingSession(
+      { provider: "opencode", cwd: workdir },
+      firstRejection,
+    );
+    readonly secondSession = new RejectingSession(
+      { provider: "opencode", cwd: workdir },
+      secondRejection,
+    );
+    resumeCalls = 0;
+
+    constructor() {
+      super("opencode");
+    }
+
+    override async createSession(): Promise<AgentSession> {
+      return this.firstSession;
+    }
+
+    override async resumeSession(): Promise<AgentSession> {
+      this.resumeCalls += 1;
+      return this.secondSession;
+    }
+  }
+
+  const client = new TwiceRejectingClient();
+  const manager = new AgentManager({
+    clients: { opencode: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000305",
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "opencode", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    await expect(manager.runAgent(snapshot.id, "retry once only")).rejects.toBe(secondRejection);
+    expect(client.firstSession.attempts).toBe(1);
+    expect(client.resumeCalls).toBe(1);
+    expect(client.secondSession.attempts).toBe(1);
+    expect(manager.getAgent(snapshot.id)).toMatchObject({
+      lifecycle: "error",
+      lastError: "second runtime is still stopping",
+    });
+  } finally {
+    await manager.flush();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  {
+    name: "an OpenCode 503 after ambiguous acceptance",
+    provider: "opencode",
+    error: new Error("503 Bad Gateway after provider acceptance was unknown"),
+  },
+  {
+    name: "an OpenCode 403",
+    provider: "opencode",
+    error: new Error("403 Forbidden"),
+  },
+  {
+    name: "an OpenCode overload response",
+    provider: "opencode",
+    error: new Error("provider overloaded"),
+  },
+  {
+    name: "the former OpenCode stop-boundary error text without the typed rejection",
+    provider: "opencode",
+    error: new Error("OpenCode is still stopping the previous turn"),
+  },
+  {
+    name: "another provider's typed stop rejection",
+    provider: "codex",
+    error: new AgentTurnStartRejectedError(
+      "previous_turn_still_stopping",
+      "Codex is still stopping the previous turn",
+    ),
+  },
+])("streamAgent does not reload for $name", async ({ provider, error }) => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-no-stop-recovery-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class RejectingSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      throw error;
+    }
+  }
+
+  class NonRecoveringClient extends TestAgentClient {
+    readonly session = new RejectingSession({ provider, cwd: workdir });
+    resumeCalls = 0;
+
+    constructor() {
+      super(provider);
+    }
+
+    override async createSession(): Promise<AgentSession> {
+      return this.session;
+    }
+
+    override async resumeSession(): Promise<AgentSession> {
+      this.resumeCalls += 1;
+      return this.session;
+    }
+  }
+
+  const client = new NonRecoveringClient();
+  const manager = new AgentManager({
+    clients: { [provider]: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000306",
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider, cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    await expect(manager.runAgent(snapshot.id, "do not duplicate this prompt")).rejects.toBe(error);
+    expect(client.resumeCalls).toBe(0);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  { control: "interrupt", reloadOutcome: "succeeds", reloadFails: false },
+  { control: "close", reloadOutcome: "succeeds", reloadFails: false },
+  { control: "interrupt", reloadOutcome: "fails", reloadFails: true },
+  { control: "close", reloadOutcome: "fails", reloadFails: true },
+] as const)(
+  "$control during OpenCode stop-boundary reload cancels the unsent prompt when reload $reloadOutcome",
+  async ({ control, reloadFails }) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-opencode-recovery-control-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const resumeStarted = deferred<void>();
+    const resumeAllowed = deferred<void>();
+
+    class RejectingSession extends TestAgentSession {
+      override async startTurn(): Promise<{ turnId: string }> {
+        throw new AgentTurnStartRejectedError(
+          "previous_turn_still_stopping",
+          "OpenCode previous turn to stop",
+        );
+      }
+    }
+
+    class RecoveredSession extends TestAgentSession {
+      prompts: AgentPromptInput[] = [];
+
+      override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+        this.prompts.push(prompt);
+        return await super.startTurn();
+      }
+    }
+
+    class HeldRecoveryClient extends TestAgentClient {
+      readonly firstSession = new RejectingSession({ provider: "opencode", cwd: workdir });
+      readonly recoveredSession = new RecoveredSession({ provider: "opencode", cwd: workdir });
+
+      constructor() {
+        super("opencode");
+      }
+
+      override async createSession(): Promise<AgentSession> {
+        return this.firstSession;
+      }
+
+      override async resumeSession(): Promise<AgentSession> {
+        resumeStarted.resolve();
+        await resumeAllowed.promise;
+        if (reloadFails) {
+          throw new Error("OpenCode runtime reload failed");
+        }
+        return this.recoveredSession;
+      }
+    }
+
+    const client = new HeldRecoveryClient();
+    const manager = new AgentManager({
+      clients: { opencode: client },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000307",
+    });
+
+    try {
+      const snapshot = await manager.createAgent(
+        { provider: "opencode", cwd: workdir },
+        undefined,
+        {
+          workspaceId: undefined,
+        },
+      );
+      const events: AgentStreamEvent[] = [];
+      const stream = manager.streamAgent(snapshot.id, "never submit after control action");
+      const drain = (async () => {
+        for await (const event of stream) {
+          events.push(event);
+        }
+      })();
+      await resumeStarted.promise;
+
+      expect(manager.hasInFlightRun(snapshot.id)).toBe(true);
+      expect(() => manager.streamAgent(snapshot.id, "do not submit a duplicate prompt")).toThrow(
+        `Agent ${snapshot.id} already has an active run`,
+      );
+
+      const controlAction =
+        control === "interrupt"
+          ? manager.cancelAgentRun(snapshot.id)
+          : manager.closeAgent(snapshot.id);
+      resumeAllowed.resolve();
+      await controlAction;
+      await drain;
+
+      expect(client.recoveredSession.prompts).toEqual([]);
+      expect(events).toContainEqual({
+        type: "turn_canceled",
+        provider: "opencode",
+        reason: control === "interrupt" ? "interrupted" : "agent closed",
+      });
+      if (control === "interrupt") {
+        expect(manager.getAgent(snapshot.id)).toMatchObject({
+          lifecycle: "idle",
+          lastError: undefined,
+        });
+        expect(manager.hasInFlightRun(snapshot.id)).toBe(false);
+      } else {
+        expect(manager.getAgent(snapshot.id)).toBeNull();
+      }
+    } finally {
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each(["interrupt", "close", "shutdown"] as const)(
+  "%s after OpenCode reload but before retry admission cancels the unsent prompt",
+  async (control) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-opencode-admission-control-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const admissionReached = deferred<void>();
+    const admissionAllowed = deferred<void>();
+
+    class RejectingSession extends TestAgentSession {
+      override async startTurn(): Promise<{ turnId: string }> {
+        throw new AgentTurnStartRejectedError(
+          "previous_turn_still_stopping",
+          "OpenCode previous turn to stop",
+        );
+      }
+    }
+
+    class RecoveredSession extends TestAgentSession {
+      readonly prompts: AgentPromptInput[] = [];
+
+      override async startTurn(
+        prompt: AgentPromptInput,
+        _options?: AgentRunOptions,
+        admission?: AgentTurnAdmission,
+      ): Promise<{ turnId: string }> {
+        admissionReached.resolve();
+        await admissionAllowed.promise;
+        admission?.admit();
+        this.prompts.push(prompt);
+        return await super.startTurn();
+      }
+    }
+
+    class RecoveredClient extends TestAgentClient {
+      readonly firstSession = new RejectingSession({ provider: "opencode", cwd: workdir });
+      readonly recoveredSession = new RecoveredSession({ provider: "opencode", cwd: workdir });
+
+      constructor() {
+        super("opencode");
+      }
+
+      override async createSession(): Promise<AgentSession> {
+        return this.firstSession;
+      }
+
+      override async resumeSession(): Promise<AgentSession> {
+        return this.recoveredSession;
+      }
+    }
+
+    const client = new RecoveredClient();
+    const manager = new AgentManager({
+      clients: { opencode: client },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000308",
+    });
+
+    try {
+      const snapshot = await manager.createAgent(
+        { provider: "opencode", cwd: workdir },
+        undefined,
+        { workspaceId: undefined },
+      );
+      const events: AgentStreamEvent[] = [];
+      const drain = (async () => {
+        for await (const event of manager.streamAgent(snapshot.id, "never submit after control")) {
+          events.push(event);
+        }
+      })();
+      await admissionReached.promise;
+
+      let controlAction: Promise<unknown>;
+      if (control === "interrupt") {
+        controlAction = manager.cancelAgentRun(snapshot.id);
+      } else {
+        if (control === "shutdown") {
+          manager.prepareForShutdown();
+        }
+        controlAction = manager.closeAgent(snapshot.id);
+      }
+      admissionAllowed.resolve();
+      await controlAction;
+      await drain;
+
+      expect(client.recoveredSession.prompts).toEqual([]);
+      expect(events).toContainEqual({
+        type: "turn_canceled",
+        provider: "opencode",
+        reason: control === "interrupt" ? "interrupted" : "agent closed",
+      });
+      if (control === "interrupt") {
+        expect(manager.getAgent(snapshot.id)).toMatchObject({
+          lifecycle: "idle",
+          lastError: undefined,
+        });
+      } else {
+        expect(manager.getAgent(snapshot.id)).toBeNull();
+      }
+      expect(manager.hasInFlightRun(snapshot.id)).toBe(false);
+    } finally {
+      admissionAllowed.resolve();
+      await manager.flush();
+      await storage.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each([
+  {
+    name: "replays an admitted OpenCode cancellation published during the baseline read",
+    finishBaselineRead: true,
+  },
+  {
+    name: "settles an admitted OpenCode cancellation when startTurn never returns",
+    finishBaselineRead: false,
+  },
+] as const)("Stop $name", async ({ finishBaselineRead }) => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-opencode-admitted-cancel-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const retryAdmitted = deferred<void>();
+  const terminalPublished = deferred<void>();
+  const baselineReadAllowed = deferred<void>();
+
+  class RejectingSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      throw new AgentTurnStartRejectedError(
+        "previous_turn_still_stopping",
+        "OpenCode previous turn to stop",
+      );
+    }
+  }
+
+  class RecoveredSession extends TestAgentSession {
+    private firstStart = true;
+
+    override async startTurn(
+      prompt: AgentPromptInput,
+      options?: AgentRunOptions,
+      admission?: AgentTurnAdmission,
+    ): Promise<{ turnId: string }> {
+      if (!this.firstStart) {
+        return await super.startTurn(prompt, options);
+      }
+      this.firstStart = false;
+      const turnId = "recovered-turn";
+      admission?.admit();
+      this.pushEvent({ type: "turn_started", provider: "opencode", turnId });
+      retryAdmitted.resolve();
+      await baselineReadAllowed.promise;
+      return { turnId };
+    }
+
+    override async interrupt(): Promise<void> {
+      this.pushEvent({
+        type: "turn_canceled",
+        provider: "opencode",
+        reason: "interrupted",
+        turnId: "recovered-turn",
+      });
+      terminalPublished.resolve();
+    }
+  }
+
+  class RecoveringClient extends TestAgentClient {
+    readonly recoveredSession = new RecoveredSession({ provider: "opencode", cwd: workdir });
+
+    constructor() {
+      super("opencode");
+    }
+
+    override async createSession(): Promise<AgentSession> {
+      return new RejectingSession({ provider: "opencode", cwd: workdir });
+    }
+
+    override async resumeSession(): Promise<AgentSession> {
+      return this.recoveredSession;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { opencode: new RecoveringClient() },
+    registry: storage,
+    logger,
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "opencode", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const events: AgentStreamEvent[] = [];
+    const drain = (async () => {
+      for await (const event of manager.streamAgent(snapshot.id, "cancel after admission")) {
+        events.push(event);
+      }
+    })();
+    await retryAdmitted.promise;
+
+    const stop = manager.cancelAgentRun(snapshot.id);
+    await terminalPublished.promise;
+    if (finishBaselineRead) {
+      baselineReadAllowed.resolve();
+    }
+
+    await expect(
+      Promise.race([
+        Promise.all([stop, drain]).then(() => "settled" as const),
+        new Promise<"timed_out">((resolvePromise) =>
+          setTimeout(() => resolvePromise("timed_out"), 1_000),
+        ),
+      ]),
+    ).resolves.toBe("settled");
+    await expect(stop).resolves.toEqual({ status: "settled" });
+    expect(events).toEqual([
+      { type: "turn_started", provider: "opencode", turnId: "recovered-turn" },
+      {
+        type: "turn_canceled",
+        provider: "opencode",
+        reason: "interrupted",
+        turnId: "recovered-turn",
+      },
+    ]);
+    expect(manager.hasInFlightRun(snapshot.id)).toBe(false);
+    await expect(
+      manager.runAgent(snapshot.id, "follow up after admitted cancellation"),
+    ).resolves.toEqual(expect.objectContaining({ canceled: false }));
+  } finally {
+    if (finishBaselineRead) {
+      baselineReadAllowed.resolve();
+      await manager.flush();
+    }
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("OpenCode stop-boundary reload failure never submits the retry", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-opencode-reload-failure-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class RejectingSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      throw new AgentTurnStartRejectedError(
+        "previous_turn_still_stopping",
+        "OpenCode previous turn to stop",
+      );
+    }
+  }
+
+  class FailingReloadClient extends TestAgentClient {
+    readonly firstSession = new RejectingSession({ provider: "opencode", cwd: workdir });
+    resumeCalls = 0;
+
+    constructor() {
+      super("opencode");
+    }
+
+    override async createSession(): Promise<AgentSession> {
+      return this.firstSession;
+    }
+
+    override async resumeSession(): Promise<AgentSession> {
+      this.resumeCalls += 1;
+      throw new Error("OpenCode runtime reload failed");
+    }
+  }
+
+  const client = new FailingReloadClient();
+  const manager = new AgentManager({
+    clients: { opencode: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000309",
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "opencode", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    await expect(manager.runAgent(snapshot.id, "never submit after failed reload")).rejects.toThrow(
+      "OpenCode runtime reload failed",
+    );
+    expect(client.resumeCalls).toBe(1);
+    expect(manager.hasInFlightRun(snapshot.id)).toBe(false);
+  } finally {
+    await manager.flush();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("cancelAgentRun preserves running state when the provider interrupt hangs", async () => {
   const fixture = await createControlledInterruptFixture({
     name: "interrupt-timeout",
@@ -2144,7 +3199,7 @@ test("cancelAgentRun preserves running state when the provider interrupt hangs",
     expect(fixture.session.interruptCalled).toBe(true);
     expect(fixture.manager.getAgent(fixture.agentId)?.lifecycle).toBe("running");
   } finally {
-    fixture.cleanup();
+    await fixture.cleanup();
   }
 });
 
@@ -2175,7 +3230,7 @@ test("cancelAgentRun preserves the active turn when the provider rejects the int
       turnId: "provider-still-active-turn",
     });
   } finally {
-    fixture.cleanup();
+    await fixture.cleanup();
   }
 });
 
@@ -2208,7 +3263,7 @@ test("cancelAgentRun succeeds when the foreground turn finishes before the provi
       activeForegroundTurnId: null,
     });
   } finally {
-    fixture.cleanup();
+    await fixture.cleanup();
   }
 });
 
@@ -2238,7 +3293,7 @@ test("cancelAgentRun succeeds when the provider queues completion before rejecti
       activeForegroundTurnId: null,
     });
   } finally {
-    fixture.cleanup();
+    await fixture.cleanup();
   }
 });
 

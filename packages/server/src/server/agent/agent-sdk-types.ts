@@ -195,11 +195,29 @@ export type AgentPromptContentBlock =
 
 export type AgentPromptInput = string | AgentPromptContentBlock[];
 
+export type AgentTurnStartRejectionReason = "previous_turn_still_stopping";
+
+/** The provider adapter rejected startTurn before submitting the prompt. */
+export class AgentTurnStartRejectedError extends Error {
+  constructor(
+    public readonly reason: AgentTurnStartRejectionReason,
+    message: string,
+  ) {
+    super(message);
+    this.name = "AgentTurnStartRejectedError";
+  }
+}
+
 export interface AgentRunOptions {
   outputSchema?: unknown;
   resumeFrom?: AgentPersistenceHandle;
   maxThinkingTokens?: number;
   clientMessageId?: string;
+}
+
+/** Runtime-only gate claimed synchronously at the provider's final pre-submit boundary. */
+export interface AgentTurnAdmission {
+  admit(): void;
 }
 
 export interface AgentUsage {
@@ -606,6 +624,14 @@ export interface AgentCreateSessionOptions {
 export interface AgentResumeSessionOptions {
   /** Defaults to interactive. History loading may be read-only for archived native sessions. */
   purpose?: "interactive" | "history";
+  /** Cancels runtime acquisition and registration when the caller no longer owns the resume. */
+  signal?: AbortSignal;
+  /** Start a provider runtime that cannot be affected by requests sent to the previous runtime. */
+  isolateProviderGeneration?: boolean;
+}
+
+export interface AgentSessionCloseOptions {
+  signal?: AbortSignal;
 }
 
 /**
@@ -618,11 +644,17 @@ export interface AgentPermissionResult {
 
 export interface AgentSession {
   readonly provider: AgentProvider;
+  /** Built-in provider behind a derived provider id. Defaults to provider. */
+  readonly baseProvider?: AgentProvider;
   readonly id: string | null;
   readonly capabilities: AgentCapabilityFlags;
   readonly features?: AgentFeature[];
   run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
-  startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
+  startTurn(
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+    admission?: AgentTurnAdmission,
+  ): Promise<{ turnId: string }>;
   subscribe(callback: (event: AgentStreamEvent) => void): () => void;
   streamHistory(): AsyncGenerator<AgentStreamEvent>;
   getRuntimeInfo(): Promise<AgentRuntimeInfo>;
@@ -637,7 +669,7 @@ export interface AgentSession {
   describePersistence(): AgentPersistenceHandle | null;
   interrupt(): Promise<void>;
   /** Release live runtime resources without archiving or deleting the durable native session. */
-  close(): Promise<void>;
+  close(options?: AgentSessionCloseOptions): Promise<void>;
   listCommands?(): Promise<AgentSlashCommand[]>;
   setModel?(modelId: string | null): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
