@@ -337,6 +337,23 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
+  test("destroy prevents a synchronously cancelled warmup from starting provider work", async () => {
+    const isAvailable = vi.fn(async () => true);
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: { codex: createExtraClient("codex", { isAvailable }) },
+    });
+
+    const warmup = manager.warmUpSnapshotForCwd({
+      cwd: "/tmp/project",
+      providers: ["codex"],
+    });
+    const destroy = manager.destroy();
+
+    await Promise.all([warmup, destroy]);
+    expect(isAvailable).not.toHaveBeenCalled();
+  });
+
   test("two timeout and destroy cycles never overlap provider work", async () => {
     let activeChecks = 0;
     let maxActiveChecks = 0;

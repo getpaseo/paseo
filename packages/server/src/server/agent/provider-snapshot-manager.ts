@@ -751,16 +751,23 @@ export class ProviderSnapshotManager {
       cancelled: false,
     };
     this.setProviderLoad(options.snapshotCwd, options.provider, load);
-    load.promise = Promise.resolve().then(() =>
-      this.refreshProvider({
+    load.promise = Promise.resolve().then(() => {
+      if (
+        load.cancelled ||
+        load.controller.signal.aborted ||
+        !this.isCurrentProviderLoad(options.snapshotCwd, options.provider, load)
+      ) {
+        return;
+      }
+      return this.refreshProvider({
         snapshotCwd: options.snapshotCwd,
         catalogScope: options.catalogScope,
         provider: options.provider,
         definition,
         load,
         force: options.force,
-      }),
-    );
+      });
+    });
     load.cleanup = load.promise
       .then(
         () => undefined,
