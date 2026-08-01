@@ -13,7 +13,12 @@ import { createAgentMcpServer } from "./mcp-server.js";
 import { AgentManager, type ManagedAgent } from "./agent-manager.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
-import type { AgentMode, AgentProvider, ProviderSnapshotEntry } from "./agent-sdk-types.js";
+import type {
+  AgentMode,
+  AgentProvider,
+  AgentStreamEvent,
+  ProviderSnapshotEntry,
+} from "./agent-sdk-types.js";
 import type { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
 import { createProviderSnapshotManagerStub } from "../test-utils/session-stubs.js";
 import {
@@ -56,10 +61,19 @@ import type { BrowserToolsBroker, BrowserToolsExecuteInput } from "../browser-to
 import type { BrowserToolsResponsePayload } from "../browser-tools/errors.js";
 import { readPaseoWorktreeMetadata } from "../../utils/worktree-metadata.js";
 import { createWorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";
+import type { CoordinatorResumeWorker } from "./coordinator-resume-worker.js";
 
 const REPO_CWD = resolvePath("/tmp/repo");
 const TARGET_CWD = resolvePath("/tmp/target");
 const BROWSER_WORKSPACE_ID = "wks_browser_tools";
+
+async function* startTurnWithHook(
+  lifecycleHooks: { onTurnStarted(turnId: string): Promise<void> },
+  turnId: string,
+): AsyncGenerator<AgentStreamEvent> {
+  await lifecycleHooks.onTurnStarted(turnId);
+  yield* [];
+}
 
 interface LooseSafeParseResult {
   success: boolean;
@@ -3117,7 +3131,7 @@ describe("create_agent MCP tool", () => {
     });
 
     expect(response.structuredContent.guidance).toBe(
-      "You will get notified when the created agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.",
+      "You will get notified when the created agent finishes or fails. Do not poll for status; continue with other work until the notification arrives.",
     );
   });
 
@@ -3549,12 +3563,39 @@ describe("send_agent_prompt MCP tool", () => {
       if (agentId === "child-agent") return childAgent;
       return null;
     });
+    const order: string[] = [];
+    const bindChildTurn = vi.fn(async (eventId: string, turnId: string) => {
+      order.push(`bind:${eventId}:${turnId}`);
+    });
+    const coordinatorResumeWorker = {
+      store: {
+        arm: vi.fn(async () => {
+          order.push("arm");
+          return { eventId: "resume-1" };
+        }),
+        bindChildTurn,
+        promoteStartFailure: vi.fn(),
+      },
+      kick: vi.fn(),
+    } as unknown as CoordinatorResumeWorker;
+    spies.agentManager.streamAgent.mockImplementation(
+      (
+        _agentId: string,
+        _prompt: unknown,
+        _runOptions: unknown,
+        lifecycleHooks: { onTurnStarted(turnId: string): Promise<void> },
+      ) => {
+        order.push("start");
+        return startTurnWithHook(lifecycleHooks, "child-turn-1");
+      },
+    );
 
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
       callerAgentId: "parent-agent",
+      coordinatorResumeWorker,
       logger,
     });
 
@@ -3574,10 +3615,12 @@ describe("send_agent_prompt MCP tool", () => {
 
     const response = await tool.handler(parsed.data as Record<string, unknown>);
 
-    expect(spies.agentManager.subscribe).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(bindChildTurn).toHaveBeenCalledWith("resume-1", "child-turn-1"));
+    expect(order).toEqual(["arm", "start", "bind:resume-1:child-turn-1"]);
+    expect(spies.agentManager.subscribe).not.toHaveBeenCalled();
     expect(spies.agentManager.waitForAgentEvent).not.toHaveBeenCalled();
     expect(response.structuredContent.guidance).toBe(
-      "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.",
+      "You will get notified when the prompted agent finishes or fails. Do not poll for status; continue with other work until the notification arrives.",
     );
   });
 

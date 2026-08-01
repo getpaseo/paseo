@@ -209,6 +209,17 @@ export type AgentAttentionCallback = (params: {
 
 export type AgentArchivedCallback = (agentId: string) => Promise<void> | void;
 
+export interface AgentRunLifecycleHooks {
+  onTurnStarted(turnId: string): Promise<void>;
+  onTurnStartFailed?(error: unknown): Promise<void>;
+}
+
+export type AgentTurnTerminalCallback = (params: {
+  agentId: string;
+  turnId: string;
+  outcome: "completed" | "failed" | "canceled";
+}) => Promise<void>;
+
 export interface ProviderAvailability {
   provider: AgentProvider;
   available: boolean;
@@ -443,12 +454,30 @@ function isAgentBusy(status: AgentLifecycleStatus): boolean {
   return BUSY_STATUSES.has(status);
 }
 
-function isTurnTerminalEvent(event: AgentStreamEvent): boolean {
+function isTurnTerminalEvent(
+  event: AgentStreamEvent,
+): event is Extract<
+  AgentStreamEvent,
+  { type: "turn_completed" | "turn_failed" | "turn_canceled" }
+> {
   return (
     event.type === "turn_completed" ||
     event.type === "turn_failed" ||
     event.type === "turn_canceled"
   );
+}
+
+function getTurnTerminalOutcome(
+  event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
+): "completed" | "failed" | "canceled" {
+  switch (event.type) {
+    case "turn_completed":
+      return "completed";
+    case "turn_failed":
+      return "failed";
+    case "turn_canceled":
+      return "canceled";
+  }
 }
 
 function abortMessage(reason: unknown, fallbackMessage: string): string {
@@ -563,6 +592,7 @@ export class AgentManager {
   private readonly providerSubagents = new ProviderSubagentStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
+  private readonly runStartBarriers = new Map<string, Promise<void>>();
   private readonly runs = new AgentRunState();
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
@@ -580,6 +610,7 @@ export class AgentManager {
   private appendSystemPrompt: string;
   private onAgentAttention?: AgentAttentionCallback;
   private onAgentArchived?: AgentArchivedCallback;
+  private onTurnTerminal?: AgentTurnTerminalCallback;
   private onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
@@ -654,6 +685,10 @@ export class AgentManager {
 
   setAgentArchivedCallback(callback: AgentArchivedCallback): void {
     this.onAgentArchived = callback;
+  }
+
+  setTurnTerminalCallback(callback: AgentTurnTerminalCallback | undefined): void {
+    this.onTurnTerminal = callback;
   }
 
   setMcpBaseUrl(url: string | null): void {
@@ -1944,6 +1979,7 @@ export class AgentManager {
     agentId: string,
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
+    lifecycleHooks?: AgentRunLifecycleHooks,
   ): AsyncGenerator<AgentStreamEvent> {
     const existingAgent = this.requireSessionAgent(agentId);
     this.logger.trace(
@@ -1984,10 +2020,29 @@ export class AgentManager {
     const streamForwarder = async function* streamForwarder(this: AgentManager) {
       let turnId: string;
       let turnStream: ReturnType<AgentRunState["createTurnStream"]> | null = null;
+      let releaseStartBarrier: (() => void) | null = null;
+      const startBarrier = new Promise<void>((resolvePromise) => {
+        releaseStartBarrier = resolvePromise;
+      });
+      this.runStartBarriers.set(agentId, startBarrier);
+      const releaseBarrier = () => {
+        releaseStartBarrier?.();
+        releaseStartBarrier = null;
+        if (this.runStartBarriers.get(agentId) === startBarrier) {
+          this.runStartBarriers.delete(agentId);
+        }
+      };
       try {
         const result = await agent.session.startTurn(prompt, options);
         turnId = result.turnId;
       } catch (error) {
+        try {
+          await lifecycleHooks?.onTurnStartFailed?.(error);
+        } catch (hookError) {
+          this.logger.error({ err: hookError, agentId }, "Agent turn start-failure hook failed");
+        } finally {
+          releaseBarrier();
+        }
         agent.pendingReplacement = false;
         const errorMsg = error instanceof Error ? error.message : "Failed to start turn";
         await this.handleStreamEvent(agent, {
@@ -1999,6 +2054,32 @@ export class AgentManager {
         this.runs.settleForegroundRun(agentId, pendingRun.token);
         throw error;
       }
+      try {
+        await lifecycleHooks?.onTurnStarted(turnId);
+      } catch (error) {
+        try {
+          await lifecycleHooks?.onTurnStartFailed?.(error);
+        } catch (hookError) {
+          this.logger.error(
+            { err: hookError, agentId, turnId },
+            "Agent turn start-failure hook failed after turn binding",
+          );
+        }
+        await this.interruptSession(agent.session, agentId);
+        releaseBarrier();
+        agent.pendingReplacement = false;
+        const errorMsg = error instanceof Error ? error.message : "Failed to start turn";
+        await this.handleStreamEvent(agent, {
+          type: "turn_failed",
+          provider: agent.provider,
+          error: errorMsg,
+        });
+        this.finalizeForegroundTurn(agent);
+        this.runs.settleForegroundRun(agentId, pendingRun.token);
+        throw error;
+      }
+
+      releaseBarrier();
 
       pendingRun.started = true;
       pendingRun.turnId = turnId;
@@ -2089,6 +2170,7 @@ export class AgentManager {
     agentId: string,
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
+    lifecycleHooks?: AgentRunLifecycleHooks,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
     const snapshot = this.requireAgent(agentId);
     if (
@@ -2096,7 +2178,7 @@ export class AgentManager {
       !snapshot.activeForegroundTurnId &&
       !this.runs.hasRun(agentId)
     ) {
-      return this.streamAgent(agentId, prompt, options);
+      return this.streamAgent(agentId, prompt, options, lifecycleHooks);
     }
 
     const agent = this.requireSessionAgent(agentId);
@@ -2107,7 +2189,7 @@ export class AgentManager {
 
     try {
       await this.cancelAgentRunBefore(agentId, "replace");
-      return this.streamAgent(agentId, prompt, options);
+      return this.streamAgent(agentId, prompt, options, lifecycleHooks);
     } catch (error) {
       const latest = this.agents.get(agentId);
       if (latest) {
@@ -2936,9 +3018,11 @@ export class AgentManager {
       "agent.manager.enqueue",
     );
     const previous = this.sessionEventTails.get(agentId) ?? Promise.resolve();
+    const runStartBarrier = this.runStartBarriers.get(agentId);
     const next = previous
       .catch(() => undefined)
       .then(async () => {
+        await runStartBarrier;
         const current = this.agents.get(agentId);
         if (!current) {
           return;
@@ -3337,11 +3421,8 @@ export class AgentManager {
       await dispatchPromise;
     }
 
-    if (!options?.fromHistory && isTurnTerminalEvent(event)) {
-      this.runs.settleTerminalRun(agent.id, eventTurnId);
-      if (isForegroundEvent) {
-        this.finalizeForegroundTurn(agent, eventTurnId);
-      }
+    if (!options?.fromHistory) {
+      await this.handleLiveTerminalEvent(agent, event, eventTurnId, isForegroundEvent);
     }
 
     if (!options?.fromHistory && flags.shouldDispatchEvent) {
@@ -3351,6 +3432,26 @@ export class AgentManager {
     this.traceHandleStreamEventEnd(agent, event, eventTurnId, flags);
 
     return flags.shouldNotifyWaiters;
+  }
+
+  private async handleLiveTerminalEvent(
+    agent: ActiveManagedAgent,
+    event: AgentStreamEvent,
+    eventTurnId: string | undefined,
+    isForegroundEvent: boolean,
+  ): Promise<void> {
+    if (!isTurnTerminalEvent(event)) return;
+    if (eventTurnId) {
+      await this.onTurnTerminal?.({
+        agentId: agent.id,
+        turnId: eventTurnId,
+        outcome: getTurnTerminalOutcome(event),
+      });
+    }
+    this.runs.settleTerminalRun(agent.id, eventTurnId);
+    if (isForegroundEvent) {
+      this.finalizeForegroundTurn(agent, eventTurnId);
+    }
   }
 
   private traceHandleStreamEventStart(

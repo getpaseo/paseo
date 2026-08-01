@@ -52,6 +52,8 @@ $PASEO_HOME/
 ├── agents/
 │   └── {sanitized-cwd}/
 │       └── {agentId}.json               # One file per agent
+├── coordinator-resume/
+│   └── outbox.json                       # Durable delegated-agent completion delivery
 ├── schedules/
 │   └── {scheduleId}.json                # One file per schedule
 ├── chat/
@@ -170,6 +172,26 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 Terminals are live daemon state, not persisted JSON records. A terminal carries a `workspaceId` while it is running; workspace-scoped terminal lists include only terminals with the matching `workspaceId`. Legacy live terminals without an owner remain visible to unscoped terminal reads but contribute to no workspace status.
 
 Terminal activity contributes to the workspace status bucket **per `workspaceId`**: a working terminal drives `running` onto the workspace it carries only. Same-`cwd` siblings are untouched; terminal visibility is likewise `workspaceId`-scoped.
+
+---
+
+## Coordinator Resume Outbox
+
+**Path:** `$PASEO_HOME/coordinator-resume/outbox.json`
+
+The daemon persists delegated-agent completion delivery before starting work that requested
+`notifyOnFinish`. Each event contains only stable identifiers, lifecycle state, retry/lease timing,
+and child/coordinator turn IDs. Prompts, reports, result bodies, working directories, commands,
+environment values, credentials, and other customer content are never stored in this outbox.
+
+An event moves from `armed` to `pending` only for the exact bound child turn completing or failing.
+Cancellation, archiving, missing agents, relationship changes, and unsupported coordinators are
+recorded as terminal policy states instead. The worker leases pending events with bounded
+exponential backoff, resumes only closed Codex coordinators, and never replaces an unrelated active
+turn. Delivery records the exact coordinator turn before its terminal event is processed; only that
+turn completing acknowledges the event. Failed or canceled coordinator turns retry, expired leases
+recover during normal operation, and daemon startup recovers interrupted armed, leased, and
+delivered events for at-least-once processing.
 
 ---
 

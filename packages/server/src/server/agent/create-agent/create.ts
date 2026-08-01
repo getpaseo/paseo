@@ -16,7 +16,8 @@ import type { AgentPromptInput, AgentRunOptions, AgentSessionConfig } from "../a
 import type { AgentStorage } from "../agent-storage.js";
 import type { AgentOwner } from "../agent-owner.js";
 import type { ProviderSnapshotManager } from "../provider-snapshot-manager.js";
-import { setupFinishNotification, startCreatedAgentInitialPrompt } from "../agent-prompt.js";
+import { startCreatedAgentInitialPrompt } from "../agent-prompt.js";
+import type { CoordinatorResumeWorker } from "../coordinator-resume-worker.js";
 import { resolveCreateAgentTitles } from "../create-agent-title.js";
 import { buildAgentPrompt } from "../prompt-attachments.js";
 import { normalizeClientMessageId, resolveClientMessageId } from "../../client-message-id.js";
@@ -46,6 +47,7 @@ export interface CreateAgentCommandDependencies {
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
   // Mints a fresh directory workspace for a cwd and returns its id.
   ensureWorkspaceForCreate?: EnsureWorkspaceForCreate;
+  coordinatorResumeWorker?: CoordinatorResumeWorker;
 }
 
 export type EnsureWorkspaceForCreate = (
@@ -185,6 +187,18 @@ export async function createAgentCommand(
     resolved.createOptions,
   );
 
+  const coordinatorResumeEvent =
+    input.kind === "mcp" &&
+    input.notifyOnFinish &&
+    input.callerAgentId &&
+    resolved.prompt !== undefined &&
+    dependencies.coordinatorResumeWorker
+      ? await dependencies.coordinatorResumeWorker.store.arm({
+          childAgentId: snapshot.id,
+          coordinatorAgentId: input.callerAgentId,
+        })
+      : null;
+
   resolved.setupContinuation?.startAfterAgentCreate({
     agentId: snapshot.id,
   });
@@ -196,21 +210,15 @@ export async function createAgentCommand(
     input.onCreated?.({ agentId: snapshot.id, createdWorktree: resolved.createdWorktree ?? null });
   }
   if (resolved.prompt !== undefined) {
-    const sendResult = await sendInitialPrompt(dependencies, resolved, snapshot);
+    const sendResult = await sendInitialPrompt(
+      dependencies,
+      resolved,
+      snapshot,
+      coordinatorResumeEvent?.eventId,
+    );
     initialPromptStarted = sendResult.started;
     liveSnapshot = sendResult.liveSnapshot;
     initialPromptError = sendResult.error ?? null;
-  }
-
-  if (input.kind === "mcp" && input.notifyOnFinish && input.callerAgentId && initialPromptStarted) {
-    setupFinishNotification({
-      agentManager: dependencies.agentManager,
-      agentStorage: dependencies.agentStorage,
-      childAgentId: snapshot.id,
-      callerAgentId: input.callerAgentId,
-      requireParentOwnership: true,
-      logger: dependencies.logger,
-    });
   }
 
   return {
@@ -448,6 +456,7 @@ async function sendInitialPrompt(
   dependencies: CreateAgentCommandDependencies,
   resolved: ResolvedCreateAgent,
   snapshot: ManagedAgent,
+  coordinatorResumeEventId?: string,
 ): Promise<{ started: boolean; liveSnapshot: ManagedAgent; error?: unknown }> {
   try {
     const prompt = resolved.prompt;
@@ -460,10 +469,34 @@ async function sendInitialPrompt(
       snapshot,
       prompt,
       runOptions: resolved.runOptions,
+      ...(coordinatorResumeEventId && dependencies.coordinatorResumeWorker
+        ? {
+            lifecycleHooks: {
+              onTurnStarted: async (turnId: string) => {
+                await dependencies.coordinatorResumeWorker?.store.bindChildTurn(
+                  coordinatorResumeEventId,
+                  turnId,
+                );
+              },
+              onTurnStartFailed: async () => {
+                await dependencies.coordinatorResumeWorker?.store.promoteStartFailure(
+                  coordinatorResumeEventId,
+                );
+                dependencies.coordinatorResumeWorker?.kick();
+              },
+            },
+          }
+        : {}),
       logger: resolved.promptLogger ?? dependencies.logger,
     });
     return { started: true, liveSnapshot };
   } catch (error) {
+    if (coordinatorResumeEventId && dependencies.coordinatorResumeWorker) {
+      await dependencies.coordinatorResumeWorker.store.promoteStartFailure(
+        coordinatorResumeEventId,
+      );
+      dependencies.coordinatorResumeWorker.kick();
+    }
     if (resolved.promptFailure === "throw") {
       throw error;
     }

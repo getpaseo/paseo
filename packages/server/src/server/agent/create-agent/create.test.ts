@@ -11,8 +11,18 @@ import { AgentStorage } from "../agent-storage.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
 import { createAgentCommand } from "./create.js";
 import type { ManagedAgent } from "../agent-manager.js";
+import type { AgentStreamEvent } from "../agent-sdk-types.js";
+import type { CoordinatorResumeWorker } from "../coordinator-resume-worker.js";
 
 const logger = createTestLogger();
+
+async function* startTurnWithHook(
+  lifecycleHooks: { onTurnStarted(turnId: string): Promise<void> },
+  turnId: string,
+): AsyncGenerator<AgentStreamEvent> {
+  await lifecycleHooks.onTurnStarted(turnId);
+  yield* [];
+}
 
 function createRealAgentManager(storage: AgentStorage): AgentManager {
   return new AgentManager({
@@ -209,6 +219,77 @@ test("mcp create accepts provider-only internal input and leaves model undefined
       workspaceId: "ws-create-test",
     }),
   );
+});
+
+test("delegated mcp create durably arms before starting and binds the exact child turn", async () => {
+  const parent = {
+    id: "parent-1",
+    provider: "codex",
+    cwd: "/tmp/paseo-create-test",
+    workspaceId: "ws-create-test",
+    labels: {},
+  } as ManagedAgent;
+  const child = {
+    id: "child-1",
+    provider: "claude",
+    cwd: "/tmp/paseo-create-test",
+    workspaceId: "ws-create-test",
+    runtimeInfo: null,
+    labels: { "paseo.parent-agent-id": parent.id },
+  } as ManagedAgent;
+  const order: string[] = [];
+  const bindChildTurn = vi.fn(async (eventId: string, turnId: string) => {
+    order.push(`bind:${eventId}:${turnId}`);
+  });
+  const coordinatorResumeWorker = {
+    store: {
+      arm: vi.fn(async () => {
+        order.push("arm");
+        return { eventId: "resume-1" };
+      }),
+      bindChildTurn,
+      promoteStartFailure: vi.fn(),
+    },
+    kick: vi.fn(),
+  } as unknown as CoordinatorResumeWorker;
+  const streamAgent = vi.fn(
+    (
+      _agentId: string,
+      _prompt: unknown,
+      _runOptions: unknown,
+      lifecycleHooks: { onTurnStarted(turnId: string): Promise<void> },
+    ) => {
+      order.push("start");
+      return startTurnWithHook(lifecycleHooks, "child-turn-1");
+    },
+  );
+  const dependencies: Parameters<typeof createAgentCommand>[0] = {
+    agentManager: {
+      createAgent: vi.fn(async () => child),
+      getAgent: vi.fn((agentId: string) => (agentId === parent.id ? parent : child)),
+      tryRunOutOfBand: vi.fn(() => false),
+      hasInFlightRun: vi.fn(() => false),
+      streamAgent,
+      waitForAgentRunStart: vi.fn(async () => undefined),
+    } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
+    agentStorage: {} as Parameters<typeof createAgentCommand>[0]["agentStorage"],
+    logger: createTestLogger(),
+    providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+    coordinatorResumeWorker,
+  };
+
+  await createAgentCommand(dependencies, {
+    kind: "mcp",
+    provider: "claude",
+    workspaceId: "ws-create-test",
+    initialPrompt: "delegate this",
+    background: true,
+    notifyOnFinish: true,
+    callerAgentId: parent.id,
+  });
+
+  await vi.waitFor(() => expect(bindChildTurn).toHaveBeenCalledWith("resume-1", "child-turn-1"));
+  expect(order).toEqual(["arm", "start", "bind:resume-1:child-turn-1"]);
 });
 
 test("session create stamps the requested workspaceId when no worktree setup runs", async () => {

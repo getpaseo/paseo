@@ -441,6 +441,142 @@ class TestAgentSession implements AgentSession {
   async close(): Promise<void> {}
 }
 
+test("turn binding completes before a synchronous terminal event is processed", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-start-barrier-"));
+  const order: string[] = [];
+  const session = new (class extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = "synchronous-turn";
+      this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      return { turnId };
+    }
+  })({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger: createTestLogger() });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "workspace-1",
+    });
+    manager.setTurnTerminalCallback(async ({ turnId }) => {
+      order.push(`terminal:${turnId}`);
+    });
+
+    const stream = manager.streamAgent(agent.id, "hello", undefined, {
+      onTurnStarted: async (turnId) => {
+        order.push(`bound:${turnId}`);
+      },
+    });
+    const events: AgentStreamEvent[] = [];
+    for await (const event of stream) {
+      events.push(event);
+    }
+
+    expect(order).toEqual(["bound:synchronous-turn", "terminal:synchronous-turn"]);
+    expect(events).toContainEqual({
+      type: "turn_completed",
+      provider: "codex",
+      turnId: "synchronous-turn",
+    });
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a failed start hook cannot skip cleanup for a provider start failure", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-start-failure-hook-"));
+  const providerError = new Error("provider start failed");
+  const session = new (class extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      throw providerError;
+    }
+  })({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger: createTestLogger() });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "workspace-1",
+    });
+    const onTurnStartFailed = vi.fn(async () => {
+      throw new Error("hook failed");
+    });
+    const stream = manager.streamAgent(agent.id, "hello", undefined, {
+      onTurnStarted: async () => undefined,
+      onTurnStartFailed,
+    });
+
+    const drained = (async () => {
+      for await (const _event of stream) {
+        // The provider fails before producing events.
+      }
+    })();
+
+    await expect(drained).rejects.toBe(providerError);
+    expect(onTurnStartFailed).toHaveBeenCalledWith(providerError);
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "error",
+      activeForegroundTurnId: null,
+      lastError: "provider start failed",
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a failed turn-binding hook interrupts the provider and records start failure", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-binding-failure-"));
+  const session = new TestAgentSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger: createTestLogger() });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "workspace-1",
+    });
+    const bindingError = new Error("outbox write failed");
+    const onTurnStartFailed = vi.fn(async () => undefined);
+    const stream = manager.streamAgent(agent.id, "hello", undefined, {
+      onTurnStarted: async () => {
+        throw bindingError;
+      },
+      onTurnStartFailed,
+    });
+
+    const drained = (async () => {
+      for await (const _event of stream) {
+        // Binding fails before stream events are exposed.
+      }
+    })();
+
+    await expect(drained).rejects.toBe(bindingError);
+    expect(onTurnStartFailed).toHaveBeenCalledWith(bindingError);
+    expect(session.interrupted).toBe(true);
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "error",
+      activeForegroundTurnId: null,
+      lastError: "outbox write failed",
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 class ControlledInterruptSession extends TestAgentSession {
   interruptCalled = false;
 

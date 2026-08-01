@@ -128,6 +128,8 @@ import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
+import { CoordinatorResumeStore } from "./agent/coordinator-resume-store.js";
+import { CoordinatorResumeWorker } from "./agent/coordinator-resume-worker.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import {
@@ -827,6 +829,15 @@ export async function createPaseoDaemon(
     mcpAuthToken: agentMcpAuthToken,
     logger,
   });
+  const coordinatorResumeWorker = new CoordinatorResumeWorker(
+    new CoordinatorResumeStore(path.join(config.paseoHome, "coordinator-resume", "outbox.json")),
+    agentManager,
+    agentStorage,
+    logger,
+  );
+  agentManager.setTurnTerminalCallback((event) =>
+    coordinatorResumeWorker.handleTurnTerminal(event),
+  );
 
   const detachAgentStoragePersistence = attachAgentStoragePersistence(
     logger,
@@ -1044,6 +1055,7 @@ export async function createPaseoDaemon(
     logger,
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
+    coordinatorResumeWorker,
     terminalManager,
     providerSnapshotManager,
     createPaseoWorktree: createPaseoWorktreeForTools,
@@ -1272,6 +1284,7 @@ export async function createPaseoDaemon(
     browserToolsBroker,
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
+    coordinatorResumeWorker,
     callerAgentId: runtime.callerAgentId,
     enableVoiceTools: runtime.enableVoiceTools,
     voiceOnly: runtime.voiceOnly,
@@ -1585,11 +1598,14 @@ export async function createPaseoDaemon(
         }
       });
 
+      await coordinatorResumeWorker.start();
+
       // Start speech service after listening so synchronous Sherpa native
       // model loading doesn't block the server from accepting connections.
       speechService.start();
       scriptHealthMonitor.start();
     } catch (error) {
+      await coordinatorResumeWorker.stop().catch(() => undefined);
       await serviceProxy.stopStandalone().catch(() => undefined);
       if (mainStarted) {
         httpServer.closeAllConnections();
@@ -1606,6 +1622,7 @@ export async function createPaseoDaemon(
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();
     agentManager.prepareForShutdown();
+    await coordinatorResumeWorker.stop();
     await closeAllAgents(logger, agentManager);
     await agentManager.flushForShutdown().catch(() => undefined);
     detachAgentStoragePersistence();

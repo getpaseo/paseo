@@ -21,6 +21,7 @@ import {
 import { curateAgentActivity } from "../activity-curator.js";
 import { selectItemsByProjectedLimit } from "../timeline-projection.js";
 import type { AgentStorage } from "../agent-storage.js";
+import type { CoordinatorResumeWorker } from "../coordinator-resume-worker.js";
 import { ensureAgentLoaded } from "../agent-loading.js";
 import { isStoredAgentProviderAvailable } from "../../persistence-hooks.js";
 import {
@@ -58,7 +59,7 @@ import {
   toScheduleSummary,
   waitForAgentWithTimeout,
 } from "../mcp-shared.js";
-import { sendPromptToAgent, setupFinishNotification } from "../agent-prompt.js";
+import { sendPromptToAgent } from "../agent-prompt.js";
 import { respondToAgentPermission } from "../permission-response.js";
 import {
   archiveAgentCommand,
@@ -127,6 +128,7 @@ export interface PaseoToolHostDependencies {
   browserToolsBroker?: BrowserToolsBroker | null;
   paseoHome?: string;
   worktreesRoot?: string;
+  coordinatorResumeWorker?: CoordinatorResumeWorker;
   /**
    * ID of the agent that is using this tool catalog.
    * Used for cwd/mode inheritance when agents spawn child agents.
@@ -1010,7 +1012,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       .optional()
       .default(true)
       .describe(
-        "Get notified when the created agent finishes, errors, or needs permission. Set false only for truly fire-and-forget agents.",
+        "Get notified when the created agent finishes or fails. Set false only for truly fire-and-forget agents.",
       ),
   };
   const canonicalTopLevelInputSchema = {
@@ -1026,9 +1028,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       .boolean()
       .optional()
       .default(false)
-      .describe(
-        "Agent-scoped only: get notified when the created agent finishes, errors, or needs permission.",
-      ),
+      .describe("Agent-scoped only: get notified when the created agent finishes or fails."),
   };
   const legacyAgentToAgentInputSchema = {
     ...commonCreateAgentFields,
@@ -1109,7 +1109,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       .optional()
       .default(true)
       .describe(
-        "Get notified when the prompted agent finishes, errors, or needs permission. Set false only for truly fire-and-forget prompts.",
+        "Get notified when the prompted agent finishes or fails. Set false only for truly fire-and-forget prompts.",
       ),
   };
   const topLevelSendAgentPromptInputSchema = {
@@ -1125,9 +1125,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       .boolean()
       .optional()
       .default(false)
-      .describe(
-        "Agent-scoped only: get notified when the prompted agent finishes, errors, or needs permission.",
-      ),
+      .describe("Agent-scoped only: get notified when the prompted agent finishes or fails."),
   };
   const sendAgentPromptInputSchema = callerAgentId
     ? agentToAgentSendAgentPromptInputSchema
@@ -1435,6 +1433,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           worktreesRoot: options.worktreesRoot,
           terminalManager,
           providerSnapshotManager,
+          coordinatorResumeWorker: options.coordinatorResumeWorker,
           createPaseoWorktree: options.createPaseoWorktree,
           ...(options.ensureWorkspaceForCreate
             ? { ensureWorkspaceForCreate: options.ensureWorkspaceForCreate }
@@ -1495,7 +1494,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       const currentSnapshot = agentManager.getAgent(snapshot.id) ?? snapshot;
       const guidance =
         callerAgentId && notifyOnFinish && initialPromptStarted
-          ? "You will get notified when the created agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives."
+          ? "You will get notified when the created agent finishes or fails. Do not poll for status; continue with other work until the notification arrives."
           : undefined;
       const response = {
         content: [],
@@ -1872,24 +1871,55 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       notifyOnFinish = Boolean(callerAgentId),
     }) => {
       const shouldNotifyOnFinish = Boolean(callerAgentId && notifyOnFinish && background);
+      const coordinatorResumeEvent =
+        shouldNotifyOnFinish && callerAgentId && options.coordinatorResumeWorker
+          ? await options.coordinatorResumeWorker.store.arm({
+              childAgentId: agentId,
+              coordinatorAgentId: callerAgentId,
+            })
+          : null;
 
-      await sendPromptToAgent({
-        agentManager,
-        agentStorage,
-        agentId,
-        prompt,
-        sessionMode,
-        logger: childLogger,
-      });
-
-      if (shouldNotifyOnFinish && callerAgentId) {
-        setupFinishNotification({
+      try {
+        const dispatchResult = await sendPromptToAgent({
           agentManager,
           agentStorage,
-          childAgentId: agentId,
-          callerAgentId,
+          agentId,
+          prompt,
+          sessionMode,
+          ...(coordinatorResumeEvent && options.coordinatorResumeWorker
+            ? {
+                lifecycleHooks: {
+                  onTurnStarted: async (turnId: string) => {
+                    await options.coordinatorResumeWorker?.store.bindChildTurn(
+                      coordinatorResumeEvent.eventId,
+                      turnId,
+                    );
+                  },
+                  onTurnStartFailed: async () => {
+                    await options.coordinatorResumeWorker?.store.promoteStartFailure(
+                      coordinatorResumeEvent.eventId,
+                    );
+                    options.coordinatorResumeWorker?.kick();
+                  },
+                },
+              }
+            : {}),
           logger: childLogger,
         });
+        if (dispatchResult.outOfBand && coordinatorResumeEvent && options.coordinatorResumeWorker) {
+          await options.coordinatorResumeWorker.store.promoteStartFailure(
+            coordinatorResumeEvent.eventId,
+          );
+          options.coordinatorResumeWorker.kick();
+        }
+      } catch (error) {
+        if (coordinatorResumeEvent && options.coordinatorResumeWorker) {
+          await options.coordinatorResumeWorker.store.promoteStartFailure(
+            coordinatorResumeEvent.eventId,
+          );
+          options.coordinatorResumeWorker.kick();
+        }
+        throw error;
       }
 
       // If not running in background, wait for completion
@@ -1925,7 +1955,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         ...(shouldNotifyOnFinish
           ? {
               guidance:
-                "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.",
+                "You will get notified when the prompted agent finishes or fails. Do not poll for status; continue with other work until the notification arrives.",
             }
           : {}),
       };

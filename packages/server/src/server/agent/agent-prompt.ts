@@ -1,10 +1,9 @@
 import type { Logger } from "pino";
 
-import type { AgentPromptInput, AgentRunOptions } from "./agent-sdk-types.js";
-import type { AgentManager, ManagedAgent } from "./agent-manager.js";
+import type { AgentPromptInput, AgentRunOptions, AgentStreamEvent } from "./agent-sdk-types.js";
+import type { AgentManager, AgentRunLifecycleHooks, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
-import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 
 export type AgentUnarchiveController = Pick<AgentManager, "notifyAgentState" | "unarchiveSnapshot">;
 
@@ -16,6 +15,41 @@ export type AgentRunController = Pick<
 export interface StartAgentRunOptions {
   replaceRunning?: boolean;
   runOptions?: AgentRunOptions;
+  lifecycleHooks?: AgentRunLifecycleHooks;
+}
+
+async function createAgentRunIterator(params: {
+  agentManager: AgentRunController;
+  agentId: string;
+  prompt: AgentPromptInput;
+  shouldReplace: boolean;
+  runOptions?: AgentRunOptions;
+  lifecycleHooks?: AgentRunLifecycleHooks;
+}): Promise<AsyncGenerator<AgentStreamEvent>> {
+  if (params.shouldReplace) {
+    if (params.lifecycleHooks) {
+      return await params.agentManager.replaceAgentRun(
+        params.agentId,
+        params.prompt,
+        params.runOptions,
+        params.lifecycleHooks,
+      );
+    }
+    return await params.agentManager.replaceAgentRun(
+      params.agentId,
+      params.prompt,
+      params.runOptions,
+    );
+  }
+  if (params.lifecycleHooks) {
+    return params.agentManager.streamAgent(
+      params.agentId,
+      params.prompt,
+      params.runOptions,
+      params.lifecycleHooks,
+    );
+  }
+  return params.agentManager.streamAgent(params.agentId, params.prompt, params.runOptions);
 }
 
 export async function startAgentRun(
@@ -45,10 +79,14 @@ export async function startAgentRun(
     return { outOfBand: true };
   }
   const shouldReplace = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
-  const runOptions = options?.runOptions;
-  const iterator = shouldReplace
-    ? await agentManager.replaceAgentRun(agentId, prompt, runOptions)
-    : agentManager.streamAgent(agentId, prompt, runOptions);
+  const iterator = await createAgentRunIterator({
+    agentManager,
+    agentId,
+    prompt,
+    shouldReplace,
+    runOptions: options?.runOptions,
+    lifecycleHooks: options?.lifecycleHooks,
+  });
   logger.trace(
     {
       agentId,
@@ -107,7 +145,7 @@ export async function unarchiveAgentState(
 /**
  * Wrap a body in <paseo-system>…</paseo-system> so the receiving agent
  * recognizes the prompt as system-injected context — not a user turn.
- * Used by chat mentions, schedule fires, and notify-on-finish.
+ * Used by chat mentions, schedule fires, and coordinator resume.
  */
 export function formatSystemNotificationPrompt(reason: string): string {
   return `<paseo-system>\n${reason}\n</paseo-system>`;
@@ -127,12 +165,14 @@ export interface SendPromptToAgentParams {
   prompt: AgentPromptInput;
   messageId?: string;
   runOptions?: AgentRunOptions;
+  lifecycleHooks?: AgentRunLifecycleHooks;
+  replaceRunning?: boolean;
   /** Optional mode to set on the agent before the run starts. */
   sessionMode?: string;
   /**
    * Default true. When false, archived agents are skipped instead of being
    * unarchived. Use false for system-injected prompts (chat mentions,
-   * schedule fires, notify-on-finish).
+   * schedule fires, coordinator resume).
    */
   unarchive?: boolean;
   logger: Logger;
@@ -144,6 +184,7 @@ export interface StartCreatedAgentInitialPromptParams {
   snapshot?: ManagedAgent;
   prompt: AgentPromptInput | null;
   runOptions?: AgentRunOptions;
+  lifecycleHooks?: AgentRunLifecycleHooks;
   logger: Logger;
 }
 
@@ -168,7 +209,7 @@ export async function waitForAgentRunStartWithTimeout(
  * mode change) → start run.
  *
  * Every surface that sends a prompt to an agent (Session/WS, MCP, CLI-through-MCP,
- * chat mentions, notify-on-finish) MUST go through this so behavior can never
+ * chat mentions, coordinator resume) MUST go through this so behavior can never
  * drift between them.
  *
  * When `unarchive` is false and the agent is archived, the call is a silent
@@ -202,8 +243,9 @@ export async function sendPromptToAgent(
     : params.runOptions;
 
   return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
-    replaceRunning: true,
+    replaceRunning: params.replaceRunning ?? true,
     runOptions,
+    lifecycleHooks: params.lifecycleHooks,
   });
 }
 
@@ -226,6 +268,7 @@ export async function startCreatedAgentInitialPrompt(
     params.logger,
     {
       runOptions: params.runOptions,
+      lifecycleHooks: params.lifecycleHooks,
     },
   );
 
@@ -238,137 +281,4 @@ export async function startCreatedAgentInitialPrompt(
     throw new Error(`Agent ${params.agentId} not found`);
   }
   return refreshedSnapshot;
-}
-
-export interface SetupFinishNotificationParams {
-  agentManager: AgentManager;
-  agentStorage: AgentStorage;
-  childAgentId: string;
-  callerAgentId: string;
-  requireParentOwnership?: boolean;
-  logger: Logger;
-}
-
-interface FinishNotificationBodyInput {
-  childAgentId: string;
-  title: string;
-  reason: "finished" | "errored" | "needs permission";
-  lastAssistantMessage: string | null;
-}
-
-function formatFinishNotificationBody(params: FinishNotificationBodyInput): string {
-  const statusLine = `Agent ${params.childAgentId} (${params.title}) ${params.reason}.`;
-  const lastAssistantMessage = params.lastAssistantMessage?.trim();
-  if (!lastAssistantMessage) {
-    return statusLine;
-  }
-  return `${statusLine}\n\n<agent-response>\n${lastAssistantMessage}\n</agent-response>`;
-}
-
-export function setupFinishNotification(params: SetupFinishNotificationParams): void {
-  const {
-    agentManager,
-    agentStorage,
-    childAgentId,
-    callerAgentId,
-    requireParentOwnership = false,
-    logger,
-  } = params;
-  let hasSeenRunning = false;
-  let fired = false;
-  let unsubscribe: (() => void) | null = null;
-
-  async function notify(reason: "finished" | "errored" | "needs permission"): Promise<void> {
-    if (fired) {
-      return;
-    }
-    fired = true;
-    unsubscribe?.();
-
-    const callerRecord = await agentStorage.get(callerAgentId);
-    if (callerRecord?.archivedAt) {
-      return;
-    }
-
-    const record = await agentStorage.get(childAgentId);
-    if (requireParentOwnership && getParentAgentIdFromLabels(record?.labels) !== callerAgentId) {
-      return;
-    }
-    const title = record?.title ?? childAgentId;
-    const lastAssistantMessage = await agentManager.getLastAssistantMessage(childAgentId);
-    const body = formatFinishNotificationBody({
-      childAgentId,
-      title,
-      reason,
-      lastAssistantMessage,
-    });
-
-    await sendPromptToAgent({
-      agentManager,
-      agentStorage,
-      agentId: callerAgentId,
-      prompt: formatSystemNotificationPrompt(body),
-      unarchive: false,
-      logger,
-    });
-  }
-
-  function notifySafely(reason: "finished" | "errored" | "needs permission"): void {
-    void notify(reason).catch((error) => {
-      logger.error(
-        { err: error, childAgentId, callerAgentId, reason },
-        "Failed to notify caller agent",
-      );
-    });
-  }
-
-  unsubscribe = agentManager.subscribe(
-    (event) => {
-      if (fired) {
-        return;
-      }
-
-      if (event.type === "agent_state") {
-        if (event.agent.lifecycle === "running") {
-          hasSeenRunning = true;
-          return;
-        }
-        if (event.agent.lifecycle === "error") {
-          notifySafely("errored");
-          return;
-        }
-        if (event.agent.lifecycle === "idle" && hasSeenRunning) {
-          notifySafely("finished");
-          return;
-        }
-        if (event.agent.lifecycle === "closed") {
-          fired = true;
-          unsubscribe?.();
-          return;
-        }
-        return;
-      }
-
-      if (event.event.type === "permission_requested") {
-        notifySafely("needs permission");
-      }
-    },
-    { agentId: childAgentId, replayState: false },
-  );
-
-  // Check if the child is already running (catches the case where
-  // the lifecycle flipped before our subscribe call was processed).
-  // Do NOT treat an immediate "idle" as "finished" — the agent may
-  // not have started yet (streamAgent sets a pending run before
-  // transitioning to "running").
-  const childSnapshot = agentManager.getAgent(childAgentId);
-  if (!childSnapshot || childSnapshot.lifecycle === "closed") {
-    unsubscribe();
-    return;
-  }
-  if (childSnapshot.lifecycle === "running") {
-    hasSeenRunning = true;
-  } else if (childSnapshot.lifecycle === "error") {
-    notifySafely("errored");
-  }
 }
