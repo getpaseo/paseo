@@ -79,6 +79,13 @@ export interface ArchiveResult {
   cleanupPendingWorkspaceIds: string[];
 }
 
+export class WorkspaceArchiveTargetNotFoundError extends Error {
+  constructor(workspaceId: string) {
+    super(`Workspace not found: ${workspaceId}`);
+    this.name = "WorkspaceArchiveTargetNotFoundError";
+  }
+}
+
 export interface ArchiveByScopeRequest {
   scope: ArchiveScope;
   requestId: string;
@@ -98,7 +105,7 @@ export async function requireActiveWorkspaceForArchive(
   if (persistedWorkspace?.cleanupPending) {
     return persistedWorkspace;
   }
-  throw new Error(`Workspace not found: ${workspaceId}`);
+  throw new WorkspaceArchiveTargetNotFoundError(workspaceId);
 }
 
 interface BackingDirectory {

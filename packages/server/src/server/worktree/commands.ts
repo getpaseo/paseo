@@ -5,6 +5,7 @@ import {
   archiveByScope,
   requireActiveWorkspaceForArchive,
   resolveWorkspaceIdAtPath,
+  WorkspaceArchiveTargetNotFoundError,
   type ArchiveDependencies,
   type ArchiveScope,
 } from "../workspace-archive-service.js";
@@ -129,7 +130,8 @@ export async function archiveCommand(
   if (scope === "workspace" && input.workspaceId) {
     try {
       await requireActiveWorkspaceForArchive(dependencies, input.workspaceId);
-    } catch {
+    } catch (error) {
+      if (!(error instanceof WorkspaceArchiveTargetNotFoundError)) throw error;
       return {
         ok: false,
         code: "UNKNOWN",
