@@ -21,6 +21,44 @@ describe("daemon relay config", () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });
 
+  test("preserves implicit relay-on for a legacy config without enabled", async () => {
+    const home = await createPaseoHome({ version: 1, daemon: { relay: {} } });
+    expect(loadConfig(home, { env: {} }).relayEnabled).toBe(true);
+  });
+
+  test("keeps explicit persisted relay state and marks it mutable", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      daemon: { relay: { enabled: false } },
+    });
+    const config = loadConfig(home, { env: {} });
+    expect(config.relayEnabled).toBe(false);
+    expect(config.relayEnabledMutable).toBe(true);
+  });
+
+  test("marks environment relay overrides immutable", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      daemon: { relay: { enabled: false } },
+    });
+    const config = loadConfig(home, { env: { PASEO_RELAY_ENABLED: "true" } });
+    expect(config.relayEnabled).toBe(true);
+    expect(config.relayEnabledMutable).toBe(false);
+  });
+
+  test.each(["", "treu"])(
+    "ignores invalid relay override %j without locking config",
+    async (value) => {
+      const home = await createPaseoHome({
+        version: 1,
+        daemon: { relay: { enabled: false } },
+      });
+      const config = loadConfig(home, { env: { PASEO_RELAY_ENABLED: value } });
+      expect(config.relayEnabled).toBe(false);
+      expect(config.relayEnabledMutable).toBe(true);
+    },
+  );
+
   test("loads relay TLS from env, persisted config, and hosted relay fallback", async () => {
     const persistedHome = await createPaseoHome({
       version: 1,

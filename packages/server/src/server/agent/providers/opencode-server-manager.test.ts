@@ -33,6 +33,16 @@ afterEach(() => {
 });
 
 describe("OpenCodeServerManager generations", () => {
+  test("uses an explicit base environment for the server process", async () => {
+    const baseEnv = { HOME: "/isolated/home", PATH: "/isolated/bin" };
+    const { manager, runtime } = createTestManager([4091], { baseEnv });
+
+    const acquisition = await manager.acquireCurrent();
+
+    expect(runtime.spawnCalls[0]?.options.baseEnv).toEqual(baseEnv);
+    await acquisition.release();
+  });
+
   test("rotation creates a new current server without killing a referenced old server", async () => {
     const { manager, runtime } = createTestManager([4101, 4102]);
 
@@ -603,6 +613,7 @@ function createTestManager(
   ports: number[],
   options: {
     autoAnnounce?: boolean;
+    baseEnv?: Record<string, string>;
     opencodeHomeDir?: string;
     terminationResult?: TerminateWithTreeKillResult;
     processGroupIdentityOwned?: boolean;
@@ -634,6 +645,7 @@ function createTestManager(
   return {
     manager: new OpenCodeServerManager({
       logger: createTestLogger(),
+      baseEnv: options.baseEnv,
       managedProcesses: runtime.managedProcesses,
       portAllocator: runtime.allocatePort,
       resolveCommandPrefix: runtime.resolveCommandPrefix,

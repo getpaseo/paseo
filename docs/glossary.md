@@ -41,6 +41,7 @@ Authoritative terminology. UI label wins. Don't invent synonyms; use what's here
 - **Subagent** — User-facing term for an agent session related to a parent agent session. Use **subagents** in UI copy and docs. Internal daemon/provider plumbing may say "child agent" or `child_session`, especially for provider-managed imports; do not surface "child agent" as a product term.
 - **Attachment tray** — The selected-attachments row inside the composer input, above the text input. Code: `renderAttachmentTray` (`packages/app/src/composer/index.tsx`). Forbidden: "Attachment bar".
 - **Conflict** — Two distinct senses; do NOT use the bare word in UI copy without qualifying which: (a) **stale-write conflict** on `paseo.json` ("Config changed on disk", code `stale_project_config`, `packages/app/src/screens/project-settings-screen.tsx:593`); (b) **git merge conflict** (no current UI string).
+- **Product discussion** — Where non-bug product talk goes: [GitHub Discussions](https://github.com/getpaseo/paseo/discussions) and `#product` in Discord. Covers workflows, features, and product direction. The container term; the ask inside it is always a **workflow** — what you're doing, how you do it today, where Paseo gets in the way. Issues are bugs only. Forbidden: "Feature request" as a Paseo surface, label, or invitation; the phrase is only used when answering someone who arrived with it. Don't invent "feature discussion", "idea", or "workflow thread" as synonyms. See [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Inconsistencies (documented, not papered over)
 

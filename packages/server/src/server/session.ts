@@ -1,7 +1,7 @@
 import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
 import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
-import { resolve, sep } from "path";
+import { basename, resolve, sep } from "path";
 import { homedir } from "node:os";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import {
@@ -138,6 +138,11 @@ import {
 } from "./workspace-registry.js";
 import { wrapSpokenInput } from "./voice-config.js";
 import { isVoicePermissionAllowed } from "./voice-permission-policy.js";
+import {
+  readProjectIcon,
+  removeProjectCustomIcon,
+  setProjectCustomIcon,
+} from "../utils/project-custom-icon.js";
 import { VoiceSession } from "./session/voice/voice-session.js";
 import { CheckoutSession } from "./session/checkout/checkout-session.js";
 import {
@@ -1934,6 +1939,8 @@ export class Session {
         return this.handleUpdateAgentRequest(msg.agentId, msg.name, msg.labels, msg.requestId);
       case "project.rename.request":
         return this.handleProjectRenameRequest(msg.projectId, msg.customName, msg.requestId);
+      case "project.icon.set.request":
+        return this.handleProjectIconSetRequest(msg);
       case "send_agent_message_request":
         return this.handleSendAgentMessageRequest(msg);
       case "wait_for_finish_request":
@@ -2131,6 +2138,8 @@ export class Session {
         return this.workspaceFilesSession.handleFileWriteRequest(msg);
       case "project_icon_request":
         return this.workspaceFilesSession.handleProjectIconRequest(msg);
+      case "project.icon.get.request":
+        return this.handleProjectIconGetRequest(msg.projectId, msg.requestId);
       case "file_download_token_request":
         return this.workspaceFilesSession.handleFileDownloadTokenRequest(msg);
       case "file.upload.request":
@@ -2665,6 +2674,61 @@ export class Session {
     }
   }
 
+  private async handleProjectIconSetRequest(
+    request: Extract<SessionInboundMessage, { type: "project.icon.set.request" }>,
+  ): Promise<void> {
+    const { projectId, requestId } = request;
+    try {
+      const updated = await setProjectCustomIcon({
+        paseoHome: this.paseoHome,
+        projectId,
+        source: request.source,
+        projects: this.projectRegistry,
+      });
+
+      this.emit({
+        type: "project.icon.set.response",
+        payload: { requestId, projectId, accepted: true, error: null },
+      });
+      this.emitProjectUpdate({ kind: "upsert", project: updated });
+
+      const affectedWorkspaceIds = (await this.workspaceRegistry.list())
+        .filter((workspace) => workspace.projectId === projectId)
+        .map((workspace) => workspace.workspaceId);
+      if (affectedWorkspaceIds.length > 0) {
+        await this.emitWorkspaceUpdatesForWorkspaceIds(affectedWorkspaceIds);
+      }
+    } catch (error) {
+      this.emit({
+        type: "project.icon.set.response",
+        payload: {
+          requestId,
+          projectId,
+          accepted: false,
+          error: getErrorMessageOr(error, "Failed to update project icon"),
+        },
+      });
+    }
+  }
+
+  private async handleProjectIconGetRequest(projectId: string, requestId: string): Promise<void> {
+    try {
+      const project = await this.projectRegistry.get(projectId);
+      if (!project) throw new Error("Project not found");
+
+      const icon = await readProjectIcon({ paseoHome: this.paseoHome, project });
+      this.emit({
+        type: "project.icon.get.response",
+        payload: { projectId, icon, error: null, requestId },
+      });
+    } catch (error) {
+      this.emit({
+        type: "project.icon.get.response",
+        payload: { projectId, icon: null, error: getErrorMessage(error), requestId },
+      });
+    }
+  }
+
   private async handleProjectRemoveRequest(
     request: Extract<SessionInboundMessage, { type: "project.remove.request" }>,
   ): Promise<void> {
@@ -2704,6 +2768,15 @@ export class Session {
         }
 
         await this.projectRegistry.remove(resolvedProjectId);
+        await removeProjectCustomIcon({
+          paseoHome: this.paseoHome,
+          projectId: resolvedProjectId,
+        }).catch((error) => {
+          this.sessionLogger.warn(
+            { err: error, projectId: resolvedProjectId },
+            "Failed to clean up removed project icon",
+          );
+        });
       } finally {
         if (activeWorkspaceIds.length > 0) {
           this.clearWorkspaceArchiving(activeWorkspaceIds);
@@ -4203,6 +4276,11 @@ export class Session {
       diffStat = snapshot.git.diffStat;
     }
 
+    const worktreeSlug =
+      workspace.isPaseoOwnedWorktree && workspace.worktreeRoot
+        ? basename(workspace.worktreeRoot)
+        : undefined;
+
     return {
       id: workspace.workspaceId,
       projectId: workspace.projectId,
@@ -4210,8 +4288,10 @@ export class Session {
         ? resolveProjectDisplayName(resolvedProjectRecord)
         : workspace.projectId,
       projectCustomName: resolvedProjectRecord?.customName ?? null,
+      projectCustomIconRevision: resolvedProjectRecord?.customIconRevision ?? null,
       projectRootPath: resolvedProjectRecord?.rootPath ?? workspace.cwd,
       workspaceDirectory: workspace.cwd,
+      worktreeSlug,
       projectKind: (resolvedProjectRecord?.kind ?? "directory") === "git" ? "git" : "non_git",
       workspaceKind: workspace.kind,
       name: resolveWorkspaceDisplayName(workspace),
@@ -4296,8 +4376,10 @@ export class Session {
         ? resolveProjectDisplayName(projectRecord)
         : result.workspace.projectId,
       projectCustomName: projectRecord?.customName ?? null,
+      projectCustomIconRevision: projectRecord?.customIconRevision ?? null,
       projectRootPath: projectRecord?.rootPath ?? result.repoRoot,
       workspaceDirectory: result.workspace.cwd,
+      worktreeSlug: basename(result.worktree.worktreePath),
       projectKind: projectRecord?.kind ?? "git",
       workspaceKind: result.workspace.kind,
       name: resolveWorkspaceName({
@@ -4467,6 +4549,7 @@ export class Session {
       ...(project.projectKey ? { projectKey: project.projectKey } : {}),
       projectDisplayName: resolveProjectDisplayName(project),
       projectCustomName: project.customName ?? null,
+      projectCustomIconRevision: project.customIconRevision ?? null,
       projectRootPath: project.rootPath,
       projectKind: project.kind,
     };
