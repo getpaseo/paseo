@@ -6,7 +6,17 @@ import type {
   UserComposerAttachment,
   WorkspaceComposerAttachment,
 } from "@/attachments/types";
-import type { StreamItem } from "@/types/stream";
+import {
+  appendSubmittedUserMessage,
+  removeSubmittedUserMessage,
+  type StreamItem,
+} from "@/types/stream";
+import {
+  acceptMessageSubmission,
+  beginMessageSubmission,
+  rejectMessageSubmission,
+  type MessageSubmissionRecord,
+} from "@/composer/submission/model";
 import {
   cancelComposerAgent,
   dispatchComposerAgentMessage,
@@ -20,7 +30,7 @@ import {
   sendQueuedComposerMessageNow,
   toggleGithubAttachment,
   toggleGithubAttachmentFromPicker,
-  type AgentStreamWriter,
+  type MessageSubmissionWriter,
   type AttachmentPersister,
   type ComposerCancelClient,
   type ComposerSendClient,
@@ -168,14 +178,16 @@ interface FakeSendCall {
 }
 
 function createFakeSendClient(
-  options: { rejection?: Error } = {},
+  options: { rejection?: Error; beforeRejection?: (call: FakeSendCall) => void } = {},
 ): ComposerSendClient & { calls: FakeSendCall[] } {
   const calls: FakeSendCall[] = [];
   return {
     calls,
     sendAgentMessage: async (agentId, text, opts) => {
-      calls.push({ agentId, text, options: opts });
+      const call = { agentId, text, options: opts };
+      calls.push(call);
       if (options.rejection) {
+        options.beforeRejection?.(call);
         throw options.rejection;
       }
     },
@@ -183,7 +195,7 @@ function createFakeSendClient(
   };
 }
 
-interface FakeStream extends AgentStreamWriter {
+interface FakeStream extends MessageSubmissionWriter {
   head: Map<string, StreamItem[]>;
   tail: Map<string, StreamItem[]>;
 }
@@ -192,16 +204,67 @@ function createFakeStream(initialHead: Map<string, StreamItem[]> = new Map()): F
   const fake: FakeStream = {
     head: new Map(initialHead),
     tail: new Map(),
-    getTail: (agentId) => fake.tail.get(agentId),
-    getHead: (agentId) => fake.head.get(agentId),
-    setHead: (updater) => {
-      fake.head = updater(fake.head);
+    begin: (agentId, message) => {
+      const current = readSubmission(fake, agentId);
+      const stream = appendSubmittedUserMessage({
+        tail: current.tail,
+        head: current.head,
+        message,
+      });
+      writeSubmission(fake, agentId, {
+        ...stream,
+        submissions: beginMessageSubmission(current.submissions, {
+          clientMessageId: message.clientMessageId!,
+        }),
+      });
     },
-    setTail: (updater) => {
-      fake.tail = updater(fake.tail);
+    accept: (agentId, clientMessageId) => {
+      const current = readSubmission(fake, agentId);
+      writeSubmission(fake, agentId, {
+        ...current,
+        submissions: acceptMessageSubmission(current.submissions, clientMessageId),
+      });
+    },
+    reject: (agentId, clientMessageId) => {
+      const current = readSubmission(fake, agentId);
+      const result = rejectMessageSubmission(current.submissions, clientMessageId);
+      const stream =
+        result.outcome === "rejected"
+          ? removeSubmittedUserMessage({
+              tail: current.tail,
+              head: current.head,
+              clientMessageId,
+            })
+          : current;
+      writeSubmission(fake, agentId, { ...stream, submissions: result.submissions });
+      return result.outcome;
     },
   };
   return fake;
+}
+
+const submissionsByFakeStream = new WeakMap<FakeStream, Map<string, MessageSubmissionRecord[]>>();
+
+interface FakeSubmissionState {
+  tail: StreamItem[];
+  head: StreamItem[];
+  submissions: MessageSubmissionRecord[];
+}
+
+function readSubmission(fake: FakeStream, agentId: string): FakeSubmissionState {
+  return {
+    tail: fake.tail.get(agentId) ?? [],
+    head: fake.head.get(agentId) ?? [],
+    submissions: submissionsByFakeStream.get(fake)?.get(agentId) ?? [],
+  };
+}
+
+function writeSubmission(fake: FakeStream, agentId: string, state: FakeSubmissionState): void {
+  fake.tail = new Map(fake.tail).set(agentId, state.tail);
+  fake.head = new Map(fake.head).set(agentId, state.head);
+  const submissions = submissionsByFakeStream.get(fake) ?? new Map();
+  submissions.set(agentId, state.submissions);
+  submissionsByFakeStream.set(fake, submissions);
 }
 
 function createFakeQueue(
@@ -227,7 +290,6 @@ describe("cancelComposerAgent", () => {
     isAgentRunning: boolean;
     isCancellingAgent: boolean;
     isConnected: boolean;
-    onCancelFailed: (error: unknown) => void;
   } {
     const canceledIds: string[] = [];
     return {
@@ -241,53 +303,45 @@ describe("cancelComposerAgent", () => {
       isAgentRunning: true,
       isCancellingAgent: false,
       isConnected: true,
-      onCancelFailed: () => undefined,
     };
   }
 
-  it("issues a cancel and reports true when the agent is running, connected, and not already canceling", () => {
+  it("returns the cancel request when the agent is running, connected, and not already canceling", async () => {
     const input = baseInput();
     const result = cancelComposerAgent(input);
-    expect(result).toBe(true);
+    expect(result).not.toBeNull();
+    await result;
     expect(input.client.canceledIds).toEqual(["agent"]);
   });
 
-  it("reports a rejected cancel so the composer can leave its canceling state", async () => {
+  it("returns a rejected cancel request to the composer", async () => {
     const cancellationError = new Error("Provider rejected the interrupt");
-    const failures: unknown[] = [];
     const input = baseInput();
     input.client.cancelAgent = async () => {
       throw cancellationError;
     };
 
-    const result = cancelComposerAgent({
-      ...input,
-      onCancelFailed: (error: unknown) => failures.push(error),
-    });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(result).toBe(true);
-    expect(failures).toEqual([cancellationError]);
+    await expect(cancelComposerAgent(input)).rejects.toBe(cancellationError);
   });
 
   it("does nothing when the agent is not running", () => {
     const input = baseInput();
     const result = cancelComposerAgent({ ...input, isAgentRunning: false });
-    expect(result).toBe(false);
+    expect(result).toBeNull();
     expect(input.client.canceledIds).toEqual([]);
   });
 
   it("does nothing when the agent is already being canceled", () => {
     const input = baseInput();
     const result = cancelComposerAgent({ ...input, isCancellingAgent: true });
-    expect(result).toBe(false);
+    expect(result).toBeNull();
     expect(input.client.canceledIds).toEqual([]);
   });
 
   it("does nothing when disconnected or the client is null", () => {
     const input = baseInput();
-    expect(cancelComposerAgent({ ...input, isConnected: false })).toBe(false);
-    expect(cancelComposerAgent({ ...input, client: null })).toBe(false);
+    expect(cancelComposerAgent({ ...input, isConnected: false })).toBeNull();
+    expect(cancelComposerAgent({ ...input, client: null })).toBeNull();
     expect(input.client.canceledIds).toEqual([]);
   });
 });
@@ -337,7 +391,7 @@ describe("pickAndPersistImages", () => {
 });
 
 describe("dispatchComposerAgentMessage", () => {
-  it("removes the optimistic prompt when the host rejects it", async () => {
+  it("removes the submitted prompt when the host rejects it", async () => {
     const rejection = new Error("Host rejected prompt");
     const client = createFakeSendClient({ rejection });
     const stream = createFakeStream();
@@ -349,12 +403,52 @@ describe("dispatchComposerAgentMessage", () => {
         text: "rejected prompt",
         attachments: [],
         encodeImages: passthroughEncodeImages,
-        stream,
+        submission: stream,
       }),
     ).rejects.toBe(rejection);
 
-    expect(stream.head.get("agent")).toBeUndefined();
+    expect(stream.head.get("agent")).toEqual([]);
     expect(stream.tail.get("agent") ?? []).toEqual([]);
+  });
+
+  it("rolls back an already-running force send when its RPC fails", async () => {
+    const stream = createFakeStream();
+    const transportError = new Error("Force send failed while the prior turn was running");
+    const client = createFakeSendClient({ rejection: transportError });
+
+    await expect(
+      dispatchComposerAgentMessage({
+        client,
+        agentId: "agent",
+        text: "force send",
+        attachments: [],
+        encodeImages: passthroughEncodeImages,
+        submission: stream,
+      }),
+    ).rejects.toBe(transportError);
+
+    expect(stream.tail.get("agent") ?? []).toEqual([]);
+  });
+
+  it("does not swallow a transport error when submission state is missing", async () => {
+    const transportError = new Error("Connection lost with unknown submission state");
+    const client = createFakeSendClient({ rejection: transportError });
+    const submission: MessageSubmissionWriter = {
+      begin: () => {},
+      accept: () => {},
+      reject: () => "unknown",
+    };
+
+    await expect(
+      dispatchComposerAgentMessage({
+        client,
+        agentId: "agent",
+        text: "unknown state",
+        attachments: [],
+        encodeImages: passthroughEncodeImages,
+        submission,
+      }),
+    ).rejects.toBe(transportError);
   });
 
   it("sends text + image data + structured attachments and appends user_message to the tail when head is empty", async () => {
@@ -371,7 +465,7 @@ describe("dispatchComposerAgentMessage", () => {
         { kind: "github_pr", item: prItem },
       ],
       encodeImages: passthroughEncodeImages,
-      stream,
+      submission: stream,
     });
 
     expect(client.calls).toHaveLength(1);
@@ -393,7 +487,7 @@ describe("dispatchComposerAgentMessage", () => {
       },
     ]);
 
-    expect(stream.head.get("agent")).toBeUndefined();
+    expect(stream.head.get("agent")).toEqual([]);
     const tail = stream.tail.get("agent");
     expect(tail).toHaveLength(1);
     const userMessage = tail?.[0] as Extract<StreamItem, { kind: "user_message" }>;
@@ -402,7 +496,8 @@ describe("dispatchComposerAgentMessage", () => {
     expect(userMessage.images).toEqual([image]);
     expect(userMessage.attachments).toEqual(call.options.attachments);
     expect(userMessage.id).toBe(call.options.messageId);
-    expect(userMessage.optimistic).toBe(true);
+    expect(userMessage.clientMessageId).toBe(call.options.messageId);
+    expect(userMessage.messageId).toBeUndefined();
   });
 
   it("can send legacy GitHub attachment payloads for old daemons", async () => {
@@ -416,7 +511,7 @@ describe("dispatchComposerAgentMessage", () => {
       attachments: [{ kind: "forge_change_request", item: prItem }],
       attachmentSubmitFormat: "legacy-github",
       encodeImages: passthroughEncodeImages,
-      stream,
+      submission: stream,
     });
 
     expect(client.calls[0].options.attachments).toEqual([
@@ -449,11 +544,11 @@ describe("dispatchComposerAgentMessage", () => {
       text: "next message",
       attachments: [],
       encodeImages: passthroughEncodeImages,
-      stream,
+      submission: stream,
     });
 
     expect(stream.head.get("agent")).toHaveLength(2);
-    expect(stream.tail.get("agent")).toBeUndefined();
+    expect(stream.tail.get("agent")).toEqual([]);
   });
 
   it("submits empty wire arrays when no attachments are provided", async () => {
@@ -466,7 +561,7 @@ describe("dispatchComposerAgentMessage", () => {
       text: "plain message",
       attachments: [],
       encodeImages: passthroughEncodeImages,
-      stream,
+      submission: stream,
     });
 
     expect(client.calls[0]?.options).toMatchObject({
@@ -486,7 +581,7 @@ describe("dispatchComposerAgentMessage", () => {
       text: "review this",
       attachments: [review],
       encodeImages: passthroughEncodeImages,
-      stream,
+      submission: stream,
     });
 
     expect(client.calls[0]?.options.attachments).toEqual([review.attachment]);
@@ -504,7 +599,7 @@ describe("dispatchComposerAgentMessage", () => {
       text: "inspect element",
       attachments: [browserElement],
       encodeImages: passthroughEncodeImages,
-      stream,
+      submission: stream,
     });
 
     expect(client.calls[0]?.options.attachments).toEqual([

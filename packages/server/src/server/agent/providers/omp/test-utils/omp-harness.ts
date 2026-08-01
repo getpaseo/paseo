@@ -391,6 +391,10 @@ export class OmpHarness {
     return this.events.flatMap((event) => (event.type === "timeline" ? [event.item] : []));
   }
 
+  eventTypes(): AgentStreamEvent["type"][] {
+    return this.events.map((event) => event.type);
+  }
+
   async history(): Promise<AgentTimelineItem[]> {
     const items: AgentTimelineItem[] = [];
     for await (const event of this.requireSession().streamHistory()) {
@@ -479,7 +483,9 @@ export class OmpHarness {
       .map(([callId]) => callId);
   }
 
-  subagentUpserts(): Array<{ id: string; status: string }> {
+  // `status` is optional on the upsert event — an upsert may report only model or usage. OMP
+  // always sets one, so this stays a plain string for assertions.
+  subagentUpserts(): Array<{ id: string; status: string | undefined }> {
     return this.events.flatMap((event) =>
       event.type === "provider_subagent" && event.event.type === "upsert"
         ? [{ id: event.event.id, status: event.event.status }]

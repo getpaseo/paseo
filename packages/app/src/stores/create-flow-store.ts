@@ -109,7 +109,10 @@ export const useCreateFlowStore = create<CreateFlowState>((set) => ({
     set((state) => {
       const next = Object.fromEntries(
         Object.entries(state.pendingByDraftId).filter(
-          ([, pending]) => pending.serverId !== serverId || pending.agentId !== agentId,
+          ([, pending]) =>
+            pending.lifecycle !== "sent" ||
+            pending.serverId !== serverId ||
+            pending.agentId !== agentId,
         ),
       );
       if (Object.keys(next).length === Object.keys(state.pendingByDraftId).length) {

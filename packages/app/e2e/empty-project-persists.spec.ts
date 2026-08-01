@@ -10,6 +10,7 @@ import {
 import { expectOpenedProject } from "./helpers/project-picker-ui";
 import { connectSeedClient, seedWorkspace } from "./helpers/seed-client";
 import { getServerId } from "./helpers/server-id";
+import { projectEquivalenceViewKey } from "./helpers/project-view-key";
 import { createTempGitRepo } from "./helpers/workspace";
 import { waitForSidebarHydration } from "./helpers/workspace-ui";
 
@@ -32,12 +33,12 @@ async function archiveWorkspaceFromSidebar(page: Page, workspaceId: string): Pro
   await archiveItem.click();
 }
 
-async function removeProjectFromSidebar(page: Page, projectKey: string): Promise<void> {
-  const projectRow = page.getByTestId(`sidebar-project-row-${projectKey}`);
+async function removeProjectFromSidebar(page: Page, projectViewKey: string): Promise<void> {
+  const projectRow = page.getByTestId(`sidebar-project-row-${projectViewKey}`);
   await expect(projectRow).toBeVisible({ timeout: 30_000 });
   await projectRow.hover();
 
-  const kebab = page.getByTestId(`sidebar-project-kebab-${projectKey}`);
+  const kebab = page.getByTestId(`sidebar-project-kebab-${projectViewKey}`);
   await expect(kebab).toBeVisible({ timeout: 10_000 });
   await kebab.click();
 
@@ -45,7 +46,7 @@ async function removeProjectFromSidebar(page: Page, projectKey: string): Promise
   // user-confirmed removal proceeds deterministically.
   page.once("dialog", (dialog) => void dialog.accept());
 
-  const removeItem = page.getByTestId(`sidebar-project-menu-remove-${projectKey}`);
+  const removeItem = page.getByTestId(`sidebar-project-menu-remove-${projectViewKey}`);
   await expect(removeItem).toBeVisible({ timeout: 10_000 });
   await removeItem.click();
 }
@@ -152,9 +153,10 @@ test.describe("Project with no workspaces persists", () => {
     const workspace = await seedWorkspace({ repoPrefix: "empty-project-persists-" });
 
     try {
-      const projectRow = page.getByTestId(`sidebar-project-row-${workspace.projectKey}`);
+      const projectViewKey = projectEquivalenceViewKey(workspace.projectKey);
+      const projectRow = page.getByTestId(`sidebar-project-row-${projectViewKey}`);
       const newWorkspaceRow = page.getByTestId(
-        `sidebar-project-new-workspace-row-${workspace.projectKey}`,
+        `sidebar-project-new-workspace-row-${projectViewKey}`,
       );
       const globalNewWorkspace = page.getByTestId("sidebar-global-new-workspace");
 
@@ -198,7 +200,8 @@ test.describe("Project remove", () => {
     let readdedProjectId: string | null = null;
 
     try {
-      const projectRow = page.getByTestId(`sidebar-project-row-${workspace.projectKey}`);
+      const projectViewKey = projectEquivalenceViewKey(workspace.projectKey);
+      const projectRow = page.getByTestId(`sidebar-project-row-${projectViewKey}`);
 
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
@@ -207,7 +210,7 @@ test.describe("Project remove", () => {
         timeout: 30_000,
       });
 
-      await removeProjectFromSidebar(page, workspace.projectKey);
+      await removeProjectFromSidebar(page, projectViewKey);
 
       await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toHaveCount(0, {
         timeout: 30_000,
@@ -233,7 +236,9 @@ test.describe("Project remove", () => {
       await expect(projectRow).toContainText(workspace.projectDisplayName);
       await expect(projectRow).not.toContainText(workspace.repoPath);
       await expect(
-        page.getByTestId(`sidebar-project-new-workspace-row-${readdedProjectKey}`),
+        page.getByTestId(
+          `sidebar-project-new-workspace-row-${projectEquivalenceViewKey(readdedProjectKey)}`,
+        ),
       ).toBeVisible({ timeout: 30_000 });
     } finally {
       if (readdedProjectId) {

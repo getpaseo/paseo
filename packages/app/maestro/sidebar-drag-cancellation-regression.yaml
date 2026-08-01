@@ -1,0 +1,105 @@
+appId: ${PASEO_MAESTRO_APP_ID}
+---
+- launchApp:
+    clearState: true
+
+- runFlow: flows/dev-client.yaml
+- runFlow: flows/connect-direct-if-welcome.yaml
+
+- extendedWaitUntil:
+    visible:
+      id: "menu-button"
+    timeout: 60000
+
+- tapOn:
+    id: "menu-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "sidebar-project-list"
+    timeout: 10000
+
+- extendedWaitUntil:
+    visible:
+      text: ".*${PASEO_MAESTRO_DRAG_A_NAME}, Create a new workspace for ${PASEO_MAESTRO_DRAG_A_NAME}, Project actions"
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      text: ".*${PASEO_MAESTRO_DRAG_B_NAME}, Create a new workspace for ${PASEO_MAESTRO_DRAG_B_NAME}, Project actions"
+    timeout: 30000
+
+# A slow swipe stays inside the stationary slop long enough to arm the native
+# long-press drag before it moves the second project above the first.
+- assertVisible:
+    text: ".*${PASEO_MAESTRO_DRAG_A_NAME}, Create a new workspace for ${PASEO_MAESTRO_DRAG_A_NAME}, Project actions"
+    above:
+      text: ".*${PASEO_MAESTRO_DRAG_B_NAME}, Create a new workspace for ${PASEO_MAESTRO_DRAG_B_NAME}, Project actions"
+- swipe:
+    from:
+      text: ".*${PASEO_MAESTRO_DRAG_B_NAME}, Create a new workspace for ${PASEO_MAESTRO_DRAG_B_NAME}, Project actions"
+    direction: UP
+    duration: 20000
+    waitToSettleTimeoutMs: 0
+
+# A second touch during the drop spring must not cancel the committed reorder.
+- tapOn:
+    text: ".*${PASEO_MAESTRO_DRAG_B_NAME}, Create a new workspace for ${PASEO_MAESTRO_DRAG_B_NAME}, Project actions"
+- assertVisible:
+    text: ".*${PASEO_MAESTRO_DRAG_B_NAME}, Create a new workspace for ${PASEO_MAESTRO_DRAG_B_NAME}, Project actions"
+    above:
+      text: ".*${PASEO_MAESTRO_DRAG_A_NAME}, Create a new workspace for ${PASEO_MAESTRO_DRAG_A_NAME}, Project actions"
+
+# Horizontal intent after the lift belongs to panel close. It must cancel the
+# drag without committing another reorder or leaving the outer list locked.
+- swipe:
+    from:
+      text: ".*${PASEO_MAESTRO_DRAG_B_NAME}, Create a new workspace for ${PASEO_MAESTRO_DRAG_B_NAME}, Project actions"
+    direction: LEFT
+    duration: 20000
+- assertNotVisible:
+    id: "sidebar-project-list"
+
+- tapOn:
+    id: "menu-button"
+- extendedWaitUntil:
+    visible:
+      id: "sidebar-project-list"
+    timeout: 10000
+- assertVisible:
+    text: ".*${PASEO_MAESTRO_DRAG_B_NAME}, Create a new workspace for ${PASEO_MAESTRO_DRAG_B_NAME}, Project actions"
+    above:
+      text: ".*${PASEO_MAESTRO_DRAG_A_NAME}, Create a new workspace for ${PASEO_MAESTRO_DRAG_A_NAME}, Project actions"
+
+# Reaching a fixture at the bottom proves the nestable outer scroll was
+# unlocked by cancellation.
+- scrollUntilVisible:
+    element:
+      text: ".*${PASEO_MAESTRO_DRAG_Z_NAME}, Create a new workspace for ${PASEO_MAESTRO_DRAG_Z_NAME}, Project actions"
+    direction: DOWN
+    timeout: 30000
+    speed: 40
+    visibilityPercentage: 50
+    centerElement: true
+- assertVisible:
+    text: ".*${PASEO_MAESTRO_DRAG_Z_NAME}, Create a new workspace for ${PASEO_MAESTRO_DRAG_Z_NAME}, Project actions"
+
+- scrollUntilVisible:
+    element:
+      text: ".*${PASEO_MAESTRO_DRAG_A_NAME}, Create a new workspace for ${PASEO_MAESTRO_DRAG_A_NAME}, Project actions"
+    direction: UP
+    timeout: 30000
+    speed: 40
+    visibilityPercentage: 50
+    centerElement: true
+
+# A real reorder after cancellation proves the list is not merely scrollable;
+# its drag recognizer and semantic order update both recovered.
+- swipe:
+    from:
+      text: ".*${PASEO_MAESTRO_DRAG_A_NAME}, Create a new workspace for ${PASEO_MAESTRO_DRAG_A_NAME}, Project actions"
+    direction: UP
+    duration: 20000
+- assertVisible:
+    text: ".*${PASEO_MAESTRO_DRAG_A_NAME}, Create a new workspace for ${PASEO_MAESTRO_DRAG_A_NAME}, Project actions"
+    above:
+      text: ".*${PASEO_MAESTRO_DRAG_B_NAME}, Create a new workspace for ${PASEO_MAESTRO_DRAG_B_NAME}, Project actions"

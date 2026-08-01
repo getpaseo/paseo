@@ -188,6 +188,12 @@ describe("translation resources", () => {
     expect(en.shell.commandCenter.modelSearchKeywords).toBe(
       "switch model change model set model select model",
     );
+    expect(en.shell.commandCenter.thinkingGroupLabel).toBe("Thinking");
+    expect(en.shell.commandCenter.modeGroupLabel).toBe("Mode");
+    expect(en.shell.commandCenter.planModeGroupLabel).toBe("Plan mode");
+    expect(en.shell.commandCenter.fastModeGroupLabel).toBe("Fast");
+    expect(en.shell.commandCenter.settingOn).toBe("On");
+    expect(en.shell.commandCenter.settingOff).toBe("Off");
   });
 
   it("includes composer and agent workflow keys for the Batch 2 migration", () => {
