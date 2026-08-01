@@ -2118,11 +2118,14 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       }
 
       const state = target.refreshState;
-      if (state.status !== "in-flight" || !state.queued) {
+      if (state.status !== "in-flight") {
         break;
       }
       if (wasInvalidated) {
         state.queued = this.mergeRefreshRequests(state.queued, request);
+      }
+      if (!state.queued) {
+        break;
       }
 
       request = state.queued;
