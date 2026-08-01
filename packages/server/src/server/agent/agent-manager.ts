@@ -601,6 +601,17 @@ function getFirstUserMessageTextFromRows(rows: readonly AgentTimelineRow[]): str
   return null;
 }
 
+function restoreSubmittedPromptIdentity(
+  item: AgentTimelineItem,
+  identities: Record<string, string>,
+): { item: AgentTimelineItem; providerMessageId?: string } {
+  if (item.type !== "user_message" || !item.messageId) return { item };
+  const match = Object.entries(identities).find(([, providerId]) => providerId === item.messageId);
+  if (!match) return { item };
+  const [clientMessageId, providerMessageId] = match;
+  return { item: { ...item, clientMessageId, messageId: clientMessageId }, providerMessageId };
+}
+
 export class AgentManager {
   private readonly clients = new Map<AgentProvider, AgentClient>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
@@ -3200,7 +3211,15 @@ export class AgentManager {
     if (agent.internal) {
       return;
     }
-    await this.registry.applySnapshot(agent, options);
+    const timelineRows = this.timelineStore.getRows(agent.id);
+    const submittedPromptIdentities: Record<string, string> = {};
+    for (const row of timelineRows) {
+      if (row.item.type === "user_message" && row.item.clientMessageId && row.providerMessageId) {
+        submittedPromptIdentities[row.item.clientMessageId] = row.providerMessageId;
+      }
+    }
+    const identities = timelineRows.length > 0 ? submittedPromptIdentities : undefined;
+    await this.registry.applySnapshot(agent, options, identities);
   }
 
   private requireRegistry(): AgentStorage {
@@ -3290,6 +3309,7 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     broadcast: boolean,
   ): Promise<void> {
+    const identities = (await this.registry?.get(agent.id))?.submittedPromptIdentities ?? {};
     const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
     const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
     for await (const event of agent.session.streamHistory()) {
@@ -3320,12 +3340,13 @@ export class AgentManager {
         this.dispatch({ type: "provider_subagent", event: update });
       }
     }
-    for (const event of historyEvents) {
-      const row = this.recordTimeline(
-        agent.id,
-        event.item,
-        event.timestamp ? { timestamp: event.timestamp } : undefined,
-      );
+    for (const historyEvent of historyEvents) {
+      const restored = restoreSubmittedPromptIdentity(historyEvent.item, identities);
+      const event = { ...historyEvent, item: restored.item };
+      const row = this.recordTimeline(agent.id, event.item, {
+        timestamp: event.timestamp,
+        providerMessageId: restored.providerMessageId,
+      });
       if (broadcast) {
         this.dispatchStream(agent.id, event, {
           seq: row.seq,
@@ -3342,6 +3363,7 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     broadcast: boolean | (() => boolean),
   ): Promise<void> {
+    const identities = (await this.registry?.get(agent.id))?.submittedPromptIdentities ?? {};
     const deferredBroadcast = typeof broadcast === "function";
     const timelineEvents: Array<{
       event: Extract<AgentStreamEvent, { type: "timeline" }>;
@@ -3367,15 +3389,16 @@ export class AgentManager {
         if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
           continue;
         }
-        const row = this.recordTimeline(
-          agent.id,
-          event.item,
-          event.timestamp ? { timestamp: event.timestamp } : undefined,
-        );
+        const restored = restoreSubmittedPromptIdentity(event.item, identities);
+        const timelineEvent = { ...event, item: restored.item };
+        const row = this.recordTimeline(agent.id, timelineEvent.item, {
+          timestamp: event.timestamp,
+          providerMessageId: restored.providerMessageId,
+        });
         if (deferredBroadcast) {
-          timelineEvents.push({ event, row });
+          timelineEvents.push({ event: timelineEvent, row });
         } else if (broadcast) {
-          this.dispatchStream(agent.id, event, {
+          this.dispatchStream(agent.id, timelineEvent, {
             seq: row.seq,
             epoch: this.timelineStore.getEpoch(agent.id),
             timestamp: row.timestamp,
@@ -3977,6 +4000,7 @@ export class AgentManager {
         messageId,
       );
       if (enriched) this.enqueueDurableTimelineUpdate(agent.id, enriched);
+      if (enriched) this.enqueueBackgroundPersist(agent);
     }
     return existing;
   }

@@ -8205,6 +8205,23 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
     override async revertFiles({ messageId }: { messageId: string }): Promise<void> {
       this.rewindMessageIds.push(messageId);
     }
+
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: this.provider,
+        item: {
+          type: "user_message",
+          text: "hello from composer",
+          messageId: "provider-message-1",
+        },
+      };
+      yield {
+        type: "timeline",
+        provider: this.provider,
+        item: { type: "assistant_message", text: "output before provider echo" },
+      };
+    }
   }
 
   class SubmittedUserMessageClient extends TestAgentClient {
@@ -8212,6 +8229,17 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
 
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
       this.session = new SubmittedUserMessageSession(config);
+      return this.session;
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      this.session = new SubmittedUserMessageSession({
+        provider: "codex",
+        cwd: config?.cwd ?? workdir,
+      });
       return this.session;
     }
   }
@@ -8223,6 +8251,8 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
     logger,
     idFactory: () => "00000000-0000-4000-8000-000000000402",
   });
+  let restartedManager: AgentManager | undefined;
+  let restartedStorage: AgentStorage | undefined;
   const events: AgentManagerEvent[] = [];
   manager.subscribe((event) => events.push(event), { replayState: false });
   const streamEvents = () =>
@@ -8302,7 +8332,35 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
       "provider-message-1",
       "provider-native-message",
     ]);
+
+    await manager.closeAgent(snapshot.id);
+    expect((await storage.get(snapshot.id))?.submittedPromptIdentities).toEqual({
+      "msg-client-1": "provider-message-1",
+    });
+    restartedStorage = new AgentStorage(storagePath, logger);
+    const restartedClient = new SubmittedUserMessageClient();
+    restartedManager = new AgentManager({
+      clients: { codex: restartedClient },
+      registry: restartedStorage,
+      logger,
+    });
+    await ensureAgentLoaded(snapshot.id, {
+      agentManager: restartedManager,
+      agentStorage: restartedStorage,
+      logger,
+    });
+
+    expect(
+      restartedManager.fetchTimeline(snapshot.id, { direction: "tail", limit: 20 }).rows[0],
+    ).toMatchObject({
+      providerMessageId: "provider-message-1",
+      item: { clientMessageId: "msg-client-1", messageId: "msg-client-1" },
+    });
+    await restartedManager.rewind(snapshot.id, "msg-client-1", "files");
+    expect(restartedClient.session?.rewindMessageIds).toEqual(["provider-message-1"]);
   } finally {
+    await restartedManager?.flush().catch(() => undefined);
+    await restartedStorage?.flush().catch(() => undefined);
     await manager.flush().catch(() => undefined);
     await storage.flush().catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });

@@ -66,6 +66,7 @@ const STORED_AGENT_SCHEMA = z.object({
   internal: z.boolean().optional(),
   archivedAt: z.string().nullable().optional(),
   owner: AgentOwnerSchema.optional(),
+  submittedPromptIdentities: z.record(z.string(), z.string()).optional(),
 });
 
 export type SerializableAgentConfig = Pick<
@@ -205,6 +206,7 @@ export class AgentStorage {
   async applySnapshot(
     agent: ManagedAgent,
     options?: { title?: string | null; internal?: boolean },
+    submittedPromptIdentities?: Record<string, string>,
   ): Promise<void> {
     await this.load();
     await this.waitForPendingWrite(agent.id);
@@ -218,6 +220,8 @@ export class AgentStorage {
       createdAt: existing?.createdAt,
       internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
     });
+    record.submittedPromptIdentities =
+      submittedPromptIdentities ?? existing?.submittedPromptIdentities;
 
     // Preserve soft-delete/archive status across snapshot flushes.
     // `archivedAt` is not part of the ManagedAgent snapshot, so a naive projection
