@@ -404,16 +404,22 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     }
   });
 
-  test("shutdown cleans up a created session when startup provider.list never settles", async () => {
+  test("shutdown retains the server until a non-cooperative startup provider.list settles", async () => {
+    vi.useFakeTimers();
     const cwd = tmpCwd();
     const runtime = new TestOpenCodeHarness();
     const openCode = new TestOpenCodeClient();
+    const providerListGate = deferred<{
+      data: { connected: string[]; all: never[] };
+    }>();
+    const releaseGate = deferred<void>();
     let providerListSignal: AbortSignal | undefined;
     openCode.sessionCreateResponse = { data: { id: "created-before-provider-list" } };
     openCode.providerListImplementation = async (options) => {
       providerListSignal = (options as { signal?: AbortSignal } | undefined)?.signal;
-      return await new Promise<never>(() => {});
+      return await providerListGate.promise;
     };
+    runtime.releaseImplementation = async () => releaseGate.resolve();
     runtime.enqueueClient(openCode);
     const client = new OpenCodeAgentClient(logger, undefined, {
       serverManager: runtime,
@@ -428,13 +434,24 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
 
       expect(providerListSignal?.aborted).toBe(true);
       await expect(creation).rejects.toThrow("OpenCode agent client shutting down");
-      await shutdown;
       expect(openCode.calls.sessionDelete).toEqual([
         { sessionID: "created-before-provider-list", directory: cwd },
       ]);
-      expect(runtime.acquisitions[0]?.releaseCount).toBe(1);
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(runtime.acquisitions[0]?.releaseCount).toBe(0);
+      expect(runtime.shutdownCallCount).toBe(0);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await shutdown;
       expect(runtime.shutdownCallCount).toBe(1);
+      expect(runtime.acquisitions[0]?.releaseCount).toBe(0);
+
+      providerListGate.resolve({ data: { connected: [], all: [] } });
+      await releaseGate.promise;
+      await client.shutdown();
+      expect(runtime.acquisitions[0]?.releaseCount).toBe(1);
     } finally {
+      vi.useRealTimers();
       rmSync(cwd, { recursive: true, force: true });
     }
   });
