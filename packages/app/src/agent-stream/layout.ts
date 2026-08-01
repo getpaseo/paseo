@@ -36,7 +36,7 @@ export interface StreamLayout {
 
 export interface StreamLayoutInput {
   strategy: StreamStrategy;
-  agentStatus: string;
+  isTurnActive: boolean;
   history: StreamItem[];
   liveHead: StreamItem[];
   timingByAssistantId: Map<string, TurnTiming>;
@@ -117,7 +117,7 @@ function findLatestAssistantInTurn(input: {
 }
 
 function resolveAuxiliaryTurnFooter(input: StreamLayoutInput): TurnFooterHost | null {
-  if (input.agentStatus === "running") {
+  if (input.isTurnActive) {
     return null;
   }
 

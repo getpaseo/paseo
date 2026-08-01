@@ -4,6 +4,7 @@ export interface AgentTimelineRow {
   seq: number;
   timestamp: string;
   item: AgentTimelineItem;
+  readonly providerMessageId?: string;
 }
 
 export interface AgentTimelineCursor {
@@ -58,4 +59,5 @@ export interface AgentTimelineStore {
   getLastAssistantMessage(agentId: string): Promise<string | null>;
   deleteAgent(agentId: string): Promise<void>;
   bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void>;
+  updateCommittedRow(agentId: string, row: AgentTimelineRow): Promise<void>;
 }

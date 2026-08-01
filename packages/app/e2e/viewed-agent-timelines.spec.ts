@@ -7,6 +7,11 @@ import { observeTimelineSubscriptions } from "./helpers/timeline-delivery";
 import { waitForWorkspaceTabsVisible } from "./helpers/workspace-tabs";
 import { installDaemonWebSocketGate } from "./helpers/daemon-websocket-gate";
 import {
+  expectAgentIdle,
+  expectInlineWorkingIndicator,
+  expectTurnCopyButton,
+} from "./helpers/agent-stream";
+import {
   expectReconnectingToastGone,
   expectReconnectingToastVisible,
 } from "./helpers/workspace-ui";
@@ -19,19 +24,21 @@ interface ViewedTimelineScenario {
   cleanup(): Promise<void>;
 }
 
-async function seedViewedTimelineScenario(): Promise<ViewedTimelineScenario> {
+async function seedViewedTimelineScenario(
+  options: { firstAgentModel?: string } = {},
+): Promise<ViewedTimelineScenario> {
   const workspace = await seedWorkspace({ repoPrefix: "viewed-timelines-" });
-  const createAgent = (title: string) =>
+  const createAgent = (title: string, model = "ten-second-stream") =>
     workspace.client.createAgent({
       provider: "mock",
       cwd: workspace.repoPath,
       workspaceId: workspace.workspaceId,
       title,
       modeId: "load-test",
-      model: "ten-second-stream",
+      model,
     });
   const [firstAgent, secondAgent] = await Promise.all([
-    createAgent("First viewed chat"),
+    createAgent("First viewed chat", options.firstAgentModel),
     createAgent("Second viewed chat"),
   ]);
   return {
@@ -71,7 +78,46 @@ async function commitMessage(scenario: ViewedTimelineScenario, agentId: string, 
   expect(finish.status).toBe("idle");
 }
 
+async function startVisibleTurn(
+  page: Page,
+  scenario: ViewedTimelineScenario,
+  prompt: string,
+): Promise<void> {
+  await scenario.client.sendAgentMessage(scenario.firstAgentId, prompt);
+  await expect(page.getByText(prompt, { exact: true })).toBeVisible();
+  await expectInlineWorkingIndicator(page);
+}
+
+async function expectAgentConsistentlyIdle(page: Page, title: string): Promise<void> {
+  const tab = page.getByRole("button", { name: title, exact: true });
+  await expect(tab.locator('[data-status-bucket="running"]')).toHaveCount(0);
+  await expectAgentIdle(page);
+  await expect(page.getByTestId("turn-working-indicator")).toHaveCount(0);
+  await expectTurnCopyButton(page);
+}
+
 test.describe("Viewed agent timelines", () => {
+  test("a turn that finishes while unsubscribed reopens with consistently idle chrome", async ({
+    page,
+  }) => {
+    test.setTimeout(150_000);
+    const subscriptions = observeTimelineSubscriptions(page);
+    const scenario = await seedViewedTimelineScenario({ firstAgentModel: "one-minute-stream" });
+    try {
+      await openAgent(page, scenario, scenario.firstAgentId);
+      await startVisibleTurn(page, scenario, "Finish after this chat becomes unsubscribed.");
+      await selectAgent(page, "Second viewed chat");
+      await subscriptions.waitForSubscribedAgents([scenario.secondAgentId], { timeout: 45_000 });
+      const finish = await scenario.client.waitForFinish(scenario.firstAgentId, 90_000);
+      expect(finish.status).toBe("idle");
+
+      await selectAgent(page, "First viewed chat");
+      await expectAgentConsistentlyIdle(page, "First viewed chat");
+    } finally {
+      await scenario.cleanup();
+    }
+  });
+
   test("an unsubscribed hidden chat catches up when shown", async ({ page }) => {
     test.setTimeout(90_000);
     const subscriptions = observeTimelineSubscriptions(page);

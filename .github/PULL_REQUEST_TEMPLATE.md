@@ -24,9 +24,9 @@ Closes #
 
 <!-- A bullet list of what this PR wants to accomplish, include requirements and acceptance criteria. This helps lock down the scope of the PR and prevent expanding scope over the intended goal. -->
 
-### Non-Goals
+### Non-goals
 
-<!-- A bullet list of what this PR does not want to accomplish. This helps lock down the scope of the PR and prevent expanding scope over the intended goal. -->
+<!-- A bullet list of what this PR does not want to accomplish. Add any intentional trade offs taken. This helps lock down the scope of the PR and prevent expanding scope over the intended goal. -->
 
 ### QA
 
