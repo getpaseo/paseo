@@ -149,6 +149,8 @@ export interface AgentCapabilityFlags {
   supportsRewindConversation?: boolean;
   supportsRewindFiles?: boolean;
   supportsRewindBoth?: boolean;
+  // COMPAT(supportsNativeFork): added in v0.2.916
+  supportsNativeFork?: boolean;
 }
 
 export interface AgentPersistenceHandle {
