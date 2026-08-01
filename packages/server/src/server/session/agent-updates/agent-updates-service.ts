@@ -7,7 +7,7 @@ import type {
 } from "../../messages.js";
 import type { ManagedAgent } from "../../agent/agent-manager.js";
 import type { StoredAgentRecord } from "../../agent/agent-storage.js";
-import { resolveEffectiveThinkingOptionId } from "../../agent/agent-projections.js";
+import { resolveEffectiveThinkingOptionId, toAgentPayload } from "../../agent/agent-projections.js";
 
 type AgentUpdatePayload = Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"];
 type AgentUpdatesFilter = NonNullable<
@@ -52,7 +52,7 @@ export interface AgentUpdatesService {
 
 export interface AgentUpdatesServiceDeps {
   emit(message: SessionOutboundMessage): void;
-  buildAgentPayload(agent: ManagedAgent): Promise<AgentSnapshotPayload>;
+  enrichAgentPayload(payload: AgentSnapshotPayload): Promise<AgentSnapshotPayload>;
   buildStoredAgentPayload(record: StoredAgentRecord): AgentSnapshotPayload;
   isProviderVisibleToClient(provider: string): boolean;
   buildProjectPlacementForWorkspaceId(workspaceId: string): Promise<ProjectPlacementPayload | null>;
@@ -258,10 +258,10 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     return payload;
   }
 
-  async function emitLiveAgentUpdate(agent: ManagedAgent): Promise<void> {
+  async function emitLiveAgentUpdate(payload: AgentSnapshotPayload): Promise<void> {
     try {
       const sub = subscription;
-      const payload = await deps.buildAgentPayload(agent);
+      payload = await deps.enrichAgentPayload(payload);
       if (sub) {
         const project = payload.workspaceId
           ? await deps.buildProjectPlacementForWorkspaceId(payload.workspaceId)
@@ -319,7 +319,8 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
   }
 
   function forwardLiveAgent(agent: ManagedAgent): Promise<void> {
-    return enqueueAgentUpdate(agent.id, () => emitLiveAgentUpdate(agent));
+    const payload = toAgentPayload(agent);
+    return enqueueAgentUpdate(payload.id, () => emitLiveAgentUpdate(payload));
   }
 
   function removeAgent(agentId: string): Promise<void> {

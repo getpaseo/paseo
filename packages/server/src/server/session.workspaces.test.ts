@@ -757,15 +757,14 @@ test("agent updates preserve queued live transitions across stored metadata read
     lifecycle: "idle",
     updatedAt: "2026-07-31T10:00:02.000Z",
   }) as unknown as ManagedAgent;
-  const stored = {
-    ...makeStoredAgent({
-      id: "agent-coherent",
-      cwd: REPO_CWD,
-      updatedAt: "2026-07-31T10:00:03.000Z",
-    }),
-    title: "Stored title",
-    archivedAt: "2026-07-31T10:00:04.000Z",
-  };
+  running.config.model = "running-model";
+  idle.config = running.config;
+  const stored = makeStoredAgent({
+    id: "agent-coherent",
+    cwd: REPO_CWD,
+    updatedAt: "2026-07-31T10:00:03.000Z",
+  });
+  stored.title = "Stored title";
   const storageReadStarted = deferred<void>();
   const firstStorageRead = deferred<StoredAgentRecord | null>();
   const emittedAgentUpdates: Extract<
@@ -808,12 +807,14 @@ test("agent updates preserve queued live transitions across stored metadata read
       createdAt: "2026-07-31T10:00:00.000Z",
       updatedAt: "2026-07-31T10:00:00.000Z",
     });
-  activateAgentUpdatesSubscription(session, "sub-coherent", { includeArchived: true });
+  activateAgentUpdatesSubscription(session, "sub-coherent");
   if (!forwardAgentEvent) throw new Error("Agent event listener was not installed");
 
   forwardAgentEvent({ type: "agent_state", agent: running });
   await storageReadStarted.promise;
+  idle.config.model = "idle-model";
   forwardAgentEvent({ type: "agent_state", agent: idle });
+  idle.config.model = "mutated-after-queue";
   firstStorageRead.resolve(stored);
   await twoUpdatesEmitted.promise;
 
@@ -827,8 +828,8 @@ test("agent updates preserve queued live transitions across stored metadata read
           startedAt: "2026-07-31T10:00:00.500Z",
         },
         updatedAt: "2026-07-31T10:00:01.000Z",
+        model: "running-model",
         title: "Stored title",
-        archivedAt: "2026-07-31T10:00:04.000Z",
       }),
     }),
     expect.objectContaining({
@@ -837,8 +838,8 @@ test("agent updates preserve queued live transitions across stored metadata read
         status: "idle",
         activeTurn: null,
         updatedAt: "2026-07-31T10:00:02.000Z",
+        model: "idle-model",
         title: "Stored title",
-        archivedAt: "2026-07-31T10:00:04.000Z",
       }),
     }),
   ]);

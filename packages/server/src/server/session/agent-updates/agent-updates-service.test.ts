@@ -102,7 +102,7 @@ function buildHarness() {
 
   const service = createAgentUpdatesService({
     emit: (message) => emitted.push(message),
-    buildAgentPayload: async (agent) => {
+    enrichAgentPayload: async (payload) => {
       const queuedPayload = queuedPayloadBuilds.shift();
       if (queuedPayload) {
         return queuedPayload;
@@ -110,11 +110,11 @@ function buildHarness() {
       if (buildAgentPayloadError) {
         throw buildAgentPayloadError;
       }
-      const payload = payloadById.get(agent.id);
-      if (!payload) {
-        throw new Error(`no payload registered for ${agent.id}`);
+      const registeredPayload = payloadById.get(payload.id);
+      if (!registeredPayload) {
+        throw new Error(`no payload registered for ${payload.id}`);
       }
-      return payload;
+      return registeredPayload;
     },
     buildStoredAgentPayload: (record) => {
       const payload = payloadById.get(record.id);
@@ -167,7 +167,26 @@ function buildHarness() {
         );
     },
     managed(id: string): ManagedAgent {
-      return { id } as unknown as ManagedAgent;
+      const payload = payloadById.get(id) ?? makeAgentPayload({ id });
+      return {
+        ...payload,
+        lifecycle: payload.status,
+        config: {
+          provider: payload.provider,
+          cwd: payload.cwd,
+        },
+        createdAt: new Date(payload.createdAt),
+        updatedAt: new Date(payload.updatedAt),
+        lastUserMessageAt: null,
+        pendingPermissions: new Map(),
+        attention: {
+          requiresAttention: payload.requiresAttention ?? false,
+          attentionReason: null,
+          attentionTimestamp: new Date(payload.updatedAt),
+        },
+        activeTurnId: null,
+        activeTurnStartedAt: null,
+      } as unknown as ManagedAgent;
     },
     stored(id: string): StoredAgentRecord {
       return { id } as unknown as StoredAgentRecord;
