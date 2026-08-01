@@ -147,6 +147,7 @@ describe("OMP agent client and session", () => {
       { type: "user_message", text: "hello OMP", messageId: "user-1" },
       { type: "assistant_message", text: "hello from OMP", messageId: "omp-assistant-1" },
     ]);
+    expect(omp.eventTypes().slice(0, 2)).toEqual(["turn_started", "timeline"]);
     expect(omp.completedTurnCount()).toBe(1);
   });
 

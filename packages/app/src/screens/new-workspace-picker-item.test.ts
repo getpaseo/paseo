@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
+import type { CheckoutStatusPayload } from "@/git/checkout-status-cache";
 import {
   branchPickerOptionId,
   buildBranchPickerItems,
   pickerItemToCheckoutRequest,
+  resolveCheckoutRequest,
   type PickerItem,
 } from "./new-workspace-picker-item";
 
@@ -216,5 +218,41 @@ describe("buildBranchPickerItems", () => {
         committerDate: 1,
       },
     ]);
+  });
+});
+
+describe("resolveCheckoutRequest", () => {
+  const checkoutStatus = {
+    currentBranch: "feature/current",
+  } as CheckoutStatusPayload;
+
+  it("branches from the loaded current branch when nothing was picked", () => {
+    expect(resolveCheckoutRequest(null, checkoutStatus)).toEqual({
+      action: "branch-off",
+      refName: "feature/current",
+    });
+  });
+
+  it("prefers an explicit picker selection", () => {
+    expect(
+      resolveCheckoutRequest(
+        {
+          kind: "branch",
+          name: "feature/picked",
+          refName: "refs/heads/feature/picked",
+          accessibilityLabel: "feature/picked, local branch",
+        },
+        checkoutStatus,
+      ),
+    ).toEqual({
+      action: "branch-off",
+      refName: "refs/heads/feature/picked",
+    });
+  });
+
+  it("preserves the server-default intent for a detached checkout", () => {
+    expect(
+      resolveCheckoutRequest(null, { ...checkoutStatus, currentBranch: null }),
+    ).toBeUndefined();
   });
 });

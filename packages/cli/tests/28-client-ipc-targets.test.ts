@@ -27,6 +27,17 @@ console.log("=== CLI IPC Target Helpers ===\n");
 }
 
 {
+  console.log("Test 1b: bare unix socket paths resolve at the connection boundary");
+  const target = resolveDaemonTarget("/tmp/paseo.sock");
+  assert.deepStrictEqual(target, {
+    type: "ipc",
+    url: "ws+unix:///tmp/paseo.sock:/ws",
+    socketPath: "/tmp/paseo.sock",
+  });
+  console.log("✓ bare unix socket paths resolve at the connection boundary\n");
+}
+
+{
   console.log("Test 2: pipe hosts preserve the Node socketPath transport form");
   const target = resolveDaemonTarget("pipe://\\\\.\\pipe\\paseo-managed-test");
   assert.deepStrictEqual(target, {
