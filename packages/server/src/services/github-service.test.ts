@@ -1787,11 +1787,125 @@ describe("ForgeService", () => {
     now = 1_007_000;
     await service.getPullRequestTimeline({
       cwd: "/repo",
-      prNumber: 45,
+      prNumber: 42,
       repoOwner: "parentOwner",
       repoName: "parentRepo",
     });
     expect(runner.calls).toHaveLength(2);
+  });
+
+  it("uses the response rate-limit resource to isolate REST and GraphQL cooldowns", async () => {
+    const runner = createScriptedRunner([
+      {
+        error: new GitHubCommandError({
+          args: ["api", "repos/parentOwner/parentRepo/check-runs/1"],
+          cwd: "/repo",
+          exitCode: 1,
+          stderr: "HTTP 429: API rate limit exceeded",
+          stdout:
+            "HTTP/2.0 429 Too Many Requests\nRetry-After: 60\nX-RateLimit-Resource: graphql\n\nrate limited",
+        }),
+      },
+      JSON.stringify({ id: 2, name: "test", status: "completed", conclusion: "success" }),
+      "[]",
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 1_000,
+    });
+
+    await expect(
+      service.getCheckDetails({
+        cwd: "/repo",
+        repoOwner: "parentOwner",
+        repoName: "parentRepo",
+        checkRunId: 1,
+      }),
+    ).rejects.toMatchObject({ stderr: "HTTP 429: API rate limit exceeded" });
+
+    await expect(service.getPullRequest({ cwd: "/repo", number: 42 })).rejects.toMatchObject({
+      message: "GitHub API rate limit cooldown active",
+    });
+
+    await expect(
+      service.getCheckDetails({
+        cwd: "/repo",
+        repoOwner: "parentOwner",
+        repoName: "parentRepo",
+        checkRunId: 2,
+      }),
+    ).resolves.toMatchObject({ checkRunId: 2, name: "test" });
+    expect(runner.calls).toHaveLength(3);
+    expect(runner.calls[1].args).toEqual([
+      "api",
+      "--include",
+      "repos/parentOwner/parentRepo/check-runs/2",
+    ]);
+  });
+
+  it("admits one GraphQL request at a time before a rate limit response", async () => {
+    const calls: RunnerCall[] = [];
+    let activeCalls = 0;
+    let maxActiveCalls = 0;
+    let releaseGraphql: (() => void) | null = null;
+    let releaseRest: (() => void) | null = null;
+    const runner: GitHubCommandRunner = async (args, options) => {
+      calls.push({ args, cwd: options.cwd, envOverlay: options.envOverlay });
+      activeCalls += 1;
+      maxActiveCalls = Math.max(maxActiveCalls, activeCalls);
+      if (args[0] === "pr" && releaseGraphql === null) {
+        await new Promise<void>((resolve) => {
+          releaseGraphql = resolve;
+        });
+      }
+      if (args.includes("repos/parentOwner/parentRepo/check-runs/2")) {
+        await new Promise<void>((resolve) => {
+          releaseRest = resolve;
+        });
+      }
+      activeCalls -= 1;
+      return {
+        stdout: args.includes("repos/parentOwner/parentRepo/check-runs/2")
+          ? JSON.stringify({ id: 2, name: "test", status: "completed", conclusion: "success" })
+          : "[]",
+        stderr: "",
+      };
+    };
+    const service = createGitHubService({
+      runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 1_000,
+      resolveRepoHost: async () => null,
+    });
+
+    const first = service.listPullRequests({ cwd: "/repo", query: "first" });
+    await flushMicrotasks();
+    const second = service.listPullRequests({ cwd: "/repo", query: "second" });
+    await flushMicrotasks();
+
+    expect(calls).toHaveLength(1);
+    expect(maxActiveCalls).toBe(1);
+    const rest = service.getCheckDetails({
+      cwd: "/repo",
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+      checkRunId: 2,
+    });
+    await flushMicrotasks();
+
+    expect(calls).toHaveLength(2);
+    expect(maxActiveCalls).toBe(2);
+    releaseRest?.();
+    await flushMicrotasks();
+    expect(calls).toHaveLength(3);
+    releaseGraphql?.();
+
+    const [firstResult, secondResult, checkDetails] = await Promise.all([first, second, rest]);
+    expect(firstResult).toEqual([]);
+    expect(secondResult).toEqual([]);
+    expect(checkDetails).toMatchObject({ checkRunId: 2, name: "test" });
+    expect(maxActiveCalls).toBe(2);
   });
 
   it("uses the GitHub reset timestamp when Retry-After is absent", async () => {
@@ -2638,8 +2752,7 @@ describe("ForgeService", () => {
   it("keeps fresh merged PR state when supplemental facts hit a rate-limit cooldown", async () => {
     const headSha = "1111111111111111111111111111111111111111";
     const runner = createScriptedRunner([
-      currentPullRequestJson({ state: "OPEN", mergedAt: null }),
-      currentPullRequestGithubFactsJson(),
+      currentPullRequestJson({ state: "MERGED", mergedAt: "2026-07-17T12:00:00Z" }),
       {
         error: new GitHubCommandError({
           args: ["api", "graphql"],
@@ -2649,7 +2762,6 @@ describe("ForgeService", () => {
           stdout: "HTTP/2.0 429 Too Many Requests\nRetry-After: 60\n\nrate limited",
         }),
       },
-      currentPullRequestJson({ state: "MERGED", mergedAt: "2026-07-17T12:00:00Z" }),
     ]);
     const service = createGitHubService({
       runner: runner.runner,
@@ -2657,17 +2769,6 @@ describe("ForgeService", () => {
       now: () => 1_000,
     });
 
-    const open = await service.getCurrentPullRequestStatus({
-      cwd: "/repo",
-      headRef: "feature/fork",
-      headSha,
-    });
-    await service.getPullRequestTimeline({
-      cwd: "/repo",
-      prNumber: 42,
-      repoOwner: "parentOwner",
-      repoName: "parentRepo",
-    });
     const merged = await service.getCurrentPullRequestStatus({
       cwd: "/repo",
       headRef: "feature/fork",
@@ -2676,7 +2777,6 @@ describe("ForgeService", () => {
       reason: "test",
     });
 
-    expect(open?.isMerged).toBe(false);
     expect(merged).toMatchObject({ isMerged: true, state: "merged" });
     expect(merged).not.toHaveProperty("forgeSpecific");
   });

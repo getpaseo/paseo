@@ -676,6 +676,7 @@ interface GitHubRateLimitResponseMetadata {
   retryAfter?: string;
   rateLimitRemaining?: string;
   rateLimitReset?: string;
+  rateLimitResource?: string;
 }
 
 export class GitHubCommandError extends ForgeCommandError {
@@ -735,6 +736,11 @@ interface InFlightCacheEntry {
   force: boolean;
 }
 
+interface GitHubRateLimitCooldown {
+  resource: string;
+  retryAt: number;
+}
+
 interface GitHubPollTarget {
   cwd: string;
   headRef: string;
@@ -773,7 +779,8 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
   const inFlight = new Map<string, InFlightCacheEntry>();
   const pollTargets = new Map<string, GitHubPollTarget>();
   const checkLogTailCache = new Map<string, { logTail: string; logTruncated: boolean }>();
-  const rateLimitCooldownByHost = new Map<string, number>();
+  const rateLimitCooldownByResource = new Map<string, number>();
+  const rateLimitAdmissionByResource = new Map<string, Promise<void>>();
   let api!: GitHubService;
 
   async function cached<T>(params: {
@@ -782,6 +789,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     args: unknown;
     readOptions?: ForgeReadOptions;
     load: () => Promise<T>;
+    cacheExpiresAt?: (value: T) => number | null;
   }): Promise<T> {
     if (params.readOptions?.force && !params.readOptions.reason) {
       throw new Error("ForgeService forced read requires a reason");
@@ -807,10 +815,11 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       .load()
       .then((value) => {
         if (inFlight.get(key)?.promise === request) {
+          const cacheExpiresAt = params.cacheExpiresAt?.(value);
           cache.set(key, {
             value,
             cwd: params.cwd,
-            expiresAt: deps.now() + ttlMs,
+            expiresAt: Math.min(deps.now() + ttlMs, cacheExpiresAt ?? Number.POSITIVE_INFINITY),
           });
         }
         return value;
@@ -866,32 +875,50 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       ? { ...runOptions, envOverlay: { ...runOptions.envOverlay, GH_HOST: host } }
       : runOptions;
     const rateLimitHost = (host ?? "github.com").toLowerCase();
-    const isApiCommand = isGitHubApiCommand(args);
-    const commandArgs = isApiCommand ? addGitHubApiResponseHeaders(args) : args;
-    if (isApiCommand) {
-      assertGitHubRateLimitCooldown({
-        cooldownByHost: rateLimitCooldownByHost,
-        host: rateLimitHost,
-        now: deps.now(),
-      });
-    }
-    try {
-      const result = await deps.runner(commandArgs, effectiveOptions);
-      return stripGitHubApiResponseHeaders({ args: commandArgs, stdout: result.stdout }).trim();
-    } catch (error) {
-      const normalized = githubCliRunner.normalizeError(error, {
-        args: commandArgs,
-        cwd: runOptions.cwd,
-      });
-      if (isApiCommand) {
-        const retryAt = getGitHubRateLimitRetryAt({ error: normalized, now: deps.now() });
-        if (retryAt !== null) {
-          const existingRetryAt = rateLimitCooldownByHost.get(rateLimitHost) ?? 0;
-          rateLimitCooldownByHost.set(rateLimitHost, Math.max(existingRetryAt, retryAt));
+    const resource = getGitHubRateLimitResource(args);
+    const commandArgs = isGitHubApiCommand(args) ? addGitHubApiResponseHeaders(args) : args;
+    const execute = async (): Promise<string> => {
+      try {
+        const result = await deps.runner(commandArgs, effectiveOptions);
+        return stripGitHubApiResponseHeaders({ args: commandArgs, stdout: result.stdout }).trim();
+      } catch (error) {
+        const normalized = githubCliRunner.normalizeError(error, {
+          args: commandArgs,
+          cwd: runOptions.cwd,
+        });
+        if (resource) {
+          const cooldown = getGitHubRateLimitCooldown({
+            error: normalized,
+            fallbackResource: resource,
+            now: deps.now(),
+          });
+          if (cooldown) {
+            const key = buildGitHubRateLimitKey(rateLimitHost, cooldown.resource);
+            const existingRetryAt = rateLimitCooldownByResource.get(key) ?? 0;
+            rateLimitCooldownByResource.set(key, Math.max(existingRetryAt, cooldown.retryAt));
+          }
         }
+        throw normalized;
       }
-      throw normalized;
+    };
+
+    if (!resource) {
+      return execute();
     }
+
+    const rateLimitKey = buildGitHubRateLimitKey(rateLimitHost, resource);
+    return runWithGitHubRateLimitAdmission({
+      admissionByResource: rateLimitAdmissionByResource,
+      key: rateLimitKey,
+      load: execute,
+      onAdmit: () => {
+        assertGitHubRateLimitCooldown({
+          cooldownByResource: rateLimitCooldownByResource,
+          key: rateLimitKey,
+          now: deps.now(),
+        });
+      },
+    });
   }
 
   async function runGhJson<T>(
@@ -1170,11 +1197,13 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     },
 
     getPullRequestTimeline(input) {
+      let cacheExpiresAt: number | null = null;
       return cached({
         cwd: input.cwd,
         method: "getPullRequestTimeline",
         args: { prNumber: input.prNumber },
         readOptions: input,
+        cacheExpiresAt: () => cacheExpiresAt,
         load: async () => {
           try {
             const parsed = await runGhJson(
@@ -1200,6 +1229,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
               repoName: input.repoName,
             });
           } catch (error) {
+            cacheExpiresAt = getGitHubRateLimitRetryAt({ error, now: deps.now() });
             return {
               prNumber: input.prNumber,
               repoOwner: input.repoOwner,
@@ -1876,23 +1906,83 @@ function isGitHubApiCommand(args: string[]): boolean {
   return args[0] === "api";
 }
 
+function getGitHubRateLimitResource(args: string[]): string | null {
+  if (isGitHubApiCommand(args)) {
+    return args[1] === "graphql" ? "graphql" : "core";
+  }
+  // GitHub CLI's pull request commands use GraphQL even though they do not
+  // expose the underlying API command in their arguments.
+  return args[0] === "pr" ? "graphql" : null;
+}
+
+function buildGitHubRateLimitKey(host: string, resource: string): string {
+  return `${host}:${resource}`;
+}
+
+async function runWithGitHubRateLimitAdmission<T>(input: {
+  admissionByResource: Map<string, Promise<void>>;
+  key: string;
+  onAdmit: () => void;
+  load: () => Promise<T>;
+}): Promise<T> {
+  const previous = input.admissionByResource.get(input.key) ?? Promise.resolve();
+  let release!: () => void;
+  const admission = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(() => admission);
+  input.admissionByResource.set(input.key, tail);
+
+  await previous;
+  try {
+    input.onAdmit();
+    return await input.load();
+  } finally {
+    release();
+    if (input.admissionByResource.get(input.key) === tail) {
+      input.admissionByResource.delete(input.key);
+    }
+  }
+}
+
 function assertGitHubRateLimitCooldown(input: {
-  cooldownByHost: Map<string, number>;
-  host: string;
+  cooldownByResource: Map<string, number>;
+  key: string;
   now: number;
 }): void {
-  const retryAt = input.cooldownByHost.get(input.host);
+  const retryAt = input.cooldownByResource.get(input.key);
   if (retryAt === undefined) {
     return;
   }
   if (retryAt <= input.now) {
-    input.cooldownByHost.delete(input.host);
+    input.cooldownByResource.delete(input.key);
     return;
   }
   throw new GitHubRateLimitCooldownError(retryAt);
 }
 
-function getGitHubRateLimitRetryAt(input: { error: Error; now: number }): number | null {
+function getGitHubRateLimitCooldown(input: {
+  error: unknown;
+  fallbackResource: string;
+  now: number;
+}): GitHubRateLimitCooldown | null {
+  const retryAt = getGitHubRateLimitRetryAt(input);
+  if (retryAt === null) {
+    return null;
+  }
+  const response = input.error instanceof GitHubCommandError ? input.error.rateLimitResponse : null;
+  const resource =
+    response?.rateLimitResource ??
+    (input.error instanceof GitHubCommandError
+      ? parseGitHubHeaders(input.error.stderr).get("x-ratelimit-resource")
+      : undefined);
+  return { resource: resource?.toLowerCase() || input.fallbackResource, retryAt };
+}
+
+function getGitHubRateLimitRetryAt(input: { error: unknown; now: number }): number | null {
+  if (input.error instanceof GitHubRateLimitCooldownError) {
+    return input.error.retryAt;
+  }
   if (!(input.error instanceof GitHubCommandError)) {
     return null;
   }
@@ -1905,6 +1995,7 @@ function getGitHubRateLimitRetryAt(input: { error: Error; now: number }): number
           "retry-after": response.retryAfter,
           "x-ratelimit-remaining": response.rateLimitRemaining,
           "x-ratelimit-reset": response.rateLimitReset,
+          "x-ratelimit-resource": response.rateLimitResource,
         }).filter((entry): entry is [string, string] => entry[1] !== undefined),
       )
     : parseGitHubHeaders(output);
@@ -1989,6 +2080,7 @@ function getGitHubRateLimitResponseMetadata(
     retryAfter: response.headers.get("retry-after"),
     rateLimitRemaining: response.headers.get("x-ratelimit-remaining"),
     rateLimitReset: response.headers.get("x-ratelimit-reset"),
+    rateLimitResource: response.headers.get("x-ratelimit-resource"),
   };
 }
 
