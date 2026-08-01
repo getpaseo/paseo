@@ -2,11 +2,13 @@ import { randomUUID } from "node:crypto";
 import type pino from "pino";
 
 import type { ForgeService } from "../../services/forge-service.js";
+import { withTimeout } from "../../utils/promise-timeout.js";
 import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
 import {
   archiveByScope,
   requireArchiveCleanupComplete,
   type ActiveWorkspaceRef,
+  WorkspaceCleanupPendingError,
 } from "../workspace-archive-service.js";
 import type {
   CreatePaseoWorktreeWorkflowFn,
@@ -34,7 +36,7 @@ interface CreateAgentLifecycleDispatchDependencies {
   findWorkspaceIdForCwd: (cwd: string) => Promise<string | null>;
   listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
   archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
-  workspaceRegistry: Pick<WorkspaceRegistry, "get" | "list" | "update">;
+  workspaceRegistry: Pick<WorkspaceRegistry, "get" | "list" | "update" | "subscribeToMutations">;
   emit: (message: SessionOutboundMessage) => void;
   emitAgentRemove: (agentId: string) => void;
   emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
@@ -45,6 +47,7 @@ interface CreateAgentLifecycleDispatchDependencies {
 }
 
 export interface LifecycleRegistration {
+  readonly settled: Promise<"completed" | "cancelled">;
   cancel(): Promise<void>;
 }
 
@@ -52,7 +55,15 @@ interface AgentLifecycleEvents {
   subscribe(callback: AgentSubscriber, options?: SubscribeOptions): () => void;
 }
 
-const inactiveRegistration: LifecycleRegistration = { cancel: async () => undefined };
+const inactiveRegistration: LifecycleRegistration = {
+  settled: Promise.resolve("cancelled"),
+  cancel: async () => undefined,
+};
+
+export interface LifecycleDispatchShutdownResult {
+  completed: boolean;
+  pendingAgentIds: string[];
+}
 
 type AutoArchiveTarget =
   | { kind: "agent-only" }
@@ -60,6 +71,8 @@ type AutoArchiveTarget =
 
 export class CreateAgentLifecycleDispatch {
   private readonly autoArchiveTasks = new Map<string, Promise<void>>();
+  private readonly autoArchiveRegistrations = new Map<string, LifecycleRegistration>();
+  private shuttingDown = false;
 
   constructor(private readonly dependencies: CreateAgentLifecycleDispatchDependencies) {}
 
@@ -162,11 +175,57 @@ export class CreateAgentLifecycleDispatch {
     agentId: string,
     target: AutoArchiveTarget,
   ): LifecycleRegistration {
-    return registerAgentAutoArchive({
+    if (this.shuttingDown) return inactiveRegistration;
+    const existing = this.autoArchiveRegistrations.get(agentId);
+    if (existing) return existing;
+
+    const subscribeToMutations = this.dependencies.workspaceRegistry.subscribeToMutations?.bind(
+      this.dependencies.workspaceRegistry,
+    );
+    const registration = registerAgentAutoArchive({
       agentManager: this.dependencies.agentManager,
       agentId,
       archive: () => this.autoArchiveAgentOnce(agentId, target),
+      shouldRetry: (error) => !(error instanceof WorkspaceCleanupPendingError),
+      subscribeToRearm: subscribeToMutations
+        ? (rearm) => subscribeToMutations(() => rearm())
+        : undefined,
     });
+    this.autoArchiveRegistrations.set(agentId, registration);
+    void registration.settled.then(() => {
+      if (this.autoArchiveRegistrations.get(agentId) === registration) {
+        this.autoArchiveRegistrations.delete(agentId);
+      }
+      return undefined;
+    });
+    return registration;
+  }
+
+  async shutdown(options?: { timeoutMs?: number }): Promise<LifecycleDispatchShutdownResult> {
+    this.shuttingDown = true;
+    const registrations = Array.from(this.autoArchiveRegistrations.entries());
+    const cancellation = Promise.allSettled(
+      registrations.map(([, registration]) => registration.cancel()),
+    ).then(async () => {
+      await Promise.allSettled(Array.from(this.autoArchiveTasks.values()));
+      return undefined;
+    });
+    try {
+      await withTimeout(
+        cancellation,
+        options?.timeoutMs ?? 10_000,
+        "Timed out shutting down create-agent lifecycle registrations",
+      );
+    } catch (error) {
+      this.dependencies.logger.error(
+        { err: error, agentIds: registrations.map(([registeredAgentId]) => registeredAgentId) },
+        "Create-agent lifecycle shutdown remains incomplete",
+      );
+    }
+    const pendingAgentIds = Array.from(
+      new Set([...this.autoArchiveRegistrations.keys(), ...this.autoArchiveTasks.keys()]),
+    );
+    return { completed: pendingAgentIds.length === 0, pendingAgentIds };
   }
 
   private async autoArchiveAgentOnce(agentId: string, target: AutoArchiveTarget): Promise<void> {
@@ -250,20 +309,38 @@ export function registerAgentAutoArchive(input: {
   archive: () => Promise<unknown>;
   retryBaseMs?: number;
   retryMaxMs?: number;
+  shouldRetry?: (error: unknown) => boolean;
+  subscribeToRearm?: (rearm: () => void) => () => void;
 }): LifecycleRegistration {
   let unsubscribe: (() => void) | null = null;
+  let unsubscribeRearm: (() => void) | null = null;
   let archiveTask: Promise<unknown> | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let lastArchiveFailure: unknown | null = null;
   let consecutiveFailures = 0;
+  let mutationVersion = 0;
+  let awaitingRearm = false;
+  let terminalObserved = false;
   let canceled = false;
+  let settleRegistration!: (result: "completed" | "cancelled") => void;
+  let registrationSettled = false;
+  const settled = new Promise<"completed" | "cancelled">((resolve) => {
+    settleRegistration = resolve;
+  });
   const retryBaseMs = input.retryBaseMs ?? 1_000;
   const retryMaxMs = input.retryMaxMs ?? 60_000;
+  const settle = (result: "completed" | "cancelled") => {
+    if (registrationSettled) return;
+    registrationSettled = true;
+    settleRegistration(result);
+  };
   const release = () => {
-    if (!unsubscribe) return;
-    const subscribed = unsubscribe;
+    const subscribedToAgent = unsubscribe;
     unsubscribe = null;
-    subscribed();
+    subscribedToAgent?.();
+    const subscribedToRearm = unsubscribeRearm;
+    unsubscribeRearm = null;
+    subscribedToRearm?.();
   };
   const scheduleRetry = () => {
     if (canceled || retryTimer) return;
@@ -274,9 +351,20 @@ export function registerAgentAutoArchive(input: {
     }, delay);
     (retryTimer as unknown as { unref?: () => void }).unref?.();
   };
-  const attemptArchive = () => {
+  if (input.subscribeToRearm) {
+    unsubscribeRearm = input.subscribeToRearm(() => {
+      mutationVersion += 1;
+      if (!canceled && terminalObserved && awaitingRearm && !archiveTask) {
+        awaitingRearm = false;
+        consecutiveFailures = 0;
+        attemptArchive();
+      }
+    });
+  }
+  function attemptArchive(): void {
     if (canceled || archiveTask) return;
-    const task = input.archive();
+    const attemptMutationVersion = mutationVersion;
+    const task = Promise.resolve().then(input.archive);
     archiveTask = task;
     void task.then(
       () => {
@@ -289,6 +377,7 @@ export function registerAgentAutoArchive(input: {
           retryTimer = null;
         }
         release();
+        settle("completed");
         return undefined;
       },
       (error: unknown) => {
@@ -296,25 +385,41 @@ export function registerAgentAutoArchive(input: {
         archiveTask = null;
         lastArchiveFailure = error;
         consecutiveFailures += 1;
-        scheduleRetry();
+        const retryAllowed = input.shouldRetry?.(error) ?? true;
+        if (!retryAllowed) {
+          awaitingRearm = true;
+          if (!canceled && terminalObserved && mutationVersion !== attemptMutationVersion) {
+            awaitingRearm = false;
+            consecutiveFailures = 0;
+            attemptArchive();
+          }
+        } else {
+          scheduleRetry();
+        }
         return undefined;
       },
     );
-  };
+  }
   const registration: LifecycleRegistration = {
+    settled,
     async cancel() {
       canceled = true;
+      awaitingRearm = false;
       if (retryTimer) {
         clearTimeout(retryTimer);
         retryTimer = null;
       }
       release();
-      const pendingArchive = archiveTask;
-      if (pendingArchive) {
-        await pendingArchive;
-      }
-      if (lastArchiveFailure) {
-        throw lastArchiveFailure;
+      try {
+        const pendingArchive = archiveTask;
+        if (pendingArchive) {
+          await pendingArchive;
+        }
+        if (lastArchiveFailure) {
+          throw lastArchiveFailure;
+        }
+      } finally {
+        settle("cancelled");
       }
     },
   };
@@ -328,6 +433,7 @@ export function registerAgentAutoArchive(input: {
       ) {
         return;
       }
+      terminalObserved = true;
       attemptArchive();
     },
     { agentId: input.agentId, replayState: false },

@@ -1669,6 +1669,12 @@ export async function createPaseoDaemon(
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();
     agentManager.prepareForShutdown();
+    const lifecycleShutdown = await hubAgentLifecycle.shutdown({ timeoutMs: 10_000 });
+    if (!lifecycleShutdown.completed) {
+      throw new Error(
+        `Create-agent lifecycle shutdown remains incomplete for agents: ${lifecycleShutdown.pendingAgentIds.join(", ")}`,
+      );
+    }
     await closeAllAgents(logger, agentManager);
     await agentManager.flushForShutdown().catch(() => undefined);
     detachAgentStoragePersistence();
