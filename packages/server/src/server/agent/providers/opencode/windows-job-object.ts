@@ -649,10 +649,27 @@ function resolveTargetEnvironment(
   baseEnv: ProcessEnvRecord,
   envOverlay: ProcessEnvRecord | undefined,
 ): ProcessEnvRecord {
+  const normalized = normalizeWindowsEnvironment(baseEnv, ...(envOverlay ? [envOverlay] : []));
   if (envMode === "internal") {
-    return { ...baseEnv, ...envOverlay };
+    return normalized;
   }
-  return createExternalProcessEnv(baseEnv, ...(envOverlay ? [envOverlay] : []));
+  return createExternalProcessEnv(normalized);
+}
+
+function normalizeWindowsEnvironment(...layers: ProcessEnvRecord[]): ProcessEnvRecord {
+  const normalized: ProcessEnvRecord = {};
+  const normalizedNames = new Map<string, string>();
+  // Windows environment names are case-insensitive. Retain one stable spelling while allowing
+  // each later layer to replace the value associated with that name.
+  for (const layer of layers) {
+    for (const [name, value] of Object.entries(layer)) {
+      const normalizedName = name.toLowerCase();
+      const retainedName = normalizedNames.get(normalizedName) ?? name;
+      normalizedNames.set(normalizedName, retainedName);
+      normalized[retainedName] = value;
+    }
+  }
+  return normalized;
 }
 
 function quoteCreateProcessArgument(value: string): string {

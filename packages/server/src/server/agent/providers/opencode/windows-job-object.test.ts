@@ -168,6 +168,65 @@ describe("Windows Job Object process spawner", () => {
     );
   });
 
+  test.each([
+    {
+      basePathKey: "Path",
+      basePathExtKey: "PathExt",
+      overlayPathKey: "PATH",
+      overlayPathExtKey: "PATHEXT",
+    },
+    {
+      basePathKey: "PATH",
+      basePathExtKey: "PATHEXT",
+      overlayPathKey: "Path",
+      overlayPathExtKey: "PathExt",
+    },
+  ])(
+    "uses the runtime $overlayPathKey/$overlayPathExtKey overlay for resolution and spawn",
+    ({ basePathKey, basePathExtKey, overlayPathKey, overlayPathExtKey }) => {
+      const child = createFakeChild();
+      const calls: Array<{ command: string; args: string[]; options: SpawnProcessOptions }> = [];
+      const cwd = "C:\\requested-workspace";
+      const baseCommand = "C:\\base-bin\\opencode.EXE";
+      const overlayCommand = "C:\\runtime-bin\\opencode.CMD";
+      const checkedCandidates: string[] = [];
+      const spawn = createWindowsJobObjectProcessSpawner(
+        (spawnCommand, args, options) => {
+          calls.push({ command: spawnCommand, args, options });
+          return child;
+        },
+        undefined,
+        createDeterministicWindowsResolver([baseCommand, overlayCommand], checkedCandidates),
+      );
+
+      spawn("opencode", ["serve"], {
+        cwd,
+        baseEnv: {
+          [basePathKey]: "C:\\base-bin",
+          [basePathExtKey]: ".EXE",
+        },
+        envOverlay: {
+          [overlayPathKey]: "C:\\runtime-bin",
+          [overlayPathExtKey]: ".CMD",
+        },
+      });
+
+      expect(checkedCandidates).toContain(overlayCommand);
+      expect(checkedCandidates).not.toContain(baseCommand);
+      const spawnedEnvironment = calls[0]?.options.env;
+      const spawnedPathEntries = getWindowsEnvironmentEntries(spawnedEnvironment, "PATH");
+      const spawnedPathExtEntries = getWindowsEnvironmentEntries(spawnedEnvironment, "PATHEXT");
+      expect(spawnedPathEntries).toHaveLength(1);
+      expect(spawnedPathEntries[0]?.[1]).toBe("C:\\runtime-bin");
+      expect(spawnedPathExtEntries).toHaveLength(1);
+      expect(spawnedPathExtEntries[0]?.[1]).toBe(".CMD");
+      expect(calls[0]?.options.envOverlay?.PASEO_WINDOWS_JOB_COMMAND).toBe("cmd.exe");
+      expect(decodeBase64(calls[0]?.options.envOverlay?.PASEO_WINDOWS_JOB_COMMAND_LINE)).toContain(
+        overlayCommand,
+      );
+    },
+  );
+
   test.each([".CMD", ".BAT"])(
     "resolves a target-cwd-only %s command through the hardened batch launcher",
     (extension) => {
@@ -699,6 +758,16 @@ function collectOutput(process: ChildProcess): Promise<Buffer> {
     process.stdout?.once("error", reject);
     process.stdout?.once("end", () => resolve(Buffer.concat(chunks)));
   });
+}
+
+function getWindowsEnvironmentEntries(
+  environment: SpawnProcessOptions["env"],
+  requestedName: string,
+): Array<[string, string | undefined]> {
+  const normalizedName = requestedName.toLowerCase();
+  return Object.entries(environment ?? {}).filter(
+    ([name]) => name.toLowerCase() === normalizedName,
+  );
 }
 
 function createDeterministicWindowsResolver(
