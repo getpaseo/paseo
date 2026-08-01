@@ -457,46 +457,6 @@ describe("OpenCodeServerManager generations", () => {
     await next.release();
     expect(runtime.terminatedPorts).toEqual([4553]);
   });
-
-  test("signal cleanup includes a retiring manager after a same-settings replacement", async () => {
-    const firstRuntime = new FakeOpenCodeServerRuntime([4555], { autoAnnounce: true });
-    const secondRuntime = new FakeOpenCodeServerRuntime([4556], { autoAnnounce: true });
-    const terminationGate = createDeferred<void>();
-    const terminationStarted = createDeferred<void>();
-    const firstTerminate = vi.fn<ProcessTerminator>(async (target, options) => {
-      terminationStarted.resolve();
-      await terminationGate.promise;
-      return await firstRuntime.terminateProcess(target, options);
-    });
-    const first = OpenCodeServerManager.acquireShared(createTestLogger(), undefined, {
-      managedProcesses: firstRuntime.managedProcesses,
-      portAllocator: firstRuntime.allocatePort,
-      resolveCommandPrefix: firstRuntime.resolveCommandPrefix,
-      spawnServerProcess: firstRuntime.spawnServerProcess,
-      terminateProcess: firstTerminate,
-    });
-    const firstAcquisition = await first.manager.acquireCurrent();
-
-    await first.release();
-
-    const second = OpenCodeServerManager.acquireShared(createTestLogger(), undefined, {
-      managedProcesses: secondRuntime.managedProcesses,
-      portAllocator: secondRuntime.allocatePort,
-      resolveCommandPrefix: secondRuntime.resolveCommandPrefix,
-      spawnServerProcess: secondRuntime.spawnServerProcess,
-      terminateProcess: secondRuntime.terminateProcess,
-    });
-    const secondAcquisition = await second.manager.acquireCurrent();
-    const firstAcquisitionRelease = firstAcquisition.release();
-    await terminationStarted.promise;
-
-    process.emit("SIGTERM");
-    await vi.waitFor(() => expect(secondRuntime.terminatedPorts).toEqual([4556]));
-    expect(firstTerminate).toHaveBeenCalledTimes(1);
-
-    terminationGate.resolve();
-    await Promise.all([firstAcquisitionRelease, secondAcquisition.release(), second.release()]);
-  });
 });
 
 describe("OpenCodeServerManager managed process ledger", () => {

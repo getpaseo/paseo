@@ -79,17 +79,14 @@ export interface OpenCodeServerManagerOptions {
 
 export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private static readonly instances = new Map<string, SharedOpenCodeServerManager>();
-  private static readonly retiringManagers = new Set<OpenCodeServerManager>();
   private static exitHandlerRegistered = false;
   private currentServer: OpenCodeServerGeneration | null = null;
   private retiredServers = new Set<OpenCodeServerGeneration>();
   private startingServers = new Set<OpenCodeServerGeneration>();
-  private terminatingServers = new Set<OpenCodeServerGeneration>();
   private startPromise: Promise<OpenCodeServerGeneration> | null = null;
   private newServerPromise: Promise<OpenCodeServerGeneration> | null = null;
   private lifecycleGeneration = 0;
   private shutDown = false;
-  private retainedForSignalCleanup = false;
   private retirementPromise: Promise<void> | null = null;
   private shutdownPromise: Promise<void> | null = null;
   private readonly shutdownController = new AbortController();
@@ -170,9 +167,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       return;
     }
     OpenCodeServerManager.instances.delete(settingsKey);
-    shared.manager.retainForSignalCleanup();
     await shared.manager.retireWhenUnused();
-    shared.manager.releaseSignalCleanupRetentionIfSettled();
   }
 
   private static registerExitHandler(): void {
@@ -182,12 +177,8 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     OpenCodeServerManager.exitHandlerRegistered = true;
 
     const cleanup = () => {
-      const managers = new Set([
-        ...Array.from(OpenCodeServerManager.instances.values(), (shared) => shared.manager),
-        ...OpenCodeServerManager.retiringManagers,
-      ]);
-      for (const manager of managers) {
-        void manager.shutdown();
+      for (const manager of OpenCodeServerManager.instances.values()) {
+        void manager.manager.shutdown();
       }
     };
 
@@ -549,7 +540,6 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
             this.retiredServers.delete(retired);
           }
         }
-        this.releaseSignalCleanupRetentionIfSettled();
       });
     });
 
@@ -588,7 +578,6 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       this.currentServer = null;
       this.retiredServers.clear();
       this.startingServers.clear();
-      this.releaseSignalCleanupRetentionIfSettled();
     });
     return this.shutdownPromise;
   }
@@ -612,36 +601,14 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       server.retired = true;
       this.retiredServers.add(server);
     }
-    this.retirementPromise = this.cleanupRetiredServers().finally(() => {
-      this.releaseSignalCleanupRetentionIfSettled();
-    });
+    this.retirementPromise = this.cleanupRetiredServers();
     return this.retirementPromise;
   }
 
   private unregisterSharedInstance(): void {
     if (OpenCodeServerManager.instances.get(this.runtimeSettingsKey)?.manager === this) {
-      this.retainForSignalCleanup();
       OpenCodeServerManager.instances.delete(this.runtimeSettingsKey);
     }
-  }
-
-  private retainForSignalCleanup(): void {
-    this.retainedForSignalCleanup = true;
-    OpenCodeServerManager.retiringManagers.add(this);
-  }
-
-  private releaseSignalCleanupRetentionIfSettled(): void {
-    if (
-      !this.retainedForSignalCleanup ||
-      this.currentServer ||
-      this.retiredServers.size > 0 ||
-      this.startingServers.size > 0 ||
-      this.terminatingServers.size > 0
-    ) {
-      return;
-    }
-    this.retainedForSignalCleanup = false;
-    OpenCodeServerManager.retiringManagers.delete(this);
   }
 
   private getActiveGeneration(): number {
@@ -693,27 +660,8 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   }
 
   private killServer(server: OpenCodeServerGeneration): Promise<void> {
-    const existingTermination = server.terminationPromise;
-    if (existingTermination) {
-      return existingTermination;
-    }
-
-    const termination = this.terminateServer(server);
-    server.terminationPromise = termination;
-    this.terminatingServers.add(server);
-    void termination.then(
-      () => {
-        this.terminatingServers.delete(server);
-        this.releaseSignalCleanupRetentionIfSettled();
-        return undefined;
-      },
-      () => {
-        this.terminatingServers.delete(server);
-        this.releaseSignalCleanupRetentionIfSettled();
-        return undefined;
-      },
-    );
-    return termination;
+    server.terminationPromise ??= this.terminateServer(server);
+    return server.terminationPromise;
   }
 
   private async terminateServer(server: OpenCodeServerGeneration): Promise<void> {
