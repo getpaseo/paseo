@@ -19,6 +19,7 @@ import {
   type ArchiveResult,
   requireActiveWorkspaceForArchive,
   requireArchiveCleanupComplete,
+  retryPendingWorkspaceCleanup,
   resolveWorkspaceIdAtPath,
 } from "./workspace-archive-service.js";
 import { WorkspaceCleanupRetryService } from "./workspace-cleanup-retry-service.js";
@@ -1229,11 +1230,13 @@ describe("archiveByScope", () => {
     deps.workspaceRegistry = registry;
     const service = new WorkspaceCleanupRetryService({
       workspaceRegistry: registry,
-      retryWorktreeCleanup: async (targetPath) => {
+      retryWorktreeCleanup: async (target, signal) => {
         requireArchiveCleanupComplete(
-          await archiveByScope(deps, {
-            scope: { kind: "worktree", targetPath },
+          await retryPendingWorkspaceCleanup(deps, {
+            directoryPath: target.directoryPath,
+            worktreeIncarnationId: target.worktreeIncarnationId,
             requestId: "startup-schedule-cleanup-retry",
+            signal,
           }),
           "Startup schedule cleanup retry",
         );
@@ -1243,7 +1246,10 @@ describe("archiveByScope", () => {
     });
 
     await service.start();
-    await vi.waitFor(() => expect(existsSync(worktree.worktreePath)).toBe(false));
+    await vi.waitFor(async () => {
+      expect((await registry.get("ws-completed-schedule-root"))?.cleanupPending).toBeNull();
+      expect((await registry.get("ws-completed-schedule-nested"))?.cleanupPending).toBeNull();
+    });
     await service.stop();
 
     expect(readFileSync(path.join(repoDir, "retry-root.log"), "utf8")).toBe("root");
@@ -1251,6 +1257,87 @@ describe("archiveByScope", () => {
     expect(existsSync(worktree.worktreePath)).toBe(false);
     expect((await registry.get("ws-completed-schedule-root"))?.cleanupPending).toBeNull();
     expect((await registry.get("ws-completed-schedule-nested"))?.cleanupPending).toBeNull();
+  });
+
+  test("cleanup-only retry never archives a live replacement at a reused path", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const replacement = await createPaseoOwnedWorktree(repoDir, paseoHome, "reused-cleanup-path");
+    const replacementIncarnation = readPaseoWorktreeIncarnationId(replacement.worktreePath);
+    expect(replacementIncarnation).toBeTruthy();
+    const staleWorkspaceId = "ws-stale-cleanup-owner";
+    const replacementWorkspaceId = "ws-live-replacement-owner";
+    const registry = new FileBackedWorkspaceRegistry(
+      path.join(tempDir, "workspaces.json"),
+      createLogger(),
+    );
+    await registry.initialize();
+    const timestamp = new Date().toISOString();
+    await registry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId: staleWorkspaceId,
+        projectId: "project-reused-cleanup-path",
+        cwd: replacement.worktreePath,
+        kind: "worktree",
+        displayName: "Stale cleanup owner",
+        worktreeRoot: replacement.worktreePath,
+        isPaseoOwnedWorktree: true,
+        mainRepoRoot: repoDir,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        archivedAt: timestamp,
+        cleanupPending: {
+          directoryPath: replacement.worktreePath,
+          teardownCwd: replacement.worktreePath,
+          mainRepoRoot: repoDir,
+          paseoWorktreesRoot: null,
+          worktreeIncarnationId: "incarnation-before-replacement",
+        },
+      }),
+    );
+    await registry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId: replacementWorkspaceId,
+        projectId: "project-reused-cleanup-path",
+        cwd: replacement.worktreePath,
+        kind: "worktree",
+        displayName: "Live replacement owner",
+        worktreeRoot: replacement.worktreePath,
+        isPaseoOwnedWorktree: true,
+        mainRepoRoot: repoDir,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId: replacementWorkspaceId,
+          cwd: replacement.worktreePath,
+          kind: "worktree",
+          worktreeRoot: replacement.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+      ],
+    });
+    deps.workspaceRegistry = registry;
+    deps.archiveWorkspaceRecord = vi.fn(deps.archiveWorkspaceRecord);
+    deps.killTerminalsForWorkspace = vi.fn(async () => undefined);
+
+    const result = await retryPendingWorkspaceCleanup(deps, {
+      directoryPath: replacement.worktreePath,
+      worktreeIncarnationId: "incarnation-before-replacement",
+      requestId: "stale-cleanup-live-replacement",
+    });
+
+    expect(result.removedDirectory).toBe(false);
+    expect(deps.archiveWorkspaceRecord).not.toHaveBeenCalled();
+    expect(deps.killTerminalsForWorkspace).not.toHaveBeenCalled();
+    expect(existsSync(replacement.worktreePath)).toBe(true);
+    expect((await registry.get(replacementWorkspaceId))?.archivedAt).toBeNull();
+    expect((await registry.get(staleWorkspaceId))?.cleanupPending).toBeNull();
   });
 
   test("workspace teardown failure keeps the record active and prevents recursive deletion", async () => {

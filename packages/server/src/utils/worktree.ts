@@ -30,6 +30,7 @@ import {
 } from "./worktree-metadata.js";
 import { runGitCommand } from "./run-git-command.js";
 import { spawnProcess } from "./spawn.js";
+import { terminateWithTreeKill } from "./tree-kill.js";
 import { resolvePaseoHome } from "../server/paseo-home.js";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
@@ -422,6 +423,7 @@ async function execSetupCommandStreamed(options: {
   total: number;
   maxOutputBytes: number;
   onEvent?: (event: WorktreeSetupCommandProgressEvent) => void;
+  signal?: AbortSignal;
 }): Promise<WorktreeSetupCommandResult> {
   return new Promise((resolvePromise) => {
     const startedAt = Date.now();
@@ -455,6 +457,7 @@ async function execSetupCommandStreamed(options: {
         return;
       }
       settled = true;
+      options.signal?.removeEventListener("abort", abortCommand);
       const combinedBytes = stdoutAccumulator.totalBytes + stderrAccumulator.totalBytes;
       const stdoutOutputBytes =
         combinedBytes === 0
@@ -500,6 +503,15 @@ async function execSetupCommandStreamed(options: {
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
     });
+    const abortCommand = () => {
+      emitOutput("stderr", "Worktree lifecycle command canceled");
+      void terminateWithTreeKill(child, {
+        gracefulTimeoutMs: 1_000,
+        forceTimeoutMs: 1_000,
+      }).finally(() => finish(null));
+    };
+    options.signal?.addEventListener("abort", abortCommand, { once: true });
+    if (options.signal?.aborted) abortCommand();
 
     child.stdout?.on("data", (chunk: Buffer | string) => {
       emitOutput("stdout", chunk.toString());
@@ -709,6 +721,7 @@ export async function runWorktreeTeardownCommands(options: {
   teardownCwd?: string;
   branchName?: string;
   repoRootPath?: string;
+  signal?: AbortSignal;
 }): Promise<WorktreeTeardownCommandResult[]> {
   const teardownCwd = options.teardownCwd ?? options.worktreePath;
   if (getRealpathAwareRelativePath(options.worktreePath, teardownCwd) === null) {
@@ -749,6 +762,7 @@ export async function runWorktreeTeardownCommands(options: {
       index: index + 1,
       total: teardownCommands.length,
       maxOutputBytes,
+      signal: options.signal,
     });
     results.push(result);
 
@@ -1066,6 +1080,7 @@ export interface DeletePaseoWorktreeOptions {
   worktreesRoot?: string;
   paseoHome?: string;
   worktreesBaseRoot?: string;
+  signal?: AbortSignal;
 }
 
 export async function deletePaseoWorktree({
@@ -1076,6 +1091,7 @@ export async function deletePaseoWorktree({
   worktreesRoot,
   paseoHome,
   worktreesBaseRoot,
+  signal,
 }: DeletePaseoWorktreeOptions): Promise<void> {
   if (!worktreePath && !worktreeSlug) {
     throw new Error("worktreePath or worktreeSlug is required");
@@ -1115,8 +1131,13 @@ export async function deletePaseoWorktree({
       await runWorktreeTeardownCommands({
         worktreePath: resolvedWorktree,
         teardownCwd,
+        signal,
       });
     }
+  }
+
+  if (signal?.aborted) {
+    throw new Error("Worktree deletion canceled");
   }
 
   if (cwd) {

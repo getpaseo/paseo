@@ -9,7 +9,7 @@ const DEFAULT_RETRY_BASE_MS = 1_000;
 const DEFAULT_RETRY_MAX_MS = 60_000;
 const DEFAULT_MAX_TARGETS_PER_CYCLE = 8;
 
-interface WorkspaceCleanupRetryTarget {
+export interface WorkspaceCleanupRetryTarget {
   directoryPath: string;
   worktreeIncarnationId: string;
   workspaceIds: string[];
@@ -17,7 +17,7 @@ interface WorkspaceCleanupRetryTarget {
 
 export interface WorkspaceCleanupRetryServiceOptions {
   workspaceRegistry: Pick<WorkspaceRegistry, "list" | "subscribeToMutations">;
-  retryWorktreeCleanup: (targetPath: string) => Promise<void>;
+  retryWorktreeCleanup: (target: WorkspaceCleanupRetryTarget, signal: AbortSignal) => Promise<void>;
   logger: Logger;
   idlePollMs?: number;
   retryBaseMs?: number;
@@ -39,6 +39,7 @@ export class WorkspaceCleanupRetryService {
   private consecutiveFailedCycles = 0;
   private wakeRequested = false;
   private nextTargetDirectoryPath: string | null = null;
+  private activeAbortController: AbortController | null = null;
 
   constructor(private readonly options: WorkspaceCleanupRetryServiceOptions) {
     this.logger = options.logger.child({ module: "workspace-cleanup-retry-service" });
@@ -71,6 +72,10 @@ export class WorkspaceCleanupRetryService {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    const activeCycle = this.activeCycle;
+    this.activeAbortController?.abort();
+    this.activeAbortController = null;
+    await activeCycle;
   }
 
   private requestWake(): void {
@@ -132,23 +137,32 @@ export class WorkspaceCleanupRetryService {
     const batch = rotatedTargets.slice(0, this.maxTargetsPerCycle);
     const nextTarget = rotatedTargets[batch.length] ?? null;
     this.nextTargetDirectoryPath = nextTarget?.directoryPath ?? null;
+    const abortController = new AbortController();
+    this.activeAbortController = abortController;
 
     let failed = false;
-    for (const target of batch) {
-      try {
-        await this.options.retryWorktreeCleanup(target.directoryPath);
-      } catch (error) {
-        failed = true;
-        this.logger.warn(
-          {
-            err: error,
-            directoryPath: target.directoryPath,
-            workspaceIds: target.workspaceIds,
-            worktreeIncarnationId: target.worktreeIncarnationId,
-          },
-          "Pending workspace cleanup retry failed",
-        );
+    try {
+      for (const target of batch) {
+        if (abortController.signal.aborted) break;
+        try {
+          await this.options.retryWorktreeCleanup(target, abortController.signal);
+        } catch (error) {
+          failed = true;
+          if (!abortController.signal.aborted) {
+            this.logger.warn(
+              {
+                err: error,
+                directoryPath: target.directoryPath,
+                workspaceIds: target.workspaceIds,
+                worktreeIncarnationId: target.worktreeIncarnationId,
+              },
+              "Pending workspace cleanup retry failed",
+            );
+          }
+        }
       }
+    } finally {
+      if (this.activeAbortController === abortController) this.activeAbortController = null;
     }
     if (!failed && nextTarget) {
       this.wakeRequested = true;

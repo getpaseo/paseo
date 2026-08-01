@@ -153,6 +153,7 @@ import {
   archivePersistedWorkspaceRecord,
   killTerminalsForWorkspace,
   requireArchiveCleanupComplete,
+  retryPendingWorkspaceCleanup,
   type ActiveWorkspaceRef,
 } from "./workspace-archive-service.js";
 import { WorkspaceCleanupRetryService } from "./workspace-cleanup-retry-service.js";
@@ -1088,9 +1089,11 @@ export async function createPaseoDaemon(
       ),
       "Workspace archive",
     );
-  const retryPendingWorktreeCleanupExternal = async (targetPath: string): Promise<void> => {
+  const retryPendingWorktreeCleanupExternal: ConstructorParameters<
+    typeof WorkspaceCleanupRetryService
+  >[0]["retryWorktreeCleanup"] = async (target, signal) => {
     requireArchiveCleanupComplete(
-      await archiveByScope(
+      await retryPendingWorkspaceCleanup(
         {
           paseoHome: config.paseoHome,
           paseoWorktreesBaseRoot: config.worktreesRoot,
@@ -1113,8 +1116,10 @@ export async function createPaseoDaemon(
           sessionLogger: logger,
         },
         {
-          scope: { kind: "worktree", targetPath },
+          directoryPath: target.directoryPath,
+          worktreeIncarnationId: target.worktreeIncarnationId,
           requestId: `cleanup-retry:${randomUUID()}`,
+          signal,
         },
       ),
       "Workspace cleanup retry",

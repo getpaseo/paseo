@@ -96,7 +96,7 @@ test("rotates bounded batches and preserves backoff after a failed target", asyn
     }),
   ];
   const attempts: string[] = [];
-  const retryWorktreeCleanup = vi.fn(async (targetPath: string) => {
+  const retryWorktreeCleanup = vi.fn(async ({ directoryPath: targetPath }) => {
     attempts.push(targetPath);
     if (targetPath === "/worktrees/first") throw new Error("still busy");
   });
@@ -130,10 +130,21 @@ test("rotates bounded batches and preserves backoff after a failed target", asyn
   expect(retryWorktreeCleanup).toHaveBeenCalledTimes(attempts.length);
 });
 
-test("hung cleanup does not block startup or shutdown", async () => {
+test("shutdown cancels and owns an active cleanup cycle", async () => {
   vi.useFakeTimers();
-  const never = new Promise<void>(() => undefined);
-  const retryWorktreeCleanup = vi.fn(() => never);
+  let aborted = false;
+  const retryWorktreeCleanup = vi.fn((_target, signal: AbortSignal) => {
+    return new Promise<void>((_resolve, reject) => {
+      signal.addEventListener(
+        "abort",
+        () => {
+          aborted = true;
+          reject(new Error("cleanup canceled"));
+        },
+        { once: true },
+      );
+    });
+  });
   const service = new WorkspaceCleanupRetryService({
     workspaceRegistry: {
       list: async () => [
@@ -153,4 +164,5 @@ test("hung cleanup does not block startup or shutdown", async () => {
   await vi.advanceTimersToNextTimerAsync();
   expect(retryWorktreeCleanup).toHaveBeenCalledTimes(1);
   await expect(service.stop()).resolves.toBeUndefined();
+  expect(aborted).toBe(true);
 });

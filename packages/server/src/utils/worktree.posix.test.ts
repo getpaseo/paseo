@@ -1352,5 +1352,45 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(existsSync(created.worktreePath)).toBe(true);
       expect(existsSync(join(repoDir, "teardown-start.log"))).toBe(true);
     });
+
+    it("cancels a running teardown process tree before deleting the worktree", async () => {
+      writeFileSync(
+        join(repoDir, "paseo.json"),
+        JSON.stringify({
+          worktree: {
+            teardown: ['node -e "setInterval(() => {}, 1000)"'],
+          },
+        }),
+      );
+      execFileSync("git", ["add", "paseo.json"], { cwd: repoDir });
+      execFileSync(
+        "git",
+        ["-c", "commit.gpgsign=false", "commit", "-m", "add cancellable teardown"],
+        { cwd: repoDir },
+      );
+      const created = await createLegacyWorktreeForTest({
+        branchName: "teardown-cancel-branch",
+        cwd: repoDir,
+        baseBranch: "main",
+        worktreeSlug: "teardown-cancel-test",
+        paseoHome,
+      });
+      const controller = new AbortController();
+      const abortTimer = setTimeout(() => controller.abort(), 100);
+
+      try {
+        await expect(
+          deletePaseoWorktree({
+            cwd: repoDir,
+            worktreePath: created.worktreePath,
+            paseoHome,
+            signal: controller.signal,
+          }),
+        ).rejects.toThrow("Worktree teardown command failed");
+      } finally {
+        clearTimeout(abortTimer);
+      }
+      expect(existsSync(created.worktreePath)).toBe(true);
+    });
   });
 });
