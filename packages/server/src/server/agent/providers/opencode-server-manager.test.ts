@@ -719,6 +719,7 @@ function createTestManager(
       createManagedProcessIdentityToken: () => "test-managed-process-token",
       verifyProcessGroupIdentity: runtime.verifyProcessGroupIdentity,
       verifyProcessIdentity: runtime.verifyProcessIdentity,
+      getWindowsJobProofMarker: () => "test-windows-job-empty",
     }),
     runtime,
   };
@@ -963,13 +964,17 @@ class FakeOpenCodeProcess extends EventEmitter {
 
   exitNormally(): void {
     this.exitCode = 0;
+    this.stdout.emit("data", Buffer.from("test-windows-job-empty\n"));
     this.emit("exit", 0, null);
+    this.emit("close", 0, null);
   }
 
   exitBySignal(signal: NodeJS.Signals): void {
     this.killed = true;
     this.signalCode = signal;
+    this.stdout.emit("data", Buffer.from("test-windows-job-empty\n"));
     this.emit("exit", null, signal);
+    this.emit("close", null, signal);
   }
 
   markKillSignalSent(): void {

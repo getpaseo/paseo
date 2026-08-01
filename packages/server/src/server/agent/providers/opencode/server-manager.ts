@@ -28,6 +28,10 @@ import {
   type ProviderRuntimeSettings,
 } from "../../provider-launch-config.js";
 import { resolveOpenCodeHomeDir } from "./paths.js";
+import {
+  getWindowsJobObjectProofMarker,
+  spawnWindowsJobObjectProcess,
+} from "./windows-job-object.js";
 import type {
   AgentRuntimeCapacityController,
   AgentRuntimeCapacityReservation,
@@ -69,6 +73,8 @@ export interface OpenCodeServerGeneration {
   managedProcessRecord?: Promise<ManagedProcessRecord | null>;
   managedProcessIdentity?: ManagedProcessRecord;
   ownsProcessGroup: boolean;
+  ownsWindowsJob: boolean;
+  windowsJobCompletion?: Promise<boolean>;
   identityToken?: string;
   cleanupComplete: boolean;
   abortStartup?: (error: Error) => void;
@@ -86,6 +92,7 @@ export type OpenCodeProcessGroupIdentityVerifier = (
   identityToken: string,
 ) => Promise<ManagedProcessGroupInspection>;
 export type OpenCodeProcessIdentityVerifier = (record: ManagedProcessRecord) => Promise<boolean>;
+export type OpenCodeWindowsJobProofResolver = (process: ChildProcess) => string | undefined;
 
 export interface OpenCodeServerManagerOptions {
   logger: Logger;
@@ -100,6 +107,8 @@ export interface OpenCodeServerManagerOptions {
   createManagedProcessIdentityToken?: () => string;
   verifyProcessGroupIdentity?: OpenCodeProcessGroupIdentityVerifier;
   verifyProcessIdentity?: OpenCodeProcessIdentityVerifier;
+  getWindowsJobProofMarker?: OpenCodeWindowsJobProofResolver;
+  platform?: NodeJS.Platform;
 }
 
 export class OpenCodeServerManager implements OpenCodeServerManagerLike {
@@ -128,6 +137,8 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private readonly createManagedProcessIdentityToken: () => string;
   private readonly verifyProcessGroupIdentity: OpenCodeProcessGroupIdentityVerifier;
   private readonly verifyProcessIdentity: OpenCodeProcessIdentityVerifier;
+  private readonly platform: NodeJS.Platform;
+  private readonly getWindowsJobProofMarker: OpenCodeWindowsJobProofResolver;
 
   constructor(options: OpenCodeServerManagerOptions) {
     this.logger = options.logger;
@@ -141,7 +152,11 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       options.resolveCommandPrefix ??
       (() => resolveProviderCommandPrefix(this.runtimeSettings?.command, resolveOpenCodeBinary));
     this.resolveHomeDir = options.resolveHomeDir ?? resolveOpenCodeHomeDir;
-    const spawnServerProcess = options.spawnServerProcess ?? spawnProcess;
+    this.platform = options.platform ?? process.platform;
+    this.getWindowsJobProofMarker =
+      options.getWindowsJobProofMarker ?? getWindowsJobObjectProofMarker;
+    const defaultSpawner = this.platform === "win32" ? spawnWindowsJobObjectProcess : spawnProcess;
+    const spawnServerProcess = options.spawnServerProcess ?? defaultSpawner;
     this.spawnServerProcess = (command, args, spawnOptions) => {
       let reservation: AgentRuntimeCapacityReservation | null =
         this.runtimeCapacity?.reserve() ?? null;
@@ -397,7 +412,8 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     // index the entire home tree.
     const serverCwd = this.resolveHomeDir();
     mkdirSync(serverCwd, { recursive: true });
-    const ownsProcessGroup = process.platform !== "win32";
+    const ownsProcessGroup = this.platform !== "win32";
+    const ownsWindowsJob = this.platform === "win32";
     const identityToken = ownsProcessGroup ? this.createManagedProcessIdentityToken() : undefined;
 
     const serverProcess = this.spawnServerProcess(launchPrefix.command, serverArgs, {
@@ -413,6 +429,15 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
         ],
       }),
     });
+    const windowsJobProofMarker = ownsWindowsJob
+      ? this.getWindowsJobProofMarker(serverProcess)
+      : undefined;
+    let resolveWindowsJobCompletion: ((proven: boolean) => void) | undefined;
+    const windowsJobCompletion = ownsWindowsJob
+      ? new Promise<boolean>((resolve) => {
+          resolveWindowsJobCompletion = resolve;
+        })
+      : undefined;
     let capturedManagedProcessIdentity: ManagedProcessRecord | undefined;
     const serverRef: { current?: OpenCodeServerGeneration } = {};
     const managedProcessRecord = this.recordManagedServerProcess({
@@ -439,6 +464,8 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       managedProcessRecord,
       managedProcessIdentity: capturedManagedProcessIdentity,
       ownsProcessGroup,
+      ownsWindowsJob,
+      windowsJobCompletion,
       identityToken,
       cleanupComplete: false,
     };
@@ -457,6 +484,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     let settled = false;
     let stderrBuffer = "";
     let stdoutBuffer = "";
+    let windowsJobProofBuffer = "";
     const STARTUP_BUFFER_CAP = 8192;
     const appendCapped = (current: string, chunk: string): string => {
       if (current.length >= STARTUP_BUFFER_CAP) {
@@ -496,6 +524,13 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
 
       serverProcess.stdout?.on("data", (data: Buffer) => {
         const output = data.toString();
+        if (windowsJobProofMarker) {
+          windowsJobProofBuffer = appendProofBuffer(windowsJobProofBuffer, output);
+          if (windowsJobProofBuffer.includes(windowsJobProofMarker)) {
+            resolveWindowsJobCompletion?.(true);
+            resolveWindowsJobCompletion = undefined;
+          }
+        }
         stdoutBuffer = appendCapped(stdoutBuffer, output);
         if (output.includes("listening on") && !started && !settled) {
           started = true;
@@ -528,7 +563,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
           server.retired = true;
           this.retiredServers.add(server);
           queueMicrotask(() => void this.killServer(server));
-        } else if (!this.terminationPromises.has(server)) {
+        } else if (!server.ownsWindowsJob && !this.terminationPromises.has(server)) {
           server.cleanupComplete = true;
           this.removeManagedServerRecord(server);
           this.finishServerCleanup(server);
@@ -540,6 +575,16 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
         }
         if (this.currentServer?.process === serverProcess) {
           this.currentServer = null;
+        }
+      });
+      serverProcess.on("close", () => {
+        if (!server.ownsWindowsJob) {
+          return;
+        }
+        resolveWindowsJobCompletion?.(false);
+        resolveWindowsJobCompletion = undefined;
+        if (!this.terminationPromises.has(server)) {
+          void this.finishWindowsJobAfterExit(server);
         }
       });
       server.abortStartup = failStartup;
@@ -639,7 +684,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private async killServerOnce(server: OpenCodeServerGeneration): Promise<void> {
     server.abortStartup?.(new Error("OpenCode server terminated during startup"));
     server.abortStartup = undefined;
-    if (!server.ownsProcessGroup && hasProcessExited(server.process)) {
+    if (hasExitedWithoutContainer(server)) {
       server.cleanupComplete = true;
       this.removeManagedServerRecord(server);
       this.finishServerCleanup(server);
@@ -696,6 +741,18 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       ) {
         await this.retainForCleanupRetry(server);
       }
+      return;
+    }
+    await this.finishTerminatedServer(server);
+  }
+
+  private async finishTerminatedServer(server: OpenCodeServerGeneration): Promise<void> {
+    if (server.ownsWindowsJob && !(await server.windowsJobCompletion)) {
+      this.logger.warn(
+        { pid: server.process.pid },
+        "Windows OpenCode Job Object supervisor exited without proving the generation empty",
+      );
+      await this.retainForCleanupRetry(server);
       return;
     }
     if (server.managedProcessId) {
@@ -755,6 +812,18 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     }
     this.retiredServers.delete(server);
     this.runtimeCapacity?.release(server.process);
+  }
+
+  private async finishWindowsJobAfterExit(server: OpenCodeServerGeneration): Promise<void> {
+    if (server.cleanupComplete || !(await server.windowsJobCompletion)) {
+      if (!server.cleanupComplete) {
+        await this.retainForCleanupRetry(server);
+      }
+      return;
+    }
+    server.cleanupComplete = true;
+    this.removeManagedServerRecord(server);
+    this.finishServerCleanup(server);
   }
 
   private async recordManagedServerProcess(options: {
@@ -850,7 +919,33 @@ function createServerTerminationTarget(server: OpenCodeServerGeneration): TreeKi
   if (server.ownsProcessGroup && server.process.pid) {
     return createProcessGroupTarget(server.process.pid);
   }
+  if (server.ownsWindowsJob) {
+    return createWindowsJobTarget(server.process);
+  }
   return createDirectChildTarget(server.process);
+}
+
+function createWindowsJobTarget(process: ChildProcess): TreeKillTarget {
+  return {
+    get exitCode() {
+      return process.exitCode;
+    },
+    get signalCode() {
+      return process.signalCode;
+    },
+    kill: () => process.stdin?.write("terminate\n") ?? false,
+    once: (event, listener) => process.once(event, listener),
+    off: (event, listener) => process.off(event, listener),
+  };
+}
+
+function appendProofBuffer(current: string, output: string): string {
+  const proofBufferCap = 256;
+  return (current + output).slice(-proofBufferCap);
+}
+
+function hasExitedWithoutContainer(server: OpenCodeServerGeneration): boolean {
+  return !server.ownsProcessGroup && !server.ownsWindowsJob && hasProcessExited(server.process);
 }
 
 async function resolveOpenCodeBinary(): Promise<string> {

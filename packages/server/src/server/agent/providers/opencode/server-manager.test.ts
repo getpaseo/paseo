@@ -47,13 +47,31 @@ function createManager(options: {
   terminateImplementation?: ProcessTerminator;
   processGroupInspection?: ManagedProcessGroupInspection;
   capacity?: number;
+  platform?: NodeJS.Platform;
+  spawnErrors?: Error[];
 }) {
   const directory = mkdtempSync(path.join(os.tmpdir(), "paseo-opencode-capacity-"));
   tempDirs.push(directory);
   const children: ChildProcess[] = [];
   const terminateProcess = vi.fn<ProcessTerminator>(
     options.terminateImplementation ??
-      (async () => options.terminateResults?.shift() ?? options.terminateResult ?? "terminated"),
+      (async () => {
+        const result = options.terminateResults?.shift() ?? options.terminateResult ?? "terminated";
+        if (
+          options.platform === "win32" &&
+          result !== "kill-timeout" &&
+          result !== "signal-skipped"
+        ) {
+          const child = children.find((candidate) => candidate.exitCode === null);
+          if (child) {
+            Object.defineProperty(child, "exitCode", { configurable: true, value: 1 });
+            (child.stdout as EventEmitter).emit("data", Buffer.from("test-windows-job-empty\n"));
+            child.emit("exit", 1, null);
+            child.emit("close", 1, null);
+          }
+        }
+        return result;
+      }),
   );
   let processGroupInspection: ManagedProcessGroupInspection = options.processGroupInspection ?? {
     status: "owned",
@@ -64,6 +82,10 @@ function createManager(options: {
     resolveCommandPrefix: async () => ({ command: "opencode", args: [] }),
     resolveHomeDir: () => directory,
     spawnServerProcess: () => {
+      const spawnError = options.spawnErrors?.shift();
+      if (spawnError) {
+        throw spawnError;
+      }
       const child = createChild();
       children.push(child);
       queueMicrotask(() => {
@@ -74,6 +96,8 @@ function createManager(options: {
     terminateProcess,
     createManagedProcessIdentityToken: () => "capacity-test-token",
     verifyProcessGroupIdentity: async () => processGroupInspection,
+    getWindowsJobProofMarker: () => "test-windows-job-empty",
+    platform: options.platform,
   });
   const runtimeCapacity = new HostAgentRuntimeCapacityController(options.capacity ?? 1);
   const releaseCapacity = vi.spyOn(runtimeCapacity, "release");
@@ -115,6 +139,55 @@ describe("OpenCodeServerManager runtime capacity", () => {
 
     await current.release();
     await manager.shutdown();
+  });
+
+  test("rolls back a reservation when the generation spawner throws", async () => {
+    const { children, manager } = createManager({
+      spawnErrors: [new Error("Windows supervisor failed to spawn")],
+    });
+
+    await expect(manager.acquireCurrent()).rejects.toThrow("Windows supervisor failed to spawn");
+    const replacement = await manager.acquireCurrent();
+
+    expect(children).toHaveLength(1);
+    await replacement.release();
+  });
+
+  test("retains the Windows charge until the Job Object supervisor reports empty", async () => {
+    const { children, manager, releaseCapacity } = createManager({ platform: "win32" });
+    const current = await manager.acquireCurrent();
+
+    await expect(manager.acquireDedicated({ TEST: "descendant-survives" })).rejects.toBeInstanceOf(
+      AgentRuntimeCapacityError,
+    );
+    expect(releaseCapacity).not.toHaveBeenCalled();
+
+    const supervisor = children[0]!;
+    Object.defineProperty(supervisor, "exitCode", { configurable: true, value: 0 });
+    (supervisor.stdout as EventEmitter).emit("data", Buffer.from("test-windows-job-empty\n"));
+    supervisor.emit("exit", 0, null);
+    supervisor.emit("close", 0, null);
+    await vi.waitFor(() => expect(releaseCapacity).toHaveBeenCalledTimes(1));
+
+    const replacement = await manager.acquireDedicated({ TEST: "job-empty" });
+    await current.release();
+    await replacement.release();
+  });
+
+  test("retains the Windows charge when the supervisor exits without empty proof", async () => {
+    vi.useFakeTimers();
+    const { children, manager, releaseCapacity } = createManager({ platform: "win32" });
+    await manager.acquireCurrent();
+
+    Object.defineProperty(children[0], "exitCode", { configurable: true, value: 1 });
+    children[0]?.emit("exit", 1, null);
+    children[0]?.emit("close", 1, null);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(releaseCapacity).not.toHaveBeenCalled();
+    await expect(manager.acquireDedicated({ TEST: "blocked" })).rejects.toBeInstanceOf(
+      AgentRuntimeCapacityError,
+    );
   });
 
   test.runIf(process.platform !== "win32")(
