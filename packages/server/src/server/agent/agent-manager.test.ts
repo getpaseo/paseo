@@ -841,6 +841,37 @@ test("applies host runtime capacity before fallback draft discovery starts a ses
   await manager.closeAgent(live.id);
 });
 
+test("rejects runtime-producing direct draft discovery before invoking a full provider", async () => {
+  class RuntimeProducingCommandClient extends TestAgentClient {
+    readonly draftDiscoveryRuntimeMethods = { listCommands: true } as const;
+    listCommandCalls = 0;
+
+    async listCommands(): Promise<AgentSlashCommand[]> {
+      this.listCommandCalls += 1;
+      throw new Error("capacity should reject before provider invocation");
+    }
+  }
+
+  const client = new RuntimeProducingCommandClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    maxActiveAgentRuntimes: 1,
+  });
+  const live = await manager.createAgent(
+    { provider: "codex", cwd: process.cwd() },
+    "00000000-0000-4000-8000-000000000099",
+    { workspaceId: undefined },
+  );
+
+  await expect(
+    manager.listDraftCommands({ provider: "codex", cwd: process.cwd(), model: "gpt-5.4" }),
+  ).rejects.toMatchObject({ name: "AgentRuntimeCapacityError", live: 1, reserved: 0 });
+  expect(client.listCommandCalls).toBe(0);
+
+  await manager.closeAgent(live.id);
+});
+
 test("keeps fallback draft discovery charged when its session does not close", async () => {
   class DraftCommandSession extends TestAgentSession {
     override async listCommands(): Promise<AgentSlashCommand[]> {

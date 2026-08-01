@@ -10,7 +10,7 @@
       },
       "candidate": {
         "branch": "review/v025-host-capacity-admission",
-        "commit": "45b32697e4bbc53e673aa702ffdc1dd296242864"
+        "commit": null
       },
       "sources": [
         "docs/data-model.md",
@@ -18,6 +18,7 @@
         "packages/server/src/server/agent/agent-sdk-types.ts",
         "packages/server/src/server/agent/provider-registry.ts",
         "packages/server/src/server/agent/providers/acp-agent.ts",
+        "packages/server/src/server/agent/providers/opencode-agent.ts",
         "packages/server/src/server/bootstrap.ts",
         "packages/server/src/server/config.ts",
         "packages/server/src/server/persisted-config.ts",
@@ -28,12 +29,18 @@
         "packages/server/src/server/agent/agent-manager.test.ts",
         "packages/server/src/server/agent/provider-registry.test.ts",
         "packages/server/src/server/agent/providers/acp-agent.test.ts",
+        "packages/server/src/server/agent/providers/opencode-agent.test.ts",
+        "packages/server/src/server/agent/providers/opencode/test-utils/test-opencode-harness.ts",
         "packages/server/src/server/config.test.ts",
         "packages/server/src/server/persisted-config.test.ts"
       ],
       "testCases": [
         "simultaneous creates reserve capacity atomically before provider startup",
         "fallback and direct runtime-producing draft discovery share atomic capacity admission",
+        "OpenCode command discovery is rejected before acquisition when capacity is full",
+        "concurrent OpenCode command discovery shares admission and releases capacity after cleanup",
+        "failed OpenCode server release keeps its command discovery runtime charged",
+        "wrapped provider clients preserve command and feature runtime lifecycle observers",
         "failed draft session and ACP probe cleanup remain conservatively charged",
         "live provider runtimes continue to consume capacity after entering an error state",
         "provider startup and registration failures release reserved capacity",
@@ -46,10 +53,10 @@
         "the generated public JSON schema accepts the positive runtime limit and rejects zero"
       ],
       "verification": {
-        "commit": "45b32697e4bbc53e673aa702ffdc1dd296242864",
-        "completedAt": "2026-08-01T02:14:47Z",
+        "commit": null,
+        "completedAt": "2026-08-01T02:37:57Z",
         "commands": [
-          "PATH=/opt/homebrew/Cellar/node@24/24.18.1/bin:$PATH npx vitest run packages/server/src/server/agent/agent-manager.test.ts packages/server/src/server/agent/provider-registry.test.ts packages/server/src/server/agent/providers/acp-agent.test.ts packages/server/src/server/agent/agent-loading.test.ts packages/server/src/server/config.test.ts packages/server/src/server/persisted-config.test.ts --bail=1",
+          "PATH=/opt/homebrew/Cellar/node@24/24.18.1/bin:$PATH npx vitest run packages/server/src/server/agent/agent-manager.test.ts packages/server/src/server/agent/provider-registry.test.ts packages/server/src/server/agent/providers/acp-agent.test.ts packages/server/src/server/agent/providers/opencode-agent.test.ts packages/server/src/server/agent/agent-loading.test.ts packages/server/src/server/config.test.ts packages/server/src/server/persisted-config.test.ts --bail=1",
           "npm run build:server",
           "npm run typecheck",
           "npm run lint",
@@ -59,7 +66,7 @@
           "jq empty patches/local-patches.json"
         ],
         "result": {
-          "focusedAndBroaderTests": "333 passed on Node 24.18.1",
+          "focusedAndBroaderTests": "404 passed on Node 24.18.1",
           "publicConfigSchema": "validated",
           "serverBuild": "passed",
           "workspaceTypechecks": "passed",

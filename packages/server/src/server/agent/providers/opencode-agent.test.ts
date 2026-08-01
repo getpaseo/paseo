@@ -16,6 +16,7 @@ import {
   TestOpenCodeClient,
   TestOpenCodeHarness,
 } from "./opencode/test-utils/test-opencode-harness.js";
+import { AgentManager } from "../agent-manager.js";
 import type {
   AgentSessionConfig,
   AgentStreamEvent,
@@ -34,6 +35,19 @@ function tmpCwd(): string {
 }
 
 const TEST_MODEL = "opencode/big-pickle";
+
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve(value: T): void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
 
 interface TurnResult {
   events: AgentStreamEvent[];
@@ -246,6 +260,114 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     provider: "opencode",
     cwd,
     model: TEST_MODEL,
+  });
+
+  class AvailableOpenCodeAgentClient extends OpenCodeAgentClient {
+    override async isAvailable(): Promise<boolean> {
+      return true;
+    }
+  }
+
+  test("admits only one concurrent OpenCode draft command runtime", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const firstOpenCode = new TestOpenCodeClient();
+    const firstCommandStarted = deferred<void>();
+    const finishFirstCommand = deferred<void>();
+    firstOpenCode.commandListImplementation = async () => {
+      firstCommandStarted.resolve();
+      await finishFirstCommand.promise;
+      return { data: [] };
+    };
+    runtime.enqueueClient(firstOpenCode);
+    const client = new AvailableOpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const manager = new AgentManager({
+      clients: { opencode: client },
+      logger,
+      maxActiveAgentRuntimes: 1,
+    });
+    const config = buildConfig(process.cwd());
+    const expectedCommands = [
+      {
+        name: "compact",
+        description: "Compact the current session",
+        argumentHint: "",
+        kind: "command",
+      },
+      {
+        name: "summarize",
+        description: "Compact the current session",
+        argumentHint: "",
+        kind: "command",
+      },
+    ];
+
+    const first = manager.listDraftCommands(config);
+    await firstCommandStarted.promise;
+    await expect(manager.listDraftCommands(config)).rejects.toMatchObject({
+      name: "AgentRuntimeCapacityError",
+      live: 1,
+      reserved: 0,
+    });
+    expect({
+      methods: client.draftDiscoveryRuntimeMethods,
+      acquisitions: runtime.acquisitions,
+    }).toEqual({
+      methods: { listCommands: true },
+      acquisitions: [{ kind: "current", releaseCount: 0 }],
+    });
+
+    finishFirstCommand.resolve();
+    await expect(first).resolves.toEqual(expectedCommands);
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+
+    const secondOpenCode = new TestOpenCodeClient();
+    runtime.enqueueClient(secondOpenCode);
+    await expect(manager.listDraftCommands(config)).resolves.toEqual(expectedCommands);
+    expect(runtime.acquisitions).toEqual([
+      { kind: "current", releaseCount: 1 },
+      { kind: "current", releaseCount: 1 },
+    ]);
+  });
+
+  test("keeps failed OpenCode draft command release charged", async () => {
+    class ReleaseFailureHarness extends TestOpenCodeHarness {
+      override async acquireCurrent() {
+        const acquisition = await super.acquireCurrent();
+        return {
+          ...acquisition,
+          release: async () => {
+            await acquisition.release();
+            throw new Error("OpenCode command release failed");
+          },
+        };
+      }
+    }
+
+    const runtime = new ReleaseFailureHarness();
+    runtime.enqueueClient(new TestOpenCodeClient());
+    const client = new AvailableOpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const manager = new AgentManager({
+      clients: { opencode: client },
+      logger,
+      maxActiveAgentRuntimes: 1,
+    });
+    const config = buildConfig(process.cwd());
+
+    await expect(manager.listDraftCommands(config)).rejects.toThrow(
+      "OpenCode command release failed",
+    );
+    await expect(manager.listDraftCommands(config)).rejects.toMatchObject({
+      name: "AgentRuntimeCapacityError",
+      live: 1,
+      reserved: 0,
+    });
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
   });
 
   test("creates a session with valid id and provider", async () => {

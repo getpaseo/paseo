@@ -8,6 +8,7 @@ import type {
   AgentMode,
   AgentRuntimeLifecycleObserver,
   AgentSessionConfig,
+  AgentSlashCommand,
   ProviderCatalog,
 } from "./agent-sdk-types.js";
 
@@ -44,7 +45,9 @@ const mockState = vi.hoisted(() => {
     },
     isCommandAvailable: vi.fn(async (_command: string) => false),
     runtimeModels: new Map<string, AgentModelDefinition[]>(),
+    cursorListCommandConfigs: [] as AgentSessionConfig[],
     cursorListFeaturesConfigs: [] as AgentSessionConfig[],
+    cursorCommandLifecycle: [] as string[],
     cursorFeatureLifecycle: [] as string[],
     reset() {
       this.constructorArgs.claude = [];
@@ -57,7 +60,9 @@ const mockState = vi.hoisted(() => {
       this.isCommandAvailable.mockReset();
       this.isCommandAvailable.mockImplementation(async (_command: string) => false);
       this.runtimeModels.clear();
+      this.cursorListCommandConfigs = [];
       this.cursorListFeaturesConfigs = [];
+      this.cursorCommandLifecycle = [];
       this.cursorFeatureLifecycle = [];
     },
   };
@@ -346,7 +351,10 @@ vi.mock("./providers/cursor-acp-agent.js", () => ({
       supportsToolInvocations: true,
     };
     readonly provider = "acp";
-    readonly draftDiscoveryRuntimeMethods = { listFeatures: true } as const;
+    readonly draftDiscoveryRuntimeMethods = {
+      listCommands: true,
+      listFeatures: true,
+    } as const;
     readonly runtimeSettings?: unknown;
 
     constructor(options: {
@@ -385,6 +393,18 @@ vi.mock("./providers/cursor-acp-agent.js", () => ({
 
     async isAvailable(): Promise<boolean> {
       return true;
+    }
+
+    async listCommands(
+      config: AgentSessionConfig,
+      runtimeLifecycle?: AgentRuntimeLifecycleObserver,
+    ): Promise<AgentSlashCommand[]> {
+      mockState.cursorListCommandConfigs.push(config);
+      runtimeLifecycle?.runtimeStarted();
+      mockState.cursorCommandLifecycle.push("started");
+      runtimeLifecycle?.runtimeClosed();
+      mockState.cursorCommandLifecycle.push("closed");
+      return [{ name: "review", description: "Review changes", argumentHint: "", kind: "command" }];
     }
 
     async listFeatures(
@@ -723,7 +743,7 @@ test("cursor provider extending acp uses CursorACPAgentClient", () => {
   expect(mockState.constructorArgs.genericAcp).toEqual([]);
 });
 
-test("wrapped cursor client lists ACP features through the inner provider", async () => {
+test("wrapped cursor client preserves draft discovery runtime lifecycles", async () => {
   const registry = buildProviderRegistry(logger, {
     providerOverrides: {
       cursor: {
@@ -735,7 +755,23 @@ test("wrapped cursor client lists ACP features through the inner provider", asyn
   });
 
   const client = registry.cursor.createClient(logger);
-  const lifecycle: string[] = [];
+  const featureLifecycle: string[] = [];
+  const commandLifecycle: string[] = [];
+
+  await expect(
+    client.listCommands?.(
+      {
+        provider: "cursor",
+        cwd: "/tmp/cursor",
+      },
+      {
+        runtimeStarted: () => commandLifecycle.push("started"),
+        runtimeClosed: () => commandLifecycle.push("closed"),
+      },
+    ),
+  ).resolves.toEqual([
+    { name: "review", description: "Review changes", argumentHint: "", kind: "command" },
+  ]);
 
   await expect(
     client.listFeatures?.(
@@ -744,8 +780,8 @@ test("wrapped cursor client lists ACP features through the inner provider", asyn
         cwd: "/tmp/cursor",
       },
       {
-        runtimeStarted: () => lifecycle.push("started"),
-        runtimeClosed: () => lifecycle.push("closed"),
+        runtimeStarted: () => featureLifecycle.push("started"),
+        runtimeClosed: () => featureLifecycle.push("closed"),
       },
     ),
   ).resolves.toEqual([
@@ -763,10 +799,26 @@ test("wrapped cursor client lists ACP features through the inner provider", asyn
       cwd: "/tmp/cursor",
     },
   ]);
-  expect(client.draftDiscoveryRuntimeMethods).toEqual({ listFeatures: true });
-  expect({ lifecycle, innerLifecycle: mockState.cursorFeatureLifecycle }).toEqual({
-    lifecycle: ["started", "closed"],
-    innerLifecycle: ["started", "closed"],
+  expect(mockState.cursorListCommandConfigs).toEqual([
+    {
+      provider: "acp",
+      cwd: "/tmp/cursor",
+    },
+  ]);
+  expect(client.draftDiscoveryRuntimeMethods).toEqual({
+    listCommands: true,
+    listFeatures: true,
+  });
+  expect({
+    commandLifecycle,
+    featureLifecycle,
+    innerCommandLifecycle: mockState.cursorCommandLifecycle,
+    innerFeatureLifecycle: mockState.cursorFeatureLifecycle,
+  }).toEqual({
+    commandLifecycle: ["started", "closed"],
+    featureLifecycle: ["started", "closed"],
+    innerCommandLifecycle: ["started", "closed"],
+    innerFeatureLifecycle: ["started", "closed"],
   });
 });
 
