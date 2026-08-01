@@ -148,6 +148,102 @@ describe("provider subagent client store", () => {
     ]);
   });
 
+  test.each(["tail first", "pagination first"])(
+    "preserves same-epoch reconnect tail and pagination when %s resolves",
+    async (resolutionOrder) => {
+      type TimelineResponse = Awaited<ReturnType<DaemonClient["fetchProviderSubagentTimeline"]>>;
+      const resolvers = new Map<string, (response: TimelineResponse) => void>();
+      const client = {
+        fetchProviderSubagentTimeline(
+          _parentAgentId: string,
+          _subagentId: string,
+          request: Parameters<DaemonClient["fetchProviderSubagentTimeline"]>[2],
+        ) {
+          return new Promise<TimelineResponse>((resolve) =>
+            resolvers.set(request?.direction ?? "tail", resolve),
+          );
+        },
+      };
+      const response = (
+        requestId: string,
+        direction: "tail" | "before",
+        seq: number,
+        text: string,
+        hasOlder: boolean,
+      ): TimelineResponse => ({
+        requestId,
+        parentAgentId: PARENT_ID,
+        subagentId: SUBAGENT_ID,
+        provider: "codex",
+        direction,
+        epoch: "timeline-epoch",
+        reset: false,
+        staleCursor: false,
+        gap: false,
+        window: { minSeq: 1, maxSeq: 2, nextSeq: 3 },
+        hasOlder,
+        hasNewer: direction === "before",
+        rows: [
+          {
+            seq,
+            timestamp: `2026-07-12T10:00:0${seq}.000Z`,
+            item: { type: "assistant_message", text },
+          },
+        ],
+        error: null,
+      });
+      useProviderSubagentStore
+        .getState()
+        .replaceTimeline(SERVER_ID, response("initial-tail", "tail", 2, "Recent output.", true));
+
+      const paginationRequest = refreshProviderSubagentTimeline(
+        client,
+        SERVER_ID,
+        PARENT_ID,
+        SUBAGENT_ID,
+        1,
+        {
+          direction: "before",
+          cursor: { epoch: "timeline-epoch", seq: 2 },
+          limit: 100,
+        },
+      );
+      const reconnectTailRequest = refreshProviderSubagentTimeline(
+        client,
+        SERVER_ID,
+        PARENT_ID,
+        SUBAGENT_ID,
+        1,
+        { direction: "tail", limit: 100 },
+      );
+      const tailResponse = response("reconnect-tail", "tail", 2, "Current output.", true);
+      const paginationResponse = response("older-page", "before", 1, "Older output.", false);
+
+      if (resolutionOrder === "tail first") {
+        resolvers.get("tail")?.(tailResponse);
+        await reconnectTailRequest;
+        resolvers.get("before")?.(paginationResponse);
+      } else {
+        resolvers.get("before")?.(paginationResponse);
+        await Promise.resolve();
+        resolvers.get("tail")?.(tailResponse);
+      }
+      await Promise.all([paginationRequest, reconnectTailRequest]);
+
+      const timeline = useProviderSubagentStore
+        .getState()
+        .timelines.get(providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID));
+      expect(timeline?.hasOlder).toBe(false);
+      expect([...timeline!.rows.keys()]).toEqual([2, 1]);
+      expect(timeline?.head).toEqual([
+        expect.objectContaining({
+          kind: "assistant_message",
+          text: "Older output.Current output.",
+        }),
+      ]);
+    },
+  );
+
   test("builds a shared stream model from ordered provider updates", () => {
     const subagents = useProviderSubagentStore.getState();
     subagents.applyUpdate(SERVER_ID, {

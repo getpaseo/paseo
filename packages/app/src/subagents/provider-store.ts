@@ -82,6 +82,10 @@ interface ProviderSubagentConnectionSource {
 }
 
 const pendingListRequests = new WeakMap<ProviderSubagentListClient, Map<string, Promise<void>>>();
+const pendingTimelineTailRequests = new WeakMap<
+  ProviderSubagentTimelineClient,
+  Map<string, Promise<void>>
+>();
 const currentConnectionSources = new Map<string, ProviderSubagentConnectionSource>();
 
 function captureConnectionSource(
@@ -148,15 +152,39 @@ export function refreshProviderSubagentTimeline(
   connectionEpoch: number,
   request: ProviderSubagentTimelineRequest,
 ): Promise<void> {
+  const requestKey = `${serverId}\0${connectionEpoch}\0${parentAgentId}\0${subagentId}`;
+  const direction = request?.direction ?? (request?.cursor ? "after" : "tail");
+  let clientTailRequests = pendingTimelineTailRequests.get(client);
+  if (!clientTailRequests) {
+    clientTailRequests = new Map();
+    pendingTimelineTailRequests.set(client, clientTailRequests);
+  }
+  if (direction === "tail") {
+    const pendingTail = clientTailRequests.get(requestKey);
+    if (pendingTail) return pendingTail;
+  }
+
   const source = captureConnectionSource(client, serverId, connectionEpoch);
-  return client
+  const timelineRequest = client
     .fetchProviderSubagentTimeline(parentAgentId, subagentId, request)
-    .then((payload) => {
+    .then(async (payload) => {
+      if (direction !== "tail") {
+        await clientTailRequests?.get(requestKey)?.catch(() => undefined);
+      }
       if (currentConnectionSources.get(serverId) !== source) return undefined;
       useProviderSubagentStore.getState().replaceTimeline(serverId, payload);
       return undefined;
     })
-    .finally(() => releaseConnectionSource(serverId, source));
+    .finally(() => {
+      if (direction === "tail" && clientTailRequests?.get(requestKey) === timelineRequest) {
+        clientTailRequests.delete(requestKey);
+      }
+      releaseConnectionSource(serverId, source);
+    });
+  if (direction === "tail") {
+    clientTailRequests.set(requestKey, timelineRequest);
+  }
+  return timelineRequest;
 }
 
 function parentPrefix(serverId: string, parentAgentId: string): string {

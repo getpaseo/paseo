@@ -1031,7 +1031,10 @@ export class Session {
     }
   }
 
-  private registerProviderSubagentInterest(parentAgentId: string, source?: object): void {
+  private registerProviderSubagentInterest(parentAgentId: string, source?: object): boolean {
+    if (source && !this.clientCapabilitiesBySource.has(source)) {
+      return false;
+    }
     const subscriptionSource = source ?? this.defaultProviderSubagentSource;
     let parentAgentIds = this.providerSubagentParentIdsBySource.get(subscriptionSource);
     if (!parentAgentIds) {
@@ -1039,6 +1042,7 @@ export class Session {
       this.providerSubagentParentIdsBySource.set(subscriptionSource, parentAgentIds);
     }
     parentAgentIds.add(parentAgentId);
+    return true;
   }
 
   private forwardProviderSubagentUpdate(
@@ -6204,7 +6208,7 @@ export class Session {
         agentStorage: this.agentStorage,
         logger: this.sessionLogger,
       });
-      this.registerProviderSubagentInterest(msg.parentAgentId, source);
+      if (!this.registerProviderSubagentInterest(msg.parentAgentId, source)) return;
       this.emitForSource(
         {
           type: "agent.provider_subagents.list.response",
@@ -6248,7 +6252,7 @@ export class Session {
       if (!descriptor) {
         throw new Error("Provider subagent not found");
       }
-      this.registerProviderSubagentInterest(msg.parentAgentId, source);
+      if (!this.registerProviderSubagentInterest(msg.parentAgentId, source)) return;
       const timeline = this.agentManager.fetchProviderSubagentTimeline(
         msg.parentAgentId,
         msg.subagentId,
