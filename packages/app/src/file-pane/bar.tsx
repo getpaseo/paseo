@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import type { Theme } from "@/styles/theme";
-import { FileConflictAlert } from "./conflict-alert";
+import { FileConflictAlert, type FileConflictAlertState } from "./conflict-alert";
 import type { FileEditorStatus } from "./editor/model";
 
 const ThemedSpinner = withUnistyles(LoadingSpinner);
@@ -18,9 +18,7 @@ export function FilePanelBar({
   editorStatus,
   cursor,
   vimMode,
-  conflictUnavailable,
-  onOverwrite,
-  onReload,
+  conflict,
 }: {
   size: number;
   lineCount?: number;
@@ -29,9 +27,7 @@ export function FilePanelBar({
   editorStatus?: FileEditorStatus;
   cursor?: { line: number; column: number };
   vimMode?: string | null;
-  conflictUnavailable?: boolean;
-  onOverwrite?(): void;
-  onReload?(): void;
+  conflict?: FileConflictAlertState;
 }) {
   const { t } = useTranslation();
   const markdownModes = [
@@ -84,9 +80,6 @@ export function FilePanelBar({
           {editorStatus === "error" ? (
             <Text style={styles.error}>{t("panels.file.editor.saveFailed")}</Text>
           ) : null}
-          {editorStatus === "conflict" ? (
-            <Text style={styles.error}>{t("panels.file.editor.changedOnDisk")}</Text>
-          ) : null}
           {vimMode ? (
             <Text
               style={styles.vim}
@@ -114,15 +107,7 @@ export function FilePanelBar({
           />
         ) : null}
       </View>
-      {editorStatus === "conflict" && onOverwrite && onReload ? (
-        <View style={styles.notice}>
-          <FileConflictAlert
-            unavailable={conflictUnavailable ?? false}
-            onOverwrite={onOverwrite}
-            onReload={onReload}
-          />
-        </View>
-      ) : null}
+      {conflict ? <FileConflictAlert state={conflict} /> : null}
     </View>
   );
 }
@@ -137,8 +122,6 @@ const styles = StyleSheet.create((theme) => ({
   chrome: {
     flexShrink: 0,
     backgroundColor: theme.colors.surface1,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
   },
   row: {
     minHeight: 32,
@@ -146,6 +129,8 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[3],
     paddingHorizontal: theme.spacing[3],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
   },
   metadata: {
     flex: 1,
@@ -174,5 +159,4 @@ const styles = StyleSheet.create((theme) => ({
     fontFamily: theme.fontFamily.mono,
     fontSize: theme.fontSize.xs,
   },
-  notice: { paddingHorizontal: theme.spacing[3], paddingBottom: theme.spacing[3] },
 }));

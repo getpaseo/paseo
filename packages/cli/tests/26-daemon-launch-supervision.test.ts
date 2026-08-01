@@ -18,6 +18,7 @@ const serverConnectionOfferE2ePath = join(
 );
 const desktopRuntimePathsPath = join(repoRoot, "packages/desktop/src/daemon/runtime-paths.ts");
 const nixPackagePath = join(repoRoot, "nix/package.nix");
+const nixModulePath = join(repoRoot, "nix/module.nix");
 
 function assertNoDirectWorkerLaunch(label: string, command: string): void {
   assert(
@@ -100,6 +101,24 @@ assert(
   "Nix paseo-server wrapper should use dist/scripts/supervisor-entrypoint.js",
 );
 assertNoDirectWorkerLaunch("Nix package wrapper", nixPackage);
-console.log("✓ desktop runtime and Nix wrapper enter supervisor\n");
+assert(
+  nixPackage.includes("--set PASEO_NODE_ENV production"),
+  "Nix paseo-server wrapper should keep the daemon runtime mode Paseo-scoped",
+);
+assert(
+  !/--set(-default)?\s+NODE_ENV\b/.test(nixPackage),
+  "Nix paseo-server wrapper must not leak NODE_ENV to external agent processes",
+);
+
+const nixModule = await readFile(nixModulePath, "utf-8");
+assert(
+  !/\bNODE_ENV\b\s*=/.test(nixModule),
+  "NixOS module must not leak NODE_ENV to external agent processes",
+);
+assert(
+  !/\bPASEO_NODE_ENV\b/.test(nixModule),
+  "NixOS module must not duplicate the packaged daemon runtime mode",
+);
+console.log("✓ desktop runtime and Nix wrapper enter supervisor without leaking runtime env\n");
 
 console.log("=== Daemon launch supervision regression test passed ===");

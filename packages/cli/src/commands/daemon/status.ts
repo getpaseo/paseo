@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { getOrCreateServerId, findExecutable, execCommand } from "@getpaseo/server";
 import { connectToDaemon } from "../../utils/client.js";
 import type { CommandOptions, ListResult, OutputSchema } from "../../output/index.js";
-import { resolveLocalDaemonState, resolveTcpHostFromListen } from "./local-daemon.js";
+import { resolveLocalDaemonState } from "./local-daemon.js";
 import { resolveNodePathFromPid } from "./runtime-toolchain.js";
 
 const DAEMON_STATUS_PROBE_TIMEOUT_MS = 1500;
@@ -204,6 +204,7 @@ interface DaemonProbeResult {
   daemonVersion?: string | null;
   daemonNodeOverride?: string;
   daemonProviders?: ProviderBinaryStatus[];
+  relayStatus?: string;
   note?: string;
 }
 
@@ -262,6 +263,13 @@ async function probeDaemonOverWebsocket(args: {
       version: p.available ? null : (p.error ?? null),
       source: "daemon" as const,
     }));
+    const relayStatus =
+      statusPayload.relay == null
+        ? undefined
+        : selectRelayStatus({
+            persisted: relayConfigFromLocalState(state),
+            live: statusPayload.relay,
+          });
 
     if (!state.running) {
       return {
@@ -269,6 +277,7 @@ async function probeDaemonOverWebsocket(args: {
         daemonVersion: statusPayload.version ?? daemonVersion,
         daemonNodeOverride: statusPayload.nodePath,
         daemonProviders,
+        relayStatus,
         note: state.pidInfo
           ? `Connected daemon is reachable at ${host} even though local daemon PID ${state.pidInfo.pid} is stale`
           : `Connected daemon is reachable at ${host} but no local daemon PID file was found`,
@@ -280,6 +289,7 @@ async function probeDaemonOverWebsocket(args: {
       daemonVersion: statusPayload.version ?? daemonVersion,
       daemonNodeOverride: statusPayload.nodePath,
       daemonProviders,
+      relayStatus,
     };
   } catch {
     return {
@@ -301,6 +311,7 @@ interface ProbeMergeState {
   daemonNode: string;
   daemonVersion: string | null;
   daemonProviders: ProviderBinaryStatus[] | undefined;
+  relayStatus: string;
   note: string | undefined;
 }
 
@@ -312,6 +323,7 @@ function applyProbeToStatus(input: ProbeMergeState): Omit<ProbeMergeState, "prob
     daemonNode: probe.daemonNodeOverride ?? input.daemonNode,
     daemonVersion: probe.daemonVersion !== undefined ? probe.daemonVersion : input.daemonVersion,
     daemonProviders: probe.daemonProviders ?? input.daemonProviders,
+    relayStatus: probe.relayStatus ?? input.relayStatus,
     note: probe.note ? appendNote(input.note, probe.note) : input.note,
   };
 }
@@ -336,10 +348,34 @@ async function resolveDaemonNodeLabel(
   return fromPid.nodePath ?? `unknown (${fromPid.error ?? "could not resolve from PID"})`;
 }
 
-function formatRelayStatus(state: ReturnType<typeof resolveLocalDaemonState>): string {
-  if (!state.relayEnabled) return "disabled";
-  const scheme = state.relayPublicUseTls ? "wss" : "ws";
-  return `${scheme}://${state.relayEndpoint}`;
+interface RelayStatusConfig {
+  enabled: boolean;
+  endpoint: string;
+  publicEndpoint: string;
+  useTls: boolean;
+  publicUseTls: boolean;
+}
+
+function relayConfigFromLocalState(
+  state: ReturnType<typeof resolveLocalDaemonState>,
+): RelayStatusConfig {
+  return {
+    enabled: state.relayEnabled,
+    endpoint: state.relayEndpoint,
+    publicEndpoint: state.relayEndpoint,
+    useTls: state.relayUseTls,
+    publicUseTls: state.relayPublicUseTls,
+  };
+}
+
+export function selectRelayStatus(input: {
+  persisted: RelayStatusConfig;
+  live?: RelayStatusConfig;
+}): string {
+  const relay = input.live ?? input.persisted;
+  if (!relay.enabled) return "disabled";
+  const scheme = relay.publicUseTls ? "wss" : "ws";
+  return `${scheme}://${relay.publicEndpoint}`;
 }
 
 export type StatusResult = ListResult<StatusRow>;
@@ -350,7 +386,7 @@ export async function runStatusCommand(
 ): Promise<StatusResult> {
   const home = typeof options.home === "string" ? options.home : undefined;
   const state = resolveLocalDaemonState({ home });
-  const host = resolveTcpHostFromListen(state.listen);
+  const daemonTarget = state.listen.trim();
 
   const owner = resolveOwnerLabel(state.pidInfo?.uid, state.pidInfo?.hostname);
   let daemonNode = await resolveDaemonNodeLabel(state);
@@ -359,6 +395,7 @@ export async function runStatusCommand(
   let connectedDaemon: DaemonStatus["connectedDaemon"] = "not_probed";
   let daemonVersion: string | null = null;
   let daemonProviders: ProviderBinaryStatus[] | undefined;
+  let relayStatus = selectRelayStatus({ persisted: relayConfigFromLocalState(state) });
   let note: string | undefined;
 
   if (!state.running && state.stalePidFile && state.pidInfo) {
@@ -366,20 +403,26 @@ export async function runStatusCommand(
     note = `Stale PID file found for PID ${state.pidInfo.pid}`;
   }
 
-  if (host) {
-    const probe = await probeDaemonOverWebsocket({ host, state });
-    ({ connectedDaemon, localDaemon, daemonNode, daemonVersion, daemonProviders, note } =
-      applyProbeToStatus({
-        probe,
-        connectedDaemon,
-        localDaemon,
-        daemonNode,
-        daemonVersion,
-        daemonProviders,
-        note,
-      }));
-  } else {
-    note = appendNote(note, "Daemon is configured for unix socket listen; API probe skipped");
+  if (daemonTarget) {
+    const probe = await probeDaemonOverWebsocket({ host: daemonTarget, state });
+    ({
+      connectedDaemon,
+      localDaemon,
+      daemonNode,
+      daemonVersion,
+      daemonProviders,
+      relayStatus,
+      note,
+    } = applyProbeToStatus({
+      probe,
+      connectedDaemon,
+      localDaemon,
+      daemonNode,
+      daemonVersion,
+      daemonProviders,
+      relayStatus,
+      note,
+    }));
   }
 
   const cliVersion = resolveCliVersion();
@@ -398,7 +441,7 @@ export async function runStatusCommand(
     connectedDaemon,
     home: state.home,
     listen: state.listen,
-    relay: formatRelayStatus(state),
+    relay: relayStatus,
     hostname: state.pidInfo?.hostname ?? null,
     pid: state.pidInfo?.pid ?? null,
     startedAt: state.pidInfo?.startedAt ?? null,

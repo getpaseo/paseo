@@ -2,7 +2,9 @@ import { expect, type Locator, type Page } from "@playwright/test";
 import { gotoAppShell } from "./app";
 import { addConnectedHostsAndReload, waitForConnectedHost } from "./hosts";
 import { openProjectSettings } from "./project-settings";
+import { selectSettingsHost } from "./settings";
 import { waitForSidebarHydration } from "./workspace-ui";
+import { buildProjectsSettingsRoute } from "@/utils/host-routes";
 
 const PROJECT_VISIBILITY_TIMEOUT = 30_000;
 
@@ -98,34 +100,37 @@ export async function expectProjectWorkspaceCountForHost(
 }
 
 export async function renameProject(page: Page, name: string): Promise<void> {
-  await page.getByRole("button", { name: "Rename project", exact: true }).click();
+  await page.getByRole("button", { name: "Edit project", exact: true }).click();
   await page.getByRole("textbox", { name: "Project name", exact: true }).fill(name);
-  await page.getByRole("button", { name: "Save project name", exact: true }).click();
-  await expect(page.getByText("Project renamed", { exact: true })).toBeVisible({
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(page.getByText("Project updated", { exact: true })).toBeVisible({
     timeout: PROJECT_VISIBILITY_TIMEOUT,
   });
 }
 
-export async function openGroupedProjectSettings(page: Page, projectName: string): Promise<void> {
+export async function openGroupedProjectSettings(
+  page: Page,
+  input: { serverId: string; projectName: string },
+): Promise<void> {
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(page).toHaveURL(/\/settings\/general$/);
-  await page.getByRole("button", { name: "Projects", exact: true }).click();
-  await expect(page).toHaveURL(/\/settings\/projects$/);
-  await openProjectSettings(page, projectName);
+  await selectSettingsHost(page, input.serverId);
+  await page.locator('[data-testid="settings-host-section-projects"]:visible').click();
+  await expect(page).toHaveURL(/\/settings\/hosts\/[^/]+\/projects$/);
+  await openProjectSettings(page, input.projectName);
 }
 
-export async function switchProjectSettingsHost(page: Page, hostName: string): Promise<void> {
-  const projectSettings = page.getByRole("main");
-  await projectSettings.getByRole("button", { name: "Switch host", exact: true }).click();
-  await page.getByRole("button", { name: hostName, exact: true }).click();
-  await expect(
-    projectSettings.getByRole("button", { name: "Switch host", exact: true }),
-  ).toContainText(hostName);
+export async function openProjectsForSettingsHost(
+  page: Page,
+  input: { serverId: string; projectName: string },
+): Promise<void> {
+  await selectSettingsHost(page, input.serverId);
+  await expect(page).toHaveURL(buildProjectsSettingsRoute(input.serverId));
+  await openProjectSettings(page, input.projectName);
 }
 
 export async function expectProjectSettingsName(page: Page, projectName: string): Promise<void> {
-  await expect(page.getByRole("group", { name: "Project name", exact: true })).toContainText(
-    projectName,
-    { timeout: PROJECT_VISIBILITY_TIMEOUT },
-  );
+  await expect(page.getByRole("main").getByText(projectName, { exact: true })).toBeVisible({
+    timeout: PROJECT_VISIBILITY_TIMEOUT,
+  });
 }

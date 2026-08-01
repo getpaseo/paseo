@@ -7,8 +7,8 @@ interface SidebarOrderStoreState {
   workspaceOrderByProject: Record<string, string[]>;
   getProjectOrder: () => string[];
   setProjectOrder: (keys: string[]) => void;
-  getWorkspaceOrder: (projectKey: string) => string[];
-  setWorkspaceOrder: (projectKey: string, keys: string[]) => void;
+  getWorkspaceOrder: (projectViewKey: string) => string[];
+  setWorkspaceOrder: (projectViewKey: string, keys: string[]) => void;
 }
 
 interface SidebarOrderPersistedState {
@@ -20,7 +20,7 @@ interface SidebarOrderPersistedState {
 
 interface SidebarWorkspaceOrderScope {
   serverId: string;
-  projectKey: string;
+  projectViewKey: string;
 }
 
 function normalizeKeys(keys: string[]): string[] {
@@ -43,8 +43,8 @@ function normalizeWorkspaceOrderByProject(
   workspaceOrderByProject: Record<string, string[]> | undefined,
 ): Record<string, string[]> {
   const normalized: Record<string, string[]> = {};
-  for (const [projectKey, order] of Object.entries(workspaceOrderByProject ?? {})) {
-    const scope = projectKey.trim();
+  for (const [projectViewKey, order] of Object.entries(workspaceOrderByProject ?? {})) {
+    const scope = projectViewKey.trim();
     if (!scope) continue;
     normalized[scope] = normalizeKeys(order);
   }
@@ -55,9 +55,9 @@ function extractWorkspaceOrderScope(scopeKey: string): SidebarWorkspaceOrderScop
   const separatorIndex = scopeKey.indexOf("::");
   if (separatorIndex < 0) return null;
   const serverId = scopeKey.slice(0, separatorIndex).trim();
-  const projectKey = scopeKey.slice(separatorIndex + 2).trim();
-  if (!serverId || !projectKey) return null;
-  return { serverId, projectKey };
+  const projectViewKey = scopeKey.slice(separatorIndex + 2).trim();
+  if (!serverId || !projectViewKey) return null;
+  return { serverId, projectViewKey };
 }
 
 function normalizeLegacyWorkspaceKey(serverId: string, rawWorkspaceKey: string): string | null {
@@ -91,7 +91,7 @@ export function migrateSidebarOrderState(persistedState: unknown): {
   for (const [scopeKey, order] of Object.entries(state.workspaceOrderByServerAndProject ?? {})) {
     const scope = extractWorkspaceOrderScope(scopeKey);
     if (!scope) continue;
-    const existing = workspaceOrderByProject[scope.projectKey] ?? [];
+    const existing = workspaceOrderByProject[scope.projectViewKey] ?? [];
     const merged = [...existing];
     const seen = new Set(merged);
     for (const key of order) {
@@ -100,7 +100,7 @@ export function migrateSidebarOrderState(persistedState: unknown): {
       seen.add(workspaceKey);
       merged.push(workspaceKey);
     }
-    workspaceOrderByProject[scope.projectKey] = merged;
+    workspaceOrderByProject[scope.projectViewKey] = merged;
   }
 
   return { projectOrder, workspaceOrderByProject };
@@ -116,13 +116,13 @@ export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
         const normalized = normalizeKeys(keys);
         set({ projectOrder: normalized });
       },
-      getWorkspaceOrder: (projectKey) => {
-        const scope = projectKey.trim();
+      getWorkspaceOrder: (projectViewKey) => {
+        const scope = projectViewKey.trim();
         if (!scope) return [];
         return get().workspaceOrderByProject[scope] ?? [];
       },
-      setWorkspaceOrder: (projectKey, keys) => {
-        const scope = projectKey.trim();
+      setWorkspaceOrder: (projectViewKey, keys) => {
+        const scope = projectViewKey.trim();
         if (!scope) return;
         const normalized = normalizeKeys(keys);
         set((state) => ({
