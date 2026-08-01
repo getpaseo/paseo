@@ -103,6 +103,16 @@ function createProjectRegistryForRoot(rootPath: string): Pick<ProjectRegistry, "
   };
 }
 
+function createWorkspaceRegistryForRecords(
+  records: PersistedWorkspaceRecord[] = [],
+): Pick<WorkspaceRegistry, "list"> {
+  return { list: async () => records };
+}
+
+function createWorktreeListService(): Pick<WorkspaceGitService, "listWorktrees"> {
+  return { listWorktrees: vi.fn(async () => []) };
+}
+
 function createWorkflowForRequestTest(options: {
   paseoHome: string;
   createPaseoWorktree?: CreatePaseoWorktreeFn;
@@ -431,6 +441,7 @@ describe("handlePaseoWorktreeListRequest", () => {
         paseoHome: "/tmp/paseo-home",
         workspaceGitService: workspaceGitService as unknown as WorkspaceGitService,
         projectRegistry: createProjectRegistryForRoot(repoRoot),
+        workspaceRegistry: createWorkspaceRegistryForRecords(),
       },
       {
         type: "paseo_worktree_list_request",
@@ -458,29 +469,31 @@ describe("handlePaseoWorktreeListRequest", () => {
     });
   });
 
-  test("rejects a legacy caller cwd without touching Git", async () => {
+  test("resolves a legacy caller cwd through the registered project", async () => {
     const emitted: SessionOutboundMessage[] = [];
-    const workspaceGitService = { listWorktrees: vi.fn() };
+    const repoRoot = realpathSync.native(process.cwd());
+    const workspaceGitService = { listWorktrees: vi.fn(async () => []) };
 
     await handlePaseoWorktreeListRequest(
       {
         emit: (message) => emitted.push(message),
         workspaceGitService: workspaceGitService as unknown as WorkspaceGitService,
-        projectRegistry: createProjectRegistryForRoot(realpathSync.native(process.cwd())),
+        projectRegistry: createProjectRegistryForRoot(repoRoot),
+        workspaceRegistry: createWorkspaceRegistryForRecords(),
       },
       {
         type: "paseo_worktree_list_request",
-        cwd: "/remote-callers/unrelated/repo",
+        cwd: repoRoot,
         requestId: "request-unscoped-worktrees",
       },
     );
 
-    expect(workspaceGitService.listWorktrees).not.toHaveBeenCalled();
+    expect(workspaceGitService.listWorktrees).toHaveBeenCalledWith(repoRoot);
     expect(emitted).toContainEqual({
       type: "paseo_worktree_list_response",
       payload: {
         worktrees: [],
-        error: expect.objectContaining({ message: expect.stringContaining("required") }),
+        error: null,
         requestId: "request-unscoped-worktrees",
       },
     });
@@ -1424,6 +1437,8 @@ describe("handleCreatePaseoWorktreeRequest", () => {
         emit: (message) => emitted.push(message),
         sessionLogger: logger,
         projectRegistry: createProjectRegistryForRoot(repoDir),
+        workspaceRegistry: createWorkspaceRegistryForRecords(),
+        workspaceGitService: createWorktreeListService(),
         createPaseoWorktreeWorkflow: createWorkflowForRequestTest({
           paseoHome,
           createPaseoWorktree: createPaseoWorktreeForTest({ paseoHome, project }),
@@ -1433,7 +1448,6 @@ describe("handleCreatePaseoWorktreeRequest", () => {
         type: "create_paseo_worktree_request",
         requestId: "req-pr-worktree",
         cwd: repoDir,
-        repoRoot: repoDir,
         worktreeSlug: "review-pr-123",
         action: "checkout",
         githubPrNumber: 123,
@@ -1726,6 +1740,8 @@ describe("handleCreatePaseoWorktreeRequest", () => {
           sessionLogger: createLogger(),
           emit: (message) => emitted.push(message),
           projectRegistry: createProjectRegistryForRoot(repoDir),
+          workspaceRegistry: createWorkspaceRegistryForRecords(),
+          workspaceGitService: createWorktreeListService(),
           createPaseoWorktreeWorkflow: createWorkflowForRequestTest({
             paseoHome,
             createPaseoWorktree: createPaseoWorktreeForTest({ paseoHome, events }),
@@ -1791,6 +1807,8 @@ describe("handleCreatePaseoWorktreeRequest", () => {
           sessionLogger: createLogger(),
           emit: (message) => emitted.push(message),
           projectRegistry: createProjectRegistryForRoot(repoDir),
+          workspaceRegistry: createWorkspaceRegistryForRecords(),
+          workspaceGitService: createWorktreeListService(),
           createPaseoWorktreeWorkflow: createWorkflowForRequestTest({
             paseoHome,
             createPaseoWorktree: async (input) => {
@@ -1875,6 +1893,8 @@ describe("handleCreatePaseoWorktreeRequest", () => {
           sessionLogger: createLogger(),
           emit: (message) => emitted.push(message),
           projectRegistry: createProjectRegistryForRoot(repoDir),
+          workspaceRegistry: createWorkspaceRegistryForRecords(),
+          workspaceGitService: createWorktreeListService(),
           createPaseoWorktreeWorkflow: createWorkflowForRequestTest({ paseoHome }),
           describeWorkspaceRecord: vi.fn(async (result) =>
             createWorkspaceDescriptor({ workspace: result.workspace, repoDir }),
@@ -1915,6 +1935,8 @@ describe("handleCreatePaseoWorktreeRequest", () => {
           sessionLogger: createLogger(),
           emit: (message) => emitted.push(message),
           projectRegistry: createProjectRegistryForRoot(repoDir),
+          workspaceRegistry: createWorkspaceRegistryForRecords(),
+          workspaceGitService: createWorktreeListService(),
           createPaseoWorktreeWorkflow: createWorkflowForRequestTest({ paseoHome }),
           describeWorkspaceRecord: vi.fn(async (result) =>
             createWorkspaceDescriptor({ workspace: result.workspace, repoDir }),
@@ -1994,6 +2016,7 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
           ]),
         },
         projectRegistry: createProjectRegistryForRoot(repoDir),
+        workspaceRegistry: createWorkspaceRegistryForRecords(),
         agentManager: {
           listAgents: () => [],
           archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
@@ -2019,7 +2042,6 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
         type: "paseo_worktree_archive_request",
         requestId: "req-worktree-scope",
         worktreePath: sharedCwd,
-        repoRoot: repoDir,
         scope: "worktree",
       },
     );
@@ -2073,6 +2095,7 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
           ]),
         },
         projectRegistry: createProjectRegistryForRoot(repoDir),
+        workspaceRegistry: createWorkspaceRegistryForRecords(),
         agentManager: {
           listAgents: () => [],
           archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
@@ -2157,6 +2180,7 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
           ]),
         },
         projectRegistry: createProjectRegistryForRoot(repoDir),
+        workspaceRegistry: createWorkspaceRegistryForRecords(),
         agentManager: {
           listAgents: () => [],
           archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
@@ -2241,6 +2265,7 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
         ]),
       },
       projectRegistry: createProjectRegistryForRoot(repoDir),
+      workspaceRegistry: createWorkspaceRegistryForRecords(),
       agentManager: {
         listAgents: () => [],
         archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),

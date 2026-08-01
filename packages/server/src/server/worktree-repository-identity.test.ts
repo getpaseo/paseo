@@ -1,12 +1,15 @@
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, parse } from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   createPersistedProjectRecord,
+  createPersistedWorkspaceRecord,
   type PersistedProjectRecord,
   type ProjectRegistry,
+  type WorkspaceRegistry,
 } from "./workspace-registry.js";
+import type { WorkspaceGitService } from "./workspace-git-service.js";
 import { resolveWorktreeRepositoryIdentity } from "./worktree-repository-identity.js";
 
 const cleanupPaths: string[] = [];
@@ -137,5 +140,56 @@ describe("resolveWorktreeRepositoryIdentity", () => {
     await expect(
       resolveWorktreeRepositoryIdentity({ repoRoot: `${repoRoot}/.` }, projects),
     ).rejects.toThrow("multiple active daemon projects");
+  });
+
+  test("resolves legacy paths only through active workspaces and known worktrees", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "worktree-repository-identity-"));
+    cleanupPaths.push(tempDir);
+    const repoRoot = join(tempDir, "repo");
+    const workspaceCwd = join(repoRoot, "packages", "app");
+    const knownWorktree = join(tempDir, "known-worktree");
+    const unrelatedPath = join(tempDir, "unrelated");
+    mkdirSync(workspaceCwd, { recursive: true });
+    mkdirSync(knownWorktree);
+    mkdirSync(unrelatedPath);
+    const projects = createProjectRegistry(repoRoot);
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: "wks_repo",
+      projectId: "prj_repo",
+      cwd: workspaceCwd,
+      kind: "local_checkout",
+      displayName: "app",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const workspaceRegistry: Pick<WorkspaceRegistry, "list"> = {
+      list: async () => [workspace],
+    };
+    const listWorktrees = vi.fn(async () => [
+      { path: knownWorktree, createdAt: "2026-01-01T00:00:00.000Z" },
+    ]);
+    const legacyDependencies = {
+      workspaceRegistry,
+      workspaceGitService: { listWorktrees } as Pick<WorkspaceGitService, "listWorktrees">,
+    };
+
+    await expect(
+      resolveWorktreeRepositoryIdentity({ cwd: workspaceCwd }, projects, legacyDependencies),
+    ).resolves.toEqual({ projectId: "prj_repo", repoRoot: realpathSync.native(repoRoot) });
+    await expect(
+      resolveWorktreeRepositoryIdentity(
+        { worktreePath: knownWorktree },
+        projects,
+        legacyDependencies,
+      ),
+    ).resolves.toEqual({ projectId: "prj_repo", repoRoot: realpathSync.native(repoRoot) });
+    await expect(
+      resolveWorktreeRepositoryIdentity({ cwd: unrelatedPath }, projects, legacyDependencies),
+    ).rejects.toThrow("does not identify");
+    expect(listWorktrees).toHaveBeenCalledWith(realpathSync.native(repoRoot), {
+      force: true,
+      reason: "legacy-worktree-repository-identity",
+    });
+    expect(listWorktrees).not.toHaveBeenCalledWith(unrelatedPath, expect.anything());
   });
 });

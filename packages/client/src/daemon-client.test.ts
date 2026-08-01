@@ -270,7 +270,7 @@ test("Hub management requires daemon support before dispatching requests", async
   expect(mock.sent).toEqual([]);
 });
 
-test("worktree commands require repository-identity support before dispatching requests", async () => {
+test("project-ID-only worktree commands require repository-identity support", async () => {
   const mock = createMockTransport();
   const client = new DaemonClient({
     url: "ws://test",
@@ -283,10 +283,81 @@ test("worktree commands require repository-identity support before dispatching r
   mock.triggerOpen();
   await connecting;
 
-  await expect(client.getPaseoWorktreeList({ repoRoot: "/repo" })).rejects.toThrow(
+  await expect(client.getPaseoWorktreeList({ projectId: "prj_repo" })).rejects.toThrow(
     "Update the host to use repository-scoped worktree commands.",
   );
   expect(mock.sent).toEqual([]);
+});
+
+test("worktree commands retain legacy path fields for an old daemon", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "legacy_worktree_daemon_unit_test",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen();
+  await connecting;
+
+  const listPromise = client.getPaseoWorktreeList({ repoRoot: "/repo" }, "req-list");
+  expect(parseSentFrame(mock.sent[0])).toMatchObject({
+    type: "paseo_worktree_list_request",
+    cwd: "/repo",
+    repoRoot: "/repo",
+    requestId: "req-list",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "paseo_worktree_list_response",
+      payload: { worktrees: [], error: null, requestId: "req-list" },
+    }),
+  );
+  await listPromise;
+
+  const archivePromise = client.archivePaseoWorktree(
+    { worktreePath: "/repo-worktree", repoRoot: "/repo" },
+    "req-archive",
+  );
+  expect(parseSentFrame(mock.sent[1])).toMatchObject({
+    type: "paseo_worktree_archive_request",
+    worktreePath: "/repo-worktree",
+    repoRoot: "/repo",
+    requestId: "req-archive",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "paseo_worktree_archive_response",
+      payload: { success: true, removedAgents: [], error: null, requestId: "req-archive" },
+    }),
+  );
+  await archivePromise;
+
+  const createPromise = client.createPaseoWorktree(
+    { repoRoot: "/repo", worktreeSlug: "legacy-client" },
+    "req-create",
+  );
+  expect(parseSentFrame(mock.sent[2])).toMatchObject({
+    type: "create_paseo_worktree_request",
+    cwd: "/repo",
+    repoRoot: "/repo",
+    worktreeSlug: "legacy-client",
+    requestId: "req-create",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "create_paseo_worktree_response",
+      payload: {
+        workspace: null,
+        error: "legacy daemon sentinel",
+        setupTerminalId: null,
+        requestId: "req-create",
+      },
+    }),
+  );
+  await expect(createPromise).resolves.toMatchObject({ error: "legacy daemon sentinel" });
 });
 
 test("sets the complete viewed timeline subscription only when the daemon supports it", async () => {

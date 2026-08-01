@@ -2252,6 +2252,45 @@ const x = 1;
     expect(branches.find((branch) => branch.name === "feature/shared")).toMatchObject({
       hasLocal: true,
       hasRemote: true,
+      localAhead: 0,
+      localBehind: 0,
+    });
+    await expect(listBranchSuggestions(repoDir, { query: "origin/main" })).resolves.toEqual([
+      expect.objectContaining({ name: "main", hasLocal: true, hasRemote: true }),
+    ]);
+  });
+
+  it("reports local and origin divergence for branch suggestions", async () => {
+    const remoteDir = join(tempDir, "remote.git");
+    execFileSync("git", ["init", "--bare", "-b", "main", remoteDir]);
+    execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: repoDir });
+    execFileSync("git", ["push", "-u", "origin", "main"], { cwd: repoDir });
+
+    writeFileSync(join(repoDir, "local.txt"), "local\n");
+    execFileSync("git", ["add", "local.txt"], { cwd: repoDir });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "local commit"], {
+      cwd: repoDir,
+    });
+
+    const otherClone = join(tempDir, "diverged-clone");
+    execFileSync("git", ["clone", remoteDir, otherClone]);
+    execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: otherClone });
+    execFileSync("git", ["config", "user.name", "Test"], { cwd: otherClone });
+    writeFileSync(join(otherClone, "remote.txt"), "remote\n");
+    execFileSync("git", ["add", "remote.txt"], { cwd: otherClone });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "remote commit"], {
+      cwd: otherClone,
+    });
+    execFileSync("git", ["push", "origin", "main"], { cwd: otherClone });
+    execFileSync("git", ["fetch", "origin"], { cwd: repoDir });
+
+    const branches = await listBranchSuggestions(repoDir, { limit: 50 });
+
+    expect(branches.find((branch) => branch.name === "main")).toMatchObject({
+      hasLocal: true,
+      hasRemote: true,
+      localAhead: 1,
+      localBehind: 1,
     });
   });
 

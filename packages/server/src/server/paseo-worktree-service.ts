@@ -110,16 +110,20 @@ export async function createPaseoWorktree(
     if (!createdWorktree.created) {
       throw error;
     }
-    return rollbackCreatedPaseoWorktree(
-      {
-        cwd: createdWorktree.repoRoot,
-        worktreePath: createdWorktree.worktree.worktreePath,
-        ...(input.runSetup === false ? { teardownCwds: [] } : {}),
-        paseoHome: input.paseoHome,
-        worktreesBaseRoot: input.worktreesRoot,
-      },
-      error,
-    );
+    try {
+      return await rollbackCreatedPaseoWorktree(
+        {
+          cwd: createdWorktree.repoRoot,
+          worktreePath: createdWorktree.worktree.worktreePath,
+          ...(input.runSetup === false ? { teardownCwds: [] } : {}),
+          paseoHome: input.paseoHome,
+          worktreesBaseRoot: input.worktreesRoot,
+        },
+        error,
+      );
+    } finally {
+      deps.workspaceGitService.invalidateWorktreeList(createdWorktree.repoRoot);
+    }
   }
 }
 

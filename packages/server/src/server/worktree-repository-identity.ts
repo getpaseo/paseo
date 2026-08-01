@@ -1,15 +1,23 @@
 import { realpathSync } from "node:fs";
 import { isAbsolute, parse, resolve, sep } from "node:path";
-import type { ProjectRegistry } from "./workspace-registry.js";
+import type { ProjectRegistry, WorkspaceRegistry } from "./workspace-registry.js";
+import type { WorkspaceGitService } from "./workspace-git-service.js";
 
 export interface WorktreeRepositoryIdentityInput {
   projectId?: string;
   repoRoot?: string;
+  cwd?: string;
+  worktreePath?: string;
 }
 
 export interface ResolvedWorktreeRepository {
   projectId: string;
   repoRoot: string;
+}
+
+export interface LegacyWorktreeRepositoryIdentityDependencies {
+  workspaceRegistry: Pick<WorkspaceRegistry, "list">;
+  workspaceGitService: Pick<WorkspaceGitService, "listWorktrees">;
 }
 
 /**
@@ -20,11 +28,28 @@ export interface ResolvedWorktreeRepository {
 export async function resolveWorktreeRepositoryIdentity(
   input: WorktreeRepositoryIdentityInput,
   projectRegistry: Pick<ProjectRegistry, "get" | "list">,
+  legacyDependencies?: LegacyWorktreeRepositoryIdentityDependencies,
 ): Promise<ResolvedWorktreeRepository> {
   if (!input.projectId && !input.repoRoot) {
-    throw new Error("projectId or repoRoot is required for a worktree command");
+    const legacyPath = input.cwd ?? input.worktreePath;
+    if (!legacyPath) {
+      throw new Error(
+        "projectId, repoRoot, cwd, or worktreePath is required for a worktree command",
+      );
+    }
+    if (!legacyDependencies) {
+      throw new Error("Legacy worktree repository resolution is unavailable");
+    }
+    return resolveLegacyWorktreeRepositoryIdentity(legacyPath, projectRegistry, legacyDependencies);
   }
 
+  return resolveRegisteredWorktreeRepositoryIdentity(input, projectRegistry);
+}
+
+async function resolveRegisteredWorktreeRepositoryIdentity(
+  input: WorktreeRepositoryIdentityInput,
+  projectRegistry: Pick<ProjectRegistry, "get" | "list">,
+): Promise<ResolvedWorktreeRepository> {
   const project = input.projectId ? await projectRegistry.get(input.projectId) : null;
   if (input.projectId && (!project || project.archivedAt)) {
     throw new Error(`Project not found: ${input.projectId}`);
@@ -75,6 +100,90 @@ export async function resolveWorktreeRepositoryIdentity(
   }
   const matchingProject = canonicalMatches[0]!;
   return { projectId: matchingProject.projectId, repoRoot: requestedRoot };
+}
+
+async function resolveLegacyWorktreeRepositoryIdentity(
+  legacyPath: string,
+  projectRegistry: Pick<ProjectRegistry, "list">,
+  dependencies: LegacyWorktreeRepositoryIdentityDependencies,
+): Promise<ResolvedWorktreeRepository> {
+  // COMPAT(legacyWorktreeRepositoryPaths): added in v0.2.6 on 2026-08-01;
+  // remove after 2027-02-01 once supported clients send repository identity.
+  const requestedPath = canonicalizeExistingRoot(legacyPath);
+  if (!requestedPath) {
+    throw new Error(
+      "Legacy cwd or worktreePath must be an existing absolute path on the daemon host",
+    );
+  }
+
+  const projects = (await projectRegistry.list())
+    .filter((project) => project.archivedAt === null)
+    .map((project) => ({ project, repoRoot: canonicalizeExistingRoot(project.rootPath) }))
+    .filter(
+      (entry): entry is { project: (typeof entry)["project"]; repoRoot: string } =>
+        entry.repoRoot !== null,
+    );
+  const lexicalProjectMatches = projects.filter(({ project }) => project.rootPath === legacyPath);
+  if (lexicalProjectMatches.length === 1) {
+    const match = lexicalProjectMatches[0]!;
+    return { projectId: match.project.projectId, repoRoot: match.repoRoot };
+  }
+  const canonicalProjectMatches = projects.filter(({ repoRoot }) => repoRoot === requestedPath);
+  if (canonicalProjectMatches.length === 1) {
+    const match = canonicalProjectMatches[0]!;
+    return { projectId: match.project.projectId, repoRoot: match.repoRoot };
+  }
+  if (lexicalProjectMatches.length > 1 || canonicalProjectMatches.length > 1) {
+    throw new Error("Legacy path identifies multiple active daemon projects");
+  }
+
+  const projectsById = new Map(projects.map((entry) => [entry.project.projectId, entry]));
+  const workspaceProjectIds = new Set(
+    (await dependencies.workspaceRegistry.list())
+      .filter(
+        (workspace) =>
+          workspace.archivedAt === null &&
+          [workspace.cwd, workspace.worktreeRoot]
+            .filter((path): path is string => path !== null)
+            .some((path) => canonicalizeExistingRoot(path) === requestedPath),
+      )
+      .map((workspace) => workspace.projectId)
+      .filter((projectId) => projectsById.has(projectId)),
+  );
+  if (workspaceProjectIds.size === 1) {
+    const match = projectsById.get([...workspaceProjectIds][0]!)!;
+    return { projectId: match.project.projectId, repoRoot: match.repoRoot };
+  }
+  if (workspaceProjectIds.size > 1) {
+    throw new Error("Legacy path identifies workspaces from multiple active daemon projects");
+  }
+
+  const worktreeOwners = new Map<string, (typeof projects)[number]>();
+  await Promise.all(
+    projects.map(async (entry) => {
+      try {
+        const worktrees = await dependencies.workspaceGitService.listWorktrees(entry.repoRoot, {
+          force: true,
+          reason: "legacy-worktree-repository-identity",
+        });
+        if (
+          worktrees.some((worktree) => canonicalizeExistingRoot(worktree.path) === requestedPath)
+        ) {
+          worktreeOwners.set(entry.project.projectId, entry);
+        }
+      } catch {
+        // An unavailable registered project cannot establish ownership of the caller's path.
+      }
+    }),
+  );
+  if (worktreeOwners.size === 1) {
+    const match = [...worktreeOwners.values()][0]!;
+    return { projectId: match.project.projectId, repoRoot: match.repoRoot };
+  }
+  if (worktreeOwners.size > 1) {
+    throw new Error("Legacy path identifies worktrees from multiple active daemon projects");
+  }
+  throw new Error("Legacy cwd or worktreePath does not identify daemon-owned repository state");
 }
 
 export function canonicalizeExistingRoot(value: string): string | null {

@@ -3965,11 +3965,18 @@ export class DaemonClient {
     input: { repoRoot?: string; projectId?: string },
     requestId?: string,
   ): Promise<PaseoWorktreeListPayload> {
-    this.requireWorktreeRepositoryIdentitySupport();
+    const supportsRepositoryIdentity =
+      this.lastServerInfoMessage?.features?.worktreeRepositoryIdentity === true;
+    if (!input.repoRoot) {
+      this.requireWorktreeRepositoryIdentitySupport();
+    }
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
         type: "paseo_worktree_list_request",
+        // COMPAT(legacyWorktreeRepositoryPaths): added in v0.2.6 on 2026-08-01;
+        // remove after 2027-02-01 once the daemon compatibility floor sends repoRoot.
+        cwd: supportsRepositoryIdentity ? undefined : input.repoRoot,
         repoRoot: input.repoRoot,
         projectId: input.projectId,
       },
@@ -3988,7 +3995,6 @@ export class DaemonClient {
     },
     requestId?: string,
   ): Promise<PaseoWorktreeArchivePayload> {
-    this.requireWorktreeRepositoryIdentitySupport();
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
@@ -4008,12 +4014,19 @@ export class DaemonClient {
     input: Omit<CreatePaseoWorktreeRequest, "type" | "requestId">,
     requestId?: string,
   ): Promise<CreatePaseoWorktreePayload> {
-    this.requireWorktreeRepositoryIdentitySupport();
+    const supportsRepositoryIdentity =
+      this.lastServerInfoMessage?.features?.worktreeRepositoryIdentity === true;
+    const legacyCwd = input.cwd ?? (supportsRepositoryIdentity ? undefined : input.repoRoot);
+    if (!legacyCwd) {
+      this.requireWorktreeRepositoryIdentitySupport();
+    }
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
         type: "create_paseo_worktree_request",
-        ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+        // COMPAT(legacyWorktreeRepositoryPaths): added in v0.2.6 on 2026-08-01;
+        // remove after 2027-02-01 once the daemon compatibility floor sends repoRoot.
+        ...(legacyCwd !== undefined ? { cwd: legacyCwd } : {}),
         ...(input.repoRoot !== undefined ? { repoRoot: input.repoRoot } : {}),
         ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
         worktreeSlug: input.worktreeSlug,

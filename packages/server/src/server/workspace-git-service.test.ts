@@ -688,7 +688,61 @@ describe("WorkspaceGitServiceImpl", () => {
     service.dispose();
   });
 
-  test("a sibling refresh started before invalidation cannot publish after a newer refresh", async () => {
+  test("initial snapshot load reruns after repository facts are invalidated", async () => {
+    const commonDir = join(REPO_CWD, ".git");
+    const staleLoad = createDeferred<string>();
+    const loadDefaultBranch = vi
+      .fn<() => Promise<string>>()
+      .mockImplementationOnce(async () => staleLoad.promise)
+      .mockResolvedValueOnce("develop");
+    const getCheckoutSnapshotFacts = vi.fn(
+      async (cwd: string, context?: import("../utils/checkout-git.js").CheckoutContext) => {
+        const currentBranch = await context?.repositoryFacts?.read(
+          commonDir,
+          "default-branch",
+          loadDefaultBranch,
+        );
+        return {
+          ...createCheckoutSnapshotFacts(cwd),
+          currentBranch: currentBranch ?? null,
+          gitCommonDir: commonDir,
+          remoteUrl: null,
+        };
+      },
+    );
+    const service = createService({
+      getCheckoutSnapshotFacts,
+      getCheckoutStatus: vi.fn(
+        async (cwd: string, context?: import("../utils/checkout-git.js").CheckoutContext) =>
+          createCheckoutStatus(cwd, {
+            currentBranch: context?.facts?.isGit ? context.facts.currentBranch : null,
+            remoteUrl: null,
+          }),
+      ),
+    });
+
+    const initialSnapshot = service.getSnapshot(REPO_CWD, { includeForge: false });
+    await vi.waitFor(() => expect(loadDefaultBranch).toHaveBeenCalledTimes(1));
+    service.invalidateRepositoryFacts(REPO_CWD);
+    staleLoad.resolve("main");
+
+    await expect(initialSnapshot).resolves.toMatchObject({
+      git: { currentBranch: "develop" },
+    });
+    expect(service.peekSnapshot(REPO_CWD)?.git.currentBranch).toBe("develop");
+    expect(loadDefaultBranch).toHaveBeenCalledTimes(2);
+    expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
+    expect(service.getMetrics()).toMatchObject({
+      repositoryFactInvalidationCount: 1,
+      workspaceRefreshInFlightCount: 0,
+      workspaceRefreshQueuedCount: 0,
+    });
+    expect(service.getMetrics().workspaceRefreshCountByReason).toEqual({ getSnapshot: 2 });
+
+    service.dispose();
+  });
+
+  test("sibling worktree refresh reruns after a repository mutation invalidates it", async () => {
     const commonDir = join(REPO_CWD, ".git");
     const siblingCwd = join("/tmp/worktrees", "stale-sibling");
     const staleSiblingFactLoad = createDeferred<string>();
@@ -750,15 +804,6 @@ describe("WorkspaceGitServiceImpl", () => {
     await staleSiblingRefresh;
     await flushPromises();
 
-    expect(service.peekSnapshot(siblingCwd)).toBeNull();
-    expect(siblingListener).not.toHaveBeenCalled();
-
-    await service.getSnapshot(siblingCwd, {
-      force: true,
-      includeForge: false,
-      reason: "valid-sibling-refresh",
-    });
-
     expect(service.peekSnapshot(siblingCwd)?.git.currentBranch).toBe("fresh-sibling");
     expect(service.peekSnapshot(REPO_CWD)?.git.currentBranch).toBe("source-after-mutation");
     expect(siblingListener).toHaveBeenCalledTimes(1);
@@ -768,6 +813,15 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(getCheckoutSnapshotFacts.mock.calls.filter(([cwd]) => cwd === siblingCwd)).toHaveLength(
       2,
     );
+    expect(service.getMetrics()).toMatchObject({
+      workspaceRefreshInFlightCount: 0,
+      workspaceRefreshQueuedCount: 0,
+    });
+    expect(service.getMetrics().workspaceRefreshCountByReason).toEqual({
+      "commit-changes": 1,
+      getSnapshot: 1,
+      initial: 2,
+    });
 
     subscription.unsubscribe();
     service.dispose();

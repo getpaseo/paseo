@@ -231,6 +231,7 @@ function normalizeBranchSuggestionName(raw: string): string | null {
 interface GitRef {
   name: string;
   committerDate: number;
+  oid: string;
 }
 
 export interface BranchSuggestion {
@@ -238,6 +239,8 @@ export interface BranchSuggestion {
   committerDate: number;
   hasLocal: boolean;
   hasRemote: boolean;
+  localAhead?: number;
+  localBehind?: number;
 }
 
 async function listGitRefs(cwd: string, refPrefix: string): Promise<GitRef[]> {
@@ -245,7 +248,7 @@ async function listGitRefs(cwd: string, refPrefix: string): Promise<GitRef[]> {
     [
       "for-each-ref",
       "--sort=-committerdate",
-      "--format=%(refname)%09%(committerdate:unix)",
+      "--format=%(refname)%09%(committerdate:unix)%09%(objectname)",
       refPrefix,
     ],
     { cwd, envOverlay: READ_ONLY_GIT_ENV },
@@ -255,9 +258,9 @@ async function listGitRefs(cwd: string, refPrefix: string): Promise<GitRef[]> {
     .map((line) => {
       const trimmed = line.trim();
       if (!trimmed) return null;
-      const [name, dateStr] = trimmed.split("\t");
-      if (!name) return null;
-      return { name, committerDate: Number(dateStr) || 0 };
+      const [name, dateStr, oid] = trimmed.split("\t");
+      if (!name || !oid) return null;
+      return { name, committerDate: Number(dateStr) || 0, oid };
     })
     .filter((ref): ref is GitRef => ref !== null);
 }
@@ -266,6 +269,8 @@ interface BranchSuggestionMeta {
   committerDate: number;
   hasLocal: boolean;
   hasRemote: boolean;
+  localOid?: string;
+  remoteOid?: string;
 }
 
 function sortBranchSuggestions(
@@ -304,7 +309,8 @@ export async function listBranchSuggestions(
 
   const requestedLimit = options?.limit ?? 50;
   const limit = Math.max(1, Math.min(200, requestedLimit));
-  const query = options?.query?.trim().toLowerCase() ?? "";
+  const rawQuery = options?.query?.trim().toLowerCase() ?? "";
+  const query = normalizeBranchSuggestionName(rawQuery) ?? rawQuery;
 
   const [localRefs, remoteRefs] = await Promise.all([
     listGitRefs(cwd, "refs/heads"),
@@ -320,6 +326,8 @@ export async function listBranchSuggestions(
     branchMeta.set(normalized, {
       hasLocal: true,
       hasRemote: existing?.hasRemote ?? false,
+      localOid: ref.oid,
+      ...(existing?.remoteOid ? { remoteOid: existing.remoteOid } : {}),
       committerDate: Math.max(ref.committerDate, existing?.committerDate ?? 0),
     });
   }
@@ -332,12 +340,14 @@ export async function listBranchSuggestions(
       branchMeta.set(normalized, {
         hasLocal: false,
         hasRemote: true,
+        remoteOid: ref.oid,
         committerDate: ref.committerDate,
       });
     } else {
       branchMeta.set(normalized, {
         ...existing,
         hasRemote: true,
+        remoteOid: ref.oid,
         committerDate: Math.max(ref.committerDate, existing.committerDate),
       });
     }
@@ -351,15 +361,46 @@ export async function listBranchSuggestions(
   }
 
   const ordered = sortBranchSuggestions(filteredNames, branchMeta, query);
-  return ordered.slice(0, limit).map((name) => {
-    const meta = branchMeta.get(name);
-    return {
-      name,
-      committerDate: meta?.committerDate ?? 0,
-      hasLocal: meta?.hasLocal ?? false,
-      hasRemote: meta?.hasRemote ?? false,
-    };
-  });
+  return Promise.all(
+    ordered.slice(0, limit).map(async (name): Promise<BranchSuggestion> => {
+      const meta = branchMeta.get(name);
+      const suggestion: BranchSuggestion = {
+        name,
+        committerDate: meta?.committerDate ?? 0,
+        hasLocal: meta?.hasLocal ?? false,
+        hasRemote: meta?.hasRemote ?? false,
+      };
+      if (!suggestion.hasLocal || !suggestion.hasRemote) {
+        return suggestion;
+      }
+      if (meta?.localOid && meta.localOid === meta.remoteOid) {
+        suggestion.localAhead = 0;
+        suggestion.localBehind = 0;
+        return suggestion;
+      }
+
+      try {
+        const { stdout } = await runGitCommand(
+          [
+            "rev-list",
+            "--left-right",
+            "--count",
+            `refs/heads/${name}...refs/remotes/origin/${name}`,
+          ],
+          { cwd, envOverlay: READ_ONLY_GIT_ENV },
+        );
+        const [localAhead, localBehind] = stdout.trim().split(/\s+/).map(Number);
+        if (Number.isFinite(localAhead) && Number.isFinite(localBehind)) {
+          suggestion.localAhead = localAhead;
+          suggestion.localBehind = localBehind;
+        }
+      } catch {
+        // A ref may disappear between listing and comparison. Keep the branch
+        // available without divergence metadata and let creation re-resolve it.
+      }
+      return suggestion;
+    }),
+  );
 }
 
 export interface LocalBranchCheckoutResolution {

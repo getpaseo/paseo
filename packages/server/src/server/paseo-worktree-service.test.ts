@@ -5,7 +5,11 @@ import path from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 
 import type { ForgeService } from "../services/forge-service.js";
-import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
+import {
+  WorkspaceGitServiceImpl,
+  type WorkspaceGitRuntimeSnapshot,
+  type WorkspaceGitService,
+} from "./workspace-git-service.js";
 import type {
   PersistedProjectRecord,
   PersistedWorkspaceRecord,
@@ -307,25 +311,41 @@ test("removes a new worktree when workspace persistence fails", async () => {
     "persistence-failure",
   );
 
+  const workspaceGitService = new WorkspaceGitServiceImpl({
+    logger: createTestLogger(),
+    paseoHome,
+  });
+  const cacheTransientWorktree = vi.fn(async () => {
+    const worktrees = await workspaceGitService.listWorktrees(repoDir);
+    expect(worktrees.map((worktree) => worktree.path)).toContain(worktreePath);
+    throw new Error("workspace persistence failed");
+  });
+
   await expect(
     createPaseoWorktree(
       {
         cwd: repoDir,
-        projectId: "missing-project",
         worktreeSlug: "persistence-failure",
         runSetup: false,
         paseoHome,
       },
-      createDeps(),
+      {
+        github: createGitHubServiceStub(),
+        workspaceGitService,
+        workspaceProvisioning: { createWorkspaceForWorktree: cacheTransientWorktree },
+      },
     ),
-  ).rejects.toThrow("Unknown project: missing-project");
+  ).rejects.toThrow("workspace persistence failed");
 
+  expect(cacheTransientWorktree).toHaveBeenCalledTimes(1);
   expect(existsSync(worktreePath)).toBe(false);
   expect(
     execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: repoDir, stdio: "pipe" })
       .toString()
       .includes("persistence-failure"),
   ).toBe(false);
+  await expect(workspaceGitService.listWorktrees(repoDir)).resolves.toEqual([]);
+  workspaceGitService.dispose();
 });
 
 test("maps a nested cwd from an existing Paseo worktree into the next worktree", async () => {
