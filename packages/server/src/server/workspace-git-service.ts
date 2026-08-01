@@ -1188,12 +1188,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           });
         }),
       );
-      for (const alias of target.aliases) {
-        this.invalidateCheckoutDiffCache(alias, "uncommitted");
-      }
-      for (const listener of target.listeners) {
-        listener();
-      }
+      this.notifyWorkingTreeConsumers(target);
       if (!target.closed) {
         target.fallbackPollTimer = setTimeout(poll, DEGRADED_GIT_POLL_INTERVAL_MS);
       }
@@ -1224,18 +1219,36 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     if (target.closed) {
       return;
     }
+    this.notifyWorkingTreeConsumers(target);
+    this.scheduleWorkingTreeRefreshes(target, reason);
+  }
+
+  private notifyWorkingTreeConsumers(target: WorkingTreeWatchTarget): void {
     for (const alias of target.aliases) {
       this.invalidateCheckoutDiffCache(alias, "uncommitted");
     }
+    for (const listener of target.listeners) {
+      listener();
+    }
+  }
+
+  private scheduleWorkingTreeRefreshes(target: WorkingTreeWatchTarget, reason: string): void {
     for (const workspaceKey of target.workspaceKeys) {
       const workspaceTarget = this.workspaceTargets.get(workspaceKey);
       if (workspaceTarget) {
         this.scheduleWorkspaceRefresh(workspaceTarget, { scope: "worktree", reason });
       }
     }
-    for (const listener of target.listeners) {
-      listener();
-    }
+  }
+
+  private getWorkingTreeWatchTargetForWorkspace(
+    workspaceTarget: WorkspaceGitTarget,
+  ): WorkingTreeWatchTarget | null {
+    const cwd = workspaceTarget.latestFacts?.isGit
+      ? workspaceTarget.latestFacts.worktreeRoot
+      : workspaceTarget.cwd;
+    const targetCwd = this.workingTreeWatchAliases.get(cwd);
+    return targetCwd ? (this.workingTreeWatchTargets.get(targetCwd) ?? null) : null;
   }
 
   private async resolveCheckoutWatchRoot(cwd: string): Promise<string | null> {
@@ -1337,7 +1350,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
             return;
           }
           if (events.length > 0) {
-            this.scheduleRepoMetadataRefresh(target, "git-metadata-watch");
+            this.scheduleRepoMetadataRefresh(target, "git-metadata-watch", true);
           }
         },
         { ignore },
@@ -1374,10 +1387,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.startRepoMetadataFallback(target);
   }
 
-  private scheduleRepoMetadataRefresh(target: RepoGitTarget, reason: string): void {
+  private scheduleRepoMetadataRefresh(
+    target: RepoGitTarget,
+    reason: string,
+    refreshWorktree: boolean,
+  ): void {
     if (target.closed || this.repoTargets.get(target.repoGitRoot) !== target) {
       return;
     }
+    const workingTreeTargets = new Set<WorkingTreeWatchTarget>();
     for (const workspaceKey of target.workspaceKeys) {
       const workspaceTarget = this.workspaceTargets.get(workspaceKey);
       if (workspaceTarget) {
@@ -1385,12 +1403,21 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         if (workspaceTarget.latestFacts?.isGit) {
           this.invalidateCheckoutDiffCache(workspaceTarget.latestFacts.worktreeRoot, "base");
         }
+        if (refreshWorktree) {
+          const workingTreeTarget = this.getWorkingTreeWatchTargetForWorkspace(workspaceTarget);
+          if (workingTreeTarget) {
+            workingTreeTargets.add(workingTreeTarget);
+          }
+        }
         this.scheduleWorkspaceRefresh(workspaceTarget, {
-          scope: "structure",
+          scope: refreshWorktree ? undefined : "structure",
           emitUnchanged: true,
           reason,
         });
       }
+    }
+    for (const workingTreeTarget of workingTreeTargets) {
+      this.notifyWorkingTreeConsumers(workingTreeTarget);
     }
   }
 
@@ -1403,6 +1430,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       if (target.closed || this.repoTargets.get(target.repoGitRoot) !== target) {
         return;
       }
+      const workingTreeTargets = new Set<WorkingTreeWatchTarget>();
       await Promise.all(
         Array.from(target.workspaceKeys, async (workspaceKey) => {
           const workspaceTarget = this.workspaceTargets.get(workspaceKey);
@@ -1413,10 +1441,14 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           if (workspaceTarget.latestFacts?.isGit) {
             this.invalidateCheckoutDiffCache(workspaceTarget.latestFacts.worktreeRoot, "base");
           }
+          const workingTreeTarget = this.getWorkingTreeWatchTargetForWorkspace(workspaceTarget);
+          if (workingTreeTarget) {
+            workingTreeTargets.add(workingTreeTarget);
+          }
           await this.refreshWorkspaceTarget(workspaceTarget, {
             force: false,
             refreshStructure: true,
-            refreshWorktree: false,
+            refreshWorktree: true,
             includeForge: false,
             emitUnchanged: true,
             reason: "git-metadata-watch-fallback",
@@ -1425,6 +1457,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           });
         }),
       );
+      for (const workingTreeTarget of workingTreeTargets) {
+        this.notifyWorkingTreeConsumers(workingTreeTarget);
+      }
       if (!target.closed) {
         target.fallbackPollTimer = setTimeout(poll, DEGRADED_GIT_POLL_INTERVAL_MS);
       }
@@ -1491,6 +1526,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           target.latestWorktreeRefreshAtMs < auditWindowStartedAtMs;
         if (!refreshStructure && !refreshWorktree) {
           return;
+        }
+        if (refreshWorktree) {
+          const workingTreeTarget = this.getWorkingTreeWatchTargetForWorkspace(target);
+          if (workingTreeTarget) {
+            this.notifyWorkingTreeConsumers(workingTreeTarget);
+          }
         }
         this.refreshWorkspaceTarget(target, {
           force: false,
@@ -2170,7 +2211,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     if (!succeeded) {
       return;
     }
-    this.scheduleRepoMetadataRefresh(target, "repo-fetch");
+    this.scheduleRepoMetadataRefresh(target, "repo-fetch", false);
   }
 
   private removeWorkspaceListener(cwd: string, listener: WorkspaceGitListener): void {

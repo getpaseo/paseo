@@ -373,6 +373,66 @@ describe("WorkspaceGitService checkout observation", () => {
     service.dispose();
   });
 
+  test("metadata-only changes refresh worktree summary and active uncommitted diff", async () => {
+    const watcher = createWatcherHarness();
+    let isDirty = true;
+    let diffStat = { additions: 3, deletions: 1 };
+    let diffFiles = [{ path: "tracked.txt", additions: 3, deletions: 1, status: "modified" }];
+    const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd, { isDirty }));
+    const getCheckoutShortstat = vi.fn(async () => diffStat);
+    const getCheckoutDiff = vi.fn(async () => ({ diff: "", structured: diffFiles }));
+    const service = createService(watcher, {
+      getCheckoutStatus,
+      getCheckoutShortstat,
+      getCheckoutDiff,
+    });
+    const diffManager = new CheckoutDiffManager({
+      logger: createLogger(),
+      paseoHome: "/tmp/paseo-home",
+      workspaceGitService: service,
+    });
+    const summaryListener = vi.fn();
+    const diffListener = vi.fn();
+    const summarySubscription = service.registerWorkspace({ cwd: REPO_CWD }, summaryListener);
+    const diffSubscription = await diffManager.subscribe(
+      { cwd: REPO_CWD, compare: { mode: "uncommitted" } },
+      diffListener,
+    );
+
+    await vi.waitFor(() => {
+      expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+      expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
+    });
+    isDirty = false;
+    diffStat = { additions: 0, deletions: 0 };
+    diffFiles = [];
+
+    watcher.records
+      .find((record) => record.directory === GIT_DIR)
+      ?.callback(null, [{ path: path.join(GIT_DIR, "index"), type: "update" }]);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => {
+      expect(summaryListener).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          git: expect.objectContaining({
+            isDirty: false,
+            diffStat: { additions: 0, deletions: 0 },
+          }),
+        }),
+      );
+      expect(diffListener).toHaveBeenLastCalledWith({
+        cwd: REPO_CWD,
+        files: [],
+        error: null,
+      });
+    });
+
+    diffSubscription.unsubscribe();
+    summarySubscription.unsubscribe();
+    diffManager.dispose();
+    service.dispose();
+  });
+
   test("base diff projections follow metadata but ignore volatile worktree updates", async () => {
     const watcher = createWatcherHarness();
     const getCheckoutDiff = vi.fn(async () => ({ diff: "", structured: [] }));
@@ -679,15 +739,33 @@ describe("WorkspaceGitService checkout observation", () => {
     const watcher = createWatcherHarness();
     let isDirty = false;
     let diffStat = { additions: 0, deletions: 0 };
+    let diffFiles: Array<{
+      path: string;
+      additions: number;
+      deletions: number;
+      status: string;
+    }> = [];
     const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd, { isDirty }));
     const getCheckoutShortstat = vi.fn(async () => diffStat);
+    const getCheckoutDiff = vi.fn(async () => ({ diff: "", structured: diffFiles }));
     const service = createService(watcher, {
       getCheckoutStatus,
       getCheckoutShortstat,
+      getCheckoutDiff,
       getWorkspaceGitSelfHealPhaseMs: () => 10_000,
     });
+    const diffManager = new CheckoutDiffManager({
+      logger: createLogger(),
+      paseoHome: "/tmp/paseo-home",
+      workspaceGitService: service,
+    });
     const listener = vi.fn();
+    const diffListener = vi.fn();
     const subscription = service.registerWorkspace({ cwd: REPO_CWD }, listener);
+    const diffSubscription = await diffManager.subscribe(
+      { cwd: REPO_CWD, compare: { mode: "uncommitted" } },
+      diffListener,
+    );
 
     await vi.waitFor(() => {
       expect(service.peekSnapshot(REPO_CWD)).not.toBeNull();
@@ -695,6 +773,7 @@ describe("WorkspaceGitService checkout observation", () => {
     });
     isDirty = true;
     diffStat = { additions: 7, deletions: 3 };
+    diffFiles = [{ path: "tracked.txt", additions: 7, deletions: 3, status: "modified" }];
 
     await vi.advanceTimersByTimeAsync(70_000);
     await vi.waitFor(() => {
@@ -706,10 +785,17 @@ describe("WorkspaceGitService checkout observation", () => {
           }),
         }),
       );
+      expect(diffListener).toHaveBeenLastCalledWith({
+        cwd: REPO_CWD,
+        files: [{ path: "tracked.txt", additions: 7, deletions: 3, status: "modified" }],
+        error: null,
+      });
     });
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
 
+    diffSubscription.unsubscribe();
     subscription.unsubscribe();
+    diffManager.dispose();
     service.dispose();
   });
 });
