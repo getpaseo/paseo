@@ -129,6 +129,52 @@ describe("AgentManager rewind", () => {
     });
   });
 
+  test("waits for the provider terminal after cancellation acknowledgement", async () => {
+    let acknowledgeInterrupt!: () => void;
+    const interruptAcknowledged = new Promise<void>((resolve) => {
+      acknowledgeInterrupt = resolve;
+    });
+    class DelayedTerminalRewindSession extends FakeRewindSession {
+      override async interrupt(): Promise<void> {
+        this.aborted = true;
+        acknowledgeInterrupt();
+      }
+    }
+
+    const session = new DelayedTerminalRewindSession();
+    const manager = new AgentManager({
+      clients: { claude: new FakeRewindClient(session) },
+      logger: createTestLogger(),
+      idFactory: () => "00000000-0000-4000-8000-000000000903",
+    });
+    const agent = await manager.createAgent({ provider: "claude", cwd: process.cwd() }, undefined, {
+      workspaceId: undefined,
+    });
+    const run = manager.streamAgent(agent.id, "keep working");
+    const runDrain = (async () => {
+      for await (const _event of run) {
+        // Drain until the delayed provider terminal arrives.
+      }
+    })();
+    await manager.waitForAgentRunStart(agent.id);
+
+    let rewindSettled = false;
+    const rewind = manager.rewind(agent.id, "message-1", "files").then(() => {
+      rewindSettled = true;
+      return undefined;
+    });
+    await interruptAcknowledged;
+
+    expect(session.aborted).toBe(true);
+    expect(rewindSettled).toBe(false);
+    expect(session.recordedRewinds).toEqual([]);
+
+    session.completeActiveTurn();
+    await rewind;
+    await runDrain;
+    expect(session.recordedRewinds).toEqual([{ mode: "files", messageId: "message-1" }]);
+  });
+
   test("rewinds after invalidating an acknowledged pending start generation", async () => {
     let resolveStart!: () => void;
     let startRequested!: () => void;

@@ -2786,6 +2786,43 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("keeps foreground admission closed after interrupt acknowledgement until terminal", async () => {
+    const appServer = createFakeCodexAppServer({
+      "turn/interrupt": () => ({}),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      const firstRun = session.run("Start the first turn.");
+      await appServer.waitForTurnStart();
+      appServer.startsTurn({ threadId: "thread-1", turnId: "native-turn-1" });
+
+      await session.interrupt();
+
+      expect((session as CodexTestSession).activeForegroundTurnId).not.toBeNull();
+      await expect(session.startTurn("Too early.")).rejects.toThrow(
+        "A foreground turn is already active",
+      );
+
+      appServer.interruptTurn({ threadId: "thread-1", turnId: "native-turn-1" });
+      await firstRun;
+
+      const secondRun = session.run("Start the replacement turn.");
+      await appServer.waitForTurnStart(2);
+      appServer.startsTurn({ threadId: "thread-1", turnId: "native-turn-2" });
+      appServer.completeTurn({ threadId: "thread-1", turnId: "native-turn-2" });
+      await secondRun;
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("does not interrupt after the accepted turn terminates before identification", async () => {
     const interruptedTurns: unknown[] = [];
     const appServer = createFakeCodexAppServer({

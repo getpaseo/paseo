@@ -2412,39 +2412,14 @@ export class AgentManager {
       agent.lastError = undefined;
       this.finalizeForegroundTurn(agent);
     }
-    const settlement = await this.waitWithTimeout({
-      operation: run.settledPromise,
-      timeoutMs: interruptAcknowledged
-        ? INTERRUPT_SESSION_TIMEOUT_MS
-        : this.rescueTimeouts.interruptSessionMs,
-    });
-
-    if (!interruptAcknowledged) {
-      return { status: settlement === "completed" ? "settled" : "refused" };
-    }
-
-    if (settlement === "timed_out" && run.turnId) {
-      this.logger.warn(
-        { agentId, turnId: run.turnId, kind: run.kind },
-        "cancelAgentRun: acknowledged turn still active after timeout, force-canceling",
-      );
-      await this.dispatchSessionEvent(agent, {
-        type: "turn_canceled",
-        provider: agent.provider,
-        reason: "interrupted",
-        turnId: run.turnId,
+    if (!interruptAcknowledged && !run.settled) {
+      const settlement = await this.waitWithTimeout({
+        operation: run.settledPromise,
+        timeoutMs: this.rescueTimeouts.interruptSessionMs,
       });
-      await run.settledPromise;
-    } else if (settlement === "timed_out" && run.kind === "autonomous") {
-      this.logger.warn(
-        { agentId, kind: run.kind },
-        "cancelAgentRun: acknowledged turn still active after timeout, force-canceling",
-      );
-      await this.dispatchSessionEvent(agent, {
-        type: "turn_canceled",
-        provider: agent.provider,
-        reason: "interrupted",
-      });
+      if (settlement === "timed_out") {
+        return { status: "refused" };
+      }
     }
 
     if (agent.pendingPermissions.size > 0) {
@@ -2459,9 +2434,13 @@ export class AgentManager {
     agentId: string,
     action: "reload" | "replace" | "rewind",
   ): Promise<void> {
+    const run = this.runs.getRun(agentId);
     const result = await this.cancelAgentRun(agentId);
     if (result.status === "refused") {
       throw new AgentRunCancellationError(agentId, action);
+    }
+    if (action !== "reload" && run && !run.settled) {
+      await run.settledPromise;
     }
   }
 

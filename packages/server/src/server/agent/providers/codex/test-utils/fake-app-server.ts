@@ -48,11 +48,13 @@ export interface FakeCodexAppServer {
   readonly child: CodexAppServerChildProcess;
   readonly recordedRollbacks: JsonObject[];
   assertNoErrors(): void;
-  waitForTurnStart(): Promise<JsonObject>;
+  waitForTurnStart(count?: number): Promise<JsonObject>;
+  waitForTurnInterrupt(count?: number): Promise<JsonObject>;
   nextResponse(): Promise<string>;
   startsTurn(params: { threadId: string; turnId?: string }): void;
   setThreadTurnStatus(params: { threadId: string; turnId: string; status: string }): void;
   completeTurn(params?: { threadId?: string; turnId?: string; omitTurnId?: boolean }): void;
+  interruptTurn(params?: { threadId?: string; turnId?: string }): void;
   startsSubAgent(params: {
     callId: string;
     threadId: string;
@@ -308,10 +310,31 @@ export function createFakeCodexAppServer(
         throw errors[0];
       }
     },
-    async waitForTurnStart() {
+    async waitForTurnStart(count = 1) {
+      const existing = messages.filter((candidate) => candidate.method === "turn/start")[count - 1];
+      if (existing) {
+        return toJsonObject(existing.params);
+      }
       const message = await waitForMessage(
-        (candidate) => candidate.method === "turn/start",
+        (candidate) =>
+          candidate.method === "turn/start" &&
+          messages.filter((recorded) => recorded.method === "turn/start").length >= count,
         "turn start request",
+      );
+      return toJsonObject(message.params);
+    },
+    async waitForTurnInterrupt(count = 1) {
+      const existing = messages.filter((candidate) => candidate.method === "turn/interrupt")[
+        count - 1
+      ];
+      if (existing) {
+        return toJsonObject(existing.params);
+      }
+      const message = await waitForMessage(
+        (candidate) =>
+          candidate.method === "turn/interrupt" &&
+          messages.filter((recorded) => recorded.method === "turn/interrupt").length >= count,
+        "turn interrupt request",
       );
       return toJsonObject(message.params);
     },
@@ -369,6 +392,20 @@ export function createFakeCodexAppServer(
           },
         })}\n`,
       );
+    },
+    interruptTurn(params = {}) {
+      const threadId = params.threadId ?? "thread-1";
+      const turnId = params.turnId ?? activeTurnIdByThreadId.get(threadId);
+      if (!turnId) {
+        throw new Error(`No active turn for thread ${threadId}`);
+      }
+      const statuses = turnStatusesByThreadId.get(threadId) ?? new Map<string, string>();
+      statuses.set(turnId, "interrupted");
+      turnStatusesByThreadId.set(threadId, statuses);
+      writeNotification("turn/completed", {
+        threadId,
+        turn: { id: turnId, status: "interrupted" },
+      });
     },
     startsSubAgent(params) {
       writeSubAgentActivity("item/completed", { ...params, kind: "started" });

@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -40,6 +40,12 @@ import type {
 } from "./agent-sdk-types.js";
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
+import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js";
+import {
+  createFakeCodexAppServer,
+  type FakeCodexAppServer,
+} from "./providers/codex/test-utils/fake-app-server.js";
+import { asInternals as castInternals } from "../test-utils/class-mocks.js";
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -55,6 +61,28 @@ function deferred<T>(): Deferred<T> {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+function createCodexProviderWithFakeAppServers(
+  appServers: FakeCodexAppServer[],
+): CodexAppServerAgentClient {
+  const provider = new CodexAppServerAgentClient(logger);
+  const remaining = [...appServers];
+  const internals = castInternals<{
+    goalsEnabledPromise: Promise<boolean> | null;
+    autoReviewEnabledPromise: Promise<boolean> | null;
+    spawnAppServer: () => Promise<ChildProcessWithoutNullStreams>;
+  }>(provider);
+  internals.goalsEnabledPromise = Promise.resolve(false);
+  internals.autoReviewEnabledPromise = Promise.resolve(false);
+  internals.spawnAppServer = async () => {
+    const appServer = remaining.shift();
+    if (!appServer) {
+      throw new Error("No fake Codex app-server remains");
+    }
+    return appServer.child;
+  };
+  return provider;
 }
 
 function waitForAgentLifecycle(
@@ -5231,7 +5259,7 @@ test("preserves terminal fallback when no active turn identity was observed", as
   );
 });
 
-test("cancelAgentRun waits for an acknowledged autonomous interrupt to settle", async () => {
+test("cancelAgentRun returns after an acknowledged interrupt without releasing ownership", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-live-cancel-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -5305,15 +5333,11 @@ test("cancelAgentRun waits for an acknowledged autonomous interrupt to settle", 
   expect(beforeCancel?.lifecycle).toBe("running");
   expect(beforeCancel?.activeForegroundTurnId).toBeNull();
 
-  let cancelSettled = false;
-  const cancelPromise = manager.cancelAgentRun(snapshot.id).finally(() => {
-    cancelSettled = true;
-  });
+  await expect(manager.cancelAgentRun(snapshot.id)).resolves.toEqual({ status: "settled" });
   await capturedSession.interruptCalled.promise;
-  await new Promise((resolve) => setTimeout(resolve, 0));
-
-  expect(cancelSettled).toBe(false);
   expect(client.lastSession?.interruptCount).toBe(1);
+  expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("running");
+  expect(manager.hasInFlightRun(snapshot.id)).toBe(true);
 
   capturedSession.pushEvent({
     type: "turn_canceled",
@@ -5322,8 +5346,7 @@ test("cancelAgentRun waits for an acknowledged autonomous interrupt to settle", 
     reason: "interrupted",
   });
 
-  await expect(cancelPromise).resolves.toEqual({ status: "settled" });
-  expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("idle");
+  await vi.waitFor(() => expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("idle"));
 });
 
 test("failed replacement cancellation preserves an autonomous running state", async () => {
@@ -8586,93 +8609,159 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
   }
 });
 
-test("replaceAgentRun succeeds when foreground turn terminal event is never delivered", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stale-fg-"));
-  const storagePath = join(workdir, "agents");
-  const storage = new AgentStorage(storagePath, logger);
-  const allowSecondRunToEnd = deferred<void>();
-
-  // Session where the first foreground turn never emits a terminal event
-  // (simulates the claude-agent pendingInterruptAbort suppression bug),
-  // and interrupt() does not produce events either.
-  class StaleForegroundSession extends TestAgentSession {
-    override async startTurn(): Promise<{ turnId: string }> {
-      this.interrupted = false;
-      const turnId = `turn-${++this.turnIdCounter}`;
-      const turnNum = this.turnIdCounter;
-
-      setTimeout(async () => {
-        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
-        if (turnNum === 1) {
-          // First turn: emit turn_started but NEVER emit a terminal event.
-          // This simulates the provider suppressing the result.
-        } else {
-          // Subsequent turns: complete normally
-          await allowSecondRunToEnd.promise;
-          this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
-        }
-      }, 0);
-      return { turnId };
-    }
-
-    override async interrupt(): Promise<void> {
-      this.interrupted = true;
-      // No events produced — the terminal event was suppressed
-    }
-  }
-
-  class StaleForegroundClient extends TestAgentClient {
-    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-      return new StaleForegroundSession(config);
-    }
-  }
-
+test("Codex replacement waits for the provider terminal before admitting the next turn", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-codex-replace-terminal-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const firstStartResponse = deferred<void>();
+  const secondStartResponse = deferred<void>();
+  let turnStartCount = 0;
+  const catalogAppServer = createFakeCodexAppServer();
+  const appServer = createFakeCodexAppServer({
+    "turn/start": async () => {
+      turnStartCount += 1;
+      await (turnStartCount === 1 ? firstStartResponse.promise : secondStartResponse.promise);
+      return {};
+    },
+    "turn/interrupt": () => ({}),
+  });
   const manager = new AgentManager({
-    clients: { codex: new StaleForegroundClient() },
+    clients: {
+      codex: createCodexProviderWithFakeAppServers([catalogAppServer, appServer]),
+    },
     registry: storage,
     logger,
     idFactory: () => "00000000-0000-4000-8000-000000000500",
   });
 
-  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-    workspaceId: undefined,
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const firstRun = manager.streamAgent(agent.id, "first prompt");
+    const firstRunDrain = (async () => {
+      for await (const _event of firstRun) {
+        // Drain the provider-backed foreground turn.
+      }
+    })();
+
+    await appServer.waitForTurnStart();
+    appServer.startsTurn({ threadId: "thread-1", turnId: "native-turn-1" });
+    firstStartResponse.resolve(undefined);
+    await manager.waitForAgentRunStart(agent.id);
+    const firstManagerTurnId = manager.getAgent(agent.id)?.activeForegroundTurnId;
+
+    let replacementResolved = false;
+    const replacementPromise = manager
+      .replaceAgentRun(agent.id, "replacement prompt")
+      .then((run) => {
+        replacementResolved = true;
+        return run;
+      });
+    await appServer.waitForTurnInterrupt();
+
+    expect(replacementResolved).toBe(false);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "running",
+      activeForegroundTurnId: firstManagerTurnId,
+    });
+
+    appServer.interruptTurn({ threadId: "thread-1", turnId: "native-turn-1" });
+    const replacement = await replacementPromise;
+    const replacementEvents: AgentStreamEvent[] = [];
+    const replacementDrain = (async () => {
+      for await (const event of replacement) replacementEvents.push(event);
+    })();
+
+    await appServer.waitForTurnStart(2);
+    appServer.startsTurn({ threadId: "thread-1", turnId: "native-turn-2" });
+    appServer.completeTurn({ threadId: "thread-1", turnId: "native-turn-1" });
+    secondStartResponse.resolve(undefined);
+    await manager.waitForAgentRunStart(agent.id);
+
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "running",
+    });
+    expect(manager.getAgent(agent.id)?.activeForegroundTurnId).not.toBe(firstManagerTurnId);
+
+    appServer.completeTurn({ threadId: "thread-1", turnId: "native-turn-2" });
+    await firstRunDrain;
+    await replacementDrain;
+
+    expect(replacementEvents.some((event) => event.type === "turn_completed")).toBe(true);
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+    catalogAppServer.assertNoErrors();
+    appServer.assertNoErrors();
+    await manager.closeAgent(agent.id);
+  } finally {
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("Codex reload replaces the provider session without waiting for its old terminal", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-codex-reload-terminal-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const catalogAppServer = createFakeCodexAppServer();
+  const oldAppServer = createFakeCodexAppServer({
+    "turn/interrupt": () => ({}),
+  });
+  const newAppServer = createFakeCodexAppServer();
+  const manager = new AgentManager({
+    clients: {
+      codex: createCodexProviderWithFakeAppServers([catalogAppServer, oldAppServer, newAppServer]),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000501",
   });
 
-  // Start first foreground run — it will hang (no terminal event)
-  const firstRun = manager.streamAgent(snapshot.id, "hanging prompt");
-  const firstRunDrain = (async () => {
-    for await (const _event of firstRun) {
-      // Draining — will hang until force-cleaned
-    }
-  })();
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const oldRun = manager.streamAgent(agent.id, "old session prompt");
+    const oldRunDrain = (async () => {
+      for await (const _event of oldRun) {
+        // Reload closes this stream at the provider-session boundary.
+      }
+    })();
 
-  await manager.waitForAgentRunStart(snapshot.id);
+    await oldAppServer.waitForTurnStart();
+    oldAppServer.startsTurn({ threadId: "thread-1", turnId: "native-old-turn" });
+    await manager.waitForAgentRunStart(agent.id);
 
-  const beforeReplace = manager.getAgent(snapshot.id);
-  expect(beforeReplace?.lifecycle).toBe("running");
-  expect(beforeReplace?.activeForegroundTurnId).toBe("turn-1");
+    const reload = manager.reloadAgentSession(agent.id);
+    await oldAppServer.waitForTurnInterrupt();
+    await expect(reload).resolves.toMatchObject({ id: agent.id, lifecycle: "idle" });
+    await oldRunDrain;
 
-  // Replace the hung run. cancelAgentRun will time out after 2s because
-  // no terminal event arrives. After the fix, it should force-clear the
-  // stale foreground state so streamAgent can proceed.
-  const secondRun = await manager.replaceAgentRun(snapshot.id, "replacement prompt");
-  const collectedEvents: AgentStreamEvent[] = [];
-  const secondRunDrain = (async () => {
-    for await (const event of secondRun) {
-      collectedEvents.push(event);
-    }
-  })();
+    const newRun = manager.streamAgent(agent.id, "new session prompt");
+    const newRunDrain = (async () => {
+      for await (const _event of newRun) {
+        // Drain the replacement provider session.
+      }
+    })();
+    await newAppServer.waitForTurnStart();
+    newAppServer.startsTurn({ threadId: "thread-1", turnId: "native-new-turn" });
+    await manager.waitForAgentRunStart(agent.id);
 
-  await manager.waitForAgentRunStart(snapshot.id);
-  allowSecondRunToEnd.resolve();
+    oldAppServer.interruptTurn({ threadId: "thread-1", turnId: "native-old-turn" });
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
 
-  await secondRunDrain;
-  await firstRunDrain;
-
-  expect(collectedEvents.some((e) => e.type === "turn_completed")).toBe(true);
-  expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("idle");
-  expect(manager.getAgent(snapshot.id)?.activeForegroundTurnId).toBeNull();
-}, 10_000);
+    newAppServer.completeTurn({ threadId: "thread-1", turnId: "native-new-turn" });
+    await newRunDrain;
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+    catalogAppServer.assertNoErrors();
+    oldAppServer.assertNoErrors();
+    newAppServer.assertNoErrors();
+    await manager.closeAgent(agent.id);
+  } finally {
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
 
 class RecordingPersistedAgentsClient implements AgentClient {
   readonly capabilities = TEST_CAPABILITIES;
