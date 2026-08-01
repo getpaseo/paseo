@@ -58,6 +58,7 @@
         "failed physical cleanup remains retryable after the workspace record is archived",
         "partial multi-workspace retries preserve every archived sibling teardown obligation",
         "merge auto-archive receives the durable workspace cleanup registry",
+        "merge auto-archive rejects stale resolved workspaces and never reports pending cleanup as success",
         "replacement worktree incarnations archive independently of stale cleanup intents",
         "auto-archive retries after transient failure and cancellation observes rejection",
         "setup output is bounded while preserving the final diagnostic tail"

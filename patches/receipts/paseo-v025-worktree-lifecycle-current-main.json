@@ -11,14 +11,14 @@
     "upstreamMainCommit": "70ed70d36e2eabd3876a22931954319ec202c902",
     "mergeCommit": "e5e5d607ea8e14dd874c3db4ce095634a9da7092",
     "mergeTree": "529add05cfc1424c287d576f27d8194f37503c35",
-    "headCommit": "d5743f9c37765b118d8ae78a2ae6c853ed796b65",
-    "headTree": "d0cb749501fc5ba10ace42c4dae0d3a05b12f227",
+    "headCommit": "48646138bdfed7f40cd9ab50397f99763ba91e68",
+    "headTree": "a946790495412748cd629375ca4150a8b8acf739",
     "firstParent": "bfdb6ed4a8668e05826effd3f8b1a18dbf74c9b2",
     "secondParent": "70ed70d36e2eabd3876a22931954319ec202c902"
   },
   "verification": {
-    "commit": "d5743f9c37765b118d8ae78a2ae6c853ed796b65",
-    "completedAt": "2026-08-01T01:22:49Z",
+    "commit": "48646138bdfed7f40cd9ab50397f99763ba91e68",
+    "completedAt": "2026-08-01T01:28:59Z",
     "commands": [
       "npm run build --workspace packages/protocol",
       "cd packages/server && npx vitest run src/server/agent/create-agent-lifecycle-dispatch.test.ts src/server/agent/create-agent/create.test.ts src/server/agent/mcp-server.test.ts src/server/session.workspace-git-watch.test.ts src/server/session.workspaces.test.ts",
@@ -30,6 +30,7 @@
       "npm run lint -- --deny-warnings",
       "cd packages/server && npx vitest run src/server/worktree-session.test.ts",
       "cd packages/server && vitest run src/server/agent/create-agent/create.test.ts src/server/agent/mcp-server.test.ts src/terminal/terminal-session-controller.test.ts src/server/auto-archive-on-merge/archive-if-safe.test.ts src/server/workspace-archive-service.test.ts src/server/worktree-session.test.ts src/server/session.workspaces.test.ts --fileParallelism=false",
+      "cd packages/server && vitest run src/server/auto-archive-on-merge/archive-if-safe.test.ts --fileParallelism=false",
       "npm run build --workspace packages/server",
       "npm run typecheck --workspace packages/server",
       "oxlint <16 changed lifecycle source and test files>",
@@ -45,6 +46,7 @@
       "lifecycleFormatAndConflictDiff": "passed",
       "ownershipAndRetryRepairTests": "317 passed, 4 skipped; final ownership subset 144 passed",
       "repairServerBuildAndTypecheck": "passed",
+      "autoArchiveTruthfulnessTests": "16 passed",
       "allWorkspaceTypecheck": "unchanged app errors: DaemonClient lacks setProjectIcon/getProjectIcon on this stable-derived branch"
     }
   }
