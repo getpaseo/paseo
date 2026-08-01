@@ -1608,8 +1608,20 @@ export class OpenCodeAgentClient implements AgentClient {
       directory: openCodeConfig.cwd,
     });
 
+    let providerListOperation: Promise<unknown> | null = null;
+    const ownStartupProviderListOperation: OpenCodeLifecycleOperationOwner = <T>(
+      operation: Promise<T>,
+    ): Promise<T> => {
+      providerListOperation = operation;
+      return this.ownSessionOperation(operation);
+    };
     try {
-      await this.populateModelContextWindowCache(client, openCodeConfig.cwd, signal);
+      await this.populateModelContextWindowCache(
+        client,
+        openCodeConfig.cwd,
+        signal,
+        ownStartupProviderListOperation,
+      );
 
       return new OpenCodeAgentSession(
         openCodeConfig,
@@ -1626,7 +1638,13 @@ export class OpenCodeAgentClient implements AgentClient {
         this.ownSessionOperation,
       );
     } catch (error) {
-      await this.releaseFailedSessionStartup(acquisition);
+      if (providerListOperation) {
+        this.ownFailedSessionStartupCleanup(
+          this.finishFailedProviderListStartup(providerListOperation, acquisition),
+        );
+      } else {
+        await this.releaseFailedSessionStartup(acquisition);
+      }
       throw error;
     }
   }

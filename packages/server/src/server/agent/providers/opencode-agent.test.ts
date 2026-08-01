@@ -456,6 +456,65 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     }
   });
 
+  test.each(["fulfills", "rejects"] as const)(
+    "shutdown retains a resumed session server until startup provider.list %s",
+    async (settlement) => {
+      vi.useFakeTimers();
+      const cwd = tmpCwd();
+      const runtime = new TestOpenCodeHarness();
+      const openCode = new TestOpenCodeClient();
+      const providerListGate = deferred<void>();
+      const releaseGate = deferred<void>();
+      let providerListSignal: AbortSignal | undefined;
+      openCode.providerListImplementation = async (options) => {
+        providerListSignal = (options as { signal?: AbortSignal } | undefined)?.signal;
+        await providerListGate.promise;
+        if (settlement === "rejects") {
+          throw new Error("provider.list failed");
+        }
+        return { data: { connected: [], all: [] } };
+      };
+      runtime.releaseImplementation = async () => releaseGate.resolve();
+      runtime.enqueueClient(openCode);
+      const client = new OpenCodeAgentClient(logger, undefined, {
+        serverManager: runtime,
+        createClient: runtime.createClient,
+      });
+
+      try {
+        const resume = client.resumeSession({
+          provider: "opencode",
+          sessionId: "resumed-before-provider-list",
+          metadata: { cwd },
+        });
+        await vi.waitFor(() => expect(openCode.calls.providerList).toHaveLength(1));
+
+        const shutdown = client.shutdown();
+
+        expect(providerListSignal?.aborted).toBe(true);
+        await expect(resume).rejects.toThrow("OpenCode agent client shutting down");
+        expect(openCode.calls.sessionDelete).toEqual([]);
+        await vi.advanceTimersByTimeAsync(4_999);
+        expect(runtime.acquisitions[0]?.releaseCount).toBe(0);
+        expect(runtime.shutdownCallCount).toBe(0);
+
+        await vi.advanceTimersByTimeAsync(1);
+        await shutdown;
+        expect(runtime.shutdownCallCount).toBe(1);
+        expect(runtime.acquisitions[0]?.releaseCount).toBe(0);
+
+        providerListGate.resolve();
+        await releaseGate.promise;
+        await client.shutdown();
+        expect(openCode.calls.sessionDelete).toEqual([]);
+        expect(runtime.acquisitions[0]?.releaseCount).toBe(1);
+      } finally {
+        vi.useRealTimers();
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+  );
+
   test("deletes a session that resolves after create timeout", async () => {
     vi.useFakeTimers();
     const cwd = tmpCwd();
