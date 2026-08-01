@@ -36,6 +36,7 @@
         "material progress pages beyond the durable 1000-row tail to the current continuation",
         "a delayed material progress write cannot overwrite a newer continuation",
         "persists terminal outcomes and clears the previous outcome when a new turn starts",
+        "a live null turn outcome overrides stale persisted completion while a new turn runs",
         "concurrent snapshots preserve a newly derived material progress signal",
         "setTitle started before a newer snapshot cannot overwrite its material progress",
         "setTitle still runs after an earlier queued write fails",
