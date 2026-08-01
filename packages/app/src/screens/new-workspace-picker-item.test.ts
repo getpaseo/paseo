@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
 import type { CheckoutStatusPayload } from "@/git/checkout-status-cache";
 import {
+  branchPickerOptionId,
+  buildBranchPickerItems,
   pickerItemToCheckoutRequest,
   resolveCheckoutRequest,
   type PickerItem,
@@ -19,16 +21,29 @@ const prItem: ForgeSearchItem = {
   headRefName: "feature/picker",
 };
 
+describe("branchPickerOptionId", () => {
+  it("distinguishes a local origin-prefixed branch from the origin ref", () => {
+    expect(branchPickerOptionId("refs/heads/origin/main")).not.toBe(
+      branchPickerOptionId("refs/remotes/origin/main"),
+    );
+  });
+});
+
 describe("pickerItemToCheckoutRequest", () => {
   it("returns undefined for no selection (null)", () => {
     expect(pickerItemToCheckoutRequest(null)).toBeUndefined();
   });
 
-  it("maps a branch row to branch-off with the branch name", () => {
-    const item: PickerItem = { kind: "branch", name: "dev" };
+  it("maps a branch row to branch-off with its exact ref", () => {
+    const item: PickerItem = {
+      kind: "branch",
+      name: "dev",
+      refName: "refs/heads/dev",
+      accessibilityLabel: "dev, local branch",
+    };
     expect(pickerItemToCheckoutRequest(item)).toEqual({
       action: "branch-off",
-      refName: "dev",
+      refName: "refs/heads/dev",
     });
   });
 
@@ -88,6 +103,124 @@ describe("pickerItemToCheckoutRequest", () => {
   });
 });
 
+describe("buildBranchPickerItems", () => {
+  it("hides the origin duplicate when local and origin match", () => {
+    expect(
+      buildBranchPickerItems([
+        {
+          name: "main",
+          committerDate: 10,
+          hasLocal: true,
+          hasRemote: true,
+          localAhead: 0,
+          localBehind: 0,
+        },
+      ]),
+    ).toEqual([
+      {
+        kind: "branch",
+        name: "main",
+        refName: "refs/heads/main",
+        accessibilityLabel: "main, local branch, up to date with origin main",
+        committerDate: 10,
+      },
+    ]);
+  });
+
+  it("creates compact local and origin rows when the refs differ", () => {
+    expect(
+      buildBranchPickerItems([
+        {
+          name: "main",
+          committerDate: 10,
+          hasLocal: true,
+          hasRemote: true,
+          localAhead: 3,
+          localBehind: 2,
+        },
+      ]),
+    ).toEqual([
+      {
+        kind: "branch",
+        name: "main",
+        refName: "refs/heads/main",
+        divergenceLabel: "+3 −2",
+        accessibilityLabel: "main, local branch, 3 commits ahead and 2 behind origin main",
+        committerDate: 10,
+      },
+      {
+        kind: "branch",
+        name: "origin/main",
+        refName: "refs/remotes/origin/main",
+        divergenceLabel: "+2 −3",
+        accessibilityLabel: "origin main, 2 commits ahead and 3 behind local main",
+        committerDate: 10,
+      },
+    ]);
+  });
+
+  it("uses an exact origin ref for remote-only branches", () => {
+    expect(
+      buildBranchPickerItems([
+        {
+          name: "release",
+          committerDate: 5,
+          hasLocal: false,
+          hasRemote: true,
+        },
+      ]),
+    ).toEqual([
+      {
+        kind: "branch",
+        name: "origin/release",
+        refName: "refs/remotes/origin/release",
+        accessibilityLabel: "origin release, origin branch",
+        committerDate: 5,
+      },
+    ]);
+  });
+
+  it("shows both refs when their divergence is unavailable", () => {
+    expect(
+      buildBranchPickerItems([
+        {
+          name: "main",
+          committerDate: 10,
+          hasLocal: true,
+          hasRemote: true,
+        },
+      ]),
+    ).toEqual([
+      {
+        kind: "branch",
+        name: "main",
+        refName: "refs/heads/main",
+        accessibilityLabel: "main, local branch",
+        committerDate: 10,
+      },
+      {
+        kind: "branch",
+        name: "origin/main",
+        refName: "refs/remotes/origin/main",
+        accessibilityLabel: "origin main, origin branch",
+        committerDate: 10,
+      },
+    ]);
+  });
+
+  it("keeps the legacy unqualified row when provenance is unavailable", () => {
+    expect(buildBranchPickerItems([{ name: "legacy", committerDate: 1 }])).toEqual([
+      {
+        kind: "branch",
+        name: "legacy",
+        refName: "legacy",
+        accessibilityLabel: "legacy, branch",
+        committerDate: 1,
+      },
+    ]);
+  });
+});
+
 describe("resolveCheckoutRequest", () => {
   const checkoutStatus = {
     currentBranch: "feature/current",
@@ -102,10 +235,18 @@ describe("resolveCheckoutRequest", () => {
 
   it("prefers an explicit picker selection", () => {
     expect(
-      resolveCheckoutRequest({ kind: "branch", name: "feature/picked" }, checkoutStatus),
+      resolveCheckoutRequest(
+        {
+          kind: "branch",
+          name: "feature/picked",
+          refName: "refs/heads/feature/picked",
+          accessibilityLabel: "feature/picked, local branch",
+        },
+        checkoutStatus,
+      ),
     ).toEqual({
       action: "branch-off",
-      refName: "feature/picked",
+      refName: "refs/heads/feature/picked",
     });
   });
 
