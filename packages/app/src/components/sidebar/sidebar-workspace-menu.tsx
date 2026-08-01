@@ -2,7 +2,16 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { Archive, CircleCheck, Copy, MoreVertical, Pencil, Pin, PinOff } from "lucide-react-native";
+import {
+  Archive,
+  CircleCheck,
+  CircleDot,
+  Copy,
+  MoreVertical,
+  Pencil,
+  Pin,
+  PinOff,
+} from "lucide-react-native";
 import { isNative, isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
 import type { ShortcutKey } from "@/utils/format-shortcut";
@@ -25,6 +34,7 @@ const ThemedCopy = withUnistyles(Copy);
 const ThemedArchive = withUnistyles(Archive);
 const ThemedPencil = withUnistyles(Pencil);
 const ThemedCircleCheck = withUnistyles(CircleCheck);
+const ThemedCircleDot = withUnistyles(CircleDot);
 const ThemedPin = withUnistyles(Pin);
 const ThemedPinOff = withUnistyles(PinOff);
 
@@ -32,6 +42,9 @@ const copyLeadingIcon = <ThemedCopy size={14} uniProps={foregroundMutedColorMapp
 const renameLeadingIcon = <ThemedPencil size={14} uniProps={foregroundMutedColorMapping} />;
 const markAsReadLeadingIcon = (
   <ThemedCircleCheck size={14} uniProps={foregroundMutedColorMapping} />
+);
+const markAsReadyToReviewLeadingIcon = (
+  <ThemedCircleDot size={14} uniProps={foregroundMutedColorMapping} />
 );
 const archiveLeadingIcon = <ThemedArchive size={14} uniProps={foregroundMutedColorMapping} />;
 const pinLeadingIcon = <ThemedPin size={14} uniProps={foregroundMutedColorMapping} />;
@@ -52,6 +65,7 @@ interface SidebarWorkspaceMenuProps {
   onCopyBranchName?: () => void;
   onRename?: () => void;
   onMarkAsRead?: () => void;
+  onMarkAsReadyToReview?: () => void;
   onArchive: () => void;
   archiveLabel?: string;
   archiveStatus?: "idle" | "pending" | "success";
@@ -68,6 +82,7 @@ export function SidebarWorkspaceMenu({
   onCopyBranchName,
   onRename,
   onMarkAsRead,
+  onMarkAsReadyToReview,
   onArchive,
   archiveLabel,
   archiveStatus,
@@ -128,7 +143,16 @@ export function SidebarWorkspaceMenu({
             leading={markAsReadLeadingIcon}
             onSelect={onMarkAsRead}
           >
-            Mark as read
+            {t("sidebar.workspace.actions.markAsRead")}
+          </DropdownMenuItem>
+        ) : null}
+        {onMarkAsReadyToReview ? (
+          <DropdownMenuItem
+            testID={`sidebar-workspace-menu-mark-as-ready-to-review-${workspaceKey}`}
+            leading={markAsReadyToReviewLeadingIcon}
+            onSelect={onMarkAsReadyToReview}
+          >
+            {t("sidebar.workspace.actions.markAsReadyToReview")}
           </DropdownMenuItem>
         ) : null}
         {onTogglePin ? (

@@ -2113,6 +2113,8 @@ export class Session {
         return this.handleWorkspaceCreateRequest(msg);
       case "workspace.clear_attention.request":
         return this.handleWorkspaceClearAttentionRequest(msg);
+      case "workspace.set_attention.request":
+        return this.handleWorkspaceSetAttentionRequest(msg);
       case "workspace.title.set.request":
         return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
       case "workspace.pin.set.request":
@@ -5999,6 +6001,139 @@ export class Session {
         requestId,
         workspaceId,
         clearedAgentIds,
+        results,
+        success: failedResults.length === 0,
+        error:
+          failedResults.length === 0
+            ? null
+            : failedResults
+                .map((result) => result.error)
+                .filter((error) => error !== null)
+                .join("; "),
+      },
+    });
+  }
+
+  private async handleWorkspaceSetAttentionRequest(
+    request: Extract<SessionInboundMessage, { type: "workspace.set_attention.request" }>,
+  ): Promise<void> {
+    const { requestId, workspaceId } = request;
+    const requestedWorkspaceIds = Array.isArray(workspaceId) ? workspaceId : [workspaceId];
+    let agents: AgentSnapshotPayload[];
+    try {
+      agents = await this.listAgentPayloads();
+    } catch (error) {
+      const message = getErrorMessage(error);
+      const results = requestedWorkspaceIds.map((requestedWorkspaceId) => ({
+        workspaceId: requestedWorkspaceId,
+        markedAgentIds: [],
+        success: false,
+        error: message,
+      }));
+      this.emit({
+        type: "workspace.set_attention.response",
+        payload: {
+          requestId,
+          workspaceId,
+          markedAgentIds: [],
+          results,
+          success: false,
+          error: message,
+        },
+      });
+      return;
+    }
+    const results: Array<{
+      workspaceId: string;
+      markedAgentIds: string[];
+      success: boolean;
+      error: string | null;
+    }> = [];
+
+    for (const requestedWorkspaceId of requestedWorkspaceIds) {
+      const markedAgentIds: string[] = [];
+      try {
+        const workspace = await this.workspaceRegistry.get(requestedWorkspaceId);
+        if (!workspace || workspace.archivedAt) {
+          throw new Error(`Workspace not found: ${requestedWorkspaceId}`);
+        }
+
+        // Setting attention is scoped to the workspace that OWNS the agent, by
+        // workspaceId — never by comparing cwd strings. A sibling workspace
+        // sharing the same directory keeps its own agents' attention.
+        const markableAgentIds = agents
+          .filter((agent) => !agent.archivedAt)
+          .filter((agent) => agent.workspaceId === workspace.workspaceId)
+          .filter((agent) => {
+            if (agent.requiresAttention === false) return true;
+            if (!agent.attentionReason) return true;
+            return agent.attentionReason !== "manual";
+          })
+          .map((agent) => agent.id);
+
+        for (const agentId of markableAgentIds) {
+          const liveAgent = this.agentManager.getAgent(agentId);
+          if (liveAgent) {
+            await this.agentManager.markAgentAttention(agentId, "manual");
+            markedAgentIds.push(agentId);
+            continue;
+          }
+
+          const record = await this.agentStorage.get(agentId);
+          if (!record || record.internal || record.archivedAt) {
+            continue;
+          }
+          const nextRecord: StoredAgentRecord = {
+            ...record,
+            updatedAt: new Date().toISOString(),
+            requiresAttention: true,
+            attentionReason: "manual",
+            attentionTimestamp: new Date().toISOString(),
+          };
+          await this.agentStorage.upsert(nextRecord);
+          const agent = this.buildStoredAgentPayload(nextRecord);
+          const project = await this.buildProjectPlacementForWorkspace(workspace);
+          this.emit({
+            type: "agent_update",
+            payload: {
+              kind: "upsert",
+              agent,
+              project,
+            },
+          });
+          markedAgentIds.push(agentId);
+        }
+
+        await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
+        results.push({
+          workspaceId: requestedWorkspaceId,
+          markedAgentIds,
+          success: true,
+          error: null,
+        });
+      } catch (error) {
+        const message = getErrorMessage(error);
+        this.sessionLogger.error(
+          { err: error, workspaceId: requestedWorkspaceId },
+          "Failed to set workspace attention",
+        );
+        results.push({
+          workspaceId: requestedWorkspaceId,
+          markedAgentIds,
+          success: false,
+          error: message,
+        });
+      }
+    }
+
+    const markedAgentIds = results.flatMap((result) => result.markedAgentIds);
+    const failedResults = results.filter((result) => !result.success);
+    this.emit({
+      type: "workspace.set_attention.response",
+      payload: {
+        requestId,
+        workspaceId,
+        markedAgentIds,
         results,
         success: failedResults.length === 0,
         error:

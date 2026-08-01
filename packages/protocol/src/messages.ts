@@ -657,7 +657,7 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("attention_required"),
     provider: AgentProviderSchema,
-    reason: z.enum(["finished", "error", "permission"]),
+    reason: z.enum(["finished", "error", "permission", "manual"]),
     timestamp: z.string(),
     shouldNotify: z.boolean(),
     notification: z
@@ -668,7 +668,7 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
           serverId: z.string(),
           workspaceId: z.string().optional(),
           agentId: z.string(),
-          reason: z.enum(["finished", "error", "permission"]),
+          reason: z.enum(["finished", "error", "permission", "manual"]),
         }),
       })
       .optional(),
@@ -717,7 +717,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   title: z.string().nullable(),
   labels: z.record(z.string(), z.string()).default({}),
   requiresAttention: z.boolean().optional(),
-  attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
+  attentionReason: z.enum(["finished", "error", "permission", "manual"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
   archivedAt: z.string().nullable().optional(),
   providerUnavailable: z.boolean().optional(),
@@ -740,7 +740,7 @@ export const AgentListItemPayloadSchema = z.object({
   lastUserMessageAt: z.string().nullable(),
   archivedAt: z.string().nullable().optional(),
   requiresAttention: z.boolean().optional(),
-  attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
+  attentionReason: z.enum(["finished", "error", "permission", "manual"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
   labels: z.record(z.string(), z.string()).default({}),
   providerUnavailable: z.boolean().optional(),
@@ -2125,6 +2125,12 @@ export const WorkspaceClearAttentionRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const WorkspaceSetAttentionRequestSchema = z.object({
+  type: z.literal("workspace.set_attention.request"),
+  workspaceId: z.union([z.string(), z.array(z.string())]),
+  requestId: z.string(),
+});
+
 // Highlighted diff token schema
 // Note: style can be a compound class name (e.g., "heading meta") from the syntax highlighter
 const HighlightTokenSchema = z.object({
@@ -2589,6 +2595,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ArchiveWorkspaceRequestSchema,
   WorkspaceCreateRequestSchema,
   WorkspaceClearAttentionRequestSchema,
+  WorkspaceSetAttentionRequestSchema,
   FileExplorerRequestSchema,
   FileSubscribeRequestSchema,
   FileUnsubscribeRequestSchema,
@@ -3767,6 +3774,25 @@ export const WorkspaceClearAttentionResponseSchema = z.object({
       z.object({
         workspaceId: z.string(),
         clearedAgentIds: z.array(z.string()),
+        success: z.boolean(),
+        error: z.string().nullable(),
+      }),
+    ),
+    success: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const WorkspaceSetAttentionResponseSchema = z.object({
+  type: z.literal("workspace.set_attention.response"),
+  payload: z.object({
+    requestId: z.string(),
+    workspaceId: z.union([z.string(), z.array(z.string())]),
+    markedAgentIds: z.array(z.string()),
+    results: z.array(
+      z.object({
+        workspaceId: z.string(),
+        markedAgentIds: z.array(z.string()),
         success: z.boolean(),
         error: z.string().nullable(),
       }),
@@ -5302,6 +5328,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ClearAgentAttentionResponseMessageSchema,
   WorkspaceCreateResponseSchema,
   WorkspaceClearAttentionResponseSchema,
+  WorkspaceSetAttentionResponseSchema,
   SendAgentMessageResponseMessageSchema,
   SetVoiceModeResponseMessageSchema,
   DaemonGetStatusResponseSchema,
@@ -5525,6 +5552,8 @@ export type WorkspaceRecoveryRestoreResponse = z.infer<
 >;
 export type WorkspaceCreateRequest = z.infer<typeof WorkspaceCreateRequestSchema>;
 export type WorkspaceCreateResponse = z.infer<typeof WorkspaceCreateResponseSchema>;
+export type WorkspaceClearAttentionResponse = z.infer<typeof WorkspaceClearAttentionResponseSchema>;
+export type WorkspaceSetAttentionResponse = z.infer<typeof WorkspaceSetAttentionResponseSchema>;
 export type ProjectRenameResponsePayload = z.infer<typeof ProjectRenameResponsePayloadSchema>;
 export type ProjectRemoveResponsePayload = z.infer<typeof ProjectRemoveResponsePayloadSchema>;
 export type WaitForFinishResponseMessage = z.infer<typeof WaitForFinishResponseMessageSchema>;
@@ -5782,6 +5811,7 @@ export type ProjectGithubCloneRequest = z.infer<typeof ProjectGithubCloneRequest
 export type ProjectGithubCloneProtocol = z.infer<typeof ProjectGithubCloneProtocolSchema>;
 export type ArchiveWorkspaceRequest = z.infer<typeof ArchiveWorkspaceRequestSchema>;
 export type WorkspaceClearAttentionRequest = z.infer<typeof WorkspaceClearAttentionRequestSchema>;
+export type WorkspaceSetAttentionRequest = z.infer<typeof WorkspaceSetAttentionRequestSchema>;
 export type FileExplorerRequest = z.infer<typeof FileExplorerRequestSchema>;
 export type FileExplorerResponse = z.infer<typeof FileExplorerResponseSchema>;
 export type FileVersion = z.infer<typeof FileVersionSchema>;

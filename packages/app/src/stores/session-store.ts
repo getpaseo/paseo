@@ -116,7 +116,7 @@ export interface Agent {
   features?: AgentFeature[];
   thinkingOptionId?: string | null;
   requiresAttention?: boolean;
-  attentionReason?: "finished" | "error" | "permission" | null;
+  attentionReason?: "finished" | "error" | "permission" | "manual" | null;
   attentionTimestamp?: Date | null;
   archivedAt?: Date | null;
   parentAgentId: string | null;

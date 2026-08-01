@@ -17,7 +17,7 @@ export function AgentStatusDot({
 }: {
   status: string | null | undefined;
   requiresAttention: boolean | null | undefined;
-  attentionReason?: "finished" | "error" | "permission" | null;
+  attentionReason?: "finished" | "error" | "permission" | "manual" | null;
   pendingPermissionCount?: number;
   showInactive?: boolean;
 }) {

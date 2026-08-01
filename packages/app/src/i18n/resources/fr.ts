@@ -986,6 +986,8 @@ export const fr: TranslationResources = {
         copyPath: "Copier le chemin",
         copyBranchName: "Copier le nom de la branche",
         rename: "Renommer l'espace de travail",
+        markAsRead: "Marquer comme lu",
+        markAsReadyToReview: "Marquer comme prêt à réviser",
         pin: "Épingler en haut",
         unpin: "Désépingler",
         archive: "Archive",

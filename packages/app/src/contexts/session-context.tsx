@@ -497,7 +497,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const notifyAgentAttention = useCallback(
     (params: {
       agentId: string;
-      reason: "finished" | "error" | "permission";
+      reason: "finished" | "error" | "permission" | "manual";
       timestamp: string;
       notification?: AgentAttentionNotificationPayload;
     }) => {

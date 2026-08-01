@@ -1,6 +1,6 @@
 const NOTIFICATION_PREVIEW_LIMIT = 220;
 
-export type AgentAttentionReason = "finished" | "error" | "permission";
+export type AgentAttentionReason = "finished" | "error" | "permission" | "manual";
 
 export interface AgentAttentionNotificationData {
   [key: string]: unknown;
@@ -172,6 +172,7 @@ export function findLatestPermissionRequest(
 function resolveAgentAttentionTitle(reason: AgentAttentionReason): string {
   if (reason === "permission") return "Agent needs permission";
   if (reason === "error") return "Agent needs attention";
+  if (reason === "manual") return "Marked for review";
   return "Agent finished";
 }
 
@@ -190,6 +191,7 @@ function resolveAgentAttentionPreview(
 function resolveAgentAttentionFallbackBody(reason: AgentAttentionReason): string {
   if (reason === "permission") return "Permission requested.";
   if (reason === "error") return "Encountered an error.";
+  if (reason === "manual") return "Manually marked for review.";
   return "Finished working.";
 }
 
