@@ -368,3 +368,75 @@ test("provider permissions do not survive an unexpected exit and reconnect", asy
     rmSync(workdir, { recursive: true, force: true });
   }
 });
+
+test("idle provider exit preserves a synthetic plan approval across reconnect", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-process-plan-exit-"));
+  const exitedAppServer = createFakeCodexAppServer();
+  const replacementAppServer = createFakeCodexAppServer();
+  const manager = new AgentManager({
+    clients: {
+      codex: new ProcessExitCodexClient([exitedAppServer, replacementAppServer]),
+    },
+    logger,
+  });
+  let agentId: string | null = null;
+
+  try {
+    const agent = await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+        modeId: "auto",
+        model: "gpt-5.4",
+        featureValues: { plan_mode: true },
+      },
+      undefined,
+      { workspaceId: undefined },
+    );
+    agentId = agent.id;
+
+    const planRun = manager.runAgent(agent.id, "make a plan");
+    const planTurnStart = await exitedAppServer.waitForTurnStart();
+    const planThreadId = String(planTurnStart.threadId);
+    exitedAppServer.startsTurn({ threadId: planThreadId, turnId: "plan-turn" });
+    exitedAppServer.updatesPlan({
+      threadId: planThreadId,
+      steps: ["Inspect the provider lifecycle", "Implement the fix"],
+    });
+    exitedAppServer.completeTurn({ threadId: planThreadId });
+    await expect(planRun).resolves.toMatchObject({ sessionId: "thread-1" });
+    const [planApproval] = manager.getPendingPermissions(agent.id);
+    expect(planApproval).toMatchObject({
+      name: "CodexPlanApproval",
+      kind: "plan",
+    });
+
+    exitedAppServer.child.emit("exit", 17, null);
+
+    await expect.poll(() => manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+    expect(manager.getPendingPermissions(agent.id)).toEqual([planApproval]);
+    const approval = await manager.respondToPermission(agent.id, planApproval!.id, {
+      behavior: "allow",
+      selectedActionId: "implement",
+    });
+    expect(approval).toMatchObject({
+      followUpPrompt: expect.stringContaining("Implement the fix"),
+    });
+
+    const implementationRun = manager.runAgent(agent.id, approval!.followUpPrompt!);
+    const implementationTurnStart = await replacementAppServer.waitForTurnStart();
+    const implementationThreadId = String(implementationTurnStart.threadId);
+    replacementAppServer.startsTurn({
+      threadId: implementationThreadId,
+      turnId: "implementation-turn",
+    });
+    replacementAppServer.completeTurn({ threadId: implementationThreadId });
+    await expect(implementationRun).resolves.toMatchObject({ sessionId: "thread-1" });
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+  } finally {
+    if (agentId && manager.getAgent(agentId)) {
+      await manager.closeAgent(agentId);
+    }
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});

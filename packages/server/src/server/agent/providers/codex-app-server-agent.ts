@@ -3276,8 +3276,8 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private handleUnexpectedTermination(error: Error): void {
     this.connected = false;
-    this.clearPendingPermissions();
     const hasActiveRootTurn = this.activeForegroundTurnId !== null || this.currentTurnId !== null;
+    this.clearPendingPermissions({ preservePlanApprovals: !hasActiveRootTurn });
     if (hasActiveRootTurn) {
       this.emitEvent({
         type: "turn_failed",
@@ -4340,12 +4340,15 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.currentThreadId = null;
   }
 
-  private clearPendingPermissions(): void {
-    for (const pending of this.pendingPermissionHandlers.values()) {
+  private clearPendingPermissions(options?: { preservePlanApprovals?: boolean }): void {
+    for (const [requestId, pending] of this.pendingPermissionHandlers) {
+      if (options?.preservePlanApprovals && pending.kind === "plan") {
+        continue;
+      }
       pending.resolve({ decision: "cancel" });
+      this.pendingPermissionHandlers.delete(requestId);
+      this.pendingPermissions.delete(requestId);
     }
-    this.pendingPermissionHandlers.clear();
-    this.pendingPermissions.clear();
     this.mcpElicitationPermissionIds.clear();
     this.resolvedPermissionRequests.clear();
   }
