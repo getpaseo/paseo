@@ -655,7 +655,7 @@ export class VoiceAssistantWebSocketServer {
       this.speech?.onReadinessChange((snapshot) => {
         this.publishSpeechReadiness(snapshot);
       }) ?? null;
-    this.unsubscribeDaemonConfigApply = this.daemonConfigStore.onBeforeChange(
+    this.unsubscribeDaemonConfigApply = this.daemonConfigStore.onBeforeProviderChange(
       async (config, details) => {
         const update = this.providerConfigUpdate
           .then(async () => {

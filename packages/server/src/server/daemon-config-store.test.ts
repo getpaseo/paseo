@@ -630,7 +630,7 @@ describe("DaemonConfigStore", () => {
     store.onChange(() => {
       changes++;
     });
-    store.onBeforeChange(async () => {
+    store.onBeforeProviderChange(async () => {
       throw new Error("provider cleanup timed out");
     });
 
@@ -645,5 +645,34 @@ describe("DaemonConfigStore", () => {
       label: "Gemini",
       command: ["gemini", "--acp"],
     });
+  });
+
+  test("async patch does not reapply providers for an unrelated setting", async () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+    );
+    let providerApplications = 0;
+    store.onBeforeProviderChange(async () => {
+      providerApplications++;
+      throw new Error("provider load did not stop");
+    });
+
+    const next = await store.patchAsync({ browserTools: { enabled: true } });
+
+    expect(next.browserTools.enabled).toBe(true);
+    expect(providerApplications).toBe(0);
+    expect(loadPersistedConfig(paseoHome).daemon?.browserTools?.enabled).toBe(true);
   });
 });

@@ -36,6 +36,7 @@ interface PreparedConfigPatch {
   removedProviders: readonly string[];
   changedFieldPaths: string[];
   configChanged: boolean;
+  providersChanged: boolean;
 }
 
 function getLogger(logger: LoggerLike | undefined): LoggerLike | undefined {
@@ -172,7 +173,7 @@ export class DaemonConfigStore {
   private readonly paseoHome: string;
   private readonly logger: LoggerLike | undefined;
   private readonly changeListeners = new Set<ConfigListener>();
-  private readonly beforeChangeListeners = new Set<AsyncConfigListener>();
+  private readonly beforeProviderChangeListeners = new Set<AsyncConfigListener>();
   private readonly fieldChangeHandlers = new Map<string, Set<FieldChangeHandler>>();
   private asyncPatchTail = Promise.resolve();
 
@@ -216,7 +217,7 @@ export class DaemonConfigStore {
 
   private async applyAsyncPatch(partial: MutableDaemonConfigPatch): Promise<MutableDaemonConfig> {
     const prepared = this.preparePatch(partial);
-    const { next, removedProviders, configChanged } = prepared;
+    const { next, removedProviders, configChanged, providersChanged } = prepared;
 
     if (!configChanged && removedProviders.length === 0) {
       return this.current;
@@ -224,18 +225,19 @@ export class DaemonConfigStore {
 
     const previousPersistedConfig = loadPersistedConfig(this.paseoHome, this.logger);
     this.persistConfig(next, removedProviders, previousPersistedConfig);
+    if (providersChanged) {
+      try {
+        const details: DaemonConfigChangeDetails = { removedProviders };
+        for (const listener of this.beforeProviderChangeListeners) {
+          await listener(next, details);
+        }
+      } catch (error) {
+        savePersistedConfig(this.paseoHome, previousPersistedConfig, this.logger);
+        throw error;
+      }
+    }
     if (!configChanged) {
       return this.current;
-    }
-
-    try {
-      const details: DaemonConfigChangeDetails = { removedProviders };
-      for (const listener of this.beforeChangeListeners) {
-        await listener(next, details);
-      }
-    } catch (error) {
-      savePersistedConfig(this.paseoHome, previousPersistedConfig, this.logger);
-      throw error;
     }
 
     this.commitPatch(prepared);
@@ -258,8 +260,10 @@ export class DaemonConfigStore {
       return !isEqualValue(getValueAtPath(this.current, path), getValueAtPath(next, path));
     });
     const configChanged = !isEqualValue(this.current, next);
+    const providersChanged =
+      removedProviders.length > 0 || !isEqualValue(this.current.providers, next.providers);
 
-    return { next, removedProviders, changedFieldPaths, configChanged };
+    return { next, removedProviders, changedFieldPaths, configChanged, providersChanged };
   }
 
   private commitPatch(prepared: PreparedConfigPatch): void {
@@ -307,10 +311,10 @@ export class DaemonConfigStore {
     };
   }
 
-  public onBeforeChange(listener: AsyncConfigListener): () => void {
-    this.beforeChangeListeners.add(listener);
+  public onBeforeProviderChange(listener: AsyncConfigListener): () => void {
+    this.beforeProviderChangeListeners.add(listener);
     return () => {
-      this.beforeChangeListeners.delete(listener);
+      this.beforeProviderChangeListeners.delete(listener);
     };
   }
 
