@@ -731,6 +731,107 @@ describe("WorkspaceGitServiceImpl", () => {
     service.dispose();
   });
 
+  test("forced cooldown preserves same-head pull request state and reports retry timing", async () => {
+    const retryAt = Date.parse("2026-04-12T00:06:00.000Z");
+    const getPullRequestStatus = vi
+      .fn<() => Promise<PullRequestStatusResult>>()
+      .mockResolvedValueOnce(createPullRequestStatusResult())
+      .mockRejectedValueOnce(new GitHubRateLimitCooldownError(retryAt));
+    const service = createService({ getPullRequestStatus });
+
+    const initial = await service.getSnapshot(REPO_CWD);
+    const cooledDown = await service.getSnapshot(REPO_CWD, {
+      force: true,
+      reason: "rate-limit-regression",
+    });
+
+    expect(cooledDown.forge.pullRequest).toEqual(initial.forge.pullRequest);
+    expect(cooledDown.forge.error).toEqual({
+      message: "GitHub API rate limit cooldown active",
+      retryAt,
+    });
+
+    service.dispose();
+  });
+
+  test("forced cooldown rejects pull request state after the checkout identity changes", async () => {
+    const getCheckoutStatus = vi
+      .fn<() => Promise<CheckoutStatusGit>>()
+      .mockResolvedValueOnce(createCheckoutStatus(REPO_CWD))
+      .mockResolvedValueOnce(createCheckoutStatus(REPO_CWD, { currentBranch: "other-head" }));
+    const getPullRequestStatus = vi
+      .fn<() => Promise<PullRequestStatusResult>>()
+      .mockResolvedValueOnce(createPullRequestStatusResult())
+      .mockRejectedValueOnce(new GitHubRateLimitCooldownError(123_000));
+    const service = createService({ getCheckoutStatus, getPullRequestStatus });
+
+    await service.getSnapshot(REPO_CWD);
+    const cooledDown = await service.getSnapshot(REPO_CWD, {
+      force: true,
+      reason: "head-change-rate-limit-regression",
+    });
+
+    expect(cooledDown.git.currentBranch).toBe("other-head");
+    expect(cooledDown.forge.pullRequest).toBeNull();
+    expect(cooledDown.forge.error).toEqual({
+      message: "GitHub API rate limit cooldown active",
+      retryAt: 123_000,
+    });
+
+    service.dispose();
+  });
+
+  test("forced cooldown rejects pull request state after the repository changes", async () => {
+    const getCheckoutStatus = vi
+      .fn<() => Promise<CheckoutStatusGit>>()
+      .mockResolvedValueOnce(createCheckoutStatus(REPO_CWD))
+      .mockResolvedValueOnce(
+        createCheckoutStatus(REPO_CWD, {
+          remoteUrl: "https://github.com/acme/other-repo.git",
+        }),
+      );
+    const getPullRequestStatus = vi
+      .fn<() => Promise<PullRequestStatusResult>>()
+      .mockResolvedValueOnce(createPullRequestStatusResult())
+      .mockRejectedValueOnce(new GitHubRateLimitCooldownError(123_000));
+    const service = createService({ getCheckoutStatus, getPullRequestStatus });
+
+    await service.getSnapshot(REPO_CWD);
+    const cooledDown = await service.getSnapshot(REPO_CWD, {
+      force: true,
+      reason: "repository-change-rate-limit-regression",
+    });
+
+    expect(cooledDown.git.remoteUrl).toBe("https://github.com/acme/other-repo.git");
+    expect(cooledDown.forge.pullRequest).toBeNull();
+    expect(cooledDown.forge.error).toEqual({
+      message: "GitHub API rate limit cooldown active",
+      retryAt: 123_000,
+    });
+
+    service.dispose();
+  });
+
+  test("forced permanent forge failure does not preserve pull request state", async () => {
+    const permanentError = new Error("repository not found");
+    const getPullRequestStatus = vi
+      .fn<() => Promise<PullRequestStatusResult>>()
+      .mockResolvedValueOnce(createPullRequestStatusResult())
+      .mockRejectedValueOnce(permanentError);
+    const service = createService({ getPullRequestStatus });
+
+    await service.getSnapshot(REPO_CWD);
+    const failed = await service.getSnapshot(REPO_CWD, {
+      force: true,
+      reason: "permanent-forge-failure",
+    });
+
+    expect(failed.forge.pullRequest).toBeNull();
+    expect(failed.forge.error).toEqual({ message: permanentError.message });
+
+    service.dispose();
+  });
+
   test("unchanged runtime snapshots do not emit duplicate updates", async () => {
     const getCheckoutStatus = vi
       .fn<() => Promise<CheckoutStatusGit>>()

@@ -37,6 +37,7 @@ import {
   type ForgeResolution,
   type ForgeResolver,
 } from "../services/forge-resolver.js";
+import { GitHubRateLimitCooldownError } from "../services/github-service.js";
 import { parseGitRevParsePath } from "../utils/git-rev-parse-path.js";
 import { runGitCommand } from "../utils/run-git-command.js";
 import { listPaseoWorktrees, type PaseoWorktreeInfo } from "../utils/worktree.js";
@@ -118,7 +119,7 @@ export interface WorkspaceGitRuntimeSnapshot {
       reviewDecision?: "approved" | "changes_requested" | "pending" | null;
       forgeSpecific?: ForgeSpecificStatusFacts;
     } | null;
-    error: { message: string } | null;
+    error: { message: string; retryAt?: number } | null;
   };
 }
 
@@ -1881,6 +1882,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       force: forceForge,
       reason: request.reason,
       facts,
+      pullRequestFallback: target.latestForge?.pullRequest ?? null,
     });
     // Carry the resolved forge (probe-aware) so the wire projection labels
     // self-managed GitLab hosts correctly instead of falling back to "github".
@@ -2106,6 +2108,7 @@ async function loadForgeSnapshot(options: {
   force?: boolean;
   reason?: string;
   facts?: CheckoutSnapshotFacts;
+  pullRequestFallback: WorkspaceGitRuntimeSnapshot["forge"]["pullRequest"];
 }): Promise<WorkspaceGitRuntimeSnapshot["forge"]> {
   const forgeService = options.forgeService;
   if (!forgeService) {
@@ -2134,13 +2137,17 @@ async function loadForgeSnapshot(options: {
       },
       { facts: options.facts },
     );
-    return buildForgeSnapshot(result.authState, result.status, null);
+    return buildForgeSnapshot(result.authState, result.status, result.error ?? null);
   } catch (error) {
     // The auth probe succeeded, so a failure here is a command error, not an
     // auth problem — surface it as an error while keeping features enabled.
-    return buildForgeSnapshot("authenticated", null, {
-      message: error instanceof Error ? error.message : String(error),
-    });
+    return buildForgeSnapshot(
+      "authenticated",
+      error instanceof GitHubRateLimitCooldownError ? options.pullRequestFallback : null,
+      error instanceof GitHubRateLimitCooldownError
+        ? { message: error.message, retryAt: error.retryAt }
+        : { message: error instanceof Error ? error.message : String(error) },
+    );
   }
 }
 

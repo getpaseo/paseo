@@ -857,7 +857,10 @@ describe("workspace message schemas", () => {
                 headRefName: "workspace-git-service",
                 isMerged: false,
               },
-              error: null,
+              error: {
+                message: "GitHub API rate limit cooldown active",
+                retryAt: 1_776_038_760_000,
+              },
               refreshedAt: "2026-04-12T00:00:00.000Z",
             },
           },
@@ -877,6 +880,7 @@ describe("workspace message schemas", () => {
       aheadOfOrigin: 2,
     });
     expect(parsed.payload.entries[0]?.githubRuntime?.pullRequest?.title).toBe("Runtime payloads");
+    expect(parsed.payload.entries[0]?.githubRuntime?.error?.retryAt).toBe(1_776_038_760_000);
   });
 
   test("older workspace parsers ignore additive runtime fields", () => {

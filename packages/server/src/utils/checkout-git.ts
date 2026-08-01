@@ -3514,6 +3514,7 @@ export interface PullRequestStatusResult {
   authState: ForgeAuthState;
   /** Kept in sync with {@link authState} for back-compat; true iff authenticated. */
   githubFeaturesEnabled: boolean;
+  error?: { message: string; retryAt?: number };
 }
 
 function buildPullRequestStatusResult(
@@ -3620,13 +3621,18 @@ export async function getPullRequestStatus(
       return status;
     })
     .catch((error) => {
-      if (
-        !options?.force &&
-        (error instanceof GitHubRateLimitCooldownError || isTransientForgeCommandError(error))
-      ) {
+      if (!options?.force) {
         const stale = lastSuccessfulPullRequestStatus.get(cacheKey);
         if (stale) {
-          return stale;
+          if (error instanceof GitHubRateLimitCooldownError) {
+            return {
+              ...stale,
+              error: { message: error.message, retryAt: error.retryAt },
+            };
+          }
+          if (isTransientForgeCommandError(error)) {
+            return stale;
+          }
         }
       }
       throw error;

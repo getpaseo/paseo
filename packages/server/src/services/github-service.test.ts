@@ -2540,6 +2540,52 @@ describe("ForgeService", () => {
     ]);
   });
 
+  it("preserves failed job logs that begin with an HTTP response-like block", async () => {
+    const log = [
+      "HTTP/2.0 200 OK",
+      "content-type: text/plain",
+      "",
+      "this text is part of the job log",
+    ].join("\n");
+    const runner = createRunner([
+      JSON.stringify({
+        id: 12345,
+        name: "server-tests",
+        status: "completed",
+        conclusion: "failure",
+        html_url: "https://github.com/acme/repo/actions/runs/456/job/789",
+        check_suite: { workflow_run: { id: 456 } },
+      }),
+      JSON.stringify([]),
+      JSON.stringify({
+        jobs: [
+          {
+            id: 789,
+            name: "test",
+            status: "completed",
+            conclusion: "failure",
+            html_url: "https://github.com/acme/repo/actions/runs/456/job/789",
+            completed_at: "2026-04-02T13:52:14Z",
+          },
+        ],
+      }),
+      ["HTTP/2.0 200 OK", "content-type: text/plain", "", log].join("\n"),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+    });
+
+    const details = await service.getCheckDetails({
+      cwd: "/repo",
+      repoOwner: "acme",
+      repoName: "repo",
+      checkRunId: 12345,
+    });
+
+    expect(details.failedJobs[0]?.logTail).toBe(log);
+  });
+
   it("caps failed check jobs at five and caps each log tail to 16 KiB", async () => {
     const oversizedLog = "x".repeat(20 * 1024);
     const failedJobs = Array.from({ length: 6 }, (_, index) => ({

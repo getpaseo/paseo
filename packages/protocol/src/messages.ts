@@ -3146,6 +3146,8 @@ const WorkspaceGitHubRuntimePayloadSchema = z
     error: z
       .object({
         message: z.string(),
+        // COMPAT(githubCooldownRetryAt): added in v0.2.6, remove optional after 2027-02-01.
+        retryAt: z.number().int().optional(),
       })
       .nullable()
       .optional(),

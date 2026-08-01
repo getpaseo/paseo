@@ -2126,7 +2126,9 @@ function parseGitHubHttpResponse(output: string): GitHubHttpResponse | null {
       body: "",
     };
     offset = headerEnd + 2;
-    if (!normalized.slice(offset).startsWith("HTTP/")) {
+    const canHaveAnotherEnvelope =
+      response.statusCode < 200 || (response.statusCode >= 300 && response.statusCode < 400);
+    if (!canHaveAnotherEnvelope || !normalized.slice(offset).startsWith("HTTP/")) {
       response.body = normalized.slice(offset);
       return response;
     }

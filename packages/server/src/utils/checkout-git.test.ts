@@ -3157,7 +3157,7 @@ const x = 1;
     }
   });
 
-  it("keeps stale PR status when the first real GitHub rate-limit response arrives", async () => {
+  it("keeps stale PR status and reports the first GitHub rate-limit cooldown", async () => {
     execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
     execFileSync("git", ["remote", "add", "origin", "https://github.com/getpaseo/paseo.git"], {
       cwd: repoDir,
@@ -3165,6 +3165,7 @@ const x = 1;
 
     __setPullRequestStatusCacheTtlForTests(50);
     try {
+      let now = 1_000;
       let pullRequestViewCalls = 0;
       const runner: GitHubCommandRunner = async (args, options) => {
         if (args[0] === "pr" && args[1] === "view") {
@@ -3207,13 +3208,21 @@ const x = 1;
         runner,
         resolveGhPath: async () => "/usr/bin/gh",
         resolveRepoHost: async () => null,
+        now: () => now,
       });
 
       const fresh = await getPullRequestStatus(repoDir, github);
       await sleep(80);
+      now = 2_000;
       const stale = await getPullRequestStatus(repoDir, github);
 
-      expect(stale).toEqual(fresh);
+      expect(stale).toEqual({
+        ...fresh,
+        error: {
+          message: "GitHub API rate limit cooldown active",
+          retryAt: 62_000,
+        },
+      });
       expect(stale.githubFeaturesEnabled).toBe(true);
       expect(stale.status?.url).toContain("/pull/123");
       expect(pullRequestViewCalls).toBe(2);
@@ -3222,7 +3231,7 @@ const x = 1;
     }
   });
 
-  it("keeps stale PR status when fallback repo view is rate limited", async () => {
+  it("keeps stale PR status and reports cooldown when fallback repo view is rate limited", async () => {
     execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
     execFileSync("git", ["remote", "add", "origin", "https://github.com/getpaseo/paseo.git"], {
       cwd: repoDir,
@@ -3230,6 +3239,7 @@ const x = 1;
 
     __setPullRequestStatusCacheTtlForTests(50);
     try {
+      let now = 1_000;
       let pullRequestViewCalls = 0;
       let repoViewCalls = 0;
       const runner: GitHubCommandRunner = async (args, options) => {
@@ -3282,13 +3292,21 @@ const x = 1;
         runner,
         resolveGhPath: async () => "/usr/bin/gh",
         resolveRepoHost: async () => null,
+        now: () => now,
       });
 
       const fresh = await getPullRequestStatus(repoDir, github);
       await sleep(80);
+      now = 2_000;
       const stale = await getPullRequestStatus(repoDir, github);
 
-      expect(stale).toEqual(fresh);
+      expect(stale).toEqual({
+        ...fresh,
+        error: {
+          message: "GitHub API rate limit cooldown active",
+          retryAt: 62_000,
+        },
+      });
       expect(stale.status?.url).toContain("/pull/123");
       expect(pullRequestViewCalls).toBe(2);
       expect(repoViewCalls).toBe(1);
