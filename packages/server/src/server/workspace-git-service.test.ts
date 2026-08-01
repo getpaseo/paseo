@@ -4,6 +4,11 @@ import path, { join } from "node:path";
 import type { FSWatcher } from "node:fs";
 import type pino from "pino";
 import type { ForgeService } from "../services/forge-service.js";
+import {
+  createGitHubService,
+  GitHubCommandError,
+  type GitHubCommandRunner,
+} from "../services/github-service.js";
 import type {
   CheckoutSnapshotFacts,
   CheckoutStatusGit,
@@ -410,6 +415,37 @@ describe("WorkspaceGitServiceImpl", () => {
 
     expect(gitlabIsAuthenticated).not.toHaveBeenCalled();
     expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
+
+    service.dispose();
+  });
+
+  test("getSnapshot keeps GitHub authenticated during an API cooldown", async () => {
+    const githubRunner: GitHubCommandRunner = async (args, options) => {
+      if (args[0] === "api") {
+        throw new GitHubCommandError({
+          args,
+          cwd: options.cwd,
+          exitCode: 1,
+          stderr: "HTTP 429: API rate limit exceeded",
+          stdout: "HTTP/2.0 429 Too Many Requests\nRetry-After: 60\n\nrate limited",
+        });
+      }
+      return { stdout: "", stderr: "" };
+    };
+    const github = createGitHubService({
+      runner: githubRunner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 1_000,
+    });
+    await github.getPullRequestTimeline({
+      cwd: REPO_CWD,
+      prNumber: 123,
+      repoOwner: "acme",
+      repoName: "repo",
+    });
+    const service = createService({ forgeOverrides: { github } });
+
+    await expect(service.getSnapshot(REPO_CWD)).resolves.toEqual(createSnapshot(REPO_CWD));
 
     service.dispose();
   });

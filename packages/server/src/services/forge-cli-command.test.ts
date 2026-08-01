@@ -1,12 +1,16 @@
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import pino from "pino";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createCachedCliPathResolver,
   createForgeCliRunner,
   probeHostViaCliAuthStatus,
 } from "./forge-cli-command.js";
+import { TeaCommandError } from "./gitea-service.js";
+import { GitHubCommandError } from "./github-service.js";
+import { GlabCommandError } from "./gitlab-service.js";
 import { isPlatform } from "../test-utils/platform.js";
 
 describe.skipIf(isPlatform("win32"))("probeHostViaCliAuthStatus", () => {
@@ -174,5 +178,40 @@ describe("createCachedCliPathResolver", () => {
 
     await Promise.all([resolveCliPath(), resolveCliPath(), resolveCliPath()]);
     expect(calls).toBe(1);
+  });
+});
+
+describe("ForgeCommandError", () => {
+  it("does not serialize raw command output from any forge adapter", () => {
+    const privateOutput = '{"token":"private-token"}';
+    const errors = [
+      new GitHubCommandError({
+        args: ["api", "user"],
+        cwd: "/repo",
+        exitCode: 1,
+        stderr: "request failed",
+        stdout: privateOutput,
+      }),
+      new GlabCommandError({
+        args: ["api", "user"],
+        cwd: "/repo",
+        exitCode: 1,
+        stderr: "request failed",
+        stdout: privateOutput,
+      }),
+      new TeaCommandError({
+        args: ["api", "user"],
+        cwd: "/repo",
+        exitCode: 1,
+        stderr: "request failed",
+        stdout: privateOutput,
+      }),
+    ];
+
+    for (const error of errors) {
+      expect(error).not.toHaveProperty("stdout");
+      expect(JSON.stringify(error)).not.toContain(privateOutput);
+      expect(JSON.stringify(pino.stdSerializers.err(error))).not.toContain(privateOutput);
+    }
   });
 });

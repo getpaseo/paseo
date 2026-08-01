@@ -13,7 +13,7 @@ import {
   parseDiff,
 } from "../server/utils/diff-highlighter.js";
 import { parseGitHubRepoFromRemote } from "../server/workspace-git-metadata.js";
-import { createGitHubService } from "../services/github-service.js";
+import { createGitHubService, GitHubRateLimitCooldownError } from "../services/github-service.js";
 import type {
   CurrentPullRequestStatus,
   ForgeAuthState,
@@ -3620,7 +3620,10 @@ export async function getPullRequestStatus(
       return status;
     })
     .catch((error) => {
-      if (!options?.force && error instanceof ForgeCommandError) {
+      if (
+        !options?.force &&
+        (error instanceof ForgeCommandError || error instanceof GitHubRateLimitCooldownError)
+      ) {
         const stale = lastSuccessfulPullRequestStatus.get(cacheKey);
         if (stale) {
           return stale;

@@ -48,7 +48,11 @@ import {
 } from "./checkout-git.js";
 import { startGitCommandMetrics, stopGitCommandMetrics } from "./run-git-command.js";
 import { createForgeResolver } from "../services/forge-resolver.js";
-import { GitHubCommandError, GitHubCliMissingError } from "../services/github-service.js";
+import {
+  GitHubCommandError,
+  GitHubCliMissingError,
+  GitHubRateLimitCooldownError,
+} from "../services/github-service.js";
 import type { CurrentPullRequestStatus, ForgeService } from "../services/forge-service.js";
 import {
   TeaAuthenticationError,
@@ -3107,6 +3111,39 @@ const x = 1;
           exitCode: 1,
           stderr: "could not resolve host: github.com",
         });
+      };
+
+      const fresh = await getPullRequestStatus(repoDir, github);
+      await sleep(80);
+      const stale = await getPullRequestStatus(repoDir, github);
+
+      expect(stale).toEqual(fresh);
+      expect(stale.githubFeaturesEnabled).toBe(true);
+      expect(stale.status?.url).toContain("/pull/123");
+      expect(callCount).toBe(2);
+    } finally {
+      __resetPullRequestStatusCacheForTests();
+    }
+  });
+
+  it("keeps stale PR status when a refresh hits a GitHub rate-limit cooldown", async () => {
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    execFileSync("git", ["remote", "add", "origin", "https://github.com/getpaseo/paseo.git"], {
+      cwd: repoDir,
+    });
+
+    __setPullRequestStatusCacheTtlForTests(50);
+    try {
+      let callCount = 0;
+      const github = createGitHubServiceForStatus(null);
+      github.getCurrentPullRequestStatus = async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return createPullRequestStatus({
+            url: "https://github.com/getpaseo/paseo/pull/123",
+          });
+        }
+        throw new GitHubRateLimitCooldownError(Date.now() + 60_000);
       };
 
       const fresh = await getPullRequestStatus(repoDir, github);

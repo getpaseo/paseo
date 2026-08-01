@@ -866,12 +866,15 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       ? { ...runOptions, envOverlay: { ...runOptions.envOverlay, GH_HOST: host } }
       : runOptions;
     const rateLimitHost = (host ?? "github.com").toLowerCase();
-    const commandArgs = addGitHubApiResponseHeaders(args);
-    assertGitHubRateLimitCooldown({
-      cooldownByHost: rateLimitCooldownByHost,
-      host: rateLimitHost,
-      now: deps.now(),
-    });
+    const isApiCommand = isGitHubApiCommand(args);
+    const commandArgs = isApiCommand ? addGitHubApiResponseHeaders(args) : args;
+    if (isApiCommand) {
+      assertGitHubRateLimitCooldown({
+        cooldownByHost: rateLimitCooldownByHost,
+        host: rateLimitHost,
+        now: deps.now(),
+      });
+    }
     try {
       const result = await deps.runner(commandArgs, effectiveOptions);
       return stripGitHubApiResponseHeaders({ args: commandArgs, stdout: result.stdout }).trim();
@@ -880,10 +883,12 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         args: commandArgs,
         cwd: runOptions.cwd,
       });
-      const retryAt = getGitHubRateLimitRetryAt({ error: normalized, now: deps.now() });
-      if (retryAt !== null) {
-        const existingRetryAt = rateLimitCooldownByHost.get(rateLimitHost) ?? 0;
-        rateLimitCooldownByHost.set(rateLimitHost, Math.max(existingRetryAt, retryAt));
+      if (isApiCommand) {
+        const retryAt = getGitHubRateLimitRetryAt({ error: normalized, now: deps.now() });
+        if (retryAt !== null) {
+          const existingRetryAt = rateLimitCooldownByHost.get(rateLimitHost) ?? 0;
+          rateLimitCooldownByHost.set(rateLimitHost, Math.max(existingRetryAt, retryAt));
+        }
       }
       throw normalized;
     }
@@ -1854,17 +1859,21 @@ interface GitHubHttpResponse {
 }
 
 function addGitHubApiResponseHeaders(args: string[]): string[] {
-  if (args[0] !== "api" || args.includes("--include") || args.includes("-i")) {
+  if (!isGitHubApiCommand(args) || args.includes("--include") || args.includes("-i")) {
     return args;
   }
   return ["api", "--include", ...args.slice(1)];
 }
 
 function stripGitHubApiResponseHeaders(input: { args: string[]; stdout: string }): string {
-  if (input.args[0] !== "api") {
+  if (!isGitHubApiCommand(input.args)) {
     return input.stdout;
   }
   return parseGitHubHttpResponse(input.stdout)?.body ?? input.stdout;
+}
+
+function isGitHubApiCommand(args: string[]): boolean {
+  return args[0] === "api";
 }
 
 function assertGitHubRateLimitCooldown(input: {

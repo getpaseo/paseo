@@ -1715,13 +1715,13 @@ describe("ForgeService", () => {
 
     expect(error).toBeInstanceOf(GitHubCommandError);
     expect(error).toMatchObject({
-      stdout: "",
       rateLimitResponse: {
         statusCode: 429,
         retryAfter: "7",
         rateLimitReset: "999999",
       },
     });
+    expect(error).not.toHaveProperty("stdout");
     expect(JSON.stringify(error)).not.toContain(privateResponse);
   });
 
@@ -1738,7 +1738,7 @@ describe("ForgeService", () => {
             "HTTP/2.0 429 Too Many Requests\nRetry-After: 7\nX-RateLimit-Reset: 999999\n\nrate limited",
         }),
       },
-      "[]",
+      '{"url":"","number":0}',
     ]);
     const service = createGitHubService({
       runner: runner.runner,
@@ -1760,25 +1760,37 @@ describe("ForgeService", () => {
     expect(runner.calls).toHaveLength(1);
     expect(runner.calls[0].args).toContain("--include");
 
-    const blocked = await Promise.allSettled([
-      service.listIssues({ cwd: "/repo", query: "one" }),
-      service.listPullRequests({ cwd: "/repo", query: "two" }),
+    const blocked = await Promise.all([
+      service.getPullRequestTimeline({
+        cwd: "/repo",
+        prNumber: 43,
+        repoOwner: "parentOwner",
+        repoName: "parentRepo",
+      }),
+      service.getPullRequestTimeline({
+        cwd: "/repo",
+        prNumber: 44,
+        repoOwner: "parentOwner",
+        repoName: "parentRepo",
+      }),
     ]);
 
     expect(blocked).toHaveLength(2);
-    for (const result of blocked) {
-      expect(result.status).toBe("rejected");
-      if (result.status === "rejected") {
-        expect(result.reason).toMatchObject({
-          name: "GitHubRateLimitCooldownError",
-          retryAt: 1_007_000,
-        });
-      }
+    for (const blockedTimeline of blocked) {
+      expect(blockedTimeline.error).toEqual({
+        kind: "unknown",
+        message: "GitHub API rate limit cooldown active",
+      });
     }
     expect(runner.calls).toHaveLength(1);
 
     now = 1_007_000;
-    await expect(service.listIssues({ cwd: "/repo", query: "recovered" })).resolves.toEqual([]);
+    await service.getPullRequestTimeline({
+      cwd: "/repo",
+      prNumber: 45,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+    });
     expect(runner.calls).toHaveLength(2);
   });
 
@@ -1809,12 +1821,15 @@ describe("ForgeService", () => {
       repoName: "parentRepo",
     });
 
-    const blocked = await service
-      .listIssues({ cwd: "/repo", query: "blocked" })
-      .catch((error) => error);
-    expect(blocked).toMatchObject({
-      name: "GitHubRateLimitCooldownError",
-      retryAt: 123_000,
+    const blocked = await service.getPullRequestTimeline({
+      cwd: "/repo",
+      prNumber: 43,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+    });
+    expect(blocked.error).toEqual({
+      kind: "unknown",
+      message: "GitHub API rate limit cooldown active",
     });
     expect(runner.calls).toHaveLength(1);
   });
@@ -1853,12 +1868,15 @@ describe("ForgeService", () => {
       repoName: "parentRepo",
     });
 
-    const blocked = await service
-      .listIssues({ cwd: "/repo", query: "blocked" })
-      .catch((error) => error);
-    expect(blocked).toMatchObject({
-      name: "GitHubRateLimitCooldownError",
-      retryAt: 560_000,
+    const blocked = await service.getPullRequestTimeline({
+      cwd: "/repo",
+      prNumber: 43,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+    });
+    expect(blocked.error).toEqual({
+      kind: "unknown",
+      message: "GitHub API rate limit cooldown active",
     });
     expect(runner.calls).toHaveLength(1);
   });
@@ -1874,7 +1892,7 @@ describe("ForgeService", () => {
           stdout: "HTTP/2.0 429 Too Many Requests\nRetry-After: 60\n\nrate limited",
         }),
       },
-      "[]",
+      '{"url":"","number":0}',
     ]);
     const service = createGitHubService({
       runner: runner.runner,
@@ -1890,11 +1908,52 @@ describe("ForgeService", () => {
       repoName: "parentRepo",
     });
 
-    await expect(service.listIssues({ cwd: "/enterprise", query: "available" })).resolves.toEqual(
-      [],
-    );
+    await service.getPullRequestTimeline({
+      cwd: "/enterprise",
+      prNumber: 42,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+    });
     expect(runner.calls).toHaveLength(2);
     expect(runner.calls[1].envOverlay).toEqual({ GH_HOST: "github.acme.test" });
+  });
+
+  it("keeps auth and non-API commands available during an API cooldown", async () => {
+    const calls: RunnerCall[] = [];
+    const runner: GitHubCommandRunner = async (args, options) => {
+      calls.push({ args, cwd: options.cwd, envOverlay: options.envOverlay });
+      if (args[0] === "api") {
+        throw new GitHubCommandError({
+          args,
+          cwd: options.cwd,
+          exitCode: 1,
+          stderr: "HTTP 429: API rate limit exceeded",
+          stdout: "HTTP/2.0 429 Too Many Requests\nRetry-After: 60\n\nrate limited",
+        });
+      }
+      if (args[0] === "repo") {
+        return { stdout: "[]", stderr: "" };
+      }
+      return { stdout: "ssh", stderr: "" };
+    };
+    const service = createGitHubService({
+      runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 1_000,
+    });
+
+    await service.getPullRequestTimeline({
+      cwd: "/repo",
+      prNumber: 42,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+    });
+
+    await expect(service.isAuthenticated({ cwd: "/repo" })).resolves.toBe(true);
+    await expect(service.searchRepositories({ cwd: "/repo", query: "" })).resolves.toEqual([]);
+    expect(calls.some((call) => call.args[0] === "auth")).toBe(true);
+    expect(calls.some((call) => call.args[0] === "repo")).toBe(true);
+    expect(calls.some((call) => call.args[0] === "config")).toBe(true);
   });
 
   it("maps PR timeline network timeouts to unknown timeline errors with runner details", async () => {
