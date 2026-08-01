@@ -84,7 +84,7 @@ describe("loadOlderAgentHistory", () => {
     const client = createClient();
     const inFlight = createInFlight();
 
-    await loadOlderAgentHistory(agentId, {
+    const started = await loadOlderAgentHistory(agentId, {
       client,
       cursor: undefined,
       hasOlder: true,
@@ -94,13 +94,14 @@ describe("loadOlderAgentHistory", () => {
 
     expect(client.calls).toEqual([]);
     expect(inFlight.values).toEqual([false]);
+    expect(started).toBe(false);
   });
 
   it("no-ops when the daemon says no older history exists", async () => {
     const client = createClient();
     const inFlight = createInFlight();
 
-    await loadOlderAgentHistory(agentId, {
+    const started = await loadOlderAgentHistory(agentId, {
       client,
       cursor: someCursor,
       hasOlder: false,
@@ -110,13 +111,14 @@ describe("loadOlderAgentHistory", () => {
 
     expect(client.calls).toEqual([]);
     expect(inFlight.values).toEqual([false]);
+    expect(started).toBe(false);
   });
 
   it("no-ops when a request is already in flight", async () => {
     const client = createClient();
     const inFlight = createInFlight(true);
 
-    await loadOlderAgentHistory(agentId, {
+    const started = await loadOlderAgentHistory(agentId, {
       client,
       cursor: someCursor,
       hasOlder: true,
@@ -126,13 +128,14 @@ describe("loadOlderAgentHistory", () => {
 
     expect(client.calls).toEqual([]);
     expect(inFlight.values).toEqual([true]);
+    expect(started).toBe(true);
   });
 
   it("requests the page before the current start cursor and clears in-flight on success", async () => {
     const client = createClient();
     const inFlight = createInFlight();
 
-    await loadOlderAgentHistory(agentId, {
+    const started = await loadOlderAgentHistory(agentId, {
       client,
       cursor: someCursor,
       hasOlder: true,
@@ -152,6 +155,7 @@ describe("loadOlderAgentHistory", () => {
       },
     ]);
     expect(inFlight.values).toEqual([false, true, false]);
+    expect(started).toBe(true);
   });
 
   it("shows a panel toast, warns, and clears in-flight on failure", async () => {

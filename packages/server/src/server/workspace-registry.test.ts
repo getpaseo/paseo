@@ -420,6 +420,35 @@ describe("workspace registries", () => {
     });
   });
 
+  test("persists the consumed change request with the workspace archive", async () => {
+    await workspaceRegistry.initialize();
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId: "workspace-auto-archive",
+        projectId: "project-one",
+        cwd: "/tmp/repo",
+        kind: "worktree",
+        displayName: "feature",
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:00:00.000Z",
+      }),
+    );
+
+    await workspaceRegistry.archive("workspace-auto-archive", "2026-03-02T00:00:00.000Z", {
+      autoArchivedChangeRequestUrl: "https://github.com/acme/repo/pull/123",
+    });
+
+    const reloaded = new FileBackedWorkspaceRegistry(
+      path.join(tmpDir, "projects", "workspaces.json"),
+      logger,
+    );
+    await reloaded.initialize();
+    expect(await reloaded.get("workspace-auto-archive")).toMatchObject({
+      archivedAt: "2026-03-02T00:00:00.000Z",
+      autoArchivedChangeRequestUrl: "https://github.com/acme/repo/pull/123",
+    });
+  });
+
   test("composes concurrent workspace field updates without losing either change", async () => {
     await workspaceRegistry.initialize();
     await workspaceRegistry.upsert(
