@@ -8373,7 +8373,6 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
         type: "user_message",
         text: "/handled",
         clientMessageId: "msg-client-daemon-handled",
-        messageId: "msg-client-daemon-handled",
       },
       { type: "assistant_message", text: "Handled by the daemon" },
     ]);
@@ -8384,7 +8383,6 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
         type: "user_message",
         text: "/handled",
         clientMessageId: "msg-client-daemon-handled",
-        messageId: "msg-client-daemon-handled",
       },
       { type: "assistant_message", text: "Handled by the daemon" },
     ]);

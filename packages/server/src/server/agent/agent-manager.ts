@@ -2080,6 +2080,7 @@ export class AgentManager {
         : undefined;
       if (options?.clientMessageId) {
         this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, {
+          messageId: options.clientMessageId,
           providerMessageId:
             stagedSubmittedPromptEcho?.item.type === "user_message"
               ? stagedSubmittedPromptEcho.item.messageId
@@ -3945,7 +3946,7 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     prompt: AgentPromptInput,
     clientMessageId: string,
-    options?: { providerMessageId?: string },
+    options?: { messageId?: string; providerMessageId?: string },
   ): void {
     if (this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId)) {
       return;
@@ -3956,7 +3957,7 @@ export class AgentManager {
       type: "user_message",
       text: submittedPromptText(prompt),
       clientMessageId,
-      messageId: clientMessageId,
+      ...(options?.messageId ? { messageId: options.messageId } : {}),
     };
     this.recordAndDispatchTimelineItem(agent.id, item, agent.provider, undefined, options);
   }
