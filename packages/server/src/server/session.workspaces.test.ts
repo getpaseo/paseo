@@ -311,6 +311,7 @@ function makeManagedAgent(input: {
   workspaceId?: string;
   lifecycle: AgentSnapshotPayload["status"];
   updatedAt: string;
+  activeTurn?: { turnId: string; startedAt: string };
 }) {
   const now = new Date(input.updatedAt);
   const snapshot = makeAgent({
@@ -346,6 +347,8 @@ function makeManagedAgent(input: {
     unsubscribeSession: null,
     session: null,
     activeForegroundTurnId: input.lifecycle === "running" ? "turn-1" : null,
+    activeTurnId: input.activeTurn?.turnId ?? null,
+    activeTurnStartedAt: input.activeTurn ? new Date(input.activeTurn.startedAt) : null,
   };
 }
 
@@ -735,47 +738,64 @@ function createSessionForWorkspaceTests(
   return session;
 }
 
-test("agent updates pair a stored revision with current live state", async () => {
-  const idle = makeManagedAgent({
-    id: "agent-coherent",
-    cwd: REPO_CWD,
-    workspaceId: "ws-repo-running",
-    lifecycle: "idle",
-    updatedAt: "2026-07-31T10:00:00.000Z",
-  }) as unknown as ManagedAgent;
+test("agent updates preserve queued live transitions across stored metadata reads", async () => {
   const running = makeManagedAgent({
     id: "agent-coherent",
     cwd: REPO_CWD,
     workspaceId: "ws-repo-running",
     lifecycle: "running",
     updatedAt: "2026-07-31T10:00:01.000Z",
+    activeTurn: {
+      turnId: "turn-running",
+      startedAt: "2026-07-31T10:00:00.500Z",
+    },
   }) as unknown as ManagedAgent;
-  const stored = makeStoredAgent({
+  const idle = makeManagedAgent({
     id: "agent-coherent",
     cwd: REPO_CWD,
+    workspaceId: "ws-repo-running",
+    lifecycle: "idle",
     updatedAt: "2026-07-31T10:00:02.000Z",
-  });
+  }) as unknown as ManagedAgent;
+  const stored = {
+    ...makeStoredAgent({
+      id: "agent-coherent",
+      cwd: REPO_CWD,
+      updatedAt: "2026-07-31T10:00:03.000Z",
+    }),
+    title: "Stored title",
+    archivedAt: "2026-07-31T10:00:04.000Z",
+  };
   const storageReadStarted = deferred<void>();
-  const storageRead = deferred<StoredAgentRecord | null>();
-  const emittedAgentUpdate =
-    deferred<Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"]>();
-  let current = idle;
+  const firstStorageRead = deferred<StoredAgentRecord | null>();
+  const emittedAgentUpdates: Extract<
+    SessionOutboundMessage,
+    { type: "agent_update" }
+  >["payload"][] = [];
+  const twoUpdatesEmitted = deferred<void>();
+  let storageReadCount = 0;
   let forwardAgentEvent: ((event: AgentManagerEvent) => void) | null = null;
   const session = createSessionForWorkspaceTests({
     onMessage: (message) => {
-      if (message.type === "agent_update") emittedAgentUpdate.resolve(message.payload);
+      if (message.type !== "agent_update") return;
+      emittedAgentUpdates.push(message.payload);
+      if (emittedAgentUpdates.length === 2) twoUpdatesEmitted.resolve();
     },
     agentManager: {
       subscribe: (listener: (event: AgentManagerEvent) => void) => {
         forwardAgentEvent = listener;
         return () => {};
       },
-      getAgent: () => current,
+      getAgent: () => idle,
     },
     agentStorage: {
       get: async () => {
-        storageReadStarted.resolve();
-        return storageRead.promise;
+        storageReadCount += 1;
+        if (storageReadCount === 1) {
+          storageReadStarted.resolve();
+          return firstStorageRead.promise;
+        }
+        return stored;
       },
     },
   });
@@ -788,22 +808,40 @@ test("agent updates pair a stored revision with current live state", async () =>
       createdAt: "2026-07-31T10:00:00.000Z",
       updatedAt: "2026-07-31T10:00:00.000Z",
     });
-  activateAgentUpdatesSubscription(session, "sub-coherent");
+  activateAgentUpdatesSubscription(session, "sub-coherent", { includeArchived: true });
   if (!forwardAgentEvent) throw new Error("Agent event listener was not installed");
 
-  forwardAgentEvent({ type: "agent_state", agent: idle });
+  forwardAgentEvent({ type: "agent_state", agent: running });
   await storageReadStarted.promise;
-  current = running;
-  storageRead.resolve(stored);
+  forwardAgentEvent({ type: "agent_state", agent: idle });
+  firstStorageRead.resolve(stored);
+  await twoUpdatesEmitted.promise;
 
-  await expect(emittedAgentUpdate.promise).resolves.toMatchObject({
-    kind: "upsert",
-    agent: {
-      id: "agent-coherent",
-      status: "running",
-      updatedAt: "2026-07-31T10:00:02.000Z",
-    },
-  });
+  expect(emittedAgentUpdates).toEqual([
+    expect.objectContaining({
+      kind: "upsert",
+      agent: expect.objectContaining({
+        status: "running",
+        activeTurn: {
+          turnId: "turn-running",
+          startedAt: "2026-07-31T10:00:00.500Z",
+        },
+        updatedAt: "2026-07-31T10:00:01.000Z",
+        title: "Stored title",
+        archivedAt: "2026-07-31T10:00:04.000Z",
+      }),
+    }),
+    expect.objectContaining({
+      kind: "upsert",
+      agent: expect.objectContaining({
+        status: "idle",
+        activeTurn: null,
+        updatedAt: "2026-07-31T10:00:02.000Z",
+        title: "Stored title",
+        archivedAt: "2026-07-31T10:00:04.000Z",
+      }),
+    }),
+  ]);
 });
 
 test("client heartbeat clears attention for the focused terminal", async () => {

@@ -91,11 +91,7 @@ import {
   setAgentModeCommand,
   updateAgentCommand,
 } from "./agent/lifecycle-command.js";
-import {
-  buildStoredAgentPayload,
-  resolveStoredAgentPayloadUpdatedAt,
-  toAgentPayload,
-} from "./agent/agent-projections.js";
+import { buildStoredAgentPayload, toAgentPayload } from "./agent/agent-projections.js";
 import {
   appendTimelineItemIfAgentKnown,
   emitLiveTimelineItemIfAgentKnown,
@@ -1672,18 +1668,9 @@ export class Session {
   }
 
   private async buildAgentPayload(agent: ManagedAgent): Promise<AgentSnapshotPayload> {
+    const payload = toAgentPayload(agent);
     const storedRecord = await this.agentStorage.get(agent.id);
-    const title = storedRecord?.title ?? null;
-    const currentAgent = this.agentManager.getAgent(agent.id) ?? agent;
-    const payload = toAgentPayload(currentAgent, { title });
-    const storedUpdatedAt = storedRecord ? resolveStoredAgentPayloadUpdatedAt(storedRecord) : null;
-    if (storedUpdatedAt) {
-      const liveUpdatedAt = Date.parse(payload.updatedAt);
-      const persistedUpdatedAt = Date.parse(storedUpdatedAt);
-      if (Number.isNaN(liveUpdatedAt) || persistedUpdatedAt > liveUpdatedAt) {
-        payload.updatedAt = storedUpdatedAt;
-      }
-    }
+    payload.title = storedRecord?.title ?? null;
     payload.archivedAt = storedRecord?.archivedAt ?? null;
     return payload;
   }
