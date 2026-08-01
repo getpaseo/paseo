@@ -13,7 +13,7 @@ import type {
 import type { AgentAttachment, FirstAgentContext, GitSetupOptions } from "../../messages.js";
 import type { AgentManager, CreateAgentOptions, ManagedAgent } from "../agent-manager.js";
 import type { AgentPromptInput, AgentRunOptions, AgentSessionConfig } from "../agent-sdk-types.js";
-import type { AgentStorage } from "../agent-storage.js";
+import type { AgentStorage, AutoArchiveObligation } from "../agent-storage.js";
 import type { AgentOwner } from "../agent-owner.js";
 import type { ProviderSnapshotManager } from "../provider-snapshot-manager.js";
 import { setupFinishNotification, startCreatedAgentInitialPrompt } from "../agent-prompt.js";
@@ -74,6 +74,8 @@ export interface CreateAgentFromSessionInput {
   env?: Record<string, string>;
   provisionalTitle: string | null;
   firstAgentContext: FirstAgentContext;
+  autoArchiveObligation?: AutoArchiveObligation;
+  onCreated?: (created: { agentId: string }) => void;
   buildSessionConfig: (
     config: AgentSessionConfig,
     gitOptions?: GitSetupOptions,
@@ -210,7 +212,9 @@ export async function createAgentCommand(
   let liveSnapshot = snapshot;
   let initialPromptStarted = false;
   let initialPromptError: unknown | null = null;
-  if (input.kind === "mcp") {
+  if (input.kind === "session") {
+    input.onCreated?.({ agentId: snapshot.id });
+  } else {
     input.onCreated?.({ agentId: snapshot.id, createdWorktree: resolved.createdWorktree ?? null });
   }
   if (resolved.prompt !== undefined) {
@@ -306,6 +310,7 @@ async function resolveSessionCreateAgent(
         // agent belongs to that workspace, not the source one. createdWorkspaceId
         // is the freshly created worktree's workspace.
         workspaceId: requireResolvedWorkspaceId(workspaceId),
+        autoArchiveObligation: input.autoArchiveObligation,
       },
       prompt: hasPromptContent ? prompt : undefined,
       runOptions,

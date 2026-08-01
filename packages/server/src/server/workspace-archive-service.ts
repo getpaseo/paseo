@@ -109,6 +109,7 @@ export function requireArchiveCleanupComplete(
 export interface ArchiveByScopeRequest {
   scope: ArchiveScope;
   requestId: string;
+  signal?: AbortSignal;
 }
 
 export interface PendingWorkspaceCleanupRetryRequest {
@@ -176,44 +177,55 @@ export async function archiveByScope(
       ? `workspace:${request.scope.workspaceId}`
       : `worktree:${resolve(request.scope.targetPath)}`;
 
-  return lifecycleCoordinator.runArchive(operationKey, async () => {
-    const initialTarget = await resolveArchiveTarget(dependencies, request.scope);
-    const archiveReservation = lifecycleCoordinator.reserveWorkspaceArchive(
-      initialTarget.workspaceIds,
-    );
-    const archiveOperation = async () => {
-      const closureWorkspaceIds = new Set(initialTarget.workspaceIds);
-      let target = initialTarget;
-      while (true) {
-        await lifecycleCoordinator.waitForWorkspaceSetups(closureWorkspaceIds);
-        await lifecycleCoordinator.waitForWorkspaceOwnershipMutations(closureWorkspaceIds);
+  return lifecycleCoordinator.runArchive(
+    operationKey,
+    async () => {
+      const initialTarget = await resolveArchiveTarget(dependencies, request.scope);
+      const archiveReservation = lifecycleCoordinator.reserveWorkspaceArchive(
+        initialTarget.workspaceIds,
+      );
+      const archiveOperation = async () => {
+        const closureWorkspaceIds = new Set(initialTarget.workspaceIds);
+        let target = initialTarget;
+        while (true) {
+          await lifecycleCoordinator.waitForWorkspaceSetups(closureWorkspaceIds, request.signal);
+          await lifecycleCoordinator.waitForWorkspaceOwnershipMutations(
+            closureWorkspaceIds,
+            request.signal,
+          );
 
-        const refreshedTarget = await resolveArchiveTarget(dependencies, request.scope);
-        archiveReservation.add(refreshedTarget.workspaceIds);
-        target = mergeArchiveTargets(target, refreshedTarget);
+          const refreshedTarget = await resolveArchiveTarget(dependencies, request.scope);
+          archiveReservation.add(refreshedTarget.workspaceIds);
+          target = mergeArchiveTargets(target, refreshedTarget);
 
-        const newlyDiscoveredWorkspaceIds = refreshedTarget.workspaceIds.filter(
-          (workspaceId) => !closureWorkspaceIds.has(workspaceId),
-        );
-        if (newlyDiscoveredWorkspaceIds.length === 0) {
-          return archiveResolvedTarget(dependencies, lifecycleCoordinator, request, target);
+          const newlyDiscoveredWorkspaceIds = refreshedTarget.workspaceIds.filter(
+            (workspaceId) => !closureWorkspaceIds.has(workspaceId),
+          );
+          if (newlyDiscoveredWorkspaceIds.length === 0) {
+            return archiveResolvedTarget(dependencies, lifecycleCoordinator, request, target);
+          }
+          for (const workspaceId of newlyDiscoveredWorkspaceIds) {
+            closureWorkspaceIds.add(workspaceId);
+          }
         }
-        for (const workspaceId of newlyDiscoveredWorkspaceIds) {
-          closureWorkspaceIds.add(workspaceId);
-        }
+      };
+      try {
+        const mutationRoot =
+          (await resolveWorktreeMutationRoot(dependencies, initialTarget.backing)) ??
+          (request.scope.kind === "worktree" ? dirname(resolve(request.scope.targetPath)) : null);
+        return await (mutationRoot
+          ? lifecycleCoordinator.runWorktreeMutationExclusive(
+              mutationRoot,
+              archiveOperation,
+              request.signal,
+            )
+          : archiveOperation());
+      } finally {
+        archiveReservation.release();
       }
-    };
-    try {
-      const mutationRoot =
-        (await resolveWorktreeMutationRoot(dependencies, initialTarget.backing)) ??
-        (request.scope.kind === "worktree" ? dirname(resolve(request.scope.targetPath)) : null);
-      return await (mutationRoot
-        ? lifecycleCoordinator.runWorktreeMutationExclusive(mutationRoot, archiveOperation)
-        : archiveOperation());
-    } finally {
-      archiveReservation.release();
-    }
-  });
+    },
+    request.signal,
+  );
 }
 
 // Retries only the physical teardown intent already persisted on archived
@@ -237,59 +249,63 @@ export async function retryPendingWorkspaceCleanup(
   const directoryPath = resolve(request.directoryPath);
   const operationKey = `cleanup:${directoryPath}:${request.worktreeIncarnationId}`;
 
-  return lifecycleCoordinator.runArchive(operationKey, async () => {
-    const matchesDirectory = createRealpathAwarePathMatcher(directoryPath);
-    const pendingRecords = (await workspaceRegistry.list()).filter(
-      (workspace) =>
-        workspace.archivedAt !== null &&
-        workspace.cleanupPending !== null &&
-        workspace.cleanupPending.worktreeIncarnationId === request.worktreeIncarnationId &&
-        matchesDirectory(workspace.cleanupPending.directoryPath),
-    );
-    const firstPending = pendingRecords[0]?.cleanupPending ?? null;
-    if (!firstPending) {
-      return {
-        archivedAgentIds: [],
-        archivedWorkspaceIds: [],
-        removedDirectory: false,
-        cleanupPendingWorkspaceIds: [],
-      };
-    }
-    const target: ArchiveTarget = {
-      backing: {
-        path: firstPending.directoryPath,
-        isPaseoOwnedWorktree: true,
-        mainRepoRoot: firstPending.mainRepoRoot,
-        paseoWorktreesRoot: firstPending.paseoWorktreesRoot,
-      },
-      teardownTargets: pendingRecords.map((workspace) => ({
-        workspaceId: workspace.workspaceId,
-        cwd: workspace.cleanupPending!.teardownCwd,
-      })),
-      workspaceIds: [],
-    };
-    const retry = async (): Promise<ArchiveResult> => {
-      if (request.signal?.aborted) throw new Error("Workspace cleanup retry canceled");
-      const removedDirectory = await maybeRemoveDirectory(
-        dependencies,
-        lifecycleCoordinator,
-        request,
-        target,
-        [],
-        request.signal,
+  return lifecycleCoordinator.runArchive(
+    operationKey,
+    async () => {
+      const matchesDirectory = createRealpathAwarePathMatcher(directoryPath);
+      const pendingRecords = (await workspaceRegistry.list()).filter(
+        (workspace) =>
+          workspace.archivedAt !== null &&
+          workspace.cleanupPending !== null &&
+          workspace.cleanupPending.worktreeIncarnationId === request.worktreeIncarnationId &&
+          matchesDirectory(workspace.cleanupPending.directoryPath),
       );
-      return {
-        archivedAgentIds: [],
-        archivedWorkspaceIds: [],
-        removedDirectory,
-        cleanupPendingWorkspaceIds: await getCleanupPendingWorkspaceIds(dependencies, target),
+      const firstPending = pendingRecords[0]?.cleanupPending ?? null;
+      if (!firstPending) {
+        return {
+          archivedAgentIds: [],
+          archivedWorkspaceIds: [],
+          removedDirectory: false,
+          cleanupPendingWorkspaceIds: [],
+        };
+      }
+      const target: ArchiveTarget = {
+        backing: {
+          path: firstPending.directoryPath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: firstPending.mainRepoRoot,
+          paseoWorktreesRoot: firstPending.paseoWorktreesRoot,
+        },
+        teardownTargets: pendingRecords.map((workspace) => ({
+          workspaceId: workspace.workspaceId,
+          cwd: workspace.cleanupPending!.teardownCwd,
+        })),
+        workspaceIds: [],
       };
-    };
-    const mutationRoot = await resolveWorktreeMutationRoot(dependencies, target.backing);
-    return mutationRoot
-      ? lifecycleCoordinator.runWorktreeMutationExclusive(mutationRoot, retry)
-      : retry();
-  });
+      const retry = async (): Promise<ArchiveResult> => {
+        if (request.signal?.aborted) throw new Error("Workspace cleanup retry canceled");
+        const removedDirectory = await maybeRemoveDirectory(
+          dependencies,
+          lifecycleCoordinator,
+          request,
+          target,
+          [],
+          request.signal,
+        );
+        return {
+          archivedAgentIds: [],
+          archivedWorkspaceIds: [],
+          removedDirectory,
+          cleanupPendingWorkspaceIds: await getCleanupPendingWorkspaceIds(dependencies, target),
+        };
+      };
+      const mutationRoot = await resolveWorktreeMutationRoot(dependencies, target.backing);
+      return mutationRoot
+        ? lifecycleCoordinator.runWorktreeMutationExclusive(mutationRoot, retry, request.signal)
+        : retry();
+    },
+    request.signal,
+  );
 }
 
 async function resolveWorktreeMutationRoot(
@@ -596,15 +612,19 @@ async function maybeRemoveDirectory(
     return false;
   }
 
-  return lifecycleCoordinator.runDirectoryExclusive(backing.path, async () => {
-    return maybeRemoveDirectoryExclusive(
-      dependencies,
-      request,
-      target,
-      archivedWorkspaceIds,
-      signal,
-    );
-  });
+  return lifecycleCoordinator.runDirectoryExclusive(
+    backing.path,
+    async () => {
+      return maybeRemoveDirectoryExclusive(
+        dependencies,
+        request,
+        target,
+        archivedWorkspaceIds,
+        signal,
+      );
+    },
+    signal,
+  );
 }
 
 async function maybeRemoveDirectoryExclusive(

@@ -1083,6 +1083,35 @@ export interface DeletePaseoWorktreeOptions {
   signal?: AbortSignal;
 }
 
+function throwIfWorktreeDeletionCanceled(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  const error = new Error("Worktree deletion canceled");
+  error.name = "AbortError";
+  throw error;
+}
+
+async function waitForWorktreeDeletionRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
+  throwIfWorktreeDeletionCanceled(signal);
+  if (delayMs === 0) return;
+
+  await new Promise<void>((resolvePromise, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolvePromise();
+    }, delayMs);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(
+        Object.assign(new Error("Worktree deletion canceled"), {
+          name: "AbortError",
+        }),
+      );
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+  });
+}
+
 export async function deletePaseoWorktree({
   cwd,
   worktreePath,
@@ -1136,17 +1165,17 @@ export async function deletePaseoWorktree({
     }
   }
 
-  if (signal?.aborted) {
-    throw new Error("Worktree deletion canceled");
-  }
+  throwIfWorktreeDeletionCanceled(signal);
 
   if (cwd) {
     try {
       await runGitCommand(["worktree", "remove", resolvedWorktree, "--force"], {
         cwd,
         timeout: 120_000,
+        signal,
       });
     } catch {
+      throwIfWorktreeDeletionCanceled(signal);
       // `git worktree remove` fails if the admin dir is already gone (e.g. a
       // prior archive attempt removed it before the working tree could be
       // fully cleaned up), or if the repo root has moved. Fall through to the
@@ -1154,12 +1183,13 @@ export async function deletePaseoWorktree({
     }
   }
 
-  await removeDirectoryWithRetries(resolvedWorktree);
+  await removeDirectoryWithRetries(resolvedWorktree, signal);
 
   if (cwd) {
     try {
-      await runGitCommand(["worktree", "prune"], { cwd, timeout: 30_000 });
+      await runGitCommand(["worktree", "prune"], { cwd, timeout: 30_000, signal });
     } catch {
+      throwIfWorktreeDeletionCanceled(signal);
       // not critical; git will prune lazily
     }
   }
@@ -1198,7 +1228,8 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-async function removeDirectoryWithRetries(path: string): Promise<void> {
+async function removeDirectoryWithRetries(path: string, signal?: AbortSignal): Promise<void> {
+  throwIfWorktreeDeletionCanceled(signal);
   if (!(await pathExists(path))) {
     return;
   }
@@ -1206,16 +1237,16 @@ async function removeDirectoryWithRetries(path: string): Promise<void> {
   const delaysMs = [0, 100, 300, 700, 1500];
   let lastError: unknown = null;
   for (const delay of delaysMs) {
-    if (delay > 0) {
-      await new Promise((resolvePromise) => setTimeout(resolvePromise, delay));
-    }
+    await waitForWorktreeDeletionRetry(delay, signal);
     try {
       await rm(path, { recursive: true, force: true });
+      throwIfWorktreeDeletionCanceled(signal);
       if (!(await pathExists(path))) {
         return;
       }
       lastError = new Error(`Directory still present after rm: ${path}`);
     } catch (error) {
+      throwIfWorktreeDeletionCanceled(signal);
       lastError = error;
     }
   }

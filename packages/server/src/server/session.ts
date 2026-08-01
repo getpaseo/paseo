@@ -112,7 +112,7 @@ import {
   type AgentRunOptions,
   type AgentSessionConfig,
 } from "./agent/agent-sdk-types.js";
-import type { StoredAgentRecord } from "./agent/agent-storage.js";
+import type { AutoArchiveObligation, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
 import {
   ImportSessionsRequestError,
@@ -3096,6 +3096,15 @@ export class Session {
         throw new Error(`Working directory does not exist or is not a directory: ${resolvedCwd}`);
       }
 
+      const autoArchiveObligation: AutoArchiveObligation | undefined =
+        autoArchive === true
+          ? {
+              phase: "armed",
+              target: createdWorktree
+                ? { kind: "workspace", workspaceId: createdWorktree.workspace.workspaceId }
+                : { kind: "agent" },
+            }
+          : undefined;
       const { snapshot, liveSnapshot } = await createAgentCommand(
         {
           agentManager: this.agentManager,
@@ -3127,11 +3136,20 @@ export class Session {
           env,
           provisionalTitle,
           firstAgentContext,
+          autoArchiveObligation,
+          onCreated: ({ agentId }) => {
+            createdAgentId = agentId;
+            if (autoArchiveObligation) {
+              this.createAgentLifecycleDispatch.registerAutoArchive({
+                agentId,
+                obligation: autoArchiveObligation,
+              });
+            }
+          },
           buildSessionConfig: (sessionConfig, gitOptions, legacyWorktreeName, ctx) =>
             this.buildAgentSessionConfig(sessionConfig, gitOptions, legacyWorktreeName, ctx),
         },
       );
-      createdAgentId = snapshot.id;
       await this.agentUpdates.forwardLiveAgent(snapshot);
       if (resolvedIntent.createdDirectoryWorkspace && trimmedPrompt) {
         this.workspaceAutoName.scheduleForDirectory(
@@ -3143,11 +3161,6 @@ export class Session {
           { currentSelection: this.getFocusedAgentSelectionForCwd(resolvedIntent.config.cwd) },
         );
       }
-      this.createAgentLifecycleDispatch.registerAutoArchiveIfRequested({
-        autoArchive,
-        agentId: snapshot.id,
-        createdWorktree,
-      });
       if (requestId) {
         const agentPayload = await this.buildAgentPayload(liveSnapshot);
         this.emit({

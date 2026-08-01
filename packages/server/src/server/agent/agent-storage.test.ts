@@ -192,6 +192,41 @@ describe("AgentStorage", () => {
     expect(persisted.config?.extra?.claude).toMatchObject({ maxThinkingTokens: 1024 });
   });
 
+  test("persists auto-archive obligations across restart", async () => {
+    await storage.applySnapshot(createManagedAgent({ id: "agent-auto-archive" }), {
+      autoArchiveObligation: {
+        phase: "armed",
+        target: { kind: "workspace", workspaceId: "ws-auto-archive" },
+      },
+    });
+
+    const reloaded = new AgentStorage(storagePath, logger);
+    await expect(reloaded.get("agent-auto-archive")).resolves.toMatchObject({
+      autoArchiveObligation: {
+        phase: "armed",
+        target: { kind: "workspace", workspaceId: "ws-auto-archive" },
+      },
+    });
+  });
+
+  test("serialized snapshots cannot overwrite a pending auto-archive obligation", async () => {
+    const agent = createManagedAgent({ id: "agent-auto-archive-race" });
+    await storage.applySnapshot(agent, {
+      autoArchiveObligation: { phase: "armed", target: { kind: "agent" } },
+    });
+
+    const pending = storage.update(agent.id, (record) => ({
+      ...record,
+      autoArchiveObligation: { phase: "pending", target: { kind: "agent" } },
+    }));
+    const snapshot = storage.applySnapshot({ ...agent, updatedAt: new Date("2025-02-01") });
+    await Promise.all([pending, snapshot]);
+
+    await expect(storage.get(agent.id)).resolves.toMatchObject({
+      autoArchiveObligation: { phase: "pending", target: { kind: "agent" } },
+    });
+  });
+
   test("applySnapshot stores and reloads featureValues when present", async () => {
     await storage.applySnapshot(
       createManagedAgent({

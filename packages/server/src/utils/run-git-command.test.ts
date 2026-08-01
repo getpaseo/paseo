@@ -230,6 +230,44 @@ describe("runGitCommand", () => {
     });
   });
 
+  it("cancels active and queued git commands without starting the queued process", async () => {
+    const { runGitCommand } = await loadRunGitCommand(1);
+    const activeController = new AbortController();
+    const queuedController = new AbortController();
+
+    enqueueSpawnBehaviors({ delayMs: 5_000 }, { delayMs: 0 });
+    const active = runGitCommand(["status"], {
+      cwd: process.cwd(),
+      signal: activeController.signal,
+    });
+    await vi.waitFor(() => expect(fakeSpawnController.processes).toHaveLength(1));
+    const queued = runGitCommand(["rev-parse", "--show-toplevel"], {
+      cwd: process.cwd(),
+      signal: queuedController.signal,
+    });
+
+    queuedController.abort();
+    await expect(queued).rejects.toThrow("Git command canceled: git rev-parse --show-toplevel");
+    expect(fakeSpawnController.processes).toHaveLength(1);
+
+    activeController.abort();
+    await expect(active).rejects.toThrow("Git command canceled: git status");
+    expect(fakeSpawnController.processes[0]?.killSignals).toEqual(["SIGKILL"]);
+    await vi.waitFor(() => expect(fakeSpawnController.activeCount).toBe(0));
+    expect(fakeSpawnController.processes).toHaveLength(1);
+
+    const preAbortedController = new AbortController();
+    preAbortedController.abort();
+    await expect(
+      runGitCommand(["status", "--short"], {
+        cwd: process.cwd(),
+        signal: preAbortedController.signal,
+      }),
+    ).rejects.toThrow("Git command canceled: git status --short");
+    await Promise.resolve();
+    expect(fakeSpawnController.processes).toHaveLength(1);
+  });
+
   it("resolves truncated stdout, caps output, and kills the child process", async () => {
     const { runGitCommand } = await loadRunGitCommand(1);
 

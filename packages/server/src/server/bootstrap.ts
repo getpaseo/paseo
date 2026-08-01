@@ -217,6 +217,8 @@ import { DaemonExecutions } from "./hub/daemon-executions.js";
 
 const MAX_MCP_DEBUG_BATCH_ITEMS = 10;
 const REDACTED_LOG_VALUE = "[redacted]";
+const DEFAULT_DAEMON_SHUTDOWN_TIMEOUT_MS = 10_000;
+const FORCE_EXIT_SHUTDOWN_RESERVE_MS = 250;
 const DOWNLOAD_OPEN_FLAGS =
   process.platform === "win32" ? constants.O_RDONLY : constants.O_RDONLY | constants.O_NOFOLLOW;
 
@@ -451,15 +453,51 @@ export interface PaseoDaemonStopOptions {
   deadlineAt?: number;
 }
 
+export interface WorkspaceCleanupRetryLifecycle {
+  start(): Promise<void>;
+  stop(): Promise<void>;
+}
+
 export interface PaseoDaemonDependencies {
   hubRelationshipRemote?: HubRelationshipRemote;
   hubRelationshipClock?: HubRelationshipClock;
   hubRelationshipRetryPolicy?: HubRelationshipRetryPolicy;
   createHubDaemonId?: () => string;
+  workspaceCleanupRetryService?: WorkspaceCleanupRetryLifecycle;
   serverFeatureOverrides?: {
     daemonStatusRpc?: boolean;
     relayConfig?: boolean;
   };
+}
+
+class DaemonShutdownDeadlineError extends Error {
+  constructor(label: string) {
+    super(`Daemon shutdown deadline reached during: ${label}`);
+    this.name = "DaemonShutdownDeadlineError";
+  }
+}
+
+function waitForShutdownStep(
+  task: Promise<void>,
+  signal: AbortSignal,
+  label: string,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      callback();
+    };
+    const onAbort = () => finish(() => reject(new DaemonShutdownDeadlineError(label)));
+    signal.addEventListener("abort", onAbort, { once: true });
+    void task.then(
+      () => finish(resolve),
+      (error) => finish(() => reject(error)),
+    );
+    if (signal.aborted) onAbort();
+  });
 }
 
 function createBootstrapManagedProcessRegistry(
@@ -1065,7 +1103,11 @@ export async function createPaseoDaemon(
   };
   const createAgent = (input: Parameters<typeof createAgentCommand>[1]) =>
     createAgentCommand(createAgentCommandDependencies, input);
-  const archiveWorkspaceByIdExternal = async (workspaceId: string, requestId: string) =>
+  const archiveWorkspaceByIdExternal = async (
+    workspaceId: string,
+    requestId: string,
+    signal?: AbortSignal,
+  ) =>
     requireArchiveCleanupComplete(
       await archiveByScope(
         {
@@ -1089,7 +1131,7 @@ export async function createPaseoDaemon(
           workspaceRegistry,
           sessionLogger: logger,
         },
-        { scope: { kind: "workspace", workspaceId }, requestId },
+        { scope: { kind: "workspace", workspaceId }, requestId, signal },
       ),
       "Workspace archive",
     );
@@ -1129,11 +1171,13 @@ export async function createPaseoDaemon(
       "Workspace cleanup retry",
     );
   };
-  const workspaceCleanupRetryService = new WorkspaceCleanupRetryService({
-    workspaceRegistry,
-    retryWorktreeCleanup: retryPendingWorktreeCleanupExternal,
-    logger,
-  });
+  const workspaceCleanupRetryService =
+    dependencies.workspaceCleanupRetryService ??
+    new WorkspaceCleanupRetryService({
+      workspaceRegistry,
+      retryWorktreeCleanup: retryPendingWorktreeCleanupExternal,
+      logger,
+    });
   await workspaceCleanupRetryService.start();
   const hubAgentLifecycle = new CreateAgentLifecycleDispatch({
     paseoHome: config.paseoHome,
@@ -1144,6 +1188,8 @@ export async function createPaseoDaemon(
     workspaceGitService,
     archiveAgentForClose: (agentId) =>
       archiveAgentCommand({ agentManager, agentStorage, logger }, agentId),
+    archiveWorkspaceForClose: (workspaceId, signal) =>
+      archiveWorkspaceByIdExternal(workspaceId, randomUUID(), signal),
     findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
     listActiveWorkspaces: listActiveWorkspacesExternal,
     archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
@@ -1276,6 +1322,7 @@ export async function createPaseoDaemon(
   logger.info({ elapsed: elapsed() }, "Schedule service initialized");
   logger.info({ elapsed: elapsed() }, "Loading persisted agent registry");
   const persistedRecords = await agentStorage.list();
+  await hubAgentLifecycle.recoverPersistedAutoArchives();
   logger.info(
     { elapsed: elapsed() },
     `Agent registry loaded (${persistedRecords.length} record${persistedRecords.length === 1 ? "" : "s"}); agents will initialize on demand`,
@@ -1667,9 +1714,20 @@ export async function createPaseoDaemon(
 
   const stop = async (options?: PaseoDaemonStopOptions) => {
     const errors: unknown[] = [];
+    const outerDeadlineAt = options?.deadlineAt ?? Date.now() + DEFAULT_DAEMON_SHUTDOWN_TIMEOUT_MS;
+    const shutdownDeadlineAt = options?.deadlineAt
+      ? Math.max(Date.now(), outerDeadlineAt - FORCE_EXIT_SHUTDOWN_RESERVE_MS)
+      : outerDeadlineAt;
+    const shutdownController = new AbortController();
+    const deadlineTimer = setTimeout(
+      () => shutdownController.abort(),
+      Math.max(0, shutdownDeadlineAt - Date.now()),
+    );
+    deadlineTimer.unref();
     const attempt = async (label: string, action: () => void | Promise<void>): Promise<void> => {
+      const task = Promise.resolve().then(action);
       try {
-        await action();
+        await waitForShutdownStep(task, shutdownController.signal, label);
       } catch (error) {
         errors.push(error);
         logger.error({ err: error }, `Daemon shutdown step failed: ${label}`);
@@ -1684,10 +1742,7 @@ export async function createPaseoDaemon(
     await attempt("WebSocket ingress", () => wsServer?.prepareForShutdown());
     await attempt("agent registration", () => agentManager.prepareForShutdown());
     await attempt("create-agent lifecycle", async () => {
-      const remainingMs =
-        options?.deadlineAt === undefined
-          ? 10_000
-          : Math.max(0, options.deadlineAt - Date.now() - 2_000);
+      const remainingMs = Math.max(0, shutdownDeadlineAt - Date.now());
       const lifecycleShutdown = await hubAgentLifecycle.shutdown({ timeoutMs: remainingMs });
       if (!lifecycleShutdown.completed) {
         throw new Error(
@@ -1727,6 +1782,7 @@ export async function createPaseoDaemon(
         unlinkSync(listenTarget.path);
       }
     });
+    clearTimeout(deadlineTimer);
     if (errors.length > 0) {
       throw new AggregateError(errors, "One or more daemon shutdown steps failed");
     }

@@ -44,6 +44,10 @@ export function asAgentStorage(stub: {
 
 export function createAgentLifecycleDispatchStub(): SessionOptions["createAgentLifecycleDispatch"] {
   return createStub<SessionOptions["createAgentLifecycleDispatch"]>({
+    registerAutoArchive: () => ({
+      settled: Promise.resolve("cancelled"),
+      cancel: async () => {},
+    }),
     registerAutoArchiveIfRequested: () => ({
       settled: Promise.resolve("cancelled"),
       cancel: async () => {},

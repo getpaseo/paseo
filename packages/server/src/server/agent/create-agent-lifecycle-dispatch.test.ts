@@ -10,6 +10,7 @@ import {
   requireArchiveCleanupComplete,
   WorkspaceCleanupPendingError,
 } from "../workspace-archive-service.js";
+import type { StoredAgentRecord } from "./agent-storage.js";
 
 class AgentLifecycleEvents {
   private readonly listeners = new Set<AgentSubscriber>();
@@ -53,14 +54,31 @@ class LifecycleRearmEvents {
 function createLifecycleDispatch(
   agents: AgentLifecycleEvents,
   archiveAgentForClose: (agentId: string) => Promise<void>,
+  options?: {
+    records?: Map<string, StoredAgentRecord>;
+    archiveWorkspaceForClose?: (workspaceId: string, signal?: AbortSignal) => Promise<void>;
+  },
 ): CreateAgentLifecycleDispatch {
+  const records = options?.records ?? new Map<string, StoredAgentRecord>();
   const dependencies = {
     paseoHome: "/tmp/paseo",
     agentManager: agents,
-    agentStorage: {},
+    agentStorage: {
+      list: async () => Array.from(records.values()),
+      update: async (
+        agentId: string,
+        mutation: (record: StoredAgentRecord) => StoredAgentRecord,
+      ) => {
+        const current = records.get(agentId) ?? ({ id: agentId } as StoredAgentRecord);
+        const next = mutation(current);
+        records.set(agentId, next);
+        return next;
+      },
+    },
     github: {},
     workspaceGitService: {},
     archiveAgentForClose,
+    archiveWorkspaceForClose: options?.archiveWorkspaceForClose ?? (async () => undefined),
     findWorkspaceIdForCwd: async () => null,
     listActiveWorkspaces: async () => [],
     archiveWorkspaceRecord: async () => undefined,
@@ -334,6 +352,39 @@ test("lifecycle shutdown reports its active archive at the deadline", async () =
   }
 });
 
+test("lifecycle shutdown aborts an active workspace archive", async () => {
+  const agentId = "agent-auto-archive-workspace-shutdown";
+  const agents = new AgentLifecycleEvents();
+  let markArchiveStarted = () => {};
+  const archiveStarted = new Promise<void>((resolve) => {
+    markArchiveStarted = resolve;
+  });
+  let receivedSignal: AbortSignal | undefined;
+  const dispatch = createLifecycleDispatch(agents, async () => undefined, {
+    archiveWorkspaceForClose: async (_workspaceId, signal) => {
+      receivedSignal = signal;
+      markArchiveStarted();
+      await new Promise<void>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(new Error("workspace archive canceled")), {
+          once: true,
+        });
+      });
+    },
+  });
+  dispatch.registerAutoArchive({
+    agentId,
+    obligation: { phase: "armed", target: { kind: "workspace", workspaceId: "ws-shutdown" } },
+  });
+  agents.completeTurn(agentId);
+  await archiveStarted;
+
+  await expect(dispatch.shutdown()).resolves.toEqual({
+    completed: false,
+    pendingAgentIds: [agentId],
+  });
+  expect(receivedSignal?.aborted).toBe(true);
+});
+
 test("auto-archive cancellation observes an in-flight archive rejection", async () => {
   const agentId = "agent-auto-archive-cancel-failure";
   const agents = new AgentLifecycleEvents();
@@ -385,13 +436,7 @@ test("lifecycle dispatch does not permanently suppress an agent after archive fa
     .fn<(agentId: string) => Promise<void>>()
     .mockRejectedValueOnce(new Error("transient close failure"))
     .mockResolvedValueOnce(undefined);
-  const dependencies = {
-    agentManager: agents,
-    archiveAgentForClose,
-    workspaceRegistry: {},
-    logger: createTestLogger(),
-  } as unknown as ConstructorParameters<typeof CreateAgentLifecycleDispatch>[0];
-  const dispatch = new CreateAgentLifecycleDispatch(dependencies);
+  const dispatch = createLifecycleDispatch(agents, archiveAgentForClose);
   const registration = dispatch.registerAutoArchiveIfRequested({
     autoArchive: true,
     agentId,
@@ -405,4 +450,101 @@ test("lifecycle dispatch does not permanently suppress an agent after archive fa
 
   expect(archiveAgentForClose).toHaveBeenCalledTimes(2);
   expect(agents.listenerCount()).toBe(0);
+});
+
+test("startup completes an armed agent-only auto-archive obligation", async () => {
+  const agentId = "agent-restart-armed";
+  const records = new Map<string, StoredAgentRecord>([
+    [
+      agentId,
+      {
+        id: agentId,
+        autoArchiveObligation: { phase: "armed", target: { kind: "agent" } },
+      } as StoredAgentRecord,
+    ],
+  ]);
+  const archiveAgentForClose = vi.fn(async () => undefined);
+  const dispatch = createLifecycleDispatch(new AgentLifecycleEvents(), archiveAgentForClose, {
+    records,
+  });
+
+  await dispatch.recoverPersistedAutoArchives();
+  await vi.waitFor(() => expect(archiveAgentForClose).toHaveBeenCalledWith(agentId));
+
+  expect(records.get(agentId)?.autoArchiveObligation).toBeUndefined();
+});
+
+test("startup completes a persisted workspace auto-archive obligation", async () => {
+  const agentId = "agent-restart-workspace";
+  const records = new Map<string, StoredAgentRecord>([
+    [
+      agentId,
+      {
+        id: agentId,
+        autoArchiveObligation: {
+          phase: "pending",
+          target: { kind: "workspace", workspaceId: "ws-restart" },
+        },
+      } as StoredAgentRecord,
+    ],
+  ]);
+  const archiveWorkspaceForClose = vi.fn(async () => undefined);
+  const dispatch = createLifecycleDispatch(new AgentLifecycleEvents(), async () => undefined, {
+    records,
+    archiveWorkspaceForClose,
+  });
+
+  await dispatch.recoverPersistedAutoArchives();
+  await vi.waitFor(() =>
+    expect(archiveWorkspaceForClose).toHaveBeenCalledWith("ws-restart", expect.any(AbortSignal)),
+  );
+
+  expect(records.get(agentId)?.autoArchiveObligation).toBeUndefined();
+});
+
+test.each([
+  ["workspace cleanup failure", new WorkspaceCleanupPendingError("archive", ["ws-restart"])],
+  ["failure before cleanup-pending persistence", new Error("git removal failed early")],
+])("startup retains and retries a workspace obligation after %s", async (_name, failure) => {
+  const agentId = "agent-restart-workspace-failure";
+  const records = new Map<string, StoredAgentRecord>([
+    [
+      agentId,
+      {
+        id: agentId,
+        autoArchiveObligation: {
+          phase: "armed",
+          target: { kind: "workspace", workspaceId: "ws-restart" },
+        },
+      } as StoredAgentRecord,
+    ],
+  ]);
+  const firstArchive = vi.fn(async () => {
+    throw failure;
+  });
+  const firstDispatch = createLifecycleDispatch(new AgentLifecycleEvents(), async () => undefined, {
+    records,
+    archiveWorkspaceForClose: firstArchive,
+  });
+
+  await firstDispatch.recoverPersistedAutoArchives();
+  await vi.waitFor(() => expect(firstArchive).toHaveBeenCalledOnce());
+  await vi.waitFor(() =>
+    expect(records.get(agentId)?.autoArchiveObligation).toEqual({
+      phase: "pending",
+      target: { kind: "workspace", workspaceId: "ws-restart" },
+    }),
+  );
+
+  const retryArchive = vi.fn(async () => undefined);
+  const restartedDispatch = createLifecycleDispatch(
+    new AgentLifecycleEvents(),
+    async () => undefined,
+    { records, archiveWorkspaceForClose: retryArchive },
+  );
+  await restartedDispatch.recoverPersistedAutoArchives();
+  await vi.waitFor(() =>
+    expect(retryArchive).toHaveBeenCalledWith("ws-restart", expect.any(AbortSignal)),
+  );
+  expect(records.get(agentId)?.autoArchiveObligation).toBeUndefined();
 });

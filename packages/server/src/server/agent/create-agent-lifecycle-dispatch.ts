@@ -15,7 +15,7 @@ import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type { WorkspaceRegistry } from "../workspace-registry.js";
 import type { SessionOutboundMessage } from "../messages.js";
 import type { AgentManager, AgentSubscriber, SubscribeOptions } from "./agent-manager.js";
-import type { AgentStorage } from "./agent-storage.js";
+import type { AgentStorage, AutoArchiveObligation } from "./agent-storage.js";
 
 interface CreateAgentLifecycleDispatchDependencies {
   paseoHome: string;
@@ -25,6 +25,7 @@ interface CreateAgentLifecycleDispatchDependencies {
   github: ForgeService;
   workspaceGitService: WorkspaceGitService;
   archiveAgentForClose: (agentId: string) => Promise<unknown>;
+  archiveWorkspaceForClose: (workspaceId: string, signal?: AbortSignal) => Promise<unknown>;
   findWorkspaceIdForCwd: (cwd: string) => Promise<string | null>;
   listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
   archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
@@ -57,13 +58,10 @@ export interface LifecycleDispatchShutdownResult {
   pendingAgentIds: string[];
 }
 
-type AutoArchiveTarget =
-  | { kind: "agent-only" }
-  | { kind: "created-worktree"; result: CreatePaseoWorktreeWorkflowResult };
-
 export class CreateAgentLifecycleDispatch {
   private readonly autoArchiveTasks = new Map<string, Promise<void>>();
   private readonly autoArchiveRegistrations = new Map<string, LifecycleRegistration>();
+  private readonly shutdownController = new AbortController();
   private shuttingDown = false;
 
   constructor(private readonly dependencies: CreateAgentLifecycleDispatchDependencies) {}
@@ -77,10 +75,36 @@ export class CreateAgentLifecycleDispatch {
       return inactiveRegistration;
     }
 
-    return this.registerAutoArchiveOnTerminalState(
-      input.agentId,
-      toAutoArchiveTarget(input.createdWorktree),
-    );
+    return this.registerAutoArchive({
+      agentId: input.agentId,
+      obligation: {
+        phase: "armed",
+        target: input.createdWorktree
+          ? { kind: "workspace", workspaceId: input.createdWorktree.workspace.workspaceId }
+          : { kind: "agent" },
+      },
+    });
+  }
+
+  registerAutoArchive(input: {
+    agentId: string;
+    obligation: AutoArchiveObligation;
+  }): LifecycleRegistration {
+    if (input.obligation.phase === "pending") {
+      void this.autoArchiveAgentOnce(input.agentId, input.obligation.target).catch(() => undefined);
+      return inactiveRegistration;
+    }
+    return this.registerAutoArchiveOnTerminalState(input.agentId, input.obligation.target);
+  }
+
+  async recoverPersistedAutoArchives(): Promise<void> {
+    const records = await this.dependencies.agentStorage.list();
+    for (const record of records) {
+      if (!record.autoArchiveObligation) continue;
+      void this.autoArchiveAgentOnce(record.id, record.autoArchiveObligation.target).catch(
+        () => undefined,
+      );
+    }
   }
 
   async cleanupCreatedWorktreeAfterFailedAgentCreate(input: {
@@ -108,7 +132,7 @@ export class CreateAgentLifecycleDispatch {
 
   private registerAutoArchiveOnTerminalState(
     agentId: string,
-    target: AutoArchiveTarget,
+    target: AutoArchiveObligation["target"],
   ): LifecycleRegistration {
     if (this.shuttingDown) return inactiveRegistration;
     const existing = this.autoArchiveRegistrations.get(agentId);
@@ -140,6 +164,7 @@ export class CreateAgentLifecycleDispatch {
 
   async shutdown(options?: { timeoutMs?: number }): Promise<LifecycleDispatchShutdownResult> {
     this.shuttingDown = true;
+    this.shutdownController.abort();
     const registrations = Array.from(this.autoArchiveRegistrations.entries());
     const cancellation = Promise.allSettled(
       registrations.map(([, registration]) => registration.cancel()),
@@ -175,7 +200,10 @@ export class CreateAgentLifecycleDispatch {
     return { completed: pendingAgentIds.length === 0, pendingAgentIds };
   }
 
-  private async autoArchiveAgentOnce(agentId: string, target: AutoArchiveTarget): Promise<void> {
+  private async autoArchiveAgentOnce(
+    agentId: string,
+    target: AutoArchiveObligation["target"],
+  ): Promise<void> {
     const existingTask = this.autoArchiveTasks.get(agentId);
     if (existingTask) return existingTask;
 
@@ -193,16 +221,25 @@ export class CreateAgentLifecycleDispatch {
     }
   }
 
-  private async runAutoArchiveAgent(agentId: string, target: AutoArchiveTarget): Promise<void> {
-    if (target.kind === "created-worktree") {
-      await this.archiveAutoCreatedWorktree({
-        agentId,
-        createdWorktree: target.result,
-      });
-      return;
+  private async runAutoArchiveAgent(
+    agentId: string,
+    target: AutoArchiveObligation["target"],
+  ): Promise<void> {
+    await this.dependencies.agentStorage.update(agentId, (record) => ({
+      ...record,
+      autoArchiveObligation: { phase: "pending", target },
+    }));
+    if (target.kind === "workspace") {
+      await this.dependencies.archiveWorkspaceForClose(
+        target.workspaceId,
+        this.shutdownController.signal,
+      );
+    } else {
+      await this.dependencies.archiveAgentForClose(agentId);
     }
-
-    await this.dependencies.archiveAgentForClose(agentId);
+    await this.dependencies.agentStorage.update(agentId, (record) => {
+      return { ...record, autoArchiveObligation: undefined };
+    });
   }
 
   private async archiveAutoCreatedWorktree(options: {
@@ -240,6 +277,7 @@ export class CreateAgentLifecycleDispatch {
       {
         scope: { kind: "workspace", workspaceId: createdWorktree.workspace.workspaceId },
         requestId: randomUUID(),
+        signal: this.shutdownController.signal,
       },
     );
     requireArchiveCleanupComplete(archiveResult, "Auto-created worktree archive");
@@ -404,12 +442,4 @@ export function registerAgentAutoArchive(input: {
     { agentId: input.agentId, replayState: false },
   );
   return registration;
-}
-
-function toAutoArchiveTarget(
-  createdWorktree: CreatePaseoWorktreeWorkflowResult | null,
-): AutoArchiveTarget {
-  return createdWorktree
-    ? { kind: "created-worktree", result: createdWorktree }
-    : { kind: "agent-only" };
 }

@@ -357,6 +357,46 @@ describe("paseo daemon bootstrap", () => {
     }
   });
 
+  test("a blocked cleanup stop cannot prevent later teardown before the outer deadline", async () => {
+    let markCleanupStopStarted = () => {};
+    const cleanupStopStarted = new Promise<void>((resolve) => {
+      markCleanupStopStarted = resolve;
+    });
+    const daemonHandle = await createTestPaseoDaemon({
+      cleanup: false,
+      dependencies: {
+        workspaceCleanupRetryService: {
+          start: async () => undefined,
+          stop: () => {
+            markCleanupStopStarted();
+            return new Promise<void>(() => undefined);
+          },
+        },
+      },
+    });
+    const killAll = vi.spyOn(daemonHandle.daemon.terminalManager, "killAll");
+    const outerDeadlineAt = Date.now() + 1_000;
+
+    try {
+      const stopPromise = daemonHandle.daemon.stop({ deadlineAt: outerDeadlineAt });
+      await cleanupStopStarted;
+      await expect(stopPromise).rejects.toMatchObject({
+        errors: expect.arrayContaining([
+          expect.objectContaining({ name: "DaemonShutdownDeadlineError" }),
+        ]),
+      });
+
+      expect(killAll).toHaveBeenCalledOnce();
+      expect(Date.now()).toBeLessThan(outerDeadlineAt);
+    } finally {
+      await daemonHandle.daemon.agentManager.flush().catch(() => undefined);
+      await Promise.all([
+        rm(path.dirname(daemonHandle.paseoHome), { recursive: true, force: true }),
+        rm(daemonHandle.staticDir, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
   test("standalone listener exposes services only", async () => {
     const standalonePort = await findFreePort();
     const upstream = http.createServer((_req, res) => {

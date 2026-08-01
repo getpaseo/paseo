@@ -84,6 +84,58 @@ test("session create forwards clientMessageId to the initial prompt run options"
   });
 });
 
+test("session create persists and arms auto-archive before starting the initial prompt", async () => {
+  const order: string[] = [];
+  const snapshot = {
+    id: "agent-auto-archive-gap",
+    provider: "codex",
+    cwd: "/tmp/paseo-create-test",
+    runtimeInfo: null,
+  } as ManagedAgent;
+  const createAgent = vi.fn(async (_config, _agentId, options) => {
+    expect(options.autoArchiveObligation).toEqual({
+      phase: "armed",
+      target: { kind: "agent" },
+    });
+    order.push("persisted");
+    return snapshot;
+  });
+  const streamAgent = vi.fn(() => {
+    order.push("prompt");
+    return (async function* noop() {})();
+  });
+
+  await createAgentCommand(
+    {
+      agentManager: {
+        createAgent,
+        getAgent: vi.fn(() => snapshot),
+        tryRunOutOfBand: vi.fn(() => false),
+        hasInFlightRun: vi.fn(() => false),
+        streamAgent,
+        waitForAgentRunStart: vi.fn(async () => undefined),
+      } as unknown as AgentManager,
+      agentStorage: {} as AgentStorage,
+      logger,
+      providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+    },
+    {
+      kind: "session",
+      config: { provider: "codex", cwd: "/tmp/paseo-create-test" },
+      workspaceId: "ws-create-test",
+      initialPrompt: "finish immediately",
+      labels: {},
+      provisionalTitle: null,
+      firstAgentContext: {},
+      autoArchiveObligation: { phase: "armed", target: { kind: "agent" } },
+      onCreated: () => order.push("armed"),
+      buildSessionConfig: async (config) => ({ sessionConfig: config }),
+    },
+  );
+
+  expect(order).toEqual(["persisted", "armed", "prompt"]);
+});
+
 test("session create validates the requested mode against the provider's modes", async () => {
   const snapshot = {
     id: "agent-1",

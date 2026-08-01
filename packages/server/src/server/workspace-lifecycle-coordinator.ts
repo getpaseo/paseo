@@ -1,5 +1,33 @@
 import { normalizePathForIdentity } from "../utils/path.js";
 
+function createCancellationError(message: string): Error {
+  const error = new Error(message);
+  error.name = "AbortError";
+  return error;
+}
+
+function waitForAbortable<T>(task: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return task;
+
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      callback();
+    };
+    const onAbort = () =>
+      finish(() => reject(createCancellationError("Workspace lifecycle operation canceled")));
+    signal.addEventListener("abort", onAbort, { once: true });
+    void task.then(
+      (value) => finish(() => resolve(value)),
+      (error) => finish(() => reject(error)),
+    );
+    if (signal.aborted) onAbort();
+  });
+}
+
 export class WorkspaceLifecycleCoordinator {
   private readonly setupTasks = new Map<string, Promise<void>>();
   private readonly setupTasksByDirectory = new Map<string, Set<Promise<void>>>();
@@ -54,11 +82,17 @@ export class WorkspaceLifecycleCoordinator {
     };
   }
 
-  async waitForWorkspaceSetups(workspaceIds: Iterable<string>): Promise<void> {
+  async waitForWorkspaceSetups(
+    workspaceIds: Iterable<string>,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const tasks = Array.from(workspaceIds, (workspaceId) =>
       this.setupTasks.get(workspaceId),
     ).filter((task): task is Promise<void> => task !== undefined);
-    await Promise.allSettled(tasks);
+    await waitForAbortable(
+      Promise.allSettled(tasks).then(() => undefined),
+      signal,
+    );
   }
 
   reserveWorkspaceOwnershipMutation(workspaceId: string): WorkspaceOwnershipMutationReservation {
@@ -136,20 +170,31 @@ export class WorkspaceLifecycleCoordinator {
     };
   }
 
-  async waitForWorkspaceOwnershipMutations(workspaceIds: Iterable<string>): Promise<void> {
+  async waitForWorkspaceOwnershipMutations(
+    workspaceIds: Iterable<string>,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const tasks = Array.from(workspaceIds).flatMap((workspaceId) =>
       Array.from(this.ownershipMutationTasks.get(workspaceId) ?? []),
     );
-    await Promise.allSettled(tasks);
+    await waitForAbortable(
+      Promise.allSettled(tasks).then(() => undefined),
+      signal,
+    );
   }
 
-  runArchive<T>(key: string, operation: () => Promise<T>): Promise<T> {
+  runArchive<T>(key: string, operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     const existing = this.archiveOperations.get(key);
     if (existing) {
-      return existing as Promise<T>;
+      return waitForAbortable(existing as Promise<T>, signal);
     }
 
-    const task = Promise.resolve().then(operation);
+    const task = Promise.resolve().then(() => {
+      if (signal?.aborted) {
+        throw createCancellationError("Workspace archive canceled");
+      }
+      return operation();
+    });
     this.archiveOperations.set(key, task);
     const clearTask = () => {
       if (this.archiveOperations.get(key) === task) {
@@ -157,19 +202,26 @@ export class WorkspaceLifecycleCoordinator {
       }
     };
     void task.then(clearTask, clearTask);
-    return task;
+    return waitForAbortable(task, signal);
   }
 
-  runDirectoryExclusive<T>(directoryPath: string, operation: () => Promise<T>): Promise<T> {
+  runDirectoryExclusive<T>(
+    directoryPath: string,
+    operation: () => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
     const directoryKey = normalizePathForIdentity(directoryPath);
     const previous = this.directoryOperations.get(directoryKey) ?? Promise.resolve();
     const task = previous
       .catch(() => undefined)
       .then(async () => {
+        if (signal?.aborted) {
+          throw createCancellationError("Workspace directory operation canceled");
+        }
         while (true) {
           const setupTasks = Array.from(this.setupTasksByDirectory.get(directoryKey) ?? []);
           if (setupTasks.length === 0) break;
-          await Promise.allSettled(setupTasks);
+          await waitForAbortable(Promise.allSettled(setupTasks), signal);
         }
         return operation();
       });
@@ -180,12 +232,23 @@ export class WorkspaceLifecycleCoordinator {
       }
     };
     void task.then(clearTask, clearTask);
-    return task;
+    return waitForAbortable(task, signal);
   }
 
-  runWorktreeMutationExclusive<T>(worktreesRoot: string, operation: () => Promise<T>): Promise<T> {
+  runWorktreeMutationExclusive<T>(
+    worktreesRoot: string,
+    operation: () => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
     const previous = this.worktreeMutationOperations.get(worktreesRoot) ?? Promise.resolve();
-    const task = previous.catch(() => undefined).then(operation);
+    const task = previous
+      .catch(() => undefined)
+      .then(() => {
+        if (signal?.aborted) {
+          throw createCancellationError("Worktree mutation canceled");
+        }
+        return operation();
+      });
     this.worktreeMutationOperations.set(worktreesRoot, task);
     const clearTask = () => {
       if (this.worktreeMutationOperations.get(worktreesRoot) === task) {
@@ -193,7 +256,7 @@ export class WorkspaceLifecycleCoordinator {
       }
     };
     void task.then(clearTask, clearTask);
-    return task;
+    return waitForAbortable(task, signal);
   }
 }
 

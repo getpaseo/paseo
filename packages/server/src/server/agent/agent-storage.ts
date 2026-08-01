@@ -33,6 +33,16 @@ const PERSISTENCE_HANDLE_SCHEMA = z
   .nullable()
   .optional();
 
+const AUTO_ARCHIVE_TARGET_SCHEMA = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("agent") }),
+  z.object({ kind: z.literal("workspace"), workspaceId: z.string() }),
+]);
+
+const AUTO_ARCHIVE_OBLIGATION_SCHEMA = z.object({
+  phase: z.enum(["armed", "pending"]),
+  target: AUTO_ARCHIVE_TARGET_SCHEMA,
+});
+
 const STORED_AGENT_SCHEMA = z.object({
   id: z.string(),
   provider: z.string(),
@@ -66,6 +76,7 @@ const STORED_AGENT_SCHEMA = z.object({
   internal: z.boolean().optional(),
   archivedAt: z.string().nullable().optional(),
   owner: AgentOwnerSchema.optional(),
+  autoArchiveObligation: AUTO_ARCHIVE_OBLIGATION_SCHEMA.optional(),
 });
 
 export type SerializableAgentConfig = Pick<
@@ -80,6 +91,7 @@ export type SerializableAgentConfig = Pick<
 >;
 
 export type StoredAgentRecord = z.infer<typeof STORED_AGENT_SCHEMA>;
+export type AutoArchiveObligation = z.infer<typeof AUTO_ARCHIVE_OBLIGATION_SCHEMA>;
 export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
   return STORED_AGENT_SCHEMA.parse(value);
 }
@@ -125,6 +137,35 @@ export class AgentStorage {
   async upsert(record: StoredAgentRecord): Promise<void> {
     await this.load();
     await this.queueRecordWrite(record);
+  }
+
+  async update(
+    agentId: string,
+    mutation: (record: StoredAgentRecord) => StoredAgentRecord,
+  ): Promise<StoredAgentRecord> {
+    await this.load();
+    const previousWrite = this.pendingWrites.get(agentId) ?? Promise.resolve();
+    const operation = (async () => {
+      await Promise.allSettled([previousWrite]);
+      const current = this.cache.get(agentId);
+      if (!current) {
+        throw new Error(`Agent ${agentId} not found`);
+      }
+      const next = mutation(current);
+      if (!this.deleting.has(agentId)) {
+        await this.writeRecord(next);
+      }
+      return next;
+    })();
+    const tracked = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    void tracked.finally(() => {
+      if (this.pendingWrites.get(agentId) === tracked) this.pendingWrites.delete(agentId);
+    });
+    this.pendingWrites.set(agentId, tracked);
+    return operation;
   }
 
   private queueRecordWrite(record: StoredAgentRecord): Promise<void> {
@@ -204,38 +245,50 @@ export class AgentStorage {
 
   async applySnapshot(
     agent: ManagedAgent,
-    options?: { title?: string | null; internal?: boolean },
+    options?: {
+      title?: string | null;
+      internal?: boolean;
+      autoArchiveObligation?: AutoArchiveObligation;
+    },
   ): Promise<void> {
     await this.load();
-    await this.waitForPendingWrite(agent.id);
-    const existing = (await this.get(agent.id)) ?? null;
-    const hasTitleOverride =
-      options !== undefined && Object.prototype.hasOwnProperty.call(options, "title");
-    const hasInternalOverride =
-      options !== undefined && Object.prototype.hasOwnProperty.call(options, "internal");
-    const record = toStoredAgentRecord(agent, {
-      title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
-      createdAt: existing?.createdAt,
-      internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
+    const previousWrite = this.pendingWrites.get(agent.id) ?? Promise.resolve();
+    const operation = (async () => {
+      await Promise.allSettled([previousWrite]);
+      const existing = this.cache.get(agent.id) ?? null;
+      const hasTitleOverride =
+        options !== undefined && Object.prototype.hasOwnProperty.call(options, "title");
+      const hasInternalOverride =
+        options !== undefined && Object.prototype.hasOwnProperty.call(options, "internal");
+      const hasAutoArchiveOverride =
+        options !== undefined &&
+        Object.prototype.hasOwnProperty.call(options, "autoArchiveObligation");
+      const record = toStoredAgentRecord(agent, {
+        title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
+        createdAt: existing?.createdAt,
+        internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
+      });
+      record.archivedAt = existing?.archivedAt;
+      record.autoArchiveObligation = hasAutoArchiveOverride
+        ? options?.autoArchiveObligation
+        : existing?.autoArchiveObligation;
+      if (!this.deleting.has(agent.id)) {
+        await this.writeRecord(record);
+      }
+    })();
+    const tracked = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    void tracked.finally(() => {
+      if (this.pendingWrites.get(agent.id) === tracked) this.pendingWrites.delete(agent.id);
     });
-
-    // Preserve soft-delete/archive status across snapshot flushes.
-    // `archivedAt` is not part of the ManagedAgent snapshot, so a naive projection
-    // would wipe it during normal persistence (including on daemon restart).
-    if (existing && existing.archivedAt !== undefined) {
-      record.archivedAt = existing.archivedAt;
-    }
-    await this.upsert(record);
+    this.pendingWrites.set(agent.id, tracked);
+    await operation;
   }
 
   async setTitle(agentId: string, title: string): Promise<void> {
-    await this.load();
-    await this.waitForPendingWrite(agentId);
-    const record = await this.get(agentId);
-    if (!record) {
-      throw new Error(`Agent ${agentId} not found`);
-    }
-    await this.upsert({ ...record, title });
+    await this.update(agentId, (record) => ({ ...record, title }));
   }
 
   async flush(): Promise<void> {
@@ -385,10 +438,6 @@ export class AgentStorage {
       this.daemonAgentIdsByExecution.delete(key);
     }
     this.daemonExecutionKeysByAgentId.delete(agentId);
-  }
-
-  private async waitForPendingWrite(agentId: string): Promise<void> {
-    await (this.pendingWrites.get(agentId) ?? Promise.resolve()).catch(() => undefined);
   }
 }
 
