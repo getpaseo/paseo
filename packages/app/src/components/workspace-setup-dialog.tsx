@@ -8,7 +8,7 @@ import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { Composer } from "@/composer";
 import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
-import { useProjectIconQuery } from "@/hooks/use-project-icon-query";
+import { useProjectIcon } from "@/projects/icons";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-store";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
@@ -195,7 +195,7 @@ export function WorkspaceSetupDialog() {
     throw new Error(t("workspaceSetup.errors.composerStateRequired"));
   }
 
-  const { icon: projectIcon } = useProjectIconQuery({
+  const { icon: projectIcon } = useProjectIcon({
     serverId,
     cwd: sourceDirectory,
   });

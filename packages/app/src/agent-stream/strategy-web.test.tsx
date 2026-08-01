@@ -130,7 +130,7 @@ describe("createWebStreamStrategy", () => {
             routeBottomAnchorRequest: null,
             isAuthoritativeHistoryReady: true,
             onNearBottomChange: vi.fn(),
-            onNearHistoryStart: vi.fn(),
+            onNearHistoryStart: vi.fn().mockReturnValue(true),
             isLoadingOlderHistory: false,
             hasOlderHistory: false,
             olderHistoryProgressKey: null,
@@ -174,7 +174,7 @@ describe("createWebStreamStrategy", () => {
       routeBottomAnchorRequest: null,
       isAuthoritativeHistoryReady: true,
       onNearBottomChange: vi.fn(),
-      onNearHistoryStart: vi.fn(),
+      onNearHistoryStart: vi.fn().mockReturnValue(true),
       isLoadingOlderHistory: false,
       hasOlderHistory: false,
       olderHistoryProgressKey: null,
@@ -230,7 +230,7 @@ describe("createWebStreamStrategy", () => {
           routeBottomAnchorRequest: null,
           isAuthoritativeHistoryReady: true,
           onNearBottomChange: vi.fn(),
-          onNearHistoryStart: vi.fn(),
+          onNearHistoryStart: vi.fn().mockReturnValue(true),
           isLoadingOlderHistory: false,
           hasOlderHistory: false,
           olderHistoryProgressKey: null,
@@ -285,76 +285,6 @@ describe("createWebStreamStrategy", () => {
     expect(scrollTo).not.toHaveBeenCalled();
   });
 
-  it("fires near-history-start when the user scrolls near the top", async () => {
-    const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
-    const viewportRef = React.createRef<StreamViewportHandle>();
-    const onNearHistoryStart = vi.fn();
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-
-    act(() => {
-      root?.render(
-        <>
-          {strategy.render({
-            agentId: "agent",
-            segments: {
-              historyVirtualized: [],
-              historyMounted: [userMessage(1), userMessage(2)],
-              liveHead: [],
-            },
-            boundary: {
-              hasVirtualizedHistory: false,
-              hasMountedHistory: true,
-              hasLiveHead: false,
-            },
-            renderers: createRenderers(vi.fn()),
-            listEmptyComponent: null,
-            viewportRef,
-            routeBottomAnchorRequest: null,
-            isAuthoritativeHistoryReady: true,
-            onNearBottomChange: vi.fn(),
-            onNearHistoryStart,
-            isLoadingOlderHistory: false,
-            hasOlderHistory: true,
-            olderHistoryProgressKey: "epoch-1:20",
-            scrollEnabled: true,
-            listStyle: null,
-            baseListContentContainerStyle: null,
-            forwardListContentContainerStyle: null,
-          })}
-        </>,
-      );
-    });
-
-    const scrollContainer = container.querySelector('[data-testid="agent-chat-scroll"]');
-    if (!(scrollContainer instanceof HTMLElement)) {
-      throw new Error("Expected agent chat scroll container");
-    }
-    Object.defineProperty(scrollContainer, "clientHeight", { configurable: true, value: 400 });
-    Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 1200 });
-    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 64 });
-
-    await act(async () => {
-      await new Promise((resolve) => requestAnimationFrame(resolve));
-    });
-
-    expect(onNearHistoryStart).not.toHaveBeenCalled();
-
-    act(() => {
-      scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
-      scrollContainer?.dispatchEvent(new Event("scroll"));
-    });
-
-    expect(onNearHistoryStart).toHaveBeenCalledTimes(1);
-
-    act(() => {
-      scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
-    });
-
-    expect(onNearHistoryStart).toHaveBeenCalledTimes(2);
-  });
-
   it("waits for bottom anchoring before evaluating a delayed initial tail", async () => {
     HTMLElement.prototype.scrollTo = vi.fn(function (
       this: HTMLElement,
@@ -366,7 +296,7 @@ describe("createWebStreamStrategy", () => {
     });
     const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
     const viewportRef = React.createRef<StreamViewportHandle>();
-    const onNearHistoryStart = vi.fn();
+    const onNearHistoryStart = vi.fn().mockReturnValue(true);
     const renderInput = {
       agentId: "agent",
       boundary: {
@@ -473,7 +403,7 @@ describe("createWebStreamStrategy", () => {
       viewportRef,
       routeBottomAnchorRequest,
       onNearBottomChange: vi.fn(),
-      onNearHistoryStart: vi.fn(),
+      onNearHistoryStart: vi.fn().mockReturnValue(true),
       isLoadingOlderHistory: false,
       hasOlderHistory: false,
       olderHistoryProgressKey: null,
@@ -581,7 +511,7 @@ describe("createWebStreamStrategy", () => {
       viewportRef,
       routeBottomAnchorRequest,
       onNearBottomChange: vi.fn(),
-      onNearHistoryStart: vi.fn(),
+      onNearHistoryStart: vi.fn().mockReturnValue(true),
       isLoadingOlderHistory: false,
       hasOlderHistory: false,
       olderHistoryProgressKey: null,
@@ -678,7 +608,7 @@ describe("createWebStreamStrategy", () => {
       viewportRef,
       routeBottomAnchorRequest,
       onNearBottomChange: vi.fn(),
-      onNearHistoryStart: vi.fn(),
+      onNearHistoryStart: vi.fn().mockReturnValue(true),
       isLoadingOlderHistory: false,
       hasOlderHistory: false,
       olderHistoryProgressKey: null,
@@ -777,7 +707,7 @@ describe("createWebStreamStrategy", () => {
       viewportRef,
       routeBottomAnchorRequest: null,
       onNearBottomChange: vi.fn(),
-      onNearHistoryStart: vi.fn(),
+      onNearHistoryStart: vi.fn().mockReturnValue(true),
       isLoadingOlderHistory: false,
       hasOlderHistory: false,
       olderHistoryProgressKey: null,

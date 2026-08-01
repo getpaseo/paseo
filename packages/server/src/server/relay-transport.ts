@@ -11,7 +11,7 @@ import { buildRelayWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
 import type { ExternalSocketMetadata } from "./websocket-server.js";
 import { createEncryptedRelaySocket } from "./websocket/encrypted-relay-socket.js";
 
-interface RelayTransportOptions {
+export interface RelayTransportOptions {
   logger: pino.Logger;
   attachSocket: (ws: RelaySocketLike, metadata?: ExternalSocketMetadata) => Promise<void>;
   relayEndpoint: string; // "host:port"
@@ -25,7 +25,7 @@ export interface RelayTransportController {
   stop: () => Promise<void>;
 }
 
-interface RelaySocketLike {
+export interface RelaySocketLike {
   readyState: number;
   bufferedAmount?: number;
   send: (data: string | Uint8Array | ArrayBuffer, callback?: (error?: Error) => void) => void;

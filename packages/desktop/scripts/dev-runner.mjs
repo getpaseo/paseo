@@ -4,6 +4,9 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { createElectronSpawnOptions, resolveChildKillTarget } from "./dev-runner-config.mjs";
+
+import { resolveDevElectronArgs } from "./dev-runner-args.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopDir = path.resolve(scriptDir, "..");
@@ -19,7 +22,7 @@ if (!Number.isInteger(expoPort) || expoPort <= 0) {
 }
 
 const expoDevUrl = process.env.EXPO_DEV_URL || `http://localhost:${expoPort}`;
-const electronArgs = process.argv.slice(2);
+const electronArgs = resolveDevElectronArgs(process.platform, process.argv.slice(2));
 const colorEnv = {
   FORCE_COLOR: process.env.FORCE_COLOR || "1",
   npm_config_color: process.env.npm_config_color || "always",
@@ -58,7 +61,11 @@ function spawnChild(name, command, args, options = {}) {
     ...options,
   });
 
-  children.set(name, child);
+  const managedChild = {
+    process: child,
+    detached: options.detached === true,
+  };
+  children.set(name, managedChild);
   prefixStream(name, child.stdout, process.stdout);
   prefixStream(name, child.stderr, process.stderr);
 
@@ -82,17 +89,13 @@ function spawnChild(name, command, args, options = {}) {
   return child;
 }
 
-function killChild(child, signal) {
+function killChild({ process: child, detached }, signal) {
   if (!child.pid || child.killed) {
     return;
   }
 
   try {
-    if (child.detached) {
-      process.kill(-child.pid, signal);
-    } else {
-      child.kill(signal);
-    }
+    process.kill(resolveChildKillTarget(child.pid, detached), signal);
   } catch {
     // The child may have exited between the liveness check and the signal.
   }
@@ -176,12 +179,14 @@ try {
 }
 
 if (!stopping) {
-  spawnChild("electron", electron, [...electronArgs, desktopDir], {
-    detached: true,
-    env: {
-      ...process.env,
-      ...colorEnv,
-      EXPO_DEV_URL: expoDevUrl,
-    },
-  });
+  spawnChild(
+    "electron",
+    electron,
+    [...electronArgs, desktopDir],
+    createElectronSpawnOptions({
+      env: process.env,
+      colorEnv,
+      expoDevUrl,
+    }),
+  );
 }

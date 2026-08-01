@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { AGENT_HOOK_PROVIDERS } from "@getpaseo/server/agent-hooks";
 import { describe, expect, it } from "vitest";
 import { runHooksCommand } from "./hooks.js";
@@ -75,6 +76,14 @@ function expectPostedState(fetch: RecordingFetch, state: string) {
 }
 
 describe("runHooksCommand", () => {
+  it("keeps provider names out of the generic command", () => {
+    const source = readFileSync(new URL("./hooks.ts", import.meta.url), "utf8").toLowerCase();
+
+    for (const providerId of Object.keys(AGENT_HOOK_PROVIDERS)) {
+      expect(source).not.toContain(providerId);
+    }
+  });
+
   it.each([
     [claudeProvider.events[0].event, "running"],
     [claudeProvider.events[1].event, "idle"],

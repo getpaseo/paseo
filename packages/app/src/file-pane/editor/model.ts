@@ -1,6 +1,6 @@
 import type { FileVersion, FileWriteResult } from "@getpaseo/protocol/messages";
 
-export type FileEditorStatus = "loading" | "clean" | "dirty" | "saving" | "conflict" | "error";
+export type FileEditorStatus = "clean" | "dirty" | "saving" | "conflict" | "error";
 export type FileLineSeparator = "\n" | "\r\n" | "\r";
 
 export interface FileEditorSnapshot {
@@ -25,7 +25,6 @@ export interface FileEditorFile {
 }
 
 export interface FileEditorSession {
-  read(): Promise<FileEditorFile>;
   write(input: {
     content: string;
     expectedModifiedAt: string;
@@ -33,10 +32,17 @@ export interface FileEditorSession {
   }): Promise<FileWriteResult>;
 }
 
-export interface FileVersionSource {
+export type FileEditorObservation =
+  | { status: "ready"; file: FileEditorFile }
+  | Extract<FileVersion, { status: "missing" | "error" }>;
+
+export interface FileObservationSource {
   subscribe(listener: () => void): () => void;
-  getVersion(): FileVersion | null;
+  getObservation(): FileEditorObservation | null;
+  refresh(): void;
 }
+
+type ObservedDiskState = FileEditorObservation | { status: "unsettled"; version: FileVersion };
 
 export interface FileEditorClock {
   setTimeout(callback: () => void, delayMs: number): ReturnType<typeof setTimeout>;
@@ -60,10 +66,14 @@ export class FileEditorModel {
   private autosave: ReturnType<typeof setTimeout> | null = null;
   private saveSequence = 0;
   private disposed = false;
-  private observedWhileSaving: FileVersion | null = null;
+  private observedWhileSaving: FileEditorObservation | null = null;
+  private observed: ObservedDiskState;
+  private lastReceivedObservation: FileEditorObservation | null = null;
+  private refreshObservation: (() => void) | null = null;
+  private reloadRequested = false;
   private persistedContent: string;
   private hasBom: boolean;
-  private unsubscribeVersionSource: (() => void) | null = null;
+  private unsubscribeObservationSource: (() => void) | null = null;
 
   constructor(input: {
     file: FileEditorFile;
@@ -74,6 +84,7 @@ export class FileEditorModel {
     this.clock = input.clock ?? systemClock;
     this.persistedContent = input.file.content;
     this.hasBom = input.file.hasBom;
+    this.observed = { status: "ready", file: input.file };
     this.snapshot = {
       status: "clean",
       content: input.file.content,
@@ -92,26 +103,29 @@ export class FileEditorModel {
 
   getSnapshot = (): FileEditorSnapshot => this.snapshot;
 
-  connectFileVersions(source: FileVersionSource): void {
-    this.disconnectFileVersions();
-    const receiveVersion = () => {
-      const version = source.getVersion();
-      if (version) this.receiveFileVersion(version);
+  connectFileObservations(source: FileObservationSource): void {
+    this.disconnectFileObservations();
+    this.refreshObservation = source.refresh;
+    const receiveObservation = () => {
+      const observation = source.getObservation();
+      if (observation) this.receiveFileObservation(observation);
     };
-    this.unsubscribeVersionSource = source.subscribe(receiveVersion);
-    receiveVersion();
+    this.unsubscribeObservationSource = source.subscribe(receiveObservation);
+    receiveObservation();
   }
 
-  disconnectFileVersions(): void {
-    this.unsubscribeVersionSource?.();
-    this.unsubscribeVersionSource = null;
+  disconnectFileObservations(): void {
+    this.unsubscribeObservationSource?.();
+    this.unsubscribeObservationSource = null;
+    this.refreshObservation = null;
   }
 
   edit(content: string): void {
     if (this.disposed || content === this.snapshot.content) return;
+    this.reloadRequested = false;
     const modified = content !== this.persistedContent;
     let status: FileEditorStatus = modified ? "dirty" : "clean";
-    if (this.snapshot.status === "conflict" || this.snapshot.status === "loading") {
+    if (this.snapshot.status === "conflict") {
       status = "conflict";
     }
     this.setSnapshot({ ...this.snapshot, status, content, modified, error: null });
@@ -130,34 +144,32 @@ export class FileEditorModel {
     await this.performWrite(this.snapshot.observedVersion);
   }
 
-  receiveFileVersion(version: FileVersion): void {
-    if (this.disposed) return;
-    if (sameVersion(version, this.snapshot.observedVersion)) {
-      if (
-        version.status === "ready" &&
-        this.snapshot.observedVersion.status === "ready" &&
-        version.revision &&
-        !this.snapshot.observedVersion.revision
-      ) {
-        this.setSnapshot({
-          ...this.snapshot,
-          version:
-            this.snapshot.version.status === "ready"
-              ? { ...this.snapshot.version, revision: version.revision }
-              : this.snapshot.version,
-          observedVersion: version,
-        });
-      }
-      return;
-    }
-    if (this.restoreUnchangedConflict(version)) return;
+  receiveFileObservation(observation: FileEditorObservation): void {
+    if (this.disposed || observation === this.lastReceivedObservation) return;
+    this.lastReceivedObservation = observation;
+    const version = observationVersion(observation);
+    this.observed = observation;
     this.setSnapshot({ ...this.snapshot, observedVersion: version });
     if (this.snapshot.status === "saving") {
-      this.observedWhileSaving = version;
+      this.observedWhileSaving = observation;
       return;
     }
-    if (this.snapshot.status === "clean" || this.snapshot.status === "loading") {
-      void this.reloadFromDisk(version);
+    if (observation.status !== "ready") {
+      this.reloadRequested = false;
+      this.enterConflict(version);
+      return;
+    }
+    if (this.reloadRequested) {
+      this.reloadRequested = false;
+      this.applyFile(observation.file);
+      return;
+    }
+    if (observation.file.content === this.persistedContent) {
+      this.adoptUnchangedFile(observation.file);
+      return;
+    }
+    if (this.snapshot.status === "clean") {
+      this.applyFile(observation.file);
       return;
     }
     this.enterConflict(version);
@@ -171,14 +183,20 @@ export class FileEditorModel {
 
   async reload(): Promise<void> {
     if (this.disposed) return;
-    await this.reloadFromDisk(this.snapshot.observedVersion);
+    if (this.observed.status !== "ready") {
+      this.reloadRequested = true;
+      this.refreshObservation?.();
+      return;
+    }
+    this.applyFile(this.observed.file);
   }
 
   dispose(): void {
     this.disposed = true;
+    this.reloadRequested = false;
     this.saveSequence += 1;
     this.clearAutosave();
-    this.disconnectFileVersions();
+    this.disconnectFileObservations();
     this.listeners.clear();
   }
 
@@ -199,9 +217,10 @@ export class FileEditorModel {
     this.clearAutosave();
     const sequence = ++this.saveSequence;
     const content = this.snapshot.content;
+    const hasBom = this.hasBom;
     this.observedWhileSaving = null;
     this.setSnapshot({ ...this.snapshot, status: "saving", error: null });
-    const serializedContent = this.hasBom ? `\uFEFF${content}` : content;
+    const serializedContent = hasBom ? `\uFEFF${content}` : content;
     let result: FileWriteResult;
     try {
       result = await this.session.write({
@@ -224,11 +243,12 @@ export class FileEditorModel {
       return;
     }
     if (result.status === "conflict") {
+      this.observed = { status: "unsettled", version: result.version };
       this.enterConflict(result.version);
       return;
     }
 
-    const writtenVersion: FileVersion = {
+    const writtenVersion: Extract<FileVersion, { status: "ready" }> = {
       status: "ready",
       cwd: this.snapshot.version.cwd,
       path: this.snapshot.version.path,
@@ -236,64 +256,56 @@ export class FileEditorModel {
       modifiedAt: result.modifiedAt,
       revision: result.revision,
     };
-    const pending = this.observedWhileSaving;
-    this.observedWhileSaving = null;
+    const pending = this.takeObservedWhileSaving();
     this.persistedContent = content;
-    if (pending && !sameVersion(pending, writtenVersion)) {
+    if (pending && !observationMatchesWrite(pending, content, hasBom)) {
+      const pendingVersion = observationVersion(pending);
+      this.observed = pending;
       this.setSnapshot({
         ...this.snapshot,
         status: "conflict",
         modified: this.snapshot.content !== this.persistedContent,
         version: writtenVersion,
-        observedVersion: pending,
+        observedVersion: pendingVersion,
         error: null,
       });
       return;
     }
+    const settledVersion = pending?.status === "ready" ? pending.file.version : writtenVersion;
+    this.observed = pending ?? { status: "unsettled", version: writtenVersion };
     const modified = this.snapshot.content !== this.persistedContent;
     this.setSnapshot({
       ...this.snapshot,
       status: modified ? "dirty" : "clean",
       modified,
-      version: writtenVersion,
-      observedVersion: writtenVersion,
+      version: settledVersion,
+      observedVersion: settledVersion,
       error: null,
     });
     if (modified) this.scheduleAutosave();
   }
 
-  private async reloadFromDisk(version: FileVersion): Promise<void> {
+  private applyFile(file: FileEditorFile): void {
     this.clearAutosave();
-    if (version.status !== "ready") {
-      this.enterConflict(version);
-      return;
-    }
-    const sequence = ++this.saveSequence;
-    this.setSnapshot({ ...this.snapshot, status: "loading", error: null });
-    try {
-      const file = await this.session.read();
-      if (this.disposed || sequence !== this.saveSequence || this.snapshot.status !== "loading") {
-        return;
-      }
-      this.persistedContent = file.content;
-      this.hasBom = file.hasBom;
-      this.setSnapshot({
-        status: "clean",
-        content: file.content,
-        lineSeparator: detectLineSeparator(file.content),
-        modified: false,
-        version: file.version,
-        observedVersion: file.version,
-        error: null,
-      });
-    } catch (error) {
-      if (this.disposed || sequence !== this.saveSequence) return;
-      this.setSnapshot({
-        ...this.snapshot,
-        status: "error",
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+    this.saveSequence += 1;
+    this.persistedContent = file.content;
+    this.hasBom = file.hasBom;
+    this.observed = { status: "ready", file };
+    this.setSnapshot({
+      status: "clean",
+      content: file.content,
+      lineSeparator: detectLineSeparator(file.content),
+      modified: false,
+      version: file.version,
+      observedVersion: file.version,
+      error: null,
+    });
+  }
+
+  private takeObservedWhileSaving(): FileEditorObservation | null {
+    const observation = this.observedWhileSaving;
+    this.observedWhileSaving = null;
+    return observation;
   }
 
   private enterConflict(version: FileVersion): void {
@@ -307,27 +319,23 @@ export class FileEditorModel {
     });
   }
 
-  private restoreUnchangedConflict(version: FileVersion): boolean {
-    if (
-      this.snapshot.status !== "conflict" ||
-      version.status !== "ready" ||
-      this.snapshot.version.status !== "ready" ||
-      !sameVersion(version, this.snapshot.version)
-    ) {
-      return false;
-    }
+  private adoptUnchangedFile(file: FileEditorFile): void {
+    this.hasBom = file.hasBom;
+    this.observed = { status: "ready", file };
     const modified = this.snapshot.content !== this.persistedContent;
+    const recovering = this.snapshot.status === "conflict";
+    let status = this.snapshot.status;
+    if (recovering) status = modified ? "dirty" : "clean";
     this.setSnapshot({
       ...this.snapshot,
-      status: modified ? "dirty" : "clean",
+      status,
       modified,
-      version,
-      observedVersion: version,
-      error: null,
+      version: file.version,
+      observedVersion: file.version,
+      error: recovering ? null : this.snapshot.error,
     });
-    if (modified) this.scheduleAutosave();
+    if (status === "dirty") this.scheduleAutosave();
     else this.clearAutosave();
-    return true;
   }
 
   private scheduleAutosave(): void {
@@ -377,13 +385,18 @@ function detectLineSeparator(content: string): FileLineSeparator {
   return "\n";
 }
 
-function sameVersion(left: FileVersion, right: FileVersion): boolean {
-  if (left.status !== right.status || left.cwd !== right.cwd || left.path !== right.path)
-    return false;
-  if (left.status === "ready" && right.status === "ready") {
-    if (left.revision && right.revision) return left.revision === right.revision;
-    return left.modifiedAt === right.modifiedAt && left.size === right.size;
-  }
-  if (left.status === "error" && right.status === "error") return left.error === right.error;
-  return true;
+function observationVersion(observation: FileEditorObservation): FileVersion {
+  return observation.status === "ready" ? observation.file.version : observation;
+}
+
+function observationMatchesWrite(
+  observation: FileEditorObservation,
+  content: string,
+  hasBom: boolean,
+): boolean {
+  return (
+    observation.status === "ready" &&
+    observation.file.content === content &&
+    observation.file.hasBom === hasBom
+  );
 }

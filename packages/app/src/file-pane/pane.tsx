@@ -20,7 +20,7 @@ import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
-import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
+import { filePreviewRenderKind } from "@/components/file-pane-render-mode";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { persistAttachmentFromBytes } from "@/attachments/service";
@@ -35,12 +35,9 @@ import { isWeb } from "@/constants/platform";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useLiveFile } from "./live-file/hook";
 import { FilePanelBar } from "./bar";
-import {
-  FileEditorModel,
-  getFileConflictCallout,
-  type FileConflictCallout,
-  type FileEditorFile,
-} from "./editor/model";
+import { FileHtmlPreview } from "./html-preview";
+import { FileEditorModel, getFileConflictCallout, type FileConflictCallout } from "./editor/model";
+import { createFileObservationSource } from "./editor/observation-source";
 import { FileEditorView } from "./editor/view";
 import type { FileConflictAlertState } from "./conflict-alert";
 import type { LiveFileModel } from "./live-file/model";
@@ -62,6 +59,7 @@ interface CodeLineProps {
 
 interface FilePreviewBodyProps {
   preview: ExplorerFile | null;
+  mode?: "preview" | "source";
   isLoading: boolean;
   isMobile: boolean;
   location: WorkspaceFileLocation;
@@ -213,6 +211,7 @@ const codeLineStyles = StyleSheet.create((theme) => ({
 
 function FilePreviewBody({
   preview,
+  mode,
   isLoading,
   isMobile,
   location,
@@ -222,18 +221,22 @@ function FilePreviewBody({
   const theme = UnistylesRuntime.getTheme();
   const { t } = useTranslation();
   const filePath = location.path;
-  const isMarkdownFile =
-    preview?.kind === "text" && isRenderedMarkdownFile(filePath) && !location.lineStart;
+  // A line target means the caller wants to land on that line, so fall back to
+  // the highlighted source view even for renderable files.
+  const renderKind =
+    preview?.kind === "text" && !location.lineStart && mode !== "source"
+      ? filePreviewRenderKind(filePath)
+      : null;
 
   const previewScrollRef = useRef<RNScrollView>(null);
 
   const highlightedLines = useMemo(() => {
-    if (!preview || preview.kind !== "text" || isMarkdownFile) {
+    if (!preview || preview.kind !== "text" || renderKind) {
       return null;
     }
 
     return highlightCode(preview.content ?? "", filePath);
-  }, [isMarkdownFile, preview, filePath]);
+  }, [renderKind, preview, filePath]);
 
   const gutterWidth = useMemo(() => {
     if (!highlightedLines) return 0;
@@ -287,7 +290,16 @@ function FilePreviewBody({
   }
 
   if (preview.kind === "text") {
-    if (isMarkdownFile) {
+    if (renderKind === "html") {
+      // The HTML document owns its own scrolling, so no ScrollView wrapper here.
+      return (
+        <View style={styles.previewScrollContainer}>
+          <FileHtmlPreview html={preview.content ?? ""} testID="file-html-preview" />
+        </View>
+      );
+    }
+
+    if (renderKind === "markdown") {
       return (
         <View style={styles.previewScrollContainer}>
           <RNScrollView
@@ -399,7 +411,7 @@ export function FilePane({
 }) {
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
-  const [markdownMode, setMarkdownMode] = useState<"preview" | "source">("preview");
+  const [previewMode, setPreviewMode] = useState<"preview" | "source">("preview");
   const [resolvedPreview, setResolvedPreview] = useState<{
     key: string | null;
     file: ExplorerFile | null;
@@ -455,19 +467,19 @@ export function FilePane({
     };
   }, [liveFile.file, readTarget]);
 
-  useEffect(() => setMarkdownMode("preview"), [readTarget?.path]);
-
   const previewKey = readTarget ? `${readTarget.cwd}:${readTarget.path}` : null;
+  useEffect(() => setPreviewMode("preview"), [previewKey]);
+
   const preview = resolvedPreview.key === previewKey ? resolvedPreview.file : null;
   const imagePreviewUri = useAttachmentPreviewUrl(
     resolvedPreview.key === previewKey ? resolvedPreview.imageAttachment : null,
   );
-  const isMarkdown = isMarkdownPreview(preview, location.path);
+  const isRenderable = isRenderablePreview(preview, location.path);
   const editable = isEditableTextFile({
     preview,
     supportsEditing,
   });
-  const canToggleMarkdownMode = isMarkdown && editable;
+  const canTogglePreviewMode = isRenderable && !location.lineStart;
   const lineCount =
     preview?.kind === "text" ? (preview.content ?? "").split("\n").length : undefined;
   const errorMessage = getFileErrorMessage(liveFile.error, t("panels.file.failedToLoad"));
@@ -483,8 +495,8 @@ export function FilePane({
       retryingRead={liveFile.isRetrying}
       retryLabel={t("common.actions.retry")}
       filename={getFileNameFromPath(location.path) ?? location.path}
-      markdownMode={canToggleMarkdownMode ? markdownMode : undefined}
-      onMarkdownModeChange={canToggleMarkdownMode ? setMarkdownMode : undefined}
+      previewMode={canTogglePreviewMode ? previewMode : undefined}
+      onPreviewModeChange={canTogglePreviewMode ? setPreviewMode : undefined}
       lineCount={lineCount}
       editable={editable}
       disconnectedMessage={t("workspace.terminal.hostDisconnected")}
@@ -498,8 +510,8 @@ export function FilePane({
   );
 }
 
-function isMarkdownPreview(preview: ExplorerFile | null, path: string): boolean {
-  return preview?.kind === "text" && isRenderedMarkdownFile(path);
+function isRenderablePreview(preview: ExplorerFile | null, path: string): boolean {
+  return preview?.kind === "text" && filePreviewRenderKind(path) !== null;
 }
 
 function getFileErrorMessage(error: unknown, fallback: string): string | null {
@@ -530,8 +542,8 @@ function FilePanePresentation({
   retryingRead,
   retryLabel,
   filename,
-  markdownMode,
-  onMarkdownModeChange,
+  previewMode,
+  onPreviewModeChange,
   lineCount,
   editable,
   disconnectedMessage,
@@ -551,8 +563,8 @@ function FilePanePresentation({
   retryingRead: boolean;
   retryLabel: string;
   filename: string;
-  markdownMode?: "preview" | "source";
-  onMarkdownModeChange?: (mode: "preview" | "source") => void;
+  previewMode?: "preview" | "source";
+  onPreviewModeChange?: (mode: "preview" | "source") => void;
   lineCount?: number;
   editable: boolean;
   disconnectedMessage: string;
@@ -585,8 +597,8 @@ function FilePanePresentation({
         onRetryRead={onRetryRead}
         retryingRead={retryingRead}
         filename={filename}
-        mode={markdownMode}
-        onModeChange={onMarkdownModeChange}
+        mode={previewMode}
+        onModeChange={onPreviewModeChange}
         isLoading={isLoading}
         isMobile={isMobile}
         location={location}
@@ -614,12 +626,13 @@ function FilePanePresentation({
         <FilePanelBar
           size={preview.size}
           lineCount={lineCount}
-          mode={markdownMode}
-          onModeChange={onMarkdownModeChange}
+          mode={previewMode}
+          onModeChange={onPreviewModeChange}
         />
       ) : null}
       <FilePreviewBody
         preview={preview}
+        mode={previewMode}
         isLoading={isLoading}
         isMobile={isMobile}
         location={location}
@@ -667,25 +680,6 @@ function EditableFilePane({
   const [vimMode, setVimMode] = useState<string | null>(settings.vimKeybindings ? "NORMAL" : null);
   const session = useMemo(
     () => ({
-      async read(): Promise<FileEditorFile> {
-        const file = await client.readFile(cwd, path);
-        const decodedFile = explorerFileFromReadResult(file);
-        if (decodedFile.kind !== "text" || decodedFile.content === undefined) {
-          throw new Error("File is no longer text.");
-        }
-        return {
-          content: decodedFile.content,
-          hasBom: decodedFile.hasBom,
-          version: {
-            status: "ready",
-            cwd,
-            path,
-            size: file.size,
-            modifiedAt: file.modifiedAt,
-            revision: file.revision,
-          },
-        };
-      },
       write(input: { content: string; expectedModifiedAt: string; expectedRevision?: string }) {
         return client.writeFile({ cwd, path, ...input });
       },
@@ -703,14 +697,16 @@ function EditableFilePane({
           path,
           size: preview.size,
           modifiedAt: preview.modifiedAt,
+          revision: preview.revision,
         },
       },
       session,
     });
   });
   useEffect(() => {
-    model.connectFileVersions(liveFile);
-    return () => model.disconnectFileVersions();
+    const source = createFileObservationSource(liveFile);
+    model.connectFileObservations(source);
+    return () => model.disconnectFileObservations();
   }, [liveFile, model]);
   const snapshot = useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot);
   const suspendPendingSave = useCallback(() => model.suspendAutosave(), [model]);
@@ -809,6 +805,7 @@ function EditableFilePane({
       ) : (
         <FilePreviewBody
           preview={renderedPreview}
+          mode={mode}
           isLoading={isLoading}
           isMobile={isMobile}
           location={location}

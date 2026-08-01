@@ -76,7 +76,7 @@ By default the daemon listens on `127.0.0.1:6767`, reachable only from the same 
 paseo daemon start --web-ui --listen 0.0.0.0:6767
 ```
 
-> **Anyone who can reach the listening address can use your agents.** Before you bind beyond localhost, set a password and review your host allowlist. The relay (the default mobile pairing path) avoids this entirely by keeping the daemon bound to localhost, see [Security](/docs/security).
+> **Anyone who can reach the listening address can use your agents.** Before you bind beyond localhost, set a password and review your host allowlist. The relay pairing path avoids this entirely by keeping the daemon bound to localhost, see [Security](/docs/security).
 
 Two things to configure when you expose the daemon directly:
 

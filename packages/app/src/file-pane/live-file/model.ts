@@ -24,15 +24,21 @@ export type LiveFileReadState =
   | { status: "pending"; requested: boolean }
   | { status: "error"; error: string };
 
+export type LiveFileObservation =
+  | {
+      status: "ready";
+      version: Extract<FileVersion, { status: "ready" }>;
+      file: FileReadResult;
+    }
+  | Extract<FileVersion, { status: "missing" | "error" }>;
+
 export interface LiveFileSnapshot {
-  file: FileReadResult | null;
-  version: FileVersion | null;
+  observation: LiveFileObservation | null;
   read: LiveFileReadState;
 }
 
 const idleSnapshot: LiveFileSnapshot = {
-  file: null,
-  version: null,
+  observation: null,
   read: { status: "idle" },
 };
 
@@ -49,6 +55,7 @@ export class LiveFileModel {
   private activeReadSequence: number | null = null;
   private activeReadRequested = false;
   private observedAfterReadSequence: number | null = null;
+  private candidateVersion: FileVersion | null = null;
   private refreshQueued = false;
   private requestedRefreshQueued = false;
 
@@ -59,7 +66,7 @@ export class LiveFileModel {
 
   getSnapshot = (): LiveFileSnapshot => this.snapshot;
 
-  getVersion = (): FileVersion | null => this.snapshot.version;
+  getObservation = (): LiveFileObservation | null => this.snapshot.observation;
 
   open(input: { session: LiveFileSession; target: LiveFileTarget; liveUpdates: boolean }): void {
     this.reset();
@@ -111,6 +118,7 @@ export class LiveFileModel {
     this.activeReadSequence = null;
     this.activeReadRequested = false;
     this.observedAfterReadSequence = null;
+    this.candidateVersion = null;
     this.refreshQueued = false;
     this.requestedRefreshQueued = false;
     this.setSnapshot(idleSnapshot);
@@ -144,7 +152,7 @@ export class LiveFileModel {
 
   private observeVersion(version: FileVersion): void {
     this.observedAfterReadSequence = this.issuedReadSequence;
-    this.setSnapshot({ ...this.snapshot, version });
+    this.candidateVersion = version;
     this.scheduleRead(false);
   }
 
@@ -180,9 +188,13 @@ export class LiveFileModel {
       return;
     }
     this.observedAfterReadSequence = null;
+    this.candidateVersion = null;
     this.setSnapshot({
-      file: input.file,
-      version: readyVersion(input.target, input.file),
+      observation: {
+        status: "ready",
+        file: input.file,
+        version: readyVersion(input.target, input.file),
+      },
       read: { status: "idle" },
     });
     this.startQueuedRead();
@@ -203,11 +215,14 @@ export class LiveFileModel {
       return;
     }
     const message = errorMessage(input.error);
-    let version = this.snapshot.version;
-    if (version?.status !== "missing" && version?.status !== "error") {
-      version = { status: "error", cwd: input.target.cwd, path: input.target.path, error: message };
-    }
-    this.setSnapshot({ ...this.snapshot, version, read: { status: "error", error: message } });
+    const candidate = this.candidateVersion;
+    this.candidateVersion = null;
+    const candidateDescribesFailure =
+      candidate?.status === "missing" || candidate?.status === "error";
+    const observation: LiveFileObservation = candidateDescribesFailure
+      ? candidate
+      : { status: "error", cwd: input.target.cwd, path: input.target.path, error: message };
+    this.setSnapshot({ ...this.snapshot, observation, read: { status: "error", error: message } });
     this.startQueuedRead();
   }
 
