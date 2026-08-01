@@ -2,8 +2,8 @@ import path from "node:path";
 import { describe, expect, test } from "vitest";
 import {
   buildElectronFlags,
+  resolveDevRuntime,
   resolveDevUserDataDir,
-  selectRemoteDebuggingPort,
 } from "./dev-runtime-config.mjs";
 
 describe("desktop dev runtime isolation", () => {
@@ -31,26 +31,20 @@ describe("desktop dev runtime isolation", () => {
     );
   });
 
-  test("selects another CDP port when the default is occupied", async () => {
-    const selectedPort = await selectRemoteDebuggingPort({
-      preferredPort: 9223,
-      findAvailablePort: async (preferredPort) => {
-        expect(preferredPort).toBe(9223);
-        return 43127;
-      },
+  test("lets Chromium atomically allocate the default CDP port", async () => {
+    const runtime = await resolveDevRuntime({
+      PASEO_DEV_RUNTIME_FALLBACK_ROOT: "/checkouts/paseo",
     });
 
-    expect(selectedPort).toBe(43127);
+    expect(runtime.electronFlags).toBe("--remote-debugging-port=0");
   });
 
   test("honors an explicit CDP port without silently changing it", async () => {
-    const selectedPort = await selectRemoteDebuggingPort({
-      configuredPort: "9333",
-      findAvailablePort: async () => {
-        throw new Error("must not probe an explicit port");
-      },
+    const runtime = await resolveDevRuntime({
+      PASEO_DEV_RUNTIME_FALLBACK_ROOT: "/checkouts/paseo",
+      PASEO_ELECTRON_REMOTE_DEBUGGING_PORT: "9333",
     });
 
-    expect(selectedPort).toBe(9333);
+    expect(runtime.electronFlags).toBe("--remote-debugging-port=9333");
   });
 });

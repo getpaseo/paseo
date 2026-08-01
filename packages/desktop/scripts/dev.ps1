@@ -36,7 +36,6 @@ $env:EXPO_DEV_URL = "http://localhost:$($env:EXPO_PORT)"
 $env:PASEO_DEV_ROOT = $RootDir
 $env:PASEO_DEV_RUNTIME_FALLBACK_ROOT = $RootDir
 $DevRuntime = node "$ScriptDir\dev-runtime.mjs" | ConvertFrom-Json
-$RemoteDebuggingPort = $DevRuntime.remoteDebuggingPort
 $env:PASEO_ELECTRON_FLAGS = $DevRuntime.electronFlags
 $env:PASEO_ELECTRON_USER_DATA_DIR = $DevRuntime.userDataDir
 Remove-Item Env:\PASEO_DEV_RUNTIME_FALLBACK_ROOT -ErrorAction SilentlyContinue
@@ -104,7 +103,6 @@ Write-Host @"
   Paseo Desktop Dev (Windows)
 ======================================================
   Metro:      http://localhost:$($env:EXPO_PORT)
-  CDP:        http://127.0.0.1:$RemoteDebuggingPort
   Daemon:     $($env:PASEO_LISTEN) (isolated)
   PASEO_HOME: $($env:PASEO_HOME)
   userData:   $($env:PASEO_ELECTRON_USER_DATA_DIR)

@@ -103,11 +103,11 @@ The iOS simulator shares the Mac's loopback, so `localhost:<port>` reaches the h
 ### Desktop renderer profiling
 
 `npm run dev:desktop` starts Electron with Chromium remote debugging enabled so
-renderer CPU profiles can be captured through CDP. It prefers
-`http://127.0.0.1:9223` and automatically selects a free port when that port is
-already occupied. The startup banner prints the selected URL. It launches its own
-Electron-flavored Expo server and passes that URL to Electron. Set
-`PASEO_ELECTRON_REMOTE_DEBUGGING_PORT` when a QA workflow requires a fixed port.
+renderer CPU profiles can be captured through CDP. By default it passes
+`--remote-debugging-port=0`, so Chromium atomically asks the OS for an available
+port and prints the selected DevTools endpoint. Set
+`PASEO_ELECTRON_REMOTE_DEBUGGING_PORT` when a QA workflow requires a validated,
+fixed port.
 
 Desktop dev also scopes Electron `userData` to the current dev root. This prevents
 desktop-only environment inherited by terminals opened inside Paseo from coupling
@@ -126,8 +126,9 @@ npm run verify:electron-cdp --workspace=@getpaseo/desktop
 ```
 
 The verifier reads the same `EXPO_PORT` and
-`PASEO_ELECTRON_REMOTE_DEBUGGING_PORT` environment names as desktop dev. Set both when
-testing an isolated instance on non-default ports.
+`PASEO_ELECTRON_REMOTE_DEBUGGING_PORT` environment names as desktop dev. Set an
+explicit remote-debugging port for verifier runs, and set both when testing an
+isolated instance on non-default ports.
 
 When running a dedicated Electron QA instance against a non-default Expo port, set
 `EXPO_DEV_URL` explicitly. Desktop main defaults to `http://localhost:8081`, so
