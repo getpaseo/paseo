@@ -18,6 +18,7 @@ import { toAgentPayload } from "./agent-projections.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { formatSystemNotificationPrompt, startAgentRun } from "./agent-prompt.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent-loading.js";
+import { FileAgentTimelineStore } from "./file-agent-timeline-store.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
 import type {
   AgentClient,
@@ -2880,7 +2881,617 @@ test("reloadAgentSession preserves timeline and does not force history replay", 
   expect(afterHydrate).toEqual(beforeReload);
 });
 
-test("reloadAgentSession clears provider children before rehydrating from disk", async () => {
+test("ordinary reload preserves material progress while disk rehydration mints a clean epoch", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-material-progress-reload-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class ReloadProgressSession extends TestAgentSession {
+    async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: this.provider,
+        item: { type: "assistant_message", text: "provider history after rewind" },
+      };
+    }
+  }
+
+  class ReloadProgressClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new ReloadProgressSession(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new ReloadProgressSession({
+        provider: "codex",
+        cwd: config?.cwd ?? workdir,
+      });
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ReloadProgressClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000133",
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.runAgent(snapshot.id, "accepted continuation");
+    await manager.appendTimelineItem(snapshot.id, {
+      type: "tool_call",
+      callId: "write-before-reload",
+      name: "write",
+      status: "completed",
+      error: null,
+      detail: { type: "write", filePath: "proof.txt", content: "durable proof" },
+    });
+    const beforeReload = manager.getMaterialProgress(snapshot.id);
+    expect(beforeReload).toMatchObject({ state: "progressing", lastMaterialProgressKind: "write" });
+
+    await manager.reloadAgentSession(snapshot.id);
+    expect(manager.getMaterialProgress(snapshot.id)).toEqual(beforeReload);
+
+    await manager.reloadAgentSession(snapshot.id, undefined, { rehydrateFromDisk: true });
+    expect(manager.getMaterialProgress(snapshot.id)).toEqual(beforeReload);
+
+    await manager.hydrateTimelineFromProvider(snapshot.id, { force: true });
+    const afterRehydrate = manager.getMaterialProgress(snapshot.id);
+    expect(afterRehydrate).toMatchObject({
+      state: "none",
+      continuationBoundarySeq: null,
+      lastMaterialProgressKind: null,
+    });
+    expect(afterRehydrate.timelineEpoch).not.toBe(beforeReload.timelineEpoch);
+  } finally {
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("material progress restores only with the exact durable timeline incarnation across restart", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-material-progress-restart-"));
+  const agentStoragePath = join(workdir, "agents");
+  const timelineStoragePath = join(workdir, "timelines");
+  const agentId = "00000000-0000-4000-8000-000000000134";
+
+  class ReplacementHistoryClient extends TestAgentClient {
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+          yield {
+            type: "timeline",
+            provider: this.provider,
+            item: { type: "user_message", text: "longer replacement history" },
+          };
+          yield {
+            type: "timeline",
+            provider: this.provider,
+            item: { type: "assistant_message", text: "replacement result" },
+          };
+        }
+      })({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  }
+
+  const createManager = (storage: AgentStorage) =>
+    new AgentManager({
+      clients: { codex: new ReplacementHistoryClient() },
+      registry: storage,
+      durableTimelineStore: new FileAgentTimelineStore(timelineStoragePath, logger),
+      logger,
+      idFactory: () => agentId,
+    });
+
+  try {
+    const firstStorage = new AgentStorage(agentStoragePath, logger);
+    const firstManager = createManager(firstStorage);
+    const created = await firstManager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await firstManager.runAgent(created.id, "accepted durable continuation");
+    await firstManager.appendTimelineItem(created.id, {
+      type: "tool_call",
+      callId: "write-before-restart",
+      name: "write",
+      status: "completed",
+      error: null,
+      detail: { type: "write", filePath: "proof.txt", content: "durable proof" },
+    });
+    await firstManager.flush();
+    const beforeRestart = firstManager.getMaterialProgress(created.id);
+    expect(beforeRestart).toMatchObject({
+      state: "progressing",
+      continuationBoundarySeq: 1,
+      observedThroughSeq: 1,
+      lastMaterialProgressKind: "write",
+    });
+    await firstManager.closeAgent(created.id);
+    await firstManager.flush();
+
+    const restartedStorage = new AgentStorage(agentStoragePath, logger);
+    const restartedManager = createManager(restartedStorage);
+    await ensureAgentLoaded(created.id, {
+      agentManager: restartedManager,
+      agentStorage: restartedStorage,
+      logger,
+    });
+    expect(restartedManager.getMaterialProgress(created.id)).toEqual(beforeRestart);
+
+    await restartedManager.reloadAgentSession(created.id, undefined, {
+      rehydrateFromDisk: true,
+    });
+    await restartedManager.hydrateTimelineFromProvider(created.id);
+    await restartedManager.flush();
+    const afterReplacement = restartedManager.getMaterialProgress(created.id);
+    expect(afterReplacement).toMatchObject({
+      state: "none",
+      continuationBoundarySeq: null,
+      observedThroughSeq: 2,
+      lastMaterialProgressKind: null,
+    });
+    expect(afterReplacement.timelineEpoch).not.toBe(beforeRestart.timelineEpoch);
+    expect(restartedManager.getTimeline(created.id)).toHaveLength(2);
+    await restartedManager.closeAgent(created.id);
+    await restartedManager.flush();
+
+    const replacementRestartStorage = new AgentStorage(agentStoragePath, logger);
+    const replacementRestartManager = createManager(replacementRestartStorage);
+    await ensureAgentLoaded(created.id, {
+      agentManager: replacementRestartManager,
+      agentStorage: replacementRestartStorage,
+      logger,
+    });
+    expect(replacementRestartManager.getMaterialProgress(created.id)).toEqual(afterReplacement);
+    await replacementRestartManager.closeAgent(created.id);
+    await replacementRestartManager.flush();
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("provider history hydration retries after a one-row-then-throw restart without persisting a prefix", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-atomic-retry-"));
+  const agentStoragePath = join(workdir, "agents");
+  const timelineStoragePath = join(workdir, "timelines");
+  const agentId = "00000000-0000-4000-8000-000000000154";
+  let historyReads = 0;
+
+  class RetryHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      historyReads += 1;
+      yield {
+        type: "timeline",
+        provider: this.provider,
+        timestamp: "2026-08-01T00:00:00.000Z",
+        item: { type: "user_message", text: "history row one" },
+        turnId: "history-turn",
+      };
+      if (historyReads === 1) {
+        throw new Error("history interrupted after one row");
+      }
+      yield {
+        type: "timeline",
+        provider: this.provider,
+        timestamp: "2026-08-01T00:00:01.000Z",
+        item: { type: "assistant_message", text: "history row two" },
+        turnId: "history-turn",
+      };
+    }
+  }
+
+  class RetryHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new RetryHistorySession(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new RetryHistorySession({
+        provider: "codex",
+        cwd: config?.cwd ?? workdir,
+      });
+    }
+  }
+
+  const client = new RetryHistoryClient();
+  const createManager = (storage: AgentStorage) =>
+    new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      durableTimelineStore: new FileAgentTimelineStore(timelineStoragePath, logger),
+      logger,
+      idFactory: () => agentId,
+    });
+
+  try {
+    const firstStorage = new AgentStorage(agentStoragePath, logger);
+    const firstManager = createManager(firstStorage);
+    const created = await firstManager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const beforeFailureEpoch = firstManager.fetchTimeline(created.id, { limit: 0 }).epoch;
+
+    await firstManager.hydrateTimelineFromProvider(created.id);
+    await firstManager.flush();
+    expect(historyReads).toBe(1);
+    expect(firstManager.getTimeline(created.id)).toEqual([]);
+    const durableAfterFailure = await new FileAgentTimelineStore(
+      timelineStoragePath,
+      logger,
+    ).fetchCommitted(created.id, { limit: 0 });
+    expect(durableAfterFailure).toMatchObject({ epoch: beforeFailureEpoch, rows: [] });
+    expect((await firstStorage.get(created.id))?.historyPrimed).toBe(false);
+
+    await firstManager.closeAgent(created.id);
+    await firstManager.flush();
+
+    const restartedStorage = new AgentStorage(agentStoragePath, logger);
+    const restartedManager = createManager(restartedStorage);
+    try {
+      await ensureAgentLoaded(created.id, {
+        agentManager: restartedManager,
+        agentStorage: restartedStorage,
+        logger,
+      });
+      await restartedManager.flush();
+
+      expect(historyReads).toBe(2);
+      expect(restartedManager.fetchTimeline(created.id, { limit: 0 }).epoch).not.toBe(
+        beforeFailureEpoch,
+      );
+      expect(restartedManager.getTimeline(created.id)).toEqual([
+        { type: "user_message", text: "history row one" },
+        { type: "assistant_message", text: "history row two" },
+      ]);
+      await expect(
+        new FileAgentTimelineStore(timelineStoragePath, logger).getCommittedRows(created.id),
+      ).resolves.toMatchObject([
+        { seq: 1, turnId: "history-turn", item: { text: "history row one" } },
+        { seq: 2, turnId: "history-turn", item: { text: "history row two" } },
+      ]);
+      expect((await restartedStorage.get(created.id))?.historyPrimed).toBe(true);
+      await restartedManager.closeAgent(created.id);
+      await restartedManager.flush();
+    } finally {
+      await restartedManager.closeAgent(created.id).catch(() => undefined);
+    }
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("atomic provider hydration replays a live row after the complete replacement", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-live-replay-"));
+  const timelineStoragePath = join(workdir, "timelines");
+  const agentId = "00000000-0000-4000-8000-000000000156";
+  const historyEntered = deferred<void>();
+  const releaseHistory = deferred<void>();
+  let activeSession: LiveDuringHistorySession | null = null;
+
+  class LiveDuringHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      historyEntered.resolve();
+      await releaseHistory.promise;
+      yield {
+        type: "timeline",
+        provider: this.provider,
+        item: { type: "user_message", text: "complete provider history" },
+        turnId: "history-turn",
+      };
+    }
+  }
+
+  class LiveDuringHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      activeSession = new LiveDuringHistorySession(config);
+      return activeSession;
+    }
+  }
+
+  const epochs = ["initial-live-epoch", "replacement-live-epoch"];
+  const durableStore = new FileAgentTimelineStore(timelineStoragePath, logger, {
+    epochFactory: () => epochs.shift() ?? "unexpected-live-epoch",
+  });
+  const manager = new AgentManager({
+    clients: { codex: new LiveDuringHistoryClient() },
+    durableTimelineStore: durableStore,
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const hydration = manager.hydrateTimelineFromProvider(created.id, { force: true });
+    await historyEntered.promise;
+    activeSession!.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "assistant_message", text: "live after gate admission" },
+      turnId: "live-turn",
+    });
+    releaseHistory.resolve();
+    await hydration;
+    await manager.flush();
+
+    const inMemory = manager.fetchTimeline(created.id, { direction: "tail", limit: 0 });
+    const durable = await durableStore.fetchCommitted(created.id, { limit: 0 });
+    expect(inMemory.epoch).toBe("replacement-live-epoch");
+    expect(durable.epoch).toBe(inMemory.epoch);
+    expect(inMemory.rows).toEqual(durable.rows);
+    expect(inMemory.rows).toMatchObject([
+      {
+        seq: 1,
+        turnId: "history-turn",
+        item: { type: "user_message", text: "complete provider history" },
+      },
+      {
+        seq: 2,
+        turnId: "live-turn",
+        item: { type: "assistant_message", text: "live after gate admission" },
+      },
+    ]);
+  } finally {
+    releaseHistory.resolve();
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("file-backed assistant-only history returns one last message across force hydration and restart", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-assistant-only-history-"));
+  const agentId = "00000000-0000-4000-8000-000000000160";
+  const expectedMessage = "one durable assistant response";
+  const timelineStoragePath = join(workdir, "timelines");
+  let historyCalls = 0;
+
+  class AssistantOnlyHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      historyCalls += 1;
+      yield {
+        type: "timeline",
+        provider: "codex",
+        timestamp: "2026-02-01T00:00:00.000Z",
+        item: { type: "assistant_message", text: expectedMessage },
+      };
+    }
+  }
+
+  class AssistantOnlyHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new AssistantOnlyHistorySession(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new AssistantOnlyHistorySession({
+        provider: "codex",
+        cwd: config?.cwd ?? workdir,
+      });
+    }
+  }
+
+  const client = new AssistantOnlyHistoryClient();
+  const firstManager = new AgentManager({
+    clients: { codex: client },
+    durableTimelineStore: new FileAgentTimelineStore(timelineStoragePath, logger),
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await firstManager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await firstManager.hydrateTimelineFromProvider(created.id, { force: true });
+    await expect(firstManager.getLastAssistantMessage(created.id)).resolves.toBe(expectedMessage);
+    await expect(firstManager.waitForAgentEvent(created.id)).resolves.toMatchObject({
+      lastMessage: expectedMessage,
+    });
+    await firstManager.closeAgent(agentId);
+
+    const restartedManager = new AgentManager({
+      clients: { codex: client },
+      durableTimelineStore: new FileAgentTimelineStore(timelineStoragePath, logger),
+      logger,
+      idFactory: () => agentId,
+    });
+    try {
+      const restarted = await restartedManager.resumeAgentFromPersistence(
+        { provider: "codex", sessionId: "assistant-only-session", metadata: { cwd: workdir } },
+        undefined,
+        agentId,
+        { workspaceId: undefined },
+      );
+      await restartedManager.hydrateTimelineFromProvider(restarted.id);
+      expect(historyCalls).toBe(1);
+      await expect(restartedManager.getLastAssistantMessage(restarted.id)).resolves.toBe(
+        expectedMessage,
+      );
+      await expect(restartedManager.waitForAgentEvent(restarted.id)).resolves.toMatchObject({
+        lastMessage: expectedMessage,
+      });
+
+      await restartedManager.hydrateTimelineFromProvider(restarted.id, { force: true });
+      expect(historyCalls).toBe(2);
+      await expect(restartedManager.getLastAssistantMessage(restarted.id)).resolves.toBe(
+        expectedMessage,
+      );
+    } finally {
+      await restartedManager.closeAgent(agentId).catch(() => undefined);
+    }
+  } finally {
+    await firstManager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("late material progress from a replaced turn stays excluded across restart", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-material-progress-turn-restart-"));
+  const agentStoragePath = join(workdir, "agents");
+  const timelineStoragePath = join(workdir, "timelines");
+  const agentId = "00000000-0000-4000-8000-000000000155";
+  let activeSession: ReplacementProgressSession | null = null;
+
+  class ReplacementProgressSession extends TestAgentSession {
+    private turnCounter = 0;
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = `replacement-turn-${++this.turnCounter}`;
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+      }, 0);
+      return { turnId };
+    }
+
+    override async interrupt(): Promise<void> {
+      this.pushEvent({
+        type: "turn_canceled",
+        provider: this.provider,
+        reason: "Replaced",
+        turnId: "replacement-turn-1",
+      });
+    }
+  }
+
+  class ReplacementProgressClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      activeSession = new ReplacementProgressSession(config);
+      return activeSession;
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      activeSession = new ReplacementProgressSession({
+        provider: "codex",
+        cwd: config?.cwd ?? workdir,
+      });
+      return activeSession;
+    }
+  }
+
+  const client = new ReplacementProgressClient();
+  const createManager = (storage: AgentStorage) =>
+    new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      durableTimelineStore: new FileAgentTimelineStore(timelineStoragePath, logger),
+      logger,
+      idFactory: () => agentId,
+    });
+
+  try {
+    const firstStorage = new AgentStorage(agentStoragePath, logger);
+    const firstManager = createManager(firstStorage);
+    const created = await firstManager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const firstRun = firstManager.streamAgent(created.id, "turn one", {
+      clientMessageId: "replacement-client-one",
+    });
+    const firstDrain = (async () => {
+      for await (const _event of firstRun) {
+        // Drain the replaced turn.
+      }
+    })();
+    await firstManager.waitForAgentRunStart(created.id);
+
+    const secondRun = await firstManager.replaceAgentRun(created.id, "turn two", {
+      clientMessageId: "replacement-client-two",
+    });
+    const secondDrain = (async () => {
+      for await (const _event of secondRun) {
+        // Drained by closeAgent below.
+      }
+    })();
+    await firstManager.waitForAgentRunStart(created.id);
+
+    activeSession!.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      turnId: "replacement-turn-1",
+      item: {
+        type: "tool_call",
+        callId: "late-replaced-write",
+        name: "write",
+        status: "completed",
+        error: null,
+        detail: { type: "write", filePath: "stale.txt", content: "late result" },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(
+        firstManager
+          .fetchTimeline(created.id, { direction: "tail", limit: 0 })
+          .rows.some(
+            (row) => row.item.type === "tool_call" && row.item.callId === "late-replaced-write",
+          ),
+      ).toBe(true),
+    );
+    await firstManager.flush();
+    const beforeRestart = firstManager.getMaterialProgress(created.id);
+    expect(beforeRestart).toMatchObject({
+      state: "none",
+      lastMaterialProgressKind: null,
+      completedCompactionsSinceMaterialProgress: 0,
+    });
+    expect(
+      firstManager
+        .fetchTimeline(created.id, { direction: "tail", limit: 0 })
+        .rows.find(
+          (row) => row.item.type === "tool_call" && row.item.callId === "late-replaced-write",
+        )?.turnId,
+    ).toBe("replacement-turn-1");
+
+    await firstManager.closeAgent(created.id);
+    await firstManager.flush();
+    await Promise.all([firstDrain, secondDrain]);
+
+    const restartedStorage = new AgentStorage(agentStoragePath, logger);
+    const restartedManager = createManager(restartedStorage);
+    try {
+      await ensureAgentLoaded(created.id, {
+        agentManager: restartedManager,
+        agentStorage: restartedStorage,
+        logger,
+      });
+      await restartedManager.flush();
+
+      expect(restartedManager.getMaterialProgress(created.id)).toEqual(beforeRestart);
+      expect(
+        restartedManager
+          .fetchTimeline(created.id, { direction: "tail", limit: 0 })
+          .rows.find(
+            (row) => row.item.type === "tool_call" && row.item.callId === "late-replaced-write",
+          )?.turnId,
+      ).toBe("replacement-turn-1");
+      await restartedManager.closeAgent(created.id);
+    } finally {
+      await restartedManager.closeAgent(created.id).catch(() => undefined);
+    }
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("reloadAgentSession keeps provider children until disk rehydration commits", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-child-reload-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
   let activeSession: TestAgentSession | null = null;
@@ -2918,7 +3529,102 @@ test("reloadAgentSession clears provider children before rehydrating from disk",
 
   await manager.reloadAgentSession(snapshot.id, undefined, { rehydrateFromDisk: true });
 
+  expect(manager.listProviderSubagents(snapshot.id)).toHaveLength(1);
+  await manager.hydrateTimelineFromProvider(snapshot.id, { force: true, broadcast: true });
   expect(manager.listProviderSubagents(snapshot.id)).toEqual([]);
+});
+
+test("failed refresh history preserves prior file-backed state", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-refresh-history-rollback-"));
+  const agentId = "00000000-0000-4000-8000-000000000159";
+  const agentStorage = new AgentStorage(join(workdir, "agents"), logger);
+  const timelineStoragePath = join(workdir, "timelines");
+  const durableTimelineStore = new FileAgentTimelineStore(timelineStoragePath, logger);
+  let activeSession: TestAgentSession | null = null;
+
+  class FailingRefreshHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield* [];
+      throw new Error("provider refresh history failed");
+    }
+  }
+
+  class FailingRefreshHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      activeSession = new TestAgentSession(config);
+      return activeSession;
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new FailingRefreshHistorySession({
+        provider: "codex",
+        cwd: config?.cwd ?? workdir,
+      });
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new FailingRefreshHistoryClient() },
+    registry: agentStorage,
+    durableTimelineStore,
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.runAgent(created.id, "accepted continuation");
+    await manager.appendTimelineItem(created.id, {
+      type: "tool_call",
+      callId: "write-before-failed-refresh",
+      name: "write",
+      status: "completed",
+      error: null,
+      detail: { type: "write", filePath: "proof.txt", content: "durable proof" },
+    });
+    activeSession?.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: {
+        type: "upsert",
+        id: "prior-child",
+        title: "Prior child",
+        status: "running",
+      },
+    });
+    await vi.waitFor(() => expect(manager.listProviderSubagents(agentId)).toHaveLength(1));
+    await manager.flush();
+
+    const timelineBefore = manager.fetchTimeline(agentId, { direction: "tail", limit: 0 });
+    const materialProgressBefore = manager.getMaterialProgress(agentId);
+    const childrenBefore = manager.listProviderSubagents(agentId);
+    const durableBefore = await durableTimelineStore.fetchCommitted(agentId, { limit: 0 });
+
+    await manager.reloadAgentSession(agentId, undefined, { rehydrateFromDisk: true });
+    expect(manager.fetchTimeline(agentId, { direction: "tail", limit: 0 })).toEqual(timelineBefore);
+    expect(manager.getMaterialProgress(agentId)).toEqual(materialProgressBefore);
+    expect(manager.listProviderSubagents(agentId)).toEqual(childrenBefore);
+
+    await expect(
+      manager.hydrateTimelineFromProvider(agentId, { force: true, broadcast: true }),
+    ).rejects.toThrow("provider refresh history failed");
+    await manager.flush();
+
+    expect(manager.fetchTimeline(agentId, { direction: "tail", limit: 0 })).toEqual(timelineBefore);
+    expect(manager.getMaterialProgress(agentId)).toEqual(materialProgressBefore);
+    expect(manager.listProviderSubagents(agentId)).toEqual(childrenBefore);
+    await expect(
+      new FileAgentTimelineStore(timelineStoragePath, logger).fetchCommitted(agentId, { limit: 0 }),
+    ).resolves.toEqual(durableBefore);
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("hydrateTimelineFromProvider restores and broadcasts provider children from session history", async () => {
@@ -3022,6 +3728,383 @@ test("force provider hydration removes children absent from current history", as
       subagentId: "removed-by-rewind",
     },
   });
+});
+
+test("provider hydration preserves a queued terminal child update across a successor", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-child-order-"));
+  const agentId = "00000000-0000-4000-8000-000000000161";
+  let session: TestAgentSession | null = null;
+  let historyGeneration = 0;
+
+  class ProviderChildOrderingSession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      historyGeneration += 1;
+      yield {
+        type: "provider_subagent",
+        provider: "codex",
+        event: {
+          type: "upsert",
+          id: "child-1",
+          title: "Child",
+          status: "running",
+          timestamp: "2026-01-01T00:00:00.000Z",
+        },
+      };
+      if (historyGeneration > 1) {
+        yield {
+          type: "provider_subagent",
+          provider: "codex",
+          event: {
+            type: "upsert",
+            id: "child-1",
+            title: "Child",
+            status: "completed",
+            timestamp: "2026-01-02T00:00:00.000Z",
+          },
+        };
+      }
+    }
+  }
+
+  class ProviderChildOrderingClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new ProviderChildOrderingSession(config);
+      return session;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ProviderChildOrderingClient() },
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    let successorHydration: Promise<void> | null = null;
+    let completedUpserts = 0;
+    manager.subscribe(
+      (event) => {
+        if (
+          event.type !== "provider_subagent" ||
+          event.event.type !== "upsert" ||
+          event.event.subagent.status !== "completed"
+        ) {
+          return;
+        }
+        completedUpserts += 1;
+        successorHydration ??= manager.hydrateTimelineFromProvider(created.id, {
+          force: true,
+          broadcast: true,
+        });
+      },
+      { agentId: created.id, replayState: false },
+    );
+    session?.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: {
+        type: "upsert",
+        id: "child-1",
+        title: "Child",
+        status: "completed",
+        timestamp: "2026-01-02T00:00:00.000Z",
+      },
+    });
+
+    await manager.hydrateTimelineFromProvider(created.id, { force: true, broadcast: true });
+    await successorHydration;
+
+    expect(manager.getProviderSubagent(created.id, "child-1")).toMatchObject({
+      status: "completed",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    });
+    expect(historyGeneration).toBe(2);
+    expect(completedUpserts).toBe(2);
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("force hydration preserves durable provider identity for canonical submitted prompts", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-hydration-provider-identity-"));
+  const agentId = "00000000-0000-4000-8000-000000000163";
+  const durableTimelineStore = new FileAgentTimelineStore(join(workdir, "timelines"), logger);
+  const canonicalItem = {
+    type: "user_message",
+    text: "canonical submitted prompt",
+    messageId: "client-message-1",
+    clientMessageId: "client-message-1",
+  } satisfies AgentTimelineItem;
+  await durableTimelineStore.replaceCommitted(agentId, [
+    {
+      seq: 1,
+      timestamp: "2026-01-01T00:00:00.000Z",
+      providerMessageId: "provider-message-1",
+      turnId: "submitted-turn",
+      item: canonicalItem,
+    },
+  ]);
+
+  class IdentityHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield { type: "timeline", provider: "codex", item: canonicalItem };
+    }
+  }
+
+  class IdentityHistoryClient extends TestAgentClient {
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new IdentityHistorySession({
+        provider: "codex",
+        cwd: config?.cwd ?? workdir,
+      });
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new IdentityHistoryClient() },
+    durableTimelineStore,
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const resumed = await manager.resumeAgentFromPersistence(
+      { provider: "codex", sessionId: "identity-session", metadata: { cwd: workdir } },
+      undefined,
+      agentId,
+      { workspaceId: undefined },
+    );
+    await manager.hydrateTimelineFromProvider(resumed.id, { force: true });
+
+    await expect(durableTimelineStore.getCommittedRows(agentId)).resolves.toEqual([
+      expect.objectContaining({
+        seq: 1,
+        providerMessageId: "provider-message-1",
+        turnId: "submitted-turn",
+        item: canonicalItem,
+      }),
+    ]);
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a successor generation preserves a writer replaying behind the prior generation", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-hydration-writer-successor-"));
+  const agentId = "00000000-0000-4000-8000-000000000162";
+  const writerPersistStarted = deferred<void>();
+  const releaseWriterPersist = deferred<void>();
+  const durableTimelineStore = new FileAgentTimelineStore(join(workdir, "timelines"), logger);
+  let session: TestAgentSession | null = null;
+  let historyGeneration = 0;
+
+  class GatedWriterStorage extends AgentStorage {
+    armed = false;
+    private armedPersistCount = 0;
+
+    override async applySnapshot(
+      agent: ManagedAgent,
+      options?: { title?: string | null; internal?: boolean },
+    ): Promise<void> {
+      if (this.armed) {
+        this.armedPersistCount += 1;
+        if (this.armedPersistCount === 2) {
+          writerPersistStarted.resolve();
+          await releaseWriterPersist.promise;
+        }
+      }
+      await super.applySnapshot(agent, options);
+    }
+  }
+
+  class GeneratedWriterHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      historyGeneration += 1;
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: `history generation ${historyGeneration}` },
+      };
+      if (historyGeneration > 1) {
+        yield {
+          type: "timeline",
+          provider: "codex",
+          item: { type: "user_message", text: "writer admitted behind generation 1" },
+        };
+      }
+    }
+  }
+
+  class GeneratedWriterHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new GeneratedWriterHistorySession(config);
+      return session;
+    }
+  }
+
+  const storage = new GatedWriterStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new GeneratedWriterHistoryClient() },
+    registry: storage,
+    durableTimelineStore,
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    storage.armed = true;
+    const first = manager.hydrateTimelineFromProvider(created.id, { force: true });
+    session?.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      turnId: "writer-turn-behind-generation-1",
+      item: { type: "user_message", text: "writer admitted behind generation 1" },
+    });
+
+    await writerPersistStarted.promise;
+    const second = manager.hydrateTimelineFromProvider(created.id, { force: true });
+    session?.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      turnId: "live-turn-behind-generation-2",
+      item: { type: "user_message", text: "live row admitted behind generation 2" },
+    });
+    releaseWriterPersist.resolve();
+
+    await Promise.all([first, second]);
+    await manager.flush();
+    const expectedItems: AgentTimelineItem[] = [
+      { type: "user_message", text: "history generation 2" },
+      { type: "user_message", text: "writer admitted behind generation 1" },
+      { type: "user_message", text: "live row admitted behind generation 2" },
+    ];
+    expect(manager.getTimeline(created.id)).toEqual(expectedItems);
+    const durableRows = await durableTimelineStore.getCommittedRows(agentId);
+    expect(durableRows.map((row) => row.item)).toEqual(expectedItems);
+    expect(durableRows[1]?.turnId).toBe("writer-turn-behind-generation-1");
+    expect(durableRows[2]?.turnId).toBe("live-turn-behind-generation-2");
+  } finally {
+    releaseWriterPersist.resolve();
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a successor hydration preserves material progress opened by a replayed running state", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-hydration-progress-successor-"));
+  const agentId = "00000000-0000-4000-8000-000000000164";
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const epochs = ["initial-progress-epoch", "first-progress-epoch", "successor-progress-epoch"];
+  const durableTimelineStore = new FileAgentTimelineStore(join(workdir, "timelines"), logger, {
+    epochFactory: () => epochs.shift() ?? "unexpected-progress-epoch",
+  });
+  let session: TestAgentSession | null = null;
+  let historyGeneration = 0;
+
+  class SuccessorProgressHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      historyGeneration += 1;
+      yield* [];
+    }
+  }
+
+  class SuccessorProgressHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new SuccessorProgressHistorySession(config);
+      return session;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new SuccessorProgressHistoryClient() },
+    registry: storage,
+    durableTimelineStore,
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const turnId = "accepted-live-turn";
+    let successorHydration: Promise<void> | null = null;
+    manager.subscribe(
+      (event) => {
+        if (
+          successorHydration === null &&
+          event.type === "agent_state" &&
+          event.agent.lifecycle === "running"
+        ) {
+          successorHydration = manager.hydrateTimelineFromProvider(created.id, { force: true });
+        }
+      },
+      { agentId: created.id, replayState: false },
+    );
+
+    const firstHydration = manager.hydrateTimelineFromProvider(created.id, { force: true });
+    session!.pushEvent({ type: "turn_started", provider: "codex", turnId });
+    session!.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      turnId,
+      item: {
+        type: "tool_call",
+        callId: "write-replayed-behind-successor",
+        name: "write",
+        status: "completed",
+        error: null,
+        detail: { type: "write", filePath: "proof.txt", content: "durable successor proof" },
+      },
+    });
+    session!.pushEvent({
+      type: "usage_updated",
+      provider: "codex",
+      turnId,
+      usage: { inputTokens: 1 },
+    });
+
+    await firstHydration;
+    await successorHydration;
+    await manager.flush();
+
+    expect(historyGeneration).toBe(2);
+    expect(manager.getMaterialProgress(created.id)).toMatchObject({
+      state: "progressing",
+      timelineEpoch: "successor-progress-epoch",
+      continuationBoundarySeq: 1,
+      observedThroughSeq: 1,
+      lastMaterialProgressKind: "write",
+    });
+    await expect(durableTimelineStore.getCommittedRows(agentId)).resolves.toMatchObject([
+      {
+        seq: 1,
+        turnId,
+        item: { type: "tool_call", callId: "write-replayed-behind-successor" },
+      },
+    ]);
+    expect((await storage.get(agentId))?.materialProgress).toMatchObject({
+      timelineEpoch: "successor-progress-epoch",
+      continuationBoundarySeq: 1,
+      acceptedTurnId: turnId,
+      observedThroughSeq: 1,
+      lastMaterialProgressKind: "write",
+    });
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("reloadAgentSession preserves current title when config title is unset", async () => {
@@ -6176,6 +7259,108 @@ test("streamAgent clears pending run when startTurn fails before a turn id exist
   );
 });
 
+test("a pre-accept start failure preserves the prior accepted continuation progress", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-material-progress-rejection-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class MaterialThenRejectSession extends TestAgentSession {
+    private attempt = 0;
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      this.attempt += 1;
+      if (this.attempt === 2) {
+        throw new Error("rejected before provider turn acceptance");
+      }
+      const turnId = "accepted-material-turn";
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        this.pushEvent({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: {
+            type: "tool_call",
+            callId: "write-proof",
+            name: "write",
+            status: "completed",
+            error: null,
+            detail: { type: "write", filePath: "proof.txt", content: "material result" },
+          },
+        });
+        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      }, 0);
+      return { turnId };
+    }
+  }
+
+  class MaterialThenRejectClient implements AgentClient {
+    readonly provider = "codex" as const;
+    readonly capabilities = TEST_CAPABILITIES;
+    readonly session = new MaterialThenRejectSession({ provider: "codex", cwd: workdir });
+
+    async isAvailable(): Promise<boolean> {
+      return true;
+    }
+
+    async createSession(): Promise<AgentSession> {
+      return this.session;
+    }
+
+    async resumeSession(): Promise<AgentSession> {
+      return this.session;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new MaterialThenRejectClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000132",
+  });
+
+  try {
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Material progress rejection" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    await manager.runAgent(agent.id, "accepted turn");
+    const accepted = manager.getMaterialProgress(agent.id);
+    expect(accepted).toMatchObject({
+      state: "progressing",
+      continuationBoundarySeq: 1,
+      observedThroughSeq: 1,
+      lastMaterialProgressKind: "write",
+    });
+
+    await expect(manager.runAgent(agent.id, "rejected turn")).rejects.toThrow(
+      "rejected before provider turn acceptance",
+    );
+    const afterRejection = manager.getMaterialProgress(agent.id);
+    expect(afterRejection).toMatchObject({
+      state: accepted.state,
+      timelineEpoch: accepted.timelineEpoch,
+      continuationBoundarySeq: accepted.continuationBoundarySeq,
+      completedCompactionsSinceMaterialProgress: accepted.completedCompactionsSinceMaterialProgress,
+      lastMaterialProgressAt: accepted.lastMaterialProgressAt,
+      lastMaterialProgressKind: accepted.lastMaterialProgressKind,
+    });
+    expect(afterRejection.observedThroughSeq).toBe(accepted.observedThroughSeq! + 1);
+
+    await manager.flush();
+    expect((await storage.get(agent.id))?.materialProgress).toMatchObject({
+      timelineEpoch: afterRejection.timelineEpoch,
+      continuationBoundarySeq: afterRejection.continuationBoundarySeq,
+      observedThroughSeq: afterRejection.observedThroughSeq,
+      lastMaterialProgressKind: "write",
+    });
+  } finally {
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("archiveAgent persists archivedAt and updatedAt before emitting closed state", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archive-"));
   const storagePath = join(workdir, "agents");
@@ -8331,6 +9516,7 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
         seq: 1,
         timestamp: expect.any(String),
         providerMessageId: "provider-message-1",
+        turnId: "turn-submitted-user-message",
         item: {
           type: "user_message",
           text: "hello from composer",
@@ -8341,6 +9527,7 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
       {
         seq: 2,
         timestamp: expect.any(String),
+        turnId: "turn-submitted-user-message",
         item: { type: "assistant_message", text: "output before provider echo" },
       },
     ]);

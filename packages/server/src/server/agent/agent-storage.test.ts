@@ -14,6 +14,7 @@ import type {
   AgentSession,
   AgentSessionConfig,
 } from "./agent-sdk-types.js";
+import { createMaterialProgressCheckpoint } from "./material-progress.js";
 
 type ManagedAgentOverrides = Omit<
   Partial<ManagedAgent>,
@@ -113,6 +114,9 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
     foregroundTurnWaiters: new Set(),
     unsubscribeSession: null,
     timeline: overrides.timeline ?? [],
+    materialProgress:
+      overrides.materialProgress ??
+      createMaterialProgressCheckpoint({ timelineEpoch: "epoch-1", nextSeq: 1 }),
     attention: overrides.attention ?? { requiresAttention: false },
     runtimeInfo:
       overrides.runtimeInfo ??
@@ -211,6 +215,26 @@ describe("AgentStorage", () => {
     const persisted = await reloaded.get("agent-feature-values");
     expect(persisted?.config?.featureValues).toEqual({ fast_mode: true });
     expect(buildSessionConfig(persisted!).featureValues).toEqual({ fast_mode: true });
+  });
+
+  test("applySnapshot stores and reloads the epoch-bound material progress checkpoint", async () => {
+    const checkpoint = {
+      ...createMaterialProgressCheckpoint({ timelineEpoch: "epoch-persisted", nextSeq: 1 }),
+      continuationBoundarySeq: 1,
+      acceptedTurnId: "turn-persisted",
+      observedThroughSeq: 3,
+      completedCompactionsSinceMaterialProgress: 1,
+      lastMaterialProgressAt: "2026-08-01T00:00:03.000Z",
+      lastMaterialProgressKind: "write" as const,
+      seenMaterialProgressFingerprints: ["write:proof"],
+    };
+
+    await storage.applySnapshot(
+      createManagedAgent({ id: "agent-material-progress", materialProgress: checkpoint }),
+    );
+
+    const reloaded = new AgentStorage(storagePath, logger);
+    expect((await reloaded.get("agent-material-progress"))?.materialProgress).toEqual(checkpoint);
   });
 
   test("applySnapshot keeps featureValues absent when they were never set", async () => {
@@ -388,6 +412,47 @@ describe("AgentStorage", () => {
     await applySnapshotPromise;
     const record = await storage.get(agentId);
     expect(record?.title).toBe("Generated title");
+  });
+
+  test("a concurrent title mutation cannot overwrite a newer material progress checkpoint", async () => {
+    const agentId = "agent-material-progress-race";
+    const initialCheckpoint = createMaterialProgressCheckpoint({
+      timelineEpoch: "epoch-race",
+      nextSeq: 1,
+    });
+    await storage.applySnapshot(
+      createManagedAgent({ id: agentId, materialProgress: initialCheckpoint }),
+    );
+
+    let releasePendingWrite: (() => void) | null = null;
+    const pendingWrite = new Promise<void>((resolve) => {
+      releasePendingWrite = resolve;
+    });
+    const storageInternals = storage as unknown as {
+      pendingWrites: Map<string, Promise<void>>;
+    };
+    storageInternals.pendingWrites.set(agentId, pendingWrite);
+
+    const newerCheckpoint = {
+      ...initialCheckpoint,
+      continuationBoundarySeq: 1,
+      acceptedTurnId: "turn-race",
+      observedThroughSeq: 4,
+      lastMaterialProgressAt: "2026-08-01T00:00:04.000Z",
+      lastMaterialProgressKind: "verification" as const,
+      seenMaterialProgressFingerprints: ["verification:race"],
+    };
+    const snapshotWrite = storage.applySnapshot(
+      createManagedAgent({ id: agentId, materialProgress: newerCheckpoint }),
+    );
+    const titleWrite = storage.setTitle(agentId, "Generated during snapshot");
+    releasePendingWrite?.();
+
+    await Promise.all([snapshotWrite, titleWrite]);
+    const reloaded = new AgentStorage(storagePath, logger);
+    const record = await reloaded.get(agentId);
+    expect(record?.title).toBe("Generated during snapshot");
+    expect(record?.materialProgress).toEqual(newerCheckpoint);
   });
 
   test("list returns all agents including internal ones", async () => {

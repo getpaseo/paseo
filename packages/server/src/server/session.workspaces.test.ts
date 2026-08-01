@@ -5066,7 +5066,12 @@ test("refresh_agent_request leaves workspace archival independent when its direc
   session.agentManager.getAgent = () => managed;
   session.interruptAgentIfRunning = async () => undefined;
   session.agentManager.reloadAgentSession = async () => managed;
-  session.agentManager.hydrateTimelineFromProvider = async () => undefined;
+  let hydrationRequest:
+    | { agentId: string; options: { broadcast?: boolean; force?: boolean } | undefined }
+    | undefined;
+  session.agentManager.hydrateTimelineFromProvider = async (requestedAgentId, options) => {
+    hydrationRequest = { agentId: requestedAgentId, options };
+  };
   session.agentManager.getTimeline = () => [];
   session.agentUpdates.forwardLiveAgent = async () => undefined;
 
@@ -5087,6 +5092,39 @@ test("refresh_agent_request leaves workspace archival independent when its direc
   expect(projects.get(cwd)?.archivedAt).toBe("2026-03-10T00:00:00.000Z");
   expect(unarchivedWorkspaceIds).toEqual([]);
   expect(findByType(emitted, "rpc_error")).toBeUndefined();
+  expect(hydrationRequest).toEqual({
+    agentId,
+    options: { broadcast: true, force: true },
+  });
+
+  session.agentManager.hydrateTimelineFromProvider = async () => {
+    throw new Error("provider refresh history failed");
+  };
+  await session.handleMessage({
+    type: "refresh_agent_request",
+    agentId,
+    requestId: "req-refresh-history-failure",
+  });
+
+  expect(
+    emitted.find(
+      (message) =>
+        message.type === "rpc_error" && message.payload.requestId === "req-refresh-history-failure",
+    )?.payload,
+  ).toMatchObject({
+    requestId: "req-refresh-history-failure",
+    requestType: "refresh_agent_request",
+    code: "agent_refresh_failed",
+    error: "provider refresh history failed",
+  });
+  expect(
+    emitted.find(
+      (message) =>
+        message.type === "status" &&
+        message.payload.status === "agent_refreshed" &&
+        message.payload.requestId === "req-refresh-history-failure",
+    ),
+  ).toBeUndefined();
 });
 
 test("refresh_agent_request leaves workspace archival independent when its directory is missing", async () => {
