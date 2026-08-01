@@ -3164,6 +3164,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private unpairedCompactionNotificationCompletions = 0;
   private unpairedCompactionItemCompletions = 0;
   private connected = false;
+  private connectionPromise: Promise<void> | null = null;
   private collaborationModes: Array<{
     name: string;
     mode?: string | null;
@@ -3230,6 +3231,23 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   async connect(): Promise<void> {
     if (this.connected) return;
+    if (this.connectionPromise) {
+      await this.connectionPromise;
+      return;
+    }
+
+    const connectionPromise = this.establishConnection();
+    this.connectionPromise = connectionPromise;
+    try {
+      await connectionPromise;
+    } finally {
+      if (this.connectionPromise === connectionPromise) {
+        this.connectionPromise = null;
+      }
+    }
+  }
+
+  private async establishConnection(): Promise<void> {
     const child = await this.spawnAppServer();
     this.client = new CodexAppServerClient(child, this.logger, () => this.traceContext());
     this.client.setUnexpectedTerminationHandler((error) => {

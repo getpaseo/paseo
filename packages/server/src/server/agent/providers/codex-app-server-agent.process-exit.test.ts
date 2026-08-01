@@ -440,3 +440,51 @@ test("idle provider exit preserves a synthetic plan approval across reconnect", 
     rmSync(workdir, { recursive: true, force: true });
   }
 });
+
+test("concurrent session APIs share one reconnect after an idle provider exit", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-process-concurrent-reconnect-"));
+  const appServers = [
+    createFakeCodexAppServer(),
+    createFakeCodexAppServer(),
+    createFakeCodexAppServer(),
+  ];
+  let spawnCount = 0;
+  let releaseReconnect: (() => void) | undefined;
+  const reconnectGate = new Promise<void>((resolve) => {
+    releaseReconnect = resolve;
+  });
+  const session = new CodexAppServerAgentSession(
+    { provider: "codex", cwd: workdir, modeId: "auto", model: "gpt-5.4" },
+    null,
+    logger,
+    async () => {
+      const appServer = appServers[spawnCount];
+      if (!appServer) {
+        throw new Error("No fake Codex app-server available");
+      }
+      spawnCount += 1;
+      if (spawnCount > 1) {
+        await reconnectGate;
+      }
+      return appServer.child;
+    },
+  );
+
+  try {
+    await session.connect();
+    appServers[0]!.child.emit("exit", 17, null);
+
+    const runtimeInfo = session.getRuntimeInfo();
+    const turnStart = session.startTurn("continue after reconnect");
+    const reconnectSpawnCount = spawnCount - 1;
+    releaseReconnect?.();
+
+    await expect(runtimeInfo).resolves.toMatchObject({ provider: "codex" });
+    await expect(turnStart).resolves.toMatchObject({ turnId: expect.any(String) });
+    expect(reconnectSpawnCount).toBe(1);
+  } finally {
+    releaseReconnect?.();
+    await session.close();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
