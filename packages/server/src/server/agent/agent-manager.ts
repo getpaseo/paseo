@@ -2406,17 +2406,63 @@ export class AgentManager {
     const previous = (this.historyHydrationTails.get(agentId) ?? Promise.resolve()).catch(
       () => undefined,
     );
-    const hydration = previous.then(async () => {
-      const agent = this.requireSessionAgent(agentId);
-      await this.hydrateTimelineFromLegacyProviderHistory(agent, options);
-      return undefined;
-    });
+    let hydration!: Promise<void>;
+    const ownsLatestTail = () => this.historyHydrationTails.get(agentId) === hydration;
+    hydration = previous.then(() =>
+      this.runSerializedHistoryHydration(agentId, options, ownsLatestTail),
+    );
     this.historyHydrationTails.set(agentId, hydration);
+    let hydrationError: unknown;
+    let hydrationFailed = false;
     try {
       await hydration;
+    } catch (error) {
+      hydrationFailed = true;
+      hydrationError = error;
     } finally {
+      // A caller whose hydration handed the gate to a queued successor must not return while
+      // that shared gate still owns uncommitted live writes. Follow the latest per-agent tail to
+      // a stable endpoint, while preserving this caller's own success/failure result.
+      while (true) {
+        const latestHydration = this.historyHydrationTails.get(agentId);
+        if (!latestHydration || latestHydration === hydration) {
+          break;
+        }
+        await latestHydration.catch(() => undefined);
+        if (this.historyHydrationTails.get(agentId) === latestHydration) {
+          break;
+        }
+      }
       if (this.historyHydrationTails.get(agentId) === hydration) {
         this.historyHydrationTails.delete(agentId);
+      }
+    }
+    if (hydrationFailed) {
+      throw hydrationError;
+    }
+    return undefined;
+  }
+
+  private async runSerializedHistoryHydration(
+    agentId: string,
+    options: HydrateTimelineOptions | undefined,
+    ownsLatestTail: () => boolean,
+  ): Promise<void> {
+    await this.drainSessionEvents(agentId);
+    const hydrationToken = this.beginOrContinueHistoryHydration(agentId);
+    try {
+      // Capture output already waiting in the coalescer at this exact boundary. When another
+      // hydration is queued, the same gate remains active and this flush places between-call
+      // output after earlier buffered work but before the next provider history read.
+      this.agentStreamCoalescer.flushAndDiscard(agentId);
+      const agent = this.requireSessionAgent(agentId);
+      await this.hydrateTimelineFromLegacyProviderHistory(agent, options);
+    } finally {
+      // A queued successor inherits the gate and buffered operations. Only the latest hydration
+      // performs the final release; writers that have not already linearized remain gated across
+      // the handoff so they cannot escape into the between-promises microtask window.
+      if (ownsLatestTail()) {
+        await this.releaseHistoryHydration(agentId, hydrationToken, ownsLatestTail);
       }
     }
   }
@@ -3221,50 +3267,97 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     broadcast: boolean,
   ): Promise<void> {
-    await this.drainSessionEvents(agent.id);
-    const hydrationToken = this.beginHistoryHydration(agent.id);
-    // Session events drained above may still have timeline output waiting in the coalescer.
-    // Capture that output at the front of the owned buffer before streamHistory can interleave
-    // newer live events, preserving the original per-agent event order across replacement.
+    const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
+    const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
+    for await (const event of agent.session.streamHistory()) {
+      if (event.type === "timeline") {
+        if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
+          continue;
+        }
+        historyEvents.push(event);
+      } else if (event.type === "provider_subagent") {
+        providerSubagentEvents.push(event);
+      }
+    }
+
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
+    await this.deleteCommittedTimeline(agent.id);
+    this.timelineStore.delete(agent.id);
+    this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
+    agent.historyPrimed = true;
+
+    for (const event of this.providerSubagents.deleteParent(agent.id)) {
+      if (broadcast) {
+        this.dispatch({ type: "provider_subagent", event });
+      }
+    }
+    for (const event of providerSubagentEvents) {
+      const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+      if (broadcast) {
+        this.dispatch({ type: "provider_subagent", event: update });
+      }
+    }
+    for (const event of historyEvents) {
+      const row = this.recordTimeline(
+        agent.id,
+        event.item,
+        event.timestamp ? { timestamp: event.timestamp } : undefined,
+      );
+      if (broadcast) {
+        this.dispatchStream(agent.id, event, {
+          seq: row.seq,
+          epoch: this.timelineStore.getEpoch(agent.id),
+          timestamp: row.timestamp,
+        });
+      }
+    }
+    this.touchUpdatedAt(agent);
+    this.emitState(agent);
+  }
+
+  private async primeTimelineFromLegacyProviderHistory(
+    agent: ActiveManagedAgent,
+    broadcast: boolean | (() => boolean),
+  ): Promise<void> {
+    const timelineEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
+    const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
+    let historyAvailable = true;
+    agent.historyPrimed = true;
     try {
-      const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
-      const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
       for await (const event of agent.session.streamHistory()) {
-        if (event.type === "timeline") {
-          if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
-            continue;
-          }
-          historyEvents.push(event);
-        } else if (event.type === "provider_subagent") {
+        if (event.type === "provider_subagent") {
           providerSubagentEvents.push(event);
+          continue;
         }
-      }
-
-      this.agentStreamCoalescer.flushAndDiscard(agent.id);
-      await this.deleteCommittedTimeline(agent.id);
-      this.timelineStore.delete(agent.id);
-      this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
-      agent.historyPrimed = true;
-
-      for (const event of this.providerSubagents.deleteParent(agent.id)) {
-        if (broadcast) {
-          this.dispatch({ type: "provider_subagent", event });
+        if (event.type !== "timeline") {
+          continue;
         }
+        if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
+          continue;
+        }
+        timelineEvents.push(event);
       }
+    } catch {
+      agent.historyPrimed = false;
+      historyAvailable = false;
+      // ignore history failures
+    }
+
+    if (historyAvailable) {
+      const shouldBroadcast = typeof broadcast === "function" ? broadcast() : broadcast;
       for (const event of providerSubagentEvents) {
         const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
-        if (broadcast) {
+        if (shouldBroadcast) {
           this.dispatch({ type: "provider_subagent", event: update });
         }
       }
-      for (const event of historyEvents) {
+      for (const event of timelineEvents) {
         const row = this.recordTimeline(
           agent.id,
           event.item,
           event.timestamp ? { timestamp: event.timestamp } : undefined,
         );
-        if (broadcast) {
+        if (shouldBroadcast) {
           this.dispatchStream(agent.id, event, {
             seq: row.seq,
             epoch: this.timelineStore.getEpoch(agent.id),
@@ -3272,84 +3365,24 @@ export class AgentManager {
           });
         }
       }
-      this.touchUpdatedAt(agent);
-      this.emitState(agent);
-    } finally {
-      await this.releaseHistoryHydration(agent.id, hydrationToken);
     }
   }
 
-  private async primeTimelineFromLegacyProviderHistory(
-    agent: ActiveManagedAgent,
-    broadcast: boolean | (() => boolean),
-  ): Promise<void> {
-    await this.drainSessionEvents(agent.id);
-    const hydrationToken = this.beginHistoryHydration(agent.id);
-    // Preserve pre-hydration coalescer output ahead of any live events emitted by streamHistory.
-    this.agentStreamCoalescer.flushAndDiscard(agent.id);
-    const timelineEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
-    const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
-    let historyAvailable = true;
-    try {
-      agent.historyPrimed = true;
-      try {
-        for await (const event of agent.session.streamHistory()) {
-          if (event.type === "provider_subagent") {
-            providerSubagentEvents.push(event);
-            continue;
-          }
-          if (event.type !== "timeline") {
-            continue;
-          }
-          if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
-            continue;
-          }
-          timelineEvents.push(event);
-        }
-      } catch {
-        agent.historyPrimed = false;
-        historyAvailable = false;
-        // ignore history failures
-      }
-
-      if (historyAvailable) {
-        const shouldBroadcast = typeof broadcast === "function" ? broadcast() : broadcast;
-        for (const event of providerSubagentEvents) {
-          const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
-          if (shouldBroadcast) {
-            this.dispatch({ type: "provider_subagent", event: update });
-          }
-        }
-        for (const event of timelineEvents) {
-          const row = this.recordTimeline(
-            agent.id,
-            event.item,
-            event.timestamp ? { timestamp: event.timestamp } : undefined,
-          );
-          if (shouldBroadcast) {
-            this.dispatchStream(agent.id, event, {
-              seq: row.seq,
-              epoch: this.timelineStore.getEpoch(agent.id),
-              timestamp: row.timestamp,
-            });
-          }
-        }
-      }
-    } finally {
-      await this.releaseHistoryHydration(agent.id, hydrationToken);
-    }
-  }
-
-  private beginHistoryHydration(agentId: string): symbol {
-    if (this.activeHistoryHydrations.has(agentId)) {
-      throw new Error(`Agent ${agentId} already has an active history hydration`);
+  private beginOrContinueHistoryHydration(agentId: string): symbol {
+    const activeHydration = this.activeHistoryHydrations.get(agentId);
+    if (activeHydration) {
+      return activeHydration.token;
     }
     const token = Symbol(agentId);
     this.activeHistoryHydrations.set(agentId, { token, bufferedOperations: [] });
     return token;
   }
 
-  private async releaseHistoryHydration(agentId: string, token: symbol): Promise<void> {
+  private async releaseHistoryHydration(
+    agentId: string,
+    token: symbol,
+    stillOwnsTail: () => boolean,
+  ): Promise<void> {
     const activeHydration = this.activeHistoryHydrations.get(agentId);
     if (!activeHydration || activeHydration.token !== token) {
       throw new Error(`Agent ${agentId} history hydration ownership was lost`);
@@ -3363,6 +3396,11 @@ export class AgentManager {
       const operation = activeHydration.bufferedOperations.shift();
       if (operation) {
         try {
+          if (operation.kind === "timeline_writer") {
+            // A preceding replayed session event may have placed older output in the coalescer.
+            // Commit it before this direct writer so crossing the barrier cannot invert order.
+            this.flushCoalescedTimelineItems(agentId, token);
+          }
           await operation.run();
           operation.resolve?.();
         } catch (err) {
@@ -3378,6 +3416,13 @@ export class AgentManager {
       this.flushCoalescedTimelineItems(agentId, token);
       if (activeHydration.bufferedOperations.length > 0) {
         continue;
+      }
+
+      // A successor may have been enqueued while a buffered operation awaited persistence. In
+      // that case keep the gate installed; the successor inherits it and performs the final
+      // release after its own replacement instead of opening a between-gates writer window.
+      if (!stillOwnsTail()) {
+        return;
       }
 
       // There is no await between this final check and gate removal. A concurrent writer either
@@ -3415,15 +3460,23 @@ export class AgentManager {
   }
 
   private flushCoalescedTimelineItems(agentId: string, historyHydrationToken?: symbol): void {
-    if (!historyHydrationToken) {
+    this.withCoalescerHistoryHydrationToken(agentId, historyHydrationToken, () => {
       this.agentStreamCoalescer.flushFor(agentId);
-      return;
-    }
+    });
+  }
 
+  private withCoalescerHistoryHydrationToken<T>(
+    agentId: string,
+    historyHydrationToken: symbol | undefined,
+    run: () => T,
+  ): T {
+    if (!historyHydrationToken) {
+      return run();
+    }
     const previousToken = this.coalescerHistoryHydrationTokens.get(agentId);
     this.coalescerHistoryHydrationTokens.set(agentId, historyHydrationToken);
     try {
-      this.agentStreamCoalescer.flushFor(agentId);
+      return run();
     } finally {
       if (previousToken) {
         this.coalescerHistoryHydrationTokens.set(agentId, previousToken);
@@ -3482,7 +3535,12 @@ export class AgentManager {
     // Only update timestamp for live events, not history replay
     if (!options?.fromHistory) {
       this.touchUpdatedAt(agent);
-      if (this.agentStreamCoalescer.handle(agent.id, event)) {
+      const eventWasCoalesced = this.withCoalescerHistoryHydrationToken(
+        agent.id,
+        options?.historyHydrationToken,
+        () => this.agentStreamCoalescer.handle(agent.id, event),
+      );
+      if (eventWasCoalesced) {
         this.traceCoalescerBuffered(agent, event, eventTurnId);
         return false;
       }

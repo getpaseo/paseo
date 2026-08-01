@@ -3132,6 +3132,109 @@ test("force provider hydration preserves a direct timeline append during replace
   }
 });
 
+test.each([
+  {
+    caseName: "assistant output",
+    liveItems: [
+      { type: "assistant_message", text: "earlier assistant" },
+    ] satisfies AgentTimelineItem[],
+    expectedCoalesced: {
+      type: "assistant_message",
+      text: "earlier assistant",
+    } satisfies AgentTimelineItem,
+  },
+  {
+    caseName: "a running-to-terminal tool call",
+    liveItems: [
+      {
+        type: "tool_call",
+        callId: "ordered-tool",
+        name: "bash",
+        status: "running",
+        error: null,
+        detail: { type: "shell", command: "git status" },
+      },
+      {
+        type: "tool_call",
+        callId: "ordered-tool",
+        name: "bash",
+        status: "completed",
+        error: null,
+        detail: { type: "shell", command: "git status", exitCode: 0 },
+      },
+    ] satisfies AgentTimelineItem[],
+    expectedCoalesced: {
+      type: "tool_call",
+      callId: "ordered-tool",
+      name: "bash",
+      status: "completed",
+      error: null,
+      detail: { type: "shell", command: "git status", exitCode: 0 },
+    } satisfies AgentTimelineItem,
+  },
+])(
+  "force hydration keeps buffered $caseName ahead of a later direct writer",
+  async ({ liveItems, expectedCoalesced }) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-force-cross-writer-order-"));
+    const agentId = randomUUID();
+    const historyEntered = deferred<void>();
+    const releaseHistory = deferred<void>();
+    let session: CrossWriterOrderingSession | null = null;
+
+    class CrossWriterOrderingSession extends TestAgentSession {
+      override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        historyEntered.resolve();
+        await releaseHistory.promise;
+        yield {
+          type: "timeline",
+          provider: "codex",
+          item: { type: "user_message", text: "replacement history" },
+        };
+      }
+    }
+    class CrossWriterOrderingClient extends TestAgentClient {
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        session = new CrossWriterOrderingSession(config);
+        return session;
+      }
+    }
+
+    const manager = new AgentManager({
+      clients: { codex: new CrossWriterOrderingClient() },
+      logger,
+      idFactory: () => agentId,
+      agentStreamCoalesceWindowMs: 60_000,
+    });
+    try {
+      const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      const hydration = manager.hydrateTimelineFromProvider(created.id, { force: true });
+      await historyEntered.promise;
+
+      for (const item of liveItems) {
+        session?.pushEvent({ type: "timeline", provider: "codex", item });
+      }
+      const append = manager.appendTimelineItem(created.id, {
+        type: "user_message",
+        text: "later direct append",
+      });
+
+      releaseHistory.resolve();
+      await Promise.all([hydration, append]);
+      expect(manager.getTimeline(created.id)).toEqual([
+        { type: "user_message", text: "replacement history" },
+        expectedCoalesced,
+        { type: "user_message", text: "later direct append" },
+      ]);
+    } finally {
+      releaseHistory.resolve();
+      await manager.closeAgent(agentId).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
 test("force provider hydration preserves out-of-band timeline output during replacement", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-force-out-of-band-"));
   const agentId = "00000000-0000-4000-8000-000000000153";
@@ -3543,6 +3646,180 @@ test("concurrent forced history hydrations serialize per agent", async () => {
     ]);
   } finally {
     releaseFirstHydration.resolve();
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("queued force hydrations keep one gate across sequential direct writers", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-force-continuous-gate-"));
+  const agentId = "00000000-0000-4000-8000-000000000158";
+  const firstHistoryEntered = deferred<void>();
+  const releaseFirstHistory = deferred<void>();
+  const secondHistoryEntered = deferred<void>();
+  const releaseSecondHistory = deferred<void>();
+  let historyCalls = 0;
+
+  class ContinuousGateHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      historyCalls += 1;
+      const call = historyCalls;
+      if (call === 1) {
+        firstHistoryEntered.resolve();
+        await releaseFirstHistory.promise;
+      } else {
+        secondHistoryEntered.resolve();
+        await releaseSecondHistory.promise;
+      }
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: `history ${call}` },
+      };
+    }
+  }
+  class ContinuousGateHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new ContinuousGateHistorySession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ContinuousGateHistoryClient() },
+    logger,
+    idFactory: () => agentId,
+  });
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    let firstSettled = false;
+    const first = manager.hydrateTimelineFromProvider(created.id, { force: true }).finally(() => {
+      firstSettled = true;
+    });
+    await firstHistoryEntered.promise;
+    const second = manager.hydrateTimelineFromProvider(created.id, { force: true });
+
+    let firstAppendSettled = false;
+    const firstAppend = manager
+      .appendTimelineItem(created.id, { type: "user_message", text: "direct append B" })
+      .finally(() => {
+        firstAppendSettled = true;
+      });
+    const secondAppend = firstAppend.then(async () => {
+      await manager.appendTimelineItem(created.id, {
+        type: "user_message",
+        text: "sequential direct append C",
+      });
+      return undefined;
+    });
+
+    releaseFirstHistory.resolve();
+    await secondHistoryEntered.promise;
+    expect(firstSettled).toBe(false);
+    expect(firstAppendSettled).toBe(false);
+
+    releaseSecondHistory.resolve();
+    await Promise.all([first, second, firstAppend, secondAppend]);
+    expect(manager.getTimeline(created.id)).toEqual([
+      { type: "user_message", text: "history 2" },
+      { type: "user_message", text: "direct append B" },
+      { type: "user_message", text: "sequential direct append C" },
+    ]);
+  } finally {
+    releaseFirstHistory.resolve();
+    releaseSecondHistory.resolve();
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a force queued during release inherits the gate for later writers", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-force-release-handoff-"));
+  const agentId = "00000000-0000-4000-8000-000000000159";
+  const firstHistoryEntered = deferred<void>();
+  const releaseFirstHistory = deferred<void>();
+  const firstAppendPersistEntered = deferred<void>();
+  const releaseFirstAppendPersist = deferred<void>();
+  let historyCalls = 0;
+
+  class ReleaseHandoffHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      historyCalls += 1;
+      const call = historyCalls;
+      if (call === 1) {
+        firstHistoryEntered.resolve();
+        await releaseFirstHistory.promise;
+      }
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: `history ${call}` },
+      };
+    }
+  }
+  class ReleaseHandoffHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new ReleaseHandoffHistorySession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ReleaseHandoffHistoryClient() },
+    logger,
+    idFactory: () => agentId,
+  });
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const originalPersistSnapshot = Reflect.get(manager, "persistSnapshot") as (
+      agent: ManagedAgent,
+    ) => Promise<void>;
+    let delayNextPersist = true;
+    Reflect.set(manager, "persistSnapshot", async (agent: ManagedAgent) => {
+      const firstAppendWasRecorded = manager
+        .getTimeline(agent.id)
+        .some(
+          (item) =>
+            item.type === "user_message" &&
+            item.text === "direct append B may linearize before force 2",
+        );
+      if (delayNextPersist && firstAppendWasRecorded) {
+        delayNextPersist = false;
+        firstAppendPersistEntered.resolve();
+        await releaseFirstAppendPersist.promise;
+      }
+      await originalPersistSnapshot.call(manager, agent);
+    });
+
+    const first = manager.hydrateTimelineFromProvider(created.id, { force: true });
+    await firstHistoryEntered.promise;
+    const firstAppend = manager.appendTimelineItem(created.id, {
+      type: "user_message",
+      text: "direct append B may linearize before force 2",
+    });
+    const laterAppend = firstAppend.then(async () => {
+      await manager.appendTimelineItem(created.id, {
+        type: "user_message",
+        text: "direct append C begins after force 2",
+      });
+      return undefined;
+    });
+
+    releaseFirstHistory.resolve();
+    await firstAppendPersistEntered.promise;
+    const second = manager.hydrateTimelineFromProvider(created.id, { force: true });
+    releaseFirstAppendPersist.resolve();
+
+    await Promise.all([first, second, firstAppend, laterAppend]);
+    expect(manager.getTimeline(created.id)).toEqual([
+      { type: "user_message", text: "history 2" },
+      { type: "user_message", text: "direct append C begins after force 2" },
+    ]);
+  } finally {
+    releaseFirstHistory.resolve();
+    releaseFirstAppendPersist.resolve();
     await manager.closeAgent(agentId).catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
   }
