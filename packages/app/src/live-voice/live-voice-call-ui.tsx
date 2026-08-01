@@ -26,11 +26,6 @@ const ICON_SIZE = 14;
 /** How close to the end counts as "pinned to the bottom" for auto-scroll. */
 const PINNED_THRESHOLD = 48;
 
-/** The large call surface exists only while a call is being established, live, or stopped. */
-export function isLiveVoiceCallInProgress(phase: LiveVoicePhase): boolean {
-  return phase === "starting" || phase === "active" || phase === "stopping";
-}
-
 export function resolveLiveVoiceStatusLabel(args: {
   phase: LiveVoicePhase;
   isAudioBlocked: boolean;

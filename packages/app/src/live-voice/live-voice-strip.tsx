@@ -1,18 +1,19 @@
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
+import Animated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 import { useLiveVoiceOptional } from "@/contexts/live-voice-context";
+import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import {
-  isLiveVoiceCallInProgress,
   LiveVoiceCallControls,
   LiveVoiceStatusDot,
   LiveVoiceTranscript,
   resolveLiveVoiceModeLabel,
   resolveLiveVoiceStatusLabel,
 } from "@/live-voice/live-voice-call-ui";
-import { useSidebarOwnsLiveVoiceSurface } from "@/live-voice/live-voice-placement";
+import { useIsLiveVoiceStripDocked } from "@/live-voice/live-voice-placement";
 import { resolveLiveVoiceErrorMessage } from "@/live-voice/live-voice-error-message";
 import { useHosts } from "@/runtime/host-runtime";
 
@@ -30,10 +31,11 @@ const TRANSCRIPT_MAX_HEIGHT = 280;
  * starting a call and inspecting terminal status are the footer button's jobs.
  */
 export function LiveVoiceStrip() {
-  const sidebarOwnsSurface = useSidebarOwnsLiveVoiceSurface();
+  const isDocked = useIsLiveVoiceStripDocked();
   const liveVoice = useLiveVoiceOptional();
   const hosts = useHosts();
   const insets = useSafeAreaInsets();
+  const { style: keyboardShiftStyle } = useKeyboardShiftStyle({ mode: "translate" });
   const { t } = useTranslation();
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -41,13 +43,12 @@ export function LiveVoiceStrip() {
     setIsExpanded((current) => !current);
   }, []);
 
-  if (sidebarOwnsSurface || !liveVoice) {
+  // One predicate decides both this render and the bottom inset every screen
+  // above the strip uses, so the two can never disagree.
+  if (!isDocked || !liveVoice) {
     return null;
   }
   const { phase, serverId, sessionMode, transcripts, isAudioBlocked, error } = liveVoice;
-  if (!isLiveVoiceCallInProgress(phase)) {
-    return null;
-  }
 
   const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? null;
   const modeLabel = resolveLiveVoiceModeLabel({ sessionMode, t });
@@ -56,7 +57,12 @@ export function LiveVoiceStrip() {
   const latestTranscript = transcripts.length > 0 ? transcripts[transcripts.length - 1] : null;
 
   return (
-    <View testID="live-voice-strip" style={[styles.container, { paddingBottom: insets.bottom }]}>
+    <Animated.View
+      testID="live-voice-strip"
+      // The window does not resize for the keyboard, so the strip has to ride it
+      // the way composers do or it ends up hidden behind an open keyboard.
+      style={[styles.container, { paddingBottom: insets.bottom }, keyboardShiftStyle]}
+    >
       {isExpanded ? (
         <View style={styles.transcriptSection}>
           <LiveVoiceTranscript
@@ -84,7 +90,7 @@ export function LiveVoiceStrip() {
 
         <LiveVoiceCallControls isExpanded={isExpanded} onToggleExpanded={handleToggleExpanded} />
       </View>
-    </View>
+    </Animated.View>
   );
 }
 

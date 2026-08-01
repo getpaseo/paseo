@@ -4,14 +4,16 @@ import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useLiveVoiceOptional } from "@/contexts/live-voice-context";
 import {
-  isLiveVoiceCallInProgress,
   LiveVoiceCallControls,
   LiveVoiceStatusDot,
   LiveVoiceTranscript,
   resolveLiveVoiceModeLabel,
   resolveLiveVoiceStatusLabel,
 } from "@/live-voice/live-voice-call-ui";
-import { acquireSidebarVoiceSlot } from "@/live-voice/live-voice-placement";
+import {
+  acquireSidebarVoiceSlot,
+  isLiveVoiceCallInProgress,
+} from "@/live-voice/live-voice-placement";
 import { resolveLiveVoiceErrorMessage } from "@/live-voice/live-voice-error-message";
 import { useHosts } from "@/runtime/host-runtime";
 

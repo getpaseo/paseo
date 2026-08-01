@@ -12,6 +12,8 @@
  */
 
 import { useSyncExternalStore } from "react";
+import { useLiveVoiceOptional } from "@/contexts/live-voice-context";
+import type { LiveVoicePhase } from "@/live-voice/live-voice-runtime";
 
 let sidebarSlots = 0;
 const listeners = new Set<() => void>();
@@ -50,4 +52,22 @@ function getSidebarOwnsSurface(): boolean {
 
 export function useSidebarOwnsLiveVoiceSurface(): boolean {
   return useSyncExternalStore(subscribe, getSidebarOwnsSurface, getSidebarOwnsSurface);
+}
+
+/** The large call surface exists only while a call is being established, live, or stopped. */
+export function isLiveVoiceCallInProgress(phase: LiveVoicePhase): boolean {
+  return phase === "starting" || phase === "active" || phase === "stopping";
+}
+
+/**
+ * Whether the docked strip is currently occupying the layout's bottom edge.
+ *
+ * `LiveVoiceStrip` renders on exactly this condition, so content docked above it
+ * can drop its own bottom safe-area padding without the two rules drifting apart
+ * (see `useScreenBottomInset`).
+ */
+export function useIsLiveVoiceStripDocked(): boolean {
+  const sidebarOwnsSurface = useSidebarOwnsLiveVoiceSurface();
+  const liveVoice = useLiveVoiceOptional();
+  return !sidebarOwnsSurface && liveVoice != null && isLiveVoiceCallInProgress(liveVoice.phase);
 }
