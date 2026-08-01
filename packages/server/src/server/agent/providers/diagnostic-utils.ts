@@ -147,6 +147,9 @@ export async function resolveBinaryVersion(
     });
     return stdout.trim() || "unknown";
   } catch (error) {
+    if (signal?.aborted) {
+      throw signal.reason;
+    }
     return `error: ${toDiagnosticErrorMessage(error)}`;
   }
 }

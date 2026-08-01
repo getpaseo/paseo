@@ -1246,6 +1246,97 @@ describe("ProviderSnapshotManager lifecycle", () => {
     }
   });
 
+  test("shutdown aborts a cooperative availability probe before draining its client", async () => {
+    let availabilitySignal: AbortSignal | undefined;
+    const availabilityEntered = createDeferred<void>();
+    const shutdown = vi.fn(async () => {});
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: vi.fn(
+            async (options) =>
+              await new Promise<boolean>((_resolve, reject) => {
+                availabilitySignal = options?.signal;
+                availabilityEntered.resolve();
+                if (availabilitySignal) rejectWhenAborted(availabilitySignal, reject);
+              }),
+          ),
+          shutdown,
+        }),
+      },
+    });
+
+    try {
+      const refresh = manager.refreshSnapshotForCwd({
+        cwd: "/tmp/project",
+        providers: ["codex"],
+      });
+      await availabilityEntered.promise;
+
+      const shutdownPromise = manager.shutdown();
+      await shutdownPromise;
+      await refresh;
+
+      expect(availabilitySignal?.aborted).toBe(true);
+      expect(shutdown).toHaveBeenCalledTimes(1);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("a forced refresh aborts and drains the superseded availability probe", async () => {
+    const availabilitySignals: AbortSignal[] = [];
+    const shutdown = vi.fn(async () => {});
+    const isAvailable = vi.fn(async (options?: { signal?: AbortSignal }) => {
+      const signal = options?.signal;
+      if (!signal) return await new Promise<boolean>(() => {});
+      availabilitySignals.push(signal);
+      if (availabilitySignals.length === 2) return false;
+      return await new Promise<boolean>((_resolve, reject) => rejectWhenAborted(signal, reject));
+    });
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", { isAvailable, shutdown }),
+      },
+    });
+
+    try {
+      const first = manager.refreshSnapshotForCwd({
+        cwd: "/tmp/project",
+        providers: ["codex"],
+      });
+      await vi.waitFor(() => expect(availabilitySignals).toHaveLength(1));
+
+      const second = manager.refreshSnapshotForCwd({
+        cwd: "/tmp/project",
+        providers: ["codex"],
+      });
+      await Promise.all([first, second]);
+
+      expect(availabilitySignals).toHaveLength(2);
+      expect(availabilitySignals[0]?.aborted).toBe(true);
+      expect(availabilitySignals[1]?.aborted).toBe(false);
+      await manager.shutdown();
+      expect(shutdown).toHaveBeenCalledTimes(1);
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("shutdown cancels an in-flight catalog before its provider request survives", async () => {
     const catalogEntered = createDeferred<void>();
     const catalogGate = createDeferred<void>();
@@ -1360,9 +1451,10 @@ describe("ProviderSnapshotManager lifecycle", () => {
     }
   });
 
-  test("availability timeout retains client ownership until the probe settles", async () => {
+  test("availability timeout aborts the probe but retains client ownership until it settles", async () => {
     const availabilityEntered = createDeferred<void>();
     const availabilityGate = createDeferred<boolean>();
+    let availabilitySignal: AbortSignal | undefined;
     const shutdown = vi.fn(async () => {});
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
@@ -1375,7 +1467,8 @@ describe("ProviderSnapshotManager lifecycle", () => {
       },
       extraClients: {
         codex: createExtraClient("codex", {
-          isAvailable: vi.fn(async () => {
+          isAvailable: vi.fn(async (options) => {
+            availabilitySignal = options?.signal;
             availabilityEntered.resolve();
             return await availabilityGate.promise;
           }),
@@ -1392,6 +1485,7 @@ describe("ProviderSnapshotManager lifecycle", () => {
       await availabilityEntered.promise;
       await refresh;
 
+      expect(availabilitySignal?.aborted).toBe(true);
       const shutdownPromise = manager.shutdown();
       await Promise.resolve();
       expect(shutdown).not.toHaveBeenCalled();

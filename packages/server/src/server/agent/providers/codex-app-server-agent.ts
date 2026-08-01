@@ -6399,8 +6399,8 @@ export class CodexAppServerAgentSession implements AgentSession {
 export class CodexAppServerAgentClient implements AgentClient {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
-  private goalsEnabledPromise: Promise<boolean> | null = null;
-  private autoReviewEnabledPromise: Promise<boolean> | null = null;
+  private goalsEnabled: boolean | null = null;
+  private autoReviewEnabled: boolean | null = null;
   private readonly activeCatalogOperations = new Set<Promise<ProviderCatalog>>();
   private readonly shutdownController = new AbortController();
 
@@ -6420,35 +6420,47 @@ export class CodexAppServerAgentClient implements AgentClient {
     };
   }
 
-  private resolveGoalsEnabled(): Promise<boolean> {
-    if (!this.goalsEnabledPromise) {
-      this.goalsEnabledPromise = (async () => {
-        try {
-          const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
-          const versionOutput = await resolveBinaryVersion(launchPrefix.command);
-          const enabled = codexVersionAtLeast(versionOutput, CODEX_GOALS_MIN_VERSION);
-          this.logger.trace(
-            {
-              provider: CODEX_PROVIDER,
-              versionOutput,
-              enabled,
-            },
-            "provider.codex.config.goals_resolved",
-          );
-          return enabled;
-        } catch (error) {
-          this.logger.warn({ err: error }, "Failed to probe codex version for goals gate");
-          return false;
-        }
-      })();
+  private async probeGoalsEnabled(signal?: AbortSignal): Promise<boolean> {
+    try {
+      signal?.throwIfAborted();
+      const launchPrefix = await this.resolveLaunchPrefix();
+      signal?.throwIfAborted();
+      const versionOutput = await resolveBinaryVersion(launchPrefix.command, signal);
+      signal?.throwIfAborted();
+      const enabled = codexVersionAtLeast(versionOutput, CODEX_GOALS_MIN_VERSION);
+      this.logger.trace(
+        {
+          provider: CODEX_PROVIDER,
+          versionOutput,
+          enabled,
+        },
+        "provider.codex.config.goals_resolved",
+      );
+      return enabled;
+    } catch (error) {
+      if (signal?.aborted) {
+        throw signal.reason;
+      }
+      this.logger.warn({ err: error }, "Failed to probe codex version for goals gate");
+      return false;
     }
-    return this.goalsEnabledPromise;
+  }
+
+  private async resolveGoalsEnabled(signal?: AbortSignal): Promise<boolean> {
+    signal?.throwIfAborted();
+    if (this.goalsEnabled !== null) {
+      return this.goalsEnabled;
+    }
+    const enabled = await this.probeGoalsEnabled(signal);
+    signal?.throwIfAborted();
+    this.goalsEnabled = enabled;
+    return enabled;
   }
 
   private async probeAutoReviewEnabled(signal?: AbortSignal): Promise<boolean> {
     try {
       signal?.throwIfAborted();
-      const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
+      const launchPrefix = await this.resolveLaunchPrefix();
       signal?.throwIfAborted();
       const versionOutput = await resolveBinaryVersion(launchPrefix.command, signal);
       signal?.throwIfAborted();
@@ -6471,18 +6483,26 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
   }
 
-  private resolveAutoReviewEnabled(signal?: AbortSignal): Promise<boolean> {
-    if (signal) {
-      return this.probeAutoReviewEnabled(signal);
+  private async resolveAutoReviewEnabled(signal?: AbortSignal): Promise<boolean> {
+    signal?.throwIfAborted();
+    if (this.autoReviewEnabled !== null) {
+      return this.autoReviewEnabled;
     }
-    if (!this.autoReviewEnabledPromise) {
-      this.autoReviewEnabledPromise = this.probeAutoReviewEnabled();
-    }
-    return this.autoReviewEnabledPromise;
+    const enabled = await this.probeAutoReviewEnabled(signal);
+    signal?.throwIfAborted();
+    this.autoReviewEnabled = enabled;
+    return enabled;
   }
 
   private resolveLaunchPrefix() {
     return resolveCodexLaunchPrefix(this.runtimeSettings);
+  }
+
+  private resolveStartupSignal(requestSignal?: AbortSignal): AbortSignal {
+    return AbortSignal.any([
+      ...(requestSignal ? [requestSignal] : []),
+      this.shutdownController.signal,
+    ]);
   }
 
   private async spawnAppServer(
@@ -6531,8 +6551,13 @@ export class CodexAppServerAgentClient implements AgentClient {
       // utility generations through `codex exec --ephemeral` in a larger change.
     }
     const sessionConfig: AgentSessionConfig = { ...config, provider: CODEX_PROVIDER };
-    const goalsEnabled = await this.resolveGoalsEnabled();
-    const autoReviewEnabled = await this.resolveAutoReviewEnabled();
+    const startupSignal = this.resolveStartupSignal(options?.signal);
+    startupSignal.throwIfAborted();
+    const [goalsEnabled, autoReviewEnabled] = await Promise.all([
+      this.resolveGoalsEnabled(startupSignal),
+      this.resolveAutoReviewEnabled(startupSignal),
+    ]);
+    startupSignal.throwIfAborted();
     const session = new CodexAppServerAgentSession(
       sessionConfig,
       null,
@@ -6545,7 +6570,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       autoReviewEnabled,
       launchContext?.agentId,
     );
-    await session.connect(options?.signal);
+    await session.connect(startupSignal);
     return session;
   }
 
@@ -6562,8 +6587,13 @@ export class CodexAppServerAgentClient implements AgentClient {
       provider: CODEX_PROVIDER,
       cwd: overrides?.cwd ?? storedConfig.cwd ?? process.cwd(),
     };
-    const goalsEnabled = await this.resolveGoalsEnabled();
-    const autoReviewEnabled = await this.resolveAutoReviewEnabled();
+    const startupSignal = this.resolveStartupSignal(options?.signal);
+    startupSignal.throwIfAborted();
+    const [goalsEnabled, autoReviewEnabled] = await Promise.all([
+      this.resolveGoalsEnabled(startupSignal),
+      this.resolveAutoReviewEnabled(startupSignal),
+    ]);
+    startupSignal.throwIfAborted();
     const session = new CodexAppServerAgentSession(
       merged,
       handle,
@@ -6577,7 +6607,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       launchContext?.agentId,
       options?.purpose ?? "interactive",
     );
-    await session.connect(options?.signal);
+    await session.connect(startupSignal);
     return session;
   }
 
@@ -6676,7 +6706,9 @@ export class CodexAppServerAgentClient implements AgentClient {
   }
 
   async resolveDefaultModeId(): Promise<string> {
-    return (await this.resolveAutoReviewEnabled()) ? "auto-review" : DEFAULT_CODEX_MODE_ID;
+    return (await this.resolveAutoReviewEnabled(this.shutdownController.signal))
+      ? "auto-review"
+      : DEFAULT_CODEX_MODE_ID;
   }
 
   private async fetchModelsFromAppServer(signal?: AbortSignal): Promise<AgentModelDefinition[]> {

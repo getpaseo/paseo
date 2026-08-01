@@ -117,12 +117,12 @@ function createSession(
 function createProviderWithFakeAppServer(appServer: FakeCodexAppServer): CodexAppServerAgentClient {
   const provider = new CodexAppServerAgentClient(createTestLogger());
   const internals = castInternals<{
-    goalsEnabledPromise: Promise<boolean> | null;
-    autoReviewEnabledPromise: Promise<boolean> | null;
+    goalsEnabled: boolean | null;
+    autoReviewEnabled: boolean | null;
     spawnAppServer: () => Promise<ChildProcessWithoutNullStreams>;
   }>(provider);
-  internals.goalsEnabledPromise = Promise.resolve(false);
-  internals.autoReviewEnabledPromise = Promise.resolve(false);
+  internals.goalsEnabled = false;
+  internals.autoReviewEnabled = false;
   internals.spawnAppServer = async () => appServer.child;
   return provider;
 }
@@ -921,12 +921,12 @@ describe("Codex app-server provider", () => {
     const spawnStarted = deferred<void>();
     const provider = new CodexAppServerAgentClient(createTestLogger());
     const internals = castInternals<{
-      goalsEnabledPromise: Promise<boolean> | null;
-      autoReviewEnabledPromise: Promise<boolean> | null;
+      goalsEnabled: boolean | null;
+      autoReviewEnabled: boolean | null;
       spawnAppServer: () => Promise<ChildProcessWithoutNullStreams>;
     }>(provider);
-    internals.goalsEnabledPromise = Promise.resolve(false);
-    internals.autoReviewEnabledPromise = Promise.resolve(false);
+    internals.goalsEnabled = false;
+    internals.autoReviewEnabled = false;
     internals.spawnAppServer = async () => {
       spawnStarted.resolve();
       return await childGate.promise;
@@ -944,6 +944,120 @@ describe("Codex app-server provider", () => {
     childGate.resolve(appServer.child);
     await vi.waitFor(() => expect(killSpy).toHaveBeenCalledWith("SIGTERM"));
   });
+
+  test.each(["create", "resume"] as const)(
+    "passes one composed startup signal through %s feature gates and connection",
+    async (operation) => {
+      const provider = new CodexAppServerAgentClient(createTestLogger());
+      let goalsSignal: AbortSignal | undefined;
+      let autoReviewSignal: AbortSignal | undefined;
+      let connectSignal: AbortSignal | undefined;
+      const internals = castInternals<{
+        resolveGoalsEnabled: (signal?: AbortSignal) => Promise<boolean>;
+        resolveAutoReviewEnabled: (signal?: AbortSignal) => Promise<boolean>;
+      }>(provider);
+      internals.resolveGoalsEnabled = async (signal) => {
+        goalsSignal = signal;
+        return false;
+      };
+      internals.resolveAutoReviewEnabled = async (signal) => {
+        autoReviewSignal = signal;
+        return false;
+      };
+      const connectSpy = vi
+        .spyOn(CodexAppServerAgentSession.prototype, "connect")
+        .mockImplementation(async (signal) => {
+          connectSignal = signal;
+        });
+      const controller = new AbortController();
+
+      try {
+        if (operation === "create") {
+          await provider.createSession(createConfig(), undefined, { signal: controller.signal });
+        } else {
+          await provider.resumeSession(archivedThreadHandle(), undefined, undefined, {
+            signal: controller.signal,
+          });
+        }
+
+        expect(goalsSignal).toBeDefined();
+        expect(autoReviewSignal).toBe(goalsSignal);
+        expect(connectSignal).toBe(goalsSignal);
+
+        if (operation === "create") {
+          const cancellation = new Error("request startup canceled");
+          controller.abort(cancellation);
+          expect(goalsSignal?.reason).toBe(cancellation);
+        } else {
+          await provider.shutdown();
+          expect(goalsSignal?.reason).toEqual(
+            new Error("Codex app-server client is shutting down"),
+          );
+        }
+        expect(goalsSignal?.aborted).toBe(true);
+      } finally {
+        connectSpy.mockRestore();
+      }
+    },
+  );
+
+  test.each(["create", "resume"] as const)(
+    "cancels concurrent %s feature preflights before connection",
+    async (operation) => {
+      const provider = new CodexAppServerAgentClient(createTestLogger());
+      const goalsEntered = deferred<void>();
+      const autoReviewEntered = deferred<void>();
+      let goalsSignal: AbortSignal | undefined;
+      let autoReviewSignal: AbortSignal | undefined;
+      const waitForCancellation = async (
+        signal: AbortSignal | undefined,
+        entered: ReturnType<typeof deferred<void>>,
+      ): Promise<boolean> => {
+        if (!signal) return await new Promise<boolean>(() => {});
+        signal.throwIfAborted();
+        entered.resolve();
+        return await new Promise<boolean>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      };
+      const internals = castInternals<{
+        resolveGoalsEnabled: (signal?: AbortSignal) => Promise<boolean>;
+        resolveAutoReviewEnabled: (signal?: AbortSignal) => Promise<boolean>;
+      }>(provider);
+      internals.resolveGoalsEnabled = async (signal) => {
+        goalsSignal = signal;
+        return await waitForCancellation(signal, goalsEntered);
+      };
+      internals.resolveAutoReviewEnabled = async (signal) => {
+        autoReviewSignal = signal;
+        return await waitForCancellation(signal, autoReviewEntered);
+      };
+      const connectSpy = vi.spyOn(CodexAppServerAgentSession.prototype, "connect");
+      const controller = new AbortController();
+      const startup =
+        operation === "create"
+          ? provider.createSession(createConfig(), undefined, { signal: controller.signal })
+          : provider.resumeSession(archivedThreadHandle(), undefined, undefined, {
+              signal: controller.signal,
+            });
+
+      try {
+        await Promise.all([goalsEntered.promise, autoReviewEntered.promise]);
+        expect(autoReviewSignal).toBe(goalsSignal);
+
+        if (operation === "create") {
+          controller.abort(new Error("request canceled during feature preflight"));
+          await expect(startup).rejects.toThrow("request canceled during feature preflight");
+        } else {
+          await provider.shutdown();
+          await expect(startup).rejects.toThrow("Codex app-server client is shutting down");
+        }
+        expect(connectSpy).not.toHaveBeenCalled();
+      } finally {
+        connectSpy.mockRestore();
+      }
+    },
+  );
 
   test("catalog cancellation preserves its reason and waits for the real app-server child to exit", async () => {
     const tempDir = await mkdtemp(path.join(tmpdir(), "codex-catalog-cancel-"));

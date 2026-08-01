@@ -1,10 +1,11 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
   buildCommandResolutionDiagnosticRows,
+  resolveBinaryVersion,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
 
@@ -125,6 +126,30 @@ describe("buildCommandResolutionDiagnosticRows", () => {
 
     expect(rows).toContainEqual({ label: "PATH matches", value: "not checked" });
   });
+});
+
+describe("resolveBinaryVersion", () => {
+  test.skipIf(process.platform === "win32")(
+    "aborts an in-flight version subprocess and preserves the cancellation reason",
+    async () => {
+      const dir = makeTempDir();
+      const markerPath = path.join(dir, "started");
+      const binaryPath = path.join(dir, "hanging-version-probe");
+      writeFileSync(
+        binaryPath,
+        `#!/usr/bin/env node\nrequire("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "yes");\nsetInterval(() => {}, 1_000);\n`,
+      );
+      chmodSync(binaryPath, 0o755);
+      const controller = new AbortController();
+      const cancellation = new Error("version probe canceled");
+
+      const version = resolveBinaryVersion(binaryPath, controller.signal);
+      await vi.waitFor(() => expect(existsSync(markerPath)).toBe(true));
+      controller.abort(cancellation);
+
+      await expect(version).rejects.toBe(cancellation);
+    },
+  );
 });
 
 describe("toDiagnosticErrorMessage", () => {

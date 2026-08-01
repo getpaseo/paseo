@@ -892,10 +892,11 @@ export class ProviderSnapshotManager {
 
       const client = this.ensureClient(provider, definition);
       load.client = client;
-      const availabilityOperation = client.isAvailable();
+      const availabilityOperation = client.isAvailable({ signal: load.controller.signal });
       load.providerOperations.push(availabilityOperation);
-      const available = await withTimeout(
+      const available = await withAbortTimeout(
         availabilityOperation,
+        load.controller,
         this.refreshTimeoutMs,
         `Timed out checking ${definition.label} availability after ${this.refreshTimeoutMs}ms`,
       );
