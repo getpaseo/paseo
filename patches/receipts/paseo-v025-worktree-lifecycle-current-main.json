@@ -11,14 +11,14 @@
     "upstreamMainCommit": "70ed70d36e2eabd3876a22931954319ec202c902",
     "mergeCommit": "e5e5d607ea8e14dd874c3db4ce095634a9da7092",
     "mergeTree": "529add05cfc1424c287d576f27d8194f37503c35",
-    "headCommit": "5e17fcf769cb855326683413cdcd9b3cbe82ba43",
-    "headTree": "e83f37f06eeb44d5b87ff30d5ca18c0d25288f5b",
+    "headCommit": "5c70d522437ea0c02c1e769ee5f9975b8077811e",
+    "headTree": "1b4b0a140a483504225e043bfdd5cf1f26e7f875",
     "firstParent": "bfdb6ed4a8668e05826effd3f8b1a18dbf74c9b2",
     "secondParent": "70ed70d36e2eabd3876a22931954319ec202c902"
   },
   "verification": {
-    "commit": "5e17fcf769cb855326683413cdcd9b3cbe82ba43",
-    "completedAt": "2026-08-01T02:18:00Z",
+    "commit": "5c70d522437ea0c02c1e769ee5f9975b8077811e",
+    "completedAt": "2026-08-01T02:31:40Z",
     "commands": [
       "npm run build --workspace packages/protocol",
       "cd packages/server && npx vitest run src/server/agent/create-agent-lifecycle-dispatch.test.ts src/server/agent/create-agent/create.test.ts src/server/agent/mcp-server.test.ts src/server/session.workspace-git-watch.test.ts src/server/session.workspaces.test.ts",
@@ -45,6 +45,12 @@
       "npm run typecheck --workspace packages/server",
       "oxlint <7 cleanup retry source and test files>",
       "oxfmt --check <7 cleanup retry source and test files>",
+      "git diff --check",
+      "vitest run <14 lifecycle, provisioning, and affected call-site test files> --fileParallelism=false",
+      "npm run build --workspace packages/server",
+      "npm run typecheck --workspace packages/server",
+      "oxlint <4 cleanup/create exclusion source and test files>",
+      "oxfmt --check <4 cleanup/create exclusion source and test files>",
       "git diff --check"
     ],
     "result": {
@@ -66,7 +72,11 @@
       "cleanupRetryShutdown": "stop aborts and awaits the owned active cycle; hanging teardown subprocess trees are terminated before shutdown completes",
       "cleanupOnlyRetryBuildAndTypecheck": "passed",
       "cleanupOnlyRetryLintAndFormat": "0 warnings, 0 errors; formatting and diff checks passed",
-      "allWorkspaceTypecheck": "unchanged app errors: DaemonClient lacks setProjectIcon/getProjectIcon on this stable-derived branch"
+      "cleanupCreateExclusionTests": "509 passed, 5 skipped across 14 lifecycle, provisioning, and affected call-site files",
+      "cleanupCreateExclusionBoundary": "directory workspace creation and unarchive share cleanup directory exclusion and revalidate directory existence after waiting; deterministic final-owner-read race leaves no replacement record for a deleted worktree",
+      "cleanupCreateExclusionBuildAndTypecheck": "passed; repository pre-commit all-workspace typecheck also passed",
+      "cleanupCreateExclusionLintAndFormat": "0 warnings, 0 errors; formatting and diff checks passed",
+      "allWorkspaceTypecheck": "passed in repository pre-commit hook"
     }
   }
 }
