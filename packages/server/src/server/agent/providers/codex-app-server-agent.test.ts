@@ -1551,6 +1551,35 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
+  test("omits disabled Codex skills from slash commands", async () => {
+    const commands = await listCommandsFromFakeCodex([
+      {
+        name: "enabled-skill",
+        description: "An enabled skill.",
+        path: "/tmp/skills/enabled-skill/SKILL.md",
+        enabled: true,
+      },
+      {
+        name: "disabled-skill",
+        description: "A disabled skill.",
+        path: "/tmp/skills/disabled-skill/SKILL.md",
+        enabled: false,
+      },
+      {
+        name: "legacy-skill",
+        description: "Skill without enabled field (older Codex).",
+        path: "/tmp/skills/legacy-skill/SKILL.md",
+      },
+    ]);
+
+    const skillCommands = commands.filter((command) => command.kind === "skill");
+    expect(skillCommands.map((command) => command.name).sort()).toEqual([
+      "enabled-skill",
+      "legacy-skill",
+    ]);
+    expect(skillCommands.find((command) => command.name === "disabled-skill")).toBeUndefined();
+  });
+
   test("maps image prompt blocks to Codex localImage input", async () => {
     const input = await codexAppServerTurnInputFromPrompt(
       [

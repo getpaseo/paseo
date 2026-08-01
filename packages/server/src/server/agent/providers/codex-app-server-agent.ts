@@ -3323,6 +3323,10 @@ export class CodexAppServerAgentSession implements AgentSession {
           const skillRecord = toObjectRecord(skill);
           if (typeof skillRecord?.name !== "string" || typeof skillRecord?.path !== "string")
             continue;
+          // Codex skills/list returns disabled skills with enabled:false; omit them from
+          // slash-command surfaces so Paseo matches Codex CLI/TUI behavior.
+          // Missing enabled (older binaries) is treated as enabled.
+          if (skillRecord.enabled === false) continue;
           if (!skillsByName.has(skillRecord.name)) {
             skillsByName.set(skillRecord.name, {
               name: skillRecord.name,
