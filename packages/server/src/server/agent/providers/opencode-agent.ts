@@ -104,6 +104,7 @@ const OPENCODE_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
 const OPENCODE_PERSISTED_SESSION_LIMIT = 200;
 const OPENCODE_PENDING_ABORT_START_TIMEOUT_MS = 10_000;
 const OPENCODE_FOREGROUND_MESSAGES_TIMEOUT_MS = 10_000;
+const OPENCODE_FOREGROUND_STATUS_TIMEOUT_MS = 10_000;
 const OPENCODE_CHILD_SESSION_HYDRATION_LIMIT = 100;
 const OPENCODE_CHILD_SESSION_SERVER_REGISTRY_LIMIT = 500;
 const OPENCODE_PERMISSION_ACTION_ALLOW_ONCE = "allow_once";
@@ -1264,6 +1265,7 @@ function buildOpenCodeReplayTimelineEvents(
 
 export const __openCodeInternals = {
   OPENCODE_FOREGROUND_MESSAGES_TIMEOUT_MS,
+  OPENCODE_FOREGROUND_STATUS_TIMEOUT_MS,
   buildOpenCodePromptParts,
   buildOpenCodeSessionTimeline,
   buildOpenCodeModelContextWindowLookup,
@@ -1785,6 +1787,7 @@ type OpenCodeTraceMessage =
   | "provider.opencode.subscribe.start"
   | "provider.opencode.subscribe.ready"
   | "provider.opencode.stream.eof"
+  | "provider.opencode.stream.reconnect"
   | "provider.opencode.turn.fail_eof"
   | "provider.opencode.subscribe.error"
   | "provider.opencode.raw_event"
@@ -2812,7 +2815,7 @@ function createDeferred<T>(): Deferred<T> {
 
 type OpenCodeTurnState =
   | { status: "idle" }
-  | { status: "running"; turnId: string }
+  | { status: "running"; turnId: string; observation: "trusted" | "quarantined" }
   | { status: "stopping"; stop: OpenCodeStop };
 
 type OpenCodeRunnerStatus = "idle" | "busy" | "retry";
@@ -2904,6 +2907,19 @@ function getOpenCodeRunnerStatusFromEvent(
 
 function isOpenCodeRunnerActive(status: OpenCodeRunnerStatus): boolean {
   return status === "busy" || status === "retry";
+}
+
+function hasIncompleteEarlierOpenCodeAssistantStep(
+  messages: readonly OpenCodeSessionMessage[],
+): boolean {
+  return messages
+    .slice(0, -1)
+    .some(
+      (message) =>
+        message.info.role !== "assistant" ||
+        message.info.error !== undefined ||
+        message.info.time?.completed === undefined,
+    );
 }
 
 function isOpenCodeTerminalEvent(event: OpenCodeEvent, sessionId: string): boolean {
@@ -3257,14 +3273,58 @@ class OpenCodeAgentSession implements AgentSession {
     }
   }
 
-  private async readProviderRunnerStatus(): Promise<OpenCodeRunnerStatus> {
-    const response = await this.client.session.status({ directory: this.config.cwd });
-    if (response.error) {
+  private async readProviderRunnerStatus(signal?: AbortSignal): Promise<OpenCodeRunnerStatus> {
+    const requestAbortController = new AbortController();
+    const abortRequest = () => requestAbortController.abort(signal?.reason);
+    signal?.addEventListener("abort", abortRequest, { once: true });
+    if (signal?.aborted) {
+      abortRequest();
+    }
+    let rejectOnAbort: (() => void) | null = null;
+    const aborted = new Promise<never>((_, reject) => {
+      rejectOnAbort = () =>
+        reject(
+          requestAbortController.signal.reason ??
+            new DOMException("The operation was aborted", "AbortError"),
+        );
+      requestAbortController.signal.addEventListener("abort", rejectOnAbort, { once: true });
+    });
+    const timeout = setTimeout(() => {
+      requestAbortController.abort(
+        new Error(
+          `OpenCode session.status timed out after ${OPENCODE_FOREGROUND_STATUS_TIMEOUT_MS}ms`,
+        ),
+      );
+    }, OPENCODE_FOREGROUND_STATUS_TIMEOUT_MS);
+    const request = Promise.resolve().then(() => {
+      if (requestAbortController.signal.aborted) {
+        throw requestAbortController.signal.reason;
+      }
+      return this.client.session.status(
+        { directory: this.config.cwd },
+        { signal: requestAbortController.signal },
+      );
+    });
+    let response: Awaited<ReturnType<OpencodeClient["session"]["status"]>>;
+    try {
+      response = await Promise.race([request, aborted]);
+    } finally {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", abortRequest);
+      if (rejectOnAbort) {
+        requestAbortController.signal.removeEventListener("abort", rejectOnAbort);
+      }
+    }
+    const responseRecord = readOpenCodeRecord(response);
+    if (!responseRecord) {
+      throw new Error("OpenCode returned an invalid session status response");
+    }
+    if (responseRecord.error) {
       throw new Error(
-        `Failed to confirm OpenCode session status: ${toDiagnosticErrorMessage(response.error)}`,
+        `Failed to confirm OpenCode session status: ${toDiagnosticErrorMessage(responseRecord.error)}`,
       );
     }
-    const statuses = readOpenCodeRecord(response.data);
+    const statuses = readOpenCodeRecord(responseRecord.data);
     if (!statuses) {
       throw new Error("OpenCode returned an invalid session status response");
     }
@@ -3320,7 +3380,7 @@ class OpenCodeAgentSession implements AgentSession {
     }
 
     const turnId = this.createTurnId();
-    this.turnState = { status: "running", turnId };
+    this.turnState = { status: "running", turnId, observation: "trusted" };
     this.foregroundOwnership = { status: "inactive" };
     this.notifySubscribers({ type: "turn_started", provider: "opencode" }, turnId);
 
@@ -3339,7 +3399,7 @@ class OpenCodeAgentSession implements AgentSession {
           knownMessageIds: new Set(foregroundMessages.map((message) => message.info.id)),
           startingTotalCostUsd,
         }
-      : { status: "unowned", runnerBoundaryReached: true, startingTotalCostUsd };
+      : { status: "inactive" };
 
     if (slashCommand) {
       if (slashCommand.commandName === "compact" || slashCommand.commandName === "summarize") {
@@ -3678,18 +3738,30 @@ class OpenCodeAgentSession implements AgentSession {
     const eventStreamReady = createDeferred<void>();
     this.eventStreamAbortController = eventStreamAbortController;
     this.eventStreamReady = eventStreamReady;
-    const eventStreamTask = this.consumeEventStream(
-      eventStreamAbortController,
-      eventStreamReady,
-    ).finally(() => {
-      if (this.eventStreamAbortController === eventStreamAbortController) {
-        this.eventStreamAbortController = null;
-        this.eventStreamReady = null;
-      }
-      if (this.eventStreamTask === eventStreamTask) {
-        this.eventStreamTask = null;
-      }
-    });
+    let reconnectTurnId: string | null = null;
+    const eventStreamTask = this.consumeEventStream(eventStreamAbortController, eventStreamReady)
+      .then((turnId) => {
+        reconnectTurnId = turnId;
+        return undefined;
+      })
+      .finally(() => {
+        if (this.eventStreamAbortController === eventStreamAbortController) {
+          this.eventStreamAbortController = null;
+          this.eventStreamReady = null;
+        }
+        if (this.eventStreamTask === eventStreamTask) {
+          this.eventStreamTask = null;
+        }
+        if (reconnectTurnId && !this.closed && this.activeForegroundTurnId === reconnectTurnId) {
+          this.startEventStream();
+          void this.reconcileForegroundTurnAfterReconnect(reconnectTurnId).catch((error) => {
+            this.logger.debug(
+              { err: error, sessionId: this.sessionId, turnId: reconnectTurnId },
+              "Failed to reconcile the OpenCode turn after event stream reconnect",
+            );
+          });
+        }
+      });
     this.eventStreamTask = eventStreamTask;
     void eventStreamTask.catch((error) => {
       this.logger.warn(
@@ -3704,7 +3776,7 @@ class OpenCodeAgentSession implements AgentSession {
   private async consumeEventStream(
     eventStreamAbortController: AbortController,
     eventStreamReady: Deferred<void>,
-  ): Promise<void> {
+  ): Promise<string | null> {
     this.traceOpenCode("provider.opencode.subscribe.start", {
       sessionId: this.sessionId,
       cwd: this.config.cwd,
@@ -3724,7 +3796,11 @@ class OpenCodeAgentSession implements AgentSession {
       let eventCount = 0;
       for await (const rawEvent of result.stream) {
         eventCount += 1;
-        await this.consumeOpenCodeStreamEvent({ rawEvent, eventCount });
+        await this.consumeOpenCodeStreamEvent({
+          rawEvent,
+          eventCount,
+          signal: eventStreamAbortController.signal,
+        });
       }
 
       this.traceOpenCode("provider.opencode.stream.eof", {
@@ -3749,30 +3825,20 @@ class OpenCodeAgentSession implements AgentSession {
             eventStreamAbortController.signal.aborted ||
             this.activeForegroundTurnId !== activeTurnId
           ) {
-            return;
+            return null;
           }
-          if (reconciledEvent) {
-            this.traceOpenCode("provider.opencode.event.terminal", {
+          if (reconciledEvent === "reconnect") {
+            this.quarantineForegroundObservation(activeTurnId);
+            this.traceOpenCode("provider.opencode.stream.reconnect", {
               turnId: activeTurnId,
-              type: reconciledEvent.type,
+              eventCount,
             });
-            this.finishForegroundTurn(reconciledEvent, activeTurnId);
-            return;
+            return activeTurnId;
           }
-          this.traceOpenCode("provider.opencode.turn.fail_eof", {
-            turnId: activeTurnId,
-            eventCount,
-          });
-          this.finishForegroundTurn(
-            {
-              type: "turn_failed",
-              provider: "opencode",
-              error: "OpenCode event stream ended before the turn reached a terminal state",
-            },
-            activeTurnId,
-          );
+          this.finishForegroundTurnAfterConfirmedIdle(reconciledEvent, activeTurnId, eventCount);
         }
       }
+      return null;
     } catch (error) {
       this.traceOpenCode("provider.opencode.subscribe.error", {
         turnId: this.activeForegroundTurnId ?? undefined,
@@ -3793,24 +3859,68 @@ class OpenCodeAgentSession implements AgentSession {
           activeTurnId,
         );
       }
+      return null;
     }
+  }
+
+  private async reconcileForegroundTurnAfterReconnect(turnId: string): Promise<void> {
+    await this.ensureEventStreamReady();
+    const eventStreamSignal = this.eventStreamAbortController?.signal;
+    if (!eventStreamSignal || this.activeForegroundTurnId !== turnId) {
+      return;
+    }
+    const observedRunnerStatusRevision = this.runnerStatusRevision;
+    const reconciledEvent = await this.reconcileForegroundTurnAfterStreamEnd(
+      turnId,
+      eventStreamSignal,
+      this.abortController?.signal,
+      observedRunnerStatusRevision,
+    );
+    if (
+      reconciledEvent === "reconnect" ||
+      eventStreamSignal.aborted ||
+      this.activeForegroundTurnId !== turnId
+    ) {
+      return;
+    }
+    this.finishForegroundTurnAfterConfirmedIdle(reconciledEvent, turnId);
   }
 
   private async reconcileForegroundTurnAfterStreamEnd(
     turnId: string,
     signal: AbortSignal,
     foregroundAbortSignal?: AbortSignal,
+    expectedRunnerStatusRevision?: number,
+  ): Promise<TerminalTurnEvent | "reconnect" | null> {
+    if (this.activeForegroundTurnId !== turnId) {
+      return null;
+    }
+    const runnerBoundary = await this.readRunnerBoundaryAfterStreamEnd(
+      turnId,
+      signal,
+      expectedRunnerStatusRevision,
+    );
+    if (runnerBoundary === null) {
+      return null;
+    }
+    if (runnerBoundary === "reconnect") {
+      return "reconnect";
+    }
+    return await this.reconcileForegroundTurnAtIdleBoundary(turnId, signal, foregroundAbortSignal);
+  }
+
+  private async reconcileForegroundTurnAtIdleBoundary(
+    turnId: string,
+    signal: AbortSignal,
+    foregroundAbortSignal?: AbortSignal,
   ): Promise<TerminalTurnEvent | null> {
     const ownership = this.foregroundOwnership;
-    if (
-      this.activeForegroundTurnId !== turnId ||
-      (ownership.status !== "owned" && ownership.status !== "baseline")
-    ) {
+    if (ownership.status !== "owned" && ownership.status !== "baseline") {
       return null;
     }
 
     const messages = await this.readForegroundSessionMessages(signal, foregroundAbortSignal);
-    if (signal.aborted || this.activeForegroundTurnId !== turnId || messages === null) {
+    if (messages === null || this.isForegroundTurnCanceled(turnId, signal)) {
       return null;
     }
 
@@ -3833,15 +3943,7 @@ class OpenCodeAgentSession implements AgentSession {
     if (!assistantMessage || assistantMessage.info.role !== "assistant") {
       return null;
     }
-    const incompleteEarlierStep = ownedAssistantMessages
-      .slice(0, -1)
-      .some(
-        (message) =>
-          message.info.role !== "assistant" ||
-          message.info.error !== undefined ||
-          message.info.time?.completed === undefined,
-      );
-    if (incompleteEarlierStep) {
+    if (hasIncompleteEarlierOpenCodeAssistantStep(ownedAssistantMessages)) {
       return null;
     }
 
@@ -3863,6 +3965,66 @@ class OpenCodeAgentSession implements AgentSession {
     const contextWindowMaxTokens = this.resolveSelectedModelContextWindowMaxTokens();
     this.accumulatedUsage = contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
     return { type: "turn_completed", provider: "opencode", usage };
+  }
+
+  private finishForegroundTurnAfterConfirmedIdle(
+    event: TerminalTurnEvent | null,
+    turnId: string,
+    eventCount?: number,
+  ): void {
+    if (this.activeForegroundTurnId !== turnId) {
+      return;
+    }
+    resetOpenCodeTurnTrackingState(this.createTranslationState());
+    if (event) {
+      this.traceOpenCode("provider.opencode.event.terminal", {
+        turnId,
+        type: event.type,
+      });
+      this.finishForegroundTurn(event, turnId);
+      return;
+    }
+    this.traceOpenCode("provider.opencode.turn.fail_eof", {
+      turnId,
+      eventCount,
+    });
+    this.finishForegroundTurn(
+      {
+        type: "turn_failed",
+        provider: "opencode",
+        error: "OpenCode event stream ended before the turn reached a terminal state",
+      },
+      turnId,
+    );
+  }
+
+  private async readRunnerBoundaryAfterStreamEnd(
+    turnId: string,
+    signal: AbortSignal,
+    expectedRunnerStatusRevision?: number,
+  ): Promise<"idle" | "reconnect" | null> {
+    try {
+      const runnerStatus = await this.readProviderRunnerStatus(signal);
+      if (this.isForegroundTurnCanceled(turnId, signal)) {
+        return null;
+      }
+      if (
+        expectedRunnerStatusRevision !== undefined &&
+        this.runnerStatusRevision !== expectedRunnerStatusRevision
+      ) {
+        return "reconnect";
+      }
+      return isOpenCodeRunnerActive(runnerStatus) ? "reconnect" : "idle";
+    } catch (error) {
+      if (this.isForegroundTurnCanceled(turnId, signal)) {
+        return null;
+      }
+      this.logger.debug(
+        { err: error, sessionId: this.sessionId, turnId },
+        "Failed to confirm the OpenCode runner stopped after event stream EOF",
+      );
+      return "reconnect";
+    }
   }
 
   private mergePersistedAssistantUsage(
@@ -4080,8 +4242,9 @@ class OpenCodeAgentSession implements AgentSession {
   private async consumeOpenCodeStreamEvent(params: {
     rawEvent: unknown;
     eventCount: number;
+    signal: AbortSignal;
   }): Promise<void> {
-    const { rawEvent, eventCount } = params;
+    const { rawEvent, eventCount, signal } = params;
     let turnId = this.activeForegroundTurnId;
     const event = unwrapOpenCodeGlobalEvent(rawEvent);
     this.traceOpenCode("provider.opencode.raw_event", {
@@ -4100,14 +4263,22 @@ class OpenCodeAgentSession implements AgentSession {
     if (this.discardEventWhileStopping(event, eventCount)) {
       return;
     }
+    const quarantinedTurnId = this.getQuarantinedForegroundTurnId(turnId);
+    if (
+      quarantinedTurnId &&
+      (await this.consumeQuarantinedForegroundEvent({
+        event,
+        eventCount,
+        signal,
+        turnId: quarantinedTurnId,
+      }))
+    ) {
+      return;
+    }
     const translated = await this.translateEvent(event);
-    const foregroundEvents: AgentStreamEvent[] = [];
-    for (const translatedEvent of translated) {
-      if (isOpenCodeProviderInternalEvent(translatedEvent)) {
-        this.notifySubscribers(translatedEvent, null);
-      } else {
-        foregroundEvents.push(translatedEvent);
-      }
+    const foregroundEvents = this.emitProviderInternalEvents(translated);
+    if (this.discardQuarantinedForegroundEvents({ event, eventCount, foregroundEvents, turnId })) {
+      return;
     }
     if (!turnId && this.shouldStartAutonomousTurn(event, foregroundEvents)) {
       const runnerStatus = getOpenCodeRunnerStatusFromEvent(event, this.sessionId);
@@ -4152,6 +4323,74 @@ class OpenCodeAgentSession implements AgentSession {
       }
       this.notifySubscribers(e, turnId);
     }
+  }
+
+  private async consumeQuarantinedForegroundEvent(params: {
+    event: OpenCodeEvent;
+    eventCount: number;
+    signal: AbortSignal;
+    turnId: string;
+  }): Promise<boolean> {
+    const { event, eventCount, signal, turnId } = params;
+    if (getOpenCodeEventSessionId(event) !== this.sessionId) {
+      return false;
+    }
+    const runnerStatus = getOpenCodeRunnerStatusFromEvent(event, this.sessionId);
+    if (runnerStatus === "idle") {
+      const reconciledEvent = await this.reconcileForegroundTurnAtIdleBoundary(
+        turnId,
+        signal,
+        this.abortController?.signal,
+      );
+      if (!signal.aborted && this.activeForegroundTurnId === turnId) {
+        this.finishForegroundTurnAfterConfirmedIdle(reconciledEvent, turnId, eventCount);
+      }
+      return true;
+    }
+    if (event.type === "permission.asked" || event.type === "question.asked") {
+      return false;
+    }
+    this.traceOpenCode("provider.opencode.event.skip", {
+      n: eventCount,
+      reason: "foreground_observation_quarantined",
+      type: event.type,
+    });
+    return true;
+  }
+
+  private getQuarantinedForegroundTurnId(turnId: string | null): string | null {
+    return turnId && this.isForegroundObservationQuarantined(turnId) ? turnId : null;
+  }
+
+  private emitProviderInternalEvents(events: readonly AgentStreamEvent[]): AgentStreamEvent[] {
+    const foregroundEvents: AgentStreamEvent[] = [];
+    for (const event of events) {
+      if (isOpenCodeProviderInternalEvent(event)) {
+        this.notifySubscribers(event, null);
+      } else {
+        foregroundEvents.push(event);
+      }
+    }
+    return foregroundEvents;
+  }
+
+  private discardQuarantinedForegroundEvents(params: {
+    event: OpenCodeEvent;
+    eventCount: number;
+    foregroundEvents: readonly AgentStreamEvent[];
+    turnId: string | null;
+  }): boolean {
+    const { event, eventCount, foregroundEvents, turnId } = params;
+    if (!turnId || !this.isForegroundObservationQuarantined(turnId)) {
+      return false;
+    }
+    this.emitBackgroundPermissionRequests(foregroundEvents);
+    this.traceOpenCode("provider.opencode.event.skip", {
+      n: eventCount,
+      reason: "foreground_observation_quarantined",
+      type: event.type,
+    });
+    return true;
   }
 
   private discardEventWhileStopping(event: OpenCodeEvent, eventCount: number): boolean {
@@ -4205,14 +4444,10 @@ class OpenCodeAgentSession implements AgentSession {
     if (!this.externallyDriven) {
       return false;
     }
-    // Some provider boundaries (notably permission requests) can precede the
-    // busy status. They prove live autonomous activity; a persisted user
-    // message alone does not, because OpenCode can patch idle history later.
+    // Permission and question requests can precede the busy status and require
+    // an immediate response. Historical timeline mutations prove no active run.
     return foregroundEvents.some(
-      (foregroundEvent) =>
-        foregroundEvent.type !== "thread_started" &&
-        !toTerminalTurnEvent(foregroundEvent) &&
-        !(foregroundEvent.type === "timeline" && foregroundEvent.item.type === "user_message"),
+      (foregroundEvent) => foregroundEvent.type === "permission_requested",
     );
   }
 
@@ -4260,7 +4495,7 @@ class OpenCodeAgentSession implements AgentSession {
 
   private startAutonomousTurn(runnerBoundaryReached: boolean): string {
     const turnId = this.createTurnId();
-    this.turnState = { status: "running", turnId };
+    this.turnState = { status: "running", turnId, observation: "trusted" };
     this.foregroundOwnership = {
       status: "unowned",
       runnerBoundaryReached,
@@ -4274,6 +4509,20 @@ class OpenCodeAgentSession implements AgentSession {
     this.abortController = new AbortController();
     this.notifySubscribers({ type: "turn_started", provider: "opencode" }, turnId);
     return turnId;
+  }
+
+  private quarantineForegroundObservation(turnId: string): void {
+    if (this.turnState.status === "running" && this.turnState.turnId === turnId) {
+      this.turnState = { ...this.turnState, observation: "quarantined" };
+    }
+  }
+
+  private isForegroundObservationQuarantined(turnId: string): boolean {
+    return (
+      this.turnState.status === "running" &&
+      this.turnState.turnId === turnId &&
+      this.turnState.observation === "quarantined"
+    );
   }
 
   private finishForegroundTurn(

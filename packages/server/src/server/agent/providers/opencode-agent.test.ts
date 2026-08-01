@@ -1918,7 +1918,7 @@ describe("OpenCode adapter startTurn error handling", () => {
         { sessionID: "ses_eof_reconciliation", directory: "/workspace/repo" },
         { sessionID: "ses_eof_reconciliation", directory: "/workspace/repo" },
       ]);
-      expect(openCode.calls.sessionStatus).toEqual([]);
+      expect(openCode.calls.sessionStatus).toEqual([{ directory: "/workspace/repo" }]);
     } finally {
       await parent.close();
     }
@@ -2437,6 +2437,535 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
+  test("reconnects without completing when EOF finds an intermediate step while the runner is busy", async () => {
+    const firstStreamEnd = createTestDeferred<void>();
+    const replacementStreamReady = createTestDeferred<void>();
+    const releaseReplacementIdle = createTestDeferred<void>();
+    const initiatingMessageId = "msg_busy_intermediate_user";
+    const initiatingMessage = persistedUserMessage(initiatingMessageId);
+    let streamOrdinal = 0;
+    async function* eventStream(signal: AbortSignal, currentStreamOrdinal: number) {
+      yield { type: "server.connected", properties: {} };
+      if (currentStreamOrdinal === 0) {
+        await Promise.race([firstStreamEnd.promise, waitForAbort(signal)]);
+        if (signal.aborted) return;
+        yield {
+          type: "message.updated",
+          properties: {
+            info: {
+              id: initiatingMessageId,
+              sessionID: "ses_busy_intermediate_eof",
+              role: "user",
+            },
+          },
+        };
+        return;
+      }
+
+      replacementStreamReady.resolve();
+      await Promise.race([releaseReplacementIdle.promise, waitForAbort(signal)]);
+      if (signal.aborted) return;
+      yield {
+        type: "session.idle",
+        properties: { sessionID: "ses_busy_intermediate_eof" },
+      };
+    }
+    const { parent, openCode } = await createParentSession(
+      "ses_busy_intermediate_eof",
+      (client) => {
+        client.sessionPromptAsyncEvents = [];
+        client.sessionMessagesResponse = { data: [] };
+        client.sessionStatusResponse = {
+          data: { ses_busy_intermediate_eof: { type: "busy" } },
+        };
+        client.globalEventImplementation = async (options) => {
+          const signal = (options as { signal: AbortSignal }).signal;
+          const currentStreamOrdinal = streamOrdinal++;
+          return {
+            stream: eventStream(signal, currentStreamOrdinal),
+          };
+        };
+      },
+    );
+    const events: AgentStreamEvent[] = [];
+    parent.subscribe((event) => events.push(event));
+
+    try {
+      await parent.startTurn("use a tool, then continue");
+      openCode.sessionMessagesResponse = {
+        data: [
+          initiatingMessage,
+          persistedAssistantMessage({
+            id: "msg_busy_intermediate_assistant",
+            parentId: initiatingMessageId,
+            completed: 2,
+          }),
+        ],
+      };
+      firstStreamEnd.resolve();
+
+      await replacementStreamReady.promise;
+      await vi.waitFor(() => {
+        expect(openCode.calls.sessionStatus).toEqual([
+          { directory: "/workspace/repo" },
+          { directory: "/workspace/repo" },
+        ]);
+      });
+      expect(terminalTurnEvents(events)).toEqual([]);
+      await expect(parent.startTurn("unsafe replacement")).rejects.toThrow(
+        "A foreground turn is already active",
+      );
+
+      releaseReplacementIdle.resolve();
+      await vi.waitFor(() => {
+        expect(terminalTurnEvents(events)).toEqual([
+          expect.objectContaining({ type: "turn_completed", provider: "opencode" }),
+        ]);
+      });
+      expect(openCode.calls.globalEvent).toHaveLength(2);
+    } finally {
+      firstStreamEnd.resolve();
+      releaseReplacementIdle.resolve();
+      await parent.close();
+    }
+  });
+
+  test("reconnects without completing when EOF status is unavailable", async () => {
+    const firstStreamEnd = createTestDeferred<void>();
+    const replacementStreamReady = createTestDeferred<void>();
+    const releaseReplacementIdle = createTestDeferred<void>();
+    const initiatingMessageId = "msg_unavailable_status_user";
+    let streamOrdinal = 0;
+    async function* eventStream(signal: AbortSignal, currentStreamOrdinal: number) {
+      yield { type: "server.connected", properties: {} };
+      if (currentStreamOrdinal === 0) {
+        await Promise.race([firstStreamEnd.promise, waitForAbort(signal)]);
+        if (signal.aborted) return;
+        yield {
+          type: "message.updated",
+          properties: {
+            info: {
+              id: initiatingMessageId,
+              sessionID: "ses_unavailable_status_eof",
+              role: "user",
+            },
+          },
+        };
+        return;
+      }
+
+      replacementStreamReady.resolve();
+      await Promise.race([releaseReplacementIdle.promise, waitForAbort(signal)]);
+      if (signal.aborted) return;
+      yield {
+        type: "session.idle",
+        properties: { sessionID: "ses_unavailable_status_eof" },
+      };
+    }
+    const { parent, openCode } = await createParentSession(
+      "ses_unavailable_status_eof",
+      (client) => {
+        client.sessionPromptAsyncEvents = [];
+        client.sessionMessagesResponse = { data: [] };
+        client.sessionStatusImplementation = async () => {
+          throw new Error("provider status unavailable");
+        };
+        client.globalEventImplementation = async (options) => {
+          const signal = (options as { signal: AbortSignal }).signal;
+          const currentStreamOrdinal = streamOrdinal++;
+          return { stream: eventStream(signal, currentStreamOrdinal) };
+        };
+      },
+    );
+    const events: AgentStreamEvent[] = [];
+    parent.subscribe((event) => events.push(event));
+
+    try {
+      await parent.startTurn("continue after the stream reconnects");
+      openCode.sessionMessagesResponse = {
+        data: [
+          persistedUserMessage(initiatingMessageId),
+          persistedAssistantMessage({
+            id: "msg_unavailable_status_assistant",
+            parentId: initiatingMessageId,
+            completed: 2,
+          }),
+        ],
+      };
+      firstStreamEnd.resolve();
+
+      await replacementStreamReady.promise;
+      await vi.waitFor(() => expect(openCode.calls.sessionStatus).toHaveLength(2));
+      expect(terminalTurnEvents(events)).toEqual([]);
+      await expect(parent.startTurn("unsafe replacement")).rejects.toThrow(
+        "A foreground turn is already active",
+      );
+
+      releaseReplacementIdle.resolve();
+      await vi.waitFor(() => {
+        expect(terminalTurnEvents(events)).toEqual([
+          expect.objectContaining({ type: "turn_completed", provider: "opencode" }),
+        ]);
+      });
+      expect(openCode.calls.globalEvent).toHaveLength(2);
+    } finally {
+      firstStreamEnd.resolve();
+      releaseReplacementIdle.resolve();
+      await parent.close();
+    }
+  });
+
+  test("ignores a stale idle status response after the replacement stream reports busy", async () => {
+    const firstStreamEnd = createTestDeferred<void>();
+    const secondStatusStarted = createTestDeferred<void>();
+    const releaseSecondStatus = createTestDeferred<void>();
+    const secondStatusReturned = createTestDeferred<void>();
+    const replacementBusyConsumed = createTestDeferred<void>();
+    const releaseReplacementIdle = createTestDeferred<void>();
+    const initiatingMessageId = "msg_stale_idle_status_user";
+    let streamOrdinal = 0;
+    let statusCallCount = 0;
+    async function* eventStream(signal: AbortSignal, currentStreamOrdinal: number) {
+      yield { type: "server.connected", properties: {} };
+      if (currentStreamOrdinal === 0) {
+        await Promise.race([firstStreamEnd.promise, waitForAbort(signal)]);
+        if (signal.aborted) return;
+        yield {
+          type: "message.updated",
+          properties: {
+            info: {
+              id: initiatingMessageId,
+              sessionID: "ses_stale_idle_status",
+              role: "user",
+            },
+          },
+        };
+        return;
+      }
+
+      await Promise.race([secondStatusStarted.promise, waitForAbort(signal)]);
+      if (signal.aborted) return;
+      yield {
+        type: "session.status",
+        properties: {
+          sessionID: "ses_stale_idle_status",
+          status: { type: "busy" },
+        },
+      };
+      replacementBusyConsumed.resolve();
+      await Promise.race([releaseReplacementIdle.promise, waitForAbort(signal)]);
+      if (signal.aborted) return;
+      yield {
+        type: "session.idle",
+        properties: { sessionID: "ses_stale_idle_status" },
+      };
+    }
+    const { parent, openCode } = await createParentSession("ses_stale_idle_status", (client) => {
+      client.sessionPromptAsyncEvents = [];
+      client.sessionMessagesResponse = { data: [] };
+      client.sessionStatusImplementation = async () => {
+        statusCallCount += 1;
+        if (statusCallCount === 1) {
+          return { data: { ses_stale_idle_status: { type: "busy" } } };
+        }
+        secondStatusStarted.resolve();
+        await releaseSecondStatus.promise;
+        secondStatusReturned.resolve();
+        return { data: {} };
+      };
+      client.globalEventImplementation = async (options) => {
+        const signal = (options as { signal: AbortSignal }).signal;
+        const currentStreamOrdinal = streamOrdinal++;
+        return { stream: eventStream(signal, currentStreamOrdinal) };
+      };
+    });
+    const events: AgentStreamEvent[] = [];
+    parent.subscribe((event) => events.push(event));
+
+    try {
+      await parent.startTurn("wait for a trustworthy runner boundary");
+      openCode.sessionMessagesResponse = {
+        data: [
+          persistedUserMessage(initiatingMessageId),
+          persistedAssistantMessage({
+            id: "msg_stale_idle_status_assistant",
+            parentId: initiatingMessageId,
+            completed: 2,
+          }),
+        ],
+      };
+      firstStreamEnd.resolve();
+
+      await replacementBusyConsumed.promise;
+      releaseSecondStatus.resolve();
+      await secondStatusReturned.promise;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(terminalTurnEvents(events)).toEqual([]);
+      expect(openCode.calls.sessionMessages).toHaveLength(1);
+      await expect(parent.startTurn("unsafe replacement")).rejects.toThrow(
+        "A foreground turn is already active",
+      );
+
+      releaseReplacementIdle.resolve();
+      await vi.waitFor(() => {
+        expect(terminalTurnEvents(events)).toEqual([
+          expect.objectContaining({ type: "turn_completed", provider: "opencode" }),
+        ]);
+      });
+    } finally {
+      firstStreamEnd.resolve();
+      releaseSecondStatus.resolve();
+      releaseReplacementIdle.resolve();
+      await parent.close();
+    }
+  });
+
+  test("does not assign a new run to the old turn after an EOF reconnect", async () => {
+    const firstStreamEnd = createTestDeferred<void>();
+    const replacementEventsConsumed = createTestDeferred<void>();
+    const releaseReplacementIdle = createTestDeferred<void>();
+    const originalUserId = "msg_disconnected_original_user";
+    const originalAssistantId = "msg_disconnected_original_assistant";
+    const newUserId = "msg_disconnected_new_user";
+    const newAssistantId = "msg_disconnected_new_assistant";
+    const originalPart = {
+      id: "prt_disconnected_original",
+      sessionID: "ses_disconnected_run_boundary",
+      messageID: originalAssistantId,
+      type: "text" as const,
+      text: "Original run recovered.",
+      time: { start: 2, end: 3 },
+    };
+    const newPart = {
+      id: "prt_disconnected_new",
+      sessionID: "ses_disconnected_run_boundary",
+      messageID: newAssistantId,
+      type: "text" as const,
+      text: "Output from a newer run.",
+      time: { start: 5, end: 6 },
+    };
+    let streamOrdinal = 0;
+    async function* eventStream(signal: AbortSignal, currentStreamOrdinal: number) {
+      yield { type: "server.connected", properties: {} };
+      if (currentStreamOrdinal === 0) {
+        await Promise.race([firstStreamEnd.promise, waitForAbort(signal)]);
+        if (signal.aborted) return;
+        yield {
+          type: "message.updated",
+          properties: {
+            info: {
+              id: originalUserId,
+              sessionID: "ses_disconnected_run_boundary",
+              role: "user",
+            },
+          },
+        };
+        return;
+      }
+
+      yield {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: newUserId,
+            sessionID: "ses_disconnected_run_boundary",
+            role: "user",
+          },
+        },
+      };
+      yield {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: newAssistantId,
+            sessionID: "ses_disconnected_run_boundary",
+            role: "assistant",
+            parentID: newUserId,
+          },
+        },
+      };
+      yield { type: "message.part.updated", properties: { part: newPart } };
+      yield {
+        type: "permission.asked",
+        properties: {
+          id: "perm_disconnected_new_run",
+          sessionID: "ses_disconnected_run_boundary",
+          permission: "bash",
+          patterns: ["npm test"],
+          metadata: { command: "npm test", cwd: "/workspace/repo" },
+        },
+      };
+      replacementEventsConsumed.resolve();
+      await Promise.race([releaseReplacementIdle.promise, waitForAbort(signal)]);
+      if (signal.aborted) return;
+      yield {
+        type: "session.idle",
+        properties: { sessionID: "ses_disconnected_run_boundary" },
+      };
+    }
+    const { parent, openCode } = await createParentSession(
+      "ses_disconnected_run_boundary",
+      (client) => {
+        client.sessionPromptAsyncEvents = [];
+        client.sessionMessagesResponse = { data: [] };
+        client.sessionStatusResponse = {
+          data: { ses_disconnected_run_boundary: { type: "busy" } },
+        };
+        client.globalEventImplementation = async (options) => {
+          const signal = (options as { signal: AbortSignal }).signal;
+          const currentStreamOrdinal = streamOrdinal++;
+          return { stream: eventStream(signal, currentStreamOrdinal) };
+        };
+      },
+    );
+    const events: AgentStreamEvent[] = [];
+    parent.subscribe((event) => events.push(event));
+
+    try {
+      await parent.startTurn("original prompt");
+      openCode.sessionMessagesResponse = {
+        data: [
+          persistedUserMessage(originalUserId),
+          persistedAssistantMessage({
+            id: originalAssistantId,
+            parentId: originalUserId,
+            completed: 4,
+            parts: [originalPart],
+          }),
+          persistedUserMessage(newUserId),
+          persistedAssistantMessage({
+            id: newAssistantId,
+            parentId: newUserId,
+            completed: 7,
+            parts: [newPart],
+          }),
+        ],
+      };
+      firstStreamEnd.resolve();
+
+      await replacementEventsConsumed.promise;
+      await vi.waitFor(() => expect(openCode.calls.sessionStatus).toHaveLength(2));
+      expect(terminalTurnEvents(events)).toEqual([]);
+      expect(
+        events.some(
+          (event) =>
+            event.type === "timeline" &&
+            event.item.type === "assistant_message" &&
+            event.item.text === newPart.text,
+        ),
+      ).toBe(false);
+      expect(eventsWithType(events, "permission_requested")).toEqual([
+        expect.objectContaining({
+          type: "permission_requested",
+          request: expect.objectContaining({ id: "perm_disconnected_new_run" }),
+        }),
+      ]);
+      expect(eventsWithType(events, "permission_requested")[0]).not.toHaveProperty("turnId");
+      await expect(parent.startTurn("unsafe replacement")).rejects.toThrow(
+        "A foreground turn is already active",
+      );
+
+      releaseReplacementIdle.resolve();
+      await vi.waitFor(() => {
+        expect(terminalTurnEvents(events)).toEqual([
+          expect.objectContaining({ type: "turn_completed", provider: "opencode" }),
+        ]);
+      });
+      expect(
+        events.flatMap((event) =>
+          event.type === "timeline" && event.item.type === "assistant_message"
+            ? [event.item.text]
+            : [],
+        ),
+      ).toEqual([originalPart.text]);
+    } finally {
+      firstStreamEnd.resolve();
+      releaseReplacementIdle.resolve();
+      await parent.close();
+    }
+  });
+
+  test("fails EOF recovery when a failed baseline lets stale history race the current turn", async () => {
+    const streamEnd = createTestDeferred<void>();
+    const staleUser = persistedUserMessage("msg_stale_baseline_user");
+    const currentUser = persistedUserMessage("msg_current_baseline_user");
+    let messagesCallCount = 0;
+    async function* eventStream(signal: AbortSignal) {
+      yield { type: "server.connected", properties: {} };
+      await Promise.race([streamEnd.promise, waitForAbort(signal)]);
+      if (signal.aborted) return;
+      for (const messageId of ["msg_stale_baseline_user", "msg_current_baseline_user"]) {
+        yield {
+          type: "message.updated",
+          properties: {
+            info: {
+              id: messageId,
+              sessionID: "ses_failed_ownership_baseline",
+              role: "user",
+            },
+          },
+        };
+      }
+    }
+    const { parent, openCode } = await createParentSession(
+      "ses_failed_ownership_baseline",
+      (client) => {
+        client.sessionPromptAsyncEvents = [];
+        client.sessionMessagesImplementation = async () => {
+          messagesCallCount += 1;
+          if (messagesCallCount === 1) {
+            return { error: { message: "baseline unavailable" } };
+          }
+          return {
+            data: [
+              staleUser,
+              persistedAssistantMessage({
+                id: "msg_stale_baseline_assistant",
+                parentId: "msg_stale_baseline_user",
+                completed: 2,
+              }),
+              currentUser,
+              persistedAssistantMessage({
+                id: "msg_current_baseline_assistant",
+                parentId: "msg_current_baseline_user",
+                completed: 4,
+              }),
+            ],
+          };
+        };
+        client.globalEventImplementation = async (options) => {
+          const signal = (options as { signal: AbortSignal }).signal;
+          return {
+            stream: eventStream(signal),
+          };
+        };
+      },
+    );
+    const events: AgentStreamEvent[] = [];
+    parent.subscribe((event) => events.push(event));
+
+    try {
+      await parent.startTurn("current prompt");
+      streamEnd.resolve();
+
+      await vi.waitFor(() => {
+        expect(terminalTurnEvents(events)).toEqual([
+          expect.objectContaining({
+            type: "turn_failed",
+            error: "OpenCode event stream ended before the turn reached a terminal state",
+          }),
+        ]);
+      });
+      expect(eventsWithType(events, "turn_completed")).toEqual([]);
+      expect(openCode.calls.sessionMessages).toHaveLength(1);
+      expect(openCode.calls.sessionStatus).toEqual([{ directory: "/workspace/repo" }]);
+    } finally {
+      streamEnd.resolve();
+      await parent.close();
+    }
+  });
+
   test.each([
     { label: "user-only history with missing session status", includeAssistant: false },
     { label: "an incomplete assistant message", includeAssistant: true },
@@ -2466,7 +2995,7 @@ describe("OpenCode adapter startTurn error handling", () => {
         ]);
       });
       expect(eventsWithType(events, "turn_completed")).toEqual([]);
-      expect(openCode.calls.sessionStatus).toEqual([]);
+      expect(openCode.calls.sessionStatus).toEqual([{ directory: "/workspace/repo" }]);
     } finally {
       await parent.close();
     }
@@ -3019,6 +3548,27 @@ describe("OpenCode adapter startTurn error handling", () => {
     await parent.close();
 
     expect(messagesSignal.aborted).toBe(true);
+    expect(terminalTurnEvents(events)).toEqual([]);
+  });
+
+  test("aborts a stalled EOF status probe when the session closes", async () => {
+    const { parent, openCode, events, endStream } = await createControlledEofTurn();
+    const statusRequested = createTestDeferred<AbortSignal>();
+    openCode.sessionStatusImplementation = async (_parameters, options) => {
+      const signal = (options as { signal?: AbortSignal }).signal;
+      if (!signal) {
+        throw new Error("Expected EOF status reconciliation to receive an AbortSignal");
+      }
+      statusRequested.resolve(signal);
+      return await new Promise<never>(() => undefined);
+    };
+
+    endStream();
+    const statusSignal = await statusRequested.promise;
+    expect(statusSignal.aborted).toBe(false);
+    await parent.close();
+
+    expect(statusSignal.aborted).toBe(true);
     expect(terminalTurnEvents(events)).toEqual([]);
   });
 
@@ -4878,6 +5428,71 @@ describe("OpenCode provider subagent contract", () => {
     );
   });
 
+  test("ignores post-idle historical tool mutations for an adopted child", async () => {
+    const { child, childClient, parent } = await createAdoptedChildSession((client) => {
+      client.sessionPromptAsyncEvents = [
+        { type: "session.idle", properties: { sessionID: "ses_child_external" } },
+      ];
+    });
+    const events: AgentStreamEvent[] = [];
+
+    try {
+      child.subscribe((event) => events.push(event));
+      await vi.waitFor(() => expect(childClient.calls.sessionStatus).toHaveLength(1));
+
+      childClient.emitEvent({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "prt_pruned_historical_tool",
+            sessionID: "ses_child_external",
+            messageID: "msg_historical_assistant",
+            type: "tool",
+            tool: "bash",
+            callID: "call_historical_tool",
+            state: {
+              status: "completed",
+              input: { command: "printf old" },
+              output: "old output",
+              time: { start: 1, end: 2, compacted: 3 },
+            },
+          },
+        },
+      });
+      childClient.emitEvent({
+        type: "session.created",
+        properties: {
+          info: {
+            id: "ses_post_idle_mutation_drain",
+            parentID: "ses_child_external",
+            title: "Post-idle mutation drain",
+          },
+        },
+      });
+      await vi.waitFor(() => {
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: "provider_subagent",
+            event: expect.objectContaining({ id: "ses_post_idle_mutation_drain" }),
+          }),
+        );
+      });
+
+      expect(eventsWithType(events, "turn_started")).toEqual([]);
+      await expect(child.startTurn("next real prompt")).resolves.toEqual({
+        turnId: "opencode-turn-0",
+      });
+      await vi.waitFor(() => {
+        expect(terminalTurnEvents(events)).toEqual([
+          expect.objectContaining({ type: "turn_completed", provider: "opencode" }),
+        ]);
+      });
+    } finally {
+      await child.close();
+      await parent.close();
+    }
+  });
+
   test.each(["busy", "retry"] as const)(
     "reconciles an adopted child that was already %s before attachment",
     async (runnerStatus) => {
@@ -5283,10 +5898,6 @@ describe("OpenCode provider subagent contract", () => {
     });
 
     childClient.emitEvent({
-      type: "session.status",
-      properties: { sessionID: "ses_child_external", status: { type: "busy" } },
-    });
-    childClient.emitEvent({
       type: "permission.asked",
       properties: {
         id: "perm_child_external",
@@ -5295,6 +5906,10 @@ describe("OpenCode provider subagent contract", () => {
         patterns: ["npm test"],
         metadata: { command: "npm test", cwd: "/workspace/repo" },
       },
+    });
+    childClient.emitEvent({
+      type: "session.status",
+      properties: { sessionID: "ses_child_external", status: { type: "busy" } },
     });
     childClient.emitEvent({
       type: "session.idle",
