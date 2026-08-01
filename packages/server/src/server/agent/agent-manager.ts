@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { stat } from "node:fs/promises";
+import { isDeepStrictEqual } from "node:util";
 import {
   AGENT_LIFECYCLE_STATUSES,
   type AgentLifecycleStatus,
@@ -192,11 +193,14 @@ interface HydrateTimelineOptions {
 interface ActiveHistoryHydration {
   token: symbol;
   bufferedOperations: BufferedHistoryHydrationOperation[];
+  historyReadStarted: boolean;
+  historyOverlapItems: AgentTimelineItem[];
 }
 
 interface BufferedHistoryHydrationOperation {
   kind: "session_event" | "timeline_writer";
   run: () => Promise<void>;
+  overlapItem?: AgentTimelineItem;
   resolve?: () => void;
   reject?: (error: unknown) => void;
 }
@@ -1075,8 +1079,7 @@ export class AgentManager {
       : { persistSession: options.persistSession };
   }
 
-  // Reconstruct an agent from provider persistence. Callers should explicitly
-  // hydrate timeline history after resume.
+  // Reconstruct an agent from provider persistence and hydrate before live events can commit.
   resumeAgentFromPersistence(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
@@ -1088,6 +1091,7 @@ export class AgentManager {
       labels?: Record<string, string>;
       workspaceId?: string;
       owner?: AgentOwner;
+      historyBroadcast?: boolean | (() => boolean);
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -1107,6 +1111,7 @@ export class AgentManager {
       labels?: Record<string, string>;
       workspaceId?: string;
       owner?: AgentOwner;
+      historyBroadcast?: boolean | (() => boolean);
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -1141,10 +1146,23 @@ export class AgentManager {
       launchContext,
       resumeOptions,
     );
-    return this.registerSession(session, storedConfig, resolvedAgentId, {
-      ...options,
-      persistence: handle,
-    });
+    const hydrationToken = this.beginOrContinueHistoryHydration(resolvedAgentId);
+    try {
+      await this.registerSession(session, storedConfig, resolvedAgentId, {
+        ...options,
+        persistence: handle,
+      });
+      await this.hydrateTimelineFromProvider(resolvedAgentId, {
+        broadcast: options?.historyBroadcast,
+      });
+      return { ...this.requireAgent(resolvedAgentId) };
+    } catch (error) {
+      const activeHydration = this.activeHistoryHydrations.get(resolvedAgentId);
+      if (activeHydration?.token === hydrationToken) {
+        this.activeHistoryHydrations.delete(resolvedAgentId);
+      }
+      throw error;
+    }
   }
 
   importProviderSession(input: {
@@ -3026,6 +3044,12 @@ export class AgentManager {
       activeHydration.bufferedOperations.push({
         kind: "session_event",
         run: async () => this.processSessionEvent(agentId, event, activeHydration.token),
+        overlapItem:
+          !activeHydration.historyReadStarted &&
+          event.type === "timeline" &&
+          this.isHistoryOverlapItem(event.item)
+            ? event.item
+            : undefined,
       });
       return;
     }
@@ -3323,6 +3347,10 @@ export class AgentManager {
     const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
     let historyAvailable = true;
     agent.historyPrimed = true;
+    const activeHydration = this.activeHistoryHydrations.get(agent.id);
+    if (activeHydration) {
+      activeHydration.historyReadStarted = true;
+    }
     try {
       for await (const event of agent.session.streamHistory()) {
         if (event.type === "provider_subagent") {
@@ -3344,6 +3372,13 @@ export class AgentManager {
     }
 
     if (historyAvailable) {
+      if (activeHydration) {
+        activeHydration.historyOverlapItems.push(
+          ...timelineEvents
+            .map((event) => event.item)
+            .filter((item) => this.isHistoryOverlapItem(item)),
+        );
+      }
       const shouldBroadcast = typeof broadcast === "function" ? broadcast() : broadcast;
       for (const event of providerSubagentEvents) {
         const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
@@ -3374,8 +3409,39 @@ export class AgentManager {
       return activeHydration.token;
     }
     const token = Symbol(agentId);
-    this.activeHistoryHydrations.set(agentId, { token, bufferedOperations: [] });
+    this.activeHistoryHydrations.set(agentId, {
+      token,
+      bufferedOperations: [],
+      historyReadStarted: false,
+      historyOverlapItems: [],
+    });
     return token;
+  }
+
+  private isHistoryOverlapItem(item: AgentTimelineItem): boolean {
+    return (
+      item.type === "user_message" ||
+      item.type === "assistant_message" ||
+      item.type === "tool_call" ||
+      item.type === "compaction"
+    );
+  }
+
+  private consumeHistoryOverlap(
+    activeHydration: ActiveHistoryHydration,
+    item: AgentTimelineItem | undefined,
+  ): boolean {
+    if (!item) {
+      return false;
+    }
+    const index = activeHydration.historyOverlapItems.findIndex((historyItem) =>
+      isDeepStrictEqual(historyItem, item),
+    );
+    if (index < 0) {
+      return false;
+    }
+    activeHydration.historyOverlapItems.splice(index, 1);
+    return true;
   }
 
   private async releaseHistoryHydration(
@@ -3396,6 +3462,12 @@ export class AgentManager {
       const operation = activeHydration.bufferedOperations.shift();
       if (operation) {
         try {
+          if (
+            operation.kind === "session_event" &&
+            this.consumeHistoryOverlap(activeHydration, operation.overlapItem)
+          ) {
+            continue;
+          }
           if (operation.kind === "timeline_writer") {
             // A preceding replayed session event may have placed older output in the coalescer.
             // Commit it before this direct writer so crossing the barrier cannot invert order.

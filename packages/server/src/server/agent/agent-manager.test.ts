@@ -2831,6 +2831,97 @@ test("reloadAgentSession preserves timeline and does not force history replay", 
   expect(afterHydrate).toEqual(beforeReload);
 });
 
+async function expectResumeHistoryOverlap(params: {
+  item: AgentTimelineItem;
+  expectedCount: number;
+  emitAfterHistoryReadStarts?: boolean;
+}): Promise<void> {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-resume-history-overlap-"));
+  const agentId = randomUUID();
+
+  class OverlappingHistorySession extends TestAgentSession {
+    override subscribe(callback: (event: AgentStreamEvent) => void): () => void {
+      const unsubscribe = super.subscribe(callback);
+      callback({ type: "timeline", provider: "codex", item: params.item });
+      return unsubscribe;
+    }
+
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      if (params.emitAfterHistoryReadStarts) {
+        this.pushEvent({ type: "timeline", provider: "codex", item: params.item });
+      }
+      yield { type: "timeline", provider: "codex", item: params.item };
+    }
+  }
+
+  class OverlappingHistoryClient extends TestAgentClient {
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new OverlappingHistorySession({
+        provider: "codex",
+        cwd: config?.cwd ?? workdir,
+      });
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new OverlappingHistoryClient() },
+    logger,
+  });
+  try {
+    await manager.resumeAgentFromPersistence(
+      { provider: "codex", sessionId: "overlap-session", metadata: { cwd: workdir } },
+      undefined,
+      agentId,
+    );
+
+    expect(manager.getTimeline(agentId)).toEqual(
+      Array.from({ length: params.expectedCount }, () => params.item),
+    );
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+}
+
+test("resume hydration deduplicates the same message emitted by subscribe and history", async () => {
+  await expectResumeHistoryOverlap({
+    item: { type: "assistant_message", text: "persisted reply", messageId: "message-1" },
+    expectedCount: 1,
+  });
+});
+
+test("resume hydration deduplicates the same tool call emitted by subscribe and history", async () => {
+  await expectResumeHistoryOverlap({
+    item: {
+      type: "tool_call",
+      callId: "call-1",
+      name: "read",
+      status: "completed",
+      error: null,
+      detail: { type: "plain_text", text: "persisted result" },
+    },
+    expectedCount: 1,
+  });
+});
+
+test("resume hydration deduplicates the same compaction emitted by subscribe and history", async () => {
+  await expectResumeHistoryOverlap({
+    item: { type: "compaction", status: "completed", trigger: "auto", preTokens: 12_000 },
+    expectedCount: 1,
+  });
+});
+
+test("resume hydration preserves the same message emitted after history reading starts", async () => {
+  await expectResumeHistoryOverlap({
+    item: { type: "assistant_message", text: "same content", messageId: "message-2" },
+    expectedCount: 2,
+    emitAfterHistoryReadStarts: true,
+  });
+});
+
 test("reloadAgentSession clears provider children before rehydrating from disk", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-child-reload-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);

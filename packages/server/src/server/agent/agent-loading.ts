@@ -109,7 +109,10 @@ export async function ensureAgentLoaded(
         handle,
         buildConfigOverrides(record),
         agentId,
-        extractTimestamps(record),
+        {
+          ...extractTimestamps(record),
+          historyBroadcast: () => pendingOptions.broadcastTimeline,
+        },
         record.archivedAt ? { purpose: "history" } : undefined,
       );
       deps.logger.info({ agentId, provider: record.provider }, "Agent resumed from persistence");
@@ -128,9 +131,11 @@ export async function ensureAgentLoaded(
       deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");
     }
 
-    await deps.agentManager.hydrateTimelineFromProvider(agentId, {
-      broadcast: () => pendingOptions.broadcastTimeline,
-    });
+    if (!handle) {
+      await deps.agentManager.hydrateTimelineFromProvider(agentId, {
+        broadcast: () => pendingOptions.broadcastTimeline,
+      });
+    }
     return deps.agentManager.getAgent(agentId) ?? snapshot;
   })();
 

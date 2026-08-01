@@ -5631,10 +5631,12 @@ describe("agent snapshot MCP serialization", () => {
       }),
     );
     expect(spies.agentManager.resumeAgentFromPersistence).toHaveBeenCalled();
-    expect(spies.agentManager.hydrateTimelineFromProvider).toHaveBeenCalledWith(
-      "archived-activity-agent",
-      { broadcast: expect.any(Function) },
+    const resumeCall = spies.agentManager.resumeAgentFromPersistence.mock.calls[0];
+    expect(resumeCall?.[2]).toBe("archived-activity-agent");
+    expect(resumeCall?.[3]).toEqual(
+      expect.objectContaining({ historyBroadcast: expect.any(Function) }),
     );
+    expect(spies.agentManager.hydrateTimelineFromProvider).not.toHaveBeenCalled();
   });
 
   it("get_agent_activity limit counts projected messages, not raw deltas", async () => {
