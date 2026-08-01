@@ -8,6 +8,7 @@ import {
   type LiveVoiceContextSnapshot,
 } from "./live-voice-context.js";
 import { LiveVoiceDaemonContextProvider } from "./live-voice-daemon-context.js";
+import { buildVoiceModeSystemPrompt } from "../voice-config.js";
 
 const AGENT_ID = "agent-1";
 
@@ -55,6 +56,31 @@ describe("live voice prompt", () => {
     expect(prompt).not.toMatch(/attached/i);
     // Spoken-output discipline, since this prompt replaces codex's entire prompt.
     expect(prompt).toMatch(/no markdown/i);
+  });
+
+  it("requires user-requested agent creation to stay visible in Paseo", () => {
+    const prompt = buildLiveVoicePrompt(true);
+
+    expect(prompt).toMatch(/spawn, start, create, or delegate to an agent/i);
+    expect(prompt).toContain("list_hosts");
+    expect(prompt).toContain("create_workspace");
+    expect(prompt).toContain("create_agent");
+    expect(prompt).toMatch(/pass the returned workspaceId to create_agent/i);
+    expect(prompt).toMatch(/spawn_agent/i);
+    expect(prompt).toMatch(/Agent tool/i);
+    expect(prompt).toMatch(/collaboration primitives/i);
+    expect(prompt).toMatch(/never silently fall back/i);
+    expect(prompt).toMatch(/both workspaceId and agentId/i);
+    expect(prompt).toMatch(/visible workspace and agent titles/i);
+  });
+
+  it("keeps Live Voice creation guidance out of ordinary voice-mode prompts", () => {
+    const prompt = buildVoiceModeSystemPrompt("Base system prompt", true);
+
+    expect(prompt).not.toContain("list_hosts");
+    expect(prompt).not.toContain("create_workspace");
+    expect(prompt).not.toContain("spawn_agent");
+    expect(prompt).not.toContain("collaboration primitives");
   });
 
   it("admits it cannot act on Paseo when it has no Paseo tools", () => {

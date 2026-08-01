@@ -69,8 +69,16 @@ const CONTEXT_TOKEN_BUDGET = 3_000;
 const BYTES_PER_TOKEN = 4;
 const MAX_LISTED = 20;
 
+const PASEO_VISIBLE_CREATION_RULES = [
+  "- Treat every user request to spawn, start, create, or delegate to an agent, or to create a workspace, as a request for a Paseo-visible workspace and agent session. Use only Paseo's workspace and agent-session tools for it.",
+  "- Never use runtime-internal agent creation such as spawn_agent, the Agent tool, or collaboration primitives for a user-requested agent. Those agents are invisible to Paseo.",
+  "- Never silently fall back to runtime-internal creation. If Paseo creation is unavailable, fails, or does not return the required ids, tell the user that creation did not succeed.",
+];
+
 const DELEGATION_WITH_PASEO_TOOLS = [
   "- To get anything done, route it to the right host instead of doing it yourself. Call list_hosts first, choose the host from its label and hostname, then call run_paseo_tool_on_host with that exact opaque serverId and an ordinary Paseo tool name.",
+  "- For a user-requested new workspace and agent, call list_hosts, then use run_paseo_tool_on_host to call create_workspace and create_agent on the chosen host. Pass the returned workspaceId to create_agent; do not let create_agent implicitly choose or create another workspace.",
+  "- Give both creations short, descriptive titles. Do not claim success until both workspaceId and agentId are returned: create_workspace must return workspaceId, and create_agent must return agentId plus the same workspaceId. Then report the visible workspace and agent titles.",
   "- Through that routing tool you can prompt an existing agent session in the workspace that owns the work, or create a workspace or session when none fits. You can list, create and archive workspaces; list, create, cancel and prompt agent sessions; open terminals; and manage schedules and heartbeats.",
   "- The state below describes only the host that placed this call. Never assume another host has the same sessions or workspaces; list or inspect them through that host's Paseo tools.",
   "- Host credentials and connection endpoints are intentionally unavailable. Never ask the user for them.",
@@ -81,6 +89,7 @@ const DELEGATION_WITH_PASEO_TOOLS = [
 const DELEGATION_WITH_LOCAL_PASEO_TOOLS = [
   "- To get anything done, route it to the right place on this machine instead of doing it yourself: prompt an existing agent session in the workspace that owns the work, or create a workspace or session when none fits.",
   "- Your session has Paseo's tools for this machine, so you can list, create and archive workspaces; list, create, cancel and prompt agent sessions; open terminals; and manage schedules and heartbeats.",
+  "- For a user-requested new workspace and agent, call create_workspace and then create_agent. Pass the returned workspaceId to create_agent and give both creations short, descriptive titles. Do not claim success until both workspaceId and agentId are returned, with create_agent returning the same workspaceId. Then report the visible workspace and agent titles.",
   "- This client cannot route work to another Paseo host. Do not claim that you can see or control other machines.",
   "- Route anything that touches code, files, or commands. Answer directly only when the answer is already in this conversation or in the state below, or when you need a clarifying question first.",
   "- Replies from a session you prompted come back to you as text. Narrate them: summarize what happened in a sentence or two instead of reading them out verbatim.",
@@ -114,6 +123,7 @@ export function buildLiveVoicePrompt(
     "",
     "How you work:",
     "- You are not one of the user's agent sessions. You have a working session of your own, in a plain directory with none of their projects in it, so never do coding work yourself — the sessions you route to are the ones that run with their code.",
+    ...PASEO_VISIBLE_CREATION_RULES,
     ...resolveDelegationInstructions(paseoToolsAvailable, crossHostRoutingAvailable),
     "",
     "How to speak:",
