@@ -432,7 +432,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
         return;
       }
 
-      if (event.event.type === "permission_requested") {
+      if (event.type === "agent_stream" && event.event.type === "permission_requested") {
         notifySafely("needs permission");
       }
     },

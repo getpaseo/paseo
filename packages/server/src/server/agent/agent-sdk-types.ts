@@ -436,6 +436,11 @@ export type AgentStreamEvent =
       type: "provider_subagent";
       provider: AgentProvider;
       event: import("./provider-subagents/store.js").ProviderSubagentInputEvent;
+    }
+  | {
+      type: "background_tasks";
+      provider: AgentProvider;
+      event: import("./providers/claude/background-tasks.js").BackgroundTaskInputEvent;
     };
 
 export function getAgentStreamEventTurnId(event: AgentStreamEvent): string | undefined {
@@ -652,6 +657,14 @@ export interface AgentSession {
    * implement this. Callers must only invoke it while a turn is running.
    */
   steer?(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<void>;
+  /** Stop a provider-owned background shell task (Claude `stopTask`). */
+  stopBackgroundTask?(taskId: string): Promise<void>;
+  /** Read a capped slice of a background task output file. */
+  readBackgroundTaskOutput?(input: {
+    outputFile: string;
+    cursor?: number;
+    maxBytes?: number;
+  }): Promise<{ text: string; nextCursor: number; eof: boolean; error: string | null }>;
   /** Release live runtime resources without archiving or deleting the durable native session. */
   close(): Promise<void>;
   listCommands?(): Promise<AgentSlashCommand[]>;
