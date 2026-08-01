@@ -25,8 +25,10 @@
         "force provider hydration commits history before releasing interleaved live events",
         "force provider hydration preserves direct timeline appends during replacement",
         "force provider hydration preserves out-of-band timeline output during replacement",
+        "force provider hydration preserves synthesized start-failure timeline output during replacement",
         "force hydration flushes assistant, reasoning, and running tool output before success or failure completion",
         "coalesced timeline output retains order before the following non-coalescable event",
+        "pre-hydration coalesced output retains order before later live events on success and failure",
         "an immediate second force hydration cannot inherit a late coalescer flush",
         "concurrent forced history hydrations serialize per agent",
         "successful hydration returns only after buffered live events are committed",
@@ -34,9 +36,9 @@
       ],
       "verification": {
         "receipt": "patches/receipts/paseo-v025-hydration-atomicity-current-main.json",
-        "completedAt": "2026-08-01T03:52:56Z",
+        "completedAt": "2026-08-01T03:57:14Z",
         "result": {
-          "agentManagerTests": "152 passed",
+          "agentManagerTests": "155 passed",
           "serverBuild": "passed",
           "serverTypecheck": "passed",
           "changedFileLint": "0 warnings, 0 errors",
@@ -47,8 +49,8 @@
         "upstreamCommit": "70ed70d36e2eabd3876a22931954319ec202c902",
         "mergeCommit": "562069425d7e1d8d40329132761f71601d9dc52e",
         "mergeTree": "1034d47eeef9a5d3dd1763d580f915de60c0e20c",
-        "repairCommit": "8f9a1c90d54a85439dc2241b440a18f6a9ad4cec",
-        "repairTree": "4dba625cc64e3cde2ac6ffea3981f4f7ac2cb09a",
+        "repairCommit": "455ad19fd5032fbff95645c461c1d2061b1a0108",
+        "repairTree": "04222e73b8609e76e20453d07e291c2af8cd01ec",
         "receipt": "patches/receipts/paseo-v025-hydration-atomicity-current-main.json"
       },
       "upstreamable": true,
