@@ -129,6 +129,16 @@ still tears the call down immediately. Native background audio keeps the peer an
 socket alive across Home/screen lock; the physical-device checks and platform
 constraints are in [mobile-testing.md](mobile-testing.md).
 
+Where a call's audio plays is decided by the OS, not by the call. `react-native-webrtc`
+does not touch `AudioManager` on Android, so `packages/app/modules/paseo-background-call`
+owns the audio mode and picks a communication device, preferring a Bluetooth
+headset. A Wear OS watch with a speaker and mic is one, which is how a call reaches
+a wrist without the watch app carrying any audio — see
+[packages/watch/README.md](../packages/watch/README.md). iOS sets an equivalent
+`AVAudioSession` category, but an Apple Watch is not reachable this way: its call
+audio needs CallKit, which Paseo does not yet register with. Nothing here integrates
+with Telecom, so a cellular call arriving mid-Live-Voice is not arbitrated.
+
 On Android the foreground service's ongoing notification is the call's only
 control surface once Paseo is backgrounded, so it carries Mute and End call. The
 service never changes call state itself: a button press travels back through the
