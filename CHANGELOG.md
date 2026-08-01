@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.916 - 2026-08-01
+
+### Added
+
+- Claude Code **Background Tasks** track under Subagents: see long-running shell processes (e.g. `npm run dev`) without leaving the agent pane ([#39](https://github.com/iamriajul/paseo/pull/39))
+- Icon-only **Stop** on Background Tasks rows (track only)
+- Background Task workspace tab with focus-gated live log tailing (polls only while that tab is focused)
+- Daemon live set from Claude SDK membership signals (`background_tasks_changed` and related), with list/stop/output RPCs and `server_info.features.backgroundTasks`
+
+### Fixed
+
+- Live log subscription no longer permanently ends when a running task has no `outputFile` yet or the file is only caught up mid-run
+- Finished background tasks are removed from the live set on terminal notifications so the track does not keep stale rows
+- Bash `backgroundTaskId` correlation unwraps nested tool-result shapes so command labels can appear on rows
+
 ## 0.2.915 - 2026-07-31
 
 ### Fixed
