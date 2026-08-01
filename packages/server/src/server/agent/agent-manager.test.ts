@@ -18,6 +18,7 @@ import { toAgentPayload } from "./agent-projections.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { formatSystemNotificationPrompt, startAgentRun } from "./agent-prompt.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent-loading.js";
+import { FileAgentTimelineStore } from "./file-agent-timeline-store.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
 import type {
   AgentClient,
@@ -2947,6 +2948,110 @@ test("ordinary reload preserves material progress while disk rehydration mints a
   } finally {
     await manager.flush().catch(() => undefined);
     await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("material progress restores only with the exact durable timeline incarnation across restart", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-material-progress-restart-"));
+  const agentStoragePath = join(workdir, "agents");
+  const timelineStoragePath = join(workdir, "timelines");
+  const agentId = "00000000-0000-4000-8000-000000000134";
+
+  class ReplacementHistoryClient extends TestAgentClient {
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+          yield {
+            type: "timeline",
+            provider: this.provider,
+            item: { type: "user_message", text: "longer replacement history" },
+          };
+          yield {
+            type: "timeline",
+            provider: this.provider,
+            item: { type: "assistant_message", text: "replacement result" },
+          };
+        }
+      })({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  }
+
+  const createManager = (storage: AgentStorage) =>
+    new AgentManager({
+      clients: { codex: new ReplacementHistoryClient() },
+      registry: storage,
+      durableTimelineStore: new FileAgentTimelineStore(timelineStoragePath, logger),
+      logger,
+      idFactory: () => agentId,
+    });
+
+  try {
+    const firstStorage = new AgentStorage(agentStoragePath, logger);
+    const firstManager = createManager(firstStorage);
+    const created = await firstManager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await firstManager.runAgent(created.id, "accepted durable continuation");
+    await firstManager.appendTimelineItem(created.id, {
+      type: "tool_call",
+      callId: "write-before-restart",
+      name: "write",
+      status: "completed",
+      error: null,
+      detail: { type: "write", filePath: "proof.txt", content: "durable proof" },
+    });
+    await firstManager.flush();
+    const beforeRestart = firstManager.getMaterialProgress(created.id);
+    expect(beforeRestart).toMatchObject({
+      state: "progressing",
+      continuationBoundarySeq: 1,
+      observedThroughSeq: 1,
+      lastMaterialProgressKind: "write",
+    });
+    await firstManager.closeAgent(created.id);
+    await firstManager.flush();
+
+    const restartedStorage = new AgentStorage(agentStoragePath, logger);
+    const restartedManager = createManager(restartedStorage);
+    await ensureAgentLoaded(created.id, {
+      agentManager: restartedManager,
+      agentStorage: restartedStorage,
+      logger,
+    });
+    expect(restartedManager.getMaterialProgress(created.id)).toEqual(beforeRestart);
+
+    await restartedManager.reloadAgentSession(created.id, undefined, {
+      rehydrateFromDisk: true,
+    });
+    await restartedManager.hydrateTimelineFromProvider(created.id);
+    await restartedManager.flush();
+    const afterReplacement = restartedManager.getMaterialProgress(created.id);
+    expect(afterReplacement).toMatchObject({
+      state: "none",
+      continuationBoundarySeq: null,
+      observedThroughSeq: 2,
+      lastMaterialProgressKind: null,
+    });
+    expect(afterReplacement.timelineEpoch).not.toBe(beforeRestart.timelineEpoch);
+    expect(restartedManager.getTimeline(created.id)).toHaveLength(2);
+    await restartedManager.closeAgent(created.id);
+    await restartedManager.flush();
+
+    const replacementRestartStorage = new AgentStorage(agentStoragePath, logger);
+    const replacementRestartManager = createManager(replacementRestartStorage);
+    await ensureAgentLoaded(created.id, {
+      agentManager: replacementRestartManager,
+      agentStorage: replacementRestartStorage,
+      logger,
+    });
+    expect(replacementRestartManager.getMaterialProgress(created.id)).toEqual(afterReplacement);
+    await replacementRestartManager.closeAgent(created.id);
+    await replacementRestartManager.flush();
+  } finally {
     rmSync(workdir, { recursive: true, force: true });
   }
 });

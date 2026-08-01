@@ -2983,17 +2983,19 @@ export class AgentManager {
     const { agentId, now, options } = params;
     const timelineAlreadyPrimed = this.timelineStore.has(agentId);
     const explicitTimelineSeed = buildExplicitTimelineSeedForRegister(now, options);
-    const shouldSeedFromDurable =
-      !explicitTimelineSeed &&
-      !this.timelineStore.has(agentId) &&
-      this.durableTimelineStore !== undefined;
+    const shouldSeedFromDurable = !timelineAlreadyPrimed && this.durableTimelineStore !== undefined;
     const durableTimelineSeed = shouldSeedFromDurable
       ? await this.loadCommittedTimelineSeed(agentId, now)
       : null;
     const durableTimelineHasRows =
       timelineAlreadyPrimed ||
       (durableTimelineSeed != null && (durableTimelineSeed.nextSeq ?? 1) > 1);
-    const timelineSeed = explicitTimelineSeed ?? durableTimelineSeed;
+    const timelineSeed = explicitTimelineSeed
+      ? {
+          ...explicitTimelineSeed,
+          ...(durableTimelineSeed ? { epoch: durableTimelineSeed.epoch } : {}),
+        }
+      : durableTimelineSeed;
     if (timelineSeed || !this.timelineStore.has(agentId)) {
       this.timelineStore.initialize(agentId, timelineSeed ?? { timestamp: now.toISOString() });
     }
@@ -3092,8 +3094,11 @@ export class AgentManager {
       return { timestamp: now.toISOString() };
     }
 
+    const committed = await this.durableTimelineStore.fetchCommitted(agentId, { limit: 0 });
     return {
-      nextSeq: (await this.durableTimelineStore.getLatestCommittedSeq(agentId)) + 1,
+      epoch: committed.epoch,
+      rows: committed.rows,
+      nextSeq: committed.window.nextSeq,
       timestamp: now.toISOString(),
     };
   }
@@ -3407,7 +3412,10 @@ export class AgentManager {
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     await this.deleteCommittedTimeline(agent.id);
     this.timelineStore.delete(agent.id);
-    this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
+    this.timelineStore.initialize(
+      agent.id,
+      await this.loadCommittedTimelineSeed(agent.id, new Date()),
+    );
     this.resetMaterialProgress(agent);
     agent.historyPrimed = true;
 

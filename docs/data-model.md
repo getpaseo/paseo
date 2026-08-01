@@ -52,6 +52,8 @@ $PASEO_HOME/
 ├── agents/
 │   └── {sanitized-cwd}/
 │       └── {agentId}.json               # One file per agent
+├── timelines/
+│   └── agent-{base64url-agentId}.json    # Canonical rows plus durable incarnation epoch
 ├── schedules/
 │   └── {scheduleId}.json                # One file per schedule
 ├── chat/
@@ -68,7 +70,7 @@ $PASEO_HOME/
 └── push-tokens.json                     # Expo push notification tokens
 ```
 
-The `agents/{sanitized-cwd}/` directory name is derived from the agent's `cwd` by stripping the filesystem root and replacing path separators with `-` (Windows drive letters become a `C-` style prefix). Persistent server stores write atomically by writing a temp file in the target directory and then renaming it into place.
+The `agents/{sanitized-cwd}/` directory name is derived from the agent's `cwd` by stripping the filesystem root and replacing path separators with `-` (Windows drive letters become a `C-` style prefix). Each timeline file stores the canonical rows and the exact incarnation epoch used by material-progress checkpoints. Reopening unchanged durable rows restores that epoch; deleting or replacing the timeline retires it and mints a new one. Persistent server stores write atomically by writing a temp file in the target directory and then renaming it into place.
 
 ---
 
@@ -142,10 +144,12 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 This checkpoint is an observational read model; it does not change lifecycle or control whether an
 agent continues. An accepted provider turn opens a new continuation boundary. Rejected starts that
 never return a turn id leave the preceding accepted outcome intact. A checkpoint is restored only
-when its timeline epoch is unchanged; sequence bounds alone cannot prove continuity across a process
-restart or timeline replacement. A changed epoch starts an empty checkpoint, even when the new
-timeline is equally long or longer. After a successful provider rewind, the empty checkpoint is
-persisted before any fallible history refresh; a rejected provider rewind preserves the checkpoint.
+when its timeline epoch is unchanged; sequence bounds alone cannot prove continuity. The epoch is
+persisted with the canonical timeline so a daemon restart of that exact durable incarnation preserves
+the checkpoint. Timeline replacement, rewind, or explicit rehydration retires the epoch and starts an
+empty checkpoint, even when the replacement is equally long or longer. After a successful provider
+rewind, the empty checkpoint is persisted before any fallible history refresh; a rejected provider
+rewind preserves the checkpoint.
 
 | Field                                       | Type                                                                                     | Description                                                                                        |
 | ------------------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
