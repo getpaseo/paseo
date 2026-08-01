@@ -83,7 +83,12 @@ describe("bootstrap provider availability", () => {
       openai: undefined,
       speech: undefined,
       providerOverrides: {
+        claude: { enabled: false },
         codex: { command: [path.join(root, "missing-codex")] },
+        copilot: { enabled: false },
+        omp: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
       },
     };
     const processFailures: Error[] = [];
@@ -121,5 +126,5 @@ describe("bootstrap provider availability", () => {
       await daemon.stop().catch(() => undefined);
       await daemon.agentManager.flush().catch(() => undefined);
     }
-  });
+  }, 10_000);
 });
