@@ -1,8 +1,19 @@
+import pino from "pino";
 import { describe, expect, test } from "vitest";
 
 import type { PaseoToolCatalog } from "../../tools/types.js";
-import type { OmpNoTurnScheduler, OmpProviderIdleScheduler } from "./agent.js";
+import { OmpAgentClient, type OmpNoTurnScheduler, type OmpProviderIdleScheduler } from "./agent.js";
+import type { OmpRuntimeSession, OmpStartSessionInput } from "./runtime.js";
+import { FakeOmp } from "./test-utils/fake-omp.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolveDeferred!: (value: T) => void;
+  const promise = new Promise<T>((resolve) => {
+    resolveDeferred = resolve;
+  });
+  return { promise, resolve: resolveDeferred };
+}
 
 class ManualIdleScheduler implements OmpProviderIdleScheduler {
   private readonly retries: Array<() => void> = [];
@@ -83,6 +94,55 @@ function createToolCatalog(): PaseoToolCatalog {
 }
 
 describe("OMP agent client and session", () => {
+  test("waits for OMP catalog session cleanup before rejecting an aborted request", async () => {
+    const modelsStarted = deferred<void>();
+    const models = deferred<Awaited<ReturnType<OmpRuntimeSession["getAvailableModels"]>>>();
+    const closeStarted = deferred<void>();
+    const closeAllowed = deferred<void>();
+    class ControlledOmp extends FakeOmp {
+      override async startSession(input: OmpStartSessionInput): Promise<OmpRuntimeSession> {
+        const session = await super.startSession(input);
+        session.getAvailableModels = async () => {
+          modelsStarted.resolve();
+          return await models.promise;
+        };
+        session.close = async () => {
+          closeStarted.resolve();
+          await closeAllowed.promise;
+        };
+        return session;
+      }
+    }
+    const client = new OmpAgentClient({
+      logger: pino({ level: "silent" }),
+      runtime: new ControlledOmp(),
+    });
+    const controller = new AbortController();
+    const abortReason = new Error("catalog superseded");
+    const catalog = client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/with-extension",
+      force: false,
+      signal: controller.signal,
+    });
+
+    await modelsStarted.promise;
+    controller.abort(abortReason);
+    await closeStarted.promise;
+    const beforeCleanup = await Promise.race([
+      catalog.then(
+        () => "settled",
+        () => "settled",
+      ),
+      new Promise<"pending">((resolve) => setImmediate(() => resolve("pending"))),
+    ]);
+    expect(beforeCleanup).toBe("pending");
+
+    closeAllowed.resolve();
+    await expect(catalog).rejects.toBe(abortReason);
+    models.resolve([]);
+  });
+
   test("owns launch configuration and registers native host tools", async () => {
     const omp = new OmpHarness();
     await omp.start({ modeId: "ask" }, createToolCatalog());

@@ -53,6 +53,51 @@ describe("execCommand", () => {
     await expect(execCommand(command.command, command.args, { timeout: 100 })).rejects.toThrow();
   });
 
+  test.skipIf(process.platform === "win32")(
+    "preserves the abort reason when process-tree cleanup times out",
+    async () => {
+      const cwd = realpathSync(mkdtempSync(path.join(tmpdir(), "spawn-test-")));
+      tempDirs.push(cwd);
+      const pidFile = path.join(cwd, "command.pid");
+      const script = [
+        'const { writeFileSync } = require("node:fs");',
+        `writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));`,
+        "setInterval(() => {}, 10_000);",
+      ].join("");
+      const controller = new AbortController();
+      const reason = new Error("caller cancelled command");
+      const command = execCommand(process.execPath, ["-e", script], {
+        cwd,
+        signal: controller.signal,
+      });
+      await vi.waitFor(() => expect(fs.existsSync(pidFile)).toBe(true));
+      const pid = Number(fs.readFileSync(pidFile, "utf8"));
+      const originalKill = process.kill.bind(process);
+      const killSpy = vi.spyOn(process, "kill").mockImplementation((target, signal) => {
+        if (target === -pid) {
+          return true;
+        }
+        return originalKill(target, signal);
+      });
+      vi.useFakeTimers();
+
+      try {
+        const failure = command.catch((error: unknown) => error);
+        controller.abort(reason);
+        await vi.advanceTimersByTimeAsync(2_100);
+        expect(await failure).toBe(reason);
+      } finally {
+        vi.useRealTimers();
+        killSpy.mockRestore();
+        try {
+          originalKill(-pid, "SIGKILL");
+        } catch {
+          // Already exited.
+        }
+      }
+    },
+  );
+
   test("treats a zero timeout as disabled", async () => {
     const result = await execCommand(
       process.execPath,

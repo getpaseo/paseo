@@ -35,9 +35,10 @@ export async function getClaudeModelsWithSettings(
   logger: Logger,
   configDir?: string,
   claudeCodeVersion?: string,
+  signal?: AbortSignal,
 ): Promise<AgentModelDefinition[]> {
   const hardcodedModels = getClaudeModels(claudeCodeVersion);
-  const settingsModels = await readClaudeSettingsModels(logger, configDir);
+  const settingsModels = await readClaudeSettingsModels(logger, configDir, signal);
   if (settingsModels.length === 0) {
     return hardcodedModels;
   }
@@ -59,14 +60,16 @@ export async function getClaudeModelsWithSettings(
 async function readClaudeSettingsModels(
   logger: Logger,
   configDir?: string,
+  signal?: AbortSignal,
 ): Promise<AgentModelDefinition[]> {
   const settingsPath = path.join(resolveClaudeConfigDir(configDir), "settings.json");
 
   let parsed: unknown;
   try {
-    const rawSettings = await fs.readFile(settingsPath, "utf8");
+    const rawSettings = await fs.readFile(settingsPath, { encoding: "utf8", signal });
     parsed = JSON.parse(rawSettings);
   } catch (error) {
+    signal?.throwIfAborted();
     logger.debug({ err: error, settingsPath }, "Failed to read Claude settings models");
     return [];
   }

@@ -12,6 +12,7 @@ import {
   type TextPartInput as OpenCodeTextPartInput,
 } from "@opencode-ai/sdk/v2/client";
 import fs from "node:fs/promises";
+import { awaitWithAbort } from "../../../utils/abort.js";
 import { createPathEquivalenceMatcher } from "../../../utils/path.js";
 import pLimit from "p-limit";
 import type { Logger } from "pino";
@@ -285,6 +286,35 @@ const MCP_ALREADY_PRESENT_ERROR_TOKENS = ["already", "exists", "connected"] as c
 const OPENCODE_PROVIDER_LIST_TIMEOUT_MS = 30_000;
 const OPENCODE_METADATA_CONCURRENCY = 4;
 const openCodeMetadataLimit = pLimit(OPENCODE_METADATA_CONCURRENCY);
+
+interface AbortableMetadataRequestOptions<T> {
+  run: (signal: AbortSignal) => Promise<T>;
+  signal?: AbortSignal;
+  timeoutMs: number;
+  timeoutMessage: string;
+}
+
+async function runAbortableMetadataRequest<T>(
+  options: AbortableMetadataRequestOptions<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const abortRequest = () => controller.abort(options.signal?.reason);
+  options.signal?.addEventListener("abort", abortRequest, { once: true });
+  if (options.signal?.aborted) {
+    abortRequest();
+  }
+  const request = Promise.resolve().then(() => options.run(controller.signal));
+  try {
+    return await withTimeout(request, options.timeoutMs, options.timeoutMessage);
+  } catch (error) {
+    controller.abort(error);
+    await request.catch(() => undefined);
+    throw error;
+  } finally {
+    options.signal?.removeEventListener("abort", abortRequest);
+  }
+}
+
 const OPENCODE_HANDLED_BUILTIN_SLASH_COMMANDS: AgentSlashCommand[] = [
   {
     name: "compact",
@@ -1388,13 +1418,15 @@ export class OpenCodeAgentClient implements AgentClient {
   }
 
   async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
+    options.signal?.throwIfAborted();
     const acquisition = options.force
-      ? await this.serverManager.acquireNew()
-      : await this.serverManager.acquireCurrent();
+      ? await this.serverManager.acquireNew({ signal: options.signal })
+      : await this.serverManager.acquireCurrent({ signal: options.signal });
     const { url } = acquisition.server;
     const isGlobalCatalog = options.scope === "global";
 
     try {
+      options.signal?.throwIfAborted();
       // OpenCode treats the catalog directory as a workspace. The global catalog
       // is not a project, so use the neutral OpenCode home instead of user home.
       const directory = isGlobalCatalog ? this.resolveHomeDir() : options.cwd;
@@ -1408,11 +1440,17 @@ export class OpenCodeAgentClient implements AgentClient {
       }
 
       const client = this.createOpenCodeClient({ baseUrl: url, directory });
-      const [models, modes] = await Promise.all([
-        this.fetchModelsFromClient(client, directory),
-        this.fetchModesFromClient(client, directory),
-      ]);
-      return { models, modes };
+      const requests = [
+        this.fetchModelsFromClient(client, directory, options.signal),
+        this.fetchModesFromClient(client, directory, options.signal),
+      ] as const;
+      try {
+        const [models, modes] = await awaitWithAbort(Promise.all(requests), options.signal);
+        return { models, modes };
+      } catch (error) {
+        await Promise.allSettled(requests);
+        throw error;
+      }
     } finally {
       await acquisition.release();
     }
@@ -1602,14 +1640,17 @@ export class OpenCodeAgentClient implements AgentClient {
   private async fetchModelsFromClient(
     client: OpencodeClient,
     directory: string,
+    signal?: AbortSignal,
   ): Promise<AgentModelDefinition[]> {
-    const response = await openCodeMetadataLimit(() =>
-      withTimeout(
-        client.provider.list({ directory }),
-        OPENCODE_PROVIDER_LIST_TIMEOUT_MS,
-        `OpenCode provider.list timed out after ${OPENCODE_PROVIDER_LIST_TIMEOUT_MS / 1000}s - server may not be authenticated or connected to any providers`,
-      ),
-    );
+    const response = await openCodeMetadataLimit(() => {
+      signal?.throwIfAborted();
+      return runAbortableMetadataRequest({
+        run: (requestSignal) => client.provider.list({ directory }, { signal: requestSignal }),
+        signal,
+        timeoutMs: OPENCODE_PROVIDER_LIST_TIMEOUT_MS,
+        timeoutMessage: `OpenCode provider.list timed out after ${OPENCODE_PROVIDER_LIST_TIMEOUT_MS / 1000}s - server may not be authenticated or connected to any providers`,
+      });
+    });
 
     if (response.error) {
       throw new Error(`Failed to fetch OpenCode providers: ${JSON.stringify(response.error)}`);
@@ -1659,14 +1700,17 @@ export class OpenCodeAgentClient implements AgentClient {
   private async fetchModesFromClient(
     client: OpencodeClient,
     directory: string,
+    signal?: AbortSignal,
   ): Promise<AgentMode[]> {
-    const response = await openCodeMetadataLimit(() =>
-      withTimeout(
-        client.app.agents({ directory }),
-        10_000,
-        "OpenCode app.agents timed out after 10s",
-      ),
-    );
+    const response = await openCodeMetadataLimit(() => {
+      signal?.throwIfAborted();
+      return runAbortableMetadataRequest({
+        run: (requestSignal) => client.app.agents({ directory }, { signal: requestSignal }),
+        signal,
+        timeoutMs: 10_000,
+        timeoutMessage: "OpenCode app.agents timed out after 10s",
+      });
+    });
 
     if (response.error || !response.data) {
       // Discovery failed — return an empty list rather than fabricating

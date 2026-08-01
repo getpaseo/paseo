@@ -7,6 +7,7 @@ import { Readable, Writable } from "node:stream";
 
 import { terminateWithTreeKill } from "../../../utils/tree-kill.js";
 import type { ProcessTerminator } from "../../../utils/tree-kill.js";
+import { awaitWithAbort } from "../../../utils/abort.js";
 import type {
   ReadableStream as NodeReadableStream,
   WritableStream as NodeWritableStream,
@@ -844,23 +845,35 @@ export class ACPAgentClient implements AgentClient {
   }
 
   async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
+    options.signal?.throwIfAborted();
     const cwd = options.scope === "global" ? homedir() : options.cwd;
     const timeoutMs = options.timeoutMs ?? ACP_CATALOG_TIMEOUT_MS;
+    const probeController = new AbortController();
+    const abortProbe = () => probeController.abort(options.signal?.reason);
+    options.signal?.addEventListener("abort", abortProbe, { once: true });
+    if (options.signal?.aborted) {
+      abortProbe();
+    }
     let probe: UninitializedACPProcess | null = null;
     try {
       const catalogProbe = (async () => {
         const initializedProbe = await this.spawnProcess(PROBE_ENV, {
           initializeTimeoutMs: timeoutMs,
+          signal: probeController.signal,
           onSpawned: (spawned) => {
             probe = spawned;
           },
         });
         probe = initializedProbe;
-        const response = await this.runACPRequest(() =>
-          initializedProbe.connection.newSession({
-            cwd,
-            mcpServers: [],
-          }),
+        probeController.signal.throwIfAborted();
+        const response = await awaitWithAbort(
+          this.runACPRequest(() =>
+            initializedProbe.connection.newSession({
+              cwd,
+              mcpServers: [],
+            }),
+          ),
+          probeController.signal,
         );
         const transformed = this.transformSessionResponse(response);
         const models = deriveModelDefinitionsFromACP(
@@ -879,12 +892,19 @@ export class ACPAgentClient implements AgentClient {
         };
       })();
 
-      return await withTimeout(
-        catalogProbe,
-        timeoutMs,
-        `ACP catalog probe timed out after ${timeoutMs}ms`,
-      );
+      try {
+        return await withTimeout(
+          catalogProbe,
+          timeoutMs,
+          `ACP catalog probe timed out after ${timeoutMs}ms`,
+        );
+      } catch (error) {
+        probeController.abort(error);
+        await catalogProbe.catch(() => undefined);
+        throw error;
+      }
     } finally {
+      options.signal?.removeEventListener("abort", abortProbe);
       if (probe) {
         await this.closeProbe(probe);
       }
@@ -977,18 +997,25 @@ export class ACPAgentClient implements AgentClient {
     launchEnv?: Record<string, string>,
     options?: {
       initializeTimeoutMs?: number;
+      signal?: AbortSignal;
       onSpawned?: (probe: UninitializedACPProcess) => void;
     },
   ): Promise<SpawnedACPProcess> {
-    const transport = await this.spawnTransport(launchEnv);
+    const transport = await this.spawnTransport(launchEnv, options?.signal);
     const probe: UninitializedACPProcess = {
       child: transport.child,
       connection: transport.connection,
       stderrChunks: transport.stderrChunks,
     };
-    options?.onSpawned?.(probe);
+    let cleanupOwnedByCaller = false;
     try {
-      const initialize = await this.initializeTransport(transport, options?.initializeTimeoutMs);
+      options?.onSpawned?.(probe);
+      cleanupOwnedByCaller = options?.onSpawned != null;
+      const initialize = await this.initializeTransport(
+        transport,
+        options?.initializeTimeoutMs,
+        options?.signal,
+      );
       const initializedProbe: SpawnedACPProcess = {
         ...probe,
         initialize,
@@ -996,13 +1023,19 @@ export class ACPAgentClient implements AgentClient {
       probe.initialize = initialize;
       return initializedProbe;
     } catch (error) {
-      await terminateChildProcess(transport.child, 2_000, this.terminateProcess);
+      if (!cleanupOwnedByCaller) {
+        await terminateChildProcess(transport.child, 2_000, this.terminateProcess);
+      }
       throw error;
     }
   }
 
-  protected async spawnTransport(launchEnv?: Record<string, string>): Promise<ACPProcessTransport> {
-    const { command, args } = await this.resolveLaunchCommand();
+  protected async spawnTransport(
+    launchEnv?: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<ACPProcessTransport> {
+    const { command, args } = await this.resolveLaunchCommand({ signal });
+    signal?.throwIfAborted();
     const child = spawnProcess(command, args, {
       cwd: process.cwd(),
       ...createProviderEnvSpec({
@@ -1049,6 +1082,7 @@ export class ACPAgentClient implements AgentClient {
   protected async initializeTransport(
     transport: ACPProcessTransport,
     initializeTimeoutMs?: number,
+    signal?: AbortSignal,
   ): Promise<InitializeResponse> {
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const initializeTimeoutPromise = initializeTimeoutMs
@@ -1060,19 +1094,22 @@ export class ACPAgentClient implements AgentClient {
       : null;
 
     try {
-      return await this.runACPRequest(() =>
-        Promise.race([
-          transport.connection.initialize({
-            protocolVersion: PROTOCOL_VERSION,
-            clientCapabilities: buildACPClientCapabilities(
-              this.clientCapabilityMeta,
-              this.clientCapabilities,
-            ),
-            clientInfo: { name: "Paseo", version: "dev" },
-          }),
-          transport.spawnError,
-          ...(initializeTimeoutPromise ? [initializeTimeoutPromise] : []),
-        ]),
+      return await awaitWithAbort(
+        this.runACPRequest(() =>
+          Promise.race([
+            transport.connection.initialize({
+              protocolVersion: PROTOCOL_VERSION,
+              clientCapabilities: buildACPClientCapabilities(
+                this.clientCapabilityMeta,
+                this.clientCapabilities,
+              ),
+              clientInfo: { name: "Paseo", version: "dev" },
+            }),
+            transport.spawnError,
+            ...(initializeTimeoutPromise ? [initializeTimeoutPromise] : []),
+          ]),
+        ),
+        signal,
       );
     } finally {
       if (timeout) {

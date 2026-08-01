@@ -5,6 +5,8 @@ import { setImmediate as waitForImmediate, setTimeout as delay } from "node:time
 import type { Logger } from "pino";
 import stripAnsi from "strip-ansi";
 
+import { awaitWithAbort } from "../../../../utils/abort.js";
+
 import {
   type AgentCapabilityFlags,
   type AgentClient,
@@ -2325,6 +2327,7 @@ export class OmpAgentClient implements AgentClient {
   }
 
   async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
+    options.signal?.throwIfAborted();
     const launchMode = this.resolveLaunchMode(undefined);
     const runtimeSession = await this.runtime.startSession({
       cwd: options.scope === "global" ? homedir() : options.cwd,
@@ -2333,10 +2336,14 @@ export class OmpAgentClient implements AgentClient {
       extraArgs: launchMode.extraArgs,
     });
     try {
+      options.signal?.throwIfAborted();
       const models = transformOmpModels(
-        (await runtimeSession.getAvailableModels(OMP_CATALOG_REQUEST_TIMEOUT_MS)).map((model) =>
-          mapOmpModel(model, this.provider),
-        ),
+        (
+          await awaitWithAbort(
+            runtimeSession.getAvailableModels(OMP_CATALOG_REQUEST_TIMEOUT_MS),
+            options.signal,
+          )
+        ).map((model) => mapOmpModel(model, this.provider)),
       );
       return { models, modes: [...OMP_MODES] };
     } finally {

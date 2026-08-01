@@ -124,6 +124,14 @@ interface ACPConfiguredOverrideInternals {
   applyConfiguredOverrides(): Promise<void>;
 }
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolveDeferred!: (value: T) => void;
+  const promise = new Promise<T>((resolve) => {
+    resolveDeferred = resolve;
+  });
+  return { promise, resolve: resolveDeferred };
+}
+
 function createSession(terminateProcess?: ProcessTerminator): ACPAgentSession {
   return new ACPAgentSession(
     {
@@ -2991,6 +2999,7 @@ describe("ACPAgentSession initialization cleanup", () => {
 
 describe("ACPAgentClient probe cleanup", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -3028,6 +3037,157 @@ describe("ACPAgentClient probe cleanup", () => {
     expect(child.stdin.destroyed).toBe(true);
     expect(child.stdout.destroyed).toBe(true);
     expect(child.stderr.destroyed).toBe(true);
+  });
+
+  test("waits for probe process cleanup before rejecting an aborted catalog request", async () => {
+    const requestStarted = deferred<void>();
+    const request = deferred<never>();
+    const cleanupStarted = deferred<void>();
+    const cleanupAllowed = deferred<void>();
+    const child = createProbeChildStub();
+    const terminate: ProcessTerminator = async () => {
+      cleanupStarted.resolve();
+      await cleanupAllowed.promise;
+      return "terminated";
+    };
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child,
+          connection: {
+            newSession: async () => {
+              requestStarted.resolve();
+              return await request.promise;
+            },
+          },
+          initialize: { agentCapabilities: {} },
+        } as SpawnedACPProcess;
+      }
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "claude-acp",
+      logger: createTestLogger(),
+      defaultCommand: ["claude", "--acp"],
+      defaultModes: [],
+      terminateProcess: terminate,
+    });
+    const controller = new AbortController();
+    const abortReason = new Error("catalog superseded");
+    const catalog = client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/acp-models",
+      force: false,
+      signal: controller.signal,
+    });
+
+    await requestStarted.promise;
+    controller.abort(abortReason);
+    await cleanupStarted.promise;
+    const beforeCleanup = await Promise.race([
+      catalog.then(
+        () => "settled",
+        () => "settled",
+      ),
+      new Promise<"pending">((resolve) => setImmediate(() => resolve("pending"))),
+    ]);
+    expect(beforeCleanup).toBe("pending");
+
+    cleanupAllowed.resolve();
+    await expect(catalog).rejects.toBe(abortReason);
+  });
+
+  test("does not spawn after cancellation during launch resolution", async () => {
+    const resolutionStarted = deferred<void>();
+    const resolutionAllowed = deferred<void>();
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async resolveLaunchCommand(): Promise<{
+        command: string;
+        args: string[];
+      }> {
+        resolutionStarted.resolve();
+        await resolutionAllowed.promise;
+        return { command: "/definitely-not-an-acp-binary", args: [] };
+      }
+
+      startTransport(signal: AbortSignal): Promise<unknown> {
+        return this.spawnTransport(undefined, signal);
+      }
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "claude-acp",
+      logger: createTestLogger(),
+      defaultCommand: ["claude", "--acp"],
+      defaultModes: [],
+    });
+    const controller = new AbortController();
+    const abortReason = new Error("catalog superseded");
+    const transport = client.startTransport(controller.signal);
+
+    await resolutionStarted.promise;
+    controller.abort(abortReason);
+    resolutionAllowed.resolve();
+
+    await expect(transport).rejects.toBe(abortReason);
+  });
+
+  test("drains launch resolution without spawning after the catalog timeout", async () => {
+    vi.useFakeTimers();
+    const resolutionStarted = deferred<void>();
+    const resolutionAllowed = deferred<void>();
+    let spawnAttempted = false;
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnTransport(
+        _launchEnv?: Record<string, string>,
+        signal?: AbortSignal,
+      ): Promise<never> {
+        resolutionStarted.resolve();
+        await resolutionAllowed.promise;
+        signal?.throwIfAborted();
+        spawnAttempted = true;
+        throw new Error("spawned after catalog timeout");
+      }
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "claude-acp",
+      logger: createTestLogger(),
+      defaultCommand: ["claude", "--acp"],
+      defaultModes: [],
+    });
+    let catalogSettled = false;
+    const catalog = client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/acp-models",
+      force: false,
+      timeoutMs: 10,
+    });
+    void catalog.then(
+      () => {
+        catalogSettled = true;
+        return undefined;
+      },
+      () => {
+        catalogSettled = true;
+        return undefined;
+      },
+    );
+    const catalogFailure = expect(catalog).rejects.toThrow(
+      "ACP catalog probe timed out after 10ms",
+    );
+
+    await resolutionStarted.promise;
+    await vi.advanceTimersByTimeAsync(10);
+    const settledBeforeResolution = catalogSettled;
+    resolutionAllowed.resolve();
+    await catalogFailure;
+
+    expect(settledBeforeResolution).toBe(false);
+    expect(spawnAttempted).toBe(false);
   });
 });
 

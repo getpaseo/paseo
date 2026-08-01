@@ -446,6 +446,71 @@ describe("ProviderSnapshotManager public surface", () => {
     await manager.destroy();
   });
 
+  test("forced refresh still starts after superseded cleanup exceeds the prompt cutoff", async () => {
+    vi.useFakeTimers();
+    const initialStarted = deferred<void>();
+    const abortObserved = deferred<void>();
+    const cleanupAllowed = deferred<void>();
+    let calls = 0;
+    const client = createExtraClient("codex", {
+      async isAvailable(options) {
+        calls += 1;
+        if (calls > 1) {
+          return true;
+        }
+        initialStarted.resolve();
+        return await new Promise<boolean>((_resolve, reject) => {
+          const abort = () => {
+            abortObserved.resolve();
+            void cleanupAllowed.promise.then(() => {
+              reject(options?.signal?.reason ?? new Error("aborted"));
+              return undefined;
+            });
+          };
+          if (options?.signal?.aborted) {
+            abort();
+          } else {
+            options?.signal?.addEventListener("abort", abort, { once: true });
+          }
+        });
+      },
+    });
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      refreshTimeoutMs: 10_000,
+      extraClients: { codex: client },
+    });
+
+    try {
+      const initialWarmup = manager.warmUpSnapshotForCwd({
+        cwd: "/tmp/project",
+        providers: ["codex"],
+      });
+      await initialStarted.promise;
+      let refreshSettled = false;
+      const forcedRefresh = manager
+        .refreshSnapshotForCwd({ cwd: "/tmp/project", providers: ["codex"] })
+        .then(() => {
+          refreshSettled = true;
+          return undefined;
+        });
+      await abortObserved.promise;
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(refreshSettled).toBe(false);
+      cleanupAllowed.resolve();
+      await Promise.all([initialWarmup, forcedRefresh]);
+      expect(calls).toBe(2);
+      expect(
+        manager.getSnapshot("/tmp/project").find((entry) => entry.provider === "codex"),
+      ).toMatchObject({ status: "ready" });
+    } finally {
+      cleanupAllowed.resolve();
+      vi.useRealTimers();
+      await manager.destroy();
+    }
+  });
+
   test("destroy cancels and drains an in-flight catalog request", async () => {
     const catalogStarted = deferred<void>();
     const catalogCleaned = deferred<void>();

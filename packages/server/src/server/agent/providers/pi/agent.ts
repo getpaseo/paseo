@@ -6,6 +6,8 @@ import type { Logger } from "pino";
 import stripAnsi from "strip-ansi";
 import { z } from "zod";
 
+import { awaitWithAbort } from "../../../../utils/abort.js";
+
 import {
   type AgentCapabilityFlags,
   type AgentClient,
@@ -2475,14 +2477,19 @@ export class PiRpcAgentClient implements AgentClient {
   }
 
   async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
+    options.signal?.throwIfAborted();
     const runtimeSession = await this.runtime.startSession({
       cwd: options.scope === "global" ? homedir() : options.cwd,
     });
     try {
+      options.signal?.throwIfAborted();
       const models = transformPiModels(
-        (await runtimeSession.getAvailableModels(PI_CATALOG_REQUEST_TIMEOUT_MS)).map((model) =>
-          mapPiModel(model, PI_PROVIDER),
-        ),
+        (
+          await awaitWithAbort(
+            runtimeSession.getAvailableModels(PI_CATALOG_REQUEST_TIMEOUT_MS),
+            options.signal,
+          )
+        ).map((model) => mapPiModel(model, PI_PROVIDER)),
       );
       return { models, modes: [] };
     } finally {

@@ -22,6 +22,27 @@ interface TestClaudeSession {
   translateMessageToEvents(message: SDKMessage): AgentStreamEvent[];
 }
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+async function waitForAbortCleanup(
+  signal: AbortSignal | undefined,
+  cleanupStarted: ReturnType<typeof deferred<void>>,
+  cleanupAllowed: ReturnType<typeof deferred<void>>,
+): Promise<never> {
+  await new Promise<void>((resolve) => {
+    signal?.addEventListener("abort", () => resolve(), { once: true });
+  });
+  cleanupStarted.resolve();
+  await cleanupAllowed.promise;
+  throw signal?.reason ?? new Error("catalog aborted");
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -465,6 +486,42 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     } finally {
       await fs.rm(emptyConfigDir, { recursive: true, force: true });
     }
+  });
+
+  test("waits for Claude version probe cleanup before rejecting an aborted catalog request", async () => {
+    const probeStarted = deferred<void>();
+    const cleanupStarted = deferred<void>();
+    const cleanupAllowed = deferred<void>();
+    const client = new ClaudeAgentClient({
+      logger,
+      resolveVersion: async (options) => {
+        probeStarted.resolve();
+        return await waitForAbortCleanup(options?.signal, cleanupStarted, cleanupAllowed);
+      },
+    });
+    const controller = new AbortController();
+    const abortReason = new Error("catalog superseded");
+    const catalog = client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/claude-models",
+      force: false,
+      signal: controller.signal,
+    });
+
+    await probeStarted.promise;
+    controller.abort(abortReason);
+    await cleanupStarted.promise;
+    const beforeCleanup = await Promise.race([
+      catalog.then(
+        () => "settled",
+        () => "settled",
+      ),
+      new Promise<"pending">((resolve) => setImmediate(() => resolve("pending"))),
+    ]);
+    expect(beforeCleanup).toBe("pending");
+
+    cleanupAllowed.resolve();
+    await expect(catalog).rejects.toBe(abortReason);
   });
 
   test("exposes Ultra Code on xhigh-capable Claude models", async () => {

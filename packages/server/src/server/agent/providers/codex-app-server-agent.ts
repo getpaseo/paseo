@@ -66,6 +66,7 @@ import {
 } from "../../../executable-resolution/executable-resolution.js";
 import { createPathEquivalenceMatcher } from "../../../utils/path.js";
 import { spawnProcess } from "../../../utils/spawn.js";
+import { awaitWithAbort } from "../../../utils/abort.js";
 import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mapper-utils.js";
 import { buildCodexFeatures, codexModelSupportsFastMode } from "./codex-feature-definitions.js";
 import {
@@ -503,12 +504,15 @@ export async function findDefaultCodexBinary(options?: {
   );
 }
 
-async function resolveCodexLaunchPrefix(runtimeSettings?: ProviderRuntimeSettings): Promise<{
+async function resolveCodexLaunchPrefix(
+  runtimeSettings?: ProviderRuntimeSettings,
+  options: { signal?: AbortSignal } = {},
+): Promise<{
   command: string;
   args: string[];
 }> {
   const launch = await resolveCodexLaunch(runtimeSettings);
-  const availability = await checkCodexLaunchAvailable(launch);
+  const availability = await checkCodexLaunchAvailable(launch, options);
   if (!availability.available) {
     throw new Error(
       "Codex binary not found. Install the Codex CLI (https://github.com/openai/codex) and ensure it is available in your shell PATH.",
@@ -2912,10 +2916,13 @@ const CodexNotificationSchema = z.union([
 async function readCodexConfiguredDefaults(
   client: CodexAppServerClient,
   logger: Logger,
+  signal?: AbortSignal,
 ): Promise<CodexConfiguredDefaults> {
   let savedConfigDefaults: CodexConfiguredDefaults = {};
   try {
-    const response = toObjectRecord(await client.request("getUserSavedConfig", {}));
+    const response = toObjectRecord(
+      await awaitWithAbort(client.request("getUserSavedConfig", {}), signal),
+    );
     const config = toObjectRecord(response?.config);
     const modelValue = typeof config?.model === "string" ? config.model : undefined;
     const thinkingOptionValue =
@@ -2925,6 +2932,7 @@ async function readCodexConfiguredDefaults(
       thinkingOptionId: normalizeCodexThinkingOptionId(thinkingOptionValue),
     };
   } catch (error) {
+    signal?.throwIfAborted();
     logger.debug({ error }, "Failed to read Codex saved config defaults");
   }
 
@@ -2934,7 +2942,9 @@ async function readCodexConfiguredDefaults(
 
   let configReadDefaults: CodexConfiguredDefaults = {};
   try {
-    const response = toObjectRecord(await client.request("config/read", {}));
+    const response = toObjectRecord(
+      await awaitWithAbort(client.request("config/read", {}), signal),
+    );
     const config = toObjectRecord(response?.config);
     const modelValue = typeof config?.model === "string" ? config.model : undefined;
     const thinkingOptionValue =
@@ -2944,6 +2954,7 @@ async function readCodexConfiguredDefaults(
       thinkingOptionId: normalizeCodexThinkingOptionId(thinkingOptionValue),
     };
   } catch (error) {
+    signal?.throwIfAborted();
     logger.debug({ error }, "Failed to read Codex config defaults");
   }
 
@@ -6277,36 +6288,51 @@ export class CodexAppServerAgentClient implements AgentClient {
     return this.goalsEnabledPromise;
   }
 
+  private async probeAutoReviewEnabled(signal?: AbortSignal): Promise<boolean> {
+    try {
+      const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings, { signal });
+      const versionOutput = await resolveBinaryVersion(launchPrefix.command, { signal });
+      const enabled = codexVersionAtLeast(versionOutput, CODEX_AUTO_REVIEW_MIN_VERSION);
+      this.logger.trace(
+        {
+          provider: CODEX_PROVIDER,
+          versionOutput,
+          enabled,
+        },
+        "provider.codex.config.auto_review_resolved",
+      );
+      return enabled;
+    } catch (error) {
+      signal?.throwIfAborted();
+      this.logger.warn({ err: error }, "Failed to probe codex version for auto-review gate");
+      return false;
+    }
+  }
+
   private resolveAutoReviewEnabled(): Promise<boolean> {
     if (!this.autoReviewEnabledPromise) {
-      this.autoReviewEnabledPromise = (async () => {
-        try {
-          const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
-          const versionOutput = await resolveBinaryVersion(launchPrefix.command);
-          const enabled = codexVersionAtLeast(versionOutput, CODEX_AUTO_REVIEW_MIN_VERSION);
-          this.logger.trace(
-            {
-              provider: CODEX_PROVIDER,
-              versionOutput,
-              enabled,
-            },
-            "provider.codex.config.auto_review_resolved",
-          );
-          return enabled;
-        } catch (error) {
-          this.logger.warn({ err: error }, "Failed to probe codex version for auto-review gate");
-          return false;
-        }
-      })();
+      this.autoReviewEnabledPromise = this.probeAutoReviewEnabled();
     }
     return this.autoReviewEnabledPromise;
   }
 
+  private async resolveCatalogAutoReviewEnabled(signal?: AbortSignal): Promise<boolean> {
+    if (this.autoReviewEnabledPromise) {
+      return await awaitWithAbort(this.autoReviewEnabledPromise, signal);
+    }
+    const enabled = await this.probeAutoReviewEnabled(signal);
+    this.autoReviewEnabledPromise ??= Promise.resolve(enabled);
+    return enabled;
+  }
+
   private async spawnAppServer(
     launchEnv?: Record<string, string>,
-    options?: { goalsEnabled?: boolean; agentId?: string },
+    options?: { goalsEnabled?: boolean; agentId?: string; signal?: AbortSignal },
   ): Promise<ChildProcessWithoutNullStreams> {
-    const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
+    const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings, {
+      signal: options?.signal,
+    });
+    options?.signal?.throwIfAborted();
     const args = [...launchPrefix.args, "app-server"];
     if (options?.goalsEnabled) {
       args.push("--enable", "goals");
@@ -6453,11 +6479,20 @@ export class CodexAppServerAgentClient implements AgentClient {
     });
   }
 
-  async fetchCatalog(_options: FetchCatalogOptions): Promise<ProviderCatalog> {
-    const [models, autoReviewEnabled] = await Promise.all([
-      this.fetchModelsFromAppServer(),
-      this.resolveAutoReviewEnabled(),
-    ]);
+  async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
+    options.signal?.throwIfAborted();
+    const requests = [
+      this.fetchModelsFromAppServer(options.signal),
+      this.resolveCatalogAutoReviewEnabled(options.signal),
+    ] as const;
+    let models: AgentModelDefinition[];
+    let autoReviewEnabled: boolean;
+    try {
+      [models, autoReviewEnabled] = await Promise.all(requests);
+    } catch (error) {
+      await Promise.allSettled(requests);
+      throw error;
+    }
     return {
       models,
       defaultModeId: autoReviewEnabled ? "auto-review" : DEFAULT_CODEX_MODE_ID,
@@ -6471,19 +6506,22 @@ export class CodexAppServerAgentClient implements AgentClient {
     return (await this.resolveAutoReviewEnabled()) ? "auto-review" : DEFAULT_CODEX_MODE_ID;
   }
 
-  private async fetchModelsFromAppServer(): Promise<AgentModelDefinition[]> {
+  private async fetchModelsFromAppServer(signal?: AbortSignal): Promise<AgentModelDefinition[]> {
     // Codex model/list is global to the app server in this flow; cwd/force are intentionally ignored.
-    const child = await this.spawnAppServer();
+    const child = await this.spawnAppServer(undefined, { signal });
     const client = new CodexAppServerClient(child, this.logger);
 
     try {
-      await client.request("initialize", buildCodexAppServerInitializeParams());
+      await awaitWithAbort(
+        client.request("initialize", buildCodexAppServerInitializeParams()),
+        signal,
+      );
       client.notify("initialized", {});
 
-      const rawResponse = await client.request("model/list", {});
+      const rawResponse = await awaitWithAbort(client.request("model/list", {}), signal);
       const parsedResponse = CodexModelListResponseSchema.safeParse(rawResponse);
       const models = parsedResponse.success ? (parsedResponse.data.data ?? []) : [];
-      const configuredDefaults = await readCodexConfiguredDefaults(client, this.logger);
+      const configuredDefaults = await readCodexConfiguredDefaults(client, this.logger, signal);
       const configuredDefaultModelId = configuredDefaults.model;
       const configuredDefaultThinkingOptionId = configuredDefaults.thinkingOptionId;
       const hasConfiguredDefaultModel =

@@ -364,7 +364,7 @@ interface ClaudeAgentClientOptions {
   runtimeSettings?: ProviderRuntimeSettings;
   queryFactory?: ClaudeQueryFactory;
   resolveBinary?: () => Promise<string>;
-  resolveVersion?: () => Promise<string>;
+  resolveVersion?: (options?: { signal?: AbortSignal }) => Promise<string>;
   configDir?: string;
 }
 
@@ -1441,7 +1441,7 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly queryFactory?: ClaudeQueryFactory;
   private readonly resolveBinary: () => Promise<string>;
-  private readonly resolveVersion: () => Promise<string>;
+  private readonly resolveVersion: (options?: { signal?: AbortSignal }) => Promise<string>;
   private readonly configDir?: string;
 
   constructor(options: ClaudeAgentClientOptions) {
@@ -1451,7 +1451,8 @@ export class ClaudeAgentClient implements AgentClient {
     this.queryFactory = options.queryFactory;
     this.resolveBinary = options.resolveBinary ?? (() => resolveClaudeBinary(this.runtimeSettings));
     this.resolveVersion =
-      options.resolveVersion ?? (() => resolveClaudeCodeVersion(this.runtimeSettings));
+      options.resolveVersion ??
+      ((resolveOptions) => resolveClaudeCodeVersion(this.runtimeSettings, resolveOptions));
     this.configDir = options.configDir;
   }
 
@@ -1501,18 +1502,21 @@ export class ClaudeAgentClient implements AgentClient {
     });
   }
 
-  async fetchCatalog(_options: FetchCatalogOptions): Promise<ProviderCatalog> {
+  async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
     // Claude exposes a global catalog here; cwd/force are intentionally irrelevant.
+    options.signal?.throwIfAborted();
     let claudeCodeVersion: string | undefined;
     try {
-      claudeCodeVersion = await this.resolveVersion();
+      claudeCodeVersion = await this.resolveVersion({ signal: options.signal });
     } catch (error) {
+      options.signal?.throwIfAborted();
       this.logger.warn({ err: error }, "Failed to resolve Claude Code version for model catalog");
     }
     const models = await getClaudeModelsWithSettings(
       this.logger,
       this.configDir,
       claudeCodeVersion,
+      options.signal,
     );
     const modes = detectIneligibleAutoModeTransport(
       createProviderEnv({ baseEnv: process.env, runtimeSettings: this.runtimeSettings }),
@@ -1637,12 +1641,14 @@ async function resolveClaudeBinary(runtimeSettings?: ProviderRuntimeSettings): P
 
 export async function resolveClaudeCodeVersion(
   runtimeSettings?: ProviderRuntimeSettings,
+  options: { signal?: AbortSignal } = {},
 ): Promise<string> {
+  options.signal?.throwIfAborted();
   const launch = await resolveProviderLaunch({
     commandConfig: runtimeSettings?.command,
     defaultBinary: "claude",
   });
-  const availability = await checkProviderLaunchAvailable(launch);
+  const availability = await checkProviderLaunchAvailable(launch, undefined, options);
   if (!availability.available) {
     throw new Error("Claude binary not found while resolving Claude Code version");
   }
@@ -1650,6 +1656,7 @@ export async function resolveClaudeCodeVersion(
   const { stdout, stderr } = await execCommand(executable, [...launch.args, "--version"], {
     ...createProviderEnvSpec({ runtimeSettings }),
     timeout: 5_000,
+    signal: options.signal,
   });
   const version = parseClaudeCodeVersion(`${stdout}\n${stderr}`);
   if (!version) {

@@ -6,6 +6,7 @@ import path from "node:path";
 import type { Logger } from "pino";
 
 import { findExecutable } from "../../../../executable-resolution/executable-resolution.js";
+import { awaitWithAbort } from "../../../../utils/abort.js";
 import { spawnProcess, type SpawnProcessOptions } from "../../../../utils/spawn.js";
 import { terminateWithTreeKill, type ProcessTerminator } from "../../../../utils/tree-kill.js";
 import type { ManagedProcessRegistry } from "../../../managed-processes/managed-processes.js";
@@ -25,8 +26,8 @@ export interface OpenCodeServerAcquisition {
 }
 
 export interface OpenCodeServerManagerLike {
-  acquireCurrent(): Promise<OpenCodeServerAcquisition>;
-  acquireNew(): Promise<OpenCodeServerAcquisition>;
+  acquireCurrent(options?: { signal?: AbortSignal }): Promise<OpenCodeServerAcquisition>;
+  acquireNew(options?: { signal?: AbortSignal }): Promise<OpenCodeServerAcquisition>;
   acquireDedicated(env: Record<string, string>): Promise<OpenCodeServerAcquisition>;
   acquireExisting(url: string): OpenCodeServerAcquisition | null;
   shutdown(): Promise<void>;
@@ -68,7 +69,17 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private currentServer: OpenCodeServerGeneration | null = null;
   private retiredServers = new Set<OpenCodeServerGeneration>();
   private startPromise: Promise<OpenCodeServerGeneration> | null = null;
+  private startController: AbortController | null = null;
+  private readonly startWaiters = new WeakMap<Promise<OpenCodeServerGeneration>, number>();
   private newServerPromise: Promise<OpenCodeServerGeneration> | null = null;
+  private newServerController: AbortController | null = null;
+  private readonly newServerWaiters = new WeakMap<Promise<OpenCodeServerGeneration>, number>();
+  private readonly dedicatedStartups = new Map<
+    Promise<OpenCodeServerGeneration>,
+    AbortController
+  >();
+  private readonly serverCleanupPromises = new WeakMap<OpenCodeServerGeneration, Promise<void>>();
+  private shuttingDown = false;
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly runtimeSettingsKey: string;
@@ -134,31 +145,51 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     process.on("SIGINT", cleanup);
   }
 
-  async acquireCurrent(): Promise<OpenCodeServerAcquisition> {
-    const server = await this.getCurrentServer();
-    return this.acquireServer(server);
+  async acquireCurrent(options: { signal?: AbortSignal } = {}): Promise<OpenCodeServerAcquisition> {
+    this.assertRunning();
+    const server = await this.getCurrentServer(options.signal);
+    return this.acquireReadyServer(server, options.signal);
   }
 
-  async acquireNew(): Promise<OpenCodeServerAcquisition> {
-    const server = await this.getNewServer();
-    return this.acquireServer(server);
+  async acquireNew(options: { signal?: AbortSignal } = {}): Promise<OpenCodeServerAcquisition> {
+    this.assertRunning();
+    const server = await this.getNewServer(options.signal);
+    return this.acquireReadyServer(server, options.signal);
   }
 
   async acquireDedicated(env: Record<string, string>): Promise<OpenCodeServerAcquisition> {
-    const server = await this.startServer(env);
-    server.retired = true;
-    this.retiredServers.add(server);
-    const acquisition = this.acquireServer(server);
+    this.assertRunning();
+    const controller = new AbortController();
+    const startup = this.startServer(env, controller.signal);
+    this.dedicatedStartups.set(startup, controller);
     try {
-      await server.ready;
-      return acquisition;
-    } catch (error) {
-      await acquisition.release();
-      throw error;
+      const server = await startup;
+      server.retired = true;
+      this.retiredServers.add(server);
+      const acquisition = this.acquireServer(server);
+      try {
+        await server.ready;
+        return acquisition;
+      } catch (error) {
+        try {
+          await acquisition.release();
+        } catch (cleanupError) {
+          this.logger.warn(
+            { err: cleanupError },
+            "Failed to release OpenCode server after acquisition failure",
+          );
+        }
+        throw error;
+      }
+    } finally {
+      this.dedicatedStartups.delete(startup);
     }
   }
 
   acquireExisting(url: string): OpenCodeServerAcquisition | null {
+    if (this.shuttingDown) {
+      return null;
+    }
     const server = this.findLiveServerByUrl(url);
     return server ? this.acquireServer(server) : null;
   }
@@ -194,6 +225,35 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     };
   }
 
+  private async acquireReadyServer(
+    server: OpenCodeServerGeneration,
+    signal?: AbortSignal,
+  ): Promise<OpenCodeServerAcquisition> {
+    const acquisition = this.acquireServer(server);
+    try {
+      await awaitWithAbort(server.ready, signal);
+      return acquisition;
+    } catch (error) {
+      void server.ready.catch(() => undefined);
+      if (signal?.aborted && server.refCount === 1) {
+        server.retired = true;
+        if (this.currentServer === server) {
+          this.currentServer = null;
+        }
+        this.retiredServers.add(server);
+      }
+      try {
+        await acquisition.release();
+      } catch (cleanupError) {
+        this.logger.warn(
+          { err: cleanupError },
+          "Failed to release OpenCode server after acquisition failure",
+        );
+      }
+      throw error;
+    }
+  }
+
   private async releaseServer(server: OpenCodeServerGeneration): Promise<void> {
     server.refCount = Math.max(0, server.refCount - 1);
     if (server.refCount > 0) {
@@ -212,80 +272,166 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     await this.killServer(server);
   }
 
-  private async getNewServer(): Promise<OpenCodeServerGeneration> {
-    if (this.newServerPromise) {
-      return this.newServerPromise;
+  private async getNewServer(signal?: AbortSignal): Promise<OpenCodeServerGeneration> {
+    this.assertRunning();
+    signal?.throwIfAborted();
+    if (this.newServerPromise && !this.newServerController?.signal.aborted) {
+      const server = await this.waitForNewServer(this.newServerPromise, signal);
+      if (!server.retired) {
+        return server;
+      }
+      return await this.getNewServer(signal);
     }
 
-    this.newServerPromise = Promise.resolve()
+    const controller = new AbortController();
+    this.newServerController = controller;
+    const startup = Promise.resolve()
       .then(async () => {
-        await this.rotateCurrentServer();
-        const server = await this.startServer();
+        await this.rotateCurrentServer(controller.signal);
+        const server = await this.startServer(undefined, controller.signal);
         if (!server.retired) {
           this.currentServer = server;
         }
-        await server.ready;
         return server;
       })
       .finally(() => {
-        this.newServerPromise = null;
+        if (this.newServerPromise === startup) {
+          this.newServerPromise = null;
+          this.newServerController = null;
+        }
       });
-    return this.newServerPromise;
+    this.newServerPromise = startup;
+    const server = await this.waitForNewServer(startup, signal);
+    return server.retired ? await this.getNewServer(signal) : server;
   }
 
-  private async getCurrentServer(): Promise<OpenCodeServerGeneration> {
-    if (this.newServerPromise) {
-      return this.newServerPromise;
+  private async getCurrentServer(signal?: AbortSignal): Promise<OpenCodeServerGeneration> {
+    this.assertRunning();
+    signal?.throwIfAborted();
+    if (this.newServerPromise && !this.newServerController?.signal.aborted) {
+      const server = await this.waitForNewServer(this.newServerPromise, signal);
+      if (!server.retired) {
+        return server;
+      }
+      return await this.getCurrentServer(signal);
     }
 
-    if (this.startPromise) {
-      const server = await this.startPromise;
-      await server.ready;
-      return server;
+    if (this.startPromise && !this.startController?.signal.aborted) {
+      const server = await this.waitForCurrentServer(this.startPromise, signal);
+      if (!server.retired) {
+        return server;
+      }
+      return await this.getCurrentServer(signal);
     }
 
-    if (this.currentServer && !this.currentServer.process.killed) {
-      await this.currentServer.ready;
+    if (this.currentServer && !this.currentServer.retired && !this.currentServer.process.killed) {
       return this.currentServer;
     }
 
-    this.startPromise = this.startServer().then((server) => {
+    const controller = new AbortController();
+    this.startController = controller;
+    const startup = this.startServer(undefined, controller.signal).then((server) => {
       if (!server.retired) {
         this.currentServer = server;
       }
       return server;
     });
-    const currentStart = this.startPromise;
-    const result = await currentStart.finally(() => {
-      if (this.startPromise === currentStart) {
-        this.startPromise = null;
-      }
-    });
-    await result.ready;
-    return result;
+    this.startPromise = startup;
+    void startup.then(
+      () => {
+        if (this.startPromise === startup) {
+          this.startPromise = null;
+          this.startController = null;
+        }
+        return undefined;
+      },
+      () => {
+        if (this.startPromise === startup) {
+          this.startPromise = null;
+          this.startController = null;
+        }
+        return undefined;
+      },
+    );
+    const server = await this.waitForCurrentServer(startup, signal);
+    return server.retired ? await this.getCurrentServer(signal) : server;
   }
 
-  private async rotateCurrentServer(): Promise<void> {
+  private async waitForCurrentServer(
+    startup: Promise<OpenCodeServerGeneration>,
+    signal?: AbortSignal,
+  ): Promise<OpenCodeServerGeneration> {
+    this.startWaiters.set(startup, (this.startWaiters.get(startup) ?? 0) + 1);
+    try {
+      return await awaitWithAbort(startup, signal);
+    } finally {
+      const remaining = (this.startWaiters.get(startup) ?? 1) - 1;
+      if (remaining > 0) {
+        this.startWaiters.set(startup, remaining);
+      } else {
+        this.startWaiters.delete(startup);
+      }
+      if (remaining === 0 && this.startPromise === startup) {
+        this.startController?.abort(
+          signal?.reason ?? new Error("OpenCode server startup abandoned"),
+        );
+      }
+    }
+  }
+
+  private async waitForNewServer(
+    startup: Promise<OpenCodeServerGeneration>,
+    signal?: AbortSignal,
+  ): Promise<OpenCodeServerGeneration> {
+    this.newServerWaiters.set(startup, (this.newServerWaiters.get(startup) ?? 0) + 1);
+    try {
+      return await awaitWithAbort(startup, signal);
+    } finally {
+      const remaining = (this.newServerWaiters.get(startup) ?? 1) - 1;
+      if (remaining > 0) {
+        this.newServerWaiters.set(startup, remaining);
+      } else {
+        this.newServerWaiters.delete(startup);
+      }
+      if (remaining === 0 && this.newServerPromise === startup) {
+        this.newServerController?.abort(
+          signal?.reason ?? new Error("OpenCode server rotation abandoned"),
+        );
+      }
+    }
+  }
+
+  private async rotateCurrentServer(signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     const existing = this.currentServer;
+    const pendingStartup = this.startPromise;
     if (existing) {
       existing.retired = true;
       this.retiredServers.add(existing);
       this.currentServer = null;
       await this.cleanupRetiredServers();
+      signal?.throwIfAborted();
     }
-    if (this.startPromise) {
-      const pending = await this.startPromise;
+    if (pendingStartup) {
+      const pending = await this.waitForCurrentServer(pendingStartup, signal);
+      signal?.throwIfAborted();
       pending.retired = true;
       this.retiredServers.add(pending);
       this.currentServer = null;
       await this.cleanupRetiredServers();
+      signal?.throwIfAborted();
     }
   }
 
-  private async startServer(launchEnv?: Record<string, string>): Promise<OpenCodeServerGeneration> {
-    const port = await this.portAllocator();
+  private async startServer(
+    launchEnv?: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<OpenCodeServerGeneration> {
+    signal?.throwIfAborted();
+    const port = await awaitWithAbort(this.portAllocator(), signal);
     const url = `http://127.0.0.1:${port}`;
-    const launchPrefix = await this.resolveCommandPrefix();
+    const launchPrefix = await awaitWithAbort(this.resolveCommandPrefix(), signal);
+    signal?.throwIfAborted();
     const serverArgs = [...launchPrefix.args, "serve", "--port", String(port)];
     // Use a neutral OpenCode home as the server cwd. Launching from the user's
     // home directory causes OpenCode to treat it as the default workspace and
@@ -414,15 +560,56 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       throw error;
     });
 
+    if (signal) {
+      const abortStartedServer = () => {
+        server.retired = true;
+        this.retiredServers.add(server);
+        void server.ready.catch(() => undefined);
+        void this.killServer(server).catch((error) => {
+          this.logger.warn({ err: error }, "Failed to stop abandoned OpenCode server startup");
+        });
+      };
+      signal.addEventListener("abort", abortStartedServer, { once: true });
+      void server.ready.then(
+        () => {
+          signal.removeEventListener("abort", abortStartedServer);
+          return undefined;
+        },
+        () => {
+          signal.removeEventListener("abort", abortStartedServer);
+          return undefined;
+        },
+      );
+      if (signal.aborted) {
+        abortStartedServer();
+      }
+    }
+
     return server;
   }
 
   async shutdown(): Promise<void> {
-    const servers = [
+    this.shuttingDown = true;
+    const dedicatedStartups = Array.from(this.dedicatedStartups.entries());
+    const startups = [
+      ...[this.startPromise, this.newServerPromise].filter(
+        (startup): startup is Promise<OpenCodeServerGeneration> => startup !== null,
+      ),
+      ...dedicatedStartups.map(([startup]) => startup),
+    ];
+    const shutdownReason = new Error("OpenCode server manager shutting down");
+    this.startController?.abort(shutdownReason);
+    this.newServerController?.abort(shutdownReason);
+    for (const [, controller] of dedicatedStartups) {
+      controller.abort(shutdownReason);
+    }
+    const startupResults = await Promise.allSettled(startups);
+    const servers = new Set([
       ...(this.currentServer ? [this.currentServer] : []),
       ...Array.from(this.retiredServers),
-    ];
-    await Promise.all(servers.map((server) => this.killServer(server)));
+      ...startupResults.flatMap((result) => (result.status === "fulfilled" ? [result.value] : [])),
+    ]);
+    await Promise.all(Array.from(servers, (server) => this.killServer(server)));
     this.currentServer = null;
     this.retiredServers.clear();
   }
@@ -438,7 +625,30 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     await Promise.all(cleanup);
   }
 
-  private async killServer(server: OpenCodeServerGeneration): Promise<void> {
+  private killServer(server: OpenCodeServerGeneration): Promise<void> {
+    const existingCleanup = this.serverCleanupPromises.get(server);
+    if (existingCleanup) {
+      return existingCleanup;
+    }
+    const cleanup = this.killServerOnce(server).catch((error) => {
+      if (this.serverCleanupPromises.get(server) === cleanup) {
+        this.serverCleanupPromises.delete(server);
+      }
+      server.retired = true;
+      this.retiredServers.add(server);
+      throw error;
+    });
+    this.serverCleanupPromises.set(server, cleanup);
+    return cleanup;
+  }
+
+  private assertRunning(): void {
+    if (this.shuttingDown) {
+      throw new Error("OpenCode server manager shutting down");
+    }
+  }
+
+  private async killServerOnce(server: OpenCodeServerGeneration): Promise<void> {
     if (
       (server.process.exitCode !== null && server.process.exitCode !== undefined) ||
       (server.process.signalCode !== null && server.process.signalCode !== undefined)
@@ -460,6 +670,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
         { timeoutMs: OPENCODE_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS },
         "OpenCode server did not report exit after SIGKILL",
       );
+      throw new Error("OpenCode server did not exit after SIGKILL");
     }
     if (server.managedProcessId) {
       await this.removeManagedProcessId(server.managedProcessId);

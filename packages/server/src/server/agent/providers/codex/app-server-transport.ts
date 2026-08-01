@@ -161,6 +161,7 @@ export class CodexAppServerClient {
   private notificationHandler: NotificationHandler | null = null;
   private nextId = 1;
   private disposed = false;
+  private disposePromise: Promise<void> | null = null;
   private stderrBuffer = "";
 
   constructor(
@@ -248,15 +249,27 @@ export class CodexAppServerClient {
     this.child.stdin.write(`${JSON.stringify(payload)}\n`);
   }
 
-  async dispose(): Promise<void> {
-    if (this.disposed) return;
+  dispose(): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
+    if (this.disposed) return Promise.resolve();
     this.disposed = true;
     this.rl.close();
+    const error = new Error("Codex app-server client is closed");
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    this.pending.clear();
     try {
       this.child.stdin.end();
     } catch {
       // ignore
     }
+    this.disposePromise = this.terminateProcess();
+    return this.disposePromise;
+  }
+
+  private async terminateProcess(): Promise<void> {
     const result = await terminateWithTreeKill(this.child, {
       gracefulTimeoutMs: APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS,
       forceTimeoutMs: APP_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS,

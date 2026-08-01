@@ -135,14 +135,19 @@ export function toDiagnosticErrorMessage(error: unknown): string {
   return formatNonErrorDiagnostic(error);
 }
 
-export async function resolveBinaryVersion(binaryPath: string): Promise<string> {
+export async function resolveBinaryVersion(
+  binaryPath: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<string> {
   try {
     const { stdout } = await execCommand(binaryPath, ["--version"], {
       ...createProviderEnvSpec(),
       timeout: 5_000,
+      signal: options.signal,
     });
     return stdout.trim() || "unknown";
   } catch (error) {
+    options.signal?.throwIfAborted();
     return `error: ${toDiagnosticErrorMessage(error)}`;
   }
 }

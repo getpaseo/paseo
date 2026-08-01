@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 
 import type {
   AgentLaunchContext,
+  AgentModelDefinition,
   AgentSession,
   AgentSessionConfig,
   AgentSlashCommand,
@@ -73,6 +74,23 @@ type CodexTestSession = AgentSession & {
 const ONE_BY_ONE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X1r0AAAAASUVORK5CYII=";
 const CODEX_PROVIDER = "codex";
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolveDeferred!: (value: T) => void;
+  const promise = new Promise<T>((resolve) => {
+    resolveDeferred = resolve;
+  });
+  return { promise, resolve: resolveDeferred };
+}
+
+async function emitProcessExitWhenAllowed(
+  child: ChildProcessWithoutNullStreams,
+  signal: NodeJS.Signals | number | undefined,
+  cleanupAllowed: Promise<void>,
+): Promise<void> {
+  await cleanupAllowed;
+  child.emit("exit", null, signal ?? null);
+}
 
 function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSessionConfig {
   return {
@@ -537,6 +555,87 @@ describe("Codex app-server provider", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  test("waits for app-server cleanup before rejecting an aborted catalog request", async () => {
+    const modelRequestStarted = deferred<void>();
+    const modelResponse = deferred<never>();
+    const cleanupStarted = deferred<void>();
+    const cleanupAllowed = deferred<void>();
+    const appServer = createFakeCodexAppServer({
+      "model/list": async () => {
+        modelRequestStarted.resolve();
+        return await modelResponse.promise;
+      },
+    });
+    appServer.child.kill = vi.fn((signal?: NodeJS.Signals | number) => {
+      cleanupStarted.resolve();
+      void emitProcessExitWhenAllowed(appServer.child, signal, cleanupAllowed.promise);
+      return true;
+    }) as ChildProcessWithoutNullStreams["kill"];
+    const provider = createProviderWithFakeAppServer(appServer);
+    const controller = new AbortController();
+    const abortReason = new Error("catalog superseded");
+    const catalog = provider.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/codex-models",
+      force: false,
+      signal: controller.signal,
+    });
+
+    await modelRequestStarted.promise;
+    controller.abort(abortReason);
+    await cleanupStarted.promise;
+    const beforeCleanup = await Promise.race([
+      catalog.then(
+        () => "settled",
+        () => "settled",
+      ),
+      new Promise<"pending">((resolve) => setImmediate(() => resolve("pending"))),
+    ]);
+    expect(beforeCleanup).toBe("pending");
+
+    cleanupAllowed.resolve();
+    await expect(catalog).rejects.toBe(abortReason);
+  });
+
+  test("waits for every catalog discovery branch before rejecting", async () => {
+    const modelsStarted = deferred<void>();
+    const modelsAllowed = deferred<void>();
+    const provider = new CodexAppServerAgentClient(createTestLogger());
+    const discoveryError = new Error("version discovery failed");
+    const modelsError = new Error("model discovery failed later");
+    const internals = castInternals<{
+      fetchModelsFromAppServer: () => Promise<AgentModelDefinition[]>;
+      probeAutoReviewEnabled: () => Promise<boolean>;
+    }>(provider);
+    internals.fetchModelsFromAppServer = async () => {
+      modelsStarted.resolve();
+      await modelsAllowed.promise;
+      throw modelsError;
+    };
+    internals.probeAutoReviewEnabled = async () => {
+      throw discoveryError;
+    };
+
+    const catalog = provider.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/codex-models",
+      force: false,
+    });
+
+    await modelsStarted.promise;
+    const beforeModelsSettle = await Promise.race([
+      catalog.then(
+        () => "settled",
+        () => "settled",
+      ),
+      new Promise<"pending">((resolve) => setImmediate(() => resolve("pending"))),
+    ]);
+    expect(beforeModelsSettle).toBe("pending");
+
+    modelsAllowed.resolve();
+    await expect(catalog).rejects.toBe(discoveryError);
   });
 
   test("round-trips server-initiated command approvals through the real app-server transport", async () => {

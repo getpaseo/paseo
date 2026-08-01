@@ -761,12 +761,17 @@ export class ProviderSnapshotManager {
         force: options.force,
       }),
     );
-    load.cleanup = load.promise.then(async () => {
-      while (load.pending.size > 0) {
-        await Promise.allSettled(Array.from(load.pending));
-      }
-      return undefined;
-    });
+    load.cleanup = load.promise
+      .then(
+        () => undefined,
+        () => undefined,
+      )
+      .then(async () => {
+        while (load.pending.size > 0) {
+          await Promise.allSettled(Array.from(load.pending));
+        }
+        return undefined;
+      });
     void load.cleanup.finally(() => {
       const providerLoads = this.providerLoads.get(options.snapshotCwd);
       if (providerLoads?.get(options.provider) === load) {
@@ -785,8 +790,17 @@ export class ProviderSnapshotManager {
   ): Promise<void> {
     load.cancelled = true;
     load.controller.abort(new Error("Provider snapshot refresh superseded"));
-    if (!(await this.waitForProviderLoadCleanup(load))) {
-      return;
+    const warning = setTimeout(() => {
+      this.logger.warn(
+        { provider: options.provider, timeoutMs: PROVIDER_LOAD_CLEANUP_TIMEOUT_MS },
+        "Provider snapshot cleanup is still running before replacement",
+      );
+    }, PROVIDER_LOAD_CLEANUP_TIMEOUT_MS);
+    warning.unref?.();
+    try {
+      await load.cleanup;
+    } finally {
+      clearTimeout(warning);
     }
     if (this.destroyed) {
       return;

@@ -18,6 +18,7 @@ import { describe, expect, onTestFinished, test } from "vitest";
 
 import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
 import { PiRpcAgentClient, PiRpcAgentSession, transformPiModels } from "./agent.js";
+import type { PiRuntimeSession, PiStartSessionInput } from "./runtime.js";
 import { FakePi } from "./test-utils/fake-pi.js";
 
 const ONE_BY_ONE_PNG_BASE64 =
@@ -28,6 +29,14 @@ function createClient(pi = new FakePi()): PiRpcAgentClient {
     logger: pino({ level: "silent" }),
     runtime: pi,
   });
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolveDeferred!: (value: T) => void;
+  const promise = new Promise<T>((resolve) => {
+    resolveDeferred = resolve;
+  });
+  return { promise, resolve: resolveDeferred };
 }
 
 function rewindCapabilities(capabilities: PiRpcAgentSession["capabilities"]) {
@@ -1414,6 +1423,52 @@ describe("PiRpcAgentClient", () => {
       modes: [],
     });
     expect(pi.recordedLaunches[0]).toMatchObject({ cwd: "/workspace/with-extension" });
+  });
+
+  test("waits for Pi catalog session cleanup before rejecting an aborted request", async () => {
+    const modelsStarted = deferred<void>();
+    const models = deferred<Awaited<ReturnType<PiRuntimeSession["getAvailableModels"]>>>();
+    const closeStarted = deferred<void>();
+    const closeAllowed = deferred<void>();
+    class ControlledPi extends FakePi {
+      override async startSession(input: PiStartSessionInput): Promise<PiRuntimeSession> {
+        const session = await super.startSession(input);
+        session.getAvailableModels = async () => {
+          modelsStarted.resolve();
+          return await models.promise;
+        };
+        session.close = async () => {
+          closeStarted.resolve();
+          await closeAllowed.promise;
+        };
+        return session;
+      }
+    }
+    const client = createClient(new ControlledPi());
+    const controller = new AbortController();
+    const abortReason = new Error("catalog superseded");
+    const catalog = client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/with-extension",
+      force: false,
+      signal: controller.signal,
+    });
+
+    await modelsStarted.promise;
+    controller.abort(abortReason);
+    await closeStarted.promise;
+    const beforeCleanup = await Promise.race([
+      catalog.then(
+        () => "settled",
+        () => "settled",
+      ),
+      new Promise<"pending">((resolve) => setImmediate(() => resolve("pending"))),
+    ]);
+    expect(beforeCleanup).toBe("pending");
+
+    closeAllowed.resolve();
+    await expect(catalog).rejects.toBe(abortReason);
+    models.resolve([]);
   });
 
   test("lists no draft features without starting a Pi session", async () => {

@@ -26,6 +26,14 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolveDeferred!: (value: T) => void;
+  const promise = new Promise<T>((resolve) => {
+    resolveDeferred = resolve;
+  });
+  return { promise, resolve: resolveDeferred };
+}
+
 describe("OpenCodeServerManager generations", () => {
   test("rotation creates a new current server without killing a referenced old server", async () => {
     const { manager, runtime } = createTestManager([4101, 4102]);
@@ -126,6 +134,350 @@ describe("OpenCodeServerManager generations", () => {
     await failure;
     expect(runtime.terminatedPorts).toEqual([4471]);
     expect(await runtime.managedProcesses.list()).toEqual([]);
+  });
+
+  test("aborting the only readiness waiter kills the unready server before rejecting", async () => {
+    const { manager, runtime } = createTestManager([4470], { autoAnnounce: false });
+    const controller = new AbortController();
+    const abortReason = new Error("catalog superseded");
+    const acquisition = manager.acquireCurrent({ signal: controller.signal });
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const observed = manager.acquireExisting("http://127.0.0.1:4470");
+    expect(observed).not.toBeNull();
+    await observed?.release();
+    controller.abort(abortReason);
+    const result = await Promise.race([
+      acquisition.then(
+        () => "resolved" as const,
+        (error: unknown) => error,
+      ),
+      new Promise<"pending">((resolve) => setImmediate(() => resolve("pending"))),
+    ]);
+
+    try {
+      expect(result).toBe(abortReason);
+      expect(runtime.terminatedPorts).toEqual([4470]);
+      expect(await runtime.managedProcesses.list()).toEqual([]);
+    } finally {
+      await manager.shutdown();
+    }
+  });
+
+  test("aborting the only startup waiter prevents a spawn after command resolution", async () => {
+    const resolutionStarted = deferred<void>();
+    const resolutionAllowed = deferred<void>();
+    const { manager, runtime } = createTestManager([4468], {
+      resolveCommandPrefix: async () => {
+        resolutionStarted.resolve();
+        await resolutionAllowed.promise;
+        return { command: "opencode", args: [] };
+      },
+    });
+    const controller = new AbortController();
+    const abortReason = new Error("catalog superseded");
+    const acquisition = manager.acquireCurrent({ signal: controller.signal });
+
+    await resolutionStarted.promise;
+    controller.abort(abortReason);
+    await expect(acquisition).rejects.toBe(abortReason);
+    resolutionAllowed.resolve();
+    await runtime.settle();
+
+    expect(runtime.spawnCalls).toEqual([]);
+    await manager.shutdown();
+  });
+
+  test("a caller after startup cancellation creates a replacement generation", async () => {
+    const firstResolutionStarted = deferred<void>();
+    const firstResolutionAllowed = deferred<void>();
+    let resolutionCalls = 0;
+    const { manager, runtime } = createTestManager([4465, 4466], {
+      resolveCommandPrefix: async () => {
+        resolutionCalls += 1;
+        if (resolutionCalls === 1) {
+          firstResolutionStarted.resolve();
+          await firstResolutionAllowed.promise;
+        }
+        return { command: "opencode", args: [] };
+      },
+    });
+    const controller = new AbortController();
+    const abortReason = new Error("catalog superseded");
+    const canceledAcquisition = manager.acquireCurrent({ signal: controller.signal });
+
+    await firstResolutionStarted.promise;
+    controller.abort(abortReason);
+    await expect(canceledAcquisition).rejects.toBe(abortReason);
+    const replacementAcquisition = manager.acquireCurrent();
+    const replacement = await replacementAcquisition;
+    firstResolutionAllowed.resolve();
+    await runtime.settle();
+
+    expect(runtime.launchedPorts).toEqual([4466]);
+    await replacement.release();
+  });
+
+  test("a canceled rotation cannot retire the startup it was waiting for", async () => {
+    const resolutionStarted = deferred<void>();
+    const resolutionAllowed = deferred<void>();
+    const { manager, runtime } = createTestManager([4460], {
+      autoAnnounce: false,
+      resolveCommandPrefix: async () => {
+        resolutionStarted.resolve();
+        await resolutionAllowed.promise;
+        return { command: "opencode", args: [] };
+      },
+    });
+    const initialStart = manager.acquireCurrent();
+    const controller = new AbortController();
+    const abortReason = new Error("catalog superseded");
+    const canceledRotation = manager.acquireNew({ signal: controller.signal });
+    await resolutionStarted.promise;
+    controller.abort(abortReason);
+    await expect(canceledRotation).rejects.toBe(abortReason);
+
+    resolutionAllowed.resolve();
+    await runtime.settle();
+    runtime.processForPort(4460).announceListening();
+    const initial = await initialStart;
+    const next = await manager.acquireCurrent();
+
+    expect(initial.server.url).toBe("http://127.0.0.1:4460");
+    expect(next.server.url).toBe("http://127.0.0.1:4460");
+    expect(runtime.terminatedPorts).toEqual([]);
+
+    await next.release();
+    await initial.release();
+  });
+
+  test("a canceled rotation cannot retire a fresh acquireCurrent startup after cleanup", async () => {
+    const cleanupStarted = deferred<void>();
+    const cleanupAllowed = deferred<void>();
+    const freshResolutionStarted = deferred<void>();
+    const freshResolutionAllowed = deferred<void>();
+    let cleanupAttempts = 0;
+    let resolutionCalls = 0;
+    const { manager, runtime } = createTestManager([4457, 4458, 4459, 4464], {
+      beforeTerminate: async (port) => {
+        if (port !== 4457) {
+          return;
+        }
+        cleanupAttempts += 1;
+        if (cleanupAttempts === 1) {
+          throw new Error("termination failed");
+        }
+        cleanupStarted.resolve();
+        await cleanupAllowed.promise;
+      },
+      resolveCommandPrefix: async () => {
+        resolutionCalls += 1;
+        if (resolutionCalls === 3) {
+          freshResolutionStarted.resolve();
+          await freshResolutionAllowed.promise;
+        }
+        return { command: "opencode", args: [] };
+      },
+    });
+    const orphan = await manager.acquireDedicated({ TEST_ENV: "orphan" });
+    await expect(orphan.release()).rejects.toThrow("termination failed");
+    const oldCurrent = await manager.acquireCurrent();
+    const controller = new AbortController();
+    const abortReason = new Error("catalog superseded");
+    const canceledRotation = manager.acquireNew({ signal: controller.signal });
+
+    await cleanupStarted.promise;
+    controller.abort(abortReason);
+    await expect(canceledRotation).rejects.toBe(abortReason);
+    const freshStart = manager.acquireCurrent();
+    await freshResolutionStarted.promise;
+
+    cleanupAllowed.resolve();
+    await runtime.settle();
+    freshResolutionAllowed.resolve();
+    const fresh = await freshStart;
+    const next = await manager.acquireCurrent();
+
+    expect(fresh.server.url).toBe("http://127.0.0.1:4459");
+    expect(next.server.url).toBe("http://127.0.0.1:4459");
+    expect(runtime.launchedPorts).toEqual([4457, 4458, 4459]);
+    expect(runtime.terminatedPorts).toEqual([4457]);
+
+    await next.release();
+    await fresh.release();
+    await oldCurrent.release();
+  });
+
+  test("shutdown rejects acquisitions started after shutdown begins", async () => {
+    const resolutionStarted = deferred<void>();
+    const resolutionAllowed = deferred<void>();
+    const { manager } = createTestManager([4462], {
+      resolveCommandPrefix: async () => {
+        resolutionStarted.resolve();
+        await resolutionAllowed.promise;
+        return { command: "opencode", args: [] };
+      },
+    });
+    const pendingAcquisition = manager.acquireCurrent();
+
+    await resolutionStarted.promise;
+    const shutdown = manager.shutdown();
+
+    await expect(manager.acquireCurrent()).rejects.toThrow("OpenCode server manager shutting down");
+    await expect(manager.acquireNew()).rejects.toThrow("OpenCode server manager shutting down");
+    await expect(manager.acquireDedicated({ TEST_ENV: "custom" })).rejects.toThrow(
+      "OpenCode server manager shutting down",
+    );
+    expect(manager.acquireExisting("http://127.0.0.1:4462")).toBeNull();
+    await expect(pendingAcquisition).rejects.toThrow("OpenCode server manager shutting down");
+    await shutdown;
+    resolutionAllowed.resolve();
+  });
+
+  test("shutdown aborts and drains an in-flight dedicated startup", async () => {
+    const resolutionStarted = deferred<void>();
+    const resolutionAllowed = deferred<void>();
+    const { manager, runtime } = createTestManager([4465], {
+      resolveCommandPrefix: async () => {
+        resolutionStarted.resolve();
+        await resolutionAllowed.promise;
+        return { command: "opencode", args: [] };
+      },
+    });
+    const pendingAcquisition = manager.acquireDedicated({ TEST_ENV: "custom" });
+
+    await resolutionStarted.promise;
+    const shutdown = manager.shutdown();
+
+    await expect(pendingAcquisition).rejects.toThrow("OpenCode server manager shutting down");
+    await shutdown;
+    resolutionAllowed.resolve();
+    await runtime.settle();
+
+    expect(runtime.spawnCalls).toEqual([]);
+  });
+
+  test("shutdown retries termination that fails after signaling the process", async () => {
+    let terminationAttempts = 0;
+    const { manager, runtime } = createTestManager([4463], {
+      terminateProcess: async (target) => {
+        terminationAttempts += 1;
+        const process = target as unknown as FakeOpenCodeProcess;
+        if (terminationAttempts === 1) {
+          process.markKillSignalSent();
+          throw new Error("termination failed");
+        }
+        process.exitBySignal("SIGTERM");
+        return "terminated";
+      },
+    });
+    const acquisition = await manager.acquireCurrent();
+
+    await expect(acquisition.release()).rejects.toThrow("termination failed");
+    expect(runtime.processForPort(4463).killed).toBe(true);
+
+    await manager.shutdown();
+
+    expect(terminationAttempts).toBe(2);
+    expect(runtime.processForPort(4463).signalCode).toBe("SIGTERM");
+  });
+
+  test("shutdown retries an unconfirmed kill timeout", async () => {
+    let terminationAttempts = 0;
+    const { manager } = createTestManager([4464], {
+      terminateProcess: async (target) => {
+        terminationAttempts += 1;
+        if (terminationAttempts === 1) {
+          return "kill-timeout";
+        }
+        const process = target as unknown as FakeOpenCodeProcess;
+        process.exitBySignal("SIGKILL");
+        return "terminated";
+      },
+    });
+    const acquisition = await manager.acquireCurrent();
+
+    await expect(acquisition.release()).rejects.toThrow(
+      "OpenCode server did not exit after SIGKILL",
+    );
+
+    await manager.shutdown();
+
+    expect(terminationAttempts).toBe(2);
+  });
+
+  test("one canceled command-resolution waiter does not cancel a shared startup", async () => {
+    const resolutionStarted = deferred<void>();
+    const resolutionAllowed = deferred<void>();
+    const { manager, runtime } = createTestManager([4469], {
+      resolveCommandPrefix: async () => {
+        resolutionStarted.resolve();
+        await resolutionAllowed.promise;
+        return { command: "opencode", args: [] };
+      },
+    });
+    const controller = new AbortController();
+    const abortReason = new Error("catalog superseded");
+    const canceledAcquisition = manager.acquireCurrent({ signal: controller.signal });
+    const retainedAcquisition = manager.acquireCurrent();
+
+    await resolutionStarted.promise;
+    controller.abort(abortReason);
+    await expect(canceledAcquisition).rejects.toBe(abortReason);
+    resolutionAllowed.resolve();
+    const retained = await retainedAcquisition;
+
+    expect(runtime.launchedPorts).toEqual([4469]);
+    await retained.release();
+  });
+
+  test("shutdown prevents a spawn after command resolution", async () => {
+    const resolutionStarted = deferred<void>();
+    const resolutionAllowed = deferred<void>();
+    const { manager, runtime } = createTestManager([4467], {
+      resolveCommandPrefix: async () => {
+        resolutionStarted.resolve();
+        await resolutionAllowed.promise;
+        return { command: "opencode", args: [] };
+      },
+    });
+    const acquisition = manager.acquireCurrent();
+
+    await resolutionStarted.promise;
+    const shutdown = manager.shutdown();
+    await expect(acquisition).rejects.toThrow("OpenCode server manager shutting down");
+    await shutdown;
+    resolutionAllowed.resolve();
+    await runtime.settle();
+
+    expect(runtime.spawnCalls).toEqual([]);
+  });
+
+  test("aborting one startup waiter does not wait for or kill another waiter's server", async () => {
+    const { manager, runtime } = createTestManager([4471], { autoAnnounce: false });
+    const controller = new AbortController();
+    const abortReason = new Error("catalog superseded");
+    const canceledAcquisition = manager.acquireCurrent({ signal: controller.signal });
+    const retainedAcquisition = manager.acquireCurrent();
+
+    await runtime.settle();
+    controller.abort(abortReason);
+    const canceledResult = await Promise.race([
+      canceledAcquisition.then(
+        () => "resolved" as const,
+        (error: unknown) => error,
+      ),
+      new Promise<"pending">((resolve) => setImmediate(() => resolve("pending"))),
+    ]);
+
+    runtime.processForPort(4471).announceListening();
+    const retained = await retainedAcquisition;
+    try {
+      expect(canceledResult).toBe(abortReason);
+      expect(runtime.terminatedPorts).toEqual([]);
+    } finally {
+      await retained.release();
+    }
   });
 
   test("shutdown kills a server that is still starting", async () => {
@@ -334,7 +686,13 @@ describe.runIf(process.platform === "win32")(
 
 function createTestManager(
   ports: number[],
-  options: { autoAnnounce?: boolean; opencodeHomeDir?: string } = {},
+  options: {
+    autoAnnounce?: boolean;
+    beforeTerminate?: (port: number) => Promise<void>;
+    opencodeHomeDir?: string;
+    resolveCommandPrefix?: OpenCodeCommandPrefixResolver;
+    terminateProcess?: ProcessTerminator;
+  } = {},
 ): {
   manager: OpenCodeServerManager;
   runtime: FakeOpenCodeServerRuntime;
@@ -342,16 +700,17 @@ function createTestManager(
   const { opencodeHomeDir } = options;
   const runtime = new FakeOpenCodeServerRuntime(ports, {
     autoAnnounce: options.autoAnnounce ?? true,
+    beforeTerminate: options.beforeTerminate,
   });
   return {
     manager: new OpenCodeServerManager({
       logger: createTestLogger(),
       managedProcesses: runtime.managedProcesses,
       portAllocator: runtime.allocatePort,
-      resolveCommandPrefix: runtime.resolveCommandPrefix,
+      resolveCommandPrefix: options.resolveCommandPrefix ?? runtime.resolveCommandPrefix,
       ...(opencodeHomeDir ? { resolveHomeDir: () => opencodeHomeDir } : {}),
       spawnServerProcess: runtime.spawnServerProcess,
-      terminateProcess: runtime.terminateProcess,
+      terminateProcess: options.terminateProcess ?? runtime.terminateProcess,
     }),
     runtime,
   };
@@ -367,12 +726,20 @@ class FakeOpenCodeServerRuntime {
   }> = [];
   private readonly ports: number[];
   private readonly autoAnnounce: boolean;
+  private readonly beforeTerminate?: (port: number) => Promise<void>;
   private readonly processesByChild = new Map<ChildProcess, FakeOpenCodeProcess>();
   private readonly processesByPort = new Map<number, FakeOpenCodeProcess>();
 
-  constructor(ports: number[], options: { autoAnnounce: boolean }) {
+  constructor(
+    ports: number[],
+    options: {
+      autoAnnounce: boolean;
+      beforeTerminate?: (port: number) => Promise<void>;
+    },
+  ) {
     this.ports = [...ports];
     this.autoAnnounce = options.autoAnnounce;
+    this.beforeTerminate = options.beforeTerminate;
   }
 
   get launchedPorts(): number[] {
@@ -406,6 +773,7 @@ class FakeOpenCodeServerRuntime {
 
   readonly terminateProcess: ProcessTerminator = async (target: TreeKillTarget) => {
     const process = this.processForChild(target as ChildProcess);
+    await this.beforeTerminate?.(process.port);
     this.terminatedPorts.push(process.port);
     process.exitBySignal("SIGTERM");
     return "terminated";
@@ -420,8 +788,9 @@ class FakeOpenCodeServerRuntime {
   }
 
   async settle(): Promise<void> {
-    await Promise.resolve();
-    await Promise.resolve();
+    for (let index = 0; index < 8; index += 1) {
+      await Promise.resolve();
+    }
   }
 
   private processForChild(child: ChildProcess): FakeOpenCodeProcess {

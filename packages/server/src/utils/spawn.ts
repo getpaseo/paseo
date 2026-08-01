@@ -134,10 +134,10 @@ export async function execCommand(
           if (settled) return;
           settled = true;
           reject(reason);
-        } catch (error: unknown) {
+        } catch {
           if (settled) return;
           settled = true;
-          reject(error);
+          reject(reason);
         }
       })();
     };

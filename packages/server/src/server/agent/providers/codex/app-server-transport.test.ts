@@ -1,4 +1,5 @@
-import { describe, expect, test } from "vitest";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import {
@@ -6,6 +7,23 @@ import {
   createFakeCodexAppServer,
 } from "./test-utils/fake-app-server.js";
 import { CodexAppServerClient } from "./app-server-transport.js";
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+async function emitProcessExitWhenAllowed(
+  child: ChildProcessWithoutNullStreams,
+  signal: NodeJS.Signals | number | undefined,
+  cleanupAllowed: Promise<void>,
+): Promise<void> {
+  await cleanupAllowed;
+  child.emit("exit", null, signal ?? null);
+}
 
 describe("Codex app-server transport", () => {
   test("ignores non-JSON stdout lines without dropping pending requests", async () => {
@@ -110,5 +128,38 @@ describe("Codex app-server transport", () => {
     codex.child.stdout.end();
     codex.child.stderr.end();
     codex.child.stdin.end();
+  });
+
+  test("shares process cleanup across concurrent disposal callers", async () => {
+    const cleanupStarted = deferred<void>();
+    const cleanupAllowed = deferred<void>();
+    const child = createCodexAppServerChildProcess();
+    child.kill = vi.fn((signal?: NodeJS.Signals | number) => {
+      cleanupStarted.resolve();
+      void emitProcessExitWhenAllowed(child, signal, cleanupAllowed.promise);
+      return true;
+    }) as ChildProcessWithoutNullStreams["kill"];
+    const client = new CodexAppServerClient(child, createTestLogger());
+    const request = client.request("model/list", {});
+
+    const firstDispose = client.dispose();
+    const secondDispose = client.dispose();
+
+    await expect(request).rejects.toThrow("Codex app-server client is closed");
+    expect(secondDispose).toBe(firstDispose);
+    await cleanupStarted.promise;
+    const beforeCleanup = await Promise.race([
+      secondDispose.then(() => "settled"),
+      new Promise<"pending">((resolve) => setImmediate(() => resolve("pending"))),
+    ]);
+    expect(beforeCleanup).toBe("pending");
+
+    cleanupAllowed.resolve();
+    await expect(Promise.all([firstDispose, secondDispose])).resolves.toEqual([
+      undefined,
+      undefined,
+    ]);
+    expect(child.kill).toHaveBeenCalledTimes(1);
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
   });
 });

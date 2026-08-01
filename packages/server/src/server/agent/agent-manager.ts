@@ -4312,14 +4312,19 @@ export class AgentManager {
         return await existing.promise;
       }
       existing.controller.abort(new Error("Provider availability generation invalidated"));
-      const cleanupResult = await this.waitWithTimeout({
-        operation: existing.cleanup,
-        timeoutMs: PROVIDER_HEALTH_CLEANUP_TIMEOUT_MS,
-      });
+      const warning = setTimeout(() => {
+        this.logger.warn(
+          { provider, timeoutMs: PROVIDER_HEALTH_CLEANUP_TIMEOUT_MS },
+          "Provider availability cleanup is still running before replacement",
+        );
+      }, PROVIDER_HEALTH_CLEANUP_TIMEOUT_MS);
+      warning.unref?.();
+      try {
+        await existing.cleanup;
+      } finally {
+        clearTimeout(warning);
+      }
       if (this.providerAvailabilityProbes.get(provider) === existing) {
-        if (cleanupResult === "timed_out") {
-          return this.readProviderAvailability(provider, false);
-        }
         this.providerAvailabilityProbes.delete(provider);
       }
     }

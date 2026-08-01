@@ -2026,6 +2026,45 @@ test("provider registry invalidation waits for delayed probe cleanup before repl
   expect(activeChecks).toBe(0);
 });
 
+test("provider registry invalidation still probes the replacement after slow cleanup", async () => {
+  const started = deferred<void>();
+  let calls = 0;
+  class SlowCleanupClient extends TestAgentClient {
+    override async isAvailable(options?: { signal?: AbortSignal }): Promise<boolean> {
+      calls += 1;
+      if (calls > 1) {
+        return true;
+      }
+      started.resolve();
+      return await new Promise<boolean>((_resolve, reject) => {
+        const abort = () => {
+          setTimeout(() => {
+            reject(options?.signal?.reason ?? new Error("aborted"));
+          }, 1_100);
+        };
+        if (options?.signal?.aborted) {
+          abort();
+        } else {
+          options?.signal?.addEventListener("abort", abort, { once: true });
+        }
+      });
+    }
+  }
+  const client = new SlowCleanupClient();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+
+  const oldResult = manager.getProviderAvailability("codex", { fresh: true });
+  await started.promise;
+  manager.updateProviderRegistry({
+    clients: { codex: client },
+    providerDefinitions: { codex: { enabled: true } },
+  });
+  const replacementResult = manager.getProviderAvailability("codex", { fresh: true });
+  await expect(oldResult).resolves.toMatchObject({ status: "checking", checkedAt: null });
+  await expect(replacementResult).resolves.toMatchObject({ status: "available" });
+  expect(calls).toBe(2);
+});
+
 test("shutdown aborts and drains provider health checks before returning", async () => {
   const started = deferred<void>();
   const cleanupFinished = deferred<void>();

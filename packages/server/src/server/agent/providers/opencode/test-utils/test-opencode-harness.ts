@@ -95,6 +95,9 @@ export class TestOpenCodeClient {
   };
 
   appAgentsResponse: OpenCodeResponse = { data: [] };
+  appAgentsImplementation:
+    | ((parameters: unknown, options: unknown) => Promise<OpenCodeResponse>)
+    | null = null;
   commandListResponse: OpenCodeResponse = { data: [] };
   eventStream: AsyncIterable<unknown>;
   experimentalSessionListResponse: OpenCodeResponse = { data: [] };
@@ -102,7 +105,9 @@ export class TestOpenCodeClient {
   mcpConnectResponse: OpenCodeResponse = {};
   permissionReplyResponse: OpenCodeResponse = {};
   providerListResponse: OpenCodeResponse = { data: { connected: [], all: [] } };
-  providerListImplementation: (() => Promise<OpenCodeResponse>) | null = null;
+  providerListImplementation:
+    | ((parameters: unknown, options: unknown) => Promise<OpenCodeResponse>)
+    | null = null;
   globalEventImplementation:
     | ((options: unknown) => Promise<{ stream: AsyncIterable<unknown> }>)
     | null = null;
@@ -140,9 +145,11 @@ export class TestOpenCodeClient {
   asSdkClient(): OpencodeClient {
     return {
       app: {
-        agents: async (parameters: unknown) => {
+        agents: async (parameters: unknown, _options: unknown) => {
           this.calls.appAgents.push(parameters);
-          return this.appAgentsResponse;
+          return this.appAgentsImplementation
+            ? await this.appAgentsImplementation(parameters, _options)
+            : this.appAgentsResponse;
         },
       },
       command: {
@@ -194,10 +201,10 @@ export class TestOpenCodeClient {
         },
       },
       provider: {
-        list: async (parameters: unknown) => {
+        list: async (parameters: unknown, options: unknown) => {
           this.calls.providerList.push(parameters);
           return this.providerListImplementation
-            ? await this.providerListImplementation()
+            ? await this.providerListImplementation(parameters, options)
             : this.providerListResponse;
         },
       },
