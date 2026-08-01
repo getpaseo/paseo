@@ -265,6 +265,39 @@ describe("createProviderEnv", () => {
     expect(env.CLAUDE_AGENT_SDK_VERSION).toBeUndefined();
     expect(env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING).toBe("true");
   });
+
+  test("strips inherited askpass helpers so credential prompts fail fast", () => {
+    const base = {
+      PATH: "/usr/bin",
+      SUDO_ASKPASS: "/usr/bin/zenity-askpass",
+      SSH_ASKPASS: "/usr/bin/ssh-askpass",
+      GIT_ASKPASS: "/usr/bin/git-askpass",
+      DISPLAY: ":1",
+    };
+
+    const env = createProviderEnv({ baseEnv: base });
+
+    expect(env.SUDO_ASKPASS).toBeUndefined();
+    expect(env.SSH_ASKPASS).toBeUndefined();
+    expect(env.GIT_ASKPASS).toBeUndefined();
+    // DISPLAY stays: it is not itself a credential prompt, and GUI-aware
+    // tools legitimately use it.
+    expect(env.DISPLAY).toBe(":1");
+  });
+
+  test("keeps an explicitly configured askpass helper", () => {
+    const base = {
+      PATH: "/usr/bin",
+      SUDO_ASKPASS: "/usr/bin/zenity-askpass",
+    };
+
+    const env = createProviderEnv({
+      baseEnv: base,
+      runtimeSettings: { env: { SUDO_ASKPASS: "/opt/paseo/bin/paseo-askpass" } },
+    });
+
+    expect(env.SUDO_ASKPASS).toBe("/opt/paseo/bin/paseo-askpass");
+  });
 });
 
 describe("ProviderOverrideSchema", () => {

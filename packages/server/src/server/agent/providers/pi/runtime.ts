@@ -7,12 +7,16 @@ import type {
   PiSessionState,
   PiSessionStats,
 } from "./rpc-types.js";
-import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+import type { ProcessEnvRecord } from "../../../paseo-env.js";
+import {
+  createProviderEnvSpec,
+  type ProviderRuntimeSettings,
+} from "../../provider-launch-config.js";
 
 export interface PiRuntimeLaunch {
   cwd: string;
   argv: string[];
-  env?: Record<string, string>;
+  env?: ProcessEnvRecord;
   protocolMode?: "rpc" | "rpc-ui";
   model?: string;
   thinkingOptionId?: string;
@@ -88,13 +92,12 @@ export function buildPiLaunch(input: {
   return {
     cwd: input.session.cwd,
     argv,
-    env:
-      input.runtimeSettings?.env || input.session.env
-        ? {
-            ...input.runtimeSettings?.env,
-            ...input.session.env,
-          }
-        : undefined,
+    // Route through the shared provider env spec so inherited GUI credential
+    // helpers (askpass class) and parent-session markers are stripped here
+    // too, not just for providers that spawn via createProviderEnv directly.
+    env: createProviderEnvSpec({
+      overlays: [input.runtimeSettings?.env, input.session.env],
+    }).envOverlay,
     model: input.session.model,
     thinkingOptionId: input.session.thinkingOptionId,
     protocolMode,

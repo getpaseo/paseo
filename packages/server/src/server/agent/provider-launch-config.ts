@@ -210,6 +210,14 @@ const PARENT_SESSION_ENV_VARS = [
   "CLAUDE_AGENT_SDK_VERSION",
 ];
 
+// GUI credential helpers. Agent tool calls run without a TTY, so sudo/ssh
+// fall back to the askpass helper — typically a desktop dialog the remote
+// user can never see, parking the agent's turn indefinitely. Strip them so
+// credential prompts fail fast with a legible error instead. An explicit
+// value in provider runtimeSettings.env is kept: that is a deliberate
+// configuration, not an inherited leak.
+const ASKPASS_ENV_VARS = ["SUDO_ASKPASS", "SSH_ASKPASS", "GIT_ASKPASS"];
+
 export interface ProviderEnvOptions {
   baseEnv?: ProcessEnvRecord;
   runtimeSettings?: ProviderRuntimeSettings;
@@ -235,6 +243,11 @@ export function createProviderEnvSpec(options: ProviderEnvOptions = {}): Provide
   const envOverlay: ProcessEnvRecord = Object.assign({}, ...overlays);
   for (const key of PARENT_SESSION_ENV_VARS) {
     envOverlay[key] = undefined;
+  }
+  for (const key of ASKPASS_ENV_VARS) {
+    if (!(key in envOverlay)) {
+      envOverlay[key] = undefined;
+    }
   }
   return {
     ...(options.baseEnv ? { baseEnv: options.baseEnv } : {}),

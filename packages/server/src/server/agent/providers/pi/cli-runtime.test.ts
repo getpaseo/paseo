@@ -5,7 +5,7 @@ import pino from "pino";
 import { describe, expect, test, vi } from "vitest";
 
 import { PiCliRuntime } from "./cli-runtime.js";
-import type { PiRuntimeLaunch } from "./runtime.js";
+import { buildPiLaunch, type PiRuntimeLaunch } from "./runtime.js";
 
 type PiChild = ChildProcessWithoutNullStreams & {
   stdin: PassThrough;
@@ -443,5 +443,32 @@ describe("PiCliRuntime", () => {
 
     // Neither RPC returned usable data — should resolve with empty object
     expect(stats).toEqual({});
+  });
+});
+
+describe("buildPiLaunch env", () => {
+  test("marks inherited askpass helpers and parent-session markers for deletion", () => {
+    const launch = buildPiLaunch({
+      command: ["pi"],
+      session: { cwd: "/workspace/project" },
+    });
+
+    expect(launch.env?.SUDO_ASKPASS).toBeUndefined();
+    expect(launch.env?.SSH_ASKPASS).toBeUndefined();
+    expect(launch.env?.GIT_ASKPASS).toBeUndefined();
+    expect(launch.env?.CLAUDECODE).toBeUndefined();
+    expect(Object.keys(launch.env ?? {})).toEqual(
+      expect.arrayContaining(["SUDO_ASKPASS", "SSH_ASKPASS", "GIT_ASKPASS", "CLAUDECODE"]),
+    );
+  });
+
+  test("keeps an explicitly configured askpass helper", () => {
+    const launch = buildPiLaunch({
+      command: ["pi"],
+      runtimeSettings: { env: { SUDO_ASKPASS: "/opt/paseo/bin/paseo-askpass" } },
+      session: { cwd: "/workspace/project" },
+    });
+
+    expect(launch.env?.SUDO_ASKPASS).toBe("/opt/paseo/bin/paseo-askpass");
   });
 });

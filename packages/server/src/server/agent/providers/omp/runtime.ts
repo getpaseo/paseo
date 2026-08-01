@@ -12,12 +12,16 @@ import type {
   OmpSubagentSubscriptionLevel,
   OmpThinkingLevel,
 } from "./rpc-types.js";
-import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+import type { ProcessEnvRecord } from "../../../paseo-env.js";
+import {
+  createProviderEnvSpec,
+  type ProviderRuntimeSettings,
+} from "../../provider-launch-config.js";
 
 export interface OmpRuntimeLaunch {
   cwd: string;
   argv: string[];
-  env?: Record<string, string>;
+  env?: ProcessEnvRecord;
   protocolMode?: "rpc" | "rpc-ui";
   model?: string;
   thinkingOptionId?: string;
@@ -100,13 +104,11 @@ export function buildOmpLaunch(input: {
   return {
     cwd: input.session.cwd,
     argv,
-    env:
-      input.runtimeSettings?.env || input.session.env
-        ? {
-            ...input.runtimeSettings?.env,
-            ...input.session.env,
-          }
-        : undefined,
+    // Same shared provider env spec as every other provider: strips
+    // inherited GUI credential helpers and parent-session markers.
+    env: createProviderEnvSpec({
+      overlays: [input.runtimeSettings?.env, input.session.env],
+    }).envOverlay,
     model: input.session.model,
     thinkingOptionId: input.session.thinkingOptionId,
     protocolMode,
