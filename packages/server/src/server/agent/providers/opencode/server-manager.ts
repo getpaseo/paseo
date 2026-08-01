@@ -1,4 +1,5 @@
 import type { ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import net from "node:net";
@@ -7,8 +8,20 @@ import type { Logger } from "pino";
 
 import { findExecutable } from "../../../../executable-resolution/executable-resolution.js";
 import { spawnProcess, type SpawnProcessOptions } from "../../../../utils/spawn.js";
-import { terminateWithTreeKill, type ProcessTerminator } from "../../../../utils/tree-kill.js";
-import type { ManagedProcessRegistry } from "../../../managed-processes/managed-processes.js";
+import {
+  terminateWithTreeKill,
+  type ProcessTerminator,
+  type TreeKillTarget,
+} from "../../../../utils/tree-kill.js";
+import {
+  createProcessGroupTarget,
+  inspectSystemProcessGroupIdentity,
+  MANAGED_PROCESS_IDENTITY_ENV,
+  type ManagedProcessGroupInspection,
+  type ManagedProcessRecord,
+  type ManagedProcessRegistry,
+  verifySystemManagedProcessIdentity,
+} from "../../../managed-processes/managed-processes.js";
 import {
   createProviderEnvSpec,
   resolveProviderCommandPrefix,
@@ -18,6 +31,14 @@ import { resolveOpenCodeHomeDir } from "./paths.js";
 
 const OPENCODE_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 5_000;
 const OPENCODE_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
+const OPENCODE_SERVER_CLEANUP_RETRY_DELAY_MS = 1_000;
+
+function hasProcessExited(process: ChildProcess): boolean {
+  return (
+    (process.exitCode !== null && process.exitCode !== undefined) ||
+    (process.signalCode !== null && process.signalCode !== undefined)
+  );
+}
 
 export interface OpenCodeServerAcquisition {
   server: { port: number; url: string };
@@ -40,7 +61,11 @@ export interface OpenCodeServerGeneration {
   retired: boolean;
   ready: Promise<void>;
   managedProcessId?: string;
-  managedProcessRecord?: Promise<{ id: string } | null>;
+  managedProcessRecord?: Promise<ManagedProcessRecord | null>;
+  managedProcessIdentity?: ManagedProcessRecord;
+  ownsProcessGroup: boolean;
+  identityToken?: string;
+  cleanupComplete: boolean;
 }
 
 export type OpenCodePortAllocator = () => Promise<number>;
@@ -50,6 +75,11 @@ export type OpenCodeServerProcessSpawner = (
   args: string[],
   options: SpawnProcessOptions,
 ) => ChildProcess;
+export type OpenCodeProcessGroupIdentityVerifier = (
+  processGroupId: number,
+  identityToken: string,
+) => Promise<ManagedProcessGroupInspection>;
+export type OpenCodeProcessIdentityVerifier = (record: ManagedProcessRecord) => Promise<boolean>;
 
 export interface OpenCodeServerManagerOptions {
   logger: Logger;
@@ -60,6 +90,9 @@ export interface OpenCodeServerManagerOptions {
   resolveCommandPrefix?: OpenCodeCommandPrefixResolver;
   resolveHomeDir?: () => string;
   spawnServerProcess?: OpenCodeServerProcessSpawner;
+  createManagedProcessIdentityToken?: () => string;
+  verifyProcessGroupIdentity?: OpenCodeProcessGroupIdentityVerifier;
+  verifyProcessIdentity?: OpenCodeProcessIdentityVerifier;
 }
 
 export class OpenCodeServerManager implements OpenCodeServerManagerLike {
@@ -67,6 +100,10 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private static exitHandlerRegistered = false;
   private currentServer: OpenCodeServerGeneration | null = null;
   private retiredServers = new Set<OpenCodeServerGeneration>();
+  private terminationPromises = new WeakMap<OpenCodeServerGeneration, Promise<void>>();
+  private cleanupRetryTimers = new WeakMap<OpenCodeServerGeneration, NodeJS.Timeout>();
+  private pendingStarts = new Set<Promise<OpenCodeServerGeneration>>();
+  private shutdownPromise: Promise<void> | null = null;
   private startPromise: Promise<OpenCodeServerGeneration> | null = null;
   private newServerPromise: Promise<OpenCodeServerGeneration> | null = null;
   private readonly logger: Logger;
@@ -78,6 +115,9 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private readonly resolveCommandPrefix: OpenCodeCommandPrefixResolver;
   private readonly resolveHomeDir: () => string;
   private readonly spawnServerProcess: OpenCodeServerProcessSpawner;
+  private readonly createManagedProcessIdentityToken: () => string;
+  private readonly verifyProcessGroupIdentity: OpenCodeProcessGroupIdentityVerifier;
+  private readonly verifyProcessIdentity: OpenCodeProcessIdentityVerifier;
 
   constructor(options: OpenCodeServerManagerOptions) {
     this.logger = options.logger;
@@ -91,6 +131,12 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       (() => resolveProviderCommandPrefix(this.runtimeSettings?.command, resolveOpenCodeBinary));
     this.resolveHomeDir = options.resolveHomeDir ?? resolveOpenCodeHomeDir;
     this.spawnServerProcess = options.spawnServerProcess ?? spawnProcess;
+    this.createManagedProcessIdentityToken =
+      options.createManagedProcessIdentityToken ?? randomUUID;
+    this.verifyProcessGroupIdentity =
+      options.verifyProcessGroupIdentity ?? inspectSystemProcessGroupIdentity;
+    this.verifyProcessIdentity =
+      options.verifyProcessIdentity ?? verifySystemManagedProcessIdentity;
   }
 
   static getInstance(
@@ -135,19 +181,32 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   }
 
   async acquireCurrent(): Promise<OpenCodeServerAcquisition> {
+    if (this.shutdownPromise) {
+      await this.shutdownPromise;
+    }
     const server = await this.getCurrentServer();
     return this.acquireServer(server);
   }
 
   async acquireNew(): Promise<OpenCodeServerAcquisition> {
+    if (this.shutdownPromise) {
+      await this.shutdownPromise;
+    }
     const server = await this.getNewServer();
     return this.acquireServer(server);
   }
 
   async acquireDedicated(env: Record<string, string>): Promise<OpenCodeServerAcquisition> {
-    const server = await this.startServer(env);
-    server.retired = true;
-    this.retiredServers.add(server);
+    if (this.shutdownPromise) {
+      await this.shutdownPromise;
+    }
+    const server = await this.trackPendingStart(
+      this.startServer(env).then((startedServer) => {
+        startedServer.retired = true;
+        this.retiredServers.add(startedServer);
+        return startedServer;
+      }),
+    );
     const acquisition = this.acquireServer(server);
     try {
       await server.ready;
@@ -217,13 +276,18 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       return this.newServerPromise;
     }
 
-    this.newServerPromise = Promise.resolve()
-      .then(async () => {
+    const generation = this.trackPendingStart(
+      Promise.resolve().then(async () => {
         await this.rotateCurrentServer();
         const server = await this.startServer();
         if (!server.retired) {
           this.currentServer = server;
         }
+        return server;
+      }),
+    );
+    this.newServerPromise = generation
+      .then(async (server) => {
         await server.ready;
         return server;
       })
@@ -249,12 +313,14 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       return this.currentServer;
     }
 
-    this.startPromise = this.startServer().then((server) => {
-      if (!server.retired) {
-        this.currentServer = server;
-      }
-      return server;
-    });
+    this.startPromise = this.trackPendingStart(
+      this.startServer().then((server) => {
+        if (!server.retired) {
+          this.currentServer = server;
+        }
+        return server;
+      }),
+    );
     const currentStart = this.startPromise;
     const result = await currentStart.finally(() => {
       if (this.startPromise === currentStart) {
@@ -292,21 +358,36 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     // index the entire home tree.
     const serverCwd = this.resolveHomeDir();
     mkdirSync(serverCwd, { recursive: true });
+    const ownsProcessGroup = process.platform !== "win32";
+    const identityToken = ownsProcessGroup ? this.createManagedProcessIdentityToken() : undefined;
 
     const serverProcess = this.spawnServerProcess(launchPrefix.command, serverArgs, {
       cwd: serverCwd,
-      detached: process.platform !== "win32",
+      detached: ownsProcessGroup,
       stdio: ["ignore", "pipe", "pipe"],
       ...createProviderEnvSpec({
         runtimeSettings: this.runtimeSettings,
-        overlays: [launchEnv],
+        overlays: [
+          launchEnv,
+          identityToken ? { [MANAGED_PROCESS_IDENTITY_ENV]: identityToken } : undefined,
+        ],
       }),
     });
+    let capturedManagedProcessIdentity: ManagedProcessRecord | undefined;
+    const serverRef: { current?: OpenCodeServerGeneration } = {};
     const managedProcessRecord = this.recordManagedServerProcess({
       process: serverProcess,
       command: launchPrefix.command,
       args: serverArgs,
       port,
+      ownsProcessGroup,
+      identityToken,
+      onIdentityCaptured: (record) => {
+        capturedManagedProcessIdentity = record;
+        if (serverRef.current) {
+          serverRef.current.managedProcessIdentity = record;
+        }
+      },
     });
     const server: OpenCodeServerGeneration = {
       process: serverProcess,
@@ -316,13 +397,21 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       retired: false,
       ready: Promise.resolve(),
       managedProcessRecord,
+      managedProcessIdentity: capturedManagedProcessIdentity,
+      ownsProcessGroup,
+      identityToken,
+      cleanupComplete: false,
     };
-    void managedProcessRecord.then((record) => {
-      if (record && server.managedProcessRecord === managedProcessRecord) {
-        server.managedProcessId = record.id;
-      }
-      return undefined;
-    });
+    serverRef.current = server;
+    void managedProcessRecord
+      .then((record) => {
+        if (record && server.managedProcessRecord === managedProcessRecord) {
+          server.managedProcessId = record.id;
+          server.managedProcessIdentity = record;
+        }
+        return undefined;
+      })
+      .catch(() => undefined);
 
     let started = false;
     let settled = false;
@@ -360,7 +449,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
         reject(error);
       };
       timeout = setTimeout(() => {
-        if (!started) {
+        if (!settled) {
           failStartup(new Error(buildStartupErrorMessage("OpenCode server startup timeout")));
         }
       }, 30_000);
@@ -368,11 +457,16 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       serverProcess.stdout?.on("data", (data: Buffer) => {
         const output = data.toString();
         stdoutBuffer = appendCapped(stdoutBuffer, output);
-        if (output.includes("listening on") && !settled) {
+        if (output.includes("listening on") && !started && !settled) {
           started = true;
-          settled = true;
-          clearTimeout(timeout);
-          resolve();
+          void this.confirmManagedServerExecTransition(managedProcessRecord).then(() => {
+            if (!settled) {
+              settled = true;
+              clearTimeout(timeout);
+              resolve();
+            }
+            return undefined;
+          }, failStartup);
         }
       });
 
@@ -388,7 +482,15 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       });
 
       serverProcess.on("exit", (code) => {
-        this.removeManagedServerRecord(server);
+        if (server.ownsProcessGroup) {
+          // The group can outlive its leader. Reconcile it before deleting the
+          // durable record so grandchildren cannot become untracked helpers.
+          queueMicrotask(() => void this.killServer(server));
+        } else if (!this.terminationPromises.has(server)) {
+          server.cleanupComplete = true;
+          this.removeManagedServerRecord(server);
+          this.finishServerCleanup(server);
+        }
         if (!started) {
           failStartup(
             new Error(buildStartupErrorMessage(`OpenCode server exited with code ${code}`)),
@@ -410,21 +512,54 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       if (this.currentServer === server) {
         this.currentServer = null;
       }
-      this.retiredServers.delete(server);
+      if (server.cleanupComplete) {
+        this.retiredServers.delete(server);
+      }
       throw error;
     });
 
     return server;
   }
 
-  async shutdown(): Promise<void> {
-    const servers = [
+  shutdown(): Promise<void> {
+    if (this.shutdownPromise) {
+      return this.shutdownPromise;
+    }
+    const shutdown = this.shutdownOnce();
+    const tracked = shutdown.finally(() => {
+      if (this.shutdownPromise === tracked) {
+        this.shutdownPromise = null;
+      }
+    });
+    this.shutdownPromise = tracked;
+    return tracked;
+  }
+
+  private async shutdownOnce(): Promise<void> {
+    const pendingResults = await Promise.allSettled(Array.from(this.pendingStarts));
+    const servers = new Set<OpenCodeServerGeneration>([
       ...(this.currentServer ? [this.currentServer] : []),
-      ...Array.from(this.retiredServers),
-    ];
-    await Promise.all(servers.map((server) => this.killServer(server)));
+      ...this.retiredServers,
+      ...pendingResults.flatMap((result) => (result.status === "fulfilled" ? [result.value] : [])),
+    ]);
+    await Promise.all(Array.from(servers, (server) => this.killServer(server)));
     this.currentServer = null;
     this.retiredServers.clear();
+    for (const server of servers) {
+      if (!server.cleanupComplete) {
+        this.retiredServers.add(server);
+      }
+    }
+  }
+
+  private trackPendingStart(
+    start: Promise<OpenCodeServerGeneration>,
+  ): Promise<OpenCodeServerGeneration> {
+    const tracked = start.finally(() => {
+      this.pendingStarts.delete(tracked);
+    });
+    this.pendingStarts.add(tracked);
+    return tracked;
   }
 
   private async cleanupRetiredServers(): Promise<void> {
@@ -439,27 +574,73 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   }
 
   private async killServer(server: OpenCodeServerGeneration): Promise<void> {
-    if (
-      (server.process.exitCode !== null && server.process.exitCode !== undefined) ||
-      (server.process.signalCode !== null && server.process.signalCode !== undefined)
-    ) {
+    if (server.cleanupComplete) {
       return;
     }
-    const result = await this.terminateProcess(server.process, {
+    const existing = this.terminationPromises.get(server);
+    if (existing) {
+      return existing;
+    }
+
+    const termination = this.killServerOnce(server).finally(() => {
+      this.terminationPromises.delete(server);
+    });
+    this.terminationPromises.set(server, termination);
+    return termination;
+  }
+
+  private async killServerOnce(server: OpenCodeServerGeneration): Promise<void> {
+    if (!server.ownsProcessGroup && hasProcessExited(server.process)) {
+      server.cleanupComplete = true;
+      this.removeManagedServerRecord(server);
+      this.finishServerCleanup(server);
+      return;
+    }
+    const managedProcessIdentity = server.managedProcessIdentity;
+    const target = createServerTerminationTarget(server);
+    const processGroupId = server.ownsProcessGroup ? server.process.pid : undefined;
+    const identityToken = server.identityToken;
+    const processGroupState: { inspection?: ManagedProcessGroupInspection } = {};
+    let beforeSignal: (() => Promise<boolean>) | undefined;
+    if (processGroupId && identityToken) {
+      beforeSignal = async () => {
+        const inspection = await this.verifyProcessGroupIdentity(processGroupId, identityToken);
+        processGroupState.inspection = inspection;
+        return inspection.status === "owned";
+      };
+    } else if (managedProcessIdentity) {
+      beforeSignal = () => this.verifyProcessIdentity(managedProcessIdentity);
+    }
+    const result = await this.terminateProcess(target, {
       gracefulTimeoutMs: OPENCODE_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS,
       forceTimeoutMs: OPENCODE_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS,
+      preserveRootOnTreeFailure: true,
       onForceSignal: () => {
         this.logger.warn(
           { timeoutMs: OPENCODE_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS },
           "OpenCode server did not exit after SIGTERM; sending SIGKILL",
         );
       },
+      ...(beforeSignal ? { beforeSignal } : {}),
     });
-    if (result === "kill-timeout") {
+    if (result === "signal-skipped" && processGroupState.inspection?.status === "not-found") {
+      this.removeManagedServerRecord(server);
+      server.cleanupComplete = true;
+      this.finishServerCleanup(server);
+      return;
+    }
+    if (result === "kill-timeout" || result === "signal-skipped") {
       this.logger.warn(
-        { timeoutMs: OPENCODE_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS },
-        "OpenCode server did not report exit after SIGKILL",
+        { result, timeoutMs: OPENCODE_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS },
+        "OpenCode server process group cleanup did not complete",
       );
+      if (
+        result === "kill-timeout" ||
+        (result === "signal-skipped" && processGroupState.inspection?.status !== "not-found")
+      ) {
+        this.retainForCleanupRetry(server);
+      }
+      return;
     }
     if (server.managedProcessId) {
       await this.removeManagedProcessId(server.managedProcessId);
@@ -468,6 +649,31 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     } else {
       this.removeManagedServerRecord(server);
     }
+    server.cleanupComplete = true;
+    this.finishServerCleanup(server);
+  }
+
+  private retainForCleanupRetry(server: OpenCodeServerGeneration): void {
+    server.retired = true;
+    this.retiredServers.add(server);
+    if (this.cleanupRetryTimers.has(server)) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      this.cleanupRetryTimers.delete(server);
+      void this.killServer(server);
+    }, OPENCODE_SERVER_CLEANUP_RETRY_DELAY_MS);
+    timer.unref();
+    this.cleanupRetryTimers.set(server, timer);
+  }
+
+  private finishServerCleanup(server: OpenCodeServerGeneration): void {
+    const retryTimer = this.cleanupRetryTimers.get(server);
+    if (retryTimer) {
+      clearTimeout(retryTimer);
+      this.cleanupRetryTimers.delete(server);
+    }
+    this.retiredServers.delete(server);
   }
 
   private async recordManagedServerProcess(options: {
@@ -475,36 +681,52 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     command: string;
     args: string[];
     port: number;
-  }): Promise<{ id: string } | null> {
+    ownsProcessGroup: boolean;
+    identityToken?: string;
+    onIdentityCaptured: (record: ManagedProcessRecord) => void;
+  }): Promise<ManagedProcessRecord | null> {
     const pid = options.process.pid;
     if (!this.managedProcesses || typeof pid !== "number" || pid <= 0) {
       return null;
     }
 
-    try {
-      return await this.managedProcesses.record({
+    return this.managedProcesses.record(
+      {
         owner: { provider: "opencode", kind: "helper-server" },
         pid,
         command: options.command,
         args: options.args,
         metadata: { port: options.port },
-      });
-    } catch (error) {
-      this.logger.warn(
-        { err: error, pid, port: options.port },
-        "Failed to record OpenCode helper process",
-      );
-      return null;
+        lifecycle: {
+          execTransition: options.ownsProcessGroup ? "pending" : "none",
+          terminationScope: options.ownsProcessGroup ? "process-group" : "process",
+        },
+        ...(options.identityToken ? { identityToken: options.identityToken } : {}),
+      },
+      { onIdentityCaptured: options.onIdentityCaptured },
+    );
+  }
+
+  private async confirmManagedServerExecTransition(
+    record: Promise<ManagedProcessRecord | null>,
+  ): Promise<void> {
+    const resolved = await record;
+    if (resolved) {
+      await this.managedProcesses?.confirmExecTransition(resolved.id);
     }
   }
 
-  private removeManagedProcessRecordWhenResolved(record: Promise<{ id: string } | null>): void {
-    void record.then((resolved) => {
-      if (resolved) {
-        return this.removeManagedProcessId(resolved.id);
-      }
-      return undefined;
-    });
+  private removeManagedProcessRecordWhenResolved(
+    record: Promise<ManagedProcessRecord | null>,
+  ): void {
+    void record
+      .then((resolved) => {
+        if (resolved) {
+          return this.removeManagedProcessId(resolved.id);
+        }
+        return undefined;
+      })
+      .catch(() => undefined);
   }
 
   private removeManagedServerRecord(server: OpenCodeServerGeneration): void {
@@ -527,6 +749,27 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       this.logger.warn({ err: error, id }, "Failed to remove OpenCode helper process record");
     }
   }
+}
+
+function createDirectChildTarget(process: ChildProcess): TreeKillTarget {
+  return {
+    get exitCode() {
+      return process.exitCode;
+    },
+    get signalCode() {
+      return process.signalCode;
+    },
+    kill: (signal) => process.kill(signal),
+    once: (event, listener) => process.once(event, listener),
+    off: (event, listener) => process.off(event, listener),
+  };
+}
+
+function createServerTerminationTarget(server: OpenCodeServerGeneration): TreeKillTarget {
+  if (server.ownsProcessGroup && server.process.pid) {
+    return createProcessGroupTarget(server.process.pid);
+  }
+  return server.managedProcessIdentity ? server.process : createDirectChildTarget(server.process);
 }
 
 async function resolveOpenCodeBinary(): Promise<string> {
