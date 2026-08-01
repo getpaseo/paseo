@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -26,13 +26,16 @@ describe.runIf(process.platform !== "win32")("managed POSIX process-group scope"
   test("does not claim a descendant that leaves the recorded group with setsid", async () => {
     tempHome = await mkdtemp(path.join(tmpdir(), "paseo-managed-processes-posix-"));
     const identityToken = `setsid-scope-${process.pid}`;
+    const escapedPidPath = path.join(tempHome, "escaped.pid");
     const ownerScript = `
       const { spawn } = require("node:child_process");
+      const { writeFileSync } = require("node:fs");
       const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
         detached: true,
         stdio: "ignore",
         env: process.env,
       });
+      writeFileSync(${JSON.stringify(escapedPidPath)}, String(child.pid));
       process.send(child.pid);
       setInterval(() => {}, 1000);
     `;
@@ -79,13 +82,37 @@ describe.runIf(process.platform !== "win32")("managed POSIX process-group scope"
       expect(isProcessAlive(escapedPid)).toBe(true);
       expect(await registry.list()).toEqual([]);
     } finally {
+      escapedPid ??= await readPersistedPid(escapedPidPath);
       safeKill(-ownerPid);
       if (escapedPid !== null) {
         safeKill(escapedPid);
       }
+      await waitForProcessAbsent(ownerPid);
+      if (escapedPid !== null) {
+        await waitForProcessAbsent(escapedPid);
+      }
     }
   }, 15_000);
 });
+
+async function readPersistedPid(filePath: string): Promise<number | null> {
+  try {
+    const pid = Number((await readFile(filePath, "utf8")).trim());
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+async function waitForProcessAbsent(pid: number): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (isProcessAlive(pid)) {
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out waiting for process ${pid} to exit`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
 
 function isProcessAlive(pid: number): boolean {
   try {

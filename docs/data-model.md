@@ -64,7 +64,7 @@ $PASEO_HOME/
 │   └── icons/                           # Host-local custom project icon images
 ├── runtime/
 │   └── managed-processes/
-│       └── {recordId}.json              # Recorded helper targets; reconciled and retried after bootstrap
+│       └── {recordId}.json              # Recorded helper targets; the initial set is reconciled after bootstrap
 └── push-tokens.json                     # Expo push notification tokens
 ```
 

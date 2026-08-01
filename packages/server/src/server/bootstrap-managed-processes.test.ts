@@ -8,6 +8,7 @@ import type {
   ManagedProcessRecord,
   ManagedProcessRecordInput,
   ManagedProcessRegistry,
+  ManagedProcessReapOptions,
   ManagedProcessReapResult,
 } from "./managed-processes/managed-processes.js";
 import { createPaseoDaemon, type PaseoDaemonConfig } from "./bootstrap.js";
@@ -30,7 +31,7 @@ describe("daemon managed process bootstrap", () => {
     tempRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-managed-bootstrap-"));
     staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
     const paseoHome = path.join(tempRoot, ".paseo");
-    const managedProcesses = new FakeManagedProcesses();
+    const managedProcesses = new FakeManagedProcesses([createManagedProcessRecord("leftover")]);
     const daemon = await createPaseoDaemon(
       {
         listen: "127.0.0.1:0",
@@ -60,11 +61,26 @@ describe("daemon managed process bootstrap", () => {
     tempRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-managed-bootstrap-"));
     staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
     const paseoHome = path.join(tempRoot, ".paseo");
-    const managedProcesses = new FakeManagedProcesses([
-      createReapResult([{ id: "leftover", message: "inspection failed" }]),
-      createReapResult([]),
-    ]);
-    let retry: (() => void) | null = null;
+    const managedProcesses = new FakeManagedProcesses(
+      [createManagedProcessRecord("leftover")],
+      [
+        createReapResult([{ id: "leftover", message: "inspection failed" }]),
+        createReapResult([{ id: "leftover", message: "inspection still failed" }]),
+        createReapResult([]),
+      ],
+    );
+    const scheduledRetries: Array<() => void> = [];
+    const retryWaiters: Array<() => void> = [];
+    const waitForRetry = async (): Promise<() => void> => {
+      if (scheduledRetries.length === 0) {
+        await new Promise<void>((resolve) => retryWaiters.push(resolve));
+      }
+      const retry = scheduledRetries.shift();
+      if (!retry) {
+        throw new Error("Managed process retry was not scheduled");
+      }
+      return retry;
+    };
     const daemon = await createPaseoDaemon(
       {
         listen: "127.0.0.1:0",
@@ -83,9 +99,13 @@ describe("daemon managed process bootstrap", () => {
       pino({ level: "silent" }),
       {
         scheduleManagedProcessReapRetry: (callback) => {
-          retry = callback;
+          scheduledRetries.push(callback);
+          retryWaiters.shift()?.();
           return () => {
-            retry = null;
+            const index = scheduledRetries.indexOf(callback);
+            if (index >= 0) {
+              scheduledRetries.splice(index, 1);
+            }
           };
         },
       },
@@ -93,12 +113,22 @@ describe("daemon managed process bootstrap", () => {
 
     try {
       expect(managedProcesses.reapCount).toBe(1);
-      expect(retry).not.toBeNull();
+      const firstRetry = await waitForRetry();
 
-      retry!();
-      await Promise.resolve();
+      managedProcesses.add(createManagedProcessRecord("healthy-post-bootstrap"));
+      firstRetry();
+      const secondRetry = await waitForRetry();
 
       expect(managedProcesses.reapCount).toBe(2);
+
+      secondRetry();
+      await Promise.resolve();
+
+      expect(managedProcesses.reapCount).toBe(3);
+      expect(managedProcesses.reapedRecordIds).toEqual([["leftover"], ["leftover"], ["leftover"]]);
+      expect((await managedProcesses.list()).map((record) => record.id)).toContain(
+        "healthy-post-bootstrap",
+      );
     } finally {
       await daemon.stop().catch(() => undefined);
     }
@@ -108,9 +138,10 @@ describe("daemon managed process bootstrap", () => {
     tempRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-managed-bootstrap-"));
     staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
     const paseoHome = path.join(tempRoot, ".paseo");
-    const managedProcesses = new FakeManagedProcesses([
-      createReapResult([{ id: "leftover", message: "inspection failed" }]),
-    ]);
+    const managedProcesses = new FakeManagedProcesses(
+      [createManagedProcessRecord("leftover")],
+      [createReapResult([{ id: "leftover", message: "inspection failed" }])],
+    );
 
     await expect(
       createPaseoDaemon(
@@ -138,8 +169,16 @@ describe("daemon managed process bootstrap", () => {
 
 class FakeManagedProcesses implements ManagedProcessRegistry {
   reapCount = 0;
+  readonly reapedRecordIds: string[][] = [];
 
-  constructor(private readonly reapResults: ManagedProcessReapResult[] = []) {}
+  constructor(
+    private readonly records: ManagedProcessRecord[] = [],
+    private readonly reapResults: ManagedProcessReapResult[] = [],
+  ) {}
+
+  add(record: ManagedProcessRecord): void {
+    this.records.push(record);
+  }
 
   async record(input: ManagedProcessRecordInput): Promise<ManagedProcessRecord> {
     const { identityToken, ...recordInput } = input;
@@ -163,13 +202,39 @@ class FakeManagedProcesses implements ManagedProcessRegistry {
   async remove(): Promise<void> {}
 
   async list(): Promise<ManagedProcessRecord[]> {
-    return [];
+    return [...this.records];
   }
 
-  async reapStale(): Promise<ManagedProcessReapResult> {
+  async reapStale(options: ManagedProcessReapOptions = {}): Promise<ManagedProcessReapResult> {
     this.reapCount += 1;
-    return this.reapResults.shift() ?? createReapResult([]);
+    const recordIds = this.records
+      .map((record) => record.id)
+      .filter((id) => !options.recordIds || options.recordIds.has(id));
+    this.reapedRecordIds.push(recordIds);
+    const result = this.reapResults.shift() ?? createReapResult([]);
+    const retainedIds = new Set(result.errors.map((error) => error.id));
+    for (let index = this.records.length - 1; index >= 0; index -= 1) {
+      const record = this.records[index];
+      if (recordIds.includes(record.id) && !retainedIds.has(record.id)) {
+        this.records.splice(index, 1);
+      }
+    }
+    return result;
   }
+}
+
+function createManagedProcessRecord(id: string): ManagedProcessRecord {
+  return {
+    id,
+    owner: { provider: "opencode", kind: "helper-server" },
+    pid: 4101,
+    command: "opencode",
+    args: ["serve"],
+    metadata: {},
+    lifecycle: { execTransition: "none", terminationScope: "process" },
+    identity: { commandLine: "opencode serve", startedAt: "start", token: null },
+    createdAt: "created",
+  };
 }
 
 function createReapResult(errors: ManagedProcessReapResult["errors"]): ManagedProcessReapResult {
