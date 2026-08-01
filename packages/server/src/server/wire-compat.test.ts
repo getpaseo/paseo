@@ -16,6 +16,8 @@ import {
 import { Session, type SessionOptions } from "./session.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
 import type { AgentTimelineRow } from "./agent/agent-manager.js";
+import { InMemoryAgentTimelineStore } from "./agent/agent-timeline-store.js";
+import type { AgentTimelineFetchOptions } from "./agent/agent-timeline-store-types.js";
 import { handleCreatePaseoWorktreeRequest } from "./worktree-session.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
 
@@ -87,7 +89,15 @@ interface SessionInternals {
 }
 
 class InMemoryAgentManager {
-  constructor(private readonly rows: AgentTimelineRow[]) {}
+  private readonly timeline = new InMemoryAgentTimelineStore();
+
+  constructor(rows: AgentTimelineRow[]) {
+    this.timeline.initialize("agent-1", {
+      epoch: "epoch-1",
+      rows,
+      nextSeq: (rows.at(-1)?.seq ?? 0) + 1,
+    });
+  }
 
   getAgent() {
     return {
@@ -133,17 +143,8 @@ class InMemoryAgentManager {
     };
   }
 
-  fetchTimeline() {
-    return {
-      epoch: "epoch-1",
-      reset: false,
-      staleCursor: false,
-      gap: false,
-      window: { minSeq: 1, maxSeq: 3, nextSeq: 4 },
-      rows: this.rows,
-      hasOlder: false,
-      hasNewer: false,
-    };
+  fetchTimeline(_agentId: string, options?: AgentTimelineFetchOptions) {
+    return this.timeline.fetch("agent-1", options);
   }
 
   listAgents() {
@@ -218,6 +219,7 @@ class InMemoryWorktreeWorkflow {
 function createSessionForWireCompatTest(options?: {
   clientCapabilities?: Record<string, unknown> | null;
   messages?: SessionOutboundMessage[];
+  rows?: AgentTimelineRow[];
 }): Session {
   const messages = options?.messages ?? [];
   const rows: AgentTimelineRow[] = [
@@ -247,7 +249,9 @@ function createSessionForWireCompatTest(options?: {
     downloadTokenStore: {} as SessionOptions["downloadTokenStore"],
     pushTokenStore: {} as SessionOptions["pushTokenStore"],
     paseoHome: "/tmp/paseo-home",
-    agentManager: new InMemoryAgentManager(rows) as unknown as SessionOptions["agentManager"],
+    agentManager: new InMemoryAgentManager(
+      options?.rows ?? rows,
+    ) as unknown as SessionOptions["agentManager"],
     agentStorage: new EmptyAgentStorage() as unknown as SessionOptions["agentStorage"],
     projectRegistry: new EmptyProjectRegistry() as unknown as SessionOptions["projectRegistry"],
     workspaceRegistry:
@@ -308,11 +312,19 @@ function createSessionForWireCompatTest(options?: {
   return session;
 }
 
-async function emitTimelineResponse(
-  clientCapabilities?: Record<string, unknown> | null,
-): Promise<Extract<SessionOutboundMessage, { type: "fetch_agent_timeline_response" }>> {
+async function emitTimelineResponse(options?: {
+  clientCapabilities?: Record<string, unknown> | null;
+  rows?: AgentTimelineRow[];
+  request?: Partial<
+    Extract<z.infer<typeof SessionInboundMessageSchema>, { type: "fetch_agent_timeline_request" }>
+  >;
+}): Promise<Extract<SessionOutboundMessage, { type: "fetch_agent_timeline_response" }>> {
   const messages: SessionOutboundMessage[] = [];
-  const session = createSessionForWireCompatTest({ clientCapabilities, messages });
+  const session = createSessionForWireCompatTest({
+    clientCapabilities: options?.clientCapabilities,
+    rows: options?.rows,
+    messages,
+  });
   const internals = session as unknown as SessionInternals;
 
   await internals.handleFetchAgentTimelineRequest({
@@ -320,6 +332,7 @@ async function emitTimelineResponse(
     requestId: "req-timeline",
     agentId: "agent-1",
     projection: "projected",
+    ...options?.request,
   });
 
   const response = messages[0];
@@ -377,7 +390,7 @@ describe("wire compatibility", () => {
     ]);
   });
 
-  test("hello parses with and without the project update capability", () => {
+  test("hello parses with and without current client capabilities", () => {
     const legacy = WSHelloMessageSchema.parse({
       type: "hello",
       clientId: "legacy-client",
@@ -389,7 +402,9 @@ describe("wire compatibility", () => {
       clientId: "capable-client",
       clientType: "mobile",
       protocolVersion: 1,
-      capabilities: { [CLIENT_CAPS.projectUpdates]: true },
+      capabilities: {
+        [CLIENT_CAPS.projectUpdates]: true,
+      },
     });
 
     expect([legacy, capable]).toEqual([
@@ -404,16 +419,21 @@ describe("wire compatibility", () => {
         clientId: "capable-client",
         clientType: "mobile",
         protocolVersion: 1,
-        capabilities: { project_updates: true },
+        capabilities: {
+          project_updates: true,
+        },
       },
     ]);
   });
 
-  test("server info accepts legacy feature payloads without stable project identity", () => {
+  test("server info strips unknown legacy features while accepting former turn identity", () => {
     const parsed = ServerInfoStatusPayloadSchema.parse({
       status: "server_info",
       serverId: "legacy-server",
-      features: { workspaceGithubClone: true },
+      features: {
+        workspaceGithubClone: true,
+        agentTurnIdentity: true,
+      },
     });
 
     expect(parsed).toEqual({
@@ -421,7 +441,7 @@ describe("wire compatibility", () => {
       serverId: "legacy-server",
       hostname: null,
       version: null,
-      features: {},
+      features: { agentTurnIdentity: true },
     });
   });
 
@@ -460,7 +480,7 @@ describe("wire compatibility", () => {
 
   test("preserves reasoning_merge for clients that declare the capability", async () => {
     const response = await emitTimelineResponse({
-      [CLIENT_CAPS.reasoningMergeEnum]: true,
+      clientCapabilities: { [CLIENT_CAPS.reasoningMergeEnum]: true },
     });
 
     const currentParsed = FetchAgentTimelineResponseMessageSchema.parse(response);

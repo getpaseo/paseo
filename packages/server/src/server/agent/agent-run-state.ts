@@ -2,6 +2,11 @@ import { randomUUID } from "node:crypto";
 
 import { getAgentStreamEventTurnId, type AgentStreamEvent } from "./agent-sdk-types.js";
 
+type TerminalAgentStreamEvent = Extract<
+  AgentStreamEvent,
+  { type: "turn_completed" | "turn_failed" | "turn_canceled" }
+>;
+
 export interface ForegroundTurnWaiter {
   turnId: string;
   callback: (event: AgentStreamEvent) => void;
@@ -13,6 +18,10 @@ export interface ForegroundTurnWaiter {
 export interface PendingForegroundRun {
   token: string;
   kind: "foreground";
+  accepted: boolean;
+  acceptedTerminalPromise: Promise<TerminalAgentStreamEvent>;
+  resolveAcceptedTerminal: (event: TerminalAgentStreamEvent) => void;
+  stagedEvents: AgentStreamEvent[];
   turnId: string | null;
   started: boolean;
   settled: boolean;
@@ -51,6 +60,36 @@ export class AgentRunState {
     return run?.kind === "foreground" ? run : null;
   }
 
+  acceptPendingRun(agentId: string, token: string): void {
+    const run = this.getPendingRun(agentId);
+    if (!run || run.token !== token) {
+      throw new Error(`Pending foreground run ownership was lost for agent ${agentId}`);
+    }
+    run.accepted = true;
+  }
+
+  stagePendingEvent(agentId: string, event: AgentStreamEvent): boolean {
+    const run = this.getPendingRun(agentId);
+    if (!run || run.started) {
+      return false;
+    }
+
+    run.stagedEvents.push(event);
+    if (!run.accepted) {
+      return true;
+    }
+
+    const turnId = getAgentStreamEventTurnId(event);
+    if (event.type === "turn_started" && turnId) {
+      run.turnId ??= turnId;
+      return true;
+    }
+    if (isTerminalAgentStreamEvent(event) && turnId === run.turnId) {
+      run.resolveAcceptedTerminal(event);
+    }
+    return true;
+  }
+
   hasPendingRun(agentId: string): boolean {
     return this.getPendingRun(agentId) !== null;
   }
@@ -69,7 +108,12 @@ export class AgentRunState {
       return current;
     }
 
-    const run = createTrackedRun({ kind: "autonomous", turnId, started: true });
+    const run: AutonomousAgentRun = {
+      ...createTrackedRunState(),
+      kind: "autonomous",
+      turnId,
+      started: true,
+    };
     this.runs.set(agentId, run);
     return run;
   }
@@ -259,31 +303,42 @@ export class ForegroundTurnStream {
 }
 
 function createPendingForegroundRun(): PendingForegroundRun {
-  return createTrackedRun({ kind: "foreground", turnId: null, started: false });
+  let resolveAcceptedTerminal!: (event: TerminalAgentStreamEvent) => void;
+  const acceptedTerminalPromise = new Promise<TerminalAgentStreamEvent>((resolvePromise) => {
+    resolveAcceptedTerminal = resolvePromise;
+  });
+  return {
+    ...createTrackedRunState(),
+    kind: "foreground",
+    accepted: false,
+    acceptedTerminalPromise,
+    resolveAcceptedTerminal,
+    turnId: null,
+    started: false,
+    stagedEvents: [],
+  };
 }
 
-function createTrackedRun(input: {
-  kind: "foreground";
-  turnId: null;
-  started: false;
-}): PendingForegroundRun;
-function createTrackedRun(input: {
-  kind: "autonomous";
-  turnId: string | null;
-  started: true;
-}): AutonomousAgentRun;
-function createTrackedRun(
-  input:
-    | { kind: "foreground"; turnId: null; started: false }
-    | { kind: "autonomous"; turnId: string | null; started: true },
-): TrackedAgentRun {
+function isTerminalAgentStreamEvent(event: AgentStreamEvent): event is TerminalAgentStreamEvent {
+  return (
+    event.type === "turn_completed" ||
+    event.type === "turn_failed" ||
+    event.type === "turn_canceled"
+  );
+}
+
+function createTrackedRunState(): {
+  token: string;
+  settled: boolean;
+  settledPromise: Promise<void>;
+  resolveSettled: () => void;
+} {
   let resolveSettled!: () => void;
   const settledPromise = new Promise<void>((resolvePromise) => {
     resolveSettled = resolvePromise;
   });
   return {
     token: randomUUID(),
-    ...input,
     settled: false,
     settledPromise,
     resolveSettled,
