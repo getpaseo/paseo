@@ -1447,6 +1447,7 @@ export async function createPaseoDaemon(
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
     runLifecycleMutation: (operation) => lifecycleMutationIngress.run(operation),
+    createAgentLifecycleDispatch: hubAgentLifecycle,
     callerAgentId: runtime.callerAgentId,
     enableVoiceTools: runtime.enableVoiceTools,
     voiceOnly: runtime.voiceOnly,

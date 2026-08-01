@@ -213,6 +213,61 @@ test("startup adopts a published agent without cleaning its pending worktree", a
   }
 });
 
+test("startup adopts a same-path successful retry instead of cleaning its stale pending worktree", async () => {
+  const worktreePath = mkdtempSync(join(tmpdir(), "paseo-retried-agent-worktree-"));
+  mkdirSync(join(worktreePath, ".git"));
+  const staleAgentId = "agent-failed-before-publish";
+  const retryAgentId = "agent-retry-published";
+  const workspaceId = "ws-retry-published";
+  const pendingCreations = new Map<string, PendingAgentCreation>([
+    [
+      staleAgentId,
+      {
+        agentId: staleAgentId,
+        createdAt: "2025-01-01T00:00:00.000Z",
+        cleanupTarget: pendingWorktreeTarget(worktreePath),
+      },
+    ],
+  ]);
+  const records = new Map<string, StoredAgentRecord>([
+    [
+      retryAgentId,
+      {
+        id: retryAgentId,
+        workspaceId,
+      } as StoredAgentRecord,
+    ],
+  ]);
+  const dispatch = createLifecycleDispatch(new AgentLifecycleEvents(), async () => undefined, {
+    pendingCreations,
+    records,
+    workspaces: [
+      {
+        workspaceId,
+        cwd: worktreePath,
+        worktreeRoot: worktreePath,
+        archivedAt: null,
+      } as PersistedWorkspaceRecord,
+    ],
+  });
+  const archiveWorktreePath = vi.spyOn(
+    dispatch as unknown as {
+      archiveWorktreePath(worktreePath: string, workspaceId?: string): Promise<void>;
+    },
+    "archiveWorktreePath",
+  );
+
+  try {
+    await dispatch.recoverPendingAgentCreations();
+
+    expect(archiveWorktreePath).not.toHaveBeenCalled();
+    expect(pendingCreations.size).toBe(0);
+    expect(existsSync(worktreePath)).toBe(true);
+  } finally {
+    rmSync(worktreePath, { recursive: true, force: true });
+  }
+});
+
 test("startup removes an exact pre-git worktree reservation without archiving", async () => {
   const worktreePath = mkdtempSync(join(tmpdir(), "paseo-pre-git-reservation-"));
   const agentId = "agent-pending-pre-git-reservation";

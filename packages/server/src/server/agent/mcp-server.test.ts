@@ -1918,6 +1918,76 @@ describe("create_agent MCP tool", () => {
     }
   });
 
+  it("cleans and recovers a native MCP worktree journal when create_agent fails", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const createdWorktree = {
+      worktree: {
+        branchName: "failed-agent-worktree",
+        worktreePath: "/tmp/worktrees/failed-agent-worktree",
+      },
+      intent: {
+        kind: "branch-off" as const,
+        branchName: "failed-agent-worktree",
+        baseBranch: "main",
+      },
+      workspace: createPersistedWorkspaceRecord({
+        workspaceId: "ws-failed-agent-worktree",
+        projectId: REPO_CWD,
+        cwd: "/tmp/worktrees/failed-agent-worktree",
+        kind: "worktree",
+        displayName: "failed-agent-worktree",
+        createdAt: "2026-08-01T00:00:00.000Z",
+        updatedAt: "2026-08-01T00:00:00.000Z",
+      }),
+      repoRoot: REPO_CWD,
+      created: true,
+      setupContinuation: {
+        kind: "agent" as const,
+        startAfterAgentCreate: vi.fn(),
+        releaseWithoutStarting: vi.fn(),
+      },
+    };
+    const cleanupCreatedWorktreeAfterFailedAgentCreate = vi.fn().mockResolvedValue(undefined);
+    const recoverPendingAgentCreation = vi.fn().mockResolvedValue(undefined);
+    spies.agentManager.createAgent.mockRejectedValue(new Error("provider creation failed"));
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      createPaseoWorktree: vi.fn().mockResolvedValue(createdWorktree),
+      createAgentLifecycleDispatch: {
+        cleanupCreatedWorktreeAfterFailedAgentCreate,
+        recoverPendingAgentCreation,
+      },
+      logger,
+    });
+
+    await expect(
+      registeredTool(server, "create_agent").handler({
+        ...detachedWorktreeWorkspace(REPO_CWD, {
+          kind: "branch-off",
+          worktreeSlug: "failed-agent-worktree",
+          branchName: "failed-agent-worktree",
+          baseBranch: "main",
+        }),
+        title: "Failed worktree agent",
+        provider: "codex/gpt-5.4",
+        initialPrompt: "Fail after creating the worktree",
+        background: true,
+      }),
+    ).rejects.toThrow("provider creation failed");
+
+    const pendingAgentId = z
+      .string()
+      .parse(spies.agentStorage.beginPendingAgentCreation.mock.calls[0]?.[0]);
+    expect(cleanupCreatedWorktreeAfterFailedAgentCreate).toHaveBeenCalledWith({
+      createdWorktree,
+      createdAgentId: null,
+    });
+    expect(recoverPendingAgentCreation).toHaveBeenCalledWith(pendingAgentId);
+  });
+
   it("creates a create_agent branch-off worktree without invoking the legacy metadata branch rename", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const tempDir = await mkdtemp(join(tmpdir(), "paseo-mcp-agent-worktree-name-context-"));
@@ -3710,6 +3780,34 @@ describe("send_agent_prompt MCP tool", () => {
     expect(response.structuredContent.guidance).toBe(
       "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.",
     );
+  });
+
+  it("runs prompts inside lifecycle shutdown admission", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const runLifecycleMutation = vi.fn(async <T>(operation: () => Promise<T>) => operation());
+    spies.agentManager.getAgent.mockReturnValue({
+      id: "child-agent",
+      cwd: existingCwd,
+      lifecycle: "running",
+      currentModeId: null,
+      availableModes: [],
+      config: { title: "Child" },
+    } as ManagedAgent);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      runLifecycleMutation,
+      logger,
+    });
+
+    await invokeToolWithParsedInput(registeredTool(server, "send_agent_prompt"), {
+      agentId: "child-agent",
+      prompt: "Follow up",
+      background: true,
+    });
+
+    expect(runLifecycleMutation).toHaveBeenCalledOnce();
   });
 
   it("keeps top-level prompts blocking by default", async () => {

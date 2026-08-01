@@ -19,6 +19,7 @@ import type { CheckoutDiffManager, CheckoutDiffMetrics } from "./checkout-diff-m
 import type { DaemonConfigStore, MutableDaemonConfig } from "./daemon-config-store.js";
 import {
   type ServerInfoStatusPayload,
+  type SessionInboundMessage,
   type SessionOutboundMessage,
   type WorkspaceSetupSnapshot,
   type WSHelloMessage,
@@ -456,6 +457,51 @@ const WS_CLOSE_SERVER_SHUTDOWN = 1001;
 const WS_PROTOCOL_VERSION = 1;
 const WS_RUNTIME_METRICS_FLUSH_MS = 30_000;
 
+const SHUTDOWN_TRACKED_SESSION_MUTATIONS = new Set<SessionInboundMessage["type"]>([
+  "agent.detach.request",
+  "agent.fork_context.request",
+  "agent.rewind.request",
+  "agent_permission_response",
+  "archive_agent_request",
+  "archive_workspace_request",
+  "cancel_agent_request",
+  "close_items_request",
+  "create_agent_request",
+  "create_paseo_worktree_request",
+  "create_terminal_request",
+  "delete_agent_request",
+  "hub.execution.agent.create.request",
+  "hub.execution.control.request",
+  "import_agent_request",
+  "kill_terminal_request",
+  "loop/run",
+  "loop/stop",
+  "open_project_request",
+  "paseo_worktree_archive_request",
+  "project.add.request",
+  "project.create_directory.request",
+  "project.github.clone.request",
+  "project.remove.request",
+  "refresh_agent_request",
+  "resume_agent_request",
+  "schedule/create",
+  "schedule/delete",
+  "schedule/pause",
+  "schedule/resume",
+  "schedule/run-once",
+  "schedule/update",
+  "send_agent_message_request",
+  "set_agent_feature_request",
+  "set_agent_mode_request",
+  "set_agent_model_request",
+  "set_agent_thinking_request",
+  "start_workspace_script_request",
+  "workspace.create.request",
+  "workspace.recovery.restore.request",
+  "workspace.script.start.request",
+  "workspace.script.stop.request",
+]);
+
 export class MissingDaemonVersionError extends Error {
   constructor() {
     super("VoiceAssistantWebSocketServer requires a non-empty daemonVersion.");
@@ -500,7 +546,8 @@ export class VoiceAssistantWebSocketServer {
   private readonly wss: WebSocketServer;
   private readonly pendingConnections: Map<WebSocketLike, PendingConnection> = new Map();
   private readonly sessions: Map<WebSocketLike, SessionConnection> = new Map();
-  private readonly inFlightCreateMessages = new Set<Promise<void>>();
+  private readonly inFlightLifecycleMutations = new Set<Promise<void>>();
+  private acceptingLifecycleMutations = true;
   private readonly socketIdentities: Map<WebSocketLike, WebSocketConnectionIdentity> = new Map();
   private readonly externalSessionsByKey: Map<string, TrustedSessionConnection> = new Map();
   private readonly serverId: string;
@@ -954,8 +1001,9 @@ export class VoiceAssistantWebSocketServer {
 
   public async prepareForShutdown(): Promise<void> {
     this.acceptingConnections = false;
-    while (this.inFlightCreateMessages.size > 0) {
-      await Promise.allSettled(Array.from(this.inFlightCreateMessages));
+    this.acceptingLifecycleMutations = false;
+    while (this.inFlightLifecycleMutations.size > 0) {
+      await Promise.allSettled(Array.from(this.inFlightLifecycleMutations));
     }
   }
 
@@ -2068,12 +2116,14 @@ export class VoiceAssistantWebSocketServer {
       }
 
       if (message.type === "session") {
+        const trackedForShutdown = SHUTDOWN_TRACKED_SESSION_MUTATIONS.has(message.message.type);
+        if (trackedForShutdown && !this.acceptingLifecycleMutations) {
+          ws.close(WS_CLOSE_SERVER_SHUTDOWN, "Server shutting down");
+          return;
+        }
         const dispatch = this.dispatchSessionMessage(ws, activeConnection, message);
-        const trackedForShutdown =
-          message.message.type === "create_agent_request" ||
-          message.message.type === "create_paseo_worktree_request";
         if (trackedForShutdown) {
-          this.inFlightCreateMessages.add(dispatch);
+          this.inFlightLifecycleMutations.add(dispatch);
         }
         void dispatch
           .catch((error: unknown) => {
@@ -2081,7 +2131,7 @@ export class VoiceAssistantWebSocketServer {
           })
           .finally(() => {
             if (trackedForShutdown) {
-              this.inFlightCreateMessages.delete(dispatch);
+              this.inFlightLifecycleMutations.delete(dispatch);
             }
           });
       }

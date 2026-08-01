@@ -176,6 +176,22 @@ export class CreateAgentLifecycleDispatch {
     );
   }
 
+  private async activeWorkspaceWithPublishedAgentOwnsPath(targetPath: string): Promise<boolean> {
+    const owningWorkspaceIds = new Set(
+      (await this.dependencies.workspaceRegistry.list())
+        .filter(
+          (workspace) =>
+            !workspace.archivedAt &&
+            resolvePath(workspace.worktreeRoot ?? workspace.cwd) === targetPath,
+        )
+        .map((workspace) => workspace.workspaceId),
+    );
+    if (owningWorkspaceIds.size === 0) return false;
+    return (await this.dependencies.agentStorage.list()).some(
+      (record) => record.workspaceId && owningWorkspaceIds.has(record.workspaceId),
+    );
+  }
+
   private classifyPendingDirectoryOwnership(
     pending: PendingAgentCreation & {
       cleanupTarget: Extract<PendingAgentCreation["cleanupTarget"], { kind: "worktree" }>;
@@ -202,6 +218,10 @@ export class CreateAgentLifecycleDispatch {
     targetPath: string,
   ): Promise<boolean> {
     const agentId = pending.agentId;
+    if (await this.activeWorkspaceWithPublishedAgentOwnsPath(targetPath)) {
+      await this.dependencies.agentStorage.removePendingAgentCreation(agentId);
+      return true;
+    }
     const directoryOwnership = this.classifyPendingDirectoryOwnership(pending, targetPath);
     if (directoryOwnership === "replaced") {
       this.dependencies.logger.warn(

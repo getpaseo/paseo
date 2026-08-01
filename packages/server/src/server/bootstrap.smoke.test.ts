@@ -21,6 +21,8 @@ import { findFreePort } from "./service-proxy.js";
 import { defaultWorkspaceLifecycleCoordinator } from "./workspace-lifecycle-coordinator.js";
 import { readPaseoWorktreeIncarnationId } from "../utils/worktree-metadata.js";
 import { getPaseoWorktreesRoot } from "../utils/worktree.js";
+import { Session } from "./session.js";
+import { FileBackedProjectRegistry, FileBackedWorkspaceRegistry } from "./workspace-registry.js";
 import type {
   HubEnrollment,
   HubEnrollmentResult,
@@ -507,6 +509,279 @@ describe("paseo daemon bootstrap", () => {
     }
   });
 
+  test("an established socket cannot start a workspace mutation after shutdown admission closes", async () => {
+    const heldAgentClose = holdAgentClose();
+    const daemonHandle = await createTestPaseoDaemon({
+      cleanup: false,
+      agentClients: createTestAgentClients({ closeSession: heldAgentClose.closeSession }),
+    });
+    const blockerCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-late-workspace-blocker-"));
+    const workspaceCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-late-workspace-target-"));
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemonHandle.port}/ws`,
+      appVersion: "0.1.82",
+    });
+
+    try {
+      await client.connect();
+      await daemonHandle.daemon.agentManager.createAgent(
+        { provider: "codex", cwd: blockerCwd },
+        undefined,
+        { workspaceId: undefined },
+      );
+      const originalHandleMessage = Session.prototype.handleMessage;
+      const handledWorkspaceCreates: string[] = [];
+      vi.spyOn(Session.prototype, "handleMessage").mockImplementation(
+        async function (message, source) {
+          if (message.type === "workspace.create.request") {
+            handledWorkspaceCreates.push(message.source.path);
+          }
+          return originalHandleMessage.call(this, message, source);
+        },
+      );
+
+      heldAgentClose.arm();
+      const stopPromise = daemonHandle.daemon.stop();
+      await heldAgentClose.started;
+
+      const lateCreate = client
+        .createWorkspace({ source: { kind: "directory", path: workspaceCwd } })
+        .then(
+          () => "created" as const,
+          () => "rejected" as const,
+        );
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(handledWorkspaceCreates).toEqual([]);
+
+      heldAgentClose.finish();
+      await stopPromise;
+      await expect(lateCreate).resolves.toBe("rejected");
+    } finally {
+      heldAgentClose.finish();
+      await client.close().catch(() => undefined);
+      await daemonHandle.close().catch(() => undefined);
+      await Promise.all([
+        rm(path.dirname(daemonHandle.paseoHome), { recursive: true, force: true }),
+        rm(daemonHandle.staticDir, { recursive: true, force: true }),
+        rm(blockerCwd, { recursive: true, force: true }),
+        rm(workspaceCwd, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
+  test("shutdown joins workspace archive paused before lifecycle coordinator admission", async () => {
+    const heldAgentClose = holdAgentClose();
+    const daemonHandle = await createTestPaseoDaemon({
+      cleanup: false,
+      agentClients: createTestAgentClients({ closeSession: heldAgentClose.closeSession }),
+    });
+    const blockerCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-archive-blocker-"));
+    const workspaceCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-archive-target-"));
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemonHandle.port}/ws`,
+      appVersion: "0.1.82",
+    });
+    const registryStarted = deferred<void>();
+    const releaseRegistry = deferred<void>();
+
+    try {
+      await client.connect();
+      await daemonHandle.daemon.agentManager.createAgent(
+        { provider: "codex", cwd: blockerCwd },
+        undefined,
+        { workspaceId: undefined },
+      );
+      const created = await client.createWorkspace({
+        source: { kind: "directory", path: workspaceCwd },
+      });
+      if (!created.workspace) throw new Error(created.error ?? "Failed to create target workspace");
+
+      const originalList = FileBackedWorkspaceRegistry.prototype.list;
+      let pauseNextList = true;
+      vi.spyOn(FileBackedWorkspaceRegistry.prototype, "list").mockImplementation(async function () {
+        if (pauseNextList) {
+          pauseNextList = false;
+          registryStarted.resolve();
+          await releaseRegistry.promise;
+        }
+        return originalList.call(this);
+      });
+
+      const archivePromise = client.archiveWorkspace(created.workspace.id);
+      await registryStarted.promise;
+      heldAgentClose.arm();
+      const stopPromise = daemonHandle.daemon.stop();
+
+      const closureBeforeRelease = await Promise.race([
+        heldAgentClose.started.then(() => "closing" as const),
+        new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 50)),
+      ]);
+      expect(closureBeforeRelease).toBe("pending");
+
+      releaseRegistry.resolve();
+      await expect(archivePromise).resolves.toMatchObject({
+        workspaceId: created.workspace.id,
+        error: null,
+      });
+      await heldAgentClose.started;
+      heldAgentClose.finish();
+      await stopPromise;
+    } finally {
+      releaseRegistry.resolve();
+      heldAgentClose.finish();
+      await client.close().catch(() => undefined);
+      await daemonHandle.close().catch(() => undefined);
+      await Promise.all([
+        rm(path.dirname(daemonHandle.paseoHome), { recursive: true, force: true }),
+        rm(daemonHandle.staticDir, { recursive: true, force: true }),
+        rm(blockerCwd, { recursive: true, force: true }),
+        rm(workspaceCwd, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
+  test("shutdown joins project removal paused before lifecycle coordinator admission", async () => {
+    const heldAgentClose = holdAgentClose();
+    const daemonHandle = await createTestPaseoDaemon({
+      cleanup: false,
+      agentClients: createTestAgentClients({ closeSession: heldAgentClose.closeSession }),
+    });
+    const blockerCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-project-remove-blocker-"));
+    const workspaceCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-project-remove-target-"));
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemonHandle.port}/ws`,
+      appVersion: "0.1.82",
+    });
+    const registryStarted = deferred<void>();
+    const releaseRegistry = deferred<void>();
+
+    try {
+      await client.connect();
+      await daemonHandle.daemon.agentManager.createAgent(
+        { provider: "codex", cwd: blockerCwd },
+        undefined,
+        { workspaceId: undefined },
+      );
+      const created = await client.createWorkspace({
+        source: { kind: "directory", path: workspaceCwd },
+      });
+      if (!created.workspace) throw new Error(created.error ?? "Failed to create target project");
+
+      const originalGet = FileBackedProjectRegistry.prototype.get;
+      let pauseTargetGet = true;
+      vi.spyOn(FileBackedProjectRegistry.prototype, "get").mockImplementation(
+        async function (projectId) {
+          if (pauseTargetGet && projectId === created.workspace?.projectId) {
+            pauseTargetGet = false;
+            registryStarted.resolve();
+            await releaseRegistry.promise;
+          }
+          return originalGet.call(this, projectId);
+        },
+      );
+
+      const removePromise = client.removeProject(created.workspace.projectId);
+      await registryStarted.promise;
+      heldAgentClose.arm();
+      const stopPromise = daemonHandle.daemon.stop();
+
+      const closureBeforeRelease = await Promise.race([
+        heldAgentClose.started.then(() => "closing" as const),
+        new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 50)),
+      ]);
+      expect(closureBeforeRelease).toBe("pending");
+
+      releaseRegistry.resolve();
+      await expect(removePromise).resolves.toEqual({
+        removedWorkspaceIds: [created.workspace.id],
+      });
+      await heldAgentClose.started;
+      heldAgentClose.finish();
+      await stopPromise;
+    } finally {
+      releaseRegistry.resolve();
+      heldAgentClose.finish();
+      await client.close().catch(() => undefined);
+      await daemonHandle.close().catch(() => undefined);
+      await Promise.all([
+        rm(path.dirname(daemonHandle.paseoHome), { recursive: true, force: true }),
+        rm(daemonHandle.staticDir, { recursive: true, force: true }),
+        rm(blockerCwd, { recursive: true, force: true }),
+        rm(workspaceCwd, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
+  test("shutdown joins workspace create paused before session mutation dispatch", async () => {
+    const heldAgentClose = holdAgentClose();
+    const daemonHandle = await createTestPaseoDaemon({
+      cleanup: false,
+      agentClients: createTestAgentClients({ closeSession: heldAgentClose.closeSession }),
+    });
+    const blockerCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-workspace-create-blocker-"));
+    const workspaceCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-workspace-create-target-"));
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemonHandle.port}/ws`,
+      appVersion: "0.1.82",
+    });
+    const dispatchStarted = deferred<void>();
+    const releaseDispatch = deferred<void>();
+
+    try {
+      await client.connect();
+      await daemonHandle.daemon.agentManager.createAgent(
+        { provider: "codex", cwd: blockerCwd },
+        undefined,
+        { workspaceId: undefined },
+      );
+
+      const originalHandleMessage = Session.prototype.handleMessage;
+      let pauseWorkspaceCreate = true;
+      vi.spyOn(Session.prototype, "handleMessage").mockImplementation(
+        async function (message, source) {
+          if (pauseWorkspaceCreate && message.type === "workspace.create.request") {
+            pauseWorkspaceCreate = false;
+            dispatchStarted.resolve();
+            await releaseDispatch.promise;
+          }
+          return originalHandleMessage.call(this, message, source);
+        },
+      );
+
+      const createPromise = client.createWorkspace({
+        source: { kind: "directory", path: workspaceCwd },
+      });
+      await dispatchStarted.promise;
+      heldAgentClose.arm();
+      const stopPromise = daemonHandle.daemon.stop();
+
+      const closureBeforeRelease = await Promise.race([
+        heldAgentClose.started.then(() => "closing" as const),
+        new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 50)),
+      ]);
+      expect(closureBeforeRelease).toBe("pending");
+
+      releaseDispatch.resolve();
+      const created = await createPromise;
+      expect(created.error).toBeNull();
+      expect(created.workspace?.id).toBeTruthy();
+      await heldAgentClose.started;
+      heldAgentClose.finish();
+      await stopPromise;
+    } finally {
+      releaseDispatch.resolve();
+      heldAgentClose.finish();
+      await client.close().catch(() => undefined);
+      await daemonHandle.close().catch(() => undefined);
+      await Promise.all([
+        rm(path.dirname(daemonHandle.paseoHome), { recursive: true, force: true }),
+        rm(daemonHandle.staticDir, { recursive: true, force: true }),
+        rm(blockerCwd, { recursive: true, force: true }),
+        rm(workspaceCwd, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
   test("shutdown joins a standalone MCP worktree create accepted before ingress freezes", async () => {
     const daemonHandle = await createTestPaseoDaemon({ cleanup: false });
     const { repoDir, tempRoot } = await createCommittedGitRepo("mcp-accepted-create");
@@ -572,6 +847,101 @@ describe("paseo daemon bootstrap", () => {
     }
   });
 
+  test("failed native MCP create can retry the same worktree slug and survive startup recovery", async () => {
+    const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-mcp-create-retry-home-"));
+    const { repoDir, tempRoot } = await createCommittedGitRepo("mcp-create-retry");
+    let firstDaemon: Awaited<ReturnType<typeof createTestPaseoDaemon>> | null = null;
+    let secondDaemon: Awaited<ReturnType<typeof createTestPaseoDaemon>> | null = null;
+    let firstMcpClient: Awaited<ReturnType<typeof createBootstrapAgentMcpClient>> | null = null;
+    const staticDirs: string[] = [];
+
+    try {
+      firstDaemon = await createTestPaseoDaemon({ paseoHomeRoot, cleanup: false });
+      staticDirs.push(firstDaemon.staticDir);
+      firstMcpClient = await createBootstrapAgentMcpClient(firstDaemon.port);
+
+      const failed = await firstMcpClient.callTool({
+        name: "create_agent",
+        args: {
+          cwd: repoDir,
+          worktreeName: "same-slug-retry",
+          branchName: "same-slug-retry",
+          baseBranch: "main",
+          title: "Failed same-slug create",
+          provider: "codex/gpt-5.4",
+          mode: "invalid-test-mode",
+          initialPrompt: "This create should fail after making its worktree",
+          background: true,
+        },
+      });
+      expect(failed.isError).toBe(true);
+      await expect(firstDaemon.daemon.agentStorage.listPendingAgentCreations()).resolves.toEqual(
+        [],
+      );
+      expect(listGitWorktreePaths(repoDir)).toHaveLength(1);
+
+      const retried = await firstMcpClient.callTool({
+        name: "create_agent",
+        args: {
+          cwd: repoDir,
+          worktreeName: "same-slug-retry",
+          refName: "same-slug-retry",
+          title: "Successful same-slug retry",
+          provider: "codex/gpt-5.4",
+          mode: "full-access",
+          initialPrompt: "Complete the retry",
+          background: true,
+        },
+      });
+      expect(retried.isError).not.toBe(true);
+      const structured = retried.structuredContent as
+        | { agentId?: unknown; cwd?: unknown; workspaceId?: unknown }
+        | undefined;
+      if (
+        typeof structured?.agentId !== "string" ||
+        typeof structured.cwd !== "string" ||
+        typeof structured.workspaceId !== "string"
+      ) {
+        throw new Error("Expected successful MCP retry agent/workspace identifiers");
+      }
+      const { agentId, cwd, workspaceId } = structured as {
+        agentId: string;
+        cwd: string;
+        workspaceId: string;
+      };
+      expect(path.basename(cwd)).toBe("same-slug-retry");
+      await expect(firstDaemon.daemon.agentStorage.listPendingAgentCreations()).resolves.toEqual(
+        [],
+      );
+
+      await firstMcpClient.close();
+      firstMcpClient = null;
+      await firstDaemon.daemon.stop();
+      await firstDaemon.daemon.agentManager.flush();
+
+      secondDaemon = await createTestPaseoDaemon({ paseoHomeRoot, cleanup: false });
+      staticDirs.push(secondDaemon.staticDir);
+
+      const recoveredAgent = await secondDaemon.daemon.agentStorage.get(agentId);
+      expect(recoveredAgent).toMatchObject({ id: agentId, workspaceId });
+      expect(recoveredAgent?.archivedAt).toBeFalsy();
+      await expect(secondDaemon.daemon.agentStorage.listPendingAgentCreations()).resolves.toEqual(
+        [],
+      );
+      await expect(stat(cwd)).resolves.toMatchObject({});
+      expect(listGitWorktreePaths(repoDir)).toContain(cwd);
+    } finally {
+      await firstMcpClient?.close().catch(() => undefined);
+      await secondDaemon?.close().catch(() => undefined);
+      await firstDaemon?.close().catch(() => undefined);
+      await Promise.all([
+        rm(paseoHomeRoot, { recursive: true, force: true }),
+        ...staticDirs.map((staticDir) => rm(staticDir, { recursive: true, force: true })),
+        rm(tempRoot, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
   test("MCP cannot create a worktree after the shutdown closure snapshot", async () => {
     const heldAgentClose = holdAgentClose();
     const daemonHandle = await createTestPaseoDaemon({
@@ -629,6 +999,94 @@ describe("paseo daemon bootstrap", () => {
         rm(daemonHandle.staticDir, { recursive: true, force: true }),
         rm(initialAgentCwd, { recursive: true, force: true }),
         rm(tempRoot, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
+  test("shutdown joins an admitted native MCP prompt and rejects prompts after ingress closes", async () => {
+    const heldAgentClose = holdAgentClose();
+    const startedPrompts: unknown[] = [];
+    const daemonHandle = await createTestPaseoDaemon({
+      cleanup: false,
+      agentClients: createTestAgentClients({
+        closeSession: heldAgentClose.closeSession,
+        onStartTurn: (prompt) => startedPrompts.push(prompt),
+      }),
+    });
+    const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-mcp-prompt-shutdown-agent-"));
+    const mcpClient = await createBootstrapAgentMcpClient(daemonHandle.port);
+    const storageReadStarted = deferred<void>();
+    const releaseStorageRead = deferred<void>();
+
+    try {
+      const agent = await daemonHandle.daemon.agentManager.createAgent(
+        { provider: "codex", cwd: agentCwd },
+        undefined,
+        { workspaceId: undefined },
+      );
+      const originalGet = daemonHandle.daemon.agentStorage.get.bind(
+        daemonHandle.daemon.agentStorage,
+      );
+      let pauseTargetRead = true;
+      vi.spyOn(daemonHandle.daemon.agentStorage, "get").mockImplementation(async (agentId) => {
+        if (pauseTargetRead && agentId === agent.id) {
+          pauseTargetRead = false;
+          storageReadStarted.resolve();
+          await releaseStorageRead.promise;
+        }
+        return originalGet(agentId);
+      });
+
+      const admittedPrompt = mcpClient.callTool({
+        name: "send_agent_prompt",
+        args: {
+          agentId: agent.id,
+          prompt: "Admitted before shutdown",
+          background: true,
+        },
+      });
+      await storageReadStarted.promise;
+      heldAgentClose.arm();
+      const stopPromise = daemonHandle.daemon.stop();
+
+      const closureBeforeRelease = await Promise.race([
+        heldAgentClose.started.then(() => "closing" as const),
+        new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 50)),
+      ]);
+      expect(closureBeforeRelease).toBe("pending");
+
+      releaseStorageRead.resolve();
+      await expect(admittedPrompt).resolves.toMatchObject({
+        structuredContent: { success: true },
+      });
+      expect(startedPrompts).toEqual(["Admitted before shutdown"]);
+      await heldAgentClose.started;
+
+      const latePrompt = await mcpClient.callTool({
+        name: "send_agent_prompt",
+        args: {
+          agentId: agent.id,
+          prompt: "Rejected after shutdown",
+          background: true,
+        },
+      });
+      expect(latePrompt).toMatchObject({
+        isError: true,
+        content: [expect.objectContaining({ text: "Lifecycle mutation ingress is closed" })],
+      });
+      expect(startedPrompts).toEqual(["Admitted before shutdown"]);
+
+      heldAgentClose.finish();
+      await stopPromise;
+    } finally {
+      releaseStorageRead.resolve();
+      heldAgentClose.finish();
+      await mcpClient.close().catch(() => undefined);
+      await daemonHandle.close().catch(() => undefined);
+      await Promise.all([
+        rm(path.dirname(daemonHandle.paseoHome), { recursive: true, force: true }),
+        rm(daemonHandle.staticDir, { recursive: true, force: true }),
+        rm(agentCwd, { recursive: true, force: true }),
       ]);
     }
   });

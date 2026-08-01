@@ -111,6 +111,7 @@ export interface CreateAgentFromMcpInput {
     agentId: string;
     createdWorktree: CreatePaseoWorktreeWorkflowResult | null;
   }) => void;
+  onPendingAgentCreation?: (agentId: string) => void;
   onWorktreeCreated?: (createdWorktree: CreatePaseoWorktreeWorkflowResult) => void;
   callerAgentId?: string;
   callerContext?: {
@@ -186,6 +187,9 @@ export async function createAgentCommand(
   input: CreateAgentCommandInput,
 ): Promise<CreateAgentCommandResult> {
   const pendingAgentId = await reservePendingAgentId(dependencies, input);
+  if (input.kind === "mcp" && pendingAgentId) {
+    input.onPendingAgentCreation?.(pendingAgentId);
+  }
   const resolved = await resolveCreateAgent(dependencies, input, pendingAgentId);
 
   let snapshot: ManagedAgent;

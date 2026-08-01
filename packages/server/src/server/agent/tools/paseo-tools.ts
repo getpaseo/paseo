@@ -21,6 +21,7 @@ import {
 import { curateAgentActivity } from "../activity-curator.js";
 import { selectItemsByProjectedLimit } from "../timeline-projection.js";
 import type { AgentStorage } from "../agent-storage.js";
+import type { CreateAgentLifecycleDispatch } from "../create-agent-lifecycle-dispatch.js";
 import { ensureAgentLoaded } from "../agent-loading.js";
 import { isStoredAgentProviderAvailable } from "../../persistence-hooks.js";
 import {
@@ -35,7 +36,10 @@ import type { FirstAgentContext } from "../../messages.js";
 import { everyMsToFiveFieldCron } from "@getpaseo/protocol/schedule/cadence";
 import { expandUserPath, isSameOrDescendantPath, resolvePathFromBase } from "../../path-utils.js";
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
-import type { CreatePaseoWorktreeWorkflowFn } from "../../worktree-session.js";
+import type {
+  CreatePaseoWorktreeWorkflowFn,
+  CreatePaseoWorktreeWorkflowResult,
+} from "../../worktree-session.js";
 import type { ScheduleService } from "../../schedule/service.js";
 import {
   ScheduleRunSchema,
@@ -133,6 +137,10 @@ export interface PaseoToolHostDependencies {
   worktreesRoot?: string;
   lifecycleCoordinator?: WorkspaceLifecycleCoordinator;
   runLifecycleMutation?: <T>(operation: () => Promise<T>) => Promise<T>;
+  createAgentLifecycleDispatch?: Pick<
+    CreateAgentLifecycleDispatch,
+    "cleanupCreatedWorktreeAfterFailedAgentCreate" | "recoverPendingAgentCreation"
+  >;
   /**
    * ID of the agent that is using this tool catalog.
    * Used for cwd/mode inheritance when agents spawn child agents.
@@ -153,6 +161,7 @@ const LIFECYCLE_MUTATION_TOOL_NAMES = new Set([
   "create_workspace",
   "archive_workspace",
   "create_agent",
+  "send_agent_prompt",
   "cancel_agent",
   "archive_agent",
   "kill_agent",
@@ -1477,47 +1486,71 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         requestedBackground = resolvedArgs.parsedArgs.background;
         notifyOnFinish = resolvedArgs.parsedArgs.notifyOnFinish ?? false;
       }
-      const {
-        snapshot,
-        background: createdInBackground,
-        initialPromptStarted,
-      } = await createAgentCommand(
-        {
-          agentManager,
-          agentStorage,
-          logger: childLogger,
-          paseoHome: options.paseoHome,
-          worktreesRoot: options.worktreesRoot,
-          terminalManager,
-          providerSnapshotManager,
-          lifecycleCoordinator:
-            options.lifecycleCoordinator ?? defaultWorkspaceLifecycleCoordinator,
-          requireActiveWorkspaceForOwnership: (workspaceId) =>
-            requireActiveWorkspaceForOwnership(options, workspaceId),
-          createPaseoWorktree: options.createPaseoWorktree,
-          ...(options.ensureWorkspaceForCreate
-            ? { ensureWorkspaceForCreate: options.ensureWorkspaceForCreate }
-            : {}),
-        },
-        {
-          kind: "mcp",
-          provider: parsedArgs.provider,
-          title: parsedArgs.title,
-          initialPrompt: parsedArgs.initialPrompt,
-          cwd: resolvedArgs.cwd,
-          workspaceId: resolvedArgs.workspaceId,
-          thinking: parsedArgs.settings?.thinkingOptionId,
-          features: parsedArgs.settings?.features,
-          labels: parsedArgs.labels,
-          mode: parsedArgs.settings?.modeId,
-          background: requestedBackground,
-          notifyOnFinish,
-          detached: resolvedArgs.detached,
-          callerAgentId,
-          callerContext,
-          worktree,
-        },
-      );
+      let createdWorktreeForCleanup: CreatePaseoWorktreeWorkflowResult | null = null;
+      let createdAgentId: string | null = null;
+      let pendingCreationAgentId: string | undefined;
+      const createResult = await (async () => {
+        try {
+          return await createAgentCommand(
+            {
+              agentManager,
+              agentStorage,
+              logger: childLogger,
+              paseoHome: options.paseoHome,
+              worktreesRoot: options.worktreesRoot,
+              terminalManager,
+              providerSnapshotManager,
+              lifecycleCoordinator:
+                options.lifecycleCoordinator ?? defaultWorkspaceLifecycleCoordinator,
+              requireActiveWorkspaceForOwnership: (workspaceId) =>
+                requireActiveWorkspaceForOwnership(options, workspaceId),
+              createPaseoWorktree: options.createPaseoWorktree,
+              ...(options.ensureWorkspaceForCreate
+                ? { ensureWorkspaceForCreate: options.ensureWorkspaceForCreate }
+                : {}),
+            },
+            {
+              kind: "mcp",
+              provider: parsedArgs.provider,
+              title: parsedArgs.title,
+              initialPrompt: parsedArgs.initialPrompt,
+              cwd: resolvedArgs.cwd,
+              workspaceId: resolvedArgs.workspaceId,
+              thinking: parsedArgs.settings?.thinkingOptionId,
+              features: parsedArgs.settings?.features,
+              labels: parsedArgs.labels,
+              mode: parsedArgs.settings?.modeId,
+              background: requestedBackground,
+              notifyOnFinish,
+              detached: resolvedArgs.detached,
+              callerAgentId,
+              callerContext,
+              worktree,
+              onPendingAgentCreation: (agentId) => {
+                pendingCreationAgentId = agentId;
+              },
+              onWorktreeCreated: (createdWorktree) => {
+                createdWorktreeForCleanup = createdWorktree;
+              },
+              onCreated: ({ agentId }) => {
+                createdAgentId = agentId;
+              },
+            },
+          );
+        } catch (error) {
+          await options.createAgentLifecycleDispatch?.cleanupCreatedWorktreeAfterFailedAgentCreate({
+            createdWorktree: createdWorktreeForCleanup,
+            createdAgentId,
+          });
+          if (pendingCreationAgentId) {
+            await options.createAgentLifecycleDispatch?.recoverPendingAgentCreation(
+              pendingCreationAgentId,
+            );
+          }
+          throw error;
+        }
+      })();
+      const { snapshot, background: createdInBackground, initialPromptStarted } = createResult;
 
       try {
         if (!createdInBackground && initialPromptStarted) {
