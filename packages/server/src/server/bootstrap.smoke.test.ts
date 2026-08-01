@@ -1,7 +1,8 @@
 import os from "node:os";
 import http from "node:http";
 import path from "node:path";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
@@ -16,6 +17,7 @@ import { DaemonClient } from "./test-utils/daemon-client.js";
 import { isPlatform } from "../test-utils/platform.js";
 import { findFreePort } from "./service-proxy.js";
 import { defaultWorkspaceLifecycleCoordinator } from "./workspace-lifecycle-coordinator.js";
+import { readPaseoWorktreeIncarnationId } from "../utils/worktree-metadata.js";
 import type {
   HubEnrollment,
   HubEnrollmentResult,
@@ -42,6 +44,14 @@ interface BlockedDaemonShutdown {
 type WebSocketProbeResult =
   | { status: "connected" }
   | { status: "rejected"; statusCode: number | null };
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
 
 describe("paseo daemon bootstrap", () => {
   afterEach(() => {
@@ -340,6 +350,147 @@ describe("paseo daemon bootstrap", () => {
       ).resolves.toEqual([{ status: "rejected", statusCode: 503 }, "rejected"]);
     } finally {
       await shutdown.finish();
+    }
+  });
+
+  test("shutdown joins a worktree create accepted on an established socket before ingress freezes", async () => {
+    const clients = createTestAgentClients();
+    const createStarted = deferred<void>();
+    const allowCreate = deferred<void>();
+    const codexClient = clients.codex!;
+    const createSession = codexClient.createSession.bind(codexClient);
+    let createdSessionCwd: string | null = null;
+    vi.spyOn(codexClient, "createSession").mockImplementation(async (config, launchContext) => {
+      createdSessionCwd = config.cwd;
+      createStarted.resolve();
+      await allowCreate.promise;
+      return createSession(config, launchContext);
+    });
+
+    const daemonHandle = await createTestPaseoDaemon({
+      cleanup: false,
+      agentClients: clients,
+    });
+    const { repoDir, tempRoot } = await createCommittedGitRepo("accepted-create");
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemonHandle.port}/ws`,
+      appVersion: "0.1.82",
+    });
+
+    try {
+      await client.connect();
+      const createPromise = client.createAgent({
+        provider: "codex",
+        cwd: repoDir,
+        worktree: { mode: "branch-off", newBranch: "accepted-before-shutdown", base: "main" },
+        autoArchive: false,
+      });
+      await createStarted.promise;
+
+      const [pendingCreation] = await daemonHandle.daemon.agentStorage.listPendingAgentCreations();
+      expect(pendingCreation?.cleanupTarget).toMatchObject({
+        kind: "worktree",
+        targetPath: createdSessionCwd,
+      });
+      if (pendingCreation?.cleanupTarget.kind !== "worktree" || !createdSessionCwd) {
+        throw new Error("Expected an exact pending worktree creation journal");
+      }
+      const directoryStat = await stat(createdSessionCwd, { bigint: true });
+      expect(pendingCreation.cleanupTarget.directoryIdentity).toEqual({
+        device: directoryStat.dev.toString(),
+        inode: directoryStat.ino.toString(),
+      });
+      expect(readPaseoWorktreeIncarnationId(createdSessionCwd)).toBe(
+        pendingCreation.cleanupTarget.worktreeIncarnationId,
+      );
+
+      const stopPromise = daemonHandle.daemon.stop();
+      const earlyStop = await Promise.race([
+        stopPromise.then(() => "stopped" as const),
+        new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 50)),
+      ]);
+      expect(earlyStop).toBe("pending");
+
+      allowCreate.resolve();
+      const created = await createPromise;
+      expect(created.cwd).toBe(createdSessionCwd);
+      await expect(daemonHandle.daemon.agentStorage.listPendingAgentCreations()).resolves.toEqual(
+        [],
+      );
+      await stopPromise;
+    } finally {
+      allowCreate.resolve();
+      await client.close().catch(() => undefined);
+      await daemonHandle.daemon.stop().catch(() => undefined);
+      await daemonHandle.daemon.agentManager.flush().catch(() => undefined);
+      await Promise.all([
+        rm(path.dirname(daemonHandle.paseoHome), { recursive: true, force: true }),
+        rm(daemonHandle.staticDir, { recursive: true, force: true }),
+        rm(tempRoot, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
+  test("an established socket cannot start a worktree create after ingress freezes", async () => {
+    const heldAgentClose = holdAgentClose();
+    const clients = createTestAgentClients({ closeSession: heldAgentClose.closeSession });
+    const createSession = vi.spyOn(clients.codex!, "createSession");
+    const daemonHandle = await createTestPaseoDaemon({
+      cleanup: false,
+      agentClients: clients,
+    });
+    const { repoDir, tempRoot } = await createCommittedGitRepo("rejected-create");
+    const initialAgentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-shutdown-agent-"));
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemonHandle.port}/ws`,
+      appVersion: "0.1.82",
+    });
+
+    try {
+      await client.connect();
+      await daemonHandle.daemon.agentManager.createAgent(
+        { provider: "codex", cwd: initialAgentCwd },
+        undefined,
+        { workspaceId: undefined },
+      );
+      expect(createSession).toHaveBeenCalledTimes(1);
+
+      heldAgentClose.arm();
+      const stopPromise = daemonHandle.daemon.stop();
+      await heldAgentClose.started;
+
+      const lateCreate = client
+        .createAgent({
+          provider: "codex",
+          cwd: repoDir,
+          worktree: { mode: "branch-off", newBranch: "rejected-after-shutdown", base: "main" },
+        })
+        .then(
+          () => "created" as const,
+          () => "rejected" as const,
+        );
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(createSession).toHaveBeenCalledTimes(1);
+      expect(listGitWorktreePaths(repoDir)).toHaveLength(1);
+      await expect(daemonHandle.daemon.agentStorage.listPendingAgentCreations()).resolves.toEqual(
+        [],
+      );
+
+      heldAgentClose.finish();
+      await stopPromise;
+      await client.close();
+      await expect(lateCreate).resolves.toBe("rejected");
+    } finally {
+      heldAgentClose.finish();
+      await client.close().catch(() => undefined);
+      await daemonHandle.daemon.stop().catch(() => undefined);
+      await daemonHandle.daemon.agentManager.flush().catch(() => undefined);
+      await Promise.all([
+        rm(path.dirname(daemonHandle.paseoHome), { recursive: true, force: true }),
+        rm(daemonHandle.staticDir, { recursive: true, force: true }),
+        rm(initialAgentCwd, { recursive: true, force: true }),
+        rm(tempRoot, { recursive: true, force: true }),
+      ]);
     }
   });
 
@@ -774,6 +925,40 @@ function holdAgentClose(): HeldAgentClose {
     },
     finish: () => finish(),
   };
+}
+
+async function createCommittedGitRepo(slug: string): Promise<{
+  repoDir: string;
+  tempRoot: string;
+}> {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), `paseo-shutdown-${slug}-`));
+  const repoDir = path.join(tempRoot, "repo");
+  execFileSync("git", ["init", "-b", "main", repoDir], { stdio: "pipe" });
+  execFileSync("git", ["config", "user.email", "test@getpaseo.local"], {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  execFileSync("git", ["config", "user.name", "Paseo Test"], {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  await writeFile(path.join(repoDir, "README.md"), "shutdown lifecycle\n");
+  execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "initial"], {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  return { repoDir, tempRoot };
+}
+
+function listGitWorktreePaths(repoDir: string): string[] {
+  return execFileSync("git", ["worktree", "list", "--porcelain"], {
+    cwd: repoDir,
+    stdio: "pipe",
+  })
+    .toString()
+    .split("\n")
+    .flatMap((line) => (line.startsWith("worktree ") ? [line.slice("worktree ".length)] : []));
 }
 
 async function beginDaemonShutdownWithAgentClosing(): Promise<BlockedDaemonShutdown> {

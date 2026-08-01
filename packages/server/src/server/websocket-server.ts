@@ -500,6 +500,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly wss: WebSocketServer;
   private readonly pendingConnections: Map<WebSocketLike, PendingConnection> = new Map();
   private readonly sessions: Map<WebSocketLike, SessionConnection> = new Map();
+  private readonly inFlightCreateMessages = new Set<Promise<void>>();
   private readonly socketIdentities: Map<WebSocketLike, WebSocketConnectionIdentity> = new Map();
   private readonly externalSessionsByKey: Map<string, TrustedSessionConnection> = new Map();
   private readonly serverId: string;
@@ -951,12 +952,15 @@ export class VoiceAssistantWebSocketServer {
     connectionLogger.info("Hub session attached");
   }
 
-  public prepareForShutdown(): void {
+  public async prepareForShutdown(): Promise<void> {
     this.acceptingConnections = false;
+    while (this.inFlightCreateMessages.size > 0) {
+      await Promise.allSettled(Array.from(this.inFlightCreateMessages));
+    }
   }
 
   public async close(): Promise<void> {
-    this.prepareForShutdown();
+    await this.prepareForShutdown();
     this.unsubscribeSpeechReadiness?.();
     this.unsubscribeSpeechReadiness = null;
     this.unsubscribeDaemonConfigChange?.();
@@ -2064,9 +2068,22 @@ export class VoiceAssistantWebSocketServer {
       }
 
       if (message.type === "session") {
-        void this.dispatchSessionMessage(ws, activeConnection, message).catch((error: unknown) => {
-          this.handleRawMessageError({ ws, data, error, log: activeConnection.connectionLogger });
-        });
+        const dispatch = this.dispatchSessionMessage(ws, activeConnection, message);
+        const trackedForShutdown =
+          message.message.type === "create_agent_request" ||
+          message.message.type === "create_paseo_worktree_request";
+        if (trackedForShutdown) {
+          this.inFlightCreateMessages.add(dispatch);
+        }
+        void dispatch
+          .catch((error: unknown) => {
+            this.handleRawMessageError({ ws, data, error, log: activeConnection.connectionLogger });
+          })
+          .finally(() => {
+            if (trackedForShutdown) {
+              this.inFlightCreateMessages.delete(dispatch);
+            }
+          });
       }
     } catch (error) {
       this.handleRawMessageError({ ws, data, error, log });

@@ -257,6 +257,12 @@ function errorToFriendlyMessage(error: unknown): string {
   return "Unknown error";
 }
 
+function shouldJournalAgentCreation(msg: CreateAgentRequestMessage): boolean {
+  return (
+    msg.autoArchive === true || Boolean(msg.worktree || msg.worktreeName || msg.git?.createWorktree)
+  );
+}
+
 function resolveSubscriptionId(
   subscribe: unknown,
   requestedSubscriptionId: string | undefined,
@@ -3080,7 +3086,9 @@ export class Session {
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
       };
       const workspacePromptTitle = resolveFirstAgentPromptTitle(firstAgentContext);
-      const pendingCreation = await this.reservePendingAgentCreation(autoArchive);
+      const pendingCreation = await this.reservePendingAgentCreation(
+        shouldJournalAgentCreation(msg),
+      );
       pendingCreationAgentId = pendingCreation.agentId;
       const createdWorktree = await this.createWorktreeForCreateAgentRequest({
         cwd: config.cwd,
@@ -3241,9 +3249,9 @@ export class Session {
   }
 
   private async reservePendingAgentCreation(
-    autoArchive: boolean | undefined,
+    requiresDurableCreation: boolean,
   ): Promise<PendingAgentCreationReservation> {
-    if (autoArchive !== true) return {};
+    if (!requiresDurableCreation) return {};
 
     const agentId = this.agentManager.allocateAgentId();
     await this.agentStorage.beginPendingAgentCreation(agentId);

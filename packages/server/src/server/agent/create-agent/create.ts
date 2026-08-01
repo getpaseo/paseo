@@ -188,10 +188,8 @@ export async function createAgentCommand(
   dependencies: CreateAgentCommandDependencies,
   input: CreateAgentCommandInput,
 ): Promise<CreateAgentCommandResult> {
-  const resolved =
-    input.kind === "session"
-      ? await resolveSessionCreateAgent(dependencies, input)
-      : await resolveMcpCreateAgent(dependencies, input);
+  const pendingAgentId = await reservePendingAgentId(dependencies, input);
+  const resolved = await resolveCreateAgent(dependencies, input, pendingAgentId);
 
   let snapshot: ManagedAgent;
   const lifecycleCoordinator =
@@ -206,7 +204,7 @@ export async function createAgentCommand(
       () =>
         dependencies.agentManager.createAgent(
           resolved.config,
-          input.kind === "session" ? input.agentId : undefined,
+          pendingAgentId,
           resolved.createOptions,
         ),
     );
@@ -222,22 +220,8 @@ export async function createAgentCommand(
   let liveSnapshot = snapshot;
   let initialPromptStarted = false;
   let initialPromptError: unknown | null = null;
-  if (input.kind === "session") {
-    if (input.agentId) {
-      await dependencies.agentStorage.removePendingAgentCreation(input.agentId).catch((error) => {
-        dependencies.logger.warn(
-          { err: error, agentId: input.agentId },
-          "Failed to remove completed agent creation journal",
-        );
-      });
-    }
-    input.onCreated?.({
-      agentId: snapshot.id,
-      autoArchiveObligation: resolved.createOptions.autoArchiveObligation,
-    });
-  } else {
-    input.onCreated?.({ agentId: snapshot.id, createdWorktree: resolved.createdWorktree ?? null });
-  }
+  await completePendingAgentCreation(dependencies, pendingAgentId);
+  notifyAgentCreated(input, resolved, snapshot);
   if (resolved.prompt !== undefined) {
     const sendResult = await sendInitialPrompt(dependencies, resolved, snapshot);
     initialPromptStarted = sendResult.started;
@@ -264,6 +248,86 @@ export async function createAgentCommand(
     initialPromptError,
     ...(resolved.createdWorktree ? { createdWorktree: resolved.createdWorktree } : {}),
   };
+}
+
+async function reservePendingAgentId(
+  dependencies: CreateAgentCommandDependencies,
+  input: CreateAgentCommandInput,
+): Promise<string | undefined> {
+  if (input.kind === "session") return input.agentId;
+  if (!shouldCreateMcpWorktree(input.worktree)) return undefined;
+
+  const pendingAgentId = dependencies.agentManager.allocateAgentId();
+  await dependencies.agentStorage.beginPendingAgentCreation(pendingAgentId);
+  return pendingAgentId;
+}
+
+async function resolveCreateAgent(
+  dependencies: CreateAgentCommandDependencies,
+  input: CreateAgentCommandInput,
+  pendingAgentId: string | undefined,
+): Promise<ResolvedCreateAgent> {
+  try {
+    return input.kind === "session"
+      ? await resolveSessionCreateAgent(dependencies, input)
+      : await resolveMcpCreateAgent(dependencies, input, pendingAgentId);
+  } catch (error) {
+    await removeSideEffectFreePendingCreation(dependencies.agentStorage, pendingAgentId);
+    throw error;
+  }
+}
+
+async function completePendingAgentCreation(
+  dependencies: CreateAgentCommandDependencies,
+  pendingAgentId: string | undefined,
+): Promise<void> {
+  if (!pendingAgentId) return;
+  await dependencies.agentStorage.removePendingAgentCreation(pendingAgentId).catch((error) => {
+    dependencies.logger.warn(
+      { err: error, agentId: pendingAgentId },
+      "Failed to remove completed agent creation journal",
+    );
+  });
+}
+
+function notifyAgentCreated(
+  input: CreateAgentCommandInput,
+  resolved: ResolvedCreateAgent,
+  snapshot: ManagedAgent,
+): void {
+  if (input.kind === "session") {
+    input.onCreated?.({
+      agentId: snapshot.id,
+      autoArchiveObligation: resolved.createOptions.autoArchiveObligation,
+    });
+    return;
+  }
+  input.onCreated?.({ agentId: snapshot.id, createdWorktree: resolved.createdWorktree ?? null });
+}
+
+function shouldCreateMcpWorktree(worktree: CreateAgentFromMcpInput["worktree"]): boolean {
+  return Boolean(
+    worktree &&
+    (worktree.worktreeName || worktree.refName || worktree.action || worktree.githubPrNumber),
+  );
+}
+
+async function removeSideEffectFreePendingCreation(
+  agentStorage: AgentStorage,
+  pendingAgentId: string | undefined,
+): Promise<void> {
+  if (!pendingAgentId) return;
+  try {
+    const pending = (await agentStorage.listPendingAgentCreations()).find(
+      (record) => record.agentId === pendingAgentId,
+    );
+    if (pending?.cleanupTarget.kind === "agent") {
+      await agentStorage.removePendingAgentCreation(pendingAgentId);
+    }
+  } catch {
+    // Preserve the original create failure. Startup recovery owns any journal
+    // whose side-effect-free cleanup could not be confirmed here.
+  }
 }
 
 async function resolveSessionCreateAgent(
@@ -372,6 +436,7 @@ async function resolveSessionCreateAgent(
 async function resolveMcpCreateAgent(
   dependencies: CreateAgentCommandDependencies,
   input: CreateAgentFromMcpInput,
+  pendingAgentId?: string,
 ): Promise<ResolvedCreateAgent> {
   const resolvedProviderModel = resolveProviderModel(input.provider);
   const provider = resolvedProviderModel.provider;
@@ -385,6 +450,14 @@ async function resolveMcpCreateAgent(
       cwd,
       worktree: input.worktree,
       initialPrompt: input.initialPrompt ?? "",
+      onWorktreePathResolved: pendingAgentId
+        ? (worktreePath, reservation) =>
+            dependencies.agentStorage.setPendingAgentCreationWorktree(
+              pendingAgentId,
+              worktreePath,
+              reservation,
+            )
+        : undefined,
     });
   try {
     if (createdWorktree) input.onWorktreeCreated?.(createdWorktree);
@@ -586,6 +659,10 @@ async function resolveMcpCwd(params: {
   cwd: string;
   initialPrompt: string;
   worktree: CreateAgentFromMcpInput["worktree"];
+  onWorktreePathResolved?: (
+    worktreePath: string,
+    reservation: WorktreeCreationReservation,
+  ) => Promise<void>;
 }): Promise<{
   resolvedCwd: string;
   setupContinuation?: AgentWorktreeSetupContinuation;
@@ -596,9 +673,7 @@ async function resolveMcpCwd(params: {
   if (!worktree) {
     return { resolvedCwd: params.cwd };
   }
-  const shouldCreateWorktree = Boolean(
-    worktree.worktreeName || worktree.refName || worktree.action || worktree.githubPrNumber,
-  );
+  const shouldCreateWorktree = shouldCreateMcpWorktree(worktree);
   if (!shouldCreateWorktree) {
     return { resolvedCwd: params.cwd };
   }
@@ -624,6 +699,7 @@ async function resolveMcpCwd(params: {
       runSetup: false,
       paseoHome: dependencies.paseoHome,
       worktreesRoot: dependencies.worktreesRoot,
+      onWorktreePathResolved: params.onWorktreePathResolved,
     },
     createPaseoWorktree: dependencies.createPaseoWorktree,
     resolveDefaultBranch: baseBranch ? async () => baseBranch : undefined,
