@@ -8,6 +8,7 @@ import stripAnsi from "strip-ansi";
 import {
   type AgentCapabilityFlags,
   type AgentClient,
+  type AgentCreateSessionOptions,
   type AgentFeature,
   type AgentLaunchContext,
   type AgentMetadata,
@@ -21,6 +22,7 @@ import {
   type AgentProvider,
   type AgentRunOptions,
   type AgentRunResult,
+  type AgentResumeSessionOptions,
   type AgentRuntimeInfo,
   type AgentSession,
   type AgentSessionConfig,
@@ -2276,6 +2278,7 @@ export class OmpAgentClient implements AgentClient {
   async createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
+    options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     const launchMode = this.resolveLaunchMode(config.modeId);
     const runtimeSession = await this.runtime.startSession({
@@ -2288,6 +2291,7 @@ export class OmpAgentClient implements AgentClient {
       extraArgs: launchMode.extraArgs,
       systemPrompt: composeSystemPromptParts(config.systemPrompt, config.daemonAppendSystemPrompt),
       env: launchContext?.env,
+      signal: options?.signal,
     });
     try {
       await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
@@ -2312,6 +2316,7 @@ export class OmpAgentClient implements AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ): Promise<AgentSession> {
     const sessionFile = handle.nativeHandle;
     if (!sessionFile) {
@@ -2322,14 +2327,15 @@ export class OmpAgentClient implements AgentClient {
     const resumeConfig = buildResumeConfig(persistenceMetadata, overrides, this.provider);
 
     const launchMode = this.resolveLaunchMode(resumeConfig.modeId);
-    const runtimeSession = await this.runtime.startSession(
-      buildResumeStartInput({
+    const runtimeSession = await this.runtime.startSession({
+      ...buildResumeStartInput({
         resumeConfig,
         sessionFile,
         launchContext,
         launchMode,
       }),
-    );
+      signal: options?.signal,
+    });
     try {
       await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
       return new OmpAgentSession({

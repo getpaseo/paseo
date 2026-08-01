@@ -1806,6 +1806,44 @@ describe("OpenCode adapter startTurn error handling", () => {
     await closePromise;
   });
 
+  test("bounds a blocked OpenCode abort while closing the session", async () => {
+    vi.useFakeTimers();
+    try {
+      let abortSignal: AbortSignal | undefined;
+      const fakeClient = {
+        session: {
+          abort: vi
+            .fn()
+            .mockImplementation(
+              async (_parameters: unknown, options?: { signal?: AbortSignal }) => {
+                abortSignal = options?.signal;
+                if (!abortSignal) {
+                  return await new Promise<never>(() => {});
+                }
+                await waitForAbort(abortSignal);
+                throw abortSignal.reason;
+              },
+            ),
+          update: vi.fn().mockResolvedValue({ error: null }),
+        },
+      } as never;
+      const session = new __openCodeInternals.OpenCodeAgentSession(
+        { provider: "opencode", cwd: "/tmp/test" },
+        fakeClient,
+        "ses_unit_test",
+        createTestLogger(),
+      );
+
+      const closing = session.close();
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await expect(closing).resolves.toBeUndefined();
+      expect(abortSignal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("streamHistory preserves OpenCode replay timestamps from message and part times", async () => {
     const fakeClient = {
       session: {
@@ -1904,6 +1942,45 @@ describe("OpenCode adapter startTurn error handling", () => {
         },
       },
     ]);
+  });
+
+  test("streamHistory cancels its OpenCode SDK reads with the import signal", async () => {
+    const openCode = new TestOpenCodeClient();
+    const messagesStarted = createTestDeferred<void>();
+    const messagesCanceled = createTestDeferred<void>();
+    const controller = new AbortController();
+    const cancellation = new Error("cancel OpenCode history read");
+    openCode.sessionGetResponse = { data: { revert: undefined } };
+    openCode.sessionMessagesImplementation = async (_parameters, options) => {
+      messagesStarted.resolve();
+      const signal = (options as { signal?: AbortSignal } | undefined)?.signal;
+      return await new Promise<never>((_resolve, reject) => {
+        signal?.addEventListener(
+          "abort",
+          () => {
+            messagesCanceled.resolve();
+            reject(signal.reason);
+          },
+          { once: true },
+        );
+      });
+    };
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      openCode.asSdkClient(),
+      "ses_history_cancel",
+      createTestLogger(),
+    );
+    const nextEvent = session.streamHistory(controller.signal).next();
+    await messagesStarted.promise;
+
+    controller.abort(cancellation);
+
+    await expect(nextEvent).rejects.toBe(cancellation);
+    await messagesCanceled.promise;
+    expect(openCode.calls.sessionGetOptions).toEqual([{ signal: controller.signal }]);
+    expect(openCode.calls.sessionMessagesOptions).toEqual([{ signal: controller.signal }]);
+    await session.close();
   });
 
   test("streamHistory omits replay timestamps when OpenCode omits times", async () => {
@@ -3320,6 +3397,84 @@ describe("OpenCode persisted sessions", () => {
       { sessionID: "ses_selected", directory: cwd },
     ]);
   });
+
+  test.each(["session get", "session messages"] as const)(
+    "importSession cancels a blocked OpenCode %s pre-read and releases its server",
+    async (blockedRequest) => {
+      const runtime = new TestOpenCodeHarness();
+      const metadataClient = new TestOpenCodeClient();
+      const requestStarted = createTestDeferred<void>();
+      const requestCanceled = createTestDeferred<void>();
+      const cwd = "/workspace/repo";
+      const controller = new AbortController();
+      const selectedSession = {
+        id: "ses_selected",
+        directory: cwd,
+        title: "Selected session",
+        time: { created: 2000, updated: 3000 },
+      };
+      metadataClient.sessionGetResponse = { data: selectedSession };
+      if (blockedRequest === "session get") {
+        metadataClient.sessionGetImplementation = async (_parameters, options) => {
+          requestStarted.resolve();
+          const signal = (options as { signal?: AbortSignal } | undefined)?.signal;
+          return await new Promise<never>((_resolve, reject) => {
+            signal?.addEventListener(
+              "abort",
+              () => {
+                requestCanceled.resolve();
+                reject(signal.reason);
+              },
+              { once: true },
+            );
+          });
+        };
+      } else {
+        metadataClient.sessionMessagesImplementation = async (_parameters, options) => {
+          requestStarted.resolve();
+          const signal = (options as { signal?: AbortSignal } | undefined)?.signal;
+          return await new Promise<never>((_resolve, reject) => {
+            signal?.addEventListener(
+              "abort",
+              () => {
+                requestCanceled.resolve();
+                reject(signal.reason);
+              },
+              { once: true },
+            );
+          });
+        };
+      }
+      runtime.enqueueClient(metadataClient);
+      const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+        serverManager: runtime,
+        createClient: runtime.createClient,
+      });
+      const cancellation = new Error("cancel OpenCode import pre-read");
+      const importing = client.importSession(
+        { providerHandleId: "ses_selected", cwd },
+        {
+          config: { provider: "opencode", cwd },
+          storedConfig: { provider: "opencode", cwd },
+          signal: controller.signal,
+        },
+      );
+      await requestStarted.promise;
+      const rejectedImport = expect(importing).rejects.toBe(cancellation);
+
+      controller.abort(cancellation);
+
+      await rejectedImport;
+      await requestCanceled.promise;
+      const requestOptions =
+        blockedRequest === "session get"
+          ? metadataClient.calls.sessionGetOptions
+          : metadataClient.calls.sessionMessagesOptions;
+      expect(requestOptions).toEqual([{ signal: controller.signal }]);
+      expect(runtime.acquisitionSignals).toEqual([controller.signal]);
+      expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+    },
+  );
 
   test("listImportableSessions matches Windows cwd paths with forward slashes", async () => {
     const runtime = new TestOpenCodeHarness();

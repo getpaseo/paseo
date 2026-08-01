@@ -1,10 +1,113 @@
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import pino from "pino";
 import { describe, expect, test, vi } from "vitest";
 
+import type { AgentSessionConfig } from "../../agent-sdk-types.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
 import { OmpAgentClient, type OmpNoTurnScheduler, type OmpProviderIdleScheduler } from "./agent.js";
+import { OmpCliRuntime } from "./cli-runtime.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
 import type { OmpRuntime, OmpRuntimeSession } from "./runtime.js";
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
+
+type OmpProcess = ChildProcessWithoutNullStreams & {
+  stdin: PassThrough;
+  stdout: PassThrough;
+  stderr: PassThrough;
+  killedSignals: Array<NodeJS.Signals | number | undefined>;
+};
+
+function createOmpProcess(): OmpProcess {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    exitCode: null,
+    signalCode: null,
+    killedSignals: [],
+  }) as OmpProcess;
+  child.kill = ((signal?: NodeJS.Signals | number) => {
+    child.killedSignals.push(signal);
+    queueMicrotask(() => child.emit("exit", null, signal ?? null));
+    return true;
+  }) as ChildProcessWithoutNullStreams["kill"];
+  return child;
+}
+
+function waitForOmpCommand(child: OmpProcess, type: string): Promise<void> {
+  return new Promise((resolve) => {
+    let buffer = "";
+    child.stdin.on("data", (chunk) => {
+      buffer += chunk.toString();
+      for (;;) {
+        const newlineIndex = buffer.indexOf("\n");
+        if (newlineIndex === -1) return;
+        const command = JSON.parse(buffer.slice(0, newlineIndex)) as { type?: string };
+        buffer = buffer.slice(newlineIndex + 1);
+        if (command.type === type) resolve();
+      }
+    });
+  });
+}
+
+function createProcessClient(child: OmpProcess): OmpAgentClient {
+  return new OmpAgentClient({
+    logger: pino({ level: "silent" }),
+    runtime: new OmpCliRuntime({
+      logger: pino({ level: "silent" }),
+      command: ["omp"],
+      spawnProcess: () => child,
+    }),
+  });
+}
+
+function createConfig(): AgentSessionConfig {
+  return { provider: "omp", cwd: "/workspace/project" };
+}
+
+describe("OmpAgentClient startup cancellation", () => {
+  test("canceling OMP create startup closes its process adapter", async () => {
+    const child = createOmpProcess();
+    const client = createProcessClient(child);
+    const controller = new AbortController();
+    const stateRequest = waitForOmpCommand(child, "get_state");
+
+    const startup = client.createSession(createConfig(), undefined, { signal: controller.signal });
+    const rejection = expect(startup).rejects.toThrow("OMP create startup canceled");
+    await stateRequest;
+    controller.abort(new Error("OMP create startup canceled"));
+
+    await rejection;
+    expect(child.killedSignals).toEqual(["SIGTERM"]);
+  });
+
+  test("canceling OMP resume startup closes its process adapter", async () => {
+    const child = createOmpProcess();
+    const client = createProcessClient(child);
+    const controller = new AbortController();
+    const stateRequest = waitForOmpCommand(child, "get_state");
+
+    const startup = client.resumeSession(
+      {
+        provider: "omp",
+        sessionId: "omp-session-1",
+        nativeHandle: "/tmp/native-omp-session",
+        metadata: { cwd: "/workspace/project" },
+      },
+      {},
+      undefined,
+      { signal: controller.signal },
+    );
+    const rejection = expect(startup).rejects.toThrow("OMP resume startup canceled");
+    await stateRequest;
+    controller.abort(new Error("OMP resume startup canceled"));
+
+    await rejection;
+    expect(child.killedSignals).toEqual(["SIGTERM"]);
+  });
+});
 
 describe("OmpAgentClient catalog cancellation", () => {
   test("an already canceled OMP catalog never starts a runtime session", async () => {

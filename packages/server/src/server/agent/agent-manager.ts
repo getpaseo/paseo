@@ -1175,7 +1175,12 @@ export class AgentManager {
         providerHandleId: input.providerHandleId,
         cwd: input.cwd,
       },
-      { config: providerLaunchConfig, storedConfig, launchContext },
+      {
+        config: providerLaunchConfig,
+        storedConfig,
+        launchContext,
+        signal: this.registrationAbortController.signal,
+      },
     );
     let handedToRegistration = false;
     try {

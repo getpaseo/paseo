@@ -106,6 +106,7 @@ const OPENCODE_LEGACY_FULL_ACCESS_MODE_ID = "full-access";
 const OPENCODE_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
 const OPENCODE_PERSISTED_SESSION_LIMIT = 200;
 const OPENCODE_PENDING_ABORT_START_TIMEOUT_MS = 10_000;
+const OPENCODE_SESSION_CLOSE_ABORT_TIMEOUT_MS = 5_000;
 const OPENCODE_CHILD_SESSION_HYDRATION_LIMIT = 100;
 const OPENCODE_CHILD_SESSION_SERVER_REGISTRY_LIMIT = 500;
 const OPENCODE_PERMISSION_ACTION_ALLOW_ONCE = "allow_once";
@@ -529,12 +530,19 @@ async function abortOpenCodeSession(params: {
   logger: Logger;
 }): Promise<void> {
   const { client, sessionId, directory, logger } = params;
+  const timeoutController = new AbortController();
+  const timeout = setTimeout(() => {
+    timeoutController.abort(new Error("Timed out aborting OpenCode session during close"));
+  }, OPENCODE_SESSION_CLOSE_ABORT_TIMEOUT_MS);
 
   try {
-    const response = await client.session.abort({
-      sessionID: sessionId,
-      directory,
-    });
+    const response = await client.session.abort(
+      {
+        sessionID: sessionId,
+        directory,
+      },
+      { signal: timeoutController.signal },
+    );
     if (response.error && !isOpenCodeNotFoundError(response.error)) {
       logger.warn(
         {
@@ -552,6 +560,8 @@ async function abortOpenCodeSession(params: {
       },
       "Failed to abort OpenCode session during close",
     );
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -1167,11 +1177,15 @@ function findOpenCodeCompactionPart(
 async function readOpenCodeSessionMessagesFromSdk(
   client: Pick<OpencodeClient, "session">,
   session: OpenCodePersistedSession,
+  signal?: AbortSignal,
 ): Promise<OpenCodeSessionMessage[]> {
-  const response = await client.session.messages({
-    sessionID: session.id,
-    directory: session.directory,
-  });
+  const response = await client.session.messages(
+    {
+      sessionID: session.id,
+      directory: session.directory,
+    },
+    { signal },
+  );
 
   if (response.error || !response.data) {
     return [];
@@ -1601,23 +1615,32 @@ export class OpenCodeAgentClient implements AgentClient {
   }
 
   async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
-    const acquisition = await this.getServerManager().acquireCurrent();
-    const { url } = acquisition.server;
-    const client = this.createOpenCodeClient({
-      baseUrl: url,
-      directory: input.cwd,
-    });
+    const acquisition = await this.getServerManager().acquireCurrent(context.signal);
 
     try {
-      const sessionResponse = await client.session.get({
-        sessionID: input.providerHandleId,
+      const { url } = acquisition.server;
+      const client = this.createOpenCodeClient({
+        baseUrl: url,
         directory: input.cwd,
       });
+      const sessionResponse = await awaitOpenCodeStartupWithAbort(
+        client.session.get(
+          {
+            sessionID: input.providerHandleId,
+            directory: input.cwd,
+          },
+          { signal: context.signal },
+        ),
+        context.signal,
+      );
       if (sessionResponse.error || !sessionResponse.data) {
         throw new Error(`Failed to load OpenCode session ${input.providerHandleId}`);
       }
       const session = sessionResponse.data;
-      const messages = await readOpenCodeSessionMessagesFromSdk(client, session);
+      const messages = await awaitOpenCodeStartupWithAbort(
+        readOpenCodeSessionMessagesFromSdk(client, session, context.signal),
+        context.signal,
+      );
       const modeId = resolveOpenCodePersistedSessionModeId(session, messages);
       const model = resolveOpenCodePersistedSessionModel(session, messages);
       return await importSessionFromPersistence({
@@ -4224,15 +4247,27 @@ class OpenCodeAgentSession implements AgentSession {
     );
   }
 
-  async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-    const sessionResponse = await this.client.session.get({
-      sessionID: this.sessionId,
-      directory: this.config.cwd,
-    });
-    const response = await this.client.session.messages({
-      sessionID: this.sessionId,
-      directory: this.config.cwd,
-    });
+  async *streamHistory(signal?: AbortSignal): AsyncGenerator<AgentStreamEvent> {
+    const sessionResponse = await awaitOpenCodeStartupWithAbort(
+      this.client.session.get(
+        {
+          sessionID: this.sessionId,
+          directory: this.config.cwd,
+        },
+        { signal },
+      ),
+      signal,
+    );
+    const response = await awaitOpenCodeStartupWithAbort(
+      this.client.session.messages(
+        {
+          sessionID: this.sessionId,
+          directory: this.config.cwd,
+        },
+        { signal },
+      ),
+      signal,
+    );
 
     if (response.error || !response.data) {
       return;

@@ -2916,10 +2916,13 @@ const CodexNotificationSchema = z.union([
 async function readCodexConfiguredDefaults(
   client: CodexAppServerClient,
   logger: Logger,
+  signal?: AbortSignal,
 ): Promise<CodexConfiguredDefaults> {
   let savedConfigDefaults: CodexConfiguredDefaults = {};
   try {
-    const response = toObjectRecord(await client.request("getUserSavedConfig", {}));
+    const response = toObjectRecord(
+      await awaitCodexStartupWithAbort(client.request("getUserSavedConfig", {}), signal),
+    );
     const config = toObjectRecord(response?.config);
     const modelValue = typeof config?.model === "string" ? config.model : undefined;
     const thinkingOptionValue =
@@ -2929,6 +2932,7 @@ async function readCodexConfiguredDefaults(
       thinkingOptionId: normalizeCodexThinkingOptionId(thinkingOptionValue),
     };
   } catch (error) {
+    signal?.throwIfAborted();
     logger.debug({ error }, "Failed to read Codex saved config defaults");
   }
 
@@ -2938,7 +2942,9 @@ async function readCodexConfiguredDefaults(
 
   let configReadDefaults: CodexConfiguredDefaults = {};
   try {
-    const response = toObjectRecord(await client.request("config/read", {}));
+    const response = toObjectRecord(
+      await awaitCodexStartupWithAbort(client.request("config/read", {}), signal),
+    );
     const config = toObjectRecord(response?.config);
     const modelValue = typeof config?.model === "string" ? config.model : undefined;
     const thinkingOptionValue =
@@ -2948,6 +2954,7 @@ async function readCodexConfiguredDefaults(
       thinkingOptionId: normalizeCodexThinkingOptionId(thinkingOptionValue),
     };
   } catch (error) {
+    signal?.throwIfAborted();
     logger.debug({ error }, "Failed to read Codex config defaults");
   }
 
@@ -6264,6 +6271,8 @@ export class CodexAppServerAgentClient implements AgentClient {
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
   private goalsEnabledPromise: Promise<boolean> | null = null;
   private autoReviewEnabledPromise: Promise<boolean> | null = null;
+  private readonly activeCatalogOperations = new Set<Promise<ProviderCatalog>>();
+  private readonly shutdownController = new AbortController();
 
   constructor(
     private readonly logger: Logger,
@@ -6306,36 +6315,54 @@ export class CodexAppServerAgentClient implements AgentClient {
     return this.goalsEnabledPromise;
   }
 
-  private resolveAutoReviewEnabled(): Promise<boolean> {
+  private async probeAutoReviewEnabled(signal?: AbortSignal): Promise<boolean> {
+    try {
+      signal?.throwIfAborted();
+      const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
+      signal?.throwIfAborted();
+      const versionOutput = await resolveBinaryVersion(launchPrefix.command, signal);
+      signal?.throwIfAborted();
+      const enabled = codexVersionAtLeast(versionOutput, CODEX_AUTO_REVIEW_MIN_VERSION);
+      this.logger.trace(
+        {
+          provider: CODEX_PROVIDER,
+          versionOutput,
+          enabled,
+        },
+        "provider.codex.config.auto_review_resolved",
+      );
+      return enabled;
+    } catch (error) {
+      if (signal?.aborted) {
+        throw signal.reason;
+      }
+      this.logger.warn({ err: error }, "Failed to probe codex version for auto-review gate");
+      return false;
+    }
+  }
+
+  private resolveAutoReviewEnabled(signal?: AbortSignal): Promise<boolean> {
+    if (signal) {
+      return this.probeAutoReviewEnabled(signal);
+    }
     if (!this.autoReviewEnabledPromise) {
-      this.autoReviewEnabledPromise = (async () => {
-        try {
-          const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
-          const versionOutput = await resolveBinaryVersion(launchPrefix.command);
-          const enabled = codexVersionAtLeast(versionOutput, CODEX_AUTO_REVIEW_MIN_VERSION);
-          this.logger.trace(
-            {
-              provider: CODEX_PROVIDER,
-              versionOutput,
-              enabled,
-            },
-            "provider.codex.config.auto_review_resolved",
-          );
-          return enabled;
-        } catch (error) {
-          this.logger.warn({ err: error }, "Failed to probe codex version for auto-review gate");
-          return false;
-        }
-      })();
+      this.autoReviewEnabledPromise = this.probeAutoReviewEnabled();
     }
     return this.autoReviewEnabledPromise;
+  }
+
+  private resolveLaunchPrefix() {
+    return resolveCodexLaunchPrefix(this.runtimeSettings);
   }
 
   private async spawnAppServer(
     launchEnv?: Record<string, string>,
     options?: { goalsEnabled?: boolean; agentId?: string },
+    signal?: AbortSignal,
   ): Promise<ChildProcessWithoutNullStreams> {
-    const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
+    signal?.throwIfAborted();
+    const launchPrefix = await this.resolveLaunchPrefix();
+    signal?.throwIfAborted();
     const args = [...launchPrefix.args, "app-server"];
     if (options?.goalsEnabled) {
       args.push("--enable", "goals");
@@ -6482,53 +6509,112 @@ export class CodexAppServerAgentClient implements AgentClient {
     });
   }
 
-  async fetchCatalog(_options: FetchCatalogOptions): Promise<ProviderCatalog> {
-    const [models, autoReviewEnabled] = await Promise.all([
-      this.fetchModelsFromAppServer(),
-      this.resolveAutoReviewEnabled(),
+  async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
+    const operation = this.loadCatalog(options);
+    this.activeCatalogOperations.add(operation);
+    try {
+      return await operation;
+    } finally {
+      this.activeCatalogOperations.delete(operation);
+    }
+  }
+
+  private async loadCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
+    const operationController = new AbortController();
+    const signal = AbortSignal.any([
+      ...(options.signal ? [options.signal] : []),
+      this.shutdownController.signal,
+      operationController.signal,
     ]);
-    return {
-      models,
-      defaultModeId: autoReviewEnabled ? "auto-review" : DEFAULT_CODEX_MODE_ID,
-      modes: autoReviewEnabled
-        ? CODEX_MODES
-        : CODEX_MODES.filter((mode) => mode.id !== "auto-review"),
-    };
+    try {
+      signal.throwIfAborted();
+      const [models, autoReviewEnabled] = await Promise.all([
+        this.fetchModelsFromAppServer(signal),
+        this.resolveAutoReviewEnabled(signal),
+      ]);
+      signal.throwIfAborted();
+      return {
+        models,
+        defaultModeId: autoReviewEnabled ? "auto-review" : DEFAULT_CODEX_MODE_ID,
+        modes: autoReviewEnabled
+          ? CODEX_MODES
+          : CODEX_MODES.filter((mode) => mode.id !== "auto-review"),
+      };
+    } finally {
+      operationController.abort(new Error("Codex catalog operation finished"));
+    }
   }
 
   async resolveDefaultModeId(): Promise<string> {
     return (await this.resolveAutoReviewEnabled()) ? "auto-review" : DEFAULT_CODEX_MODE_ID;
   }
 
-  private async fetchModelsFromAppServer(): Promise<AgentModelDefinition[]> {
+  private async fetchModelsFromAppServer(signal?: AbortSignal): Promise<AgentModelDefinition[]> {
     // Codex model/list is global to the app server in this flow; cwd/force are intentionally ignored.
-    const child = await this.spawnAppServer();
+    signal?.throwIfAborted();
+    const childPromise = this.spawnAppServer(undefined, undefined, signal);
+    const child = await awaitCodexStartupWithAbort(childPromise, signal);
     const client = new CodexAppServerClient(child, this.logger);
+    let models: AgentModelDefinition[] = [];
+    let operationError: unknown;
+    let operationFailed = false;
 
     try {
-      await client.request("initialize", buildCodexAppServerInitializeParams());
+      await awaitCodexStartupWithAbort(
+        client.request("initialize", buildCodexAppServerInitializeParams()),
+        signal,
+      );
       client.notify("initialized", {});
 
-      const rawResponse = await client.request("model/list", {});
+      const rawResponse = await awaitCodexStartupWithAbort(
+        client.request("model/list", {}),
+        signal,
+      );
       const parsedResponse = CodexModelListResponseSchema.safeParse(rawResponse);
-      const models = parsedResponse.success ? (parsedResponse.data.data ?? []) : [];
-      const configuredDefaults = await readCodexConfiguredDefaults(client, this.logger);
+      const codexModels = parsedResponse.success ? (parsedResponse.data.data ?? []) : [];
+      const configuredDefaults = await readCodexConfiguredDefaults(client, this.logger, signal);
       const configuredDefaultModelId = configuredDefaults.model;
       const configuredDefaultThinkingOptionId = configuredDefaults.thinkingOptionId;
       const hasConfiguredDefaultModel =
         typeof configuredDefaultModelId === "string"
-          ? models.some((model) => model?.id === configuredDefaultModelId)
+          ? codexModels.some((model) => model?.id === configuredDefaultModelId)
           : false;
-      return models.map((model) =>
+      models = codexModels.map((model) =>
         buildCodexModelDefinition(model, {
           configuredDefaultModelId,
           configuredDefaultThinkingOptionId,
           hasConfiguredDefaultModel,
         }),
       );
-    } finally {
-      await client.dispose();
+    } catch (error) {
+      operationFailed = true;
+      operationError = signal?.aborted ? signal.reason : error;
     }
+
+    try {
+      await client.dispose();
+    } catch (disposeError) {
+      if (!operationFailed && !signal?.aborted) {
+        throw disposeError;
+      }
+      this.logger.warn(
+        { err: disposeError, operationError },
+        "Failed to dispose Codex catalog app-server after operation failure",
+      );
+    }
+
+    signal?.throwIfAborted();
+    if (operationFailed) {
+      throw operationError;
+    }
+    return models;
+  }
+
+  async shutdown(): Promise<void> {
+    if (!this.shutdownController.signal.aborted) {
+      this.shutdownController.abort(new Error("Codex app-server client is shutting down"));
+    }
+    await Promise.allSettled(Array.from(this.activeCatalogOperations));
   }
 
   async archiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {

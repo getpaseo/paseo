@@ -32,16 +32,32 @@ export async function importSessionFromPersistence(input: {
   } as AgentSessionConfig;
   const persistence =
     input.persistence ?? buildImportPersistenceHandle(input.provider, input.request, storedConfig);
-  const session = await input.resumeSession(persistence, config, input.context.launchContext);
-  const history = await collectImportedHistory(session.streamHistory());
+  input.context.signal?.throwIfAborted();
+  const session = await input.resumeSession(persistence, config, input.context.launchContext, {
+    signal: input.context.signal,
+  });
 
-  return {
-    session,
-    config: storedConfig,
-    persistence,
-    timeline: history.timeline,
-    providerSubagentEvents: history.providerSubagentEvents,
-  };
+  try {
+    const history = await collectImportedHistory(
+      session.streamHistory(input.context.signal),
+      input.context.signal,
+    );
+
+    return {
+      session,
+      config: storedConfig,
+      persistence,
+      timeline: history.timeline,
+      providerSubagentEvents: history.providerSubagentEvents,
+    };
+  } catch (error) {
+    try {
+      await session.close();
+    } catch {
+      // Preserve the import failure that caused this unregistered session to be closed.
+    }
+    throw error;
+  }
 }
 
 function buildImportPersistenceHandle(
@@ -61,13 +77,23 @@ function buildImportPersistenceHandle(
   };
 }
 
-async function collectImportedHistory(events: AsyncGenerator<AgentStreamEvent>): Promise<{
+async function collectImportedHistory(
+  events: AsyncGenerator<AgentStreamEvent>,
+  signal?: AbortSignal,
+): Promise<{
   timeline: ImportedTimelineEntry[];
   providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[];
 }> {
   const timeline: ImportedTimelineEntry[] = [];
   const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
-  for await (const event of events) {
+  const iterator = events[Symbol.asyncIterator]();
+  while (true) {
+    signal?.throwIfAborted();
+    const result = await waitForImportOperationOrAbort(iterator.next(), signal);
+    if (result.done) {
+      break;
+    }
+    const event = result.value;
     if (event.type === "provider_subagent") {
       providerSubagentEvents.push(event);
       continue;
@@ -80,5 +106,30 @@ async function collectImportedHistory(events: AsyncGenerator<AgentStreamEvent>):
       ...(event.timestamp ? { timestamp: event.timestamp } : {}),
     });
   }
+  signal?.throwIfAborted();
   return { timeline, providerSubagentEvents };
+}
+
+async function waitForImportOperationOrAbort<T>(
+  operation: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (!signal) {
+    return await operation;
+  }
+  signal.throwIfAborted();
+  return await new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    signal.addEventListener("abort", abort, { once: true });
+    void operation.then(
+      (value) => {
+        signal.removeEventListener("abort", abort);
+        return resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", abort);
+        return reject(error);
+      },
+    );
+  });
 }

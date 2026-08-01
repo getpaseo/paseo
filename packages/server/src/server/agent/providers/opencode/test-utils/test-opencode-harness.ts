@@ -95,12 +95,15 @@ export class TestOpenCodeClient {
     questionReject: [] as unknown[],
     questionReply: [] as unknown[],
     sessionAbort: [] as unknown[],
+    sessionAbortOptions: [] as unknown[],
     sessionCommand: [] as unknown[],
     sessionCreate: [] as unknown[],
     sessionDelete: [] as unknown[],
     sessionChildren: [] as unknown[],
     sessionGet: [] as unknown[],
+    sessionGetOptions: [] as unknown[],
     sessionMessages: [] as unknown[],
+    sessionMessagesOptions: [] as unknown[],
     sessionPromptAsync: [] as unknown[],
     sessionStatus: [] as unknown[],
     sessionSummarize: [] as unknown[],
@@ -123,7 +126,9 @@ export class TestOpenCodeClient {
   questionRejectResponse: OpenCodeResponse = {};
   questionReplyResponse: OpenCodeResponse = {};
   sessionAbortResponse: OpenCodeResponse = {};
-  sessionAbortImplementation: ((parameters: unknown) => Promise<OpenCodeResponse>) | null = null;
+  sessionAbortImplementation:
+    | ((parameters: unknown, options?: unknown) => Promise<OpenCodeResponse>)
+    | null = null;
   sessionCommandError: unknown = null;
   sessionCommandEvents: unknown[] = [idleEvent()];
   sessionCommandResponse: OpenCodeResponse = {};
@@ -136,7 +141,13 @@ export class TestOpenCodeClient {
   sessionGetResponse: OpenCodeResponse = {
     data: { id: "session-1", directory: "/workspace/repo", title: null },
   };
+  sessionGetImplementation:
+    | ((parameters: unknown, options?: unknown) => Promise<OpenCodeResponse>)
+    | null = null;
   sessionMessagesResponse: OpenCodeResponse = { data: [] };
+  sessionMessagesImplementation:
+    | ((parameters: unknown, options?: unknown) => Promise<OpenCodeResponse>)
+    | null = null;
   sessionPromptAsyncEvents: unknown[] = [idleEvent()];
   sessionPromptAsyncResponse: OpenCodeResponse = {};
   sessionStatusResponse: OpenCodeResponse = { data: {} };
@@ -233,10 +244,11 @@ export class TestOpenCodeClient {
         },
       },
       session: {
-        abort: async (parameters: unknown) => {
+        abort: async (parameters: unknown, options?: unknown) => {
           this.calls.sessionAbort.push(parameters);
+          this.calls.sessionAbortOptions.push(options);
           return this.sessionAbortImplementation
-            ? await this.sessionAbortImplementation(parameters)
+            ? await this.sessionAbortImplementation(parameters, options)
             : this.sessionAbortResponse;
         },
         command: async (parameters: unknown) => {
@@ -268,13 +280,19 @@ export class TestOpenCodeClient {
           }
           return this.sessionChildrenResponses.shift() ?? { data: [] };
         },
-        get: async (parameters: unknown) => {
+        get: async (parameters: unknown, options?: unknown) => {
           this.calls.sessionGet.push(parameters);
-          return this.sessionGetResponse;
+          this.calls.sessionGetOptions.push(options);
+          return this.sessionGetImplementation
+            ? await this.sessionGetImplementation(parameters, options)
+            : this.sessionGetResponse;
         },
-        messages: async (parameters: unknown) => {
+        messages: async (parameters: unknown, options?: unknown) => {
           this.calls.sessionMessages.push(parameters);
-          return this.sessionMessagesResponse;
+          this.calls.sessionMessagesOptions.push(options);
+          return this.sessionMessagesImplementation
+            ? await this.sessionMessagesImplementation(parameters, options)
+            : this.sessionMessagesResponse;
         },
         promptAsync: async (parameters: unknown) => {
           this.calls.sessionPromptAsync.push(parameters);

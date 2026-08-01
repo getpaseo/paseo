@@ -535,6 +535,8 @@ export interface ImportProviderSessionContext {
   config: AgentSessionConfig;
   storedConfig: AgentSessionConfig;
   launchContext?: AgentLaunchContext;
+  /** Cooperative daemon shutdown for provider import. */
+  signal?: AbortSignal;
 }
 
 export interface ImportedTimelineEntry {
@@ -628,7 +630,7 @@ export interface AgentSession {
   run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
   startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
   subscribe(callback: (event: AgentStreamEvent) => void): () => void;
-  streamHistory(): AsyncGenerator<AgentStreamEvent>;
+  streamHistory(signal?: AbortSignal): AsyncGenerator<AgentStreamEvent>;
   getRuntimeInfo(): Promise<AgentRuntimeInfo>;
   getAvailableModes(): Promise<AgentMode[]>;
   getCurrentMode(): Promise<string | null>;

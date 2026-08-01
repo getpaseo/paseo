@@ -1,3 +1,5 @@
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { EventEmitter } from "node:events";
 import {
   closeSync,
   existsSync,
@@ -11,6 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import pino from "pino";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
@@ -18,13 +21,14 @@ import { describe, expect, onTestFinished, test, vi } from "vitest";
 
 import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
 import { PiRpcAgentClient, PiRpcAgentSession, transformPiModels } from "./agent.js";
+import { PiCliRuntime } from "./cli-runtime.js";
 import { FakePi } from "./test-utils/fake-pi.js";
 import type { PiRuntime, PiRuntimeSession } from "./runtime.js";
 
 const ONE_BY_ONE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
 
-function createClient(pi = new FakePi()): PiRpcAgentClient {
+function createClient(pi: PiRuntime = new FakePi()): PiRpcAgentClient {
   return new PiRpcAgentClient({
     logger: pino({ level: "silent" }),
     runtime: pi,
@@ -44,6 +48,59 @@ function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSession
     provider: "pi",
     cwd: "/tmp/paseo-pi-rpc-test",
     ...overrides,
+  };
+}
+
+type PiProcess = ChildProcessWithoutNullStreams & {
+  stdin: PassThrough;
+  stdout: PassThrough;
+  stderr: PassThrough;
+  killedSignals: Array<NodeJS.Signals | number | undefined>;
+};
+
+function createPiProcess(): PiProcess {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    exitCode: null,
+    signalCode: null,
+    killedSignals: [],
+  }) as PiProcess;
+  child.kill = ((signal?: NodeJS.Signals | number) => {
+    child.killedSignals.push(signal);
+    queueMicrotask(() => child.emit("exit", null, signal ?? null));
+    return true;
+  }) as ChildProcessWithoutNullStreams["kill"];
+  return child;
+}
+
+function waitForPiCommand(child: PiProcess, type: string): Promise<void> {
+  return new Promise((resolve) => {
+    let buffer = "";
+    child.stdin.on("data", (chunk) => {
+      buffer += chunk.toString();
+      for (;;) {
+        const newlineIndex = buffer.indexOf("\n");
+        if (newlineIndex === -1) return;
+        const command = JSON.parse(buffer.slice(0, newlineIndex)) as { type?: string };
+        buffer = buffer.slice(newlineIndex + 1);
+        if (command.type === type) resolve();
+      }
+    });
+  });
+}
+
+function createProcessClient(child: PiProcess, spawnProcess = vi.fn(() => child)) {
+  return {
+    client: createClient(
+      new PiCliRuntime({
+        logger: pino({ level: "silent" }),
+        command: ["pi"],
+        spawnProcess,
+      }),
+    ),
+    spawnProcess,
   };
 }
 
@@ -138,6 +195,70 @@ test("keeps normal Pi agent sessions persisted", async () => {
   expect(pi.recordedLaunches[0]?.argv).not.toContain("--no-session");
 
   await session.close();
+});
+
+test("canceling Pi create startup closes its process adapter", async () => {
+  const child = createPiProcess();
+  const { client } = createProcessClient(child);
+  const controller = new AbortController();
+  const stateRequest = waitForPiCommand(child, "get_state");
+
+  const startup = client.createSession(createConfig(), undefined, { signal: controller.signal });
+  const rejection = expect(startup).rejects.toThrow("Pi create startup canceled");
+  await stateRequest;
+  controller.abort(new Error("Pi create startup canceled"));
+
+  await rejection;
+  expect(child.killedSignals).toEqual(["SIGTERM"]);
+});
+
+test("canceling Pi resume startup closes its process adapter", async () => {
+  const child = createPiProcess();
+  const { client } = createProcessClient(child);
+  const controller = new AbortController();
+  const stateRequest = waitForPiCommand(child, "get_state");
+
+  const startup = client.resumeSession(
+    {
+      provider: "pi",
+      sessionId: "pi-session-1",
+      nativeHandle: "/tmp/native-pi-session",
+      metadata: { cwd: "/workspace/project" },
+    },
+    {},
+    undefined,
+    { signal: controller.signal },
+  );
+  const rejection = expect(startup).rejects.toThrow("Pi resume startup canceled");
+  await stateRequest;
+  controller.abort(new Error("Pi resume startup canceled"));
+
+  await rejection;
+  expect(child.killedSignals).toEqual(["SIGTERM"]);
+});
+
+test("canceling Pi MCP detection stops startup instead of treating the adapter as absent", async () => {
+  const child = createPiProcess();
+  const { client, spawnProcess } = createProcessClient(child);
+  const controller = new AbortController();
+  const commandsRequest = waitForPiCommand(child, "get_commands");
+
+  const startup = client.createSession(
+    createConfig({
+      mcpServers: {
+        paseo: { type: "http", url: "http://127.0.0.1:6767/mcp/agents" },
+      },
+    }),
+    undefined,
+    { signal: controller.signal },
+  );
+  const rejection = expect(startup).rejects.toThrow("Pi MCP detection canceled");
+  await commandsRequest;
+  controller.abort(new Error("Pi MCP detection canceled"));
+
+  await rejection;
+  expect(spawnProcess).toHaveBeenCalledTimes(1);
+  expect(child.killedSignals).toEqual(["SIGTERM"]);
 });
 
 class SessionEvents {

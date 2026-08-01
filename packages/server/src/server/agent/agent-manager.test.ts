@@ -251,6 +251,31 @@ class HeldAgentCreationAndCloseClient extends TestAgentClient {
   }
 }
 
+class AbortAwareImportClient extends TestAgentClient {
+  private readonly importStarted = deferred<void>();
+  importSignal: AbortSignal | undefined;
+
+  async importSession(
+    _input: ImportProviderSessionInput,
+    context: ImportProviderSessionContext,
+  ): Promise<never> {
+    this.importSignal = context.signal;
+    this.importStarted.resolve();
+    const signal = context.signal;
+    if (!signal) {
+      throw new Error("Expected import cancellation signal");
+    }
+    signal.throwIfAborted();
+    return await new Promise<never>((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  }
+
+  waitForImportToStart(): Promise<void> {
+    return this.importStarted.promise;
+  }
+}
+
 class HeldReloadCloseClient extends TestAgentClient {
   private readonly closeStarted = deferred<void>();
   private readonly closeAllowed = deferred<void>();
@@ -799,6 +824,38 @@ test("flush waits for rejected session cleanup that starts after shutdown", asyn
   expect(await creation).toBeInstanceOf(AgentManagerShuttingDownError);
   await flushing;
   expect(manager.listAgents()).toEqual([]);
+});
+
+test("shutdown cancels an in-flight provider session import", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-shutdown-import-test-"));
+  const client = new AbortAwareImportClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000095",
+  });
+
+  try {
+    const importing = manager.importProviderSession({
+      provider: "codex",
+      providerHandleId: "thread-importing",
+      cwd: workdir,
+      workspaceId: "workspace-importing",
+    });
+    await client.waitForImportToStart();
+    expect(client.importSignal?.aborted).toBe(false);
+
+    manager.prepareForShutdown();
+
+    await expect(importing).rejects.toBe(client.importSignal?.reason);
+    await expect(manager.flushForShutdown()).resolves.toBeUndefined();
+    expect(client.importSignal?.aborted).toBe(true);
+    expect(manager.listAgents()).toEqual([]);
+  } finally {
+    manager.prepareForShutdown();
+    await manager.flushForShutdown().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("does not persist an initializing session after shutdown closes it", async () => {
