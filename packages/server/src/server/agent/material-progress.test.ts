@@ -10,7 +10,12 @@ import {
 } from "./material-progress.js";
 
 function row(seq: number, item: AgentTimelineItem): AgentTimelineRow {
-  return { seq, timestamp: `2026-08-01T00:00:${String(seq).padStart(2, "0")}.000Z`, item };
+  return {
+    seq,
+    timestamp: `2026-08-01T00:00:${String(seq).padStart(2, "0")}.000Z`,
+    item,
+    turnId: "turn-1",
+  };
 }
 
 function acceptedCheckpoint() {
@@ -151,6 +156,32 @@ describe("material progress checkpoint", () => {
         }),
       ),
     ).toMatchObject({ state: "progressing", lastMaterialProgressKind: "assistant_result" });
+  });
+
+  it("observes but does not count rows from a replaced turn", () => {
+    const staleWrite = {
+      ...row(1, {
+        type: "tool_call",
+        callId: "late-write",
+        name: "write",
+        status: "completed",
+        error: null,
+        detail: { type: "write", filePath: "stale.txt", content: "late" },
+      }),
+      turnId: "turn-replaced",
+    } satisfies AgentTimelineRow;
+    const afterStaleWrite = advanceMaterialProgressCheckpoint(
+      acceptedCheckpoint(),
+      staleWrite,
+      "epoch-1",
+    );
+
+    expect(materialProgressPayload(afterStaleWrite)).toMatchObject({
+      state: "none",
+      observedThroughSeq: 1,
+      lastMaterialProgressKind: null,
+      completedCompactionsSinceMaterialProgress: 0,
+    });
   });
 
   it("restores state only when the exact timeline epoch and cursor remain valid", () => {

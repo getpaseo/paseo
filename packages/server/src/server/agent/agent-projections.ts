@@ -88,6 +88,7 @@ export function toStoredAgentRecord(
     features: normalizeFeatures(agent.features),
     persistence,
     lastError: agent.lastError ?? undefined,
+    historyPrimed: agent.historyPrimed,
     materialProgress: {
       ...agent.materialProgress,
       seenMaterialProgressFingerprints: [

@@ -325,6 +325,10 @@ export function advanceMaterialProgressCheckpoint(
     });
   }
 
+  if (checkpoint.acceptedTurnId !== null && row.turnId !== checkpoint.acceptedTurnId) {
+    return { ...checkpoint, observedThroughSeq: row.seq };
+  }
+
   let next = withTrailingAssistant({ ...checkpoint, observedThroughSeq: row.seq }, row);
   if (checkpoint.continuationBoundarySeq === null || row.seq < checkpoint.continuationBoundarySeq) {
     return next;

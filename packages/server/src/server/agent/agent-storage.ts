@@ -61,6 +61,7 @@ const STORED_AGENT_SCHEMA = z.object({
   features: z.array(AgentFeatureSchema).optional(),
   persistence: PERSISTENCE_HANDLE_SCHEMA,
   lastError: z.string().nullable().optional(),
+  historyPrimed: z.boolean().optional(),
   materialProgress: MaterialProgressCheckpointSchema.optional(),
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),

@@ -264,7 +264,7 @@ export class InMemoryAgentTimelineStore {
   append(
     agentId: string,
     item: AgentTimelineItem,
-    options?: { timestamp?: string; providerMessageId?: string },
+    options?: { timestamp?: string; providerMessageId?: string; turnId?: string },
   ): AgentTimelineRow {
     const state = this.requireState(agentId);
     const row: AgentTimelineRow = {
@@ -272,6 +272,7 @@ export class InMemoryAgentTimelineStore {
       timestamp: options?.timestamp ?? new Date().toISOString(),
       item,
       ...(options?.providerMessageId ? { providerMessageId: options.providerMessageId } : {}),
+      ...(options?.turnId ? { turnId: options.turnId } : {}),
     };
     state.nextSeq += 1;
     state.rows.push(row);

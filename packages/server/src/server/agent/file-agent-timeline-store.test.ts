@@ -5,7 +5,9 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
+import { writeJsonFileAtomic } from "../atomic-file.js";
 import { FileAgentTimelineStore } from "./file-agent-timeline-store.js";
+import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
 
 const logger = createTestLogger();
 const temporaryDirectories: string[] = [];
@@ -62,6 +64,71 @@ describe("FileAgentTimelineStore", () => {
       epoch: "epoch-two",
       rows: [],
       window: { nextSeq: 1 },
+    });
+  });
+
+  it("atomically keeps prior truth after a failed complete replacement", async () => {
+    const directory = await createStoreDirectory();
+    const agentId = "agent-with-atomic-history";
+    let rejectWrites = false;
+    const epochs = ["prior-epoch", "failed-replacement-epoch", "replacement-epoch"];
+    const store = new FileAgentTimelineStore(directory, logger, {
+      epochFactory: () => epochs.shift() ?? "unexpected-epoch",
+      writeJson: async (filePath, value) => {
+        if (rejectWrites) {
+          throw new Error("injected pre-rename failure");
+        }
+        await writeJsonFileAtomic(filePath, value);
+      },
+    });
+    const priorRows: AgentTimelineRow[] = [
+      {
+        seq: 1,
+        timestamp: "2026-01-01T00:00:00.000Z",
+        item: { type: "user_message", text: "prior complete timeline" },
+        turnId: "turn-prior",
+      },
+    ];
+    const replacementRows: AgentTimelineRow[] = [
+      {
+        seq: 1,
+        timestamp: "2026-02-01T00:00:00.000Z",
+        item: { type: "user_message", text: "replacement row one" },
+        turnId: "turn-replacement",
+      },
+      {
+        seq: 2,
+        timestamp: "2026-02-01T00:00:01.000Z",
+        item: { type: "assistant_message", text: "replacement row two" },
+        turnId: "turn-replacement",
+      },
+    ];
+
+    await store.bulkInsert(agentId, priorRows);
+    const prior = await store.fetchCommitted(agentId, { limit: 0 });
+    expect(prior.epoch).toBe("prior-epoch");
+    rejectWrites = true;
+    await expect(store.replaceCommitted(agentId, replacementRows)).rejects.toThrow(
+      "injected pre-rename failure",
+    );
+
+    const restartedAfterFailure = new FileAgentTimelineStore(directory, logger);
+    await expect(restartedAfterFailure.getCommittedRows(agentId)).resolves.toEqual(priorRows);
+    await expect(
+      restartedAfterFailure.fetchCommitted(agentId, { limit: 0 }),
+    ).resolves.toMatchObject({ epoch: "prior-epoch" });
+
+    rejectWrites = false;
+    await expect(store.replaceCommitted(agentId, replacementRows)).resolves.toEqual({
+      epoch: "replacement-epoch",
+    });
+    const restartedAfterSuccess = new FileAgentTimelineStore(directory, logger);
+    await expect(
+      restartedAfterSuccess.fetchCommitted(agentId, { limit: 0 }),
+    ).resolves.toMatchObject({
+      epoch: "replacement-epoch",
+      window: { minSeq: 1, maxSeq: 2, nextSeq: 3 },
+      rows: replacementRows,
     });
   });
 });

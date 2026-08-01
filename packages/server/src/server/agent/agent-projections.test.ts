@@ -168,6 +168,7 @@ describe("toStoredAgentRecord", () => {
     expect(record.updatedAt).toBe(agent.updatedAt.toISOString());
     expect(record.lastActivityAt).toBe(agent.updatedAt.toISOString());
     expect(record.lastUserMessageAt).toBe(agent.lastUserMessageAt?.toISOString());
+    expect(record.historyPrimed).toBe(true);
     expect(record.persistence).toEqual({
       provider: "claude",
       sessionId: "persist-2",

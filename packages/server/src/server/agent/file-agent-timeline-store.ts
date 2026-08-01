@@ -10,6 +10,7 @@ import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import type {
   AgentTimelineFetchOptions,
   AgentTimelineFetchResult,
+  AgentTimelineReplacementResult,
   AgentTimelineRow,
   AgentTimelineStore,
 } from "./agent-timeline-store-types.js";
@@ -22,6 +23,7 @@ interface PersistedAgentTimeline {
 
 export interface FileAgentTimelineStoreOptions {
   epochFactory?: () => string;
+  writeJson?: (filePath: string, value: unknown) => Promise<void>;
 }
 
 function cloneRow(row: AgentTimelineRow): AgentTimelineRow {
@@ -82,6 +84,7 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
   private readonly operationTails = new Map<string, Promise<void>>();
   private readonly logger: Logger;
   private readonly epochFactory: () => string;
+  private readonly writeJson: (filePath: string, value: unknown) => Promise<void>;
 
   constructor(
     private readonly baseDir: string,
@@ -90,18 +93,20 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
   ) {
     this.logger = logger.child({ module: "agent", component: "file-agent-timeline-store" });
     this.epochFactory = options?.epochFactory ?? randomUUID;
+    this.writeJson = options?.writeJson ?? writeJsonFileAtomic;
   }
 
   async appendCommitted(
     agentId: string,
     item: AgentTimelineItem,
-    options?: { timestamp?: string },
+    options?: { timestamp?: string; turnId?: string },
   ): Promise<AgentTimelineRow> {
     return await this.queueMutation(agentId, (current) => {
       const row: AgentTimelineRow = {
         seq: (current.rows.at(-1)?.seq ?? 0) + 1,
         timestamp: options?.timestamp ?? new Date().toISOString(),
         item: structuredClone(item),
+        ...(options?.turnId ? { turnId: options.turnId } : {}),
       };
       return {
         next: { ...current, rows: [...current.rows, row] },
@@ -170,6 +175,20 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
     });
   }
 
+  async replaceCommitted(
+    agentId: string,
+    rows: readonly AgentTimelineRow[],
+  ): Promise<AgentTimelineReplacementResult> {
+    const replacement = normalizeRows(rows);
+    return await this.queueMutation(agentId, () => {
+      const epoch = this.epochFactory();
+      return {
+        next: { version: 1, epoch, rows: replacement },
+        result: { epoch },
+      };
+    });
+  }
+
   async bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void> {
     if (rows.length === 0) {
       return;
@@ -228,7 +247,7 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
       state = { version: 1, epoch: this.epochFactory(), rows: [] };
       // The empty incarnation is authoritative too. Persist it before exposing
       // its epoch so a restart before the first row cannot silently mint another.
-      await writeJsonFileAtomic(filePath, state);
+      await this.writeJson(filePath, state);
     }
     this.states.set(agentId, state);
     return state;
@@ -245,7 +264,7 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
     return await this.queueOperation(agentId, async () => {
       const current = await this.loadState(agentId);
       const { next, result } = await mutate(current);
-      await writeJsonFileAtomic(this.filePath(agentId), next);
+      await this.writeJson(this.filePath(agentId), next);
       this.states.set(agentId, next);
       return result;
     });
