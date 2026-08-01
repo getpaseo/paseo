@@ -2007,6 +2007,235 @@ test("late lifecycle from an invalidated pending start cannot settle its replace
   }
 });
 
+test("an active replacement terminal bypasses an older unresolved pending start", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-active-replacement-terminal-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const session = new InvalidatedGenerationSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10 },
+    idFactory: () => "00000000-0000-4000-8000-000000000315",
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const firstRun = manager.streamAgent(agent.id, "first pending turn");
+  const firstRunDrain = (async () => {
+    for await (const _event of firstRun) {
+      // The invalidated generation remains unresolved until cleanup.
+    }
+  })();
+  let replacementDrain: Promise<void> | null = null;
+
+  try {
+    await session.waitForFirstStart();
+    const replacement = await manager.replaceAgentRun(agent.id, "replacement turn");
+    replacementDrain = (async () => {
+      for await (const _event of replacement) {
+        // Drain through the replacement terminal.
+      }
+    })();
+    await session.waitForReplacementStart();
+    session.resolveReplacementStart();
+    await manager.waitForAgentRunStart(agent.id);
+
+    session.emitTurnCompleted("replacement-turn");
+    await vi.waitFor(() => {
+      expect(manager.getAgent(agent.id)).toMatchObject({
+        lifecycle: "idle",
+        activeForegroundTurnId: null,
+      });
+    });
+    await replacementDrain;
+  } finally {
+    session.resolveFirstStart();
+    session.resolveReplacementStart();
+    session.emitTurnCompleted("replacement-turn");
+    await firstRunDrain.catch(() => undefined);
+    await replacementDrain?.catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("cancelAgentRun clears an unidentified pending replacement", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cancel-pending-replacement-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const session = new InvalidatedGenerationSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10 },
+    idFactory: () => "00000000-0000-4000-8000-000000000316",
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const firstRun = manager.streamAgent(agent.id, "first pending turn");
+  const firstRunDrain = (async () => {
+    for await (const _event of firstRun) {
+      // The invalidated generation remains unresolved until cleanup.
+    }
+  })();
+  let replacementDrain: Promise<void> | null = null;
+
+  try {
+    await session.waitForFirstStart();
+    const replacement = await manager.replaceAgentRun(agent.id, "replacement turn");
+    replacementDrain = (async () => {
+      for await (const _event of replacement) {
+        // The replacement exits when its pending generation is invalidated.
+      }
+    })();
+    await session.waitForReplacementStart();
+
+    await expect(manager.cancelAgentRun(agent.id)).resolves.toEqual({ status: "settled" });
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+      pendingReplacement: false,
+    });
+  } finally {
+    session.resolveFirstStart();
+    session.resolveReplacementStart();
+    await firstRunDrain.catch(() => undefined);
+    await replacementDrain?.catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("cancelAgentRun clears a pending replacement that settled before start returned", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cancel-settled-replacement-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const session = new InvalidatedGenerationSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10 },
+    idFactory: () => "00000000-0000-4000-8000-000000000317",
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const firstRun = manager.streamAgent(agent.id, "first pending turn");
+  const firstRunDrain = (async () => {
+    for await (const _event of firstRun) {
+      // The invalidated generation exits when its delayed start response resolves.
+    }
+  })();
+  let replacementDrain: Promise<void> | null = null;
+
+  try {
+    await session.waitForFirstStart();
+    const replacement = await manager.replaceAgentRun(agent.id, "replacement turn");
+    replacementDrain = (async () => {
+      for await (const _event of replacement) {
+        // The settled replacement exits when its delayed start response resolves.
+      }
+    })();
+    await session.waitForReplacementStart();
+    session.resolveFirstStart();
+    await firstRunDrain;
+    session.emitTurnStarted("replacement-turn");
+    session.emitTurnCompleted("replacement-turn");
+
+    await expect(manager.cancelAgentRun(agent.id)).resolves.toEqual({ status: "settled" });
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+      pendingReplacement: false,
+    });
+  } finally {
+    session.resolveFirstStart();
+    session.resolveReplacementStart();
+    await firstRunDrain.catch(() => undefined);
+    await replacementDrain?.catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("replacing an unidentified pending replacement preserves the newer replacement", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-replace-pending-replacement-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const session = new InvalidatedGenerationSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10 },
+    idFactory: () => "00000000-0000-4000-8000-000000000318",
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const firstRun = manager.streamAgent(agent.id, "first pending turn");
+  const firstRunDrain = (async () => {
+    for await (const _event of firstRun) {
+      // The invalidated generation remains unresolved until cleanup.
+    }
+  })();
+  let replacementDrain: Promise<void> | null = null;
+
+  try {
+    await session.waitForFirstStart();
+    const replacement = await manager.replaceAgentRun(agent.id, "first replacement");
+    replacementDrain = (async () => {
+      for await (const _event of replacement) {
+        // The invalidated replacement remains unresolved until cleanup.
+      }
+    })();
+    await session.waitForReplacementStart();
+
+    await manager.replaceAgentRun(agent.id, "newer replacement");
+    expect(manager.hasInFlightRun(agent.id)).toBe(true);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "running",
+      activeForegroundTurnId: null,
+      pendingReplacement: true,
+    });
+  } finally {
+    await manager.cancelAgentRun(agent.id).catch(() => undefined);
+    session.resolveFirstStart();
+    session.resolveReplacementStart();
+    await firstRunDrain.catch(() => undefined);
+    await replacementDrain?.catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("reloadAgentSession does not restore a canceled pending start", async () => {
   const fixture = await createPendingStartFixture(
     "reload-pending-start",

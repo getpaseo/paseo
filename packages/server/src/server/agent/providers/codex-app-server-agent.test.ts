@@ -4294,6 +4294,58 @@ describe("Codex app-server provider", () => {
     expect(session.getPendingPermissions()).toEqual([]);
   });
 
+  test("keeps turn ownership when turn/started precedes turn/start rejection", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    let rejectTurnStart: ((error: Error) => void) | undefined;
+    let markTurnStartRequested: (() => void) | undefined;
+    const turnStartRequested = new Promise<void>((resolve) => {
+      markTurnStartRequested = resolve;
+    });
+    session.subscribe((event) => events.push(event));
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({
+      request: async (method) => {
+        if (method === "thread/loaded/list") return { data: ["test-thread"] };
+        if (method === "turn/start") {
+          markTurnStartRequested?.();
+          return await new Promise((_, reject) => {
+            rejectTurnStart = reject;
+          });
+        }
+        throw new Error(`Unexpected request: ${method}`);
+      },
+    });
+
+    const startTurn = session.startTurn("Keep working");
+    await turnStartRequested;
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "test-thread",
+      turn: { id: "native-turn-started-before-rejection" },
+    });
+    rejectTurnStart?.(new Error("Late turn/start rejection"));
+
+    await expect(startTurn).resolves.toEqual({ turnId: "codex-turn-0" });
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "test-thread",
+      turn: {
+        id: "native-turn-started-before-rejection",
+        status: "completed",
+        error: null,
+      },
+    });
+
+    expect(events.filter((event) => event.type.startsWith("turn_"))).toEqual([
+      { type: "turn_started", provider: "codex", turnId: "codex-turn-0" },
+      {
+        type: "turn_completed",
+        provider: "codex",
+        turnId: "codex-turn-0",
+        usage: undefined,
+      },
+    ]);
+  });
+
   test("emits imageView paths with spaces as valid assistant markdown images", () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];

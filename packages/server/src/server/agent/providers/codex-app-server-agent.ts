@@ -3931,6 +3931,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
 
     this.dismissPendingPlanApprovals("Dismissed by a new prompt");
+    let foregroundTurnId: string | null = null;
 
     try {
       await this.connect();
@@ -3951,6 +3952,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
       const turnStart = await this.buildTurnStartParams(effectivePrompt, options);
       const turnId = this.createTurnId();
+      foregroundTurnId = turnId;
       this.activeForegroundTurnId = turnId;
       this.activeClientMessageId = options?.clientMessageId ?? null;
       this.currentTurnId = null;
@@ -3977,6 +3979,16 @@ export class CodexAppServerAgentSession implements AgentSession {
       await this.client.request("turn/start", turnStart.params, TURN_START_TIMEOUT_MS);
       return { turnId };
     } catch (error) {
+      if (
+        foregroundTurnId &&
+        Array.from(this.managerTurnIdByNativeTurnId.values()).includes(foregroundTurnId)
+      ) {
+        this.logger.warn(
+          { err: error, ...this.traceContext() },
+          "Codex turn/start rejected after the turn started",
+        );
+        return { turnId: foregroundTurnId };
+      }
       this.pendingForegroundTurnIdentification?.resolve(null);
       this.pendingForegroundTurnIdentification = null;
       this.activeForegroundTurnId = null;

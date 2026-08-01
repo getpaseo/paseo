@@ -61,7 +61,11 @@ import {
   AgentStreamCoalescer,
 } from "./agent-stream-coalescer.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
-import { AgentRunState, type ForegroundTurnWaiter } from "./agent-run-state.js";
+import {
+  AgentRunState,
+  type ForegroundTurnWaiter,
+  type PendingForegroundRun,
+} from "./agent-run-state.js";
 import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
@@ -2050,7 +2054,7 @@ export class AgentManager {
     const isReplacement = agent.pendingReplacement;
     agent.lastError = undefined;
 
-    const pendingRun = this.runs.createPendingRun(agentId);
+    const pendingRun = this.runs.createPendingRun(agentId, isReplacement);
 
     const streamForwarder = async function* streamForwarder(this: AgentManager) {
       let turnId: string;
@@ -2422,6 +2426,13 @@ export class AgentManager {
   }
 
   async cancelAgentRun(agentId: string): Promise<AgentRunCancellationResult> {
+    return this.cancelAgentRunInternal(agentId, false);
+  }
+
+  private async cancelAgentRunInternal(
+    agentId: string,
+    preservePendingReplacement: boolean,
+  ): Promise<AgentRunCancellationResult> {
     const agent = this.requireSessionAgent(agentId);
     const run =
       this.runs.getRun(agentId) ??
@@ -2434,6 +2445,7 @@ export class AgentManager {
       run.settled &&
       this.runs.settleForegroundRun(agentId, run.token)
     ) {
+      this.clearCanceledReplacement(agent, run, preservePendingReplacement);
       agent.lastError = undefined;
       this.finalizeForegroundTurn(agent, run.turnId ?? run.observedTurnId ?? undefined);
       return { status: "settled" };
@@ -2447,6 +2459,7 @@ export class AgentManager {
       run.observedTurnId === null &&
       this.runs.invalidatePendingRun(agentId, run.token)
     ) {
+      this.clearCanceledReplacement(agent, run, preservePendingReplacement);
       agent.lastError = undefined;
       this.finalizeForegroundTurn(agent);
     }
@@ -2468,13 +2481,23 @@ export class AgentManager {
     return { status: "settled" };
   }
 
+  private clearCanceledReplacement(
+    agent: ActiveManagedAgent,
+    run: PendingForegroundRun,
+    preservePendingReplacement: boolean,
+  ): void {
+    if (run.replacement && !preservePendingReplacement) {
+      agent.pendingReplacement = false;
+    }
+  }
+
   private async cancelAgentRunBefore(
     agentId: string,
     action: "reload" | "replace" | "rewind",
   ): Promise<void> {
     const cancellationStartedAt = Date.now();
     const run = this.runs.getRun(agentId);
-    const result = await this.cancelAgentRun(agentId);
+    const result = await this.cancelAgentRunInternal(agentId, action === "replace");
     if (result.status === "refused") {
       throw new AgentRunCancellationError(agentId, action);
     }
@@ -2579,7 +2602,7 @@ export class AgentManager {
       await this.cancelAgentRunBefore(agentId, "rewind");
     }
 
-    const lock = this.runs.createPendingRun(agentId);
+    const lock = this.runs.createPendingRun(agentId, false);
     try {
       this.logger.info(
         { agentId, provider: agent.provider, messageId, mode },

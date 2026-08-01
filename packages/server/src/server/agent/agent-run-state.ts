@@ -13,6 +13,7 @@ export interface ForegroundTurnWaiter {
 export interface PendingForegroundRun {
   token: string;
   kind: "foreground";
+  replacement: boolean;
   stagedEvents: AgentStreamEvent[];
   observedTurnId: string | null;
   turnId: string | null;
@@ -47,8 +48,8 @@ export class AgentRunState {
   private readonly runs = new Map<string, TrackedAgentRun>();
   private readonly invalidatedPendingRuns = new Map<string, Map<string, InvalidatedPendingRun>>();
 
-  createPendingRun(agentId: string): PendingForegroundRun {
-    const pendingRun = createPendingForegroundRun();
+  createPendingRun(agentId: string, replacement: boolean): PendingForegroundRun {
+    const pendingRun = createPendingForegroundRun(replacement);
     this.runs.set(agentId, pendingRun);
     return pendingRun;
   }
@@ -80,19 +81,23 @@ export class AgentRunState {
       return true;
     }
 
+    const run = this.runs.get(agentId);
+    const eventTurnId = getAgentStreamEventTurnId(event);
+    if (run?.kind === "foreground" && run.started && eventTurnId === run.turnId) {
+      return false;
+    }
+
     const invalidatedRun = this.invalidatedPendingRuns.get(agentId)?.values().next().value;
     if (invalidatedRun && (event.type === "turn_started" || options.terminal)) {
       invalidatedRun.stagedLifecycleEvents.push(event);
       return true;
     }
 
-    const run = this.runs.get(agentId);
     if (run?.kind !== "foreground" || run.started) {
       return false;
     }
 
     run.stagedEvents.push(event);
-    const eventTurnId = getAgentStreamEventTurnId(event);
     if (event.type === "turn_started" && eventTurnId && run.observedTurnId === null) {
       run.observedTurnId = eventTurnId;
     } else if (options.terminal && eventTurnId === run.observedTurnId) {
@@ -345,10 +350,11 @@ export class ForegroundTurnStream {
   }
 }
 
-function createPendingForegroundRun(): PendingForegroundRun {
+function createPendingForegroundRun(replacement: boolean): PendingForegroundRun {
   return {
     ...createTrackedRunState(),
     kind: "foreground",
+    replacement,
     observedTurnId: null,
     turnId: null,
     started: false,
