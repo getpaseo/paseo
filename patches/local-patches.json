@@ -10,38 +10,43 @@
       },
       "candidate": {
         "branch": "review/v025-host-capacity-admission",
-        "commit": "18301dc0824f3e88d6bbfbf606f6ce42f47cb792"
+        "commit": "99cef055cba323ed5c1f05e8f14c11a0360174ef"
       },
       "sources": [
         "docs/data-model.md",
+        "packages/server/src/server/agent/agent-runtime-capacity.ts",
         "packages/server/src/server/agent/agent-manager.ts",
         "packages/server/src/server/agent/agent-sdk-types.ts",
         "packages/server/src/server/agent/provider-registry.ts",
         "packages/server/src/server/agent/providers/acp-agent.ts",
         "packages/server/src/server/agent/providers/opencode-agent.ts",
+        "packages/server/src/server/agent/providers/opencode/server-manager.ts",
         "packages/server/src/server/bootstrap.ts",
         "packages/server/src/server/config.ts",
         "packages/server/src/server/persisted-config.ts",
         "packages/website/public/schemas/paseo.config.v1.json"
       ],
       "tests": [
+        "packages/server/src/server/agent/agent-runtime-capacity.test.ts",
         "packages/server/src/server/agent/agent-loading.test.ts",
         "packages/server/src/server/agent/agent-manager.test.ts",
         "packages/server/src/server/agent/provider-registry.test.ts",
         "packages/server/src/server/agent/providers/acp-agent.test.ts",
         "packages/server/src/server/agent/providers/opencode-agent.test.ts",
+        "packages/server/src/server/agent/providers/opencode/server-manager.test.ts",
         "packages/server/src/server/agent/providers/opencode/test-utils/test-opencode-harness.ts",
         "packages/server/src/server/config.test.ts",
         "packages/server/src/server/persisted-config.test.ts"
       ],
       "testCases": [
         "simultaneous creates reserve capacity atomically before provider startup",
-        "fallback and direct runtime-producing draft discovery share atomic capacity admission",
-        "OpenCode command discovery is rejected before acquisition when capacity is full",
-        "concurrent OpenCode command discovery shares admission and releases capacity after cleanup",
-        "failed OpenCode server release keeps its command discovery runtime charged",
-        "wrapped provider clients preserve command and feature runtime lifecycle observers",
-        "failed draft session and ACP probe cleanup remain conservatively charged",
+        "fallback sessions and source-managed providers share one atomic host capacity controller without double charging",
+        "OpenCode catalog, import listing, draft commands, normal agent creation, and existing acquisitions converge through server-generation admission",
+        "concurrent OpenCode acquisitions charge one shared server generation once",
+        "failed OpenCode server termination retains both its managed-process record and runtime charge",
+        "wrapped provider clients preserve source capacity configuration",
+        "ACP catalog, import listing, feature probes, and normal sessions converge through one subprocess spawn boundary",
+        "failed draft-session and ACP subprocess cleanup remain conservatively charged",
         "live provider runtimes continue to consume capacity after entering an error state",
         "provider startup and registration failures release reserved capacity",
         "registration failures close and remove partially installed provider runtimes",
@@ -53,10 +58,10 @@
         "the generated public JSON schema accepts the positive runtime limit and rejects zero"
       ],
       "verification": {
-        "commit": "18301dc0824f3e88d6bbfbf606f6ce42f47cb792",
-        "completedAt": "2026-08-01T02:37:57Z",
+        "commit": "99cef055cba323ed5c1f05e8f14c11a0360174ef",
+        "completedAt": "2026-08-01T03:19:36Z",
         "commands": [
-          "PATH=/opt/homebrew/Cellar/node@24/24.18.1/bin:$PATH npx vitest run packages/server/src/server/agent/agent-manager.test.ts packages/server/src/server/agent/provider-registry.test.ts packages/server/src/server/agent/providers/acp-agent.test.ts packages/server/src/server/agent/providers/opencode-agent.test.ts packages/server/src/server/agent/agent-loading.test.ts packages/server/src/server/config.test.ts packages/server/src/server/persisted-config.test.ts --bail=1",
+          "PATH=/opt/homebrew/Cellar/node@24/24.18.1/bin:$PATH npx vitest run packages/server/src/server/agent/agent-runtime-capacity.test.ts packages/server/src/server/agent/providers/opencode/server-manager.test.ts packages/server/src/server/agent/providers/opencode-agent.test.ts packages/server/src/server/agent/providers/acp-agent.test.ts packages/server/src/server/agent/provider-registry.test.ts packages/server/src/server/agent/agent-manager.test.ts --bail=1",
           "npm run build:server",
           "npm run typecheck",
           "npm run lint",
@@ -66,7 +71,7 @@
           "jq empty patches/local-patches.json"
         ],
         "result": {
-          "focusedAndBroaderTests": "404 passed on Node 24.18.1",
+          "focusedAndBroaderTests": "358 passed on Node 24.18.1",
           "publicConfigSchema": "validated",
           "serverBuild": "passed",
           "workspaceTypechecks": "passed",
