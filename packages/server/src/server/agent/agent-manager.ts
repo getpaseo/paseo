@@ -2484,24 +2484,25 @@ export class AgentManager {
 
   async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
     const agent = this.requireSessionAgent(agentId);
+    const submittedRow = this.timelineStore
+      .getRows(agentId)
+      .find(
+        (row) =>
+          row.item.type === "user_message" &&
+          row.item.messageId === messageId &&
+          row.item.clientMessageId === messageId,
+      );
+    if (submittedRow && !submittedRow.providerMessageId) {
+      throw new Error("Cannot rewind before the provider acknowledges the submitted prompt");
+    }
+    const providerMessageId = submittedRow?.providerMessageId ?? messageId;
+
     if (this.hasInFlightRun(agentId)) {
       await this.cancelAgentRunBefore(agentId, "rewind");
     }
 
     const lock = this.runs.createPendingRun(agentId);
     try {
-      const submittedRow = this.timelineStore
-        .getRows(agentId)
-        .find(
-          (row) =>
-            row.item.type === "user_message" &&
-            row.item.messageId === messageId &&
-            row.item.clientMessageId === messageId,
-        );
-      if (submittedRow && !submittedRow.providerMessageId) {
-        throw new Error("Cannot rewind before the provider acknowledges the submitted prompt");
-      }
-      const providerMessageId = submittedRow?.providerMessageId ?? messageId;
       this.logger.info(
         { agentId, provider: agent.provider, messageId, mode },
         "agent.rewind.start",

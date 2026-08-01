@@ -8152,6 +8152,7 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-submitted-prompt-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
+  const allowProviderEcho = deferred<void>();
 
   class SubmittedUserMessageSession extends TestAgentSession {
     override readonly capabilities = {
@@ -8159,6 +8160,7 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
       supportsRewindFiles: true,
     };
     readonly rewindMessageIds: string[] = [];
+    interruptCount = 0;
 
     override async startTurn(
       prompt: AgentPromptInput,
@@ -8166,7 +8168,7 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
     ): Promise<{ turnId: string }> {
       const turnId = "turn-submitted-user-message";
       const text = typeof prompt === "string" ? prompt : "";
-      setTimeout(() => {
+      setTimeout(async () => {
         this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
         this.pushEvent({
           type: "timeline",
@@ -8174,6 +8176,7 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
           turnId,
           item: { type: "assistant_message", text: "output before provider echo" },
         });
+        await allowProviderEcho.promise;
         this.pushEvent({
           type: "timeline",
           provider: this.provider,
@@ -8188,6 +8191,15 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
         this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
       }, 0);
       return { turnId };
+    }
+
+    override async interrupt(): Promise<void> {
+      this.interruptCount += 1;
+      this.pushEvent({
+        type: "turn_canceled",
+        provider: this.provider,
+        turnId: "turn-submitted-user-message",
+      });
     }
 
     override async revertFiles({ messageId }: { messageId: string }): Promise<void> {
@@ -8238,7 +8250,18 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
       workspaceId: undefined,
     });
 
-    await manager.runAgent(snapshot.id, "hello from composer", { clientMessageId: "msg-client-1" });
+    const run = manager.runAgent(snapshot.id, "hello from composer", {
+      clientMessageId: "msg-client-1",
+    });
+    await manager.waitForAgentRunStart(snapshot.id);
+
+    await expect(manager.rewind(snapshot.id, "msg-client-1", "files")).rejects.toThrow(
+      "Cannot rewind before the provider acknowledges the submitted prompt",
+    );
+    expect(client.session?.interruptCount).toBe(0);
+
+    allowProviderEcho.resolve();
+    expect(await run).toMatchObject({ canceled: false });
 
     expect(streamEvents()).toEqual([
       { type: "turn_started" },
