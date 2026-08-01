@@ -30,6 +30,10 @@ import {
   mapTaskNotificationUserContentToToolCall,
 } from "./task-notification-tool-call.js";
 import {
+  extractBashBackgroundTaskCorrelation,
+  mapClaudeBackgroundSystemMessage,
+} from "./background-tasks.js";
+import {
   findClaudeModel,
   getClaudeModelsWithSettings,
   normalizeClaudeRuntimeModelId,
@@ -2197,6 +2201,55 @@ class ClaudeAgentSession implements AgentSession {
     };
   }
 
+  async stopBackgroundTask(taskId: string): Promise<void> {
+    const query = this.query;
+    if (!query || typeof query.stopTask !== "function") {
+      throw new Error("Background task stop is not available for this Claude session");
+    }
+    await query.stopTask(taskId);
+  }
+
+  async readBackgroundTaskOutput(input: {
+    outputFile: string;
+    cursor?: number;
+    maxBytes?: number;
+    live?: boolean;
+  }): Promise<{ text: string; nextCursor: number; eof: boolean; error: string | null }> {
+    const cursor = Math.max(0, input.cursor ?? 0);
+    const maxBytes = Math.min(Math.max(1, input.maxBytes ?? 64_000), 256_000);
+    const live = input.live !== false;
+    try {
+      const handle = await promises.open(input.outputFile, "r");
+      try {
+        const fileStat = await handle.stat();
+        if (cursor >= fileStat.size) {
+          return {
+            text: "",
+            nextCursor: fileStat.size,
+            eof: !live,
+            error: null,
+          };
+        }
+        const length = Math.min(maxBytes, fileStat.size - cursor);
+        const buffer = Buffer.alloc(length);
+        const { bytesRead } = await handle.read(buffer, 0, length, cursor);
+        const nextCursor = cursor + bytesRead;
+        const caughtUp = nextCursor >= fileStat.size;
+        return {
+          text: buffer.subarray(0, bytesRead).toString("utf8"),
+          nextCursor,
+          eof: !live && caughtUp,
+          error: null,
+        };
+      } finally {
+        await handle.close();
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { text: "", nextCursor: cursor, eof: !live, error: message };
+    }
+  }
+
   async interrupt(): Promise<void> {
     if (this.cancelCurrentTurn) {
       this.cancelCurrentTurn();
@@ -3853,11 +3906,33 @@ class ClaudeAgentSession implements AgentSession {
     }
     if (message.subtype === "task_notification") {
       this.appendTaskNotificationEvents(message, events);
+      this.appendBackgroundTaskSystemEvents(message, events);
       return;
     }
-    if (message.subtype === "task_progress") {
+    if (
+      message.subtype === "task_progress" ||
+      message.subtype === "task_started" ||
+      message.subtype === "task_updated" ||
+      message.subtype === "background_tasks_changed"
+    ) {
+      this.appendBackgroundTaskSystemEvents(message, events);
       return;
     }
+  }
+
+  private appendBackgroundTaskSystemEvents(
+    message: Extract<SDKMessage, { type: "system" }>,
+    events: AgentStreamEvent[],
+  ): void {
+    const event = mapClaudeBackgroundSystemMessage(message, new Date().toISOString());
+    if (!event) {
+      return;
+    }
+    events.push({
+      type: "background_tasks",
+      provider: "claude",
+      event,
+    });
   }
 
   private appendTaskNotificationEvents(
@@ -4601,30 +4676,61 @@ class ClaudeAgentSession implements AgentSession {
     // one as an assistant_message markdown image after the tool_call (matching how Codex emits).
     const { images, text } = splitClaudeToolResultImages(block.content);
     const output = this.buildToolOutput(text, block, entry);
+    this.pushToolResultCall({
+      block,
+      toolName,
+      callId,
+      input: entry?.input ?? null,
+      output: output ?? null,
+      text,
+      items,
+    });
+    this.emitBashBackgroundTaskCorrelation({
+      toolName,
+      toolInput: entry?.input ?? null,
+      toolOutput: output ?? block.content ?? null,
+    });
+    this.appendToolResultImages(images, items);
 
-    if (block.is_error) {
+    if (typeof block.tool_use_id === "string") {
+      this.toolUseCache.delete(block.tool_use_id);
+    }
+  }
+
+  private pushToolResultCall(input: {
+    block: ClaudeContentChunk;
+    toolName: string;
+    callId: string | null;
+    input: unknown;
+    output: AgentMetadata | undefined | null;
+    text: unknown;
+    items: AgentTimelineItem[];
+  }): void {
+    if (input.block.is_error) {
       this.pushToolCall(
         mapClaudeFailedToolCall({
-          name: toolName,
-          callId,
-          input: entry?.input ?? null,
-          output: output ?? null,
-          error: { ...block, content: text },
+          name: input.toolName,
+          callId: input.callId,
+          input: input.input,
+          output: input.output ?? null,
+          error: { ...input.block, content: input.text },
         }),
-        items,
+        input.items,
       );
-    } else {
-      this.pushToolCall(
-        mapClaudeCompletedToolCall({
-          name: toolName,
-          callId,
-          input: entry?.input ?? null,
-          output: output ?? null,
-        }),
-        items,
-      );
+      return;
     }
+    this.pushToolCall(
+      mapClaudeCompletedToolCall({
+        name: input.toolName,
+        callId: input.callId,
+        input: input.input,
+        output: input.output ?? null,
+      }),
+      input.items,
+    );
+  }
 
+  private appendToolResultImages(images: ProviderImageOutput[], items: AgentTimelineItem[]): void {
     for (const image of images) {
       const imageItem = renderProviderImageOutputAsAssistantMarkdown(image, {
         materialize: materializeProviderImage,
@@ -4633,10 +4739,28 @@ class ClaudeAgentSession implements AgentSession {
         items.push(imageItem);
       }
     }
+  }
 
-    if (typeof block.tool_use_id === "string") {
-      this.toolUseCache.delete(block.tool_use_id);
-    }
+  private emitBashBackgroundTaskCorrelation(input: {
+    toolName: string;
+    toolInput: unknown;
+    toolOutput: unknown;
+  }): void {
+    const correlation = extractBashBackgroundTaskCorrelation(input);
+    if (!correlation) return;
+    this.notifySubscribers({
+      type: "background_tasks",
+      provider: "claude",
+      event: {
+        kind: "enrich",
+        at: new Date().toISOString(),
+        taskId: correlation.taskId,
+        patch: {
+          command: correlation.command,
+          status: "running",
+        },
+      },
+    });
   }
 
   private buildToolOutput(
