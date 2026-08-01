@@ -42,6 +42,7 @@ import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
 import type { AgentTimelineRow, AgentTimelineStore } from "./agent-timeline-store-types.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
+import { FileAgentTimelineStore } from "./file-agent-timeline-store.js";
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -3362,6 +3363,95 @@ test("provider hydration awaits one atomic durable replacement before a restart 
     }
   } finally {
     durableStore.replacementGate?.resolve();
+    await firstManager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("file-backed assistant-only history returns one last message across force hydration and restart", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-assistant-only-history-"));
+  const agentId = "00000000-0000-4000-8000-000000000155";
+  const expectedMessage = "one durable assistant response";
+  let historyCalls = 0;
+
+  class AssistantOnlyHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      historyCalls += 1;
+      yield {
+        type: "timeline",
+        provider: "codex",
+        timestamp: "2026-02-01T00:00:00.000Z",
+        item: { type: "assistant_message", text: expectedMessage },
+      };
+    }
+  }
+
+  class AssistantOnlyHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new AssistantOnlyHistorySession(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new AssistantOnlyHistorySession({
+        provider: "codex",
+        cwd: config?.cwd ?? workdir,
+      });
+    }
+  }
+
+  const client = new AssistantOnlyHistoryClient();
+  const firstManager = new AgentManager({
+    clients: { codex: client },
+    durableTimelineStore: new FileAgentTimelineStore(join(workdir, "timelines"), logger),
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await firstManager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await firstManager.hydrateTimelineFromProvider(created.id, { force: true });
+    await expect(firstManager.getLastAssistantMessage(created.id)).resolves.toBe(expectedMessage);
+    await expect(firstManager.waitForAgentEvent(created.id)).resolves.toMatchObject({
+      lastMessage: expectedMessage,
+    });
+    await firstManager.closeAgent(agentId);
+
+    const restartedManager = new AgentManager({
+      clients: { codex: client },
+      durableTimelineStore: new FileAgentTimelineStore(join(workdir, "timelines"), logger),
+      logger,
+      idFactory: () => agentId,
+    });
+    try {
+      const restarted = await restartedManager.resumeAgentFromPersistence(
+        { provider: "codex", sessionId: "assistant-only-session", metadata: { cwd: workdir } },
+        undefined,
+        agentId,
+        { workspaceId: undefined },
+      );
+      await restartedManager.hydrateTimelineFromProvider(restarted.id);
+      expect(historyCalls).toBe(1);
+      await expect(restartedManager.getLastAssistantMessage(restarted.id)).resolves.toBe(
+        expectedMessage,
+      );
+      await expect(restartedManager.waitForAgentEvent(restarted.id)).resolves.toMatchObject({
+        lastMessage: expectedMessage,
+      });
+
+      await restartedManager.hydrateTimelineFromProvider(restarted.id, { force: true });
+      expect(historyCalls).toBe(2);
+      await expect(restartedManager.getLastAssistantMessage(restarted.id)).resolves.toBe(
+        expectedMessage,
+      );
+    } finally {
+      await restartedManager.closeAgent(agentId).catch(() => undefined);
+    }
+  } finally {
     await firstManager.closeAgent(agentId).catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
   }
