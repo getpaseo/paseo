@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import parcelWatcher from "@parcel/watcher";
 import { LRUCache } from "lru-cache";
 import type pino from "pino";
@@ -348,6 +348,8 @@ interface WorkingTreeWatchTarget {
   cwd: string;
   repoRoot: string | null;
   subscription: parcelWatcher.AsyncSubscription | null;
+  ignoredDirectories: Set<string>;
+  ignoredDirectoriesRefreshPromise: Promise<void> | null;
   aliases: Set<string>;
   workspaceKeys: Set<string>;
   fallbackPollTimer: NodeJS.Timeout | null;
@@ -1101,10 +1103,13 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     cwd: string,
     repoRoot: string | null,
   ): Promise<WorkingTreeWatchTarget> {
+    const ignoredDirectories = repoRoot ? await this.loadIgnoredDirs(cwd) : new Set<string>();
     const target: WorkingTreeWatchTarget = {
       cwd,
       repoRoot,
       subscription: null,
+      ignoredDirectories,
+      ignoredDirectoriesRefreshPromise: null,
       aliases: new Set([cwd]),
       workspaceKeys: new Set(),
       fallbackPollTimer: null,
@@ -1112,42 +1117,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       closed: false,
     };
 
-    const repoWatchPath = cwd;
-    const ignoredDirectories = repoRoot
-      ? await this.loadIgnoredDirs(repoWatchPath)
-      : new Set<string>();
-    const ignore = [join(repoWatchPath, ".git"), ...ignoredDirectories];
-    try {
-      const subscription = await this.deps.subscribe(
-        repoWatchPath,
-        (error, events) => {
-          if (error) {
-            this.logger.warn(
-              { err: error, cwd, repoWatchPath },
-              "Working tree watcher error; using degraded polling",
-            );
-            this.degradeWorkingTreeWatch(target, "watcher_error");
-            return;
-          }
-          if (events.length === 0) {
-            return;
-          }
-          this.notifyWorkingTreeChanged(target, "working-tree-watch");
-        },
-        { ignore },
-      );
-      if (target.closed || target.fallbackPollTimer) {
-        await subscription.unsubscribe();
-      } else {
-        target.subscription = subscription;
-      }
-    } catch (error) {
-      this.logger.warn(
-        { err: error, cwd, repoWatchPath },
-        "Failed to start working tree watcher; using degraded polling",
-      );
-      this.startWorkingTreeWatchFallback(target, "watcher_setup_failed");
-    }
+    await this.startWorkingTreeSubscription(target);
 
     if (repoRoot === null) {
       this.startWorkingTreeWatchFallback(target, "not_a_git_checkout");
@@ -1156,6 +1126,41 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.workingTreeWatchTargets.set(cwd, target);
     this.workingTreeWatchAliases.set(cwd, cwd);
     return target;
+  }
+
+  private async startWorkingTreeSubscription(target: WorkingTreeWatchTarget): Promise<void> {
+    const ignore = [join(target.cwd, ".git"), ...target.ignoredDirectories];
+    try {
+      const subscription = await this.deps.subscribe(
+        target.cwd,
+        (error, events) => {
+          if (error) {
+            this.logger.warn(
+              { err: error, cwd: target.cwd },
+              "Working tree watcher error; using degraded polling",
+            );
+            this.degradeWorkingTreeWatch(target, "watcher_error");
+            return;
+          }
+          if (!this.hasRelevantWorkingTreeEvent(target, events)) {
+            return;
+          }
+          this.notifyWorkingTreeChanged(target, "working-tree-watch");
+        },
+        { ignore },
+      );
+      if (target.closed || target.fallbackPollTimer || target.subscription) {
+        await subscription.unsubscribe();
+      } else {
+        target.subscription = subscription;
+      }
+    } catch (error) {
+      this.logger.warn(
+        { err: error, cwd: target.cwd },
+        "Failed to start working tree watcher; using degraded polling",
+      );
+      this.startWorkingTreeWatchFallback(target, "watcher_setup_failed");
+    }
   }
 
   private startWorkingTreeWatchFallback(
@@ -1213,6 +1218,104 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       });
     }
     this.startWorkingTreeWatchFallback(target, reason);
+  }
+
+  private hasRelevantWorkingTreeEvent(
+    target: WorkingTreeWatchTarget,
+    events: parcelWatcher.Event[],
+  ): boolean {
+    const gitDir = join(target.cwd, ".git");
+    return events.some((event) => {
+      if (this.isPathWithin(gitDir, event.path)) {
+        return false;
+      }
+      for (const ignoredDirectory of target.ignoredDirectories) {
+        if (this.isPathWithin(ignoredDirectory, event.path)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }
+
+  private isPathWithin(rootPath: string, candidatePath: string): boolean {
+    const relativePath = relative(rootPath, candidatePath);
+    return (
+      relativePath === "" ||
+      (relativePath !== ".." && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath))
+    );
+  }
+
+  private refreshWorkingTreeIgnoredDirectories(target: WorkingTreeWatchTarget): Promise<void> {
+    if (target.closed || target.repoRoot === null || target.fallbackPollTimer) {
+      return Promise.resolve();
+    }
+    if (target.ignoredDirectoriesRefreshPromise) {
+      return target.ignoredDirectoriesRefreshPromise;
+    }
+
+    const refreshPromise = this.replaceWorkingTreeIgnoredDirectories(target)
+      .catch((error) => {
+        this.logger.warn(
+          { err: error, cwd: target.cwd },
+          "Failed to refresh working tree watcher ignore paths",
+        );
+      })
+      .finally(() => {
+        if (target.ignoredDirectoriesRefreshPromise === refreshPromise) {
+          target.ignoredDirectoriesRefreshPromise = null;
+        }
+      });
+    target.ignoredDirectoriesRefreshPromise = refreshPromise;
+    return refreshPromise;
+  }
+
+  private async replaceWorkingTreeIgnoredDirectories(
+    target: WorkingTreeWatchTarget,
+  ): Promise<void> {
+    const ignoredDirectories = await this.loadIgnoredDirs(target.cwd);
+    if (
+      target.closed ||
+      target.fallbackPollTimer ||
+      this.haveSamePaths(target.ignoredDirectories, ignoredDirectories)
+    ) {
+      return;
+    }
+
+    const subscription = target.subscription;
+    if (subscription) {
+      target.subscription = null;
+      try {
+        await subscription.unsubscribe();
+      } catch (error) {
+        if (!target.closed && !target.fallbackPollTimer) {
+          target.subscription = subscription;
+        }
+        this.logger.warn(
+          { err: error, cwd: target.cwd },
+          "Failed to stop working tree watcher while refreshing ignore paths",
+        );
+        return;
+      }
+    }
+    if (target.closed || target.fallbackPollTimer) {
+      return;
+    }
+
+    target.ignoredDirectories = ignoredDirectories;
+    await this.startWorkingTreeSubscription(target);
+  }
+
+  private haveSamePaths(first: Set<string>, second: Set<string>): boolean {
+    if (first.size !== second.size) {
+      return false;
+    }
+    for (const path of first) {
+      if (!second.has(path)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private notifyWorkingTreeChanged(target: WorkingTreeWatchTarget, reason: string): void {
@@ -1517,6 +1620,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         if (auditWindowStartedAtMs === null) {
           return;
         }
+        const workingTreeTarget = this.getWorkingTreeWatchTargetForWorkspace(target);
+        if (workingTreeTarget) {
+          void this.refreshWorkingTreeIgnoredDirectories(workingTreeTarget);
+        }
         const refreshStructure =
           target.latestStructuralRefreshAtMs === null ||
           target.latestStructuralRefreshAtMs < auditWindowStartedAtMs;
@@ -1528,7 +1635,6 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           return;
         }
         if (refreshWorktree) {
-          const workingTreeTarget = this.getWorkingTreeWatchTargetForWorkspace(target);
           if (workingTreeTarget) {
             this.notifyWorkingTreeConsumers(workingTreeTarget);
           }

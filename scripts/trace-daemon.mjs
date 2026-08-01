@@ -65,6 +65,9 @@ const additionalInputs = [
   // the Nix derivation builds for one platform at a time and ships only
   // its own binaries.
   `node_modules/node-pty/prebuilds/${process.platform}-${process.arch}/**`,
+  // @parcel/watcher dynamically resolves its optional platform package.
+  // Copy whichever native packages npm installed for this build host.
+  "node_modules/@parcel/watcher-*/**",
   // sherpa-onnx-node dynamically resolves a platform-specific native package.
   // Copy the wrapper plus the host platform package explicitly.
   "node_modules/sherpa-onnx-node/**",
