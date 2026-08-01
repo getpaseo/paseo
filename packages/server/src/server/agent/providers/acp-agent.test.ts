@@ -59,6 +59,11 @@ import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { buildStringCommandShellInvocation } from "../../../utils/string-command-shell.js";
 import { asInternals } from "../../test-utils/class-mocks.js";
 import * as spawnUtils from "../../../utils/spawn.js";
+import {
+  createWindowsJobObjectProcessSpawner,
+  getWindowsJobObjectLeaderExitMarker,
+  getWindowsJobObjectProofMarker,
+} from "./opencode/windows-job-object.js";
 
 describe("buildACPClientCapabilities", () => {
   test("keeps filesystem and terminal execution with the agent by default", () => {
@@ -3126,7 +3131,7 @@ describe("ACPAgentSession close() tree-kill", () => {
     internals.sessionId = null;
 
     await expect(session.close()).rejects.toThrow(
-      "ACP process termination did not report process exit",
+      "ACP process termination did not prove process-generation exit",
     );
     await expect(session.close()).resolves.toBeUndefined();
     expect(terminationAttempts).toBe(2);
@@ -3356,6 +3361,75 @@ describe("ACPAgentClient probe cleanup", () => {
     await second.close();
   });
 
+  test("holds ACP capacity across a Windows target-leader exit until Job Object cleanup is proven", async () => {
+    class CapacityTestClient extends ACPAgentClient {
+      protected override async resolveLaunchCommand() {
+        return { command: "test-acp", args: ["--stdio"] };
+      }
+
+      async startHeldProbe() {
+        const transport = await this.spawnTransport();
+        return {
+          child: transport.child,
+          close: async () =>
+            await this.closeProbe({
+              child: transport.child,
+              connection: transport.connection,
+              stderrChunks: transport.stderrChunks,
+            }),
+        };
+      }
+    }
+
+    const supervisor = createProbeChildStub();
+    const spawnACPProcess = createWindowsJobObjectProcessSpawner(() => supervisor);
+    const runtimeCapacity = new HostAgentRuntimeCapacityController(1);
+    const releaseCapacity = vi.spyOn(runtimeCapacity, "release");
+    let control = "";
+    supervisor.stdin.on("data", (data: Buffer) => {
+      control += data.toString();
+    });
+    const terminate: ProcessTerminator = async (target) => {
+      expect(target.pid).toBeUndefined();
+      expect(target.kill("SIGTERM")).toBe(true);
+      const proofMarker = getWindowsJobObjectProofMarker(supervisor);
+      expect(proofMarker).toBeDefined();
+      supervisor.stderr.write(`${proofMarker}\n`);
+      Object.defineProperty(supervisor, "exitCode", { configurable: true, value: 0 });
+      supervisor.emit("exit", 0, null);
+      supervisor.emit("close", 0, null);
+      return "terminated";
+    };
+    const client = new CapacityTestClient({
+      provider: "claude-acp",
+      logger: createTestLogger(),
+      defaultCommand: ["claude", "--acp"],
+      terminateProcess: terminate,
+      platform: "win32",
+      spawnACPProcess,
+    });
+    client.configureRuntimeCapacityController(runtimeCapacity);
+
+    const held = await client.startHeldProbe();
+    const leaderExitMarker = getWindowsJobObjectLeaderExitMarker(supervisor);
+    expect(leaderExitMarker).toBeDefined();
+    supervisor.stderr.write(`${leaderExitMarker}0\n`);
+    await Promise.resolve();
+
+    expect(releaseCapacity).not.toHaveBeenCalled();
+    expect(() => runtimeCapacity.reserve()).toThrow(AgentRuntimeCapacityError);
+
+    await held.close();
+
+    expect(control).toMatch(/^PASEO_WINDOWS_JOB_TERMINATE:[0-9a-f-]+\n$/u);
+    expect(releaseCapacity).toHaveBeenCalledTimes(1);
+    supervisor.emit("close", 0, null);
+    await Promise.resolve();
+    expect(releaseCapacity).toHaveBeenCalledTimes(1);
+    const replacement = runtimeCapacity.reserve();
+    replacement.release();
+  });
+
   test("retries retained ACP probe cleanup before the next admission", async () => {
     class CapacityTestClient extends ACPAgentClient {
       protected override async resolveLaunchCommand() {
@@ -3391,7 +3465,7 @@ describe("ACPAgentClient probe cleanup", () => {
     client.configureRuntimeCapacityController(new HostAgentRuntimeCapacityController(1));
 
     await expect(client.startAndCloseProbe()).rejects.toThrow(
-      "ACP process termination did not report process exit",
+      "ACP process termination did not prove process-generation exit",
     );
     await expect(client.startAndCloseProbe()).resolves.toBeUndefined();
     expect(spawn).toHaveBeenCalledTimes(2);
@@ -3428,7 +3502,7 @@ describe("ACPAgentClient probe cleanup", () => {
     client.configureRuntimeCapacityController(new HostAgentRuntimeCapacityController(1));
 
     await expect(client.startAndCloseProbe()).rejects.toThrow(
-      "ACP process termination did not report process exit",
+      "ACP process termination did not prove process-generation exit",
     );
     await expect(client.shutdown()).resolves.toBeUndefined();
     expect(spawn).toHaveBeenCalledTimes(1);

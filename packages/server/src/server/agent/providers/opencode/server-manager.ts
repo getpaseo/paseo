@@ -29,6 +29,7 @@ import {
 } from "../../provider-launch-config.js";
 import { resolveOpenCodeHomeDir } from "./paths.js";
 import {
+  createWindowsJobObjectTerminationTarget,
   getWindowsJobObjectProofMarker,
   spawnWindowsJobObjectProcess,
 } from "./windows-job-object.js";
@@ -524,13 +525,6 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
 
       serverProcess.stdout?.on("data", (data: Buffer) => {
         const output = data.toString();
-        if (windowsJobProofMarker) {
-          windowsJobProofBuffer = appendProofBuffer(windowsJobProofBuffer, output);
-          if (windowsJobProofBuffer.includes(windowsJobProofMarker)) {
-            resolveWindowsJobCompletion?.(true);
-            resolveWindowsJobCompletion = undefined;
-          }
-        }
         stdoutBuffer = appendCapped(stdoutBuffer, output);
         if (output.includes("listening on") && !started && !settled) {
           started = true;
@@ -547,6 +541,13 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
 
       serverProcess.stderr?.on("data", (data: Buffer) => {
         const output = data.toString();
+        if (windowsJobProofMarker) {
+          windowsJobProofBuffer = appendProofBuffer(windowsJobProofBuffer, output);
+          if (windowsJobProofBuffer.includes(windowsJobProofMarker)) {
+            resolveWindowsJobCompletion?.(true);
+            resolveWindowsJobCompletion = undefined;
+          }
+        }
         stderrBuffer = appendCapped(stderrBuffer, output);
         this.logger.error({ stderr: output.trim() }, "OpenCode server stderr");
       });
@@ -920,23 +921,9 @@ function createServerTerminationTarget(server: OpenCodeServerGeneration): TreeKi
     return createProcessGroupTarget(server.process.pid);
   }
   if (server.ownsWindowsJob) {
-    return createWindowsJobTarget(server.process);
+    return createWindowsJobObjectTerminationTarget(server.process);
   }
   return createDirectChildTarget(server.process);
-}
-
-function createWindowsJobTarget(process: ChildProcess): TreeKillTarget {
-  return {
-    get exitCode() {
-      return process.exitCode;
-    },
-    get signalCode() {
-      return process.signalCode;
-    },
-    kill: () => process.stdin?.write("terminate\n") ?? false,
-    once: (event, listener) => process.once(event, listener),
-    off: (event, listener) => process.off(event, listener),
-  };
 }
 
 function appendProofBuffer(current: string, output: string): string {

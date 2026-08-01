@@ -65,7 +65,7 @@ function createManager(options: {
           const child = children.find((candidate) => candidate.exitCode === null);
           if (child) {
             Object.defineProperty(child, "exitCode", { configurable: true, value: 1 });
-            (child.stdout as EventEmitter).emit("data", Buffer.from("test-windows-job-empty\n"));
+            (child.stderr as EventEmitter).emit("data", Buffer.from("test-windows-job-empty\n"));
             child.emit("exit", 1, null);
             child.emit("close", 1, null);
           }
@@ -164,7 +164,7 @@ describe("OpenCodeServerManager runtime capacity", () => {
 
     const supervisor = children[0]!;
     Object.defineProperty(supervisor, "exitCode", { configurable: true, value: 0 });
-    (supervisor.stdout as EventEmitter).emit("data", Buffer.from("test-windows-job-empty\n"));
+    (supervisor.stderr as EventEmitter).emit("data", Buffer.from("test-windows-job-empty\n"));
     supervisor.emit("exit", 0, null);
     supervisor.emit("close", 0, null);
     await vi.waitFor(() => expect(releaseCapacity).toHaveBeenCalledTimes(1));

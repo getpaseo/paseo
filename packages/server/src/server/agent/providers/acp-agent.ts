@@ -115,15 +115,22 @@ import {
   buildStringCommandShellInvocation,
   createStringCommandShellEnvOverlay,
 } from "../../../utils/string-command-shell.js";
-import { spawnProcess } from "../../../utils/spawn.js";
+import { spawnProcess, type SpawnProcessOptions } from "../../../utils/spawn.js";
 import {
   type DiagnosticEntry,
   toDiagnosticErrorMessage,
   truncateForDiagnostic,
 } from "./diagnostic-utils.js";
 import { withTimeout } from "../../../utils/promise-timeout.js";
+import {
+  createWindowsJobObjectTerminationTarget,
+  getWindowsJobObjectCompletion,
+  getWindowsJobObjectLeaderExit,
+  spawnWindowsJobObjectProcess,
+} from "./opencode/windows-job-object.js";
 
 const ACP_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
+const trackedACPProcessCapacityReleases = new WeakMap<ChildProcess, () => void>();
 
 function assertChildWithPipes(
   child: ChildProcess,
@@ -143,13 +150,50 @@ function spawnCapacityTrackedACPProcess(
     assertChildWithPipes(child);
     reservation?.track(child);
     reservation = null;
-    child.once("exit", () => runtimeCapacity?.release(child));
+    let released = false;
+    const releaseCapacity = () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      runtimeCapacity?.release(child);
+    };
+    trackedACPProcessCapacityReleases.set(child, releaseCapacity);
+    const windowsJobCompletion = getWindowsJobObjectCompletion(child);
+    if (windowsJobCompletion) {
+      void windowsJobCompletion.then((provenEmpty) => {
+        if (provenEmpty) {
+          releaseCapacity();
+        }
+        return undefined;
+      });
+    } else {
+      child.once("close", releaseCapacity);
+    }
     return child;
   } catch (error) {
     reservation?.release();
     throw error;
   }
 }
+
+function releaseACPProcessCapacity(
+  child: ChildProcess,
+  runtimeCapacity: AgentRuntimeCapacityController | null | undefined,
+): void {
+  const trackedRelease = trackedACPProcessCapacityReleases.get(child);
+  if (trackedRelease) {
+    trackedRelease();
+    return;
+  }
+  runtimeCapacity?.release(child);
+}
+
+export type ACPRuntimeProcessSpawner = (
+  command: string,
+  args: string[],
+  options: SpawnProcessOptions,
+) => ChildProcess;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value);
@@ -423,6 +467,8 @@ interface ACPAgentClientOptions {
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
+  platform?: NodeJS.Platform;
+  spawnACPProcess?: ACPRuntimeProcessSpawner;
 }
 
 interface ACPAgentSessionOptions {
@@ -457,6 +503,8 @@ interface ACPAgentSessionOptions {
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
   runtimeCapacity?: AgentRuntimeCapacityController;
+  platform?: NodeJS.Platform;
+  spawnACPProcess?: ACPRuntimeProcessSpawner;
 }
 
 export interface SpawnedACPProcess {
@@ -812,6 +860,8 @@ export class ACPAgentClient implements AgentClient {
   private readonly initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   protected readonly terminateProcess: ProcessTerminator;
+  private readonly platform: NodeJS.Platform;
+  private readonly spawnACPProcess: ACPRuntimeProcessSpawner;
   private runtimeCapacity: AgentRuntimeCapacityController | null = null;
   private readonly retainedSessionCleanups = new Set<ACPAgentSession>();
   private readonly retainedProbeCleanups = new Set<UninitializedACPProcess>();
@@ -820,6 +870,10 @@ export class ACPAgentClient implements AgentClient {
   constructor(options: ACPAgentClientOptions) {
     this.provider = options.provider;
     this.terminateProcess = options.terminateProcess ?? terminateWithTreeKill;
+    this.platform = options.platform ?? process.platform;
+    this.spawnACPProcess =
+      options.spawnACPProcess ??
+      (this.platform === "win32" ? spawnWindowsJobObjectProcess : spawnProcess);
     this.capabilities = options.capabilities ?? DEFAULT_ACP_CAPABILITIES;
     this.logger = options.logger.child({
       module: "agent",
@@ -893,6 +947,8 @@ export class ACPAgentClient implements AgentClient {
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
         runtimeCapacity: this.runtimeCapacity ?? undefined,
+        platform: this.platform,
+        spawnACPProcess: this.spawnACPProcess,
       },
     );
     try {
@@ -951,6 +1007,8 @@ export class ACPAgentClient implements AgentClient {
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
       runtimeCapacity: this.runtimeCapacity ?? undefined,
+      platform: this.platform,
+      spawnACPProcess: this.spawnACPProcess,
     });
     try {
       await session.initializeResumedSession();
@@ -1126,7 +1184,7 @@ export class ACPAgentClient implements AgentClient {
     await this.retryRetainedRuntimeCleanups();
     const { command, args } = await this.resolveLaunchCommand();
     const child = spawnCapacityTrackedACPProcess(this.runtimeCapacity, () =>
-      spawnProcess(command, args, {
+      this.spawnACPProcess(command, args, {
         cwd: process.cwd(),
         ...createProviderEnvSpec({
           runtimeSettings: this.runtimeSettings,
@@ -1276,10 +1334,10 @@ export class ACPAgentClient implements AgentClient {
 
   private async terminateRuntime(child: ChildProcessWithoutNullStreams): Promise<void> {
     const result = await terminateChildProcess(child, 2_000, this.terminateProcess);
-    if (result === "kill-timeout") {
-      throw new Error("ACP process termination did not report process exit");
+    if (result === "kill-timeout" || result === "signal-skipped") {
+      throw new Error("ACP process termination did not prove process-generation exit");
     }
-    this.runtimeCapacity?.release(child);
+    releaseACPProcessCapacity(child, this.runtimeCapacity);
   }
 
   protected async runACPRequest<T>(request: () => Promise<T>): Promise<T> {
@@ -1499,16 +1557,23 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private fallbackAssistantMessageId: string | null = null;
   private closed = false;
   private closePromise: Promise<void> | null = null;
+  private runtimeExited = false;
   private historyPending = false;
   private replayingHistory = false;
   private bootstrapThreadEventPending = false;
   private readonly terminateProcess: ProcessTerminator;
   private readonly runtimeCapacity?: AgentRuntimeCapacityController;
+  private readonly platform: NodeJS.Platform;
+  private readonly spawnACPProcess: ACPRuntimeProcessSpawner;
 
   constructor(config: AgentSessionConfig, options: ACPAgentSessionOptions) {
     this.provider = options.provider;
     this.terminateProcess = options.terminateProcess ?? terminateWithTreeKill;
     this.runtimeCapacity = options.runtimeCapacity;
+    this.platform = options.platform ?? process.platform;
+    this.spawnACPProcess =
+      options.spawnACPProcess ??
+      (this.platform === "win32" ? spawnWindowsJobObjectProcess : spawnProcess);
     this.capabilities = options.capabilities;
     this.logger = options.logger.child({ module: "agent", provider: options.provider });
     this.runtimeSettings = options.runtimeSettings;
@@ -2248,7 +2313,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
     this.pendingPermissions.clear();
 
-    if (this.connection && this.sessionId) {
+    if (this.connection && this.sessionId && !this.runtimeExited) {
       try {
         if (this.activeForegroundTurnId) {
           await this.connection.cancel({ sessionId: this.sessionId });
@@ -2275,15 +2340,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
     if (this.child) {
       const child = this.child;
-      const result = await this.terminateProcess(child, {
-        gracefulTimeoutMs: 2_000,
-        forceTimeoutMs: 2_000,
-      });
-      if (result !== "kill-timeout") {
-        this.runtimeCapacity?.release(child);
-      } else {
-        throw new Error("ACP process termination did not report process exit");
+      const result = await terminateChildProcess(child, 2_000, this.terminateProcess);
+      if (result === "kill-timeout" || result === "signal-skipped") {
+        throw new Error("ACP process termination did not prove process-generation exit");
       }
+      releaseACPProcessCapacity(child, this.runtimeCapacity);
     }
 
     this.subscribers.clear();
@@ -2544,7 +2605,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const command = prefix.command;
     const args = [...prefix.args, ...this.defaultCommand.slice(1)];
     const child = spawnCapacityTrackedACPProcess(this.runtimeCapacity, () =>
-      spawnProcess(command, args, {
+      this.spawnACPProcess(command, args, {
         cwd: this.config.cwd,
         ...createProviderEnvSpec({
           runtimeSettings: this.runtimeSettings,
@@ -2558,7 +2619,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     child.stderr.on("data", (chunk: Buffer | string) => {
       stderrChunks.push(chunk.toString());
     });
-    child.once("exit", (code, signal) => {
+    let runtimeExitReported = false;
+    const reportRuntimeExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      if (runtimeExitReported) {
+        return;
+      }
+      runtimeExitReported = true;
+      this.runtimeExited = true;
       if (this.closed || this.closePromise) {
         return;
       }
@@ -2572,7 +2639,15 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           turnId: this.activeForegroundTurnId,
         });
       }
-    });
+      void this.close().catch((error) => {
+        this.logger.warn({ err: error }, "Failed to clean up exited ACP runtime generation");
+      });
+    };
+    child.once("exit", (code, signal) => reportRuntimeExit(code, signal));
+    const windowsJobLeaderExit = getWindowsJobObjectLeaderExit(child);
+    if (windowsJobLeaderExit) {
+      void windowsJobLeaderExit.then((code) => reportRuntimeExit(code, null));
+    }
 
     const stream = createLoggedNdJsonStream(
       Writable.toWeb(child.stdin),
@@ -3700,11 +3775,26 @@ async function terminateChildProcess(
   timeoutMs: number,
   terminate: ProcessTerminator,
 ): Promise<TerminateWithTreeKillResult> {
+  const windowsJobCompletion = getWindowsJobObjectCompletion(child);
+  let preservePipesForRetry = windowsJobCompletion !== undefined;
   try {
-    return await terminate(child, { gracefulTimeoutMs: timeoutMs, forceTimeoutMs: timeoutMs });
+    const target = windowsJobCompletion ? createWindowsJobObjectTerminationTarget(child) : child;
+    const result = await terminate(target, {
+      gracefulTimeoutMs: timeoutMs,
+      forceTimeoutMs: timeoutMs,
+    });
+    if (windowsJobCompletion && result !== "kill-timeout" && result !== "signal-skipped") {
+      const provenEmpty = await windowsJobCompletion;
+      preservePipesForRetry = false;
+      return provenEmpty ? result : "kill-timeout";
+    }
+    preservePipesForRetry = windowsJobCompletion !== undefined;
+    return result;
   } finally {
-    child.stdin.destroy();
-    child.stdout.destroy();
-    child.stderr.destroy();
+    if (!preservePipesForRetry) {
+      child.stdin?.destroy?.();
+      child.stdout?.destroy?.();
+      child.stderr?.destroy?.();
+    }
   }
 }
