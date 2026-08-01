@@ -2090,6 +2090,8 @@ export class Session {
       }
       case "agent.fork_context.request":
         return this.handleAgentForkContextRequest(msg);
+      case "agent.native_fork.request":
+        return this.handleAgentNativeForkRequest(msg);
       default:
         return undefined;
     }
@@ -6815,6 +6817,49 @@ export class Session {
           itemCount: 0,
           boundaryCursor: msg.boundaryCursor ?? null,
           boundaryMessageId: msg.boundaryMessageId ?? null,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  private async handleAgentNativeForkRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.native_fork.request" }>,
+  ): Promise<void> {
+    try {
+      await ensureAgentLoaded(msg.agentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
+      const result = await this.agentManager.nativeForkAgent({
+        sourceAgentId: msg.agentId,
+        boundaryMessageId: msg.boundaryMessageId,
+        boundaryCursor: msg.boundaryCursor,
+        target: msg.target,
+      });
+      this.emit({
+        type: "agent.native_fork.response",
+        payload: {
+          requestId: msg.requestId,
+          sourceAgentId: msg.agentId,
+          accepted: true,
+          error: null,
+          agentId: result.agentId,
+          workspaceId: result.workspaceId,
+        },
+      });
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, agentId: msg.agentId },
+        "Failed to handle agent.native_fork.request",
+      );
+      this.emit({
+        type: "agent.native_fork.response",
+        payload: {
+          requestId: msg.requestId,
+          sourceAgentId: msg.agentId,
+          accepted: false,
           error: error instanceof Error ? error.message : String(error),
         },
       });

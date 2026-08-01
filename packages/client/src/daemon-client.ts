@@ -3211,6 +3211,34 @@ export class DaemonClient {
     });
   }
 
+  async nativeForkAgent(
+    agentId: string,
+    options: {
+      boundaryCursor?: { epoch: string; seq: number };
+      boundaryMessageId?: string;
+      target?: "tab" | "workspace";
+      requestId?: string;
+    } = {},
+  ): Promise<{
+    requestId: string;
+    sourceAgentId: string;
+    accepted: boolean;
+    error: string | null;
+    agentId?: string;
+    workspaceId?: string;
+  }> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "agent.native_fork.request",
+        agentId,
+        ...(options.boundaryCursor ? { boundaryCursor: options.boundaryCursor } : {}),
+        ...(options.boundaryMessageId ? { boundaryMessageId: options.boundaryMessageId } : {}),
+        ...(options.target ? { target: options.target } : {}),
+      },
+    });
+  }
+
   async buildAgentForkContext(
     agentId: string,
     options: AgentForkContextOptions = {},

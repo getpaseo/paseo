@@ -87,7 +87,9 @@ import {
   type WorkspaceFileOpenRequest,
 } from "@/workspace/file-open";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { buildNewWorkspaceRoute } from "@/utils/host-routes";
+import { useHostFeature } from "@/runtime/host-features";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { isWeb } from "@/constants/platform";
 import { useWorkspaceBrowserAvailability } from "@/browser/workspace-browser-availability";
@@ -336,7 +338,131 @@ function buildForkDraftTabTarget(
   return setup ? { kind: "draft", draftId, setup } : { kind: "draft", draftId };
 }
 
+// oxlint-disable-next-line complexity -- fork strategy matrix (native/context × tab/workspace)
+async function runAssistantTurnFork(input: {
+  target: "tab" | "workspace";
+  boundary: {
+    boundaryCursor?: { epoch: string; seq: number };
+    boundaryMessageId?: string;
+  };
+  client: DaemonClient;
+  agentId: string;
+  resolvedServerId: string;
+  context: AgentScreenAgent;
+  supportsNativeFork: boolean;
+  supportsAgentForkContext: boolean;
+  router: ReturnType<typeof useRouter>;
+  toast: ToastApi | null | undefined;
+  t: ReturnType<typeof useTranslation>["t"];
+}): Promise<void> {
+  const {
+    target,
+    boundary,
+    client,
+    agentId,
+    resolvedServerId,
+    context,
+    supportsNativeFork,
+    supportsAgentForkContext,
+    router,
+    toast,
+    t,
+  } = input;
+
+  try {
+    // Prefer provider-native Claude fork when available (tab target).
+    if (supportsNativeFork && target === "tab") {
+      const workspaceId = context.workspaceId;
+      if (!workspaceId) {
+        throw new Error(t("message.actions.forkMissingWorkspace"));
+      }
+      const payload = await client.nativeForkAgent(agentId, {
+        ...boundary,
+        target: "tab",
+      });
+      if (!payload.accepted || payload.error || !payload.agentId) {
+        throw new Error(payload.error || t("message.actions.forkFailed"));
+      }
+      navigateToAgent({
+        serverId: resolvedServerId,
+        agentId: payload.agentId,
+      });
+      return;
+    }
+
+    if (!supportsAgentForkContext) {
+      toast?.error(t("message.actions.forkUnavailable"));
+      return;
+    }
+
+    const draftSetup = buildForkDraftSetup(context);
+    const prepareForkDraft = async () => {
+      const draftId = generateDraftId();
+      const payload = await client.buildAgentForkContext(agentId, boundary);
+      const attachment = buildChatHistoryAttachment({
+        draftId,
+        serverId: resolvedServerId,
+        agentId,
+        payload,
+        missingAttachmentMessage: t("message.actions.forkFailed"),
+      });
+      useWorkspaceAttachmentsStore.getState().setWorkspaceAttachments({
+        scopeKey: buildDraftWorkspaceAttachmentScopeKey(draftId),
+        attachments: [attachment],
+      });
+      return draftId;
+    };
+
+    if (target === "tab") {
+      const workspaceId = context.workspaceId;
+      if (!workspaceId) {
+        throw new Error(t("message.actions.forkMissingWorkspace"));
+      }
+      const draftId = await prepareForkDraft();
+      navigateToWorkspace({
+        serverId: resolvedServerId,
+        workspaceId,
+        target: buildForkDraftTabTarget(draftSetup, draftId),
+      });
+      return;
+    }
+
+    const draftId = await prepareForkDraft();
+    const sourceDirectory =
+      context.projectPlacement?.checkout?.cwd?.trim() || context.cwd.trim() || undefined;
+    if (draftSetup) {
+      useWorkspaceDraftSubmissionStore.getState().setDraftSetup({
+        draftId,
+        setup: draftSetup,
+        sourceDirectory,
+      });
+    }
+    router.push(
+      buildNewWorkspaceRoute({
+        serverId: resolvedServerId,
+        sourceDirectory,
+        displayName: context.projectPlacement?.projectName,
+        projectId: context.projectPlacement?.projectKey,
+        draftId,
+      }),
+    );
+  } catch (error) {
+    toast?.error(toErrorMessage(error) || t("message.actions.forkFailed"));
+  }
+}
+
+function resolveSupportsNativeFork(input: {
+  readOnly: boolean;
+  agentNativeForkFeature: boolean;
+  supportsNativeForkCapability: boolean | undefined;
+}): boolean {
+  return (
+    !input.readOnly && input.agentNativeForkFeature && input.supportsNativeForkCapability === true
+  );
+}
+
 const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamViewProps>(
+  // oxlint-disable-next-line complexity -- stream view orchestration surface
   function AgentStreamView(
     {
       agentId,
@@ -403,6 +529,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       (state) =>
         state.sessions[resolvedServerId]?.serverInfo?.features?.agentForkContextCursor === true,
     );
+    const supportsAgentNativeForkFeature = useHostFeature(resolvedServerId, "agentNativeFork");
+    const supportsNativeFork = resolveSupportsNativeFork({
+      readOnly,
+      agentNativeForkFeature: supportsAgentNativeForkFeature,
+      supportsNativeForkCapability: context.capabilities?.supportsNativeFork,
+    });
 
     const workspaceRoot = context.cwd?.trim() || "";
     const handleLocalhostUrlPress = useStableEvent((url: string) => {
@@ -518,68 +650,23 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const handleForkAssistantTurn: AssistantTurnForkHandler = useStableEvent(
       async ({ target, boundary }) => {
-        try {
-          if (!supportsAgentForkContext) {
-            toast?.error(t("message.actions.forkUnavailable"));
-            return;
-          }
-          if (!client) {
-            throw new Error(t("workspace.terminal.hostDisconnected"));
-          }
-          const draftSetup = buildForkDraftSetup(context);
-          const prepareForkDraft = async () => {
-            const draftId = generateDraftId();
-            const payload = await client.buildAgentForkContext(agentId, boundary);
-            const attachment = buildChatHistoryAttachment({
-              draftId,
-              serverId: resolvedServerId,
-              agentId,
-              payload,
-              missingAttachmentMessage: t("message.actions.forkFailed"),
-            });
-            useWorkspaceAttachmentsStore.getState().setWorkspaceAttachments({
-              scopeKey: buildDraftWorkspaceAttachmentScopeKey(draftId),
-              attachments: [attachment],
-            });
-            return draftId;
-          };
-
-          if (target === "tab") {
-            const workspaceId = context.workspaceId;
-            if (!workspaceId) {
-              throw new Error(t("message.actions.forkMissingWorkspace"));
-            }
-            const draftId = await prepareForkDraft();
-            navigateToWorkspace({
-              serverId: resolvedServerId,
-              workspaceId,
-              target: buildForkDraftTabTarget(draftSetup, draftId),
-            });
-            return;
-          }
-
-          const draftId = await prepareForkDraft();
-          const sourceDirectory =
-            context.projectPlacement?.checkout?.cwd?.trim() || context.cwd.trim() || undefined;
-          if (draftSetup) {
-            useWorkspaceDraftSubmissionStore.getState().setDraftSetup({
-              draftId,
-              setup: draftSetup,
-              sourceDirectory,
-            });
-          }
-          router.push(
-            buildNewWorkspaceRoute({
-              serverId: resolvedServerId,
-              sourceDirectory,
-              displayName: context.projectPlacement?.projectName,
-              projectId: context.projectPlacement?.projectKey,
-              draftId,
-            }),
-          );
-        } catch (error) {
-          toast?.error(toErrorMessage(error) || t("message.actions.forkFailed"));
+        if (!client) {
+          toast?.error(t("workspace.terminal.hostDisconnected"));
+          return;
         }
+        await runAssistantTurnFork({
+          target,
+          boundary,
+          client,
+          agentId,
+          resolvedServerId,
+          context,
+          supportsNativeFork,
+          supportsAgentForkContext,
+          router,
+          toast,
+          t,
+        });
       },
     );
 
