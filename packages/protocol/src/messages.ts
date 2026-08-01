@@ -57,6 +57,17 @@ import {
   TaskUploadedFileAttachmentSchema,
 } from "./tasks/rpc-schemas.js";
 import {
+  UiStateClearRequestMessageSchema,
+  UiStateClearResponseMessageSchema,
+  UiStateGetRequestMessageSchema,
+  UiStateGetResponseMessageSchema,
+  UiStateListRequestMessageSchema,
+  UiStateListResponseMessageSchema,
+  UiStateUpdatedMessageSchema,
+  UiStateUpsertRequestMessageSchema,
+  UiStateUpsertResponseMessageSchema,
+} from "./ui-state/schemas.js";
+import {
   LoopRunRequestSchema,
   LoopListRequestSchema,
   LoopInspectRequestSchema,
@@ -2719,6 +2730,10 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   TaskUpdateRequestSchema,
   TaskDeleteRequestSchema,
   TaskAttachmentDownloadTokenRequestSchema,
+  UiStateGetRequestMessageSchema,
+  UiStateUpsertRequestMessageSchema,
+  UiStateClearRequestMessageSchema,
+  UiStateListRequestMessageSchema,
   LoopRunRequestSchema,
   LoopListRequestSchema,
   LoopInspectRequestSchema,
@@ -2952,6 +2967,8 @@ export const ServerInfoStatusPayloadSchema = z
         taskBacklog: z.boolean().optional(),
         // COMPAT(taskBacklogListAll): added in v0.1.104-beta.5, drop gate once daemon floor >= v0.1.104-beta.5.
         taskBacklogListAll: z.boolean().optional(),
+        // COMPAT(uiState): added in v0.2.916, drop gate after 2027-02-01.
+        uiState: z.boolean().optional(),
         // COMPAT(tcpTunnel): added in v0.1.105, remove gate after 2027-01-07 once daemon floor >= v0.1.105.
         tcpTunnel: z.boolean().optional(),
         // COMPAT(agentForkContextCursor): added in v0.1.108, remove gate after 2027-01-14.
@@ -5697,6 +5714,11 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   TaskUpdateResponseSchema,
   TaskDeleteResponseSchema,
   TaskAttachmentDownloadTokenResponseSchema,
+  UiStateGetResponseMessageSchema,
+  UiStateUpsertResponseMessageSchema,
+  UiStateClearResponseMessageSchema,
+  UiStateListResponseMessageSchema,
+  UiStateUpdatedMessageSchema,
   LoopRunResponseSchema,
   LoopListResponseSchema,
   LoopInspectResponseSchema,
@@ -5876,6 +5898,20 @@ export type TaskDeleteResponse = z.infer<typeof TaskDeleteResponseSchema>;
 export type TaskAttachmentDownloadTokenResponse = z.infer<
   typeof TaskAttachmentDownloadTokenResponseSchema
 >;
+export type {
+  UiStateClearRequestMessage,
+  UiStateClearResponseMessage,
+  UiStateGetRequestMessage,
+  UiStateGetResponseMessage,
+  UiStateListRequestMessage,
+  UiStateListResponseMessage,
+  UiStateNamespace,
+  UiStateRecord,
+  UiStateReviewComment,
+  UiStateUpdatedMessage,
+  UiStateUpsertRequestMessage,
+  UiStateUpsertResponseMessage,
+} from "./ui-state/schemas.js";
 export type LoopRunResponse = z.infer<typeof LoopRunResponseSchema>;
 export type LoopListResponse = z.infer<typeof LoopListResponseSchema>;
 export type LoopInspectResponse = z.infer<typeof LoopInspectResponseSchema>;
