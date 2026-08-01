@@ -26,7 +26,7 @@ import {
   enableAmbientLiveVoiceWatches,
   type LiveVoiceAmbientWatchDeps,
 } from "@/live-voice/live-voice-ambient-watch";
-import { getLiveVoiceAmbientSettings } from "@/stores/live-voice-settings-store";
+import { getLiveVoiceAmbientSettings, getLiveVoiceVoice } from "@/stores/live-voice-settings-store";
 
 /**
  * Every host the app holds a connection to, read on demand. A call can outlive
@@ -145,6 +145,7 @@ export function LiveVoiceProvider({ children }: LiveVoiceProviderProps) {
           disable: ({ liveSessionId }) =>
             disableAmbientLiveVoiceWatches({ liveSessionId, deps: ambientWatchDeps }),
         },
+        { read: getLiveVoiceVoice },
       ),
     );
   }

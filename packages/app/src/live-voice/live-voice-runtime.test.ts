@@ -45,6 +45,7 @@ function createHarness(
     isSessionSupported?: boolean;
     getClient?: LiveVoiceRuntimeDeps["getClient"];
     pinConnection?: "active" | LiveVoiceRuntimeDeps["pinConnection"];
+    voice?: string;
   } = {},
 ): Harness {
   const lease = createAudioSessionLease();
@@ -97,6 +98,7 @@ function createHarness(
     startSession,
     isSessionSupported: overrides.isSessionSupported ?? true,
     lease,
+    ...(overrides.voice ? { voice: { read: () => overrides.voice } } : {}),
   });
 
   return {
@@ -162,6 +164,17 @@ describe("live voice runtime", () => {
 
     expect(harness.runtime.getSnapshot().sessionMode).toBe("foreground");
     expect(harness.sessionOptions().mode).toBe("foreground");
+  });
+
+  it("applies the selected voice when starting a new call", async () => {
+    harness = createHarness({ voice: "cedar" });
+
+    await harness.runtime.start(SERVER_ID);
+
+    expect(harness.client.startLiveVoice).toHaveBeenCalledWith({
+      offerSdp: OFFER_SDP,
+      voice: "cedar",
+    });
   });
 
   it("records finalized transcripts and replaces by transcript id", async () => {

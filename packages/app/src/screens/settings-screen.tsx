@@ -100,7 +100,9 @@ import {
 import type { LiveVoiceHostAvailability } from "@/live-voice/live-voice-availability-policy";
 import { resolveLiveVoiceUnavailableMessage } from "@/live-voice/live-voice-unavailable-message";
 import {
+  LIVE_VOICE_OPTIONS,
   MAX_AMBIENT_AGENT_GUIDANCE_LENGTH,
+  type LiveVoiceVoice,
   useLiveVoiceSettingsStore,
 } from "@/stores/live-voice-settings-store";
 import { settingsStyles } from "@/styles/settings";
@@ -281,6 +283,13 @@ function getServiceUrlBehaviorLabel(t: TFunction, value: ServiceUrlBehavior): st
 function getActiveLocale(language: string | undefined): SupportedLocale {
   const parsed = parseAppLanguage(language);
   return parsed && parsed !== "system" ? parsed : "en";
+}
+
+function getLiveVoiceVoiceLabel(t: TFunction, voice: LiveVoiceVoice | null): string {
+  if (voice === null) {
+    return t("liveVoice.settings.voice.default");
+  }
+  return `${voice.charAt(0).toUpperCase()}${voice.slice(1)}`;
 }
 
 const SERVICE_URL_BEHAVIOR_VALUES: ServiceUrlBehavior[] = ["ask", "in-app", "external"];
@@ -534,9 +543,11 @@ function GeneralSection({
  */
 function LiveVoiceSettingsCard() {
   const { t } = useTranslation();
+  const voice = useLiveVoiceSettingsStore((state) => state.voice);
   const ambientAgentReports = useLiveVoiceSettingsStore((state) => state.ambientAgentReports);
   const ambientAgentGuidance = useLiveVoiceSettingsStore((state) => state.ambientAgentGuidance);
   const setAmbientAgentReports = useLiveVoiceSettingsStore((state) => state.setAmbientAgentReports);
+  const setVoice = useLiveVoiceSettingsStore((state) => state.setVoice);
   const setAmbientAgentGuidance = useLiveVoiceSettingsStore(
     (state) => state.setAmbientAgentGuidance,
   );
@@ -544,6 +555,33 @@ function LiveVoiceSettingsCard() {
   return (
     <View style={settingsStyles.card}>
       <View style={settingsStyles.row}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>{t("liveVoice.settings.voice.label")}</Text>
+          <Text style={settingsStyles.rowHint}>{t("liveVoice.settings.voice.description")}</Text>
+        </View>
+        <DropdownMenu>
+          <DropdownTrigger
+            accessibilityRole="button"
+            accessibilityLabel={t("liveVoice.settings.voice.label")}
+            style={themeTriggerStyle}
+            testID="live-voice-voice-picker"
+          >
+            <Text style={styles.themeTriggerText}>{getLiveVoiceVoiceLabel(t, voice)}</Text>
+          </DropdownTrigger>
+          <DropdownMenuContent side="bottom" align="end" width={200}>
+            <LiveVoiceVoiceMenuItem value={null} selected={voice === null} onChange={setVoice} />
+            {LIVE_VOICE_OPTIONS.map((value) => (
+              <LiveVoiceVoiceMenuItem
+                key={value}
+                value={value}
+                selected={voice === value}
+                onChange={setVoice}
+              />
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </View>
+      <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
         <View style={settingsStyles.rowContent}>
           <Text style={settingsStyles.rowTitle}>{t("liveVoice.settings.agentReports.label")}</Text>
           <Text style={settingsStyles.rowHint}>
@@ -580,6 +618,27 @@ function LiveVoiceSettingsCard() {
         </View>
       ) : null}
     </View>
+  );
+}
+
+function LiveVoiceVoiceMenuItem({
+  value,
+  selected,
+  onChange,
+}: {
+  value: LiveVoiceVoice | null;
+  selected: boolean;
+  onChange: (value: LiveVoiceVoice | null) => void;
+}) {
+  const { t } = useTranslation();
+  const handleSelect = useCallback(() => {
+    onChange(value);
+  }, [onChange, value]);
+
+  return (
+    <DropdownMenuItem selected={selected} onSelect={handleSelect}>
+      {getLiveVoiceVoiceLabel(t, value)}
+    </DropdownMenuItem>
   );
 }
 

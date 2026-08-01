@@ -78,6 +78,7 @@ export interface LiveVoiceSnapshot {
 export interface LiveVoiceDaemonClient {
   startLiveVoice(input: {
     offerSdp: string;
+    voice?: string;
     ambientAgentReports?: boolean;
     ambientAgentGuidance?: string;
   }): Promise<{ liveSessionId: string; answerSdp: string }>;
@@ -109,6 +110,10 @@ export interface LiveVoiceRuntimeDeps {
     read(): { enabled: boolean; guidance: string | undefined };
     enable(input: { sourceServerId: string; liveSessionId: string }): Promise<void>;
     disable(input: { liveSessionId: string }): Promise<void>;
+  };
+  /** The selected provider voice, read once when a new call starts. */
+  voice?: {
+    read(): string | undefined;
   };
 }
 
@@ -206,11 +211,13 @@ export function createDefaultLiveVoiceRuntimeDeps(
   getClient: (serverId: string) => LiveVoiceDaemonClient | null,
   pinConnection?: (serverId: string) => LiveVoiceConnectionPin | null,
   ambientAgentReports?: LiveVoiceRuntimeDeps["ambientAgentReports"],
+  voice?: LiveVoiceRuntimeDeps["voice"],
 ): LiveVoiceRuntimeDeps {
   return {
     getClient,
     ...(pinConnection ? { pinConnection } : {}),
     ...(ambientAgentReports ? { ambientAgentReports } : {}),
+    ...(voice ? { voice } : {}),
     startSession: startLiveVoiceSession,
     isSessionSupported: isLiveVoiceSessionSupported,
     lease: audioSessionLease,
@@ -459,10 +466,16 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
       // Read once, before negotiating: the prompt the model gets is fixed at
       // start, so a switch flipped mid-call must not leave the two disagreeing.
       const ambientStartFields = toAmbientStartFields(deps.ambientAgentReports?.read());
+      const voice = deps.voice?.read();
 
       const sessionOptions: StartLiveVoiceSessionOptions = {
         mode: sessionMode,
-        negotiate: (offerSdp) => client.startLiveVoice({ offerSdp, ...ambientStartFields }),
+        negotiate: (offerSdp) =>
+          client.startLiveVoice({
+            offerSdp,
+            ...(voice ? { voice } : {}),
+            ...ambientStartFields,
+          }),
         onAudioBlocked: () => {
           if (generation !== startGeneration) return;
           patch({ isAudioBlocked: true });

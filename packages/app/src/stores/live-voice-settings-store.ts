@@ -10,7 +10,24 @@ import { createJSONStorage, persist } from "zustand/middleware";
  */
 export const MAX_AMBIENT_AGENT_GUIDANCE_LENGTH = 600;
 
+export const LIVE_VOICE_OPTIONS = [
+  "alloy",
+  "ash",
+  "ballad",
+  "coral",
+  "echo",
+  "sage",
+  "shimmer",
+  "verse",
+  "marin",
+  "cedar",
+] as const;
+
+export type LiveVoiceVoice = (typeof LIVE_VOICE_OPTIONS)[number];
+
 interface LiveVoiceSettingsState {
+  /** The OpenAI Realtime voice to use for new calls; null leaves selection to the provider. */
+  voice: LiveVoiceVoice | null;
   /**
    * Report agent sessions the call did not start — anything finishing, failing,
    * or asking for permission on any connected host.
@@ -18,6 +35,7 @@ interface LiveVoiceSettingsState {
   ambientAgentReports: boolean;
   /** Free text handed to the model verbatim; empty means no standing instruction. */
   ambientAgentGuidance: string;
+  setVoice: (voice: LiveVoiceVoice | null) => void;
   setAmbientAgentReports: (enabled: boolean) => void;
   setAmbientAgentGuidance: (guidance: string) => void;
 }
@@ -25,10 +43,12 @@ interface LiveVoiceSettingsState {
 export const useLiveVoiceSettingsStore = create<LiveVoiceSettingsState>()(
   persist(
     (set) => ({
+      voice: null,
       // Off by default: it turns a call the user started for one thing into a
       // channel their whole machine can interrupt, which should be chosen.
       ambientAgentReports: false,
       ambientAgentGuidance: "",
+      setVoice: (voice) => set({ voice }),
       setAmbientAgentReports: (enabled) => set({ ambientAgentReports: enabled }),
       setAmbientAgentGuidance: (guidance) =>
         set({ ambientAgentGuidance: guidance.slice(0, MAX_AMBIENT_AGENT_GUIDANCE_LENGTH) }),
@@ -39,6 +59,11 @@ export const useLiveVoiceSettingsStore = create<LiveVoiceSettingsState>()(
     },
   ),
 );
+
+export function getLiveVoiceVoice(): LiveVoiceVoice | undefined {
+  const voice = useLiveVoiceSettingsStore.getState().voice;
+  return voice && LIVE_VOICE_OPTIONS.includes(voice) ? voice : undefined;
+}
 
 /**
  * Read outside React. The Live Voice runtime starts calls from event handlers

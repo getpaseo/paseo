@@ -1796,6 +1796,11 @@ export const fr: TranslationResources = {
     },
     settings: {
       title: "Voix en direct",
+      voice: {
+        label: "Voix",
+        description: "Utilisée pour les nouveaux appels. Un appel actif conserve sa voix actuelle.",
+        default: "Par défaut",
+      },
       agentReports: {
         label: "Signaler l’activité des agents",
         description:

@@ -1763,6 +1763,11 @@ export const ja: TranslationResources = {
     },
     settings: {
       title: "ライブ音声",
+      voice: {
+        label: "音声",
+        description: "新しい通話に使用されます。通話中の音声は変更されません。",
+        default: "デフォルト",
+      },
       agentReports: {
         label: "エージェントの動きを知らせる",
         description:

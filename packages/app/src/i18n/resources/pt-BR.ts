@@ -1778,6 +1778,11 @@ export const ptBR: TranslationResources = {
     },
     settings: {
       title: "Voz ao vivo",
+      voice: {
+        label: "Voz",
+        description: "Usada em novas chamadas. Uma chamada ativa mantém a voz atual.",
+        default: "Padrão",
+      },
       agentReports: {
         label: "Avisar sobre atividade de agentes",
         description:

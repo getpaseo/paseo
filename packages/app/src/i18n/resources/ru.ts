@@ -1776,6 +1776,11 @@ export const ru: TranslationResources = {
     },
     settings: {
       title: "Живой голос",
+      voice: {
+        label: "Голос",
+        description: "Используется для новых звонков. Активный звонок сохраняет текущий голос.",
+        default: "По умолчанию",
+      },
       agentReports: {
         label: "Сообщать об активности агентов",
         description:

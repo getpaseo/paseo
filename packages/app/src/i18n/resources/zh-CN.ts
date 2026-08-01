@@ -1725,6 +1725,11 @@ export const zhCN: TranslationResources = {
     },
     settings: {
       title: "实时语音",
+      voice: {
+        label: "语音",
+        description: "用于新通话。正在进行的通话会保留当前语音。",
+        default: "默认",
+      },
       agentReports: {
         label: "播报智能体动态",
         description:
