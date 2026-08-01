@@ -113,6 +113,95 @@ code, prompts, and tool output; encrypted-at-rest storage is a separate product/
 Its serialized payload has a 1 MiB byte budget and evicts whole host snapshots in least-recently-
 written order; a single oversized host is omitted rather than partially restored.
 
+#### Live Voice ownership and cross-host routing
+
+Live Voice is one daemon-global call per owning client socket. The daemon creates
+a hidden Codex host session for the realtime conversation; it is not attached to
+a project or ordinary visible agent. SDP and control messages travel over the
+existing authenticated Paseo WebSocket, while microphone and remote speech media
+travel directly between the app's WebRTC peer and OpenAI. The app never receives
+or stores an OpenAI API key for this path: Codex uses its existing
+ChatGPT-subscription authentication to establish the realtime session.
+
+The exact source socket owns the call. The app pins that host connection so
+adaptive direct/relay selection cannot replace it mid-call, and a socket loss
+still tears the call down immediately. Native background audio keeps the peer and
+socket alive across Home/screen lock; the physical-device checks and platform
+constraints are in [mobile-testing.md](mobile-testing.md).
+
+On Android the foreground service's ongoing notification is the call's only
+control surface once Paseo is backgrounded, so it carries Mute and End call. The
+service never changes call state itself: a button press travels back through the
+Expo module to the app runtime, which stays the only writer. iOS has no
+equivalent — its module manages the audio session and nothing else, and a pinned
+call presence there would mean a Live Activity.
+
+For clients advertising `live_voice_cross_host_router`, the hidden session gets
+only routing tools: list compatible hosts, discover the ordinary tools and
+schemas on one host, and execute one selected tool. The route is:
+
+```text
+hidden Live Voice host on A
+  -> exact owning socket on A
+  -> owning app (authorizes the active call, selects and pins B)
+  -> authenticated existing socket on B
+  -> B's top-level Paseo tool catalog
+```
+
+Work started that way runs longer than a sentence, so the route has a return
+leg. A routed tool call that leaves an agent working asks the target daemon to
+watch its current turn. Permission requests are nonterminal; when the turn
+completes or fails, the target reports to
+the socket that started it, the app matches that report to the call it made it
+for, and the source daemon appends the news to the running conversation
+(`thread/realtime/appendText`), which the model then says out loud.
+
+The target daemon is never told which call the work belongs to — it has no
+liveSessionId and can address no socket but the requesting one. The app holds the
+correlation, and the source daemon still checks that the socket asking it to
+speak owns the call it names. A report for a call that has ended is dropped
+rather than spoken into whatever call came after it.
+
+A call can also report agents it did not start, gated on a user setting that is
+off by default. When it is on, the app turns on an ambient watch (`voice.live
+.agent.watch`) on every connected host that advertises
+`liveVoiceAmbientAgentReports`, and those hosts report every agent that finishes
+a turn, errors, or asks for permission. Two things differ from a routed report
+and both follow from nobody having asked for it:
+
+- **Correlation is by host, not requestId.** There is no routed call to match, so
+  the app resolves an unsolicited report through the host it armed the watch on.
+  A host reporting work the app never asked it to watch resolves to nothing. The
+  registration survives the whole call rather than retiring after one report.
+- **The model may stay silent.** A routed report is an answer the user is owed,
+  so its note says to speak. An unsolicited one says to use judgement and that
+  saying nothing is a valid outcome. There is no burst coalescing or filtering in
+  code; the user's own free-text guidance goes into the prompt verbatim and the
+  model decides.
+
+A turn-completed report does not claim that external work such as CI has
+finished. The spoken summary preserves any pending-work qualification from the
+agent. End-to-end monitoring remains an explicit heartbeat, schedule, monitoring
+agent, or service-specific check.
+
+The app is the authorization boundary because it already owns each saved host
+connection. Route messages contain only opaque server ids, sanitized host
+labels/status, tool names/arguments, and results. Passwords, relay keys, endpoint
+configuration, and OpenAI credentials never cross from one daemon to another.
+The target catalog is created without a caller agent id, so a routed request
+cannot claim an agent's workspace authority or recursively acquire the hidden
+Live Voice routing tools. Dropping the caller agent id also drops the
+agent-to-agent defaults that come with it, including background execution, so a
+routed call that asks for a report sets `defaultAgentWorkToBackground`. Without
+it the tool would block, the background-start hook would never fire, and the
+report the caller was promised would never be sent — a silence the model cannot
+detect or recover from. A paired source daemon also cannot use the app as a
+general cross-host bridge: the app accepts a route only while it owns the exact
+active Live Voice session id on that source host.
+
+Older clients that do not advertise the routing capability retain local-only
+Live Voice behavior and never receive the new server-initiated route messages.
+
 ### `packages/cli` — Command-line client
 
 Commander.js CLI with Docker-style commands. Common agent operations are also exposed at the top level (e.g. `paseo ls`, `paseo run`).
@@ -374,6 +463,7 @@ $PASEO_HOME/
 ├── agents/{cwd-with-dashes}/{agent-id}.json   # Agent record + persisted timeline rows
 ├── projects/projects.json                      # Project registry
 ├── projects/workspaces.json                    # Workspace registry
+├── projects/icons/                             # Custom project icon images
 ├── chat/                                       # Chat rooms
 ├── schedules/                                  # Scheduled-agent definitions and runs
 ├── loops/                                      # Loop runs and logs

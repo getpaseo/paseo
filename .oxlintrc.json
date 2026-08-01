@@ -130,7 +130,7 @@
         ]
       }
     },
-    // Raw query burn-down: 35 files total; the 29 files below still enforce the useUnistyles ban.
+    // Raw query burn-down: 34 files total; the 28 files below still enforce the useUnistyles ban.
     {
       "files": [
         "packages/app/src/assistant-file-links/use-file-link.ts",
@@ -154,10 +154,9 @@
         "packages/app/src/hooks/use-is-local-daemon.ts",
         "packages/app/src/hooks/use-keyboard-shortcut-overrides.ts",
         "packages/app/src/hooks/use-preferred-editor.ts",
-        "packages/app/src/hooks/use-project-icon-query.ts",
         "packages/app/src/hooks/use-settings/index.ts",
         "packages/app/src/panels/terminal-panel.tsx",
-        "packages/app/src/projects/project-icons.ts",
+        "packages/app/src/projects/icons.ts",
         "packages/app/src/provider-usage/use-provider-usage.ts",
         "packages/app/src/screens/project-settings-screen.tsx",
         "packages/app/src/screens/workspace/use-workspace-checkout-status.ts",

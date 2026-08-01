@@ -167,6 +167,7 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "dictation-toggle": "settings.shortcuts.help.startStopDictation",
   "agent-interrupt": "settings.shortcuts.help.interruptAgent",
   "voice-mute-toggle": "settings.shortcuts.help.muteUnmuteVoiceMode",
+  "live-voice-mute-toggle": "settings.shortcuts.help.muteUnmuteLiveVoice",
 };
 
 const SHORTCUT_HELP_NOTE_KEYS: Record<string, string> = {
@@ -1057,6 +1058,36 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       section: "agent-input",
       label: "Mute/unmute voice mode",
       keys: ["Space"],
+    },
+  },
+
+  // Live Voice mute works everywhere a call can follow you — including while
+  // typing — because muting is exactly what you reach for mid-keystroke when
+  // someone walks in. Terminal keeps first refusal on its own keys.
+  {
+    id: "live-voice-mute-toggle-cmd-shift-m-mac",
+    action: "live-voice.mute.toggle",
+    combo: "Cmd+Shift+M",
+    repeat: false,
+    when: { mac: true, commandCenter: false, terminal: false },
+    help: {
+      id: "live-voice-mute-toggle",
+      section: "agent-input",
+      label: "Mute/unmute live voice",
+      keys: ["mod", "shift", "M"],
+    },
+  },
+  {
+    id: "live-voice-mute-toggle-ctrl-shift-m-non-mac",
+    action: "live-voice.mute.toggle",
+    combo: "Ctrl+Shift+M",
+    repeat: false,
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "live-voice-mute-toggle",
+      section: "agent-input",
+      label: "Mute/unmute live voice",
+      keys: ["mod", "shift", "M"],
     },
   },
 ];

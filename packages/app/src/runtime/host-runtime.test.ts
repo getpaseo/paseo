@@ -926,6 +926,111 @@ describe("HostRuntimeController", () => {
     expect(controller.getSnapshot().client).not.toBeNull();
   });
 
+  it("keeps the exact active client while pinned and resumes adaptive switching after release", async () => {
+    useHostRuntimeClock();
+    const host = makeHost({ preferredConnectionId: "direct:lan:6767" });
+    const clients: FakeDaemonClient[] = [];
+    const latencies: Record<string, number | Error> = {
+      "direct:lan:6767": 15,
+      "relay:relay.paseo.sh:443": 60,
+    };
+    const controller = new HostRuntimeController({
+      host,
+      deps: makeDeps(latencies, clients),
+    });
+
+    await controller.start({ autoProbe: false });
+    const initialSnapshot = controller.getSnapshot();
+    const initialClient = initialSnapshot.client;
+    expect(initialClient).not.toBeNull();
+
+    const firstPin = controller.pinActiveConnection();
+    const secondPin = controller.pinActiveConnection();
+    expect(firstPin).toMatchObject({
+      serverId: host.serverId,
+      connectionId: "direct:lan:6767",
+      client: initialClient,
+      clientGeneration: initialSnapshot.clientGeneration,
+    });
+    expect(secondPin?.client).toBe(initialClient);
+
+    latencies["direct:lan:6767"] = 95;
+    latencies["relay:relay.paseo.sh:443"] = 30;
+    (initialClient as unknown as FakeDaemonClient).heartbeatReportsRtt(95);
+
+    for (let index = 0; index < 6; index += 1) {
+      await vi.advanceTimersByTimeAsync(120_000);
+      await controller.runProbeCycleNow();
+    }
+
+    expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
+    expect(controller.getSnapshot().client).toBe(initialClient);
+    expect((initialClient as unknown as FakeDaemonClient).isDisposed()).toBe(false);
+
+    firstPin?.release();
+    firstPin?.release();
+    for (let index = 0; index < 3; index += 1) {
+      await vi.advanceTimersByTimeAsync(120_000);
+      await controller.runProbeCycleNow();
+    }
+    expect(controller.getSnapshot().client).toBe(initialClient);
+
+    secondPin?.release();
+    let switched = false;
+    for (let index = 0; index < 6 && !switched; index += 1) {
+      await vi.advanceTimersByTimeAsync(120_000);
+      await controller.runProbeCycleNow();
+      switched = controller.getSnapshot().activeConnectionId === "relay:relay.paseo.sh:443";
+    }
+
+    expect(switched).toBe(true);
+    expect(controller.getSnapshot().client).not.toBe(initialClient);
+    expect((initialClient as unknown as FakeDaemonClient).isDisposed()).toBe(true);
+  });
+
+  it("surfaces a pinned client's transport failure without replacing it", async () => {
+    const direct: HostConnection = {
+      id: "direct:lan:6767",
+      type: "directTcp",
+      endpoint: "lan:6767",
+    };
+    const relay: HostConnection = {
+      id: "relay:relay.paseo.sh:443",
+      type: "relay",
+      relayEndpoint: "relay.paseo.sh:443",
+      daemonPublicKeyB64: "pk_test",
+    };
+    const client = makeConnectedProbeClient(10);
+    const controller = new HostRuntimeController({
+      host: makeHost({ connections: [direct, relay], preferredConnectionId: direct.id }),
+      deps: makeDeps({ [direct.id]: new Error("offline"), [relay.id]: 5 }, []),
+    });
+
+    await controller.start({
+      autoProbe: false,
+      initialConnection: {
+        connectionId: direct.id,
+        existingClient: client as unknown as DaemonClient,
+      },
+    });
+    const pin = controller.pinActiveConnection();
+    expect(pin?.client).toBe(client);
+
+    client.setConnectionState({ status: "disconnected", reason: "socket failed" });
+
+    expect(controller.getSnapshot()).toMatchObject({
+      connectionStatus: "error",
+      lastError: "socket failed",
+      client,
+    });
+
+    await controller.runProbeCycleNow();
+    expect(controller.getSnapshot().client).toBe(client);
+    expect(controller.getSnapshot().activeConnectionId).toBe(direct.id);
+
+    pin?.release();
+  });
+
   it("does not switch on a transient latency spike", async () => {
     useHostRuntimeClock();
     const host = makeHost({ preferredConnectionId: "direct:lan:6767" });
@@ -1365,6 +1470,50 @@ describe("HostRuntimeController", () => {
 });
 
 describe("HostRuntimeStore", () => {
+  it("returns a scoped connection pin whose release stays safe after host removal", async () => {
+    const host = makeHost({
+      connections: [
+        {
+          id: "direct:lan:6767",
+          type: "directTcp",
+          endpoint: "lan:6767",
+        },
+      ],
+    });
+    const client = makeConnectedProbeClient(10);
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host: hostProfile }) => ({
+          client: client as unknown as DaemonClient,
+          serverId: hostProfile.serverId,
+          hostname: hostProfile.label ?? null,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+      storage: createMemoryHostRuntimeStorage(),
+    });
+
+    store.syncHosts([host]);
+    await waitForDirectoryReady(store, host.serverId);
+
+    const pin = store.pinActiveConnection(host.serverId);
+    expect(pin).toMatchObject({
+      serverId: host.serverId,
+      connectionId: "direct:lan:6767",
+      client,
+      clientGeneration: 1,
+    });
+
+    store.syncHosts([]);
+    expect(store.pinActiveConnection(host.serverId)).toBeNull();
+    expect(() => {
+      pin?.release();
+      pin?.release();
+    }).not.toThrow();
+    useSessionStore.getState().clearSession(host.serverId);
+  });
+
   it("restores the display replica before declaring the host registry loaded", async () => {
     const host = makeHost();
     const storage = createMemoryHostRuntimeStorage();

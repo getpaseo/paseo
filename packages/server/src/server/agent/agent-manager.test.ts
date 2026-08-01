@@ -6489,7 +6489,9 @@ test("turn_failed emits a system error assistant timeline message and keeps erro
         this.pushEvent({
           type: "turn_failed",
           provider: this.provider,
-          error: "invalid model id",
+          error: "Authentication failed: sign in required",
+          code: "-32000",
+          diagnostic: '{"cause":"auth_required"}',
           turnId,
         });
       }, 0);
@@ -6536,11 +6538,18 @@ test("turn_failed emits a system error assistant timeline message and keeps erro
     { workspaceId: undefined },
   );
 
-  await expect(manager.runAgent(agent.id, "hello")).rejects.toThrow("invalid model id");
+  await expect(manager.runAgent(agent.id, "hello")).rejects.toThrow("Authentication failed");
 
   const snapshot = manager.getAgent(agent.id);
   expect(snapshot?.lifecycle).toBe("error");
-  expect(snapshot?.lastError).toBe("invalid model id");
+  expect(snapshot?.lastError).toBe("Authentication failed: sign in required");
+  expect(snapshot?.lastFailure).toEqual({
+    kind: "authentication_required",
+    message: "Authentication failed: sign in required",
+    code: "-32000",
+    diagnostic: '{"cause":"auth_required"}',
+  });
+  expect(toAgentPayload(snapshot!).lastFailure?.kind).toBe("authentication_required");
 
   const systemErrors = manager
     .getTimeline(agent.id)
@@ -6549,7 +6558,7 @@ test("turn_failed emits a system error assistant timeline message and keeps erro
         item.type === "assistant_message" && item.text.includes("[System Error]"),
     );
   expect(systemErrors).toHaveLength(1);
-  expect(systemErrors[0]?.text).toContain("invalid model id");
+  expect(systemErrors[0]?.text).toContain("Authentication failed: sign in required");
 });
 
 test("turn_failed surfaces provider code and diagnostic in system error message", async () => {
@@ -6617,6 +6626,7 @@ test("turn_failed surfaces provider code and diagnostic in system error message"
   await expect(manager.runAgent(agent.id, "hello")).rejects.toThrow("Provider execution failed");
 
   expect(manager.getAgent(agent.id)?.lastError).toBe("Provider execution failed");
+  expect(manager.getAgent(agent.id)?.lastFailure?.kind).toBe("provider_error");
 
   const systemError = manager
     .getTimeline(agent.id)

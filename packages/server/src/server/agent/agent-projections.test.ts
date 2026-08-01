@@ -194,6 +194,33 @@ describe("toStoredAgentRecord", () => {
     expect(record.lastUserMessageAt).toBeNull();
   });
 
+  it("never persists the runtime-injected Paseo MCP bearer", () => {
+    const agent = createManagedAgent({
+      persistence: {
+        provider: "claude",
+        sessionId: "persist-secret",
+        metadata: {
+          cwd: "/tmp/project",
+          mcpServers: {
+            paseo: {
+              type: "http",
+              url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+              headers: { Authorization: "Bearer sentinel-secret" },
+            },
+            userServer: { type: "http", url: "https://example.test/mcp" },
+          },
+        },
+      },
+    });
+
+    const record = toStoredAgentRecord(agent);
+
+    expect(JSON.stringify(record)).not.toContain("sentinel-secret");
+    expect(record.persistence?.metadata?.mcpServers).toEqual({
+      userServer: { type: "http", url: "https://example.test/mcp" },
+    });
+  });
+
   it("omits config when no serializable fields exist", () => {
     const agent = createManagedAgent({
       config: {
@@ -313,22 +340,31 @@ describe("toAgentPayload", () => {
     }
   });
 
-  it("keeps persistence handles sanitized and detached", () => {
+  it("exposes only provider-neutral persistence identity", () => {
     const agent = createManagedAgent({
       persistence: {
         provider: "codex",
         sessionId: "persist-99",
         nativeHandle: { id: "native" } as unknown,
-        metadata: { restored: new Date("2025-03-01T00:00:00.000Z"), empty: {} },
+        metadata: {
+          restored: new Date("2025-03-01T00:00:00.000Z"),
+          empty: {},
+          mcpServers: {
+            paseo: {
+              type: "http",
+              url: "http://127.0.0.1:6767/mcp/agents",
+              headers: { Authorization: "Bearer sentinel-secret" },
+            },
+          },
+        },
       },
     });
     const payload = toAgentPayload(agent);
     expect(payload.persistence).toEqual({
       provider: "codex",
       sessionId: "persist-99",
-      nativeHandle: { id: "native" },
-      metadata: { restored: "2025-03-01T00:00:00.000Z" },
     });
+    expect(JSON.stringify(payload)).not.toContain("sentinel-secret");
     (payload.persistence as AgentPersistenceHandle).sessionId = "mutated";
     expect(agent.persistence!.sessionId).toBe("persist-99");
   });

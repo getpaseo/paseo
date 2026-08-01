@@ -265,6 +265,106 @@ function formatFinishNotificationBody(params: FinishNotificationBodyInput): stri
   return `${statusLine}\n\n<agent-response>\n${lastAssistantMessage}\n</agent-response>`;
 }
 
+export type AgentFinishReason = "finished" | "errored" | "needs permission";
+
+export interface WatchAgentFinishParams {
+  agentManager: Pick<AgentManager, "subscribe" | "getAgent">;
+  agentId: string;
+  /** Keep watching after permission requests so a later terminal outcome is reported. */
+  continueAfterPermission?: boolean;
+  onFinish: (reason: AgentFinishReason, details: { terminal: boolean; turnId?: string }) => void;
+}
+
+/**
+ * Fires once when an agent finishes, errors, or asks for permission. Every
+ * finish notification — to a caller agent, to a Live Voice call — watches
+ * through this so they all agree on what "done" means.
+ *
+ * Returns a canceller for callers whose notification target can go away before
+ * the agent does.
+ */
+export function watchAgentFinish(params: WatchAgentFinishParams): () => void {
+  const { agentManager, agentId, onFinish } = params;
+  let hasSeenRunning = false;
+  let fired = false;
+  let unsubscribe: (() => void) | null = null;
+  const reportedPermissionIds = new Set<string>();
+
+  function fire(reason: AgentFinishReason, details: { terminal: boolean; turnId?: string }): void {
+    if (fired) {
+      return;
+    }
+    if (details.terminal || !params.continueAfterPermission) {
+      fired = true;
+      unsubscribe?.();
+    }
+    onFinish(reason, details);
+  }
+
+  unsubscribe = agentManager.subscribe(
+    (event) => {
+      if (fired) {
+        return;
+      }
+
+      if (event.type === "agent_state") {
+        if (event.agent.lifecycle === "running") {
+          hasSeenRunning = true;
+          return;
+        }
+        if (event.agent.lifecycle === "error") {
+          fire("errored", { terminal: true });
+          return;
+        }
+        if (event.agent.lifecycle === "idle" && hasSeenRunning) {
+          fire("finished", { terminal: true });
+          return;
+        }
+        if (event.agent.lifecycle === "closed") {
+          fired = true;
+          unsubscribe?.();
+          return;
+        }
+        return;
+      }
+
+      if (event.event.type === "permission_requested") {
+        if (reportedPermissionIds.has(event.event.request.id)) {
+          return;
+        }
+        reportedPermissionIds.add(event.event.request.id);
+        fire("needs permission", {
+          terminal: false,
+          ...(event.event.turnId ? { turnId: event.event.turnId } : {}),
+        });
+      }
+    },
+    { agentId, replayState: false },
+  );
+
+  // Check if the agent is already running (catches the case where the lifecycle
+  // flipped before our subscribe call was processed). Do NOT treat an immediate
+  // "idle" as "finished" — the agent may not have started yet (streamAgent sets
+  // a pending run before transitioning to "running").
+  const snapshot = agentManager.getAgent(agentId);
+  if (!snapshot || snapshot.lifecycle === "closed") {
+    fired = true;
+    unsubscribe();
+  } else if (snapshot.lifecycle === "running") {
+    hasSeenRunning = true;
+  } else if (snapshot.lifecycle === "error") {
+    fire("errored", { terminal: true });
+  }
+
+  return () => {
+    if (fired) {
+      return;
+    }
+    fired = true;
+    unsubscribe?.();
+  };
+}
+
 export function setupFinishNotification(params: SetupFinishNotificationParams): void {
   const {
     agentManager,
@@ -274,17 +374,8 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     requireParentOwnership = false,
     logger,
   } = params;
-  let hasSeenRunning = false;
-  let fired = false;
-  let unsubscribe: (() => void) | null = null;
 
-  async function notify(reason: "finished" | "errored" | "needs permission"): Promise<void> {
-    if (fired) {
-      return;
-    }
-    fired = true;
-    unsubscribe?.();
-
+  async function notify(reason: AgentFinishReason): Promise<void> {
     const callerRecord = await agentStorage.get(callerAgentId);
     if (callerRecord?.archivedAt) {
       return;
@@ -313,62 +404,16 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     });
   }
 
-  function notifySafely(reason: "finished" | "errored" | "needs permission"): void {
-    void notify(reason).catch((error) => {
-      logger.error(
-        { err: error, childAgentId, callerAgentId, reason },
-        "Failed to notify caller agent",
-      );
-    });
-  }
-
-  unsubscribe = agentManager.subscribe(
-    (event) => {
-      if (fired) {
-        return;
-      }
-
-      if (event.type === "agent_state") {
-        if (event.agent.lifecycle === "running") {
-          hasSeenRunning = true;
-          return;
-        }
-        if (event.agent.lifecycle === "error") {
-          notifySafely("errored");
-          return;
-        }
-        if (event.agent.lifecycle === "idle" && hasSeenRunning) {
-          notifySafely("finished");
-          return;
-        }
-        if (event.agent.lifecycle === "closed") {
-          fired = true;
-          unsubscribe?.();
-          return;
-        }
-        return;
-      }
-
-      if (event.event.type === "permission_requested") {
-        notifySafely("needs permission");
-      }
+  watchAgentFinish({
+    agentManager,
+    agentId: childAgentId,
+    onFinish: (reason) => {
+      void notify(reason).catch((error) => {
+        logger.error(
+          { err: error, childAgentId, callerAgentId, reason },
+          "Failed to notify caller agent",
+        );
+      });
     },
-    { agentId: childAgentId, replayState: false },
-  );
-
-  // Check if the child is already running (catches the case where
-  // the lifecycle flipped before our subscribe call was processed).
-  // Do NOT treat an immediate "idle" as "finished" — the agent may
-  // not have started yet (streamAgent sets a pending run before
-  // transitioning to "running").
-  const childSnapshot = agentManager.getAgent(childAgentId);
-  if (!childSnapshot || childSnapshot.lifecycle === "closed") {
-    unsubscribe();
-    return;
-  }
-  if (childSnapshot.lifecycle === "running") {
-    hasSeenRunning = true;
-  } else if (childSnapshot.lifecycle === "error") {
-    notifySafely("errored");
-  }
+  });
 }

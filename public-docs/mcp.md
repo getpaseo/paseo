@@ -22,8 +22,8 @@ Workspaces decide where work happens; agent parentage decides who owns the work.
 
 - An agent that calls `create_agent` without a `workspaceId` gets a subagent in its own workspace.
 - Passing a `workspaceId` places that subagent in another workspace without detaching it from its parent.
-- A top-level MCP caller without a workspace gets a new local workspace.
-- Create a workspace first when you need worktree isolation, a specific branch, or a pull request checkout.
+- A top-level MCP caller must select an existing `workspaceId`.
+- Create a workspace first when you need a new local workspace, worktree isolation, a specific branch, or a pull request checkout.
 
 MCP does not expose an agent-detach tool. Detaching is a manual user action in the app or CLI.
 
@@ -43,6 +43,7 @@ MCP does not expose an agent-detach tool. Detaching is a manual user action in t
 | `update_agent`       | Update an agent name, labels, or runtime settings such as mode/model/thinking/features. |
 | `get_agent_activity` | Return recent agent timeline entries as a curated summary.                              |
 | `set_agent_mode`     | Switch an agent's session mode.                                                         |
+| `list_paseo_tools`   | Discover available tools and their input schemas.                                       |
 
 ### Workspaces
 

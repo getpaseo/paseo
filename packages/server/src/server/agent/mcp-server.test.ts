@@ -53,6 +53,7 @@ import { areEquivalentPaths } from "../../utils/path.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { BrowserToolsBroker, BrowserToolsExecuteInput } from "../browser-tools/broker.js";
+import type { LiveVoiceRouteBroker } from "../live-voice/live-voice-route-broker.js";
 import type { BrowserToolsResponsePayload } from "../browser-tools/errors.js";
 import { readPaseoWorktreeMetadata } from "../../utils/worktree-metadata.js";
 import { createWorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";
@@ -1202,7 +1203,7 @@ describe("create_agent MCP tool", () => {
     ).toBe(true);
   });
 
-  it("creates a fresh local workspace for canonical top-level creation", async () => {
+  it("requires explicit workspace placement for canonical top-level creation", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.createAgent.mockResolvedValue({
       id: "top-level-agent",
@@ -1223,19 +1224,16 @@ describe("create_agent MCP tool", () => {
       logger,
     });
 
-    await registeredTool(server, "create_agent").handler({
-      title: "Top-level agent",
-      provider: "codex/gpt-5.4",
-      initialPrompt: "Do work",
-      background: true,
-    });
-
-    expect(ensureWorkspace).toHaveBeenCalledWith(existingCwd, { prompt: "Do work" });
-    expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
-      expect.objectContaining({ cwd: existingCwd }),
-      undefined,
-      { workspaceId: "workspace-created" },
-    );
+    await expect(
+      registeredTool(server, "create_agent").handler({
+        title: "Top-level agent",
+        provider: "codex/gpt-5.4",
+        initialPrompt: "Do work",
+        background: true,
+      }),
+    ).rejects.toThrow("workspaceId is required");
+    expect(ensureWorkspace).not.toHaveBeenCalled();
+    expect(spies.agentManager.createAgent).not.toHaveBeenCalled();
   });
 
   it("rejects partial explicit workspace shape", async () => {
@@ -2511,6 +2509,7 @@ describe("create_agent MCP tool", () => {
       const response = await tool.handler({
         isolation: "worktree",
         path: repoDir,
+        mode: "branch-off",
         worktreeSlug: "tool-worktree",
         branchName: "feature/tool-worktree",
         baseBranch: "main",
@@ -2526,6 +2525,32 @@ describe("create_agent MCP tool", () => {
     } finally {
       await removeTempDir(tempDir);
     }
+  });
+
+  it("rejects implicit or ambiguous workspace placement", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
+    const tool = registeredTool(server, "create_workspace");
+
+    await expect(tool.handler({ isolation: "local" })).rejects.toThrow(
+      "path is required for local workspace creation",
+    );
+    await expect(tool.handler({ isolation: "worktree", path: REPO_CWD })).rejects.toThrow(
+      "mode is required for worktree isolation",
+    );
+    await expect(
+      tool.handler({
+        isolation: "worktree",
+        path: REPO_CWD,
+        projectId: "project-1",
+        mode: "branch-off",
+      }),
+    ).rejects.toThrow("exactly one of path or projectId");
   });
 
   it("creates a worktree workspace from a project root without a path", async () => {
@@ -2573,6 +2598,7 @@ describe("create_agent MCP tool", () => {
     const response = await invokeToolWithParsedInput(registeredTool(server, "create_workspace"), {
       isolation: "worktree",
       projectId: project.projectId,
+      mode: "branch-off",
       worktreeSlug: "project-worktree",
       title: "Project workspace",
     });
@@ -5021,6 +5047,140 @@ describe("speak MCP tool", () => {
   });
 });
 
+describe("Live Voice cross-host MCP tools", () => {
+  const logger = createTestLogger();
+
+  it("gives an exact registered voice host only the routing tools", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce({
+        kind: "list_hosts",
+        hosts: [
+          {
+            serverId: "server-b",
+            label: "Desktop",
+            hostname: "desktop",
+            version: "0.3.0",
+            online: true,
+            toolExecutionSupported: true,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        kind: "execute_tool",
+        targetServerId: "server-b",
+        toolResult: {
+          content: [],
+          structuredContent: {
+            tools: [{ name: "list_agents", inputSchema: { type: "object" } }],
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        kind: "execute_tool",
+        targetServerId: "server-b",
+        toolResult: {
+          content: [],
+          structuredContent: { agents: [] },
+        },
+      });
+    const broker = {
+      isRegisteredHost: (agentId: string) => agentId === "voice-host",
+      execute,
+    } as unknown as LiveVoiceRouteBroker;
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      callerAgentId: "voice-host",
+      liveVoiceRouteBroker: broker,
+      enableVoiceTools: true,
+      logger,
+    });
+
+    const listHosts = registeredTool(server, "list_hosts");
+    const listTools = registeredTool(server, "list_paseo_tools_on_host");
+    const runTool = registeredTool(server, "run_paseo_tool_on_host");
+    expect(lookupTool(server, "list_agents")).toBeUndefined();
+    expect(lookupTool(server, "create_workspace")).toBeUndefined();
+    expect(lookupTool(server, "speak")).toBeUndefined();
+
+    await expect(listHosts.handler({})).resolves.toMatchObject({
+      structuredContent: {
+        hosts: [{ serverId: "server-b", label: "Desktop" }],
+      },
+    });
+    await expect(
+      listTools.handler({
+        serverId: "server-b",
+        toolName: "list_agents",
+      }),
+    ).resolves.toMatchObject({
+      structuredContent: {
+        targetServerId: "server-b",
+        tools: [{ name: "list_agents" }],
+      },
+    });
+    await expect(
+      runTool.handler({
+        serverId: "server-b",
+        toolName: "list_agents",
+        arguments: {},
+      }),
+    ).resolves.toMatchObject({
+      structuredContent: {
+        targetServerId: "server-b",
+        result: { agents: [] },
+      },
+    });
+    expect(execute).toHaveBeenNthCalledWith(1, "voice-host", { kind: "list_hosts" });
+    expect(execute).toHaveBeenNthCalledWith(2, "voice-host", {
+      kind: "execute_tool",
+      targetServerId: "server-b",
+      toolName: "list_paseo_tools",
+      arguments: { toolName: "list_agents" },
+    });
+    expect(execute).toHaveBeenNthCalledWith(3, "voice-host", {
+      kind: "execute_tool",
+      targetServerId: "server-b",
+      toolName: "list_agents",
+      arguments: {},
+      notifyOnAgentFinish: true,
+    });
+  });
+
+  it("never exposes routing wrappers to an ordinary or top-level catalog", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const broker = {
+      isRegisteredHost: () => false,
+      execute: vi.fn(),
+    } as unknown as LiveVoiceRouteBroker;
+    const ordinary = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      callerAgentId: "ordinary-agent",
+      liveVoiceRouteBroker: broker,
+      logger,
+    });
+    const topLevel = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      liveVoiceRouteBroker: broker,
+      logger,
+    });
+
+    expect(lookupTool(ordinary, "list_hosts")).toBeUndefined();
+    expect(lookupTool(ordinary, "run_paseo_tool_on_host")).toBeUndefined();
+    expect(lookupTool(ordinary, "list_agents")).toBeDefined();
+    expect(lookupTool(topLevel, "list_hosts")).toBeUndefined();
+    expect(lookupTool(topLevel, "run_paseo_tool_on_host")).toBeUndefined();
+    expect(lookupTool(topLevel, "list_agents")).toBeDefined();
+  });
+});
+
 describe("agent snapshot MCP serialization", () => {
   const logger = createTestLogger();
 
@@ -5534,6 +5694,42 @@ describe("agent snapshot MCP serialization", () => {
     }
   });
 
+  it("includes stable workspace identity and effective name in compact agent rows", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.listAgents.mockReturnValue([
+      createManagedAgent({ workspaceId: "workspace-1" }),
+    ]);
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: "workspace-1",
+      projectId: "project-1",
+      cwd: "/tmp/live-project",
+      kind: "local_checkout",
+      displayName: "main",
+      title: null,
+      createdAt: "2026-07-31T00:00:00.000Z",
+      updatedAt: "2026-07-31T00:00:00.000Z",
+    });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      logger,
+      providerSnapshotManager: createClaudeOnlyManager(),
+      workspaceRegistry: {
+        get: async () => workspace,
+        list: async () => [workspace],
+        upsert: async () => undefined,
+      },
+    });
+
+    const response = await registeredTool(server, "list_agents").handler({});
+
+    expect(agentsOf(response)[0]).toMatchObject({
+      id: "live-agent",
+      workspaceId: "workspace-1",
+      workspaceName: "main",
+    });
+  });
+
   it("emits list_pending_permissions payloads that satisfy the permission schema", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.listAgents.mockReturnValue([
@@ -5591,6 +5787,39 @@ describe("agent snapshot MCP serialization", () => {
         },
       },
     ]);
+  });
+
+  it("discovers exact Paseo tool schemas without source inspection", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      logger,
+      providerSnapshotManager: createClaudeOnlyManager(),
+    });
+
+    const response = await registeredTool(server, "list_paseo_tools").handler({
+      toolName: "create_agent",
+    });
+    const tools = z
+      .array(
+        z.object({
+          name: z.string(),
+          description: z.string(),
+          inputSchema: z.record(z.string(), z.unknown()),
+        }),
+      )
+      .parse(response.structuredContent.tools);
+
+    expect(tools).toHaveLength(1);
+    expect(tools[0]?.name).toBe("create_agent");
+    expect(tools[0]?.inputSchema).toMatchObject({
+      type: "object",
+      properties: {
+        workspaceId: expect.any(Object),
+        initialPrompt: expect.any(Object),
+      },
+    });
   });
 
   it("loads archived agents before reading get_agent_activity", async () => {

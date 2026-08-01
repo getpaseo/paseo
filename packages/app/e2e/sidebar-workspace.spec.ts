@@ -11,6 +11,7 @@ import {
 import { seedWorkspace } from "./helpers/seed-client";
 import { expectWorkspaceHeader } from "./helpers/workspace-ui";
 import { getServerId } from "./helpers/server-id";
+import { projectEquivalenceViewKey } from "./helpers/project-view-key";
 import { escapeRegex } from "./helpers/regex";
 
 const GITHUB_REMOTE_URL = "https://github.com/test-owner/test-repo.git";
@@ -219,7 +220,9 @@ test.describe("Half-screen desktop layout", () => {
       }
 
       await gotoAppShell(page);
-      await page.getByTestId(`sidebar-project-show-more-${workspace.projectKey}`).click();
+      await page
+        .getByTestId(`sidebar-project-show-more-${projectEquivalenceViewKey(workspace.projectKey)}`)
+        .click();
       await waitForSidebarWorkspace(page, lastWorkspaceId);
 
       const sidebarScroll = page.getByTestId("sidebar-project-workspace-list-scroll");

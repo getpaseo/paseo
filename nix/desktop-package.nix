@@ -50,11 +50,14 @@ buildNpmPackage rec {
   # npm rebuild. We manually rebuild only node-pty in buildPhase.
   npmRebuildFlags = [ "--ignore-scripts" ];
 
-  nativeBuildInputs = [
-    python3 # for node-gyp (node-pty)
-    makeWrapper
-    copyDesktopItems
-  ];
+  nativeBuildInputs =
+    [
+      python3 # for node-gyp (node-pty)
+    ]
+    ++ lib.optionals stdenv.hostPlatform.isLinux [
+      makeWrapper
+      copyDesktopItems
+    ];
 
   buildInputs = lib.optionals stdenv.hostPlatform.isLinux [ libuv ];
 
@@ -82,8 +85,31 @@ buildNpmPackage rec {
     # Expo web export for the Electron renderer
     ( cd packages/app && PASEO_WEB_PLATFORM=electron npx expo export --platform web )
 
-    # Desktop main process (tsc only — NOT electron-builder)
+    # Desktop main process
     npm run build:main --workspace=@getpaseo/desktop
+
+    ${lib.optionalString stdenv.hostPlatform.isDarwin ''
+      # electron-builder edits helper plists while assembling the app, so
+      # stage a writable Electron distribution instead of using the read-only
+      # nixpkgs app directly.
+      electron_dist="$NIX_BUILD_TOP/electron-dist"
+      mkdir -p "$electron_dist"
+      cp -R ${electron}/Applications/Electron.app "$electron_dist/"
+      chmod -R u+w "$electron_dist/Electron.app"
+      (
+        cd packages/desktop
+        CSC_IDENTITY_AUTO_DISCOVERY=false \
+          ../../node_modules/.bin/electron-builder \
+            --config electron-builder.yml \
+            --dir \
+            --mac \
+            --publish never \
+            --config.electronDist="$electron_dist" \
+            --config.mac.identity=null \
+            --config.mac.hardenedRuntime=false \
+            --config.mac.notarize=false
+      )
+    ''}
 
     runHook postBuild
   '';
@@ -91,6 +117,7 @@ buildNpmPackage rec {
   installPhase = ''
     runHook preInstall
 
+    ${lib.optionalString stdenv.hostPlatform.isLinux ''
     mkdir -p $out/share/paseo-desktop $out/bin
 
     # Preserve the monorepo layout so main.js's dev-mode path resolution
@@ -132,11 +159,23 @@ buildNpmPackage rec {
       --set EXPO_DEV_URL "paseo://app/"
 
     copyDesktopItems
+    ''}
+
+    ${lib.optionalString stdenv.hostPlatform.isDarwin ''
+      app="$(find packages/desktop/release -maxdepth 3 -type d -name Paseo.app -print -quit)"
+      if [ -z "$app" ]; then
+        echo "electron-builder did not produce Paseo.app" >&2
+        exit 1
+      fi
+      mkdir -p "$out/Applications"
+      cp -R "$app" "$out/Applications/Paseo.app"
+      ln -s ../Applications/Paseo.app/Contents/MacOS/Paseo "$out/bin/paseo-desktop"
+    ''}
 
     runHook postInstall
   '';
 
-  desktopItems = [
+  desktopItems = lib.optionals stdenv.hostPlatform.isLinux [
     (makeDesktopItem {
       name = "paseo-desktop";
       desktopName = "Paseo";
@@ -154,6 +193,6 @@ buildNpmPackage rec {
     homepage = "https://github.com/getpaseo/paseo";
     license = lib.licenses.agpl3Plus;
     mainProgram = "paseo-desktop";
-    platforms = lib.platforms.linux;
+    platforms = lib.platforms.linux ++ lib.platforms.darwin;
   };
 }

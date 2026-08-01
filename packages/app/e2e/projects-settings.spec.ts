@@ -5,29 +5,40 @@ import { connectSeedClient, seedWorkspace } from "./helpers/seed-client";
 import {
   blockPaseoConfigWrites,
   bumpPaseoConfigOnDisk,
+  chooseProjectIconImage,
   clickReloadProjectSettings,
   clickRetryProjectSettingsSave,
   clickSaveProjectSettings,
   corruptPaseoConfig,
   editWorktreeSetup,
   expectEmptyScriptList,
-  expectHostIndicatorVisible,
-  expectHostPickerHidden,
+  expectProjectHostContextHidden,
   expectNoEditableTarget,
   expectNoProjectSettingsError,
+  expectProjectEditFailed,
+  expectProjectEditName,
+  expectProjectEditSaved,
+  expectProjectEditsSaveDisabled,
   expectProjectSettingsError,
   expectProjectSettingsFormHidden,
   expectProjectSettingsFormVisible,
+  expectProjectTitle,
+  expectProjectSettingsHistoryRoundTrip,
   expectSaveButtonDisabled,
   expectScriptRowCount,
   expectWriteFailedCalloutActions,
+  fillProjectIconUrl,
+  fillProjectName,
   installDaemonConnectionGate,
   installReadTransportFailure,
   navigateToProjectSettings,
+  openProjectEditSheet,
   openProjectSettings,
   openProjects,
   removeProjectScript,
   restorePaseoConfig,
+  returnToProjectsList,
+  saveProjectEdits,
   unblockPaseoConfigWrites,
 } from "./helpers/project-settings";
 import { gotoAppShell } from "./helpers/app";
@@ -39,6 +50,12 @@ import {
 import { createTempGitRepo } from "./helpers/workspace";
 
 const updatedSetup = ["npm install", "npm run build"];
+
+// Smallest valid square PNG the daemon will accept as a custom project icon.
+const PNG_1X1 = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+  0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00,
+]);
 
 interface ProjectsSettingsProject {
   name: string;
@@ -204,6 +221,15 @@ test.describe("Projects settings", () => {
     await expectProjectConfigSaved(editableProject);
   });
 
+  test("project navigation stays inside the selected host", async ({ page, editableProject }) => {
+    await openProjects(page);
+    await openProjectSettings(page, editableProject.name);
+    await expectProjectHostContextHidden(page);
+    await returnToProjectsList(page);
+    await openProjectSettings(page, editableProject.name);
+    await expectProjectSettingsHistoryRoundTrip(page, editableProject.name);
+  });
+
   test("user edits worktree setup on a non-GitHub remote project", async ({
     page,
     gitlabRemoteProject,
@@ -214,6 +240,74 @@ test.describe("Projects settings", () => {
     await editWorktreeSetup(page, updatedSetup);
     await clickSaveProjectSettings(page);
     await expectProjectConfigSaved(gitlabRemoteProject);
+  });
+
+  test("user renames a project from the edit sheet", async ({ page, editableProject }) => {
+    await openProjects(page);
+    await openProjectSettings(page, editableProject.name);
+    await openProjectEditSheet(page);
+    await fillProjectName(page, "Renamed project");
+    await saveProjectEdits(page);
+
+    await expectProjectEditSaved(page);
+    await expectProjectTitle(page, "Renamed project");
+  });
+
+  test("reopening the edit sheet seeds from the saved project", async ({
+    page,
+    editableProject,
+  }) => {
+    await openProjects(page);
+    await openProjectSettings(page, editableProject.name);
+    await openProjectEditSheet(page);
+    await fillProjectName(page, "Renamed project");
+    await saveProjectEdits(page);
+    await expectProjectEditSaved(page);
+
+    await openProjectEditSheet(page);
+
+    await expectProjectEditName(page, "Renamed project");
+    await expectProjectEditsSaveDisabled(page);
+  });
+
+  test("user picks a custom project icon from a file", async ({ page, editableProject }) => {
+    await openProjects(page);
+    await openProjectSettings(page, editableProject.name);
+    await openProjectEditSheet(page);
+    await chooseProjectIconImage(page, {
+      name: "logo.png",
+      mimeType: "image/png",
+      buffer: PNG_1X1,
+    });
+    await saveProjectEdits(page);
+
+    await expectProjectEditSaved(page);
+  });
+
+  test("user sets a project name and icon in one save", async ({ page, editableProject }) => {
+    await openProjects(page);
+    await openProjectSettings(page, editableProject.name);
+    await openProjectEditSheet(page);
+    await fillProjectName(page, "Both at once");
+    await chooseProjectIconImage(page, {
+      name: "logo.png",
+      mimeType: "image/png",
+      buffer: PNG_1X1,
+    });
+    await saveProjectEdits(page);
+
+    await expectProjectEditSaved(page);
+    await expectProjectTitle(page, "Both at once");
+  });
+
+  test("project edit keeps a rejected icon URL actionable", async ({ page, editableProject }) => {
+    await openProjects(page);
+    await openProjectSettings(page, editableProject.name);
+    await openProjectEditSheet(page);
+    await fillProjectIconUrl(page, "file:///etc/passwd");
+    await saveProjectEdits(page);
+
+    await expectProjectEditFailed(page, "URL must use HTTP or HTTPS without credentials");
   });
 });
 
@@ -322,15 +416,14 @@ test.describe("Projects settings — error UX", () => {
     await expectNoEditableTarget(page);
   });
 
-  test("single-host project renders static host indicator, not a picker chip", async ({
+  test("project detail does not render a second host selector", async ({
     page,
     editableProject,
   }) => {
     await openProjects(page);
     await openProjectSettings(page, editableProject.name);
 
-    await expectHostIndicatorVisible(page);
-    await expectHostPickerHidden(page);
+    await expectProjectHostContextHidden(page);
   });
 
   test("script removal via kebab menu removes the row from the form", async ({

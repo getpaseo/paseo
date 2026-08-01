@@ -88,6 +88,7 @@ function createServer(agentManagerOverrides?: Record<string, unknown>) {
   const agentManager = {
     subscribe: vi.fn(() => () => {}),
     setAgentAttentionCallback: vi.fn(),
+    onAgentClosing: vi.fn(() => () => {}),
     getAgent: vi.fn(() => ({ workspaceId: WORKSPACE_ID, pendingPermissions: new Map() })),
     getLastAssistantMessage: vi.fn(async () => null),
     getMetricsSnapshot: vi.fn(() => ({

@@ -23,12 +23,7 @@ import {
   getCliInstallStatus,
   installCli,
 } from "../integrations/cli-install/index.js";
-import {
-  getSkillsStatus,
-  installSkills,
-  uninstallSkills,
-  updateSkills,
-} from "../integrations/skills/index.js";
+import { createSkillsCommandHandlers, getSkillsController } from "../integrations/skills/index.js";
 import {
   openLocalTransportSession,
   sendLocalTransportMessage,
@@ -623,10 +618,7 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     get_local_daemon_version: () => getLocalDaemonVersion(),
     install_cli: () => installCli(),
     get_cli_install_status: () => getCliInstallStatus(),
-    get_skills_status: () => getSkillsStatus(),
-    install_skills: () => installSkills(),
-    update_skills: () => updateSkills(),
-    uninstall_skills: () => uninstallSkills(),
+    ...createSkillsCommandHandlers({ controller: getSkillsController() }),
   };
 }
 

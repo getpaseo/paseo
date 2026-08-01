@@ -59,6 +59,17 @@ import {
 } from "./browser-automation/rpc-schemas.js";
 import { BrowserAutomationHostCapabilitySchema } from "./browser-automation/capabilities.js";
 import {
+  VoiceLiveAgentNotifyRequestSchema,
+  VoiceLiveAgentNotifyResponseSchema,
+  VoiceLiveAgentUpdateSchema,
+  VoiceLiveAgentWatchRequestSchema,
+  VoiceLiveAgentWatchResponseSchema,
+  VoiceLiveRouteRequestSchema,
+  VoiceLiveRouteResponseSchema,
+  VoiceLiveToolExecuteRequestSchema,
+  VoiceLiveToolExecuteResponseSchema,
+} from "./live-voice-routing.js";
+import {
   PaseoConfigRawSchema,
   PaseoLifecycleCommandRawSchema,
   PaseoMetadataGenerationEntrySchema,
@@ -685,6 +696,13 @@ const AgentRuntimeInfoSchema: z.ZodType<AgentRuntimeInfo> = z.object({
   extra: z.record(z.string(), z.unknown()).optional(),
 });
 
+export const AgentFailureSchema = z.object({
+  kind: z.enum(["authentication_required", "provider_error"]),
+  message: z.string(),
+  code: z.string().optional(),
+  diagnostic: z.string().optional(),
+});
+
 export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
   provider: AgentProviderSchema,
@@ -706,6 +724,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   runtimeInfo: AgentRuntimeInfoSchema.optional(),
   lastUsage: AgentUsageSchema.optional(),
   lastError: z.string().optional(),
+  lastFailure: AgentFailureSchema.optional(),
   title: z.string().nullable(),
   labels: z.record(z.string(), z.string()).default({}),
   requiresAttention: z.boolean().optional(),
@@ -721,6 +740,8 @@ export const AgentListItemPayloadSchema = z.object({
   id: z.string(),
   shortId: z.string(),
   title: z.string().nullable(),
+  workspaceId: z.string().optional(),
+  workspaceName: z.string().optional(),
   provider: AgentProviderSchema,
   model: z.string().nullable(),
   thinkingOptionId: z.string().nullable().optional(),
@@ -813,11 +834,25 @@ export const UpdateAgentRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+// The daemon accepts only image bytes chosen or acquired by the client. It must
+// never fetch a user-provided URL on the host's network.
+export const ProjectIconSourceSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("automatic") }),
+  z.object({ type: z.literal("upload"), data: z.string() }),
+]);
+
 export const ProjectRenameRequestSchema = z.object({
   type: z.literal("project.rename.request"),
   projectId: z.string(),
   // Null or empty string clears the override and reverts to the derived name.
   customName: z.string().nullable(),
+  requestId: z.string(),
+});
+
+export const ProjectIconSetRequestSchema = z.object({
+  type: z.literal("project.icon.set.request"),
+  projectId: z.string(),
+  source: ProjectIconSourceSchema,
   requestId: z.string(),
 });
 
@@ -859,6 +894,44 @@ export const SetVoiceModeMessageSchema = z.object({
   enabled: z.boolean(),
   agentId: z.string().optional(),
   requestId: z.string().optional(),
+});
+
+// Live Voice: a realtime speech-to-speech call with the daemon itself. The call
+// is daemon-global, not attached to an agent session: the daemon hosts it on a
+// hidden session of its own, so no agentId appears anywhere in this protocol.
+// Audio rides a direct WebRTC media track; the daemon only relays SDP and
+// control. `voice.live.start.response` carries the answer SDP, so the client
+// never has to correlate a separate push for the handshake.
+export const VoiceLiveStartRequestSchema = z.object({
+  type: z.literal("voice.live.start.request"),
+  requestId: z.string(),
+  offerSdp: z.string(),
+  voice: z.string().optional(),
+  /**
+   * The client will report agents this call did not start, so the model should
+   * be told to expect them. The client decides this, not the daemon: it is the
+   * party that watches every host and holds the user's setting.
+   *
+   * COMPAT(liveVoiceAmbientAgentReports): added in v0.2.6, remove after
+   * 2027-02-28. An older daemon drops both fields and the call keeps its
+   * built-in behavior.
+   */
+  ambientAgentReports: z.boolean().optional(),
+  /**
+   * The user's own standing instruction for those reports — when to interrupt,
+   * what to skip, how to handle several at once. Passed to the model verbatim
+   * rather than compiled into filtering rules here, because the judgement is
+   * the user's and the cases they care about are not enumerable.
+   */
+  ambientAgentGuidance: z.string().optional(),
+});
+
+// Stopping is idempotent: a stop for an already-closed or superseded
+// liveSessionId still answers `voice.live.stop.response`.
+export const VoiceLiveStopRequestSchema = z.object({
+  type: z.literal("voice.live.stop.request"),
+  requestId: z.string(),
+  liveSessionId: z.string(),
 });
 
 export const GitHubPrAttachmentSchema = z.object({
@@ -1515,6 +1588,16 @@ export const ProjectRenameResponseSchema = z.object({
   payload: ProjectRenameResponsePayloadSchema,
 });
 
+export const ProjectIconSetResponseSchema = z.object({
+  type: z.literal("project.icon.set.response"),
+  payload: z.object({
+    requestId: z.string(),
+    projectId: z.string(),
+    accepted: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
 export const ProjectRemoveResponsePayloadSchema = z.object({
   requestId: z.string(),
   projectId: z.string(),
@@ -1599,6 +1682,65 @@ export const SetVoiceModeResponseMessageSchema = z.object({
     reasonCode: z.string().optional(),
     retryable: z.boolean().optional(),
     missingModelIds: z.array(z.string()).optional(),
+  }),
+});
+
+// liveSessionId and answerSdp are present iff accepted; errorCode/errorMessage
+// are present iff rejected. errorCode stays z.string() (not z.enum) so a newer
+// daemon can introduce codes without breaking older clients.
+export const VoiceLiveStartResponseSchema = z.object({
+  type: z.literal("voice.live.start.response"),
+  payload: z.object({
+    requestId: z.string(),
+    accepted: z.boolean(),
+    liveSessionId: z.string().optional(),
+    answerSdp: z.string().optional(),
+    errorCode: z.string().optional(),
+    errorMessage: z.string().optional(),
+  }),
+});
+
+export const VoiceLiveStopResponseSchema = z.object({
+  type: z.literal("voice.live.stop.response"),
+  payload: z.object({
+    requestId: z.string(),
+  }),
+});
+
+// `code` and `cause` stay z.string() (not z.enum) so a newer daemon can add
+// codes without breaking older clients. `role` is an enum by design: the set of
+// speakers in a call is closed.
+export const VoiceLiveEventSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("started"),
+  }),
+  z.object({
+    kind: z.literal("transcript"),
+    role: z.enum(["user", "assistant"]),
+    transcriptId: z.string(),
+    text: z.string(),
+  }),
+  z.object({
+    kind: z.literal("error"),
+    code: z.string(),
+    message: z.string(),
+    fatal: z.boolean(),
+  }),
+  z.object({
+    kind: z.literal("closed"),
+    cause: z.string(),
+    detail: z.string().optional(),
+  }),
+]);
+
+// Server-initiated push with no matching request; sent only to the client that
+// owns the call. `seq` is monotonic per liveSessionId.
+export const VoiceLiveUpdateSchema = z.object({
+  type: z.literal("voice.live.update"),
+  payload: z.object({
+    liveSessionId: z.string(),
+    seq: z.number().int().nonnegative(),
+    event: VoiceLiveEventSchema,
   }),
 });
 
@@ -2209,6 +2351,12 @@ export const ProjectIconRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const ProjectIconGetRequestSchema = z.object({
+  type: z.literal("project.icon.get.request"),
+  projectId: z.string(),
+  requestId: z.string(),
+});
+
 export const FileDownloadTokenRequestSchema = z.object({
   type: z.literal("file_download_token_request"),
   cwd: z.string(),
@@ -2457,12 +2605,19 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CloseItemsRequestMessageSchema,
   UpdateAgentRequestMessageSchema,
   ProjectRenameRequestSchema,
+  ProjectIconSetRequestSchema,
   ProjectRemoveRequestSchema,
   WorkspaceTitleSetRequestSchema,
   WorkspacePinSetRequestSchema,
   WorkspaceRecoveryInspectRequestSchema,
   WorkspaceRecoveryRestoreRequestSchema,
   SetVoiceModeMessageSchema,
+  VoiceLiveStartRequestSchema,
+  VoiceLiveStopRequestSchema,
+  VoiceLiveRouteResponseSchema,
+  VoiceLiveToolExecuteRequestSchema,
+  VoiceLiveAgentNotifyRequestSchema,
+  VoiceLiveAgentWatchRequestSchema,
   SendAgentMessageRequestSchema,
   WaitForFinishRequestSchema,
   DaemonGetStatusRequestSchema,
@@ -2555,6 +2710,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   FileUnsubscribeRequestSchema,
   FileWriteRequestSchema,
   ProjectIconRequestSchema,
+  ProjectIconGetRequestSchema,
   FileDownloadTokenRequestSchema,
   FileUploadRequestSchema,
   ClearAgentAttentionMessageSchema,
@@ -2840,6 +2996,20 @@ export const ServerInfoStatusPayloadSchema = z
         stableProjectIdentity: z.boolean().optional(),
         // COMPAT(workspaceScriptManagement): added in v0.1.105, remove gate after 2027-01-10.
         workspaceScriptManagement: z.boolean().optional(),
+        // COMPAT(liveVoice): added in v0.2.5, remove after 2027-01-30.
+        liveVoice: z.boolean().optional(),
+        // COMPAT(liveVoiceToolExecution): added in v0.2.5, remove after 2027-01-30.
+        liveVoiceToolExecution: z.boolean().optional(),
+        // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
+        projectCustomIcon: z.boolean().optional(),
+        // COMPAT(liveVoiceAgentNotifications): added in v0.2.6, remove after
+        // 2027-02-28. Covers both legs: this daemon watches routed background
+        // work and reports it, and it speaks notifications into a call it hosts.
+        liveVoiceAgentNotifications: z.boolean().optional(),
+        // COMPAT(liveVoiceAmbientAgentReports): added in v0.2.6, remove after
+        // 2027-02-28. This daemon can watch every agent on it for a Live Voice
+        // client, not only work a routed tool call started.
+        liveVoiceAmbientAgentReports: z.boolean().optional(),
       })
       .optional(),
   })
@@ -3106,6 +3276,9 @@ export const WorkspaceDescriptorPayloadSchema = z
     // value (customName) and projectCustomName mirrors the raw override so the
     // settings UI can prefill its input and offer a "reset" action.
     projectCustomName: z.string().nullable().optional(),
+    // Identifies the project's stored custom icon; null means automatic.
+    // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
+    projectCustomIconRevision: z.string().nullable().optional(),
     projectRootPath: z.string(),
     workspaceDirectory: z.string().optional(),
     projectKind: z.enum(["git", "non_git", "directory"]),
@@ -3244,6 +3417,8 @@ export const WorkspaceProjectDescriptorPayloadSchema = z.object({
   projectKey: z.string().optional(),
   projectDisplayName: z.string(),
   projectCustomName: z.string().nullable().optional(),
+  // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
+  projectCustomIconRevision: z.string().nullable().optional(),
   projectRootPath: z.string(),
   projectKind: z.enum(["git", "non_git", "directory"]),
 });
@@ -3558,6 +3733,9 @@ export const ProviderSubagentDescriptorPayloadSchema = z.object({
   updatedAt: z.string(),
   toolCallId: z.string().nullable(),
   cwd: z.string().nullable().optional(),
+  // Compact provider-owned context for the shared track. Providers choose what belongs here and
+  // format it for display; clients must not parse provider-specific facts out of this string.
+  subtitle: z.string().nullable().optional(),
 });
 
 export type ProviderSubagentDescriptorPayload = z.infer<
@@ -4752,6 +4930,16 @@ export const ProjectIconResponseSchema = z.object({
   }),
 });
 
+export const ProjectIconGetResponseSchema = z.object({
+  type: z.literal("project.icon.get.response"),
+  payload: z.object({
+    projectId: z.string(),
+    icon: ProjectIconSchema.nullable(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
 export const FileDownloadTokenResponseSchema = z.object({
   type: z.literal("file_download_token_response"),
   payload: z.object({
@@ -5239,6 +5427,14 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceClearAttentionResponseSchema,
   SendAgentMessageResponseMessageSchema,
   SetVoiceModeResponseMessageSchema,
+  VoiceLiveStartResponseSchema,
+  VoiceLiveStopResponseSchema,
+  VoiceLiveUpdateSchema,
+  VoiceLiveRouteRequestSchema,
+  VoiceLiveToolExecuteResponseSchema,
+  VoiceLiveAgentUpdateSchema,
+  VoiceLiveAgentNotifyResponseSchema,
+  VoiceLiveAgentWatchResponseSchema,
   DaemonGetStatusResponseSchema,
   DaemonGetPairingOfferResponseSchema,
   HubManagementDaemonConnectResponseSchema,
@@ -5257,6 +5453,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentRewindResponseMessageSchema,
   UpdateAgentResponseMessageSchema,
   ProjectRenameResponseSchema,
+  ProjectIconSetResponseSchema,
   ProjectRemoveResponseSchema,
   WorkspaceTitleSetResponseSchema,
   WorkspacePinSetResponseSchema,
@@ -5307,6 +5504,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   FileWriteResponseSchema,
   FileUpdateSchema,
   ProjectIconResponseSchema,
+  ProjectIconGetResponseSchema,
   FileDownloadTokenResponseSchema,
   FileUploadResponseSchema,
   ListProviderModelsResponseMessageSchema,
@@ -5433,6 +5631,10 @@ export type AgentForkContextResponseMessage = z.infer<typeof AgentForkContextRes
 export type CancelAgentResponseMessage = z.infer<typeof CancelAgentResponseMessageSchema>;
 export type SendAgentMessageResponseMessage = z.infer<typeof SendAgentMessageResponseMessageSchema>;
 export type SetVoiceModeResponseMessage = z.infer<typeof SetVoiceModeResponseMessageSchema>;
+export type VoiceLiveStartResponse = z.infer<typeof VoiceLiveStartResponseSchema>;
+export type VoiceLiveStopResponse = z.infer<typeof VoiceLiveStopResponseSchema>;
+export type VoiceLiveEvent = z.infer<typeof VoiceLiveEventSchema>;
+export type VoiceLiveUpdate = z.infer<typeof VoiceLiveUpdateSchema>;
 export type SetAgentModeResponseMessage = z.infer<typeof SetAgentModeResponseMessageSchema>;
 export type SetAgentModelResponseMessage = z.infer<typeof SetAgentModelResponseMessageSchema>;
 export type SetAgentThinkingResponseMessage = z.infer<typeof SetAgentThinkingResponseMessageSchema>;
@@ -5441,6 +5643,7 @@ export type AgentDetachResponseMessage = z.infer<typeof AgentDetachResponseMessa
 export type AgentRewindResponseMessage = z.infer<typeof AgentRewindResponseMessageSchema>;
 export type UpdateAgentResponseMessage = z.infer<typeof UpdateAgentResponseMessageSchema>;
 export type ProjectRenameResponse = z.infer<typeof ProjectRenameResponseSchema>;
+export type ProjectIconSetResponse = z.infer<typeof ProjectIconSetResponseSchema>;
 export type ProjectRemoveResponse = z.infer<typeof ProjectRemoveResponseSchema>;
 export type WorkspaceTitleSetResponse = z.infer<typeof WorkspaceTitleSetResponseSchema>;
 export type WorkspaceTitleSetResponsePayload = z.infer<
@@ -5522,6 +5725,8 @@ export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;
 
 // Type exports for inbound message types
 export type VoiceAudioChunkMessage = z.infer<typeof VoiceAudioChunkMessageSchema>;
+export type VoiceLiveStartRequest = z.infer<typeof VoiceLiveStartRequestSchema>;
+export type VoiceLiveStopRequest = z.infer<typeof VoiceLiveStopRequestSchema>;
 export type FetchAgentsRequestMessage = z.infer<typeof FetchAgentsRequestMessageSchema>;
 export type FetchAgentHistoryRequestMessage = z.infer<typeof FetchAgentHistoryRequestMessageSchema>;
 export type FetchRecentProviderSessionsRequestMessage = z.infer<
@@ -5587,7 +5792,9 @@ export type LoopStopRequest = z.infer<typeof LoopStopRequestSchema>;
 export type ResumeAgentRequestMessage = z.infer<typeof ResumeAgentRequestMessageSchema>;
 export type DeleteAgentRequestMessage = z.infer<typeof DeleteAgentRequestMessageSchema>;
 export type UpdateAgentRequestMessage = z.infer<typeof UpdateAgentRequestMessageSchema>;
+export type ProjectIconSource = z.infer<typeof ProjectIconSourceSchema>;
 export type ProjectRenameRequest = z.infer<typeof ProjectRenameRequestSchema>;
+export type ProjectIconSetRequest = z.infer<typeof ProjectIconSetRequestSchema>;
 export type ProjectRemoveRequest = z.infer<typeof ProjectRemoveRequestSchema>;
 export type WorkspaceTitleSetRequest = z.infer<typeof WorkspaceTitleSetRequestSchema>;
 export type WorkspacePinSetRequest = z.infer<typeof WorkspacePinSetRequestSchema>;
@@ -5725,6 +5932,8 @@ export type FileWriteResult = z.infer<typeof FileWriteResultSchema>;
 export type FileUpdate = z.infer<typeof FileUpdateSchema>;
 export type ProjectIconRequest = z.infer<typeof ProjectIconRequestSchema>;
 export type ProjectIconResponse = z.infer<typeof ProjectIconResponseSchema>;
+export type ProjectIconGetRequest = z.infer<typeof ProjectIconGetRequestSchema>;
+export type ProjectIconGetResponse = z.infer<typeof ProjectIconGetResponseSchema>;
 export type ProjectIcon = z.infer<typeof ProjectIconSchema>;
 export type FileDownloadTokenRequest = z.infer<typeof FileDownloadTokenRequestSchema>;
 export type FileDownloadTokenResponse = z.infer<typeof FileDownloadTokenResponseSchema>;
@@ -5801,6 +6010,7 @@ export const WSHelloMessageSchema = z.object({
       [CLIENT_CAPS.providerSubagents]: z.boolean().optional(),
       [CLIENT_CAPS.projectUpdates]: z.boolean().optional(),
       [CLIENT_CAPS.browserHost]: BrowserAutomationHostCapabilitySchema.optional(),
+      [CLIENT_CAPS.liveVoiceCrossHostRouter]: z.boolean().optional(),
     })
     .passthrough()
     .optional(),

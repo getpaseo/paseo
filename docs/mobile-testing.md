@@ -211,6 +211,36 @@ adb emu gsm call 5551234
 
 Expected result: Paseo does not throw `RuntimeException: Audio focus request failed`; native audio reports an interruption and voice mode stops or pauses coherently.
 
+### Live Voice background-call support
+
+Live Voice uses `react-native-webrtc` directly on iOS and Android. Native call
+lifetime support keeps its audio session active after Home or screen lock: iOS
+uses the `audio` background mode with a `playAndRecord`/`voiceChat` audio session,
+and Android uses a microphone/media-playback foreground service with an ongoing
+notification. The service must start after microphone capture succeeds and while
+Paseo is still visible; Android rejects a background-origin microphone service.
+
+The app pins the exact daemon connection for the life of the call. This prevents
+adaptive direct/relay probing from swapping out the socket that owns the daemon
+session. A real transport failure still ends the call; background support does
+not provide reconnect/resume or move a call to a replacement socket.
+
+On a physical device, verify:
+
+- the first microphone permission prompt can be accepted without cancelling startup
+- remote speech plays and mute disables only the outgoing microphone track
+- after pressing Home and after locking the screen, a quiet call remains connected
+  for more than 60 seconds (past the daemon's application-socket lease)
+- speech in both directions still works after that quiet interval
+- an Android foreground-service notification stays present for the call and
+  disappears after stop; the iOS microphone indicator behaves equivalently
+- a Live Voice request that acts on another connected host completes while the
+  app is backgrounded, proving the owning daemon socket and target request path
+  remain scheduled in addition to native WebRTC media
+- returning to Paseo shows the same active call and Stop releases the microphone,
+  peer connection, connection pin, audio session/foreground service, and daemon call
+- killing the app or losing the source transport ends the call cleanly; it is not resumed
+
 ## Unistyles + Reanimated
 
 ### The crash

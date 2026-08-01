@@ -47,6 +47,14 @@ import {
 } from "./agent/create-agent-title.js";
 import { respondToAgentPermission } from "./agent/permission-response.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
+import type { LiveVoiceCoordinator } from "./live-voice/live-voice-coordinator.js";
+import type { LiveVoiceRouteBroker } from "./live-voice/live-voice-route-broker.js";
+import type {
+  LiveVoiceToolExecutionContext,
+  LiveVoiceToolExecutor,
+} from "./live-voice/live-voice-tool-executor.js";
+import type { LiveVoiceAgentNotifier } from "./live-voice/live-voice-agent-notifier.js";
+import { formatLiveVoiceAgentNotification } from "./live-voice/live-voice-agent-message.js";
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import { spawnWorkspaceScript } from "./worktree-bootstrap.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
@@ -138,6 +146,11 @@ import {
 } from "./workspace-registry.js";
 import { wrapSpokenInput } from "./voice-config.js";
 import { isVoicePermissionAllowed } from "./voice-permission-policy.js";
+import {
+  readProjectIcon,
+  removeProjectCustomIcon,
+  setProjectCustomIcon,
+} from "../utils/project-custom-icon.js";
 import { VoiceSession } from "./session/voice/voice-session.js";
 import { CheckoutSession } from "./session/checkout/checkout-session.js";
 import {
@@ -387,12 +400,21 @@ export interface SessionFileSystem {
   isDirectory(path: string): Promise<boolean>;
 }
 
+type VoiceLiveStartResponsePayload = Extract<
+  SessionOutboundMessage,
+  { type: "voice.live.start.response" }
+>["payload"];
+
 const nodeSessionFileSystem: SessionFileSystem = {
   async isDirectory(path) {
     const stats = await stat(path).catch(() => null);
     return stats?.isDirectory() ?? false;
   },
 };
+
+function optionalService<T>(value: T | undefined): T | null {
+  return value ?? null;
+}
 
 // Stub types for features under development (modules not yet available)
 type AgentMcpTransportFactory = () => Promise<unknown>;
@@ -455,6 +477,11 @@ export interface SessionOptions {
   voice?: {
     turnDetection?: Resolvable<TurnDetectionProvider | null>;
   };
+  /** Daemon-global; shared by every session so call ownership is socket-exact. */
+  liveVoiceCoordinator?: LiveVoiceCoordinator;
+  liveVoiceRouteBroker?: LiveVoiceRouteBroker;
+  liveVoiceToolExecutor?: LiveVoiceToolExecutor;
+  liveVoiceAgentNotifier?: LiveVoiceAgentNotifier;
   voiceBridge?: {
     registerVoiceSpeakHandler?: (agentId: string, handler: VoiceSpeakHandler) => void;
     unregisterVoiceSpeakHandler?: (agentId: string) => void;
@@ -630,6 +657,10 @@ export class Session {
   private readonly workspaceGitObserver: WorkspaceGitObserverService;
   private readonly workspaceDirectory: WorkspaceDirectory;
   private readonly voiceSession: VoiceSession;
+  private readonly liveVoice: LiveVoiceCoordinator | undefined;
+  private readonly liveVoiceRouteBroker: LiveVoiceRouteBroker | null;
+  private readonly liveVoiceToolExecutor: LiveVoiceToolExecutor | null;
+  private readonly liveVoiceAgentNotifier: LiveVoiceAgentNotifier | null;
   private readonly checkoutSession: CheckoutSession;
   private readonly chatScheduleLoopSession: ChatScheduleLoopSession;
   private readonly providerCatalogSession: ProviderCatalogSession;
@@ -689,6 +720,10 @@ export class Session {
       resolveScriptHealth,
       voice,
       voiceBridge,
+      liveVoiceCoordinator,
+      liveVoiceRouteBroker,
+      liveVoiceToolExecutor,
+      liveVoiceAgentNotifier,
       dictation,
       serverId,
       daemonVersion,
@@ -997,6 +1032,10 @@ export class Session {
       voiceBridge,
       dictation,
     });
+    this.liveVoice = liveVoiceCoordinator;
+    this.liveVoiceRouteBroker = optionalService(liveVoiceRouteBroker);
+    this.liveVoiceToolExecutor = optionalService(liveVoiceToolExecutor);
+    this.liveVoiceAgentNotifier = optionalService(liveVoiceAgentNotifier);
 
     this.subscribeToAgentEvents();
     this.subscribeToRegistryMutations();
@@ -1784,6 +1823,7 @@ export class Session {
   private async dispatchInboundMessage(msg: SessionInboundMessage, source?: object): Promise<void> {
     const promise =
       this.dispatchVoiceAndControlMessage(msg) ??
+      this.dispatchLiveVoiceMessage(msg, source) ??
       this.dispatchAgentRewindMessage(msg) ??
       this.dispatchAgentRelationshipMessage(msg) ??
       this.dispatchAgentTimelineMessage(msg, source) ??
@@ -1849,6 +1889,232 @@ export class Session {
       default:
         return undefined;
     }
+  }
+
+  private dispatchLiveVoiceMessage(
+    msg: SessionInboundMessage,
+    source?: object,
+  ): Promise<void> | undefined {
+    switch (msg.type) {
+      case "voice.live.start.request":
+        return this.handleLiveVoiceStartRequest(msg, source);
+      case "voice.live.stop.request":
+        this.handleLiveVoiceStopRequest(msg, source);
+        return undefined;
+      case "voice.live.route.response":
+        this.liveVoiceRouteBroker?.receiveResponse(msg, this);
+        return undefined;
+      case "voice.live.tool.execute.request":
+        return this.handleLiveVoiceToolExecuteRequest(msg, source);
+      case "voice.live.agent.notify.request":
+        return this.handleLiveVoiceAgentNotifyRequest(msg, source);
+      case "voice.live.agent.watch.request":
+        this.handleLiveVoiceAgentWatchRequest(msg, source);
+        return undefined;
+      default:
+        return undefined;
+    }
+  }
+
+  /**
+   * Turns the ambient watch over every agent on this daemon on or off for one
+   * socket. Scoped to the socket rather than the session so it dies with the
+   * connection, exactly like the per-work watches beside it.
+   */
+  private handleLiveVoiceAgentWatchRequest(
+    msg: Extract<SessionInboundMessage, { type: "voice.live.agent.watch.request" }>,
+    source?: object,
+  ): void {
+    const notifier = this.liveVoiceAgentNotifier;
+    const sourceKey = source ?? this;
+    if (!notifier) {
+      this.emitForSource(
+        {
+          type: "voice.live.agent.watch.response",
+          payload: {
+            requestId: msg.requestId,
+            enabled: false,
+            error: {
+              code: "unsupported",
+              message: "This daemon does not report agent activity to Live Voice.",
+            },
+          },
+        },
+        source,
+      );
+      return;
+    }
+    if (msg.enabled) {
+      notifier.watchAll({ sourceKey, emit: (update) => this.emitForSource(update, source) });
+    } else {
+      notifier.stopWatchingAll(sourceKey);
+    }
+    this.emitForSource(
+      {
+        type: "voice.live.agent.watch.response",
+        payload: { requestId: msg.requestId, enabled: notifier.isWatchingAll(sourceKey) },
+      },
+      source,
+    );
+  }
+
+  private async handleLiveVoiceStartRequest(
+    msg: Extract<SessionInboundMessage, { type: "voice.live.start.request" }>,
+    source?: object,
+  ): Promise<void> {
+    const respond = (payload: VoiceLiveStartResponsePayload): void => {
+      this.emitForSource({ type: "voice.live.start.response", payload }, source);
+    };
+    const coordinator = this.liveVoice;
+    if (!coordinator) {
+      respond({
+        requestId: msg.requestId,
+        accepted: false,
+        errorCode: "unsupported",
+        errorMessage: "This daemon does not support live voice.",
+      });
+      return;
+    }
+    const capabilitySourceKey = source ?? this;
+    const crossHostRoutingAvailable = this.supportsForSource(
+      CLIENT_CAPS.liveVoiceCrossHostRouter,
+      capabilitySourceKey,
+    );
+    // The reconnectable client session owns the call. Android may suspend the
+    // control socket while its native WebRTC media path and foreground service
+    // remain healthy, so updates and routed requests follow the session across
+    // socket replacement.
+    const result = await coordinator.start({
+      offerSdp: msg.offerSdp,
+      ...(msg.voice ? { voice: msg.voice } : {}),
+      owner: { sessionKey: this },
+      emit: (update) => {
+        this.emit({ type: "voice.live.update", payload: update });
+      },
+      ...(crossHostRoutingAvailable
+        ? {
+            sendRouteRequest: (request) => {
+              this.emit(request);
+            },
+          }
+        : {}),
+      // The client, not this daemon, decides whether ambient reports happen —
+      // it is the party that watches every host and holds the user's setting.
+      ...(msg.ambientAgentReports ? { ambientAgentReports: true } : {}),
+      ...(msg.ambientAgentGuidance ? { ambientAgentGuidance: msg.ambientAgentGuidance } : {}),
+    });
+    if (result.accepted) {
+      respond({
+        requestId: msg.requestId,
+        accepted: true,
+        liveSessionId: result.liveSessionId,
+        answerSdp: result.answerSdp,
+      });
+      return;
+    }
+    respond({
+      requestId: msg.requestId,
+      accepted: false,
+      errorCode: result.errorCode,
+      errorMessage: result.errorMessage,
+    });
+  }
+
+  private handleLiveVoiceStopRequest(
+    msg: Extract<SessionInboundMessage, { type: "voice.live.stop.request" }>,
+    source?: object,
+  ): void {
+    // Stop is idempotent: a stale or unknown liveSessionId is a no-op that still
+    // gets a response.
+    this.liveVoice?.stop({ liveSessionId: msg.liveSessionId });
+    this.emitForSource(
+      { type: "voice.live.stop.response", payload: { requestId: msg.requestId } },
+      source,
+    );
+  }
+
+  private async handleLiveVoiceToolExecuteRequest(
+    msg: Extract<SessionInboundMessage, { type: "voice.live.tool.execute.request" }>,
+    source?: object,
+  ): Promise<void> {
+    const sourceKey = source ?? this;
+    const notifier = this.liveVoiceAgentNotifier;
+    // The report goes to the exact socket that asked for the work and carries no
+    // call identity: this daemon is not told which call the work belongs to, and
+    // must not learn it.
+    const executionContext: LiveVoiceToolExecutionContext = notifier
+      ? {
+          onBackgroundAgentStarted: ({ agentId }) => {
+            notifier.watch({
+              agentId,
+              requestId: msg.requestId,
+              sourceKey,
+              emit: (update) => this.emitForSource(update, source),
+            });
+          },
+        }
+      : {};
+    const response = this.liveVoiceToolExecutor
+      ? await this.liveVoiceToolExecutor.execute(msg, executionContext)
+      : {
+          type: "voice.live.tool.execute.response" as const,
+          payload: {
+            requestId: msg.requestId,
+            ok: false as const,
+            error: {
+              code: "unsupported",
+              message: "This daemon does not support routed Live Voice tool execution.",
+              retryable: false,
+            },
+          },
+        };
+    this.emitForSource(response, source);
+  }
+
+  /**
+   * Speaks a work notification into a call this daemon hosts. The client is the
+   * only party that knows the routed work belongs to this call, so it is the
+   * client that asks — and the coordinator still checks that the asking client
+   * session owns the call it names.
+   */
+  private async handleLiveVoiceAgentNotifyRequest(
+    msg: Extract<SessionInboundMessage, { type: "voice.live.agent.notify.request" }>,
+    source?: object,
+  ): Promise<void> {
+    const coordinator = this.liveVoice;
+    const result = coordinator
+      ? await coordinator.say({
+          liveSessionId: msg.liveSessionId,
+          sessionKey: this,
+          text: formatLiveVoiceAgentNotification(msg.notification),
+        })
+      : ({
+          delivered: false,
+          errorCode: "unsupported",
+          errorMessage: "This daemon does not support live voice.",
+        } as const);
+    this.emitForSource(
+      {
+        type: "voice.live.agent.notify.response",
+        payload: {
+          requestId: msg.requestId,
+          delivered: result.delivered,
+          ...(result.delivered
+            ? {}
+            : { error: { code: result.errorCode, message: result.errorMessage } }),
+        },
+      },
+      source,
+    );
+  }
+
+  /** Release work that really is scoped to one physical socket. */
+  public releaseLiveVoiceSocketResources(source: object): void {
+    this.liveVoiceAgentNotifier?.releaseForSource(source);
+  }
+
+  public hasActiveLiveVoiceCall(): boolean {
+    return this.liveVoice?.hasActiveCallForSession(this) ?? false;
   }
 
   private dispatchAgentRewindMessage(msg: SessionInboundMessage): Promise<void> | undefined {
@@ -1934,6 +2200,8 @@ export class Session {
         return this.handleUpdateAgentRequest(msg.agentId, msg.name, msg.labels, msg.requestId);
       case "project.rename.request":
         return this.handleProjectRenameRequest(msg.projectId, msg.customName, msg.requestId);
+      case "project.icon.set.request":
+        return this.handleProjectIconSetRequest(msg);
       case "send_agent_message_request":
         return this.handleSendAgentMessageRequest(msg);
       case "wait_for_finish_request":
@@ -2131,6 +2399,8 @@ export class Session {
         return this.workspaceFilesSession.handleFileWriteRequest(msg);
       case "project_icon_request":
         return this.workspaceFilesSession.handleProjectIconRequest(msg);
+      case "project.icon.get.request":
+        return this.handleProjectIconGetRequest(msg.projectId, msg.requestId);
       case "file_download_token_request":
         return this.workspaceFilesSession.handleFileDownloadTokenRequest(msg);
       case "file.upload.request":
@@ -2665,6 +2935,61 @@ export class Session {
     }
   }
 
+  private async handleProjectIconSetRequest(
+    request: Extract<SessionInboundMessage, { type: "project.icon.set.request" }>,
+  ): Promise<void> {
+    const { projectId, requestId } = request;
+    try {
+      const updated = await setProjectCustomIcon({
+        paseoHome: this.paseoHome,
+        projectId,
+        source: request.source,
+        projects: this.projectRegistry,
+      });
+
+      this.emit({
+        type: "project.icon.set.response",
+        payload: { requestId, projectId, accepted: true, error: null },
+      });
+      this.emitProjectUpdate({ kind: "upsert", project: updated });
+
+      const affectedWorkspaceIds = (await this.workspaceRegistry.list())
+        .filter((workspace) => workspace.projectId === projectId)
+        .map((workspace) => workspace.workspaceId);
+      if (affectedWorkspaceIds.length > 0) {
+        await this.emitWorkspaceUpdatesForWorkspaceIds(affectedWorkspaceIds);
+      }
+    } catch (error) {
+      this.emit({
+        type: "project.icon.set.response",
+        payload: {
+          requestId,
+          projectId,
+          accepted: false,
+          error: getErrorMessageOr(error, "Failed to update project icon"),
+        },
+      });
+    }
+  }
+
+  private async handleProjectIconGetRequest(projectId: string, requestId: string): Promise<void> {
+    try {
+      const project = await this.projectRegistry.get(projectId);
+      if (!project) throw new Error("Project not found");
+
+      const icon = await readProjectIcon({ paseoHome: this.paseoHome, project });
+      this.emit({
+        type: "project.icon.get.response",
+        payload: { projectId, icon, error: null, requestId },
+      });
+    } catch (error) {
+      this.emit({
+        type: "project.icon.get.response",
+        payload: { projectId, icon: null, error: getErrorMessage(error), requestId },
+      });
+    }
+  }
+
   private async handleProjectRemoveRequest(
     request: Extract<SessionInboundMessage, { type: "project.remove.request" }>,
   ): Promise<void> {
@@ -2704,6 +3029,15 @@ export class Session {
         }
 
         await this.projectRegistry.remove(resolvedProjectId);
+        await removeProjectCustomIcon({
+          paseoHome: this.paseoHome,
+          projectId: resolvedProjectId,
+        }).catch((error) => {
+          this.sessionLogger.warn(
+            { err: error, projectId: resolvedProjectId },
+            "Failed to clean up removed project icon",
+          );
+        });
       } finally {
         if (activeWorkspaceIds.length > 0) {
           this.clearWorkspaceArchiving(activeWorkspaceIds);
@@ -4210,6 +4544,7 @@ export class Session {
         ? resolveProjectDisplayName(resolvedProjectRecord)
         : workspace.projectId,
       projectCustomName: resolvedProjectRecord?.customName ?? null,
+      projectCustomIconRevision: resolvedProjectRecord?.customIconRevision ?? null,
       projectRootPath: resolvedProjectRecord?.rootPath ?? workspace.cwd,
       workspaceDirectory: workspace.cwd,
       projectKind: (resolvedProjectRecord?.kind ?? "directory") === "git" ? "git" : "non_git",
@@ -4296,6 +4631,7 @@ export class Session {
         ? resolveProjectDisplayName(projectRecord)
         : result.workspace.projectId,
       projectCustomName: projectRecord?.customName ?? null,
+      projectCustomIconRevision: projectRecord?.customIconRevision ?? null,
       projectRootPath: projectRecord?.rootPath ?? result.repoRoot,
       workspaceDirectory: result.workspace.cwd,
       projectKind: projectRecord?.kind ?? "git",
@@ -4467,6 +4803,7 @@ export class Session {
       ...(project.projectKey ? { projectKey: project.projectKey } : {}),
       projectDisplayName: resolveProjectDisplayName(project),
       projectCustomName: project.customName ?? null,
+      projectCustomIconRevision: project.customIconRevision ?? null,
       projectRootPath: project.rootPath,
       projectKind: project.kind,
     };
@@ -6592,6 +6929,8 @@ export class Session {
   public async cleanup(): Promise<void> {
     this.sessionLogger.trace({}, "agent.session.lifecycle.cleanup");
     this.isCleanedUp = true;
+    this.liveVoice?.closeForSession(this);
+    this.liveVoiceAgentNotifier?.releaseForSource(this);
 
     if (this.unsubscribeAgentEvents) {
       this.unsubscribeAgentEvents();

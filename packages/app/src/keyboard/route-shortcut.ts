@@ -61,6 +61,7 @@ const PASSTHROUGH_DISPATCH: Record<string, KeyboardActionDefinition> = {
   "workspace.pane.move-tab.down": { id: "workspace.pane.move-tab.down", scope: "workspace" },
   "workspace.pane.close": { id: "workspace.pane.close", scope: "workspace" },
   "view.toggle.focus": { id: "workspace.focus.toggle", scope: "workspace" },
+  "live-voice.mute.toggle": { id: "live-voice.mute-toggle", scope: "global" },
 };
 
 const SIMPLE_CALLBACKS: Record<string, ShortcutCallbackName> = {

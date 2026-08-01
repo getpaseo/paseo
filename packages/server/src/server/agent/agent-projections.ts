@@ -20,6 +20,8 @@ import type {
 import type { ManagedAgent } from "./agent-manager.js";
 import type { JsonValue } from "../json-utils.js";
 import { isStoredAgentProviderAvailable, toAgentPersistenceHandle } from "../persistence-hooks.js";
+import { stripInternalPaseoMcpServerFromPersistence } from "./runtime-mcp-config.js";
+import { redactModelFacingValue } from "./model-facing-redaction.js";
 export type { ManagedAgent };
 
 interface ProjectionOptions {
@@ -87,6 +89,7 @@ export function toStoredAgentRecord(
     features: normalizeFeatures(agent.features),
     persistence,
     lastError: agent.lastError ?? undefined,
+    lastFailure: agent.lastFailure,
     requiresAttention: agent.attention.requiresAttention,
     attentionReason: agent.attention.requiresAttention ? agent.attention.attentionReason : null,
     attentionTimestamp: agent.attention.requiresAttention
@@ -126,7 +129,7 @@ export function toAgentPayload(
     availableModes: cloneAvailableModes(agent.availableModes),
     features: normalizeFeatures(agent.features),
     pendingPermissions: sanitizePendingPermissions(agent.pendingPermissions),
-    persistence: sanitizePersistenceHandle(agent.persistence),
+    persistence: toPublicPersistenceHandle(agent.persistence),
     title: options?.title ?? null,
     labels: agent.labels,
   };
@@ -138,6 +141,9 @@ export function toAgentPayload(
 
   if (agent.lastError !== undefined) {
     payload.lastError = agent.lastError;
+  }
+  if (agent.lastFailure !== undefined) {
+    payload.lastFailure = { ...agent.lastFailure };
   }
 
   // Handle attention state
@@ -182,7 +188,7 @@ function buildStoredPersistenceHandle(
   if (!isStoredAgentProviderAvailable(record, validProviders)) {
     return null;
   }
-  return toAgentPersistenceHandle(validProviders, record.persistence);
+  return toPublicPersistenceHandle(toAgentPersistenceHandle(validProviders, record.persistence));
 }
 
 export function buildStoredAgentPayload(
@@ -236,15 +242,22 @@ export function buildStoredAgentPayload(
     attentionTimestamp: record.attentionTimestamp ?? null,
     archivedAt: record.archivedAt ?? null,
     labels: normalizeLabels(record.labels),
+    ...(record.lastError ? { lastError: record.lastError } : {}),
+    ...(record.lastFailure ? { lastFailure: { ...record.lastFailure } } : {}),
     ...(providerAvailable ? {} : { providerUnavailable: true }),
   };
 }
 
-export function toAgentListItemPayload(agent: AgentSnapshotPayload): AgentListItemPayload {
+export function toAgentListItemPayload(
+  agent: AgentSnapshotPayload,
+  options?: { workspaceName?: string },
+): AgentListItemPayload {
   return {
     id: agent.id,
     shortId: agent.id.slice(0, 7),
     title: agent.title,
+    ...(agent.workspaceId ? { workspaceId: agent.workspaceId } : {}),
+    ...(options?.workspaceName ? { workspaceName: options.workspaceName } : {}),
     provider: agent.provider,
     model: agent.runtimeInfo?.model ?? agent.model,
     thinkingOptionId: agent.thinkingOptionId,
@@ -331,10 +344,10 @@ function sanitizePendingPermissions(
 ): AgentPermissionRequest[] {
   return Array.from(pending.values()).map((request) =>
     Object.assign({}, request, {
-      input: sanitizeMetadata(request.input),
-      suggestions: sanitizeMetadataArray(request.suggestions),
+      input: redactModelFacingValue(sanitizeMetadata(request.input)),
+      suggestions: redactModelFacingValue(sanitizeMetadataArray(request.suggestions)),
       actions: request.actions?.map((action) => Object.assign({}, action)),
-      metadata: sanitizeMetadata(request.metadata),
+      metadata: redactModelFacingValue(sanitizeMetadata(request.metadata)),
     }),
   );
 }
@@ -342,21 +355,34 @@ function sanitizePendingPermissions(
 function sanitizePersistenceHandle(
   handle: AgentPersistenceHandle | null,
 ): AgentPersistenceHandle | null {
-  if (!handle) {
+  const stripped = stripInternalPaseoMcpServerFromPersistence(handle);
+  if (!stripped) {
     return null;
   }
   const sanitized: AgentPersistenceHandle = {
-    provider: handle.provider,
-    sessionId: handle.sessionId,
+    provider: stripped.provider,
+    sessionId: stripped.sessionId,
   };
-  if (handle.nativeHandle !== undefined) {
-    sanitized.nativeHandle = handle.nativeHandle;
+  if (stripped.nativeHandle !== undefined) {
+    sanitized.nativeHandle = stripped.nativeHandle;
   }
-  const metadata = sanitizeMetadata(handle.metadata);
+  const metadata = sanitizeMetadata(stripped.metadata);
   if (metadata !== undefined) {
     sanitized.metadata = metadata;
   }
   return sanitized;
+}
+
+function toPublicPersistenceHandle(
+  handle: AgentPersistenceHandle | null,
+): AgentPersistenceHandle | null {
+  if (!handle) {
+    return null;
+  }
+  return {
+    provider: handle.provider,
+    sessionId: handle.sessionId,
+  };
 }
 
 function cloneCapabilities(capabilities: AgentCapabilityFlags): AgentCapabilityFlags {

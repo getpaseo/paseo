@@ -1,5 +1,8 @@
 import type { AgentManager } from "./agent/agent-manager.js";
-import { stripInternalPaseoMcpServer } from "./agent/runtime-mcp-config.js";
+import {
+  stripInternalPaseoMcpServer,
+  stripInternalPaseoMcpServerFromPersistence,
+} from "./agent/runtime-mcp-config.js";
 import type {
   AgentPersistenceHandle,
   AgentProvider,
@@ -136,10 +139,10 @@ export function toAgentPersistenceHandle(
   if (!handle.sessionId) {
     return null;
   }
-  return {
+  return stripInternalPaseoMcpServerFromPersistence({
     provider,
     sessionId: handle.sessionId,
     ...(handle.nativeHandle !== undefined ? { nativeHandle: handle.nativeHandle } : {}),
     ...(handle.metadata !== undefined ? { metadata: handle.metadata } : {}),
-  } satisfies AgentPersistenceHandle;
+  } satisfies AgentPersistenceHandle);
 }

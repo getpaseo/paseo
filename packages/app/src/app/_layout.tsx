@@ -57,6 +57,9 @@ import { SessionProvider } from "@/contexts/session-context";
 import { SidebarCalloutProvider } from "@/contexts/sidebar-callout-context";
 import { ToastProvider } from "@/contexts/toast-context";
 import { VoiceProvider } from "@/contexts/voice-context";
+import { LiveVoiceProvider } from "@/contexts/live-voice-context";
+import { LiveVoiceStrip } from "@/live-voice/live-voice-strip";
+import { LiveVoiceMuteShortcut } from "@/live-voice/live-voice-mute-shortcut";
 import {
   resolveStartupBlocker,
   resolveStartupNavigationReady,
@@ -534,6 +537,10 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const surface = (
     <View style={layoutStyles.surfaceFill}>
       {workspaceChrome}
+      {/* In normal flow below the content row: a live call belongs to no screen,
+          so its surface docks at the app's edge instead of floating over one. */}
+      <LiveVoiceStrip />
+      <LiveVoiceMuteShortcut />
       {!isCompactLayout && appChromeLayout.sidebarToggleOwner === "window" ? (
         <WindowChromeRegion corners="top-left">
           <WindowChromeSafeArea
@@ -652,11 +659,13 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
 
   return (
     <VoiceProvider>
-      <DesktopWindowControlsSync enabled={!settingsLoading} />
-      <OfferLinkListener upsertDaemonFromOfferUrl={upsertConnectionFromOfferUrl} />
-      <HostSessionManager />
-      <FaviconStatusSync />
-      {children}
+      <LiveVoiceProvider>
+        <DesktopWindowControlsSync enabled={!settingsLoading} />
+        <OfferLinkListener upsertDaemonFromOfferUrl={upsertConnectionFromOfferUrl} />
+        <HostSessionManager />
+        <FaviconStatusSync />
+        {children}
+      </LiveVoiceProvider>
     </VoiceProvider>
   );
 }
@@ -883,8 +892,6 @@ function RootStack() {
         <Stack.Screen name="welcome" />
         <Stack.Screen name="settings/index" />
         <Stack.Screen name="settings/[section]" />
-        <Stack.Screen name="settings/projects/index" />
-        <Stack.Screen name="settings/projects/[serverId]/[projectId]" />
         <Stack.Screen name="new" />
         <Stack.Screen name="open-project" />
         <Stack.Screen name="sessions" />
@@ -894,6 +901,8 @@ function RootStack() {
       <Stack.Screen name="h/[serverId]" />
       <Stack.Screen name="settings/hosts/[serverId]/index" />
       <Stack.Screen name="settings/hosts/[serverId]/[hostSection]" />
+      <Stack.Screen name="settings/hosts/[serverId]/projects/index" />
+      <Stack.Screen name="settings/hosts/[serverId]/projects/[projectId]" />
     </ThemedStack>
   );
 }

@@ -29,6 +29,8 @@ function createSnapshot(
     availableModes: input.availableModes ?? [],
     pendingPermissions: input.pendingPermissions ?? [],
     persistence: input.persistence ?? null,
+    ...(input.lastError ? { lastError: input.lastError } : {}),
+    ...(input.lastFailure ? { lastFailure: input.lastFailure } : {}),
     title: input.title ?? null,
     labels: (input.labels ?? {}) as AgentSnapshotPayload["labels"],
   };
@@ -70,5 +72,22 @@ describe("normalizeAgentSnapshot", () => {
     expect(missing.parentAgentId).toBeNull();
     expect(empty.parentAgentId).toBeNull();
     expect(nonString.parentAgentId).toBeNull();
+  });
+
+  it("surfaces authentication failures as sign-in required", () => {
+    const agent = normalizeAgentSnapshot(
+      createSnapshot({
+        status: "error",
+        lastError: "Provider failed",
+        lastFailure: {
+          kind: "authentication_required",
+          message: "OAuth token expired",
+        },
+      }),
+      "server-1",
+    );
+
+    expect(agent.lastFailure?.kind).toBe("authentication_required");
+    expect(agent.lastError).toBe("Sign in required. OAuth token expired");
   });
 });

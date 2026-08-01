@@ -9,6 +9,11 @@ import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
 import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./agent-owner.js";
+import {
+  stripInternalPaseoMcpServer,
+  stripInternalPaseoMcpServerFromPersistence,
+} from "./runtime-mcp-config.js";
+import type { AgentPersistenceHandle } from "./agent-sdk-types.js";
 
 const SERIALIZABLE_CONFIG_SCHEMA = z
   .object({
@@ -60,6 +65,14 @@ const STORED_AGENT_SCHEMA = z.object({
   features: z.array(AgentFeatureSchema).optional(),
   persistence: PERSISTENCE_HANDLE_SCHEMA,
   lastError: z.string().nullable().optional(),
+  lastFailure: z
+    .object({
+      kind: z.enum(["authentication_required", "provider_error"]),
+      message: z.string(),
+      code: z.string().optional(),
+      diagnostic: z.string().optional(),
+    })
+    .optional(),
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
@@ -336,7 +349,16 @@ export class AgentStorage {
     try {
       const content = await fs.readFile(filePath, "utf8");
       const parsed = JSON.parse(content);
-      return parseStoredAgentRecord(parsed);
+      const record = parseStoredAgentRecord(parsed);
+      const scrubbed = scrubLegacyRuntimeSecrets(record);
+      if (JSON.stringify(scrubbed) !== JSON.stringify(record)) {
+        await writeJsonFileAtomic(filePath, scrubbed);
+        this.logger.warn(
+          { agentId: record.id, filePath },
+          "Removed runtime-only MCP credentials from stored agent record",
+        );
+      }
+      return scrubbed;
     } catch (error) {
       this.logger.error({ err: error, filePath }, "Skipping invalid agent record");
       return null;
@@ -390,6 +412,29 @@ export class AgentStorage {
   private async waitForPendingWrite(agentId: string): Promise<void> {
     await (this.pendingWrites.get(agentId) ?? Promise.resolve()).catch(() => undefined);
   }
+}
+
+function scrubLegacyRuntimeSecrets(record: StoredAgentRecord): StoredAgentRecord {
+  const persistence = stripInternalPaseoMcpServerFromPersistence(
+    record.persistence as AgentPersistenceHandle | null,
+  );
+  let config = record.config;
+  if (config?.mcpServers) {
+    const stripped = stripInternalPaseoMcpServer({
+      provider: record.provider,
+      cwd: record.cwd,
+      ...config,
+    } as AgentSessionConfig);
+    config = {
+      ...config,
+      ...(stripped.mcpServers ? { mcpServers: stripped.mcpServers } : { mcpServers: undefined }),
+    };
+  }
+  return {
+    ...record,
+    persistence: persistence as StoredAgentRecord["persistence"],
+    config,
+  };
 }
 
 function projectDirNameFromCwd(cwd: string): string {

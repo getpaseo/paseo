@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { resolveAudioSessionBusyMessage } from "@/audio/audio-session-busy-message";
+import { audioSessionLease, type AudioSessionLeaseToken } from "@/audio/audio-session-lease";
 import { DictationStreamSender } from "@/dictation/dictation-stream-sender";
 import { useDictationAudioSource } from "@/hooks/use-dictation-audio-source";
 import { generateMessageId } from "@/types/stream";
@@ -131,6 +133,15 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     [setError],
   );
 
+  // Dictation is one of three microphone owners; the app-global lease keeps voice
+  // mode and live voice from talking over it (and vice versa).
+  const micLeaseRef = useRef<AudioSessionLeaseToken | null>(null);
+  const releaseMicLease = useCallback(() => {
+    const token = micLeaseRef.current;
+    micLeaseRef.current = null;
+    audioSessionLease.release(token);
+  }, []);
+
   const clearStreamingState = useCallback(() => {
     senderRef.current?.clearAll();
     latestPartialTranscriptRef.current = "";
@@ -209,6 +220,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       const normalized = toError(failure);
       const failureId = generateMessageId();
       stopDurationTracking();
+      releaseMicLease();
       setIsProcessing(false);
       isProcessingRef.current = false;
       isRecordingRef.current = false;
@@ -223,7 +235,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
 
       reportError(normalized, "Failed to complete dictation");
     },
-    [reportError, stopDurationTracking],
+    [releaseMicLease, reportError, stopDurationTracking],
   );
 
   const audio = useDictationAudioSource({
@@ -263,6 +275,13 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       return;
     }
 
+    const micLease = audioSessionLease.acquire("dictation");
+    if (!micLease) {
+      setError(resolveAudioSessionBusyMessage(audioSessionLease.current()));
+      return;
+    }
+    micLeaseRef.current = micLease;
+
     actionGateRef.current.starting = true;
     setError(null);
     setPartialTranscript("");
@@ -283,6 +302,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       }
     } catch (err) {
       await audio.stop().catch(() => undefined);
+      releaseMicLease();
       stopDurationTracking();
       isRecordingRef.current = false;
       setIsRecording(false);
@@ -297,6 +317,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     clearStreamingState,
     client,
     enableDuration,
+    releaseMicLease,
     reportError,
     startDurationTracking,
     startNewStream,
@@ -326,6 +347,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     } catch (err) {
       reportError(err, "Failed to cancel dictation");
     } finally {
+      releaseMicLease();
       isRecordingRef.current = false;
       setIsRecording(false);
       setIsProcessing(false);
@@ -334,7 +356,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       clearStreamingState();
       actionGateRef.current.cancelling = false;
     }
-  }, [audio, clearStreamingState, reportError, stopDurationTracking]);
+  }, [audio, clearStreamingState, releaseMicLease, reportError, stopDurationTracking]);
 
   const confirmDictation = useCallback(async () => {
     if (actionGateRef.current.confirming) {
@@ -379,11 +401,14 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       }
       handleDictationFailure(err);
     } finally {
+      // The mic is done once capture has stopped; uploading does not need it.
+      releaseMicLease();
       actionGateRef.current.confirming = false;
     }
   }, [
     audio,
     canConfirm,
+    releaseMicLease,
     handleDictationFailure,
     handleStreamingTranscriptionSuccess,
     stopDurationTracking,
@@ -431,6 +456,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
   }, [clearStreamingState]);
 
   const reset = useCallback(() => {
+    releaseMicLease();
     setIsRecording(false);
     isRecordingRef.current = false;
     setIsProcessing(false);
@@ -440,7 +466,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     setError(null);
     setStatus("idle");
     clearStreamingState();
-  }, [clearStreamingState, stopDurationTracking]);
+  }, [clearStreamingState, releaseMicLease, stopDurationTracking]);
 
   useEffect(() => {
     const attemptGuard = attemptGuardRef.current;
@@ -448,9 +474,10 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     return () => {
       attemptGuard.cancel();
       stopDurationTracking();
+      releaseMicLease();
       void audioStop.current().catch(() => undefined);
     };
-  }, [stopDurationTracking]);
+  }, [releaseMicLease, stopDurationTracking]);
 
   return {
     isRecording,
