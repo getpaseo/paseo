@@ -1,8 +1,9 @@
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { createRequire } from "node:module";
+import { statSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import net from "node:net";
-import { extname } from "node:path";
+import { win32 } from "node:path";
 import { gzipSync } from "node:zlib";
 
 import { createExternalProcessEnv, type ProcessEnvRecord } from "../../../paseo-env.js";
@@ -25,13 +26,7 @@ const WINDOWS_CONTROL_PIPE_RETRY_MS = 10;
 const WINDOWS_EXIT_CODE_MAX_DIGITS = 10;
 const WINDOWS_EXIT_CODE_MAX = 0xffff_ffff;
 const WINDOWS_RECORD_SCAN_CHUNK_SIZE = 256;
-
-interface Which {
-  sync(command: string, options: { nothrow: true; path?: string; pathExt?: string }): string | null;
-}
-
-const require = createRequire(import.meta.url);
-const which = require("which") as Which;
+const WINDOWS_DEFAULT_PATH_EXTENSIONS = ".COM;.EXE;.BAT;.CMD";
 
 interface WindowsJobObjectMetadata {
   proofMarker: string;
@@ -529,6 +524,7 @@ const WINDOWS_JOB_ENCODED_COMMAND = Buffer.from(WINDOWS_JOB_BOOTSTRAP, "utf16le"
 export const __windowsJobObjectInternals = {
   commandHost: WINDOWS_COMMAND_HOST,
   createRecordParser: createWindowsJobRecordParser,
+  resolveCommand: resolveWindowsJobCommand,
   supervisor: WINDOWS_JOB_SUPERVISOR,
 };
 
@@ -546,6 +542,7 @@ export type WindowsJobObjectControlFactory = (
 export type WindowsJobObjectCommandResolver = (
   command: string,
   environment: ProcessEnvRecord,
+  cwd: SpawnProcessOptions["cwd"],
 ) => string;
 
 export function createWindowsJobObjectProcessSpawner(
@@ -557,7 +554,13 @@ export function createWindowsJobObjectProcessSpawner(
     const { baseEnv, env, envOverlay, ...spawnOptions } = options;
     const resolvedBaseEnv = env ?? baseEnv ?? process.env;
     const targetEnv = resolveTargetEnvironment(options.envMode, resolvedBaseEnv, envOverlay);
-    const target = resolveWindowsJobTarget(command, args, targetEnv, resolveCommand);
+    const target = resolveWindowsJobTarget(
+      command,
+      args,
+      targetEnv,
+      spawnOptions.cwd,
+      resolveCommand,
+    );
     const commandLine = target.commandLine;
     const proof = randomUUID();
     const proofMarker = `${WINDOWS_JOB_PROOF_PREFIX}${proof}`;
@@ -709,27 +712,81 @@ function getWindowsEnvironmentValue(
   return undefined;
 }
 
-function resolveWindowsJobCommand(command: string, environment: ProcessEnvRecord): string {
+function resolveWindowsJobCommand(
+  command: string,
+  environment: ProcessEnvRecord,
+  cwd: SpawnProcessOptions["cwd"],
+  runtime: WindowsCommandResolutionRuntime = DEFAULT_WINDOWS_COMMAND_RESOLUTION_RUNTIME,
+): string {
   if (command.includes("/") || command.includes("\\")) {
     return command;
   }
-  return (
-    which.sync(command, {
-      nothrow: true,
-      path: getWindowsEnvironmentValue(environment, "PATH"),
-      pathExt: getWindowsEnvironmentValue(environment, "PATHEXT"),
-    }) ?? command
-  );
+
+  let requestedCwd: string;
+  if (typeof cwd === "string") {
+    requestedCwd = cwd;
+  } else if (cwd) {
+    requestedCwd = fileURLToPath(cwd);
+  } else {
+    requestedCwd = runtime.processCwd();
+  }
+  const launchCwd = win32.resolve(requestedCwd);
+  // `which` prepends the daemon's process.cwd() on Windows. Enumerate the child launch cwd and
+  // its environment PATH explicitly so an unrelated daemon-local shim cannot win resolution.
+  const pathDirectories = (getWindowsEnvironmentValue(environment, "PATH") ?? "")
+    .split(";")
+    .map((directory) => stripWindowsPathQuotes(directory));
+  const pathExtensions = (
+    getWindowsEnvironmentValue(environment, "PATHEXT") ?? WINDOWS_DEFAULT_PATH_EXTENSIONS
+  ).split(";");
+  const candidateExtensions = win32.extname(command)
+    ? ["", ...pathExtensions.filter(Boolean)]
+    : pathExtensions;
+
+  for (const directory of [launchCwd, ...pathDirectories]) {
+    for (const extension of candidateExtensions) {
+      const candidate = win32.resolve(launchCwd, directory, `${command}${extension}`);
+      if (runtime.isFile(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return command;
 }
+
+function stripWindowsPathQuotes(directory: string): string {
+  return directory.length >= 2 && directory.startsWith('"') && directory.endsWith('"')
+    ? directory.slice(1, -1)
+    : directory;
+}
+
+function isWindowsCommandFile(candidate: string): boolean {
+  try {
+    return statSync(candidate).isFile();
+  } catch {
+    return false;
+  }
+}
+
+interface WindowsCommandResolutionRuntime {
+  isFile(candidate: string): boolean;
+  processCwd(): string;
+}
+
+const DEFAULT_WINDOWS_COMMAND_RESOLUTION_RUNTIME: WindowsCommandResolutionRuntime = {
+  isFile: isWindowsCommandFile,
+  processCwd: () => process.cwd(),
+};
 
 function resolveWindowsJobTarget(
   command: string,
   args: string[],
   environment: ProcessEnvRecord,
+  cwd: SpawnProcessOptions["cwd"],
   resolveCommand: WindowsJobObjectCommandResolver,
 ): { command: string; commandLine: string; envOverlay?: ProcessEnvRecord } {
-  const resolvedCommand = resolveCommand(command, environment);
-  const extension = extname(resolvedCommand).toLowerCase();
+  const resolvedCommand = resolveCommand(command, environment, cwd);
+  const extension = win32.extname(resolvedCommand).toLowerCase();
   if (extension === ".exe" || extension === ".com") {
     return {
       command: resolvedCommand,

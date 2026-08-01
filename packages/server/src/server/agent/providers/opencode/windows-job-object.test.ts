@@ -16,6 +16,7 @@ import {
   getWindowsJobObjectLeaderExit,
   getWindowsJobObjectLeaderExitMarker,
   getWindowsJobObjectProofMarker,
+  type WindowsJobObjectCommandResolver,
 } from "./windows-job-object.js";
 
 const liveSupervisors: ChildProcess[] = [];
@@ -131,20 +132,25 @@ describe("Windows Job Object process spawner", () => {
   test("resolves a bare Windows command against the target PATH and PATHEXT", () => {
     const child = createFakeChild();
     const calls: Array<{ command: string; args: string[]; options: SpawnProcessOptions }> = [];
-    const resolutionCalls: Array<{ command: string; environment: Record<string, string> }> = [];
+    const resolutionCalls: Array<{
+      command: string;
+      cwd: string | URL | undefined;
+      environment: Record<string, string>;
+    }> = [];
     const spawn = createWindowsJobObjectProcessSpawner(
       (spawnCommand, args, options) => {
         calls.push({ command: spawnCommand, args, options });
         return child;
       },
       undefined,
-      (command, environment) => {
-        resolutionCalls.push({ command, environment });
+      (command, environment, cwd) => {
+        resolutionCalls.push({ command, cwd, environment });
         return "C:\\provider-bin\\opencode.cmd";
       },
     );
 
     spawn("opencode", ["serve"], {
+      cwd: "C:\\workspace",
       envMode: "internal",
       env: { Path: "C:\\provider-bin", PathExt: ".EXE;.CMD;.BAT" },
     });
@@ -152,12 +158,109 @@ describe("Windows Job Object process spawner", () => {
     expect(resolutionCalls).toEqual([
       {
         command: "opencode",
+        cwd: "C:\\workspace",
         environment: { Path: "C:\\provider-bin", PathExt: ".EXE;.CMD;.BAT" },
       },
     ]);
     expect(calls[0]?.options.envOverlay?.PASEO_WINDOWS_JOB_COMMAND).toBe("cmd.exe");
     expect(decodeBase64(calls[0]?.options.envOverlay?.PASEO_WINDOWS_JOB_COMMAND_LINE)).toContain(
       "C:\\provider-bin\\opencode.cmd",
+    );
+  });
+
+  test.each([".CMD", ".BAT"])(
+    "resolves a target-cwd-only %s command through the hardened batch launcher",
+    (extension) => {
+      const child = createFakeChild();
+      const calls: Array<{ command: string; args: string[]; options: SpawnProcessOptions }> = [];
+      const cwd = "C:\\requested-workspace";
+      const resolvedCommand = `${cwd}\\opencode${extension}`;
+      const checkedCandidates: string[] = [];
+      const spawn = createWindowsJobObjectProcessSpawner(
+        (spawnCommand, args, options) => {
+          calls.push({ command: spawnCommand, args, options });
+          return child;
+        },
+        undefined,
+        createDeterministicWindowsResolver([resolvedCommand], checkedCandidates),
+      );
+
+      spawn("opencode", ["serve"], {
+        cwd,
+        envMode: "internal",
+        env: {
+          COMSPEC: "C:\\Windows\\System32\\cmd.exe",
+          PATH: "C:\\provider-bin",
+          PATHEXT: `.EXE;${extension}`,
+        },
+      });
+
+      expect(checkedCandidates).toContain(resolvedCommand);
+      expect(calls[0]?.options.envOverlay?.PASEO_WINDOWS_JOB_COMMAND).toBe(
+        "C:\\Windows\\System32\\cmd.exe",
+      );
+      expect(decodeBase64(calls[0]?.options.envOverlay?.PASEO_WINDOWS_JOB_COMMAND_LINE)).toContain(
+        resolvedCommand,
+      );
+      expect(calls[0]?.options.env?.PASEO_WINDOWS_BATCH_LITERAL_PERCENT).toBe("%");
+    },
+  );
+
+  test("does not let a same-named daemon-cwd executable beat the requested cwd", () => {
+    const requestedCwd = "C:\\requested-workspace";
+    const daemonCwd = "C:\\paseo-daemon";
+    const requestedCommand = `${requestedCwd}\\opencode.CMD`;
+    const daemonCommand = `${daemonCwd}\\opencode.EXE`;
+    const checkedCandidates: string[] = [];
+    let processCwdRequested = false;
+
+    const resolved = __windowsJobObjectInternals.resolveCommand(
+      "opencode",
+      { PATH: "C:\\provider-bin", PATHEXT: ".EXE;.CMD" },
+      requestedCwd,
+      {
+        isFile: (candidate) => {
+          checkedCandidates.push(candidate);
+          return candidate === requestedCommand || candidate === daemonCommand;
+        },
+        processCwd: () => {
+          processCwdRequested = true;
+          return daemonCwd;
+        },
+      },
+    );
+
+    expect(resolved).toBe(requestedCommand);
+    expect(processCwdRequested).toBe(false);
+    expect(checkedCandidates).not.toContain(daemonCommand);
+  });
+
+  test("falls back to the target environment PATH after the requested cwd", () => {
+    const child = createFakeChild();
+    const calls: Array<{ command: string; args: string[]; options: SpawnProcessOptions }> = [];
+    const cwd = "C:\\requested-workspace";
+    const pathCommand = "C:\\provider-bin\\opencode.EXE";
+    const checkedCandidates: string[] = [];
+    const spawn = createWindowsJobObjectProcessSpawner(
+      (spawnCommand, args, options) => {
+        calls.push({ command: spawnCommand, args, options });
+        return child;
+      },
+      undefined,
+      createDeterministicWindowsResolver([pathCommand], checkedCandidates),
+    );
+
+    spawn("opencode", ["serve"], {
+      cwd,
+      envMode: "internal",
+      env: { Path: "C:\\provider-bin", PathExt: ".COM;.EXE;.BAT;.CMD" },
+    });
+
+    expect(checkedCandidates).toContain("C:\\requested-workspace\\opencode.EXE");
+    expect(checkedCandidates).toContain(pathCommand);
+    expect(calls[0]?.options.envOverlay?.PASEO_WINDOWS_JOB_COMMAND).toBe(pathCommand);
+    expect(decodeBase64(calls[0]?.options.envOverlay?.PASEO_WINDOWS_JOB_COMMAND_LINE)).toBe(
+      `${pathCommand} serve`,
     );
   });
 
@@ -596,6 +699,23 @@ function collectOutput(process: ChildProcess): Promise<Buffer> {
     process.stdout?.once("error", reject);
     process.stdout?.once("end", () => resolve(Buffer.concat(chunks)));
   });
+}
+
+function createDeterministicWindowsResolver(
+  existingFiles: readonly string[],
+  checkedCandidates: string[],
+): WindowsJobObjectCommandResolver {
+  const normalizedFiles = new Set(existingFiles.map((candidate) => candidate.toLowerCase()));
+  return (command, environment, cwd) =>
+    __windowsJobObjectInternals.resolveCommand(command, environment, cwd, {
+      isFile: (candidate) => {
+        checkedCandidates.push(candidate);
+        return normalizedFiles.has(candidate.toLowerCase());
+      },
+      processCwd: () => {
+        throw new Error("explicit test cwd must not fall back to the daemon cwd");
+      },
+    });
 }
 
 async function writeInChunks(
