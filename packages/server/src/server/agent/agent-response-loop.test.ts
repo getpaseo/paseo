@@ -221,9 +221,12 @@ describe("generateStructuredAgentResponse", () => {
       await vi.advanceTimersByTimeAsync(60);
       await settled;
 
-      // A per-retry bound would have let all 101 attempts through. One shared
-      // 60ms budget at 20ms an attempt starts four (t=0/20/40/60) before the
-      // deadline stops it.
+      // A per-retry bound would have let all 101 attempts through; one shared
+      // 60ms budget stops the loop after three. The fourth is the abandoned
+      // loop resuming once more after the deadline already rejected, which is
+      // possible only because this fake manager has no closed-agent guard —
+      // in production `streamAgent`'s `requireSessionAgent` throws once
+      // `prepareAgentForClosure` has removed the agent. Don't "fix" it to 3.
       expect(attempts).toBe(4);
       expect(closed).toEqual(["generator"]);
     } finally {
@@ -391,8 +394,8 @@ describe("generateStructuredAgentResponseWithFallback", () => {
       // and once it is spent the rest are skipped instead of run.
       expect(error).toBeInstanceOf(StructuredAgentFallbackError);
       expect(timeouts).toEqual([50, 20]);
-      // A skipped candidate was never probed, so the summary must not claim it
-      // is unavailable.
+      // A skipped candidate was probed and is usable — the budget ran out
+      // before it could run — so the summary must not call it unavailable.
       expect((error as Error).message).toContain(
         "opencode (opencode/gpt-5-nano): skipped (structured generation deadline exceeded)",
       );
