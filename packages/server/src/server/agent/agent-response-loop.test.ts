@@ -2,9 +2,11 @@ import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import {
   getStructuredAgentResponse,
+  generateStructuredAgentResponse,
   generateStructuredAgentResponseWithFallback,
   StructuredAgentFallbackError,
   StructuredAgentResponseError,
+  StructuredAgentTimeoutError,
   type AgentCaller,
 } from "./agent-response-loop.js";
 import type { AgentManager } from "./agent-manager.js";
@@ -127,6 +129,91 @@ describe("getStructuredAgentResponse", () => {
     });
 
     expect(result).toEqual({ value: 42 });
+  });
+});
+
+describe("generateStructuredAgentResponse", () => {
+  const schema = z.object({ summary: z.string() });
+
+  function createRunnerManager(runAgent: () => Promise<{ finalText: string }>) {
+    const created: string[] = [];
+    const closed: string[] = [];
+    const deleted: string[] = [];
+    const manager = {
+      createAgent: async () => {
+        created.push("generator");
+        return { id: "generator" };
+      },
+      runAgent,
+      closeAgent: async (id: string) => {
+        closed.push(id);
+      },
+      deleteAgentState: async (id: string) => {
+        deleted.push(id);
+      },
+    } as unknown as AgentManager;
+    return { manager, created, closed, deleted };
+  }
+
+  it("closes and deletes the ephemeral agent after a successful run", async () => {
+    const { manager, closed, deleted } = createRunnerManager(async () => ({
+      finalText: '{"summary":"ok"}',
+    }));
+
+    const result = await generateStructuredAgentResponse({
+      manager,
+      agentConfig: { provider: "claude", cwd: "/tmp/project" },
+      prompt: "Return JSON",
+      schema,
+      maxRetries: 0,
+    });
+
+    expect(result).toEqual({ summary: "ok" });
+    expect(closed).toEqual(["generator"]);
+    expect(deleted).toEqual(["generator"]);
+  });
+
+  // Regression: a metadata-generation run that never terminates (an internal
+  // agent's permission prompt has no UI to answer it) left the provider CLI
+  // child process alive forever. See issue #1937.
+  it("closes the ephemeral agent when the run never finishes", async () => {
+    const { manager, closed, deleted } = createRunnerManager(() => new Promise<never>(() => {}));
+
+    await expect(
+      generateStructuredAgentResponse({
+        manager,
+        agentConfig: { provider: "claude", cwd: "/tmp/project" },
+        prompt: "Return JSON",
+        schema,
+        timeoutMs: 25,
+      }),
+    ).rejects.toBeInstanceOf(StructuredAgentTimeoutError);
+
+    expect(closed).toEqual(["generator"]);
+    expect(deleted).toEqual(["generator"]);
+  });
+
+  it("bounds the whole generation, not each retry", async () => {
+    let attempts = 0;
+    const { manager, closed } = createRunnerManager(async () => {
+      attempts += 1;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return { finalText: "not json" };
+    });
+
+    await expect(
+      generateStructuredAgentResponse({
+        manager,
+        agentConfig: { provider: "claude", cwd: "/tmp/project" },
+        prompt: "Return JSON",
+        schema,
+        maxRetries: 100,
+        timeoutMs: 60,
+      }),
+    ).rejects.toBeInstanceOf(StructuredAgentTimeoutError);
+
+    expect(attempts).toBeLessThan(101);
+    expect(closed).toEqual(["generator"]);
   });
 });
 

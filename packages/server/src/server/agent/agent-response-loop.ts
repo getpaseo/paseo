@@ -37,6 +37,23 @@ export interface StructuredGenerationAttempt {
   error: string | null;
 }
 
+// Metadata generation runs headless on an internal agent: it has no UI, so a
+// permission prompt it raises can never be answered and the turn waits forever.
+// An unbounded wait pins the provider CLI child process (~250MB for `claude`)
+// for the lifetime of the daemon, because the close that reaps it lives in the
+// finally block this wait never reaches. Bound the run so cleanup always runs.
+export const DEFAULT_STRUCTURED_GENERATION_TIMEOUT_MS = 120_000;
+
+export class StructuredAgentTimeoutError extends Error {
+  readonly timeoutMs: number;
+
+  constructor(timeoutMs: number) {
+    super(`Structured generation timed out after ${timeoutMs}ms`);
+    this.name = "StructuredAgentTimeoutError";
+    this.timeoutMs = timeoutMs;
+  }
+}
+
 export class StructuredAgentFallbackError extends Error {
   readonly attempts: StructuredGenerationAttempt[];
 
@@ -78,6 +95,7 @@ export interface StructuredAgentGenerationOptions<T> {
   schema: z.ZodType<T> | JsonSchema;
   maxRetries?: number;
   schemaName?: string;
+  timeoutMs?: number;
 }
 
 export interface StructuredAgentGenerationWithFallbackOptions<T> {
@@ -93,6 +111,7 @@ export interface StructuredAgentGenerationWithFallbackOptions<T> {
   persistSession?: boolean;
   maxRetries?: number;
   schemaName?: string;
+  timeoutMs?: number;
   logger?: StructuredGenerationLogger;
   runner?: <TResult>(options: StructuredAgentGenerationOptions<TResult>) => Promise<TResult>;
 }
@@ -356,10 +375,12 @@ export async function generateStructuredAgentResponse<T>(
 ): Promise<T> {
   const { manager, agentConfig, agentId, persistSession, prompt, schema, maxRetries, schemaName } =
     options;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_STRUCTURED_GENERATION_TIMEOUT_MS;
   const agent = await manager.createAgent(agentConfig, agentId, {
     persistSession,
     workspaceId: undefined,
   });
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const caller: AgentCaller = async (nextPrompt) => {
       const result = await manager.runAgent(agent.id, nextPrompt);
@@ -370,14 +391,22 @@ export async function generateStructuredAgentResponse<T>(
       const lastAssistant = result.timeline.findLast((item) => item.type === "assistant_message");
       return lastAssistant?.text ?? "";
     };
-    return await getStructuredAgentResponse({
-      caller,
-      prompt,
-      schema,
-      maxRetries,
-      schemaName,
-    });
+    // The deadline covers every retry, not each one, so a model that stalls on
+    // its second attempt can't extend the run past the bound.
+    return await Promise.race([
+      getStructuredAgentResponse({
+        caller,
+        prompt,
+        schema,
+        maxRetries,
+        schemaName,
+      }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new StructuredAgentTimeoutError(timeoutMs)), timeoutMs);
+      }),
+    ]);
   } finally {
+    clearTimeout(timer);
     try {
       await manager.closeAgent(agent.id);
     } catch {
@@ -408,6 +437,7 @@ export async function generateStructuredAgentResponseWithFallback<T>(
     persistSession,
     maxRetries,
     schemaName,
+    timeoutMs,
     logger,
     runner,
   } = options;
@@ -446,6 +476,7 @@ export async function generateStructuredAgentResponseWithFallback<T>(
         maxRetries,
         schemaName,
         persistSession,
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
         agentConfig: {
           ...agentConfigOverrides,
           provider: candidate.provider,
