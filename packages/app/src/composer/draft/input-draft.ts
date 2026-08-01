@@ -21,7 +21,7 @@ import {
   type ProviderSelectionState,
 } from "@/provider-selection/provider-selection";
 import { useHostFeature } from "@/runtime/host-features";
-import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import { getHostRuntimeStore, useHostRuntimeConnectionStatus } from "@/runtime/host-runtime";
 import { useDraftStore } from "@/stores/draft-store";
 import { toDraftInputIfReady } from "@/stores/draft-store/state";
 import {
@@ -100,6 +100,8 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     return formState.selectedServerId?.trim() || null;
   }, [composerOptions?.initialServerId, draftKey, formState.selectedServerId]);
   const supportsUiState = useHostFeature(hostServerId, "uiState");
+  const connectionStatus = useHostRuntimeConnectionStatus(hostServerId ?? "");
+  const isHostOnline = connectionStatus === "online";
   const draftRecord = useDraftStore((state) => state.drafts[draftKey]);
   const draft = useMemo(() => toDraftInputIfReady(draftRecord), [draftRecord]);
   const attachmentFocusRequestId = useDraftStore(
@@ -180,7 +182,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     let cancelled = false;
     void (async () => {
       await useDraftStore.getState().hydrateDraftInput({ draftKey });
-      if (supportsUiState && hostServerId && toWireComposerKey(draftKey)) {
+      if (supportsUiState && isHostOnline && hostServerId && toWireComposerKey(draftKey)) {
         const client = getHostRuntimeStore().getClient(hostServerId);
         if (client) {
           try {
@@ -198,10 +200,10 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     return () => {
       cancelled = true;
     };
-  }, [draftKey, hostServerId, supportsUiState]);
+  }, [draftKey, hostServerId, isHostOnline, supportsUiState]);
 
   useEffect(() => {
-    if (!supportsUiState || !hostServerId) {
+    if (!supportsUiState || !isHostOnline || !hostServerId) {
       return;
     }
     const client = getHostRuntimeStore().getClient(hostServerId);
@@ -218,7 +220,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
         resolveClientDraftKeys: (key) => (key === wireKey ? [draftKey] : []),
       });
     });
-  }, [draftKey, hostServerId, supportsUiState]);
+  }, [draftKey, hostServerId, isHostOnline, supportsUiState]);
 
   const lockedWorkingDir = composerOptions?.lockedWorkingDir?.trim() ?? "";
   useEffect(() => {
