@@ -83,6 +83,7 @@ beforeEach(async () => {
     projectRegistry,
     workspaceGitService: gitService(),
     logger,
+    isDirectory: async () => true,
   });
 });
 
@@ -175,6 +176,7 @@ test("persists manual worktree ownership separately from its workspace kind", as
         mainRepoRoot,
       }),
     }),
+    isDirectory: async () => true,
   });
 
   const workspace = await manualWorktreeProvisioning.findOrCreateWorkspaceForDirectory(cwd);
@@ -237,6 +239,7 @@ test("reopening archived exact-root records restores the fresh Git project", asy
         mainRepoRoot: null,
       }),
     }),
+    isDirectory: async () => true,
   });
 
   const reopened = await archivedProvisioning.ensureWorkspaceRecordUnarchived(workspace);
@@ -276,6 +279,7 @@ test("uses one workspace snapshot when reopening an archived workspace", async (
     workspaceRegistry: snapshotRegistry,
     projectRegistry,
     workspaceGitService: gitService(),
+    isDirectory: async () => true,
   });
 
   const reopened = await snapshotProvisioning.findOrCreateWorkspaceForDirectory(repo);

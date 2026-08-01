@@ -751,6 +751,7 @@ export class Session {
       projectRegistry: this.projectRegistry,
       workspaceGitService: this.workspaceGitService,
       logger: this.sessionLogger,
+      isDirectory: (targetPath) => this.filesystem.isDirectory(targetPath),
     });
     this.workspaceRecovery = createWorkspaceRecoveryService({
       paseoHome: this.paseoHome,

@@ -26,8 +26,10 @@ import { WorkspaceCleanupRetryService } from "./workspace-cleanup-retry-service.
 import { WorkspaceLifecycleCoordinator } from "./workspace-lifecycle-coordinator.js";
 import {
   createPersistedWorkspaceRecord,
+  FileBackedProjectRegistry,
   FileBackedWorkspaceRegistry,
 } from "./workspace-registry.js";
+import { createWorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
 
 const cleanupPaths: string[] = [];
 
@@ -1338,6 +1340,108 @@ describe("archiveByScope", () => {
     expect(existsSync(replacement.worktreePath)).toBe(true);
     expect((await registry.get(replacementWorkspaceId))?.archivedAt).toBeNull();
     expect((await registry.get(staleWorkspaceId))?.cleanupPending).toBeNull();
+  });
+
+  test("directory workspace creation waits for cleanup and revalidates after final owner read", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "cleanup-create-race");
+    const incarnationId = readPaseoWorktreeIncarnationId(worktree.worktreePath);
+    expect(incarnationId).toBeTruthy();
+    const registry = new FileBackedWorkspaceRegistry(
+      path.join(tempDir, "workspaces.json"),
+      createLogger(),
+    );
+    const projectRegistry = new FileBackedProjectRegistry(
+      path.join(tempDir, "projects.json"),
+      createLogger(),
+    );
+    await registry.initialize();
+    await projectRegistry.initialize();
+    const timestamp = new Date().toISOString();
+    await registry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId: "ws-cleanup-create-race-stale",
+        projectId: "project-cleanup-create-race",
+        cwd: worktree.worktreePath,
+        kind: "worktree",
+        displayName: "Archived cleanup owner",
+        worktreeRoot: worktree.worktreePath,
+        isPaseoOwnedWorktree: true,
+        mainRepoRoot: repoDir,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        archivedAt: timestamp,
+        cleanupPending: {
+          directoryPath: worktree.worktreePath,
+          teardownCwd: worktree.worktreePath,
+          mainRepoRoot: repoDir,
+          paseoWorktreesRoot: null,
+          worktreeIncarnationId: incarnationId,
+        },
+      }),
+    );
+
+    const lifecycleCoordinator = new WorkspaceLifecycleCoordinator();
+    let resolveFinalOwnerReadStarted: (() => void) | null = null;
+    const finalOwnerReadStarted = new Promise<void>((resolvePromise) => {
+      resolveFinalOwnerReadStarted = resolvePromise;
+    });
+    let allowFinalOwnerRead: (() => void) | null = null;
+    const finalOwnerReadAllowed = new Promise<void>((resolvePromise) => {
+      allowFinalOwnerRead = resolvePromise;
+    });
+    let ownerReads = 0;
+    const deps = createArchiveDeps({ paseoHome, activeWorkspaces: [] });
+    deps.lifecycleCoordinator = lifecycleCoordinator;
+    deps.workspaceRegistry = registry;
+    deps.listActiveWorkspaces = vi.fn(async () => {
+      ownerReads += 1;
+      if (ownerReads === 2) {
+        resolveFinalOwnerReadStarted?.();
+        await finalOwnerReadAllowed;
+      }
+      return [];
+    });
+    const cleanup = retryPendingWorkspaceCleanup(deps, {
+      directoryPath: worktree.worktreePath,
+      worktreeIncarnationId: incarnationId!,
+      requestId: "cleanup-create-race",
+    });
+    await finalOwnerReadStarted;
+
+    const provisioning = createWorkspaceProvisioningService({
+      workspaceRegistry: registry,
+      projectRegistry,
+      workspaceGitService: {
+        getCheckout: async (cwd) => ({
+          cwd,
+          isGit: true,
+          currentBranch: "cleanup-create-race",
+          remoteUrl: null,
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        }),
+        peekSnapshot: () => null,
+      },
+      logger: createLogger(),
+      lifecycleCoordinator,
+    });
+    let creationSettled = false;
+    const creation = provisioning.createWorkspaceForDirectory(worktree.worktreePath).finally(() => {
+      creationSettled = true;
+    });
+    await Promise.resolve();
+    expect(creationSettled).toBe(false);
+
+    allowFinalOwnerRead?.();
+    await expect(cleanup).resolves.toMatchObject({ removedDirectory: true });
+    await expect(creation).rejects.toThrow("Working directory does not exist");
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+    expect((await registry.list()).filter((workspace) => workspace.archivedAt === null)).toEqual(
+      [],
+    );
   });
 
   test("workspace teardown failure keeps the record active and prevents recursive deletion", async () => {
