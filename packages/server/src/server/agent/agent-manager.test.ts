@@ -8545,3 +8545,54 @@ test("successful history hydration orders buffered live events after recovered h
     rmSync(workdir, { recursive: true, force: true });
   }
 });
+
+test("failed history hydration discards partial history before releasing buffered live events", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-failure-atomicity-"));
+  const agentId = "00000000-0000-4000-8000-000000000149";
+
+  class FailingHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: "partial historical request" },
+      };
+      this.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: "live request after failure" },
+      });
+      throw new Error("provider history failed");
+    }
+  }
+
+  class FailingHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new FailingHistorySession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new FailingHistoryClient() },
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.hydrateTimelineFromProvider(created.id);
+    await manager.flush();
+
+    expect(manager.getTimeline(created.id)).toEqual([
+      { type: "user_message", text: "live request after failure" },
+    ]);
+    expect((await manager.getTimelineRows(created.id)).map((row) => row.item)).toEqual([
+      { type: "user_message", text: "live request after failure" },
+    ]);
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
