@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "patchId": "paseo-v025-provider-health-control-plane",
+  "base": {
+    "tag": "v0.2.5",
+    "commit": "6fc491e6220fba6543bbbe4bf1b1f58cfe59228b"
+  },
+  "candidate": {
+    "branch": "review/v025-provider-health-status",
+    "commit": "46bfd29050140d34a35a222f88b1f632cbd60d7d",
+    "tree": "01d720465f6c72725eb3125d659195cb53a6b341"
+  },
+  "verification": {
+    "commit": "46bfd29050140d34a35a222f88b1f632cbd60d7d",
+    "completedAt": "2026-08-01T00:04:38Z",
+    "commands": [
+      "cd packages/server && ../../node_modules/.bin/vitest run src/server/agent/agent-manager.test.ts src/server/agent/agent-response-loop.test.ts src/server/agent/providers/provider-availability.test.ts src/server/session/daemon/daemon-session.test.ts src/server/session/provider/provider-catalog-session.test.ts",
+      "cd packages/cli && ../../node_modules/.bin/vitest run src/commands/daemon/status.test.ts",
+      "npm run test --workspace=@getpaseo/protocol",
+      "npm run build:server",
+      "npm run typecheck:server",
+      "npx oxlint packages/cli/src/commands/daemon/status.test.ts packages/cli/src/commands/daemon/status.ts packages/protocol/src/messages.ts packages/protocol/tests/validation/ws-outbound.test.ts packages/server/src/server/agent/agent-manager.test.ts packages/server/src/server/agent/agent-manager.ts packages/server/src/server/agent/agent-response-loop.test.ts packages/server/src/server/agent/agent-response-loop.ts packages/server/src/server/agent/agent-sdk-types.ts packages/server/src/server/agent/provider-registry.ts packages/server/src/server/agent/providers/provider-availability.test.ts packages/server/src/server/session/daemon/daemon-session.test.ts packages/server/src/server/session/daemon/daemon-session.ts packages/server/src/server/session/daemon/diagnostics.ts",
+      "npx oxfmt --check packages/cli/src/commands/daemon/status.test.ts packages/cli/src/commands/daemon/status.ts packages/protocol/src/messages.ts packages/protocol/tests/validation/ws-outbound.test.ts packages/server/src/server/agent/agent-manager.test.ts packages/server/src/server/agent/agent-manager.ts packages/server/src/server/agent/agent-response-loop.test.ts packages/server/src/server/agent/agent-response-loop.ts packages/server/src/server/agent/agent-sdk-types.ts packages/server/src/server/agent/provider-registry.ts packages/server/src/server/agent/providers/provider-availability.test.ts packages/server/src/server/session/daemon/daemon-session.test.ts packages/server/src/server/session/daemon/daemon-session.ts packages/server/src/server/session/daemon/diagnostics.ts patches/local-patches.json",
+      "git diff --check",
+      "jq -e '.schemaVersion == 1 and (.patches | length == 1)' patches/local-patches.json"
+    ],
+    "result": {
+      "focusedProviderHealthTests": "57 passed",
+      "broaderServerTests": "189 passed",
+      "cliTests": "1 passed",
+      "protocolTests": "469 passed",
+      "serverBuild": "passed",
+      "serverTypechecks": "passed",
+      "lint": "0 warnings, 0 errors",
+      "formatDiffAndManifest": "passed"
+    }
+  }
+}
