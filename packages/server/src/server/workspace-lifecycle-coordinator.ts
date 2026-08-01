@@ -84,6 +84,23 @@ export class WorkspaceLifecycleCoordinator {
     return { release };
   }
 
+  async runWorkspaceOwnershipMutation<T>(
+    workspaceId: string,
+    requireActiveWorkspace: () => Promise<void>,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const reservation = this.reserveWorkspaceOwnershipMutation(workspaceId);
+    try {
+      // Validate after acquiring the reservation. An archive either already owns
+      // the workspace (and reservation fails), or must now wait for this check and
+      // mutation to finish. This also rejects attaches after archive completion.
+      await requireActiveWorkspace();
+      return await operation();
+    } finally {
+      reservation.release();
+    }
+  }
+
   reserveWorkspaceArchive(workspaceIds: Iterable<string>): WorkspaceArchiveReservation {
     const ownedWorkspaceIds = new Set<string>();
     const add = (additionalWorkspaceIds: Iterable<string>) => {

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { getPaseoWorktreesRoot, isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
 import {
   archiveByScope,
+  requireActiveWorkspaceForArchive,
   resolveWorkspaceIdAtPath,
   type ArchiveDependencies,
   type ArchiveScope,
@@ -126,6 +127,16 @@ export async function archiveCommand(
 ): Promise<ArchiveCommandResult> {
   const scope = input.scope ?? "workspace";
   if (scope === "workspace" && input.workspaceId) {
+    try {
+      await requireActiveWorkspaceForArchive(dependencies, input.workspaceId);
+    } catch {
+      return {
+        ok: false,
+        code: "UNKNOWN",
+        message: `Workspace not found: ${input.workspaceId}`,
+        removedAgents: [],
+      };
+    }
     const result = await archiveByScope(dependencies, {
       scope: { kind: "workspace", workspaceId: input.workspaceId },
       requestId: input.requestId,

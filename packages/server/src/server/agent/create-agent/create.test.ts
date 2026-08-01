@@ -333,6 +333,38 @@ test("agent creation holds workspace ownership until the agent is attached", asy
   archiveReservation.release();
 });
 
+test("agent creation rejects an ownership attach after workspace archive", async () => {
+  const createAgent = vi.fn();
+  const requireActiveWorkspaceForOwnership = vi.fn(async () => {
+    throw new Error("Workspace not found: ws-archived");
+  });
+
+  await expect(
+    createAgentCommand(
+      {
+        agentManager: { createAgent } as unknown as AgentManager,
+        agentStorage: {} as AgentStorage,
+        logger,
+        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+        lifecycleCoordinator: new WorkspaceLifecycleCoordinator(),
+        requireActiveWorkspaceForOwnership,
+      },
+      {
+        kind: "session",
+        config: { provider: "codex", cwd: "/tmp/paseo-create-archived" },
+        workspaceId: "ws-archived",
+        labels: {},
+        provisionalTitle: null,
+        firstAgentContext: {},
+        buildSessionConfig: async (config) => ({ sessionConfig: config }),
+      },
+    ),
+  ).rejects.toThrow("Workspace not found: ws-archived");
+
+  expect(requireActiveWorkspaceForOwnership).toHaveBeenCalledWith("ws-archived");
+  expect(createAgent).not.toHaveBeenCalled();
+});
+
 test("session create applies the resolved mode from the provider create config", async () => {
   const snapshot = {
     id: "agent-1",

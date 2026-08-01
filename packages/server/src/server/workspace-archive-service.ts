@@ -327,21 +327,23 @@ async function resolveWorktreeArchiveTarget(
     (workspace) => workspace.mainRepoRoot,
   )?.mainRepoRoot;
   let teardownTargets: ArchiveTarget["teardownTargets"];
-  if (targetWorkspaces.length > 0) {
+  if (targetWorkspaces.length > 0 || (pendingRecords && pendingRecords.length > 0)) {
+    const activeWorkspaceIds = new Set(targetWorkspaces.map((workspace) => workspace.workspaceId));
     teardownTargets = targetWorkspaces.map((workspace) => ({
       workspaceId: workspace.workspaceId,
       cwd: workspace.cwd,
     }));
-  } else if (pendingRecords && pendingRecords.length > 0) {
-    teardownTargets = pendingRecords.flatMap((workspace) => {
-      if (!workspace.cleanupPending) return [];
-      return [
-        {
-          workspaceId: workspace.workspaceId,
-          cwd: workspace.cleanupPending.teardownCwd,
-        },
-      ];
-    });
+    teardownTargets.push(
+      ...(pendingRecords ?? []).flatMap((workspace) => {
+        if (!workspace.cleanupPending || activeWorkspaceIds.has(workspace.workspaceId)) return [];
+        return [
+          {
+            workspaceId: workspace.workspaceId,
+            cwd: workspace.cleanupPending.teardownCwd,
+          },
+        ];
+      }),
+    );
   } else {
     teardownTargets = [{ workspaceId: null, cwd: targetPath }];
   }

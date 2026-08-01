@@ -167,7 +167,6 @@ import { DownloadTokenStore } from "./file-download/token-store.js";
 import { PushTokenStore } from "./push/token-store.js";
 import {
   archivePersistedWorkspaceRecord,
-  archiveWorkspaceContents,
   requireActiveWorkspaceForArchive,
 } from "./workspace-archive-service.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
@@ -896,6 +895,7 @@ export class Session {
       isPathWithinRoot: (rootPath, candidatePath) => this.isPathWithinRoot(rootPath, candidatePath),
       sessionLogger: this.sessionLogger,
       listTerminalWorkspaceRefs: () => this.listActiveWorkspaceRefs(),
+      lifecycleCoordinator: defaultWorkspaceLifecycleCoordinator,
       clientSupportsWrapReflow: () =>
         this.clientCapabilities.has(CLIENT_CAPS.terminalReflowableSnapshot),
       getClientBufferedAmount: () => this.getTransportBufferedAmount(),
@@ -2744,47 +2744,54 @@ export class Session {
       const projectWorkspaces = (await this.workspaceRegistry.list()).filter(
         (workspace) => workspace.projectId === resolvedProjectId,
       );
-      const activeWorkspaceIds = projectWorkspaces
-        .filter((workspace) => !workspace.archivedAt)
+      const workspaceIdsToArchive = projectWorkspaces
+        .filter((workspace) => !workspace.archivedAt || workspace.cleanupPending)
         .map((workspace) => workspace.workspaceId);
 
-      if (activeWorkspaceIds.length > 0) {
-        this.markWorkspaceArchiving(activeWorkspaceIds, new Date().toISOString());
-        await this.emitWorkspaceUpdatesForWorkspaceIds(activeWorkspaceIds);
-      }
-
       const removedWorkspaceIds: string[] = [];
-      try {
-        for (const workspaceId of activeWorkspaceIds) {
-          await archiveWorkspaceContents(
-            {
-              agentManager: this.agentManager,
-              agentStorage: this.agentStorage,
-              killTerminalsForWorkspace: (id) =>
-                this.terminalController.killTerminalsForWorkspace(id),
-              sessionLogger: this.sessionLogger,
-            },
-            workspaceId,
-          );
-          await this.archiveWorkspaceRecord(workspaceId);
-          removedWorkspaceIds.push(workspaceId);
-        }
-
-        await this.projectRegistry.remove(resolvedProjectId);
-        await removeProjectCustomIcon({
-          paseoHome: this.paseoHome,
-          projectId: resolvedProjectId,
-        }).catch((error) => {
-          this.sessionLogger.warn(
-            { err: error, projectId: resolvedProjectId },
-            "Failed to clean up removed project icon",
-          );
-        });
-      } finally {
-        if (activeWorkspaceIds.length > 0) {
-          this.clearWorkspaceArchiving(activeWorkspaceIds);
-        }
+      for (const workspaceId of workspaceIdsToArchive) {
+        await archiveByScope(
+          {
+            paseoHome: this.paseoHome,
+            paseoWorktreesBaseRoot: this.worktreesRoot,
+            github: this.github,
+            workspaceGitService: this.workspaceGitService,
+            agentManager: this.agentManager,
+            agentStorage: this.agentStorage,
+            findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
+            listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
+            archiveWorkspaceRecord: (id) => this.archiveWorkspaceRecord(id),
+            workspaceRegistry: this.workspaceRegistry,
+            emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
+              this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
+            markWorkspaceArchiving: (workspaceIds, archivingAt) =>
+              this.markWorkspaceArchiving(workspaceIds, archivingAt),
+            clearWorkspaceArchiving: (workspaceIds) => this.clearWorkspaceArchiving(workspaceIds),
+            killTerminalsForWorkspace: (id) =>
+              this.terminalController.killTerminalsForWorkspace(id),
+            sessionLogger: this.sessionLogger,
+          },
+          {
+            scope: { kind: "workspace", workspaceId },
+            requestId,
+          },
+        );
+        removedWorkspaceIds.push(workspaceId);
       }
+
+      await this.projectRegistry.remove(resolvedProjectId);
+      await removeProjectCustomIcon({
+        paseoHome: this.paseoHome,
+        projectId: resolvedProjectId,
+      }).catch((error) => {
+        this.sessionLogger.warn(
+          {
+            err: error,
+            projectId: resolvedProjectId,
+          },
+          "Failed to clean up removed project icon",
+        );
+      });
 
       const updateIds =
         removedWorkspaceIds.length > 0
@@ -3116,6 +3123,12 @@ export class Session {
           worktreesRoot: this.worktreesRoot,
           providerSnapshotManager: this.providerSnapshotManager,
           lifecycleCoordinator: defaultWorkspaceLifecycleCoordinator,
+          requireActiveWorkspaceForOwnership: async (workspaceId) => {
+            const workspace = await this.workspaceRegistry.get(workspaceId);
+            if (!workspace || workspace.archivedAt) {
+              throw new Error(`Workspace not found: ${workspaceId}`);
+            }
+          },
         },
         {
           kind: "session",

@@ -74,6 +74,7 @@ import {
   type PersistedWorkspaceRecord,
   type WorkspaceMutation,
 } from "./workspace-registry.js";
+import { defaultWorkspaceLifecycleCoordinator } from "./workspace-lifecycle-coordinator.js";
 
 const REPO_CWD = path.resolve("/tmp/repo");
 const UNREGISTERED_CWD = path.resolve("/tmp/unregistered");
@@ -3449,6 +3450,9 @@ test("project.remove.request archives active workspaces and removes the project 
     workspaces.get(workspaceId) ?? null;
   session.workspaceRegistry.list = async () => Array.from(workspaces.values());
   session.workspaceRegistry.archive = async (workspaceId: string, archivedAt: string) => {
+    expect(() =>
+      defaultWorkspaceLifecycleCoordinator.reserveWorkspaceOwnershipMutation(workspaceId),
+    ).toThrow(`Workspace ${workspaceId} is being archived`);
     const existing = workspaces.get(workspaceId);
     if (!existing) return;
     workspaces.set(workspaceId, { ...existing, updatedAt: archivedAt, archivedAt });

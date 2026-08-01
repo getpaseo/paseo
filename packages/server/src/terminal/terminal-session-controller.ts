@@ -15,6 +15,10 @@ import type {
 } from "../server/messages.js";
 import { killTerminalsForWorkspace as killWorkspaceTerminals } from "../server/workspace-archive-service.js";
 import {
+  defaultWorkspaceLifecycleCoordinator,
+  type WorkspaceLifecycleCoordinator,
+} from "../server/workspace-lifecycle-coordinator.js";
+import {
   TerminalStreamOpcode,
   decodeTerminalResizePayload,
   encodeTerminalStreamFrame,
@@ -69,6 +73,7 @@ export interface TerminalSessionControllerOptions {
   isPathWithinRoot: (rootPath: string, candidatePath: string) => boolean;
   sessionLogger: pino.Logger;
   listTerminalWorkspaceRefs?: () => Promise<readonly TerminalWorkspaceRef[]>;
+  lifecycleCoordinator?: WorkspaceLifecycleCoordinator;
   listTerminalWorkspaceRoots?: () => Promise<readonly string[]>;
   // Whether the connected client can reflow restored snapshots. When true the
   // daemon attaches per-row soft-wrap flags to snapshots; otherwise it omits them
@@ -128,6 +133,7 @@ export class TerminalSessionController {
   private readonly sessionLogger: pino.Logger;
   private readonly listTerminalWorkspaceRefs: () => Promise<readonly TerminalWorkspaceRef[]>;
   private readonly listTerminalWorkspaceRoots: () => Promise<readonly string[]>;
+  private readonly lifecycleCoordinator: WorkspaceLifecycleCoordinator;
   private readonly clientSupportsWrapReflow: () => boolean;
   private readonly getClientBufferedAmount: () => number | null;
 
@@ -153,6 +159,8 @@ export class TerminalSessionController {
     this.isPathWithinRoot = options.isPathWithinRoot;
     this.sessionLogger = options.sessionLogger;
     this.listTerminalWorkspaceRefs = options.listTerminalWorkspaceRefs ?? (async () => []);
+    this.lifecycleCoordinator =
+      options.lifecycleCoordinator ?? defaultWorkspaceLifecycleCoordinator;
     this.listTerminalWorkspaceRoots =
       options.listTerminalWorkspaceRoots ??
       (async () => (await this.listTerminalWorkspaceRefs()).map((workspace) => workspace.cwd));
@@ -543,15 +551,27 @@ export class TerminalSessionController {
         return;
       }
 
-      const session = await this.terminalManager.createTerminal({
-        cwd: msg.cwd,
+      const session = await this.lifecycleCoordinator.runWorkspaceOwnershipMutation(
         workspaceId,
-        name: msg.name,
-        command: msg.command,
-        args: msg.args,
-        rows: msg.size?.rows,
-        cols: msg.size?.cols,
-      });
+        async () => {
+          const workspace = (await this.listTerminalWorkspaceRefs()).find(
+            (candidate) => candidate.workspaceId === workspaceId,
+          );
+          if (!workspace) {
+            throw new Error(`Workspace not found: ${workspaceId}`);
+          }
+        },
+        () =>
+          this.terminalManager!.createTerminal({
+            cwd: msg.cwd,
+            workspaceId,
+            name: msg.name,
+            command: msg.command,
+            args: msg.args,
+            rows: msg.size?.rows,
+            cols: msg.size?.cols,
+          }),
+      );
       this.ensureExitSubscription(session);
       this.emit({
         type: "create_terminal_response",

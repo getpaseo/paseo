@@ -2065,6 +2065,58 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
     });
   });
 
+  test("reports failure for an explicit unknown workspace id", async () => {
+    const { tempDir } = createGitRepo();
+    cleanupPaths.push(tempDir);
+    const emitted: SessionOutboundMessage[] = [];
+    const archiveWorkspaceRecord = vi.fn(async () => {});
+
+    await handlePaseoWorktreeArchiveRequest(
+      {
+        paseoHome: path.join(tempDir, ".paseo"),
+        github: createGitHubServiceStub(),
+        workspaceGitService: {
+          getSnapshot: vi.fn(async () => null),
+          listWorktrees: vi.fn(async () => []),
+        },
+        agentManager: {
+          listAgents: () => [],
+          archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
+          archiveSnapshot: vi.fn(async () => ({})),
+        },
+        agentStorage: createAgentStorageStub(),
+        findWorkspaceIdForCwd: vi.fn(async () => null),
+        listActiveWorkspaces: vi.fn(async () => []),
+        archiveWorkspaceRecord,
+        emit: (message) => emitted.push(message),
+        emitWorkspaceUpdatesForWorkspaceIds: vi.fn(async () => {}),
+        markWorkspaceArchiving: vi.fn(),
+        clearWorkspaceArchiving: vi.fn(),
+        killTerminalsForWorkspace: vi.fn(async () => {}),
+        sessionLogger: createLogger(),
+      },
+      {
+        type: "paseo_worktree_archive_request",
+        requestId: "req-explicit-unknown",
+        workspaceId: "ws-explicit-unknown",
+        scope: "workspace",
+      },
+    );
+
+    expect(archiveWorkspaceRecord).not.toHaveBeenCalled();
+    expect(
+      emitted.find((message) => message.type === "paseo_worktree_archive_response"),
+    ).toMatchObject({
+      payload: {
+        success: false,
+        error: {
+          code: "UNKNOWN",
+          message: "Workspace not found: ws-explicit-unknown",
+        },
+      },
+    });
+  });
+
   test("archives every active workspace on the directory and removes it", async () => {
     const { tempDir, repoDir } = createGitRepo();
     cleanupPaths.push(tempDir);

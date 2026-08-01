@@ -148,6 +148,21 @@ export interface PaseoToolHostDependencies {
   logger: Logger;
 }
 
+async function requireActiveWorkspaceForOwnership(
+  options: Pick<PaseoToolHostDependencies, "listActiveWorkspaces" | "workspaceRegistry">,
+  workspaceId: string,
+): Promise<void> {
+  if (!options.listActiveWorkspaces && !options.workspaceRegistry) return;
+  const workspace = options.listActiveWorkspaces
+    ? (await options.listActiveWorkspaces()).find(
+        (candidate) => candidate.workspaceId === workspaceId,
+      )
+    : await options.workspaceRegistry?.get(workspaceId);
+  if (!workspace || ("archivedAt" in workspace && workspace.archivedAt)) {
+    throw new Error(`Workspace not found: ${workspaceId}`);
+  }
+}
+
 function parseTimestamp(value: string | null | undefined): number {
   if (!value) {
     return 0;
@@ -1447,6 +1462,8 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           providerSnapshotManager,
           lifecycleCoordinator:
             options.lifecycleCoordinator ?? defaultWorkspaceLifecycleCoordinator,
+          requireActiveWorkspaceForOwnership: (workspaceId) =>
+            requireActiveWorkspaceForOwnership(options, workspaceId),
           createPaseoWorktree: options.createPaseoWorktree,
           ...(options.ensureWorkspaceForCreate
             ? { ensureWorkspaceForCreate: options.ensureWorkspaceForCreate }
@@ -2382,19 +2399,18 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
 
       const resolvedCwd = resolveScopedCwd(cwd, { required: true });
       const workspaceId = await resolveTerminalWorkspaceId(resolvedCwd);
-      const ownershipReservation = (
-        options.lifecycleCoordinator ?? defaultWorkspaceLifecycleCoordinator
-      ).reserveWorkspaceOwnershipMutation(workspaceId);
-      let terminal;
-      try {
-        terminal = await terminalManager.createTerminal({
-          cwd: resolvedCwd,
-          workspaceId,
-          ...(name?.trim() ? { name: name.trim() } : {}),
-        });
-      } finally {
-        ownershipReservation.release();
-      }
+      const lifecycleCoordinator =
+        options.lifecycleCoordinator ?? defaultWorkspaceLifecycleCoordinator;
+      const terminal = await lifecycleCoordinator.runWorkspaceOwnershipMutation(
+        workspaceId,
+        () => requireActiveWorkspaceForOwnership(options, workspaceId),
+        () =>
+          terminalManager.createTerminal({
+            cwd: resolvedCwd,
+            workspaceId,
+            ...(name?.trim() ? { name: name.trim() } : {}),
+          }),
+      );
 
       return {
         content: [],

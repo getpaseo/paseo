@@ -297,7 +297,7 @@ describe("terminal-session-controller legacy terminal creation", () => {
       hasBinaryChannel: () => true,
       isPathWithinRoot: isSameOrDescendantPath,
       sessionLogger: createLogger(),
-      listTerminalWorkspaceRefs: async () => [],
+      listTerminalWorkspaceRefs: async () => [{ workspaceId: "ws-1", cwd: "/work/repo" }],
     });
 
     await controller.dispatch({
@@ -311,6 +311,37 @@ describe("terminal-session-controller legacy terminal creation", () => {
     expect(createTerminal).toHaveBeenCalledWith(
       expect.objectContaining({ cwd: "/work/repo", workspaceId: "ws-1", rows: 55, cols: 136 }),
     );
+  });
+
+  test("rejects a desktop terminal attach after its workspace was archived", async () => {
+    const outboundMessages: SessionOutboundMessage[] = [];
+    const createTerminal = vi.fn();
+    const controller = new TerminalSessionController({
+      terminalManager: { createTerminal } as unknown as TerminalManager,
+      emit: (message) => outboundMessages.push(message),
+      emitBinary: vi.fn(),
+      hasBinaryChannel: () => true,
+      isPathWithinRoot: isSameOrDescendantPath,
+      sessionLogger: createLogger(),
+      listTerminalWorkspaceRefs: async () => [],
+    });
+
+    await controller.dispatch({
+      type: "create_terminal_request",
+      cwd: "/work/repo",
+      workspaceId: "ws-archived",
+      requestId: "req-archived",
+    });
+
+    expect(createTerminal).not.toHaveBeenCalled();
+    expect(outboundMessages).toContainEqual({
+      type: "create_terminal_response",
+      payload: {
+        terminal: null,
+        error: "Workspace not found: ws-archived",
+        requestId: "req-archived",
+      },
+    });
   });
 });
 

@@ -297,6 +297,13 @@ it("holds workspace ownership while an MCP terminal is being attached", async ()
     }),
     providerSnapshotManager: createProviderSnapshotManagerStub().manager,
     ensureWorkspaceForCreate: async () => "ws-terminal-owned",
+    listActiveWorkspaces: async () => [
+      {
+        workspaceId: "ws-terminal-owned",
+        cwd: "/tmp/terminal-owned",
+        kind: "local_checkout",
+      },
+    ],
     lifecycleCoordinator,
     logger: createTestLogger(),
   });
@@ -322,6 +329,31 @@ it("holds workspace ownership while an MCP terminal is being attached", async ()
   await waitTask;
   expect(ownershipReleased).toBe(true);
   archiveReservation.release();
+});
+
+it("rejects an MCP terminal attach after workspace archive", async () => {
+  const { agentManager, agentStorage } = createTestDeps();
+  const createTerminal = vi.fn();
+  const server = await createAgentMcpServer({
+    agentManager,
+    agentStorage,
+    terminalManager: createTerminalManagerStub({
+      createTerminal: createTerminal as unknown as TerminalManager["createTerminal"],
+    }),
+    providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+    ensureWorkspaceForCreate: async () => "ws-terminal-archived",
+    listActiveWorkspaces: async () => [],
+    lifecycleCoordinator: new WorkspaceLifecycleCoordinator(),
+    logger: createTestLogger(),
+  });
+
+  await expect(
+    registeredTool(server, "create_terminal").handler({
+      cwd: "/tmp/terminal-archived",
+      name: "Archived terminal",
+    }),
+  ).rejects.toThrow("Workspace not found: ws-terminal-archived");
+  expect(createTerminal).not.toHaveBeenCalled();
 });
 
 type ProviderSnapshotManagerStub = ReturnType<typeof createProviderSnapshotManagerStub>;

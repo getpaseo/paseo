@@ -51,6 +51,7 @@ export interface CreateAgentCommandDependencies {
   // Mints a fresh directory workspace for a cwd and returns its id.
   ensureWorkspaceForCreate?: EnsureWorkspaceForCreate;
   lifecycleCoordinator?: WorkspaceLifecycleCoordinator;
+  requireActiveWorkspaceForOwnership?: (workspaceId: string) => Promise<void>;
 }
 
 export type EnsureWorkspaceForCreate = (
@@ -187,26 +188,19 @@ export async function createAgentCommand(
   let snapshot: ManagedAgent;
   const lifecycleCoordinator =
     dependencies.lifecycleCoordinator ?? defaultWorkspaceLifecycleCoordinator;
-  let ownershipReservation;
+  const workspaceId = requireResolvedWorkspaceId(resolved.createOptions.workspaceId);
   try {
-    ownershipReservation = lifecycleCoordinator.reserveWorkspaceOwnershipMutation(
-      requireResolvedWorkspaceId(resolved.createOptions.workspaceId),
+    snapshot = await lifecycleCoordinator.runWorkspaceOwnershipMutation(
+      workspaceId,
+      async () => {
+        await dependencies.requireActiveWorkspaceForOwnership?.(workspaceId);
+      },
+      () =>
+        dependencies.agentManager.createAgent(resolved.config, undefined, resolved.createOptions),
     );
   } catch (error) {
     resolved.setupContinuation?.releaseWithoutStarting();
     throw error;
-  }
-  try {
-    snapshot = await dependencies.agentManager.createAgent(
-      resolved.config,
-      undefined,
-      resolved.createOptions,
-    );
-  } catch (error) {
-    resolved.setupContinuation?.releaseWithoutStarting();
-    throw error;
-  } finally {
-    ownershipReservation.release();
   }
 
   resolved.setupContinuation?.startAfterAgentCreate({

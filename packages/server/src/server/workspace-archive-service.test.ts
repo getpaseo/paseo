@@ -1008,6 +1008,93 @@ describe("archiveByScope", () => {
     expect((await registry.get(workspaceId))?.cleanupPending).toBeNull();
   });
 
+  test("a partial worktree retry preserves every sibling teardown obligation", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "partial-sibling-retry");
+    const nestedCwd = path.join(worktree.worktreePath, "packages", "app");
+    mkdirSync(nestedCwd, { recursive: true });
+    const workspaceA = "ws-partial-retry-a";
+    const workspaceB = "ws-partial-retry-b";
+    const registry = new FileBackedWorkspaceRegistry(
+      path.join(tempDir, "workspaces.json"),
+      createLogger(),
+    );
+    await registry.initialize();
+    const timestamp = new Date().toISOString();
+    for (const [workspaceId, cwd] of [
+      [workspaceA, worktree.worktreePath],
+      [workspaceB, nestedCwd],
+    ] as const) {
+      await registry.upsert(
+        createPersistedWorkspaceRecord({
+          workspaceId,
+          projectId: "project-partial-retry",
+          cwd,
+          kind: "worktree",
+          displayName: workspaceId,
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }),
+      );
+    }
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId: workspaceA,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+        {
+          workspaceId: workspaceB,
+          cwd: nestedCwd,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+      ],
+    });
+    deps.workspaceRegistry = registry;
+    const archiveActiveRecord = deps.archiveWorkspaceRecord;
+    let rejectWorkspaceBOnce = true;
+    deps.archiveWorkspaceRecord = async (workspaceId: string) => {
+      if (workspaceId === workspaceB && rejectWorkspaceBOnce) {
+        rejectWorkspaceBOnce = false;
+        throw new Error("registry archive failed once");
+      }
+      await archiveActiveRecord(workspaceId);
+      await registry.archive(workspaceId, new Date().toISOString());
+    };
+
+    await expect(
+      archiveByScope(deps, {
+        scope: { kind: "worktree", targetPath: worktree.worktreePath },
+        requestId: "req-partial-retry-first",
+      }),
+    ).rejects.toThrow("Failed to archive one or more workspaces");
+    expect((await registry.get(workspaceA))?.cleanupPending).not.toBeNull();
+    expect((await registry.get(workspaceB))?.archivedAt).toBeNull();
+    expect(existsSync(worktree.worktreePath)).toBe(true);
+
+    const retry = await archiveByScope(deps, {
+      scope: { kind: "worktree", targetPath: worktree.worktreePath },
+      requestId: "req-partial-retry-second",
+    });
+
+    expect(retry.removedDirectory).toBe(true);
+    expect((await registry.get(workspaceA))?.cleanupPending).toBeNull();
+    expect((await registry.get(workspaceB))?.cleanupPending).toBeNull();
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+  });
+
   test("workspace teardown failure keeps the record active and prevents recursive deletion", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
