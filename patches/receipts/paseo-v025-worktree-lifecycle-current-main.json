@@ -11,14 +11,14 @@
     "upstreamMainCommit": "70ed70d36e2eabd3876a22931954319ec202c902",
     "mergeCommit": "e5e5d607ea8e14dd874c3db4ce095634a9da7092",
     "mergeTree": "529add05cfc1424c287d576f27d8194f37503c35",
-    "headCommit": "7e9b8bf54fb2735a1ca5551a4362940fb01d2869",
-    "headTree": "ec2ee9a9d60b58aeb5f2c8a460ac1970e5c38d1f",
+    "headCommit": "48b53ce71d850f065a22fb1a66cca4f6d4ec66ab",
+    "headTree": "335c1308797ad77810ecccd4cb0f73708b7c6979",
     "firstParent": "bfdb6ed4a8668e05826effd3f8b1a18dbf74c9b2",
     "secondParent": "70ed70d36e2eabd3876a22931954319ec202c902"
   },
   "verification": {
-    "commit": "7e9b8bf54fb2735a1ca5551a4362940fb01d2869",
-    "completedAt": "2026-08-01T01:37:33Z",
+    "commit": "48b53ce71d850f065a22fb1a66cca4f6d4ec66ab",
+    "completedAt": "2026-08-01T01:57:31Z",
     "commands": [
       "npm run build --workspace packages/protocol",
       "cd packages/server && npx vitest run src/server/agent/create-agent-lifecycle-dispatch.test.ts src/server/agent/create-agent/create.test.ts src/server/agent/mcp-server.test.ts src/server/session.workspace-git-watch.test.ts src/server/session.workspaces.test.ts",
@@ -34,6 +34,7 @@
       "cd packages/server && vitest run src/server/workspace-archive-service.test.ts --fileParallelism=false",
       "cd packages/server && vitest run src/server/workspace-archive-service.test.ts src/server/worktree-session.test.ts src/server/auto-archive-on-merge/archive-if-safe.test.ts --fileParallelism=false",
       "cd packages/server && vitest run src/server/agent/create-agent-lifecycle-dispatch.test.ts src/server/workspace-archive-service.test.ts src/server/worktree-session.test.ts src/server/auto-archive-on-merge/archive-if-safe.test.ts src/server/session.workspaces.test.ts --fileParallelism=false",
+      "vitest run packages/server/src/server/agent/create-agent-lifecycle-dispatch.test.ts packages/server/src/server/agent/create-agent/create.test.ts packages/server/src/server/agent/mcp-server.test.ts packages/server/src/terminal/terminal-session-controller.test.ts packages/server/src/server/auto-archive-on-merge/archive-if-safe.test.ts packages/server/src/server/workspace-archive-service.test.ts packages/server/src/server/workspace-cleanup-retry-service.test.ts packages/server/src/server/worktree-session.test.ts packages/server/src/server/session.workspaces.test.ts packages/server/src/server/schedule/service.test.ts --fileParallelism=false",
       "npm run build --workspace packages/server",
       "npm run typecheck --workspace packages/server",
       "oxlint <16 changed lifecycle source and test files>",
@@ -52,7 +53,8 @@
       "autoArchiveTruthfulnessTests": "16 passed",
       "archiveTargetClosureTests": "26 passed; combined auto-archive and closure proof 42 passed",
       "archiveFailureTruthfulnessTests": "75 passed",
-      "automatedCleanupRetryTests": "182 passed, 4 skipped",
+      "automatedCleanupRetryTests": "387 passed, 4 skipped",
+      "autonomousCleanupOwner": "startup and mutation-driven retry; incarnation-grouped worktree scope; bounded cycle and capped backoff; cancellable timers",
       "allWorkspaceTypecheck": "unchanged app errors: DaemonClient lacks setProjectIcon/getProjectIcon on this stable-derived branch"
     }
   }
