@@ -1995,6 +1995,46 @@ describe("ForgeService", () => {
     expect(runner.calls).toHaveLength(1);
   });
 
+  it.each([
+    ["caps a large Retry-After value", "Retry-After: 999999", 3_600_000],
+    ["falls back from an unsafe reset timestamp", "X-RateLimit-Reset: 9007199254740992", 60_000],
+  ])("%s", async (_name, header, cooldownMs) => {
+    let now = 1_000;
+    const runner = createScriptedRunner([
+      {
+        error: new GitHubCommandError({
+          args: ["api", "graphql"],
+          cwd: "/repo",
+          exitCode: 1,
+          stderr: "HTTP 429: API rate limit exceeded",
+          stdout: `HTTP/2.0 429 Too Many Requests\n${header}\n\nrate limited`,
+        }),
+      },
+      '{"url":"","number":0}',
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => now,
+    });
+
+    await service.getPullRequestTimeline({
+      cwd: "/repo",
+      prNumber: 42,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+    });
+
+    now += cooldownMs;
+    await service.getPullRequestTimeline({
+      cwd: "/repo",
+      prNumber: 43,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+    });
+    expect(runner.calls).toHaveLength(2);
+  });
+
   it("keeps cooldowns isolated to the resolved GitHub host", async () => {
     const runner = createScriptedRunner([
       {
@@ -2032,7 +2072,7 @@ describe("ForgeService", () => {
     expect(runner.calls[1].envOverlay).toEqual({ GH_HOST: "github.acme.test" });
   });
 
-  it("keeps auth and non-API commands available during an API cooldown", async () => {
+  it("blocks GraphQL commands but keeps REST search and local commands available during a GraphQL cooldown", async () => {
     const calls: RunnerCall[] = [];
     const runner: GitHubCommandRunner = async (args, options) => {
       calls.push({ args, cwd: options.cwd, envOverlay: options.envOverlay });
@@ -2045,7 +2085,7 @@ describe("ForgeService", () => {
           stdout: "HTTP/2.0 429 Too Many Requests\nRetry-After: 60\n\nrate limited",
         });
       }
-      if (args[0] === "repo") {
+      if (args[0] === "search") {
         return { stdout: "[]", stderr: "" };
       }
       return { stdout: "ssh", stderr: "" };
@@ -2064,10 +2104,25 @@ describe("ForgeService", () => {
     });
 
     await expect(service.isAuthenticated({ cwd: "/repo" })).resolves.toBe(true);
-    await expect(service.searchRepositories({ cwd: "/repo", query: "" })).resolves.toEqual([]);
+    await expect(service.listIssues({ cwd: "/repo", query: "open" })).rejects.toMatchObject({
+      message: "GitHub API rate limit cooldown active",
+    });
+    await expect(service.getPullRequest({ cwd: "/repo", number: 42 })).rejects.toMatchObject({
+      message: "GitHub API rate limit cooldown active",
+    });
+    await expect(service.searchRepositories({ cwd: "/repo", query: "" })).rejects.toThrow(
+      "GitHub API rate limit cooldown active",
+    );
+    await expect(
+      service.getPullRequestCheckoutTarget?.({ cwd: "/repo", number: 42 }),
+    ).rejects.toThrow("Unable to resolve GitHub repository for pull request checkout");
+    await expect(service.searchRepositories({ cwd: "/repo", query: "paseo" })).resolves.toEqual([]);
     expect(calls.some((call) => call.args[0] === "auth")).toBe(true);
-    expect(calls.some((call) => call.args[0] === "repo")).toBe(true);
     expect(calls.some((call) => call.args[0] === "config")).toBe(true);
+    expect(calls.some((call) => call.args[0] === "search" && call.args[1] === "repos")).toBe(true);
+    expect(calls.some((call) => call.args[0] === "issue")).toBe(false);
+    expect(calls.some((call) => call.args[0] === "pr")).toBe(false);
+    expect(calls.some((call) => call.args[0] === "repo")).toBe(false);
   });
 
   it("maps PR timeline network timeouts to unknown timeline errors with runner details", async () => {

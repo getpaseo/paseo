@@ -116,6 +116,9 @@ const GITHUB_COMMAND_TIMEOUT_MS = 30_000;
 const REPO_HOST_NULL_TTL_MS = 60_000;
 const GIT_ORIGIN_URL_READ_TIMEOUT_MS = 5_000;
 const GITHUB_RATE_LIMIT_FALLBACK_COOLDOWN_MS = 60_000;
+// GitHub's primary rate limits reset hourly. Never let malformed upstream
+// headers suspend one resource for longer than that bounded interval.
+const GITHUB_RATE_LIMIT_MAX_COOLDOWN_MS = 60 * 60 * 1_000;
 
 const LabelSchema = z.object({
   name: z.string().optional(),
@@ -1906,13 +1909,33 @@ function isGitHubApiCommand(args: string[]): boolean {
   return args[0] === "api";
 }
 
+const GITHUB_CLI_RATE_LIMIT_RESOURCE_BY_COMMAND: Readonly<Record<string, string | null>> = {
+  api: "core",
+  "api graphql": "graphql",
+  "auth status": null,
+  "config get": null,
+  "issue list": "graphql",
+  "pr list": "graphql",
+  "pr merge": "graphql",
+  "pr view": "graphql",
+  "repo list": "graphql",
+  "repo view": "graphql",
+  "search repos": "search",
+};
+
 function getGitHubRateLimitResource(args: string[]): string | null {
-  if (isGitHubApiCommand(args)) {
-    return args[1] === "graphql" ? "graphql" : "core";
+  const command = [args[0], args[1]].filter(Boolean).join(" ");
+  const exactResource = GITHUB_CLI_RATE_LIMIT_RESOURCE_BY_COMMAND[command];
+  if (exactResource !== undefined) {
+    return exactResource;
   }
-  // GitHub CLI's pull request commands use GraphQL even though they do not
-  // expose the underlying API command in their arguments.
-  return args[0] === "pr" ? "graphql" : null;
+  const rootResource = GITHUB_CLI_RATE_LIMIT_RESOURCE_BY_COMMAND[args[0]];
+  if (rootResource !== undefined) {
+    return rootResource;
+  }
+  // New adapter commands can call the GitHub API. Treat unknown commands as
+  // core API work until their resource is explicitly documented above.
+  return "core";
 }
 
 function buildGitHubRateLimitKey(host: string, resource: string): string {
@@ -2009,15 +2032,15 @@ function getGitHubRateLimitRetryAt(input: { error: unknown; now: number }): numb
 
   const retryAfter = parseRetryAfter(headers.get("retry-after"), input.now);
   if (retryAfter !== null) {
-    return input.now + retryAfter;
+    return retryAfter;
   }
 
-  const resetAt = parseRateLimitReset(headers.get("x-ratelimit-reset"));
+  const resetAt = parseRateLimitReset(headers.get("x-ratelimit-reset"), input.now);
   if (resetAt !== null && resetAt > input.now) {
     return resetAt;
   }
 
-  return input.now + GITHUB_RATE_LIMIT_FALLBACK_COOLDOWN_MS;
+  return getGitHubRateLimitRetryAtFromDelay(input.now, GITHUB_RATE_LIMIT_FALLBACK_COOLDOWN_MS);
 }
 
 function parseRetryAfter(value: string | undefined, now: number): number | null {
@@ -2026,18 +2049,40 @@ function parseRetryAfter(value: string | undefined, now: number): number | null 
   }
   if (/^\d+$/.test(value)) {
     const seconds = Number(value);
-    return Number.isSafeInteger(seconds) ? seconds * 1000 : null;
+    return Number.isSafeInteger(seconds)
+      ? getGitHubRateLimitRetryAtFromDelay(now, seconds * 1000)
+      : null;
   }
   const retryAt = Date.parse(value);
-  return Number.isFinite(retryAt) ? Math.max(0, retryAt - now) : null;
+  return Number.isSafeInteger(retryAt) ? getBoundedGitHubRateLimitRetryAt(now, retryAt) : null;
 }
 
-function parseRateLimitReset(value: string | undefined): number | null {
+function parseRateLimitReset(value: string | undefined, now: number): number | null {
   if (!value || !/^\d+$/.test(value)) {
     return null;
   }
   const seconds = Number(value);
-  return Number.isSafeInteger(seconds) ? seconds * 1000 : null;
+  return Number.isSafeInteger(seconds)
+    ? getBoundedGitHubRateLimitRetryAt(now, seconds * 1000)
+    : null;
+}
+
+function getGitHubRateLimitRetryAtFromDelay(now: number, delayMs: number): number | null {
+  if (!Number.isSafeInteger(delayMs) || delayMs < 0) {
+    return null;
+  }
+  return getBoundedGitHubRateLimitRetryAt(now, now + delayMs);
+}
+
+function getBoundedGitHubRateLimitRetryAt(now: number, retryAt: number): number | null {
+  if (!Number.isSafeInteger(now) || !Number.isSafeInteger(retryAt)) {
+    return null;
+  }
+  const maximumRetryAt = now + GITHUB_RATE_LIMIT_MAX_COOLDOWN_MS;
+  if (!Number.isSafeInteger(maximumRetryAt)) {
+    return null;
+  }
+  return Math.min(retryAt, maximumRetryAt);
 }
 
 function parseGitHubHttpResponse(output: string): GitHubHttpResponse | null {
