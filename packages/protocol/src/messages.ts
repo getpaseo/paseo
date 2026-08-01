@@ -1427,6 +1427,42 @@ export const ProviderSubagentTimelineRequestMessageSchema = z.object({
   limit: z.number().int().nonnegative().optional(),
 });
 
+export const BackgroundTasksListRequestMessageSchema = z.object({
+  type: z.literal("agent.background_tasks.list.request"),
+  parentAgentId: z.string(),
+  requestId: z.string(),
+});
+
+export const BackgroundTasksStopRequestMessageSchema = z.object({
+  type: z.literal("agent.background_tasks.stop.request"),
+  parentAgentId: z.string(),
+  taskId: z.string().min(1),
+  requestId: z.string(),
+});
+
+export const BackgroundTasksOutputGetRequestMessageSchema = z.object({
+  type: z.literal("agent.background_tasks.output.get.request"),
+  parentAgentId: z.string(),
+  taskId: z.string().min(1),
+  requestId: z.string(),
+  cursor: z.number().int().nonnegative().optional(),
+  maxBytes: z.number().int().positive().optional(),
+});
+
+export const BackgroundTasksOutputSubscribeRequestMessageSchema = z.object({
+  type: z.literal("agent.background_tasks.output.subscribe.request"),
+  parentAgentId: z.string(),
+  taskId: z.string().min(1),
+  requestId: z.string(),
+});
+
+export const BackgroundTasksOutputUnsubscribeRequestMessageSchema = z.object({
+  type: z.literal("agent.background_tasks.output.unsubscribe.request"),
+  parentAgentId: z.string(),
+  taskId: z.string().min(1),
+  requestId: z.string(),
+});
+
 export const SetAgentTimelineSubscriptionRequestMessageSchema = z.object({
   type: z.literal("agent.timeline.set_subscription.request"),
   agentIds: z.array(z.string()),
@@ -2547,6 +2583,11 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   FetchAgentTimelineRequestMessageSchema,
   ProviderSubagentListRequestMessageSchema,
   ProviderSubagentTimelineRequestMessageSchema,
+  BackgroundTasksListRequestMessageSchema,
+  BackgroundTasksStopRequestMessageSchema,
+  BackgroundTasksOutputGetRequestMessageSchema,
+  BackgroundTasksOutputSubscribeRequestMessageSchema,
+  BackgroundTasksOutputUnsubscribeRequestMessageSchema,
   SetAgentTimelineSubscriptionRequestMessageSchema,
   AgentForkContextRequestMessageSchema,
   SetAgentModeRequestMessageSchema,
@@ -2862,6 +2903,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentForkContextCursor: z.boolean().optional(),
         // COMPAT(providerSubagents): added in v0.1.107, remove gate after 2027-01-12.
         providerSubagents: z.boolean().optional(),
+        // COMPAT(backgroundTasks): added in v0.2.x, remove gate after 2027-02-01.
+        backgroundTasks: z.boolean().optional(),
         // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.
         workspacePinning: z.boolean().optional(),
         // COMPAT(hubRelationship): added in v0.1.X, drop the gate when floor >= v0.1.X.
@@ -3696,6 +3739,100 @@ export const ProviderSubagentUpdateMessageSchema = z.object({
       subagentId: z.string(),
     }),
   ]),
+});
+
+export const BackgroundTaskStatusSchema = z.enum([
+  "running",
+  "completed",
+  "failed",
+  "stopped",
+  "unknown",
+]);
+export type BackgroundTaskStatus = z.infer<typeof BackgroundTaskStatusSchema>;
+
+export const BackgroundTaskDescriptorPayloadSchema = z.object({
+  taskId: z.string().min(1),
+  parentAgentId: z.string(),
+  type: z.string().min(1),
+  description: z.string(),
+  command: z.string().nullable().optional(),
+  status: BackgroundTaskStatusSchema,
+  outputFile: z.string().nullable().optional(),
+  lastSummary: z.string().nullable().optional(),
+  updatedAt: z.string().min(1),
+});
+export type BackgroundTaskDescriptorPayload = z.infer<typeof BackgroundTaskDescriptorPayloadSchema>;
+
+export const BackgroundTasksListResponseMessageSchema = z.object({
+  type: z.literal("agent.background_tasks.list.response"),
+  payload: z.object({
+    requestId: z.string(),
+    parentAgentId: z.string(),
+    tasks: z.array(BackgroundTaskDescriptorPayloadSchema),
+    error: z.string().nullable(),
+  }),
+});
+
+export const BackgroundTasksUpdateMessageSchema = z.object({
+  type: z.literal("agent.background_tasks.update"),
+  payload: z.object({
+    parentAgentId: z.string(),
+    tasks: z.array(BackgroundTaskDescriptorPayloadSchema),
+  }),
+});
+
+export const BackgroundTasksStopResponseMessageSchema = z.object({
+  type: z.literal("agent.background_tasks.stop.response"),
+  payload: z.object({
+    requestId: z.string(),
+    parentAgentId: z.string(),
+    taskId: z.string().min(1),
+    error: z.string().nullable(),
+  }),
+});
+
+export const BackgroundTasksOutputGetResponseMessageSchema = z.object({
+  type: z.literal("agent.background_tasks.output.get.response"),
+  payload: z.object({
+    requestId: z.string(),
+    parentAgentId: z.string(),
+    taskId: z.string().min(1),
+    text: z.string(),
+    nextCursor: z.number().int().nonnegative(),
+    eof: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const BackgroundTasksOutputSubscribeResponseMessageSchema = z.object({
+  type: z.literal("agent.background_tasks.output.subscribe.response"),
+  payload: z.object({
+    requestId: z.string(),
+    parentAgentId: z.string(),
+    taskId: z.string().min(1),
+    error: z.string().nullable(),
+  }),
+});
+
+export const BackgroundTasksOutputUnsubscribeResponseMessageSchema = z.object({
+  type: z.literal("agent.background_tasks.output.unsubscribe.response"),
+  payload: z.object({
+    requestId: z.string(),
+    parentAgentId: z.string(),
+    taskId: z.string().min(1),
+    error: z.string().nullable(),
+  }),
+});
+
+export const BackgroundTasksOutputUpdateMessageSchema = z.object({
+  type: z.literal("agent.background_tasks.output.update"),
+  payload: z.object({
+    parentAgentId: z.string(),
+    taskId: z.string().min(1),
+    text: z.string(),
+    nextCursor: z.number().int().nonnegative(),
+    eof: z.boolean(),
+  }),
 });
 
 export const SetAgentTimelineSubscriptionResponseMessageSchema = z.object({
@@ -5311,6 +5448,13 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProviderSubagentListResponseMessageSchema,
   ProviderSubagentTimelineResponseMessageSchema,
   ProviderSubagentUpdateMessageSchema,
+  BackgroundTasksListResponseMessageSchema,
+  BackgroundTasksUpdateMessageSchema,
+  BackgroundTasksStopResponseMessageSchema,
+  BackgroundTasksOutputGetResponseMessageSchema,
+  BackgroundTasksOutputSubscribeResponseMessageSchema,
+  BackgroundTasksOutputUnsubscribeResponseMessageSchema,
+  BackgroundTasksOutputUpdateMessageSchema,
   SetAgentTimelineSubscriptionResponseMessageSchema,
   AgentAttentionRequiredMessageSchema,
   AgentForkContextResponseMessageSchema,
