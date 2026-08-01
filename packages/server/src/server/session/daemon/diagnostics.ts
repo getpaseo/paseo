@@ -133,7 +133,7 @@ function collectProcessEntries(options: DaemonDiagnosticsOptions): DiagnosticEnt
 }
 
 function collectRuntimeConfigEntries(options: DaemonDiagnosticsOptions): DiagnosticEntry[] {
-  const relay = options.daemonRuntimeConfig?.relay ?? null;
+  const relay = options.daemonRuntimeConfig?.getRelayConfig() ?? null;
   return [
     { label: "Listen", value: formatListenKind(options.daemonRuntimeConfig?.listen ?? null) },
     { label: "Relay enabled", value: relay ? String(relay.enabled) : "false" },
@@ -536,8 +536,8 @@ export function redactDiagnostic(
   let redacted = value;
   const sensitiveValues = [
     options?.daemonRuntimeConfig?.listen,
-    options?.daemonRuntimeConfig?.relay?.endpoint,
-    options?.daemonRuntimeConfig?.relay?.publicEndpoint,
+    options?.daemonRuntimeConfig?.getRelayConfig()?.endpoint,
+    options?.daemonRuntimeConfig?.getRelayConfig()?.publicEndpoint,
   ].filter((item): item is string => Boolean(item));
 
   for (const sensitive of sensitiveValues) {

@@ -36,7 +36,7 @@ export function buildSidebarShortcutModel(input: {
   return buildSidebarShortcutSections({
     sections: input.projects.map((project) => ({
       workspaces: project.workspaces,
-      collapsed: input.collapsedProjectKeys.has(project.projectKey),
+      collapsed: input.collapsedProjectKeys.has(project.viewKey),
     })),
     shortcutLimit: input.shortcutLimit,
   });
