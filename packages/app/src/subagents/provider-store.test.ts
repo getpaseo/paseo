@@ -238,11 +238,220 @@ describe("provider subagent client store", () => {
       expect(timeline?.head).toEqual([
         expect.objectContaining({
           kind: "assistant_message",
-          text: "Older output.Current output.",
+          text: "Older output.Recent output.",
         }),
       ]);
     },
   );
+
+  test("discards an older page after a reconnect tail moves the history start", async () => {
+    type TimelineResponse = Awaited<ReturnType<DaemonClient["fetchProviderSubagentTimeline"]>>;
+    const resolvers = new Map<string, (response: TimelineResponse) => void>();
+    const client = {
+      fetchProviderSubagentTimeline(
+        _parentAgentId: string,
+        _subagentId: string,
+        request: Parameters<DaemonClient["fetchProviderSubagentTimeline"]>[2],
+      ) {
+        return new Promise<TimelineResponse>((resolve) =>
+          resolvers.set(request?.direction ?? "tail", resolve),
+        );
+      },
+    };
+    const store = useProviderSubagentStore.getState();
+    store.replaceTimeline(SERVER_ID, {
+      requestId: "initial-tail",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      direction: "tail",
+      epoch: "timeline-epoch",
+      reset: false,
+      staleCursor: false,
+      gap: false,
+      window: { minSeq: 1, maxSeq: 2, nextSeq: 3 },
+      hasOlder: true,
+      hasNewer: false,
+      rows: [
+        {
+          seq: 2,
+          timestamp: "2026-07-12T10:00:02.000Z",
+          item: { type: "assistant_message", text: "Previous tail." },
+        },
+      ],
+      error: null,
+    });
+
+    const olderRequest = refreshProviderSubagentTimeline(
+      client,
+      SERVER_ID,
+      PARENT_ID,
+      SUBAGENT_ID,
+      1,
+      {
+        direction: "before",
+        cursor: { epoch: "timeline-epoch", seq: 2 },
+        limit: 100,
+      },
+    );
+    const tailRequest = refreshProviderSubagentTimeline(
+      client,
+      SERVER_ID,
+      PARENT_ID,
+      SUBAGENT_ID,
+      1,
+      { direction: "tail", limit: 100 },
+    );
+    resolvers.get("tail")?.({
+      requestId: "new-tail",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      direction: "tail",
+      epoch: "timeline-epoch",
+      reset: false,
+      staleCursor: false,
+      gap: false,
+      window: { minSeq: 1, maxSeq: 4, nextSeq: 5 },
+      hasOlder: true,
+      hasNewer: false,
+      rows: [
+        {
+          seq: 4,
+          timestamp: "2026-07-12T10:00:04.000Z",
+          item: { type: "assistant_message", text: "Current tail." },
+        },
+      ],
+      error: null,
+    });
+    await tailRequest;
+    const timelineAfterTail = useProviderSubagentStore
+      .getState()
+      .timelines.get(providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID));
+    resolvers.get("before")?.({
+      requestId: "stale-older-page",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      direction: "before",
+      epoch: "timeline-epoch",
+      reset: false,
+      staleCursor: false,
+      gap: false,
+      window: { minSeq: 1, maxSeq: 2, nextSeq: 3 },
+      hasOlder: false,
+      hasNewer: true,
+      rows: [
+        {
+          seq: 1,
+          timestamp: "2026-07-12T10:00:01.000Z",
+          item: { type: "assistant_message", text: "Stale older output." },
+        },
+      ],
+      error: null,
+    });
+    await olderRequest;
+
+    const timeline = useProviderSubagentStore
+      .getState()
+      .timelines.get(providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID));
+    expect(timeline).toBe(timelineAfterTail);
+    expect(timeline?.hasOlder).toBe(true);
+    expect([...timeline!.rows.keys()]).toEqual([4]);
+  });
+
+  test("discards an older page after another page moves the history start", async () => {
+    type TimelineResponse = Awaited<ReturnType<DaemonClient["fetchProviderSubagentTimeline"]>>;
+    const resolvers: Array<(response: TimelineResponse) => void> = [];
+    const client = {
+      fetchProviderSubagentTimeline() {
+        return new Promise<TimelineResponse>((resolve) => resolvers.push(resolve));
+      },
+    };
+    useProviderSubagentStore.getState().replaceTimeline(SERVER_ID, {
+      requestId: "initial-tail",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      direction: "tail",
+      epoch: "timeline-epoch",
+      reset: false,
+      staleCursor: false,
+      gap: false,
+      window: { minSeq: 1, maxSeq: 2, nextSeq: 3 },
+      hasOlder: true,
+      hasNewer: false,
+      rows: [
+        {
+          seq: 2,
+          timestamp: "2026-07-12T10:00:02.000Z",
+          item: { type: "assistant_message", text: "Recent output." },
+        },
+      ],
+      error: null,
+    });
+
+    const staleRequest = refreshProviderSubagentTimeline(
+      client,
+      SERVER_ID,
+      PARENT_ID,
+      SUBAGENT_ID,
+      1,
+      {
+        direction: "before",
+        cursor: { epoch: "timeline-epoch", seq: 2 },
+        limit: 100,
+      },
+    );
+    const currentRequest = refreshProviderSubagentTimeline(
+      client,
+      SERVER_ID,
+      PARENT_ID,
+      SUBAGENT_ID,
+      1,
+      {
+        direction: "before",
+        cursor: { epoch: "timeline-epoch", seq: 2 },
+        limit: 100,
+      },
+    );
+    const olderPage = (requestId: string, hasOlder: boolean): TimelineResponse => ({
+      requestId,
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      direction: "before",
+      epoch: "timeline-epoch",
+      reset: false,
+      staleCursor: false,
+      gap: false,
+      window: { minSeq: 1, maxSeq: 2, nextSeq: 3 },
+      hasOlder,
+      hasNewer: true,
+      rows: [
+        {
+          seq: 1,
+          timestamp: "2026-07-12T10:00:01.000Z",
+          item: { type: "assistant_message", text: "Older output." },
+        },
+      ],
+      error: null,
+    });
+    resolvers[1]?.(olderPage("current-older-page", false));
+    await currentRequest;
+    const timelineAfterCurrentPage = useProviderSubagentStore
+      .getState()
+      .timelines.get(providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID));
+    resolvers[0]?.(olderPage("stale-older-page", true));
+    await staleRequest;
+
+    const timeline = useProviderSubagentStore
+      .getState()
+      .timelines.get(providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID));
+    expect(timeline).toBe(timelineAfterCurrentPage);
+    expect(timeline?.hasOlder).toBe(false);
+    expect([...timeline!.rows.keys()]).toEqual([2, 1]);
+  });
 
   test("builds a shared stream model from ordered provider updates", () => {
     const subagents = useProviderSubagentStore.getState();
@@ -655,7 +864,7 @@ describe("provider subagent client store", () => {
     ]);
   });
 
-  test("replaces cached rows with an authoritative tail page after a reconnect gap", () => {
+  test("keeps loaded older history when an unchanged reconnect tail arrives", () => {
     const store = useProviderSubagentStore.getState();
     store.replaceTimeline(SERVER_ID, {
       requestId: "old-tail",
@@ -667,18 +876,43 @@ describe("provider subagent client store", () => {
       reset: false,
       staleCursor: false,
       gap: false,
-      window: { minSeq: 1, maxSeq: 500, nextSeq: 501 },
+      window: { minSeq: 1, maxSeq: 2, nextSeq: 3 },
       hasOlder: true,
       hasNewer: false,
       rows: [
         {
-          seq: 100,
+          seq: 2,
           timestamp: "2026-07-12T10:00:00.000Z",
-          item: { type: "assistant_message", text: "Old cached output." },
+          item: { type: "assistant_message", text: "Current tail output." },
         },
       ],
       error: null,
     });
+    store.replaceTimeline(SERVER_ID, {
+      requestId: "older-page",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      direction: "before",
+      epoch: "epoch-1",
+      reset: false,
+      staleCursor: false,
+      gap: false,
+      window: { minSeq: 1, maxSeq: 2, nextSeq: 3 },
+      hasOlder: false,
+      hasNewer: true,
+      rows: [
+        {
+          seq: 1,
+          timestamp: "2026-07-12T09:59:00.000Z",
+          item: { type: "assistant_message", text: "Older loaded output." },
+        },
+      ],
+      error: null,
+    });
+    const timelineBeforeReconnect = useProviderSubagentStore
+      .getState()
+      .timelines.get(providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID));
     store.replaceTimeline(SERVER_ID, {
       requestId: "reconnect-tail",
       parentAgentId: PARENT_ID,
@@ -689,12 +923,12 @@ describe("provider subagent client store", () => {
       reset: false,
       staleCursor: false,
       gap: false,
-      window: { minSeq: 1, maxSeq: 500, nextSeq: 501 },
+      window: { minSeq: 1, maxSeq: 2, nextSeq: 3 },
       hasOlder: true,
       hasNewer: false,
       rows: [
         {
-          seq: 401,
+          seq: 2,
           timestamp: "2026-07-12T10:00:01.000Z",
           item: { type: "assistant_message", text: "Current tail output." },
         },
@@ -705,9 +939,14 @@ describe("provider subagent client store", () => {
     const timeline = useProviderSubagentStore
       .getState()
       .timelines.get(providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID));
-    expect([...timeline!.rows.keys()]).toEqual([401]);
+    expect(timeline).toBe(timelineBeforeReconnect);
+    expect(timeline?.hasOlder).toBe(false);
+    expect([...timeline!.rows.keys()]).toEqual([2, 1]);
     expect(timeline?.head).toEqual([
-      expect.objectContaining({ kind: "assistant_message", text: "Current tail output." }),
+      expect.objectContaining({
+        kind: "assistant_message",
+        text: "Older loaded output.Current tail output.",
+      }),
     ]);
   });
 });

@@ -20,6 +20,11 @@ interface ProviderSubagentTimelineRow {
   timestamp: string;
 }
 
+interface ProviderSubagentTimelineUpdate {
+  rows: Map<number, ProviderSubagentTimelineRow>;
+  hasOlder: boolean;
+}
+
 export interface ProviderSubagentTimelineState {
   tail: StreamItem[];
   head: StreamItem[];
@@ -246,35 +251,65 @@ function buildTimelineState(
   };
 }
 
-function buildTimelineResponseRows(
+function buildTimelineResponseUpdate(
   existing: ProviderSubagentTimelineState | undefined,
   payload: Extract<
     SessionOutboundMessage,
     { type: "agent.provider_subagents.timeline.get.response" }
   >["payload"],
   provider: ProviderSubagentDescriptorPayload["provider"],
-): ProviderSubagentTimelineState["rows"] {
+): ProviderSubagentTimelineUpdate | null {
   const rows = new Map<number, ProviderSubagentTimelineRow>();
   for (const row of payload.rows) {
     rows.set(row.seq, { provider, item: row.item, timestamp: row.timestamp });
   }
   if (payload.reset || existing?.epoch !== payload.epoch) {
-    return rows;
+    return { rows, hasOlder: payload.hasOlder };
   }
-  if (payload.direction !== "tail") {
-    return new Map([...existing.rows, ...rows]);
+  if (payload.direction === "before") {
+    const currentFirstSeq = existing.rows.size ? Math.min(...existing.rows.keys()) : null;
+    const responseLastSeq = rows.size ? Math.max(...rows.keys()) : null;
+    if (
+      currentFirstSeq === null ||
+      responseLastSeq === null ||
+      responseLastSeq !== currentFirstSeq - 1
+    ) {
+      return null;
+    }
+    return {
+      rows: new Map([...existing.rows, ...rows]),
+      hasOlder: payload.hasOlder,
+    };
+  }
+  if (payload.direction === "after") {
+    return {
+      rows: new Map([...existing.rows, ...rows]),
+      hasOlder: existing.hasOlder,
+    };
   }
 
-  let nextSeq = payload.rows.length
-    ? Math.max(...payload.rows.map((row) => row.seq)) + 1
-    : payload.window.maxSeq + 1;
-  for (const [seq, row] of [...existing.rows].sort(([left], [right]) => left - right)) {
-    if (seq < nextSeq) continue;
-    if (seq !== nextSeq) break;
-    rows.set(seq, row);
-    nextSeq += 1;
+  const unchangedBoundary = payload.window.maxSeq === existing.lastSeq;
+  const responseAlreadyLoaded = payload.rows.every((row) => existing.rows.has(row.seq));
+  if (unchangedBoundary && responseAlreadyLoaded) {
+    return null;
   }
-  return rows;
+  if (rows.size === 0 || existing.rows.size === 0) {
+    return { rows, hasOlder: payload.hasOlder };
+  }
+
+  const currentFirstSeq = Math.min(...existing.rows.keys());
+  const responseFirstSeq = Math.min(...rows.keys());
+  const responseLastSeq = Math.max(...rows.keys());
+  const responseEndsBeforeCurrent = responseLastSeq < currentFirstSeq - 1;
+  const responseStartsAfterCurrent = responseFirstSeq > existing.lastSeq + 1;
+  if (responseEndsBeforeCurrent || responseStartsAfterCurrent) {
+    return { rows, hasOlder: payload.hasOlder };
+  }
+
+  return {
+    rows: new Map([...existing.rows, ...rows]),
+    hasOlder: responseFirstSeq < currentFirstSeq ? payload.hasOlder : existing.hasOlder,
+  };
 }
 
 export const useProviderSubagentStore = create<ProviderSubagentState>((set) => ({
@@ -403,10 +438,16 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
     set((state) => {
       const key = providerSubagentKey(serverId, payload.parentAgentId, payload.subagentId);
       const existing = state.timelines.get(key);
-      const rows = buildTimelineResponseRows(existing, payload, provider);
+      const update = buildTimelineResponseUpdate(existing, payload, provider);
+      if (!update) {
+        return state;
+      }
       const descriptor = state.descriptors.get(key);
       const timelines = new Map(state.timelines);
-      timelines.set(key, buildTimelineState(rows, payload.epoch, descriptor, payload.hasOlder));
+      timelines.set(
+        key,
+        buildTimelineState(update.rows, payload.epoch, descriptor, update.hasOlder),
+      );
       return { timelines };
     });
   },
