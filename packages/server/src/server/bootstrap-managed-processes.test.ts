@@ -60,6 +60,39 @@ describe("daemon managed process bootstrap", () => {
     }
   });
 
+  test("fails construction when the pre-runtime managed-process snapshot cannot be read", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-managed-bootstrap-"));
+    staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+    const paseoHome = path.join(tempRoot, ".paseo");
+    const managedProcesses = new FakeManagedProcesses([createManagedProcessRecord("leftover")]);
+    const listFailure = new Error("managed-process list failed");
+    vi.spyOn(managedProcesses, "list").mockRejectedValueOnce(listFailure);
+    const scheduleRetry = vi.fn(() => () => undefined);
+    let unexpectedDaemon: Awaited<ReturnType<typeof createBootstrapTestDaemon>> | null = null;
+
+    try {
+      await expect(
+        createBootstrapTestDaemon(paseoHome, managedProcesses, scheduleRetry).then((daemon) => {
+          unexpectedDaemon = daemon;
+          return daemon;
+        }),
+      ).rejects.toThrow("Failed to capture managed helper processes before daemon startup");
+    } finally {
+      await unexpectedDaemon?.stop().catch(() => undefined);
+    }
+
+    expect(managedProcesses.reapCount).toBe(0);
+    expect(scheduleRetry).not.toHaveBeenCalled();
+
+    const replacement = await createBootstrapTestDaemon(paseoHome, managedProcesses);
+    try {
+      expect(managedProcesses.reapCount).toBe(1);
+      expect((await managedProcesses.list()).map((record) => record.id)).toEqual([]);
+    } finally {
+      await replacement.stop().catch(() => undefined);
+    }
+  });
+
   test("retries retained reap failures during the same daemon run", async () => {
     tempRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-managed-bootstrap-"));
     staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
@@ -169,7 +202,7 @@ describe("daemon managed process bootstrap", () => {
     expect(managedProcesses.reapCount).toBe(0);
   });
 
-  test("stop cancels a delayed initial ledger read before it can reconcile", async () => {
+  test("does not finish construction before the initial ledger snapshot is established", async () => {
     tempRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-managed-bootstrap-"));
     staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
     const paseoHome = path.join(tempRoot, ".paseo");
@@ -177,22 +210,25 @@ describe("daemon managed process bootstrap", () => {
       [createManagedProcessRecord("leftover")],
       { delayFirstList: true },
     );
-    const daemon = await createBootstrapTestDaemon(paseoHome, managedProcesses);
+    let constructionComplete = false;
+    const construction = createBootstrapTestDaemon(paseoHome, managedProcesses).then((daemon) => {
+      constructionComplete = true;
+      return daemon;
+    });
     await managedProcesses.waitForListStart();
 
-    await daemon.stop();
-    managedProcesses.releaseList();
     await Promise.resolve();
 
-    expect(managedProcesses.reapStarts).toBe(0);
+    expect(constructionComplete).toBe(false);
     expect(managedProcesses.recordIds).toEqual(["leftover"]);
 
-    const replacement = await createBootstrapTestDaemon(paseoHome, managedProcesses);
+    managedProcesses.releaseList();
+    const daemon = await construction;
     try {
       expect(managedProcesses.reapStarts).toBe(1);
       expect(managedProcesses.recordIds).toEqual([]);
     } finally {
-      await replacement.stop().catch(() => undefined);
+      await daemon.stop().catch(() => undefined);
     }
   });
 
