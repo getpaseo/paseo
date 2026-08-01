@@ -134,8 +134,21 @@ describe("default provider availability", () => {
         provider: "codex",
         available: false,
         error: null,
+        status: "checking",
+        checkedAt: null,
       },
     ]);
+    await expect
+      .poll(async () => await manager.listProviderAvailability())
+      .toEqual([
+        {
+          provider: "codex",
+          available: false,
+          error: null,
+          status: "unavailable",
+          checkedAt: expect.any(String),
+        },
+      ]);
   });
 
   test("resumeAgentFromPersistence stops before provider spawn when Codex is unavailable", async () => {

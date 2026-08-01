@@ -100,6 +100,8 @@ describe("bootstrap provider availability", () => {
         provider: "codex",
         available: false,
         error: null,
+        status: "checking",
+        checkedAt: null,
       });
       await expect(
         ensureAgentLoaded(agentId, {

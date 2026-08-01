@@ -238,7 +238,6 @@ interface ProviderAvailabilityProbe {
   generation: number;
   controller: AbortController;
   response: Promise<ProviderAvailability>;
-  cleanup: Promise<void>;
 }
 
 function resolveProviderHealthOptions(options: AgentManagerOptions): {
@@ -4507,9 +4506,9 @@ export class AgentManager {
       }
       return {
         provider,
-        // Legacy clients only understand `available`; preserve their historical
-        // optimistic behavior while newer clients render the explicit state.
-        available: true,
+        // Legacy clients only understand `available`, so an unverified provider
+        // must remain fail-closed while newer clients render `checking`.
+        available: false,
         error: null,
         status: "checking",
         checkedAt: null,
@@ -4541,17 +4540,12 @@ export class AgentManager {
       return immediate;
     }
 
-    while (true) {
-      const existing = this.providerAvailabilityProbes.get(provider);
-      if (!existing) {
-        break;
-      }
-      if (existing.generation === this.providerAvailabilityGeneration) {
-        return await existing.response;
-      }
-
+    const existing = this.providerAvailabilityProbes.get(provider);
+    if (existing?.generation === this.providerAvailabilityGeneration) {
+      return await existing.response;
+    }
+    if (existing) {
       existing.controller.abort(new Error("Provider availability generation invalidated"));
-      await existing.cleanup;
       if (this.providerAvailabilityProbes.get(provider) === existing) {
         this.providerAvailabilityProbes.delete(provider);
       }
@@ -4570,36 +4564,33 @@ export class AgentManager {
       generation,
       controller,
     );
-    const cleanup = providerWork.then(
-      () => undefined,
-      () => undefined,
-    );
-    const probe: ProviderAvailabilityProbe = {
-      generation,
-      controller,
-      cleanup,
-      response: Promise.resolve({
-        provider,
-        available: true,
-        error: null,
-        status: "checking",
-        checkedAt: null,
-      }),
-    };
-    probe.response = this.runProviderAvailabilityProbe(
+    const response = this.runProviderAvailabilityProbe(
       provider,
       client,
       generation,
       controller,
       providerWork,
     );
-    void cleanup.finally(() => {
-      if (this.providerAvailabilityProbes.get(provider) === probe) {
-        this.providerAvailabilityProbes.delete(provider);
-      }
-    });
+    const probe: ProviderAvailabilityProbe = {
+      generation,
+      controller,
+      response,
+    };
     this.providerAvailabilityProbes.set(provider, probe);
-    return await probe.response;
+    void response.then(
+      () => this.forgetProviderAvailabilityProbe(provider, probe),
+      () => this.forgetProviderAvailabilityProbe(provider, probe),
+    );
+    return await response;
+  }
+
+  private forgetProviderAvailabilityProbe(
+    provider: AgentProvider,
+    probe: ProviderAvailabilityProbe,
+  ): void {
+    if (this.providerAvailabilityProbes.get(provider) === probe) {
+      this.providerAvailabilityProbes.delete(provider);
+    }
   }
 
   private async runProviderAvailabilityProbe(
@@ -4692,7 +4683,7 @@ export class AgentManager {
     return result;
   }
 
-  private async executeProviderAvailabilityProbe(
+  private executeProviderAvailabilityProbe(
     provider: AgentProvider,
     client: AgentClient,
     generation: number,
@@ -4700,15 +4691,16 @@ export class AgentManager {
   ): Promise<boolean | null> {
     // Let the status response publish its cached/checking state before a provider
     // implementation gets any opportunity to perform synchronous work.
-    await new Promise<void>((resolveProbeStart) => setImmediate(resolveProbeStart));
-    if (
-      generation !== this.providerAvailabilityGeneration ||
-      this.clients.get(provider) !== client ||
-      this.providerEnabled.get(provider) === false
-    ) {
-      return null;
-    }
-    return await client.isAvailable({ signal: controller.signal });
+    return new Promise<void>((resolveProbeStart) => setImmediate(resolveProbeStart)).then(() => {
+      if (
+        generation !== this.providerAvailabilityGeneration ||
+        this.clients.get(provider) !== client ||
+        this.providerEnabled.get(provider) === false
+      ) {
+        return null;
+      }
+      return client.isAvailable({ signal: controller.signal });
+    });
   }
 
   private invalidateProviderAvailability(): void {

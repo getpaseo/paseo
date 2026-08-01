@@ -166,7 +166,7 @@ const SourceSchema = z.object({
           providers: [
             {
               provider: "opencode",
-              available: true,
+              available: false,
               error: null,
               status: "checking",
               checkedAt: null,

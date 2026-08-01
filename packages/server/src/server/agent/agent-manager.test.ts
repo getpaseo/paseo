@@ -1653,7 +1653,7 @@ test("listProviderAvailability uses registered client keys, including custom pro
   await expect(manager.listProviderAvailability()).resolves.toEqual([
     {
       provider: "zai",
-      available: true,
+      available: false,
       error: null,
       status: "checking",
       checkedAt: null,
@@ -1754,7 +1754,7 @@ test("create probes only the selected provider and fails closed before provider 
   }
 });
 
-test("an invalidated probe drains before replacement and cannot publish late", async () => {
+test("an invalidated probe cannot delay its replacement or publish late", async () => {
   const oldAvailability = deferred<boolean>();
   const order: string[] = [];
   class OldClient extends TestAgentClient {
@@ -1784,16 +1784,55 @@ test("an invalidated probe drains before replacement and cannot publish late", a
   const replacementResult = manager.getProviderAvailability("codex", { fresh: true });
 
   await expect(oldResult).resolves.toMatchObject({ status: "checking", checkedAt: null });
-  expect(order).toEqual(["old-start"]);
-  oldAvailability.resolve(true);
   await expect(replacementResult).resolves.toMatchObject({
     status: "unavailable",
     available: false,
   });
+  expect(order).toEqual(["old-start", "replacement-start"]);
+
+  oldAvailability.resolve(true);
+  await vi.waitFor(() => expect(order).toEqual(["old-start", "replacement-start", "old-finish"]));
   await expect(manager.listProviderAvailability()).resolves.toEqual([
     expect.objectContaining({ status: "unavailable", available: false }),
   ]);
-  expect(order).toEqual(["old-start", "old-finish", "replacement-start"]);
+});
+
+test("an abort-ignoring never-settling probe does not retain or block its replacement", async () => {
+  let oldSignal: AbortSignal | undefined;
+  class NeverSettlingClient extends TestAgentClient {
+    override isAvailable(options?: { signal?: AbortSignal }): Promise<boolean> {
+      oldSignal = options?.signal;
+      return new Promise<boolean>(() => {});
+    }
+  }
+  const replacementAvailability = vi.fn(async () => false);
+  class ReplacementClient extends TestAgentClient {
+    override isAvailable = replacementAvailability;
+  }
+  const manager = new AgentManager({ clients: { codex: new NeverSettlingClient() }, logger });
+
+  const oldResult = manager.getProviderAvailability("codex", { fresh: true });
+  await vi.waitFor(() => expect(oldSignal).toBeInstanceOf(AbortSignal));
+  manager.updateProviderRegistry({
+    clients: { codex: new ReplacementClient() },
+    providerDefinitions: { codex: { enabled: true } },
+  });
+
+  const replacementResult = manager.getProviderAvailability("codex", { fresh: true });
+  await expect(oldResult).resolves.toMatchObject({
+    status: "checking",
+    available: false,
+    checkedAt: null,
+  });
+  await expect(replacementResult).resolves.toMatchObject({
+    status: "unavailable",
+    available: false,
+  });
+  expect(oldSignal?.aborted).toBe(true);
+  expect(replacementAvailability).toHaveBeenCalledTimes(1);
+
+  const probes = Reflect.get(manager, "providerAvailabilityProbes") as Map<string, unknown>;
+  expect(probes.size).toBe(0);
 });
 
 test("createAgent passes daemon launch env through the provider launch context", async () => {
