@@ -9,6 +9,7 @@ import { z } from "zod";
 import {
   type AgentCapabilityFlags,
   type AgentClient,
+  type AgentCreateSessionOptions,
   type AgentFeature,
   type AgentLaunchContext,
   type AgentMetadata,
@@ -23,6 +24,7 @@ import {
   type AgentProvider,
   type AgentRunOptions,
   type AgentRunResult,
+  type AgentResumeSessionOptions,
   type AgentRuntimeInfo,
   type AgentSession,
   type AgentSessionConfig,
@@ -89,6 +91,32 @@ const PI_PROVIDER = "pi";
 const DEFAULT_PI_THINKING_LEVEL: PiThinkingLevel = "medium";
 const PI_BINARY_COMMAND = process.env.PI_COMMAND ?? process.env.PI_ACP_PI_COMMAND ?? "pi";
 const PI_CATALOG_REQUEST_TIMEOUT_MS = 120_000;
+
+function assertPiCatalogActive(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new Error("Pi catalog probe was canceled");
+  }
+}
+
+async function racePiCatalogOperation<T>(
+  operation: Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  if (!signal) return await operation;
+  assertPiCatalogActive(signal);
+  let onAbort: (() => void) | null = null;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([operation, aborted]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
+}
 const PASEO_PI_TREE_EXTENSION_COMMAND = "paseo_tree";
 const PASEO_PI_CAPTURE_EXTENSION_COMMAND = "paseo_capture_entries";
 const PASEO_PI_ENTRY_CAPTURE_MARKER = "PASEO_ENTRY_CAPTURE";
@@ -2370,12 +2398,18 @@ export class PiRpcAgentClient implements AgentClient {
   async createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
+    options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     const mcpEnv = {
       ...this.runtimeSettings?.env,
       ...launchContext?.env,
     };
-    const mcpConfig = await this.prepareMcpConfig(config.cwd, config.mcpServers, mcpEnv);
+    const mcpConfig = await this.prepareMcpConfig(
+      config.cwd,
+      config.mcpServers,
+      mcpEnv,
+      options?.signal,
+    );
     const paseoExtension = createPiPaseoExtensionFile(
       composeSystemPromptParts(config.systemPrompt, config.daemonAppendSystemPrompt),
     );
@@ -2388,6 +2422,7 @@ export class PiRpcAgentClient implements AgentClient {
           normalizePiThinkingOption(config.thinkingOptionId) ?? DEFAULT_PI_THINKING_LEVEL,
         noSession: config.internal === true,
         env: launchContext?.env,
+        signal: options?.signal,
         mcpConfigPath: mcpConfig?.path,
         extensionPaths: paseoExtension ? [paseoExtension.path] : undefined,
       });
@@ -2417,6 +2452,7 @@ export class PiRpcAgentClient implements AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ): Promise<AgentSession> {
     const sessionFile = handle.nativeHandle;
     if (!sessionFile) {
@@ -2434,6 +2470,7 @@ export class PiRpcAgentClient implements AgentClient {
       resumeConfig.cwd,
       resumeConfig.config.mcpServers,
       mcpEnv,
+      options?.signal,
     );
     const paseoExtension = createPiPaseoExtensionFile(
       composeSystemPromptParts(
@@ -2443,15 +2480,16 @@ export class PiRpcAgentClient implements AgentClient {
     );
     let runtimeSession: PiRuntimeSession;
     try {
-      runtimeSession = await this.runtime.startSession(
-        buildResumeStartInput({
+      runtimeSession = await this.runtime.startSession({
+        ...buildResumeStartInput({
           resumeConfig,
           sessionFile,
           launchContext,
           mcpConfig,
           paseoExtension,
         }),
-      );
+        signal: options?.signal,
+      });
     } catch (error) {
       mcpConfig?.cleanup();
       paseoExtension?.cleanup();
@@ -2475,14 +2513,26 @@ export class PiRpcAgentClient implements AgentClient {
   }
 
   async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
-    const runtimeSession = await this.runtime.startSession({
+    assertPiCatalogActive(options.signal);
+    const startSession = this.runtime.startSession({
       cwd: options.scope === "global" ? homedir() : options.cwd,
+      signal: options.signal,
     });
+    let runtimeSession: PiRuntimeSession;
+    try {
+      runtimeSession = await racePiCatalogOperation(startSession, options.signal);
+    } catch (error) {
+      void startSession.then((session) => session.close()).catch(() => undefined);
+      throw error;
+    }
     try {
       const models = transformPiModels(
-        (await runtimeSession.getAvailableModels(PI_CATALOG_REQUEST_TIMEOUT_MS)).map((model) =>
-          mapPiModel(model, PI_PROVIDER),
-        ),
+        (
+          await racePiCatalogOperation(
+            runtimeSession.getAvailableModels(PI_CATALOG_REQUEST_TIMEOUT_MS),
+            options.signal,
+          )
+        ).map((model) => mapPiModel(model, PI_PROVIDER)),
       );
       return { models, modes: [] };
     } finally {
@@ -2555,18 +2605,25 @@ export class PiRpcAgentClient implements AgentClient {
     cwd: string,
     servers: Record<string, McpServerConfig> | undefined,
     env: Record<string, string> | undefined,
+    signal?: AbortSignal,
   ): Promise<PiMcpConfigFile | null> {
     if (!servers || Object.keys(servers).length === 0) {
       return null;
     }
-    if (!(await this.detectMcpAdapter(cwd, env))) {
+    if (!(await this.detectMcpAdapter(cwd, env, signal))) {
       return null;
     }
+    signal?.throwIfAborted();
     return createPiMcpConfigFile(servers, { piGlobalConfigEnv: env });
   }
 
-  private async detectMcpAdapter(cwd: string, env?: Record<string, string>): Promise<boolean> {
-    const runtimeSession = await this.runtime.startSession({ cwd, env }).catch((error) => {
+  private async detectMcpAdapter(
+    cwd: string,
+    env?: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    const runtimeSession = await this.runtime.startSession({ cwd, env, signal }).catch((error) => {
+      signal?.throwIfAborted();
       this.logger.debug({ err: error, cwd }, "Pi MCP adapter probe failed to start");
       return null;
     });
@@ -2576,6 +2633,7 @@ export class PiRpcAgentClient implements AgentClient {
     try {
       return (await runtimeSession.getCommands()).some(isPiMcpAdapterCommand);
     } catch (error) {
+      signal?.throwIfAborted();
       this.logger.debug({ err: error, cwd }, "Pi MCP adapter probe failed");
       return false;
     } finally {

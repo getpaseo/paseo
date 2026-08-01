@@ -535,6 +535,8 @@ export interface ImportProviderSessionContext {
   config: AgentSessionConfig;
   storedConfig: AgentSessionConfig;
   launchContext?: AgentLaunchContext;
+  /** Cooperative daemon shutdown for provider import. */
+  signal?: AbortSignal;
 }
 
 export interface ImportedTimelineEntry {
@@ -600,12 +602,16 @@ export interface AgentCreateSessionOptions {
    * Defaults to true. Providers that cannot honor false should no-op.
    */
   persistSession?: boolean;
+  /** Cooperative daemon shutdown for provider startup. */
+  signal?: AbortSignal;
 }
 
 /** Runtime-only intent for a persisted-session resume. Never persist this option. */
 export interface AgentResumeSessionOptions {
   /** Defaults to interactive. History loading may be read-only for archived native sessions. */
   purpose?: "interactive" | "history";
+  /** Cooperative daemon shutdown for provider resume. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -624,7 +630,7 @@ export interface AgentSession {
   run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
   startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
   subscribe(callback: (event: AgentStreamEvent) => void): () => void;
-  streamHistory(): AsyncGenerator<AgentStreamEvent>;
+  streamHistory(signal?: AbortSignal): AsyncGenerator<AgentStreamEvent>;
   getRuntimeInfo(): Promise<AgentRuntimeInfo>;
   getAvailableModes(): Promise<AgentMode[]>;
   getCurrentMode(): Promise<string | null>;
@@ -663,12 +669,14 @@ export type FetchCatalogOptions =
       scope: "global";
       force: boolean;
       timeoutMs?: number;
+      signal?: AbortSignal;
     }
   | {
       scope: "workspace";
       cwd: string;
       force: boolean;
       timeoutMs?: number;
+      signal?: AbortSignal;
     };
 
 export interface ProviderCatalog {

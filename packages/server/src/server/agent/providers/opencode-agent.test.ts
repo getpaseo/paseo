@@ -35,6 +35,14 @@ function tmpCwd(): string {
 
 const TEST_MODEL = "opencode/big-pickle";
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 interface TurnResult {
   events: AgentStreamEvent[];
   assistantMessages: AssistantMessageTimelineItem[];
@@ -282,6 +290,344 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     expect(openCode.calls.sessionUpdate).toEqual([]);
     rmSync(cwd, { recursive: true, force: true });
   }, 60_000);
+
+  test("deletes a session that resolves after create cancellation before releasing its server", async () => {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    const createGate = deferred<{ data: { id: string } }>();
+    openCode.sessionCreateImplementation = async () => await createGate.promise;
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const controller = new AbortController();
+    const creation = client.createSession(buildConfig(cwd), undefined, {
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(openCode.calls.sessionCreate).toHaveLength(1));
+    expect(runtime.acquisitionSignals[0]?.aborted).toBe(false);
+
+    controller.abort(new Error("OpenCode startup canceled"));
+
+    await expect(creation).rejects.toThrow("OpenCode startup canceled");
+    expect(runtime.acquisitionSignals[0]?.aborted).toBe(true);
+    expect(runtime.acquisitions[0]?.releaseCount).toBe(0);
+    const shutdown = client.shutdown();
+    expect(runtime.shutdownCallCount).toBe(0);
+    createGate.resolve({ data: { id: "late-session" } });
+    await shutdown;
+
+    expect(openCode.calls.sessionDelete).toEqual([{ sessionID: "late-session", directory: cwd }]);
+    expect(runtime.acquisitions[0]?.releaseCount).toBe(1);
+    expect(runtime.shutdownCallCount).toBe(1);
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  test("bounds shutdown while retaining a canceled create request the SDK ignores", async () => {
+    vi.useFakeTimers();
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    let createSignal: AbortSignal | undefined;
+    openCode.sessionCreateImplementation = async (_parameters, options) => {
+      createSignal = (options as { signal?: AbortSignal } | undefined)?.signal;
+      return await new Promise<never>(() => {});
+    };
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const controller = new AbortController();
+
+    try {
+      const creation = client.createSession(buildConfig(cwd), undefined, {
+        signal: controller.signal,
+      });
+      await vi.waitFor(() => expect(openCode.calls.sessionCreate).toHaveLength(1));
+
+      controller.abort(new Error("OpenCode startup canceled"));
+
+      await expect(creation).rejects.toThrow("OpenCode startup canceled");
+      expect(createSignal?.aborted).toBe(true);
+      const shutdown = client.shutdown();
+      await vi.advanceTimersByTimeAsync(5_000);
+      await shutdown;
+
+      expect(openCode.calls.sessionDelete).toEqual([]);
+      expect(runtime.acquisitions[0]?.releaseCount).toBe(0);
+      expect(runtime.shutdownCallCount).toBe(1);
+    } finally {
+      vi.useRealTimers();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("deletes a session that resolves after failed create cleanup times out", async () => {
+    vi.useFakeTimers();
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    const createGate = deferred<{ data: { id: string } }>();
+    openCode.sessionCreateImplementation = async () => await createGate.promise;
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const controller = new AbortController();
+
+    try {
+      const creation = client.createSession(buildConfig(cwd), undefined, {
+        signal: controller.signal,
+      });
+      await vi.waitFor(() => expect(openCode.calls.sessionCreate).toHaveLength(1));
+      controller.abort(new Error("OpenCode startup canceled"));
+      await expect(creation).rejects.toThrow("OpenCode startup canceled");
+
+      const shutdown = client.shutdown();
+      await vi.advanceTimersByTimeAsync(5_000);
+      await shutdown;
+      expect(openCode.calls.sessionDelete).toEqual([]);
+      expect(runtime.acquisitions[0]?.releaseCount).toBe(0);
+
+      createGate.resolve({ data: { id: "late-after-cleanup-timeout" } });
+      await vi.waitFor(() =>
+        expect(openCode.calls.sessionDelete).toEqual([
+          { sessionID: "late-after-cleanup-timeout", directory: cwd },
+        ]),
+      );
+      await vi.waitFor(() => expect(runtime.acquisitions[0]?.releaseCount).toBe(1));
+    } finally {
+      vi.useRealTimers();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("shutdown remains bounded when a session.create request never settles", async () => {
+    vi.useFakeTimers();
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    let createSignal: AbortSignal | undefined;
+    openCode.sessionCreateImplementation = async (_parameters, options) => {
+      createSignal = (options as { signal?: AbortSignal } | undefined)?.signal;
+      return await new Promise<never>(() => {});
+    };
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+
+    try {
+      const creation = client.createSession(buildConfig(cwd));
+      await vi.waitFor(() => expect(openCode.calls.sessionCreate).toHaveLength(1));
+
+      const shutdown = client.shutdown();
+
+      expect(createSignal?.aborted).toBe(true);
+      await expect(creation).rejects.toThrow("OpenCode agent client shutting down");
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(runtime.acquisitions[0]?.releaseCount).toBe(0);
+      expect(runtime.shutdownCallCount).toBe(0);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await shutdown;
+      expect(openCode.calls.sessionDelete).toEqual([]);
+      expect(runtime.acquisitions[0]?.releaseCount).toBe(0);
+      expect(runtime.shutdownCallCount).toBe(1);
+    } finally {
+      vi.useRealTimers();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("shutdown retains the server until a non-cooperative startup provider.list settles", async () => {
+    vi.useFakeTimers();
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    const providerListGate = deferred<{
+      data: { connected: string[]; all: never[] };
+    }>();
+    const releaseGate = deferred<void>();
+    let providerListSignal: AbortSignal | undefined;
+    openCode.sessionCreateResponse = { data: { id: "created-before-provider-list" } };
+    openCode.providerListImplementation = async (options) => {
+      providerListSignal = (options as { signal?: AbortSignal } | undefined)?.signal;
+      return await providerListGate.promise;
+    };
+    runtime.releaseImplementation = async () => releaseGate.resolve();
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+
+    try {
+      const creation = client.createSession(buildConfig(cwd));
+      await vi.waitFor(() => expect(openCode.calls.providerList).toHaveLength(1));
+
+      const shutdown = client.shutdown();
+
+      expect(providerListSignal?.aborted).toBe(true);
+      await expect(creation).rejects.toThrow("OpenCode agent client shutting down");
+      expect(openCode.calls.sessionDelete).toEqual([
+        { sessionID: "created-before-provider-list", directory: cwd },
+      ]);
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(runtime.acquisitions[0]?.releaseCount).toBe(0);
+      expect(runtime.shutdownCallCount).toBe(0);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await shutdown;
+      expect(runtime.shutdownCallCount).toBe(1);
+      expect(runtime.acquisitions[0]?.releaseCount).toBe(0);
+
+      providerListGate.resolve({ data: { connected: [], all: [] } });
+      await releaseGate.promise;
+      await client.shutdown();
+      expect(runtime.acquisitions[0]?.releaseCount).toBe(1);
+    } finally {
+      vi.useRealTimers();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test.each(["fulfills", "rejects"] as const)(
+    "shutdown retains a resumed session server until startup provider.list %s",
+    async (settlement) => {
+      vi.useFakeTimers();
+      const cwd = tmpCwd();
+      const runtime = new TestOpenCodeHarness();
+      const openCode = new TestOpenCodeClient();
+      const providerListGate = deferred<void>();
+      const releaseGate = deferred<void>();
+      let providerListSignal: AbortSignal | undefined;
+      openCode.providerListImplementation = async (options) => {
+        providerListSignal = (options as { signal?: AbortSignal } | undefined)?.signal;
+        await providerListGate.promise;
+        if (settlement === "rejects") {
+          throw new Error("provider.list failed");
+        }
+        return { data: { connected: [], all: [] } };
+      };
+      runtime.releaseImplementation = async () => releaseGate.resolve();
+      runtime.enqueueClient(openCode);
+      const client = new OpenCodeAgentClient(logger, undefined, {
+        serverManager: runtime,
+        createClient: runtime.createClient,
+      });
+
+      try {
+        const resume = client.resumeSession({
+          provider: "opencode",
+          sessionId: "resumed-before-provider-list",
+          metadata: { cwd },
+        });
+        await vi.waitFor(() => expect(openCode.calls.providerList).toHaveLength(1));
+
+        const shutdown = client.shutdown();
+
+        expect(providerListSignal?.aborted).toBe(true);
+        await expect(resume).rejects.toThrow("OpenCode agent client shutting down");
+        expect(openCode.calls.sessionDelete).toEqual([]);
+        await vi.advanceTimersByTimeAsync(4_999);
+        expect(runtime.acquisitions[0]?.releaseCount).toBe(0);
+        expect(runtime.shutdownCallCount).toBe(0);
+
+        await vi.advanceTimersByTimeAsync(1);
+        await shutdown;
+        expect(runtime.shutdownCallCount).toBe(1);
+        expect(runtime.acquisitions[0]?.releaseCount).toBe(0);
+
+        providerListGate.resolve();
+        await releaseGate.promise;
+        await client.shutdown();
+        expect(openCode.calls.sessionDelete).toEqual([]);
+        expect(runtime.acquisitions[0]?.releaseCount).toBe(1);
+      } finally {
+        vi.useRealTimers();
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test("deletes a session that resolves after create timeout", async () => {
+    vi.useFakeTimers();
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    const createGate = deferred<{ data: { id: string } }>();
+    openCode.sessionCreateImplementation = async () => await createGate.promise;
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+
+    try {
+      const creation = client.createSession(buildConfig(cwd));
+      for (let index = 0; index < 5; index += 1) await Promise.resolve();
+      expect(openCode.calls.sessionCreate).toHaveLength(1);
+      const createFailure = expect(creation).rejects.toThrow(
+        "OpenCode session.create timed out after 10s",
+      );
+
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      await createFailure;
+      expect(runtime.acquisitions[0]?.releaseCount).toBe(0);
+      createGate.resolve({ data: { id: "late-timeout-session" } });
+      await client.shutdown();
+      expect(openCode.calls.sessionDelete).toEqual([
+        { sessionID: "late-timeout-session", directory: cwd },
+      ]);
+      expect(runtime.acquisitions[0]?.releaseCount).toBe(1);
+    } finally {
+      vi.useRealTimers();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("owns delete and release failures while draining canceled create cleanup", async () => {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    const createGate = deferred<{ data: { id: string } }>();
+    openCode.sessionCreateImplementation = async () => await createGate.promise;
+    openCode.sessionDeleteImplementation = async () => {
+      throw new Error("delete failed");
+    };
+    runtime.releaseImplementation = async () => {
+      throw new Error("release failed");
+    };
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const controller = new AbortController();
+    const creation = client.createSession(buildConfig(cwd), undefined, {
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(openCode.calls.sessionCreate).toHaveLength(1));
+    controller.abort(new Error("OpenCode startup canceled"));
+    await expect(creation).rejects.toThrow("OpenCode startup canceled");
+
+    createGate.resolve({ data: { id: "failed-cleanup-session" } });
+
+    await expect(client.shutdown()).resolves.toBeUndefined();
+    expect(openCode.calls.sessionDelete).toEqual([
+      { sessionID: "failed-cleanup-session", directory: cwd },
+    ]);
+    expect(runtime.acquisitions[0]?.releaseCount).toBe(1);
+    expect(runtime.shutdownCallCount).toBe(1);
+    rmSync(cwd, { recursive: true, force: true });
+  });
 
   test("archives and unarchives the durable native session through client hooks", async () => {
     const cwd = tmpCwd();
@@ -624,6 +970,156 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     );
 
     expect(maxActiveProviderListCalls).toBeLessThanOrEqual(4);
+  });
+
+  test("aborting a catalog refresh aborts the actual OpenCode SDK requests", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const openCodeClient = new TestOpenCodeClient();
+    let providerSignal: AbortSignal | undefined;
+    let agentsSignal: AbortSignal | undefined;
+    openCodeClient.providerListImplementation = async (requestOptions) => {
+      providerSignal = (requestOptions as { signal?: AbortSignal } | undefined)?.signal;
+      return await new Promise((_, reject) => {
+        providerSignal?.addEventListener("abort", () => reject(providerSignal?.reason), {
+          once: true,
+        });
+      });
+    };
+    openCodeClient.appAgentsImplementation = async (requestOptions) => {
+      agentsSignal = (requestOptions as { signal?: AbortSignal } | undefined)?.signal;
+      return await new Promise((_, reject) => {
+        agentsSignal?.addEventListener("abort", () => reject(agentsSignal?.reason), { once: true });
+      });
+    };
+    runtime.enqueueClient(openCodeClient);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const controller = new AbortController();
+    const catalog = client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/opencode-abort",
+      force: false,
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => {
+      expect(providerSignal).toBe(controller.signal);
+      expect(agentsSignal).toBe(controller.signal);
+    });
+
+    controller.abort(new Error("catalog canceled"));
+
+    await expect(catalog).rejects.toThrow("catalog canceled");
+    expect(providerSignal?.aborted).toBe(true);
+    expect(agentsSignal?.aborted).toBe(true);
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+  });
+
+  test("keeps the acquired server until aborted SDK requests actually settle", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const openCodeClient = new TestOpenCodeClient();
+    const requestGate = createTestDeferred<void>();
+    let providerSignal: AbortSignal | undefined;
+    let agentsSignal: AbortSignal | undefined;
+    openCodeClient.providerListImplementation = async (requestOptions) => {
+      providerSignal = (requestOptions as { signal?: AbortSignal } | undefined)?.signal;
+      await requestGate.promise;
+      throw providerSignal?.reason;
+    };
+    openCodeClient.appAgentsImplementation = async (requestOptions) => {
+      agentsSignal = (requestOptions as { signal?: AbortSignal } | undefined)?.signal;
+      await requestGate.promise;
+      throw agentsSignal?.reason;
+    };
+    runtime.enqueueClient(openCodeClient);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const controller = new AbortController();
+    const catalog = client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/opencode-abort-drain",
+      force: false,
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => {
+      expect(providerSignal).toBe(controller.signal);
+      expect(agentsSignal).toBe(controller.signal);
+    });
+
+    controller.abort(new Error("catalog canceled"));
+    await Promise.resolve();
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 0 }]);
+
+    requestGate.resolve();
+    await expect(catalog).rejects.toThrow("catalog canceled");
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+  });
+
+  test("a catalog aborted in the metadata queue never starts its SDK requests", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const activeGate = createTestDeferred<void>();
+    const providerResponse = {
+      data: {
+        connected: ["opencode"],
+        all: [
+          {
+            id: "opencode",
+            name: "OpenCode",
+            source: "api",
+            models: { "big-pickle": { name: "Big Pickle" } },
+          },
+        ],
+      },
+    };
+    let activeRequests = 0;
+    for (let index = 0; index < 2; index += 1) {
+      const activeClient = new TestOpenCodeClient();
+      activeClient.providerListImplementation = async () => {
+        activeRequests += 1;
+        await activeGate.promise;
+        return providerResponse;
+      };
+      activeClient.appAgentsImplementation = async () => {
+        activeRequests += 1;
+        await activeGate.promise;
+        return { data: [] };
+      };
+      runtime.enqueueClient(activeClient);
+    }
+    const queuedClient = new TestOpenCodeClient();
+    const queuedProviderRequest = vi.fn(async () => providerResponse);
+    const queuedAgentsRequest = vi.fn(async () => ({ data: [] }));
+    queuedClient.providerListImplementation = queuedProviderRequest;
+    queuedClient.appAgentsImplementation = queuedAgentsRequest;
+    runtime.enqueueClient(queuedClient);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const activeCatalogs = [
+      client.fetchCatalog({ scope: "workspace", cwd: "/tmp/opencode-active-1", force: false }),
+      client.fetchCatalog({ scope: "workspace", cwd: "/tmp/opencode-active-2", force: false }),
+    ];
+    await vi.waitFor(() => expect(activeRequests).toBe(4));
+    const controller = new AbortController();
+    const queuedCatalog = client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/opencode-queued",
+      force: false,
+      signal: controller.signal,
+    });
+
+    controller.abort(new Error("queued catalog canceled"));
+    await expect(queuedCatalog).rejects.toThrow("queued catalog canceled");
+    activeGate.resolve();
+    await Promise.all(activeCatalogs);
+    await Promise.resolve();
+
+    expect(queuedProviderRequest).not.toHaveBeenCalled();
+    expect(queuedAgentsRequest).not.toHaveBeenCalled();
   });
 
   test("available modes reflect the agents OpenCode discovers", async () => {
@@ -1496,6 +1992,39 @@ describe("OpenCode adapter startTurn error handling", () => {
     });
   });
 
+  test("bounds an ephemeral session.delete that never settles before releasing its server", async () => {
+    vi.useFakeTimers();
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    openCode.sessionDeleteImplementation = async () => await new Promise<never>(() => {});
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+
+    try {
+      const session = await client.createSession({ provider: "opencode", cwd }, undefined, {
+        persistSession: false,
+      });
+      const close = session.close();
+
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(openCode.calls.sessionDelete).toEqual([{ sessionID: "session-1", directory: cwd }]);
+      expect(runtime.acquisitions[0]?.releaseCount).toBe(0);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await close;
+      expect(runtime.acquisitions[0]?.releaseCount).toBe(1);
+      await client.shutdown();
+      expect(runtime.shutdownCallCount).toBe(1);
+    } finally {
+      vi.useRealTimers();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("does not delete provider session on close by default", async () => {
     const fakeClient = {
       session: {
@@ -1561,6 +2090,44 @@ describe("OpenCode adapter startTurn error handling", () => {
 
     finishStreamCleanup.resolve();
     await closePromise;
+  });
+
+  test("bounds a blocked OpenCode abort while closing the session", async () => {
+    vi.useFakeTimers();
+    try {
+      let abortSignal: AbortSignal | undefined;
+      const fakeClient = {
+        session: {
+          abort: vi
+            .fn()
+            .mockImplementation(
+              async (_parameters: unknown, options?: { signal?: AbortSignal }) => {
+                abortSignal = options?.signal;
+                if (!abortSignal) {
+                  return await new Promise<never>(() => {});
+                }
+                await waitForAbort(abortSignal);
+                throw abortSignal.reason;
+              },
+            ),
+          update: vi.fn().mockResolvedValue({ error: null }),
+        },
+      } as never;
+      const session = new __openCodeInternals.OpenCodeAgentSession(
+        { provider: "opencode", cwd: "/tmp/test" },
+        fakeClient,
+        "ses_unit_test",
+        createTestLogger(),
+      );
+
+      const closing = session.close();
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await expect(closing).resolves.toBeUndefined();
+      expect(abortSignal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("streamHistory preserves OpenCode replay timestamps from message and part times", async () => {
@@ -1661,6 +2228,45 @@ describe("OpenCode adapter startTurn error handling", () => {
         },
       },
     ]);
+  });
+
+  test("streamHistory cancels its OpenCode SDK reads with the import signal", async () => {
+    const openCode = new TestOpenCodeClient();
+    const messagesStarted = createTestDeferred<void>();
+    const messagesCanceled = createTestDeferred<void>();
+    const controller = new AbortController();
+    const cancellation = new Error("cancel OpenCode history read");
+    openCode.sessionGetResponse = { data: { revert: undefined } };
+    openCode.sessionMessagesImplementation = async (_parameters, options) => {
+      messagesStarted.resolve();
+      const signal = (options as { signal?: AbortSignal } | undefined)?.signal;
+      return await new Promise<never>((_resolve, reject) => {
+        signal?.addEventListener(
+          "abort",
+          () => {
+            messagesCanceled.resolve();
+            reject(signal.reason);
+          },
+          { once: true },
+        );
+      });
+    };
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      openCode.asSdkClient(),
+      "ses_history_cancel",
+      createTestLogger(),
+    );
+    const nextEvent = session.streamHistory(controller.signal).next();
+    await messagesStarted.promise;
+
+    controller.abort(cancellation);
+
+    await expect(nextEvent).rejects.toBe(cancellation);
+    await messagesCanceled.promise;
+    expect(openCode.calls.sessionGetOptions).toEqual([{ signal: controller.signal }]);
+    expect(openCode.calls.sessionMessagesOptions).toEqual([{ signal: controller.signal }]);
+    await session.close();
   });
 
   test("streamHistory omits replay timestamps when OpenCode omits times", async () => {
@@ -2509,6 +3115,163 @@ describe("OpenCode adapter startTurn error handling", () => {
     expect(openCode.calls.sessionAbort).toHaveLength(2);
   });
 
+  test("bounds close when the event stream and SDK abort ignore cancellation", async () => {
+    vi.useFakeTimers();
+    const openCode = new TestOpenCodeClient();
+    let abortSignal: AbortSignal | undefined;
+    openCode.globalEventImplementation = async () => ({
+      stream: {
+        [Symbol.asyncIterator]() {
+          return {
+            next: async () => await new Promise<IteratorResult<unknown>>(() => {}),
+          };
+        },
+      },
+    });
+    openCode.sessionAbortImplementation = async (_parameters, options) => {
+      abortSignal = (options as { signal?: AbortSignal } | undefined)?.signal;
+      return await new Promise<never>(() => {});
+    };
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/workspace/repo" },
+      openCode.asSdkClient(),
+      "ses_non_cooperative_close",
+      createTestLogger(),
+    );
+
+    try {
+      await vi.waitFor(() => expect(openCode.calls.globalEvent).toHaveLength(1));
+      const close = session.close();
+      let closed = false;
+      void close.then(() => {
+        closed = true;
+        return undefined;
+      });
+
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(openCode.calls.sessionAbort).toHaveLength(1);
+      expect(abortSignal?.aborted).toBe(true);
+      expect(closed).toBe(true);
+      await close;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("waits for a timed-out close abort before prompting a replacement generation", async () => {
+    vi.useFakeTimers();
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const previousClient = new TestOpenCodeClient();
+    const replacementClient = new TestOpenCodeClient();
+    const settleAbort = deferred<void>();
+    previousClient.sessionCreateResponse = { data: { id: "ses_reload_generation" } };
+    previousClient.sessionAbortImplementation = async () => {
+      await settleAbort.promise;
+      return {};
+    };
+    replacementClient.sessionGetResponse = {
+      data: { id: "ses_reload_generation", directory: cwd, title: null },
+    };
+    runtime.enqueueClient(previousClient);
+    runtime.enqueueClient(replacementClient);
+    const provider = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+
+    try {
+      const previous = await provider.createSession({ provider: "opencode", cwd });
+      const previousClose = previous.close();
+      await vi.advanceTimersByTimeAsync(5_000);
+      await previousClose;
+      expect(previousClient.calls.sessionAbort).toEqual([
+        { sessionID: "ses_reload_generation", directory: cwd },
+      ]);
+
+      const replacement = await provider.resumeSession(
+        {
+          provider: "opencode",
+          sessionId: "ses_reload_generation",
+          nativeHandle: "ses_reload_generation",
+          metadata: { cwd },
+        },
+        undefined,
+      );
+
+      const prompt = replacement.startTurn("replacement");
+      for (let index = 0; index < 10; index += 1) {
+        await Promise.resolve();
+      }
+      expect(replacementClient.calls.sessionPromptAsync).toEqual([]);
+
+      settleAbort.resolve();
+      await prompt;
+      expect(replacementClient.calls.sessionPromptAsync).toHaveLength(1);
+      await replacement.close();
+      expect(replacementClient.calls.sessionAbort).toEqual([
+        { sessionID: "ses_reload_generation", directory: cwd },
+      ]);
+      await provider.shutdown();
+    } finally {
+      vi.useRealTimers();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("same-session resume generations follow completion order", async () => {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const firstClient = new TestOpenCodeClient();
+    const secondClient = new TestOpenCodeClient();
+    const firstProviderList = deferred<{
+      data: { connected: unknown[]; all: unknown[] };
+    }>();
+    const secondProviderList = deferred<{
+      data: { connected: unknown[]; all: unknown[] };
+    }>();
+    firstClient.providerListImplementation = async () => await firstProviderList.promise;
+    secondClient.providerListImplementation = async () => await secondProviderList.promise;
+    runtime.enqueueClient(firstClient);
+    runtime.enqueueClient(secondClient);
+    const provider = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const handle = {
+      provider: "opencode" as const,
+      sessionId: "ses_concurrent_reload",
+      nativeHandle: "ses_concurrent_reload",
+      metadata: { cwd },
+    };
+
+    try {
+      const firstResume = provider.resumeSession(handle);
+      await vi.waitFor(() => expect(firstClient.calls.providerList).toHaveLength(1));
+      const secondResume = provider.resumeSession(handle);
+      await vi.waitFor(() => expect(secondClient.calls.providerList).toHaveLength(1));
+
+      secondProviderList.resolve({ data: { connected: [], all: [] } });
+      const secondSession = await secondResume;
+      firstProviderList.resolve({ data: { connected: [], all: [] } });
+      const firstSession = await firstResume;
+
+      await secondSession.close();
+      expect(secondClient.calls.sessionAbort).toEqual([]);
+      await firstSession.close();
+      expect(firstClient.calls.sessionAbort).toEqual([
+        { sessionID: "ses_concurrent_reload", directory: cwd },
+      ]);
+      expect(runtime.acquisitions.every((acquisition) => acquisition.releaseCount === 1)).toBe(
+        true,
+      );
+      await provider.shutdown();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("fails closed when the SDK abort throws before returning a promise", async () => {
     const openCode = new TestOpenCodeClient();
     const sdkClient = openCode.asSdkClient();
@@ -3077,6 +3840,84 @@ describe("OpenCode persisted sessions", () => {
       { sessionID: "ses_selected", directory: cwd },
     ]);
   });
+
+  test.each(["session get", "session messages"] as const)(
+    "importSession cancels a blocked OpenCode %s pre-read and releases its server",
+    async (blockedRequest) => {
+      const runtime = new TestOpenCodeHarness();
+      const metadataClient = new TestOpenCodeClient();
+      const requestStarted = createTestDeferred<void>();
+      const requestCanceled = createTestDeferred<void>();
+      const cwd = "/workspace/repo";
+      const controller = new AbortController();
+      const selectedSession = {
+        id: "ses_selected",
+        directory: cwd,
+        title: "Selected session",
+        time: { created: 2000, updated: 3000 },
+      };
+      metadataClient.sessionGetResponse = { data: selectedSession };
+      if (blockedRequest === "session get") {
+        metadataClient.sessionGetImplementation = async (_parameters, options) => {
+          requestStarted.resolve();
+          const signal = (options as { signal?: AbortSignal } | undefined)?.signal;
+          return await new Promise<never>((_resolve, reject) => {
+            signal?.addEventListener(
+              "abort",
+              () => {
+                requestCanceled.resolve();
+                reject(signal.reason);
+              },
+              { once: true },
+            );
+          });
+        };
+      } else {
+        metadataClient.sessionMessagesImplementation = async (_parameters, options) => {
+          requestStarted.resolve();
+          const signal = (options as { signal?: AbortSignal } | undefined)?.signal;
+          return await new Promise<never>((_resolve, reject) => {
+            signal?.addEventListener(
+              "abort",
+              () => {
+                requestCanceled.resolve();
+                reject(signal.reason);
+              },
+              { once: true },
+            );
+          });
+        };
+      }
+      runtime.enqueueClient(metadataClient);
+      const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+        serverManager: runtime,
+        createClient: runtime.createClient,
+      });
+      const cancellation = new Error("cancel OpenCode import pre-read");
+      const importing = client.importSession(
+        { providerHandleId: "ses_selected", cwd },
+        {
+          config: { provider: "opencode", cwd },
+          storedConfig: { provider: "opencode", cwd },
+          signal: controller.signal,
+        },
+      );
+      await requestStarted.promise;
+      const rejectedImport = expect(importing).rejects.toBe(cancellation);
+
+      controller.abort(cancellation);
+
+      await rejectedImport;
+      await requestCanceled.promise;
+      const requestOptions =
+        blockedRequest === "session get"
+          ? metadataClient.calls.sessionGetOptions
+          : metadataClient.calls.sessionMessagesOptions;
+      expect(requestOptions).toEqual([{ signal: controller.signal }]);
+      expect(runtime.acquisitionSignals).toEqual([controller.signal]);
+      expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+    },
+  );
 
   test("listImportableSessions matches Windows cwd paths with forward slashes", async () => {
     const runtime = new TestOpenCodeHarness();

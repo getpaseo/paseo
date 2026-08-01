@@ -78,6 +78,7 @@ const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
 const PROVIDER_HEALTH_PROBE_TIMEOUT_MS = 3_000;
 const PROVIDER_HEALTH_STALE_AFTER_MS = 30_000;
+const DEFAULT_MODEL_RESOLUTION_TIMEOUT_MS = 30_000;
 const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: false,
   supportsSessionPersistence: true,
@@ -294,6 +295,7 @@ export interface AgentManagerOptions {
   providerHealthProbeTimeoutMs?: number;
   providerHealthStaleAfterMs?: number;
   providerHealthNow?: () => number;
+  defaultModelResolutionTimeoutMs?: number;
   logger: Logger;
 }
 
@@ -650,7 +652,9 @@ export class AgentManager {
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
+  private readonly defaultModelResolutionControllers = new Set<AbortController>();
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
+  private readonly agentSessionSwapTails = new Map<string, Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
@@ -665,6 +669,8 @@ export class AgentManager {
   private readonly providerHealthProbeTimeoutMs: number;
   private readonly providerHealthStaleAfterMs: number;
   private readonly providerHealthNow: () => number;
+  private readonly defaultModelResolutionTimeoutMs: number;
+  private readonly registrationAbortController = new AbortController();
   private acceptingAgentRegistrations = true;
 
   constructor(options: AgentManagerOptions) {
@@ -688,6 +694,8 @@ export class AgentManager {
     this.providerHealthProbeTimeoutMs = providerHealth.probeTimeoutMs;
     this.providerHealthStaleAfterMs = providerHealth.staleAfterMs;
     this.providerHealthNow = providerHealth.now;
+    this.defaultModelResolutionTimeoutMs =
+      options.defaultModelResolutionTimeoutMs ?? DEFAULT_MODEL_RESOLUTION_TIMEOUT_MS;
     this.agentStreamCoalescer = new AgentStreamCoalescer({
       windowMs: options.agentStreamCoalesceWindowMs ?? AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS,
       timers: { setTimeout, clearTimeout },
@@ -750,6 +758,11 @@ export class AgentManager {
 
   prepareForShutdown(): void {
     this.acceptingAgentRegistrations = false;
+    this.invalidateProviderAvailability();
+    this.registrationAbortController.abort(new AgentManagerShuttingDownError());
+    for (const controller of this.defaultModelResolutionControllers) {
+      controller.abort(new AgentManagerShuttingDownError());
+    }
   }
 
   setPaseoToolsEnabled(enabled: boolean): void {
@@ -1099,7 +1112,10 @@ export class AgentManager {
       options?.env,
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
-    const createOptions = this.buildCreateSessionOptions(options);
+    const createOptions = this.buildCreateSessionOptions({
+      ...options,
+      signal: this.registrationAbortController.signal,
+    });
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       labels: options.labels,
@@ -1111,10 +1127,11 @@ export class AgentManager {
 
   private buildCreateSessionOptions(options?: {
     persistSession?: boolean;
+    signal?: AbortSignal;
   }): AgentCreateSessionOptions | undefined {
-    return options?.persistSession === undefined
+    return options?.persistSession === undefined && options?.signal === undefined
       ? undefined
-      : { persistSession: options.persistSession };
+      : { persistSession: options?.persistSession, signal: options?.signal };
   }
 
   // Reconstruct an agent from provider persistence. Callers should explicitly
@@ -1168,21 +1185,15 @@ export class AgentManager {
       resolvedAgentId,
     );
 
-    const client = this.requireClient(handle.provider);
-    const available = await client.isAvailable();
-    if (!available) {
-      throw new Error(
-        `Provider '${handle.provider}' is not available. Please ensure the CLI is installed.`,
-      );
-    }
+    const client = await this.requireAvailableClient({ provider: handle.provider });
     const launchContext = await this.buildLaunchContext(resolvedAgentId, client, storedConfig.cwd);
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
-    const session = await client.resumeSession(
-      handle,
-      providerLaunchConfig,
-      launchContext,
-      resumeOptions,
-    );
+    const session = await client.resumeSession(handle, providerLaunchConfig, launchContext, {
+      ...resumeOptions,
+      signal: resumeOptions?.signal
+        ? AbortSignal.any([this.registrationAbortController.signal, resumeOptions.signal])
+        : this.registrationAbortController.signal,
+    });
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       ...options,
       persistence: handle,
@@ -1229,7 +1240,12 @@ export class AgentManager {
         providerHandleId: input.providerHandleId,
         cwd: input.cwd,
       },
-      { config: providerLaunchConfig, storedConfig, launchContext },
+      {
+        config: providerLaunchConfig,
+        storedConfig,
+        launchContext,
+        signal: this.registrationAbortController.signal,
+      },
     );
     let handedToRegistration = false;
     try {
@@ -1290,10 +1306,6 @@ export class AgentManager {
       existing = this.requireSessionAgent(agentId);
     }
     const rehydrateFromDisk = options?.rehydrateFromDisk ?? false;
-    const preservedHistoryPrimed = existing.historyPrimed;
-    const preservedLastUsage = existing.lastUsage;
-    const preservedLastError = existing.lastError;
-    const preservedAttention = existing.attention;
     const handle = existing.persistence;
     const provider = handle?.provider ?? existing.provider;
     const client = this.requireClient(provider);
@@ -1307,18 +1319,25 @@ export class AgentManager {
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
 
     const session = handle
-      ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
-      : await client.createSession(providerLaunchConfig, launchContext);
+      ? await client.resumeSession(handle, providerLaunchConfig, launchContext, {
+          signal: this.registrationAbortController.signal,
+        })
+      : await client.createSession(providerLaunchConfig, launchContext, {
+          signal: this.registrationAbortController.signal,
+        });
+
+    const releaseSwap = await this.enterAgentSessionSwap(agentId);
 
     let handedToRegistration = false;
     try {
       this.assertAcceptingAgentRegistrations();
+      const displaced = this.requireSessionAgent(agentId);
 
-      const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
+      const closedExisting = this.prepareAgentForClosure(displaced, "agent reloaded");
       try {
         await this.persistSnapshot(closedExisting);
       } finally {
-        await this.closeReloadedSession(existing.session, agentId);
+        await this.closeReloadedSession(displaced.session, agentId);
       }
 
       if (rehydrateFromDisk) {
@@ -1334,23 +1353,42 @@ export class AgentManager {
 
       // Preserve existing labels and timeline during reload.
       handedToRegistration = true;
-      return this.registerSession(session, storedConfig, agentId, {
-        labels: existing.labels,
-        workspaceId: existing.workspaceId,
-        owner: existing.owner,
-        createdAt: existing.createdAt,
-        updatedAt: existing.updatedAt,
-        lastUserMessageAt: existing.lastUserMessageAt,
-        historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
-        lastUsage: preservedLastUsage,
-        lastError: preservedLastError,
-        attention: preservedAttention,
+      return await this.registerSession(session, storedConfig, agentId, {
+        labels: displaced.labels,
+        workspaceId: displaced.workspaceId,
+        owner: displaced.owner,
+        createdAt: displaced.createdAt,
+        updatedAt: displaced.updatedAt,
+        lastUserMessageAt: displaced.lastUserMessageAt,
+        historyPrimed: rehydrateFromDisk ? false : displaced.historyPrimed,
+        lastUsage: displaced.lastUsage,
+        lastError: displaced.lastError,
+        attention: displaced.attention,
       });
     } finally {
       if (!handedToRegistration) {
         await this.closeUnregisteredSession(session);
       }
+      releaseSwap();
     }
+  }
+
+  private async enterAgentSessionSwap(agentId: string): Promise<() => void> {
+    const previousSwap = this.agentSessionSwapTails.get(agentId) ?? Promise.resolve();
+    let completeSwap!: () => void;
+    const swapComplete = new Promise<void>((resolveSwap) => {
+      completeSwap = resolveSwap;
+    });
+    const swapTail = previousSwap.then(() => swapComplete);
+    this.agentSessionSwapTails.set(agentId, swapTail);
+    await previousSwap;
+
+    return () => {
+      completeSwap();
+      if (this.agentSessionSwapTails.get(agentId) === swapTail) {
+        this.agentSessionSwapTails.delete(agentId);
+      }
+    };
   }
 
   private async closeReloadedSession(session: AgentSession, agentId: string): Promise<void> {
@@ -1425,50 +1463,55 @@ export class AgentManager {
   }
 
   private async closeAgentRuntime(agentId: string): Promise<void> {
-    const agent = this.requireAgent(agentId);
-    this.logger.trace(
-      {
-        agentId,
-        provider: agent.provider,
-        sessionId: agent.persistence?.sessionId ?? undefined,
-        turnId: agent.activeForegroundTurnId ?? undefined,
-        lifecycle: agent.lifecycle,
-        activeForegroundTurnId: agent.activeForegroundTurnId,
-        pendingPermissions: agent.pendingPermissions.size,
-      },
-      "agent.manager.close.start",
-    );
-    await this.drainSessionEvents(agentId);
-    this.cancelRunningProviderSubagents(agentId);
-    const closedAgent = this.prepareAgentForClosure(agent, "agent closed");
-    let closeError: unknown;
+    const releaseSwap = await this.enterAgentSessionSwap(agentId);
     try {
-      await agent.session.close();
-    } catch (error) {
-      closeError = error;
-    }
+      const agent = this.requireAgent(agentId);
+      this.logger.trace(
+        {
+          agentId,
+          provider: agent.provider,
+          sessionId: agent.persistence?.sessionId ?? undefined,
+          turnId: agent.activeForegroundTurnId ?? undefined,
+          lifecycle: agent.lifecycle,
+          activeForegroundTurnId: agent.activeForegroundTurnId,
+          pendingPermissions: agent.pendingPermissions.size,
+        },
+        "agent.manager.close.start",
+      );
+      await this.drainSessionEvents(agentId);
+      this.cancelRunningProviderSubagents(agentId);
+      const closedAgent = this.prepareAgentForClosure(agent, "agent closed");
+      let closeError: unknown;
+      try {
+        await agent.session.close();
+      } catch (error) {
+        closeError = error;
+      }
 
-    let persistError: unknown;
-    try {
-      await this.persistSnapshot(closedAgent);
-    } catch (error) {
-      persistError = error;
-    }
-    this.emitClosedAgent(closedAgent, { persist: false });
-    this.logger.trace(
-      {
-        agentId,
-        provider: closedAgent.provider,
-        sessionId: closedAgent.persistence?.sessionId ?? undefined,
-      },
-      "agent.manager.close.complete",
-    );
+      let persistError: unknown;
+      try {
+        await this.persistSnapshot(closedAgent);
+      } catch (error) {
+        persistError = error;
+      }
+      this.emitClosedAgent(closedAgent, { persist: false });
+      this.logger.trace(
+        {
+          agentId,
+          provider: closedAgent.provider,
+          sessionId: closedAgent.persistence?.sessionId ?? undefined,
+        },
+        "agent.manager.close.complete",
+      );
 
-    if (closeError !== undefined) {
-      throw closeError;
-    }
-    if (persistError !== undefined) {
-      throw persistError;
+      if (closeError !== undefined) {
+        throw closeError;
+      }
+      if (persistError !== undefined) {
+        throw persistError;
+      }
+    } finally {
+      releaseSwap();
     }
   }
 
@@ -3267,6 +3310,9 @@ export class AgentManager {
   ): Promise<void> {
     try {
       const newInfo = await agent.session.getRuntimeInfo();
+      if (!this.acceptingAgentRegistrations || this.agents.get(agent.id) !== agent) {
+        return;
+      }
       const changed =
         newInfo.model !== agent.runtimeInfo?.model ||
         newInfo.thinkingOptionId !== agent.runtimeInfo?.thinkingOptionId ||
@@ -4402,16 +4448,59 @@ export class AgentManager {
     if (!client) {
       return undefined;
     }
+    const controller = new AbortController();
+    this.defaultModelResolutionControllers.add(controller);
+    const timeout = setTimeout(() => {
+      controller.abort(
+        new Error(
+          `Provider default model resolution timed out after ${this.defaultModelResolutionTimeoutMs}ms`,
+        ),
+      );
+    }, this.defaultModelResolutionTimeoutMs);
+    timeout.unref?.();
     try {
-      const catalog = await client.fetchCatalog({
+      const catalogRequest = client.fetchCatalog({
         scope: "workspace",
         cwd: config.cwd,
         force: false,
+        signal: controller.signal,
       });
+      const catalog = await this.waitForDefaultModelResolution(catalogRequest, controller.signal);
       return (catalog.models.find((model) => model.isDefault) ?? catalog.models[0])?.id;
-    } catch {
+    } catch (error) {
+      if (!this.acceptingAgentRegistrations) {
+        throw new AgentManagerShuttingDownError();
+      }
+      this.logger.warn(
+        { err: error, provider: config.provider },
+        "Failed to resolve provider default model",
+      );
       // Provider may not support model listing — leave model undefined.
       return undefined;
+    } finally {
+      clearTimeout(timeout);
+      this.defaultModelResolutionControllers.delete(controller);
+    }
+  }
+
+  private async waitForDefaultModelResolution<T>(
+    operation: Promise<T>,
+    signal: AbortSignal,
+  ): Promise<T> {
+    if (signal.aborted) {
+      throw signal.reason;
+    }
+    let onAbort: (() => void) | null = null;
+    const aborted = new Promise<never>((_, reject) => {
+      onAbort = () => reject(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      return await Promise.race([operation, aborted]);
+    } finally {
+      if (onAbort) {
+        signal.removeEventListener("abort", onAbort);
+      }
     }
   }
 

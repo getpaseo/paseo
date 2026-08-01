@@ -58,6 +58,7 @@ export class PiCliRuntime implements PiRuntime {
   }
 
   async startSession(input: PiStartSessionInput): Promise<PiRuntimeSession> {
+    input.signal?.throwIfAborted();
     const launch = buildPiLaunch({
       command: this.command,
       runtimeSettings: this.options.runtimeSettings,
@@ -75,6 +76,7 @@ export class PiCliRuntime implements PiRuntime {
       launch: processLaunch,
       logger: this.options.logger,
       diagnosticName: "Pi RPC",
+      signal: input.signal,
       ...(spawn ? { spawn: () => spawn(launch) } : {}),
     };
     const process = new JsonlRpcProcess(processOptions);

@@ -82,6 +82,9 @@ describe("bootstrap provider availability", () => {
       appBaseUrl: "https://app.paseo.sh",
       openai: undefined,
       speech: undefined,
+      providerOverrides: {
+        codex: { command: [path.join(root, "missing-codex")] },
+      },
     };
     const processFailures: Error[] = [];
     const onUnhandledRejection = (reason: unknown) => {

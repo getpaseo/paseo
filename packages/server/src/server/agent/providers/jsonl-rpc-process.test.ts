@@ -2,7 +2,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import pino from "pino";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import { JsonlRpcProcess, type JsonlRpcExit } from "./jsonl-rpc-process.js";
 
@@ -62,6 +62,7 @@ interface InMemoryChildProcess extends ChildProcessWithoutNullStreams {
 
 interface StartProcessOptions {
   child?: ChildProcessWithoutNullStreams;
+  signal?: AbortSignal;
 }
 
 function createInMemoryChildProcess(): InMemoryChildProcess {
@@ -89,6 +90,7 @@ function startProcess(options: StartProcessOptions = {}): JsonlRpcProcess {
       env: { JSONL_RPC_TEST_VALUE: "resolved-env" },
     },
     logger: pino({ level: "silent" }),
+    signal: options.signal,
     ...(child ? { spawn: () => child } : {}),
   });
 }
@@ -103,6 +105,41 @@ function nextExit(transport: JsonlRpcProcess): Promise<JsonlRpcExit> {
 }
 
 describe("JsonlRpcProcess", () => {
+  test("does not spawn when its launch signal is already canceled", () => {
+    const controller = new AbortController();
+    const spawn = vi.fn(() => createInMemoryChildProcess());
+    controller.abort(new Error("catalog canceled before spawn"));
+
+    expect(
+      () =>
+        new JsonlRpcProcess({
+          launch: {
+            command: "pi",
+            args: [],
+            cwd: process.cwd(),
+          },
+          logger: pino({ level: "silent" }),
+          signal: controller.signal,
+          spawn,
+        }),
+    ).toThrow("catalog canceled before spawn");
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  test("cancellation rejects an in-flight request and closes the process once", async () => {
+    const controller = new AbortController();
+    const child = createInMemoryChildProcess();
+    const kill = vi.spyOn(child, "kill");
+    const transport = startProcess({ child, signal: controller.signal });
+    const request = transport.request({ type: "hang" }, null);
+
+    controller.abort(new Error("catalog canceled in request"));
+
+    await expect(request).rejects.toThrow("catalog canceled in request");
+    await transport.close();
+    expect(kill).toHaveBeenCalledTimes(1);
+  });
+
   test("spawns a resolved command and correlates concurrent requests", async () => {
     const transport = startProcess();
 

@@ -29,6 +29,18 @@ const TEST_CAPABILITIES = {
 } as const;
 const TEST_REFRESH_TIMEOUT_MS = 120_000;
 
+function createDeferred<T>() {
+  let resolvePromise!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((fulfill) => {
+    resolvePromise = fulfill;
+  });
+  return { promise, resolve: resolvePromise };
+}
+
+function rejectWhenAborted(signal: AbortSignal, reject: (reason?: unknown) => void): void {
+  signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+}
+
 // Builds an AgentClient that can be injected via the public extraClients option.
 // extraClients is the only injection surface the manager exposes for tests.
 function createExtraClient(
@@ -1075,6 +1087,654 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
 });
 
 describe("ProviderSnapshotManager lifecycle", () => {
+  test("shutdown immediately demotes snapshots and rejects new provider probes", async () => {
+    const shutdownGate = createDeferred<void>();
+    const isAvailable = vi.fn(async () => true);
+    const fetchCatalog = vi.fn(async () => ({
+      models: [{ id: "codex-ready", name: "Codex Ready" }],
+      modes: [] as AgentMode[],
+    }));
+    const shutdown = vi.fn(async () => shutdownGate.promise);
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", { isAvailable, fetchCatalog, shutdown }),
+      },
+    });
+    let shutdownPromise: Promise<void> | undefined;
+
+    try {
+      const cwd = "/tmp/project";
+      await manager.listProviders({ cwd, providers: ["codex"], wait: true });
+      isAvailable.mockClear();
+      fetchCatalog.mockClear();
+
+      shutdownPromise = manager.shutdown();
+
+      expect(manager.getSnapshot(cwd).find((entry) => entry.provider === "codex")).toMatchObject({
+        status: "unavailable",
+        enabled: true,
+        error: "Provider runtime is shutting down",
+      });
+      expect(
+        manager.getSnapshot("/tmp/new-project").find((entry) => entry.provider === "codex"),
+      ).toMatchObject({
+        status: "unavailable",
+        enabled: true,
+        error: "Provider runtime is shutting down",
+      });
+      await expect(manager.refreshSnapshotForCwd({ cwd, providers: ["codex"] })).rejects.toThrow(
+        "Provider runtime is shutting down",
+      );
+      await expect(
+        manager.resolveCreateConfig({
+          cwd,
+          provider: "codex",
+          requestedMode: undefined,
+          featureValues: undefined,
+          parent: null,
+          unattended: false,
+        }),
+      ).rejects.toThrow("Provider runtime is shutting down");
+      expect(isAvailable).not.toHaveBeenCalled();
+      expect(fetchCatalog).not.toHaveBeenCalled();
+    } finally {
+      shutdownGate.resolve();
+      await shutdownPromise;
+      manager.destroy();
+    }
+  });
+
+  test("shutdown is idempotent and completed shutdown remains definitively unavailable", async () => {
+    const shutdown = vi.fn(async () => {});
+    const isAvailable = vi.fn(async () => true);
+    const fetchCatalog = vi.fn(async () => ({
+      models: [] as AgentModelDefinition[],
+      modes: [] as AgentMode[],
+    }));
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", { isAvailable, fetchCatalog, shutdown }),
+      },
+    });
+
+    try {
+      await Promise.all([manager.shutdown(), manager.shutdown()]);
+      isAvailable.mockClear();
+      fetchCatalog.mockClear();
+
+      const entries = await manager.listProviders({
+        cwd: "/tmp/project",
+        providers: ["codex"],
+        wait: true,
+      });
+
+      expect(shutdown).toHaveBeenCalledTimes(1);
+      expect(entries[0]).toMatchObject({
+        status: "unavailable",
+        enabled: true,
+        error: "Provider runtime has shut down",
+      });
+      expect(isAvailable).not.toHaveBeenCalled();
+      expect(fetchCatalog).not.toHaveBeenCalled();
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("shutdown prevents an in-flight availability probe from starting a catalog request", async () => {
+    const availabilityGate = createDeferred<boolean>();
+    const isAvailable = vi.fn(async () => availabilityGate.promise);
+    const fetchCatalog = vi.fn(async () => ({
+      models: [] as AgentModelDefinition[],
+      modes: [] as AgentMode[],
+    }));
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable,
+          fetchCatalog,
+          shutdown: vi.fn(async () => {}),
+        }),
+      },
+    });
+
+    try {
+      const refreshPromise = manager.refreshSnapshotForCwd({
+        cwd: "/tmp/project",
+        providers: ["codex"],
+      });
+      await vi.waitFor(() => expect(isAvailable).toHaveBeenCalledTimes(1));
+
+      const shutdownPromise = manager.shutdown();
+      await Promise.resolve();
+      expect(fetchCatalog).not.toHaveBeenCalled();
+      availabilityGate.resolve(true);
+      await shutdownPromise;
+      await refreshPromise;
+
+      expect(fetchCatalog).not.toHaveBeenCalled();
+      expect(
+        manager.getSnapshot("/tmp/project").find((entry) => entry.provider === "codex"),
+      ).toMatchObject({
+        status: "unavailable",
+        error: "Provider runtime has shut down",
+      });
+    } finally {
+      availabilityGate.resolve(false);
+      manager.destroy();
+    }
+  });
+
+  test("shutdown cancels an in-flight catalog before its provider request survives", async () => {
+    const catalogEntered = createDeferred<void>();
+    const catalogGate = createDeferred<void>();
+    const providerRequest = vi.fn();
+    const fetchCatalog = vi.fn(async (options: FetchCatalogOptions) => {
+      catalogEntered.resolve();
+      await catalogGate.promise;
+      if (options.signal?.aborted) {
+        throw options.signal.reason;
+      }
+      providerRequest();
+      return {
+        models: [] as AgentModelDefinition[],
+        modes: [] as AgentMode[],
+      };
+    });
+    const shutdown = vi.fn(async () => {});
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: vi.fn(async () => true),
+          fetchCatalog,
+          shutdown,
+        }),
+      },
+    });
+
+    try {
+      const refreshPromise = manager.refreshSnapshotForCwd({
+        cwd: "/tmp/project",
+        providers: ["codex"],
+      });
+      await catalogEntered.promise;
+
+      const shutdownPromise = manager.shutdown();
+      await Promise.resolve();
+      expect(shutdown).not.toHaveBeenCalled();
+      catalogGate.resolve();
+      await shutdownPromise;
+      await refreshPromise;
+
+      expect(shutdown).toHaveBeenCalledTimes(1);
+      expect(providerRequest).not.toHaveBeenCalled();
+      expect(
+        manager.getSnapshot("/tmp/project").find((entry) => entry.provider === "codex"),
+      ).toMatchObject({
+        status: "unavailable",
+        error: "Provider runtime has shut down",
+      });
+    } finally {
+      catalogGate.resolve();
+      manager.destroy();
+    }
+  });
+
+  test("catalog timeout aborts the probe but retains client ownership until the probe settles", async () => {
+    const catalogEntered = createDeferred<void>();
+    const catalogGate = createDeferred<void>();
+    let catalogSignal: AbortSignal | undefined;
+    const shutdown = vi.fn(async () => {});
+    const fetchCatalog = vi.fn(async (options: FetchCatalogOptions) => {
+      catalogSignal = options.signal;
+      catalogEntered.resolve();
+      await catalogGate.promise;
+      throw options.signal?.reason;
+    });
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      refreshTimeoutMs: 1,
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: vi.fn(async () => true),
+          fetchCatalog,
+          shutdown,
+        }),
+      },
+    });
+
+    try {
+      const refresh = manager.refreshSnapshotForCwd({
+        cwd: "/tmp/project",
+        providers: ["codex"],
+      });
+      await catalogEntered.promise;
+      await refresh;
+
+      expect(catalogSignal?.aborted).toBe(true);
+      const shutdownPromise = manager.shutdown();
+      await Promise.resolve();
+      expect(shutdown).not.toHaveBeenCalled();
+
+      catalogGate.resolve();
+      await shutdownPromise;
+
+      expect(shutdown).toHaveBeenCalledTimes(1);
+    } finally {
+      catalogGate.resolve();
+      manager.destroy();
+    }
+  });
+
+  test("availability timeout retains client ownership until the probe settles", async () => {
+    const availabilityEntered = createDeferred<void>();
+    const availabilityGate = createDeferred<boolean>();
+    const shutdown = vi.fn(async () => {});
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      refreshTimeoutMs: 1,
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: vi.fn(async () => {
+            availabilityEntered.resolve();
+            return await availabilityGate.promise;
+          }),
+          shutdown,
+        }),
+      },
+    });
+
+    try {
+      const refresh = manager.refreshSnapshotForCwd({
+        cwd: "/tmp/project",
+        providers: ["codex"],
+      });
+      await availabilityEntered.promise;
+      await refresh;
+
+      const shutdownPromise = manager.shutdown();
+      await Promise.resolve();
+      expect(shutdown).not.toHaveBeenCalled();
+
+      availabilityGate.resolve(false);
+      await shutdownPromise;
+
+      expect(shutdown).toHaveBeenCalledTimes(1);
+    } finally {
+      availabilityGate.resolve(false);
+      manager.destroy();
+    }
+  });
+
+  test("shutdown terminalizes a never-settling availability probe within the drain bound", async () => {
+    vi.useFakeTimers();
+    const availabilityEntered = createDeferred<void>();
+    const shutdown = vi.fn(async () => {});
+    const laterCleanup = vi.fn();
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      refreshTimeoutMs: 1,
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: vi.fn(async () => {
+            availabilityEntered.resolve();
+            return await new Promise<boolean>(() => {});
+          }),
+          shutdown,
+        }),
+      },
+    });
+
+    try {
+      const refresh = manager.refreshSnapshotForCwd({
+        cwd: "/tmp/project",
+        providers: ["codex"],
+      });
+      await availabilityEntered.promise;
+      await vi.advanceTimersByTimeAsync(1);
+      await refresh;
+
+      const shutdownAndLaterCleanup = manager.shutdown().then(laterCleanup);
+      await vi.advanceTimersByTimeAsync(14_999);
+      expect(shutdown).not.toHaveBeenCalled();
+      expect(laterCleanup).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      await shutdownAndLaterCleanup;
+
+      expect(shutdown).toHaveBeenCalledTimes(1);
+      expect(laterCleanup).toHaveBeenCalledTimes(1);
+      expect(
+        manager.getSnapshot("/tmp/project").find((entry) => entry.provider === "codex"),
+      ).toMatchObject({
+        status: "unavailable",
+        error: "Provider runtime has shut down",
+      });
+    } finally {
+      manager.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  test("shutdown terminalizes a never-settling catalog probe within the drain bound", async () => {
+    vi.useFakeTimers();
+    const catalogEntered = createDeferred<void>();
+    const shutdown = vi.fn(async () => {});
+    const laterCleanup = vi.fn();
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      refreshTimeoutMs: 1,
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: vi.fn(async () => true),
+          fetchCatalog: vi.fn(async () => {
+            catalogEntered.resolve();
+            return await new Promise<{ models: AgentModelDefinition[]; modes: AgentMode[] }>(
+              () => {},
+            );
+          }),
+          shutdown,
+        }),
+      },
+    });
+
+    try {
+      const refresh = manager.refreshSnapshotForCwd({
+        cwd: "/tmp/project",
+        providers: ["codex"],
+      });
+      await catalogEntered.promise;
+      await vi.advanceTimersByTimeAsync(1);
+      await refresh;
+
+      const shutdownAndLaterCleanup = manager.shutdown().then(laterCleanup);
+      await vi.advanceTimersByTimeAsync(14_999);
+      expect(shutdown).not.toHaveBeenCalled();
+      expect(laterCleanup).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      await shutdownAndLaterCleanup;
+
+      expect(shutdown).toHaveBeenCalledTimes(1);
+      expect(laterCleanup).toHaveBeenCalledTimes(1);
+      expect(
+        manager.getSnapshot("/tmp/project").find((entry) => entry.provider === "codex"),
+      ).toMatchObject({
+        status: "unavailable",
+        error: "Provider runtime has shut down",
+      });
+    } finally {
+      manager.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  test("overlapping forced loads remain tracked and every generation aborts on shutdown", async () => {
+    const catalogSignals: AbortSignal[] = [];
+    const fetchCatalog = vi.fn(
+      async (options: FetchCatalogOptions) =>
+        await new Promise<{ models: AgentModelDefinition[]; modes: AgentMode[] }>(
+          (_resolve, reject) => {
+            const signal = options.signal!;
+            catalogSignals.push(signal);
+            rejectWhenAborted(signal, reject);
+          },
+        ),
+    );
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: vi.fn(async () => true),
+          fetchCatalog,
+          shutdown: vi.fn(async () => {}),
+        }),
+      },
+    });
+
+    try {
+      const first = manager.refreshSnapshotForCwd({ cwd: "/tmp/project", providers: ["codex"] });
+      await vi.waitFor(() => expect(catalogSignals).toHaveLength(1));
+      const second = manager.refreshSnapshotForCwd({ cwd: "/tmp/project", providers: ["codex"] });
+      await vi.waitFor(() => expect(catalogSignals).toHaveLength(2));
+      const third = manager.refreshSnapshotForCwd({ cwd: "/tmp/project", providers: ["codex"] });
+      await vi.waitFor(() => expect(catalogSignals).toHaveLength(3));
+
+      await manager.shutdown();
+      await Promise.all([first, second, third]);
+
+      expect(catalogSignals.map((signal) => signal.aborted)).toEqual([true, true, true]);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("provider config replacement aborts an active load before deleting its cache key", async () => {
+    let catalogSignal: AbortSignal | undefined;
+    const fetchCatalog = vi.fn(
+      async (options: FetchCatalogOptions) =>
+        await new Promise<{ models: AgentModelDefinition[]; modes: AgentMode[] }>(
+          (_resolve, reject) => {
+            catalogSignal = options.signal;
+            if (options.signal) rejectWhenAborted(options.signal, reject);
+          },
+        ),
+    );
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: vi.fn(async () => true),
+          fetchCatalog,
+        }),
+      },
+    });
+
+    try {
+      const refresh = manager.refreshSnapshotForCwd({
+        cwd: "/tmp/project",
+        providers: ["codex"],
+      });
+      await vi.waitFor(() => expect(catalogSignal).toBeDefined());
+
+      manager.applyMutableProviderConfig({ codex: { enabled: false } });
+      await refresh;
+
+      expect(catalogSignal?.aborted).toBe(true);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("settings cache refresh aborts active loads before clearing cached provider keys", async () => {
+    let firstSignal: AbortSignal | undefined;
+    let callCount = 0;
+    const fetchCatalog = vi.fn(async (options: FetchCatalogOptions) => {
+      callCount += 1;
+      if (callCount > 1) {
+        return { models: [] as AgentModelDefinition[], modes: [] as AgentMode[] };
+      }
+      return await new Promise<{ models: AgentModelDefinition[]; modes: AgentMode[] }>(
+        (_resolve, reject) => {
+          firstSignal = options.signal;
+          if (options.signal) rejectWhenAborted(options.signal, reject);
+        },
+      );
+    });
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: vi.fn(async () => true),
+          fetchCatalog,
+        }),
+      },
+    });
+
+    try {
+      const workspaceRefresh = manager.refreshSnapshotForCwd({
+        cwd: "/tmp/project",
+        providers: ["codex"],
+      });
+      await vi.waitFor(() => expect(firstSignal).toBeDefined());
+
+      await manager.refreshSettingsSnapshot({ providers: ["codex"] });
+      await workspaceRefresh;
+
+      expect(firstSignal?.aborted).toBe(true);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("throwing shutdown observers cannot skip provider client cleanup", async () => {
+    const shutdown = vi.fn(async () => {});
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", { shutdown }),
+      },
+    });
+
+    try {
+      manager.getSnapshot("/tmp/project");
+      manager.on("change", () => {
+        throw new Error("observer failed");
+      });
+
+      await expect(manager.shutdown()).resolves.toBeUndefined();
+
+      expect(shutdown).toHaveBeenCalledTimes(1);
+      expect(
+        manager.getSnapshot("/tmp/project").find((entry) => entry.provider === "codex"),
+      ).toMatchObject({
+        status: "unavailable",
+        error: "Provider runtime has shut down",
+      });
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("reentrant repeated shutdown shares the published cleanup operation", async () => {
+    const shutdownGate = createDeferred<void>();
+    const shutdown = vi.fn(async () => shutdownGate.promise);
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", { shutdown }),
+      },
+    });
+    const reentrantShutdowns: Promise<void>[] = [];
+
+    try {
+      manager.getSnapshot("/tmp/project");
+      manager.on("change", () => {
+        reentrantShutdowns.push(manager.shutdown());
+      });
+
+      const firstShutdown = manager.shutdown();
+      const repeatedShutdown = manager.shutdown();
+      await vi.waitFor(() => expect(shutdown).toHaveBeenCalledTimes(1));
+      shutdownGate.resolve();
+      await Promise.all([firstShutdown, repeatedShutdown, ...reentrantShutdowns]);
+
+      expect(shutdown).toHaveBeenCalledTimes(1);
+      expect(reentrantShutdowns.length).toBeGreaterThan(0);
+      expect(
+        manager.getSnapshot("/tmp/project").find((entry) => entry.provider === "codex"),
+      ).toMatchObject({
+        status: "unavailable",
+        error: "Provider runtime has shut down",
+      });
+    } finally {
+      shutdownGate.resolve();
+      manager.destroy();
+    }
+  });
+
   test("on/off attaches and detaches change listeners", () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),

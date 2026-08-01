@@ -49,6 +49,7 @@ export interface JsonlRpcProcessOptions {
   logger: Logger;
   diagnosticName?: string;
   spawn?: (launch: JsonlRpcLaunch) => ChildProcessWithoutNullStreams;
+  signal?: AbortSignal;
 }
 
 function assertChildWithPipes(
@@ -78,11 +79,29 @@ export class JsonlRpcProcess {
   private stderrBuffer = "";
   private nextRequestId = 1;
   private disposed = false;
+  private closePromise: Promise<void> | null = null;
   private stdoutBuffer = "";
+  private readonly abortListener: (() => void) | null;
 
   constructor(private readonly options: JsonlRpcProcessOptions) {
+    options.signal?.throwIfAborted();
     this.diagnosticName = options.diagnosticName ?? "JSONL RPC";
     this.child = (options.spawn ?? spawnJsonlRpcProcess)(options.launch);
+    this.abortListener = options.signal
+      ? () => {
+          const reason =
+            options.signal?.reason instanceof Error
+              ? options.signal.reason
+              : new Error(`${this.diagnosticName} process was canceled`);
+          void this.close(reason);
+        }
+      : null;
+    if (options.signal && this.abortListener) {
+      options.signal.addEventListener("abort", this.abortListener, { once: true });
+      if (options.signal.aborted) {
+        this.abortListener();
+      }
+    }
     this.child.stdout.on("data", (chunk) => {
       this.handleStdoutChunk(chunk.toString());
     });
@@ -96,6 +115,7 @@ export class JsonlRpcProcess {
       this.failAll(error instanceof Error ? error : new Error(String(error)));
     });
     this.child.on("exit", (code, signal) => {
+      this.detachAbortListener();
       const error = new Error(
         `${this.diagnosticName} process exited with code ${code ?? "null"} and signal ${signal ?? "null"}\n${this.stderrBuffer}`.trim(),
       );
@@ -162,8 +182,15 @@ export class JsonlRpcProcess {
     this.child.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
-  async close(error = new Error(`${this.diagnosticName} process is closed`)): Promise<void> {
-    if (this.disposed) return;
+  close(error = new Error(`${this.diagnosticName} process is closed`)): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    if (this.disposed) return Promise.resolve();
+    this.closePromise = this.closeProcess(error);
+    return this.closePromise;
+  }
+
+  private async closeProcess(error: Error): Promise<void> {
+    this.detachAbortListener();
     this.failAll(error);
     try {
       this.child.stdin.end();
@@ -200,6 +227,12 @@ export class JsonlRpcProcess {
       if (line.trim()) {
         this.handleLine(line);
       }
+    }
+  }
+
+  private detachAbortListener(): void {
+    if (this.abortListener && this.options.signal) {
+      this.options.signal.removeEventListener("abort", this.abortListener);
     }
   }
 

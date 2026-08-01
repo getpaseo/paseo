@@ -206,6 +206,53 @@ describe("managed process registry", () => {
     expect(await restartedRegistry.list()).toHaveLength(1);
   });
 
+  test("keeps a helper record when termination cannot prove process exit", async () => {
+    tempHome = await mkdtemp(path.join(tmpdir(), "paseo-managed-processes-"));
+    const processTable = new FakeProcessTable([
+      {
+        pid: 4106,
+        commandLine: "opencode serve --port 4106",
+        startedAt: "process-start-token",
+      },
+    ]);
+    const registry = createManagedProcessRegistry({
+      paseoHome: tempHome,
+      processTable,
+      terminateProcess: async () => "terminated",
+      logger: createTestLogger(),
+    });
+    await registry.record({
+      owner: { provider: "opencode", kind: "helper-server" },
+      pid: 4106,
+      command: "opencode",
+      args: ["serve", "--port", "4106"],
+      metadata: { port: 4106 },
+    });
+    const restartedRegistry = createManagedProcessRegistry({
+      paseoHome: tempHome,
+      processTable,
+      terminateProcess: async () => "kill-timeout",
+      logger: createTestLogger(),
+    });
+
+    const result = await restartedRegistry.reapStale();
+
+    expect(result).toMatchObject({
+      checked: 1,
+      dead: 0,
+      mismatched: 0,
+      removed: 0,
+      terminated: 0,
+    });
+    expect(result.errors).toEqual([
+      {
+        id: expect.any(String),
+        message: "Managed helper process did not report exit after SIGKILL",
+      },
+    ]);
+    expect(await restartedRegistry.list()).toHaveLength(1);
+  });
+
   test("does not terminate a reused PID whose command line only mentions the tokens", async () => {
     tempHome = await mkdtemp(path.join(tmpdir(), "paseo-managed-processes-"));
     const terminator = new FakeProcessTerminator();

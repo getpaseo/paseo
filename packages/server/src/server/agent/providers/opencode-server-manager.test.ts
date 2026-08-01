@@ -26,7 +26,59 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+function createDeferred<T>() {
+  let resolvePromise!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return { promise, resolve: resolvePromise };
+}
+
 describe("OpenCodeServerManager generations", () => {
+  test("same-settings client leases keep a shared manager alive across replacement", async () => {
+    const runtime = new FakeOpenCodeServerRuntime([4091, 4092], { autoAnnounce: true });
+    const options = {
+      managedProcesses: runtime.managedProcesses,
+      portAllocator: runtime.allocatePort,
+      resolveCommandPrefix: runtime.resolveCommandPrefix,
+      spawnServerProcess: runtime.spawnServerProcess,
+      terminateProcess: runtime.terminateProcess,
+    };
+    const first = OpenCodeServerManager.acquireShared(createTestLogger(), undefined, options);
+    const replacement = OpenCodeServerManager.acquireShared(createTestLogger(), undefined, options);
+    const firstAcquisition = await first.manager.acquireCurrent();
+
+    await first.release();
+    const replacementAcquisition = await replacement.manager.acquireCurrent();
+
+    expect(replacement.manager).toBe(first.manager);
+    expect(runtime.launchedPorts).toEqual([4091]);
+
+    await firstAcquisition.release();
+    await replacement.release();
+    expect(runtime.terminatedPorts).toEqual([]);
+
+    await replacementAcquisition.release();
+    expect(runtime.terminatedPorts).toEqual([4091]);
+
+    const fresh = OpenCodeServerManager.acquireShared(createTestLogger(), undefined, options);
+    expect(fresh.manager).not.toBe(first.manager);
+    await fresh.release();
+  });
+
+  test("different runtime settings receive independent shared managers", async () => {
+    const first = OpenCodeServerManager.acquireShared(createTestLogger(), {
+      env: { OPENCODE_CONFIG: "first" },
+    });
+    const second = OpenCodeServerManager.acquireShared(createTestLogger(), {
+      env: { OPENCODE_CONFIG: "second" },
+    });
+
+    expect(second.manager).not.toBe(first.manager);
+
+    await Promise.all([first.release(), second.release()]);
+  });
+
   test("uses an explicit base environment for the server process", async () => {
     const baseEnv = { HOME: "/isolated/home", PATH: "/isolated/bin" };
     const { manager, runtime } = createTestManager([4091], { baseEnv });
@@ -142,7 +194,7 @@ describe("OpenCodeServerManager generations", () => {
     const { manager, runtime } = createTestManager([4472], { autoAnnounce: false });
 
     const acquisition = manager.acquireCurrent();
-    await runtime.settle();
+    await vi.waitFor(() => expect(runtime.launchedPorts).toContain(4472));
 
     await manager.shutdown();
 
@@ -151,16 +203,147 @@ describe("OpenCodeServerManager generations", () => {
     expect(await runtime.managedProcesses.list()).toEqual([]);
   });
 
+  test("shutdown before spawn cancels a pending server generation", async () => {
+    const portGate = createDeferred<number>();
+    const portAllocationStarted = createDeferred<void>();
+    const runtime = new FakeOpenCodeServerRuntime([4477], { autoAnnounce: true });
+    const manager = new OpenCodeServerManager({
+      logger: createTestLogger(),
+      managedProcesses: runtime.managedProcesses,
+      portAllocator: async () => {
+        portAllocationStarted.resolve();
+        return portGate.promise;
+      },
+      resolveCommandPrefix: runtime.resolveCommandPrefix,
+      spawnServerProcess: runtime.spawnServerProcess,
+      terminateProcess: runtime.terminateProcess,
+    });
+
+    const acquisition = manager.acquireCurrent();
+    const acquisitionFailure = expect(acquisition).rejects.toThrow(
+      "OpenCode server manager has shut down",
+    );
+    await portAllocationStarted.promise;
+
+    await manager.shutdown();
+    await acquisitionFailure;
+    portGate.resolve(4477);
+
+    expect(runtime.spawnCalls).toEqual([]);
+    expect(runtime.terminatedPorts).toEqual([]);
+    expect(await runtime.managedProcesses.list()).toEqual([]);
+  });
+
+  test("caller cancellation stops waiting for a shared server before it is acquired", async () => {
+    const portGate = createDeferred<number>();
+    const portAllocationStarted = createDeferred<void>();
+    const runtime = new FakeOpenCodeServerRuntime([4477], { autoAnnounce: true });
+    const manager = new OpenCodeServerManager({
+      logger: createTestLogger(),
+      managedProcesses: runtime.managedProcesses,
+      portAllocator: async () => {
+        portAllocationStarted.resolve();
+        return portGate.promise;
+      },
+      resolveCommandPrefix: runtime.resolveCommandPrefix,
+      spawnServerProcess: runtime.spawnServerProcess,
+      terminateProcess: runtime.terminateProcess,
+    });
+    const controller = new AbortController();
+    const acquisition = manager.acquireCurrent(controller.signal);
+    await portAllocationStarted.promise;
+
+    controller.abort(new Error("catalog canceled"));
+
+    await expect(acquisition).rejects.toThrow("catalog canceled");
+    expect(runtime.spawnCalls).toEqual([]);
+
+    portGate.resolve(4477);
+    await vi.waitFor(() => expect(runtime.launchedPorts).toEqual([4477]));
+    await manager.shutdown();
+    expect(runtime.terminatedPorts).toEqual([4477]);
+  });
+
+  test("a server generation that finishes after caller cancellation remains available", async () => {
+    const portGate = createDeferred<number>();
+    const portAllocationStarted = createDeferred<void>();
+    const runtime = new FakeOpenCodeServerRuntime([4476], { autoAnnounce: true });
+    const manager = new OpenCodeServerManager({
+      logger: createTestLogger(),
+      managedProcesses: runtime.managedProcesses,
+      portAllocator: async () => {
+        portAllocationStarted.resolve();
+        return portGate.promise;
+      },
+      resolveCommandPrefix: runtime.resolveCommandPrefix,
+      spawnServerProcess: runtime.spawnServerProcess,
+      terminateProcess: runtime.terminateProcess,
+    });
+    const controller = new AbortController();
+    const canceledAcquisition = manager.acquireCurrent(controller.signal);
+    await portAllocationStarted.promise;
+
+    controller.abort(new Error("startup canceled"));
+    await expect(canceledAcquisition).rejects.toThrow("startup canceled");
+    portGate.resolve(4476);
+    await vi.waitFor(() => expect(runtime.launchedPorts).toEqual([4476]));
+
+    const retainedAcquisition = await manager.acquireCurrent();
+
+    expect(retainedAcquisition.server.url).toBe("http://127.0.0.1:4476");
+    expect(runtime.launchedPorts).toEqual([4476]);
+    await retainedAcquisition.release();
+    expect(runtime.terminatedPorts).toEqual([4476]);
+  });
+
+  test("shutdown while acquireNew rotation is pending prevents the replacement spawn", async () => {
+    const runtime = new FakeOpenCodeServerRuntime([4478, 4479], { autoAnnounce: true });
+    const replacementPrefixGate = createDeferred<{ command: string; args: string[] }>();
+    const replacementPrefixStarted = createDeferred<void>();
+    let prefixCalls = 0;
+    const manager = new OpenCodeServerManager({
+      logger: createTestLogger(),
+      managedProcesses: runtime.managedProcesses,
+      portAllocator: runtime.allocatePort,
+      resolveCommandPrefix: async () => {
+        prefixCalls += 1;
+        if (prefixCalls === 1) {
+          return { command: "opencode", args: [] };
+        }
+        replacementPrefixStarted.resolve();
+        return replacementPrefixGate.promise;
+      },
+      spawnServerProcess: runtime.spawnServerProcess,
+      terminateProcess: runtime.terminateProcess,
+    });
+
+    const current = await manager.acquireCurrent();
+    const rotation = manager.acquireNew();
+    const rotationFailure = expect(rotation).rejects.toThrow(
+      "OpenCode server manager has shut down",
+    );
+    await replacementPrefixStarted.promise;
+
+    await manager.shutdown();
+    await rotationFailure;
+    replacementPrefixGate.resolve({ command: "opencode", args: [] });
+    await current.release();
+
+    expect(runtime.launchedPorts).toEqual([4478]);
+    expect(runtime.terminatedPorts).toEqual([4478]);
+    expect(await runtime.managedProcesses.list()).toEqual([]);
+  });
+
   test("dedicated server startup is protected from retired cleanup", async () => {
     const { manager, runtime } = createTestManager([4473, 4474], { autoAnnounce: false });
 
     const currentStart = manager.acquireCurrent();
-    await runtime.settle();
+    await vi.waitFor(() => expect(runtime.launchedPorts).toContain(4473));
     runtime.processForPort(4473).announceListening();
     const currentAcquisition = await currentStart;
 
     const dedicatedStart = manager.acquireDedicated({ TEST_ENV: "custom" });
-    await runtime.settle();
+    await vi.waitFor(() => expect(runtime.launchedPorts).toContain(4474));
 
     await currentAcquisition.release();
     expect(runtime.terminatedPorts).toEqual([4473]);
@@ -172,6 +355,35 @@ describe("OpenCodeServerManager generations", () => {
 
     await dedicatedAcquisition.release();
     expect(runtime.terminatedPorts).toEqual([4473, 4474]);
+  });
+
+  test("concurrent shutdown and final release share one server termination", async () => {
+    const terminationGate = createDeferred<void>();
+    const runtime = new FakeOpenCodeServerRuntime([4475], { autoAnnounce: true });
+    const terminateProcess = vi.fn<ProcessTerminator>(async (target, options) => {
+      const result = await runtime.terminateProcess(target, options);
+      await terminationGate.promise;
+      return result;
+    });
+    const manager = new OpenCodeServerManager({
+      logger: createTestLogger(),
+      managedProcesses: runtime.managedProcesses,
+      portAllocator: runtime.allocatePort,
+      resolveCommandPrefix: runtime.resolveCommandPrefix,
+      spawnServerProcess: runtime.spawnServerProcess,
+      terminateProcess,
+    });
+    const acquisition = await manager.acquireCurrent();
+
+    const shutdown = manager.shutdown();
+    const release = acquisition.release();
+    await vi.waitFor(() => expect(terminateProcess).toHaveBeenCalledTimes(1));
+    terminationGate.resolve();
+    await Promise.all([shutdown, release]);
+
+    expect(terminateProcess).toHaveBeenCalledTimes(1);
+    expect(runtime.terminatedPorts).toEqual([4475]);
+    expect(await runtime.managedProcesses.list()).toEqual([]);
   });
 
   test("acquireExisting keeps a retired dedicated server alive until every reference releases", async () => {
@@ -228,6 +440,23 @@ describe("OpenCodeServerManager generations", () => {
 
     await next.release();
   });
+
+  test("acquireCurrent reserves the selected generation before a concurrent final release", async () => {
+    const { manager, runtime } = createTestManager([4553, 4554]);
+
+    const first = await manager.acquireCurrent();
+    const nextPromise = manager.acquireCurrent();
+    const release = first.release();
+    const next = await nextPromise;
+
+    await release;
+    expect(next.server.url).toBe("http://127.0.0.1:4553");
+    expect(runtime.launchedPorts).toEqual([4553]);
+    expect(runtime.terminatedPorts).toEqual([]);
+
+    await next.release();
+    expect(runtime.terminatedPorts).toEqual([4553]);
+  });
 });
 
 describe("OpenCodeServerManager managed process ledger", () => {
@@ -264,6 +493,31 @@ describe("OpenCodeServerManager managed process ledger", () => {
 
     expect(runtime.terminatedPorts).toEqual([4602]);
     expect(await runtime.managedProcesses.list()).toEqual([]);
+  });
+
+  test("retains the helper record when shutdown cannot prove process exit", async () => {
+    const runtime = new FakeOpenCodeServerRuntime([4604], { autoAnnounce: true });
+    const terminateProcess = vi.fn<ProcessTerminator>(async () => "kill-timeout");
+    const manager = new OpenCodeServerManager({
+      logger: createTestLogger(),
+      managedProcesses: runtime.managedProcesses,
+      portAllocator: runtime.allocatePort,
+      resolveCommandPrefix: runtime.resolveCommandPrefix,
+      spawnServerProcess: runtime.spawnServerProcess,
+      terminateProcess,
+    });
+
+    await manager.acquireCurrent();
+    await manager.shutdown();
+
+    expect(terminateProcess).toHaveBeenCalledTimes(1);
+    expect(await runtime.managedProcesses.list()).toEqual([
+      expect.objectContaining({
+        owner: { provider: "opencode", kind: "helper-server" },
+        pid: 14604,
+        metadata: { port: 4604 },
+      }),
+    ]);
   });
 
   test("starts helper server from opencode-home", async () => {

@@ -297,7 +297,7 @@ class FileBackedManagedProcessRegistry implements ManagedProcessRegistry {
           continue;
         }
 
-        await this.terminateProcess(createPidTarget(entry.record.pid), {
+        const termination = await this.terminateProcess(createPidTarget(entry.record.pid), {
           gracefulTimeoutMs: MANAGED_PROCESS_GRACEFUL_SHUTDOWN_TIMEOUT_MS,
           forceTimeoutMs: MANAGED_PROCESS_FORCE_SHUTDOWN_TIMEOUT_MS,
           onForceSignal: () => {
@@ -311,6 +311,15 @@ class FileBackedManagedProcessRegistry implements ManagedProcessRegistry {
             );
           },
         });
+        if (termination === "kill-timeout") {
+          const message = "Managed helper process did not report exit after SIGKILL";
+          result.errors.push({ id: entry.record.id, message });
+          this.logger.warn(
+            { id: entry.record.id, pid: entry.record.pid, owner: entry.record.owner },
+            `${message}; leaving record for next reconcile`,
+          );
+          continue;
+        }
         await fs.rm(entry.path, { force: true });
         result.terminated += 1;
         result.removed += 1;

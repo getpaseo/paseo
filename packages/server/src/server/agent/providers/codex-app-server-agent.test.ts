@@ -74,6 +74,14 @@ const ONE_BY_ONE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X1r0AAAAASUVORK5CYII=";
 const CODEX_PROVIDER = "codex";
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSessionConfig {
   return {
     provider: CODEX_PROVIDER,
@@ -905,6 +913,178 @@ describe("Codex app-server provider", () => {
     });
     appServer.assertNoErrors();
     await session.close();
+  });
+
+  test("disposes an app-server child that resolves after startup cancellation", async () => {
+    const appServer = createFakeCodexAppServer();
+    const childGate = deferred<ChildProcessWithoutNullStreams>();
+    const spawnStarted = deferred<void>();
+    const provider = new CodexAppServerAgentClient(createTestLogger());
+    const internals = castInternals<{
+      goalsEnabledPromise: Promise<boolean> | null;
+      autoReviewEnabledPromise: Promise<boolean> | null;
+      spawnAppServer: () => Promise<ChildProcessWithoutNullStreams>;
+    }>(provider);
+    internals.goalsEnabledPromise = Promise.resolve(false);
+    internals.autoReviewEnabledPromise = Promise.resolve(false);
+    internals.spawnAppServer = async () => {
+      spawnStarted.resolve();
+      return await childGate.promise;
+    };
+    const killSpy = vi.spyOn(appServer.child, "kill");
+    const controller = new AbortController();
+    const creation = provider.createSession(createConfig(), undefined, {
+      signal: controller.signal,
+    });
+    await spawnStarted.promise;
+
+    controller.abort(new Error("Codex startup canceled"));
+
+    await expect(creation).rejects.toThrow("Codex startup canceled");
+    childGate.resolve(appServer.child);
+    await vi.waitFor(() => expect(killSpy).toHaveBeenCalledWith("SIGTERM"));
+  });
+
+  test("catalog cancellation preserves its reason and waits for the real app-server child to exit", async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), "codex-catalog-cancel-"));
+    const fixturePath = path.join(tempDir, "hanging-codex-app-server.cjs");
+    const pidPath = path.join(tempDir, "pid");
+    const readyPath = path.join(tempDir, "ready");
+    writeFileSync(
+      fixturePath,
+      `
+const fs = require("node:fs");
+
+const pidPath = process.argv[2];
+const readyPath = process.argv[3];
+let buffer = "";
+
+fs.writeFileSync(pidPath, String(process.pid));
+
+function respond(id, result) {
+  process.stdout.write(JSON.stringify({ id, result }) + "\\n");
+}
+
+process.stdin.on("data", (chunk) => {
+  buffer += chunk.toString();
+  for (;;) {
+    const newlineIndex = buffer.indexOf("\\n");
+    if (newlineIndex === -1) break;
+    const line = buffer.slice(0, newlineIndex).trim();
+    buffer = buffer.slice(newlineIndex + 1);
+    if (!line) continue;
+    const message = JSON.parse(line);
+    if (typeof message.id !== "number") continue;
+    if (message.method === "initialize") {
+      respond(message.id, {});
+      continue;
+    }
+    if (message.method === "model/list") {
+      respond(message.id, { data: [{ id: "gpt-test", isDefault: true }] });
+      continue;
+    }
+    if (message.method === "getUserSavedConfig") {
+      fs.writeFileSync(readyPath, "ready");
+      continue;
+    }
+    respond(message.id, {});
+  }
+});
+`,
+    );
+
+    const provider = new CodexAppServerAgentClient(createTestLogger(), {
+      command: {
+        mode: "replace",
+        argv: [process.execPath, fixturePath, pidPath, readyPath],
+      },
+    });
+    const controller = new AbortController();
+    const abortReason = new Error("Codex catalog canceled during config read");
+
+    try {
+      const catalog = provider.fetchCatalog({
+        scope: "workspace",
+        cwd: tempDir,
+        force: false,
+        signal: controller.signal,
+      });
+      await vi.waitFor(() => expect(existsSync(readyPath)).toBe(true), {
+        timeout: 5_000,
+        interval: 20,
+      });
+      const pid = Number(readFileSync(pidPath, "utf8"));
+
+      controller.abort(abortReason);
+
+      await expect(catalog).rejects.toBe(abortReason);
+      expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("shutdown cancels and drains an active catalog app-server", async () => {
+    const configReadStarted = deferred<void>();
+    const appServer = createFakeCodexAppServer({
+      initialize: () => ({}),
+      "model/list": () => ({ data: [{ id: "gpt-test", isDefault: true }] }),
+      getUserSavedConfig: () => {
+        configReadStarted.resolve();
+        return new Promise<never>(() => {});
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    const internals = castInternals<{
+      resolveAutoReviewEnabled: (signal?: AbortSignal) => Promise<boolean>;
+    }>(provider);
+    internals.resolveAutoReviewEnabled = async () => false;
+    const killSpy = vi.spyOn(appServer.child, "kill");
+    const catalog = provider.fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/project",
+      force: false,
+    });
+    await configReadStarted.promise;
+
+    const shutdown = provider.shutdown();
+
+    await expect(catalog).rejects.toThrow("Codex app-server client is shutting down");
+    await shutdown;
+    expect(killSpy).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  test("does not spawn a catalog app-server after launch resolution is canceled", async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), "codex-catalog-late-spawn-"));
+    const markerPath = path.join(tempDir, "spawned");
+    const launchGate = deferred<{ command: string; args: string[] }>();
+    const provider = new CodexAppServerAgentClient(createTestLogger());
+    const internals = castInternals<{
+      resolveLaunchPrefix: () => Promise<{ command: string; args: string[] }>;
+      spawnAppServer: (
+        launchEnv?: Record<string, string>,
+        options?: { goalsEnabled?: boolean; agentId?: string },
+        signal?: AbortSignal,
+      ) => Promise<ChildProcessWithoutNullStreams>;
+    }>(provider);
+    internals.resolveLaunchPrefix = async () => await launchGate.promise;
+    const controller = new AbortController();
+    const cancellation = new Error("cancel before Codex catalog spawn");
+
+    try {
+      const spawning = internals.spawnAppServer(undefined, undefined, controller.signal);
+      controller.abort(cancellation);
+      launchGate.resolve({
+        command: process.execPath,
+        args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "yes")`],
+      });
+
+      await expect(spawning).rejects.toBe(cancellation);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(existsSync(markerPath)).toBe(false);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   test("loads archived Codex history without resuming the native thread", async () => {

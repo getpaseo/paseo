@@ -29,6 +29,7 @@ import type {
   AgentPersistenceHandle,
   AgentRunOptions,
   AgentRunResult,
+  AgentResumeSessionOptions,
   AgentSession,
   AgentSessionConfig,
   AgentSlashCommand,
@@ -37,6 +38,7 @@ import type {
   ImportProviderSessionInput,
   ImportProviderSessionContext,
   ResolveAgentDefaultModeInput,
+  FetchCatalogOptions,
 } from "./agent-sdk-types.js";
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
@@ -183,8 +185,14 @@ class HeldAgentCreationClient extends TestAgentClient {
   private readonly creationStarted = deferred<void>();
   private readonly creationAllowed = deferred<void>();
   createdSessionClosed = false;
+  creationSignal: AbortSignal | undefined;
 
-  override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+  override async createSession(
+    config: AgentSessionConfig,
+    _launchContext?: AgentLaunchContext,
+    options?: AgentCreateSessionOptions,
+  ): Promise<AgentSession> {
+    this.creationSignal = options?.signal;
     const recordSessionClosed = () => {
       this.createdSessionClosed = true;
     };
@@ -240,6 +248,31 @@ class HeldAgentCreationAndCloseClient extends TestAgentClient {
 
   finishClosing(): void {
     this.closeAllowed.resolve();
+  }
+}
+
+class AbortAwareImportClient extends TestAgentClient {
+  private readonly importStarted = deferred<void>();
+  importSignal: AbortSignal | undefined;
+
+  async importSession(
+    _input: ImportProviderSessionInput,
+    context: ImportProviderSessionContext,
+  ): Promise<never> {
+    this.importSignal = context.signal;
+    this.importStarted.resolve();
+    const signal = context.signal;
+    if (!signal) {
+      throw new Error("Expected import cancellation signal");
+    }
+    signal.throwIfAborted();
+    return await new Promise<never>((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  }
+
+  waitForImportToStart(): Promise<void> {
+    return this.importStarted.promise;
   }
 }
 
@@ -740,8 +773,10 @@ test("does not register a session that finishes starting after shutdown begins",
     { workspaceId: undefined },
   );
   await client.waitForCreationToStart();
+  expect(client.creationSignal?.aborted).toBe(false);
 
   manager.prepareForShutdown();
+  expect(client.creationSignal?.aborted).toBe(true);
   client.finishCreating();
 
   await expect(creation).rejects.toThrow("Agent manager is shutting down");
@@ -791,6 +826,38 @@ test("flush waits for rejected session cleanup that starts after shutdown", asyn
   expect(manager.listAgents()).toEqual([]);
 });
 
+test("shutdown cancels an in-flight provider session import", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-shutdown-import-test-"));
+  const client = new AbortAwareImportClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000095",
+  });
+
+  try {
+    const importing = manager.importProviderSession({
+      provider: "codex",
+      providerHandleId: "thread-importing",
+      cwd: workdir,
+      workspaceId: "workspace-importing",
+    });
+    await client.waitForImportToStart();
+    expect(client.importSignal?.aborted).toBe(false);
+
+    manager.prepareForShutdown();
+
+    await expect(importing).rejects.toBe(client.importSignal?.reason);
+    await expect(manager.flushForShutdown()).resolves.toBeUndefined();
+    expect(client.importSignal?.aborted).toBe(true);
+    expect(manager.listAgents()).toEqual([]);
+  } finally {
+    manager.prepareForShutdown();
+    await manager.flushForShutdown().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("does not persist an initializing session after shutdown closes it", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-shutdown-register-test-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
@@ -802,6 +869,15 @@ test("does not persist an initializing session after shutdown closes it", async 
     logger,
     idFactory: () => agentId,
   });
+  const publishedLifecycles: string[] = [];
+  manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state" && event.agent.id === agentId) {
+        publishedLifecycles.push(event.agent.lifecycle);
+      }
+    },
+    { replayState: false },
+  );
 
   try {
     const creation = manager.createAgent(
@@ -825,6 +901,7 @@ test("does not persist an initializing session after shutdown closes it", async 
       agents: [],
       record: { lastStatus: "closed" },
     });
+    expect(publishedLifecycles).toEqual(["closed"]);
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }
@@ -928,6 +1005,124 @@ test("reload closes both sessions when the closed snapshot cannot be persisted",
   }
 });
 
+test("concurrent reload swaps follow completion order and close the displaced replacement", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-concurrent-reload-test-"));
+  const agentId = "00000000-0000-4000-8000-000000000094";
+  const resumeGates: Array<Deferred<AgentSession>> = [];
+  let originalCloseCount = 0;
+  let firstReplacementCloseCount = 0;
+  let secondReplacementCloseCount = 0;
+  const config: AgentSessionConfig = { provider: "codex", cwd: workdir };
+  const firstReplacement = new (class extends TestAgentSession {
+    override async close(): Promise<void> {
+      firstReplacementCloseCount += 1;
+    }
+  })(config);
+  const secondReplacement = new (class extends TestAgentSession {
+    override async close(): Promise<void> {
+      secondReplacementCloseCount += 1;
+    }
+  })(config);
+  const client = new (class extends TestAgentClient {
+    override async createSession(sessionConfig: AgentSessionConfig): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override async close(): Promise<void> {
+          originalCloseCount += 1;
+        }
+      })(sessionConfig);
+    }
+
+    override async resumeSession(): Promise<AgentSession> {
+      const gate = deferred<AgentSession>();
+      resumeGates.push(gate);
+      return await gate.promise;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    await manager.createAgent(config, undefined, { workspaceId: undefined });
+    const firstReload = manager.reloadAgentSession(agentId);
+    await vi.waitFor(() => expect(resumeGates).toHaveLength(1));
+    const secondReload = manager.reloadAgentSession(agentId);
+    await vi.waitFor(() => expect(resumeGates).toHaveLength(2));
+
+    resumeGates[1]?.resolve(secondReplacement);
+    await secondReload;
+    resumeGates[0]?.resolve(firstReplacement);
+    await firstReload;
+
+    expect(manager.listAgents()[0]?.session).toBe(firstReplacement);
+    expect({ originalCloseCount, firstReplacementCloseCount, secondReplacementCloseCount }).toEqual(
+      {
+        originalCloseCount: 1,
+        firstReplacementCloseCount: 0,
+        secondReplacementCloseCount: 1,
+      },
+    );
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("close waits for an active reload swap and closes its replacement", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-close-test-"));
+  const agentId = "00000000-0000-4000-8000-000000000095";
+  const originalCloseStarted = deferred<void>();
+  const allowOriginalClose = deferred<void>();
+  const resumeGate = deferred<AgentSession>();
+  let replacementCloseCount = 0;
+  const config: AgentSessionConfig = { provider: "codex", cwd: workdir };
+  const replacement = new (class extends TestAgentSession {
+    override async close(): Promise<void> {
+      replacementCloseCount += 1;
+    }
+  })(config);
+  const client = new (class extends TestAgentClient {
+    override async createSession(sessionConfig: AgentSessionConfig): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override async close(): Promise<void> {
+          originalCloseStarted.resolve();
+          await allowOriginalClose.promise;
+        }
+      })(sessionConfig);
+    }
+
+    override async resumeSession(): Promise<AgentSession> {
+      return await resumeGate.promise;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    await manager.createAgent(config, undefined, { workspaceId: undefined });
+    const reload = manager.reloadAgentSession(agentId);
+    resumeGate.resolve(replacement);
+    await originalCloseStarted.promise;
+
+    const close = manager.closeAgent(agentId);
+    allowOriginalClose.resolve();
+    await reload;
+    await close;
+
+    expect(manager.listAgents()).toEqual([]);
+    expect(replacementCloseCount).toBe(1);
+  } finally {
+    allowOriginalClose.resolve();
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("normalizeConfig injects the provider default model when omitted", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
@@ -952,6 +1147,44 @@ test("normalizeConfig injects the provider default model when omitted", async ()
 
   expect(snapshot.config.model).toBe("gpt-5.4");
   expect(snapshot.config.modeId).toBe("auto-review");
+});
+
+test("shutdown aborts a hung default-model lookup so registration flush completes", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-default-model-shutdown-"));
+  const catalogStarted = deferred<void>();
+  class HungCatalogClient extends TestAgentClient {
+    catalogSignal: AbortSignal | undefined;
+
+    override async fetchCatalog(options: FetchCatalogOptions) {
+      this.catalogSignal = options.signal;
+      catalogStarted.resolve();
+      return await new Promise<never>(() => {});
+    }
+  }
+  const client = new HungCatalogClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000102",
+  });
+
+  try {
+    const creation = manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await catalogStarted.promise;
+
+    manager.prepareForShutdown();
+
+    await expect(creation).rejects.toBeInstanceOf(AgentManagerShuttingDownError);
+    await expect(manager.flushForShutdown()).resolves.toBeUndefined();
+    expect(client.catalogSignal?.aborted).toBe(true);
+    expect(client.createdConfigs).toEqual([]);
+  } finally {
+    manager.prepareForShutdown();
+    await manager.flushForShutdown().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("normalizeConfig injects Claude's automatic approval default when omitted", async () => {
@@ -1459,6 +1692,7 @@ test("reloadAgentSession completes when the previous session close hangs", async
       cwd: workdir,
     });
     resumeSessionCalls = 0;
+    resumeSignal: AbortSignal | undefined;
 
     override async createSession(): Promise<AgentSession> {
       return this.firstSession;
@@ -1467,8 +1701,11 @@ test("reloadAgentSession completes when the previous session close hangs", async
     override async resumeSession(
       _handle: AgentPersistenceHandle,
       config?: Partial<AgentSessionConfig>,
+      _launchContext?: AgentLaunchContext,
+      options?: AgentResumeSessionOptions,
     ): Promise<AgentSession> {
       this.resumeSessionCalls += 1;
+      this.resumeSignal = options?.signal;
       return new TestAgentSession({
         provider: "codex",
         cwd: config?.cwd ?? workdir,
@@ -1502,6 +1739,9 @@ test("reloadAgentSession completes when the previous session close hangs", async
     expect(reloaded.id).toBe(snapshot.id);
     expect(client.firstSession.closeCalled).toBe(true);
     expect(client.resumeSessionCalls).toBe(1);
+    expect(client.resumeSignal?.aborted).toBe(false);
+    manager.prepareForShutdown();
+    expect(client.resumeSignal?.aborted).toBe(true);
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }
@@ -1925,7 +2165,10 @@ test("createAgent passes persistSession to provider create options", async () =>
     { persistSession: false, workspaceId: undefined },
   );
 
-  expect(client.lastCreateOptions).toEqual({ persistSession: false });
+  expect(client.lastCreateOptions).toEqual({
+    persistSession: false,
+    signal: expect.any(AbortSignal),
+  });
 
   rmSync(workdir, { recursive: true, force: true });
 });
