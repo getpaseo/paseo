@@ -3423,6 +3423,8 @@ export class Session {
       }
       await this.agentManager.hydrateTimelineFromProvider(agentId, {
         broadcast: true,
+        // An explicit refresh must surface provider-history failures even when
+        // ensureAgentLoaded already attempted the best-effort initial hydration.
         force: true,
       });
       await this.agentUpdates.forwardLiveAgent(snapshot);

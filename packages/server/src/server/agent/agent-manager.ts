@@ -360,6 +360,7 @@ interface ActiveHistoryHydration {
     provider: AgentProvider;
     event: ProviderSubagentInputEvent;
   }>;
+  admissionTerminalProviderSubagents: ProviderSubagentDescriptor[];
 }
 
 interface BufferedHistoryHydrationOperation {
@@ -2024,8 +2025,8 @@ export class AgentManager {
       // Persist timeline items so they show up in fetchAgentTimeline; broadcast
       // for live subscribers. Other event types are broadcast only.
       if (event.type === "timeline") {
-        this.touchUpdatedAt(agent);
         void this.runOrBufferTimelineWriter(agent.id, async () => {
+          this.touchUpdatedAt(agent);
           const row = this.recordTimeline(
             agent.id,
             event.item,
@@ -2036,6 +2037,11 @@ export class AgentManager {
             epoch: this.timelineStore.getEpoch(agent.id),
             timestamp: row.timestamp,
           });
+        }).catch((err) => {
+          this.logger.error(
+            { err, agentId: agent.id, itemType: event.item.type },
+            "Failed to persist out-of-band timeline item",
+          );
         });
         return;
       }
@@ -2059,9 +2065,9 @@ export class AgentManager {
   async appendTimelineItem(agentId: string, item: AgentTimelineItem): Promise<void> {
     const agent = this.requireAgent(agentId);
     item = limitAgentTimelineItemContent(item);
-    this.touchUpdatedAt(agent);
     await this.runOrBufferTimelineWriter(agentId, async () => {
-      const turnId = agent.materialProgress.acceptedTurnId ?? undefined;
+      this.touchUpdatedAt(agent);
+      const turnId = agent.activeTurnId ?? agent.materialProgress.acceptedTurnId ?? undefined;
       const row = this.recordTimeline(agentId, item, { turnId });
       this.dispatchStream(
         agentId,
@@ -2077,8 +2083,8 @@ export class AgentManager {
           timestamp: row.timestamp,
         },
       );
+      await this.persistSnapshot(agent);
     });
-    await this.persistSnapshot(agent);
   }
 
   async emitLiveTimelineItem(agentId: string, item: AgentTimelineItem): Promise<void> {
@@ -2185,6 +2191,7 @@ export class AgentManager {
             stagedSubmittedPromptEcho?.item.type === "user_message"
               ? stagedSubmittedPromptEcho.item.messageId
               : undefined,
+          turnId,
         });
       }
       for (const stagedEvent of pendingRun.stagedEvents.splice(0)) {
@@ -3341,16 +3348,18 @@ export class AgentManager {
           { err, agentId, eventType: event.type },
           "Failed to process session event",
         );
+      })
+      .finally(() => {
+        const tokens = this.sessionEventAdmissionTokens.get(agentId);
+        tokens?.delete(admissionToken);
+        if (tokens?.size === 0) {
+          this.sessionEventAdmissionTokens.delete(agentId);
+        }
       });
 
     this.sessionEventTails.set(agentId, next);
     this.trackBackgroundTask(next);
     void next.finally(() => {
-      const tokens = this.sessionEventAdmissionTokens.get(agentId);
-      tokens?.delete(admissionToken);
-      if (tokens?.size === 0) {
-        this.sessionEventAdmissionTokens.delete(agentId);
-      }
       if (this.sessionEventTails.get(agentId) === next) {
         this.sessionEventTails.delete(agentId);
       }
@@ -3612,6 +3621,11 @@ export class AgentManager {
       activeHydration,
       incomingProviderSubagentHistory,
     );
+    const retainedTerminalProviderSubagentEvents =
+      this.getRetainedAdmissionTerminalProviderSubagentEvents(
+        activeHydration.admissionTerminalProviderSubagents,
+        incomingProviderSubagentHistory,
+      );
     let epoch: string;
     try {
       epoch = await this.replaceCommittedTimeline(agent.id, replacementRows);
@@ -3639,6 +3653,7 @@ export class AgentManager {
     this.replaceProviderSubagentHistory(
       agent.id,
       providerSubagentEvents,
+      retainedTerminalProviderSubagentEvents,
       carriedProviderSubagentEvents,
       broadcast,
     );
@@ -3662,6 +3677,10 @@ export class AgentManager {
   private replaceProviderSubagentHistory(
     agentId: string,
     providerSubagentEvents: readonly Extract<AgentStreamEvent, { type: "provider_subagent" }>[],
+    retainedProviderSubagentEvents: readonly {
+      provider: AgentProvider;
+      event: ProviderSubagentInputEvent;
+    }[],
     carriedProviderSubagentEvents: readonly {
       provider: AgentProvider;
       event: ProviderSubagentInputEvent;
@@ -3675,6 +3694,12 @@ export class AgentManager {
     }
     for (const event of providerSubagentEvents) {
       const update = this.providerSubagents.apply(agentId, event.provider, event.event);
+      if (broadcast) {
+        this.dispatch({ type: "provider_subagent", event: update });
+      }
+    }
+    for (const retained of retainedProviderSubagentEvents) {
+      const update = this.providerSubagents.apply(agentId, retained.provider, retained.event);
       if (broadcast) {
         this.dispatch({ type: "provider_subagent", event: update });
       }
@@ -3866,14 +3891,24 @@ export class AgentManager {
     });
 
     const priorHistoryItems = activeHydration.lastProviderHistoryItems;
-    const hasPriorHistoryPrefix =
-      priorHistoryItems.length <= historyRows.length &&
-      priorHistoryItems.every((item, index) => isDeepStrictEqual(item, historyRows[index]?.item));
-    let historySearchIndex = hasPriorHistoryPrefix ? priorHistoryItems.length : 0;
+    const reservedHistoryIndexes = new Set<number>();
+    for (const priorItem of priorHistoryItems) {
+      const matchingHistoryIndex = historyRows.findIndex(
+        (row, index) =>
+          !reservedHistoryIndexes.has(index) && isDeepStrictEqual(row.item, priorItem),
+      );
+      if (matchingHistoryIndex >= 0) {
+        reservedHistoryIndexes.add(matchingHistoryIndex);
+      }
+    }
+    let historySearchIndex = 0;
     const unmatchedCarriedRows: AgentTimelineRow[] = [];
     for (const carriedRow of candidateCarriedRows) {
       const matchingHistoryIndex = historyRows.findIndex(
-        (row, index) => index >= historySearchIndex && isDeepStrictEqual(row.item, carriedRow.item),
+        (row, index) =>
+          index >= historySearchIndex &&
+          !reservedHistoryIndexes.has(index) &&
+          isDeepStrictEqual(row.item, carriedRow.item),
       );
       if (matchingHistoryIndex < 0) {
         unmatchedCarriedRows.push(carriedRow);
@@ -3929,6 +3964,55 @@ export class AgentManager {
     return unmatchedCarriedEvents;
   }
 
+  private getRetainedAdmissionTerminalProviderSubagentEvents(
+    admissionTerminalSubagents: readonly ProviderSubagentDescriptor[],
+    incomingHistory: readonly {
+      provider: AgentProvider;
+      event: ProviderSubagentInputEvent;
+    }[],
+  ): Array<{ provider: AgentProvider; event: ProviderSubagentInputEvent }> {
+    const projectedHistory = new ProviderSubagentStore();
+    const latestIncomingUpsertTimestamps = new Map<string, string | undefined>();
+    for (const incoming of incomingHistory) {
+      projectedHistory.apply("history", incoming.provider, incoming.event);
+      if (incoming.event.type === "upsert") {
+        latestIncomingUpsertTimestamps.set(incoming.event.id, incoming.event.timestamp);
+      } else if (incoming.event.type === "remove") {
+        latestIncomingUpsertTimestamps.delete(incoming.event.id);
+      }
+    }
+
+    const retainedEvents: Array<{
+      provider: AgentProvider;
+      event: ProviderSubagentInputEvent;
+    }> = [];
+    for (const retained of admissionTerminalSubagents) {
+      const incoming = projectedHistory.get("history", retained.id);
+      const incomingTimestamp = latestIncomingUpsertTimestamps.get(retained.id);
+      if (
+        !incoming ||
+        (incomingTimestamp !== undefined && retained.updatedAt <= incomingTimestamp)
+      ) {
+        continue;
+      }
+      retainedEvents.push({
+        provider: retained.provider,
+        event: {
+          type: "upsert",
+          id: retained.id,
+          title: retained.title,
+          description: retained.description,
+          status: retained.status,
+          toolCallId: retained.toolCallId,
+          cwd: retained.cwd,
+          subtitle: retained.subtitle,
+          timestamp: retained.updatedAt,
+        },
+      });
+    }
+    return retainedEvents;
+  }
+
   private beginOrContinueHistoryHydration(agentId: string): symbol {
     const activeHydration = this.activeHistoryHydrations.get(agentId);
     if (activeHydration) {
@@ -3948,6 +4032,10 @@ export class AgentManager {
       lastProviderHistoryItems: [],
       carriedProviderSubagentEvents: [],
       lastProviderSubagentHistory: [],
+      admissionTerminalProviderSubagents: this.providerSubagents
+        .list(agentId)
+        .filter((subagent) => subagent.status !== "running")
+        .map((subagent) => structuredClone(subagent)),
     });
     return token;
   }
@@ -4484,7 +4572,7 @@ export class AgentManager {
     eventTurnId: string | undefined;
     isForegroundEvent: boolean;
     terminalDisposition: ActiveTurnTerminalDisposition;
-    options: { fromHistory?: boolean } | undefined;
+    options: HandleStreamEventOptions | undefined;
   }): Promise<void> {
     const { agent, event, eventTurnId, isForegroundEvent, terminalDisposition, options } = params;
     this.logger.warn(
@@ -4529,11 +4617,7 @@ export class AgentManager {
     eventTurnId: string | undefined;
     isForegroundEvent: boolean;
     terminalDisposition: ActiveTurnTerminalDisposition;
-    options:
-      | {
-          fromHistory?: boolean;
-        }
-      | undefined;
+    options: HandleStreamEventOptions | undefined;
   }): void {
     const { agent, event, eventTurnId, isForegroundEvent, terminalDisposition, options } = params;
     this.logger.trace(
@@ -4614,7 +4698,7 @@ export class AgentManager {
   private onStreamPermissionResolved(params: {
     agent: ActiveManagedAgent;
     event: Extract<AgentStreamEvent, { type: "permission_resolved" }>;
-    options: { fromHistory?: boolean } | undefined;
+    options: HandleStreamEventOptions | undefined;
     flags: StreamEventFlags;
   }): void {
     const { agent, event, options, flags } = params;
@@ -4630,7 +4714,7 @@ export class AgentManager {
   private resolvePendingPermissionsForAgent(
     agent: ActiveManagedAgent,
     provider: AgentProvider,
-    options: { fromHistory?: boolean } | undefined,
+    options: HandleStreamEventOptions | undefined,
     message: string,
   ): void {
     for (const [requestId] of agent.pendingPermissions) {
@@ -4688,7 +4772,7 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     prompt: AgentPromptInput,
     clientMessageId: string,
-    options?: { messageId?: string; providerMessageId?: string },
+    options?: { messageId?: string; providerMessageId?: string; turnId?: string },
   ): Promise<void> {
     await this.runOrBufferTimelineWriter(agent.id, async () => {
       if (this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId)) {
@@ -4702,7 +4786,8 @@ export class AgentManager {
         clientMessageId,
         ...(options?.messageId ? { messageId: options.messageId } : {}),
       };
-      const turnId = agent.activeTurnId ?? agent.materialProgress.acceptedTurnId ?? undefined;
+      const turnId =
+        options?.turnId ?? agent.activeTurnId ?? agent.materialProgress.acceptedTurnId ?? undefined;
       this.recordAndDispatchTimelineItem(agent.id, item, agent.provider, turnId, options);
     });
   }
