@@ -97,6 +97,19 @@ export class AgentManagerShuttingDownError extends Error {
   }
 }
 
+export class AgentRuntimeCapacityError extends Error {
+  constructor(
+    public readonly limit: number,
+    public readonly live: number,
+    public readonly reserved: number,
+  ) {
+    super(
+      `Host agent runtime capacity reached (limit: ${limit}, live: ${live}, starting: ${reserved}). Close an agent or increase daemon.maxActiveAgentRuntimes.`,
+    );
+    this.name = "AgentRuntimeCapacityError";
+  }
+}
+
 export class AgentRunCancellationError extends Error {
   constructor(agentId: string, action: "reload" | "replace" | "rewind" | "stop") {
     super(
@@ -114,6 +127,18 @@ export type AgentRunCancellationResult =
 interface PreparedSessionConfig {
   storedConfig: AgentSessionConfig;
   launchConfig: AgentSessionConfig;
+}
+
+interface AgentRuntimeReservation {
+  transferToLiveRuntime(): void;
+  release(): void;
+}
+
+function resolveMaxActiveAgentRuntimes(value: number | undefined): number | null {
+  if (value !== undefined && (!Number.isInteger(value) || value <= 0)) {
+    throw new RangeError("maxActiveAgentRuntimes must be a positive integer");
+  }
+  return value ?? null;
 }
 
 interface NormalizeConfigOptions {
@@ -253,6 +278,7 @@ export interface AgentManagerOptions {
   paseoToolCatalogFactory?: PaseoToolCatalogFactory;
   appendSystemPrompt?: string;
   agentStreamCoalesceWindowMs?: number;
+  maxActiveAgentRuntimes?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
   logger: Logger;
 }
@@ -583,6 +609,9 @@ export class AgentManager {
   private onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
+  private readonly maxActiveAgentRuntimes: number | null;
+  private readonly liveAgentRuntimeSessions = new Set<AgentSession>();
+  private activeAgentRuntimeReservations = 0;
   private acceptingAgentRegistrations = true;
 
   constructor(options: AgentManagerOptions) {
@@ -596,6 +625,7 @@ export class AgentManager {
     this.configurePaseoTools(options);
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
+    this.maxActiveAgentRuntimes = resolveMaxActiveAgentRuntimes(options.maxActiveAgentRuntimes);
     this.rescueTimeouts = {
       reloadSessionCloseMs:
         options.rescueTimeouts?.reloadSessionCloseMs ?? RELOAD_SESSION_CLOSE_TIMEOUT_MS,
@@ -1003,13 +1033,16 @@ export class AgentManager {
     agentId: string | undefined,
     options: CreateAgentOptions,
   ): Promise<ManagedAgent> {
-    return this.trackAgentRegistrationOperation(this.createAgentInternal(config, agentId, options));
+    return this.trackAgentRegistrationOperation((reservation) =>
+      this.createAgentInternal(config, agentId, options, reservation),
+    );
   }
 
   private async createAgentInternal(
     config: AgentSessionConfig,
     agentId: string | undefined,
     options: CreateAgentOptions,
+    reservation: AgentRuntimeReservation,
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
@@ -1032,6 +1065,7 @@ export class AgentManager {
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const createOptions = this.buildCreateSessionOptions(options);
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
+    this.trackStartedAgentRuntime(session, reservation);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       labels: options.labels,
       initialTitle: options.initialTitle,
@@ -1064,12 +1098,20 @@ export class AgentManager {
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
-    return this.trackAgentRegistrationOperation(
-      this.resumeAgentFromPersistenceInternal(handle, overrides, agentId, options, resumeOptions),
+    return this.trackAgentRegistrationOperation((reservation) =>
+      this.resumeAgentFromPersistenceInternal(
+        reservation,
+        handle,
+        overrides,
+        agentId,
+        options,
+        resumeOptions,
+      ),
     );
   }
 
   private async resumeAgentFromPersistenceInternal(
+    reservation: AgentRuntimeReservation,
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     agentId?: string,
@@ -1114,6 +1156,7 @@ export class AgentManager {
       launchContext,
       resumeOptions,
     );
+    this.trackStartedAgentRuntime(session, reservation);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       ...options,
       persistence: handle,
@@ -1127,16 +1170,21 @@ export class AgentManager {
     workspaceId: string;
     labels?: Record<string, string>;
   }): Promise<ManagedAgent> {
-    return this.trackAgentRegistrationOperation(this.importProviderSessionInternal(input));
+    return this.trackAgentRegistrationOperation((reservation) =>
+      this.importProviderSessionInternal(input, reservation),
+    );
   }
 
-  private async importProviderSessionInternal(input: {
-    provider: AgentProvider;
-    providerHandleId: string;
-    cwd: string;
-    workspaceId: string;
-    labels?: Record<string, string>;
-  }): Promise<ManagedAgent> {
+  private async importProviderSessionInternal(
+    input: {
+      provider: AgentProvider;
+      providerHandleId: string;
+      cwd: string;
+      workspaceId: string;
+      labels?: Record<string, string>;
+    },
+    reservation: AgentRuntimeReservation,
+  ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(this.idFactory(), "importProviderSession");
     this.requireEnabledProvider(input.provider);
@@ -1162,6 +1210,7 @@ export class AgentManager {
       },
       { config: providerLaunchConfig, storedConfig, launchContext },
     );
+    this.trackStartedAgentRuntime(imported.session, reservation);
     let handedToRegistration = false;
     try {
       const importedConfig = await this.normalizeConfig(
@@ -1204,12 +1253,13 @@ export class AgentManager {
     overrides?: Partial<AgentSessionConfig>,
     options?: { rehydrateFromDisk?: boolean },
   ): Promise<ManagedAgent> {
-    return this.trackAgentRegistrationOperation(
-      this.reloadAgentSessionInternal(agentId, overrides, options),
+    return this.trackAgentRegistrationOperation((reservation) =>
+      this.reloadAgentSessionInternal(reservation, agentId, overrides, options),
     );
   }
 
   private async reloadAgentSessionInternal(
+    reservation: AgentRuntimeReservation,
     agentId: string,
     overrides?: Partial<AgentSessionConfig>,
     options?: { rehydrateFromDisk?: boolean },
@@ -1240,6 +1290,7 @@ export class AgentManager {
     const session = handle
       ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
       : await client.createSession(providerLaunchConfig, launchContext);
+    this.trackStartedAgentRuntime(session, reservation);
 
     let handedToRegistration = false;
     try {
@@ -1287,7 +1338,7 @@ export class AgentManager {
   private async closeReloadedSession(session: AgentSession, agentId: string): Promise<void> {
     try {
       const result = await this.waitWithTimeout({
-        operation: session.close(),
+        operation: this.closeTrackedAgentRuntime(session),
         timeoutMs: this.rescueTimeouts.reloadSessionCloseMs,
         onLateError: (error) => {
           this.logger.warn(
@@ -1374,7 +1425,7 @@ export class AgentManager {
     const closedAgent = this.prepareAgentForClosure(agent, "agent closed");
     let closeError: unknown;
     try {
-      await agent.session.close();
+      await this.closeTrackedAgentRuntime(agent.session);
     } catch (error) {
       closeError = error;
     }
@@ -2659,29 +2710,32 @@ export class AgentManager {
     session: AgentSession,
     config: AgentSessionConfig,
     agentId: string,
-    options?: {
-      createdAt?: Date;
-      updatedAt?: Date;
-      lastUserMessageAt?: Date | null;
-      labels?: Record<string, string>;
-      timeline?: AgentTimelineItem[];
-      timelineRows?: AgentTimelineRow[];
-      timelineNextSeq?: number;
-      persistence?: AgentPersistenceHandle;
-      historyPrimed?: boolean;
-      lastUsage?: AgentUsage;
-      lastError?: string;
-      attention?: AttentionState;
-      initialTitle?: string | null;
-      publishWhenReady?: boolean;
-      workspaceId?: string;
-      owner?: AgentOwner;
-    },
+    options:
+      | {
+          createdAt?: Date;
+          updatedAt?: Date;
+          lastUserMessageAt?: Date | null;
+          labels?: Record<string, string>;
+          timeline?: AgentTimelineItem[];
+          timelineRows?: AgentTimelineRow[];
+          timelineNextSeq?: number;
+          persistence?: AgentPersistenceHandle;
+          historyPrimed?: boolean;
+          lastUsage?: AgentUsage;
+          lastError?: string;
+          attention?: AttentionState;
+          initialTitle?: string | null;
+          publishWhenReady?: boolean;
+          workspaceId?: string;
+          owner?: AgentOwner;
+        }
+      | undefined,
   ): Promise<ManagedAgent> {
     let registered = false;
+    let resolvedAgentId = agentId;
     try {
       this.assertAcceptingAgentRegistrations();
-      const resolvedAgentId = validateAgentId(agentId, "registerSession");
+      resolvedAgentId = validateAgentId(agentId, "registerSession");
       if (this.agents.has(resolvedAgentId)) {
         throw new Error(`Agent with id ${resolvedAgentId} already exists`);
       }
@@ -2732,7 +2786,11 @@ export class AgentManager {
       this.subscribeToSession(managed);
       return { ...managed };
     } catch (error) {
-      if (!registered) {
+      const installedAgent = this.agents.get(resolvedAgentId);
+      if (registered && installedAgent?.session === session) {
+        this.prepareAgentForClosure(installedAgent, "agent registration failed");
+        await this.closeUnregisteredSession(session);
+      } else if (!registered) {
         await this.closeUnregisteredSession(session);
       }
       throw error;
@@ -2753,7 +2811,7 @@ export class AgentManager {
 
   private async closeUnregisteredSession(session: AgentSession): Promise<void> {
     try {
-      await session.close();
+      await this.closeTrackedAgentRuntime(session);
     } catch (error) {
       this.logger.warn({ err: error }, "Failed to close unregistered agent session");
     }
@@ -3935,7 +3993,59 @@ export class AgentManager {
     });
   }
 
-  private trackAgentRegistrationOperation<T>(result: Promise<T>): Promise<T> {
+  private reserveAgentRuntime(): AgentRuntimeReservation {
+    const live = this.liveAgentRuntimeSessions.size;
+    const reserved = this.activeAgentRuntimeReservations;
+    if (this.maxActiveAgentRuntimes !== null && live + reserved >= this.maxActiveAgentRuntimes) {
+      throw new AgentRuntimeCapacityError(this.maxActiveAgentRuntimes, live, reserved);
+    }
+
+    this.activeAgentRuntimeReservations += 1;
+    let active = true;
+    const release = () => {
+      if (!active) {
+        return;
+      }
+      active = false;
+      this.activeAgentRuntimeReservations -= 1;
+    };
+    return {
+      transferToLiveRuntime: release,
+      release,
+    };
+  }
+
+  private trackStartedAgentRuntime(
+    session: AgentSession,
+    reservation: AgentRuntimeReservation,
+  ): void {
+    this.liveAgentRuntimeSessions.add(session);
+    reservation.transferToLiveRuntime();
+  }
+
+  private async closeTrackedAgentRuntime(session: AgentSession): Promise<void> {
+    await session.close();
+    this.liveAgentRuntimeSessions.delete(session);
+  }
+
+  private trackAgentRegistrationOperation<T>(
+    operation: (reservation: AgentRuntimeReservation) => Promise<T>,
+  ): Promise<T> {
+    let reservation: AgentRuntimeReservation;
+    try {
+      this.assertAcceptingAgentRegistrations();
+      reservation = this.reserveAgentRuntime();
+    } catch (error) {
+      return Promise.reject(error);
+    }
+
+    let result: Promise<T>;
+    try {
+      result = operation(reservation).finally(() => reservation.release());
+    } catch (error) {
+      reservation.release();
+      return Promise.reject(error);
+    }
     const settled = result.then(
       () => undefined,
       () => undefined,

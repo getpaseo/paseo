@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -24,6 +24,19 @@ describe("server config", () => {
 
     expect(desktopConfig.desktopManaged).toBe(true);
     expect(standaloneConfig.desktopManaged).toBe(false);
+  });
+
+  test("resolves the persisted host runtime limit and otherwise stays unbounded", async () => {
+    const configuredHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-capacity-"));
+    const defaultHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-capacity-default-"));
+    roots.push(configuredHome, defaultHome);
+    await writeFile(
+      path.join(configuredHome, "config.json"),
+      JSON.stringify({ version: 1, daemon: { maxActiveAgentRuntimes: 3 } }),
+    );
+
+    expect(loadConfig(configuredHome, { env: {} }).maxActiveAgentRuntimes).toBe(3);
+    expect(loadConfig(defaultHome, { env: {} }).maxActiveAgentRuntimes).toBeUndefined();
   });
 
   test("resolves bundled web UI path from source-tree modules", () => {

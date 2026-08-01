@@ -1,6 +1,8 @@
-import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+
+import Ajv, { type AnySchema } from "ajv";
 import { describe, expect, test } from "vitest";
 
 import {
@@ -43,6 +45,35 @@ describe("PersistedConfigSchema daemon append system prompt config", () => {
     });
 
     expect(parsed.daemon?.appendSystemPrompt).toBe("Prefer terse replies.");
+  });
+});
+
+describe("PersistedConfigSchema daemon runtime capacity", () => {
+  test("accepts an optional positive active runtime limit", () => {
+    const parsed = PersistedConfigSchema.parse({
+      daemon: { maxActiveAgentRuntimes: 4 },
+    });
+
+    expect(parsed.daemon?.maxActiveAgentRuntimes).toBe(4);
+  });
+
+  test.each([0, -1, 1.5])("rejects invalid active runtime limit %s", (limit) => {
+    expect(
+      PersistedConfigSchema.safeParse({ daemon: { maxActiveAgentRuntimes: limit } }).success,
+    ).toBe(false);
+  });
+
+  test("publishes the runtime limit in the strict JSON schema", () => {
+    const schema = JSON.parse(
+      readFileSync(
+        new URL("../../../website/public/schemas/paseo.config.v1.json", import.meta.url),
+        "utf8",
+      ),
+    ) as AnySchema;
+    const validate = new Ajv({ strict: false }).compile(schema);
+
+    expect(validate({ version: 1, daemon: { maxActiveAgentRuntimes: 2 } })).toBe(true);
+    expect(validate({ version: 1, daemon: { maxActiveAgentRuntimes: 0 } })).toBe(false);
   });
 });
 

@@ -80,3 +80,66 @@ test("loads archived records for history and active records with the interactive
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("rejects stored-agent recovery before provider startup when host runtime capacity is full", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "agent-loading-capacity-"));
+  const logger = createTestLogger();
+  const storage = new AgentStorage(path.join(root, "agents"), logger);
+  const baseClient = createTestAgentClients().codex;
+  if (!baseClient) {
+    throw new Error("expected Codex test client");
+  }
+
+  let resumeCalls = 0;
+  const client: AgentClient = {
+    provider: baseClient.provider,
+    capabilities: baseClient.capabilities,
+    createSession: async (
+      config: AgentSessionConfig,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> => await baseClient.createSession(config, launchContext),
+    resumeSession: async (
+      handle: AgentPersistenceHandle,
+      overrides?: Partial<AgentSessionConfig>,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> => {
+      resumeCalls += 1;
+      return await baseClient.resumeSession(handle, overrides, launchContext);
+    },
+    fetchCatalog: async (options) => await baseClient.fetchCatalog(options),
+    isAvailable: async () => await baseClient.isAvailable(),
+  };
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    maxActiveAgentRuntimes: 1,
+  });
+  const storedId = "00000000-0000-4000-8000-000000000303";
+  const liveId = "00000000-0000-4000-8000-000000000304";
+
+  try {
+    await manager.createAgent({ provider: "codex", cwd: root }, storedId, {
+      workspaceId: "workspace-stored",
+    });
+    await manager.closeAgent(storedId);
+    await manager.createAgent({ provider: "codex", cwd: root }, liveId, {
+      workspaceId: "workspace-live",
+    });
+
+    await expect(
+      ensureAgentLoaded(storedId, { agentManager: manager, agentStorage: storage, logger }),
+    ).rejects.toMatchObject({
+      name: "AgentRuntimeCapacityError",
+      limit: 1,
+      live: 1,
+      reserved: 0,
+    });
+    expect(resumeCalls).toBe(0);
+  } finally {
+    await manager.closeAgent(liveId).catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+  }
+});

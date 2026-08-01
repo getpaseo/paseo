@@ -387,6 +387,7 @@ export interface PaseoDaemonConfig {
   browserToolsEnabled?: boolean;
   autoArchiveAfterMerge?: boolean;
   enableTerminalAgentHooks?: boolean;
+  maxActiveAgentRuntimes?: number;
   appendSystemPrompt?: string;
   terminalProfiles?: TerminalProfile[];
   staticDir: string;
@@ -814,6 +815,7 @@ export async function createPaseoDaemon(
     clients: initialAgentManagerState.clients,
     providerDefinitions: initialAgentManagerState.providerDefinitions,
     registry: agentStorage,
+    maxActiveAgentRuntimes: config.maxActiveAgentRuntimes,
     appendSystemPrompt: config.appendSystemPrompt,
     onWorkspaceStateMayHaveChanged: ({ cwd }) => {
       workspaceGitService.onWorkspaceStateMayHaveChanged(cwd);

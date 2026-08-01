@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "patches": [
+    {
+      "id": "paseo-v025-host-runtime-capacity-admission",
+      "category": "stable-core-host-capacity",
+      "base": {
+        "tag": "v0.2.5",
+        "commit": "6fc491e6220fba6543bbbe4bf1b1f58cfe59228b"
+      },
+      "candidate": {
+        "branch": "review/v025-host-capacity-admission",
+        "commit": null
+      },
+      "sources": [
+        "docs/data-model.md",
+        "packages/server/src/server/agent/agent-manager.ts",
+        "packages/server/src/server/bootstrap.ts",
+        "packages/server/src/server/config.ts",
+        "packages/server/src/server/persisted-config.ts",
+        "packages/website/public/schemas/paseo.config.v1.json"
+      ],
+      "tests": [
+        "packages/server/src/server/agent/agent-loading.test.ts",
+        "packages/server/src/server/agent/agent-manager.test.ts",
+        "packages/server/src/server/config.test.ts",
+        "packages/server/src/server/persisted-config.test.ts"
+      ],
+      "testCases": [
+        "simultaneous creates reserve capacity atomically before provider startup",
+        "live provider runtimes continue to consume capacity after entering an error state",
+        "provider startup and registration failures release reserved capacity",
+        "registration failures close and remove partially installed provider runtimes",
+        "closing and timed-out reload runtimes stay charged until provider close succeeds",
+        "failed provider cleanup remains conservatively charged",
+        "resume, import, reload, and stored-agent recovery share one admission boundary",
+        "shutdown waits for in-flight registration and releases its reservation",
+        "the optional daemon limit accepts positive integers and remains unbounded when omitted",
+        "the generated public JSON schema accepts the positive runtime limit and rejects zero"
+      ],
+      "verification": {
+        "commit": null,
+        "completedAt": "2026-08-01T01:21:42Z",
+        "commands": [
+          "npx vitest run src/server/agent/agent-manager.test.ts src/server/agent/agent-loading.test.ts src/server/persisted-config.test.ts src/server/config.test.ts --bail=1",
+          "npm run build:server",
+          "npm run typecheck",
+          "npm run lint",
+          "npm run format",
+          "npm run format:check",
+          "git diff --check",
+          "jq empty patches/local-patches.json"
+        ],
+        "result": {
+          "focusedAndBroaderTests": "204 passed",
+          "publicConfigSchema": "validated",
+          "serverBuild": "passed",
+          "workspaceTypechecks": "passed",
+          "lint": "0 warnings, 0 errors",
+          "formatDiffAndManifest": "passed"
+        }
+      },
+      "upstreamable": true,
+      "upstreamCondition": "Submit while the stable daemon has no host-local atomic admission limit for live agent provider runtimes.",
+      "dropCondition": "Remove when the latest stable release provides equivalent configurable atomic admission across create, resume, import, reload, and recovery while counting actual live provider runtimes and cleaning up all startup failure paths.",
+      "deployedReceipt": null,
+      "deployedAt": null
+    }
+  ]
+}
