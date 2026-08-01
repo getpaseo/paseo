@@ -2635,6 +2635,52 @@ describe("ForgeService", () => {
     });
   });
 
+  it("keeps fresh merged PR state when supplemental facts hit a rate-limit cooldown", async () => {
+    const headSha = "1111111111111111111111111111111111111111";
+    const runner = createScriptedRunner([
+      currentPullRequestJson({ state: "OPEN", mergedAt: null }),
+      currentPullRequestGithubFactsJson(),
+      {
+        error: new GitHubCommandError({
+          args: ["api", "graphql"],
+          cwd: "/repo",
+          exitCode: 1,
+          stderr: "HTTP 429: API rate limit exceeded",
+          stdout: "HTTP/2.0 429 Too Many Requests\nRetry-After: 60\n\nrate limited",
+        }),
+      },
+      currentPullRequestJson({ state: "MERGED", mergedAt: "2026-07-17T12:00:00Z" }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 1_000,
+    });
+
+    const open = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feature/fork",
+      headSha,
+    });
+    await service.getPullRequestTimeline({
+      cwd: "/repo",
+      prNumber: 42,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+    });
+    const merged = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feature/fork",
+      headSha,
+      force: true,
+      reason: "test",
+    });
+
+    expect(open?.isMerged).toBe(false);
+    expect(merged).toMatchObject({ isMerged: true, state: "merged" });
+    expect(merged).not.toHaveProperty("forgeSpecific");
+  });
+
   it("keeps a merged PR only when headRefOid matches the checkout HEAD", async () => {
     const headSha = "2222222222222222222222222222222222222222";
     const runner = createRunner([

@@ -2171,7 +2171,7 @@ async function loadPullRequestGithubFacts(options: {
     const stdout = await options.run(args, { cwd: options.cwd });
     return parsePullRequestGithubFacts(stdout, { args, cwd: options.cwd });
   } catch (error) {
-    if (error instanceof GitHubCommandError) {
+    if (error instanceof GitHubCommandError || error instanceof GitHubRateLimitCooldownError) {
       return null;
     }
     throw error;

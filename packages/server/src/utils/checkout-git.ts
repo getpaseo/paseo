@@ -3622,7 +3622,7 @@ export async function getPullRequestStatus(
     .catch((error) => {
       if (
         !options?.force &&
-        (error instanceof ForgeCommandError || error instanceof GitHubRateLimitCooldownError)
+        (error instanceof GitHubRateLimitCooldownError || isTransientForgeCommandError(error))
       ) {
         const stale = lastSuccessfulPullRequestStatus.get(cacheKey);
         if (stale) {
@@ -3637,6 +3637,15 @@ export async function getPullRequestStatus(
 
   pullRequestStatusInFlight.set(cacheKey, lookup);
   return lookup;
+}
+
+function isTransientForgeCommandError(error: unknown): error is ForgeCommandError {
+  if (!(error instanceof ForgeCommandError)) {
+    return false;
+  }
+  return /could not resolve host|network is unreachable|connection (?:timed out|refused|reset)|request timed out|etimedout|temporary failure|http 5\d\d|internal server error|bad gateway|service unavailable|gateway timeout/i.test(
+    error.stderr,
+  );
 }
 
 async function getPullRequestStatusUncached(

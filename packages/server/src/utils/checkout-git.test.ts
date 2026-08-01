@@ -3126,6 +3126,36 @@ const x = 1;
     }
   });
 
+  it("does not keep stale PR status when the GitHub repository was deleted or renamed", async () => {
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    execFileSync("git", ["remote", "add", "origin", "https://github.com/getpaseo/paseo.git"], {
+      cwd: repoDir,
+    });
+
+    __setPullRequestStatusCacheTtlForTests(50);
+    try {
+      const github = createGitHubServiceForStatus(null);
+      const repositoryNotFound = new GitHubCommandError({
+        args: ["pr", "view"],
+        cwd: repoDir,
+        exitCode: 1,
+        stderr: "Could not resolve to a Repository with the name 'getpaseo/paseo'.",
+      });
+      github.getCurrentPullRequestStatus = async () =>
+        createPullRequestStatus({ url: "https://github.com/getpaseo/paseo/pull/123" });
+
+      await getPullRequestStatus(repoDir, github);
+      await sleep(80);
+      github.getCurrentPullRequestStatus = async () => {
+        throw repositoryNotFound;
+      };
+
+      await expect(getPullRequestStatus(repoDir, github)).rejects.toBe(repositoryNotFound);
+    } finally {
+      __resetPullRequestStatusCacheForTests();
+    }
+  });
+
   it("keeps stale PR status when a refresh hits a GitHub rate-limit cooldown", async () => {
     execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
     execFileSync("git", ["remote", "add", "origin", "https://github.com/getpaseo/paseo.git"], {
