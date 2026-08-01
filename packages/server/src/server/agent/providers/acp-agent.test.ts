@@ -3430,6 +3430,48 @@ describe("ACPAgentClient probe cleanup", () => {
     replacement.release();
   });
 
+  test("releases Windows ACP capacity exactly once after a normal proven Job Object exit", async () => {
+    class CapacityTestClient extends ACPAgentClient {
+      protected override async resolveLaunchCommand() {
+        return { command: "test-acp", args: [] };
+      }
+
+      async startHeldProbe() {
+        return await this.spawnTransport();
+      }
+    }
+
+    const supervisor = createProbeChildStub();
+    const runtimeCapacity = new HostAgentRuntimeCapacityController(1);
+    const releaseCapacity = vi.spyOn(runtimeCapacity, "release");
+    const client = new CapacityTestClient({
+      provider: "claude-acp",
+      logger: createTestLogger(),
+      defaultCommand: ["claude", "--acp"],
+      platform: "win32",
+      spawnACPProcess: createWindowsJobObjectProcessSpawner(() => supervisor),
+    });
+    client.configureRuntimeCapacityController(runtimeCapacity);
+
+    await client.startHeldProbe();
+    const proofMarker = getWindowsJobObjectProofMarker(supervisor);
+    expect(proofMarker).toBeDefined();
+    supervisor.stderr.write(`${proofMarker}\n`);
+    Object.defineProperty(supervisor, "exitCode", { configurable: true, value: 0 });
+    supervisor.emit("exit", 0, null);
+    supervisor.emit("close", 0, null);
+
+    await vi.waitFor(() => expect(releaseCapacity).toHaveBeenCalledTimes(1));
+    supervisor.emit("close", 0, null);
+    await Promise.resolve();
+    expect(releaseCapacity).toHaveBeenCalledTimes(1);
+    const replacement = runtimeCapacity.reserve();
+    replacement.release();
+    supervisor.stdin.destroy();
+    supervisor.stdout.destroy();
+    supervisor.stderr.destroy();
+  });
+
   test("retries retained ACP probe cleanup before the next admission", async () => {
     class CapacityTestClient extends ACPAgentClient {
       protected override async resolveLaunchCommand() {
