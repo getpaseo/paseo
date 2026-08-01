@@ -76,6 +76,10 @@ const REPOSITORY_CREATE_SETTLEMENT_TIMEOUT_MS = 30_000;
 const REPOSITORY_CREATE_SETTLEMENT_POLL_MS = 500;
 const LIVE_TEST_TIMEOUT_MS = 900_000;
 const LIVE_CLEANUP_RESERVE_MS = 300_000;
+const LIVE_CONSTRUCTION_TIMEOUT_MS = 240_000;
+const LIVE_TIMEOUT_REPORTING_MARGIN_MS = 30_000;
+const LIVE_HOOK_TIMEOUT_MARGIN_MS = 30_000;
+const CLEANUP_RETRY_DELAY_MS = 100;
 const LIVE_OPERATION_SETTLEMENT_TIMEOUT_MS = GIT_COMMAND_TIMEOUT_MS;
 const LIVE_OPERATION_TIMEOUT_MS =
   LIVE_TEST_TIMEOUT_MS - LIVE_CLEANUP_RESERVE_MS - LIVE_OPERATION_SETTLEMENT_TIMEOUT_MS;
@@ -1430,6 +1434,233 @@ function aggregateCleanupErrors(errors: unknown[]): unknown {
   return new AggregateError(errors, "Multiple checkout ship cleanup operations failed");
 }
 
+interface TeardownAttemptResult {
+  complete: boolean;
+  error: unknown;
+}
+
+interface CleanupDrainOptions<Result extends TeardownAttemptResult> {
+  cleanup(): Promise<Result>;
+  incompleteResult(error: unknown): Result;
+  resourcesCompleteAfterExpiry?: (result: Result) => boolean;
+  reserveMs: number;
+  now?: () => number;
+  waitBeforeRetry?: (delayMs: number) => Promise<void>;
+  waitForReserveExpiry?: (remainingMs: number) => Promise<void>;
+}
+
+type CleanupDrainTimingOptions = Pick<
+  CleanupDrainOptions<TeardownAttemptResult>,
+  "now" | "waitBeforeRetry" | "waitForReserveExpiry"
+> & { reserveMs?: number };
+
+interface CleanupDrain<Result extends TeardownAttemptResult> {
+  (): Promise<Result>;
+  onSettled(listener: (result: Result) => void): () => void;
+}
+
+class CleanupReserveExpiredError extends Error {
+  constructor(reserveMs: number) {
+    super(`Checkout ship cleanup exceeded its ${reserveMs}ms reserve`);
+    this.name = "CleanupReserveExpiredError";
+  }
+}
+
+class CheckoutShipCredentialLeakError extends Error {
+  constructor(
+    readonly cleanupComplete: boolean,
+    cause?: unknown,
+  ) {
+    super(
+      "The checkout ship operation credential reached an observable surface",
+      cause === undefined ? undefined : { cause },
+    );
+    this.name = "CheckoutShipCredentialLeakError";
+  }
+}
+
+function createJoinedCleanup<Result extends TeardownAttemptResult>(
+  runAttempt: () => Promise<Result>,
+): () => Promise<Result> {
+  let completedResult: Result | null = null;
+  let inFlight: Promise<Result> | null = null;
+  return () => {
+    if (completedResult) {
+      return Promise.resolve(completedResult);
+    }
+    if (inFlight) {
+      return inFlight;
+    }
+    const attempt = runAttempt().then((result) => {
+      if (result.complete) {
+        completedResult = result;
+      }
+      return result;
+    });
+    inFlight = attempt.finally(() => {
+      inFlight = null;
+    });
+    return inFlight;
+  };
+}
+
+function createCleanupDrainWithReserve<Result extends TeardownAttemptResult>(
+  options: CleanupDrainOptions<Result>,
+): CleanupDrain<Result> {
+  const now = options.now ?? (() => performance.now());
+  let deadline: number | null = null;
+  let firstError: unknown;
+  let hasReportingError = false;
+  let credentialLeakError: CheckoutShipCredentialLeakError | null = null;
+  let deadlineExpired = false;
+  let settledResult: Result | null = null;
+  let inFlightDrain: Promise<Result> | null = null;
+  const settledListeners = new Set<(result: Result) => void>();
+
+  function reportingError(): unknown {
+    if (credentialLeakError) {
+      if (firstError instanceof CheckoutShipCredentialLeakError) {
+        return credentialLeakError.cleanupComplete === firstError.cleanupComplete
+          ? firstError
+          : new CheckoutShipCredentialLeakError(
+              credentialLeakError.cleanupComplete,
+              firstError.cause,
+            );
+      }
+      return firstError !== undefined
+        ? new CheckoutShipCredentialLeakError(credentialLeakError.cleanupComplete, firstError)
+        : credentialLeakError;
+    }
+    return hasReportingError ? firstError : new CleanupReserveExpiredError(options.reserveMs);
+  }
+
+  function preserveReportingError(result: Result): Result {
+    if (!hasReportingError) {
+      return result;
+    }
+    const error = reportingError();
+    return result.error === error ? result : { ...result, error };
+  }
+
+  function observeResult(result: Result): Result {
+    if (!hasReportingError && result.error !== undefined) {
+      firstError = result.error;
+      hasReportingError = true;
+    }
+    if (result.error instanceof CheckoutShipCredentialLeakError) {
+      credentialLeakError = result.error;
+    }
+    const cleanupComplete =
+      result.complete ||
+      (result.error instanceof CheckoutShipCredentialLeakError && result.error.cleanupComplete) ||
+      (deadlineExpired && options.resourcesCompleteAfterExpiry?.(result) === true);
+    if (cleanupComplete && !settledResult) {
+      settledResult = deadlineExpired
+        ? options.incompleteResult(reportingError())
+        : preserveReportingError(result);
+      for (const listener of settledListeners) {
+        listener(settledResult);
+      }
+      settledListeners.clear();
+    }
+    return result;
+  }
+
+  async function runDrain(): Promise<Result> {
+    if (settledResult) {
+      return settledResult;
+    }
+    deadline ??= now() + options.reserveMs;
+    while (true) {
+      const remainingMs = deadline - now();
+      if (remainingMs <= 0) {
+        deadlineExpired = true;
+        return options.incompleteResult(reportingError());
+      }
+      let timeoutHandle: NodeJS.Timeout | undefined;
+      const reserveExpiry = options.waitForReserveExpiry
+        ? options.waitForReserveExpiry(remainingMs)
+        : new Promise<void>((resolve) => {
+            timeoutHandle = setTimeout(resolve, remainingMs);
+          });
+      const outcome = await Promise.race([
+        options.cleanup().then((result) => {
+          if (deadline !== null && now() >= deadline) {
+            deadlineExpired = true;
+          }
+          return { kind: "result" as const, result: observeResult(result) };
+        }),
+        reserveExpiry.then(() => ({ kind: "expired" as const })),
+      ]);
+      clearTimeout(timeoutHandle);
+      if (outcome.kind === "expired") {
+        deadlineExpired = true;
+        return options.incompleteResult(reportingError());
+      }
+      if (settledResult) {
+        return settledResult;
+      }
+      if (now() >= deadline) {
+        deadlineExpired = true;
+        return options.incompleteResult(reportingError());
+      }
+      const retryDelayMs = Math.min(CLEANUP_RETRY_DELAY_MS, deadline - now());
+      if (retryDelayMs > 0) {
+        if (options.waitBeforeRetry) {
+          await options.waitBeforeRetry(retryDelayMs);
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+        }
+      }
+    }
+  }
+
+  const drain = () => {
+    if (settledResult) {
+      return Promise.resolve(settledResult);
+    }
+    if (inFlightDrain) {
+      return inFlightDrain;
+    }
+    const running = runDrain();
+    inFlightDrain = running.finally(() => {
+      inFlightDrain = null;
+    });
+    return inFlightDrain;
+  };
+  return Object.assign(drain, {
+    onSettled(listener: (result: Result) => void): () => void {
+      if (settledResult) {
+        listener(settledResult);
+        return () => {};
+      } else {
+        settledListeners.add(listener);
+        return () => settledListeners.delete(listener);
+      }
+    },
+  });
+}
+
+async function waitForCleanupSettlement<Result extends TeardownAttemptResult>(
+  drain: CleanupDrain<Result>,
+  timeoutMs: number,
+): Promise<Result | null> {
+  let unsubscribe = () => {};
+  const settled = new Promise<Result>((resolve) => {
+    unsubscribe = drain.onSettled(resolve);
+  });
+  let timeoutHandle: NodeJS.Timeout | undefined;
+  const reportingTimeout = new Promise<null>((resolve) => {
+    timeoutHandle = setTimeout(() => resolve(null), timeoutMs);
+  });
+  try {
+    return await Promise.race([settled, reportingTimeout]);
+  } finally {
+    clearTimeout(timeoutHandle);
+    unsubscribe();
+  }
+}
+
 interface DaemonContextCloseResult {
   complete: boolean;
   resourcesClosed: boolean;
@@ -1442,15 +1673,21 @@ interface CredentialBoundaryClient {
   close(): Promise<void>;
 }
 
+interface RetryableDaemonCleanup {
+  (): Promise<DaemonContextCloseResult>;
+  drain: CleanupDrain<DaemonContextCloseResult>;
+}
+
 function createRetryableDaemonCleanup(
   daemon: TestPaseoDaemon,
   client: CredentialBoundaryClient | null,
-): () => Promise<DaemonContextCloseResult> {
+  drainOptions: CleanupDrainTimingOptions = {},
+): RetryableDaemonCleanup {
   let clientClosed = client === null;
   let stopped = false;
   let flushed = false;
   let handleClosed = false;
-  return async () => {
+  const runAttempt = async (): Promise<DaemonContextCloseResult> => {
     const errors: unknown[] = [];
     if (!clientClosed && client) {
       try {
@@ -1504,13 +1741,28 @@ function createRetryableDaemonCleanup(
     const complete = resourcesClosed && errors.length === 0;
     return { complete, resourcesClosed, stopped, flushed, error: aggregateCleanupErrors(errors) };
   };
+  const cleanup = createJoinedCleanup(runAttempt);
+  function incompleteResult(error: unknown): DaemonContextCloseResult {
+    const resourcesClosed = clientClosed && stopped && flushed && handleClosed;
+    return { complete: false, resourcesClosed, stopped, flushed, error };
+  }
+  return Object.assign(cleanup, {
+    drain: createCleanupDrainWithReserve({
+      cleanup,
+      incompleteResult,
+      resourcesCompleteAfterExpiry: (result) => result.resourcesClosed,
+      ...drainOptions,
+      reserveMs: drainOptions.reserveMs ?? LIVE_CLEANUP_RESERVE_MS,
+    }),
+  });
 }
 
 async function closeDaemonForCredentialBoundary(
   daemon: TestPaseoDaemon,
   client: CredentialBoundaryClient | null,
 ): Promise<DaemonContextCloseResult> {
-  return createRetryableDaemonCleanup(daemon, client)();
+  const cleanup = createRetryableDaemonCleanup(daemon, client);
+  return cleanup.drain();
 }
 
 async function closeDaemonContextForCredentialBoundary(
@@ -1520,10 +1772,16 @@ async function closeDaemonContextForCredentialBoundary(
 }
 
 interface DaemonContextConstructionOptions {
+  cleanupDrainOptions?: CleanupDrainTimingOptions;
   createDaemon(onDaemonCreated: (daemon: TestPaseoDaemon) => void): Promise<TestPaseoDaemon>;
   createClient(url: string): DaemonClient;
   containsCredential(value: unknown): boolean;
-  retainPartialContext(daemon: TestPaseoDaemon | null, client: DaemonClient | null): void;
+  retainPartialContext(
+    daemon: TestPaseoDaemon | null,
+    client: DaemonClient | null,
+    cleanup: RetryableDaemonCleanup | null,
+  ): void;
+  reportLateCleanupError(error: unknown): void;
   restoreEnvironment(): void;
 }
 
@@ -1532,14 +1790,18 @@ async function constructDaemonContextForCredentialBoundary(
 ): Promise<DaemonTestContext> {
   let daemon: TestPaseoDaemon | null = null;
   let client: DaemonClient | null = null;
+  let cleanup: RetryableDaemonCleanup | null = null;
   try {
     daemon = await options.createDaemon((createdDaemon) => {
       daemon = createdDaemon;
-      options.retainPartialContext(createdDaemon, null);
+      cleanup = createRetryableDaemonCleanup(createdDaemon, null, options.cleanupDrainOptions);
+      options.retainPartialContext(createdDaemon, null, cleanup);
     });
-    options.retainPartialContext(daemon, null);
+    cleanup ??= createRetryableDaemonCleanup(daemon, null, options.cleanupDrainOptions);
+    options.retainPartialContext(daemon, null, cleanup);
     client = options.createClient(`ws://127.0.0.1:${daemon.port}/ws`);
-    options.retainPartialContext(daemon, client);
+    cleanup = createRetryableDaemonCleanup(daemon, client, options.cleanupDrainOptions);
+    options.retainPartialContext(daemon, client, cleanup);
     const ctx: DaemonTestContext = {
       daemon,
       client,
@@ -1552,8 +1814,8 @@ async function constructDaemonContextForCredentialBoundary(
     await client.fetchAgents({ subscribe: { subscriptionId: "test" } });
     return ctx;
   } catch (error) {
-    const closeResult = daemon
-      ? await closeDaemonForCredentialBoundary(daemon, client)
+    const closeResult = cleanup
+      ? await cleanup.drain()
       : {
           complete: true,
           resourcesClosed: true,
@@ -1566,8 +1828,24 @@ async function constructDaemonContextForCredentialBoundary(
       finalConstructionCleanupError: closeResult.error,
     });
     if (closeResult.resourcesClosed) {
-      options.retainPartialContext(null, null);
+      options.retainPartialContext(null, null, null);
       options.restoreEnvironment();
+    } else if (cleanup) {
+      cleanup.drain.onSettled((lateResult) => {
+        const lateCredentialLeak = options.containsCredential({
+          constructionError: error,
+          lateConstructionCleanupError: lateResult.error,
+        });
+        if (lateCredentialLeak) {
+          options.reportLateCleanupError(
+            new Error("The checkout ship operation credential reached a construction surface"),
+          );
+        }
+        if (lateResult.resourcesClosed) {
+          options.retainPartialContext(null, null, null);
+          options.restoreEnvironment();
+        }
+      });
     }
     if (credentialLeak) {
       // eslint-disable-next-line preserve-caught-error -- construction errors may contain the operation credential
@@ -1577,10 +1855,6 @@ async function constructDaemonContextForCredentialBoundary(
     throw error;
   }
 }
-
-type TeardownAttemptResult =
-  | { complete: true; error: undefined }
-  | { complete: false; error: unknown };
 
 interface CheckoutShipLiveCleanupState {
   agentId: string | null;
@@ -1696,9 +1970,10 @@ async function runCheckoutShipLiveCleanupAttempt(
     (errors.length > scannedErrorCount &&
       actions.containsCredential(errors.slice(scannedErrorCount)));
   if (credentialLeak) {
+    const cleanupComplete = state.finalReadbackComplete && state.environmentRestored;
     return {
       complete: false,
-      error: new Error("The checkout ship operation credential reached an observable surface"),
+      error: new CheckoutShipCredentialLeakError(cleanupComplete, aggregateCleanupErrors(errors)),
     };
   }
 
@@ -1709,29 +1984,24 @@ async function runCheckoutShipLiveCleanupAttempt(
   return { complete: false, error: aggregateCleanupErrors(errors) };
 }
 
+interface RetryableTeardown {
+  (): Promise<TeardownAttemptResult>;
+  drain: CleanupDrain<TeardownAttemptResult>;
+}
+
 function createJoinedTeardown(
   runAttempt: () => Promise<TeardownAttemptResult>,
-): () => Promise<TeardownAttemptResult> {
-  let completedResult: TeardownAttemptResult | null = null;
-  let inFlight: Promise<TeardownAttemptResult> | null = null;
-  return () => {
-    if (completedResult) {
-      return Promise.resolve(completedResult);
-    }
-    if (inFlight) {
-      return inFlight;
-    }
-    const attempt = runAttempt().then((result) => {
-      if (result.complete) {
-        completedResult = result;
-      }
-      return result;
-    });
-    inFlight = attempt.finally(() => {
-      inFlight = null;
-    });
-    return inFlight;
-  };
+  drainOptions: Omit<CleanupDrainTimingOptions, "reserveMs"> = {},
+): RetryableTeardown {
+  const cleanup = createJoinedCleanup(runAttempt);
+  return Object.assign(cleanup, {
+    drain: createCleanupDrainWithReserve({
+      cleanup,
+      incompleteResult: (error) => ({ complete: false, error }),
+      reserveMs: LIVE_CLEANUP_RESERVE_MS,
+      ...drainOptions,
+    }),
+  });
 }
 
 class CheckoutShipOperationDeadlineError extends Error {
@@ -1744,7 +2014,7 @@ class CheckoutShipOperationDeadlineError extends Error {
 interface CleanupReservedOperationOptions {
   operation(signal: AbortSignal): Promise<void>;
   cancel(): Promise<void>;
-  cleanup(): Promise<TeardownAttemptResult>;
+  cleanup: RetryableTeardown;
   recordOperationError(error: unknown): void;
   operationTimeoutMs: number;
   settlementTimeoutMs: number;
@@ -1760,7 +2030,7 @@ async function runOperationWithCleanupReserve(
   options: CleanupReservedOperationOptions,
 ): Promise<CleanupReservedOperationResult> {
   const controller = new AbortController();
-  const now = options.now ?? Date.now;
+  const now = options.now ?? (() => performance.now());
   const operationStartedAt = now();
   let operationPromise: Promise<void>;
   try {
@@ -1839,7 +2109,10 @@ async function runOperationWithCleanupReserve(
   }
 
   options.recordOperationError(operationError);
-  return { operationError, teardown: await options.cleanup() };
+  return {
+    operationError,
+    teardown: await options.cleanup.drain(),
+  };
 }
 
 function textContainsCredential(value: string, owner: GitHubCredentialOwner): boolean {
@@ -2190,12 +2463,17 @@ describe("checkout ship live GitHub mutation safety", () => {
     const restore = sanitizeProcessEnvironmentForCredential(fixtureOwner);
     const events: string[] = [];
     const constructionLogs: string[] = [];
+    let stopAttempts = 0;
     const daemon = {
       port: 12345,
       daemon: {
         async stop() {
           events.push("stop");
+          stopAttempts += 1;
           constructionLogs.push(`shutdown log containing ${fixtureToken}`);
+          if (stopAttempts <= 3) {
+            throw new Error(`simulated daemon stop failure ${stopAttempts}`);
+          }
         },
         agentManager: {
           async flush() {
@@ -2224,6 +2502,9 @@ describe("checkout ship live GitHub mutation safety", () => {
             return valueContainsCredential({ constructionLogs, value }, fixtureOwner);
           },
           retainPartialContext() {},
+          reportLateCleanupError() {
+            throw new Error("late cleanup reporting must not run");
+          },
           restoreEnvironment() {
             events.push("restore");
             restore();
@@ -2237,7 +2518,16 @@ describe("checkout ship live GitHub mutation safety", () => {
         "The checkout ship operation credential reached a construction surface",
       );
       expect((constructionError as Error).message).not.toContain(fixtureToken);
-      expect(events).toEqual(["stop", "flush", "daemon-close", "scan", "restore"]);
+      expect(events).toEqual([
+        "stop",
+        "daemon-close",
+        "stop",
+        "stop",
+        "stop",
+        "flush",
+        "scan",
+        "restore",
+      ]);
       expect({ ...process.env }).toEqual(expectedEnvironment);
     } finally {
       restore();
@@ -2247,6 +2537,93 @@ describe("checkout ship live GitHub mutation safety", () => {
         process.env.CONSTRUCTION_TOKEN_ALIAS = previousAlias;
       }
     }
+  });
+
+  test("late partial-construction cleanup restores the environment after reserve expiry", async () => {
+    let announceStop: (() => void) | null = null;
+    let finishStop: (() => void) | null = null;
+    let announceLateError: (() => void) | null = null;
+    let announceRestore: (() => void) | null = null;
+    const stopStarted = new Promise<void>((resolve) => {
+      announceStop = resolve;
+    });
+    const stopCanFinish = new Promise<void>((resolve) => {
+      finishStop = resolve;
+    });
+    const environmentRestored = new Promise<void>((resolve) => {
+      announceRestore = resolve;
+    });
+    const lateErrorReported = new Promise<void>((resolve) => {
+      announceLateError = resolve;
+    });
+    let retainedCleanup: RetryableDaemonCleanup | null = null;
+    let reportedLateError: unknown;
+    let restoreCalls = 0;
+    let stopCalls = 0;
+    const lateLogs: string[] = [];
+    const daemon = {
+      port: 12345,
+      daemon: {
+        async stop() {
+          announceStop?.();
+          await stopCanFinish;
+          stopCalls += 1;
+          if (stopCalls === 1) {
+            lateLogs.push(`late shutdown log containing ${fixtureToken}`);
+            throw new Error("late transient stop failure");
+          }
+        },
+        agentManager: {
+          async flush() {},
+        },
+      },
+      async close() {},
+    } as unknown as TestPaseoDaemon;
+
+    const construction = constructDaemonContextForCredentialBoundary({
+      cleanupDrainOptions: {
+        reserveMs: 25,
+        now: () => 0,
+        waitForReserveExpiry: async () => {},
+      },
+      async createDaemon(onDaemonCreated) {
+        onDaemonCreated(daemon);
+        throw new Error("simulated daemon startup failure");
+      },
+      createClient(): DaemonClient {
+        throw new Error("client construction must not run");
+      },
+      containsCredential(value) {
+        return valueContainsCredential({ lateLogs, value }, fixtureOwner);
+      },
+      retainPartialContext(_daemon, _client, cleanup) {
+        retainedCleanup = cleanup;
+      },
+      reportLateCleanupError(error) {
+        reportedLateError = error;
+        announceLateError?.();
+      },
+      restoreEnvironment() {
+        restoreCalls += 1;
+        announceRestore?.();
+      },
+    });
+
+    await stopStarted;
+    await expect(construction).rejects.toBeInstanceOf(AggregateError);
+    expect(retainedCleanup).not.toBeNull();
+    expect(restoreCalls).toBe(0);
+
+    finishStop?.();
+    await Promise.all([environmentRestored, lateErrorReported]);
+
+    expect(retainedCleanup).toBeNull();
+    expect(restoreCalls).toBe(1);
+    expect(reportedLateError).toBeInstanceOf(Error);
+    expect((reportedLateError as Error).message).toBe(
+      "The checkout ship operation credential reached a construction surface",
+    );
+    expect((reportedLateError as Error).message).not.toContain(fixtureToken);
   });
 
   test("operation deadline reserves cleanup and joins concurrent teardown callers", async () => {
@@ -2293,6 +2670,234 @@ describe("checkout ship live GitHub mutation safety", () => {
     expect(result.operationError).toBeInstanceOf(CheckoutShipOperationDeadlineError);
     expect(result.teardown).toBe(joinedResult);
     expect(events).toEqual(["cancel", "cleanup"]);
+  });
+
+  test("cleanup reserve expiry preserves the first error and reports incomplete state", async () => {
+    const firstError = new Error("first cleanup failure");
+    let attempts = 0;
+    let now = 0;
+
+    const drain = createCleanupDrainWithReserve({
+      async cleanup() {
+        attempts += 1;
+        now += 1;
+        return {
+          complete: attempts === 3,
+          error: attempts === 1 ? firstError : new Error(`cleanup failure ${attempts}`),
+        };
+      },
+      incompleteResult: (error) => ({ complete: false, error }),
+      reserveMs: 3,
+      now: () => now,
+      waitBeforeRetry: async () => {},
+    });
+    const result = await drain();
+
+    expect(result).toEqual({ complete: false, error: firstError });
+    await expect(drain()).resolves.toEqual(result);
+    expect(attempts).toBe(3);
+  });
+
+  test("cleanup reserve expiry does not wait for a stuck cleanup attempt", async () => {
+    let cleanupAttempts = 0;
+
+    const drain = createCleanupDrainWithReserve({
+      cleanup() {
+        cleanupAttempts += 1;
+        return new Promise<TeardownAttemptResult>(() => {});
+      },
+      incompleteResult: (error) => ({ complete: false, error }),
+      reserveMs: 25,
+      now: () => 0,
+      waitForReserveExpiry: async (remainingMs) => {
+        expect(remainingMs).toBe(25);
+      },
+    });
+    const result = await drain();
+
+    expect(result.complete).toBe(false);
+    expect(result.error).toEqual(new CleanupReserveExpiredError(25));
+    expect(cleanupAttempts).toBe(1);
+  });
+
+  test("cleanup completion is observed after a stuck attempt exceeds the reserve", async () => {
+    let finishCleanup: (() => void) | null = null;
+    const cleanupCanFinish = new Promise<void>((resolve) => {
+      finishCleanup = resolve;
+    });
+    let cleanupAttempts = 0;
+    const drain = createCleanupDrainWithReserve({
+      async cleanup() {
+        cleanupAttempts += 1;
+        await cleanupCanFinish;
+        return { complete: true, error: undefined };
+      },
+      incompleteResult: (error) => ({ complete: false, error }),
+      reserveMs: 25,
+      now: () => 0,
+      waitForReserveExpiry: async () => {},
+    });
+
+    const expiredResult = await drain();
+    const settled = new Promise<TeardownAttemptResult>((resolve) => drain.onSettled(resolve));
+    finishCleanup?.();
+    const lateResult = await settled;
+
+    expect(expiredResult.complete).toBe(false);
+    expect(expiredResult.error).toEqual(new CleanupReserveExpiredError(25));
+    expect(lateResult.complete).toBe(false);
+    expect(lateResult.error).toEqual(new CleanupReserveExpiredError(25));
+    await expect(drain()).resolves.toBe(lateResult);
+    expect(cleanupAttempts).toBe(1);
+  });
+
+  test("completed cleanup remains settled after its shared deadline", async () => {
+    let cleanupAttempts = 0;
+    let now = 0;
+    const drain = createCleanupDrainWithReserve({
+      async cleanup() {
+        cleanupAttempts += 1;
+        return { complete: true, error: undefined };
+      },
+      incompleteResult: (error) => ({ complete: false, error }),
+      reserveMs: 25,
+      now: () => now,
+    });
+
+    const first = await drain();
+    now = 26;
+
+    await expect(drain()).resolves.toBe(first);
+    expect(first).toEqual({ complete: true, error: undefined });
+    expect(cleanupAttempts).toBe(1);
+  });
+
+  test("cleanup reserve retries yield until the shared deadline", async () => {
+    const firstError = new Error("persistent cleanup failure");
+    const retryDelays: number[] = [];
+    let cleanupAttempts = 0;
+    let now = 0;
+    const drain = createCleanupDrainWithReserve({
+      async cleanup() {
+        cleanupAttempts += 1;
+        return { complete: false, error: firstError };
+      },
+      incompleteResult: (error) => ({ complete: false, error }),
+      reserveMs: 250,
+      now: () => now,
+      async waitBeforeRetry(delayMs) {
+        retryDelays.push(delayMs);
+        now += delayMs;
+      },
+    });
+
+    await expect(drain()).resolves.toEqual({ complete: false, error: firstError });
+    expect(cleanupAttempts).toBe(3);
+    expect(retryDelays).toEqual([100, 100, 50]);
+  });
+
+  test("cleanup drain does not retry a terminal failure", async () => {
+    const terminalError = new CheckoutShipCredentialLeakError(true);
+    let cleanupAttempts = 0;
+    const drain = createCleanupDrainWithReserve({
+      async cleanup() {
+        cleanupAttempts += 1;
+        return { complete: false, error: terminalError };
+      },
+      incompleteResult: (error) => ({ complete: false, error }),
+      reserveMs: 250,
+    });
+
+    await expect(drain()).resolves.toEqual({
+      complete: false,
+      error: terminalError,
+    });
+    expect(cleanupAttempts).toBe(1);
+  });
+
+  test("late credential leak settlement replaces the reserve timeout", async () => {
+    let finishCleanup: (() => void) | null = null;
+    const cleanupCanFinish = new Promise<void>((resolve) => {
+      finishCleanup = resolve;
+    });
+    const credentialLeakError = new CheckoutShipCredentialLeakError(true);
+    const teardown = createJoinedTeardown(
+      async () => {
+        await cleanupCanFinish;
+        return { complete: false, error: credentialLeakError };
+      },
+      {
+        now: () => 0,
+        waitForReserveExpiry: async () => {},
+      },
+    );
+
+    const expiredResult = await teardown.drain();
+    const settlement = waitForCleanupSettlement(teardown.drain, 1_000);
+    finishCleanup?.();
+    const lateResult = await settlement;
+
+    expect(expiredResult.error).toBeInstanceOf(CleanupReserveExpiredError);
+    expect(lateResult).toEqual({ complete: false, error: credentialLeakError });
+  });
+
+  test("credential leak reporting does not stop incomplete resource cleanup", async () => {
+    const firstCleanupError = new Error("first transient cleanup failure");
+    let cleanupAttempts = 0;
+    let credentialScans = 0;
+    let now = 0;
+    const state: CheckoutShipLiveCleanupState = {
+      agentId: "fixture-agent",
+      createdRepo: fixtureRepo,
+      credentialLease: null,
+      daemonClosed: true,
+      environmentRestored: false,
+      finalReadbackComplete: false,
+      operationError: undefined,
+      repoCreateAttempted: false,
+      repoDirRemoved: true,
+      remoteDeletionConfirmed: true,
+    };
+    const teardown = createJoinedTeardown(
+      async () => {
+        cleanupAttempts += 1;
+        now += 1;
+        return runCheckoutShipLiveCleanupAttempt(state, {
+          async deleteAgent() {
+            if (cleanupAttempts === 1) {
+              throw firstCleanupError;
+            }
+            if (cleanupAttempts === 2) {
+              throw new Error("second transient cleanup failure");
+            }
+          },
+          async deleteRemoteRepo() {},
+          async closeCredentialLease() {},
+          removeRepoDir() {},
+          async closeDaemon() {},
+          async finalReadback() {},
+          containsCredential() {
+            credentialScans += 1;
+            return credentialScans > 1;
+          },
+          restoreEnvironment() {},
+        });
+      },
+      {
+        now: () => now,
+        waitBeforeRetry: async () => {},
+      },
+    );
+
+    const result = await teardown.drain();
+
+    expect(cleanupAttempts).toBe(3);
+    expect(state.agentId).toBeNull();
+    expect(state.finalReadbackComplete).toBe(true);
+    expect(state.environmentRestored).toBe(true);
+    expect(result.error).toBeInstanceOf(CheckoutShipCredentialLeakError);
+    expect((result.error as CheckoutShipCredentialLeakError).cause).toBe(firstCleanupError);
+    expect((result.error as CheckoutShipCredentialLeakError).cleanupComplete).toBe(true);
   });
 
   test("in-process operator implements the checkout PR command surface", async () => {
@@ -2430,7 +3035,7 @@ describe("checkout ship live GitHub mutation safety", () => {
     }
   });
 
-  test("credential lease cleanup retries every unverified phase and then becomes idempotent", async () => {
+  test("cleanup reserve drains every transient credential phase without repeating completed work", async () => {
     const repoDir = tmpCwd("credential-lease-retry-repo-");
     const credentialDir = realpathSync(mkdtempSync("/tmp/pgh-retry-"));
     const gitConfigPath = path.join(repoDir, ".git", "config");
@@ -2439,6 +3044,8 @@ describe("checkout ship live GitHub mutation safety", () => {
     let readCalls = 0;
     let removeCalls = 0;
     let absenceReads = 0;
+    let cleanupAttempts = 0;
+    let now = 0;
     initGitRepo(repoDir);
     const originalGitConfig = readFileSync(gitConfigPath);
 
@@ -2486,21 +3093,71 @@ describe("checkout ship live GitHub mutation safety", () => {
       });
       expect(readFileSync(gitConfigPath)).not.toEqual(originalGitConfig);
 
-      await expect(lease.close()).rejects.toThrow("Failed to close");
-      expect({ stopCalls, writeCalls, readCalls, removeCalls, absenceReads }).toEqual({
-        stopCalls: 1,
-        writeCalls: 0,
-        readCalls: 0,
-        removeCalls: 0,
-        absenceReads: 0,
-      });
+      const state: CheckoutShipLiveCleanupState = {
+        agentId: "fixture-agent",
+        createdRepo: fixtureRepo,
+        credentialLease: lease,
+        daemonClosed: false,
+        environmentRestored: false,
+        finalReadbackComplete: false,
+        operationError: undefined,
+        repoCreateAttempted: true,
+        repoDirRemoved: false,
+        remoteDeletionConfirmed: false,
+      };
+      const completedMutations = {
+        agent: 0,
+        remote: 0,
+        local: 0,
+        daemon: 0,
+        finalReadback: 0,
+        restore: 0,
+      };
+      let firstCleanupError: unknown;
+      const teardown = createJoinedTeardown(
+        async () => {
+          cleanupAttempts += 1;
+          now += 1;
+          const result = await runCheckoutShipLiveCleanupAttempt(state, {
+            async deleteAgent() {
+              completedMutations.agent += 1;
+            },
+            async deleteRemoteRepo() {
+              completedMutations.remote += 1;
+            },
+            closeCredentialLease: (credentialLease) => credentialLease.close(),
+            removeRepoDir() {
+              completedMutations.local += 1;
+            },
+            async closeDaemon() {
+              completedMutations.daemon += 1;
+            },
+            async finalReadback() {
+              completedMutations.finalReadback += 1;
+            },
+            containsCredential() {
+              return false;
+            },
+            restoreEnvironment() {
+              completedMutations.restore += 1;
+            },
+          });
+          if (cleanupAttempts === 1) {
+            expect(result.error).toBeInstanceOf(Error);
+            firstCleanupError = result.error;
+          }
+          return result;
+        },
+        {
+          now: () => now,
+          waitBeforeRetry: async () => {},
+        },
+      );
 
-      await expect(lease.close()).rejects.toThrow("Failed to close");
-      await expect(lease.close()).rejects.toThrow("Failed to close");
-      await expect(lease.close()).rejects.toThrow("Failed to close");
-      await expect(lease.close()).rejects.toThrow("Failed to close");
-      await expect(lease.close()).resolves.toBeUndefined();
-      await expect(lease.close()).resolves.toBeUndefined();
+      const result = await teardown.drain();
+      expect(result.complete).toBe(true);
+      expect(result.error).toBe(firstCleanupError);
+      expect(cleanupAttempts).toBe(6);
 
       expect(readFileSync(gitConfigPath)).toEqual(originalGitConfig);
       expect(existsSync(credentialDir)).toBe(false);
@@ -2510,6 +3167,24 @@ describe("checkout ship live GitHub mutation safety", () => {
         readCalls: 2,
         removeCalls: 3,
         absenceReads: 2,
+      });
+      expect(completedMutations).toEqual({
+        agent: 1,
+        remote: 1,
+        local: 1,
+        daemon: 1,
+        finalReadback: 1,
+        restore: 1,
+      });
+
+      await expect(teardown()).resolves.toEqual({ complete: true, error: undefined });
+      expect(completedMutations).toEqual({
+        agent: 1,
+        remote: 1,
+        local: 1,
+        daemon: 1,
+        finalReadback: 1,
+        restore: 1,
       });
     } finally {
       rmSync(repoDir, { recursive: true, force: true });
@@ -2869,7 +3544,7 @@ describe("checkout ship live GitHub mutation safety", () => {
 
     const result = await closeDaemonContextForCredentialBoundary(closeContext);
 
-    expect(result.complete).toBe(false);
+    expect(result.complete).toBe(true);
     expect(result.resourcesClosed).toBe(true);
     expect(result.stopped).toBe(true);
     expect(result.flushed).toBe(true);
@@ -3121,133 +3796,193 @@ describe("daemon checkout ship loop", () => {
   let contextClosed: boolean;
   let contextInitialized: boolean;
   let boundLiveOwner: GitHubCredentialOwner | null;
-  let restoreProcessEnvironment: (() => void) | null;
-  let partialDaemon: TestPaseoDaemon | null;
-  let partialClient: DaemonClient | null;
-  let liveTeardown: (() => Promise<TeardownAttemptResult>) | null;
+  let restoreProcessEnvironment: (() => void) | null = null;
+  let partialCleanup: RetryableDaemonCleanup | null = null;
+  let lateConstructionCleanupError: unknown;
+  let liveTeardown: RetryableTeardown | null = null;
 
-  beforeEach(async () => {
-    operationOwner = null;
-    githubAudit = [];
-    daemonLogs = [];
-    contextClosed = false;
-    contextInitialized = false;
-    boundLiveOwner = null;
-    restoreProcessEnvironment = null;
-    partialDaemon = null;
-    partialClient = null;
-    liveTeardown = null;
-    if (process.env[CHECKOUT_SHIP_LIVE_GITHUB_E2E] === "1") {
-      boundLiveOwner = await assertCheckoutShipLiveGitHubMutationEnabled();
-      restoreProcessEnvironment = sanitizeProcessEnvironmentForCredential(boundLiveOwner);
-      operationOwner = boundLiveOwner;
-    }
-    let constructionBoundaryStarted = false;
-    try {
-      const github = createGitHubService({
-        resolveRepoHost: async () => GITHUB_HOST,
-        runner: createPinnedGitHubRunner(() => {
-          if (!operationOwner) {
-            throw new Error("No checkout ship operation credential is active");
-          }
-          return operationOwner;
-        }, githubAudit),
-      });
-      const logger = pino(
-        { level: "trace" },
-        {
-          write(message: string) {
-            daemonLogs.push(message);
-          },
-        },
-      );
-      constructionBoundaryStarted = true;
-      ctx = await constructDaemonContextForCredentialBoundary({
-        createDaemon: (onDaemonCreated) =>
-          createTestPaseoDaemon({ github, logger, onDaemonCreated }),
-        createClient: (url) => new DaemonClient({ url }),
-        containsCredential(value) {
-          return (
-            boundLiveOwner !== null &&
-            valueContainsCredential({ daemonLogs, githubAudit, value }, boundLiveOwner)
-          );
-        },
-        retainPartialContext(daemon, client) {
-          partialDaemon = daemon;
-          partialClient = client;
-        },
-        restoreEnvironment() {
-          restoreProcessEnvironment?.();
-          restoreProcessEnvironment = null;
-        },
-      });
-      partialDaemon = null;
-      partialClient = null;
-      contextInitialized = true;
-    } catch (error) {
-      if (!constructionBoundaryStarted) {
-        restoreProcessEnvironment?.();
-        restoreProcessEnvironment = null;
+  beforeEach(
+    async () => {
+      if (lateConstructionCleanupError) {
+        const error = lateConstructionCleanupError;
+        lateConstructionCleanupError = undefined;
+        throw error;
       }
-      throw error;
-    }
-  });
-
-  afterEach(async () => {
-    if (!contextInitialized) {
-      if (partialDaemon) {
-        const result = await closeDaemonForCredentialBoundary(partialDaemon, partialClient);
-        contextClosed = result.resourcesClosed;
-        const credentialLeak =
-          boundLiveOwner &&
-          valueContainsCredential(
-            { daemonLogs, githubAudit, finalConstructionCleanupError: result.error },
-            boundLiveOwner,
-          );
-        if (contextClosed) {
+      if (partialCleanup) {
+        const cleanup = partialCleanup;
+        await waitForCleanupSettlement(cleanup.drain, LIVE_TIMEOUT_REPORTING_MARGIN_MS);
+        if (lateConstructionCleanupError) {
+          const error = lateConstructionCleanupError;
+          lateConstructionCleanupError = undefined;
+          throw error;
+        }
+      }
+      if (liveTeardown) {
+        const teardown = liveTeardown;
+        const result = await waitForCleanupSettlement(
+          teardown.drain,
+          LIVE_TIMEOUT_REPORTING_MARGIN_MS,
+        );
+        if (result && liveTeardown === teardown) {
+          liveTeardown = null;
+          if (result.error) {
+            throw result.error;
+          }
+        }
+      }
+      if (partialCleanup || liveTeardown || restoreProcessEnvironment) {
+        throw new Error("The previous checkout ship cleanup is still running");
+      }
+      operationOwner = null;
+      githubAudit = [];
+      daemonLogs = [];
+      contextClosed = false;
+      contextInitialized = false;
+      boundLiveOwner = null;
+      restoreProcessEnvironment = null;
+      partialCleanup = null;
+      liveTeardown = null;
+      if (process.env[CHECKOUT_SHIP_LIVE_GITHUB_E2E] === "1") {
+        boundLiveOwner = await assertCheckoutShipLiveGitHubMutationEnabled();
+        restoreProcessEnvironment = sanitizeProcessEnvironmentForCredential(boundLiveOwner);
+        operationOwner = boundLiveOwner;
+      }
+      let constructionBoundaryStarted = false;
+      try {
+        const github = createGitHubService({
+          resolveRepoHost: async () => GITHUB_HOST,
+          runner: createPinnedGitHubRunner(() => {
+            if (!operationOwner) {
+              throw new Error("No checkout ship operation credential is active");
+            }
+            return operationOwner;
+          }, githubAudit),
+        });
+        const logger = pino(
+          { level: "trace" },
+          {
+            write(message: string) {
+              daemonLogs.push(message);
+            },
+          },
+        );
+        constructionBoundaryStarted = true;
+        ctx = await constructDaemonContextForCredentialBoundary({
+          createDaemon: (onDaemonCreated) =>
+            createTestPaseoDaemon({ github, logger, onDaemonCreated }),
+          createClient: (url) => new DaemonClient({ url }),
+          containsCredential(value) {
+            return (
+              boundLiveOwner !== null &&
+              valueContainsCredential({ daemonLogs, githubAudit, value }, boundLiveOwner)
+            );
+          },
+          retainPartialContext(_daemon, _client, cleanup) {
+            partialCleanup = cleanup;
+          },
+          reportLateCleanupError(error) {
+            lateConstructionCleanupError = error;
+          },
+          restoreEnvironment() {
+            restoreProcessEnvironment?.();
+            restoreProcessEnvironment = null;
+          },
+        });
+        partialCleanup = null;
+        contextInitialized = true;
+      } catch (error) {
+        if (!constructionBoundaryStarted) {
           restoreProcessEnvironment?.();
           restoreProcessEnvironment = null;
-          partialDaemon = null;
-          partialClient = null;
         }
-        if (credentialLeak) {
-          throw new Error("The checkout ship operation credential reached a construction surface");
+        throw error;
+      }
+    },
+    LIVE_CONSTRUCTION_TIMEOUT_MS +
+      LIVE_CLEANUP_RESERVE_MS +
+      LIVE_TIMEOUT_REPORTING_MARGIN_MS +
+      LIVE_HOOK_TIMEOUT_MARGIN_MS,
+  );
+
+  afterEach(
+    async () => {
+      if (!contextInitialized) {
+        if (partialCleanup) {
+          const cleanup = partialCleanup;
+          let result = await cleanup.drain();
+          const settledResult = await waitForCleanupSettlement(
+            cleanup.drain,
+            LIVE_TIMEOUT_REPORTING_MARGIN_MS,
+          );
+          result = settledResult ?? result;
+          contextClosed = result.resourcesClosed;
+          const credentialLeak =
+            boundLiveOwner &&
+            valueContainsCredential(
+              { daemonLogs, githubAudit, finalConstructionCleanupError: result.error },
+              boundLiveOwner,
+            );
+          if (contextClosed) {
+            restoreProcessEnvironment?.();
+            restoreProcessEnvironment = null;
+            partialCleanup = null;
+          }
+          if (lateConstructionCleanupError) {
+            const error = lateConstructionCleanupError;
+            lateConstructionCleanupError = undefined;
+            throw error;
+          }
+          if (credentialLeak) {
+            throw new Error(
+              "The checkout ship operation credential reached a construction surface",
+            );
+          }
+          if (result.error) {
+            throw result.error;
+          }
+        }
+        return;
+      }
+      if (liveTeardown) {
+        const teardown = liveTeardown;
+        let result = await teardown.drain();
+        const settledResult = await waitForCleanupSettlement(
+          teardown.drain,
+          LIVE_TIMEOUT_REPORTING_MARGIN_MS,
+        );
+        if (settledResult && liveTeardown === teardown) {
+          result = settledResult;
+          liveTeardown = null;
         }
         if (result.error) {
           throw result.error;
         }
+        return;
       }
-      return;
-    }
-    if (liveTeardown) {
-      const result = await liveTeardown();
-      if (result.error) {
-        throw result.error;
-      }
-      return;
-    }
-    let teardownError: unknown;
-    try {
-      operationOwner = null;
-      if (!contextClosed) {
-        if (restoreProcessEnvironment) {
-          const result = await closeDaemonContextForCredentialBoundary(ctx);
-          contextClosed = result.resourcesClosed;
-          teardownError = result.error;
-        } else {
-          await ctx.cleanup();
+      let teardownError: unknown;
+      try {
+        operationOwner = null;
+        if (!contextClosed) {
+          if (restoreProcessEnvironment) {
+            const result = await closeDaemonContextForCredentialBoundary(ctx);
+            contextClosed = result.resourcesClosed;
+            teardownError = result.error;
+          } else {
+            await ctx.cleanup();
+          }
+        }
+      } finally {
+        if (contextClosed) {
+          restoreProcessEnvironment?.();
+          restoreProcessEnvironment = null;
         }
       }
-    } finally {
-      if (contextClosed) {
-        restoreProcessEnvironment?.();
-        restoreProcessEnvironment = null;
+      if (teardownError) {
+        throw teardownError;
       }
-    }
-    if (teardownError) {
-      throw teardownError;
-    }
-  }, LIVE_CLEANUP_RESERVE_MS);
+    },
+    LIVE_CLEANUP_RESERVE_MS + LIVE_TIMEOUT_REPORTING_MARGIN_MS + LIVE_HOOK_TIMEOUT_MARGIN_MS,
+  );
 
   testWithExplicitLiveGitHubOptIn(
     "runs the full checkout ship loop via checkout RPCs",
@@ -3585,7 +4320,7 @@ describe("daemon checkout ship loop", () => {
       });
       throwCheckoutShipErrors(reservedOperation.operationError, reservedOperation.teardown.error);
     },
-    LIVE_TEST_TIMEOUT_MS,
+    LIVE_TEST_TIMEOUT_MS + LIVE_TIMEOUT_REPORTING_MARGIN_MS,
   );
 
   test("credential-free GitHub remotes stay token-free in checkout protocol facts", async () => {
