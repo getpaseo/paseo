@@ -2133,7 +2133,7 @@ describe("ForgeService", () => {
     );
     await expect(
       service.getPullRequestCheckoutTarget?.({ cwd: "/repo", number: 42 }),
-    ).rejects.toThrow("Unable to resolve GitHub repository for pull request checkout");
+    ).rejects.toBeInstanceOf(GitHubRateLimitCooldownError);
     await expect(service.searchRepositories({ cwd: "/repo", query: "paseo" })).resolves.toEqual([]);
     expect(calls.some((call) => call.args[0] === "auth")).toBe(true);
     expect(calls.some((call) => call.args[0] === "config")).toBe(true);
@@ -3324,6 +3324,37 @@ describe("ForgeService", () => {
     ).rejects.toBe(dnsError);
   });
 
+  it("propagates a repo-view rate limit after current PR view has no result", async () => {
+    const runner = createScriptedRunner([
+      { error: noPullRequestError() },
+      {
+        error: new GitHubCommandError({
+          args: ["repo", "view"],
+          cwd: "/repo",
+          exitCode: 1,
+          stderr: "HTTP 429: API rate limit exceeded",
+          stdout: "HTTP/2.0 429 Too Many Requests\nRetry-After: 60\n\nrate limited",
+        }),
+      },
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    await expect(
+      service.getCurrentPullRequestStatus({
+        cwd: "/repo",
+        headRef: "feature/pr-pane",
+      }),
+    ).rejects.toBeInstanceOf(GitHubRateLimitCooldownError);
+    expect(runner.calls.map((call) => call.args.slice(0, 2))).toEqual([
+      ["pr", "view"],
+      ["repo", "view"],
+    ]);
+  });
+
   it("returns null when no current branch PR is matched by view or qualified fork lookup", async () => {
     const runner = createScriptedRunner([
       { error: noPullRequestError() },
@@ -3572,6 +3603,76 @@ describe("ForgeService", () => {
     await expect(service.isAuthenticated({ cwd: "/repo" })).rejects.toBeInstanceOf(
       GitHubAuthenticationError,
     );
+  });
+
+  it("forgets confirmed auth after a permanent auth failure", async () => {
+    let authStatusCalls = 0;
+    let now = 100;
+    const service = createGitHubService({
+      ttlMs: 1,
+      runner: async (args, options) => {
+        authStatusCalls += 1;
+        if (authStatusCalls === 1) {
+          return { stdout: "", stderr: "" };
+        }
+        if (authStatusCalls === 2) {
+          throw new GitHubCommandError({
+            args,
+            cwd: options.cwd,
+            exitCode: 1,
+            stderr: "To authenticate, run: gh auth login",
+          });
+        }
+        throw new GitHubCommandError({
+          args,
+          cwd: options.cwd,
+          exitCode: 1,
+          stderr: "could not resolve host: github.com",
+        });
+      },
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => now,
+    });
+
+    await expect(service.isAuthenticated({ cwd: "/repo" })).resolves.toBe(true);
+    now += 2;
+    await expect(service.isAuthenticated({ cwd: "/repo" })).rejects.toBeInstanceOf(
+      GitHubAuthenticationError,
+    );
+    await expect(service.isAuthenticated({ cwd: "/repo" })).rejects.toMatchObject({
+      stderr: "could not resolve host: github.com",
+    });
+  });
+
+  it("forgets confirmed auth when invalidation changes the repository host", async () => {
+    let authStatusCalls = 0;
+    let hostCall = 0;
+    const routedHosts: Array<string | undefined> = [];
+    const service = createGitHubService({
+      runner: async (args, options) => {
+        routedHosts.push(options.envOverlay?.GH_HOST);
+        authStatusCalls += 1;
+        if (authStatusCalls === 1) {
+          return { stdout: "", stderr: "" };
+        }
+        throw new GitHubCommandError({
+          args,
+          cwd: options.cwd,
+          exitCode: 1,
+          stderr: "could not resolve host: host-b.internal",
+        });
+      },
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => (hostCall++ === 0 ? "host-a.internal" : "host-b.internal"),
+    });
+
+    await expect(service.isAuthenticated({ cwd: "/repo" })).resolves.toBe(true);
+    service.invalidate({ cwd: "/repo" });
+
+    await expect(service.isAuthenticated({ cwd: "/repo" })).rejects.toMatchObject({
+      stderr: "could not resolve host: host-b.internal",
+    });
+    expect(routedHosts).toEqual(["host-a.internal", "host-b.internal"]);
   });
 
   it("throws a typed command error for non-zero exits", async () => {

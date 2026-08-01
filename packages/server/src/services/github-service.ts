@@ -784,7 +784,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
   const checkLogTailCache = new Map<string, { logTail: string; logTruncated: boolean }>();
   const rateLimitCooldownByResource = new Map<string, number>();
   const rateLimitAdmissionByResource = new Map<string, Promise<void>>();
-  const lastAuthenticatedByCwd = new Map<string, true>();
+  const lastAuthenticatedByHost = new Set<string>();
   let api!: GitHubService;
 
   async function cached<T>(params: {
@@ -1564,18 +1564,21 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         args: {},
         readOptions: input,
         load: async () => {
+          const authHost = ((await resolveRepoHostCached(input.cwd)) ?? "github.com").toLowerCase();
           try {
             await run(["auth", "status"], { cwd: input.cwd });
-            lastAuthenticatedByCwd.set(input.cwd, true);
+            lastAuthenticatedByHost.add(authHost);
             return true;
           } catch (error) {
-            if (lastAuthenticatedByCwd.has(input.cwd) && isTransientGitHubAuthProbeError(error)) {
+            if (lastAuthenticatedByHost.has(authHost) && isTransientGitHubAuthProbeError(error)) {
               return true;
             }
             if (isGitHubAuthenticationError(error)) {
+              lastAuthenticatedByHost.delete(authHost);
               throw error;
             }
             if (error instanceof GitHubCommandError && isAuthFailureText(error.stderr)) {
+              lastAuthenticatedByHost.delete(authHost);
               throw new GitHubAuthenticationError({ stderr: error.stderr });
             }
             throw error;
@@ -2433,12 +2436,12 @@ async function getGitHubRepoView(options: {
       emptyFallback: "{}",
     });
   } catch (error) {
-    // A missing CLI or an auth failure must surface as its typed class so the
-    // caller reports the real problem; only a genuine "not a resolvable repo"
-    // (gh command failure / malformed output) degrades to null.
+    // Typed availability failures must reach callers; only a genuine "not a
+    // resolvable repo" (gh command failure / malformed output) degrades to null.
     if (
       error instanceof GitHubEnterpriseHostProbeError ||
       error instanceof GitHubCliMissingError ||
+      error instanceof GitHubRateLimitCooldownError ||
       isGitHubAuthenticationError(error)
     ) {
       throw error;

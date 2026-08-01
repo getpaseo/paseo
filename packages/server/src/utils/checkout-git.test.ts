@@ -3222,6 +3222,81 @@ const x = 1;
     }
   });
 
+  it("keeps stale PR status when fallback repo view is rate limited", async () => {
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    execFileSync("git", ["remote", "add", "origin", "https://github.com/getpaseo/paseo.git"], {
+      cwd: repoDir,
+    });
+
+    __setPullRequestStatusCacheTtlForTests(50);
+    try {
+      let pullRequestViewCalls = 0;
+      let repoViewCalls = 0;
+      const runner: GitHubCommandRunner = async (args, options) => {
+        if (args[0] === "pr" && args[1] === "view") {
+          pullRequestViewCalls += 1;
+          if (pullRequestViewCalls === 1) {
+            return {
+              stdout: JSON.stringify({
+                number: 123,
+                url: "https://github.com/getpaseo/paseo/pull/123",
+                title: "Ship feature",
+                state: "OPEN",
+                isDraft: false,
+                baseRefName: "main",
+                headRefName: "feature",
+                headRefOid: "1111111111111111111111111111111111111111",
+                mergedAt: null,
+                statusCheckRollup: [],
+                reviewDecision: null,
+                mergeable: "MERGEABLE",
+                headRepositoryOwner: null,
+              }),
+              stderr: "",
+            };
+          }
+          throw new GitHubCommandError({
+            args,
+            cwd: options.cwd,
+            exitCode: 1,
+            stderr: "no pull requests found for branch feature",
+          });
+        }
+        if (args[0] === "repo" && args[1] === "view") {
+          repoViewCalls += 1;
+          throw new GitHubCommandError({
+            args,
+            cwd: options.cwd,
+            exitCode: 1,
+            stderr: "HTTP 429: API rate limit exceeded",
+            stdout: "HTTP/2.0 429 Too Many Requests\nRetry-After: 60\n\nrate limited",
+          });
+        }
+        if (args[0] === "api") {
+          return { stdout: '{"data":{"repository":null}}', stderr: "" };
+        }
+        throw new Error(`Unexpected GitHub command: ${args.join(" ")}`);
+      };
+      const github = createGitHubService({
+        ttlMs: 50,
+        runner,
+        resolveGhPath: async () => "/usr/bin/gh",
+        resolveRepoHost: async () => null,
+      });
+
+      const fresh = await getPullRequestStatus(repoDir, github);
+      await sleep(80);
+      const stale = await getPullRequestStatus(repoDir, github);
+
+      expect(stale).toEqual(fresh);
+      expect(stale.status?.url).toContain("/pull/123");
+      expect(pullRequestViewCalls).toBe(2);
+      expect(repoViewCalls).toBe(1);
+    } finally {
+      __resetPullRequestStatusCacheForTests();
+    }
+  });
+
   it("keeps stale PR status when a Gitea-family refresh hits a transient command error", async () => {
     execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
     execFileSync("git", ["remote", "add", "origin", "https://gitea.example.com/acme/repo.git"], {
