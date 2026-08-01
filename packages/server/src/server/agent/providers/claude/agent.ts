@@ -283,6 +283,8 @@ const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: true,
   supportsRewindBoth: true,
+  // COMPAT(supportsNativeFork): added in v0.2.916
+  supportsNativeFork: true,
 };
 
 const DEFAULT_MODES: AgentMode[] = [
