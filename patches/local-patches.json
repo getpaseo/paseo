@@ -23,15 +23,20 @@
         "live session events arriving during hydration are buffered and committed after recovered history",
         "history hydration drains already queued live session events before opening the buffer boundary",
         "force provider hydration commits history before releasing interleaved live events",
+        "force provider hydration preserves direct timeline appends during replacement",
+        "force provider hydration preserves out-of-band timeline output during replacement",
+        "force hydration flushes assistant, reasoning, and running tool output before success or failure completion",
+        "coalesced timeline output retains order before the following non-coalescable event",
+        "an immediate second force hydration cannot inherit a late coalescer flush",
         "concurrent forced history hydrations serialize per agent",
         "successful hydration returns only after buffered live events are committed",
         "failed hydration returns only after buffered live events are committed"
       ],
       "verification": {
         "receipt": "patches/receipts/paseo-v025-hydration-atomicity-current-main.json",
-        "completedAt": "2026-08-01T03:13:36Z",
+        "completedAt": "2026-08-01T03:48:02Z",
         "result": {
-          "agentManagerTests": "147 passed",
+          "agentManagerTests": "152 passed",
           "serverBuild": "passed",
           "serverTypecheck": "passed",
           "changedFileLint": "0 warnings, 0 errors",
@@ -42,8 +47,8 @@
         "upstreamCommit": "70ed70d36e2eabd3876a22931954319ec202c902",
         "mergeCommit": "562069425d7e1d8d40329132761f71601d9dc52e",
         "mergeTree": "1034d47eeef9a5d3dd1763d580f915de60c0e20c",
-        "repairCommit": "7b72a7915a9769140c6e5db5cf90a8adb50f5013",
-        "repairTree": "6dcac81733a5ce80fb57487fefdb5a0d80866bf4",
+        "repairCommit": "8be95ad0012158574569e06a2295510c9a708444",
+        "repairTree": "8a6ef0d04dcf95317f6c9d11712649e66467e6b9",
         "receipt": "patches/receipts/paseo-v025-hydration-atomicity-current-main.json"
       },
       "upstreamable": true,
