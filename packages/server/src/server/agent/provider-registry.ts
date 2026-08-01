@@ -350,6 +350,7 @@ function mergeModelAdditions(
 export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession): AgentSession {
   return {
     provider,
+    baseProvider: inner.baseProvider ?? inner.provider,
     id: inner.id,
     capabilities: inner.capabilities,
     get features() {
@@ -371,7 +372,7 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     respondToPermission: (requestId, response) => inner.respondToPermission(requestId, response),
     describePersistence: () => mapPersistenceHandle(provider, inner.describePersistence()),
     interrupt: () => inner.interrupt(),
-    close: () => inner.close(),
+    close: (options) => inner.close(options),
     listCommands: inner.listCommands?.bind(inner),
     setModel: inner.setModel?.bind(inner),
     setThinkingOption: inner.setThinkingOption?.bind(inner),

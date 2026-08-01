@@ -96,6 +96,7 @@ export class TestOpenCodeClient {
 
   appAgentsResponse: OpenCodeResponse = { data: [] };
   commandListResponse: OpenCodeResponse = { data: [] };
+  commandListImplementation: (() => Promise<OpenCodeResponse>) | null = null;
   eventStream: AsyncIterable<unknown>;
   experimentalSessionListResponse: OpenCodeResponse = { data: [] };
   mcpAddResponse: OpenCodeResponse = {};
@@ -149,6 +150,9 @@ export class TestOpenCodeClient {
       command: {
         list: async (parameters: unknown) => {
           this.calls.commandList.push(parameters);
+          if (this.commandListImplementation) {
+            return this.commandListImplementation();
+          }
           return this.commandListResponse;
         },
       },

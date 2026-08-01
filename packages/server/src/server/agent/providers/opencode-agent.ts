@@ -35,7 +35,9 @@ import {
   type AgentRunOptions,
   type AgentRunResult,
   type AgentRuntimeInfo,
+  type AgentResumeSessionOptions,
   type AgentSession,
+  type AgentSessionCloseOptions,
   type AgentSessionConfig,
   type AgentSlashCommand,
   type AgentStreamEvent,
@@ -70,6 +72,7 @@ import { execCommand } from "../../../utils/spawn.js";
 import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
 import {
   OpenCodeServerManager,
+  type OpenCodeServerAcquisition,
   type OpenCodeServerManagerLike,
 } from "./opencode/server-manager.js";
 import { resolveOpenCodeHomeDir } from "./opencode/paths.js";
@@ -438,14 +441,18 @@ async function abortOpenCodeSession(params: {
   sessionId: string;
   directory: string;
   logger: Logger;
+  signal?: AbortSignal;
 }): Promise<void> {
-  const { client, sessionId, directory, logger } = params;
+  const { client, sessionId, directory, logger, signal } = params;
 
   try {
-    const response = await client.session.abort({
-      sessionID: sessionId,
-      directory,
-    });
+    const response = await client.session.abort(
+      {
+        sessionID: sessionId,
+        directory,
+      },
+      { signal },
+    );
     if (response.error && !isOpenCodeNotFoundError(response.error)) {
       logger.warn(
         {
@@ -1339,7 +1346,9 @@ export class OpenCodeAgentClient implements AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ): Promise<AgentSession> {
+    options?.signal?.throwIfAborted();
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
     const cwd = overrides?.cwd ?? metadata.cwd;
     if (!cwd) {
@@ -1353,15 +1362,11 @@ export class OpenCodeAgentClient implements AgentClient {
       cwd,
     };
     const openCodeConfig = this.assertConfig(config);
-    const registeredServerUrl = getOpenCodeChildSessionServerUrl(handle.sessionId);
-    const registeredAcquisition = registeredServerUrl
-      ? this.serverManager.acquireExisting(registeredServerUrl)
-      : null;
-    const acquisition =
-      registeredAcquisition ??
-      (launchContext?.env
-        ? await this.serverManager.acquireDedicated(launchContext.env)
-        : await this.serverManager.acquireCurrent());
+    const { acquisition, registered } = await this.acquireServerForResume({
+      sessionId: handle.sessionId,
+      launchContext,
+      options,
+    });
     const { url } = acquisition.server;
     const client = this.createOpenCodeClient({
       baseUrl: url,
@@ -1369,7 +1374,9 @@ export class OpenCodeAgentClient implements AgentClient {
     });
 
     try {
-      await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
+      options?.signal?.throwIfAborted();
+      await this.populateModelContextWindowCache(client, openCodeConfig.cwd, options?.signal);
+      options?.signal?.throwIfAborted();
 
       return new OpenCodeAgentSession(
         openCodeConfig,
@@ -1381,12 +1388,40 @@ export class OpenCodeAgentClient implements AgentClient {
         undefined,
         launchContext?.agentId,
         url,
-        registeredAcquisition !== null,
+        registered,
       );
     } catch (error) {
       await acquisition.release();
       throw error;
     }
+  }
+
+  private async acquireServerForResume(input: {
+    sessionId: string;
+    launchContext?: AgentLaunchContext;
+    options?: AgentResumeSessionOptions;
+  }): Promise<{ acquisition: OpenCodeServerAcquisition; registered: boolean }> {
+    if (!input.options?.isolateProviderGeneration) {
+      const registeredServerUrl = getOpenCodeChildSessionServerUrl(input.sessionId);
+      const registeredAcquisition = registeredServerUrl
+        ? this.serverManager.acquireExisting(registeredServerUrl)
+        : null;
+      if (registeredAcquisition) {
+        return { acquisition: registeredAcquisition, registered: true };
+      }
+    }
+    if (input.launchContext?.env) {
+      return {
+        acquisition: await this.serverManager.acquireDedicated(input.launchContext.env),
+        registered: false,
+      };
+    }
+    return {
+      acquisition: input.options?.isolateProviderGeneration
+        ? await this.serverManager.acquireNew()
+        : await this.serverManager.acquireCurrent(),
+      registered: false,
+    };
   }
 
   async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
@@ -1691,8 +1726,11 @@ export class OpenCodeAgentClient implements AgentClient {
   private async populateModelContextWindowCache(
     client: OpencodeClient,
     cwd: string,
+    signal?: AbortSignal,
   ): Promise<void> {
-    const response = await openCodeMetadataLimit(() => client.provider.list({ directory: cwd }));
+    const response = await openCodeMetadataLimit(() =>
+      client.provider.list({ directory: cwd }, { signal }),
+    );
     if (response.error || !response.data) {
       return;
     }
@@ -3221,6 +3259,18 @@ class OpenCodeAgentSession implements AgentSession {
     return statusType;
   }
 
+  private assertNoForegroundTurnBeforeSubmission(): void {
+    if (this.turnState.status === "running") {
+      throw new Error("A foreground turn became active before prompt submission");
+    }
+    if (this.turnState.status === "stopping") {
+      throw new AgentTurnStartRejectedError(
+        "previous_turn_still_stopping",
+        "OpenCode is still stopping the previous turn",
+      );
+    }
+  }
+
   async startTurn(
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
@@ -3267,6 +3317,7 @@ class OpenCodeAgentSession implements AgentSession {
     let slashCommand: { commandName: string; args?: string } | null;
     try {
       slashCommand = await this.resolveSlashCommandInvocation(prompt);
+      this.assertNoForegroundTurnBeforeSubmission();
       admission?.admit();
     } catch (error) {
       if (this.abortController === turnAbortController) {
@@ -4180,7 +4231,7 @@ class OpenCodeAgentSession implements AgentSession {
     };
   }
 
-  async close(): Promise<void> {
+  async close(options?: AgentSessionCloseOptions): Promise<void> {
     try {
       // Flip closed before clearing subscribers so any event the SDK delivers
       // after the abort (between here and subscribers.clear) is swallowed by
@@ -4207,6 +4258,7 @@ class OpenCodeAgentSession implements AgentSession {
         sessionId: this.sessionId,
         directory: this.config.cwd,
         logger: this.logger,
+        signal: options?.signal,
       });
       await this.deleteProviderSessionIfEphemeral();
       this.turnState = { status: "idle" };

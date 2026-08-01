@@ -2593,6 +2593,44 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
+  test("does not overwrite an autonomous turn that starts while resolving a slash command", async () => {
+    const commandListStarted = createTestDeferred<void>();
+    const commandListAllowed = createTestDeferred<void>();
+    const { parent: session, openCode } = await createParentSession("ses_autonomous_command_race");
+    openCode.commandListImplementation = async () => {
+      commandListStarted.resolve();
+      await commandListAllowed.promise;
+      return { data: [{ name: "help", description: "Show help", hints: [] }] };
+    };
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    try {
+      const start = session.startTurn("/help");
+      const rejectedStart = expect(start).rejects.toThrow(
+        "A foreground turn became active before prompt submission",
+      );
+      await commandListStarted.promise;
+      openCode.emitEvent({
+        type: "session.status",
+        properties: { sessionID: "ses_autonomous_command_race", status: { type: "busy" } },
+      });
+      await vi.waitFor(() =>
+        expect(events).toContainEqual(
+          expect.objectContaining({ type: "turn_started", provider: "opencode" }),
+        ),
+      );
+      commandListAllowed.resolve();
+
+      await rejectedStart;
+      expect(openCode.calls.sessionCommand).toEqual([]);
+      expect(events.filter((event) => event.type === "turn_started")).toHaveLength(1);
+    } finally {
+      commandListAllowed.resolve();
+      await session.close();
+    }
+  });
+
   test("keeps waiting for the stop terminal when the reconnect status probe fails", async () => {
     const firstStreamEnd = createTestDeferred<void>();
     const settleAbort = createTestDeferred<void>();
@@ -3276,6 +3314,60 @@ describe("OpenCode provider subagent contract", () => {
     expect(runtime.clientCreations).toEqual([
       { baseUrl: runtime.server.url, directory: "/workspace/repo" },
       { baseUrl: runtime.server.url, directory: "/workspace/repo" },
+    ]);
+  });
+
+  test("isolates a recovery resume from the registered OpenCode server generation", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const oldClient = new TestOpenCodeClient();
+    const replacementClient = new TestOpenCodeClient();
+    oldClient.sessionCreateResponse = { data: { id: "ses_parent_isolated" } };
+    runtime.enqueueClient(oldClient);
+    runtime.enqueueClient(replacementClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const oldSession = await client.createSession({ provider: "opencode", cwd: "/workspace/repo" });
+
+    oldClient.emitEvent({
+      type: "session.created",
+      properties: {
+        info: {
+          id: "ses_registered_isolated",
+          parentID: "ses_parent_isolated",
+          title: "Registered child",
+        },
+      },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const replacement = await client.resumeSession(
+      {
+        provider: "opencode",
+        sessionId: "ses_registered_isolated",
+        nativeHandle: "ses_registered_isolated",
+        metadata: { cwd: "/workspace/repo" },
+      },
+      undefined,
+      undefined,
+      { isolateProviderGeneration: true },
+    );
+    await oldSession.close();
+
+    expect(runtime.acquisitions).toEqual([
+      { kind: "current", releaseCount: 1 },
+      { kind: "new", releaseCount: 0 },
+    ]);
+    expect(oldClient.calls.sessionAbort).toEqual([
+      { sessionID: "ses_parent_isolated", directory: "/workspace/repo" },
+    ]);
+    expect(replacementClient.calls.sessionAbort).toEqual([]);
+
+    await replacement.close();
+    expect(replacementClient.calls.sessionAbort).toEqual([
+      { sessionID: "ses_registered_isolated", directory: "/workspace/repo" },
     ]);
   });
 

@@ -178,6 +178,7 @@ describe("wrapSessionProvider", () => {
 
     await wrapped.startTurn("prompt", undefined, admission);
 
+    expect(wrapped.baseProvider).toBe("claude");
     expect(session.lastAdmission).toBe(admission);
   });
 

@@ -624,6 +624,14 @@ export interface AgentCreateSessionOptions {
 export interface AgentResumeSessionOptions {
   /** Defaults to interactive. History loading may be read-only for archived native sessions. */
   purpose?: "interactive" | "history";
+  /** Cancels runtime acquisition and registration when the caller no longer owns the resume. */
+  signal?: AbortSignal;
+  /** Start a provider runtime that cannot be affected by requests sent to the previous runtime. */
+  isolateProviderGeneration?: boolean;
+}
+
+export interface AgentSessionCloseOptions {
+  signal?: AbortSignal;
 }
 
 /**
@@ -636,6 +644,8 @@ export interface AgentPermissionResult {
 
 export interface AgentSession {
   readonly provider: AgentProvider;
+  /** Built-in provider behind a derived provider id. Defaults to provider. */
+  readonly baseProvider?: AgentProvider;
   readonly id: string | null;
   readonly capabilities: AgentCapabilityFlags;
   readonly features?: AgentFeature[];
@@ -659,7 +669,7 @@ export interface AgentSession {
   describePersistence(): AgentPersistenceHandle | null;
   interrupt(): Promise<void>;
   /** Release live runtime resources without archiving or deleting the durable native session. */
-  close(): Promise<void>;
+  close(options?: AgentSessionCloseOptions): Promise<void>;
   listCommands?(): Promise<AgentSlashCommand[]>;
   setModel?(modelId: string | null): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;

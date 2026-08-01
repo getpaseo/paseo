@@ -132,6 +132,7 @@ interface TimeoutOptions {
 interface OpenCodeStopBoundaryRecovery {
   cancellationReason: "interrupted" | "agent closed" | null;
   admitted: boolean;
+  abortController: AbortController;
   finished: Promise<void>;
   resolveFinished: () => void;
 }
@@ -147,9 +148,9 @@ function formatProviderList(providers: readonly string[]): string {
   return providers.length > 0 ? providers.join(", ") : "none";
 }
 
-function isRecoverableOpenCodeStopBoundaryError(provider: AgentProvider, error: unknown): boolean {
+function isRecoverableOpenCodeStopBoundaryError(session: AgentSession, error: unknown): boolean {
   return (
-    provider === "opencode" &&
+    (session.baseProvider ?? session.provider) === "opencode" &&
     error instanceof AgentTurnStartRejectedError &&
     error.reason === "previous_turn_still_stopping"
   );
@@ -690,6 +691,7 @@ export class AgentManager {
     for (const recovery of this.openCodeStopBoundaryRecoveries.values()) {
       if (!recovery.admitted) {
         recovery.cancellationReason ??= "agent closed";
+        recovery.abortController.abort();
       }
     }
   }
@@ -1244,8 +1246,10 @@ export class AgentManager {
     overrides?: Partial<AgentSessionConfig>,
     options?: { rehydrateFromDisk?: boolean },
     preservePendingRun = false,
+    resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
+    resumeOptions?.signal?.throwIfAborted();
     let existing = this.requireSessionAgent(agentId);
     if (this.hasInFlightRun(agentId) && !preservePendingRun) {
       await this.cancelAgentRunBefore(agentId, "reload");
@@ -1269,11 +1273,12 @@ export class AgentManager {
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
 
     const session = handle
-      ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
+      ? await client.resumeSession(handle, providerLaunchConfig, launchContext, resumeOptions)
       : await client.createSession(providerLaunchConfig, launchContext);
 
     let handedToRegistration = false;
     try {
+      resumeOptions?.signal?.throwIfAborted();
       this.assertAcceptingAgentRegistrations();
 
       const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded", {
@@ -1284,6 +1289,7 @@ export class AgentManager {
       } finally {
         await this.closeReloadedSession(existing.session, agentId);
       }
+      resumeOptions?.signal?.throwIfAborted();
 
       if (rehydrateFromDisk) {
         // Wipe both durable and in-memory timeline so registerSession mints a
@@ -1318,9 +1324,10 @@ export class AgentManager {
   }
 
   private async closeReloadedSession(session: AgentSession, agentId: string): Promise<void> {
+    const abortController = new AbortController();
     try {
       const result = await this.waitWithTimeout({
-        operation: session.close(),
+        operation: session.close({ signal: abortController.signal }),
         timeoutMs: this.rescueTimeouts.reloadSessionCloseMs,
         onLateError: (error) => {
           this.logger.warn(
@@ -1331,6 +1338,7 @@ export class AgentManager {
       });
 
       if (result === "timed_out") {
+        abortController.abort();
         this.logger.warn(
           { agentId, timeoutMs: this.rescueTimeouts.reloadSessionCloseMs },
           "Timed out closing previous session during refresh",
@@ -1341,9 +1349,16 @@ export class AgentManager {
     }
   }
 
-  private reloadAgentSessionPreservingPendingRun(agentId: string): Promise<ManagedAgent> {
+  private reloadAgentSessionPreservingPendingRun(
+    agentId: string,
+    recovery: OpenCodeStopBoundaryRecovery,
+  ): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(
-      this.reloadAgentSessionInternal(agentId, undefined, undefined, true),
+      this.reloadAgentSessionInternal(agentId, undefined, undefined, true, {
+        signal: recovery.abortController.signal,
+        isolateProviderGeneration: true,
+      }),
+      recovery.abortController.signal,
     );
   }
 
@@ -1401,7 +1416,7 @@ export class AgentManager {
     agentId: string,
     recovery: OpenCodeStopBoundaryRecovery,
   ): Promise<void> {
-    await recovery.finished;
+    await this.waitForOpenCodeStopBoundaryRecovery(agentId, recovery);
     if (this.agents.has(agentId)) {
       await this.closeAgentRuntime(agentId);
     }
@@ -2041,7 +2056,7 @@ export class AgentManager {
           const result = await agent.session.startTurn(prompt, options);
           turnId = result.turnId;
         } catch (initialError) {
-          if (!isRecoverableOpenCodeStopBoundaryError(agent.provider, initialError)) {
+          if (!isRecoverableOpenCodeStopBoundaryError(agent.session, initialError)) {
             throw initialError;
           }
 
@@ -2372,8 +2387,9 @@ export class AgentManager {
   async cancelAgentRun(agentId: string): Promise<AgentRunCancellationResult> {
     const recovery = this.cancelOpenCodeStopBoundaryRecovery(agentId, "interrupted");
     if (recovery) {
-      await recovery.finished;
-      return { status: "settled" };
+      return (await this.waitForOpenCodeStopBoundaryRecovery(agentId, recovery))
+        ? { status: "settled" }
+        : { status: "refused" };
     }
 
     const agent = this.requireSessionAgent(agentId);
@@ -2433,6 +2449,7 @@ export class AgentManager {
     const recovery: OpenCodeStopBoundaryRecovery = {
       cancellationReason: null,
       admitted: false,
+      abortController: new AbortController(),
       finished: new Promise<void>((resolvePromise) => {
         resolveFinished = resolvePromise;
       }),
@@ -2493,7 +2510,7 @@ export class AgentManager {
     recovery: OpenCodeStopBoundaryRecovery;
   }): Promise<ActiveManagedAgent> {
     try {
-      await this.reloadAgentSessionPreservingPendingRun(options.agentId);
+      await this.reloadAgentSessionPreservingPendingRun(options.agentId, options.recovery);
       return this.requireSessionAgent(options.agentId);
     } catch (error) {
       if (!options.recovery.cancellationReason) {
@@ -2537,7 +2554,26 @@ export class AgentManager {
       return null;
     }
     recovery.cancellationReason ??= reason;
+    recovery.abortController.abort();
     return recovery;
+  }
+
+  private async waitForOpenCodeStopBoundaryRecovery(
+    agentId: string,
+    recovery: OpenCodeStopBoundaryRecovery,
+  ): Promise<boolean> {
+    const result = await this.waitWithTimeout({
+      operation: recovery.finished,
+      timeoutMs: this.rescueTimeouts.reloadSessionCloseMs,
+    });
+    if (result === "completed") {
+      return true;
+    }
+    this.logger.warn(
+      { agentId, timeoutMs: this.rescueTimeouts.reloadSessionCloseMs },
+      "Timed out draining canceled OpenCode stop-boundary recovery",
+    );
+    return false;
   }
 
   private finishOpenCodeStopBoundaryRecovery(
@@ -4177,11 +4213,19 @@ export class AgentManager {
     });
   }
 
-  private trackAgentRegistrationOperation<T>(result: Promise<T>): Promise<T> {
-    const settled = result.then(
-      () => undefined,
-      () => undefined,
-    );
+  private trackAgentRegistrationOperation<T>(result: Promise<T>, signal?: AbortSignal): Promise<T> {
+    const settled = new Promise<void>((resolvePromise) => {
+      const finish = () => {
+        signal?.removeEventListener("abort", finish);
+        resolvePromise();
+      };
+      if (signal?.aborted) {
+        finish();
+        return;
+      }
+      signal?.addEventListener("abort", finish, { once: true });
+      void result.then(finish, finish);
+    });
     this.agentRegistrationTasks.add(settled);
     void settled.then(() => {
       this.agentRegistrationTasks.delete(settled);
