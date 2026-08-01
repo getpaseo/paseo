@@ -76,6 +76,7 @@ import {
   type AgentPromptInput,
   type AgentRunOptions,
   type AgentRunResult,
+  type AgentRuntimeLifecycleObserver,
   type AgentRuntimeInfo,
   type AgentSession,
   type AgentSessionConfig,
@@ -697,6 +698,7 @@ export function deriveFeaturesFromACP(
 export class ACPAgentClient implements AgentClient {
   readonly provider: string;
   readonly capabilities: AgentCapabilityFlags;
+  readonly draftDiscoveryRuntimeMethods?: { listFeatures: true };
 
   protected readonly logger: Logger;
   protected readonly runtimeSettings?: ProviderRuntimeSettings;
@@ -745,6 +747,8 @@ export class ACPAgentClient implements AgentClient {
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
     this.configFeatureOptions = options.configFeatureOptions ?? [];
+    this.draftDiscoveryRuntimeMethods =
+      this.configFeatureOptions.length > 0 ? { listFeatures: true } : undefined;
     this.clientCapabilities = options.clientCapabilities;
     this.clientCapabilityMeta = options.clientCapabilityMeta;
     this.modeIdTransformer = options.modeIdTransformer;
@@ -891,13 +895,17 @@ export class ACPAgentClient implements AgentClient {
     }
   }
 
-  async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+  async listFeatures(
+    config: AgentSessionConfig,
+    runtimeLifecycle?: AgentRuntimeLifecycleObserver,
+  ): Promise<AgentFeature[]> {
     if (this.configFeatureOptions.length === 0) {
       return [];
     }
 
     this.assertProvider(config);
     const probe = await this.spawnProcess(PROBE_ENV);
+    runtimeLifecycle?.runtimeStarted();
     try {
       const response = await this.runACPRequest(() =>
         probe.connection.newSession({
@@ -909,6 +917,7 @@ export class ACPAgentClient implements AgentClient {
       return deriveFeaturesFromACP(transformed.configOptions, this.configFeatureOptions);
     } finally {
       await this.closeProbe(probe);
+      runtimeLifecycle?.runtimeClosed();
     }
   }
 

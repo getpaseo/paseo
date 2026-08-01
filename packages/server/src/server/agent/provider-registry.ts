@@ -392,11 +392,13 @@ function wrapClientProvider(
 ): AgentClient {
   const listImportableSessions = inner.listImportableSessions?.bind(inner);
   const importSession = inner.importSession?.bind(inner);
+  const listCommands = inner.listCommands?.bind(inner);
   const listFeatures = inner.listFeatures?.bind(inner);
 
   return {
     provider,
     capabilities: inner.capabilities,
+    draftDiscoveryRuntimeMethods: inner.draftDiscoveryRuntimeMethods,
     createSession: async (config, launchContext) =>
       wrapSessionProvider(
         provider,
@@ -445,8 +447,13 @@ function wrapClientProvider(
       : undefined,
     resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
     isCreateConfigUnattended: inner.isCreateConfigUnattended?.bind(inner),
+    listCommands: listCommands
+      ? async (config, runtimeLifecycle) =>
+          await listCommands({ ...config, provider: inner.provider }, runtimeLifecycle)
+      : undefined,
     listFeatures: listFeatures
-      ? async (config) => await listFeatures({ ...config, provider: inner.provider })
+      ? async (config, runtimeLifecycle) =>
+          await listFeatures({ ...config, provider: inner.provider }, runtimeLifecycle)
       : undefined,
     listImportableSessions: listImportableSessions
       ? async (options) => await listImportableSessions(options)

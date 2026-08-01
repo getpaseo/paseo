@@ -29,6 +29,7 @@ import type {
   AgentPersistenceHandle,
   AgentRunOptions,
   AgentRunResult,
+  AgentRuntimeLifecycleObserver,
   AgentSession,
   AgentSessionConfig,
   AgentSlashCommand,
@@ -805,6 +806,155 @@ test("reserves host runtime capacity before concurrent provider startup", async 
   client.finishCreating();
   const created = await first;
   await manager.closeAgent(created.id);
+});
+
+test("applies host runtime capacity before fallback draft discovery starts a session", async () => {
+  class DraftDiscoveryClient extends TestAgentClient {
+    createSessionCalls = 0;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.createSessionCalls += 1;
+      return await super.createSession(config);
+    }
+  }
+
+  const client = new DraftDiscoveryClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    maxActiveAgentRuntimes: 1,
+  });
+  const live = await manager.createAgent(
+    { provider: "codex", cwd: process.cwd() },
+    "00000000-0000-4000-8000-000000000096",
+    { workspaceId: undefined },
+  );
+
+  await expect(
+    manager.listDraftCommands({ provider: "codex", cwd: process.cwd(), model: "gpt-5.4" }),
+  ).rejects.toMatchObject({ name: "AgentRuntimeCapacityError", live: 1, reserved: 0 });
+  await expect(
+    manager.listDraftFeatures({ provider: "codex", cwd: process.cwd(), model: "gpt-5.4" }),
+  ).rejects.toMatchObject({ name: "AgentRuntimeCapacityError", live: 1, reserved: 0 });
+  expect(client.createSessionCalls).toBe(1);
+
+  await manager.closeAgent(live.id);
+});
+
+test("keeps fallback draft discovery charged when its session does not close", async () => {
+  class DraftCommandSession extends TestAgentSession {
+    override async listCommands(): Promise<AgentSlashCommand[]> {
+      return [];
+    }
+
+    override async close(): Promise<void> {
+      throw new Error("draft session cleanup failed");
+    }
+  }
+  class DraftDiscoveryClient extends TestAgentClient {
+    createSessionCalls = 0;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.createSessionCalls += 1;
+      return new DraftCommandSession(config);
+    }
+  }
+
+  const client = new DraftDiscoveryClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    maxActiveAgentRuntimes: 1,
+  });
+
+  await expect(
+    manager.listDraftCommands({ provider: "codex", cwd: process.cwd(), model: "gpt-5.4" }),
+  ).resolves.toEqual([]);
+  await expect(
+    manager.createAgent(
+      { provider: "codex", cwd: process.cwd() },
+      "00000000-0000-4000-8000-000000000097",
+      { workspaceId: undefined },
+    ),
+  ).rejects.toMatchObject({ name: "AgentRuntimeCapacityError", live: 1, reserved: 0 });
+  expect(client.createSessionCalls).toBe(1);
+});
+
+test("keeps direct draft discovery charged when provider cleanup fails", async () => {
+  class RuntimeProducingFeatureClient extends TestAgentClient {
+    readonly draftDiscoveryRuntimeMethods = { listFeatures: true } as const;
+    listFeatureCalls = 0;
+
+    async listFeatures(
+      _config: AgentSessionConfig,
+      runtimeLifecycle?: AgentRuntimeLifecycleObserver,
+    ): Promise<AgentFeature[]> {
+      this.listFeatureCalls += 1;
+      runtimeLifecycle?.runtimeStarted();
+      throw new Error("draft feature cleanup failed");
+    }
+  }
+
+  const client = new RuntimeProducingFeatureClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    maxActiveAgentRuntimes: 1,
+  });
+
+  await expect(
+    manager.listDraftFeatures({ provider: "codex", cwd: process.cwd(), model: "gpt-5.4" }),
+  ).rejects.toThrow("draft feature cleanup failed");
+  await expect(
+    manager.listDraftFeatures({ provider: "codex", cwd: process.cwd(), model: "gpt-5.4" }),
+  ).rejects.toMatchObject({ name: "AgentRuntimeCapacityError", live: 1, reserved: 0 });
+  expect(client.listFeatureCalls).toBe(1);
+});
+
+test("serializes runtime-producing direct draft discovery through capacity admission", async () => {
+  class RuntimeProducingFeatureClient extends TestAgentClient {
+    readonly draftDiscoveryRuntimeMethods = { listFeatures: true } as const;
+    readonly started = deferred<void>();
+    readonly finish = deferred<void>();
+    listFeatureCalls = 0;
+
+    async listFeatures(
+      _config: AgentSessionConfig,
+      runtimeLifecycle?: AgentRuntimeLifecycleObserver,
+    ): Promise<AgentFeature[]> {
+      this.listFeatureCalls += 1;
+      runtimeLifecycle?.runtimeStarted();
+      this.started.resolve();
+      await this.finish.promise;
+      runtimeLifecycle?.runtimeClosed();
+      return [];
+    }
+  }
+
+  const client = new RuntimeProducingFeatureClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    maxActiveAgentRuntimes: 1,
+  });
+  const first = manager.listDraftFeatures({
+    provider: "codex",
+    cwd: process.cwd(),
+    model: "gpt-5.4",
+  });
+  await client.started.promise;
+
+  await expect(
+    manager.listDraftFeatures({ provider: "codex", cwd: process.cwd(), model: "gpt-5.4" }),
+  ).rejects.toMatchObject({ name: "AgentRuntimeCapacityError", live: 1, reserved: 0 });
+  expect(client.listFeatureCalls).toBe(1);
+
+  client.finish.resolve();
+  await expect(first).resolves.toEqual([]);
+  await expect(
+    manager.listDraftFeatures({ provider: "codex", cwd: process.cwd(), model: "gpt-5.4" }),
+  ).resolves.toEqual([]);
+  expect(client.listFeatureCalls).toBe(2);
 });
 
 test("counts errored provider runtimes until they are closed", async () => {

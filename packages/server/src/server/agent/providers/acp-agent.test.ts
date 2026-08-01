@@ -1530,12 +1530,19 @@ describe("ACPAgentClient config features", () => {
       defaultCommand: ["copilot", "--acp"],
       configFeatureOptions: [COPILOT_AGENT_FEATURE_OPTION],
     });
+    const lifecycle: string[] = [];
 
     await expect(
-      client.listFeatures({
-        provider: "copilot",
-        cwd: "/tmp/acp-features",
-      }),
+      client.listFeatures(
+        {
+          provider: "copilot",
+          cwd: "/tmp/acp-features",
+        },
+        {
+          runtimeStarted: () => lifecycle.push("started"),
+          runtimeClosed: () => lifecycle.push("closed"),
+        },
+      ),
     ).resolves.toEqual([
       expect.objectContaining({
         type: "select",
@@ -1547,6 +1554,47 @@ describe("ACPAgentClient config features", () => {
         ],
       }),
     ]);
+    expect(lifecycle).toEqual(["started", "closed"]);
+  });
+
+  test("does not report an ACP feature probe closed when process cleanup fails", async () => {
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession: vi.fn().mockResolvedValue({
+              sessionId: "session-1",
+              configOptions: [copilotAgentConfigOption("Probe Agent")],
+            }),
+          },
+          initialize: { agentCapabilities: {} },
+        } as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {
+        throw new Error("probe cleanup failed");
+      }
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "copilot",
+      logger: createTestLogger(),
+      defaultCommand: ["copilot", "--acp"],
+      configFeatureOptions: [COPILOT_AGENT_FEATURE_OPTION],
+    });
+    const lifecycle: string[] = [];
+
+    await expect(
+      client.listFeatures(
+        { provider: "copilot", cwd: "/tmp/acp-features" },
+        {
+          runtimeStarted: () => lifecycle.push("started"),
+          runtimeClosed: () => lifecycle.push("closed"),
+        },
+      ),
+    ).rejects.toThrow("probe cleanup failed");
+    expect(lifecycle).toEqual(["started"]);
   });
 });
 

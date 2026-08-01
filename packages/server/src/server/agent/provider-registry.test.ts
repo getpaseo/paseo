@@ -6,6 +6,7 @@ import type {
   AgentFeature,
   AgentModelDefinition,
   AgentMode,
+  AgentRuntimeLifecycleObserver,
   AgentSessionConfig,
   ProviderCatalog,
 } from "./agent-sdk-types.js";
@@ -44,6 +45,7 @@ const mockState = vi.hoisted(() => {
     isCommandAvailable: vi.fn(async (_command: string) => false),
     runtimeModels: new Map<string, AgentModelDefinition[]>(),
     cursorListFeaturesConfigs: [] as AgentSessionConfig[],
+    cursorFeatureLifecycle: [] as string[],
     reset() {
       this.constructorArgs.claude = [];
       this.constructorArgs.codex = [];
@@ -56,6 +58,7 @@ const mockState = vi.hoisted(() => {
       this.isCommandAvailable.mockImplementation(async (_command: string) => false);
       this.runtimeModels.clear();
       this.cursorListFeaturesConfigs = [];
+      this.cursorFeatureLifecycle = [];
     },
   };
 });
@@ -343,6 +346,7 @@ vi.mock("./providers/cursor-acp-agent.js", () => ({
       supportsToolInvocations: true,
     };
     readonly provider = "acp";
+    readonly draftDiscoveryRuntimeMethods = { listFeatures: true } as const;
     readonly runtimeSettings?: unknown;
 
     constructor(options: {
@@ -383,8 +387,15 @@ vi.mock("./providers/cursor-acp-agent.js", () => ({
       return true;
     }
 
-    async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+    async listFeatures(
+      config: AgentSessionConfig,
+      runtimeLifecycle?: AgentRuntimeLifecycleObserver,
+    ): Promise<AgentFeature[]> {
       mockState.cursorListFeaturesConfigs.push(config);
+      runtimeLifecycle?.runtimeStarted();
+      mockState.cursorFeatureLifecycle.push("started");
+      runtimeLifecycle?.runtimeClosed();
+      mockState.cursorFeatureLifecycle.push("closed");
       return [
         {
           type: "select",
@@ -724,12 +735,19 @@ test("wrapped cursor client lists ACP features through the inner provider", asyn
   });
 
   const client = registry.cursor.createClient(logger);
+  const lifecycle: string[] = [];
 
   await expect(
-    client.listFeatures?.({
-      provider: "cursor",
-      cwd: "/tmp/cursor",
-    }),
+    client.listFeatures?.(
+      {
+        provider: "cursor",
+        cwd: "/tmp/cursor",
+      },
+      {
+        runtimeStarted: () => lifecycle.push("started"),
+        runtimeClosed: () => lifecycle.push("closed"),
+      },
+    ),
   ).resolves.toEqual([
     {
       type: "select",
@@ -745,6 +763,11 @@ test("wrapped cursor client lists ACP features through the inner provider", asyn
       cwd: "/tmp/cursor",
     },
   ]);
+  expect(client.draftDiscoveryRuntimeMethods).toEqual({ listFeatures: true });
+  expect({ lifecycle, innerLifecycle: mockState.cursorFeatureLifecycle }).toEqual({
+    lifecycle: ["started", "closed"],
+    innerLifecycle: ["started", "closed"],
+  });
 });
 
 test("traecli provider extending acp uses TraeACPAgentClient", () => {

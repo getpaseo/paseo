@@ -235,10 +235,11 @@ Single file, validated with `PersistedConfigSchema`.
 All fields are optional with sensible defaults.
 
 `daemon.maxActiveAgentRuntimes` limits live provider runtimes on this host. Starting create,
-resume, import, recovery, and reload operations reserve capacity atomically; when the field is
-absent, runtime capacity is unbounded. The limit is read at daemon startup, so changing it requires
-a restart and does not evict existing runtimes. A runtime keeps its slot until provider close
-completes successfully; reload needs a spare slot while its replacement runtime starts.
+resume, import, recovery, reload, and runtime-producing draft discovery operations reserve capacity
+atomically; when the field is absent, runtime capacity is unbounded. The limit is read at daemon
+startup, so changing it requires a restart and does not evict existing runtimes. A runtime keeps its
+slot until provider close completes successfully; reload needs a spare slot while its replacement
+runtime starts.
 
 `agents.metadataGeneration.providers` controls the preferred structured-generation fallback order for daemon-side metadata tasks such as commit messages, PR text, branch names, and generated agent titles. Entries are tried first in the configured order, then Paseo falls through to dynamically discovered defaults and finally the current selection when available.
 

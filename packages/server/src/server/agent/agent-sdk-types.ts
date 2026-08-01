@@ -682,9 +682,21 @@ export interface ResolveAgentDefaultModeInput {
   env?: Record<string, string>;
 }
 
+export interface AgentRuntimeLifecycleObserver {
+  runtimeStarted(): void;
+  runtimeClosed(): void;
+}
+
+export interface AgentDraftDiscoveryRuntimeMethods {
+  listCommands?: true;
+  listFeatures?: true;
+}
+
 export interface AgentClient {
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
+  /** Draft discovery methods that can start a provider runtime and therefore need admission. */
+  readonly draftDiscoveryRuntimeMethods?: AgentDraftDiscoveryRuntimeMethods;
   createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
@@ -706,8 +718,14 @@ export interface AgentClient {
   resolveDefaultModeId?(input: ResolveAgentDefaultModeInput): Promise<string | undefined>;
   resolveCreateConfig?(input: ResolveAgentCreateConfigInput): ResolveAgentCreateConfigResult;
   isCreateConfigUnattended?(input: AgentCreateConfigUnattendedInput): boolean;
-  listCommands?(config: AgentSessionConfig): Promise<AgentSlashCommand[]>;
-  listFeatures?(config: AgentSessionConfig): Promise<AgentFeature[]>;
+  listCommands?(
+    config: AgentSessionConfig,
+    runtimeLifecycle?: AgentRuntimeLifecycleObserver,
+  ): Promise<AgentSlashCommand[]>;
+  listFeatures?(
+    config: AgentSessionConfig,
+    runtimeLifecycle?: AgentRuntimeLifecycleObserver,
+  ): Promise<AgentFeature[]>;
   listImportableSessions?(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]>;

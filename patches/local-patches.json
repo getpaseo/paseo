@@ -15,6 +15,9 @@
       "sources": [
         "docs/data-model.md",
         "packages/server/src/server/agent/agent-manager.ts",
+        "packages/server/src/server/agent/agent-sdk-types.ts",
+        "packages/server/src/server/agent/provider-registry.ts",
+        "packages/server/src/server/agent/providers/acp-agent.ts",
         "packages/server/src/server/bootstrap.ts",
         "packages/server/src/server/config.ts",
         "packages/server/src/server/persisted-config.ts",
@@ -23,11 +26,15 @@
       "tests": [
         "packages/server/src/server/agent/agent-loading.test.ts",
         "packages/server/src/server/agent/agent-manager.test.ts",
+        "packages/server/src/server/agent/provider-registry.test.ts",
+        "packages/server/src/server/agent/providers/acp-agent.test.ts",
         "packages/server/src/server/config.test.ts",
         "packages/server/src/server/persisted-config.test.ts"
       ],
       "testCases": [
         "simultaneous creates reserve capacity atomically before provider startup",
+        "fallback and direct runtime-producing draft discovery share atomic capacity admission",
+        "failed draft session and ACP probe cleanup remain conservatively charged",
         "live provider runtimes continue to consume capacity after entering an error state",
         "provider startup and registration failures release reserved capacity",
         "registration failures close and remove partially installed provider runtimes",
@@ -40,9 +47,9 @@
       ],
       "verification": {
         "commit": null,
-        "completedAt": "2026-08-01T01:21:42Z",
+        "completedAt": "2026-08-01T02:14:47Z",
         "commands": [
-          "npx vitest run src/server/agent/agent-manager.test.ts src/server/agent/agent-loading.test.ts src/server/persisted-config.test.ts src/server/config.test.ts --bail=1",
+          "PATH=/opt/homebrew/Cellar/node@24/24.18.1/bin:$PATH npx vitest run packages/server/src/server/agent/agent-manager.test.ts packages/server/src/server/agent/provider-registry.test.ts packages/server/src/server/agent/providers/acp-agent.test.ts packages/server/src/server/agent/agent-loading.test.ts packages/server/src/server/config.test.ts packages/server/src/server/persisted-config.test.ts --bail=1",
           "npm run build:server",
           "npm run typecheck",
           "npm run lint",
@@ -52,7 +59,7 @@
           "jq empty patches/local-patches.json"
         ],
         "result": {
-          "focusedAndBroaderTests": "204 passed",
+          "focusedAndBroaderTests": "333 passed on Node 24.18.1",
           "publicConfigSchema": "validated",
           "serverBuild": "passed",
           "workspaceTypechecks": "passed",

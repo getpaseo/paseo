@@ -33,6 +33,7 @@ import {
   type AgentProvider,
   type AgentRunOptions,
   type AgentRunResult,
+  type AgentRuntimeLifecycleObserver,
   type AgentSession,
   type AgentSessionConfig,
   type AgentStreamEvent,
@@ -610,7 +611,7 @@ export class AgentManager {
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
   private readonly maxActiveAgentRuntimes: number | null;
-  private readonly liveAgentRuntimeSessions = new Set<AgentSession>();
+  private readonly liveAgentRuntimes = new Set<object>();
   private activeAgentRuntimeReservations = 0;
   private acceptingAgentRegistrations = true;
 
@@ -923,28 +924,38 @@ export class AgentManager {
       );
     }
 
-    if (client.listCommands) {
-      return await client.listCommands(normalizedConfig);
+    const listCommands = client.listCommands?.bind(client);
+    if (listCommands) {
+      if (client.draftDiscoveryRuntimeMethods?.listCommands) {
+        return await this.trackAgentRegistrationOperation(async (reservation) => {
+          const runtimeLifecycle = this.createTrackedRuntimeLifecycle(reservation);
+          return await listCommands(normalizedConfig, runtimeLifecycle);
+        });
+      }
+      return await listCommands(normalizedConfig);
     }
 
-    const session = await client.createSession(normalizedConfig);
-    try {
-      if (!session.listCommands) {
-        throw new Error(
-          `Provider '${normalizedConfig.provider}' does not support listing commands`,
-        );
-      }
-      return await session.listCommands();
-    } finally {
+    return await this.trackAgentRegistrationOperation(async (reservation) => {
+      const session = await client.createSession(normalizedConfig);
+      this.trackStartedAgentRuntime(session, reservation);
       try {
-        await session.close();
-      } catch (error) {
-        this.logger.warn(
-          { err: error, provider: normalizedConfig.provider },
-          "Failed to close draft command listing session",
-        );
+        if (!session.listCommands) {
+          throw new Error(
+            `Provider '${normalizedConfig.provider}' does not support listing commands`,
+          );
+        }
+        return await session.listCommands();
+      } finally {
+        try {
+          await this.closeTrackedAgentRuntime(session);
+        } catch (error) {
+          this.logger.warn(
+            { err: error, provider: normalizedConfig.provider },
+            "Failed to close draft command listing session",
+          );
+        }
       }
-    }
+    });
   }
 
   async listDraftFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
@@ -960,23 +971,33 @@ export class AgentManager {
       );
     }
 
-    if (client.listFeatures) {
-      return await client.listFeatures(normalizedConfig);
+    const listFeatures = client.listFeatures?.bind(client);
+    if (listFeatures) {
+      if (client.draftDiscoveryRuntimeMethods?.listFeatures) {
+        return await this.trackAgentRegistrationOperation(async (reservation) => {
+          const runtimeLifecycle = this.createTrackedRuntimeLifecycle(reservation);
+          return await listFeatures(normalizedConfig, runtimeLifecycle);
+        });
+      }
+      return await listFeatures(normalizedConfig);
     }
 
-    const session = await client.createSession(normalizedConfig);
-    try {
-      return session.features ?? [];
-    } finally {
+    return await this.trackAgentRegistrationOperation(async (reservation) => {
+      const session = await client.createSession(normalizedConfig);
+      this.trackStartedAgentRuntime(session, reservation);
       try {
-        await session.close();
-      } catch (error) {
-        this.logger.warn(
-          { err: error, provider: normalizedConfig.provider },
-          "Failed to close draft feature listing session",
-        );
+        return session.features ?? [];
+      } finally {
+        try {
+          await this.closeTrackedAgentRuntime(session);
+        } catch (error) {
+          this.logger.warn(
+            { err: error, provider: normalizedConfig.provider },
+            "Failed to close draft feature listing session",
+          );
+        }
       }
-    }
+    });
   }
 
   getAgent(id: string): ManagedAgent | null {
@@ -3994,7 +4015,7 @@ export class AgentManager {
   }
 
   private reserveAgentRuntime(): AgentRuntimeReservation {
-    const live = this.liveAgentRuntimeSessions.size;
+    const live = this.liveAgentRuntimes.size;
     const reserved = this.activeAgentRuntimeReservations;
     if (this.maxActiveAgentRuntimes !== null && live + reserved >= this.maxActiveAgentRuntimes) {
       throw new AgentRuntimeCapacityError(this.maxActiveAgentRuntimes, live, reserved);
@@ -4019,13 +4040,41 @@ export class AgentManager {
     session: AgentSession,
     reservation: AgentRuntimeReservation,
   ): void {
-    this.liveAgentRuntimeSessions.add(session);
+    this.liveAgentRuntimes.add(session);
     reservation.transferToLiveRuntime();
+  }
+
+  private createTrackedRuntimeLifecycle(
+    reservation: AgentRuntimeReservation,
+  ): AgentRuntimeLifecycleObserver {
+    const runtime = {};
+    let started = false;
+    let closed = false;
+    return {
+      runtimeStarted: () => {
+        if (started) {
+          throw new Error("Draft discovery runtime reported duplicate startup");
+        }
+        started = true;
+        this.liveAgentRuntimes.add(runtime);
+        reservation.transferToLiveRuntime();
+      },
+      runtimeClosed: () => {
+        if (!started) {
+          throw new Error("Draft discovery runtime reported close before startup");
+        }
+        if (closed) {
+          throw new Error("Draft discovery runtime reported duplicate close");
+        }
+        closed = true;
+        this.liveAgentRuntimes.delete(runtime);
+      },
+    };
   }
 
   private async closeTrackedAgentRuntime(session: AgentSession): Promise<void> {
     await session.close();
-    this.liveAgentRuntimeSessions.delete(session);
+    this.liveAgentRuntimes.delete(session);
   }
 
   private trackAgentRegistrationOperation<T>(
