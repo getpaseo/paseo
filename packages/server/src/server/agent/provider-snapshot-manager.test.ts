@@ -1226,8 +1226,11 @@ describe("ProviderSnapshotManager lifecycle", () => {
       });
       await vi.waitFor(() => expect(isAvailable).toHaveBeenCalledTimes(1));
 
-      await manager.shutdown();
+      const shutdownPromise = manager.shutdown();
+      await Promise.resolve();
+      expect(fetchCatalog).not.toHaveBeenCalled();
       availabilityGate.resolve(true);
+      await shutdownPromise;
       await refreshPromise;
 
       expect(fetchCatalog).not.toHaveBeenCalled();
@@ -1284,8 +1287,11 @@ describe("ProviderSnapshotManager lifecycle", () => {
       });
       await catalogEntered.promise;
 
-      await manager.shutdown();
+      const shutdownPromise = manager.shutdown();
+      await Promise.resolve();
+      expect(shutdown).not.toHaveBeenCalled();
       catalogGate.resolve();
+      await shutdownPromise;
       await refreshPromise;
 
       expect(shutdown).toHaveBeenCalledTimes(1);
@@ -1298,6 +1304,104 @@ describe("ProviderSnapshotManager lifecycle", () => {
       });
     } finally {
       catalogGate.resolve();
+      manager.destroy();
+    }
+  });
+
+  test("catalog timeout aborts the probe but retains client ownership until the probe settles", async () => {
+    const catalogEntered = createDeferred<void>();
+    const catalogGate = createDeferred<void>();
+    let catalogSignal: AbortSignal | undefined;
+    const shutdown = vi.fn(async () => {});
+    const fetchCatalog = vi.fn(async (options: FetchCatalogOptions) => {
+      catalogSignal = options.signal;
+      catalogEntered.resolve();
+      await catalogGate.promise;
+      throw options.signal?.reason;
+    });
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      refreshTimeoutMs: 1,
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: vi.fn(async () => true),
+          fetchCatalog,
+          shutdown,
+        }),
+      },
+    });
+
+    try {
+      const refresh = manager.refreshSnapshotForCwd({
+        cwd: "/tmp/project",
+        providers: ["codex"],
+      });
+      await catalogEntered.promise;
+      await refresh;
+
+      expect(catalogSignal?.aborted).toBe(true);
+      const shutdownPromise = manager.shutdown();
+      await Promise.resolve();
+      expect(shutdown).not.toHaveBeenCalled();
+
+      catalogGate.resolve();
+      await shutdownPromise;
+
+      expect(shutdown).toHaveBeenCalledTimes(1);
+    } finally {
+      catalogGate.resolve();
+      manager.destroy();
+    }
+  });
+
+  test("availability timeout retains client ownership until the probe settles", async () => {
+    const availabilityEntered = createDeferred<void>();
+    const availabilityGate = createDeferred<boolean>();
+    const shutdown = vi.fn(async () => {});
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      refreshTimeoutMs: 1,
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: vi.fn(async () => {
+            availabilityEntered.resolve();
+            return await availabilityGate.promise;
+          }),
+          shutdown,
+        }),
+      },
+    });
+
+    try {
+      const refresh = manager.refreshSnapshotForCwd({
+        cwd: "/tmp/project",
+        providers: ["codex"],
+      });
+      await availabilityEntered.promise;
+      await refresh;
+
+      const shutdownPromise = manager.shutdown();
+      await Promise.resolve();
+      expect(shutdown).not.toHaveBeenCalled();
+
+      availabilityGate.resolve(false);
+      await shutdownPromise;
+
+      expect(shutdown).toHaveBeenCalledTimes(1);
+    } finally {
+      availabilityGate.resolve(false);
       manager.destroy();
     }
   });

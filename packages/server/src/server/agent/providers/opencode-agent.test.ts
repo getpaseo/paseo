@@ -656,6 +656,48 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
   });
 
+  test("keeps the acquired server until aborted SDK requests actually settle", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const openCodeClient = new TestOpenCodeClient();
+    const requestGate = createTestDeferred<void>();
+    let providerSignal: AbortSignal | undefined;
+    let agentsSignal: AbortSignal | undefined;
+    openCodeClient.providerListImplementation = async (requestOptions) => {
+      providerSignal = (requestOptions as { signal?: AbortSignal } | undefined)?.signal;
+      await requestGate.promise;
+      throw providerSignal?.reason;
+    };
+    openCodeClient.appAgentsImplementation = async (requestOptions) => {
+      agentsSignal = (requestOptions as { signal?: AbortSignal } | undefined)?.signal;
+      await requestGate.promise;
+      throw agentsSignal?.reason;
+    };
+    runtime.enqueueClient(openCodeClient);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const controller = new AbortController();
+    const catalog = client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/opencode-abort-drain",
+      force: false,
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => {
+      expect(providerSignal).toBe(controller.signal);
+      expect(agentsSignal).toBe(controller.signal);
+    });
+
+    controller.abort(new Error("catalog canceled"));
+    await Promise.resolve();
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 0 }]);
+
+    requestGate.resolve();
+    await expect(catalog).rejects.toThrow("catalog canceled");
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+  });
+
   test("a catalog aborted in the metadata queue never starts its SDK requests", async () => {
     const runtime = new TestOpenCodeHarness();
     const activeGate = createTestDeferred<void>();

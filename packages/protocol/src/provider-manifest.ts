@@ -35,6 +35,16 @@ export interface AgentProviderDefinition {
   };
 }
 
+export const BUILTIN_PROVIDER_IDS: readonly string[] = Object.freeze([
+  "claude",
+  "codex",
+  "copilot",
+  "opencode",
+  "pi",
+  "omp",
+]);
+export const AGENT_PROVIDER_IDS = BUILTIN_PROVIDER_IDS;
+
 const CLAUDE_MODES: AgentProviderModeDefinition[] = [
   {
     id: "plan",
@@ -281,9 +291,6 @@ export function getAgentProviderDefinition(
   }
   return definition;
 }
-
-export const BUILTIN_PROVIDER_IDS = AGENT_PROVIDER_DEFINITIONS.map((d) => d.id);
-export const AGENT_PROVIDER_IDS = BUILTIN_PROVIDER_IDS;
 
 export const AgentProviderSchema = z.string();
 

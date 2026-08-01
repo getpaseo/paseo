@@ -803,6 +803,15 @@ test("does not persist an initializing session after shutdown closes it", async 
     logger,
     idFactory: () => agentId,
   });
+  const publishedLifecycles: string[] = [];
+  manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state" && event.agent.id === agentId) {
+        publishedLifecycles.push(event.agent.lifecycle);
+      }
+    },
+    { replayState: false },
+  );
 
   try {
     const creation = manager.createAgent(
@@ -826,6 +835,7 @@ test("does not persist an initializing session after shutdown closes it", async 
       agents: [],
       record: { lastStatus: "closed" },
     });
+    expect(publishedLifecycles).toEqual(["closed"]);
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }

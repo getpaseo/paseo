@@ -35,6 +35,50 @@ function createDeferred<T>() {
 }
 
 describe("OpenCodeServerManager generations", () => {
+  test("same-settings client leases keep a shared manager alive across replacement", async () => {
+    const runtime = new FakeOpenCodeServerRuntime([4091, 4092], { autoAnnounce: true });
+    const options = {
+      managedProcesses: runtime.managedProcesses,
+      portAllocator: runtime.allocatePort,
+      resolveCommandPrefix: runtime.resolveCommandPrefix,
+      spawnServerProcess: runtime.spawnServerProcess,
+      terminateProcess: runtime.terminateProcess,
+    };
+    const first = OpenCodeServerManager.acquireShared(createTestLogger(), undefined, options);
+    const replacement = OpenCodeServerManager.acquireShared(createTestLogger(), undefined, options);
+    const firstAcquisition = await first.manager.acquireCurrent();
+
+    await first.release();
+    const replacementAcquisition = await replacement.manager.acquireCurrent();
+
+    expect(replacement.manager).toBe(first.manager);
+    expect(runtime.launchedPorts).toEqual([4091]);
+
+    await firstAcquisition.release();
+    await replacement.release();
+    expect(runtime.terminatedPorts).toEqual([]);
+
+    await replacementAcquisition.release();
+    expect(runtime.terminatedPorts).toEqual([4091]);
+
+    const fresh = OpenCodeServerManager.acquireShared(createTestLogger(), undefined, options);
+    expect(fresh.manager).not.toBe(first.manager);
+    await fresh.release();
+  });
+
+  test("different runtime settings receive independent shared managers", async () => {
+    const first = OpenCodeServerManager.acquireShared(createTestLogger(), {
+      env: { OPENCODE_CONFIG: "first" },
+    });
+    const second = OpenCodeServerManager.acquireShared(createTestLogger(), {
+      env: { OPENCODE_CONFIG: "second" },
+    });
+
+    expect(second.manager).not.toBe(first.manager);
+
+    await Promise.all([first.release(), second.release()]);
+  });
+
   test("rotation creates a new current server without killing a referenced old server", async () => {
     const { manager, runtime } = createTestManager([4101, 4102]);
 
@@ -178,6 +222,36 @@ describe("OpenCodeServerManager generations", () => {
     expect(runtime.spawnCalls).toEqual([]);
     expect(runtime.terminatedPorts).toEqual([]);
     expect(await runtime.managedProcesses.list()).toEqual([]);
+  });
+
+  test("caller cancellation stops waiting for a shared server before it is acquired", async () => {
+    const portGate = createDeferred<number>();
+    const portAllocationStarted = createDeferred<void>();
+    const runtime = new FakeOpenCodeServerRuntime([4477], { autoAnnounce: true });
+    const manager = new OpenCodeServerManager({
+      logger: createTestLogger(),
+      managedProcesses: runtime.managedProcesses,
+      portAllocator: async () => {
+        portAllocationStarted.resolve();
+        return portGate.promise;
+      },
+      resolveCommandPrefix: runtime.resolveCommandPrefix,
+      spawnServerProcess: runtime.spawnServerProcess,
+      terminateProcess: runtime.terminateProcess,
+    });
+    const controller = new AbortController();
+    const acquisition = manager.acquireCurrent(controller.signal);
+    await portAllocationStarted.promise;
+
+    controller.abort(new Error("catalog canceled"));
+
+    await expect(acquisition).rejects.toThrow("catalog canceled");
+    expect(runtime.spawnCalls).toEqual([]);
+
+    portGate.resolve(4477);
+    await vi.waitFor(() => expect(runtime.launchedPorts).toEqual([4477]));
+    await manager.shutdown();
+    expect(runtime.terminatedPorts).toEqual([4477]);
   });
 
   test("shutdown while acquireNew rotation is pending prevents the replacement spawn", async () => {
@@ -360,6 +434,31 @@ describe("OpenCodeServerManager managed process ledger", () => {
 
     expect(runtime.terminatedPorts).toEqual([4602]);
     expect(await runtime.managedProcesses.list()).toEqual([]);
+  });
+
+  test("retains the helper record when shutdown cannot prove process exit", async () => {
+    const runtime = new FakeOpenCodeServerRuntime([4604], { autoAnnounce: true });
+    const terminateProcess = vi.fn<ProcessTerminator>(async () => "kill-timeout");
+    const manager = new OpenCodeServerManager({
+      logger: createTestLogger(),
+      managedProcesses: runtime.managedProcesses,
+      portAllocator: runtime.allocatePort,
+      resolveCommandPrefix: runtime.resolveCommandPrefix,
+      spawnServerProcess: runtime.spawnServerProcess,
+      terminateProcess,
+    });
+
+    await manager.acquireCurrent();
+    await manager.shutdown();
+
+    expect(terminateProcess).toHaveBeenCalledTimes(1);
+    expect(await runtime.managedProcesses.list()).toEqual([
+      expect.objectContaining({
+        owner: { provider: "opencode", kind: "helper-server" },
+        pid: 14604,
+        metadata: { port: 4604 },
+      }),
+    ]);
   });
 
   test("starts helper server from opencode-home", async () => {

@@ -161,7 +161,10 @@ interface ProviderLoadOptions {
 }
 interface ProviderLoad {
   promise: Promise<void>;
+  drained: Promise<void>;
   controller: AbortController;
+  providerOperations: Promise<unknown>[];
+  client?: AgentClient;
   runtimeEpoch: number;
   snapshotCwd: string;
   provider: AgentProvider;
@@ -185,6 +188,7 @@ export class ProviderSnapshotManager {
   private lifecycle: ProviderRuntimeLifecycle = "active";
   private runtimeEpoch = 0;
   private shutdownPromise: Promise<void> | null = null;
+  private readonly pendingClientShutdowns = new Set<Promise<void>>();
   private readonly refreshTimeoutMs: number;
   private readonly diagnosticTimeoutMs: number;
   private readonly logger: Logger;
@@ -418,6 +422,7 @@ export class ProviderSnapshotManager {
     options: ApplyMutableProviderConfigOptions = {},
   ): AgentManagerProviderState {
     this.assertRuntimeActive();
+    const previousClients = Object.values(this.providerClients);
     this.abortProviderLoads(
       () => true,
       new Error("Provider catalog load canceled because provider configuration changed"),
@@ -433,6 +438,13 @@ export class ProviderSnapshotManager {
     );
     this.providerRegistry = this.buildRegistry();
     this.providerClients = { ...this.extraClients } as Record<AgentProvider, AgentClient>;
+    const retainedClients = new Set(Object.values(this.providerClients));
+    const retiredClients = previousClients.filter((client) => !retainedClients.has(client));
+    const retiredClientSet = new Set(retiredClients);
+    const retiredLoads = Array.from(this.activeProviderLoads).filter(
+      (load) => load.client && retiredClientSet.has(load.client),
+    );
+    this.queueClientShutdown(retiredClients, retiredLoads);
 
     for (const cwd of this.snapshots.keys()) {
       this.snapshots.set(cwd, this.reconcileSnapshotForRegistry(cwd));
@@ -469,7 +481,12 @@ export class ProviderSnapshotManager {
     );
     this.lifecycle = "shutting_down";
     this.runtimeEpoch += 1;
+    const activeLoads = Array.from(this.activeProviderLoads);
+    const pendingClientShutdowns = Array.from(this.pendingClientShutdowns);
     const shutdownPromise = Promise.resolve()
+      .then(() =>
+        Promise.all([...activeLoads.map((load) => load.drained), ...pendingClientShutdowns]),
+      )
       .then(() => shutdownAgentClients(clients, this.logger))
       .then(() => undefined)
       .finally(() => {
@@ -795,34 +812,42 @@ export class ProviderSnapshotManager {
 
     const load: ProviderLoad = {
       promise: Promise.resolve(),
+      drained: Promise.resolve(),
       controller: new AbortController(),
+      providerOperations: [],
       runtimeEpoch: this.runtimeEpoch,
       snapshotCwd: options.snapshotCwd,
       provider: options.provider,
     };
     this.activeProviderLoads.add(load);
     this.setProviderLoad(options.snapshotCwd, options.provider, load);
-    load.promise = Promise.resolve()
-      .then(() =>
-        this.refreshProvider({
-          snapshotCwd: options.snapshotCwd,
-          catalogScope: options.catalogScope,
-          provider: options.provider,
-          definition,
-          load,
-          force: options.force,
-        }),
+    load.promise = Promise.resolve().then(() =>
+      this.refreshProvider({
+        snapshotCwd: options.snapshotCwd,
+        catalogScope: options.catalogScope,
+        provider: options.provider,
+        definition,
+        load,
+        force: options.force,
+      }),
+    );
+    load.drained = load.promise
+      .then(
+        () => Promise.allSettled(load.providerOperations),
+        () => Promise.allSettled(load.providerOperations),
       )
-      .finally(() => {
-        this.activeProviderLoads.delete(load);
-        const providerLoads = this.providerLoads.get(options.snapshotCwd);
-        if (providerLoads?.get(options.provider) === load) {
-          providerLoads.delete(options.provider);
-        }
-        if (providerLoads?.size === 0) {
-          this.providerLoads.delete(options.snapshotCwd);
-        }
-      });
+      .then(() => undefined);
+    void load.drained.then(() => {
+      this.activeProviderLoads.delete(load);
+      const providerLoads = this.providerLoads.get(options.snapshotCwd);
+      if (providerLoads?.get(options.provider) === load) {
+        providerLoads.delete(options.provider);
+      }
+      if (providerLoads?.size === 0) {
+        this.providerLoads.delete(options.snapshotCwd);
+      }
+      return undefined;
+    });
     return load.promise;
   }
 
@@ -862,8 +887,11 @@ export class ProviderSnapshotManager {
       }
 
       const client = this.ensureClient(provider, definition);
+      load.client = client;
+      const availabilityOperation = client.isAvailable();
+      load.providerOperations.push(availabilityOperation);
       const available = await withTimeout(
-        client.isAvailable(),
+        availabilityOperation,
         this.refreshTimeoutMs,
         `Timed out checking ${definition.label} availability after ${this.refreshTimeoutMs}ms`,
       );
@@ -876,15 +904,18 @@ export class ProviderSnapshotManager {
       }
 
       const catalogOptions = createFetchCatalogOptions(catalogScope, force);
-      const catalog = await withTimeout(
-        definition.fetchCatalog(
-          {
-            ...catalogOptions,
-            timeoutMs: this.refreshTimeoutMs,
-            signal: load.controller.signal,
-          },
-          client,
-        ),
+      const catalogOperation = definition.fetchCatalog(
+        {
+          ...catalogOptions,
+          timeoutMs: this.refreshTimeoutMs,
+          signal: load.controller.signal,
+        },
+        client,
+      );
+      load.providerOperations.push(catalogOperation);
+      const catalog = await withAbortTimeout(
+        catalogOperation,
+        load.controller,
         this.refreshTimeoutMs,
         `Timed out refreshing ${definition.label} after ${this.refreshTimeoutMs}ms`,
       );
@@ -987,6 +1018,23 @@ export class ProviderSnapshotManager {
         load.controller.abort(reason);
       }
     }
+  }
+
+  private queueClientShutdown(clients: AgentClient[], loads: ProviderLoad[]): void {
+    if (clients.length === 0) {
+      return;
+    }
+    const shutdown = Promise.all(loads.map((load) => load.drained))
+      .then(() => shutdownAgentClients(clients, this.logger))
+      .then(() => undefined);
+    this.pendingClientShutdowns.add(shutdown);
+    void shutdown.then(
+      () => this.pendingClientShutdowns.delete(shutdown),
+      (error) => {
+        this.pendingClientShutdowns.delete(shutdown);
+        this.logger.warn({ err: error }, "Retired provider client cleanup failed");
+      },
+    );
   }
 
   private isProviderLoadRuntimeActive(load: ProviderLoad): boolean {
@@ -1152,6 +1200,30 @@ function toErrorMessage(error: unknown): string {
     return error;
   }
   return "Unknown error";
+}
+
+async function withAbortTimeout<T>(
+  operation: Promise<T>,
+  controller: AbortController,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error(message);
+      controller.abort(error);
+      reject(error);
+    }, timeoutMs);
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([operation, timeout]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
 }
 
 function formatProviderStatus(entry: ProviderSnapshotEntry): string {

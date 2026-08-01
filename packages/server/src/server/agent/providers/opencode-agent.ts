@@ -68,6 +68,7 @@ import { execCommand } from "../../../utils/spawn.js";
 import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
 import {
   OpenCodeServerManager,
+  type OpenCodeServerManagerLease,
   type OpenCodeServerManagerLike,
 } from "./opencode/server-manager.js";
 import { resolveOpenCodeHomeDir } from "./opencode/paths.js";
@@ -288,14 +289,31 @@ const openCodeMetadataLimit = pLimit(OPENCODE_METADATA_CONCURRENCY);
 
 async function runOpenCodeMetadataRequest<T>(
   signal: AbortSignal | undefined,
-  request: () => Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string,
+  request: (requestSignal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   assertAbortSignalActive(signal);
+  let started = false;
   const queued = openCodeMetadataLimit(async () => {
+    started = true;
     assertAbortSignalActive(signal);
-    return await request();
+    const timeoutController = signal ? null : new AbortController();
+    const requestSignal = signal ?? timeoutController!.signal;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    if (timeoutController) {
+      timer = setTimeout(() => timeoutController.abort(new Error(timeoutMessage)), timeoutMs);
+      timer.unref?.();
+    }
+    try {
+      return await request(requestSignal);
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
   });
-  return await raceWithAbortSignal(queued, signal);
+  return await raceQueuedRequestWithAbort(queued, signal, () => started);
 }
 
 function assertAbortSignalActive(signal: AbortSignal | undefined): void {
@@ -307,9 +325,10 @@ function assertAbortSignalActive(signal: AbortSignal | undefined): void {
     : new Error("OpenCode provider catalog refresh was canceled");
 }
 
-async function raceWithAbortSignal<T>(
+async function raceQueuedRequestWithAbort<T>(
   operation: Promise<T>,
   signal: AbortSignal | undefined,
+  hasStarted: () => boolean,
 ): Promise<T> {
   if (!signal) {
     return await operation;
@@ -317,7 +336,11 @@ async function raceWithAbortSignal<T>(
   assertAbortSignalActive(signal);
   let onAbort: (() => void) | null = null;
   const aborted = new Promise<never>((_, reject) => {
-    onAbort = () => reject(signal.reason);
+    onAbort = () => {
+      if (!hasStarted()) {
+        reject(signal.reason);
+      }
+    };
     signal.addEventListener("abort", onAbort, { once: true });
   });
   try {
@@ -1302,7 +1325,11 @@ export class OpenCodeAgentClient implements AgentClient {
   readonly resolveCreateConfig = resolveOpenCodeCreateConfig;
   readonly isCreateConfigUnattended = isOpenCodeCreateConfigUnattended;
 
-  private readonly serverManager: OpenCodeServerManagerLike;
+  private readonly injectedServerManager: OpenCodeServerManagerLike | null;
+  private readonly acquireSharedServerManager: (() => OpenCodeServerManagerLease) | null;
+  private sharedServerManagerLease: OpenCodeServerManagerLease | null = null;
+  private shutDown = false;
+  private shutdownPromise: Promise<void> | null = null;
   private readonly createOpenCodeClient: OpenCodeClientFactory;
   private readonly resolveHomeDir: () => string;
   private readonly logger: Logger;
@@ -1316,12 +1343,14 @@ export class OpenCodeAgentClient implements AgentClient {
   ) {
     this.logger = logger.child({ module: "agent", provider: "opencode" });
     this.runtimeSettings = runtimeSettings;
-    this.serverManager =
-      deps.serverManager ??
-      OpenCodeServerManager.getInstance(this.logger, runtimeSettings, {
-        managedProcesses: deps.managedProcesses,
-        resolveHomeDir: deps.resolveHomeDir,
-      });
+    this.injectedServerManager = deps.serverManager ?? null;
+    this.acquireSharedServerManager = deps.serverManager
+      ? null
+      : () =>
+          OpenCodeServerManager.acquireShared(this.logger, runtimeSettings, {
+            managedProcesses: deps.managedProcesses,
+            resolveHomeDir: deps.resolveHomeDir,
+          });
     this.createOpenCodeClient = deps.createClient ?? createSdkOpenCodeClient;
     this.resolveHomeDir = deps.resolveHomeDir ?? resolveOpenCodeHomeDir;
   }
@@ -1332,9 +1361,10 @@ export class OpenCodeAgentClient implements AgentClient {
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     const openCodeConfig = this.assertConfig(config);
+    const serverManager = this.getServerManager();
     const acquisition = launchContext?.env
-      ? await this.serverManager.acquireDedicated(launchContext.env)
-      : await this.serverManager.acquireCurrent();
+      ? await serverManager.acquireDedicated(launchContext.env)
+      : await serverManager.acquireCurrent();
     const { url } = acquisition.server;
     const client = this.createOpenCodeClient({
       baseUrl: url,
@@ -1394,15 +1424,16 @@ export class OpenCodeAgentClient implements AgentClient {
       cwd,
     };
     const openCodeConfig = this.assertConfig(config);
+    const serverManager = this.getServerManager();
     const registeredServerUrl = getOpenCodeChildSessionServerUrl(handle.sessionId);
     const registeredAcquisition = registeredServerUrl
-      ? this.serverManager.acquireExisting(registeredServerUrl)
+      ? serverManager.acquireExisting(registeredServerUrl)
       : null;
     const acquisition =
       registeredAcquisition ??
       (launchContext?.env
-        ? await this.serverManager.acquireDedicated(launchContext.env)
-        : await this.serverManager.acquireCurrent());
+        ? await serverManager.acquireDedicated(launchContext.env)
+        : await serverManager.acquireCurrent());
     const { url } = acquisition.server;
     const client = this.createOpenCodeClient({
       baseUrl: url,
@@ -1432,9 +1463,10 @@ export class OpenCodeAgentClient implements AgentClient {
 
   async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
     assertFetchCatalogActive(options);
+    const serverManager = this.getServerManager();
     const acquisition = options.force
-      ? await this.serverManager.acquireNew()
-      : await this.serverManager.acquireCurrent();
+      ? await serverManager.acquireNew(options.signal)
+      : await serverManager.acquireCurrent(options.signal);
     const { url } = acquisition.server;
     const isGlobalCatalog = options.scope === "global";
 
@@ -1468,7 +1500,7 @@ export class OpenCodeAgentClient implements AgentClient {
 
   async listCommands(config: AgentSessionConfig): Promise<AgentSlashCommand[]> {
     const openCodeConfig = this.assertConfig(config);
-    const acquisition = await this.serverManager.acquireCurrent();
+    const acquisition = await this.getServerManager().acquireCurrent();
     const { url } = acquisition.server;
     const client = this.createOpenCodeClient({
       baseUrl: url,
@@ -1489,7 +1521,7 @@ export class OpenCodeAgentClient implements AgentClient {
   async listImportableSessions(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]> {
-    const acquisition = await this.serverManager.acquireCurrent();
+    const acquisition = await this.getServerManager().acquireCurrent();
     const { url } = acquisition.server;
     const client = this.createOpenCodeClient({
       baseUrl: url,
@@ -1504,7 +1536,7 @@ export class OpenCodeAgentClient implements AgentClient {
   }
 
   async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
-    const acquisition = await this.serverManager.acquireCurrent();
+    const acquisition = await this.getServerManager().acquireCurrent();
     const { url } = acquisition.server;
     const client = this.createOpenCodeClient({
       baseUrl: url,
@@ -1556,10 +1588,11 @@ export class OpenCodeAgentClient implements AgentClient {
       throw new Error("OpenCode native archive update requires the original working directory");
     }
 
+    const serverManager = this.getServerManager();
     const registeredServerUrl = getOpenCodeChildSessionServerUrl(handle.sessionId);
     const acquisition =
-      (registeredServerUrl ? this.serverManager.acquireExisting(registeredServerUrl) : null) ??
-      (await this.serverManager.acquireCurrent());
+      (registeredServerUrl ? serverManager.acquireExisting(registeredServerUrl) : null) ??
+      (await serverManager.acquireCurrent());
     const client = this.createOpenCodeClient({
       baseUrl: acquisition.server.url,
       directory: metadata.cwd,
@@ -1599,7 +1632,28 @@ export class OpenCodeAgentClient implements AgentClient {
   }
 
   async shutdown(): Promise<void> {
-    await this.serverManager.shutdown();
+    if (this.shutdownPromise) {
+      return this.shutdownPromise;
+    }
+    this.shutDown = true;
+    this.shutdownPromise = this.injectedServerManager
+      ? this.injectedServerManager.shutdown()
+      : (this.sharedServerManagerLease?.release() ?? Promise.resolve());
+    return this.shutdownPromise;
+  }
+
+  private getServerManager(): OpenCodeServerManagerLike {
+    if (this.shutDown) {
+      throw new Error("OpenCode agent client has shut down");
+    }
+    if (this.injectedServerManager) {
+      return this.injectedServerManager;
+    }
+    this.sharedServerManagerLease ??= this.acquireSharedServerManager?.() ?? null;
+    if (!this.sharedServerManagerLease) {
+      throw new Error("OpenCode shared server manager is unavailable");
+    }
+    return this.sharedServerManagerLease.manager;
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
@@ -1652,12 +1706,11 @@ export class OpenCodeAgentClient implements AgentClient {
     directory: string,
     signal?: AbortSignal,
   ): Promise<AgentModelDefinition[]> {
-    const response = await runOpenCodeMetadataRequest(signal, () =>
-      withTimeout(
-        client.provider.list({ directory }, { signal }),
-        OPENCODE_PROVIDER_LIST_TIMEOUT_MS,
-        `OpenCode provider.list timed out after ${OPENCODE_PROVIDER_LIST_TIMEOUT_MS / 1000}s - server may not be authenticated or connected to any providers`,
-      ),
+    const response = await runOpenCodeMetadataRequest(
+      signal,
+      OPENCODE_PROVIDER_LIST_TIMEOUT_MS,
+      `OpenCode provider.list timed out after ${OPENCODE_PROVIDER_LIST_TIMEOUT_MS / 1000}s - server may not be authenticated or connected to any providers`,
+      (requestSignal) => client.provider.list({ directory }, { signal: requestSignal }),
     );
 
     if (response.error) {
@@ -1710,12 +1763,11 @@ export class OpenCodeAgentClient implements AgentClient {
     directory: string,
     signal?: AbortSignal,
   ): Promise<AgentMode[]> {
-    const response = await runOpenCodeMetadataRequest(signal, () =>
-      withTimeout(
-        client.app.agents({ directory }, { signal }),
-        10_000,
-        "OpenCode app.agents timed out after 10s",
-      ),
+    const response = await runOpenCodeMetadataRequest(
+      signal,
+      10_000,
+      "OpenCode app.agents timed out after 10s",
+      (requestSignal) => client.app.agents({ directory }, { signal: requestSignal }),
     );
 
     if (response.error || !response.data) {

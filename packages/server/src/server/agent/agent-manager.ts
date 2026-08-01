@@ -3119,6 +3119,9 @@ export class AgentManager {
   ): Promise<void> {
     try {
       const newInfo = await agent.session.getRuntimeInfo();
+      if (!this.acceptingAgentRegistrations || this.agents.get(agent.id) !== agent) {
+        return;
+      }
       const changed =
         newInfo.model !== agent.runtimeInfo?.model ||
         newInfo.thinkingOptionId !== agent.runtimeInfo?.thinkingOptionId ||
