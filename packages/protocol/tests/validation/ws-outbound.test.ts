@@ -152,7 +152,7 @@ const SourceSchema = z.object({
           providers: [
             {
               provider: "codex",
-              available: false,
+              available: true,
               error: null,
               status: "checking",
               checkedAt: null,

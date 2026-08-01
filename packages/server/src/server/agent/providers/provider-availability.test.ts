@@ -132,7 +132,7 @@ describe("default provider availability", () => {
     await expect(manager.listProviderAvailability()).resolves.toEqual([
       {
         provider: "codex",
-        available: false,
+        available: true,
         error: null,
         status: "checking",
         checkedAt: null,

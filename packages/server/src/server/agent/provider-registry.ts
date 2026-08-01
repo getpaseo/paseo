@@ -479,7 +479,7 @@ function wrapClientProvider(
           };
         }
       : undefined,
-    isAvailable: () => inner.isAvailable(),
+    isAvailable: (options) => inner.isAvailable(options),
     getDiagnostic: inner.getDiagnostic?.bind(inner),
   };
 }

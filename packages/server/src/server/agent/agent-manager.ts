@@ -226,6 +226,7 @@ interface CachedProviderAvailability extends ProviderAvailability {
 
 interface ProviderAvailabilityProbe {
   generation: number;
+  controller: AbortController;
   promise: Promise<ProviderAvailability>;
 }
 
@@ -906,11 +907,11 @@ export class AgentManager {
   }
 
   async listDraftCommands(config: AgentSessionConfig): Promise<AgentSlashCommand[]> {
+    const client = await this.requireAvailableClient({ provider: config.provider });
     const normalizedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
     if (!normalizedConfig.model) {
       return [];
     }
-    const client = await this.requireAvailableClient({ provider: normalizedConfig.provider });
 
     if (client.listCommands) {
       return await client.listCommands(normalizedConfig);
@@ -937,11 +938,11 @@ export class AgentManager {
   }
 
   async listDraftFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+    const client = await this.requireAvailableClient({ provider: config.provider });
     const normalizedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
     if (!normalizedConfig.model) {
       return [];
     }
-    const client = await this.requireAvailableClient({ provider: normalizedConfig.provider });
 
     if (client.listFeatures) {
       return await client.listFeatures(normalizedConfig);
@@ -1026,8 +1027,8 @@ export class AgentManager {
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
-    await this.deleteAgentState(resolvedAgentId);
     const client = await this.requireAvailableClient({ provider: config.provider });
+    await this.deleteAgentState(resolvedAgentId);
     const { storedConfig, launchConfig } = await this.prepareSessionConfig(
       config,
       resolvedAgentId,
@@ -1218,6 +1219,8 @@ export class AgentManager {
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     let existing = this.requireSessionAgent(agentId);
+    const provider = existing.persistence?.provider ?? existing.provider;
+    const client = await this.requireAvailableClient({ provider });
     if (this.hasInFlightRun(agentId)) {
       await this.cancelAgentRunBefore(agentId, "reload");
       existing = this.requireSessionAgent(agentId);
@@ -1228,8 +1231,6 @@ export class AgentManager {
     const preservedLastError = existing.lastError;
     const preservedAttention = existing.attention;
     const handle = existing.persistence;
-    const provider = handle?.provider ?? existing.provider;
-    const client = this.requireClient(provider);
     const refreshConfig = {
       ...existing.config,
       ...overrides,
@@ -4239,7 +4240,9 @@ export class AgentManager {
       }
       return {
         provider,
-        available: false,
+        // Legacy clients only understand `available`; keep their historical
+        // optimistic behavior while new clients render the explicit state.
+        available: true,
         error: null,
         status: "checking",
         checkedAt: null,
@@ -4281,17 +4284,24 @@ export class AgentManager {
       return this.readProviderAvailability(provider, false);
     }
     const generation = this.providerAvailabilityGeneration;
+    const controller = new AbortController();
     const probe: ProviderAvailabilityProbe = {
       generation,
+      controller,
       promise: Promise.resolve({
         provider,
-        available: false,
+        available: true,
         error: null,
         status: "checking" as const,
         checkedAt: null,
       }),
     };
-    probe.promise = this.runProviderAvailabilityProbe(provider, client, generation).finally(() => {
+    probe.promise = this.runProviderAvailabilityProbe(
+      provider,
+      client,
+      generation,
+      controller,
+    ).finally(() => {
       if (this.providerAvailabilityProbes.get(provider) === probe) {
         this.providerAvailabilityProbes.delete(provider);
       }
@@ -4304,6 +4314,7 @@ export class AgentManager {
     provider: AgentProvider,
     client: AgentClient,
     generation: number,
+    controller: AbortController,
   ): Promise<ProviderAvailability> {
     // Status reads must be able to publish their cached/checking response before
     // a provider implementation gets any opportunity to do synchronous work.
@@ -4317,22 +4328,35 @@ export class AgentManager {
     }
 
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let rejectAborted!: (reason?: unknown) => void;
+    const aborted = new Promise<never>((_, reject) => {
+      rejectAborted = reject;
+    });
+    const rejectFromAbort = () => {
+      rejectAborted(
+        controller.signal.reason instanceof Error
+          ? controller.signal.reason
+          : new Error("Provider availability check aborted"),
+      );
+    };
     let result: CachedProviderAvailability;
     try {
+      if (controller.signal.aborted) {
+        rejectFromAbort();
+      } else {
+        controller.signal.addEventListener("abort", rejectFromAbort, { once: true });
+      }
+      timer = setTimeout(() => {
+        controller.abort(
+          new Error(
+            `Provider availability check timed out after ${this.providerHealthProbeTimeoutMs}ms`,
+          ),
+        );
+      }, this.providerHealthProbeTimeoutMs);
+      timer.unref?.();
       const available = await Promise.race([
-        Promise.resolve().then(() => client.isAvailable()),
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () =>
-              reject(
-                new Error(
-                  `Provider availability check timed out after ${this.providerHealthProbeTimeoutMs}ms`,
-                ),
-              ),
-            this.providerHealthProbeTimeoutMs,
-          );
-          timer.unref?.();
-        }),
+        Promise.resolve().then(() => client.isAvailable({ signal: controller.signal })),
+        aborted,
       ]);
       result = {
         provider,
@@ -4343,7 +4367,9 @@ export class AgentManager {
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn({ err: error, provider }, "Failed to check provider availability");
+      if (generation === this.providerAvailabilityGeneration) {
+        this.logger.warn({ err: error, provider }, "Failed to check provider availability");
+      }
       result = {
         provider,
         available: false,
@@ -4355,6 +4381,7 @@ export class AgentManager {
       if (timer) {
         clearTimeout(timer);
       }
+      controller.signal.removeEventListener("abort", rejectFromAbort);
     }
 
     if (
@@ -4370,6 +4397,9 @@ export class AgentManager {
 
   private invalidateProviderAvailability(): void {
     this.providerAvailabilityGeneration += 1;
+    for (const probe of this.providerAvailabilityProbes.values()) {
+      probe.controller.abort(new Error("Provider availability generation invalidated"));
+    }
     this.providerAvailabilityCache.clear();
     this.providerAvailabilityProbes.clear();
   }
@@ -4393,7 +4423,7 @@ export class AgentManager {
     const availableProviders = (
       await this.listProviderAvailability({ startBackgroundChecks: false })
     )
-      .filter((entry) => entry.available)
+      .filter((entry) => entry.status === "available")
       .map((entry) => entry.provider);
     const providerList = formatProviderList(availableProviders);
     const reason = availability.error ? ` Reason: ${availability.error}.` : "";
@@ -4404,14 +4434,6 @@ export class AgentManager {
 
   private getConfiguredProviderIds(): AgentProvider[] {
     return Array.from(new Set([...this.providerEnabled.keys(), ...this.clients.keys()]));
-  }
-
-  private requireClient(provider: AgentProvider): AgentClient {
-    const client = this.clients.get(provider);
-    if (!client) {
-      throw new Error(`No client registered for provider '${provider}'`);
-    }
-    return client;
   }
 
   async archiveNativeSessionBestEffort(

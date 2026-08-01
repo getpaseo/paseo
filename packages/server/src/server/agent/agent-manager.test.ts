@@ -1087,7 +1087,7 @@ test("listDraftCommands returns no commands without guessing a missing model", a
 
   expect(client.fetchCatalogCalls).toBe(0);
   expect(client.createSessionCalls).toBe(0);
-  expect(client.availabilityCalls).toBe(0);
+  expect(client.availabilityCalls).toBe(1);
 });
 
 test("listDraftCommands uses explicit model config without default model fetching", async () => {
@@ -1192,7 +1192,7 @@ test("listDraftFeatures returns no features without guessing a missing model", a
 
   expect(client.fetchCatalogCalls).toBe(0);
   expect(client.createSessionCalls).toBe(0);
-  expect(client.availabilityCalls).toBe(0);
+  expect(client.availabilityCalls).toBe(1);
   expect(client.featureConfigs).toEqual([]);
 });
 
@@ -1654,7 +1654,7 @@ test("listProviderAvailability uses registered client keys, including custom pro
   expect(firstRead).toEqual([
     {
       provider: "zai",
-      available: false,
+      available: true,
       error: null,
       status: "checking",
       checkedAt: null,
@@ -1700,6 +1700,108 @@ test("disabled provider health is authoritative and never starts a probe", async
   expect(isAvailable).not.toHaveBeenCalled();
 });
 
+test("checking health stays optimistic for legacy clients while new clients see checking", async () => {
+  const availability = deferred<boolean>();
+  const client = new TestAgentClient();
+  vi.spyOn(client, "isAvailable").mockImplementation(async () => await availability.promise);
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+
+  const [entry] = await manager.listProviderAvailability();
+  expect(entry).toEqual({
+    provider: "codex",
+    available: true,
+    error: null,
+    status: "checking",
+    checkedAt: null,
+  });
+  expect({ provider: entry?.provider, available: entry?.available, error: entry?.error }).toEqual({
+    provider: "codex",
+    available: true,
+    error: null,
+  });
+
+  availability.resolve(true);
+});
+
+test("draft commands and features reject unavailable providers before default-mode normalization", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-draft-health-gate-"));
+  class UnavailableDraftClient extends TestAgentClient {
+    defaultModeCalls = 0;
+
+    override async isAvailable(): Promise<boolean> {
+      return false;
+    }
+
+    override async resolveDefaultModeId(): Promise<string | undefined> {
+      this.defaultModeCalls += 1;
+      return await new Promise(() => {});
+    }
+  }
+  const client = new UnavailableDraftClient();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+
+  try {
+    await expect(
+      manager.listDraftCommands({ provider: "codex", cwd: workdir, model: "gpt-5.4" }),
+    ).rejects.toThrow("Provider 'codex' is not available");
+    await expect(
+      manager.listDraftFeatures({ provider: "codex", cwd: workdir, model: "gpt-5.4" }),
+    ).rejects.toThrow("Provider 'codex' is not available");
+    expect(client.defaultModeCalls).toBe(0);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("reload rejects disabled and unavailable providers before session replacement", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-health-gate-"));
+  class ReloadHealthClient extends TestAgentClient {
+    available = true;
+
+    override async isAvailable(): Promise<boolean> {
+      return this.available;
+    }
+  }
+  const client = new ReloadHealthClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    providerDefinitions: { codex: { enabled: true } },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000328",
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    expect(client.createdConfigs).toHaveLength(1);
+    expect(client.resumeOverrides).toHaveLength(0);
+
+    manager.updateProviderRegistry({
+      clients: { codex: client },
+      providerDefinitions: { codex: { enabled: false } },
+    });
+    await expect(manager.reloadAgentSession(created.id)).rejects.toThrow(
+      "Provider 'codex' is disabled",
+    );
+
+    client.available = false;
+    manager.updateProviderRegistry({
+      clients: { codex: client },
+      providerDefinitions: { codex: { enabled: true } },
+    });
+    await expect(manager.reloadAgentSession(created.id)).rejects.toThrow(
+      "Provider 'codex' is not available",
+    );
+    expect(client.createdConfigs).toHaveLength(1);
+    expect(client.resumeOverrides).toHaveLength(0);
+    expect(manager.getAgent(created.id)).not.toBeNull();
+  } finally {
+    await manager.closeAgent("00000000-0000-4000-8000-000000000328").catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("first provider-health read returns checking promptly and deduplicates the probe", async () => {
   const availability = deferred<boolean>();
   const client = new TestAgentClient();
@@ -1711,7 +1813,7 @@ test("first provider-health read returns checking promptly and deduplicates the 
   await expect(manager.listProviderAvailability()).resolves.toEqual([
     {
       provider: "codex",
-      available: false,
+      available: true,
       error: null,
       status: "checking",
       checkedAt: null,
@@ -1793,6 +1895,136 @@ test("provider-health errors and timeouts become bounded unavailable results", a
   });
 });
 
+test("provider-health timeout aborts the exact in-flight provider check", async () => {
+  class AbortAwareClient extends TestAgentClient {
+    activeChecks = 0;
+    abortedChecks = 0;
+
+    override async isAvailable(options?: { signal?: AbortSignal }): Promise<boolean> {
+      this.activeChecks += 1;
+      try {
+        return await new Promise<boolean>((_resolve, reject) => {
+          const abort = () => {
+            this.abortedChecks += 1;
+            reject(options?.signal?.reason ?? new Error("aborted"));
+          };
+          if (options?.signal?.aborted) {
+            abort();
+          } else {
+            options?.signal?.addEventListener("abort", abort, { once: true });
+          }
+        });
+      } finally {
+        this.activeChecks -= 1;
+      }
+    }
+  }
+  const client = new AbortAwareClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    providerHealthProbeTimeoutMs: 5,
+  });
+
+  await expect(manager.getProviderAvailability("codex", { fresh: true })).resolves.toMatchObject({
+    status: "unavailable",
+    error: "Provider availability check timed out after 5ms",
+  });
+  expect(client.abortedChecks).toBe(1);
+  expect(client.activeChecks).toBe(0);
+});
+
+test("provider registry invalidation aborts the old in-flight health generation", async () => {
+  const started = deferred<void>();
+  class InvalidatedClient extends TestAgentClient {
+    activeChecks = 0;
+    abortedChecks = 0;
+
+    override async isAvailable(options?: { signal?: AbortSignal }): Promise<boolean> {
+      this.activeChecks += 1;
+      started.resolve();
+      try {
+        return await new Promise<boolean>((_resolve, reject) => {
+          const abort = () => {
+            this.abortedChecks += 1;
+            reject(options?.signal?.reason ?? new Error("aborted"));
+          };
+          options?.signal?.addEventListener("abort", abort, { once: true });
+        });
+      } finally {
+        this.activeChecks -= 1;
+      }
+    }
+  }
+  const oldClient = new InvalidatedClient();
+  const newClient = new TestAgentClient();
+  const manager = new AgentManager({ clients: { codex: oldClient }, logger });
+
+  const oldResult = manager.getProviderAvailability("codex", { fresh: true });
+  await started.promise;
+  manager.updateProviderRegistry({
+    clients: { codex: newClient },
+    providerDefinitions: { codex: { enabled: true } },
+  });
+
+  await expect(oldResult).resolves.toMatchObject({ status: "checking", available: true });
+  expect(oldClient.abortedChecks).toBe(1);
+  expect(oldClient.activeChecks).toBe(0);
+});
+
+test("repeated fresh and stale health checks leave no provider work behind", async () => {
+  let now = 0;
+  class RepeatedAbortClient extends TestAgentClient {
+    calls = 0;
+    activeChecks = 0;
+    abortedChecks = 0;
+
+    override async isAvailable(options?: { signal?: AbortSignal }): Promise<boolean> {
+      this.calls += 1;
+      if (this.calls === 1) return true;
+      this.activeChecks += 1;
+      try {
+        return await new Promise<boolean>((_resolve, reject) => {
+          const abort = () => {
+            this.abortedChecks += 1;
+            reject(options?.signal?.reason ?? new Error("aborted"));
+          };
+          options?.signal?.addEventListener("abort", abort, { once: true });
+        });
+      } finally {
+        this.activeChecks -= 1;
+      }
+    }
+  }
+  const client = new RepeatedAbortClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    providerHealthNow: () => now,
+    providerHealthStaleAfterMs: 1,
+    providerHealthProbeTimeoutMs: 5,
+  });
+
+  await expect(manager.getProviderAvailability("codex", { fresh: true })).resolves.toMatchObject({
+    status: "available",
+  });
+  now = 2;
+  await expect(manager.listProviderAvailability()).resolves.toEqual([
+    expect.objectContaining({ status: "stale", available: true }),
+  ]);
+  await vi.waitFor(() => expect(client.calls).toBe(2));
+  await vi.waitFor(() => expect(client.activeChecks).toBe(0));
+
+  for (let index = 0; index < 3; index += 1) {
+    await expect(manager.getProviderAvailability("codex", { fresh: true })).resolves.toMatchObject({
+      status: "unavailable",
+    });
+    expect(client.activeChecks).toBe(0);
+  }
+  expect(client.calls).toBe(5);
+  expect(client.abortedChecks).toBe(4);
+});
+
 test("concurrent fresh provider probes share one in-flight request", async () => {
   const availability = deferred<boolean>();
   const client = new TestAgentClient();
@@ -1852,6 +2084,37 @@ test("provider registry generation changes discard old probe results and config 
     }),
   ]);
   expect(newProbe).toHaveBeenCalledTimes(1);
+});
+
+test("stale last-known availability is excluded from lifecycle error alternatives", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stale-health-error-"));
+  let now = 0;
+  const requestedClient = new TestAgentClient("codex");
+  vi.spyOn(requestedClient, "isAvailable").mockResolvedValue(false);
+  const staleClient = new TestAgentClient("claude");
+  vi.spyOn(staleClient, "isAvailable").mockResolvedValue(true);
+  const manager = new AgentManager({
+    clients: { codex: requestedClient, claude: staleClient },
+    logger,
+    providerHealthNow: () => now,
+    providerHealthStaleAfterMs: 1,
+  });
+
+  try {
+    await expect(manager.getProviderAvailability("claude", { fresh: true })).resolves.toMatchObject(
+      {
+        status: "available",
+      },
+    );
+    now = 2;
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      }),
+    ).rejects.toThrow("Available providers: none");
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("create and resume fresh-probe only the requested provider", async () => {
