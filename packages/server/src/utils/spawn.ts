@@ -1,6 +1,5 @@
 import { execFile, spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { extname } from "node:path";
-import { promisify } from "node:util";
 
 import { createExternalCommandProcessEnv, type ProcessEnvRecord } from "../server/paseo-env.js";
 import {
@@ -8,8 +7,7 @@ import {
   quoteWindowsArgument,
   quoteWindowsCommand,
 } from "./windows-command.js";
-
-const execFileAsync = promisify(execFile);
+import { terminateWithTreeKill } from "./tree-kill.js";
 
 interface ExternalEnvOptions {
   baseEnv?: ProcessEnvRecord;
@@ -87,6 +85,7 @@ export async function execCommand(
   args: string[],
   options?: ExecCommandOptions,
 ): Promise<ExecCommandResult> {
+  options?.signal?.throwIfAborted();
   const { baseEnv, env, envOverlay } = options ?? {};
   const resolvedBaseEnv = env ?? baseEnv ?? process.env;
   const isWindows = process.platform === "win32";
@@ -103,15 +102,96 @@ export async function execCommand(
           ...(envOverlay ? [envOverlay] : []),
         );
 
-  return execFileAsync(resolvedCommand, resolvedArgs, {
-    cwd: options?.cwd,
-    env: childEnv,
-    encoding: options?.encoding ?? "utf8",
-    killSignal: options?.killSignal,
-    signal: options?.signal,
-    timeout: options?.timeout,
-    maxBuffer: options?.maxBuffer,
-    shell,
-    windowsHide: true,
-  }) as Promise<ExecCommandResult>;
+  return await new Promise<ExecCommandResult>((resolve, reject) => {
+    let callbackResult:
+      | { error: Error | null; stdout: string | Buffer; stderr: string | Buffer }
+      | undefined;
+    let closed = false;
+    let aborting = false;
+    let abortComplete = false;
+    let abortReason: unknown;
+    let settled = false;
+    const cleanup = () => {
+      options?.signal?.removeEventListener("abort", abort);
+    };
+    const settle = () => {
+      if (settled) {
+        return;
+      }
+      if (aborting) {
+        if (!abortComplete) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        reject(abortReason);
+        return;
+      }
+      if (!closed || !callbackResult) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      if (callbackResult.error) {
+        reject(callbackResult.error);
+        return;
+      }
+      resolve({
+        stdout: callbackResult.stdout.toString(),
+        stderr: callbackResult.stderr.toString(),
+      });
+    };
+    let child: ChildProcess;
+    const abort = () => {
+      if (aborting || settled) {
+        return;
+      }
+      aborting = true;
+      abortReason = options?.signal?.reason ?? new DOMException("Aborted", "AbortError");
+      void terminateWithTreeKill(child, {
+        gracefulSignal: options?.killSignal ?? "SIGTERM",
+        forceSignal: "SIGKILL",
+        gracefulTimeoutMs: options?.killSignal === "SIGKILL" ? 0 : 1_000,
+        forceTimeoutMs: 1_000,
+      }).then(
+        () => {
+          abortComplete = true;
+          settle();
+          return undefined;
+        },
+        () => {
+          abortComplete = true;
+          settle();
+          return undefined;
+        },
+      );
+    };
+    child = execFile(
+      resolvedCommand,
+      resolvedArgs,
+      {
+        cwd: options?.cwd,
+        env: childEnv,
+        encoding: options?.encoding ?? "utf8",
+        killSignal: options?.killSignal,
+        timeout: options?.timeout,
+        maxBuffer: options?.maxBuffer,
+        shell,
+        windowsHide: true,
+      },
+      (error, stdout, stderr) => {
+        callbackResult = { error, stdout, stderr };
+        settle();
+      },
+    );
+    child.once("close", () => {
+      closed = true;
+      settle();
+    });
+    if (options?.signal?.aborted) {
+      abort();
+    } else {
+      options?.signal?.addEventListener("abort", abort, { once: true });
+    }
+  });
 }

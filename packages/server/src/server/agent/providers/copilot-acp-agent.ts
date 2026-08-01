@@ -96,8 +96,8 @@ export class CopilotACPAgentClient extends ACPAgentClient {
     });
   }
 
-  override async isAvailable(): Promise<boolean> {
-    return super.isAvailable();
+  override async isAvailable(options?: { signal?: AbortSignal }): Promise<boolean> {
+    return super.isAvailable(options);
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {

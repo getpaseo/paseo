@@ -16,26 +16,38 @@ function hasPathSeparator(value: string): boolean {
   return value.includes("/") || value.includes("\\");
 }
 
-async function enumerateCandidates(name: string): Promise<string[]> {
+async function enumerateCandidates(name: string, signal?: AbortSignal): Promise<string[]> {
+  signal?.throwIfAborted();
   if (process.platform !== "win32" && existsSync("/usr/bin/which")) {
-    return enumerateCandidatesViaSystemWhich(name);
+    return enumerateCandidatesViaSystemWhich(name, signal);
   }
-  return enumerateCandidatesViaLibrary(name);
+  return enumerateCandidatesViaLibrary(name, signal);
 }
 
-async function enumerateCandidatesViaSystemWhich(name: string): Promise<string[]> {
+async function enumerateCandidatesViaSystemWhich(
+  name: string,
+  signal?: AbortSignal,
+): Promise<string[]> {
   try {
     const { stdout } = await execCommand("/usr/bin/which", ["-a", name], {
       timeout: 3000,
       killSignal: "SIGKILL",
+      signal,
     });
+    signal?.throwIfAborted();
     return Array.from(new Set(stdout.trim().split("\n").filter(Boolean)));
   } catch {
+    if (signal?.aborted) {
+      throw signal.reason;
+    }
     return [];
   }
 }
 
-async function enumerateCandidatesViaLibrary(name: string): Promise<string[]> {
+async function enumerateCandidatesViaLibrary(
+  name: string,
+  signal?: AbortSignal,
+): Promise<string[]> {
   let candidates: string[];
   try {
     candidates = await which(name, { all: true });
@@ -46,6 +58,7 @@ async function enumerateCandidatesViaLibrary(name: string): Promise<string[]> {
     }
     throw error;
   }
+  signal?.throwIfAborted();
 
   const seen = new Set<string>();
   return candidates.filter((candidate) => {
@@ -60,16 +73,23 @@ async function enumerateCandidatesViaLibrary(name: string): Promise<string[]> {
 export async function probeExecutable(
   executablePath: string,
   timeoutMs = PROBE_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   try {
+    signal?.throwIfAborted();
     await execCommand(executablePath, ["--version"], {
       timeout: timeoutMs,
       killSignal: "SIGKILL",
       maxBuffer: 64 * 1024,
       shell: isWindowsCommandScript(executablePath),
+      signal,
     });
+    signal?.throwIfAborted();
     return true;
   } catch (error) {
+    if (signal?.aborted) {
+      throw signal.reason;
+    }
     return classifyProbeError(error);
   }
 }
@@ -111,7 +131,9 @@ export function executableExists(
 export async function findExecutable(
   name: string,
   probeTimeoutMs = PROBE_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<string | null> {
+  signal?.throwIfAborted();
   const trimmed = name.trim();
   if (!trimmed) {
     return null;
@@ -119,26 +141,28 @@ export async function findExecutable(
 
   if (process.platform === "win32") {
     return windowsExecutableResolution.find(trimmed, {
-      enumeratePathCandidates: enumerateCandidates,
-      probeExecutable,
+      enumeratePathCandidates: (candidate) => enumerateCandidates(candidate, signal),
+      probeExecutable: (candidate, timeoutMs) => probeExecutable(candidate, timeoutMs, signal),
       exists: existsSync,
       probeTimeoutMs,
+      signal,
     });
   }
 
   if (hasPathSeparator(trimmed)) {
-    return (await probeExecutable(trimmed, probeTimeoutMs)) ? trimmed : null;
+    return (await probeExecutable(trimmed, probeTimeoutMs, signal)) ? trimmed : null;
   }
 
-  const candidates = await enumerateCandidates(trimmed);
+  const candidates = await enumerateCandidates(trimmed, signal);
   for (const candidate of candidates) {
-    if (await probeExecutable(candidate, probeTimeoutMs)) {
+    signal?.throwIfAborted();
+    if (await probeExecutable(candidate, probeTimeoutMs, signal)) {
       return candidate;
     }
   }
   return null;
 }
 
-export async function isCommandAvailable(command: string): Promise<boolean> {
-  return (await findExecutable(command)) !== null;
+export async function isCommandAvailable(command: string, signal?: AbortSignal): Promise<boolean> {
+  return (await findExecutable(command, PROBE_TIMEOUT_MS, signal)) !== null;
 }

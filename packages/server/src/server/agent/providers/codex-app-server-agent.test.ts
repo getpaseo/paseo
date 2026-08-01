@@ -915,9 +915,108 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
-  test("disposes an app-server child that resolves after startup cancellation", async () => {
-    const appServer = createFakeCodexAppServer();
-    const childGate = deferred<ChildProcessWithoutNullStreams>();
+  test.each(["create", "resume"] as const)(
+    "shutdown drains a late app-server child before %s startup and shutdown settle",
+    async (operation) => {
+      const appServer = createFakeCodexAppServer();
+      const childGate = deferred<ChildProcessWithoutNullStreams>();
+      const spawnStarted = deferred<void>();
+      const provider = new CodexAppServerAgentClient(createTestLogger());
+      const internals = castInternals<{
+        goalsEnabled: boolean | null;
+        autoReviewEnabled: boolean | null;
+        spawnAppServer: () => Promise<ChildProcessWithoutNullStreams>;
+      }>(provider);
+      internals.goalsEnabled = false;
+      internals.autoReviewEnabled = false;
+      internals.spawnAppServer = async () => {
+        spawnStarted.resolve();
+        return await childGate.promise;
+      };
+      const killSpy = vi.spyOn(appServer.child, "kill");
+      const startup =
+        operation === "create"
+          ? provider.createSession(createConfig())
+          : provider.resumeSession(archivedThreadHandle());
+      let startupSettled = false;
+      let shutdownSettled = false;
+      void startup.then(
+        () => {
+          startupSettled = true;
+          return undefined;
+        },
+        () => {
+          startupSettled = true;
+          return undefined;
+        },
+      );
+      await spawnStarted.promise;
+
+      const shutdown = provider.shutdown().finally(() => {
+        shutdownSettled = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(startupSettled).toBe(false);
+      expect(shutdownSettled).toBe(false);
+      expect(killSpy).not.toHaveBeenCalled();
+
+      childGate.resolve(appServer.child);
+
+      await expect(startup).rejects.toThrow("Codex app-server client is shutting down");
+      await shutdown;
+      expect(killSpy).toHaveBeenCalledWith("SIGTERM");
+    },
+  );
+
+  test.each(["create", "resume"] as const)(
+    "does not spawn an app-server after canceled %s launch resolution",
+    async (operation) => {
+      const tempDir = await mkdtemp(path.join(tmpdir(), `codex-${operation}-late-spawn-`));
+      const markerPath = path.join(tempDir, "spawned");
+      const launchEntered = deferred<void>();
+      const launchGate = deferred<{ command: string; args: string[] }>();
+      const provider = new CodexAppServerAgentClient(createTestLogger());
+      const internals = castInternals<{
+        goalsEnabled: boolean | null;
+        autoReviewEnabled: boolean | null;
+        resolveLaunchPrefix: (signal?: AbortSignal) => Promise<{ command: string; args: string[] }>;
+      }>(provider);
+      internals.goalsEnabled = false;
+      internals.autoReviewEnabled = false;
+      internals.resolveLaunchPrefix = async () => {
+        launchEntered.resolve();
+        return await launchGate.promise;
+      };
+      const controller = new AbortController();
+      const cancellation = new Error(`cancel ${operation} before Codex spawn`);
+
+      try {
+        const startup =
+          operation === "create"
+            ? provider.createSession(createConfig(), undefined, { signal: controller.signal })
+            : provider.resumeSession(archivedThreadHandle(), undefined, undefined, {
+                signal: controller.signal,
+              });
+        await launchEntered.promise;
+        controller.abort(cancellation);
+        launchGate.resolve({
+          command: process.execPath,
+          args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "yes")`],
+        });
+
+        await expect(startup).rejects.toBe(cancellation);
+        await provider.shutdown();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(existsSync(markerPath)).toBe(false);
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test("bounds shutdown when a Codex spawn callback never returns after cancellation", async () => {
+    vi.useFakeTimers();
     const spawnStarted = deferred<void>();
     const provider = new CodexAppServerAgentClient(createTestLogger());
     const internals = castInternals<{
@@ -929,20 +1028,28 @@ describe("Codex app-server provider", () => {
     internals.autoReviewEnabled = false;
     internals.spawnAppServer = async () => {
       spawnStarted.resolve();
-      return await childGate.promise;
+      return await new Promise<ChildProcessWithoutNullStreams>(() => {});
     };
-    const killSpy = vi.spyOn(appServer.child, "kill");
-    const controller = new AbortController();
-    const creation = provider.createSession(createConfig(), undefined, {
-      signal: controller.signal,
-    });
-    await spawnStarted.promise;
+    const startup = provider.createSession(createConfig());
+    void startup.catch(() => undefined);
 
-    controller.abort(new Error("Codex startup canceled"));
+    try {
+      await spawnStarted.promise;
+      let shutdownSettled = false;
+      const shutdown = provider.shutdown().then(() => {
+        shutdownSettled = true;
+        return undefined;
+      });
 
-    await expect(creation).rejects.toThrow("Codex startup canceled");
-    childGate.resolve(appServer.child);
-    await vi.waitFor(() => expect(killSpy).toHaveBeenCalledWith("SIGTERM"));
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(shutdownSettled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await shutdown;
+      expect(shutdownSettled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test.each(["create", "resume"] as const)(

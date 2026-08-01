@@ -81,16 +81,18 @@ export class GenericACPAgentClient extends ACPAgentClient {
     this.diagnosticPhaseTimeoutMs = options.diagnosticPhaseTimeoutMs;
   }
 
-  protected override async resolveLaunchCommand(): Promise<{ command: string; args: string[] }> {
+  protected override async resolveLaunchCommand(
+    _signal?: AbortSignal,
+  ): Promise<{ command: string; args: string[] }> {
     return {
       command: this.command[0],
       args: this.command.slice(1),
     };
   }
 
-  override async isAvailable(): Promise<boolean> {
+  override async isAvailable(options?: { signal?: AbortSignal }): Promise<boolean> {
     const launch = await this.resolveConfiguredLaunch();
-    const availability = await checkProviderLaunchAvailable(launch);
+    const availability = await checkProviderLaunchAvailable(launch, undefined, options?.signal);
     return availability.available;
   }
 

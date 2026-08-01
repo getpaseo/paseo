@@ -48,7 +48,7 @@ export interface ProviderLaunchAvailability {
 
 export interface ProviderLaunchDefault {
   command: string;
-  resolvePath?: () => Promise<string | null>;
+  resolvePath?: (signal?: AbortSignal) => Promise<string | null>;
 }
 
 function normalizeLaunchDefault(
@@ -60,8 +60,8 @@ function normalizeLaunchDefault(
   return defaultBinary;
 }
 
-async function resolveLaunchPath(command: string): Promise<string | null> {
-  const found = await findExecutable(command);
+async function resolveLaunchPath(command: string, signal?: AbortSignal): Promise<string | null> {
+  const found = await findExecutable(command, undefined, signal);
   if (found) {
     return found;
   }
@@ -73,10 +73,11 @@ async function resolveLaunchPath(command: string): Promise<string | null> {
 
 async function resolveDefaultLaunchPath(
   defaultBinary: ProviderLaunchDefault,
+  signal?: AbortSignal,
 ): Promise<string | null> {
   return defaultBinary.resolvePath
-    ? await defaultBinary.resolvePath()
-    : await resolveLaunchPath(defaultBinary.command);
+    ? await defaultBinary.resolvePath(signal)
+    : await resolveLaunchPath(defaultBinary.command, signal);
 }
 
 export interface ResolveProviderLaunchOptions {
@@ -112,11 +113,14 @@ export async function resolveProviderLaunch({
 export async function checkProviderLaunchAvailable(
   launch: ResolvedProviderLaunch,
   defaultBinary?: ProviderLaunchDefault,
+  signal?: AbortSignal,
 ): Promise<ProviderLaunchAvailability> {
+  signal?.throwIfAborted();
   const resolvedPath =
     defaultBinary && launch.source !== "override"
-      ? await resolveDefaultLaunchPath(defaultBinary)
-      : await resolveLaunchPath(launch.command);
+      ? await resolveDefaultLaunchPath(defaultBinary, signal)
+      : await resolveLaunchPath(launch.command, signal);
+  signal?.throwIfAborted();
   return {
     available: resolvedPath !== null,
     resolvedPath,
@@ -249,26 +253,32 @@ export function createProviderEnv(options: ProviderEnvOptions = {}): NodeJS.Proc
 
 export async function isProviderCommandAvailable(
   commandConfig: ProviderCommand | undefined,
-  resolveDefaultCommand: () => string | Promise<string>,
+  resolveDefaultCommand: (signal?: AbortSignal) => string | Promise<string>,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   try {
+    signal?.throwIfAborted();
     if (commandConfig?.mode === "replace") {
       const launch = await resolveProviderLaunch({
         commandConfig,
       });
-      const availability = await checkProviderLaunchAvailable(launch);
+      const availability = await checkProviderLaunchAvailable(launch, undefined, signal);
       return availability.available;
     }
 
-    const defaultCommand = await resolveDefaultCommand();
+    const defaultCommand = await resolveDefaultCommand(signal);
+    signal?.throwIfAborted();
     const defaultBinary = {
       command: defaultCommand,
       resolvePath: async () => defaultCommand,
     };
     const launch = await resolveProviderLaunch({ commandConfig, defaultBinary });
-    const availability = await checkProviderLaunchAvailable(launch, defaultBinary);
+    const availability = await checkProviderLaunchAvailable(launch, defaultBinary, signal);
     return availability.available;
   } catch {
+    if (signal?.aborted) {
+      throw signal.reason;
+    }
     return false;
   }
 }

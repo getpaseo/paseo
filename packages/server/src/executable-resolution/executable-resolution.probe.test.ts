@@ -13,7 +13,7 @@ import { performance } from "node:perf_hooks";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { isPlatform } from "../test-utils/platform.js";
-import { probeExecutable } from "./executable-resolution.js";
+import { findExecutable, probeExecutable } from "./executable-resolution.js";
 
 const timeoutMs = 1000;
 const timeoutSlackMs = 500;
@@ -100,6 +100,21 @@ async function waitForFile(filePath: string): Promise<void> {
   }
 }
 
+async function waitForProcessExit(pid: number): Promise<void> {
+  const deadline = performance.now() + timeoutSlackMs;
+  while (performance.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+        return;
+      }
+      throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 const fixtures: ProbeFixture[] = [
   {
     name: "hangs forever after starting",
@@ -143,6 +158,53 @@ afterEach(() => {
 });
 
 describe("probeExecutable", () => {
+  test.skipIf(isPlatform("win32"))(
+    "abort preserves its reason and kills the exact --version subprocess",
+    async () => {
+      const dir = makeTempDir();
+      const executablePath = createHangingFixture(dir);
+      const pidFile = path.join(dir, "hangs.pid");
+      const controller = new AbortController();
+      const cancellation = new Error("cancel executable availability probe");
+      const probe = probeExecutable(executablePath, 10_000, controller.signal);
+      await waitForFile(pidFile);
+      const pid = Number(readFileSync(pidFile, "utf8"));
+
+      controller.abort(cancellation);
+
+      await expect(probe).rejects.toBe(cancellation);
+      await waitForProcessExit(pid);
+      expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+    },
+  );
+
+  test.skipIf(isPlatform("win32"))(
+    "findExecutable forwards cancellation through which into the selected probe",
+    async () => {
+      const dir = makeTempDir();
+      createHangingFixture(dir);
+      const pidFile = path.join(dir, "hangs.pid");
+      const controller = new AbortController();
+      const cancellation = new Error("cancel executable discovery");
+      const originalPath = process.env.PATH;
+      process.env.PATH = `${dir}${path.delimiter}${originalPath ?? ""}`;
+
+      try {
+        const discovery = findExecutable("hangs", 10_000, controller.signal);
+        await waitForFile(pidFile);
+        const pid = Number(readFileSync(pidFile, "utf8"));
+
+        controller.abort(cancellation);
+
+        await expect(discovery).rejects.toBe(cancellation);
+        await waitForProcessExit(pid);
+        expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+      } finally {
+        process.env.PATH = originalPath;
+      }
+    },
+  );
+
   // POSIX-only: positive fixtures rely on direct script probing; Windows command-script probing has separate coverage.
   test.skipIf(isPlatform("win32")).each(fixtures.filter((fixture) => fixture.expected))(
     "$name",

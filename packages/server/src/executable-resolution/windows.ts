@@ -7,6 +7,7 @@ interface WindowsFindExecutableOptions {
   exists: (path: string) => boolean;
   localAppData?: string;
   probeTimeoutMs: number;
+  signal?: AbortSignal;
 }
 
 interface WindowsExecutableExistsOptions {
@@ -47,11 +48,13 @@ function enumerateWingetPackageCandidates(
 }
 
 async function find(input: string, options: WindowsFindExecutableOptions): Promise<string | null> {
+  options.signal?.throwIfAborted();
   if (hasPathSeparator(input)) {
     return findFirstProbeable(enumerateLiteralPathCandidates(input), options);
   }
 
   const pathCandidates = await options.enumeratePathCandidates(input);
+  options.signal?.throwIfAborted();
   const wingetCandidates = enumerateWingetPackageCandidates(
     input,
     options.localAppData ?? process.env.LOCALAPPDATA,
@@ -66,6 +69,7 @@ async function findFirstProbeable(
 ): Promise<string | null> {
   const seen = new Set<string>();
   for (const candidate of candidates) {
+    options.signal?.throwIfAborted();
     if (seen.has(candidate)) {
       continue;
     }

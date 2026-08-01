@@ -2413,12 +2413,15 @@ export class OmpAgentClient implements AgentClient {
     });
   }
 
-  async isAvailable(): Promise<boolean> {
+  async isAvailable(options?: { signal?: AbortSignal }): Promise<boolean> {
     try {
       const launch = await this.resolveOmpLaunch();
-      const availability = await checkProviderLaunchAvailable(launch);
+      const availability = await checkProviderLaunchAvailable(launch, undefined, options?.signal);
       return availability.available;
     } catch {
+      if (options?.signal?.aborted) {
+        throw options.signal.reason;
+      }
       return false;
     }
   }

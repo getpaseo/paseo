@@ -65,6 +65,7 @@ import {
   probeExecutable,
 } from "../../../executable-resolution/executable-resolution.js";
 import { createPathEquivalenceMatcher } from "../../../utils/path.js";
+import { withTimeout } from "../../../utils/promise-timeout.js";
 import { spawnProcess } from "../../../utils/spawn.js";
 import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mapper-utils.js";
 import { buildCodexFeatures, codexModelSupportsFastMode } from "./codex-feature-definitions.js";
@@ -148,6 +149,7 @@ function isCodexAlreadyUnarchivedError(error: unknown, threadId: string): boolea
 
 const TURN_START_TIMEOUT_MS = 90 * 1000;
 const INTERRUPT_TIMEOUT_MS = 2_000;
+const CODEX_SESSION_STARTUP_SHUTDOWN_TIMEOUT_MS = 5_000;
 const CODEX_PROVIDER = "codex" as const;
 // Codex treats most app-server client names as the model-request originator.
 // This reserved Codex name is non-originating, so requests keep Codex's default
@@ -469,7 +471,8 @@ function codexMicrosoftStorePackageRoot(): string | null {
   return path.join(localAppData, "Packages");
 }
 
-export async function findCodexMicrosoftStoreBinary(): Promise<string | null> {
+export async function findCodexMicrosoftStoreBinary(signal?: AbortSignal): Promise<string | null> {
+  signal?.throwIfAborted();
   if (process.platform !== "win32") {
     return null;
   }
@@ -483,8 +486,12 @@ export async function findCodexMicrosoftStoreBinary(): Promise<string | null> {
   try {
     entries = await fs.readdir(packageRoot, { withFileTypes: true });
   } catch {
+    if (signal?.aborted) {
+      throw signal.reason;
+    }
     return null;
   }
+  signal?.throwIfAborted();
 
   const codexPackages = entries
     .filter((entry) => entry.isDirectory() && entry.name.startsWith("OpenAI.Codex_"))
@@ -492,6 +499,7 @@ export async function findCodexMicrosoftStoreBinary(): Promise<string | null> {
     .sort();
 
   for (const packageName of codexPackages) {
+    signal?.throwIfAborted();
     const candidate = path.join(
       packageRoot,
       packageName,
@@ -502,7 +510,7 @@ export async function findCodexMicrosoftStoreBinary(): Promise<string | null> {
       "bin",
       "codex.exe",
     );
-    if (await probeExecutable(candidate)) {
+    if (await probeExecutable(candidate, undefined, signal)) {
       return candidate;
     }
   }
@@ -510,16 +518,23 @@ export async function findCodexMicrosoftStoreBinary(): Promise<string | null> {
   return null;
 }
 
-export async function findDefaultCodexBinary(): Promise<string | null> {
-  return (await findExecutable("codex")) ?? (await findCodexMicrosoftStoreBinary());
+export async function findDefaultCodexBinary(signal?: AbortSignal): Promise<string | null> {
+  return (
+    (await findExecutable("codex", undefined, signal)) ??
+    (await findCodexMicrosoftStoreBinary(signal))
+  );
 }
 
-async function resolveCodexLaunchPrefix(runtimeSettings?: ProviderRuntimeSettings): Promise<{
+async function resolveCodexLaunchPrefix(
+  runtimeSettings?: ProviderRuntimeSettings,
+  signal?: AbortSignal,
+): Promise<{
   command: string;
   args: string[];
 }> {
+  signal?.throwIfAborted();
   const launch = await resolveCodexLaunch(runtimeSettings);
-  const availability = await checkCodexLaunchAvailable(launch);
+  const availability = await checkCodexLaunchAvailable(launch, signal);
   if (!availability.available) {
     throw new Error(
       "Codex binary not found. Install the Codex CLI (https://github.com/openai/codex) and ensure it is available in your shell PATH.",
@@ -544,11 +559,15 @@ async function resolveCodexLaunch(
   });
 }
 
-async function checkCodexLaunchAvailable(launch: ResolvedProviderLaunch) {
-  return checkProviderLaunchAvailable(launch, {
-    command: "codex",
-    resolvePath: findDefaultCodexBinary,
-  });
+async function checkCodexLaunchAvailable(launch: ResolvedProviderLaunch, signal?: AbortSignal) {
+  return checkProviderLaunchAvailable(
+    launch,
+    {
+      command: "codex",
+      resolvePath: findDefaultCodexBinary,
+    },
+    signal,
+  );
 }
 
 function resolveCodexHomeDir(): string {
@@ -3213,7 +3232,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     config: AgentSessionConfig,
     private readonly resumeHandle: { sessionId: string; metadata?: Record<string, unknown> } | null,
     logger: Logger,
-    private readonly spawnAppServer: () => Promise<ChildProcessWithoutNullStreams>,
+    private readonly spawnAppServer: (
+      signal?: AbortSignal,
+    ) => Promise<ChildProcessWithoutNullStreams>,
     private readonly deps: CodexAppServerAgentDeps = {},
     private readonly ephemeral: boolean = false,
     private readonly goalsEnabled: boolean = false,
@@ -3289,30 +3310,34 @@ export class CodexAppServerAgentSession implements AgentSession {
         return null;
       },
     );
-    await awaitCodexStartupWithAbort(connectionPromise, signal);
+    // The connection owner must not report cancellation until establishConnection
+    // has disposed any child that crossed the spawn boundary. Concurrent callers
+    // still use the abortable waiter above without taking over that cleanup.
+    await connectionPromise;
     if (this.closed) {
       throw this.createClosedError();
     }
   }
 
   private async establishConnection(signal?: AbortSignal): Promise<void> {
-    const childPromise = this.spawnAppServer();
+    const childPromise = this.spawnAppServer(signal);
     let child: ChildProcessWithoutNullStreams;
     try {
       child = await awaitCodexStartupWithAbort(childPromise, signal);
     } catch (error) {
       if (signal?.aborted) {
-        void childPromise
-          .then(async (lateChild) => {
-            const lateClient = new CodexAppServerClient(lateChild, this.logger);
-            return await lateClient.dispose();
-          })
-          .catch((cleanupError) => {
+        try {
+          const lateChild = await childPromise;
+          const lateClient = new CodexAppServerClient(lateChild, this.logger);
+          await lateClient.dispose();
+        } catch (cleanupError) {
+          if (cleanupError !== signal.reason) {
             this.logger.warn(
               { err: cleanupError },
               "Failed to dispose Codex app-server after startup cancellation",
             );
-          });
+          }
+        }
       }
       throw error;
     }
@@ -6402,7 +6427,9 @@ export class CodexAppServerAgentClient implements AgentClient {
   private goalsEnabled: boolean | null = null;
   private autoReviewEnabled: boolean | null = null;
   private readonly activeCatalogOperations = new Set<Promise<ProviderCatalog>>();
+  private readonly activeSessionStartups = new Set<Promise<AgentSession>>();
   private readonly shutdownController = new AbortController();
+  private shutdownPromise: Promise<void> | null = null;
 
   constructor(
     private readonly logger: Logger,
@@ -6423,7 +6450,7 @@ export class CodexAppServerAgentClient implements AgentClient {
   private async probeGoalsEnabled(signal?: AbortSignal): Promise<boolean> {
     try {
       signal?.throwIfAborted();
-      const launchPrefix = await this.resolveLaunchPrefix();
+      const launchPrefix = await this.resolveLaunchPrefix(signal);
       signal?.throwIfAborted();
       const versionOutput = await resolveBinaryVersion(launchPrefix.command, signal);
       signal?.throwIfAborted();
@@ -6460,7 +6487,7 @@ export class CodexAppServerAgentClient implements AgentClient {
   private async probeAutoReviewEnabled(signal?: AbortSignal): Promise<boolean> {
     try {
       signal?.throwIfAborted();
-      const launchPrefix = await this.resolveLaunchPrefix();
+      const launchPrefix = await this.resolveLaunchPrefix(signal);
       signal?.throwIfAborted();
       const versionOutput = await resolveBinaryVersion(launchPrefix.command, signal);
       signal?.throwIfAborted();
@@ -6494,8 +6521,8 @@ export class CodexAppServerAgentClient implements AgentClient {
     return enabled;
   }
 
-  private resolveLaunchPrefix() {
-    return resolveCodexLaunchPrefix(this.runtimeSettings);
+  private resolveLaunchPrefix(signal?: AbortSignal) {
+    return resolveCodexLaunchPrefix(this.runtimeSettings, signal);
   }
 
   private resolveStartupSignal(requestSignal?: AbortSignal): AbortSignal {
@@ -6505,13 +6532,36 @@ export class CodexAppServerAgentClient implements AgentClient {
     ]);
   }
 
+  private runSessionStartup(
+    requestSignal: AbortSignal | undefined,
+    start: (startupSignal: AbortSignal) => Promise<AgentSession>,
+  ): Promise<AgentSession> {
+    const startupSignal = this.resolveStartupSignal(requestSignal);
+    const startup = Promise.resolve().then(async () => {
+      startupSignal.throwIfAborted();
+      return await start(startupSignal);
+    });
+    this.activeSessionStartups.add(startup);
+    void startup.then(
+      () => this.activeSessionStartups.delete(startup),
+      () => this.activeSessionStartups.delete(startup),
+    );
+    return startup;
+  }
+
+  private async drainSessionStartups(): Promise<void> {
+    while (this.activeSessionStartups.size > 0) {
+      await Promise.allSettled(Array.from(this.activeSessionStartups));
+    }
+  }
+
   private async spawnAppServer(
     launchEnv?: Record<string, string>,
     options?: { goalsEnabled?: boolean; agentId?: string },
     signal?: AbortSignal,
   ): Promise<ChildProcessWithoutNullStreams> {
     signal?.throwIfAborted();
-    const launchPrefix = await this.resolveLaunchPrefix();
+    const launchPrefix = await this.resolveLaunchPrefix(signal);
     signal?.throwIfAborted();
     const args = [...launchPrefix.args, "app-server"];
     if (options?.goalsEnabled) {
@@ -6538,77 +6588,85 @@ export class CodexAppServerAgentClient implements AgentClient {
     return child;
   }
 
-  async createSession(
+  createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
-    if (options?.persistSession === false) {
-      this.logger.debug(
-        "Codex app-server does not expose an ephemeral-session option; persistSession=false is currently a no-op",
+    return this.runSessionStartup(options?.signal, async (startupSignal) => {
+      if (options?.persistSession === false) {
+        this.logger.debug(
+          "Codex app-server does not expose an ephemeral-session option; persistSession=false is currently a no-op",
+        );
+        // TODO: Honor persistSession=false if app-server adds support, or route
+        // utility generations through `codex exec --ephemeral` in a larger change.
+      }
+      const sessionConfig: AgentSessionConfig = { ...config, provider: CODEX_PROVIDER };
+      const [goalsEnabled, autoReviewEnabled] = await Promise.all([
+        this.resolveGoalsEnabled(startupSignal),
+        this.resolveAutoReviewEnabled(startupSignal),
+      ]);
+      startupSignal.throwIfAborted();
+      const session = new CodexAppServerAgentSession(
+        sessionConfig,
+        null,
+        this.logger,
+        (attemptSignal) =>
+          this.spawnAppServer(
+            launchContext?.env,
+            { goalsEnabled, agentId: launchContext?.agentId },
+            attemptSignal,
+          ),
+        this.sessionDeps(),
+        options?.persistSession === false,
+        goalsEnabled,
+        autoReviewEnabled,
+        launchContext?.agentId,
       );
-      // TODO: Honor persistSession=false if app-server adds support, or route
-      // utility generations through `codex exec --ephemeral` in a larger change.
-    }
-    const sessionConfig: AgentSessionConfig = { ...config, provider: CODEX_PROVIDER };
-    const startupSignal = this.resolveStartupSignal(options?.signal);
-    startupSignal.throwIfAborted();
-    const [goalsEnabled, autoReviewEnabled] = await Promise.all([
-      this.resolveGoalsEnabled(startupSignal),
-      this.resolveAutoReviewEnabled(startupSignal),
-    ]);
-    startupSignal.throwIfAborted();
-    const session = new CodexAppServerAgentSession(
-      sessionConfig,
-      null,
-      this.logger,
-      () =>
-        this.spawnAppServer(launchContext?.env, { goalsEnabled, agentId: launchContext?.agentId }),
-      this.sessionDeps(),
-      options?.persistSession === false,
-      goalsEnabled,
-      autoReviewEnabled,
-      launchContext?.agentId,
-    );
-    await session.connect(startupSignal);
-    return session;
+      await session.connect(startupSignal);
+      return session;
+    });
   }
 
-  async resumeSession(
+  resumeSession(
     handle: { sessionId: string; metadata?: Record<string, unknown> },
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
     options?: AgentResumeSessionOptions,
   ): Promise<AgentSession> {
-    const storedConfig = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
-    const merged: AgentSessionConfig = {
-      ...storedConfig,
-      ...overrides,
-      provider: CODEX_PROVIDER,
-      cwd: overrides?.cwd ?? storedConfig.cwd ?? process.cwd(),
-    };
-    const startupSignal = this.resolveStartupSignal(options?.signal);
-    startupSignal.throwIfAborted();
-    const [goalsEnabled, autoReviewEnabled] = await Promise.all([
-      this.resolveGoalsEnabled(startupSignal),
-      this.resolveAutoReviewEnabled(startupSignal),
-    ]);
-    startupSignal.throwIfAborted();
-    const session = new CodexAppServerAgentSession(
-      merged,
-      handle,
-      this.logger,
-      () =>
-        this.spawnAppServer(launchContext?.env, { goalsEnabled, agentId: launchContext?.agentId }),
-      this.sessionDeps(),
-      false,
-      goalsEnabled,
-      autoReviewEnabled,
-      launchContext?.agentId,
-      options?.purpose ?? "interactive",
-    );
-    await session.connect(startupSignal);
-    return session;
+    return this.runSessionStartup(options?.signal, async (startupSignal) => {
+      const storedConfig = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
+      const merged: AgentSessionConfig = {
+        ...storedConfig,
+        ...overrides,
+        provider: CODEX_PROVIDER,
+        cwd: overrides?.cwd ?? storedConfig.cwd ?? process.cwd(),
+      };
+      const [goalsEnabled, autoReviewEnabled] = await Promise.all([
+        this.resolveGoalsEnabled(startupSignal),
+        this.resolveAutoReviewEnabled(startupSignal),
+      ]);
+      startupSignal.throwIfAborted();
+      const session = new CodexAppServerAgentSession(
+        merged,
+        handle,
+        this.logger,
+        (attemptSignal) =>
+          this.spawnAppServer(
+            launchContext?.env,
+            { goalsEnabled, agentId: launchContext?.agentId },
+            attemptSignal,
+          ),
+        this.sessionDeps(),
+        false,
+        goalsEnabled,
+        autoReviewEnabled,
+        launchContext?.agentId,
+        options?.purpose ?? "interactive",
+      );
+      await session.connect(startupSignal);
+      return session;
+    });
   }
 
   async listImportableSessions(
@@ -6773,10 +6831,25 @@ export class CodexAppServerAgentClient implements AgentClient {
   }
 
   async shutdown(): Promise<void> {
+    if (this.shutdownPromise) {
+      return this.shutdownPromise;
+    }
     if (!this.shutdownController.signal.aborted) {
       this.shutdownController.abort(new Error("Codex app-server client is shutting down"));
     }
-    await Promise.allSettled(Array.from(this.activeCatalogOperations));
+    this.shutdownPromise = (async () => {
+      try {
+        await withTimeout(
+          this.drainSessionStartups(),
+          CODEX_SESSION_STARTUP_SHUTDOWN_TIMEOUT_MS,
+          `Codex session startup shutdown cleanup timed out after ${CODEX_SESSION_STARTUP_SHUTDOWN_TIMEOUT_MS}ms`,
+        );
+      } catch (error) {
+        this.logger.warn({ err: error }, "Codex session startup shutdown cleanup timed out");
+      }
+      await Promise.allSettled(Array.from(this.activeCatalogOperations));
+    })();
+    return this.shutdownPromise;
   }
 
   async archiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
@@ -6822,9 +6895,9 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
   }
 
-  async isAvailable(): Promise<boolean> {
+  async isAvailable(options?: { signal?: AbortSignal }): Promise<boolean> {
     const launch = await resolveCodexLaunch(this.runtimeSettings);
-    const availability = await checkCodexLaunchAvailable(launch);
+    const availability = await checkCodexLaunchAvailable(launch, options?.signal);
     return availability.available;
   }
 

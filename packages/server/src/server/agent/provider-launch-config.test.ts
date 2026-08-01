@@ -187,6 +187,29 @@ describe("resolveProviderLaunch", () => {
 });
 
 describe("checkProviderLaunchAvailable", () => {
+  test("forwards cancellation to a default path resolver and preserves its reason", async () => {
+    const entered = new Promise<void>((resolve) => setImmediate(resolve));
+    const controller = new AbortController();
+    const cancellation = new Error("cancel provider launch availability");
+    let receivedSignal: AbortSignal | undefined;
+    const defaultBinary = {
+      command: "default-provider",
+      resolvePath: async (signal?: AbortSignal) => {
+        receivedSignal = signal;
+        await entered;
+        signal?.throwIfAborted();
+        return "/usr/local/bin/default-provider";
+      },
+    };
+    const launch = await resolveProviderLaunch({ defaultBinary });
+    const availability = checkProviderLaunchAvailable(launch, defaultBinary, controller.signal);
+
+    controller.abort(cancellation);
+
+    await expect(availability).rejects.toBe(cancellation);
+    expect(receivedSignal).toBe(controller.signal);
+  });
+
   test("reports available with a resolved path", async () => {
     const binDir = makeTempDir();
     const binary = createExecutable(binDir, "default-provider");

@@ -32,7 +32,8 @@ export class MockSlowProviderClient implements AgentClient {
   readonly provider: AgentProvider = MOCK_SLOW_PROVIDER_ID;
   readonly capabilities = CAPABILITIES;
 
-  async isAvailable(): Promise<boolean> {
+  async isAvailable(options?: { signal?: AbortSignal }): Promise<boolean> {
+    options?.signal?.throwIfAborted();
     return process.env.PASEO_ENABLE_MOCK_SLOW === "true";
   }
 

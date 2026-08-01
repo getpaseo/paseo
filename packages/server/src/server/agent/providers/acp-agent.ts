@@ -1087,11 +1087,14 @@ export class ACPAgentClient implements AgentClient {
     });
   }
 
-  async isAvailable(): Promise<boolean> {
+  async isAvailable(options?: { signal?: AbortSignal }): Promise<boolean> {
     try {
-      await this.resolveLaunchCommand();
+      await this.resolveLaunchCommand(options?.signal);
       return true;
     } catch {
+      if (options?.signal?.aborted) {
+        throw options.signal.reason;
+      }
       return false;
     }
   }
@@ -1133,7 +1136,7 @@ export class ACPAgentClient implements AgentClient {
     launchEnv?: Record<string, string>,
     signal?: AbortSignal,
   ): Promise<ACPProcessTransport> {
-    const { command, args } = await raceCatalogOperation(this.resolveLaunchCommand(), signal);
+    const { command, args } = await raceCatalogOperation(this.resolveLaunchCommand(signal), signal);
     assertCatalogSignalActive(signal);
     const child = spawnProcess(command, args, {
       cwd: process.cwd(),
@@ -1364,12 +1367,14 @@ export class ACPAgentClient implements AgentClient {
     }
   }
 
-  protected async resolveLaunchCommand(): Promise<{ command: string; args: string[] }> {
+  protected async resolveLaunchCommand(
+    signal?: AbortSignal,
+  ): Promise<{ command: string; args: string[] }> {
     const prefix = await resolveProviderLaunch({
       commandConfig: this.runtimeSettings?.command,
       defaultBinary: this.defaultCommand[0],
     });
-    const availability = await checkProviderLaunchAvailable(prefix);
+    const availability = await checkProviderLaunchAvailable(prefix, undefined, signal);
     if (!availability.available) {
       throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
     }
@@ -2499,7 +2504,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       signal,
     );
     const availability = await awaitACPStartupWithAbort(
-      checkProviderLaunchAvailable(prefix),
+      checkProviderLaunchAvailable(prefix, undefined, signal),
       signal,
     );
     if (!availability.available) {
