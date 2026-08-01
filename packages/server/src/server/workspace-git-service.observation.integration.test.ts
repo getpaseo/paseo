@@ -77,8 +77,19 @@ test("native recursive observation updates tracked state and prunes ignored stor
 
   let activeWatcherCount = 0;
   let watcherStartCount = 0;
-  const subscribe = async (...args: Parameters<typeof parcelWatcher.subscribe>) => {
-    const subscription = await parcelWatcher.subscribe(...args);
+  const deliveredEvents: Array<{
+    directory: string;
+    events: parcelWatcher.Event[];
+  }> = [];
+  const subscribe: typeof parcelWatcher.subscribe = async (directory, callback, options) => {
+    const subscription = await parcelWatcher.subscribe(
+      directory,
+      (error, events) => {
+        deliveredEvents.push({ directory, events });
+        callback(error, events);
+      },
+      options,
+    );
     activeWatcherCount += 1;
     watcherStartCount += 1;
     return {
@@ -183,11 +194,12 @@ test("native recursive observation updates tracked state and prunes ignored stor
   getCheckoutWorktreeState.mockClear();
   getCheckoutDiff.mockClear();
   runGitCommand.mockClear();
+  deliveredEvents.length = 0;
 
   await new Promise((resolve) => setTimeout(resolve, 250));
   expect(runGitCommand).not.toHaveBeenCalled();
   expect(getCheckoutWorktreeState).not.toHaveBeenCalled();
-  expect(getCheckoutDiff).not.toHaveBeenCalled();
+  expect(getCheckoutDiff, JSON.stringify(deliveredEvents)).not.toHaveBeenCalled();
   expect(service.getMetrics().workspaceRefreshQueuedCount).toBe(0);
 
   for (let index = 0; index < 100; index += 1) {
