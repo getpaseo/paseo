@@ -1,6 +1,6 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
+import { PassThrough, Readable, Writable } from "node:stream";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   AgentSideConnection,
@@ -3452,6 +3452,66 @@ describe("ACPAgentSession initialization cleanup", () => {
     await expect(session.initializeResumedSession()).rejects.toThrow("session/load failed");
 
     expect(terminator.terminated).toContain(child);
+  });
+
+  test("resumeSession retains failed cleanup for client shutdown using the client terminator", async () => {
+    const child = createProbeChildStub();
+    const runtimeCapacity = new HostAgentRuntimeCapacityController(1);
+    const releaseCapacity = vi.spyOn(runtimeCapacity, "release");
+    let terminationAttempts = 0;
+    const agent: Agent = {
+      async initialize() {
+        return {
+          protocolVersion: PROTOCOL_VERSION,
+          agentCapabilities: { loadSession: true },
+        };
+      },
+      async newSession() {
+        return { sessionId: "unused" };
+      },
+      async loadSession() {
+        throw new Error("session/load failed");
+      },
+      async prompt() {
+        return { stopReason: "end_turn" };
+      },
+      async authenticate() {},
+      async cancel() {},
+    };
+    const agentConnection = new AgentSideConnection(
+      () => agent,
+      ndJsonStream(Writable.toWeb(child.stdout), Readable.toWeb(child.stdin)),
+    );
+    const client = new ACPAgentClient({
+      provider: "cursor",
+      logger: createTestLogger(),
+      defaultCommand: [process.execPath],
+      defaultModes: [],
+      terminateProcess: async () => {
+        terminationAttempts += 1;
+        return terminationAttempts === 1 ? "kill-timeout" : "terminated";
+      },
+      spawnACPProcess: () => {
+        queueMicrotask(() => child.emit("spawn"));
+        return child;
+      },
+    });
+    client.configureRuntimeCapacityController(runtimeCapacity);
+
+    await expect(
+      client.resumeSession({
+        provider: "cursor",
+        sessionId: "session-1",
+        metadata: { cwd: "/tmp/paseo-acp-test" },
+      }),
+    ).rejects.toThrow("session/load failed");
+    expect(agentConnection.signal.aborted).toBe(false);
+    expect(terminationAttempts).toBe(1);
+    expect(releaseCapacity).not.toHaveBeenCalledWith(child);
+
+    await expect(client.shutdown()).resolves.toBeUndefined();
+    expect(terminationAttempts).toBe(2);
+    expect(releaseCapacity).toHaveBeenCalledWith(child);
   });
 });
 

@@ -1,13 +1,24 @@
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { EventEmitter } from "node:events";
 import os from "node:os";
 import http from "node:http";
 import path from "node:path";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { PassThrough, Readable, Writable } from "node:stream";
+import {
+  AgentSideConnection,
+  PROTOCOL_VERSION,
+  ndJsonStream,
+  type Agent,
+} from "@agentclientprotocol/sdk";
 import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
 
 import { createPaseoDaemon, parseListenString, type PaseoDaemonConfig } from "./bootstrap.js";
 import { AgentManagerShuttingDownError } from "./agent/agent-manager.js";
+import type { AgentRuntimeCapacityController } from "./agent/agent-sdk-types.js";
+import { ACPAgentClient } from "./agent/providers/acp-agent.js";
 import { hashDaemonPassword } from "./auth.js";
 import { generateLocalPairingOffer } from "./pairing-offer.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
@@ -15,6 +26,7 @@ import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
 import { DaemonClient } from "./test-utils/daemon-client.js";
 import { isPlatform } from "../test-utils/platform.js";
 import { findFreePort } from "./service-proxy.js";
+import type { ProcessTerminator } from "../utils/tree-kill.js";
 import type {
   HubEnrollment,
   HubEnrollmentResult,
@@ -342,6 +354,132 @@ describe("paseo daemon bootstrap", () => {
     }
   });
 
+  test("daemon stop retries retained ACP session cleanup on the exact registered client", async () => {
+    const logger = pino({ level: "silent" });
+    const child = createACPChildStub();
+    const agentConnections: AgentSideConnection[] = [];
+    const shutdownOrder: string[] = [];
+    let terminationAttempts = 0;
+
+    const agent: Agent = {
+      async initialize() {
+        return { protocolVersion: PROTOCOL_VERSION, agentCapabilities: {} };
+      },
+      async newSession() {
+        throw new Error("session/new failed");
+      },
+      async prompt() {
+        return { stopReason: "end_turn" };
+      },
+      async authenticate() {},
+      async cancel() {},
+    };
+    const terminateProcess: ProcessTerminator = async () => {
+      terminationAttempts += 1;
+      return terminationAttempts === 1 ? "kill-timeout" : "terminated";
+    };
+
+    class RetainedCleanupACPClient extends ACPAgentClient {
+      runtimeCapacity: AgentRuntimeCapacityController | null = null;
+
+      override configureRuntimeCapacityController(
+        controller: AgentRuntimeCapacityController,
+      ): void {
+        super.configureRuntimeCapacityController(controller);
+        this.runtimeCapacity = controller;
+      }
+    }
+
+    const acpClient = new RetainedCleanupACPClient({
+      provider: "copilot",
+      logger,
+      defaultCommand: [process.execPath],
+      terminateProcess,
+      spawnACPProcess: () => {
+        agentConnections.push(
+          new AgentSideConnection(
+            () => agent,
+            ndJsonStream(Writable.toWeb(child.stdout), Readable.toWeb(child.stdin)),
+          ),
+        );
+        queueMicrotask(() => child.emit("spawn"));
+        return child;
+      },
+    });
+    const checkAvailability = vi.spyOn(acpClient, "isAvailable").mockResolvedValue(true);
+    const agentClients = {
+      ...createTestAgentClients({
+        closeSession: async () => {
+          shutdownOrder.push("agent-closed");
+        },
+      }),
+      copilot: acpClient,
+    };
+    const daemonHandle = await createTestPaseoDaemon({ cleanup: false, agentClients });
+    const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-acp-shutdown-"));
+    let stopped = false;
+
+    try {
+      const runtimeCapacity = acpClient.runtimeCapacity;
+      if (!runtimeCapacity) {
+        throw new Error("ACP runtime capacity was not configured");
+      }
+      const releaseCapacity = vi.spyOn(runtimeCapacity, "release");
+      const flushForShutdown = daemonHandle.daemon.agentManager.flushForShutdown.bind(
+        daemonHandle.daemon.agentManager,
+      );
+      vi.spyOn(daemonHandle.daemon.agentManager, "flushForShutdown").mockImplementation(
+        async () => {
+          await flushForShutdown();
+          shutdownOrder.push("agents-flushed");
+        },
+      );
+      const clientShutdown = acpClient.shutdown.bind(acpClient);
+      const shutdownClient = vi.spyOn(acpClient, "shutdown").mockImplementation(async () => {
+        shutdownOrder.push("client-shutdown");
+        await clientShutdown();
+      });
+
+      await daemonHandle.daemon.agentManager.createAgent(
+        { provider: "codex", cwd: agentCwd },
+        undefined,
+        { workspaceId: undefined },
+      );
+      const createFailure = await daemonHandle.daemon.agentManager
+        .createAgent({ provider: "copilot", cwd: agentCwd, model: "test-model" }, undefined, {
+          workspaceId: undefined,
+        })
+        .catch((error: unknown) => error);
+
+      expect(checkAvailability).toHaveBeenCalled();
+      expect(createFailure).toBeInstanceOf(Error);
+      expect((createFailure as Error).message).toContain("session/new failed");
+      expect(agentConnections).toHaveLength(1);
+      expect(terminationAttempts).toBe(1);
+      expect(releaseCapacity).not.toHaveBeenCalledWith(child);
+
+      await daemonHandle.daemon.stop();
+      stopped = true;
+
+      expect(shutdownOrder).toEqual(["agent-closed", "agents-flushed", "client-shutdown"]);
+      expect(terminationAttempts).toBe(2);
+      expect(releaseCapacity).toHaveBeenCalledWith(child);
+      expect(shutdownClient).toHaveBeenCalledOnce();
+
+      await daemonHandle.daemon.agentManager.shutdown();
+      expect(shutdownClient).toHaveBeenCalledOnce();
+    } finally {
+      if (!stopped) {
+        await daemonHandle.daemon.stop().catch(() => undefined);
+      }
+      await Promise.all([
+        rm(path.dirname(daemonHandle.paseoHome), { recursive: true, force: true }),
+        rm(daemonHandle.staticDir, { recursive: true, force: true }),
+        rm(agentCwd, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
   test("standalone listener exposes services only", async () => {
     const standalonePort = await findFreePort();
     const upstream = http.createServer((_req, res) => {
@@ -658,6 +796,15 @@ describe("paseo daemon bootstrap", () => {
     },
   );
 });
+
+function createACPChildStub(): ChildProcessWithoutNullStreams {
+  const child = new EventEmitter() as ChildProcessWithoutNullStreams;
+  child.stdin = new PassThrough();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.kill = vi.fn(() => true) as ChildProcessWithoutNullStreams["kill"];
+  return child;
+}
 
 function holdAgentClose(): HeldAgentClose {
   let armed = false;

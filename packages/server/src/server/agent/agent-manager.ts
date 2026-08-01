@@ -692,6 +692,7 @@ export class AgentManager {
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
   private readonly runtimeCapacity: HostAgentRuntimeCapacityController;
   private acceptingAgentRegistrations = true;
+  private clientShutdown: Promise<void> | null = null;
 
   constructor(options: AgentManagerOptions) {
     this.idFactory = options?.idFactory ?? (() => randomUUID());
@@ -4773,6 +4774,28 @@ export class AgentManager {
   async flushForShutdown(): Promise<void> {
     await this.flushTasks({ includeAgentRegistrations: true });
     await this.retryRetainedAgentRuntimeCleanups();
+  }
+
+  async shutdown(): Promise<void> {
+    if (!this.clientShutdown) {
+      const clients = Array.from(new Set(this.clients.values()));
+      this.clientShutdown = Promise.all(
+        clients.map(async (client) => {
+          if (!client.shutdown) {
+            return;
+          }
+          try {
+            await client.shutdown();
+          } catch (error) {
+            this.logger.warn(
+              { err: error, provider: client.provider },
+              "Provider client shutdown failed",
+            );
+          }
+        }),
+      ).then(() => undefined);
+    }
+    await this.clientShutdown;
   }
 
   private async flushTasks(options: { includeAgentRegistrations: boolean }): Promise<void> {
