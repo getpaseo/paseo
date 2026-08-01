@@ -15,7 +15,6 @@ import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { isAgentArchiving, setAgentArchiving } from "@/hooks/use-archive-agent";
 import { queryClient } from "@/data/query-client";
 import {
-  APP_CLIENT_CAPABILITIES,
   HostRuntimeController,
   HostRuntimeStore,
   readInitialDaemonConnectionHint,
@@ -24,10 +23,17 @@ import {
 } from "./host-runtime";
 import { ReplicaCache } from "./replica-cache";
 
-it("advertises canonical submitted prompt revision support", () => {
-  expect(APP_CLIENT_CAPABILITIES).toMatchObject({
-    [CLIENT_CAPS.canonicalSubmittedPromptRevisions]: true,
-  });
+const capturedDefaultClientOptions = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+
+vi.mock("@getpaseo/client/internal/daemon-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@getpaseo/client/internal/daemon-client")>();
+  return {
+    ...actual,
+    DaemonClient: function DaemonClientDouble(options: Record<string, unknown>) {
+      capturedDefaultClientOptions.push(options);
+      return new FakeDaemonClient();
+    },
+  };
 });
 
 class FakeDaemonClient {
@@ -566,36 +572,25 @@ describe("HostRuntimeController", () => {
     expect(controller.getSnapshot().agentDirectoryStatus).toBe("initial_loading");
   });
 
-  it("passes resolved client id into created active clients", async () => {
-    const host = makeHost({
-      connections: [
-        {
-          id: "direct:lan:6767",
-          type: "directTcp",
-          endpoint: "lan:6767",
-        },
-      ],
-    });
-    const seenClientIds: string[] = [];
-    const fakeClient = new FakeDaemonClient();
-    const controller = new HostRuntimeController({
-      host,
-      deps: {
-        createClient: ({ clientId }) => {
-          seenClientIds.push(clientId);
-          return fakeClient as unknown as DaemonClient;
-        },
-        connectToDaemon: async () => {
-          throw new Error("probe unavailable");
-        },
-        getClientId: async () => "cid_runtime_stable",
+  it("passes resolved client configuration into created active clients", async () => {
+    capturedDefaultClientOptions.length = 0;
+    const values = new Map([["@paseo:client-id-v1", "cid_runtime_stable"]]);
+    (globalThis as { window?: unknown }).window = {
+      localStorage: {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => values.set(key, value),
       },
-    });
+    };
+    const controller = new HostRuntimeController({ host: makeHost() });
 
     await controller.activateConnection({ connectionId: "direct:lan:6767" });
 
-    expect(seenClientIds).toEqual(["cid_runtime_stable"]);
+    expect(capturedDefaultClientOptions[0]).toMatchObject({
+      clientId: "cid_runtime_stable",
+      capabilities: { [CLIENT_CAPS.canonicalSubmittedPromptRevisions]: true },
+    });
     expect(controller.getSnapshot().connectionStatus).toBe("online");
+    await controller.stop();
   });
 
   it("keeps browser client lifecycle tied to the active host runtime client", async () => {

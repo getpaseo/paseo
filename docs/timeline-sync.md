@@ -181,13 +181,10 @@ original sequence; clients apply it only to the already-covered row with the sam
 
 Clients that understand these same-sequence updates advertise the
 `canonical_submitted_prompt_revisions` client capability. For older destinations, the daemon keeps
-the canonical row globally but withholds a rewind-capable foreground prompt until provider identity
-arrives, then delivers the enriched row once at its original sequence. Timeline fetches apply the
-same destination projection: a trailing identity-pending suffix is temporarily outside the visible
-window, while daemon-handled prompts and providers without the rewind identity contract remain
-immediately visible.
-An immediately interrupted turn remains
-canonical even when the provider never emits its echo.
+the canonical row globally but withholds an identity-awaiting foreground prompt until provider identity
+arrives or the turn produces later output or a terminal. Finalization optionally adds provider
+identity, removes the internal delivery marker, and redispatches the same stored sequence. Timeline
+fetches hide only that trailing marked row; daemon-handled prompts are never marked.
 Content matching is limited to the dated compatibility path for daemon timelines created before
 that field existed. Canonical ingestion may match only an explicit unreconciled local candidate;
 the draft-create handoff is the one boundary that also permits the legacy canonical twin to have

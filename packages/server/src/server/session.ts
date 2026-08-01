@@ -77,7 +77,6 @@ import type {
   ManagedAgent,
 } from "./agent/agent-manager.js";
 import {
-  findSubmittedPromptVisibleMaxSeq,
   projectSubmittedPromptTimeline,
   shouldDeliverSubmittedPromptRow,
 } from "./agent/submitted-prompt-delivery.js";
@@ -1070,11 +1069,11 @@ export class Session {
     if (this.clientCapabilitiesBySource.size === 0 || !this.onMessageToSource) {
       if (
         serializedEvent.type === "timeline" &&
-        !shouldDeliverSubmittedPromptRow({
-          delivery: event.delivery,
-          item: serializedEvent.item,
-          supportsRevisions: this.supports(CLIENT_CAPS.canonicalSubmittedPromptRevisions),
-        })
+        !shouldDeliverSubmittedPromptRow(
+          event.delivery,
+          serializedEvent.item,
+          this.supports(CLIENT_CAPS.canonicalSubmittedPromptRevisions),
+        )
       ) {
         return;
       }
@@ -1105,11 +1104,11 @@ export class Session {
       const supportsSelectiveDelivery = capabilities.has(CLIENT_CAPS.selectiveAgentTimeline);
       if (
         serializedEvent.type === "timeline" &&
-        !shouldDeliverSubmittedPromptRow({
-          delivery: event.delivery,
-          item: serializedEvent.item,
-          supportsRevisions: capabilities.has(CLIENT_CAPS.canonicalSubmittedPromptRevisions),
-        })
+        !shouldDeliverSubmittedPromptRow(
+          event.delivery,
+          serializedEvent.item,
+          capabilities.has(CLIENT_CAPS.canonicalSubmittedPromptRevisions),
+        )
       ) {
         continue;
       }
@@ -6120,36 +6119,30 @@ export class Session {
     direction: AgentTimelineFetchDirection;
     cursor?: AgentTimelineCursor;
     pageLimit: number;
-    visibleMaxSeq?: number;
+    fullTimeline?: AgentTimelineFetchResult;
   }): AgentTimelineProjectionSelection {
     const selectedTimeline = this.shouldUseFullTimelineForProjectedPage({
       timeline: input.controlTimeline,
       pageLimit: input.pageLimit,
     })
-      ? this.agentManager.fetchTimeline(input.agentId, { direction: "tail", limit: 0 })
+      ? (input.fullTimeline ??
+        this.agentManager.fetchTimeline(input.agentId, { direction: "tail", limit: 0 }))
       : input.controlTimeline;
-    const timeline =
-      input.visibleMaxSeq === undefined
-        ? selectedTimeline
-        : projectSubmittedPromptTimeline({
-            timeline: selectedTimeline,
-            visibleMaxSeq: input.visibleMaxSeq,
-            ...(input.cursor ? { cursorSeq: input.cursor.seq } : {}),
-          });
     const page = selectProjectedTimelinePage({
-      rows: timeline.rows,
-      bounds: timeline.window,
+      rows: selectedTimeline.rows,
+      bounds: selectedTimeline.window,
       direction: input.controlTimeline.reset ? "tail" : input.direction,
       ...(input.cursor ? { cursorSeq: input.cursor.seq } : {}),
       limit: input.pageLimit,
     });
 
     return {
-      timeline,
+      timeline: selectedTimeline,
       entries: page.entries,
       startSeq: page.startSeq,
       endSeq: page.endSeq,
-      hasOlder: page.hasOlder || (page.startSeq !== null && page.startSeq > timeline.window.minSeq),
+      hasOlder:
+        page.hasOlder || (page.startSeq !== null && page.startSeq > selectedTimeline.window.minSeq),
       hasNewer: page.hasNewer,
     };
   }
@@ -6161,7 +6154,7 @@ export class Session {
     direction: AgentTimelineFetchDirection;
     cursor?: AgentTimelineCursor;
     pageLimit: number;
-    visibleMaxSeq?: number;
+    fullTimeline?: AgentTimelineFetchResult;
   }): AgentTimelineProjectionSelection {
     if (input.projection === "canonical") {
       return this.selectCanonicalTimelineProjection({ timeline: input.controlTimeline });
@@ -6201,20 +6194,24 @@ export class Session {
       const supportsSubmittedPromptRevisions = source
         ? this.supportsForSource(CLIENT_CAPS.canonicalSubmittedPromptRevisions, source)
         : this.supports(CLIENT_CAPS.canonicalSubmittedPromptRevisions);
-      const visibleMaxSeq = supportsSubmittedPromptRevisions
-        ? undefined
-        : findSubmittedPromptVisibleMaxSeq(
-            this.agentManager.fetchTimeline(msg.agentId, { direction: "tail", limit: 0 }).rows,
-            fetchedControlTimeline.window.maxSeq,
-          );
+      let fetchedFullTimeline: AgentTimelineFetchResult | undefined;
+      if (!supportsSubmittedPromptRevisions) {
+        fetchedFullTimeline =
+          direction === "tail" && pageLimit === 0
+            ? fetchedControlTimeline
+            : this.agentManager.fetchTimeline(msg.agentId, { direction: "tail", limit: 0 });
+      }
       const controlTimeline =
-        visibleMaxSeq === undefined
+        fetchedFullTimeline === undefined
           ? fetchedControlTimeline
-          : projectSubmittedPromptTimeline({
-              timeline: fetchedControlTimeline,
-              visibleMaxSeq,
-              ...(cursor ? { cursorSeq: cursor.seq } : {}),
-            });
+          : projectSubmittedPromptTimeline(
+              fetchedControlTimeline,
+              fetchedFullTimeline,
+              cursor?.seq,
+            );
+      const fullTimeline = fetchedFullTimeline
+        ? projectSubmittedPromptTimeline(fetchedFullTimeline)
+        : undefined;
       const selectedTimeline = this.selectTimelineProjection({
         agentId: msg.agentId,
         projection,
@@ -6222,7 +6219,7 @@ export class Session {
         direction,
         ...(cursor ? { cursor } : {}),
         pageLimit,
-        ...(visibleMaxSeq !== undefined ? { visibleMaxSeq } : {}),
+        ...(fullTimeline ? { fullTimeline } : {}),
       });
       const startCursor =
         selectedTimeline.startSeq !== null

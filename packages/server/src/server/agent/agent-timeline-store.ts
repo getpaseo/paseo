@@ -176,20 +176,28 @@ export class InMemoryAgentTimelineStore {
     return row ? cloneRow(row) : null;
   }
 
-  enrichSubmittedUserMessage(
+  finalizeSubmittedUserMessage(
     agentId: string,
     clientMessageId: string,
-    enrichment: { messageId: string },
+    identity?: { messageId: string },
   ): AgentTimelineRow | null {
     const state = this.requireState(agentId);
-    const row = state.rows.find(
+    const index = state.rows.findIndex(
       (candidate) =>
         candidate.item.type === "user_message" &&
         candidate.item.clientMessageId === clientMessageId,
     );
-    if (!row || row.item.type !== "user_message") return null;
-    row.item = { ...row.item, messageId: enrichment.messageId };
-    return cloneRow(row);
+    const row = state.rows[index];
+    if (!row || row.item.type !== "user_message" || row.delivery !== "awaiting_provider_identity") {
+      return null;
+    }
+    const finalized: AgentTimelineRow = {
+      seq: row.seq,
+      timestamp: row.timestamp,
+      item: identity ? { ...row.item, messageId: identity.messageId } : row.item,
+    };
+    state.rows[index] = finalized;
+    return cloneRow(finalized);
   }
 
   getEpoch(agentId: string): string {

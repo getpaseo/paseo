@@ -2081,14 +2081,13 @@ export class AgentManager {
           )
         : undefined;
       if (options?.clientMessageId) {
-        this.recordSubmittedPrompt(
-          agent,
-          prompt,
-          options.clientMessageId,
-          stagedSubmittedPromptEcho?.item.type === "user_message"
-            ? stagedSubmittedPromptEcho.item.messageId
-            : undefined,
-        );
+        this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, {
+          awaitProviderIdentity: true,
+          messageId:
+            stagedSubmittedPromptEcho?.item.type === "user_message"
+              ? stagedSubmittedPromptEcho.item.messageId
+              : undefined,
+        });
       }
       for (const stagedEvent of pendingRun.stagedEvents.splice(0)) {
         const isAcceptedTurnStart =
@@ -3432,6 +3431,13 @@ export class AgentManager {
       return false;
     }
 
+    this.finalizeSubmittedPromptBeforeTimeline(
+      agent,
+      event,
+      options?.fromHistory === true,
+      isForegroundEvent,
+    );
+
     // Only update timestamp for live events, not history replay
     if (!options?.fromHistory) {
       this.touchUpdatedAt(agent);
@@ -3442,12 +3448,13 @@ export class AgentManager {
       this.agentStreamCoalescer.flushFor(agent.id);
     }
 
-    let terminalDisposition: ActiveTurnTerminalDisposition = "untracked";
-    if (isTurnTerminalEvent(event)) {
-      terminalDisposition = options?.fromHistory
-        ? "stale"
-        : this.applyActiveTurnTerminal(agent, eventTurnId);
-    }
+    const terminalDisposition = this.applyStreamTerminalDisposition(
+      agent,
+      event,
+      eventTurnId,
+      options?.fromHistory === true,
+      isForegroundEvent,
+    );
 
     const flags: StreamEventFlags = { shouldDispatchEvent: true, shouldNotifyWaiters: true };
 
@@ -3499,6 +3506,21 @@ export class AgentManager {
       },
       "agent.manager.handle_stream_event.start",
     );
+  }
+
+  private applyStreamTerminalDisposition(
+    agent: ActiveManagedAgent,
+    event: AgentStreamEvent,
+    turnId: string | undefined,
+    fromHistory: boolean,
+    isForegroundEvent: boolean,
+  ): ActiveTurnTerminalDisposition {
+    if (!isTurnTerminalEvent(event)) return "untracked";
+    const disposition = fromHistory ? "stale" : this.applyActiveTurnTerminal(agent, turnId);
+    if (isForegroundEvent && disposition !== "stale") {
+      this.finalizeSubmittedPrompt(agent, event);
+    }
+    return disposition;
   }
 
   private traceCoalescerBuffered(
@@ -3896,8 +3918,9 @@ export class AgentManager {
     item: AgentTimelineItem,
     provider: AgentProvider,
     turnId?: string,
+    delivery?: AgentTimelineRow["delivery"],
   ): AgentStreamEvent {
-    const row = this.recordTimeline(agentId, item);
+    const row = this.recordTimeline(agentId, item, delivery ? { delivery } : undefined);
     const event: AgentStreamEvent = {
       type: "timeline",
       item,
@@ -3908,6 +3931,7 @@ export class AgentManager {
       seq: row.seq,
       epoch: this.timelineStore.getEpoch(agentId),
       timestamp: row.timestamp,
+      ...(row.delivery ? { delivery: row.delivery } : {}),
     });
 
     if (
@@ -3929,7 +3953,7 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     prompt: AgentPromptInput,
     clientMessageId: string,
-    messageId?: string,
+    options?: { awaitProviderIdentity: boolean; messageId: string | undefined },
   ): void {
     if (this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId)) {
       return;
@@ -3940,27 +3964,13 @@ export class AgentManager {
       type: "user_message",
       text: submittedPromptText(prompt),
       clientMessageId,
-      ...(messageId ? { messageId } : {}),
+      ...(options?.messageId ? { messageId: options.messageId } : {}),
     };
-    const capabilities = agent.session.capabilities;
     const delivery =
-      messageId === undefined &&
-      (capabilities.supportsRewindConversation ||
-        capabilities.supportsRewindFiles ||
-        capabilities.supportsRewindBoth)
+      options?.awaitProviderIdentity === true && options.messageId === undefined
         ? AWAITING_PROVIDER_IDENTITY_DELIVERY
         : undefined;
-    const row = this.recordTimeline(agent.id, item, delivery ? { delivery } : undefined);
-    this.dispatchStream(
-      agent.id,
-      { type: "timeline", item, provider: agent.provider },
-      {
-        seq: row.seq,
-        epoch: this.timelineStore.getEpoch(agent.id),
-        timestamp: row.timestamp,
-        ...(row.delivery ? { delivery: row.delivery } : {}),
-      },
-    );
+    this.recordAndDispatchTimelineItem(agent.id, item, agent.provider, undefined, delivery);
   }
 
   private reconcileSubmittedPromptEcho(
@@ -3971,31 +3981,69 @@ export class AgentManager {
     const { clientMessageId, messageId } = item;
     if (!clientMessageId) return null;
     const existing = this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId);
-    if (
-      !existing ||
-      existing.item.type !== "user_message" ||
-      !messageId ||
-      existing.item.messageId === messageId
-    ) {
-      return existing;
+    if (!existing || existing.item.type !== "user_message") return null;
+    this.finalizeSubmittedPrompt(agent, event, clientMessageId, messageId);
+    return existing;
+  }
+
+  private finalizeSubmittedPromptBeforeTimeline(
+    agent: ActiveManagedAgent,
+    event: AgentStreamEvent,
+    fromHistory: boolean,
+    isForegroundEvent: boolean,
+  ): void {
+    if (fromHistory || !isForegroundEvent || event.type !== "timeline") return;
+    const item = event.item;
+    if (item.type === "user_message") {
+      if (isSystemInjectedEnvelope(item.text)) return;
+      if (
+        item.clientMessageId &&
+        this.timelineStore.getSubmittedUserMessage(agent.id, item.clientMessageId)
+      ) {
+        return;
+      }
     }
-    const row = this.timelineStore.enrichSubmittedUserMessage(agent.id, clientMessageId, {
-      messageId,
-    });
-    if (row) {
-      this.enqueueDurableTimelineUpdate(agent.id, row);
-      this.dispatchStream(
-        agent.id,
-        { ...event, item: row.item },
-        {
-          seq: row.seq,
-          epoch: this.timelineStore.getEpoch(agent.id),
-          timestamp: row.timestamp,
-          ...(row.delivery ? { delivery: row.delivery } : {}),
-        },
+    this.finalizeSubmittedPrompt(agent, event);
+  }
+
+  private finalizeSubmittedPrompt(
+    agent: ActiveManagedAgent,
+    event: AgentStreamEvent,
+    correlatedClientMessageId?: string,
+    messageId?: string,
+  ): void {
+    const pending = this.timelineStore
+      .getRows(agent.id)
+      .findLast(
+        (row) =>
+          row.delivery === AWAITING_PROVIDER_IDENTITY_DELIVERY && row.item.type === "user_message",
       );
-    }
-    return row;
+    const clientMessageId =
+      correlatedClientMessageId ??
+      (pending?.item.type === "user_message" ? pending.item.clientMessageId : undefined);
+    if (!clientMessageId) return;
+    const row = this.timelineStore.finalizeSubmittedUserMessage(
+      agent.id,
+      clientMessageId,
+      messageId ? { messageId } : undefined,
+    );
+    if (!row) return;
+    this.enqueueDurableTimelineUpdate(agent.id, row);
+    const turnId = getAgentStreamEventTurnId(event);
+    this.dispatchStream(
+      agent.id,
+      {
+        type: "timeline",
+        item: row.item,
+        provider: event.provider,
+        ...(turnId ? { turnId } : {}),
+      },
+      {
+        seq: row.seq,
+        epoch: this.timelineStore.getEpoch(agent.id),
+        timestamp: row.timestamp,
+      },
+    );
   }
 
   private async appendSystemErrorTimelineMessage(

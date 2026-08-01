@@ -16,6 +16,8 @@ import {
 import { Session, type SessionOptions } from "./session.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
 import type { AgentTimelineRow } from "./agent/agent-manager.js";
+import { InMemoryAgentTimelineStore } from "./agent/agent-timeline-store.js";
+import type { AgentTimelineFetchOptions } from "./agent/agent-timeline-store-types.js";
 import { handleCreatePaseoWorktreeRequest } from "./worktree-session.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
 
@@ -87,7 +89,15 @@ interface SessionInternals {
 }
 
 class InMemoryAgentManager {
-  constructor(private readonly rows: AgentTimelineRow[]) {}
+  private readonly timeline = new InMemoryAgentTimelineStore();
+
+  constructor(rows: AgentTimelineRow[]) {
+    this.timeline.initialize("agent-1", {
+      epoch: "epoch-1",
+      rows,
+      nextSeq: (rows.at(-1)?.seq ?? 0) + 1,
+    });
+  }
 
   getAgent() {
     return {
@@ -133,17 +143,8 @@ class InMemoryAgentManager {
     };
   }
 
-  fetchTimeline() {
-    return {
-      epoch: "epoch-1",
-      reset: false,
-      staleCursor: false,
-      gap: false,
-      window: { minSeq: 1, maxSeq: 3, nextSeq: 4 },
-      rows: this.rows,
-      hasOlder: false,
-      hasNewer: false,
-    };
+  fetchTimeline(_agentId: string, options?: AgentTimelineFetchOptions) {
+    return this.timeline.fetch("agent-1", options);
   }
 
   listAgents() {
@@ -218,6 +219,7 @@ class InMemoryWorktreeWorkflow {
 function createSessionForWireCompatTest(options?: {
   clientCapabilities?: Record<string, unknown> | null;
   messages?: SessionOutboundMessage[];
+  rows?: AgentTimelineRow[];
 }): Session {
   const messages = options?.messages ?? [];
   const rows: AgentTimelineRow[] = [
@@ -247,7 +249,9 @@ function createSessionForWireCompatTest(options?: {
     downloadTokenStore: {} as SessionOptions["downloadTokenStore"],
     pushTokenStore: {} as SessionOptions["pushTokenStore"],
     paseoHome: "/tmp/paseo-home",
-    agentManager: new InMemoryAgentManager(rows) as unknown as SessionOptions["agentManager"],
+    agentManager: new InMemoryAgentManager(
+      options?.rows ?? rows,
+    ) as unknown as SessionOptions["agentManager"],
     agentStorage: new EmptyAgentStorage() as unknown as SessionOptions["agentStorage"],
     projectRegistry: new EmptyProjectRegistry() as unknown as SessionOptions["projectRegistry"],
     workspaceRegistry:
@@ -308,11 +312,19 @@ function createSessionForWireCompatTest(options?: {
   return session;
 }
 
-async function emitTimelineResponse(
-  clientCapabilities?: Record<string, unknown> | null,
-): Promise<Extract<SessionOutboundMessage, { type: "fetch_agent_timeline_response" }>> {
+async function emitTimelineResponse(options?: {
+  clientCapabilities?: Record<string, unknown> | null;
+  rows?: AgentTimelineRow[];
+  request?: Partial<
+    Extract<z.infer<typeof SessionInboundMessageSchema>, { type: "fetch_agent_timeline_request" }>
+  >;
+}): Promise<Extract<SessionOutboundMessage, { type: "fetch_agent_timeline_response" }>> {
   const messages: SessionOutboundMessage[] = [];
-  const session = createSessionForWireCompatTest({ clientCapabilities, messages });
+  const session = createSessionForWireCompatTest({
+    clientCapabilities: options?.clientCapabilities,
+    rows: options?.rows,
+    messages,
+  });
   const internals = session as unknown as SessionInternals;
 
   await internals.handleFetchAgentTimelineRequest({
@@ -320,6 +332,7 @@ async function emitTimelineResponse(
     requestId: "req-timeline",
     agentId: "agent-1",
     projection: "projected",
+    ...options?.request,
   });
 
   const response = messages[0];
@@ -377,7 +390,7 @@ describe("wire compatibility", () => {
     ]);
   });
 
-  test("hello parses with and without the project update capability", () => {
+  test("hello parses with and without current client capabilities", () => {
     const legacy = WSHelloMessageSchema.parse({
       type: "hello",
       clientId: "legacy-client",
@@ -389,7 +402,10 @@ describe("wire compatibility", () => {
       clientId: "capable-client",
       clientType: "mobile",
       protocolVersion: 1,
-      capabilities: { [CLIENT_CAPS.projectUpdates]: true },
+      capabilities: {
+        [CLIENT_CAPS.projectUpdates]: true,
+        [CLIENT_CAPS.canonicalSubmittedPromptRevisions]: true,
+      },
     });
 
     expect([legacy, capable]).toEqual([
@@ -404,7 +420,10 @@ describe("wire compatibility", () => {
         clientId: "capable-client",
         clientType: "mobile",
         protocolVersion: 1,
-        capabilities: { project_updates: true },
+        capabilities: {
+          project_updates: true,
+          canonical_submitted_prompt_revisions: true,
+        },
       },
     ]);
   });
@@ -463,11 +482,92 @@ describe("wire compatibility", () => {
 
   test("preserves reasoning_merge for clients that declare the capability", async () => {
     const response = await emitTimelineResponse({
-      [CLIENT_CAPS.reasoningMergeEnum]: true,
+      clientCapabilities: { [CLIENT_CAPS.reasoningMergeEnum]: true },
     });
 
     const currentParsed = FetchAgentTimelineResponseMessageSchema.parse(response);
     expect(currentParsed.payload.entries[0]?.collapsed).toContain("reasoning_merge");
+  });
+
+  test("projects identity-pending prompt rows coherently for legacy fetches", async () => {
+    const timestamp = "2026-08-01T00:00:00.000Z";
+    const prompt = (options?: { delivery?: AgentTimelineRow["delivery"]; messageId?: string }) => ({
+      seq: 1,
+      timestamp,
+      ...(options?.delivery ? { delivery: options.delivery } : {}),
+      item: {
+        type: "user_message" as const,
+        text: "hello",
+        clientMessageId: "client-message-1",
+        ...(options?.messageId ? { messageId: options.messageId } : {}),
+      },
+    });
+
+    const pending = await emitTimelineResponse({
+      rows: [prompt({ delivery: "awaiting_provider_identity" })],
+      request: { projection: "canonical" },
+    });
+    const pageShape = (response: typeof pending) => [
+      [
+        response.payload.window.minSeq,
+        response.payload.window.maxSeq,
+        response.payload.window.nextSeq,
+      ],
+      response.payload.startCursor?.seq ?? null,
+      response.payload.endCursor?.seq ?? null,
+      response.payload.hasOlder,
+      response.payload.hasNewer,
+      response.payload.entries.map((entry) => entry.seqStart),
+    ];
+    expect(pageShape(pending)).toEqual([[0, 0, 1], null, null, false, false, []]);
+
+    for (const request of [
+      { projection: "canonical" as const },
+      {
+        projection: "canonical" as const,
+        direction: "after" as const,
+        cursor: { epoch: "epoch-1", seq: 0 },
+      },
+      { projection: "projected" as const },
+    ]) {
+      const finalized = await emitTimelineResponse({
+        rows: [prompt({ messageId: "provider-message-1" })],
+        request,
+      });
+      expect(pageShape(finalized)).toEqual([[1, 1, 2], 1, 1, false, false, [1]]);
+      expect(finalized.payload.entries[0]?.item).toMatchObject({
+        type: "user_message",
+        messageId: "provider-message-1",
+      });
+    }
+
+    const daemonHandled = await emitTimelineResponse({
+      rows: [prompt()],
+      request: { projection: "canonical" },
+    });
+    expect(daemonHandled.payload.entries).toHaveLength(1);
+
+    const pageRows: AgentTimelineRow[] = [1, 2, 3].map((seq) => ({
+      seq,
+      timestamp,
+      item: {
+        type: "user_message",
+        text: `prompt ${seq}`,
+        clientMessageId: `client-message-${seq}`,
+      },
+    }));
+    for (const projection of ["canonical", "projected"] as const) {
+      const page = await emitTimelineResponse({
+        rows: pageRows,
+        request: {
+          projection,
+          direction: "before",
+          cursor: { epoch: "epoch-1", seq: 3 },
+          limit: 1,
+        },
+      });
+      expect(pageShape(page)).toEqual([[1, 3, 4], 2, 2, true, true, [2]]);
+    }
   });
 
   test("sub_agent tool-call payload still parses against the v0.1.65-beta.3 schema", () => {

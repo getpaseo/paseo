@@ -1,63 +1,50 @@
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import type {
   AgentTimelineFetchResult,
-  AgentTimelineRow,
   AgentTimelineRowDelivery,
 } from "./agent-timeline-store-types.js";
 
 export const AWAITING_PROVIDER_IDENTITY_DELIVERY = "awaiting_provider_identity" as const;
 
-export function shouldDeliverSubmittedPromptRow(input: {
-  delivery: AgentTimelineRowDelivery | undefined;
-  item: AgentTimelineItem;
-  supportsRevisions: boolean;
-}): boolean {
+export function shouldDeliverSubmittedPromptRow(
+  delivery: AgentTimelineRowDelivery | undefined,
+  item: AgentTimelineItem,
+  supportsRevisions: boolean,
+): boolean {
   return (
-    input.supportsRevisions ||
-    input.delivery !== AWAITING_PROVIDER_IDENTITY_DELIVERY ||
-    input.item.type !== "user_message" ||
-    input.item.messageId !== undefined
+    supportsRevisions ||
+    delivery !== AWAITING_PROVIDER_IDENTITY_DELIVERY ||
+    item.type !== "user_message" ||
+    item.messageId !== undefined
   );
 }
 
-export function findSubmittedPromptVisibleMaxSeq(
-  rows: readonly AgentTimelineRow[],
-  maxSeq: number,
-): number {
-  let visibleMaxSeq = maxSeq;
-  for (let index = rows.length - 1; index >= 0; index -= 1) {
-    const row = rows[index];
-    if (
-      !row ||
-      row.seq !== visibleMaxSeq ||
-      shouldDeliverSubmittedPromptRow({
-        delivery: row.delivery,
-        item: row.item,
-        supportsRevisions: false,
-      })
-    ) {
-      break;
-    }
-    visibleMaxSeq -= 1;
+export function projectSubmittedPromptTimeline(
+  timeline: AgentTimelineFetchResult,
+  fullTimeline = timeline,
+  cursorSeq = 0,
+): AgentTimelineFetchResult {
+  const pending = fullTimeline.rows.at(-1);
+  if (
+    !pending ||
+    pending.seq !== fullTimeline.window.maxSeq ||
+    shouldDeliverSubmittedPromptRow(pending.delivery, pending.item, false)
+  ) {
+    return timeline;
   }
-  return visibleMaxSeq;
-}
-
-export function projectSubmittedPromptTimeline(input: {
-  timeline: AgentTimelineFetchResult;
-  visibleMaxSeq: number;
-  cursorSeq?: number;
-}): AgentTimelineFetchResult {
-  const rows = input.timeline.rows.filter((row) => row.seq <= input.visibleMaxSeq);
-  const selectedEndSeq = rows.at(-1)?.seq ?? input.cursorSeq ?? 0;
+  const visibleMaxSeq = pending.seq - 1;
+  const rows = timeline.rows.filter((row) => row.seq <= visibleMaxSeq);
+  const selectedEndSeq = rows.at(-1)?.seq ?? cursorSeq;
   return {
-    ...input.timeline,
+    ...timeline,
     window: {
-      ...input.timeline.window,
-      maxSeq: input.visibleMaxSeq,
-      nextSeq: input.visibleMaxSeq + 1,
+      ...timeline.window,
+      minSeq:
+        visibleMaxSeq === 0 || timeline.window.minSeq > visibleMaxSeq ? 0 : timeline.window.minSeq,
+      maxSeq: visibleMaxSeq,
+      nextSeq: visibleMaxSeq + 1,
     },
-    hasNewer: input.timeline.hasNewer && selectedEndSeq < input.visibleMaxSeq,
+    hasNewer: timeline.hasNewer && selectedEndSeq < visibleMaxSeq,
     rows,
   };
 }

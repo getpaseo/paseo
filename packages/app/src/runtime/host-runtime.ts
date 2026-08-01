@@ -456,11 +456,6 @@ function probeIntervalForConnection(
   return PROBE_MAX_BACKOFF_MS;
 }
 
-export const APP_CLIENT_CAPABILITIES = {
-  [CLIENT_CAPS.selectiveAgentTimeline]: true,
-  [CLIENT_CAPS.canonicalSubmittedPromptRevisions]: true,
-} as const;
-
 function createDefaultDeps(): HostRuntimeControllerDeps {
   const browserHostAvailable =
     typeof getDesktopHost()?.browser?.executeAutomationCommand === "function";
@@ -473,7 +468,8 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
       }
     : undefined;
   const appCapabilities = {
-    ...APP_CLIENT_CAPABILITIES,
+    [CLIENT_CAPS.selectiveAgentTimeline]: true,
+    [CLIENT_CAPS.canonicalSubmittedPromptRevisions]: true,
     ...browserAutomationCapabilities,
   };
 
