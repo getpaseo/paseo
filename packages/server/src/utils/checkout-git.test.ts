@@ -49,9 +49,10 @@ import {
 import { startGitCommandMetrics, stopGitCommandMetrics } from "./run-git-command.js";
 import { createForgeResolver } from "../services/forge-resolver.js";
 import {
+  createGitHubService,
   GitHubCommandError,
   GitHubCliMissingError,
-  GitHubRateLimitCooldownError,
+  type GitHubCommandRunner,
 } from "../services/github-service.js";
 import type { CurrentPullRequestStatus, ForgeService } from "../services/forge-service.js";
 import {
@@ -3156,7 +3157,7 @@ const x = 1;
     }
   });
 
-  it("keeps stale PR status when a refresh hits a GitHub rate-limit cooldown", async () => {
+  it("keeps stale PR status when the first real GitHub rate-limit response arrives", async () => {
     execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
     execFileSync("git", ["remote", "add", "origin", "https://github.com/getpaseo/paseo.git"], {
       cwd: repoDir,
@@ -3164,17 +3165,49 @@ const x = 1;
 
     __setPullRequestStatusCacheTtlForTests(50);
     try {
-      let callCount = 0;
-      const github = createGitHubServiceForStatus(null);
-      github.getCurrentPullRequestStatus = async () => {
-        callCount += 1;
-        if (callCount === 1) {
-          return createPullRequestStatus({
-            url: "https://github.com/getpaseo/paseo/pull/123",
+      let pullRequestViewCalls = 0;
+      const runner: GitHubCommandRunner = async (args, options) => {
+        if (args[0] === "pr" && args[1] === "view") {
+          pullRequestViewCalls += 1;
+          if (pullRequestViewCalls === 1) {
+            return {
+              stdout: JSON.stringify({
+                number: 123,
+                url: "https://github.com/getpaseo/paseo/pull/123",
+                title: "Ship feature",
+                state: "OPEN",
+                isDraft: false,
+                baseRefName: "main",
+                headRefName: "feature",
+                headRefOid: "1111111111111111111111111111111111111111",
+                mergedAt: null,
+                statusCheckRollup: [],
+                reviewDecision: null,
+                mergeable: "MERGEABLE",
+                headRepositoryOwner: null,
+              }),
+              stderr: "",
+            };
+          }
+          throw new GitHubCommandError({
+            args,
+            cwd: options.cwd,
+            exitCode: 1,
+            stderr: "HTTP 429: API rate limit exceeded",
+            stdout: "HTTP/2.0 429 Too Many Requests\nRetry-After: 60\n\nrate limited",
           });
         }
-        throw new GitHubRateLimitCooldownError(Date.now() + 60_000);
+        if (args[0] === "api") {
+          return { stdout: '{"data":{"repository":null}}', stderr: "" };
+        }
+        throw new Error(`Unexpected GitHub command: ${args.join(" ")}`);
       };
+      const github = createGitHubService({
+        ttlMs: 50,
+        runner,
+        resolveGhPath: async () => "/usr/bin/gh",
+        resolveRepoHost: async () => null,
+      });
 
       const fresh = await getPullRequestStatus(repoDir, github);
       await sleep(80);
@@ -3183,7 +3216,7 @@ const x = 1;
       expect(stale).toEqual(fresh);
       expect(stale.githubFeaturesEnabled).toBe(true);
       expect(stale.status?.url).toContain("/pull/123");
-      expect(callCount).toBe(2);
+      expect(pullRequestViewCalls).toBe(2);
     } finally {
       __resetPullRequestStatusCacheForTests();
     }

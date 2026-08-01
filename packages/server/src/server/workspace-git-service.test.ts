@@ -7,6 +7,7 @@ import type { ForgeService } from "../services/forge-service.js";
 import {
   createGitHubService,
   GitHubCommandError,
+  GitHubRateLimitCooldownError,
   type GitHubCommandRunner,
 } from "../services/github-service.js";
 import type {
@@ -419,8 +420,23 @@ describe("WorkspaceGitServiceImpl", () => {
     service.dispose();
   });
 
-  test("getSnapshot keeps GitHub authenticated during an API cooldown", async () => {
+  test("getSnapshot preserves confirmed GitHub auth when core API admission is cooling down", async () => {
+    let now = 1_000;
+    let authStatusCalls = 0;
     const githubRunner: GitHubCommandRunner = async (args, options) => {
+      if (args[0] === "auth" && args[1] === "status") {
+        authStatusCalls += 1;
+        if (authStatusCalls === 1) {
+          return { stdout: "", stderr: "" };
+        }
+        throw new GitHubCommandError({
+          args,
+          cwd: options.cwd,
+          exitCode: 1,
+          stderr: "HTTP 429: API rate limit exceeded",
+          stdout: "HTTP/2.0 429 Too Many Requests\nRetry-After: 60\n\nrate limited",
+        });
+      }
       if (args[0] === "api") {
         throw new GitHubCommandError({
           args,
@@ -433,19 +449,28 @@ describe("WorkspaceGitServiceImpl", () => {
       return { stdout: "", stderr: "" };
     };
     const github = createGitHubService({
+      ttlMs: 1,
       runner: githubRunner,
       resolveGhPath: async () => "/usr/bin/gh",
-      now: () => 1_000,
-    });
-    await github.getPullRequestTimeline({
-      cwd: REPO_CWD,
-      prNumber: 123,
-      repoOwner: "acme",
-      repoName: "repo",
+      now: () => now,
     });
     const service = createService({ forgeOverrides: { github } });
 
     await expect(service.getSnapshot(REPO_CWD)).resolves.toEqual(createSnapshot(REPO_CWD));
+    await expect(
+      github.getCheckDetails({
+        cwd: REPO_CWD,
+        repoOwner: "acme",
+        repoName: "repo",
+        checkRunId: 123,
+      }),
+    ).rejects.toBeInstanceOf(GitHubRateLimitCooldownError);
+
+    now = 1_002;
+    await expect(
+      service.getSnapshot(REPO_CWD, { force: true, reason: "rate-limit-regression" }),
+    ).resolves.toEqual(createSnapshot(REPO_CWD));
+    expect(authStatusCalls).toBe(1);
 
     service.dispose();
   });

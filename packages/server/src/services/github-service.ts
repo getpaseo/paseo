@@ -784,6 +784,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
   const checkLogTailCache = new Map<string, { logTail: string; logTruncated: boolean }>();
   const rateLimitCooldownByResource = new Map<string, number>();
   const rateLimitAdmissionByResource = new Map<string, Promise<void>>();
+  const lastAuthenticatedByCwd = new Map<string, true>();
   let api!: GitHubService;
 
   async function cached<T>(params: {
@@ -899,6 +900,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
             const key = buildGitHubRateLimitKey(rateLimitHost, cooldown.resource);
             const existingRetryAt = rateLimitCooldownByResource.get(key) ?? 0;
             rateLimitCooldownByResource.set(key, Math.max(existingRetryAt, cooldown.retryAt));
+            throw new GitHubRateLimitCooldownError(cooldown.retryAt);
           }
         }
         throw normalized;
@@ -1564,8 +1566,12 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         load: async () => {
           try {
             await run(["auth", "status"], { cwd: input.cwd });
+            lastAuthenticatedByCwd.set(input.cwd, true);
             return true;
           } catch (error) {
+            if (lastAuthenticatedByCwd.has(input.cwd) && isTransientGitHubAuthProbeError(error)) {
+              return true;
+            }
             if (isGitHubAuthenticationError(error)) {
               throw error;
             }
@@ -1912,7 +1918,7 @@ function isGitHubApiCommand(args: string[]): boolean {
 const GITHUB_CLI_RATE_LIMIT_RESOURCE_BY_COMMAND: Readonly<Record<string, string | null>> = {
   api: "core",
   "api graphql": "graphql",
-  "auth status": null,
+  "auth status": "core",
   "config get": null,
   "issue list": "graphql",
   "pr list": "graphql",
@@ -2041,6 +2047,18 @@ function getGitHubRateLimitRetryAt(input: { error: unknown; now: number }): numb
   }
 
   return getGitHubRateLimitRetryAtFromDelay(input.now, GITHUB_RATE_LIMIT_FALLBACK_COOLDOWN_MS);
+}
+
+function isTransientGitHubAuthProbeError(error: unknown): boolean {
+  if (error instanceof GitHubRateLimitCooldownError) {
+    return true;
+  }
+  return (
+    error instanceof GitHubCommandError &&
+    /could not resolve host|network is unreachable|connection (?:timed out|refused|reset)|request timed out|etimedout|temporary failure|http 5\d\d|internal server error|bad gateway|service unavailable|gateway timeout/i.test(
+      error.stderr,
+    )
+  );
 }
 
 function parseRetryAfter(value: string | undefined, now: number): number | null {

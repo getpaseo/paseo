@@ -7,6 +7,7 @@ import {
   GitHubAuthenticationError,
   GitHubCliMissingError,
   GitHubCommandError,
+  GitHubRateLimitCooldownError,
   computeGithubNextInterval,
   createGitHubService,
   type GitHubCommandRunner,
@@ -1682,7 +1683,7 @@ describe("ForgeService", () => {
 
     expect(timeline.error).toEqual({
       kind: "unknown",
-      message: "GraphQL: API rate limit exceeded for user ID 123",
+      message: "GitHub API rate limit cooldown active",
     });
   });
 
@@ -1713,14 +1714,7 @@ describe("ForgeService", () => {
       .listIssues({ cwd: "/repo", query: "private" })
       .catch((caught) => caught);
 
-    expect(error).toBeInstanceOf(GitHubCommandError);
-    expect(error).toMatchObject({
-      rateLimitResponse: {
-        statusCode: 429,
-        retryAfter: "7",
-        rateLimitReset: "999999",
-      },
-    });
+    expect(error).toBeInstanceOf(GitHubRateLimitCooldownError);
     expect(error).not.toHaveProperty("stdout");
     expect(JSON.stringify(error)).not.toContain(privateResponse);
   });
@@ -1755,7 +1749,7 @@ describe("ForgeService", () => {
 
     expect(timeline.error).toEqual({
       kind: "unknown",
-      message: "HTTP 429: API rate limit exceeded",
+      message: "GitHub API rate limit cooldown active",
     });
     expect(runner.calls).toHaveLength(1);
     expect(runner.calls[0].args).toContain("--include");
@@ -1822,7 +1816,7 @@ describe("ForgeService", () => {
         repoName: "parentRepo",
         checkRunId: 1,
       }),
-    ).rejects.toMatchObject({ stderr: "HTTP 429: API rate limit exceeded" });
+    ).rejects.toBeInstanceOf(GitHubRateLimitCooldownError);
 
     await expect(service.getPullRequest({ cwd: "/repo", number: 42 })).rejects.toMatchObject({
       message: "GitHub API rate limit cooldown active",
@@ -1945,6 +1939,30 @@ describe("ForgeService", () => {
       kind: "unknown",
       message: "GitHub API rate limit cooldown active",
     });
+    expect(runner.calls).toHaveLength(1);
+  });
+
+  it("normalizes an originating rate-limit response to a typed cooldown", async () => {
+    const runner = createScriptedRunner([
+      {
+        error: new GitHubCommandError({
+          args: ["pr", "view"],
+          cwd: "/repo",
+          exitCode: 1,
+          stderr: "HTTP 429: API rate limit exceeded",
+          stdout: "HTTP/2.0 429 Too Many Requests\nRetry-After: 60\n\nrate limited",
+        }),
+      },
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 1_000,
+    });
+
+    await expect(
+      service.getCurrentPullRequestStatus({ cwd: "/repo", headRef: "feature" }),
+    ).rejects.toBeInstanceOf(GitHubRateLimitCooldownError);
     expect(runner.calls).toHaveLength(1);
   });
 
