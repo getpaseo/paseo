@@ -26,7 +26,7 @@ const LogConfigSchema = z
         level: LogLevelSchema.optional(),
         format: LogFormatSchema.optional(),
       })
-      .strict()
+      .strip()
       .optional(),
 
     file: z
@@ -38,20 +38,20 @@ const LogConfigSchema = z
             maxSize: z.string().min(1).optional(),
             maxFiles: z.number().int().positive().optional(),
           })
-          .strict()
+          .strip()
           .optional(),
       })
-      .strict()
+      .strip()
       .optional(),
   })
-  .strict();
+  .strip();
 
 const OpenAiSpeechEndpointSchema = z
   .object({
     apiKey: z.string().trim().min(1).optional(),
     baseUrl: z.string().trim().min(1).optional(),
   })
-  .strict();
+  .strip();
 
 const OpenAiProviderSchema = z
   .object({
@@ -60,27 +60,27 @@ const OpenAiProviderSchema = z
     stt: OpenAiSpeechEndpointSchema.optional(),
     tts: OpenAiSpeechEndpointSchema.optional(),
   })
-  .strict();
+  .strip();
 
 const LocalSpeechProviderSchema = z
   .object({
     modelsDir: z.string().min(1).optional(),
   })
-  .strict();
+  .strip();
 
 const ProvidersSchema = z
   .object({
     openai: OpenAiProviderSchema.optional(),
     local: LocalSpeechProviderSchema.optional(),
   })
-  .strict();
+  .strip();
 
 const WorktreesConfigSchema = z
   .object({
     root: z.string().min(1).optional(),
     servicePorts: PaseoServicePortAllocationSchema.optional(),
   })
-  .strict();
+  .strip();
 
 const BcryptHashSchema = z.string().regex(/^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/, {
   message: "Expected a bcrypt hash",
@@ -90,7 +90,7 @@ const DaemonAuthSchema = z
   .object({
     password: BcryptHashSchema.optional(),
   })
-  .strict();
+  .strip();
 
 const SpeechProviderIdSchema = z
   .string()
@@ -108,10 +108,10 @@ const FeatureDictationSchema = z
         language: z.string().trim().min(1).optional(),
         confidenceThreshold: z.number().optional(),
       })
-      .strict()
+      .strip()
       .optional(),
   })
-  .strict();
+  .strip();
 
 const FeatureVoiceModeSchema = z
   .object({
@@ -121,7 +121,7 @@ const FeatureVoiceModeSchema = z
         provider: z.string().optional(),
         model: z.string().min(1).optional(),
       })
-      .strict()
+      .strip()
       .optional(),
     stt: z
       .object({
@@ -129,13 +129,13 @@ const FeatureVoiceModeSchema = z
         model: z.string().min(1).optional(),
         language: z.string().trim().min(1).optional(),
       })
-      .strict()
+      .strip()
       .optional(),
     turnDetection: z
       .object({
         provider: SpeechProviderIdSchema.optional(),
       })
-      .strict()
+      .strip()
       .optional(),
     tts: z
       .object({
@@ -145,17 +145,17 @@ const FeatureVoiceModeSchema = z
         speakerId: z.number().int().optional(),
         speed: z.number().optional(),
       })
-      .strict()
+      .strip()
       .optional(),
   })
-  .strict();
+  .strip();
 
 const FeatureWebUiSchema = z
   .object({
     enabled: z.boolean().optional(),
     distDir: z.string().min(1).optional(),
   })
-  .strict();
+  .strip();
 
 const StructuredGenerationProviderConfigSchema = z
   .object({
@@ -163,13 +163,13 @@ const StructuredGenerationProviderConfigSchema = z
     model: z.string().min(1).optional(),
     thinkingOptionId: z.string().min(1).optional(),
   })
-  .strict();
+  .strip();
 
 const AgentMetadataGenerationSchema = z
   .object({
     providers: z.array(StructuredGenerationProviderConfigSchema).optional(),
   })
-  .strict();
+  .strip();
 
 const BUILTIN_PROVIDER_IDS = ["claude", "codex", "copilot", "opencode", "pi", "omp"] as const;
 
@@ -256,7 +256,7 @@ export const PersistedConfigSchema = z
           .object({
             allowedOrigins: z.array(z.string()).optional(),
           })
-          .strict()
+          .strip()
           .optional(),
         relay: z
           .object({
@@ -266,7 +266,7 @@ export const PersistedConfigSchema = z
             useTls: z.boolean().optional(),
             publicUseTls: z.boolean().optional(),
           })
-          .strict()
+          .strip()
           .optional(),
         serviceProxy: z
           .object({
@@ -277,11 +277,11 @@ export const PersistedConfigSchema = z
             listen: z.string().optional(),
             publicBaseUrl: z.url().optional(),
           })
-          .strict()
+          .strip()
           .optional(),
         auth: DaemonAuthSchema.optional(),
       })
-      .strict()
+      .strip()
       .transform(({ allowedHosts, ...daemon }) => {
         const hostnames = daemon.hostnames ?? allowedHosts;
         return hostnames === undefined ? daemon : { ...daemon, hostnames };
@@ -292,7 +292,7 @@ export const PersistedConfigSchema = z
       .object({
         baseUrl: z.string().optional(),
       })
-      .strict()
+      .strip()
       .optional(),
 
     providers: ProvidersSchema.optional(),
@@ -302,7 +302,7 @@ export const PersistedConfigSchema = z
         providers: z.preprocess(normalizeAgentProviders, ProviderOverridesSchema).optional(),
         metadataGeneration: AgentMetadataGenerationSchema.optional(),
       })
-      .strict()
+      .strip()
       .optional(),
     features: z
       .object({
@@ -310,12 +310,12 @@ export const PersistedConfigSchema = z
         voiceMode: FeatureVoiceModeSchema.optional(),
         webUi: FeatureWebUiSchema.optional(),
       })
-      .strict()
+      .strip()
       .optional(),
 
     log: LogConfigSchema.optional(),
   })
-  .strict();
+  .strip();
 
 type PersistedConfigSchemaOutput = z.infer<typeof PersistedConfigSchema>;
 
