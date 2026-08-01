@@ -92,6 +92,35 @@ async function seedAgentWithFileLink(input: LinkedFile) {
   return session;
 }
 
+async function seedAgentWithMarkdownFileLink(target: string) {
+  const session = await seedMockAgentWorkspace({
+    repoPrefix: "file-editing-markdown-chat-link-",
+    title: "Markdown chat file link e2e",
+    initialPrompt: [
+      "Generate a title and a git branch name for a coding agent from the user prompt and attachments.",
+      "Return JSON only with fields 'title' and 'branch'.",
+      "",
+      "<user-prompt>",
+      `Open \`${target}\` now`,
+      "</user-prompt>",
+    ].join("\n"),
+  });
+  await writeFile(
+    path.join(session.cwd, "target.md"),
+    Array.from({ length: 50 }, (_, index) => {
+      const line_number = index + 1;
+      if (line_number === 1) return "# Markdown target headline";
+      if (line_number === 3) return "**Bold Markdown content**";
+      if (line_number === 5) return "- First list item";
+      if (line_number === 6) return "- Second list item";
+      if (line_number === 42) return "- Selected markdown target";
+      return `Markdown filler line ${line_number}`;
+    }).join("\n"),
+    "utf8",
+  );
+  return session;
+}
+
 test.describe("CodeMirror workspace file editing", () => {
   test("opens an assistant file link at its referenced line", async ({ page }) => {
     const target = "target.ts:42";
@@ -134,6 +163,78 @@ test.describe("CodeMirror workspace file editing", () => {
       await expect(
         page.getByTestId("file-source-editor").locator(".cm-line", { hasText: "line42 = 42" }),
       ).toBeVisible();
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("renders Markdown after Preview is selected for an assistant line link", async ({
+    page,
+  }) => {
+    const target = "target.md:42";
+    const session = await seedAgentWithMarkdownFileLink(target);
+
+    try {
+      await openAgentRoute(page, session);
+
+      const file_link = page.getByText(target, { exact: true });
+      await expect(file_link).toBeVisible({ timeout: 15_000 });
+      await file_link.click();
+
+      await expectFileTabOpen(page, "target.md");
+      await expect(page.getByTestId("file-mode-source")).toHaveAttribute("aria-selected", "true");
+      await expect(page.getByTestId("file-source-editor")).toBeVisible();
+      await expect(page.getByLabel("Line 42, column 1")).toBeVisible();
+      await expect(
+        page
+          .getByTestId("file-source-editor")
+          .locator(".cm-line", { hasText: "Selected markdown target" }),
+      ).toBeVisible();
+
+      await page.getByTestId("file-mode-preview").click();
+      await expect(page.getByTestId("file-mode-preview")).toHaveAttribute("aria-selected", "true");
+      await expect(page.getByText("Markdown target headline", { exact: true })).toBeVisible();
+      await expect(page.getByTestId("file-source-editor")).not.toBeVisible();
+
+      await page.getByTestId("file-mode-source").click();
+      await expect(page.getByTestId("file-source-editor")).toBeVisible();
+      await expect(page.getByLabel("Line 42, column 1")).toBeVisible();
+      await expect(
+        page
+          .getByTestId("file-source-editor")
+          .locator(".cm-line", { hasText: "Selected markdown target" }),
+      ).toBeVisible();
+
+      await page.getByTestId("file-mode-preview").click();
+      await expect(page.getByTestId("file-mode-preview")).toHaveAttribute("aria-selected", "true");
+      await page
+        .getByTestId(`workspace-tab-agent_${session.agentId}`)
+        .filter({ visible: true })
+        .click();
+      await expect(file_link).toBeVisible();
+      await file_link.click();
+      await expect(page.getByTestId("file-mode-source")).toHaveAttribute("aria-selected", "true");
+      await expect(page.getByLabel("Line 42, column 1")).toBeVisible();
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("opens an assistant Markdown file link without a line in Preview", async ({ page }) => {
+    const target = "target.md";
+    const session = await seedAgentWithMarkdownFileLink(target);
+
+    try {
+      await openAgentRoute(page, session);
+
+      const file_link = page.getByText(target, { exact: true }).first();
+      await expect(file_link).toBeVisible({ timeout: 15_000 });
+      await file_link.click();
+
+      await expectFileTabOpen(page, "target.md");
+      await expect(page.getByTestId("file-mode-preview")).toHaveAttribute("aria-selected", "true");
+      await expect(page.getByText("Markdown target headline", { exact: true })).toBeVisible();
+      await expect(page.getByTestId("file-source-editor")).not.toBeVisible();
     } finally {
       await session.cleanup();
     }

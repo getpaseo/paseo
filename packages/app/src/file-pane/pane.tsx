@@ -221,10 +221,10 @@ function FilePreviewBody({
   const theme = UnistylesRuntime.getTheme();
   const { t } = useTranslation();
   const filePath = location.path;
-  // A line target means the caller wants to land on that line, so fall back to
-  // the highlighted source view even for renderable files.
+  // A line target normally opens source so its referenced line can be selected.
+  // An explicit Preview selection must render the document instead.
   const renderKind =
-    preview?.kind === "text" && !location.lineStart && mode !== "source"
+    preview?.kind === "text" && mode !== "source" && (!location.lineStart || mode === "preview")
       ? filePreviewRenderKind(filePath)
       : null;
 
@@ -411,7 +411,9 @@ export function FilePane({
 }) {
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
-  const [previewMode, setPreviewMode] = useState<"preview" | "source">("preview");
+  const [previewMode, setPreviewMode] = useState<"preview" | "source">(() =>
+    location.lineStart ? "source" : "preview",
+  );
   const [resolvedPreview, setResolvedPreview] = useState<{
     key: string | null;
     file: ExplorerFile | null;
@@ -468,18 +470,23 @@ export function FilePane({
   }, [liveFile.file, readTarget]);
 
   const previewKey = readTarget ? `${readTarget.cwd}:${readTarget.path}` : null;
-  useEffect(() => setPreviewMode("preview"), [previewKey]);
+  useEffect(
+    () => setPreviewMode(location.lineStart ? "source" : "preview"),
+    [location.lineStart, navigationRevision, previewKey],
+  );
 
   const preview = resolvedPreview.key === previewKey ? resolvedPreview.file : null;
   const imagePreviewUri = useAttachmentPreviewUrl(
     resolvedPreview.key === previewKey ? resolvedPreview.imageAttachment : null,
   );
-  const isRenderable = isRenderablePreview(preview, location.path);
+  const renderKind = filePreviewRenderKind(location.path);
+  const isRenderable = preview?.kind === "text" && renderKind !== null;
   const editable = isEditableTextFile({
     preview,
     supportsEditing,
   });
-  const canTogglePreviewMode = isRenderable && !location.lineStart;
+  const canTogglePreviewMode =
+    isRenderable && (!location.lineStart || (renderKind === "markdown" && editable));
   const lineCount =
     preview?.kind === "text" ? (preview.content ?? "").split("\n").length : undefined;
   const errorMessage = getFileErrorMessage(liveFile.error, t("panels.file.failedToLoad"));
@@ -508,10 +515,6 @@ export function FilePane({
       imagePreviewUri={imagePreviewUri}
     />
   );
-}
-
-function isRenderablePreview(preview: ExplorerFile | null, path: string): boolean {
-  return preview?.kind === "text" && filePreviewRenderKind(path) !== null;
 }
 
 function getFileErrorMessage(error: unknown, fallback: string): string | null {
