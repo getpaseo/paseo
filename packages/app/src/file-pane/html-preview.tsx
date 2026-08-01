@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef } from "react";
 import { StyleSheet } from "react-native-unistyles";
 import { WebView } from "react-native-webview";
 import { withPreviewCsp } from "./html-preview-csp";
+import { htmlPreviewNavigationKind } from "./html-preview-navigation";
 
 // A preview is a viewer, not a browser. Only the document Paseo hands the WebView
 // loads; navigations the page attempts afterwards are refused, so a link, a
@@ -30,7 +31,6 @@ const ORIGIN_WHITELIST = ["*"];
 // allowed here: a page could navigate itself to a data document of its own, which
 // would arrive with no injected policy and a clean slate to egress from.
 const BASE_URL = "about:blank";
-const INITIAL_DOCUMENT_URLS = new Set(["about:blank", "about:srcdoc", ""]);
 
 export function FileHtmlPreview({ html, testID }: { html: string; testID?: string }) {
   const document = useMemo(() => withPreviewCsp(html), [html]);
@@ -41,8 +41,10 @@ export function FileHtmlPreview({ html, testID }: { html: string; testID?: strin
   const loadedDocumentRef = useRef<string | null>(null);
   const allowOnlyInitialDocument = useCallback(
     ({ url }: { url: string }) => {
+      const navigationKind = htmlPreviewNavigationKind(url);
+      if (navigationKind === "fragment") return true;
+      if (navigationKind === "blocked") return false;
       if (loadedDocumentRef.current === document) return false;
-      if (!INITIAL_DOCUMENT_URLS.has(url)) return false;
       loadedDocumentRef.current = document;
       return true;
     },

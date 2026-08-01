@@ -59,6 +59,7 @@ interface CodeLineProps {
 
 interface FilePreviewBodyProps {
   preview: ExplorerFile | null;
+  mode?: "preview" | "source";
   isLoading: boolean;
   isMobile: boolean;
   location: WorkspaceFileLocation;
@@ -210,6 +211,7 @@ const codeLineStyles = StyleSheet.create((theme) => ({
 
 function FilePreviewBody({
   preview,
+  mode,
   isLoading,
   isMobile,
   location,
@@ -222,7 +224,9 @@ function FilePreviewBody({
   // A line target means the caller wants to land on that line, so fall back to
   // the highlighted source view even for renderable files.
   const renderKind =
-    preview?.kind === "text" && !location.lineStart ? filePreviewRenderKind(filePath) : null;
+    preview?.kind === "text" && !location.lineStart && mode !== "source"
+      ? filePreviewRenderKind(filePath)
+      : null;
 
   const previewScrollRef = useRef<RNScrollView>(null);
 
@@ -463,9 +467,9 @@ export function FilePane({
     };
   }, [liveFile.file, readTarget]);
 
-  useEffect(() => setPreviewMode("preview"), [readTarget?.path]);
-
   const previewKey = readTarget ? `${readTarget.cwd}:${readTarget.path}` : null;
+  useEffect(() => setPreviewMode("preview"), [previewKey]);
+
   const preview = resolvedPreview.key === previewKey ? resolvedPreview.file : null;
   const imagePreviewUri = useAttachmentPreviewUrl(
     resolvedPreview.key === previewKey ? resolvedPreview.imageAttachment : null,
@@ -475,7 +479,7 @@ export function FilePane({
     preview,
     supportsEditing,
   });
-  const canTogglePreviewMode = isRenderable && editable;
+  const canTogglePreviewMode = isRenderable && !location.lineStart;
   const lineCount =
     preview?.kind === "text" ? (preview.content ?? "").split("\n").length : undefined;
   const errorMessage = getFileErrorMessage(liveFile.error, t("panels.file.failedToLoad"));
@@ -628,6 +632,7 @@ function FilePanePresentation({
       ) : null}
       <FilePreviewBody
         preview={preview}
+        mode={previewMode}
         isLoading={isLoading}
         isMobile={isMobile}
         location={location}
@@ -800,6 +805,7 @@ function EditableFilePane({
       ) : (
         <FilePreviewBody
           preview={renderedPreview}
+          mode={mode}
           isLoading={isLoading}
           isMobile={isMobile}
           location={location}

@@ -7,11 +7,10 @@
 // available in current browsers prevents it — `navigate-to` was dropped from CSP3
 // and is unenforced, and `<meta http-equiv="refresh">` needs no script at all
 // (both verified against the Chromium this app ships against). So a hostile page
-// can still reach a server by navigating, carrying its own contents and the
-// viewer's IP. The opaque origin is what bounds the damage: the frame has no
-// storage, no parent access, and no way to read any file but itself, so it can
-// leak what it already contained and nothing else. Native narrows it further in
-// html-preview.tsx, because a WebView can refuse navigation outside CSP — see the
+// can still reach a server by navigating, carrying data available inside the
+// preview. The opaque origin is what bounds the damage: the frame has no storage,
+// no parent access, and no way to read any file but itself. Native narrows it
+// further in html-preview.tsx, because a WebView can refuse navigation outside CSP — see the
 // caveat there on why that is a mitigation rather than a guarantee.
 const POLICY = [
   "default-src 'none'",
