@@ -10,7 +10,6 @@ import {
   deletePaseoWorktree,
   isPaseoOwnedWorktreeCwd,
   runWorktreeTeardownCommands,
-  WorktreeTeardownError,
 } from "../utils/worktree.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type {
@@ -168,8 +167,22 @@ export async function archiveByScope(
     };
   } finally {
     if (targetWorkspaceIds.length > 0) {
-      dependencies.clearWorkspaceArchiving(targetWorkspaceIds);
-      await dependencies.emitWorkspaceUpdatesForWorkspaceIds(targetWorkspaceIds);
+      try {
+        dependencies.clearWorkspaceArchiving(targetWorkspaceIds);
+      } catch (error) {
+        dependencies.sessionLogger?.warn(
+          { err: error, requestId: request.requestId },
+          "Failed to clear transient workspace archive state after archiving",
+        );
+      }
+      try {
+        await dependencies.emitWorkspaceUpdatesForWorkspaceIds(targetWorkspaceIds);
+      } catch (error) {
+        dependencies.sessionLogger?.warn(
+          { err: error, requestId: request.requestId },
+          "Failed to emit workspace updates after archiving",
+        );
+      }
     }
   }
 }
@@ -337,25 +350,30 @@ async function maybeRemoveDirectory(
       });
     }
   } catch (error) {
-    if (error instanceof WorktreeTeardownError) {
-      dependencies.sessionLogger?.warn(
-        { err: error, targetPath: backing.path, requestId: request.requestId },
-        "Worktree teardown failed during archive; workspace already archived",
-      );
-      return false;
-    }
-    throw error;
+    dependencies.sessionLogger?.warn(
+      { err: error, targetPath: backing.path, requestId: request.requestId },
+      "Worktree teardown failed during archive; workspace already archived",
+    );
+    return false;
   }
 
-  const remainingActive = await dependencies.listActiveWorkspaces();
-  if (
-    !(await isDirectoryUnreferenced(
+  let isUnreferenced: boolean;
+  try {
+    const remainingActive = await dependencies.listActiveWorkspaces();
+    isUnreferenced = await isDirectoryUnreferenced(
       remainingActive,
       backing.path,
       new Set(archivedWorkspaceIds),
       dependencies,
-    ))
-  ) {
+    );
+  } catch (error) {
+    dependencies.sessionLogger?.warn(
+      { err: error, targetPath: backing.path, requestId: request.requestId },
+      "Failed to verify worktree references during archive; workspace already archived",
+    );
+    return false;
+  }
+  if (!isUnreferenced) {
     return false;
   }
 
@@ -374,14 +392,11 @@ async function maybeRemoveDirectory(
     dependencies.github.invalidate({ cwd: backing.path });
     return true;
   } catch (error) {
-    if (error instanceof WorktreeTeardownError) {
-      dependencies.sessionLogger?.warn(
-        { err: error, targetPath: backing.path, requestId: request.requestId },
-        "Worktree disk removal failed during archive; workspace already archived",
-      );
-      return false;
-    }
-    throw error;
+    dependencies.sessionLogger?.warn(
+      { err: error, targetPath: backing.path, requestId: request.requestId },
+      "Worktree disk removal failed during archive; workspace already archived",
+    );
+    return false;
   }
 }
 

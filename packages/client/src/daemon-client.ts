@@ -3995,6 +3995,9 @@ export class DaemonClient {
     },
     requestId?: string,
   ): Promise<PaseoWorktreeArchivePayload> {
+    if (input.projectId !== undefined && input.repoRoot === undefined) {
+      this.requireWorktreeRepositoryIdentitySupport();
+    }
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {

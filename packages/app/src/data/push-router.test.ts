@@ -333,7 +333,7 @@ describe("server data push router", () => {
     unmount();
   });
 
-  it("re-sends active push subscriptions after reconnect", () => {
+  it("preserves active push routes while the client owns reconnect replay", () => {
     const queryClient = new QueryClient();
     const fake = createFakeClient();
     const serverId = "server-1";
@@ -399,16 +399,29 @@ describe("server data push router", () => {
         compare: { mode: "base", baseRef: "main", ignoreWhitespace: true },
         subscriptionId: checkoutDiffSubscriptionId,
       },
-      {
-        cwd,
-        compare: { mode: "base", baseRef: "main", ignoreWhitespace: true },
+    ]);
+    expect(fake.subscribeTerminalCalls).toEqual([{ cwd, workspaceId }]);
+    expect(fake.unsubscribeCheckoutDiffCalls).toEqual([]);
+    expect(fake.unsubscribeTerminalCalls).toEqual([]);
+
+    fake.emit({
+      type: "checkout_diff_update",
+      payload: {
         subscriptionId: checkoutDiffSubscriptionId,
+        cwd,
+        files: [],
+        error: null,
+        diffTooLarge: true,
       },
-    ]);
-    expect(fake.subscribeTerminalCalls).toEqual([
-      { cwd, workspaceId },
-      { cwd, workspaceId },
-    ]);
+    });
+
+    expect(queryClient.getQueryData(checkoutDiffKey)).toEqual({
+      cwd,
+      files: [],
+      error: null,
+      diffTooLarge: true,
+      requestId: `subscription:${checkoutDiffSubscriptionId}`,
+    });
 
     fake.emit({
       type: "terminals_changed",

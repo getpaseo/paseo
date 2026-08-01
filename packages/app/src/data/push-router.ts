@@ -129,7 +129,6 @@ const RECONNECT_REPAIR_POLICIES: ReconnectRepairPolicy[] = [
     },
   },
 ];
-const reconnectSubscriptionRepairsByServerId = new Map<string, Set<() => void>>();
 
 export function checkoutDiffPushRoute(input: {
   enabled: boolean;
@@ -173,10 +172,6 @@ export function invalidateServerDataQueriesAfterReconnect(input: {
 }): void {
   for (const policy of RECONNECT_REPAIR_POLICIES) {
     policy.invalidate(input);
-  }
-  for (const repairSubscriptions of reconnectSubscriptionRepairsByServerId.get(input.serverId) ??
-    []) {
-    repairSubscriptions();
   }
 }
 
@@ -245,16 +240,6 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
     });
   }
 
-  function resetSubscriptionsAfterReconnect(): void {
-    const fallbackActive = {
-      checkoutDiff: new Map(activeCheckoutDiffSubscriptions),
-      workspaceTerminals: new Map(activeTerminalSubscriptions),
-    };
-    activeCheckoutDiffSubscriptions.clear();
-    activeTerminalSubscriptions.clear();
-    reconcileSubscriptions(fallbackActive);
-  }
-
   const unsubscribeQueryCache = input.queryClient.getQueryCache().subscribe((event) => {
     if (
       !shouldReconcileSubscriptionsForCacheEvent(event, input.serverId, {
@@ -304,21 +289,10 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
       message,
     });
   });
-  let reconnectSubscriptionRepairs = reconnectSubscriptionRepairsByServerId.get(input.serverId);
-  if (!reconnectSubscriptionRepairs) {
-    reconnectSubscriptionRepairs = new Set();
-    reconnectSubscriptionRepairsByServerId.set(input.serverId, reconnectSubscriptionRepairs);
-  }
-  reconnectSubscriptionRepairs.add(resetSubscriptionsAfterReconnect);
-
   reconcileSubscriptions();
 
   return () => {
     disposed = true;
-    reconnectSubscriptionRepairs.delete(resetSubscriptionsAfterReconnect);
-    if (reconnectSubscriptionRepairs.size === 0) {
-      reconnectSubscriptionRepairsByServerId.delete(input.serverId);
-    }
     unsubscribeQueryCache();
     unsubscribeProviders();
     unsubscribeDaemonConfig();

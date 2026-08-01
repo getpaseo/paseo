@@ -5,6 +5,7 @@ export interface WorktreeCreateOptions extends CommandOptions {
   host?: string;
   project?: string;
   repoRoot?: string;
+  cwd?: string;
   mode?: string;
   newBranch?: string;
   base?: string;

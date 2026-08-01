@@ -226,6 +226,23 @@ describe("resolveWorktreeRepositoryIdentity", () => {
     expect(identity).toEqual({ repoRoot: realpathSync.native(innerRoot) });
   });
 
+  test("does not let a registered outer project shadow an independent inner repository", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "worktree-cli-identity-"));
+    cleanupPaths.push(tempDir);
+    const outerRoot = createGitRepository(tempDir, "outer");
+    const innerRoot = createGitRepository(outerRoot, "inner");
+    const nested = join(innerRoot, "src");
+    mkdirSync(nested);
+
+    const identity = await resolveWorktreeRepositoryIdentity(
+      {},
+      createLocalClient([{ projectId: "prj_outer", projectRootPath: outerRoot }]),
+      nested,
+    );
+
+    expect(identity).toEqual({ repoRoot: realpathSync.native(innerRoot) });
+  });
+
   test("uses Git's canonical top-level for a nested cwd reached through a symlink", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "worktree-cli-identity-"));
     cleanupPaths.push(tempDir);
@@ -283,6 +300,15 @@ describe("resolveWorktreeRepositoryIdentity", () => {
     expect(identity).toEqual({ repoRoot: nested });
   });
 
+  test("treats the deprecated cwd option as an explicit repository root", async () => {
+    const identity = await resolveWorktreeRepositoryIdentity(
+      { cwd: "/srv/repo" },
+      createRemoteClient(),
+    );
+
+    expect(identity).toEqual({ repoRoot: "/srv/repo" });
+  });
+
   test("refuses a remote endpoint even when the caller cwd is nested in Git", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "worktree-cli-identity-"));
     cleanupPaths.push(tempDir);
@@ -299,6 +325,12 @@ describe("resolveWorktreeRepositoryIdentity", () => {
     await expect(
       resolveWorktreeRepositoryIdentity(
         { project: "prj_remote", repoRoot: "/srv/repo" },
+        createRemoteClient(),
+      ),
+    ).rejects.toMatchObject({ code: "AMBIGUOUS_REPOSITORY_IDENTITY" });
+    await expect(
+      resolveWorktreeRepositoryIdentity(
+        { repoRoot: "/srv/repo", cwd: "/srv/other" },
         createRemoteClient(),
       ),
     ).rejects.toMatchObject({ code: "AMBIGUOUS_REPOSITORY_IDENTITY" });

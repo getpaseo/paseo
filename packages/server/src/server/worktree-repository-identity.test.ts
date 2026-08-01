@@ -238,7 +238,105 @@ describe("resolveWorktreeRepositoryIdentity", () => {
       projectId: "prj_nested",
       repoRoot: realpathSync.native(nestedRoot),
     });
-    expect(listWorktrees).not.toHaveBeenCalled();
+    expect(listWorktrees).toHaveBeenCalledTimes(2);
+  });
+
+  test("prefers exact workspace ownership over an enclosing registered project", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "worktree-repository-identity-"));
+    cleanupPaths.push(tempDir);
+    const outerRoot = join(tempDir, "outer");
+    const innerRoot = join(tempDir, "inner");
+    const requestedCwd = join(outerRoot, "linked-worktree");
+    mkdirSync(requestedCwd, { recursive: true });
+    mkdirSync(innerRoot);
+    const projects = createProjectRegistryForProjects([
+      createPersistedProjectRecord({
+        projectId: "prj_outer",
+        rootPath: outerRoot,
+        kind: "git",
+        displayName: "outer",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+      createPersistedProjectRecord({
+        projectId: "prj_inner",
+        rootPath: innerRoot,
+        kind: "git",
+        displayName: "inner",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+    ]);
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: "wks_inner",
+      projectId: "prj_inner",
+      cwd: requestedCwd,
+      kind: "worktree",
+      displayName: "linked worktree",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    await expect(
+      resolveWorktreeRepositoryIdentity({ cwd: requestedCwd }, projects, {
+        workspaceRegistry: { list: async () => [workspace] },
+        workspaceGitService: { listWorktrees: vi.fn(async () => []) },
+      }),
+    ).resolves.toEqual({
+      projectId: "prj_inner",
+      repoRoot: realpathSync.native(innerRoot),
+    });
+  });
+
+  test("rejects conflicting exact workspace and Git worktree owners", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "worktree-repository-identity-"));
+    cleanupPaths.push(tempDir);
+    const projectARoot = join(tempDir, "project-a");
+    const projectBRoot = join(tempDir, "project-b");
+    const requestedCwd = join(tempDir, "shared-worktree");
+    mkdirSync(projectARoot);
+    mkdirSync(projectBRoot);
+    mkdirSync(requestedCwd);
+    const projects = createProjectRegistryForProjects([
+      createPersistedProjectRecord({
+        projectId: "prj_a",
+        rootPath: projectARoot,
+        kind: "git",
+        displayName: "project a",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+      createPersistedProjectRecord({
+        projectId: "prj_b",
+        rootPath: projectBRoot,
+        kind: "git",
+        displayName: "project b",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+    ]);
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: "wks_a",
+      projectId: "prj_a",
+      cwd: requestedCwd,
+      kind: "worktree",
+      displayName: "shared worktree",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    await expect(
+      resolveWorktreeRepositoryIdentity({ cwd: requestedCwd }, projects, {
+        workspaceRegistry: { list: async () => [workspace] },
+        workspaceGitService: {
+          listWorktrees: vi.fn(async (repoRoot: string) =>
+            repoRoot === realpathSync.native(projectBRoot)
+              ? [{ path: requestedCwd, createdAt: "2026-01-01T00:00:00.000Z" }]
+              : [],
+          ),
+        },
+      }),
+    ).rejects.toThrow("conflicting exact workspace or worktree owners");
   });
 
   test("rejects equal-depth canonical project matches for a legacy cwd", async () => {

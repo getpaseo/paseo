@@ -137,24 +137,6 @@ async function resolveLegacyWorktreeRepositoryIdentity(
     throw new Error("Legacy path identifies multiple active daemon projects");
   }
 
-  const containingProjectMatches = projects.filter(({ repoRoot }) =>
-    requestedPath.startsWith(repoRoot.endsWith(sep) ? repoRoot : `${repoRoot}${sep}`),
-  );
-  const deepestRootLength = Math.max(
-    0,
-    ...containingProjectMatches.map(({ repoRoot }) => repoRoot.length),
-  );
-  const deepestProjectMatches = containingProjectMatches.filter(
-    ({ repoRoot }) => repoRoot.length === deepestRootLength,
-  );
-  if (deepestProjectMatches.length === 1) {
-    const match = deepestProjectMatches[0]!;
-    return { projectId: match.project.projectId, repoRoot: match.repoRoot };
-  }
-  if (deepestProjectMatches.length > 1) {
-    throw new Error("Legacy path identifies multiple equally deep active daemon projects");
-  }
-
   const projectsById = new Map(projects.map((entry) => [entry.project.projectId, entry]));
   const workspaceProjectIds = new Set(
     (await dependencies.workspaceRegistry.list())
@@ -168,14 +150,6 @@ async function resolveLegacyWorktreeRepositoryIdentity(
       .map((workspace) => workspace.projectId)
       .filter((projectId) => projectsById.has(projectId)),
   );
-  if (workspaceProjectIds.size === 1) {
-    const match = projectsById.get([...workspaceProjectIds][0]!)!;
-    return { projectId: match.project.projectId, repoRoot: match.repoRoot };
-  }
-  if (workspaceProjectIds.size > 1) {
-    throw new Error("Legacy path identifies workspaces from multiple active daemon projects");
-  }
-
   const worktreeOwners = new Map<string, (typeof projects)[number]>();
   await Promise.all(
     projects.map(async (entry) => {
@@ -194,12 +168,31 @@ async function resolveLegacyWorktreeRepositoryIdentity(
       }
     }),
   );
-  if (worktreeOwners.size === 1) {
-    const match = [...worktreeOwners.values()][0]!;
+  const exactOwnerProjectIds = new Set([...workspaceProjectIds, ...worktreeOwners.keys()]);
+  if (exactOwnerProjectIds.size === 1) {
+    const match = projectsById.get([...exactOwnerProjectIds][0]!)!;
     return { projectId: match.project.projectId, repoRoot: match.repoRoot };
   }
-  if (worktreeOwners.size > 1) {
-    throw new Error("Legacy path identifies worktrees from multiple active daemon projects");
+  if (exactOwnerProjectIds.size > 1) {
+    throw new Error("Legacy path has conflicting exact workspace or worktree owners");
+  }
+
+  const containingProjectMatches = projects.filter(({ repoRoot }) =>
+    requestedPath.startsWith(repoRoot.endsWith(sep) ? repoRoot : `${repoRoot}${sep}`),
+  );
+  const deepestRootLength = Math.max(
+    0,
+    ...containingProjectMatches.map(({ repoRoot }) => repoRoot.length),
+  );
+  const deepestProjectMatches = containingProjectMatches.filter(
+    ({ repoRoot }) => repoRoot.length === deepestRootLength,
+  );
+  if (deepestProjectMatches.length === 1) {
+    const match = deepestProjectMatches[0]!;
+    return { projectId: match.project.projectId, repoRoot: match.repoRoot };
+  }
+  if (deepestProjectMatches.length > 1) {
+    throw new Error("Legacy path identifies multiple equally deep active daemon projects");
   }
   throw new Error("Legacy cwd or worktreePath does not identify daemon-owned repository state");
 }

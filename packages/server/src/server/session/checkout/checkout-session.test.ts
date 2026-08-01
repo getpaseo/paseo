@@ -577,6 +577,18 @@ describe("CheckoutSession", () => {
         requestId: "second",
       });
 
+      expect(emitted).toEqual([
+        {
+          type: "rpc_error",
+          payload: {
+            requestId: "first",
+            requestType: "subscribe_checkout_diff_request",
+            error: "Checkout diff subscription was superseded by a newer request",
+            code: "checkout_diff_subscription_superseded",
+          },
+        },
+      ]);
+
       second.resolve({
         initial: { cwd: "/repo", files: [], error: null },
         unsubscribe: secondUnsubscribe,
@@ -598,6 +610,15 @@ describe("CheckoutSession", () => {
       await firstRequest;
 
       expect(emitted).toEqual([
+        {
+          type: "rpc_error",
+          payload: {
+            requestId: "first",
+            requestType: "subscribe_checkout_diff_request",
+            error: "Checkout diff subscription was superseded by a newer request",
+            code: "checkout_diff_subscription_superseded",
+          },
+        },
         {
           type: "subscribe_checkout_diff_response",
           payload: {
@@ -647,10 +668,29 @@ describe("CheckoutSession", () => {
         requestId: "second",
       });
 
+      expect(emitted[0]).toEqual({
+        type: "rpc_error",
+        payload: {
+          requestId: "first",
+          requestType: "subscribe_checkout_diff_request",
+          error: "Checkout diff subscription was superseded by a newer request",
+          code: "checkout_diff_subscription_superseded",
+        },
+      });
+
       first.reject(new Error("stale failure"));
 
       await expect(firstRequest).resolves.toBeUndefined();
       expect(emitted).toEqual([
+        {
+          type: "rpc_error",
+          payload: {
+            requestId: "first",
+            requestType: "subscribe_checkout_diff_request",
+            error: "Checkout diff subscription was superseded by a newer request",
+            code: "checkout_diff_subscription_superseded",
+          },
+        },
         {
           type: "subscribe_checkout_diff_response",
           payload: {
@@ -663,6 +703,49 @@ describe("CheckoutSession", () => {
         },
       ]);
       expect(secondUnsubscribe).not.toHaveBeenCalled();
+    });
+
+    it("settles a pending subscription when it is explicitly unsubscribed", async () => {
+      const pending = createDeferred<CheckoutDiffSubscription>();
+      const openedUnsubscribe = vi.fn();
+      const diff: CheckoutDiffSubscriber = {
+        subscribe: () => pending.promise,
+        scheduleRefreshForCwd: vi.fn(),
+      };
+      const { checkout, emitted } = makeCheckoutSession({ diff });
+
+      const request = checkout.handleSubscribeDiffRequest({
+        type: "subscribe_checkout_diff_request",
+        subscriptionId: "s1",
+        cwd: "/repo",
+        compare: { mode: "uncommitted" },
+        requestId: "pending",
+      });
+      checkout.handleUnsubscribeDiffRequest({
+        type: "unsubscribe_checkout_diff_request",
+        subscriptionId: "s1",
+      });
+
+      expect(emitted).toEqual([
+        {
+          type: "rpc_error",
+          payload: {
+            requestId: "pending",
+            requestType: "subscribe_checkout_diff_request",
+            error: "Checkout diff subscription was canceled before it opened",
+            code: "checkout_diff_subscription_unsubscribed",
+          },
+        },
+      ]);
+
+      pending.resolve({
+        initial: { cwd: "/repo", files: [], error: null },
+        unsubscribe: openedUnsubscribe,
+      });
+      await request;
+
+      expect(openedUnsubscribe).toHaveBeenCalledTimes(1);
+      expect(emitted).toHaveLength(1);
     });
 
     it("unsubscribes every live subscription on cleanup", async () => {

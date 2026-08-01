@@ -286,6 +286,12 @@ test("project-ID-only worktree commands require repository-identity support", as
   await expect(client.getPaseoWorktreeList({ projectId: "prj_repo" })).rejects.toThrow(
     "Update the host to use repository-scoped worktree commands.",
   );
+  await expect(
+    client.archivePaseoWorktree({
+      projectId: "prj_repo",
+      worktreePath: "/repo-worktree",
+    }),
+  ).rejects.toThrow("Update the host to use repository-scoped worktree commands.");
   expect(mock.sent).toEqual([]);
 });
 

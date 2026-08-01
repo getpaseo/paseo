@@ -1,5 +1,6 @@
 import type { Logger } from "pino";
-import { basename } from "node:path";
+import { existsSync } from "node:fs";
+import { basename, isAbsolute } from "node:path";
 
 import type { AgentSessionConfig } from "./agent/agent-sdk-types.js";
 import {
@@ -482,23 +483,66 @@ export async function handlePaseoWorktreeArchiveRequest(
   const { requestId } = msg;
 
   try {
-    const repository = await resolveWorktreeRepositoryIdentity(msg, dependencies.projectRegistry, {
-      workspaceRegistry: dependencies.workspaceRegistry,
-      workspaceGitService: dependencies.workspaceGitService,
-    });
-    const worktreePath = await resolveRepositoryWorktreePath(
-      dependencies.workspaceGitService,
-      repository.repoRoot,
-      msg.worktreePath,
-      msg.branchName,
-      {
-        projectId: repository.projectId,
-        workspaceRegistry: dependencies.workspaceRegistry,
-        paseoHome: dependencies.paseoHome,
-        worktreesRoot: dependencies.paseoWorktreesBaseRoot,
-        branchName: msg.branchName,
-      },
+    const explicitlySelectedRepository =
+      msg.projectId || msg.repoRoot
+        ? await resolveWorktreeRepositoryIdentity(msg, dependencies.projectRegistry)
+        : null;
+    const retryPlacement = await resolvePersistedArchiveRetryPlacement(
+      msg,
+      dependencies.workspaceRegistry,
+      explicitlySelectedRepository?.projectId,
     );
+    if (retryPlacement && !existsSync(retryPlacement.worktreePath)) {
+      dependencies.emit({
+        type: "paseo_worktree_archive_response",
+        payload: {
+          success: true,
+          removedAgents: [],
+          error: null,
+          requestId,
+        },
+      });
+      return;
+    }
+
+    const repository =
+      explicitlySelectedRepository ??
+      (await resolveWorktreeRepositoryIdentity(
+        retryPlacement
+          ? {
+              projectId: retryPlacement.projectId,
+              repoRoot: retryPlacement.mainRepoRoot ?? undefined,
+            }
+          : msg,
+        dependencies.projectRegistry,
+        {
+          workspaceRegistry: dependencies.workspaceRegistry,
+          workspaceGitService: dependencies.workspaceGitService,
+        },
+      ));
+    const worktreePath =
+      retryPlacement?.worktreePath ??
+      (await resolveRepositoryWorktreePath(
+        dependencies.workspaceGitService,
+        repository.repoRoot,
+        msg.worktreePath,
+        msg.branchName,
+        {
+          projectId: repository.projectId,
+          workspaceRegistry: dependencies.workspaceRegistry,
+          paseoHome: dependencies.paseoHome,
+          worktreesRoot: dependencies.paseoWorktreesBaseRoot,
+          branchName: msg.branchName,
+        },
+      ));
+    if (msg.workspaceId) {
+      await validateExplicitWorkspaceArchiveTarget({
+        workspaceRegistry: dependencies.workspaceRegistry,
+        workspaceId: msg.workspaceId,
+        projectId: repository.projectId,
+        worktreePath,
+      });
+    }
     const result = await archiveCommand(dependencies, {
       requestId,
       worktreePath,
@@ -542,6 +586,105 @@ export async function handlePaseoWorktreeArchiveRequest(
         requestId,
       },
     });
+  }
+}
+
+interface PersistedArchiveRetryPlacement {
+  projectId: string;
+  worktreePath: string;
+  mainRepoRoot: string | null;
+}
+
+async function resolvePersistedArchiveRetryPlacement(
+  msg: Extract<SessionInboundMessage, { type: "paseo_worktree_archive_request" }>,
+  workspaceRegistry: Pick<WorkspaceRegistry, "list">,
+  selectedProjectId?: string,
+): Promise<PersistedArchiveRetryPlacement | null> {
+  if (msg.worktreePath && !isAbsolute(msg.worktreePath)) {
+    return null;
+  }
+
+  const workspaces = await workspaceRegistry.list();
+  const archivedWorktrees = workspaces.filter(
+    (workspace) =>
+      workspace.archivedAt !== null &&
+      workspace.kind === "worktree" &&
+      workspace.isPaseoOwnedWorktree &&
+      workspace.worktreeRoot !== null,
+  );
+  const explicitWorkspace = msg.workspaceId
+    ? workspaces.find((workspace) => workspace.workspaceId === msg.workspaceId)
+    : null;
+  if (explicitWorkspace && explicitWorkspace.archivedAt === null) {
+    return null;
+  }
+
+  const candidates = archivedWorktrees.filter((workspace) => {
+    if (selectedProjectId && workspace.projectId !== selectedProjectId) return false;
+    if (msg.workspaceId && workspace.workspaceId !== msg.workspaceId) return false;
+    if (msg.projectId && workspace.projectId !== msg.projectId) return false;
+    if (msg.branchName && workspace.branch !== msg.branchName) return false;
+    if (
+      msg.repoRoot &&
+      (!workspace.mainRepoRoot ||
+        !createRealpathAwarePathMatcher(workspace.mainRepoRoot)(msg.repoRoot))
+    ) {
+      return false;
+    }
+    if (
+      msg.worktreePath &&
+      ![workspace.worktreeRoot, workspace.cwd].some(
+        (candidate) =>
+          candidate !== null && createRealpathAwarePathMatcher(candidate)(msg.worktreePath!),
+      )
+    ) {
+      return false;
+    }
+    return true;
+  });
+
+  if (msg.workspaceId && explicitWorkspace?.archivedAt && candidates.length === 0) {
+    throw new Error("workspaceId does not identify the selected project and worktree path");
+  }
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const placements = new Map<string, PersistedArchiveRetryPlacement>();
+  for (const workspace of candidates) {
+    const placement = {
+      projectId: workspace.projectId,
+      worktreePath: workspace.worktreeRoot!,
+      mainRepoRoot: workspace.mainRepoRoot,
+    };
+    placements.set(`${placement.projectId}\0${placement.worktreePath}`, placement);
+  }
+  if (placements.size !== 1) {
+    throw new Error("Archived workspace placement does not uniquely identify a worktree");
+  }
+  return [...placements.values()][0]!;
+}
+
+export async function validateExplicitWorkspaceArchiveTarget(input: {
+  workspaceRegistry: Pick<WorkspaceRegistry, "list">;
+  workspaceId: string;
+  projectId: string;
+  worktreePath: string;
+}): Promise<void> {
+  const workspace = (await input.workspaceRegistry.list()).find(
+    (candidate) => candidate.workspaceId === input.workspaceId,
+  );
+  if (!workspace || workspace.archivedAt !== null) {
+    throw new Error(`Workspace not found: ${input.workspaceId}`);
+  }
+  const matchesPath = createRealpathAwarePathMatcher(input.worktreePath);
+  if (
+    workspace.projectId !== input.projectId ||
+    ![workspace.worktreeRoot, workspace.cwd]
+      .filter((candidate): candidate is string => candidate !== null)
+      .some(matchesPath)
+  ) {
+    throw new Error("workspaceId does not identify the selected project and worktree path");
   }
 }
 

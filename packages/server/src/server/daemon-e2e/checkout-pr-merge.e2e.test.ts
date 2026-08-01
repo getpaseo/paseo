@@ -187,6 +187,7 @@ describe("daemon checkout PR merge loop", () => {
       let repoFullName: string | null = null;
       let agentId: string | null = null;
       let worktreePath: string | null = null;
+      let projectId: string | null = null;
 
       let repoCleanupError: unknown;
       try {
@@ -206,6 +207,14 @@ describe("daemon checkout PR merge loop", () => {
           },
         );
         execSync("git push -u origin main", { cwd: repoDir, stdio: "pipe" });
+
+        const addedProject = await ctx.client.addProject(repoDir);
+        expect(addedProject.error).toBeNull();
+        expect(addedProject.project?.projectRootPath).toBe(repoDir);
+        if (!addedProject.project) {
+          throw new Error("project.add.response returned success without a project");
+        }
+        projectId = addedProject.project.projectId;
 
         const worktree = await createWorktreePrimitive({
           cwd: repoDir,
@@ -286,12 +295,12 @@ describe("daemon checkout PR merge loop", () => {
 
         const archiveResult = await ctx.client.archivePaseoWorktree({
           worktreePath: worktree.worktreePath,
-          repoRoot: repoDir,
+          projectId,
         });
         expect(archiveResult.error).toBeNull();
         expect(archiveResult.success).toBe(true);
 
-        const worktreeListAfter = await ctx.client.getPaseoWorktreeList({ repoRoot: repoDir });
+        const worktreeListAfter = await ctx.client.getPaseoWorktreeList({ projectId });
         expect(worktreeListAfter.error).toBeNull();
         expect(worktreeListAfter.worktrees).toEqual([]);
         expect(existsSync(worktree.worktreePath)).toBe(false);
@@ -300,10 +309,8 @@ describe("daemon checkout PR merge loop", () => {
         expect(remainingAgents.entries.some((entry) => entry.agent.id === agent.id)).toBe(false);
         agentId = null;
       } finally {
-        if (worktreePath) {
-          await ctx.client
-            .archivePaseoWorktree({ worktreePath, repoRoot: repoDir })
-            .catch(() => undefined);
+        if (worktreePath && projectId) {
+          await ctx.client.archivePaseoWorktree({ worktreePath, projectId }).catch(() => undefined);
         }
         if (agentId) {
           await ctx.client.deleteAgent(agentId).catch(() => undefined);

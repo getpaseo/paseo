@@ -115,6 +115,7 @@ export interface CheckoutDiffSubscriber {
 }
 
 interface CheckoutDiffSessionSubscription {
+  pendingRequestId: string | null;
   unsubscribe(): void;
 }
 
@@ -404,9 +405,13 @@ export class CheckoutSession {
 
   async handleSubscribeDiffRequest(msg: SubscribeCheckoutDiffRequest): Promise<void> {
     const cwd = expandTilde(msg.cwd);
-    this.diffSubscriptions.get(msg.subscriptionId)?.unsubscribe();
+    this.cancelDiffSubscription(msg.subscriptionId, {
+      code: "checkout_diff_subscription_superseded",
+      error: "Checkout diff subscription was superseded by a newer request",
+    });
     const abort = new AbortController();
     const activeSubscription: CheckoutDiffSessionSubscription = {
+      pendingRequestId: msg.requestId,
       unsubscribe: () => abort.abort(),
     };
     this.diffSubscriptions.set(msg.subscriptionId, activeSubscription);
@@ -433,6 +438,7 @@ export class CheckoutSession {
         return;
       }
       activeSubscription.unsubscribe = subscription.unsubscribe;
+      activeSubscription.pendingRequestId = null;
 
       this.host.emit({
         type: "subscribe_checkout_diff_response",
@@ -448,15 +454,42 @@ export class CheckoutSession {
         return;
       }
       this.diffSubscriptions.delete(msg.subscriptionId);
+      activeSubscription.pendingRequestId = null;
       activeSubscription.unsubscribe();
       throw error;
     }
   }
 
   handleUnsubscribeDiffRequest(msg: UnsubscribeCheckoutDiffRequest): void {
-    const unsubscribe = this.diffSubscriptions.get(msg.subscriptionId);
-    this.diffSubscriptions.delete(msg.subscriptionId);
-    unsubscribe?.unsubscribe();
+    this.cancelDiffSubscription(msg.subscriptionId, {
+      code: "checkout_diff_subscription_unsubscribed",
+      error: "Checkout diff subscription was canceled before it opened",
+    });
+  }
+
+  private cancelDiffSubscription(
+    subscriptionId: string,
+    cancellation: { code: string; error: string },
+  ): void {
+    const subscription = this.diffSubscriptions.get(subscriptionId);
+    if (!subscription) {
+      return;
+    }
+    this.diffSubscriptions.delete(subscriptionId);
+    const requestId = subscription.pendingRequestId;
+    subscription.pendingRequestId = null;
+    subscription.unsubscribe();
+    if (requestId) {
+      this.host.emit({
+        type: "rpc_error",
+        payload: {
+          requestId,
+          requestType: "subscribe_checkout_diff_request",
+          error: cancellation.error,
+          code: cancellation.code,
+        },
+      });
+    }
   }
 
   async handleRefreshRequest(msg: CheckoutRefreshRequest): Promise<void> {

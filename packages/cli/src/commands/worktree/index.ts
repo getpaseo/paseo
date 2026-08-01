@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { runLsCommand } from "./ls.js";
 import { runArchiveCommand } from "./archive.js";
 import { runCreateCommand } from "./create.js";
@@ -29,7 +29,13 @@ export function createWorktreeCommand(): Command {
       .option("--branch <name>", "Existing branch to check out (--mode checkout-branch)")
       .option("--pr-number <n>", "Pull request number (--mode checkout-pr)")
       .option("--project <id>", "Daemon project ID")
-      .option("--repo-root <path>", "Repository root on the daemon host"),
+      .option("--repo-root <path>", "Repository root on the daemon host")
+      .addOption(
+        new Option("--cwd <path>", "Deprecated alias for --repo-root").conflicts([
+          "project",
+          "repoRoot",
+        ]),
+      ),
   ).action(withOutput(runCreateCommand));
 
   addJsonAndDaemonHostOptions(

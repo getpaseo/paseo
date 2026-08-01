@@ -1776,6 +1776,68 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     }
   });
 
+  test("forced snapshots refresh mainRepoRoot after bare-repository worktree topology changes", async () => {
+    const tempDir = realpathSync(mkdtempSync(join(tmpdir(), "workspace-git-bare-topology-")));
+    const sourceDir = join(tempDir, "source");
+    const bareRepoDir = join(tempDir, "repo.git");
+    const originalMainDir = join(bareRepoDir, "main");
+    const observerDir = join(tempDir, "observer");
+    const replacementMainDir = join(bareRepoDir, "replacement", "main");
+    mkdirSync(sourceDir);
+    execFileSync("git", ["init", "-b", "main"], { cwd: sourceDir, stdio: "pipe" });
+    execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: sourceDir });
+    execFileSync("git", ["config", "user.name", "Test"], { cwd: sourceDir });
+    writeFileSync(join(sourceDir, "file.txt"), "initial\n");
+    execFileSync("git", ["add", "file.txt"], { cwd: sourceDir });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "initial"], {
+      cwd: sourceDir,
+      stdio: "pipe",
+    });
+    execFileSync("git", ["clone", "--bare", sourceDir, bareRepoDir], { stdio: "pipe" });
+    execFileSync("git", ["worktree", "add", originalMainDir, "main"], {
+      cwd: bareRepoDir,
+      stdio: "pipe",
+    });
+    execFileSync("git", ["worktree", "add", "-b", "observer", observerDir, "main"], {
+      cwd: bareRepoDir,
+      stdio: "pipe",
+    });
+
+    const service = createService({
+      getCheckoutSnapshotFacts: getCheckoutSnapshotFactsUncached as never,
+      getCheckoutStatus: getCheckoutStatusUncached as never,
+    });
+
+    try {
+      const initial = await service.getSnapshot(observerDir, { includeForge: false });
+      expect(realpathSync.native(initial.git.mainRepoRoot ?? "")).toBe(
+        realpathSync.native(originalMainDir),
+      );
+
+      execFileSync("git", ["worktree", "remove", originalMainDir], {
+        cwd: bareRepoDir,
+        stdio: "pipe",
+      });
+      mkdirSync(join(bareRepoDir, "replacement"));
+      execFileSync("git", ["worktree", "add", replacementMainDir, "main"], {
+        cwd: bareRepoDir,
+        stdio: "pipe",
+      });
+
+      const refreshed = await service.getSnapshot(observerDir, {
+        force: true,
+        includeForge: false,
+        reason: "test",
+      });
+      expect(realpathSync.native(refreshed.git.mainRepoRoot ?? "")).toBe(
+        realpathSync.native(replacementMainDir),
+      );
+    } finally {
+      service.dispose();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("resolveDefaultBranch cold-loads, warms, forces, and coalesces per cwd", async () => {
     let nowMs = 0;
     const defaultBranch = createDeferred<string | null>();

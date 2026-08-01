@@ -1001,32 +1001,28 @@ async function getMainRepoRootFromCommonDir(
   if (!commonDir) {
     throw new Error("Not in a git repository");
   }
-  return readRepositoryFact("main-repo-root", context, async () => {
-    const normalized = realpathSync(commonDir);
+  const normalized = realpathSync(commonDir);
 
-    if (basename(normalized) === ".git") {
-      return dirname(normalized);
-    }
+  if (basename(normalized) === ".git") {
+    return dirname(normalized);
+  }
 
-    const { stdout: worktreeOut } = await runGitCommand(["worktree", "list", "--porcelain"], {
-      cwd,
-      envOverlay: READ_ONLY_GIT_ENV,
-    });
-    const worktrees = parseWorktreeList(worktreeOut);
-    const nonBareNonPaseo = worktrees.filter(
-      (wt) =>
-        !wt.isBare &&
-        !isPaseoWorktreePath(wt.path, {
-          paseoHome: context?.paseoHome,
-          worktreesRoot: context?.worktreesRoot,
-        }),
-    );
-    const childrenOfBareRepo = nonBareNonPaseo.filter((wt) =>
-      isDescendantPath(wt.path, normalized),
-    );
-    const mainChild = childrenOfBareRepo.find((wt) => basename(wt.path) === "main");
-    return mainChild?.path ?? childrenOfBareRepo[0]?.path ?? nonBareNonPaseo[0]?.path ?? normalized;
+  const { stdout: worktreeOut } = await runGitCommand(["worktree", "list", "--porcelain"], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
   });
+  const worktrees = parseWorktreeList(worktreeOut);
+  const nonBareNonPaseo = worktrees.filter(
+    (wt) =>
+      !wt.isBare &&
+      !isPaseoWorktreePath(wt.path, {
+        paseoHome: context?.paseoHome,
+        worktreesRoot: context?.worktreesRoot,
+      }),
+  );
+  const childrenOfBareRepo = nonBareNonPaseo.filter((wt) => isDescendantPath(wt.path, normalized));
+  const mainChild = childrenOfBareRepo.find((wt) => basename(wt.path) === "main");
+  return mainChild?.path ?? childrenOfBareRepo[0]?.path ?? nonBareNonPaseo[0]?.path ?? normalized;
 }
 
 export interface GitWorktreeEntry {

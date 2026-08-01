@@ -673,6 +673,33 @@ describe("archiveByScope", () => {
     expect(secondEmit.updates).toEqual([{ kind: "remove", workspaceId, archivingAt: null }]);
   });
 
+  test("does not fail after committed archive effects when the final update cannot be emitted", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "final-update-failure");
+    const workspaceId = "ws-final-update-failure";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [{ workspaceId, cwd: worktree.worktreePath, kind: "worktree" }],
+    });
+    deps.emitWorkspaceUpdatesForWorkspaceIds = vi
+      .fn<(workspaceIds: Iterable<string>) => Promise<void>>()
+      .mockResolvedValueOnce()
+      .mockRejectedValueOnce(new Error("connection closed"));
+
+    await expect(
+      archiveByScope(deps, {
+        scope: { kind: "workspace", workspaceId },
+        requestId: "req-final-update-failure",
+      }),
+    ).resolves.toMatchObject({
+      archivedWorkspaceIds: [workspaceId],
+      removedDirectory: true,
+    });
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+    expect(deps.clearWorkspaceArchiving).toHaveBeenCalledWith([workspaceId]);
+  });
+
   test("archives stored snapshots only for the target workspace", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");

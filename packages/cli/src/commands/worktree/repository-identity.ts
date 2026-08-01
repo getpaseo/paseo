@@ -7,6 +7,7 @@ import type { CommandError } from "../../output/index.js";
 export interface WorktreeRepositoryOptions {
   project?: string;
   repoRoot?: string;
+  cwd?: string;
   host?: string;
 }
 
@@ -26,22 +27,28 @@ export async function resolveWorktreeRepositoryIdentity(
   },
   cwd: string = process.cwd(),
 ): Promise<WorktreeRepositoryIdentity> {
-  if (options.project && options.repoRoot) {
+  const identityOptions = [options.project, options.repoRoot, options.cwd].filter(Boolean);
+  if (identityOptions.length > 1) {
     throw commandError(
       "AMBIGUOUS_REPOSITORY_IDENTITY",
-      "Use either --project or --repo-root, not both",
+      "Use only one of --project, --repo-root, or --cwd",
     );
   }
   if (options.project) return { projectId: options.project };
-  if (options.repoRoot) return { repoRoot: options.repoRoot };
+  const explicitRepoRoot = options.repoRoot ?? options.cwd;
+  if (explicitRepoRoot) return { repoRoot: explicitRepoRoot };
 
   const daemonHostname = client.getLastServerInfoMessage()?.hostname;
   if (client.isLocalDaemonConnection() && daemonHostname === hostname()) {
     const projects = (await client.listProjects()).projects;
-    const mainPath = resolveLocalGitMainPath(cwd);
-    const registeredProject =
-      selectRegisteredProject(cwd, projects) ??
-      (mainPath ? selectRegisteredProjectByCanonicalPath(mainPath, projects) : null);
+    const gitContext = resolveLocalGitProjectContext(cwd);
+    const registeredProject = gitContext
+      ? selectRegisteredProjectByCanonicalPath(
+          gitContext.projectSelectionPath,
+          projects,
+          gitContext.repositoryBoundary,
+        )
+      : selectRegisteredProject(cwd, projects);
     if (registeredProject) {
       return {
         projectId: registeredProject.projectId,
@@ -73,6 +80,7 @@ function selectRegisteredProject(
 function selectRegisteredProjectByCanonicalPath(
   canonicalCwd: string,
   projects: Array<{ projectId: string; projectRootPath: string }>,
+  repositoryBoundary?: string,
 ): { projectId: string; projectRootPath: string } | null {
   const containingProjects = projects
     .map((project) => {
@@ -84,13 +92,10 @@ function selectRegisteredProjectByCanonicalPath(
     })
     .filter((project): project is { projectId: string; projectRootPath: string } => {
       if (!project) return false;
-      const relativePath = path.relative(project.projectRootPath, canonicalCwd);
-      return (
-        relativePath === "" ||
-        (!relativePath.startsWith(`..${path.sep}`) &&
-          relativePath !== ".." &&
-          !path.isAbsolute(relativePath))
-      );
+      if (repositoryBoundary && !isPathWithin(repositoryBoundary, project.projectRootPath)) {
+        return false;
+      }
+      return isPathWithin(project.projectRootPath, canonicalCwd);
     });
   const deepestRootLength = Math.max(
     0,
@@ -112,22 +117,25 @@ function resolveLocalGitTopLevel(cwd: string): string | null {
   return resolveGitPath(cwd, ["rev-parse", "--show-toplevel"]);
 }
 
-function resolveLocalGitMainPath(cwd: string): string | null {
+interface LocalGitProjectContext {
+  projectSelectionPath: string;
+  repositoryBoundary: string;
+}
+
+function resolveLocalGitProjectContext(cwd: string): LocalGitProjectContext | null {
   const worktreeRoot = resolveLocalGitTopLevel(cwd);
   const commonDir = resolveGitPath(cwd, [
     "rev-parse",
     "--path-format=absolute",
     "--git-common-dir",
   ]);
-  if (!worktreeRoot || !commonDir || path.basename(commonDir) !== ".git") return null;
+  if (!worktreeRoot) return null;
 
   let canonicalCwd: string;
   let canonicalWorktreeRoot: string;
-  let canonicalCommonDir: string;
   try {
     canonicalCwd = realpathSync.native(cwd);
     canonicalWorktreeRoot = realpathSync.native(worktreeRoot);
-    canonicalCommonDir = realpathSync.native(commonDir);
   } catch {
     return null;
   }
@@ -139,7 +147,34 @@ function resolveLocalGitMainPath(cwd: string): string | null {
   ) {
     return null;
   }
-  return path.join(path.dirname(canonicalCommonDir), relativePath);
+
+  if (!commonDir || path.basename(commonDir) !== ".git") {
+    return {
+      projectSelectionPath: canonicalCwd,
+      repositoryBoundary: canonicalWorktreeRoot,
+    };
+  }
+
+  try {
+    const canonicalCommonDir = realpathSync.native(commonDir);
+    const mainRepositoryRoot = path.dirname(canonicalCommonDir);
+    return {
+      projectSelectionPath: path.join(mainRepositoryRoot, relativePath),
+      repositoryBoundary: mainRepositoryRoot,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isPathWithin(root: string, candidate: string): boolean {
+  const relativePath = path.relative(root, candidate);
+  return (
+    relativePath === "" ||
+    (!relativePath.startsWith(`..${path.sep}`) &&
+      relativePath !== ".." &&
+      !path.isAbsolute(relativePath))
+  );
 }
 
 function resolveGitPath(cwd: string, args: string[]): string | null {
