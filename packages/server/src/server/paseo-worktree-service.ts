@@ -66,6 +66,9 @@ export async function createPaseoWorktree(
 ): Promise<CreatePaseoWorktreeResult> {
   const workspaceCwdPlan = await planWorkspaceCwdForWorktree(input.cwd, deps.workspaceGitService);
   const createdWorktree = await createWorktreeCore(input, deps);
+  if (createdWorktree.created) {
+    deps.workspaceGitService.invalidateWorktreeList(createdWorktree.repoRoot);
+  }
   try {
     maybeMarkFirstAgentBranchAutoNameEligible({ createdWorktree });
     const workspaceCwd = mapWorkspaceRelativeCwdToWorktree({

@@ -25,6 +25,7 @@ function createLocalDaemonClient(repoRoots: string[]): DaemonClient {
   return {
     getLastServerInfoMessage: () => ({ hostname: hostname() }),
     isLocalDaemonConnection: () => true,
+    listProjects: async () => ({ projects: [], requestId: "req-projects" }),
     fetchAgents: async () => ({ entries: [] }),
     getPaseoWorktreeList: async (input) => {
       if (input.repoRoot) repoRoots.push(input.repoRoot);

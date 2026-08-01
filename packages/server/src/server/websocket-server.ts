@@ -218,6 +218,7 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
     suggestBranchesForCwd: async () => [],
     listStashes: async () => [],
     listWorktrees: async () => [],
+    invalidateWorktreeList: () => {},
     getProjectSlug: async (cwd: string) => {
       const snapshot = createFallbackWorkspaceGitSnapshot(cwd);
       return deriveProjectSlug(cwd, snapshot.git.isGit ? snapshot.git.remoteUrl : null);

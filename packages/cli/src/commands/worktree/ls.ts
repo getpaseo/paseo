@@ -90,7 +90,7 @@ export async function runLsCommandWithDeps(
     const agents = agentsPayload.entries.map((entry) => entry.agent);
 
     // Get worktree list from daemon
-    const identity = resolveWorktreeRepositoryIdentity(options, client, deps.cwd);
+    const identity = await resolveWorktreeRepositoryIdentity(options, client, deps.cwd);
     const response = await client.getPaseoWorktreeList(identity);
 
     await client.close();

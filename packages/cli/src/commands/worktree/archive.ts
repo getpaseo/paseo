@@ -76,7 +76,7 @@ export async function runArchiveCommandWithDeps(
   }
 
   try {
-    const identity = resolveWorktreeRepositoryIdentity(options, client, deps.cwd);
+    const identity = await resolveWorktreeRepositoryIdentity(options, client, deps.cwd);
     // Get the list of worktrees first to resolve the name
     const listResponse = await client.getPaseoWorktreeList(identity);
 

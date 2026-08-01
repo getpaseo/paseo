@@ -14,10 +14,21 @@ afterEach(() => {
   }
 });
 
-function createLocalClient() {
+function createLocalClient(projects: Array<{ projectId: string; projectRootPath: string }> = []) {
   return {
     getLastServerInfoMessage: () => ({ hostname: hostname() }),
     isLocalDaemonConnection: () => true,
+    listProjects: async () => ({ projects }),
+  };
+}
+
+function createRemoteClient(options?: { hostname?: string }) {
+  return {
+    getLastServerInfoMessage: () => ({ hostname: options?.hostname ?? "other-host" }),
+    isLocalDaemonConnection: () => false,
+    listProjects: async () => {
+      throw new Error("Remote identity must not list local projects");
+    },
   };
 }
 
@@ -29,81 +40,98 @@ function createGitRepository(parent: string, name: string): string {
 }
 
 describe("resolveWorktreeRepositoryIdentity", () => {
-  test("uses an explicit daemon project without consulting the caller cwd", () => {
-    const identity = resolveWorktreeRepositoryIdentity(
+  test("uses an explicit daemon project without consulting the caller cwd", async () => {
+    const identity = await resolveWorktreeRepositoryIdentity(
       { project: "prj_remote" },
-      { getLastServerInfoMessage: () => null, isLocalDaemonConnection: () => false },
+      createRemoteClient(),
     );
 
     expect(identity).toEqual({ projectId: "prj_remote" });
   });
 
-  test("requires explicit identity for a remote daemon", () => {
-    expect(() => {
-      resolveWorktreeRepositoryIdentity(
-        {},
-        {
-          getLastServerInfoMessage: () => ({ hostname: "other-host" }),
-          isLocalDaemonConnection: () => false,
-        },
-      );
-    }).toThrow(expect.objectContaining({ code: "REPOSITORY_IDENTITY_REQUIRED" }));
+  test("requires explicit identity for a remote daemon", async () => {
+    await expect(resolveWorktreeRepositoryIdentity({}, createRemoteClient())).rejects.toMatchObject(
+      { code: "REPOSITORY_IDENTITY_REQUIRED" },
+    );
   });
 
-  test("does not infer the caller cwd for a remote connection with the same hostname", () => {
-    expect(() => {
+  test("does not infer the caller cwd for a remote connection with the same hostname", async () => {
+    await expect(
       resolveWorktreeRepositoryIdentity(
         { host: "remote.example" },
-        {
-          getLastServerInfoMessage: () => ({ hostname: hostname() }),
-          isLocalDaemonConnection: () => false,
-        },
-      );
-    }).toThrow(expect.objectContaining({ code: "REPOSITORY_IDENTITY_REQUIRED" }));
+        createRemoteClient({ hostname: hostname() }),
+      ),
+    ).rejects.toMatchObject({ code: "REPOSITORY_IDENTITY_REQUIRED" });
   });
 
-  test("does not infer the caller cwd for an empty host option that falls back to remote", () => {
-    expect(() => {
-      resolveWorktreeRepositoryIdentity(
-        { host: "" },
-        {
-          getLastServerInfoMessage: () => ({ hostname: hostname() }),
-          isLocalDaemonConnection: () => false,
-        },
-      );
-    }).toThrow(expect.objectContaining({ code: "REPOSITORY_IDENTITY_REQUIRED" }));
+  test("does not infer the caller cwd for an empty host option that falls back to remote", async () => {
+    await expect(
+      resolveWorktreeRepositoryIdentity({ host: "" }, createRemoteClient({ hostname: hostname() })),
+    ).rejects.toMatchObject({ code: "REPOSITORY_IDENTITY_REQUIRED" });
   });
 
-  test("defaults to the local Git root only after local connection and same-host proof", () => {
+  test("defaults to the local Git root only after local connection and same-host proof", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "worktree-cli-identity-"));
     cleanupPaths.push(tempDir);
     const repoRoot = createGitRepository(tempDir, "repo");
 
-    const identity = resolveWorktreeRepositoryIdentity(
-      {},
-      {
-        getLastServerInfoMessage: () => ({ hostname: hostname() }),
-        isLocalDaemonConnection: () => true,
-      },
-      repoRoot,
-    );
+    const identity = await resolveWorktreeRepositoryIdentity({}, createLocalClient(), repoRoot);
 
     expect(identity).toEqual({ repoRoot: realpathSync.native(repoRoot) });
   });
 
-  test("resolves the Git top-level for a verified local nested cwd", () => {
+  test("resolves the Git top-level for a verified local nested cwd", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "worktree-cli-identity-"));
     cleanupPaths.push(tempDir);
     const repoRoot = createGitRepository(tempDir, "repo");
     const nested = join(repoRoot, "packages", "cli");
     mkdirSync(nested, { recursive: true });
 
-    const identity = resolveWorktreeRepositoryIdentity({}, createLocalClient(), nested);
+    const identity = await resolveWorktreeRepositoryIdentity({}, createLocalClient(), nested);
 
     expect(identity).toEqual({ repoRoot: realpathSync.native(repoRoot) });
   });
 
-  test("selects the innermost Git root when repositories are nested", () => {
+  test("preserves an exactly registered monorepo subproject", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "worktree-cli-identity-"));
+    cleanupPaths.push(tempDir);
+    const repoRoot = createGitRepository(tempDir, "repo");
+    const subprojectRoot = join(repoRoot, "packages", "service");
+    mkdirSync(subprojectRoot, { recursive: true });
+
+    const identity = await resolveWorktreeRepositoryIdentity(
+      {},
+      createLocalClient([
+        { projectId: "prj_repo", projectRootPath: repoRoot },
+        { projectId: "prj_service", projectRootPath: subprojectRoot },
+      ]),
+      subprojectRoot,
+    );
+
+    expect(identity).toEqual({ projectId: "prj_service" });
+  });
+
+  test("selects the deepest registered project containing the caller cwd", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "worktree-cli-identity-"));
+    cleanupPaths.push(tempDir);
+    const repoRoot = createGitRepository(tempDir, "repo");
+    const subprojectRoot = join(repoRoot, "packages", "service");
+    const nested = join(subprojectRoot, "src");
+    mkdirSync(nested, { recursive: true });
+
+    const identity = await resolveWorktreeRepositoryIdentity(
+      {},
+      createLocalClient([
+        { projectId: "prj_service", projectRootPath: subprojectRoot },
+        { projectId: "prj_repo", projectRootPath: repoRoot },
+      ]),
+      nested,
+    );
+
+    expect(identity).toEqual({ projectId: "prj_service" });
+  });
+
+  test("selects the innermost Git root when repositories are nested", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "worktree-cli-identity-"));
     cleanupPaths.push(tempDir);
     const outerRoot = createGitRepository(tempDir, "outer");
@@ -111,12 +139,12 @@ describe("resolveWorktreeRepositoryIdentity", () => {
     const nested = join(innerRoot, "src");
     mkdirSync(nested);
 
-    const identity = resolveWorktreeRepositoryIdentity({}, createLocalClient(), nested);
+    const identity = await resolveWorktreeRepositoryIdentity({}, createLocalClient(), nested);
 
     expect(identity).toEqual({ repoRoot: realpathSync.native(innerRoot) });
   });
 
-  test("uses Git's canonical top-level for a nested cwd reached through a symlink", () => {
+  test("uses Git's canonical top-level for a nested cwd reached through a symlink", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "worktree-cli-identity-"));
     cleanupPaths.push(tempDir);
     const repoRoot = createGitRepository(tempDir, "repo");
@@ -125,42 +153,46 @@ describe("resolveWorktreeRepositoryIdentity", () => {
     mkdirSync(nested);
     symlinkSync(repoRoot, alias);
 
-    const identity = resolveWorktreeRepositoryIdentity({}, createLocalClient(), join(alias, "src"));
+    const identity = await resolveWorktreeRepositoryIdentity(
+      {},
+      createLocalClient(),
+      join(alias, "src"),
+    );
 
     expect(identity).toEqual({ repoRoot: realpathSync.native(repoRoot) });
   });
 
-  test("preserves trailing whitespace in the Git top-level", () => {
+  test("preserves trailing whitespace in the Git top-level", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "worktree-cli-identity-"));
     cleanupPaths.push(tempDir);
     const repoRoot = createGitRepository(tempDir, "repo ");
     const nested = join(repoRoot, "src");
     mkdirSync(nested);
 
-    const identity = resolveWorktreeRepositoryIdentity({}, createLocalClient(), nested);
+    const identity = await resolveWorktreeRepositoryIdentity({}, createLocalClient(), nested);
 
     expect(identity).toEqual({ repoRoot: realpathSync.native(repoRoot) });
   });
 
-  test("keeps an exact cwd when the verified local directory is not in Git", () => {
+  test("keeps an exact cwd when the verified local directory is not in Git", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "worktree-cli-identity-"));
     cleanupPaths.push(tempDir);
     const nested = join(tempDir, "plain", "nested");
     mkdirSync(nested, { recursive: true });
 
-    const identity = resolveWorktreeRepositoryIdentity({}, createLocalClient(), nested);
+    const identity = await resolveWorktreeRepositoryIdentity({}, createLocalClient(), nested);
 
     expect(identity).toEqual({ repoRoot: nested });
   });
 
-  test("does not rewrite an explicit root through local Git discovery", () => {
+  test("does not rewrite an explicit root through local Git discovery", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "worktree-cli-identity-"));
     cleanupPaths.push(tempDir);
     const repoRoot = createGitRepository(tempDir, "repo");
     const nested = join(repoRoot, "src");
     mkdirSync(nested);
 
-    const identity = resolveWorktreeRepositoryIdentity(
+    const identity = await resolveWorktreeRepositoryIdentity(
       { repoRoot: nested },
       createLocalClient(),
       nested,
@@ -169,31 +201,24 @@ describe("resolveWorktreeRepositoryIdentity", () => {
     expect(identity).toEqual({ repoRoot: nested });
   });
 
-  test("refuses a remote endpoint even when the caller cwd is nested in Git", () => {
+  test("refuses a remote endpoint even when the caller cwd is nested in Git", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "worktree-cli-identity-"));
     cleanupPaths.push(tempDir);
     const repoRoot = createGitRepository(tempDir, "repo");
     const nested = join(repoRoot, "src");
     mkdirSync(nested);
 
-    expect(() => {
-      resolveWorktreeRepositoryIdentity(
-        {},
-        {
-          getLastServerInfoMessage: () => ({ hostname: hostname() }),
-          isLocalDaemonConnection: () => false,
-        },
-        nested,
-      );
-    }).toThrow(expect.objectContaining({ code: "REPOSITORY_IDENTITY_REQUIRED" }));
+    await expect(
+      resolveWorktreeRepositoryIdentity({}, createRemoteClient({ hostname: hostname() }), nested),
+    ).rejects.toMatchObject({ code: "REPOSITORY_IDENTITY_REQUIRED" });
   });
 
-  test("rejects conflicting identity flags", () => {
-    expect(() => {
+  test("rejects conflicting identity flags", async () => {
+    await expect(
       resolveWorktreeRepositoryIdentity(
         { project: "prj_remote", repoRoot: "/srv/repo" },
-        { getLastServerInfoMessage: () => null, isLocalDaemonConnection: () => false },
-      );
-    }).toThrow(expect.objectContaining({ code: "AMBIGUOUS_REPOSITORY_IDENTITY" }));
+        createRemoteClient(),
+      ),
+    ).rejects.toMatchObject({ code: "AMBIGUOUS_REPOSITORY_IDENTITY" });
   });
 });

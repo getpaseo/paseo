@@ -695,7 +695,7 @@ test("creates agent in ~/.paseo/worktrees/{hash} when worktree is requested", as
   rmSync(cwd, { recursive: true, force: true });
 }, 60000);
 
-test("archiving a worktree shuts down its terminals but leaves the worktree on disk", async () => {
+test("archiving the final worktree reference tears it down and removes it", async () => {
   const repoRoot = tmpCwd();
 
   const { execSync } = await import("child_process");
@@ -778,11 +778,12 @@ test("archiving a worktree shuts down its terminals but leaves the worktree on d
   expect(archive.success).toBe(true);
   expect(archive.removedAgents).toContain(agent.id);
 
-  // Archiving tears down the workspace's terminals but never deletes the
-  // worktree from disk and never runs teardown commands — on-disk removal is a
-  // separate, explicit step.
-  expect(existsSync(agent.cwd)).toBe(true);
-  expect(existsSync(teardownMarkerPath)).toBe(false);
+  expect(existsSync(agent.cwd)).toBe(false);
+  expect(readFileSync(teardownMarkerPath, "utf8").trim()).toBe(agent.cwd);
+
+  const worktreeListAfter = await ctx.client.getPaseoWorktreeList({ repoRoot });
+  expect(worktreeListAfter.error).toBeNull();
+  expect(worktreeListAfter.worktrees).toEqual([]);
 
   const afterArchiveDirectories = ctx.daemon.daemon.terminalManager.listDirectories();
   expect(afterArchiveDirectories).not.toContain(agent.cwd);

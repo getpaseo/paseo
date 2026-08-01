@@ -154,6 +154,7 @@ test("create_agent_request creates a worktree and auto-archives both after the f
   // last-reference worktree directory is gone.
   await expectAgentAbsentFromActiveList(created.id);
   await expect.poll(() => existsSync(created.cwd), { timeout: 10000, interval: 100 }).toBe(false);
+  await expectWorktreeListEmpty(repoDir);
 }, 30000);
 
 test("create_agent_request auto-archives a nested workspace from an existing Paseo worktree", async () => {

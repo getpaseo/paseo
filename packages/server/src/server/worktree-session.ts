@@ -458,7 +458,10 @@ export async function handlePaseoWorktreeArchiveRequest(
     "emitWorkspaceUpdatesForWorkspaceIds" | "workspaceGitService"
   > & {
     emit: EmitSessionMessage;
-    workspaceGitService: Pick<WorkspaceGitService, "getSnapshot" | "listWorktrees">;
+    workspaceGitService: Pick<
+      WorkspaceGitService,
+      "getSnapshot" | "invalidateWorktreeList" | "listWorktrees"
+    >;
     projectRegistry: Pick<ProjectRegistry, "get" | "list">;
     emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
   },
@@ -615,9 +618,12 @@ export async function resolveRepositoryWorktreePath(
   if (!canonicalTarget) {
     throw new Error("worktreePath must be an existing absolute path on the daemon host");
   }
-  const matchingWorktrees = (await workspaceGitService.listWorktrees(repoRoot)).filter(
-    (worktree) => canonicalizeExistingRoot(worktree.path) === canonicalTarget,
-  );
+  const matchingWorktrees = (
+    await workspaceGitService.listWorktrees(repoRoot, {
+      force: true,
+      reason: "archive-worktree-membership",
+    })
+  ).filter((worktree) => canonicalizeExistingRoot(worktree.path) === canonicalTarget);
   if (matchingWorktrees.length !== 1) {
     throw new Error("worktreePath is not a worktree for the selected repository");
   }

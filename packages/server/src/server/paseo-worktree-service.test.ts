@@ -85,6 +85,7 @@ test("creates a worktree and registers it in the source workspace project withou
     updatedAt: expect.any(String),
   });
   expect(events).toEqual([`workspace:${result.workspace.workspaceId}`]);
+  expect(deps.workspaceGitService.invalidateWorktreeList).toHaveBeenCalledWith(result.repoRoot);
 });
 
 test("refreshes a source project that became Git while creating a worktree", async () => {
@@ -1222,6 +1223,7 @@ function createWorkspaceGitServiceStub(): WorkspaceGitService {
       }
     },
     resolveDefaultBranch: async () => "main",
+    invalidateWorktreeList: vi.fn(),
     refresh: async () => {},
     requestWorkingTreeWatch: async (cwd) => ({
       repoRoot: cwd,

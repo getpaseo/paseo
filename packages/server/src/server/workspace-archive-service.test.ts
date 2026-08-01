@@ -10,7 +10,6 @@ import { createRealpathAwarePathMatcher } from "../utils/path.js";
 import { createWorktree, type WorktreeConfig } from "../utils/worktree.js";
 import type { ManagedAgent } from "./agent/agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
-import type { WorkspaceGitService } from "./workspace-git-service.js";
 import {
   archiveByScope,
   type ActiveWorkspaceRef,
@@ -139,7 +138,8 @@ function createArchiveDeps(input: ArchiveDepsInput): ArchiveTestDependencies {
     github: createGitHubServiceStub(),
     workspaceGitService: {
       getSnapshot: vi.fn(async () => null),
-    } as unknown as Pick<WorkspaceGitService, "getSnapshot">,
+      invalidateWorktreeList: vi.fn(),
+    },
     agentManager: {
       listAgents: () => [],
       archiveAgent: vi.fn(async (agentId: string) => {
@@ -193,28 +193,29 @@ describe("archiveByScope", () => {
     const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "last-ref-workspace");
     const workspaceId = "ws-last-ref";
 
-    const result = await archiveByScope(
-      createArchiveDeps({
-        paseoHome,
-        activeWorkspaces: [
-          {
-            workspaceId,
-            cwd: worktree.worktreePath,
-            kind: "worktree",
-          },
-        ],
-      }),
-      {
-        scope: { kind: "workspace", workspaceId },
-        requestId: "req-last-ref-workspace",
-      },
-    );
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+        },
+      ],
+    });
+    const result = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-last-ref-workspace",
+    });
 
     assertArchiveResult(result, {
       archivedWorkspaceIds: [workspaceId],
       removedDirectory: true,
     });
     expect(existsSync(worktree.worktreePath)).toBe(false);
+    const invalidatedRepoRoot = vi.mocked(deps.workspaceGitService.invalidateWorktreeList).mock
+      .calls[0]?.[0];
+    expect(createRealpathAwarePathMatcher(repoDir)(invalidatedRepoRoot ?? "")).toBe(true);
   });
 
   test("workspace scope runs teardown while keeping a directory referenced by a sibling", async () => {

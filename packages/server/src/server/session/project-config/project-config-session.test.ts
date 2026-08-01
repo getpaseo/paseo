@@ -1,6 +1,6 @@
 import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, parse } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import pino from "pino";
 import { ProjectConfigSession, type ProjectConfigSessionHost } from "./project-config-session.js";
@@ -45,6 +45,25 @@ function makeSubsystem(records: PersistedProjectRecord[]) {
 }
 
 describe("ProjectConfigSession", () => {
+  test("read preserves the platform filesystem root", async () => {
+    const filesystemRoot = parse(process.cwd()).root;
+    const { subsystem, emitted } = makeSubsystem([projectRecord(filesystemRoot)]);
+
+    await subsystem.handleReadProjectConfigRequest({
+      type: "read_project_config_request",
+      requestId: "read-filesystem-root",
+      repoRoot: filesystemRoot,
+    });
+
+    expect(emitted).toContainEqual({
+      type: "read_project_config_response",
+      payload: expect.objectContaining({
+        requestId: "read-filesystem-root",
+        repoRoot: filesystemRoot,
+      }),
+    });
+  });
+
   test("read resolves a known root despite a trailing slash and returns the raw config + revision", async () => {
     const repoRoot = makeRoot();
     writeFileSync(join(repoRoot, "paseo.json"), JSON.stringify({ worktree: { setup: "npm ci" } }));

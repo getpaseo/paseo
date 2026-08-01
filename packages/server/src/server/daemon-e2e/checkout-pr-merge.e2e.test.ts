@@ -290,8 +290,11 @@ describe("daemon checkout PR merge loop", () => {
         });
         expect(archiveResult.error).toBeNull();
         expect(archiveResult.success).toBe(true);
-        // Archiving leaves the worktree on disk; disk deletion is a separate step.
-        expect(existsSync(worktree.worktreePath)).toBe(true);
+
+        const worktreeListAfter = await ctx.client.getPaseoWorktreeList({ repoRoot: repoDir });
+        expect(worktreeListAfter.error).toBeNull();
+        expect(worktreeListAfter.worktrees).toEqual([]);
+        expect(existsSync(worktree.worktreePath)).toBe(false);
 
         const remainingAgents = await ctx.client.fetchAgents();
         expect(remainingAgents.entries.some((entry) => entry.agent.id === agent.id)).toBe(false);

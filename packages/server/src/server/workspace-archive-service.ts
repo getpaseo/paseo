@@ -26,7 +26,7 @@ export interface ArchiveDependencies {
   // Base directory that may hold worktrees across repositories.
   paseoWorktreesBaseRoot?: string;
   github: ForgeService;
-  workspaceGitService: Pick<WorkspaceGitService, "getSnapshot">;
+  workspaceGitService: Pick<WorkspaceGitService, "getSnapshot" | "invalidateWorktreeList">;
   agentManager: Pick<AgentManager, "listAgents" | "archiveAgent" | "archiveSnapshot">;
   agentStorage: Pick<AgentStorage, "list">;
   // Resolves the worktree at a path to its workspaceId for archive-by-path. The
@@ -364,6 +364,9 @@ async function maybeRemoveDirectory(
       paseoHome: dependencies.paseoHome,
       worktreesBaseRoot: dependencies.paseoWorktreesBaseRoot,
     });
+    if (backing.mainRepoRoot) {
+      dependencies.workspaceGitService.invalidateWorktreeList(backing.mainRepoRoot);
+    }
     dependencies.github.invalidate({ cwd: backing.path });
     return true;
   } catch (error) {

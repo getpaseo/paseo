@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { resolve, sep } from "path";
+import { parse, resolve, sep } from "node:path";
 import type pino from "pino";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
 import type { ProjectRegistry } from "../../workspace-registry.js";
@@ -176,8 +176,9 @@ function canonicalizeConfigRoot(repoRoot: string): string {
 }
 
 function stripTrailingPathSeparators(path: string): string {
+  const root = parse(path).root;
   let normalized = path;
-  while (normalized.length > 1 && normalized.endsWith(sep)) {
+  while (normalized.length > root.length && normalized.endsWith(sep)) {
     normalized = normalized.slice(0, -1);
   }
   return normalized;

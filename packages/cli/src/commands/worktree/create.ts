@@ -50,7 +50,7 @@ export async function runCreateCommandWithDeps(
   }
 
   try {
-    const identity = resolveWorktreeRepositoryIdentity(options, client, deps.cwd);
+    const identity = await resolveWorktreeRepositoryIdentity(options, client, deps.cwd);
     const request = buildCreateWorktreeRequest(options, identity);
     const response = await client.createPaseoWorktree(request);
 

@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { isAbsolute, resolve, sep } from "node:path";
+import { isAbsolute, parse, resolve, sep } from "node:path";
 import type { ProjectRegistry } from "./workspace-registry.js";
 
 export interface WorktreeRepositoryIdentityInput {
@@ -87,8 +87,9 @@ export function canonicalizeExistingRoot(value: string): string | null {
 }
 
 function stripTrailingSeparators(value: string): string {
+  const root = parse(value).root;
   let normalized = value;
-  while (normalized.length > 1 && normalized.endsWith(sep)) {
+  while (normalized.length > root.length && normalized.endsWith(sep)) {
     normalized = normalized.slice(0, -1);
   }
   return normalized;

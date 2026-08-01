@@ -514,6 +514,31 @@ describe("resolveRepositoryWorktreePath", () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  test("forces an authoritative repository membership read", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const worktreePath = path.join(tempDir, "known-worktree");
+    mkdirSync(worktreePath);
+    const listWorktrees = vi.fn(async () => [
+      {
+        path: worktreePath,
+        branchName: "known",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    try {
+      await expect(
+        resolveRepositoryWorktreePath({ listWorktrees }, repoDir, worktreePath, undefined),
+      ).resolves.toBe(worktreePath);
+      expect(listWorktrees).toHaveBeenCalledWith(repoDir, {
+        force: true,
+        reason: "archive-worktree-membership",
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("resolveGitCreateBaseBranch", () => {
@@ -1959,6 +1984,7 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
         github: createGitHubServiceStub(),
         workspaceGitService: {
           getSnapshot: vi.fn(async () => null),
+          invalidateWorktreeList: vi.fn(),
           listWorktrees: vi.fn(async () => [
             {
               path: sharedCwd,
@@ -2037,6 +2063,7 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
         github: createGitHubServiceStub(),
         workspaceGitService: {
           getSnapshot: vi.fn(async () => null),
+          invalidateWorktreeList: vi.fn(),
           listWorktrees: vi.fn(async () => [
             {
               path: created.worktreePath,
@@ -2120,6 +2147,7 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
         github: createGitHubServiceStub(),
         workspaceGitService: {
           getSnapshot: vi.fn(async () => null),
+          invalidateWorktreeList: vi.fn(),
           listWorktrees: vi.fn(async () => [
             {
               path: sharedCwd,
@@ -2203,6 +2231,7 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
       github: createGitHubServiceStub(),
       workspaceGitService: {
         getSnapshot: vi.fn(async () => null),
+        invalidateWorktreeList: vi.fn(),
         listWorktrees: vi.fn(async () => [
           {
             path: sharedCwd,

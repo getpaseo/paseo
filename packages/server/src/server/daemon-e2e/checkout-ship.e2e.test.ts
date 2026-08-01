@@ -143,7 +143,7 @@ describe("daemon checkout ship loop", () => {
 
         const worktree = await createLegacyWorktreeForTest({
           branchName: "ship-loop",
-          repoRoot: repoDir,
+          cwd: repoDir,
           baseBranch: "main",
           worktreeSlug: "ship-loop",
           paseoHome: ctx.daemon.paseoHome,
@@ -166,10 +166,12 @@ describe("daemon checkout ship loop", () => {
           expect(status.baseRef).toBe("main");
         }
 
-        execSync("git branch -m ship-loop-ready", {
+        const renameResult = await ctx.client.renameBranch({
           cwd: worktree.worktreePath,
-          stdio: "pipe",
+          branch: "ship-loop-ready",
         });
+        expect(renameResult.error).toBeNull();
+        expect(renameResult.success).toBe(true);
 
         const updatedStatus = await ctx.client.getCheckoutStatus(worktree.worktreePath);
         expect(updatedStatus.currentBranch).toBe("ship-loop-ready");
@@ -256,15 +258,12 @@ describe("daemon checkout ship loop", () => {
         expect(archiveResult.error).toBeNull();
         expect(archiveResult.success).toBe(true);
 
-        // Archiving removes the agent from the active list but leaves the
-        // worktree on disk — disk deletion is a separate, explicit step.
         const worktreeListAfter = await ctx.client.getPaseoWorktreeList({
           repoRoot: repoDir,
         });
-        expect(
-          worktreeListAfter.worktrees.some((entry) => entry.worktreePath === worktree.worktreePath),
-        ).toBe(true);
-        expect(existsSync(worktree.worktreePath)).toBe(true);
+        expect(worktreeListAfter.error).toBeNull();
+        expect(worktreeListAfter.worktrees).toEqual([]);
+        expect(existsSync(worktree.worktreePath)).toBe(false);
 
         const remainingAgents = await ctx.client.fetchAgents();
         expect(remainingAgents.entries.some((entry) => entry.agent.id === agent.id)).toBe(false);

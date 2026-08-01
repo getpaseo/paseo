@@ -93,7 +93,10 @@ export interface ArchiveCommandDependencies extends Omit<
   ArchiveDependencies,
   "workspaceGitService"
 > {
-  workspaceGitService: Pick<WorkspaceGitService, "getSnapshot" | "listWorktrees">;
+  workspaceGitService: Pick<
+    WorkspaceGitService,
+    "getSnapshot" | "invalidateWorktreeList" | "listWorktrees"
+  >;
 }
 
 export interface ArchiveCommandInput {

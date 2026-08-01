@@ -161,6 +161,7 @@ export interface WorkspaceGitService {
     cwdOrRepoRoot: string,
     options?: WorkspaceGitReadOptions,
   ): Promise<WorkspaceGitWorktreeInfo[]>;
+  invalidateWorktreeList(repoRoot: string): void;
   getProjectSlug(cwd: string, options?: WorkspaceGitReadOptions): Promise<string>;
   resolveRepoRoot(cwd: string, options?: WorkspaceGitReadOptions): Promise<string>;
   resolveDefaultBranch(cwdOrRepoRoot: string, options?: WorkspaceGitReadOptions): Promise<string>;
@@ -350,6 +351,10 @@ interface WorkspaceGitAuxiliaryReadCacheEntry<T> {
   loadedAtMs: number | null;
   lastShellOutAtMs: number | null;
   inFlight: Promise<T> | null;
+}
+
+function buildWorktreeListCacheKey(repoRoot: string): string {
+  return JSON.stringify(["worktrees", repoRoot]);
 }
 
 interface WorkspaceForgePrStatusPollTarget {
@@ -667,7 +672,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     options?: WorkspaceGitReadOptions,
   ): Promise<WorkspaceGitWorktreeInfo[]> {
     const repoRoot = await this.resolveRepoRoot(cwdOrRepoRoot, options);
-    const key = JSON.stringify(["worktrees", repoRoot]);
+    const key = buildWorktreeListCacheKey(repoRoot);
     return this.readAuxiliaryCache(this.worktreeListCache, key, options, () =>
       this.deps.listPaseoWorktrees({
         cwd: repoRoot,
@@ -675,6 +680,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         worktreesRoot: this.worktreesRoot,
       }),
     );
+  }
+
+  invalidateWorktreeList(repoRoot: string): void {
+    this.worktreeListCache.delete(buildWorktreeListCacheKey(resolve(repoRoot)));
   }
 
   async resolveRepoRoot(cwd: string, options?: WorkspaceGitReadOptions): Promise<string> {

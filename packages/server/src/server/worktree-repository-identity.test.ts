@@ -1,6 +1,6 @@
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, parse } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
   createPersistedProjectRecord,
@@ -42,6 +42,17 @@ function createProjectRegistryForProjects(
 }
 
 describe("resolveWorktreeRepositoryIdentity", () => {
+  test("preserves the platform filesystem root", async () => {
+    const filesystemRoot = parse(process.cwd()).root;
+
+    await expect(
+      resolveWorktreeRepositoryIdentity(
+        { repoRoot: filesystemRoot },
+        createProjectRegistry(filesystemRoot),
+      ),
+    ).resolves.toEqual({ projectId: "prj_repo", repoRoot: filesystemRoot });
+  });
+
   test("resolves a registered daemon project from an explicit project ID", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "worktree-repository-identity-"));
     cleanupPaths.push(tempDir);

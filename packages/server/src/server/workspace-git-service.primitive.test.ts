@@ -1727,6 +1727,10 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     await service.listWorktrees(REPO_CWD, { force: true, reason: "test" });
     expect(listPaseoWorktrees).toHaveBeenCalledTimes(2);
 
+    service.invalidateWorktreeList(REPO_CWD);
+    await service.listWorktrees(REPO_CWD);
+    expect(listPaseoWorktrees).toHaveBeenCalledTimes(3);
+
     service.dispose();
   });
 
