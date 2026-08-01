@@ -18,6 +18,7 @@ import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js
 import type { AgentTimelineRow } from "./agent/agent-manager.js";
 import { InMemoryAgentTimelineStore } from "./agent/agent-timeline-store.js";
 import type { AgentTimelineFetchOptions } from "./agent/agent-timeline-store-types.js";
+import { handleCreatePaseoWorktreeRequest } from "./worktree-session.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
 
 const LegacyTimelineEntryPayloadSchema = z.object({
@@ -203,6 +204,15 @@ class EmptyDaemonConfigStore {
 
   onChange() {
     return () => {};
+  }
+}
+
+class InMemoryWorktreeWorkflow {
+  readonly capturedInputs: unknown[] = [];
+
+  async create(input: unknown) {
+    this.capturedInputs.push(input);
+    return {} as never;
   }
 }
 
@@ -610,5 +620,100 @@ describe("wire compatibility", () => {
 
     expect(legacyRequest).toMatchObject({ cwd: "/tmp/repo", worktreeSlug: "legacy-worktree" });
     expect(newRequest).toMatchObject({ repoRoot: "/tmp/repo", worktreeSlug: "legacy-worktree" });
+  });
+
+  test("legacy worktree request shape normalizes to the same internal input as the new shape", async () => {
+    const repoRoot = process.cwd();
+    const project = createPersistedProjectRecord({
+      projectId: "proj-1",
+      rootPath: repoRoot,
+      kind: "git",
+      displayName: "repo",
+      createdAt: "2026-07-15T00:00:00.000Z",
+      updatedAt: "2026-07-15T00:00:00.000Z",
+    });
+    const workflow = new InMemoryWorktreeWorkflow();
+    const dependencies = {
+      paseoHome: "/tmp/paseo-home",
+      projectRegistry: {
+        get: async () => project,
+        list: async () => [project],
+      },
+      workspaceRegistry: { list: async () => [] },
+      workspaceGitService: { listWorktrees: async () => [] },
+      describeWorkspaceRecord: async () =>
+        ({
+          id: "ws-1",
+          projectId: project.projectId,
+          projectDisplayName: "repo",
+          projectRootPath: repoRoot,
+          projectKind: "directory",
+          workspaceKind: "checkout",
+          name: "repo",
+          cwd: repoRoot,
+          status: "ready",
+          activityAt: null,
+          scripts: [],
+        }) as never,
+      emit() {},
+      sessionLogger: pino({ level: "silent" }),
+      createPaseoWorktreeWorkflow: workflow.create.bind(workflow),
+    };
+
+    const legacyRequest = SessionInboundMessageSchema.parse({
+      type: "create_paseo_worktree_request",
+      requestId: "req-legacy",
+      cwd: repoRoot,
+      worktreeSlug: "legacy-worktree",
+      nameContext: "Investigate flaky test",
+      attachments: [
+        {
+          type: "github_issue",
+          mimeType: "application/github-issue",
+          number: 55,
+          title: "Improve startup error details",
+          url: "https://github.com/getpaseo/paseo/issues/55",
+        },
+      ],
+    });
+    const newRequest = SessionInboundMessageSchema.parse({
+      type: "create_paseo_worktree_request",
+      requestId: "req-new",
+      repoRoot,
+      worktreeSlug: "legacy-worktree",
+      firstAgentContext: {
+        prompt: "Investigate flaky test",
+        attachments: [
+          {
+            type: "github_issue",
+            mimeType: "application/github-issue",
+            number: 55,
+            title: "Improve startup error details",
+            url: "https://github.com/getpaseo/paseo/issues/55",
+          },
+        ],
+      },
+    });
+
+    if (legacyRequest.type !== "create_paseo_worktree_request") {
+      throw new Error("Expected legacy worktree request");
+    }
+    if (newRequest.type !== "create_paseo_worktree_request") {
+      throw new Error("Expected new worktree request");
+    }
+
+    await handleCreatePaseoWorktreeRequest(dependencies, legacyRequest);
+    await handleCreatePaseoWorktreeRequest(dependencies, newRequest);
+
+    expect(workflow.capturedInputs).toHaveLength(2);
+    expect(workflow.capturedInputs[0]).toEqual(workflow.capturedInputs[1]);
+    expect(workflow.capturedInputs[0]).toMatchObject({
+      cwd: repoRoot,
+      projectId: project.projectId,
+      worktreeSlug: "legacy-worktree",
+      firstAgentContext: {
+        prompt: "Investigate flaky test",
+      },
+    });
   });
 });

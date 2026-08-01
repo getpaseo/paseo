@@ -317,7 +317,8 @@ test("removes a new worktree when workspace persistence fails", async () => {
   });
   const cacheTransientWorktree = vi.fn(async () => {
     const worktrees = await workspaceGitService.listWorktrees(repoDir);
-    expect(worktrees.map((worktree) => worktree.path)).toContain(worktreePath);
+    const matchesWorktreePath = createRealpathAwarePathMatcher(worktreePath);
+    expect(worktrees.some((worktree) => matchesWorktreePath(worktree.path))).toBe(true);
     throw new Error("workspace persistence failed");
   });
 
