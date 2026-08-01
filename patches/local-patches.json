@@ -9,13 +9,49 @@
         "commit": "6fc491e6220fba6543bbbe4bf1b1f58cfe59228b"
       },
       "tests": [
+        "packages/cli/src/commands/agent/inspect.test.ts",
         "packages/protocol/src/material-progress-schema.test.ts",
-        "packages/server/src/server/agent/material-progress.test.ts",
         "packages/server/src/server/agent/agent-manager.test.ts",
-        "packages/server/src/server/material-progress.e2e.test.ts",
-        "packages/cli/src/commands/agent/inspect.test.ts"
+        "packages/server/src/server/agent/agent-storage.test.ts",
+        "packages/server/src/server/agent/material-progress.test.ts",
+        "packages/server/src/server/material-progress.e2e.test.ts"
+      ],
+      "sources": [
+        "packages/cli/src/commands/agent/inspect.ts",
+        "packages/protocol/src/messages.ts",
+        "packages/server/src/server/agent/agent-manager.ts",
+        "packages/server/src/server/agent/agent-projections.ts",
+        "packages/server/src/server/agent/agent-storage.ts",
+        "packages/server/src/server/agent/material-progress.ts",
+        "packages/server/src/server/persistence-hooks.ts",
+        "packages/server/src/server/session.ts"
+      ],
+      "docs": ["docs/data-model.md"],
+      "testCases": [
+        "preserves the structured signal and renders its state and reason",
+        "accepts legacy snapshots without the optional signal",
+        "accepts a structured material progress signal",
+        "an unhydrated resumed agent exposes its persisted material progress",
+        "a resumed agent with an empty live timeline derives progress from its durable tail",
+        "material progress pages beyond the durable 1000-row tail to the current continuation",
+        "a delayed material progress write cannot overwrite a newer continuation",
+        "persists terminal outcomes and clears the previous outcome when a new turn starts",
+        "concurrent snapshots preserve a newly derived material progress signal",
+        "setTitle started before a newer snapshot cannot overwrite its material progress",
+        "setTitle still runs after an earlier queued write fails",
+        "reports none when history or a current continuation is unavailable",
+        "treats completed edits and writes as material progress",
+        "warns after one compaction and stalls after two",
+        "uses only the latest user continuation and completion sequence",
+        "does not count read-only tools or commentary as material progress",
+        "counts a completed turn's final message as a deliverable, not semantic success",
+        "fetch agent exposes a backward-compatible material progress signal",
+        "fetch agent preserves material progress after the live worker is collected",
+        "fetch agent preserves material progress after archive discards the live timeline",
+        "fetch agent restores material progress after daemon restart"
       ],
       "upstreamable": true,
+      "upstreamCondition": "Submit independently when upstream still lacks singular material-progress inspection and persisted terminal-turn semantics on the latest stable base.",
       "dropCondition": "Remove when the official stable release exposes equivalent singular agent material-progress inspection with persisted terminal-turn semantics.",
       "deployedReceipt": null,
       "deployedAt": null
