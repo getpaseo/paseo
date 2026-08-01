@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { forkPaseoHomeMetadata, resolvePaseoHomePath } from "./paseo-home-fork";
@@ -117,6 +117,30 @@ async function applyMetadataFork(targetHome: string): Promise<void> {
   process.env.E2E_FORK_TARGET_PASEO_HOME = result.targetHome;
   process.env.E2E_FORK_COPIED_FILES = String(result.copiedFiles);
   process.env.E2E_FORK_COPIED_BYTES = String(result.copiedBytes);
+
+  const providerIds = (process.env.E2E_FORK_PROVIDERS ?? "")
+    .split(",")
+    .map((providerId) => providerId.trim())
+    .filter(Boolean);
+  if (providerIds.length === 0) return;
+
+  const sourceConfig = JSON.parse(
+    await readFile(path.join(result.sourceHome, "config.json"), "utf8"),
+  );
+  const sourceProviders = sourceConfig.agents?.providers ?? {};
+  const providers = Object.fromEntries(
+    providerIds.map((providerId) => {
+      const provider = sourceProviders[providerId];
+      if (!provider) {
+        throw new Error(`E2E provider '${providerId}' is not configured in ${result.sourceHome}`);
+      }
+      return [providerId, provider];
+    }),
+  );
+  await writeFile(
+    path.join(targetHome, "config.json"),
+    `${JSON.stringify({ version: 1, agents: { providers } }, null, 2)}\n`,
+  );
 }
 
 export async function startE2EWorker(workerIndex: number): Promise<E2EWorker> {

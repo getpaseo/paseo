@@ -1208,6 +1208,11 @@ describe("ACPAgentSession Zed parity", () => {
     expect(requested).toMatchObject({
       type: "permission_requested",
       request: {
+        detail: {
+          type: "plain_text",
+          label: "AskUserQuestion",
+          text: "Which path should Paseo take?",
+        },
         actions: [
           { id: "q0_opt_0", label: "Narrow fix", behavior: "allow" },
           { id: "q0_opt_1", label: "Protocol fix", behavior: "allow" },

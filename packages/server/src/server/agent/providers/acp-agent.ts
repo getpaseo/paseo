@@ -3449,13 +3449,23 @@ function mapPermissionRequest(
   snapshot: ACPToolSnapshot,
 ): AgentPermissionRequest {
   const kind: AgentPermissionRequestKind = snapshot.kind === "switch_mode" ? "mode" : "tool";
+  const chooserText = isACPChooserRequest(params.options)
+    ? extractToolText(params.toolCall.content)
+    : undefined;
   return {
     id: requestId,
     provider,
     name: snapshot.kind ?? snapshot.title,
     kind,
     title: params.toolCall.title ?? snapshot.title,
-    detail: mapToolDetail(snapshot, new Map()),
+    detail: chooserText
+      ? {
+          type: "plain_text",
+          label: params.toolCall.title ?? snapshot.title,
+          text: chooserText,
+          icon: "wrench",
+        }
+      : mapToolDetail(snapshot, new Map()),
     actions: params.options.map((option) => ({
       id: option.optionId,
       label: option.name,

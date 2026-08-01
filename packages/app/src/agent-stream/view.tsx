@@ -1166,7 +1166,13 @@ function PermissionActionButton({
     : permissionStyles.optionText;
   const colorMapping = isPrimary ? primaryColorMapping : mutedColorMapping;
   return (
-    <Pressable testID={testID} style={pressableStyle} onPress={handlePress} disabled={isResponding}>
+    <Pressable
+      accessibilityRole="button"
+      testID={testID}
+      style={pressableStyle}
+      onPress={handlePress}
+      disabled={isResponding}
+    >
       {isRespondingAction ? (
         <ThemedLoadingSpinner size="small" uniProps={colorMapping} />
       ) : (
