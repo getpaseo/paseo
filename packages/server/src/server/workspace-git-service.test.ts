@@ -593,6 +593,64 @@ describe("WorkspaceGitServiceImpl", () => {
     service.dispose();
   });
 
+  test("re-enqueues a hot workspace successor so a fifth workspace enters the global limiter", async () => {
+    const hotCwds = Array.from(
+      { length: WORKSPACE_GIT_REFRESH_CONCURRENCY },
+      (_, index) => `/tmp/hot-repo-${index}`,
+    );
+    const fifthCwd = "/tmp/fifth-repo";
+    const firstReadGates = new Map(
+      [...hotCwds, fifthCwd].map((cwd) => [cwd, createDeferred<CheckoutStatusGit>()]),
+    );
+    const pendingFirstReads = new Set(firstReadGates.keys());
+    const startedReads: string[] = [];
+    const getCheckoutStatus = vi.fn((cwd: string) => {
+      startedReads.push(cwd);
+      const firstRead = firstReadGates.get(cwd);
+      if (firstRead && pendingFirstReads.delete(cwd)) {
+        return firstRead.promise;
+      }
+      return Promise.resolve(createCheckoutStatus(cwd, { currentBranch: "successor" }));
+    });
+    const service = createService({ getCheckoutStatus });
+
+    const hotInitialReads = hotCwds.map((cwd) => service.getSnapshot(cwd, { includeForge: false }));
+    await vi.waitFor(() => {
+      expect(startedReads).toEqual(hotCwds);
+    });
+
+    const fifthRead = service.getSnapshot(fifthCwd, { includeForge: false });
+    const hotSuccessorReads = hotCwds.map((cwd) =>
+      service.getSnapshot(cwd, {
+        force: true,
+        includeForge: false,
+        reason: "hot-successor",
+      }),
+    );
+    expect(service.getMetrics()).toMatchObject({
+      workspaceRefreshAdmissionActiveCount: WORKSPACE_GIT_REFRESH_CONCURRENCY,
+      workspaceRefreshAdmissionPendingCount: 1,
+      workspaceRefreshQueuedCount: WORKSPACE_GIT_REFRESH_CONCURRENCY,
+    });
+
+    firstReadGates.get(hotCwds[0])?.resolve(createCheckoutStatus(hotCwds[0]));
+    await vi.waitFor(() => {
+      expect(startedReads).toContain(fifthCwd);
+    });
+    expect(startedReads.filter((cwd) => cwd === hotCwds[0])).toHaveLength(1);
+
+    for (const [cwd, gate] of firstReadGates) {
+      gate.resolve(createCheckoutStatus(cwd));
+    }
+    await Promise.all([...hotInitialReads, fifthRead, ...hotSuccessorReads]);
+
+    for (const cwd of hotCwds) {
+      expect(startedReads.filter((startedCwd) => startedCwd === cwd)).toHaveLength(2);
+    }
+    expect(startedReads.filter((cwd) => cwd === fifthCwd)).toHaveLength(1);
+    service.dispose();
+  });
+
   test("marks cached facts stale during blocked and failed refresh work", async () => {
     const refreshGate = createDeferred<CheckoutStatusGit>();
     const getCheckoutStatus = vi
@@ -1436,6 +1494,68 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(watchers[1].close).toHaveBeenCalledTimes(1);
 
     service.dispose();
+  });
+
+  test("dispose rejects shared working tree setup before late reads can install watchers", async () => {
+    const repoRootRead = createDeferred<{
+      stdout: string;
+      stderr: string;
+      truncated: boolean;
+      exitCode: number;
+      signal: null;
+    }>();
+    const runGitCommand = vi.fn(async () => repoRootRead.promise);
+    const watch = vi.fn(() => createWatcher());
+    const service = createService({ runGitCommand, watch });
+
+    const first = service.requestWorkingTreeWatch(REPO_CWD, vi.fn());
+    const second = service.requestWorkingTreeWatch(join(REPO_CWD, "."), vi.fn());
+    await flushPromises();
+    expect(runGitCommand).toHaveBeenCalledTimes(1);
+    expect(service.getMetrics().workingTreeWatchSetupInFlightCount).toBe(1);
+
+    service.dispose();
+    repoRootRead.resolve({
+      stdout: `${REPO_CWD}\n`,
+      stderr: "",
+      truncated: false,
+      exitCode: 0,
+      signal: null,
+    });
+
+    const settlements = await Promise.allSettled([first, second]);
+    expect(settlements).toEqual([
+      { status: "rejected", reason: expect.objectContaining({ name: "AbortError" }) },
+      { status: "rejected", reason: expect.objectContaining({ name: "AbortError" }) },
+    ]);
+    expect(watch).not.toHaveBeenCalled();
+    expect(service.getMetrics()).toMatchObject({
+      workingTreeWatchTargetCount: 0,
+      workingTreeWatchListenerCount: 0,
+      workingTreeWatchSetupInFlightCount: 0,
+    });
+  });
+
+  test("closes a watcher exactly once when disposal interrupts its installation", async () => {
+    const watcher = createWatcher();
+    let service!: WorkspaceGitServiceImpl;
+    const watch = vi.fn(() => {
+      service.dispose();
+      return watcher;
+    });
+    service = createService({ watch });
+
+    await expect(service.requestWorkingTreeWatch(REPO_CWD, vi.fn())).rejects.toMatchObject({
+      name: "AbortError",
+    });
+
+    expect(watch).toHaveBeenCalledTimes(1);
+    expect(watcher.close).toHaveBeenCalledTimes(1);
+    expect(service.getMetrics()).toMatchObject({
+      workingTreeWatchTargetCount: 0,
+      workingTreeWatchListenerCount: 0,
+      workingTreeWatchSetupInFlightCount: 0,
+    });
   });
 
   test("sets a 5-second fallback polling interval when recursive watch is unavailable", async () => {
