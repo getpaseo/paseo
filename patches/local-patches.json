@@ -10,7 +10,7 @@
       },
       "candidate": {
         "branch": "review/v025-host-capacity-admission",
-        "commit": null
+        "commit": "45b32697e4bbc53e673aa702ffdc1dd296242864"
       },
       "sources": [
         "docs/data-model.md",
@@ -46,7 +46,7 @@
         "the generated public JSON schema accepts the positive runtime limit and rejects zero"
       ],
       "verification": {
-        "commit": null,
+        "commit": "45b32697e4bbc53e673aa702ffdc1dd296242864",
         "completedAt": "2026-08-01T02:14:47Z",
         "commands": [
           "PATH=/opt/homebrew/Cellar/node@24/24.18.1/bin:$PATH npx vitest run packages/server/src/server/agent/agent-manager.test.ts packages/server/src/server/agent/provider-registry.test.ts packages/server/src/server/agent/providers/acp-agent.test.ts packages/server/src/server/agent/agent-loading.test.ts packages/server/src/server/config.test.ts packages/server/src/server/persisted-config.test.ts --bail=1",
