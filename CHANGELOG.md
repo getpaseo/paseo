@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.915 - 2026-07-31
+
+### Fixed
+
+- Host settings metadata custom endpoint fields keep their saved values after save (seed via `initialValue`/`resetKey` for uncontrolled AdaptiveTextInput)
+- Metadata custom endpoint inputs, model chips, and refresh stay disabled while a save is in flight so save-echo remounts cannot wipe post-click keystrokes
+- Codex Goals: pause active goals after interactive resume so daemon restart / cold agent load does not auto-continue Goal work outside Paseo turns
+- Codex Goals: hot reloads (voice toggle / config swap) do not silently pause Goals; user "Reload agent" still pauses on rehydrate
+- Codex Goals: bound pause-on-resume RPC to 10s and fail open so a hung or missing `thread/goal/set` cannot block agent connect
+
+### Notes
+
+- Codex Goal auto-continue after daemon restart is a **mitigation**, not a full lifecycle fix. Residuals remain: status projection for native Goal turns, mid-turn Goal not cancelled by pause, Full Access not re-applied to Goal-driven turns.
+
 ## 0.2.914 - 2026-07-31
 
 ### Added
