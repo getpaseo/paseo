@@ -29,7 +29,7 @@ const openaiApiKey = process.env.OPENAI_API_KEY ?? null;
 const localModelsDir =
   process.env.PASEO_LOCAL_MODELS_DIR ?? path.join(homedir(), ".paseo", "models", "local-speech");
 const testFileDir = path.dirname(fileURLToPath(import.meta.url));
-const appE2eFixturesDir = path.resolve(testFileDir, "../../../app/e2e/fixtures");
+const appE2eFixturesDir = path.resolve(testFileDir, "../../../app/e2e/support/fixtures");
 
 function fixturePath(fileName: string): string {
   return path.join(appE2eFixturesDir, fileName);
