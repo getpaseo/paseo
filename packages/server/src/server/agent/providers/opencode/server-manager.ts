@@ -58,6 +58,7 @@ export type OpenCodeServerProcessSpawner = (
 
 export interface OpenCodeServerManagerOptions {
   logger: Logger;
+  baseEnv?: SpawnProcessOptions["baseEnv"];
   runtimeSettings?: ProviderRuntimeSettings;
   managedProcesses?: ManagedProcessRegistry;
   terminateProcess?: ProcessTerminator;
@@ -75,6 +76,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private startPromise: Promise<OpenCodeServerGeneration> | null = null;
   private newServerPromise: Promise<OpenCodeServerGeneration> | null = null;
   private readonly logger: Logger;
+  private readonly baseEnv?: SpawnProcessOptions["baseEnv"];
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly runtimeSettingsKey: string;
   private readonly managedProcesses?: ManagedProcessRegistry;
@@ -87,6 +89,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
 
   constructor(options: OpenCodeServerManagerOptions) {
     this.logger = options.logger;
+    this.baseEnv = options.baseEnv;
     this.runtimeSettings = options.runtimeSettings;
     this.runtimeSettingsKey = JSON.stringify(this.runtimeSettings ?? {});
     this.managedProcesses = options.managedProcesses;
@@ -96,7 +99,20 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       options.resolveCommandPrefix ??
       (() => resolveProviderCommandPrefix(this.runtimeSettings?.command, resolveOpenCodeBinary));
     this.resolveHomeDir = options.resolveHomeDir ?? resolveOpenCodeHomeDir;
-    this.spawnServerProcess = options.spawnServerProcess ?? spawnProcess;
+    const spawnServerProcess = options.spawnServerProcess ?? spawnProcess;
+    this.spawnServerProcess = (command, args, spawnOptions) => {
+      let reservation: AgentRuntimeCapacityReservation | null =
+        this.runtimeCapacity?.reserve() ?? null;
+      try {
+        const child = spawnServerProcess(command, args, spawnOptions);
+        reservation?.track(child);
+        reservation = null;
+        return child;
+      } catch (error) {
+        reservation?.release();
+        throw error;
+      }
+    };
   }
 
   configureRuntimeCapacityController(controller: AgentRuntimeCapacityController): void {
@@ -320,25 +336,16 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     const serverCwd = this.resolveHomeDir();
     mkdirSync(serverCwd, { recursive: true });
 
-    let reservation: AgentRuntimeCapacityReservation | null =
-      this.runtimeCapacity?.reserve() ?? null;
-    let serverProcess: ChildProcess;
-    try {
-      serverProcess = this.spawnServerProcess(launchPrefix.command, serverArgs, {
-        cwd: serverCwd,
-        detached: process.platform !== "win32",
-        stdio: ["ignore", "pipe", "pipe"],
-        ...createProviderEnvSpec({
-          runtimeSettings: this.runtimeSettings,
-          overlays: [launchEnv],
-        }),
-      });
-      reservation?.track(serverProcess);
-      reservation = null;
-    } catch (error) {
-      reservation?.release();
-      throw error;
-    }
+    const serverProcess = this.spawnServerProcess(launchPrefix.command, serverArgs, {
+      cwd: serverCwd,
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "pipe"],
+      ...createProviderEnvSpec({
+        baseEnv: this.baseEnv,
+        runtimeSettings: this.runtimeSettings,
+        overlays: [launchEnv],
+      }),
+    });
     const managedProcessRecord = this.recordManagedServerProcess({
       process: serverProcess,
       command: launchPrefix.command,
