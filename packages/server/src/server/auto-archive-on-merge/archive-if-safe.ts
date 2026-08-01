@@ -114,7 +114,21 @@ export async function archiveIfSafe(input: {
         return;
       }
 
-      await deps.archiveByScope(
+      const activeWorkspace = (await options.listActiveWorkspaces()).find(
+        (workspace) => workspace.workspaceId === workspaceId,
+      );
+      if (!activeWorkspace) {
+        const persistedWorkspace = await options.workspaceRegistry.get(workspaceId);
+        if (!persistedWorkspace?.cleanupPending) {
+          log.warn(
+            { cwd, workspaceId },
+            "Auto-archive resolved an inactive workspace without pending cleanup; skipping",
+          );
+          return;
+        }
+      }
+
+      const result = await deps.archiveByScope(
         {
           paseoHome: options.paseoHome,
           paseoWorktreesBaseRoot: options.paseoWorktreesBaseRoot,
@@ -144,6 +158,11 @@ export async function archiveIfSafe(input: {
           requestId: "auto-archive-on-merge",
         },
       );
+      if (result.cleanupPendingWorkspaceIds.length > 0) {
+        throw new Error(
+          `Auto-archive cleanup remains pending for: ${result.cleanupPendingWorkspaceIds.join(", ")}`,
+        );
+      }
       log.info({ cwd }, "Auto-archived worktree after PR merge");
     } catch (error) {
       log.warn({ err: error, cwd }, "Auto-archive after merge failed");

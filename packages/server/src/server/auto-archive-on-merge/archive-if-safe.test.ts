@@ -110,7 +110,9 @@ function createHarness(overrides?: {
       update: vi.fn(async () => null),
     },
     findWorkspaceIdForCwd: vi.fn(async () => "ws-auto-archive"),
-    listActiveWorkspaces: vi.fn(async () => []),
+    listActiveWorkspaces: vi.fn(async () => [
+      { workspaceId: "ws-auto-archive", cwd: CWD, kind: "worktree" },
+    ]),
     archiveWorkspaceRecord: vi.fn(),
     markWorkspaceArchiving: vi.fn(),
     clearWorkspaceArchiving: vi.fn(),
@@ -123,6 +125,7 @@ function createHarness(overrides?: {
           archivedAgentIds: [],
           archivedWorkspaceIds: [],
           removedDirectory: false,
+          cleanupPendingWorkspaceIds: [],
         }) satisfies ArchiveResult),
   ) as unknown as ArchiveIfSafeDependencies["archiveByScope"];
   const resolveWorkspaceIdAtPath = vi.fn(
@@ -507,6 +510,57 @@ describe("archiveIfSafe", () => {
       "Auto-archive after merge failed",
     );
     expect(harness.inFlight.has(CWD)).toBe(false);
+  });
+
+  test("does not report success for an inactive resolved workspace without cleanup", async () => {
+    const harness = createHarness();
+    const now = new Date().toISOString();
+    const archived = createPersistedWorkspaceRecord({
+      workspaceId: "ws-auto-archive",
+      projectId: "project-auto-archive",
+      cwd: CWD,
+      kind: "worktree",
+      displayName: "Archived",
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: now,
+    });
+    harness.options.listActiveWorkspaces = vi.fn(async () => []);
+    harness.options.workspaceRegistry.get = vi.fn(async () => archived);
+
+    await runArchiveIfSafe(harness);
+
+    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
+    expect(harness.log.info).not.toHaveBeenCalledWith(
+      { cwd: CWD },
+      "Auto-archived worktree after PR merge",
+    );
+    expect(harness.log.warn).toHaveBeenCalledWith(
+      { cwd: CWD, workspaceId: "ws-auto-archive" },
+      "Auto-archive resolved an inactive workspace without pending cleanup; skipping",
+    );
+  });
+
+  test("does not report success while durable cleanup remains pending", async () => {
+    const harness = createHarness({
+      archiveByScope: async () => ({
+        archivedAgentIds: [],
+        archivedWorkspaceIds: ["ws-auto-archive"],
+        removedDirectory: false,
+        cleanupPendingWorkspaceIds: ["ws-auto-archive"],
+      }),
+    });
+
+    await runArchiveIfSafe(harness);
+
+    expect(harness.log.info).not.toHaveBeenCalledWith(
+      { cwd: CWD },
+      "Auto-archived worktree after PR merge",
+    );
+    expect(harness.log.warn).toHaveBeenCalledWith(
+      { err: expect.any(Error), cwd: CWD },
+      "Auto-archive after merge failed",
+    );
   });
 
   test("archives a clean Paseo-owned worktree after merge", async () => {
