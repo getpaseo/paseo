@@ -17,6 +17,7 @@ export interface TerminateWithTreeKillOptions {
   forceTimeoutMs?: number;
   onForceSignal?: () => void;
   beforeSignal?: (signal: NodeJS.Signals) => boolean | Promise<boolean>;
+  signal?: AbortSignal;
   treeKiller?: TreeKiller;
   preserveRootOnTreeFailure?: boolean;
 }
@@ -45,6 +46,7 @@ export async function terminateWithTreeKill(
   child: TreeKillTarget,
   options: TerminateWithTreeKillOptions,
 ): Promise<TerminateWithTreeKillResult> {
+  options.signal?.throwIfAborted();
   if (isProcessExited(child)) {
     return "already-exited";
   }
@@ -52,6 +54,7 @@ export async function terminateWithTreeKill(
   const exitObserver = observeProcessExit(child);
   try {
     const gracefulSignal = options.gracefulSignal ?? "SIGTERM";
+    options.signal?.throwIfAborted();
     if (!(await shouldSignal(options, gracefulSignal))) {
       return "signal-skipped";
     }
@@ -61,15 +64,19 @@ export async function terminateWithTreeKill(
         gracefulSignal,
         options.treeKiller ?? treeKill,
         options.preserveRootOnTreeFailure ?? false,
+        options.signal,
       ))
     ) {
       return "kill-timeout";
     }
-    if (await waitForExitOrTimeout(exitObserver.promise, options.gracefulTimeoutMs)) {
+    if (
+      await waitForExitOrTimeout(exitObserver.promise, options.gracefulTimeoutMs, options.signal)
+    ) {
       return "terminated";
     }
 
     const forceSignal = options.forceSignal ?? "SIGKILL";
+    options.signal?.throwIfAborted();
     if (!(await shouldSignal(options, forceSignal))) {
       return "signal-skipped";
     }
@@ -80,6 +87,7 @@ export async function terminateWithTreeKill(
         forceSignal,
         options.treeKiller ?? treeKill,
         options.preserveRootOnTreeFailure ?? false,
+        options.signal,
       ))
     ) {
       return "kill-timeout";
@@ -87,7 +95,11 @@ export async function terminateWithTreeKill(
     if (options.forceTimeoutMs === undefined) {
       return "killed";
     }
-    return (await waitForExitOrTimeout(exitObserver.promise, options.forceTimeoutMs))
+    return (await waitForExitOrTimeout(
+      exitObserver.promise,
+      options.forceTimeoutMs,
+      options.signal,
+    ))
       ? "killed"
       : "kill-timeout";
   } finally {
@@ -99,27 +111,37 @@ async function shouldSignal(
   options: TerminateWithTreeKillOptions,
   signal: NodeJS.Signals,
 ): Promise<boolean> {
+  options.signal?.throwIfAborted();
   return options.beforeSignal ? await options.beforeSignal(signal) : true;
 }
 
 function signalTreeOrChild(
   child: TreeKillTarget,
-  signal: NodeJS.Signals,
+  killSignal: NodeJS.Signals,
   treeKiller: TreeKiller,
   preserveRootOnTreeFailure: boolean,
+  abortSignal?: AbortSignal,
 ): Promise<boolean> {
+  abortSignal?.throwIfAborted();
   if (isProcessExited(child)) {
     return Promise.resolve(true);
   }
 
   const pid = child.pid;
   if (typeof pid !== "number" || pid <= 0) {
-    signalDirectChild(child, signal);
+    signalDirectChild(child, killSignal);
     return Promise.resolve(true);
   }
 
-  return new Promise((resolve) => {
-    treeKiller(pid, signal, (error) => {
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(abortSignal?.reason);
+    abortSignal?.addEventListener("abort", onAbort, { once: true });
+    treeKiller(pid, killSignal, (error) => {
+      abortSignal?.removeEventListener("abort", onAbort);
+      if (abortSignal?.aborted) {
+        reject(abortSignal.reason);
+        return;
+      }
       if (!error) {
         resolve(true);
         return;
@@ -129,7 +151,7 @@ function signalTreeOrChild(
         resolve(false);
         return;
       }
-      signalDirectChild(child, signal);
+      signalDirectChild(child, killSignal);
       resolve(true);
     });
   });
@@ -182,18 +204,28 @@ function observeProcessExit(child: TreeKillTarget): {
 async function waitForExitOrTimeout(
   exitPromise: Promise<void>,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<boolean> {
+  signal?.throwIfAborted();
   let timer: NodeJS.Timeout | null = null;
+  let onAbort: (() => void) | null = null;
   try {
     return await Promise.race([
       exitPromise.then(() => true),
       new Promise<boolean>((resolve) => {
         timer = setTimeout(() => resolve(false), timeoutMs);
       }),
+      new Promise<boolean>((_resolve, reject) => {
+        onAbort = () => reject(signal?.reason);
+        signal?.addEventListener("abort", onAbort, { once: true });
+      }),
     ]);
   } finally {
     if (timer) {
       clearTimeout(timer);
+    }
+    if (onAbort) {
+      signal?.removeEventListener("abort", onAbort);
     }
   }
 }

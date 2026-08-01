@@ -123,6 +123,11 @@ export interface ManagedProcessReapResult {
 
 export interface ManagedProcessReapOptions {
   recordIds?: ReadonlySet<string>;
+  signal?: AbortSignal;
+}
+
+export interface ManagedProcessListOptions {
+  signal?: AbortSignal;
 }
 
 export interface ManagedProcessRegistry {
@@ -133,7 +138,7 @@ export interface ManagedProcessRegistry {
   retain(record: ManagedProcessRecord): Promise<void>;
   confirmExecTransition(id: string): Promise<void>;
   remove(id: string): Promise<void>;
-  list(): Promise<ManagedProcessRecord[]>;
+  list(options?: ManagedProcessListOptions): Promise<ManagedProcessRecord[]>;
   reapStale(options?: ManagedProcessReapOptions): Promise<ManagedProcessReapResult>;
 }
 
@@ -437,8 +442,9 @@ class FileBackedManagedProcessRegistry implements ManagedProcessRegistry {
     });
   }
 
-  async list(): Promise<ManagedProcessRecord[]> {
-    const entries = await this.readEntries();
+  async list(options: ManagedProcessListOptions = {}): Promise<ManagedProcessRecord[]> {
+    const entries = await this.readEntries(options);
+    options.signal?.throwIfAborted();
     return entries.map((entry) => entry.record);
   }
 
@@ -452,20 +458,24 @@ class FileBackedManagedProcessRegistry implements ManagedProcessRegistry {
       errors: [],
     };
 
-    const entries = await this.readEntries();
+    throwIfAborted(options.signal);
+    const entries = await this.readEntries(options);
     for (const entry of entries) {
-      if (options.recordIds && !options.recordIds.has(entry.record.id)) {
+      throwIfAborted(options.signal);
+      if (!includesRecord(options.recordIds, entry.record.id)) {
         continue;
       }
       result.checked += 1;
       try {
         const inspection = await this.processTable.inspect(entry.record.pid);
+        throwIfAborted(options.signal);
         let identityOwned = false;
         if (inspection.status === "not-found") {
           const groupInspection = await inspectLeaderlessProcessGroup(
             this.processTable,
             entry.record,
           );
+          throwIfAborted(options.signal);
           if (groupInspection.status === "owned") {
             identityOwned = true;
           } else if (groupInspection.status !== "not-found") {
@@ -480,6 +490,7 @@ class FileBackedManagedProcessRegistry implements ManagedProcessRegistry {
             );
             continue;
           } else {
+            throwIfAborted(options.signal);
             await this.remove(entry.record.id);
             result.dead += 1;
             result.removed += 1;
@@ -509,6 +520,7 @@ class FileBackedManagedProcessRegistry implements ManagedProcessRegistry {
         if (!identityOwned && inspection.status === "alive") {
           const identity = inspectProcessIdentity(entry.record, inspection.snapshot);
           if (identity.status === "unrelated") {
+            throwIfAborted(options.signal);
             await this.remove(entry.record.id);
             result.mismatched += 1;
             result.removed += 1;
@@ -540,7 +552,9 @@ class FileBackedManagedProcessRegistry implements ManagedProcessRegistry {
             );
           },
           beforeSignal: () => verifyManagedProcessIdentity(this.processTable, entry.record),
+          signal: options.signal,
         });
+        throwIfAborted(options.signal);
         if (termination === "signal-skipped") {
           result.errors.push({
             id: entry.record.id,
@@ -559,10 +573,14 @@ class FileBackedManagedProcessRegistry implements ManagedProcessRegistry {
           });
           continue;
         }
+        throwIfAborted(options.signal);
         await this.remove(entry.record.id);
         result.terminated += 1;
         result.removed += 1;
       } catch (error) {
+        if (isAborted(options.signal)) {
+          throw error;
+        }
         const message = error instanceof Error ? error.message : String(error);
         result.errors.push({ id: entry.record.id, message });
         this.logger.warn(
@@ -601,10 +619,14 @@ class FileBackedManagedProcessRegistry implements ManagedProcessRegistry {
     }
   }
 
-  private async readEntries(): Promise<Array<{ path: string; record: ManagedProcessRecord }>> {
+  private async readEntries(
+    options: ManagedProcessListOptions = {},
+  ): Promise<Array<{ path: string; record: ManagedProcessRecord }>> {
+    options.signal?.throwIfAborted();
     let fileNames: string[];
     try {
       fileNames = await fs.readdir(this.directory);
+      options.signal?.throwIfAborted();
     } catch (error) {
       if (isNodeErrorWithCode(error, "ENOENT")) {
         return [];
@@ -614,15 +636,23 @@ class FileBackedManagedProcessRegistry implements ManagedProcessRegistry {
 
     const entries: Array<{ path: string; record: ManagedProcessRecord }> = [];
     for (const fileName of fileNames) {
+      options.signal?.throwIfAborted();
       if (!fileName.endsWith(".json")) {
         continue;
       }
       const filePath = path.join(this.directory, fileName);
       try {
-        const raw = await fs.readFile(filePath, "utf8");
+        const raw = await fs.readFile(filePath, {
+          encoding: "utf8",
+          signal: options.signal,
+        });
+        options.signal?.throwIfAborted();
         const parsed = ManagedProcessRecordSchema.parse(JSON.parse(raw));
         entries.push({ path: filePath, record: parsed });
       } catch (error) {
+        if (options.signal?.aborted) {
+          throw error;
+        }
         // A single corrupt or partially-written record must not abort the whole
         // reconcile and leave every other leftover un-reaped. Skip it.
         this.logger.warn(
@@ -782,6 +812,18 @@ function isCommandExitFailure(error: unknown): boolean {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  signal?.throwIfAborted();
+}
+
+function isAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
+}
+
+function includesRecord(recordIds: ReadonlySet<string> | undefined, id: string): boolean {
+  return recordIds === undefined || recordIds.has(id);
 }
 
 function isNodeErrorWithCode(error: unknown, code: string): boolean {

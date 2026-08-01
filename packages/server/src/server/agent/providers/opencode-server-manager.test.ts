@@ -8,6 +8,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { findExecutable } from "../../../executable-resolution/executable-resolution.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
+import type { ProviderRuntimeSettings } from "../provider-launch-config.js";
 import type {
   ManagedProcessRecord,
   ManagedProcessRecordInput,
@@ -42,6 +43,42 @@ describe("OpenCodeServerManager generations", () => {
     expect(runtime.spawnCalls[0]?.options.baseEnv).toEqual(baseEnv);
     await acquisition.release();
   });
+
+  test.runIf(process.platform !== "win32")(
+    "preserves base and runtime environments while launch and managed identity overlays win last",
+    async () => {
+      const baseEnv = {
+        BASE_ONLY: "base",
+        SHARED_VALUE: "base",
+        PASEO_MANAGED_PROCESS_TOKEN: "base-token",
+      };
+      const runtimeSettings: ProviderRuntimeSettings = {
+        env: {
+          RUNTIME_ONLY: "runtime",
+          SHARED_VALUE: "runtime",
+          PASEO_MANAGED_PROCESS_TOKEN: "runtime-token",
+        },
+      };
+      const { manager, runtime } = createTestManager([4092], { baseEnv, runtimeSettings });
+
+      const acquisition = await manager.acquireDedicated({
+        LAUNCH_ONLY: "launch",
+        SHARED_VALUE: "launch",
+        PASEO_MANAGED_PROCESS_TOKEN: "launch-token",
+      });
+
+      expect(runtime.spawnCalls[0]?.options).toMatchObject({
+        baseEnv,
+        envOverlay: {
+          RUNTIME_ONLY: "runtime",
+          LAUNCH_ONLY: "launch",
+          SHARED_VALUE: "launch",
+          PASEO_MANAGED_PROCESS_TOKEN: "test-managed-process-token",
+        },
+      });
+      await acquisition.release();
+    },
+  );
 
   test("rotation creates a new current server without killing a referenced old server", async () => {
     const { manager, runtime } = createTestManager([4101, 4102]);
@@ -614,6 +651,7 @@ function createTestManager(
   options: {
     autoAnnounce?: boolean;
     baseEnv?: Record<string, string>;
+    runtimeSettings?: ProviderRuntimeSettings;
     opencodeHomeDir?: string;
     terminationResult?: TerminateWithTreeKillResult;
     processGroupIdentityOwned?: boolean;
@@ -646,6 +684,7 @@ function createTestManager(
     manager: new OpenCodeServerManager({
       logger: createTestLogger(),
       baseEnv: options.baseEnv,
+      runtimeSettings: options.runtimeSettings,
       managedProcesses: runtime.managedProcesses,
       portAllocator: runtime.allocatePort,
       resolveCommandPrefix: runtime.resolveCommandPrefix,
