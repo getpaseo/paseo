@@ -3,7 +3,7 @@ import { usePathname, useRouter } from "expo-router";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { setCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
-import { getResidentBrowserWebview } from "@/components/browser-webview-resident";
+import { getResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
 import {
@@ -18,7 +18,7 @@ import {
   buildBrowserKeyboardPolicy,
   parseBrowserShortcutInput,
   shouldPublishBrowserShortcutPolicy,
-} from "@/keyboard/browser-shortcuts";
+} from "@/desktop/browser/shortcuts";
 import type { KeyboardFocusScope, KeyboardShortcutPayload } from "@/keyboard/actions";
 import {
   routeKeyboardShortcut,
