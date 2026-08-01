@@ -115,6 +115,7 @@ const GITHUB_ENV = {
 const GITHUB_COMMAND_TIMEOUT_MS = 30_000;
 const REPO_HOST_NULL_TTL_MS = 60_000;
 const GIT_ORIGIN_URL_READ_TIMEOUT_MS = 5_000;
+const GITHUB_RATE_LIMIT_FALLBACK_COOLDOWN_MS = 60_000;
 
 const LabelSchema = z.object({
   name: z.string().optional(),
@@ -670,10 +671,30 @@ export class GitHubAuthenticationError extends ForgeAuthenticationError {
   }
 }
 
+interface GitHubRateLimitResponseMetadata {
+  statusCode: number;
+  retryAfter?: string;
+  rateLimitRemaining?: string;
+  rateLimitReset?: string;
+}
+
 export class GitHubCommandError extends ForgeCommandError {
+  readonly rateLimitResponse: GitHubRateLimitResponseMetadata | null;
+
   constructor(params: ForgeCommandFailureParams) {
-    super({ brand: "GitHub", binary: "gh" }, params);
+    super({ brand: "GitHub", binary: "gh" }, { ...params, stdout: "" });
+    this.rateLimitResponse = getGitHubRateLimitResponseMetadata(params.stdout ?? "");
     this.name = "GitHubCommandError";
+  }
+}
+
+export class GitHubRateLimitCooldownError extends Error {
+  readonly retryAt: number;
+
+  constructor(retryAt: number) {
+    super("GitHub API rate limit cooldown active");
+    this.name = "GitHubRateLimitCooldownError";
+    this.retryAt = retryAt;
   }
 }
 
@@ -752,6 +773,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
   const inFlight = new Map<string, InFlightCacheEntry>();
   const pollTargets = new Map<string, GitHubPollTarget>();
   const checkLogTailCache = new Map<string, { logTail: string; logTruncated: boolean }>();
+  const rateLimitCooldownByHost = new Map<string, number>();
   let api!: GitHubService;
 
   async function cached<T>(params: {
@@ -843,14 +865,27 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     const effectiveOptions: GitHubCommandRunnerOptions = host
       ? { ...runOptions, envOverlay: { ...runOptions.envOverlay, GH_HOST: host } }
       : runOptions;
+    const rateLimitHost = (host ?? "github.com").toLowerCase();
+    const commandArgs = addGitHubApiResponseHeaders(args);
+    assertGitHubRateLimitCooldown({
+      cooldownByHost: rateLimitCooldownByHost,
+      host: rateLimitHost,
+      now: deps.now(),
+    });
     try {
-      const result = await deps.runner(args, effectiveOptions);
-      return result.stdout.trim();
+      const result = await deps.runner(commandArgs, effectiveOptions);
+      return stripGitHubApiResponseHeaders({ args: commandArgs, stdout: result.stdout }).trim();
     } catch (error) {
-      throw githubCliRunner.normalizeError(error, {
-        args,
+      const normalized = githubCliRunner.normalizeError(error, {
+        args: commandArgs,
         cwd: runOptions.cwd,
       });
+      const retryAt = getGitHubRateLimitRetryAt({ error: normalized, now: deps.now() });
+      if (retryAt !== null) {
+        const existingRetryAt = rateLimitCooldownByHost.get(rateLimitHost) ?? 0;
+        rateLimitCooldownByHost.set(rateLimitHost, Math.max(existingRetryAt, retryAt));
+      }
+      throw normalized;
     }
   }
 
@@ -1810,6 +1845,153 @@ function normalizeGitHubSearchQuery(query: string, enterpriseHost: string | null
 
 function buildCacheKey(params: { cwd: string; method: string; args: unknown }): string {
   return `${params.cwd}:${params.method}:${stableStringify(params.args)}`;
+}
+
+interface GitHubHttpResponse {
+  statusCode: number;
+  headers: Map<string, string>;
+  body: string;
+}
+
+function addGitHubApiResponseHeaders(args: string[]): string[] {
+  if (args[0] !== "api" || args.includes("--include") || args.includes("-i")) {
+    return args;
+  }
+  return ["api", "--include", ...args.slice(1)];
+}
+
+function stripGitHubApiResponseHeaders(input: { args: string[]; stdout: string }): string {
+  if (input.args[0] !== "api") {
+    return input.stdout;
+  }
+  return parseGitHubHttpResponse(input.stdout)?.body ?? input.stdout;
+}
+
+function assertGitHubRateLimitCooldown(input: {
+  cooldownByHost: Map<string, number>;
+  host: string;
+  now: number;
+}): void {
+  const retryAt = input.cooldownByHost.get(input.host);
+  if (retryAt === undefined) {
+    return;
+  }
+  if (retryAt <= input.now) {
+    input.cooldownByHost.delete(input.host);
+    return;
+  }
+  throw new GitHubRateLimitCooldownError(retryAt);
+}
+
+function getGitHubRateLimitRetryAt(input: { error: Error; now: number }): number | null {
+  if (!(input.error instanceof GitHubCommandError)) {
+    return null;
+  }
+
+  const response = input.error.rateLimitResponse;
+  const output = input.error.stderr;
+  const headers = response
+    ? new Map(
+        Object.entries({
+          "retry-after": response.retryAfter,
+          "x-ratelimit-remaining": response.rateLimitRemaining,
+          "x-ratelimit-reset": response.rateLimitReset,
+        }).filter((entry): entry is [string, string] => entry[1] !== undefined),
+      )
+    : parseGitHubHeaders(output);
+  const isRateLimited =
+    response?.statusCode === 429 ||
+    /\brate limit\b/i.test(output) ||
+    headers.get("x-ratelimit-remaining") === "0";
+  if (!isRateLimited) {
+    return null;
+  }
+
+  const retryAfter = parseRetryAfter(headers.get("retry-after"), input.now);
+  if (retryAfter !== null) {
+    return input.now + retryAfter;
+  }
+
+  const resetAt = parseRateLimitReset(headers.get("x-ratelimit-reset"));
+  if (resetAt !== null && resetAt > input.now) {
+    return resetAt;
+  }
+
+  return input.now + GITHUB_RATE_LIMIT_FALLBACK_COOLDOWN_MS;
+}
+
+function parseRetryAfter(value: string | undefined, now: number): number | null {
+  if (!value) {
+    return null;
+  }
+  if (/^\d+$/.test(value)) {
+    const seconds = Number(value);
+    return Number.isSafeInteger(seconds) ? seconds * 1000 : null;
+  }
+  const retryAt = Date.parse(value);
+  return Number.isFinite(retryAt) ? Math.max(0, retryAt - now) : null;
+}
+
+function parseRateLimitReset(value: string | undefined): number | null {
+  if (!value || !/^\d+$/.test(value)) {
+    return null;
+  }
+  const seconds = Number(value);
+  return Number.isSafeInteger(seconds) ? seconds * 1000 : null;
+}
+
+function parseGitHubHttpResponse(output: string): GitHubHttpResponse | null {
+  const normalized = output.replace(/\r\n/g, "\n");
+  let offset = 0;
+  let response: GitHubHttpResponse | null = null;
+  while (offset < normalized.length) {
+    const statusLine = normalized.slice(offset).match(/^HTTP\/\S+\s+(\d{3})(?:\s|$).*$/m);
+    if (!statusLine || statusLine.index !== 0) {
+      return response;
+    }
+    const headerEnd = normalized.indexOf("\n\n", offset);
+    if (headerEnd === -1) {
+      return response;
+    }
+    const headers = parseGitHubHeaders(normalized.slice(offset, headerEnd));
+    response = {
+      statusCode: Number(statusLine[1]),
+      headers,
+      body: "",
+    };
+    offset = headerEnd + 2;
+    if (!normalized.slice(offset).startsWith("HTTP/")) {
+      response.body = normalized.slice(offset);
+      return response;
+    }
+  }
+  return response;
+}
+
+function getGitHubRateLimitResponseMetadata(
+  output: string,
+): GitHubRateLimitResponseMetadata | null {
+  const response = parseGitHubHttpResponse(output);
+  if (!response) {
+    return null;
+  }
+  return {
+    statusCode: response.statusCode,
+    retryAfter: response.headers.get("retry-after"),
+    rateLimitRemaining: response.headers.get("x-ratelimit-remaining"),
+    rateLimitReset: response.headers.get("x-ratelimit-reset"),
+  };
+}
+
+function parseGitHubHeaders(value: string): Map<string, string> {
+  const headers = new Map<string, string>();
+  for (const line of value.split(/\r?\n/)) {
+    const match = line.match(/^([^:\s]+):\s*(.*)$/);
+    if (match) {
+      headers.set(match[1].toLowerCase(), match[2].trim());
+    }
+  }
+  return headers;
 }
 
 function stableStringify(value: unknown): string {

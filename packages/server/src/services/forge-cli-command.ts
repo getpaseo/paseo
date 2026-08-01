@@ -38,6 +38,7 @@ interface NormalizeCliCommandErrorOptions {
     cwd: string;
     exitCode: number | null;
     stderr: string;
+    stdout?: string;
   }) => Error;
 }
 
@@ -151,6 +152,7 @@ export interface ForgeCommandFailureParams {
   cwd: string;
   exitCode: number | null;
   stderr: string;
+  stdout?: string;
 }
 
 export class ForgeCommandError extends Error {
@@ -159,6 +161,7 @@ export class ForgeCommandError extends Error {
   readonly cwd: string;
   readonly exitCode: number | null;
   readonly stderr: string;
+  readonly stdout: string;
 
   constructor(label: { brand: string; binary: string }, params: ForgeCommandFailureParams) {
     super(`${label.brand} CLI command failed: ${label.binary} ${params.args.join(" ")}`);
@@ -166,6 +169,7 @@ export class ForgeCommandError extends Error {
     this.cwd = params.cwd;
     this.exitCode = params.exitCode;
     this.stderr = params.stderr;
+    this.stdout = params.stdout ?? "";
   }
 }
 
@@ -239,6 +243,7 @@ export function normalizeCliCommandError(options: NormalizeCliCommandErrorOption
       stderr:
         stderr ||
         `${options.commandName} was terminated before completing (timed out after ${options.timeoutMs}ms or exceeded the output limit)`,
+      stdout: bufferOrStringToString(failure.stdout),
     });
   }
   return options.createCommandError({
@@ -246,6 +251,7 @@ export function normalizeCliCommandError(options: NormalizeCliCommandErrorOption
     cwd: options.cwd,
     exitCode: typeof failure.code === "number" ? failure.code : null,
     stderr: stderr || message,
+    stdout: bufferOrStringToString(failure.stdout),
   });
 }
 
