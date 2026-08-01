@@ -63,6 +63,11 @@ interface FakeAgentSessionOptions {
 export interface TestAgentClientOptions {
   closeSession?: () => Promise<void>;
   onStartTurn?: (prompt: AgentPromptInput) => void;
+  onSessionCreated?: (session: TestAgentSession) => void;
+}
+
+export interface TestAgentSession extends AgentSession {
+  emit(event: AgentStreamEvent): void;
 }
 
 function createDeferred<T>(): Deferred<T> {
@@ -316,7 +321,7 @@ function buildLargeTimelineItem(input: {
   };
 }
 
-class FakeAgentSession implements AgentSession {
+class FakeAgentSession implements TestAgentSession {
   readonly capabilities = TEST_CAPABILITIES;
   readonly id: string;
   private readonly providerName: string;
@@ -442,6 +447,10 @@ class FakeAgentSession implements AgentSession {
     return () => {
       this.subscribers.delete(callback);
     };
+  }
+
+  emit(event: AgentStreamEvent): void {
+    this.notifySubscribers(event);
   }
 
   private notifySubscribers(event: AgentStreamEvent): void {
@@ -1181,12 +1190,14 @@ class FakeAgentClient implements AgentClient {
     config: AgentSessionConfig,
     _launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
-    return new FakeAgentSession({
+    const session = new FakeAgentSession({
       providerName: this.provider,
       config: { ...config },
       closeSession: this.options.closeSession,
       onStartTurn: this.options.onStartTurn,
     });
+    this.options.onSessionCreated?.(session);
+    return session;
   }
 
   async resumeSession(
@@ -1203,7 +1214,7 @@ class FakeAgentClient implements AgentClient {
       (handle.metadata as Record<string, unknown> | undefined)?.marker ??
       (handle.metadata as Record<string, unknown> | undefined)?.conversationId ??
       null;
-    return new FakeAgentSession({
+    const session = new FakeAgentSession({
       providerName: this.provider,
       config: cfg,
       sessionId: handle.sessionId,
@@ -1211,6 +1222,8 @@ class FakeAgentClient implements AgentClient {
       closeSession: this.options.closeSession,
       onStartTurn: this.options.onStartTurn,
     });
+    this.options.onSessionCreated?.(session);
+    return session;
   }
 
   async fetchCatalog(

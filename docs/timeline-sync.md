@@ -78,6 +78,18 @@ The app chooses one delivery policy from `server_info.features.selectiveAgentTim
 This policy is owned by `viewed-timeline-sync.ts`; downstream reducers do not branch on daemon
 version.
 
+## Provider child delivery
+
+Provider-managed child streams are scoped to a physical client connection and parent agent. A
+successful provider-child list or timeline request registers that connection's interest in the
+parent, and list and timeline responses return only to the requesting connection. Live updates go
+only to interested connections that advertise the provider-subagents capability.
+
+Disconnecting clears that connection's interest. When the host reconnects, mounted parent tracks
+refetch the authoritative child list and open child panels refetch their authoritative timeline
+using the new host connection epoch. These requests restore live interest and repair updates missed
+while disconnected without hiding or changing durable parent-agent history.
+
 ## Projected pages reconcile with live presentation
 
 A projected page is canonical state, not a sequence of live deltas. One projected item can overlap
@@ -101,5 +113,6 @@ limited to the dated compatibility path for daemon timelines created before that
 - Server live stream forwarding: `packages/server/src/server/session.ts`
 - App sync planning: `packages/app/src/timeline/timeline-sync-plan.ts`
 - App viewed-agent synchronization: `packages/app/src/timeline/viewed-timeline-sync.ts`
+- App provider-child synchronization: `packages/app/src/subagents/provider-store.ts`
 - App stream/timeline reducer: `packages/app/src/timeline/session-stream-reducers.ts`
 - Session wiring: `packages/app/src/contexts/session-context.tsx`

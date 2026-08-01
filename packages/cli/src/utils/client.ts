@@ -11,7 +11,12 @@ import {
   parseConnectionOfferFromUrl,
   type ConnectionOffer,
 } from "@getpaseo/protocol/connection-offer";
-import { DaemonClient, type WebSocketLike } from "@getpaseo/client/internal/daemon-client";
+import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
+import {
+  DaemonClient,
+  type DaemonClientConfig,
+  type WebSocketLike,
+} from "@getpaseo/client/internal/daemon-client";
 import path from "node:path";
 import { WebSocket } from "ws";
 import { getOrCreateCliClientId } from "./client-id.js";
@@ -31,6 +36,17 @@ export interface DaemonConnectionCommandError {
 const DEFAULT_HOST = "localhost:6767";
 const DEFAULT_TIMEOUT = 15000;
 const PID_FILENAME = "paseo.pid";
+
+type CliDaemonClientConfig = Omit<DaemonClientConfig, "clientType" | "appVersion" | "capabilities">;
+
+export function createCliDaemonClient(config: CliDaemonClientConfig): DaemonClient {
+  return new DaemonClient({
+    ...config,
+    clientType: "cli",
+    appVersion: resolveCliVersion(),
+    capabilities: { [CLIENT_CAPS.providerSubagents]: false },
+  });
+}
 
 type DaemonTarget =
   | {
@@ -272,11 +288,9 @@ async function tryConnectHost(
   nodeWebSocketFactory: ReturnType<typeof createNodeWebSocketFactory>,
 ): Promise<{ client: DaemonClient } | { error: unknown }> {
   const target = resolveDaemonTarget(host);
-  const client = new DaemonClient({
+  const client = createCliDaemonClient({
     url: target.url,
     clientId,
-    clientType: "cli",
-    appVersion: resolveCliVersion(),
     password,
     connectTimeoutMs: timeout,
     webSocketFactory: (
@@ -313,11 +327,9 @@ async function connectViaRelayOffer(
     useTls: offer.relay.useTls ?? shouldUseTlsForDefaultHostedRelay(offer.relay.endpoint),
   });
 
-  const client = new DaemonClient({
+  const client = createCliDaemonClient({
     url,
     clientId,
-    clientType: "cli",
-    appVersion: resolveCliVersion(),
     connectTimeoutMs: timeout,
     webSocketFactory: (
       target: string,

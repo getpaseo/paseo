@@ -79,8 +79,9 @@ export function refreshProviderSubagents(
   client: ProviderSubagentListClient,
   serverId: string,
   parentAgentId: string,
+  connectionEpoch: number,
 ): Promise<void> {
-  const requestKey = `${serverId}\0${parentAgentId}`;
+  const requestKey = `${serverId}\0${connectionEpoch}\0${parentAgentId}`;
   let clientRequests = pendingListRequests.get(client);
   if (!clientRequests) {
     clientRequests = new Map();

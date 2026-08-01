@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { providerSubagentKey, useProviderSubagentStore } from "./provider-store";
+import {
+  providerSubagentKey,
+  refreshProviderSubagents,
+  useProviderSubagentStore,
+} from "./provider-store";
 
 const SERVER_ID = "server-1";
 const PARENT_ID = "parent-1";
@@ -14,6 +18,29 @@ afterEach(() => {
 });
 
 describe("provider subagent client store", () => {
+  test("starts a fresh list request for each connection epoch", async () => {
+    let requestCount = 0;
+    const client = {
+      async listProviderSubagents(parentAgentId: string) {
+        requestCount += 1;
+        return {
+          requestId: `request-${requestCount}`,
+          parentAgentId,
+          subagents: [],
+          error: null,
+        };
+      },
+    };
+
+    const first = refreshProviderSubagents(client, SERVER_ID, PARENT_ID, 1);
+    const duplicate = refreshProviderSubagents(client, SERVER_ID, PARENT_ID, 1);
+    expect(duplicate).toBe(first);
+    await first;
+
+    await refreshProviderSubagents(client, SERVER_ID, PARENT_ID, 2);
+    expect(requestCount).toBe(2);
+  });
+
   test("builds a shared stream model from ordered provider updates", () => {
     const subagents = useProviderSubagentStore.getState();
     subagents.applyUpdate(SERVER_ID, {
