@@ -1125,7 +1125,7 @@ describe("ACPAgentSession Zed parity", () => {
       provider: "cursor-acp",
       modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
     });
-    const events: Array<{ type: string; request?: { id: string } }> = [];
+    const events: AgentStreamEvent[] = [];
     const permissionOptions: PermissionOption[] = [
       { optionId: "allow-once", name: "Allow", kind: "allow_once" },
       { optionId: "reject-once", name: "Reject", kind: "reject_once" },
@@ -1133,7 +1133,7 @@ describe("ACPAgentSession Zed parity", () => {
 
     asInternals<ACPSessionInternals>(session).sessionId = "session-1";
     session.subscribe((event) => {
-      events.push(event as { type: string; request?: { id: string } });
+      events.push(event);
     });
 
     const permission = session.requestPermission({
@@ -1150,11 +1150,82 @@ describe("ACPAgentSession Zed parity", () => {
     await Promise.resolve();
 
     const requested = events.find((event) => event.type === "permission_requested");
-    expect(requested?.request?.id).toEqual(expect.any(String));
+    expect(requested).toMatchObject({
+      type: "permission_requested",
+      request: {
+        actions: [
+          { id: "allow-once", label: "Allow", behavior: "allow" },
+          { id: "reject-once", label: "Reject", behavior: "deny" },
+        ],
+      },
+    });
+    if (requested?.type !== "permission_requested") {
+      throw new Error("Expected permission request");
+    }
 
-    await session.respondToPermission(requested!.request!.id, { behavior: "allow" });
+    await session.respondToPermission(requested.request.id, { behavior: "allow" });
     await expect(permission).resolves.toEqual({
       outcome: { outcome: "selected", optionId: "allow-once" },
+    });
+  });
+
+  test("preserves ACP chooser actions and returns the selected option", async () => {
+    const session = createSessionWithConfig({
+      provider: "kimi-acp",
+      modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    });
+    const events: AgentStreamEvent[] = [];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    const permission = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "question-1",
+        title: "AskUserQuestion",
+        status: "pending",
+        content: [
+          {
+            type: "content",
+            content: {
+              type: "text",
+              text: "Which path should Paseo take?",
+            },
+          },
+        ],
+      },
+      options: [
+        { optionId: "q0_opt_0", name: "Narrow fix", kind: "allow_once" },
+        { optionId: "q0_opt_1", name: "Protocol fix", kind: "allow_once" },
+        { optionId: "q0_skip", name: "Skip", kind: "reject_once" },
+      ],
+    } satisfies RequestPermissionRequest);
+
+    await Promise.resolve();
+
+    const requested = events.find((event) => event.type === "permission_requested");
+    expect(requested).toMatchObject({
+      type: "permission_requested",
+      request: {
+        actions: [
+          { id: "q0_opt_0", label: "Narrow fix", behavior: "allow" },
+          { id: "q0_opt_1", label: "Protocol fix", behavior: "allow" },
+          { id: "q0_skip", label: "Skip", behavior: "deny" },
+        ],
+      },
+    });
+    if (requested?.type !== "permission_requested") {
+      throw new Error("Expected permission request");
+    }
+
+    await session.respondToPermission(requested.request.id, {
+      behavior: "allow",
+      selectedActionId: "q0_opt_1",
+    });
+
+    await expect(permission).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "q0_opt_1" },
     });
   });
 
@@ -1179,6 +1250,7 @@ describe("ACPAgentSession Zed parity", () => {
         },
         options: [
           { optionId: "allow-once", name: "Allow", kind: "allow_once" },
+          { optionId: "allow-always", name: "Always allow", kind: "allow_always" },
           { optionId: "reject-once", name: "Reject", kind: "reject_once" },
         ],
       } satisfies RequestPermissionRequest),
@@ -1187,6 +1259,56 @@ describe("ACPAgentSession Zed parity", () => {
     });
     expect(events).not.toContainEqual(expect.objectContaining({ type: "permission_requested" }));
     expect(session.getPendingPermissions()).toEqual([]);
+  });
+
+  test("does not auto-accept ACP chooser requests", async () => {
+    const session = createSessionWithConfig({
+      provider: "kimi-acp",
+      featureValues: { auto_accept: true },
+    });
+    const events: AgentStreamEvent[] = [];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    const permission = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "question-1",
+        title: "AskUserQuestion",
+        status: "pending",
+      },
+      options: [
+        { optionId: "q0_opt_0", name: "Narrow fix", kind: "allow_once" },
+        { optionId: "q0_opt_1", name: "Protocol fix", kind: "allow_once" },
+        { optionId: "q0_skip", name: "Skip", kind: "reject_once" },
+      ],
+    } satisfies RequestPermissionRequest);
+
+    await Promise.resolve();
+
+    const requested = events.find((event) => event.type === "permission_requested");
+    expect(requested).toMatchObject({
+      type: "permission_requested",
+      request: {
+        actions: [
+          { id: "q0_opt_0", label: "Narrow fix", behavior: "allow" },
+          { id: "q0_opt_1", label: "Protocol fix", behavior: "allow" },
+          { id: "q0_skip", label: "Skip", behavior: "deny" },
+        ],
+      },
+    });
+    if (requested?.type !== "permission_requested") {
+      throw new Error("Expected permission request");
+    }
+
+    await session.respondToPermission(requested.request.id, {
+      behavior: "allow",
+      selectedActionId: "q0_opt_0",
+    });
+    await expect(permission).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "q0_opt_0" },
+    });
   });
 
   test("starts auto-accepting permissions when the shared feature is toggled on", async () => {

@@ -2159,7 +2159,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
-    if (isACPAutoAcceptEnabled(this.config)) {
+    const canAutoAccept =
+      isACPAutoAcceptEnabled(this.config) && !isACPChooserRequest(params.options);
+    if (canAutoAccept) {
       const allowOption = selectPermissionOption(params.options, { behavior: "allow" });
       if (allowOption) {
         this.logger.info(
@@ -3448,6 +3450,11 @@ function mapPermissionRequest(
     kind,
     title: params.toolCall.title ?? snapshot.title,
     detail: mapToolDetail(snapshot, new Map()),
+    actions: params.options.map((option) => ({
+      id: option.optionId,
+      label: option.name,
+      behavior: option.kind.startsWith("allow") ? "allow" : "deny",
+    })),
     metadata: {
       toolCallId: params.toolCall.toolCallId,
       rawRequest: params,
@@ -3460,6 +3467,13 @@ function selectPermissionOption(
   options: PermissionOption[],
   response: AgentPermissionResponse,
 ): PermissionOption | null {
+  if (response.selectedActionId) {
+    const selectedOption = options.find((option) => option.optionId === response.selectedActionId);
+    if (selectedOption) {
+      return selectedOption;
+    }
+  }
+
   const order =
     response.behavior === "allow"
       ? ["allow_once", "allow_always"]
@@ -3471,6 +3485,20 @@ function selectPermissionOption(
     }
   }
   return null;
+}
+
+function isACPChooserRequest(options: PermissionOption[]): boolean {
+  const allowKinds = new Set<PermissionOption["kind"]>();
+  for (const option of options) {
+    if (!option.kind.startsWith("allow")) {
+      continue;
+    }
+    if (allowKinds.has(option.kind)) {
+      return true;
+    }
+    allowKinds.add(option.kind);
+  }
+  return false;
 }
 
 function appendTerminalOutput(entry: TerminalEntry, chunk: string): void {
