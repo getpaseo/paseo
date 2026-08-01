@@ -4,7 +4,6 @@ import type { AssistantMessageItem, StreamItem } from "@/types/stream";
 import type { TurnLivenessTransition } from "@/timeline/turn-liveness";
 import {
   applyStreamEvent,
-  createUserMessage,
   flushHeadToTail,
   hydrateStreamState,
   isAgentToolCallItem,
@@ -185,8 +184,8 @@ function deriveBootstrapTailTimelinePolicy({
 
 type ResumeTailPolicy =
   | { kind: "not_resume" }
-  | { kind: "discard"; coveredEndSeq: number }
-  | { kind: "append"; coveredEndSeq: number }
+  | { kind: "discard" }
+  | { kind: "append" }
   | { kind: "replace"; preserveContinuity: boolean };
 
 function deriveResumeTailPolicy(input: {
@@ -205,13 +204,13 @@ function deriveResumeTailPolicy(input: {
     return { kind: "replace", preserveContinuity: false };
   }
   if (input.windowMaxSeq === input.currentCursor.endSeq) {
-    return { kind: "discard", coveredEndSeq: input.currentCursor.endSeq };
+    return { kind: "discard" };
   }
   if (input.windowMaxSeq < input.currentCursor.endSeq) {
     return { kind: "replace", preserveContinuity: false };
   }
   if (input.pageStartSeq !== null && input.pageStartSeq <= input.currentCursor.endSeq + 1) {
-    return { kind: "append", coveredEndSeq: input.currentCursor.endSeq };
+    return { kind: "append" };
   }
   return { kind: "replace", preserveContinuity: true };
 }
@@ -746,19 +745,24 @@ function applyAcceptedForwardTimelineUnits(params: {
   });
   let tail = reconciled.tail;
   let head = reconciled.head;
-  const acknowledgedClientMessageIds = new Set<string>();
 
   for (const unit of params.units) {
     if (reconciled.reconciledUnits.has(unit)) continue;
     const applied = applyCanonicalForwardUnit({ tail, head, unit, epoch: params.epoch });
     tail = applied.tail;
     head = applied.head;
-    for (const clientMessageId of applied.acknowledgedClientMessageIds) {
-      acknowledgedClientMessageIds.add(clientMessageId);
-    }
   }
 
-  return { tail, head, acknowledgedClientMessageIds: [...acknowledgedClientMessageIds] };
+  return {
+    tail,
+    head,
+    acknowledgedClientMessageIds: deriveCanonicalAcknowledgements({
+      units: params.units,
+      epoch: params.epoch,
+      currentTail: params.currentTail,
+      currentHead: params.currentHead,
+    }),
+  };
 }
 
 function deriveCanonicalAcknowledgements(params: {
@@ -780,20 +784,6 @@ function deriveCanonicalAcknowledgements(params: {
     }
   }
   return [...acknowledged];
-}
-
-function shouldDiscardUnchangedTimelineResult(params: {
-  discardPolicy: boolean;
-  currentTail: StreamItem[];
-  currentHead: StreamItem[];
-  nextTail: StreamItem[];
-  nextHead: StreamItem[];
-}): boolean {
-  return (
-    params.discardPolicy &&
-    params.nextTail === params.currentTail &&
-    params.nextHead === params.currentHead
-  );
 }
 
 function applyTimelineIncrementalPath(args: {
@@ -976,31 +966,11 @@ export function processTimelineResponse(
     bootstrapReplace: replace,
   });
   const discard = resumeTailPolicy.kind === "discard";
-  const coveredUnits = timelineUnits.filter(
-    (unit) => "coveredEndSeq" in resumeTailPolicy && unit.seqEnd <= resumeTailPolicy.coveredEndSeq,
-  );
-  const revision = processAgentStreamEvents({
-    events: coveredUnits.map((unit) => ({
-      event: unit.event,
-      seq: unit.seqEnd,
-      epoch: payload.epoch,
-      timestamp: unit.timestamp,
-    })),
-    currentTail,
-    currentHead,
-    currentCursor,
-  });
-  const coveredRevisionAcknowledgements = deriveCanonicalAcknowledgements({
-    units: coveredUnits,
-    epoch: payload.epoch,
-    currentTail,
-    currentHead,
-  });
   let timelineResult: TimelinePathResult;
   if (discard) {
     timelineResult = {
-      tail: revision.tail,
-      head: revision.head,
+      tail: currentTail,
+      head: currentHead,
       cursor: currentCursor,
       cursorChanged: false,
       older: "unchanged",
@@ -1031,20 +1001,11 @@ export function processTimelineResponse(
     timelineResult = applyTimelineIncrementalPath({
       timelineUnits: incrementalUnits,
       payload,
-      currentTail: revision.tail,
-      currentHead: revision.head,
+      currentTail,
+      currentHead,
       currentCursor,
     });
   }
-  timelineResult = {
-    ...timelineResult,
-    acknowledgedClientMessageIds: [
-      ...new Set([
-        ...coveredRevisionAcknowledgements,
-        ...timelineResult.acknowledgedClientMessageIds,
-      ]),
-    ],
-  };
 
   const nextTail = timelineResult.tail;
   const nextHead = timelineResult.head;
@@ -1074,15 +1035,7 @@ export function processTimelineResponse(
     timelineResponseComplete;
 
   const initResolution: "resolve" | "reject" | null = shouldResolveDeferredInit ? "resolve" : null;
-  const commit = shouldDiscardUnchangedTimelineResult({
-    discardPolicy: discard,
-    currentTail,
-    currentHead,
-    nextTail,
-    nextHead,
-  })
-    ? "discard"
-    : "apply";
+  const commit = discard ? "discard" : "apply";
 
   return {
     commit,
@@ -1138,55 +1091,6 @@ interface TimelineSequencingGateResult {
   cursorChanged: boolean;
   resetLiveTimeline: boolean;
   sideEffects: AgentStreamReducerSideEffect[];
-}
-
-function applyCanonicalUserMessageRevision(input: {
-  event: AgentStreamEventPayload;
-  seq: number | undefined;
-  epoch: string | undefined;
-  timestamp: Date;
-  currentTail: StreamItem[];
-  currentHead: StreamItem[];
-  currentCursor: TimelineCursor | undefined;
-}): ReturnType<typeof upsertUserMessageAcrossStream> | null {
-  const { event, seq, epoch, currentCursor } = input;
-  if (
-    event.type !== "timeline" ||
-    event.item.type !== "user_message" ||
-    !event.item.clientMessageId ||
-    !event.item.messageId ||
-    typeof seq !== "number" ||
-    typeof epoch !== "string" ||
-    currentCursor?.epoch !== epoch ||
-    seq > currentCursor.endSeq
-  ) {
-    return null;
-  }
-  const clientMessageId = event.item.clientMessageId;
-  const existing = [...input.currentTail, ...input.currentHead].find(
-    (item) =>
-      item.kind === "user_message" &&
-      item.clientMessageId === clientMessageId &&
-      item.timelineCursor?.epoch === epoch &&
-      item.timelineCursor.seq === seq,
-  );
-  if (!existing || existing.kind !== "user_message") {
-    return null;
-  }
-  return upsertUserMessageAcrossStream({
-    tail: input.currentTail,
-    head: input.currentHead,
-    message: createUserMessage({
-      id: existing.id,
-      clientMessageId,
-      messageId: event.item.messageId,
-      text: event.item.text,
-      timestamp: input.timestamp,
-      timelineCursor: existing.timelineCursor,
-    }),
-    insert: "none",
-    presentation: "existing",
-  });
 }
 
 export interface ProcessAgentStreamEventsInput {
@@ -1305,30 +1209,6 @@ export function processAgentStreamEvent(
     timestamp,
     hasAuthoritativeBaseline = true,
   } = input;
-
-  const revision = applyCanonicalUserMessageRevision({
-    event,
-    seq,
-    epoch,
-    timestamp,
-    currentTail,
-    currentHead,
-    currentCursor,
-  });
-  if (revision) {
-    return {
-      tail: revision.tail,
-      head: revision.head,
-      changedTail: revision.changedTail,
-      changedHead: revision.changedHead,
-      cursor: null,
-      cursorChanged: false,
-      acknowledgedClientMessageIds: revision.location?.message.clientMessageId
-        ? [revision.location.message.clientMessageId]
-        : [],
-      sideEffects: [],
-    };
-  }
 
   const sequencing = processTimelineSequencingGate({
     event,

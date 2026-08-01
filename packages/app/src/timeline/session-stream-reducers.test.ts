@@ -258,63 +258,6 @@ const baseStreamInput: ProcessAgentStreamEventInput = {
 // ---------------------------------------------------------------------------
 
 describe("processTimelineResponse", () => {
-  it("applies a missed same-sequence provider identity revision from an unchanged resume tail", () => {
-    const canonical = createUserMessage({
-      id: "canonical-prompt",
-      clientMessageId: "client-message",
-      text: "local prompt",
-      timestamp: new Date(1000),
-      timelineCursor: { epoch: "epoch-1", seq: 5 },
-    });
-    const unrelatedTail = makeAssistantItem("unrelated tail", "unrelated-tail");
-    const currentTail = [canonical, unrelatedTail];
-    const currentHead = [makeAssistantItem("live head", "live-head")];
-    const currentCursor: TimelineCursor = { epoch: "epoch-1", startSeq: 1, endSeq: 8 };
-
-    const result = processTimelineResponse({
-      ...baseTimelineInput,
-      currentTail,
-      currentHead,
-      currentCursor,
-      payload: {
-        ...baseTimelineInput.payload,
-        direction: "tail",
-        window: { minSeq: 1, maxSeq: 8, nextSeq: 9 },
-        startCursor: { seq: 5 },
-        endCursor: { seq: 8 },
-        entries: [
-          {
-            ...makeTimelineEntry(5, "provider prompt", "user_message"),
-            item: {
-              type: "user_message",
-              text: "provider prompt",
-              messageId: "provider-message",
-              clientMessageId: "client-message",
-            },
-          },
-        ],
-      },
-    });
-
-    expect(result.commit).toBe("apply");
-    expect(result.tail).not.toBe(currentTail);
-    expect(result.tail[0]).toEqual(
-      expect.objectContaining({
-        id: "canonical-prompt",
-        clientMessageId: "client-message",
-        messageId: "provider-message",
-        text: "local prompt",
-        timestamp: canonical.timestamp,
-        timelineCursor: { epoch: "epoch-1", seq: 5 },
-      }),
-    );
-    expect(result.tail[1]).toBe(unrelatedTail);
-    expect(result.head).toBe(currentHead);
-    expect(result.cursor).toBe(currentCursor);
-    expect(result.cursorChanged).toBe(false);
-    expect(result.acknowledgedClientMessageIds).toEqual(["client-message"]);
-  });
-
   it("discards an unchanged resume tail without replacing timeline state", () => {
     const canonical = createUserMessage({
       id: "canonical-prompt",
@@ -357,7 +300,7 @@ describe("processTimelineResponse", () => {
     expect(result.tail).toBe(currentTail);
     expect(result.head).toBe(currentHead);
     expect(result.cursorChanged).toBe(false);
-    expect(result.acknowledgedClientMessageIds).toEqual(["client-message"]);
+    expect(result.acknowledgedClientMessageIds).toEqual([]);
     expect(result.sideEffects).toEqual([{ type: "flush_pending_updates" }]);
   });
 
@@ -365,6 +308,7 @@ describe("processTimelineResponse", () => {
     const loaded = createUserMessage({
       id: "local-prompt-30",
       clientMessageId: "client-message-30",
+      messageId: "client-message-30",
       text: "local presentation",
       timestamp: new Date(1030),
       timelineCursor: { epoch: "epoch-1", seq: 30 },
@@ -407,7 +351,7 @@ describe("processTimelineResponse", () => {
     });
 
     expect(result.commit).toBe("apply");
-    expect(result.tail[0]).toEqual({ ...loaded, messageId: "provider-message-30" });
+    expect(result.tail[0]).toBe(loaded);
     expect(result.tail[1]).toBe(unrelated);
     expect(
       [...result.tail, ...result.head].filter(
@@ -419,7 +363,7 @@ describe("processTimelineResponse", () => {
     ]);
     expect(result.cursor).toEqual({ epoch: "epoch-1", startSeq: 1, endSeq: 42 });
     expect(result.cursorChanged).toBe(true);
-    expect(result.acknowledgedClientMessageIds).toEqual(["client-message-30"]);
+    expect(result.acknowledgedClientMessageIds).toEqual([]);
     expect(result.sideEffects).toEqual([{ type: "flush_pending_updates" }]);
   });
 
@@ -3239,48 +3183,6 @@ describe("processAgentStreamEvent", () => {
     expect(result.cursorChanged).toBe(false);
     expect(result.changedTail).toBe(false);
     expect(result.changedHead).toBe(false);
-    expect(result.sideEffects).toEqual([]);
-  });
-
-  it("applies a same-sequence provider identity revision to its canonical prompt", () => {
-    const canonical = createUserMessage({
-      id: "canonical-prompt",
-      clientMessageId: "client-message-1",
-      text: "Revise this prompt",
-      timestamp: new Date(1000),
-      timelineCursor: { epoch: "epoch-1", seq: 5 },
-    });
-    const currentHead = [makeAssistantItem("Still streaming")];
-
-    const result = processAgentStreamEvent({
-      ...baseStreamInput,
-      currentTail: [canonical],
-      currentHead,
-      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 8 },
-      event: {
-        type: "timeline",
-        provider: "claude",
-        item: {
-          type: "user_message",
-          text: "Revise this prompt",
-          clientMessageId: "client-message-1",
-          messageId: "provider-message-1",
-        },
-      },
-      seq: 5,
-      epoch: "epoch-1",
-    });
-
-    expect(result.tail).toEqual([
-      expect.objectContaining({
-        id: "canonical-prompt",
-        clientMessageId: "client-message-1",
-        messageId: "provider-message-1",
-        timelineCursor: { epoch: "epoch-1", seq: 5 },
-      }),
-    ]);
-    expect(result.head).toBe(currentHead);
-    expect(result.cursorChanged).toBe(false);
     expect(result.sideEffects).toEqual([]);
   });
 
