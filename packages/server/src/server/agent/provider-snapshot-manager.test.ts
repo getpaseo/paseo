@@ -9,6 +9,7 @@ import type {
   AgentModelDefinition,
   AgentProvider,
   FetchCatalogOptions,
+  ProviderCatalog,
   ResolveAgentCreateConfigInput,
 } from "./agent-sdk-types.js";
 import type { ManagedAgent } from "./agent-manager.js";
@@ -28,6 +29,14 @@ const TEST_CAPABILITIES = {
   supportsToolInvocations: false,
 } as const;
 const TEST_REFRESH_TIMEOUT_MS = 120_000;
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolveDeferred!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolveDeferred = resolvePromise;
+  });
+  return { promise, resolve: resolveDeferred };
+}
 
 // Builds an AgentClient that can be injected via the public extraClients option.
 // extraClients is the only injection surface the manager exposes for tests.
@@ -326,6 +335,161 @@ describe("ProviderSnapshotManager public surface", () => {
     } finally {
       manager.destroy();
     }
+  });
+
+  test("two timeout and destroy cycles never overlap provider work", async () => {
+    let activeChecks = 0;
+    let maxActiveChecks = 0;
+    let calls = 0;
+    const client = createExtraClient("codex", {
+      async isAvailable(options) {
+        calls += 1;
+        activeChecks += 1;
+        maxActiveChecks = Math.max(maxActiveChecks, activeChecks);
+        try {
+          return await new Promise<boolean>((_resolve, reject) => {
+            const abort = () => {
+              setTimeout(() => reject(options?.signal?.reason ?? new Error("aborted")), 100);
+            };
+            if (options?.signal?.aborted) {
+              abort();
+            } else {
+              options?.signal?.addEventListener("abort", abort, { once: true });
+            }
+          });
+        } finally {
+          activeChecks -= 1;
+        }
+      },
+    });
+
+    for (let cycle = 0; cycle < 2; cycle += 1) {
+      const manager = new ProviderSnapshotManager({
+        logger: createTestLogger(),
+        refreshTimeoutMs: 5,
+        extraClients: { codex: client },
+      });
+      const entry = await manager.getProvider({
+        cwd: "/tmp/project",
+        provider: "codex",
+        wait: true,
+      });
+      expect(entry).toMatchObject({ status: "error", error: expect.stringContaining("after 5ms") });
+      await manager.destroy();
+      expect(activeChecks).toBe(0);
+    }
+
+    expect(calls).toBe(2);
+    expect(maxActiveChecks).toBe(1);
+  });
+
+  test("forced refresh and config reset drain provider work before replacement", async () => {
+    let calls = 0;
+    let activeChecks = 0;
+    let maxActiveChecks = 0;
+    const client = createExtraClient("codex", {
+      async isAvailable(options) {
+        const call = ++calls;
+        activeChecks += 1;
+        maxActiveChecks = Math.max(maxActiveChecks, activeChecks);
+        try {
+          if (call === 2) {
+            return true;
+          }
+          return await new Promise<boolean>((_resolve, reject) => {
+            const abort = () => {
+              setTimeout(() => reject(options?.signal?.reason ?? new Error("aborted")), 100);
+            };
+            if (options?.signal?.aborted) {
+              abort();
+            } else {
+              options?.signal?.addEventListener("abort", abort, { once: true });
+            }
+          });
+        } finally {
+          activeChecks -= 1;
+        }
+      },
+    });
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      refreshTimeoutMs: 10_000,
+      extraClients: { codex: client },
+    });
+
+    const initialWarmup = manager.warmUpSnapshotForCwd({
+      cwd: "/tmp/project",
+      providers: ["codex"],
+    });
+    await vi.waitFor(() => expect(activeChecks).toBe(1));
+    const forcedRefresh = manager.refreshSnapshotForCwd({
+      cwd: "/tmp/project",
+      providers: ["codex"],
+    });
+    await Promise.all([initialWarmup, forcedRefresh]);
+    expect(
+      manager.getSnapshot("/tmp/project").find((entry) => entry.provider === "codex"),
+    ).toMatchObject({ status: "ready" });
+
+    const pendingRefresh = manager.refreshSnapshotForCwd({
+      cwd: "/tmp/project",
+      providers: ["codex"],
+    });
+    await vi.waitFor(() => expect(activeChecks).toBe(1));
+    const state = await manager.applyMutableProviderConfig({ codex: { enabled: false } });
+    await pendingRefresh;
+
+    expect(state.providerDefinitions.codex).toMatchObject({ enabled: false });
+    expect(calls).toBe(3);
+    expect(maxActiveChecks).toBe(1);
+    expect(activeChecks).toBe(0);
+    await manager.destroy();
+  });
+
+  test("destroy cancels and drains an in-flight catalog request", async () => {
+    const catalogStarted = deferred<void>();
+    const catalogCleaned = deferred<void>();
+    let activeCatalogs = 0;
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      refreshTimeoutMs: 10_000,
+      extraClients: {
+        codex: createExtraClient("codex", {
+          async isAvailable() {
+            return true;
+          },
+          async fetchCatalog(options) {
+            activeCatalogs += 1;
+            catalogStarted.resolve();
+            try {
+              return await new Promise<ProviderCatalog>((_resolve, reject) => {
+                const abort = () => {
+                  setTimeout(() => {
+                    catalogCleaned.resolve();
+                    reject(options.signal?.reason ?? new Error("aborted"));
+                  }, 100);
+                };
+                if (options.signal?.aborted) {
+                  abort();
+                } else {
+                  options.signal?.addEventListener("abort", abort, { once: true });
+                }
+              });
+            } finally {
+              activeCatalogs -= 1;
+            }
+          },
+        }),
+      },
+    });
+
+    const warmup = manager.warmUpSnapshotForCwd({ cwd: "/tmp/project", providers: ["codex"] });
+    await catalogStarted.promise;
+    await manager.destroy();
+
+    await catalogCleaned.promise;
+    await warmup;
+    expect(activeCatalogs).toBe(0);
   });
 
   test("PASEO_PROVIDER_REFRESH_TIMEOUT_MS env var is honored when no option is given", async () => {
@@ -975,7 +1139,7 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
     try {
       expect(manager.hasProvider("zai-claude")).toBe(false);
 
-      const state = manager.applyMutableProviderConfig({
+      const state = await manager.applyMutableProviderConfig({
         "zai-claude": { extends: "claude", label: "ZAI", enabled: true },
       });
 
@@ -990,7 +1154,7 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
     }
   });
 
-  test("removes startup provider overrides from the live registry", () => {
+  test("removes startup provider overrides from the live registry", async () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
       providerOverrides: {
@@ -1000,20 +1164,77 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
     try {
       expect(manager.hasProvider("zai-claude")).toBe(true);
 
-      const state = manager.applyMutableProviderConfig({}, { removeProviders: ["zai-claude"] });
+      const state = await manager.applyMutableProviderConfig(
+        {},
+        { removeProviders: ["zai-claude"] },
+      );
 
       expect(manager.hasProvider("zai-claude")).toBe(false);
       expect(state.providerDefinitions["zai-claude"]).toBeUndefined();
       expect(manager.getSnapshot().some((entry) => entry.provider === "zai-claude")).toBe(false);
 
-      manager.applyMutableProviderConfig({ codex: { enabled: false } });
+      await manager.applyMutableProviderConfig({ codex: { enabled: false } });
       expect(manager.hasProvider("zai-claude")).toBe(false);
     } finally {
       manager.destroy();
     }
   });
 
-  test("drops disabled built-in providers from clients while preserving providerDefinitions", () => {
+  test("keeps the live registry unchanged when a candidate registry is invalid", async () => {
+    const availabilityStarted = deferred<void>();
+    let availabilityAborted = false;
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        "zai-claude": { extends: "claude", label: "ZAI", enabled: true },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", {
+          async isAvailable(options) {
+            availabilityStarted.resolve();
+            return await new Promise<boolean>((resolveAvailability) => {
+              options?.signal?.addEventListener(
+                "abort",
+                () => {
+                  availabilityAborted = true;
+                  resolveAvailability(false);
+                },
+                { once: true },
+              );
+            });
+          },
+        }),
+      },
+    });
+    try {
+      const warmup = manager.warmUpSnapshotForCwd({
+        cwd: "/tmp/project",
+        providers: ["codex"],
+      });
+      await availabilityStarted.promise;
+
+      await expect(
+        manager.applyMutableProviderConfig(
+          { broken: { label: "Broken", enabled: true } },
+          { removeProviders: ["zai-claude"] },
+        ),
+      ).rejects.toThrow("Custom provider 'broken' requires an extends value");
+
+      expect(manager.hasProvider("zai-claude")).toBe(true);
+      expect(manager.hasProvider("broken")).toBe(false);
+      expect(manager.listRegisteredProviderIds()).toContain("zai-claude");
+      expect(availabilityAborted).toBe(false);
+
+      const state = await manager.applyMutableProviderConfig({ codex: { enabled: false } });
+      await warmup;
+      expect(state.providerDefinitions["zai-claude"]).toMatchObject({ enabled: true });
+      expect(state.providerDefinitions.codex).toMatchObject({ enabled: false });
+    } finally {
+      await manager.destroy();
+    }
+  });
+
+  test("drops disabled built-in providers from clients while preserving providerDefinitions", async () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
       providerOverrides: {
@@ -1029,7 +1250,7 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
       expect(before.providerDefinitions.copilot).toMatchObject({ enabled: false });
       expect(before.clients.copilot).toBeUndefined();
 
-      const state = manager.applyMutableProviderConfig({ codex: { enabled: false } });
+      const state = await manager.applyMutableProviderConfig({ codex: { enabled: false } });
       expect(state.providerDefinitions.codex).toMatchObject({ enabled: false });
       expect(state.clients.codex).toBeUndefined();
       expect(state.providerDefinitions.copilot).toMatchObject({ enabled: false });
@@ -1039,7 +1260,7 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
     }
   });
 
-  test("fires a change event on every primed snapshot cwd after applyMutableProviderConfig", () => {
+  test("fires a change event on every primed snapshot cwd after applyMutableProviderConfig", async () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
       providerOverrides: {
@@ -1062,7 +1283,7 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
       manager.getSnapshot(cwdB);
 
       listener.mockClear();
-      manager.applyMutableProviderConfig({
+      await manager.applyMutableProviderConfig({
         "zai-claude": { extends: "claude", label: "ZAI", enabled: true },
       });
 
@@ -1075,7 +1296,7 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
 });
 
 describe("ProviderSnapshotManager lifecycle", () => {
-  test("on/off attaches and detaches change listeners", () => {
+  test("on/off attaches and detaches change listeners", async () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
       providerOverrides: {
@@ -1090,19 +1311,19 @@ describe("ProviderSnapshotManager lifecycle", () => {
       const listener = vi.fn();
       manager.on("change", listener);
       manager.getSnapshot("/tmp/project");
-      manager.applyMutableProviderConfig({});
+      await manager.applyMutableProviderConfig({});
       const firstCallCount = listener.mock.calls.length;
       expect(firstCallCount).toBeGreaterThan(0);
 
       manager.off("change", listener);
-      manager.applyMutableProviderConfig({});
+      await manager.applyMutableProviderConfig({});
       expect(listener.mock.calls.length).toBe(firstCallCount);
     } finally {
       manager.destroy();
     }
   });
 
-  test("destroy clears snapshots and prevents further change emissions", () => {
+  test("destroy clears snapshots and prevents further change emissions", async () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
       providerOverrides: {
@@ -1116,10 +1337,10 @@ describe("ProviderSnapshotManager lifecycle", () => {
     const listener = vi.fn();
     manager.on("change", listener);
     manager.getSnapshot("/tmp/project");
-    manager.destroy();
+    await manager.destroy();
 
     listener.mockClear();
-    manager.applyMutableProviderConfig({});
+    await manager.applyMutableProviderConfig({});
     expect(listener).not.toHaveBeenCalled();
   });
 });
@@ -1202,7 +1423,7 @@ describe("ProviderSnapshotManager cwd routing", () => {
     }
   });
 
-  test("getSnapshot called with no cwd resolves to the global snapshot key", () => {
+  test("getSnapshot called with no cwd resolves to the global snapshot key", async () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
       providerOverrides: {
@@ -1217,7 +1438,7 @@ describe("ProviderSnapshotManager cwd routing", () => {
       const listener = vi.fn();
       manager.on("change", listener);
       manager.getSnapshot();
-      manager.applyMutableProviderConfig({});
+      await manager.applyMutableProviderConfig({});
       const cwds = listener.mock.calls.map((call) => call[1]);
       expect(cwds).toContain(GLOBAL_PROVIDER_SNAPSHOT_KEY);
     } finally {

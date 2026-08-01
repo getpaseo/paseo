@@ -589,4 +589,61 @@ describe("DaemonConfigStore", () => {
       env: {},
     });
   });
+
+  test("async patch rolls persisted provider config back when live application fails", async () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const configPath = path.join(paseoHome, "config.json");
+    writeFileSync(
+      configPath,
+      `${JSON.stringify(
+        {
+          version: 1,
+          agents: {
+            providers: {
+              gemini: {
+                extends: "acp",
+                label: "Gemini",
+                command: ["gemini", "--acp"],
+              },
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: { gemini: {} },
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+    );
+    let changes = 0;
+    store.onChange(() => {
+      changes++;
+    });
+    store.onBeforeChange(async () => {
+      throw new Error("provider cleanup timed out");
+    });
+
+    await expect(store.patchAsync({ providers: { gemini: { enabled: false } } })).rejects.toThrow(
+      "provider cleanup timed out",
+    );
+
+    expect(store.get().providers.gemini).toEqual({});
+    expect(changes).toBe(0);
+    expect(loadPersistedConfig(paseoHome).agents?.providers?.gemini).toEqual({
+      extends: "acp",
+      label: "Gemini",
+      command: ["gemini", "--acp"],
+    });
+  });
 });

@@ -53,6 +53,63 @@ describe("execCommand", () => {
     await expect(execCommand(command.command, command.args, { timeout: 100 })).rejects.toThrow();
   });
 
+  test("treats a zero timeout as disabled", async () => {
+    const result = await execCommand(
+      process.execPath,
+      ["-e", "setTimeout(() => console.log('completed'), 25)"],
+      { timeout: 0 },
+    );
+
+    expect(result.stdout.trim()).toBe("completed");
+  });
+
+  test("rejects invalid timeout and maxBuffer options before spawning", async () => {
+    await expect(execCommand(process.execPath, ["-e", ""], { timeout: -1 })).rejects.toThrow(
+      RangeError,
+    );
+    await expect(execCommand(process.execPath, ["-e", ""], { maxBuffer: -1 })).rejects.toThrow(
+      RangeError,
+    );
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "stops collecting output while terminating the process tree after maxBuffer",
+    async () => {
+      const cwd = realpathSync(mkdtempSync(path.join(tmpdir(), "spawn-test-")));
+      tempDirs.push(cwd);
+      const pidFile = path.join(cwd, "descendant.pid");
+      const descendantScript = 'process.on("SIGTERM", () => {}); setInterval(() => {}, 10_000);';
+      const wrapperScript = [
+        'const { spawn } = require("node:child_process");',
+        'const { writeFileSync } = require("node:fs");',
+        `const child = spawn(${JSON.stringify(process.execPath)}, ["-e", ${JSON.stringify(descendantScript)}], { stdio: ["ignore", "inherit", "inherit"] });`,
+        `writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));`,
+        'process.on("SIGTERM", () => {});',
+        'setInterval(() => process.stdout.write("x".repeat(1024)), 0);',
+      ].join("");
+      let descendantPid: number | undefined;
+
+      try {
+        await expect(
+          execCommand(process.execPath, ["-e", wrapperScript], { maxBuffer: 1024 }),
+        ).rejects.toMatchObject({ code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" });
+
+        const pid = Number(fs.readFileSync(pidFile, "utf8"));
+        descendantPid = pid;
+        expect(Number.isSafeInteger(pid)).toBe(true);
+        expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+      } finally {
+        if (descendantPid) {
+          try {
+            process.kill(descendantPid, "SIGKILL");
+          } catch {
+            // Already exited.
+          }
+        }
+      }
+    },
+  );
+
   test("runs the command in the provided cwd", async () => {
     const cwd = realpathSync(mkdtempSync(path.join(tmpdir(), "spawn-test-")));
     tempDirs.push(cwd);

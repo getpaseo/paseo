@@ -313,6 +313,7 @@ interface SessionForTestOptions {
   serverId?: SessionOptions["serverId"];
   daemonVersion?: SessionOptions["daemonVersion"];
   daemonRuntimeConfig?: SessionOptions["daemonRuntimeConfig"];
+  daemonConfigStore?: SessionOptions["daemonConfigStore"];
   downloadTokenStore?: SessionOptions["downloadTokenStore"];
   messages?: unknown[];
   targetedMessages?: Array<{ source: object; message: SessionOutboundMessage }>;
@@ -396,13 +397,15 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     checkoutDiffManager: asCheckoutDiffManager(checkoutDiffManager),
     github: asGitHubService(github),
     workspaceGitService: asWorkspaceGitService(workspaceGitService),
-    daemonConfigStore: asDaemonConfigStore({
-      get: vi.fn(() => ({
-        mcp: { injectIntoAgents: false },
-        providers: {},
-      })),
-      onChange: vi.fn(() => () => {}),
-    }),
+    daemonConfigStore:
+      options.daemonConfigStore ??
+      asDaemonConfigStore({
+        get: vi.fn(() => ({
+          mcp: { injectIntoAgents: false },
+          providers: {},
+        })),
+        onChange: vi.fn(() => () => {}),
+      }),
     stt: options.stt ?? null,
     tts: null,
     terminalManager: options.terminalManager ?? null,
@@ -5222,5 +5225,46 @@ describe("agent config setters", () => {
         error: "thinking boom",
       },
     });
+  });
+
+  test("set_daemon_config_request waits for live config application before acknowledging", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const config = {
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: { claude: { enabled: false } },
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    };
+    let finishApply: ((value: typeof config) => void) | undefined;
+    const patchAsync = vi.fn(
+      () =>
+        new Promise<typeof config>((resolve) => {
+          finishApply = resolve;
+        }),
+    );
+    const session = createSessionForTest({
+      messages,
+      daemonConfigStore: asDaemonConfigStore({ patchAsync }),
+    });
+
+    const request = session.handleMessage({
+      type: "set_daemon_config_request",
+      requestId: "req-config",
+      config: { providers: { claude: { enabled: false } } },
+    });
+    await Promise.resolve();
+
+    expect(messages).toEqual([]);
+    finishApply?.(config);
+    await request;
+    expect(messages).toEqual([
+      {
+        type: "set_daemon_config_response",
+        payload: { requestId: "req-config", config },
+      },
+    ]);
   });
 });

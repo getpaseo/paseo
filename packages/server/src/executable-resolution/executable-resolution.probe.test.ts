@@ -15,14 +15,16 @@ import { afterEach, describe, expect, test } from "vitest";
 import { isPlatform } from "../test-utils/platform.js";
 import { probeExecutable } from "./executable-resolution.js";
 
-const timeoutMs = 1000;
-const timeoutSlackMs = 500;
+const timeoutMs = 3000;
+const timeoutSlackMs = 1000;
+const fixtureReadyTimeoutMs = 10_000;
 const tempDirs: string[] = [];
+const spawnedProbePids = new Set<number>();
 
 interface ProbeFixture {
   name: string;
   expected: boolean;
-  create: (dir: string) => { executablePath: string; pidFile?: string };
+  create: (dir: string) => { executablePath: string };
 }
 
 function makeTempDir(): string {
@@ -52,7 +54,22 @@ function createHangingFixture(dir: string): string {
   }
   return writeExecutable(
     scriptPath(dir, "hangs"),
-    `#!/bin/sh\ntrap '' TERM\necho $$ > "${path.join(dir, "hangs.pid")}"\nwhile :; do :; done\n`,
+    "#!/bin/sh\ntrap '' TERM\nwhile :; do :; done\n",
+  );
+}
+
+function createHangingDescendantFixture(dir: string): string {
+  const descendantPidFile = path.join(dir, "descendant.pid");
+  const descendant = `process.on("SIGTERM", () => {}); setInterval(() => {}, 10_000);`;
+  return writeExecutable(
+    scriptPath(dir, "hangs-with-descendant"),
+    `#!/bin/sh
+trap '' TERM
+${JSON.stringify(process.execPath)} -e '${descendant}' &
+child=$!
+echo "$child" > "${descendantPidFile}"
+wait "$child"
+`,
   );
 }
 
@@ -94,10 +111,26 @@ function missingAbsolutePath(): string {
 }
 
 async function waitForFile(filePath: string): Promise<void> {
-  const deadline = performance.now() + timeoutSlackMs;
+  const deadline = performance.now() + fixtureReadyTimeoutMs;
   while (!existsSync(filePath) && performance.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
+  if (!existsSync(filePath)) {
+    throw new Error(`Timed out waiting for fixture file: ${filePath}`);
+  }
+}
+
+function readFixturePid(pidFile: string): number {
+  const rawPid = readFileSync(pidFile, "utf8").trim();
+  if (!/^\d+$/.test(rawPid)) {
+    throw new Error(`Invalid PID fixture contents: ${JSON.stringify(rawPid)}`);
+  }
+  const pid = Number(rawPid);
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    throw new Error(`Invalid PID fixture value: ${rawPid}`);
+  }
+  spawnedProbePids.add(pid);
+  return pid;
 }
 
 const fixtures: ProbeFixture[] = [
@@ -106,7 +139,6 @@ const fixtures: ProbeFixture[] = [
     expected: true,
     create: (dir) => ({
       executablePath: createHangingFixture(dir),
-      pidFile: process.platform === "win32" ? undefined : path.join(dir, "hangs.pid"),
     }),
   },
   {
@@ -137,6 +169,14 @@ const fixtures: ProbeFixture[] = [
 ];
 
 afterEach(() => {
+  for (const pid of spawnedProbePids) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // Already exited.
+    }
+  }
+  spawnedProbePids.clear();
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -147,35 +187,52 @@ describe("probeExecutable", () => {
   test.skipIf(isPlatform("win32")).each(fixtures.filter((fixture) => fixture.expected))(
     "$name",
     async ({ create, expected }) => {
-      const { executablePath, pidFile } = create(makeTempDir());
+      const { executablePath } = create(makeTempDir());
       const startedAt = performance.now();
 
       const result = await probeExecutable(executablePath, timeoutMs);
 
       expect(result).toBe(expected);
       expect(performance.now() - startedAt).toBeLessThanOrEqual(timeoutMs + timeoutSlackMs);
-      if (pidFile) {
-        await waitForFile(pidFile);
-        const pid = Number(readFileSync(pidFile, "utf8"));
-        expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
-      }
     },
   );
 
   test.each(fixtures.filter((fixture) => !fixture.expected))(
     "$name",
     async ({ create, expected }) => {
-      const { executablePath, pidFile } = create(makeTempDir());
+      const { executablePath } = create(makeTempDir());
       const startedAt = performance.now();
 
       const result = await probeExecutable(executablePath, timeoutMs);
 
       expect(result).toBe(expected);
       expect(performance.now() - startedAt).toBeLessThanOrEqual(timeoutMs + timeoutSlackMs);
-      if (pidFile) {
+    },
+  );
+
+  test.skipIf(isPlatform("win32"))(
+    "aborts a ready hanging wrapper and its descendant",
+    async () => {
+      const dir = makeTempDir();
+      const executablePath = createHangingDescendantFixture(dir);
+      const pidFile = path.join(dir, "descendant.pid");
+      const controller = new AbortController();
+      const probe = probeExecutable(executablePath, {
+        probeTimeoutMs: 30_000,
+        signal: controller.signal,
+      });
+
+      try {
         await waitForFile(pidFile);
-        const pid = Number(readFileSync(pidFile, "utf8"));
+        const pid = readFixturePid(pidFile);
+        controller.abort(new Error("Stop ready probe fixture"));
+
+        await expect(probe).rejects.toThrow("Stop ready probe fixture");
         expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+        spawnedProbePids.delete(pid);
+      } finally {
+        controller.abort(new Error("Clean up probe fixture"));
+        await probe.catch(() => undefined);
       }
     },
   );

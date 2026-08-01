@@ -545,7 +545,9 @@ export class VoiceAssistantWebSocketServer {
   private readonly applicationSocketLease = new ApplicationSocketLease<WebSocketLike>();
   private eventLoopDelayMonitor: ReturnType<typeof monitorEventLoopDelay> | null = null;
   private unsubscribeSpeechReadiness: (() => void) | null = null;
+  private unsubscribeDaemonConfigApply: (() => void) | null = null;
   private unsubscribeDaemonConfigChange: (() => void) | null = null;
+  private providerConfigUpdate = Promise.resolve();
   private readonly providerUsageService: ProviderUsageService;
   private unsubscribeTerminalActivity: (() => void) | null = null;
   private readonly browserToolsBroker: BrowserToolsBroker | null;
@@ -653,12 +655,29 @@ export class VoiceAssistantWebSocketServer {
       this.speech?.onReadinessChange((snapshot) => {
         this.publishSpeechReadiness(snapshot);
       }) ?? null;
-    this.unsubscribeDaemonConfigChange = this.daemonConfigStore.onChange((config, details) => {
-      const nextAgentManagerState = this.providerSnapshotManager.applyMutableProviderConfig(
-        config.providers,
-        { removeProviders: details.removedProviders },
-      );
-      this.agentManager.updateProviderRegistry(nextAgentManagerState);
+    this.unsubscribeDaemonConfigApply = this.daemonConfigStore.onBeforeChange(
+      async (config, details) => {
+        const update = this.providerConfigUpdate
+          .then(async () => {
+            const nextAgentManagerState =
+              await this.providerSnapshotManager.applyMutableProviderConfig(config.providers, {
+                removeProviders: details.removedProviders,
+              });
+            this.agentManager.updateProviderRegistry(nextAgentManagerState);
+            return undefined;
+          })
+          .catch((error) => {
+            this.logger.warn({ err: error }, "Failed to apply provider config update");
+            throw error;
+          });
+        this.providerConfigUpdate = update.then(
+          () => undefined,
+          () => undefined,
+        );
+        await update;
+      },
+    );
+    this.unsubscribeDaemonConfigChange = this.daemonConfigStore.onChange((config) => {
       this.broadcastDaemonConfigChanged(config);
     });
 
@@ -941,14 +960,20 @@ export class VoiceAssistantWebSocketServer {
 
   public prepareForShutdown(): void {
     this.acceptingConnections = false;
+    this.unsubscribeDaemonConfigApply?.();
+    this.unsubscribeDaemonConfigApply = null;
+    this.unsubscribeDaemonConfigChange?.();
+    this.unsubscribeDaemonConfigChange = null;
+  }
+
+  public async drainProviderConfigUpdates(): Promise<void> {
+    await this.providerConfigUpdate;
   }
 
   public async close(): Promise<void> {
     this.prepareForShutdown();
     this.unsubscribeSpeechReadiness?.();
     this.unsubscribeSpeechReadiness = null;
-    this.unsubscribeDaemonConfigChange?.();
-    this.unsubscribeDaemonConfigChange = null;
     this.unsubscribeTerminalActivity?.();
     this.unsubscribeTerminalActivity = null;
     if (this.runtimeMetricsInterval) {
@@ -1015,7 +1040,8 @@ export class VoiceAssistantWebSocketServer {
     }
 
     await Promise.all(cleanupPromises);
-    this.providerSnapshotManager.destroy();
+    await this.drainProviderConfigUpdates();
+    await this.providerSnapshotManager.destroy();
     this.checkoutDiffManager.dispose();
     this.workspaceGitService.dispose();
     this.pendingConnections.clear();

@@ -25,7 +25,18 @@ export interface DaemonConfigChangeDetails {
 }
 
 type ConfigListener = (config: MutableDaemonConfig, details: DaemonConfigChangeDetails) => void;
+type AsyncConfigListener = (
+  config: MutableDaemonConfig,
+  details: DaemonConfigChangeDetails,
+) => Promise<void>;
 type FieldChangeHandler = (value: unknown) => void;
+
+interface PreparedConfigPatch {
+  next: MutableDaemonConfig;
+  removedProviders: readonly string[];
+  changedFieldPaths: string[];
+  configChanged: boolean;
+}
 
 function getLogger(logger: LoggerLike | undefined): LoggerLike | undefined {
   return logger?.child({ module: "daemon-config-store" });
@@ -161,7 +172,9 @@ export class DaemonConfigStore {
   private readonly paseoHome: string;
   private readonly logger: LoggerLike | undefined;
   private readonly changeListeners = new Set<ConfigListener>();
+  private readonly beforeChangeListeners = new Set<AsyncConfigListener>();
   private readonly fieldChangeHandlers = new Map<string, Set<FieldChangeHandler>>();
+  private asyncPatchTail = Promise.resolve();
 
   constructor(paseoHome: string, initial: MutableDaemonConfig, logger?: LoggerLike) {
     this.paseoHome = paseoHome;
@@ -174,6 +187,62 @@ export class DaemonConfigStore {
   }
 
   public patch(partial: MutableDaemonConfigPatch): MutableDaemonConfig {
+    const prepared = this.preparePatch(partial);
+    const { next, removedProviders, configChanged } = prepared;
+
+    if (!configChanged && removedProviders.length === 0) {
+      return this.current;
+    }
+
+    // Persist before updating in-memory state so that if persistence fails,
+    // runtime and disk stay consistent.
+    this.persistConfig(next, removedProviders);
+    if (!configChanged) {
+      return this.current;
+    }
+
+    this.commitPatch(prepared);
+    return next;
+  }
+
+  public patchAsync(partial: MutableDaemonConfigPatch): Promise<MutableDaemonConfig> {
+    const operation = this.asyncPatchTail.then(async () => await this.applyAsyncPatch(partial));
+    this.asyncPatchTail = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
+  }
+
+  private async applyAsyncPatch(partial: MutableDaemonConfigPatch): Promise<MutableDaemonConfig> {
+    const prepared = this.preparePatch(partial);
+    const { next, removedProviders, configChanged } = prepared;
+
+    if (!configChanged && removedProviders.length === 0) {
+      return this.current;
+    }
+
+    const previousPersistedConfig = loadPersistedConfig(this.paseoHome, this.logger);
+    this.persistConfig(next, removedProviders, previousPersistedConfig);
+    if (!configChanged) {
+      return this.current;
+    }
+
+    try {
+      const details: DaemonConfigChangeDetails = { removedProviders };
+      for (const listener of this.beforeChangeListeners) {
+        await listener(next, details);
+      }
+    } catch (error) {
+      savePersistedConfig(this.paseoHome, previousPersistedConfig, this.logger);
+      throw error;
+    }
+
+    this.commitPatch(prepared);
+    return next;
+  }
+
+  private preparePatch(partial: MutableDaemonConfigPatch): PreparedConfigPatch {
     const parsedPatch = MutableDaemonConfigPatchSchema.parse(partial);
     const { removeProviders = [], ...configPatch } = parsedPatch;
     const removedProviders = Array.from(new Set(removeProviders));
@@ -190,17 +259,11 @@ export class DaemonConfigStore {
     });
     const configChanged = !isEqualValue(this.current, next);
 
-    if (!configChanged && removedProviders.length === 0) {
-      return this.current;
-    }
+    return { next, removedProviders, changedFieldPaths, configChanged };
+  }
 
-    // Persist before updating in-memory state so that if persistence fails,
-    // runtime and disk stay consistent.
-    this.persistConfig(next, removedProviders);
-    if (!configChanged) {
-      return this.current;
-    }
-
+  private commitPatch(prepared: PreparedConfigPatch): void {
+    const { next, removedProviders, changedFieldPaths } = prepared;
     this.current = next;
 
     for (const path of changedFieldPaths) {
@@ -218,8 +281,6 @@ export class DaemonConfigStore {
     for (const listener of this.changeListeners) {
       listener(next, changeDetails);
     }
-
-    return next;
   }
 
   public onFieldChange(path: string, handler: FieldChangeHandler): () => void {
@@ -246,8 +307,18 @@ export class DaemonConfigStore {
     };
   }
 
-  private persistConfig(config: MutableDaemonConfig, removeProviders: readonly string[]): void {
-    const persisted = loadPersistedConfig(this.paseoHome, this.logger);
+  public onBeforeChange(listener: AsyncConfigListener): () => void {
+    this.beforeChangeListeners.add(listener);
+    return () => {
+      this.beforeChangeListeners.delete(listener);
+    };
+  }
+
+  private persistConfig(
+    config: MutableDaemonConfig,
+    removeProviders: readonly string[],
+    persisted = loadPersistedConfig(this.paseoHome, this.logger),
+  ): void {
     const nextPersisted = mergeMutableConfigIntoPersistedConfig({
       persisted,
       mutable: config,

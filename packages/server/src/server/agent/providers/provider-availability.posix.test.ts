@@ -47,7 +47,13 @@ function writeHangingProviderShim(dir: string, command: string, pidFile: string)
   const filePath = join(dir, command);
   writeFileSync(
     filePath,
-    `#!/bin/sh\necho $$ >> "${pidFile}"\ntrap '' TERM\nwhile :; do :; done\n`,
+    `#!/bin/sh
+trap '' TERM
+${JSON.stringify(process.execPath)} -e 'process.on("SIGTERM", () => {}); setInterval(() => {}, 10000)' &
+child=$!
+echo "$$ $child" >> "${pidFile}"
+wait "$child"
+`,
   );
   chmodSync(filePath, 0o755);
   return filePath;
@@ -55,7 +61,17 @@ function writeHangingProviderShim(dir: string, command: string, pidFile: string)
 
 function readProbePids(pidFile: string): number[] {
   if (!existsSync(pidFile)) return [];
-  return readFileSync(pidFile, "utf8").trim().split("\n").filter(Boolean).map(Number);
+  const rawPids = readFileSync(pidFile, "utf8").trim().split(/\s+/).filter(Boolean);
+  return rawPids.map((rawPid) => {
+    if (!/^\d+$/.test(rawPid)) {
+      throw new Error(`Invalid probe PID fixture contents: ${JSON.stringify(rawPid)}`);
+    }
+    const pid = Number(rawPid);
+    if (!Number.isSafeInteger(pid) || pid <= 0) {
+      throw new Error(`Invalid probe PID fixture value: ${rawPid}`);
+    }
+    return pid;
+  });
 }
 
 async function expectProcessExited(pid: number): Promise<void> {
@@ -109,14 +125,18 @@ describe.skipIf(isPlatform("win32"))("provider-availability POSIX-only", () => {
     for (let index = 1; index <= 3; index += 1) {
       const controller = new AbortController();
       const probe = client.isAvailable({ signal: controller.signal });
-      await vi.waitFor(() => expect(readProbePids(pidFile)).toHaveLength(index));
-      const pid = readProbePids(pidFile)[index - 1];
-      spawnedProbePids.add(pid);
+      await vi.waitFor(() => expect(readProbePids(pidFile)).toHaveLength(index * 2));
+      const pids = readProbePids(pidFile).slice((index - 1) * 2, index * 2);
+      for (const pid of pids) {
+        spawnedProbePids.add(pid);
+      }
 
       controller.abort(new Error(`stop executable probe ${index}`));
       await expect(probe).rejects.toThrow(`stop executable probe ${index}`);
-      await expectProcessExited(pid);
-      spawnedProbePids.delete(pid);
+      for (const pid of pids) {
+        await expectProcessExited(pid);
+        spawnedProbePids.delete(pid);
+      }
     }
   });
 });

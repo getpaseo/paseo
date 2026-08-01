@@ -24,10 +24,6 @@ const CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindBoth: false,
 };
 
-function neverResolves<T>(): Promise<T> {
-  return new Promise<T>(() => {});
-}
-
 export class MockSlowProviderClient implements AgentClient {
   readonly provider: AgentProvider = MOCK_SLOW_PROVIDER_ID;
   readonly capabilities = CAPABILITIES;
@@ -36,14 +32,21 @@ export class MockSlowProviderClient implements AgentClient {
     return process.env.PASEO_ENABLE_MOCK_SLOW === "true";
   }
 
-  async fetchCatalog(_options: FetchCatalogOptions): Promise<ProviderCatalog> {
-    return neverResolves<ProviderCatalog>();
+  async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
+    return await new Promise<ProviderCatalog>((_resolve, reject) => {
+      const abort = () => reject(options.signal?.reason ?? new Error("Catalog fetch aborted"));
+      if (options.signal?.aborted) {
+        abort();
+      } else {
+        options.signal?.addEventListener("abort", abort, { once: true });
+      }
+    });
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
     return {
       diagnostic:
-        "Mock slow provider: dev-only. fetchCatalog() never resolves so the snapshot manager will time out.",
+        "Mock slow provider: dev-only. fetchCatalog() waits until the snapshot manager cancels it.",
     };
   }
 

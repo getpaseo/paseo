@@ -77,6 +77,7 @@ import {
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
 const PROVIDER_HEALTH_PROBE_TIMEOUT_MS = 3_000;
+const PROVIDER_HEALTH_CLEANUP_TIMEOUT_MS = 1_000;
 const PROVIDER_HEALTH_STALE_AFTER_MS = 30_000;
 const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: false,
@@ -228,6 +229,7 @@ interface ProviderAvailabilityProbe {
   generation: number;
   controller: AbortController;
   promise: Promise<ProviderAvailability>;
+  cleanup: Promise<void>;
 }
 
 function resolveProviderHealthOptions(options: AgentManagerOptions): {
@@ -620,6 +622,7 @@ export class AgentManager {
   private readonly providerHealthStaleAfterMs: number;
   private readonly providerHealthNow: () => number;
   private acceptingAgentRegistrations = true;
+  private acceptingProviderHealthChecks = true;
 
   constructor(options: AgentManagerOptions) {
     this.idFactory = options?.idFactory ?? (() => randomUUID());
@@ -650,7 +653,7 @@ export class AgentManager {
         this.notifyForegroundTurnWaiters(agentId, event);
       },
     });
-    this.updateProviderRegistry({
+    this.assignProviderRegistry({
       providerDefinitions: options.providerDefinitions ?? {},
       clients: options.clients ?? {},
     });
@@ -662,8 +665,8 @@ export class AgentManager {
   }
 
   registerClient(provider: AgentProvider, client: AgentClient): void {
-    this.clients.set(provider, client);
     this.invalidateProviderAvailability();
+    this.clients.set(provider, client);
   }
 
   updateProviderRegistry(input: {
@@ -671,6 +674,13 @@ export class AgentManager {
     clients: ProviderClientMap;
   }): void {
     this.invalidateProviderAvailability();
+    this.assignProviderRegistry(input);
+  }
+
+  private assignProviderRegistry(input: {
+    providerDefinitions: ProviderEnabledMap;
+    clients: ProviderClientMap;
+  }): void {
     this.providerEnabled.clear();
     for (const [provider, definition] of Object.entries(input.providerDefinitions)) {
       if (definition) {
@@ -704,6 +714,8 @@ export class AgentManager {
 
   prepareForShutdown(): void {
     this.acceptingAgentRegistrations = false;
+    this.acceptingProviderHealthChecks = false;
+    this.invalidateProviderAvailability();
   }
 
   setPaseoToolsEnabled(enabled: boolean): void {
@@ -3965,6 +3977,17 @@ export class AgentManager {
    */
   async flushForShutdown(): Promise<void> {
     await this.flushTasks({ includeAgentRegistrations: true });
+    await Promise.all(
+      Array.from(this.providerAvailabilityProbes.values(), async (probe) => {
+        await this.waitWithTimeout({
+          operation: probe.cleanup,
+          timeoutMs: PROVIDER_HEALTH_CLEANUP_TIMEOUT_MS,
+          onLateError: (error) => {
+            this.logger.warn({ err: error }, "Provider availability cleanup failed after shutdown");
+          },
+        });
+      }),
+    );
   }
 
   private async flushTasks(options: { includeAgentRegistrations: boolean }): Promise<void> {
@@ -4235,7 +4258,7 @@ export class AgentManager {
 
     const cached = this.providerAvailabilityCache.get(provider);
     if (!cached) {
-      if (startBackgroundCheck) {
+      if (startBackgroundCheck && this.acceptingProviderHealthChecks) {
         this.startProviderAvailabilityCheck(provider);
       }
       return {
@@ -4251,7 +4274,7 @@ export class AgentManager {
 
     const checkedAt = Date.parse(cached.checkedAt);
     if (this.providerHealthNow() - checkedAt >= this.providerHealthStaleAfterMs) {
-      if (startBackgroundCheck) {
+      if (startBackgroundCheck && this.acceptingProviderHealthChecks) {
         this.startProviderAvailabilityCheck(provider);
       }
       return { ...cached, status: "stale" };
@@ -4260,6 +4283,9 @@ export class AgentManager {
   }
 
   private startProviderAvailabilityCheck(provider: AgentProvider): void {
+    if (!this.acceptingProviderHealthChecks) {
+      return;
+    }
     void this.probeProviderAvailability(provider).catch((error) => {
       this.logger.warn(
         { err: error, provider },
@@ -4270,13 +4296,36 @@ export class AgentManager {
 
   private async probeProviderAvailability(provider: AgentProvider): Promise<ProviderAvailability> {
     const immediate = this.readProviderAvailability(provider, false);
+    if (!this.acceptingProviderHealthChecks) {
+      return immediate;
+    }
     if (immediate.error && immediate.checkedAt === null) {
       return immediate;
     }
 
-    const existing = this.providerAvailabilityProbes.get(provider);
-    if (existing?.generation === this.providerAvailabilityGeneration) {
-      return await existing.promise;
+    while (true) {
+      const existing = this.providerAvailabilityProbes.get(provider);
+      if (!existing) {
+        break;
+      }
+      if (existing.generation === this.providerAvailabilityGeneration) {
+        return await existing.promise;
+      }
+      existing.controller.abort(new Error("Provider availability generation invalidated"));
+      const cleanupResult = await this.waitWithTimeout({
+        operation: existing.cleanup,
+        timeoutMs: PROVIDER_HEALTH_CLEANUP_TIMEOUT_MS,
+      });
+      if (this.providerAvailabilityProbes.get(provider) === existing) {
+        if (cleanupResult === "timed_out") {
+          return this.readProviderAvailability(provider, false);
+        }
+        this.providerAvailabilityProbes.delete(provider);
+      }
+    }
+
+    if (!this.acceptingProviderHealthChecks) {
+      return this.readProviderAvailability(provider, false);
     }
 
     const client = this.clients.get(provider);
@@ -4295,13 +4344,27 @@ export class AgentManager {
         status: "checking" as const,
         checkedAt: null,
       }),
+      cleanup: Promise.resolve(),
     };
+    const providerWork = this.executeProviderAvailabilityProbe(
+      provider,
+      client,
+      generation,
+      controller,
+    );
+    probe.cleanup = providerWork.then(
+      () => undefined,
+      () => undefined,
+    );
     probe.promise = this.runProviderAvailabilityProbe(
       provider,
       client,
       generation,
       controller,
-    ).finally(() => {
+      providerWork,
+      probe.cleanup,
+    );
+    void probe.cleanup.finally(() => {
       if (this.providerAvailabilityProbes.get(provider) === probe) {
         this.providerAvailabilityProbes.delete(provider);
       }
@@ -4315,25 +4378,16 @@ export class AgentManager {
     client: AgentClient,
     generation: number,
     controller: AbortController,
+    providerWork: Promise<boolean | null>,
+    cleanup: Promise<void>,
   ): Promise<ProviderAvailability> {
-    // Status reads must be able to publish their cached/checking response before
-    // a provider implementation gets any opportunity to do synchronous work.
-    await new Promise<void>((resolveProbeStart) => setImmediate(resolveProbeStart));
-    if (
-      generation !== this.providerAvailabilityGeneration ||
-      this.clients.get(provider) !== client ||
-      this.providerEnabled.get(provider) === false
-    ) {
-      return this.readProviderAvailability(provider, false);
-    }
-
     let timer: ReturnType<typeof setTimeout> | null = null;
-    let rejectAborted!: (reason?: unknown) => void;
-    const aborted = new Promise<never>((_, reject) => {
-      rejectAborted = reject;
+    let resolveAborted!: (reason: unknown) => void;
+    const aborted = new Promise<unknown>((resolveAbort) => {
+      resolveAborted = resolveAbort;
     });
-    const rejectFromAbort = () => {
-      rejectAborted(
+    const resolveFromAbort = () => {
+      resolveAborted(
         controller.signal.reason instanceof Error
           ? controller.signal.reason
           : new Error("Provider availability check aborted"),
@@ -4342,9 +4396,9 @@ export class AgentManager {
     let result: CachedProviderAvailability;
     try {
       if (controller.signal.aborted) {
-        rejectFromAbort();
+        resolveFromAbort();
       } else {
-        controller.signal.addEventListener("abort", rejectFromAbort, { once: true });
+        controller.signal.addEventListener("abort", resolveFromAbort, { once: true });
       }
       timer = setTimeout(() => {
         controller.abort(
@@ -4354,10 +4408,30 @@ export class AgentManager {
         );
       }, this.providerHealthProbeTimeoutMs);
       timer.unref?.();
-      const available = await Promise.race([
-        Promise.resolve().then(() => client.isAvailable({ signal: controller.signal })),
-        aborted,
+      const outcome = await Promise.race([
+        providerWork.then(
+          (available) => ({ type: "result" as const, available }),
+          (error: unknown) => ({ type: "error" as const, error }),
+        ),
+        aborted.then((reason) => ({ type: "aborted" as const, reason })),
       ]);
+      if (outcome.type === "aborted") {
+        await this.waitWithTimeout({
+          operation: cleanup,
+          timeoutMs: PROVIDER_HEALTH_CLEANUP_TIMEOUT_MS,
+          onLateError: (error) => {
+            this.logger.warn({ err: error, provider }, "Provider availability cleanup failed");
+          },
+        });
+        throw outcome.reason;
+      }
+      if (outcome.type === "error") {
+        throw outcome.error;
+      }
+      if (outcome.available === null) {
+        return this.readProviderAvailability(provider, false);
+      }
+      const available = outcome.available;
       result = {
         provider,
         available,
@@ -4381,11 +4455,12 @@ export class AgentManager {
       if (timer) {
         clearTimeout(timer);
       }
-      controller.signal.removeEventListener("abort", rejectFromAbort);
+      controller.signal.removeEventListener("abort", resolveFromAbort);
     }
 
     if (
       generation !== this.providerAvailabilityGeneration ||
+      !this.acceptingProviderHealthChecks ||
       this.clients.get(provider) !== client ||
       this.providerEnabled.get(provider) === false
     ) {
@@ -4395,13 +4470,31 @@ export class AgentManager {
     return result;
   }
 
+  private async executeProviderAvailabilityProbe(
+    provider: AgentProvider,
+    client: AgentClient,
+    generation: number,
+    controller: AbortController,
+  ): Promise<boolean | null> {
+    // Status reads must be able to publish their cached/checking response before
+    // a provider implementation gets any opportunity to do synchronous work.
+    await new Promise<void>((resolveProbeStart) => setImmediate(resolveProbeStart));
+    if (
+      generation !== this.providerAvailabilityGeneration ||
+      this.clients.get(provider) !== client ||
+      this.providerEnabled.get(provider) === false
+    ) {
+      return null;
+    }
+    return await client.isAvailable({ signal: controller.signal });
+  }
+
   private invalidateProviderAvailability(): void {
     this.providerAvailabilityGeneration += 1;
     for (const probe of this.providerAvailabilityProbes.values()) {
       probe.controller.abort(new Error("Provider availability generation invalidated"));
     }
     this.providerAvailabilityCache.clear();
-    this.providerAvailabilityProbes.clear();
   }
 
   private async requireAvailableClient(options: { provider: AgentProvider }): Promise<AgentClient> {

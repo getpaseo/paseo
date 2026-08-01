@@ -1972,6 +1972,107 @@ test("provider registry invalidation aborts the old in-flight health generation"
   expect(oldClient.activeChecks).toBe(0);
 });
 
+test("provider registry invalidation waits for delayed probe cleanup before replacing it", async () => {
+  const started = deferred<void>();
+  let calls = 0;
+  let activeChecks = 0;
+  let maxActiveChecks = 0;
+  class DelayedCleanupClient extends TestAgentClient {
+    override async isAvailable(options?: { signal?: AbortSignal }): Promise<boolean> {
+      calls += 1;
+      activeChecks += 1;
+      maxActiveChecks = Math.max(maxActiveChecks, activeChecks);
+      if (calls === 1) {
+        started.resolve();
+      }
+      try {
+        if (calls > 1) {
+          return true;
+        }
+        return await new Promise<boolean>((_resolve, reject) => {
+          const abort = () => {
+            setTimeout(() => reject(options?.signal?.reason ?? new Error("aborted")), 100);
+          };
+          if (options?.signal?.aborted) {
+            abort();
+          } else {
+            options?.signal?.addEventListener("abort", abort, { once: true });
+          }
+        });
+      } finally {
+        activeChecks -= 1;
+      }
+    }
+  }
+  const client = new DelayedCleanupClient();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+
+  const oldResult = manager.getProviderAvailability("codex", { fresh: true });
+  await started.promise;
+  manager.updateProviderRegistry({
+    clients: { codex: client },
+    providerDefinitions: { codex: { enabled: true } },
+  });
+  const replacementResult = manager.getProviderAvailability("codex", { fresh: true });
+  const concurrentReplacementResult = manager.getProviderAvailability("codex", { fresh: true });
+
+  await expect(oldResult).resolves.toMatchObject({ status: "checking", checkedAt: null });
+  await expect(Promise.all([replacementResult, concurrentReplacementResult])).resolves.toEqual([
+    expect.objectContaining({ status: "available" }),
+    expect.objectContaining({ status: "available" }),
+  ]);
+  expect(calls).toBe(2);
+  expect(maxActiveChecks).toBe(1);
+  expect(activeChecks).toBe(0);
+});
+
+test("shutdown aborts and drains provider health checks before returning", async () => {
+  const started = deferred<void>();
+  const cleanupFinished = deferred<void>();
+  let activeChecks = 0;
+  let calls = 0;
+  class ShutdownAwareClient extends TestAgentClient {
+    override async isAvailable(options?: { signal?: AbortSignal }): Promise<boolean> {
+      calls += 1;
+      activeChecks += 1;
+      started.resolve();
+      try {
+        return await new Promise<boolean>((_resolve, reject) => {
+          const abort = () => {
+            setTimeout(() => {
+              cleanupFinished.resolve();
+              reject(options?.signal?.reason ?? new Error("aborted"));
+            }, 100);
+          };
+          if (options?.signal?.aborted) {
+            abort();
+          } else {
+            options?.signal?.addEventListener("abort", abort, { once: true });
+          }
+        });
+      } finally {
+        activeChecks -= 1;
+      }
+    }
+  }
+  const client = new ShutdownAwareClient();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+
+  const probe = manager.getProviderAvailability("codex", { fresh: true });
+  await started.promise;
+  manager.prepareForShutdown();
+  await manager.flushForShutdown();
+
+  await cleanupFinished.promise;
+  await expect(probe).resolves.toMatchObject({ status: "checking", checkedAt: null });
+  await expect(manager.getProviderAvailability("codex", { fresh: true })).resolves.toMatchObject({
+    status: "checking",
+    checkedAt: null,
+  });
+  expect(calls).toBe(1);
+  expect(activeChecks).toBe(0);
+});
+
 test("repeated fresh and stale health checks leave no provider work behind", async () => {
   let now = 0;
   class RepeatedAbortClient extends TestAgentClient {

@@ -1,4 +1,4 @@
-import { execFile, spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { extname } from "node:path";
 
 import { createExternalCommandProcessEnv, type ProcessEnvRecord } from "../server/paseo-env.js";
@@ -85,6 +85,7 @@ export async function execCommand(
   args: string[],
   options?: ExecCommandOptions,
 ): Promise<ExecCommandResult> {
+  validateExecCommandOptions(options);
   const { baseEnv, env, envOverlay } = options ?? {};
   const resolvedBaseEnv = env ?? baseEnv ?? process.env;
   const isWindows = process.platform === "win32";
@@ -103,60 +104,126 @@ export async function execCommand(
 
   options?.signal?.throwIfAborted();
   return await new Promise<ExecCommandResult>((resolve, reject) => {
-    let aborting = false;
+    let terminating = false;
     let settled = false;
-    const child = execFile(
-      resolvedCommand,
-      resolvedArgs,
-      {
-        cwd: options?.cwd,
-        env: childEnv,
-        encoding: options?.encoding ?? "utf8",
-        killSignal: options?.killSignal,
-        timeout: options?.timeout,
-        maxBuffer: options?.maxBuffer,
-        shell,
-        windowsHide: true,
-      },
-      (error, stdout, stderr) => {
-        if (aborting || settled) return;
-        settled = true;
-        options?.signal?.removeEventListener("abort", onAbort);
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve({ stdout: String(stdout), stderr: String(stderr) });
-      },
-    );
+    let timeout: NodeJS.Timeout | null = null;
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    let stdoutLength = 0;
+    let stderrLength = 0;
+    const maxBuffer = options?.maxBuffer ?? 1024 * 1024;
+    const child = spawn(resolvedCommand, resolvedArgs, {
+      cwd: options?.cwd,
+      env: childEnv,
+      shell,
+      detached: process.platform !== "win32",
+      windowsHide: true,
+    });
 
-    const onAbort = () => {
-      if (aborting || settled) return;
-      aborting = true;
+    const clearControlFlow = () => {
+      if (timeout) clearTimeout(timeout);
+      options?.signal?.removeEventListener("abort", onAbort);
+    };
+    const terminate = (reason: Error) => {
+      if (terminating || settled) return;
+      terminating = true;
+      clearControlFlow();
       void (async () => {
         try {
           await terminateAbortableCommand(child, options?.killSignal ?? "SIGTERM");
           if (settled) return;
           settled = true;
-          options?.signal?.removeEventListener("abort", onAbort);
-          reject(
-            options?.signal?.reason instanceof Error
-              ? options.signal.reason
-              : new Error("Command execution aborted"),
-          );
+          reject(reason);
         } catch (error: unknown) {
           if (settled) return;
           settled = true;
-          options?.signal?.removeEventListener("abort", onAbort);
           reject(error);
         }
       })();
     };
+    const onAbort = () => {
+      terminate(
+        options?.signal?.reason instanceof Error
+          ? options.signal.reason
+          : new Error("Command execution aborted"),
+      );
+    };
+    const collect = (target: Buffer[], chunk: Buffer, stream: "stdout" | "stderr") => {
+      if (terminating || settled) return;
+      target.push(chunk);
+      if (stream === "stdout") {
+        stdoutLength += chunk.length;
+      } else {
+        stderrLength += chunk.length;
+      }
+      if (stdoutLength > maxBuffer || stderrLength > maxBuffer) {
+        terminate(
+          Object.assign(new Error(`${stream} exceeded maxBuffer of ${maxBuffer} bytes`), {
+            code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+          }),
+        );
+      }
+    };
+    child.stdout?.on("data", (chunk: Buffer) => collect(stdout, chunk, "stdout"));
+    child.stderr?.on("data", (chunk: Buffer) => collect(stderr, chunk, "stderr"));
+    child.once("error", (error) => {
+      if (terminating || settled) return;
+      settled = true;
+      clearControlFlow();
+      reject(error);
+    });
+    child.once("close", (code, signal) => {
+      if (terminating || settled) return;
+      settled = true;
+      clearControlFlow();
+      const encoding = options?.encoding ?? "utf8";
+      const output = {
+        stdout: Buffer.concat(stdout).toString(encoding),
+        stderr: Buffer.concat(stderr).toString(encoding),
+      };
+      if (code === 0) {
+        resolve(output);
+        return;
+      }
+      reject(
+        Object.assign(new Error(`Command failed with exit code ${code ?? signal ?? "unknown"}`), {
+          code,
+          signal,
+          killed: child.killed,
+          ...output,
+        }),
+      );
+    });
     options?.signal?.addEventListener("abort", onAbort, { once: true });
     if (options?.signal?.aborted) {
       onAbort();
     }
+    if (options?.timeout !== undefined && options.timeout > 0 && !terminating) {
+      timeout = setTimeout(() => {
+        const error = Object.assign(
+          new Error(`Command execution timed out after ${options.timeout}ms`),
+          { killed: true },
+        );
+        terminate(error);
+      }, options.timeout);
+      timeout.unref?.();
+    }
   });
+}
+
+function validateExecCommandOptions(options: ExecCommandOptions | undefined): void {
+  if (
+    options?.timeout !== undefined &&
+    (!Number.isInteger(options.timeout) || options.timeout < 0 || options.timeout > 0xffff_ffff)
+  ) {
+    throw new RangeError(`timeout must be an unsigned 32-bit integer: ${options.timeout}`);
+  }
+  if (
+    options?.maxBuffer !== undefined &&
+    (Number.isNaN(options.maxBuffer) || options.maxBuffer < 0)
+  ) {
+    throw new RangeError(`maxBuffer must be a non-negative number: ${options.maxBuffer}`);
+  }
 }
 
 async function terminateAbortableCommand(
@@ -176,13 +243,65 @@ async function terminateAbortableCommand(
     return;
   }
 
-  const exitPromise = waitForChildExit(child);
-  signalChild(child, gracefulSignal);
-  if (await waitForChildExitOrTimeout(exitPromise, 1_000)) return;
+  const pid = child.pid;
+  if (typeof pid !== "number" || pid <= 0) {
+    signalChild(child, gracefulSignal);
+    await waitForChildExitOrTimeout(waitForChildExit(child), 1_000);
+    return;
+  }
 
-  signalChild(child, "SIGKILL");
-  if (!(await waitForChildExitOrTimeout(exitPromise, 1_000))) {
+  const exitPromise = waitForChildExit(child);
+  signalProcessGroup(pid, gracefulSignal);
+  if (
+    (await waitForProcessGroupExit(pid, 1_000)) &&
+    (await waitForChildExitOrTimeout(exitPromise, 1_000))
+  ) {
+    return;
+  }
+
+  signalProcessGroup(pid, "SIGKILL");
+  if (
+    !(await waitForProcessGroupExit(pid, 1_000)) ||
+    !(await waitForChildExitOrTimeout(exitPromise, 1_000))
+  ) {
     throw new Error("Timed out while terminating aborted command");
+  }
+}
+
+function signalProcessGroup(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, signal);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+      throw error;
+    }
+  }
+}
+
+async function waitForProcessGroupExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (isProcessGroupAlive(pid)) {
+    if (Date.now() >= deadline) {
+      return false;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
+  return true;
+}
+
+function isProcessGroupAlive(pid: number): boolean {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") {
+      return false;
+    }
+    if (code === "EPERM") {
+      return true;
+    }
+    throw error;
   }
 }
 

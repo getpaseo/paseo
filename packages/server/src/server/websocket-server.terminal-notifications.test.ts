@@ -133,6 +133,7 @@ function createServer(terminalManager: TerminalManager, workspaceRegistry?: Work
     })),
   };
   const daemonConfigStore = {
+    onBeforeChange: vi.fn(() => () => {}),
     onChange: vi.fn(() => () => {}),
   };
 

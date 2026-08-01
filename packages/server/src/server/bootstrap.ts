@@ -1604,6 +1604,7 @@ export async function createPaseoDaemon(
     scriptHealthMonitor.stop();
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();
+    await wsServer?.drainProviderConfigUpdates();
     agentManager.prepareForShutdown();
     await closeAllAgents(logger, agentManager);
     await agentManager.flushForShutdown().catch(() => undefined);
