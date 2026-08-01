@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Discord
+  - name: Product discussion on Discord
     url: https://discord.gg/jz8T2uahpH
-    about: Urgent or blocking issues, quick questions, sharing a video of a bug, or anything that's better as a chat.
+    about: Product discussion, including feature requests
+  - name: Product discussion on GitHub
+    url: https://github.com/getpaseo/paseo/discussions
+    about: Product discussion, including feature requests

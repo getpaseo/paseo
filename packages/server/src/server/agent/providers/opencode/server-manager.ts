@@ -67,6 +67,7 @@ export type OpenCodeServerProcessSpawner = (
 
 export interface OpenCodeServerManagerOptions {
   logger: Logger;
+  baseEnv?: SpawnProcessOptions["baseEnv"];
   runtimeSettings?: ProviderRuntimeSettings;
   managedProcesses?: ManagedProcessRegistry;
   terminateProcess?: ProcessTerminator;
@@ -90,6 +91,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private shutdownPromise: Promise<void> | null = null;
   private readonly shutdownController = new AbortController();
   private readonly logger: Logger;
+  private readonly baseEnv?: SpawnProcessOptions["baseEnv"];
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly runtimeSettingsKey: string;
   private readonly managedProcesses?: ManagedProcessRegistry;
@@ -101,6 +103,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
 
   constructor(options: OpenCodeServerManagerOptions) {
     this.logger = options.logger;
+    this.baseEnv = options.baseEnv;
     this.runtimeSettings = options.runtimeSettings;
     this.runtimeSettingsKey = JSON.stringify(this.runtimeSettings ?? {});
     this.managedProcesses = options.managedProcesses;
@@ -402,6 +405,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
       ...createProviderEnvSpec({
+        baseEnv: this.baseEnv,
         runtimeSettings: this.runtimeSettings,
         overlays: [launchEnv],
       }),

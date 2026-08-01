@@ -4,6 +4,8 @@ import { expect, type Page } from "@playwright/test";
 import type { WebSocketRoute } from "@playwright/test";
 import { gotoAppShell, openSettings } from "./app";
 import { daemonWsRoutePattern } from "./daemon-port";
+import { getServerId } from "./server-id";
+import { buildProjectsSettingsRoute } from "@/utils/host-routes";
 
 type WebSocketMessage = string | Buffer;
 
@@ -33,8 +35,8 @@ function getSessionMessage(message: WebSocketMessage): Record<string, unknown> |
 export async function openProjects(page: Page): Promise<void> {
   await gotoAppShell(page);
   await openSettings(page);
-  await page.getByTestId("settings-projects").click();
-  await expect(page).toHaveURL(/\/settings\/projects$/);
+  await page.getByRole("button", { name: "Projects", exact: true }).click();
+  await expect(page).toHaveURL(buildProjectsSettingsRoute(getServerId()));
 }
 
 export async function openProjectSettings(page: Page, projectName: string): Promise<void> {
@@ -48,6 +50,21 @@ export async function navigateToProjectSettings(page: Page, projectName: string)
   await page.getByRole("button", { name: `Edit ${projectName}`, exact: true }).click();
 }
 
+export async function returnToProjectsList(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Back to projects", exact: true }).click();
+  await expect(page).toHaveURL(buildProjectsSettingsRoute(getServerId()));
+}
+
+export async function expectProjectSettingsHistoryRoundTrip(
+  page: Page,
+  projectName: string,
+): Promise<void> {
+  await page.goBack();
+  await expect(page).toHaveURL(buildProjectsSettingsRoute(getServerId()));
+  await page.goForward();
+  await expectProjectTitle(page, projectName);
+}
+
 // --- Form interactions ---
 
 export async function editWorktreeSetup(page: Page, setupCommands: string[]): Promise<void> {
@@ -57,7 +74,7 @@ export async function editWorktreeSetup(page: Page, setupCommands: string[]): Pr
 }
 
 export async function clickSaveProjectSettings(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Save" }).click();
+  await page.getByTestId("save-button").click();
 }
 
 export async function clickRetryProjectSettingsSave(page: Page): Promise<void> {
@@ -70,6 +87,61 @@ export async function clickReloadProjectSettings(page: Page): Promise<void> {
   // Scope to the active error callout so the locator is unambiguous.
   // At most one error callout renders at a time.
   await page.locator('[data-testid$="-callout"]').getByRole("button", { name: "Reload" }).click();
+}
+
+// --- Project edit sheet (name + icon) ---
+
+export async function openProjectEditSheet(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Edit project", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Project name" })).toBeVisible();
+}
+
+export async function fillProjectName(page: Page, name: string): Promise<void> {
+  await page.getByRole("textbox", { name: "Project name" }).fill(name);
+}
+
+export async function chooseProjectIconImage(
+  page: Page,
+  file: { name: string; mimeType: string; buffer: Buffer },
+): Promise<void> {
+  const chooserPromise = page.waitForEvent("filechooser", { timeout: 10_000 });
+  await page.getByRole("button", { name: "Choose image" }).click();
+  await (await chooserPromise).setFiles([file]);
+  await expect(page.getByText(file.name, { exact: true })).toBeVisible();
+}
+
+export async function fillProjectIconUrl(page: Page, url: string): Promise<void> {
+  await page.getByRole("textbox", { name: "Image or website URL" }).fill(url);
+}
+
+export async function useAutomaticProjectIcon(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Use automatic" }).click();
+}
+
+export async function saveProjectEdits(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Save changes" }).click();
+}
+
+export async function expectProjectEditName(page: Page, name: string): Promise<void> {
+  await expect(page.getByRole("textbox", { name: "Project name" })).toHaveValue(name);
+}
+
+export async function expectProjectEditsSaveDisabled(page: Page): Promise<void> {
+  await expect(page.getByRole("button", { name: "Save changes" })).toBeDisabled();
+}
+
+export async function expectProjectEditSaved(page: Page): Promise<void> {
+  await expect(page.getByTestId("app-toast-message")).toHaveText("Project updated");
+}
+
+// The sheet keeps the user's input on a failed save so the value stays editable.
+export async function expectProjectEditFailed(page: Page, detail: string): Promise<void> {
+  await expect(page.getByText(detail, { exact: true })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Project name" })).toBeVisible();
+}
+
+export async function expectProjectTitle(page: Page, projectName: string): Promise<void> {
+  await expect(page.getByRole("main").getByText(projectName, { exact: true })).toBeVisible();
 }
 
 // --- Error-state assertions ---
@@ -102,7 +174,7 @@ export async function expectWriteFailedCalloutActions(page: Page): Promise<void>
 }
 
 export async function expectSaveButtonDisabled(page: Page): Promise<void> {
-  await expect(page.getByRole("button", { name: "Save" })).toBeDisabled();
+  await expect(page.getByTestId("save-button")).toBeDisabled();
 }
 
 // --- Form-state assertions ---
@@ -121,13 +193,8 @@ export async function expectNoEditableTarget(page: Page): Promise<void> {
   await expect(page.getByTestId("project-settings-back-button")).toBeVisible({ timeout: 30_000 });
 }
 
-// --- Host-section assertions ---
-
-export async function expectHostIndicatorVisible(page: Page): Promise<void> {
-  await expect(page.getByTestId("host-indicator")).toBeVisible();
-}
-
-export async function expectHostPickerHidden(page: Page): Promise<void> {
+export async function expectProjectHostContextHidden(page: Page): Promise<void> {
+  await expect(page.getByTestId("host-indicator")).not.toBeVisible();
   await expect(page.getByTestId("host-picker")).not.toBeVisible();
 }
 

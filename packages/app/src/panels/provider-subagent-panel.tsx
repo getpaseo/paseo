@@ -45,10 +45,14 @@ function useProviderSubagentDescriptor(
     (state) => state.sessions[context.serverId]?.agents.get(target.parentAgentId)?.provider,
   );
   const provider = descriptor?.provider ?? parentProvider ?? "agent";
-  const label = descriptor?.title?.trim() || descriptor?.description?.trim() || "Subagent";
+  // The task names the tab; the subagent type is supporting detail beside the provider.
+  const subagentType = descriptor?.title?.trim();
+  const label = descriptor?.description?.trim() || subagentType || "Subagent";
+  const providerLabel = `${formatProviderLabel(provider)} subagent`;
   return {
     label,
-    subtitle: `${formatProviderLabel(provider)} subagent`,
+    subtitle:
+      subagentType && subagentType !== label ? `${subagentType} · ${providerLabel}` : providerLabel,
     tooltip: label,
     titleState: descriptor ? "ready" : "loading",
     icon: getProviderIcon(provider),
