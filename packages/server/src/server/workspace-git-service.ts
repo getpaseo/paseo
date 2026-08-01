@@ -337,7 +337,7 @@ interface WorkspaceGitServiceOptions {
 interface WorkspaceGitTarget {
   cwd: string;
   listeners: Set<WorkspaceGitListener>;
-  watchers: FSWatcher[];
+  observationWatcherGeneration: WorkspaceGitWatcherGeneration | null;
   debounceTimer: NodeJS.Timeout | null;
   pendingDebounceRequest: WorkspaceGitRefreshRequest | null;
   selfHealTimer: NodeJS.Timeout | null;
@@ -361,6 +361,12 @@ interface WorkspaceGitTarget {
   observationSetupComplete: boolean;
   snapshotStale: boolean;
   closed: boolean;
+}
+
+interface WorkspaceGitWatcherGeneration {
+  watchers: FSWatcher[];
+  /** Mandatory reconciliation must start after this pre-install Git-read watermark. */
+  gitReadSequenceAtInstall: number;
 }
 
 interface RepoGitTarget {
@@ -954,7 +960,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const target: WorkspaceGitTarget = {
       cwd,
       listeners: new Set(),
-      watchers: [],
+      observationWatcherGeneration: null,
       debounceTimer: null,
       pendingDebounceRequest: null,
       selfHealTimer: null,
@@ -1046,13 +1052,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return;
     }
     target.repoGitRoot = repoGitRoot;
-    const installedWatcher = this.startWorkspaceWatchers(target, gitDir, repoGitRoot);
-    const watcherInstallGitReadSequence = target.gitReadSequence;
+    const watcherGeneration = this.ensureWorkspaceWatcherGeneration(target, gitDir, repoGitRoot);
     await this.ensureRepoTarget(target);
     if (!this.isActiveObservedWorkspaceTarget(target)) {
       return;
     }
-    if (!installedWatcher) {
+    if (!watcherGeneration) {
       target.observationSetupComplete = true;
       return;
     }
@@ -1063,7 +1068,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       includeForge: false,
       reason: "observation-installed",
       notify: true,
-      afterGitReadSequence: watcherInstallGitReadSequence,
+      afterGitReadSequence: watcherGeneration.gitReadSequenceAtInstall,
       forceEmit: false,
     });
     if (this.isActiveObservedWorkspaceTarget(target)) {
@@ -1218,12 +1223,16 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     return gitDir;
   }
 
-  private startWorkspaceWatchers(
+  private ensureWorkspaceWatcherGeneration(
     target: WorkspaceGitTarget,
     gitDir: string,
     repoGitRoot: string,
-  ): boolean {
-    let installedWatcher = false;
+  ): WorkspaceGitWatcherGeneration | null {
+    if (target.observationWatcherGeneration) {
+      return target.observationWatcherGeneration;
+    }
+
+    const watchers: FSWatcher[] = [];
     for (const watchPath of new Set([join(gitDir, "HEAD"), join(repoGitRoot, "refs", "heads")])) {
       let watcher: FSWatcher | null = null;
       try {
@@ -1244,10 +1253,18 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       watcher.on("error", (error) => {
         this.logger.warn({ err: error, cwd: target.cwd, watchPath }, "Workspace git watcher error");
       });
-      target.watchers.push(watcher);
-      installedWatcher = true;
+      watchers.push(watcher);
     }
-    return installedWatcher;
+    if (watchers.length === 0) {
+      return null;
+    }
+
+    const generation = {
+      watchers,
+      gitReadSequenceAtInstall: target.gitReadSequence,
+    };
+    target.observationWatcherGeneration = generation;
+    return generation;
   }
 
   private async ensureRepoTarget(workspaceTarget: WorkspaceGitTarget): Promise<void> {
@@ -2349,10 +2366,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
     this.stopForgePrStatusPollForTarget(target);
 
-    for (const watcher of target.watchers) {
+    const watcherGeneration = target.observationWatcherGeneration;
+    target.observationWatcherGeneration = null;
+    for (const watcher of watcherGeneration?.watchers ?? []) {
       watcher.close();
     }
-    target.watchers = [];
     target.listeners.clear();
   }
 

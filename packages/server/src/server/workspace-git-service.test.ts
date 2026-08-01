@@ -862,6 +862,150 @@ describe("WorkspaceGitServiceImpl", () => {
     service.dispose();
   });
 
+  test("reuses one watcher generation across failed post-install reconciliation retries", async () => {
+    let failGitReads = false;
+    const watcherRegistrations: Array<{
+      path: string;
+      callback: () => void;
+      close: ReturnType<typeof vi.fn>;
+    }> = [];
+    const watch = vi.fn((watchPath: string, _options: unknown, callback: () => void) => {
+      const registration = {
+        path: watchPath,
+        callback,
+        close: vi.fn(),
+      };
+      watcherRegistrations.push(registration);
+      return {
+        close: registration.close,
+        on: vi.fn().mockReturnThis(),
+      } as unknown as FSWatcher;
+    }) as unknown as typeof import("node:fs").watch;
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
+      ...createCheckoutSnapshotFacts(cwd),
+      remoteUrl: null,
+    }));
+    const getCheckoutStatus = vi.fn(async (cwd: string) => {
+      if (failGitReads) {
+        throw new Error("persistent post-install git read failure");
+      }
+      return createCheckoutStatus(cwd, {
+        currentBranch: getCheckoutStatus.mock.calls.length === 1 ? "main" : "recovered",
+        hasRemote: false,
+        remoteUrl: null,
+      });
+    });
+    const service = createService({
+      getCheckoutSnapshotFacts,
+      getCheckoutStatus,
+      watch,
+      now: () => new Date(Date.now()),
+    });
+
+    await service.getSnapshot(REPO_CWD);
+    failGitReads = true;
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+
+    await vi.waitFor(() => {
+      expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
+      expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+    });
+    expect(watch).toHaveBeenCalledTimes(2);
+    expect(
+      watcherRegistrations.filter((registration) => registration.close.mock.calls.length === 0),
+    ).toHaveLength(2);
+    expect(service.isSnapshotStale(REPO_CWD)).toBe(true);
+
+    for (let retry = 0; retry < 2; retry += 1) {
+      const readsBeforeRetry = getCheckoutStatus.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.waitFor(() => {
+        expect(getCheckoutStatus.mock.calls.length).toBeGreaterThan(readsBeforeRetry);
+        expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+      });
+      expect(watch).toHaveBeenCalledTimes(2);
+      expect(
+        watcherRegistrations.filter((registration) => registration.close.mock.calls.length === 0),
+      ).toHaveLength(2);
+      expect(service.isSnapshotStale(REPO_CWD)).toBe(true);
+    }
+
+    failGitReads = false;
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.waitFor(() => {
+      expect(service.peekSnapshot(REPO_CWD)?.git.currentBranch).toBe("recovered");
+      expect(service.isSnapshotStale(REPO_CWD)).toBe(false);
+      expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+    });
+    expect(watch).toHaveBeenCalledTimes(2);
+    expect(
+      watcherRegistrations.filter((registration) => registration.close.mock.calls.length === 0),
+    ).toHaveLength(2);
+
+    const readsAfterRecovery = getCheckoutStatus.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.waitFor(() => {
+      expect(getCheckoutStatus).toHaveBeenCalledTimes(readsAfterRecovery + 1);
+    });
+    expect(watch).toHaveBeenCalledTimes(2);
+
+    const headCallbacks = watcherRegistrations.filter(
+      (registration) =>
+        registration.close.mock.calls.length === 0 &&
+        registration.path === join(REPO_CWD, ".git", "HEAD"),
+    );
+    expect(headCallbacks).toHaveLength(1);
+    const readsBeforeWatcherEvent = getCheckoutStatus.mock.calls.length;
+    for (const registration of headCallbacks) {
+      registration.callback();
+    }
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => {
+      expect(getCheckoutStatus).toHaveBeenCalledTimes(readsBeforeWatcherEvent + 1);
+    });
+
+    subscription.unsubscribe();
+    expect(
+      watcherRegistrations.every((registration) => registration.close.mock.calls.length === 1),
+    ).toBe(true);
+    service.dispose();
+  });
+
+  test("dispose owns watcher generation while post-install reconciliation settles late", async () => {
+    const postInstallRead = createDeferred<CheckoutStatusGit>();
+    const watchers = [createWatcher(), createWatcher()];
+    const watch = vi.fn().mockReturnValueOnce(watchers[0]).mockReturnValueOnce(watchers[1]);
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
+      ...createCheckoutSnapshotFacts(cwd),
+      remoteUrl: null,
+    }));
+    const getCheckoutStatus = vi
+      .fn<(cwd: string) => Promise<CheckoutStatusGit>>()
+      .mockImplementationOnce(async (cwd) =>
+        createCheckoutStatus(cwd, { hasRemote: false, remoteUrl: null }),
+      )
+      .mockImplementationOnce(async () => postInstallRead.promise);
+    const service = createService({ getCheckoutSnapshotFacts, getCheckoutStatus, watch });
+
+    await service.getSnapshot(REPO_CWD);
+    service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    await vi.waitFor(() => {
+      expect(watch).toHaveBeenCalledTimes(2);
+      expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
+    });
+
+    service.dispose();
+    expect(watchers[0].close).toHaveBeenCalledTimes(1);
+    expect(watchers[1].close).toHaveBeenCalledTimes(1);
+
+    postInstallRead.reject(new Error("late post-install git read failure"));
+    await flushPromises();
+
+    expect(watch).toHaveBeenCalledTimes(2);
+    expect(watchers[0].close).toHaveBeenCalledTimes(1);
+    expect(watchers[1].close).toHaveBeenCalledTimes(1);
+  });
+
   test("dispose rejects refresh admission and clears queued refresh and observation work", async () => {
     const refreshGate = createDeferred<void>();
     const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => {
