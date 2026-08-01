@@ -11,12 +11,14 @@
     "upstreamMainCommit": "70ed70d36e2eabd3876a22931954319ec202c902",
     "mergeCommit": "e5e5d607ea8e14dd874c3db4ce095634a9da7092",
     "mergeTree": "529add05cfc1424c287d576f27d8194f37503c35",
+    "headCommit": "551bdd371d82171177387e32ec5ca0278135050b",
+    "headTree": "7f0eda65ef47fafa3e1adacb08caa8d1000bcd47",
     "firstParent": "bfdb6ed4a8668e05826effd3f8b1a18dbf74c9b2",
     "secondParent": "70ed70d36e2eabd3876a22931954319ec202c902"
   },
   "verification": {
-    "commit": "e5e5d607ea8e14dd874c3db4ce095634a9da7092",
-    "completedAt": "2026-08-01T00:39:55Z",
+    "commit": "551bdd371d82171177387e32ec5ca0278135050b",
+    "completedAt": "2026-08-01T00:42:37Z",
     "commands": [
       "npm run build --workspace packages/protocol",
       "cd packages/server && npx vitest run src/server/agent/create-agent-lifecycle-dispatch.test.ts src/server/agent/create-agent/create.test.ts src/server/agent/mcp-server.test.ts src/server/session.workspace-git-watch.test.ts src/server/session.workspaces.test.ts",
@@ -26,11 +28,12 @@
       "npm run typecheck --workspace packages/server",
       "npm run typecheck --workspace packages/protocol",
       "npm run lint -- --deny-warnings",
+      "cd packages/server && npx vitest run src/server/worktree-session.test.ts",
       "npx oxfmt --check <lifecycle sources, tests, manifests, and conflict resolution>",
       "git diff --cached --check -- packages/server/src/utils/worktree-metadata.ts"
     ],
     "result": {
-      "focusedAndBroadServerTests": "526 passed, 6 skipped",
+      "focusedAndBroadServerTests": "526 passed, 6 skipped; final archive-response suite 31 passed",
       "protocolTests": "470 passed",
       "serverBuild": "passed",
       "serverAndProtocolTypechecks": "passed",

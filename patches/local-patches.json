@@ -47,6 +47,7 @@
         "existing-workspace agent and terminal attachment are fenced against archive",
         "MCP worktree creation releases setup reservations on every pre-agent failure",
         "archive failures propagate through command, websocket, MCP, and normal session surfaces",
+        "workspace archive by unresolved path fails instead of reporting a successful no-op",
         "normal archive responses require the persisted archived timestamp",
         "failed physical cleanup remains retryable after the workspace record is archived",
         "replacement worktree incarnations archive independently of stale cleanup intents",
@@ -77,6 +78,10 @@
           "lint": "0 warnings, 0 errors",
           "formatDiffAndManifest": "passed"
         }
+      },
+      "currentMainIntegration": {
+        "upstreamMainCommit": "70ed70d36e2eabd3876a22931954319ec202c902",
+        "receipt": "patches/receipts/paseo-v025-worktree-lifecycle-current-main.json"
       },
       "upstreamable": true,
       "upstreamCondition": "Submit independently while worktree setup, ownership attachment, archive, cleanup retry, and auto-archive are not coordinated by one durable lifecycle boundary.",
