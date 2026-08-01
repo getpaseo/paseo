@@ -44,19 +44,36 @@ export async function resolveWorktreeRepositoryIdentity(
     return { projectId: project.projectId, repoRoot };
   }
 
+  const projects = (await projectRegistry.list()).filter(
+    (candidate) => candidate.archivedAt === null,
+  );
+  const lexicalMatches = projects.filter((candidate) => candidate.rootPath === input.repoRoot);
+  if (lexicalMatches.length === 1) {
+    const matchingProject = lexicalMatches[0]!;
+    const repoRoot = canonicalizeExistingRoot(matchingProject.rootPath);
+    if (!repoRoot) {
+      throw new Error(`Project root is unavailable: ${matchingProject.rootPath}`);
+    }
+    return { projectId: matchingProject.projectId, repoRoot };
+  }
+  if (lexicalMatches.length > 1) {
+    throw new Error("repoRoot identifies multiple active daemon projects; specify projectId");
+  }
+
   const requestedRoot = canonicalizeExistingRoot(input.repoRoot!);
   if (!requestedRoot) {
     throw new Error("repoRoot must be an existing absolute path on the daemon host");
   }
-  const projects = await projectRegistry.list();
-  const matchingProject = projects.find(
-    (candidate) =>
-      candidate.archivedAt === null &&
-      canonicalizeExistingRoot(candidate.rootPath) === requestedRoot,
+  const canonicalMatches = projects.filter(
+    (candidate) => canonicalizeExistingRoot(candidate.rootPath) === requestedRoot,
   );
-  if (!matchingProject) {
+  if (canonicalMatches.length === 0) {
     throw new Error("repoRoot does not identify an active daemon project");
   }
+  if (canonicalMatches.length > 1) {
+    throw new Error("repoRoot identifies multiple active daemon projects; specify projectId");
+  }
+  const matchingProject = canonicalMatches[0]!;
   return { projectId: matchingProject.projectId, repoRoot: requestedRoot };
 }
 

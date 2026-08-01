@@ -4,6 +4,7 @@ import type { CommandError } from "../../output/index.js";
 export interface WorktreeRepositoryOptions {
   project?: string;
   repoRoot?: string;
+  host?: string;
 }
 
 export interface WorktreeRepositoryIdentity {
@@ -23,6 +24,14 @@ export function resolveWorktreeRepositoryIdentity(
   }
   if (options.project) return { projectId: options.project };
   if (options.repoRoot) return { repoRoot: options.repoRoot };
+
+  // A caller-supplied endpoint does not prove that its filesystem is local.
+  if (options.host) {
+    throw commandError(
+      "REPOSITORY_IDENTITY_REQUIRED",
+      "Specify --project or --repo-root when using --host",
+    );
+  }
 
   const daemonHostname = client.getLastServerInfoMessage()?.hostname;
   if (daemonHostname && daemonHostname === hostname()) {

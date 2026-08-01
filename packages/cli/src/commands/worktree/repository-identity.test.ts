@@ -21,6 +21,15 @@ describe("resolveWorktreeRepositoryIdentity", () => {
     }).toThrow(expect.objectContaining({ code: "REPOSITORY_IDENTITY_REQUIRED" }));
   });
 
+  test("does not infer the caller cwd for an explicit remote host with the same hostname", () => {
+    expect(() => {
+      resolveWorktreeRepositoryIdentity(
+        { host: "remote.example" },
+        { getLastServerInfoMessage: () => ({ hostname: hostname() }) },
+      );
+    }).toThrow(expect.objectContaining({ code: "REPOSITORY_IDENTITY_REQUIRED" }));
+  });
+
   test("defaults to the local cwd only after same-host proof", () => {
     const identity = resolveWorktreeRepositoryIdentity(
       {},
