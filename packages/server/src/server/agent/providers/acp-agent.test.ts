@@ -1234,7 +1234,7 @@ describe("ACPAgentSession Zed parity", () => {
     });
   });
 
-  test("preserves ACP permission requests when the selected action conflicts with its behavior", async () => {
+  test("preserves ACP permission requests after invalid selected actions", async () => {
     const session = createSessionWithConfig({ provider: "generic-acp" });
     const events: AgentStreamEvent[] = [];
 
@@ -1261,6 +1261,14 @@ describe("ACPAgentSession Zed parity", () => {
     if (requested?.type !== "permission_requested") {
       throw new Error("Expected permission request");
     }
+
+    await expect(
+      session.respondToPermission(requested.request.id, {
+        behavior: "allow",
+        selectedActionId: "",
+      }),
+    ).rejects.toThrow("does not exist");
+    expect(session.getPendingPermissions()).toHaveLength(1);
 
     await expect(
       session.respondToPermission(requested.request.id, {

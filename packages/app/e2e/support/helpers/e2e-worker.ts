@@ -118,9 +118,9 @@ async function applyMetadataFork(targetHome: string): Promise<void> {
   process.env.E2E_FORK_COPIED_FILES = String(result.copiedFiles);
   process.env.E2E_FORK_COPIED_BYTES = String(result.copiedBytes);
 
-  const providerIds = (process.env.E2E_FORK_PROVIDERS ?? "")
+  const providerIds: string[] = (process.env.E2E_FORK_PROVIDERS ?? "")
     .split(",")
-    .map((providerId) => providerId.trim())
+    .map((providerId: string) => providerId.trim())
     .filter(Boolean);
   if (providerIds.length === 0) return;
 
@@ -129,7 +129,7 @@ async function applyMetadataFork(targetHome: string): Promise<void> {
   );
   const sourceProviders = sourceConfig.agents?.providers ?? {};
   const providers = Object.fromEntries(
-    providerIds.map((providerId) => {
+    providerIds.map((providerId: string) => {
       const provider = sourceProviders[providerId];
       if (!provider) {
         throw new Error(`E2E provider '${providerId}' is not configured in ${result.sourceHome}`);

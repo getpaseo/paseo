@@ -2054,7 +2054,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     const selectedOption = selectPermissionOption(pending.options, response);
-    if (response.selectedActionId && !selectedOption) {
+    if (response.selectedActionId !== undefined && !selectedOption) {
       throw new Error(
         `ACP permission action '${response.selectedActionId}' does not exist or does not match '${response.behavior}' behavior`,
       );
@@ -3483,7 +3483,7 @@ function selectPermissionOption(
   options: PermissionOption[],
   response: AgentPermissionResponse,
 ): PermissionOption | null {
-  if (response.selectedActionId) {
+  if (response.selectedActionId !== undefined) {
     const selectedOption = options.find((option) => option.optionId === response.selectedActionId);
     if (!selectedOption) return null;
     const selectedBehavior = selectedOption.kind.startsWith("allow") ? "allow" : "deny";
