@@ -174,7 +174,12 @@ class FakeTerminator {
 }
 
 function createSessionWithConfig(
-  config: { provider?: string; modeId?: string | null; model?: string | null } = {},
+  config: {
+    provider?: string;
+    modeId?: string | null;
+    model?: string | null;
+    featureValues?: Record<string, unknown>;
+  } = {},
   logger: ReturnType<typeof createTestLogger> = createTestLogger(),
 ): ACPAgentSession {
   return new ACPAgentSession(
@@ -183,6 +188,7 @@ function createSessionWithConfig(
       cwd: "/tmp/paseo-acp-test",
       modeId: config.modeId ?? undefined,
       model: config.model ?? undefined,
+      featureValues: config.featureValues,
     },
     {
       provider: config.provider ?? "claude-acp",
@@ -1152,6 +1158,90 @@ describe("ACPAgentSession Zed parity", () => {
     });
   });
 
+  test("auto-accepts ACP permission requests when the shared feature is enabled", async () => {
+    const session = createSessionWithConfig({
+      provider: "cursor-acp",
+      featureValues: { auto_accept: true },
+    });
+    const events: Array<{ type: string }> = [];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event as { type: string }));
+
+    await expect(
+      session.requestPermission({
+        sessionId: "session-1",
+        toolCall: {
+          toolCallId: "tool-1",
+          title: "Edit file",
+          kind: "edit",
+          status: "pending",
+        },
+        options: [
+          { optionId: "allow-once", name: "Allow", kind: "allow_once" },
+          { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+        ],
+      } satisfies RequestPermissionRequest),
+    ).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "allow-once" },
+    });
+    expect(events).not.toContainEqual(expect.objectContaining({ type: "permission_requested" }));
+    expect(session.getPendingPermissions()).toEqual([]);
+  });
+
+  test("starts auto-accepting permissions when the shared feature is toggled on", async () => {
+    const session = createSessionWithConfig({ provider: "generic-acp" });
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "session-1";
+    internals.connection = {};
+
+    await session.setFeature("auto_accept", true);
+
+    expect(session.features).toContainEqual(
+      expect.objectContaining({ type: "toggle", id: "auto_accept", value: true }),
+    );
+    await expect(
+      session.requestPermission({
+        sessionId: "session-1",
+        toolCall: {
+          toolCallId: "tool-1",
+          title: "Run command",
+          kind: "execute",
+          status: "pending",
+        },
+        options: [{ optionId: "allow-always", name: "Always allow", kind: "allow_always" }],
+      } satisfies RequestPermissionRequest),
+    ).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "allow-always" },
+    });
+  });
+
+  test("surfaces an ACP permission when auto-accept has no allow option", async () => {
+    const session = createSessionWithConfig({ featureValues: { auto_accept: true } });
+    const events: Array<{ type: string; request?: { id: string } }> = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event as { type: string; request?: { id: string } }));
+
+    const permission = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "tool-1",
+        title: "Unavailable approval",
+        kind: "other",
+        status: "pending",
+      },
+      options: [{ optionId: "reject-once", name: "Reject", kind: "reject_once" }],
+    } satisfies RequestPermissionRequest);
+    await Promise.resolve();
+
+    const requested = events.find((event) => event.type === "permission_requested");
+    expect(requested?.request?.id).toEqual(expect.any(String));
+    await session.respondToPermission(requested!.request!.id, { behavior: "deny" });
+    await expect(permission).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "reject-once" },
+    });
+  });
+
   test("maps Copilot Allow All mode to allow_all ACP config on session start", async () => {
     const setSessionConfigOption = vi.fn(async () => ({
       configOptions: [
@@ -1278,6 +1368,11 @@ describe("ACPAgentSession Zed parity", () => {
     internals.configOptions = [copilotAgentConfigOption("")];
 
     expect(session.features).toEqual([
+      expect.objectContaining({
+        type: "toggle",
+        id: "auto_accept",
+        value: false,
+      }),
       {
         type: "select",
         id: "agent",
@@ -1325,6 +1420,10 @@ describe("ACPAgentSession Zed parity", () => {
     });
     expect(session.features).toEqual([
       expect.objectContaining({
+        id: "auto_accept",
+        value: false,
+      }),
+      expect.objectContaining({
         id: "agent",
         value: "Probe Agent",
       }),
@@ -1349,6 +1448,10 @@ describe("ACPAgentSession Zed parity", () => {
       value: "Probe Agent",
     });
     expect(session.features).toEqual([
+      expect.objectContaining({
+        id: "auto_accept",
+        value: false,
+      }),
       expect.objectContaining({
         id: "agent",
         value: "Probe Agent",
@@ -1506,6 +1609,29 @@ describe("ACPAgentClient modelTransformer", () => {
 });
 
 describe("ACPAgentClient config features", () => {
+  test("exposes Auto Accept for every ACP provider without starting a probe", async () => {
+    const client = new ACPAgentClient({
+      provider: "generic-acp",
+      logger: createTestLogger(),
+      defaultCommand: ["generic-acp", "acp"],
+    });
+
+    await expect(
+      client.listFeatures({
+        provider: "generic-acp",
+        cwd: "/tmp/acp-features",
+        featureValues: { auto_accept: true },
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        type: "toggle",
+        id: "auto_accept",
+        label: "Auto Accept",
+        value: true,
+      }),
+    ]);
+  });
+
   test("derives features from configured ACP select options", async () => {
     class TestACPAgentClient extends ACPAgentClient {
       protected override async spawnProcess(): Promise<SpawnedACPProcess> {
@@ -1537,6 +1663,11 @@ describe("ACPAgentClient config features", () => {
         cwd: "/tmp/acp-features",
       }),
     ).resolves.toEqual([
+      expect.objectContaining({
+        type: "toggle",
+        id: "auto_accept",
+        value: false,
+      }),
       expect.objectContaining({
         type: "select",
         id: "agent",

@@ -584,6 +584,10 @@ When you launch an agent with an ACP provider:
 4. Paseo creates a session and sends prompts through the ACP protocol
 5. The agent streams responses, tool calls, and permission requests back over stdout
 
+Every ACP provider exposes an **Auto Accept** toggle. Enable it per session to let Paseo approve
+ACP permission requests without surfacing each prompt. If the provider sends no allow option,
+Paseo leaves the request for you to answer.
+
 Models and modes are discovered dynamically at runtime from the agent process. If you want to override the model list (e.g., to curate which models appear in the UI), use the `models` field:
 
 ```json

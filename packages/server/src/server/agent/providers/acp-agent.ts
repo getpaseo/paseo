@@ -114,6 +114,8 @@ import {
 } from "./diagnostic-utils.js";
 import { withTimeout } from "../../../utils/promise-timeout.js";
 
+const ACP_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
+
 function assertChildWithPipes(
   child: ChildProcess,
 ): asserts child is ChildProcessWithoutNullStreams {
@@ -694,6 +696,22 @@ export function deriveFeaturesFromACP(
   });
 }
 
+function isACPAutoAcceptEnabled(config: AgentSessionConfig): boolean {
+  return config.featureValues?.[ACP_AUTO_ACCEPT_FEATURE_ID] === true;
+}
+
+function buildACPAutoAcceptFeature(config: AgentSessionConfig): AgentFeature {
+  return {
+    type: "toggle",
+    id: ACP_AUTO_ACCEPT_FEATURE_ID,
+    label: "Auto Accept",
+    description: "Automatically approves ACP permission prompts.",
+    tooltip: "Auto accept permission prompts",
+    icon: "shield-check",
+    value: isACPAutoAcceptEnabled(config),
+  };
+}
+
 export class ACPAgentClient implements AgentClient {
   readonly provider: string;
   readonly capabilities: AgentCapabilityFlags;
@@ -892,8 +910,9 @@ export class ACPAgentClient implements AgentClient {
   }
 
   async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+    const autoAcceptFeature = buildACPAutoAcceptFeature(config);
     if (this.configFeatureOptions.length === 0) {
-      return [];
+      return [autoAcceptFeature];
     }
 
     this.assertProvider(config);
@@ -906,7 +925,10 @@ export class ACPAgentClient implements AgentClient {
         }),
       );
       const transformed = this.transformSessionResponse(response);
-      return deriveFeaturesFromACP(transformed.configOptions, this.configFeatureOptions);
+      return [
+        autoAcceptFeature,
+        ...deriveFeaturesFromACP(transformed.configOptions, this.configFeatureOptions),
+      ];
     } finally {
       await this.closeProbe(probe);
     }
@@ -1562,7 +1584,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   get features(): AgentFeature[] {
-    return deriveFeaturesFromACP(this.configOptions, this.configFeatureOptions);
+    return [
+      buildACPAutoAcceptFeature(this.config),
+      ...deriveFeaturesFromACP(this.configOptions, this.configFeatureOptions),
+    ];
   }
 
   private ensureCommandsReadyDeferred(): void {
@@ -1902,6 +1927,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       throw new Error("ACP session not initialized");
     }
 
+    if (featureId === ACP_AUTO_ACCEPT_FEATURE_ID) {
+      this.config.featureValues = {
+        ...this.config.featureValues,
+        [ACP_AUTO_ACCEPT_FEATURE_ID]: value === true,
+      };
+      return;
+    }
+
     const featureOption = this.configFeatureOptions.find((option) => option.id === featureId);
     if (!featureOption) {
       throw new Error(`Unknown ${this.provider} feature: ${featureId}`);
@@ -2083,7 +2116,20 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
-    // Match Zed acp.rs:3189-3220: generic ACP permission requests stay pure pass-through.
+    if (isACPAutoAcceptEnabled(this.config)) {
+      const allowOption = selectPermissionOption(params.options, { behavior: "allow" });
+      if (allowOption) {
+        this.logger.info(
+          { toolCallId: params.toolCall.toolCallId, optionId: allowOption.optionId },
+          "Auto-accepting ACP permission request",
+        );
+        return {
+          outcome: { outcome: "selected", optionId: allowOption.optionId },
+        };
+      }
+    }
+
+    // Match Zed acp.rs:3189-3220 when Paseo is not handling the request locally.
     const requestId = randomUUID();
     let toolSnapshot =
       this.toolCalls.get(params.toolCall.toolCallId) ??
