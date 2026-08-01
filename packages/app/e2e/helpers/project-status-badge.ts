@@ -1,7 +1,7 @@
 import { expect, type Page } from "@playwright/test";
-import { gotoAppShell } from "./app";
-import { seedWorkspace, type SeededWorkspace } from "./seed-client";
-import { waitForSidebarHydration } from "./workspace-ui";
+import { gotoAppShell } from "../support/helpers/app";
+import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
+import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
 export interface StatusProject {
   seed: SeededWorkspace;
