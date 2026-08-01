@@ -126,6 +126,36 @@ console.log("=== CLI IPC Target Helpers ===\n");
 }
 
 {
+  console.log("Test 7b: an empty CLI host falls back to the configured remote target");
+  const paseoHome = mkdtempSync(path.join(os.tmpdir(), "paseo-client-targets-empty-host-"));
+  const previousHome = process.env.PASEO_HOME;
+  const previousHost = process.env.PASEO_HOST;
+  const previousListen = process.env.PASEO_LISTEN;
+  try {
+    process.env.PASEO_HOME = paseoHome;
+    process.env.PASEO_HOST = "ignored.example:6767";
+    process.env.PASEO_LISTEN = "remote-listen.example:6767";
+    assert.strictEqual(getDaemonHost({ host: "" }), "remote-listen.example:6767");
+
+    delete process.env.PASEO_LISTEN;
+    writeFileSync(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({ daemon: { listen: "remote-config.example:6767" } }),
+    );
+    assert.strictEqual(getDaemonHost({ host: "" }), "remote-config.example:6767");
+  } finally {
+    if (previousHome === undefined) delete process.env.PASEO_HOME;
+    else process.env.PASEO_HOME = previousHome;
+    if (previousHost === undefined) delete process.env.PASEO_HOST;
+    else process.env.PASEO_HOST = previousHost;
+    if (previousListen === undefined) delete process.env.PASEO_LISTEN;
+    else process.env.PASEO_LISTEN = previousListen;
+    rmSync(paseoHome, { recursive: true, force: true });
+  }
+  console.log("✓ an empty CLI host falls back to the configured remote target\n");
+}
+
+{
   console.log("Test 8: CLI app version resolves for daemon hello compatibility");
   assert.match(resolveCliVersion(), /^\d+\.\d+\.\d+/);
   console.log("✓ CLI app version resolves for daemon hello compatibility\n");

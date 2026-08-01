@@ -161,6 +161,36 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
+test("identifies only direct local daemon connections as local", () => {
+  const localUrls = [
+    "ws+unix:///tmp/paseo.sock:/ws",
+    "ws://localhost:6767/ws",
+    "ws://127.0.0.1:6767/ws",
+    "ws://127.0.0.2:6767/ws",
+    "ws://[::1]:6767/ws",
+    "ws://0.0.0.0:6767/ws",
+    "ws://[::]:6767/ws",
+  ];
+
+  for (const url of localUrls) {
+    expect(new DaemonClient({ url, clientId: `local_${url}` }).isLocalDaemonConnection()).toBe(
+      true,
+    );
+  }
+
+  const remoteUrls = [
+    "ws://daemon.example:6767/ws",
+    "ws://192.168.1.10:6767/ws",
+    "ws://127.0.0.1/ws?role=client&serverId=srv_relay",
+  ];
+
+  for (const url of remoteUrls) {
+    expect(new DaemonClient({ url, clientId: `remote_${url}` }).isLocalDaemonConnection()).toBe(
+      false,
+    );
+  }
+});
+
 test("does not infer browser automation capabilities from Electron runtime", async () => {
   vi.stubGlobal("navigator", {
     userAgent:

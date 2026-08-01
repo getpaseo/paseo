@@ -1177,6 +1177,29 @@ export class DaemonClient {
     }
   }
 
+  isLocalDaemonConnection(): boolean {
+    if (isRelayClientWebSocketUrl(this.config.url)) {
+      return false;
+    }
+
+    const parsed = new URL(this.config.url);
+    if (parsed.protocol === "ws+unix:") {
+      return true;
+    }
+
+    const host = parsed.hostname.toLowerCase();
+    return (
+      host === "localhost" ||
+      host.endsWith(".localhost") ||
+      /^127(?:\.\d{1,3}){3}$/.test(host) ||
+      host === "[::1]" ||
+      host === "::1" ||
+      host === "0.0.0.0" ||
+      host === "[::]" ||
+      host === "::"
+    );
+  }
+
   // ============================================================================
   // Connection
   // ============================================================================

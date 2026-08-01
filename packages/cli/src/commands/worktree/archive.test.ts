@@ -7,12 +7,17 @@ function createFakeDaemonClient(
   overrides: Partial<
     Pick<
       DaemonClient,
-      "getLastServerInfoMessage" | "getPaseoWorktreeList" | "archivePaseoWorktree" | "close"
+      | "getLastServerInfoMessage"
+      | "getPaseoWorktreeList"
+      | "archivePaseoWorktree"
+      | "close"
+      | "isLocalDaemonConnection"
     >
   > = {},
 ): DaemonClient {
   return {
     getLastServerInfoMessage: () => ({ hostname: hostname() }),
+    isLocalDaemonConnection: () => true,
     getPaseoWorktreeList: async () => ({
       worktrees: [],
       error: null,

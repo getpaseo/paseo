@@ -62,18 +62,24 @@ export interface WorktreeLsOptions extends CommandOptions {
 
 export async function runLsCommand(
   options: WorktreeLsOptions,
-  _command: Command,
+  command: Command,
 ): Promise<WorktreeLsResult> {
-  const host = getDaemonHost({ host: options.host });
+  return runLsCommandWithDeps(options, command, { connectToDaemon });
+}
 
+export async function runLsCommandWithDeps(
+  options: WorktreeLsOptions,
+  _command: Command,
+  deps: { connectToDaemon: typeof connectToDaemon },
+): Promise<WorktreeLsResult> {
   let client: DaemonClient;
   try {
-    client = await connectToDaemon({ host: options.host });
+    client = await deps.connectToDaemon({ host: options.host });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const error: CommandError = {
       code: "DAEMON_NOT_RUNNING",
-      message: `Cannot connect to daemon at ${host}: ${message}`,
+      message: `Cannot connect to daemon at ${getDaemonHost({ host: options.host })}: ${message}`,
       details: "Start the daemon with: paseo daemon start",
     };
     throw error;

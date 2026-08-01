@@ -27,17 +27,24 @@ function cmdError(code: string, message: string, details?: string): CommandError
 
 export async function runCreateCommand(
   options: WorktreeCreateOptions,
-  _command: Command,
+  command: Command,
 ): Promise<SingleResult<WorktreeCreateResult>> {
-  const host = getDaemonHost({ host: options.host });
+  return runCreateCommandWithDeps(options, command, { connectToDaemon });
+}
+
+export async function runCreateCommandWithDeps(
+  options: WorktreeCreateOptions,
+  _command: Command,
+  deps: { connectToDaemon: typeof connectToDaemon },
+): Promise<SingleResult<WorktreeCreateResult>> {
   let client: DaemonClient;
   try {
-    client = await connectToDaemon({ host: options.host });
+    client = await deps.connectToDaemon({ host: options.host });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw cmdError(
       "DAEMON_NOT_RUNNING",
-      `Cannot connect to daemon at ${host}: ${message}`,
+      `Cannot connect to daemon at ${getDaemonHost({ host: options.host })}: ${message}`,
       "Start the daemon with: paseo daemon start",
     );
   }
