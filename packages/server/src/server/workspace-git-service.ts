@@ -1,4 +1,4 @@
-import { watch, type FSWatcher } from "node:fs";
+import { realpathSync, watch, type FSWatcher } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { LRUCache } from "lru-cache";
@@ -6,7 +6,7 @@ import pLimit from "p-limit";
 import type pino from "pino";
 import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
-import type { CheckoutContext } from "../utils/checkout-git.js";
+import type { CheckoutContext, CheckoutRepositoryFactReader } from "../utils/checkout-git.js";
 import {
   type BranchCheckoutResolution,
   type BranchSuggestion,
@@ -59,6 +59,10 @@ const WORKSPACE_GIT_INTERNAL_MIN_GAP_MS = 2_000;
 const WORKSPACE_GIT_CHECKOUT_DIFF_CACHE_MAX = 64;
 // Small values (booleans, short strings, small arrays); generous cap.
 const WORKSPACE_GIT_AUXILIARY_CACHE_MAX = 256;
+const WORKSPACE_GIT_REPOSITORY_FACT_CACHE_MAX = 128;
+const WORKSPACE_GIT_REPOSITORY_FACTS_PER_REPOSITORY_MAX = 64;
+const WORKSPACE_GIT_REPOSITORY_CWD_CACHE_MAX = 512;
+const WORKSPACE_GIT_REPOSITORY_OPERATION_METRICS_MAX = 256;
 const WORKSPACE_GIT_FACTS_REUSE_TTL_MS = 1_000;
 const LINUX_WATCH_MAX_DIRS = 5_000;
 const LINUX_WATCH_REFRESH_COOLDOWN_MS = 2_000;
@@ -141,6 +145,7 @@ export interface WorkspaceGitService {
     options: CheckoutDiffCompare,
     readOptions?: WorkspaceGitReadOptions,
   ): Promise<CheckoutDiffResult>;
+  invalidateCheckoutDiff(cwd: string): void;
   validateBranchRef(
     cwd: string,
     ref: string,
@@ -173,6 +178,7 @@ export interface WorkspaceGitService {
   ): Promise<{ repoRoot: string | null; unsubscribe: () => void }>;
   scheduleRefreshForCwd(cwd: string): void;
   onWorkspaceStateMayHaveChanged(cwd: string): void;
+  invalidateRepositoryFacts(cwd: string): void;
   invalidateForge(cwd: string): void;
   getMetrics(): WorkspaceGitServiceMetrics;
   dispose(): void;
@@ -191,6 +197,13 @@ export interface WorkspaceGitServiceMetrics {
   workspaceRefreshQueuedCount: number;
   fetchInFlightCount: number;
   snapshotUpdatedListenerCount: number;
+  repositoryFactCacheEntryCount: number;
+  repositoryFactHitCount: number;
+  repositoryFactMissCount: number;
+  repositoryFactInFlightJoinCount: number;
+  repositoryFactInvalidationCount: number;
+  repositoryFactLoadCountByOperation: Record<string, number>;
+  workspaceRefreshCountByReason: Record<string, number>;
 }
 
 export type WorkspaceGitListener = (snapshot: WorkspaceGitRuntimeSnapshot) => void;
@@ -244,6 +257,8 @@ export type WorkspaceGitSnapshotOptions =
 
 interface WorkspaceGitRefreshRequest {
   force: boolean;
+  forceEmit?: boolean;
+  forceForge: boolean;
   includeForge: boolean;
   reason: string;
   notify: boolean;
@@ -263,7 +278,10 @@ type WorkspaceGitRefreshState =
       status: "in-flight";
       promise: Promise<WorkspaceGitRuntimeSnapshot>;
       force: boolean;
+      forceEmit: boolean;
+      forceForge: boolean;
       includeForge: boolean;
+      repositoryFactsGeneration: number;
       queued: WorkspaceGitRefreshRequest | null;
     };
 
@@ -317,7 +335,10 @@ interface WorkspaceGitTarget {
   latestSnapshotLoadedAtMs: number | null;
   latestFacts: CheckoutSnapshotFacts | null;
   latestFactsLoadedAtMs: number | null;
+  latestFactsRepositoryGeneration: number | null;
   factsPromise: Promise<CheckoutSnapshotFacts> | null;
+  factsPromiseRepositoryGeneration: number | null;
+  repositoryFactsGeneration: number;
   latestFingerprint: string | null;
   lastShellOutAtMs: number | null;
   repoGitRoot: string | null;
@@ -357,6 +378,15 @@ function buildWorktreeListCacheKey(repoRoot: string): string {
   return JSON.stringify(["worktrees", repoRoot]);
 }
 
+interface WorkspaceGitRepositoryFactCacheEntry {
+  facts: LRUCache<string, { value: unknown }>;
+}
+
+interface WorkspaceGitRepositoryFactLoad {
+  promise: Promise<unknown>;
+  invalidated: boolean;
+}
+
 interface WorkspaceForgePrStatusPollTarget {
   headRef: string;
   headSha?: string;
@@ -388,6 +418,30 @@ function resolveWorkspaceGitServiceDeps(
   deps: Partial<WorkspaceGitServiceDependencies> | undefined,
 ): WorkspaceGitServiceDependencies {
   return { ...buildDefaultWorkspaceGitServiceDeps(), ...deps };
+}
+
+function incrementCount(counts: Map<string, number>, key: string): void {
+  counts.set(key, (counts.get(key) ?? 0) + 1);
+}
+
+function incrementBoundedCount(counts: Map<string, number>, key: string, max: number): void {
+  let metricKey = key;
+  if (!counts.has(metricKey) && counts.size >= max) {
+    metricKey = "other";
+    if (!counts.has(metricKey)) {
+      const oldestKey = counts.keys().next().value;
+      if (oldestKey !== undefined) {
+        counts.delete(oldestKey);
+      }
+    }
+  }
+  incrementCount(counts, metricKey);
+}
+
+function mapCountsToRecord(counts: Map<string, number>): Record<string, number> {
+  return Object.fromEntries(
+    [...counts.entries()].sort(([left], [right]) => left.localeCompare(right)),
+  );
 }
 
 export class WorkspaceGitServiceImpl implements WorkspaceGitService {
@@ -430,6 +484,25 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     string,
     WorkspaceGitAuxiliaryReadCacheEntry<CheckoutDiffResult>
   >({ max: WORKSPACE_GIT_CHECKOUT_DIFF_CACHE_MAX });
+  private readonly repositoryFactCache = new LRUCache<string, WorkspaceGitRepositoryFactCacheEntry>(
+    { max: WORKSPACE_GIT_REPOSITORY_FACT_CACHE_MAX },
+  );
+  private readonly repositoryFactLoads = new Map<
+    string,
+    Map<string, WorkspaceGitRepositoryFactLoad>
+  >();
+  private readonly repositoryKeyByCwd = new LRUCache<string, string>({
+    max: WORKSPACE_GIT_REPOSITORY_CWD_CACHE_MAX,
+  });
+  private readonly repositoryFactLastSelfHealAt = new LRUCache<string, number>({
+    max: WORKSPACE_GIT_REPOSITORY_FACT_CACHE_MAX,
+  });
+  private readonly repositoryFactLoadCountByOperation = new Map<string, number>();
+  private readonly workspaceRefreshCountByReason = new Map<string, number>();
+  private repositoryFactHitCount = 0;
+  private repositoryFactMissCount = 0;
+  private repositoryFactInFlightJoinCount = 0;
+  private repositoryFactInvalidationCount = 0;
   constructor(options: WorkspaceGitServiceOptions) {
     this.logger = options.logger.child({ module: "workspace-git-service" });
     this.paseoHome = options.paseoHome;
@@ -519,6 +592,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       workspaceRefreshQueuedCount,
       fetchInFlightCount,
       snapshotUpdatedListenerCount: this.snapshotUpdatedListeners.size,
+      repositoryFactCacheEntryCount: this.repositoryFactCache.size,
+      repositoryFactHitCount: this.repositoryFactHitCount,
+      repositoryFactMissCount: this.repositoryFactMissCount,
+      repositoryFactInFlightJoinCount: this.repositoryFactInFlightJoinCount,
+      repositoryFactInvalidationCount: this.repositoryFactInvalidationCount,
+      repositoryFactLoadCountByOperation: mapCountsToRecord(
+        this.repositoryFactLoadCountByOperation,
+      ),
+      workspaceRefreshCountByReason: mapCountsToRecord(this.workspaceRefreshCountByReason),
     };
   }
 
@@ -542,6 +624,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
       logger: this.logger,
+      repositoryFacts: this.createRepositoryFactReader(normalizedCwd),
     });
     if (!status.isGit) {
       return checkoutLiteFromGitSnapshot(normalizedCwd, {
@@ -582,6 +665,16 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         worktreesRoot: this.worktreesRoot,
       }),
     );
+  }
+
+  invalidateCheckoutDiff(cwd: string): void {
+    const normalizedCwd = resolve(cwd);
+    for (const key of this.checkoutDiffCache.keys()) {
+      const cacheKey = JSON.parse(key) as [domain: string, cwd: string];
+      if (cacheKey[0] === "checkout-diff" && cacheKey[1] === normalizedCwd) {
+        this.checkoutDiffCache.delete(key);
+      }
+    }
   }
 
   private normalizeCheckoutDiffOptions(options: CheckoutDiffCompare): CheckoutDiffCompare {
@@ -730,6 +823,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const target = this.ensureWorkspaceTarget(cwd);
     await this.refreshWorkspaceTarget(target, {
       force: false,
+      forceForge: false,
       includeForge: false,
       reason: "refresh",
       notify: true,
@@ -763,6 +857,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   onWorkspaceStateMayHaveChanged(cwd: string): void {
     const normalizedCwd = resolve(cwd);
+    this.invalidateRepositoryFacts(normalizedCwd);
     const target = this.workspaceTargets.get(normalizedCwd);
     if (!target || target.closed) {
       return;
@@ -784,6 +879,18 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.forgeResolver.invalidate(resolve(cwd));
   }
 
+  invalidateRepositoryFacts(cwd: string): void {
+    const normalizedCwd = resolve(cwd);
+    const repositoryKey =
+      this.repositoryKeyByCwd.get(normalizedCwd) ??
+      this.workspaceTargets.get(normalizedCwd)?.repoGitRoot;
+    if (repositoryKey) {
+      this.invalidateRepositoryFactsByKey(repositoryKey);
+      return;
+    }
+    this.invalidateAllRepositoryFacts();
+  }
+
   dispose(): void {
     for (const target of this.workspaceTargets.values()) {
       this.closeWorkspaceTarget(target);
@@ -801,6 +908,141 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.workingTreeWatchTargets.clear();
     this.workingTreeWatchSetups.clear();
     this.snapshotUpdatedListeners.clear();
+    this.markAllRepositoryFactLoadsInvalidated();
+    this.repositoryFactCache.clear();
+    this.repositoryFactLoads.clear();
+    this.repositoryKeyByCwd.clear();
+    this.repositoryFactLastSelfHealAt.clear();
+  }
+
+  private createRepositoryFactReader(cwd: string): CheckoutRepositoryFactReader {
+    return {
+      read: (gitCommonDir, operation, load) =>
+        this.readRepositoryFact(cwd, gitCommonDir, operation, load),
+    };
+  }
+
+  private readRepositoryFact<T>(
+    cwd: string,
+    gitCommonDir: string,
+    operation: string,
+    load: () => Promise<T>,
+  ): Promise<T> {
+    const repositoryKey = this.normalizeRepositoryKey(gitCommonDir);
+    this.repositoryKeyByCwd.set(resolve(cwd), repositoryKey);
+    const cacheEntry = this.repositoryFactCache.get(repositoryKey);
+    if (cacheEntry?.facts.has(operation)) {
+      this.repositoryFactHitCount += 1;
+      return Promise.resolve(cacheEntry.facts.get(operation)?.value as T);
+    }
+    const repositoryLoads = this.repositoryFactLoads.get(repositoryKey);
+    const existingLoad = repositoryLoads?.get(operation);
+    if (existingLoad && !existingLoad.invalidated) {
+      this.repositoryFactInFlightJoinCount += 1;
+      return existingLoad.promise as Promise<T>;
+    }
+
+    this.repositoryFactMissCount += 1;
+    incrementBoundedCount(
+      this.repositoryFactLoadCountByOperation,
+      operation,
+      WORKSPACE_GIT_REPOSITORY_OPERATION_METRICS_MAX,
+    );
+    const loads = repositoryLoads ?? new Map<string, WorkspaceGitRepositoryFactLoad>();
+    if (!repositoryLoads) {
+      this.repositoryFactLoads.set(repositoryKey, loads);
+    }
+    let loadState: WorkspaceGitRepositoryFactLoad;
+    const promise = load()
+      .then(
+        (value) => {
+          if (!loadState.invalidated && loads.get(operation) === loadState) {
+            this.ensureRepositoryFactCacheEntry(repositoryKey).facts.set(operation, { value });
+          }
+          return value;
+        },
+        (error: unknown) => Promise.reject(error),
+      )
+      .finally(() => {
+        if (loads.get(operation) === loadState) {
+          loads.delete(operation);
+          if (loads.size === 0) {
+            this.repositoryFactLoads.delete(repositoryKey);
+          }
+        }
+      });
+    loadState = { promise, invalidated: false };
+    loads.set(operation, loadState);
+    return promise;
+  }
+
+  private ensureRepositoryFactCacheEntry(
+    repositoryKey: string,
+  ): WorkspaceGitRepositoryFactCacheEntry {
+    const existing = this.repositoryFactCache.get(repositoryKey);
+    if (existing) {
+      return existing;
+    }
+    const entry: WorkspaceGitRepositoryFactCacheEntry = {
+      facts: new LRUCache({ max: WORKSPACE_GIT_REPOSITORY_FACTS_PER_REPOSITORY_MAX }),
+    };
+    this.repositoryFactCache.set(repositoryKey, entry);
+    return entry;
+  }
+
+  private invalidateRepositoryFactsByKey(gitCommonDir: string): void {
+    const repositoryKey = this.normalizeRepositoryKey(gitCommonDir);
+    this.markWorkspaceRepositoryFactsInvalidated(repositoryKey);
+    const hadCachedFacts = this.repositoryFactCache.delete(repositoryKey);
+    const loads = this.repositoryFactLoads.get(repositoryKey);
+    if (!hadCachedFacts && !loads) {
+      return;
+    }
+    if (loads) {
+      for (const loadState of loads.values()) {
+        loadState.invalidated = true;
+      }
+    }
+    this.repositoryFactInvalidationCount += 1;
+  }
+
+  private invalidateAllRepositoryFacts(): void {
+    for (const target of this.workspaceTargets.values()) {
+      target.repositoryFactsGeneration += 1;
+    }
+    if (this.repositoryFactCache.size === 0 && this.repositoryFactLoads.size === 0) {
+      return;
+    }
+    this.markAllRepositoryFactLoadsInvalidated();
+    this.repositoryFactCache.clear();
+    this.repositoryFactInvalidationCount += 1;
+  }
+
+  private markWorkspaceRepositoryFactsInvalidated(repositoryKey: string): void {
+    for (const target of this.workspaceTargets.values()) {
+      const targetRepositoryKey = target.repoGitRoot
+        ? this.normalizeRepositoryKey(target.repoGitRoot)
+        : this.repositoryKeyByCwd.peek(target.cwd);
+      if (targetRepositoryKey === repositoryKey) {
+        target.repositoryFactsGeneration += 1;
+      }
+    }
+  }
+
+  private markAllRepositoryFactLoadsInvalidated(): void {
+    for (const loads of this.repositoryFactLoads.values()) {
+      for (const loadState of loads.values()) {
+        loadState.invalidated = true;
+      }
+    }
+  }
+
+  private normalizeRepositoryKey(gitCommonDir: string): string {
+    try {
+      return realpathSync(gitCommonDir);
+    } catch {
+      return resolve(gitCommonDir);
+    }
   }
 
   private ensureWorkspaceTarget(cwd: string): WorkspaceGitTarget {
@@ -910,7 +1152,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       latestSnapshotLoadedAtMs: null,
       latestFacts: null,
       latestFactsLoadedAtMs: null,
+      latestFactsRepositoryGeneration: null,
       factsPromise: null,
+      factsPromiseRepositoryGeneration: null,
+      repositoryFactsGeneration: 0,
       latestFingerprint: null,
       lastShellOutAtMs: null,
       repoGitRoot: null,
@@ -930,6 +1175,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       }
       void this.refreshWorkspaceTarget(target, {
         force: false,
+        forceForge: false,
         includeForge: true,
         reason: "initial",
         notify: true,
@@ -999,31 +1245,46 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     target: WorkspaceGitTarget,
     options: CheckoutContext & { allowRecent: boolean },
   ): Promise<CheckoutSnapshotFacts> {
-    if (options.allowRecent && target.latestFacts && target.latestFactsLoadedAtMs !== null) {
+    const repositoryFactsGeneration = target.repositoryFactsGeneration;
+    if (
+      options.allowRecent &&
+      target.latestFacts &&
+      target.latestFactsLoadedAtMs !== null &&
+      target.latestFactsRepositoryGeneration === repositoryFactsGeneration
+    ) {
       const ageMs = this.deps.now().getTime() - target.latestFactsLoadedAtMs;
       if (ageMs < WORKSPACE_GIT_FACTS_REUSE_TTL_MS) {
         return Promise.resolve(target.latestFacts);
       }
     }
 
-    if (target.factsPromise) {
+    if (
+      target.factsPromise &&
+      target.factsPromiseRepositoryGeneration === repositoryFactsGeneration
+    ) {
       return target.factsPromise;
     }
 
     const { allowRecent: _allowRecent, ...context } = options;
+    context.repositoryFacts = this.createRepositoryFactReader(target.cwd);
     const promise = this.deps
       .getCheckoutSnapshotFacts(target.cwd, context)
       .then((facts) => {
-        target.latestFacts = facts;
-        target.latestFactsLoadedAtMs = this.deps.now().getTime();
+        if (target.repositoryFactsGeneration === repositoryFactsGeneration) {
+          target.latestFacts = facts;
+          target.latestFactsLoadedAtMs = this.deps.now().getTime();
+          target.latestFactsRepositoryGeneration = repositoryFactsGeneration;
+        }
         return facts;
       })
       .finally(() => {
         if (target.factsPromise === promise) {
           target.factsPromise = null;
+          target.factsPromiseRepositoryGeneration = null;
         }
       });
     target.factsPromise = promise;
+    target.factsPromiseRepositoryGeneration = repositoryFactsGeneration;
     return promise;
   }
 
@@ -1129,17 +1390,57 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     gitDir: string,
     repoGitRoot: string,
   ): void {
-    for (const watchPath of new Set([join(gitDir, "HEAD"), join(repoGitRoot, "refs", "heads")])) {
+    const watchPaths = [
+      { path: join(gitDir, "HEAD"), recursive: false, invalidatesRepositoryFacts: false },
+      { path: join(repoGitRoot, "refs"), recursive: true, invalidatesRepositoryFacts: true },
+      {
+        path: repoGitRoot,
+        recursive: false,
+        invalidatesRepositoryFacts: true,
+        filename: "packed-refs",
+      },
+    ];
+    for (const watchSpec of watchPaths) {
       let watcher: FSWatcher | null = null;
-      try {
-        watcher = this.deps.watch(watchPath, { recursive: false }, () => {
-          this.scheduleWorkspaceRefresh(target);
+      const startWatcher = (recursive: boolean): FSWatcher =>
+        this.deps.watch(watchSpec.path, { recursive }, (_eventType, filename) => {
+          if (
+            watchSpec.filename &&
+            filename !== null &&
+            filename !== undefined &&
+            filename.toString() !== watchSpec.filename
+          ) {
+            return;
+          }
+          if (watchSpec.invalidatesRepositoryFacts) {
+            this.invalidateRepositoryFactsByKey(repoGitRoot);
+          }
+          this.scheduleWorkspaceRefresh(
+            target,
+            watchSpec.invalidatesRepositoryFacts
+              ? { force: true, reason: "repository-watch" }
+              : undefined,
+          );
         });
+      try {
+        watcher = startWatcher(watchSpec.recursive);
       } catch (error) {
-        this.logger.warn(
-          { err: error, cwd: target.cwd, watchPath },
-          "Failed to start workspace git watcher",
-        );
+        if (watchSpec.recursive) {
+          this.logger.warn(
+            {
+              err: error,
+              cwd: target.cwd,
+              watchPath: watchSpec.path,
+              fallback: "self-heal-git",
+            },
+            "Recursive workspace git watcher unavailable; using self-heal refresh",
+          );
+        } else {
+          this.logger.warn(
+            { err: error, cwd: target.cwd, watchPath: watchSpec.path },
+            "Failed to start workspace git watcher",
+          );
+        }
       }
 
       if (!watcher) {
@@ -1147,7 +1448,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       }
 
       watcher.on("error", (error) => {
-        this.logger.warn({ err: error, cwd: target.cwd, watchPath }, "Workspace git watcher error");
+        this.logger.warn(
+          { err: error, cwd: target.cwd, watchPath: watchSpec.path },
+          "Workspace git watcher error",
+        );
       });
       target.watchers.push(watcher);
     }
@@ -1235,8 +1539,22 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     if (!target.selfHealTimer) {
       target.selfHealTimer = setInterval(() => {
         this.scheduleWorkspaceObservationSetup(target);
+        if (target.repoGitRoot) {
+          const repositoryKey = this.normalizeRepositoryKey(target.repoGitRoot);
+          const nowMs = this.deps.now().getTime();
+          const lastSelfHealAtMs = this.repositoryFactLastSelfHealAt.get(repositoryKey);
+          if (
+            lastSelfHealAtMs === undefined ||
+            nowMs - lastSelfHealAtMs >= WORKSPACE_GIT_SELF_HEAL_INTERVAL_MS / 2
+          ) {
+            this.repositoryFactLastSelfHealAt.set(repositoryKey, nowMs);
+            this.invalidateRepositoryFactsByKey(repositoryKey);
+          }
+        }
         this.refreshWorkspaceTarget(target, {
-          force: false,
+          force: true,
+          forceEmit: false,
+          forceForge: false,
           includeForge: false,
           reason: "self-heal-git",
           notify: true,
@@ -1429,7 +1747,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
 
     const lookupTarget =
-      target.latestFacts?.isGit && target.latestFacts.currentBranch === git.currentBranch
+      target.latestFactsRepositoryGeneration === target.repositoryFactsGeneration &&
+      target.latestFacts?.isGit &&
+      target.latestFacts.currentBranch === git.currentBranch
         ? target.latestFacts.pullRequestLookupTarget
         : null;
     if (lookupTarget) {
@@ -1673,9 +1993,18 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   ): Promise<WorkspaceGitRuntimeSnapshot> {
     if (target.refreshState.status === "in-flight") {
       const needsForcedRefresh = request.force && !target.refreshState.force;
-      const needsGitHubRefresh =
-        request.force && request.includeForge && !target.refreshState.includeForge;
-      if (needsForcedRefresh || needsGitHubRefresh) {
+      const needsForcedEmission =
+        (request.forceEmit ?? request.force) && !target.refreshState.forceEmit;
+      const needsForgeRefresh = request.forceForge && !target.refreshState.forceForge;
+      const needsPostInvalidationRefresh =
+        request.force &&
+        target.refreshState.repositoryFactsGeneration !== target.repositoryFactsGeneration;
+      if (
+        needsForcedRefresh ||
+        needsForcedEmission ||
+        needsForgeRefresh ||
+        needsPostInvalidationRefresh
+      ) {
         target.refreshState.queued = this.mergeRefreshRequests(target.refreshState.queued, request);
       }
       return target.refreshState.promise;
@@ -1685,7 +2014,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return Promise.resolve(target.latestSnapshot);
     }
 
-    const promise = this.runWorkspaceRefreshLoop(target, request).finally(() => {
+    const repositoryFactsGeneration = target.repositoryFactsGeneration;
+    const promise = this.runWorkspaceRefreshLoop(
+      target,
+      request,
+      repositoryFactsGeneration,
+    ).finally(() => {
       const state = target.refreshState;
       if (state.status === "in-flight" && state.promise === promise) {
         target.refreshState = { status: "idle" };
@@ -1695,7 +2029,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       status: "in-flight",
       promise,
       force: request.force,
+      forceEmit: request.forceEmit ?? request.force,
+      forceForge: request.forceForge,
       includeForge: request.includeForge,
+      repositoryFactsGeneration,
       queued: null,
     };
 
@@ -1714,6 +2051,8 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const force = options?.force === true;
     return {
       force,
+      forceEmit: force,
+      forceForge: force && (options?.includeForge ?? true),
       includeForge: options?.includeForge ?? true,
       reason: options?.reason ?? defaultReason,
       notify,
@@ -1737,6 +2076,8 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   ): WorkspaceGitRefreshRequest {
     return {
       force: options?.force === true,
+      forceEmit: false,
+      forceForge: false,
       includeForge: options?.includeForge ?? false,
       reason: options?.reason ?? "watch",
       notify: true,
@@ -1752,10 +2093,14 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
 
     const force = pending.force || request.force;
+    const forceEmit = (pending.forceEmit ?? pending.force) || (request.forceEmit ?? request.force);
+    const forceForge = pending.forceForge || request.forceForge;
     const upgradesForce = request.force && !pending.force;
     const upgradesForge = request.includeForge && !pending.includeForge;
     return {
       force,
+      forceEmit,
+      forceForge,
       includeForge: pending.includeForge || request.includeForge,
       reason: upgradesForce || upgradesForge ? request.reason : pending.reason,
       notify: pending.notify || request.notify,
@@ -1765,26 +2110,38 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private async runWorkspaceRefreshLoop(
     target: WorkspaceGitTarget,
     initialRequest: WorkspaceGitRefreshRequest,
+    initialRepositoryFactsGeneration: number,
   ): Promise<WorkspaceGitRuntimeSnapshot> {
     let request = initialRequest;
+    let repositoryFactsGeneration = initialRepositoryFactsGeneration;
     let snapshot!: WorkspaceGitRuntimeSnapshot;
 
     while (true) {
-      snapshot = await this.refreshSnapshot(target, request);
-      this.rememberSnapshot(target, snapshot, {
-        notify: request.notify,
-        forceEmit: request.force,
-      });
+      snapshot = await this.refreshSnapshot(target, request, repositoryFactsGeneration);
+      const wasInvalidated = target.repositoryFactsGeneration !== repositoryFactsGeneration;
+      if (!wasInvalidated) {
+        this.rememberSnapshot(target, snapshot, {
+          notify: request.notify,
+          forceEmit: request.forceEmit ?? request.force,
+        });
+      }
 
       const state = target.refreshState;
       if (state.status !== "in-flight" || !state.queued) {
         break;
       }
+      if (wasInvalidated) {
+        state.queued = this.mergeRefreshRequests(state.queued, request);
+      }
 
       request = state.queued;
       state.queued = null;
       state.force = request.force;
+      state.forceEmit = request.forceEmit ?? request.force;
+      state.forceForge = request.forceForge;
       state.includeForge = request.includeForge;
+      repositoryFactsGeneration = target.repositoryFactsGeneration;
+      state.repositoryFactsGeneration = repositoryFactsGeneration;
     }
 
     return snapshot;
@@ -1793,10 +2150,18 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private async refreshSnapshot(
     target: WorkspaceGitTarget,
     request: WorkspaceGitRefreshRequest,
+    repositoryFactsGeneration: number,
   ): Promise<WorkspaceGitRuntimeSnapshot> {
-    const facts = await this.refreshGitSnapshot(target, request);
+    incrementCount(this.workspaceRefreshCountByReason, request.reason);
+    const facts = await this.refreshGitSnapshot(target, request, repositoryFactsGeneration);
+    if (target.repositoryFactsGeneration !== repositoryFactsGeneration) {
+      return this.combineSnapshot(target);
+    }
     if (request.includeForge) {
-      await this.refreshForgeSnapshot(target, request, facts);
+      await this.refreshForgeSnapshot(target, request, facts, repositoryFactsGeneration);
+      if (target.repositoryFactsGeneration !== repositoryFactsGeneration) {
+        return this.combineSnapshot(target);
+      }
     }
 
     const snapshot = this.combineSnapshot(target);
@@ -1807,6 +2172,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private async refreshGitSnapshot(
     target: WorkspaceGitTarget,
     request: WorkspaceGitRefreshRequest,
+    repositoryFactsGeneration: number,
   ): Promise<CheckoutSnapshotFacts> {
     const now = this.deps.now();
     target.lastShellOutAtMs = now.getTime();
@@ -1817,14 +2183,22 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
       logger: this.logger,
+      repositoryFacts: this.createRepositoryFactReader(cwd),
     };
     const facts = await this.loadCheckoutFacts(target, {
       ...baseContext,
       allowRecent: !request.force,
     });
-    const context: CheckoutContext = { ...baseContext, facts };
+    const context: CheckoutContext = {
+      ...baseContext,
+      facts,
+      repositoryCommonDir: facts.isGit ? facts.gitCommonDir : null,
+    };
     const checkoutStatus = await this.deps.getCheckoutStatus(cwd, context);
     if (!checkoutStatus.isGit) {
+      if (target.repositoryFactsGeneration !== repositoryFactsGeneration) {
+        return facts;
+      }
       target.latestGit = buildNotGitSnapshot(cwd).git;
       target.latestGitLoadedAtMs = this.deps.now().getTime();
       target.latestForge = buildForgeUnavailableSnapshot();
@@ -1835,6 +2209,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const diffStat = await this.deps
       .getCheckoutShortstat(cwd, context, { force: request.force })
       .catch(() => null);
+    if (target.repositoryFactsGeneration !== repositoryFactsGeneration) {
+      return facts;
+    }
 
     target.latestGit = {
       isGit: true,
@@ -1864,9 +2241,13 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     target: WorkspaceGitTarget,
     request: WorkspaceGitRefreshRequest,
     facts: CheckoutSnapshotFacts,
+    repositoryFactsGeneration: number,
   ): Promise<void> {
     const remoteUrl = target.latestGit?.remoteUrl ?? null;
     const resolution = await this.forgeResolver.resolveFromRemoteUrlAsync(remoteUrl);
+    if (target.repositoryFactsGeneration !== repositoryFactsGeneration) {
+      return;
+    }
     // Every forge gates on the resolver alone: a cloud host matches synchronously
     // and a self-hosted/Enterprise host is recognized by the adapter probe (which
     // this async resolution populates), so GitHub Enterprise is no longer gated
@@ -1877,7 +2258,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return;
     }
     const forgeService: ForgeService = resolution.service;
-    const forceForge = request.force && request.includeForge;
+    const forceForge = request.forceForge;
     if (forceForge) {
       forgeService.invalidate({ cwd: target.cwd });
     }
@@ -1891,6 +2272,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       reason: request.reason,
       facts,
     });
+    if (target.repositoryFactsGeneration !== repositoryFactsGeneration) {
+      return;
+    }
     // Carry the resolved forge (probe-aware) so the wire projection labels
     // self-managed GitLab hosts correctly instead of falling back to "github".
     target.latestForge = { ...forgeSnapshot, forge: resolution.forge };
@@ -2002,6 +2386,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       );
     } finally {
       target.fetchInFlight = false;
+      this.invalidateRepositoryFactsByKey(target.repoGitRoot);
       await Promise.all(
         Array.from(target.workspaceKeys, async (workspaceKey) => {
           const workspaceTarget = this.workspaceTargets.get(workspaceKey);
@@ -2009,7 +2394,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
             return;
           }
           await this.refreshWorkspaceTarget(workspaceTarget, {
-            force: false,
+            force: true,
+            forceEmit: false,
+            forceForge: false,
             includeForge: false,
             reason: "repo-fetch",
             notify: true,

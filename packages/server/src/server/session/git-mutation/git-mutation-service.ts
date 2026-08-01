@@ -36,7 +36,12 @@ export interface GitMutationService {
 
 type GitMutationGitSource = Pick<
   WorkspaceGitService,
-  "validateBranchRef" | "getSnapshot" | "hasLocalBranch" | "invalidateForge"
+  | "validateBranchRef"
+  | "getSnapshot"
+  | "hasLocalBranch"
+  | "invalidateCheckoutDiff"
+  | "invalidateForge"
+  | "invalidateRepositoryFacts"
 >;
 
 export function createGitMutationService(deps: {
@@ -77,6 +82,8 @@ export function createGitMutationService(deps: {
     reason: GitMutationRefreshReason,
     options?: { invalidateForge?: boolean },
   ): Promise<void> {
+    workspaceGitService.invalidateCheckoutDiff(cwd);
+    workspaceGitService.invalidateRepositoryFacts(cwd);
     if (options?.invalidateForge) {
       workspaceGitService.invalidateForge(cwd);
     }
