@@ -3255,11 +3255,11 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.connected = true;
     } catch (error) {
       try {
-        await this.close();
-      } catch (closeError) {
+        await this.disposeClient();
+      } catch (disposeError) {
         this.logger.warn(
-          { err: closeError, connectError: error },
-          "Failed to close Codex app-server after connection failure",
+          { err: disposeError, connectError: error },
+          "Failed to dispose Codex app-server client after connection failure",
         );
       }
       throw error;
@@ -3276,7 +3276,8 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private handleUnexpectedTermination(error: Error): void {
     this.connected = false;
-    if (this.activeForegroundTurnId) {
+    const hasActiveRootTurn = this.activeForegroundTurnId !== null || this.currentTurnId !== null;
+    if (hasActiveRootTurn) {
       this.emitEvent({
         type: "turn_failed",
         provider: CODEX_PROVIDER,
@@ -4339,13 +4340,18 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.activeClientMessageId = null;
     this.pendingForegroundTurnIdentification?.resolve(null);
     this.pendingForegroundTurnIdentification = null;
-    if (this.client) {
-      await this.client.dispose();
-    }
+    await this.disposeClient();
+    this.currentThreadId = null;
+  }
+
+  private async disposeClient(): Promise<void> {
+    const client = this.client;
     this.client = null;
     this.connected = false;
-    this.currentThreadId = null;
     this.currentTurnId = null;
+    if (client) {
+      await client.dispose();
+    }
   }
 
   async listCommands(): Promise<AgentSlashCommand[]> {

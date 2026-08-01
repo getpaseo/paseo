@@ -202,3 +202,89 @@ test("idle Codex app-server exit reconnects without publishing a failed turn", a
     rmSync(workdir, { recursive: true, force: true });
   }
 });
+
+test("failed reconnect preserves manager events for a later successful run", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-process-reconnect-failure-"));
+  const exitedAppServer = createFakeCodexAppServer();
+  const failedReconnect = createFakeCodexAppServer({
+    initialize: async () => {
+      throw new Error("reconnect failed");
+    },
+  });
+  const successfulReconnect = createFakeCodexAppServer();
+  const manager = new AgentManager({
+    clients: {
+      codex: new ProcessExitCodexClient([exitedAppServer, failedReconnect, successfulReconnect]),
+    },
+    logger,
+  });
+  let agentId: string | null = null;
+
+  try {
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, modeId: "auto", model: "gpt-5.4" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    agentId = agent.id;
+    exitedAppServer.child.emit("exit", 17, null);
+
+    await expect(manager.runAgent(agent.id, "first reconnect")).rejects.toThrow("reconnect failed");
+
+    const run = manager.runAgent(agent.id, "second reconnect");
+    const turnStart = await successfulReconnect.waitForTurnStart();
+    successfulReconnect.startsTurn({
+      threadId: String(turnStart.threadId),
+      turnId: "native-turn-3",
+    });
+    successfulReconnect.completeTurn({ threadId: String(turnStart.threadId) });
+
+    await expect(run).resolves.toMatchObject({ sessionId: "thread-1" });
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+  } finally {
+    if (agentId && manager.getAgent(agentId)) {
+      await manager.closeAgent(agentId);
+    }
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("unexpected exit fails an autonomous Codex turn", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-process-autonomous-exit-"));
+  const appServer = createFakeCodexAppServer();
+  const manager = new AgentManager({
+    clients: { codex: new ProcessExitCodexClient([appServer]) },
+    logger,
+  });
+  const events: AgentManagerEvent[] = [];
+  const unsubscribe = manager.subscribe((event) => events.push(event), { replayState: false });
+  let agentId: string | null = null;
+
+  try {
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, modeId: "auto", model: "gpt-5.4" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    agentId = agent.id;
+    appServer.startsTurn({ threadId: "thread-1", turnId: "autonomous-turn" });
+    await expect.poll(() => manager.getAgent(agent.id)?.lifecycle).toBe("running");
+
+    appServer.child.stderr.write("autonomous provider crashed");
+    appServer.child.emit("exit", 23, null);
+
+    await expect.poll(() => manager.getAgent(agent.id)?.lifecycle).toBe("error");
+    expect(manager.getAgent(agent.id)?.lastError).toBe(
+      "Codex app-server exited with code 23 and signal null\nautonomous provider crashed",
+    );
+    expect(
+      events.filter((event) => event.type === "agent_stream" && event.event.type === "turn_failed"),
+    ).toHaveLength(1);
+  } finally {
+    if (agentId && manager.getAgent(agentId)) {
+      await manager.closeAgent(agentId);
+    }
+    unsubscribe();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
