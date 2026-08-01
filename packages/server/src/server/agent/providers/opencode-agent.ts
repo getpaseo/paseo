@@ -108,6 +108,7 @@ const OPENCODE_PERSISTED_SESSION_LIMIT = 200;
 const OPENCODE_PENDING_ABORT_START_TIMEOUT_MS = 10_000;
 const OPENCODE_SESSION_CLOSE_ABORT_TIMEOUT_MS = 5_000;
 const OPENCODE_SESSION_CLOSE_STREAM_TIMEOUT_MS = 5_000;
+const OPENCODE_SESSION_CLOSE_DELETE_TIMEOUT_MS = 5_000;
 const OPENCODE_CHILD_SESSION_HYDRATION_LIMIT = 100;
 const OPENCODE_CHILD_SESSION_SERVER_REGISTRY_LIMIT = 500;
 const OPENCODE_PERMISSION_ACTION_ALLOW_ONCE = "allow_once";
@@ -320,21 +321,33 @@ async function runOpenCodeMetadataRequest<T>(
   timeoutMs: number,
   timeoutMessage: string,
   request: (requestSignal: AbortSignal) => Promise<T>,
+  ownRequest?: (request: Promise<T>) => Promise<T>,
+  enforceTimeoutWithSignal = false,
 ): Promise<T> {
   assertAbortSignalActive(signal);
   let started = false;
   const queued = openCodeMetadataLimit(async () => {
     started = true;
     assertAbortSignalActive(signal);
-    const timeoutController = signal ? null : new AbortController();
-    const requestSignal = signal ?? timeoutController!.signal;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    const timeoutController = !signal || enforceTimeoutWithSignal ? new AbortController() : null;
+    let requestSignal: AbortSignal;
     if (timeoutController) {
-      timer = setTimeout(() => timeoutController.abort(new Error(timeoutMessage)), timeoutMs);
-      timer.unref?.();
+      requestSignal = signal
+        ? AbortSignal.any([signal, timeoutController.signal])
+        : timeoutController.signal;
+    } else {
+      requestSignal = signal!;
     }
+    const timer = timeoutController
+      ? setTimeout(() => timeoutController.abort(new Error(timeoutMessage)), timeoutMs)
+      : null;
+    timer?.unref?.();
     try {
-      return await request(requestSignal);
+      const operation = request(requestSignal);
+      return await awaitOpenCodeStartupWithAbort(
+        ownRequest ? ownRequest(operation) : operation,
+        requestSignal,
+      );
     } finally {
       if (timer) {
         clearTimeout(timer);
@@ -1365,6 +1378,8 @@ interface OpenCodeSessionGeneration {
   release(): void;
 }
 
+type OpenCodeLifecycleOperationOwner = <T>(operation: Promise<T>) => Promise<T>;
+
 const standaloneOpenCodeSessionGeneration: OpenCodeSessionGeneration = {
   isCurrent: () => true,
   release: () => undefined,
@@ -1390,7 +1405,10 @@ export class OpenCodeAgentClient implements AgentClient {
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly modelContextWindows = new Map<string, number>();
+  private readonly sessionStartupShutdownController = new AbortController();
+  private readonly activeSessionStartups = new Set<Promise<AgentSession>>();
   private readonly failedSessionStartupCleanupTasks = new Set<Promise<void>>();
+  private readonly unsettledSessionOperations = new Set<Promise<unknown>>();
   private readonly sessionGenerations = new Map<string, symbol>();
 
   constructor(
@@ -1413,6 +1431,8 @@ export class OpenCodeAgentClient implements AgentClient {
   }
 
   private claimSessionGeneration(serverUrl: string, sessionId: string): OpenCodeSessionGeneration {
+    // AgentManager installs the reload that completes last, so provider ownership
+    // follows completion order as well, regardless of invocation order.
     const key = `${serverUrl}\0${sessionId}`;
     const generation = Symbol(sessionId);
     this.sessionGenerations.set(key, generation);
@@ -1426,20 +1446,31 @@ export class OpenCodeAgentClient implements AgentClient {
     };
   }
 
-  async createSession(
+  createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
+    return this.runSessionStartup(options?.signal, (signal) =>
+      this.createSessionInternal(config, launchContext, options?.persistSession, signal),
+    );
+  }
+
+  private async createSessionInternal(
+    config: AgentSessionConfig,
+    launchContext: AgentLaunchContext | undefined,
+    persistSession: boolean | undefined,
+    signal: AbortSignal,
+  ): Promise<AgentSession> {
     const openCodeConfig = this.assertConfig(config);
     const serverManager = this.getServerManager();
     const acquisitionPromise = launchContext?.env
-      ? serverManager.acquireDedicated(launchContext.env, options?.signal)
-      : serverManager.acquireCurrent(options?.signal);
+      ? serverManager.acquireDedicated(launchContext.env, signal)
+      : serverManager.acquireCurrent(signal);
     const acquisition = await acquisitionPromise;
-    if (options?.signal?.aborted) {
+    if (signal.aborted) {
       await this.releaseFailedSessionStartup(acquisition);
-      options.signal.throwIfAborted();
+      signal.throwIfAborted();
     }
     const { url } = acquisition.server;
     const client = this.createOpenCodeClient({
@@ -1448,18 +1479,15 @@ export class OpenCodeAgentClient implements AgentClient {
     });
 
     const createRequestController = new AbortController();
-    const createRequestSignal = options?.signal
-      ? AbortSignal.any([options.signal, createRequestController.signal])
-      : createRequestController.signal;
-    const rawCreatePromise = client.session.create(
-      { directory: openCodeConfig.cwd },
-      { signal: createRequestSignal },
+    const createRequestSignal = AbortSignal.any([signal, createRequestController.signal]);
+    const rawCreatePromise = this.ownSessionOperation(
+      client.session.create({ directory: openCodeConfig.cwd }, { signal: createRequestSignal }),
     );
     let createdSessionId: string | null = null;
     try {
       const response = await awaitOpenCodeStartupWithAbort(
         withTimeout(rawCreatePromise, 10_000, "OpenCode session.create timed out after 10s"),
-        options?.signal,
+        signal,
       );
 
       if (response.error) {
@@ -1472,10 +1500,7 @@ export class OpenCodeAgentClient implements AgentClient {
       }
       createdSessionId = session.id;
 
-      await awaitOpenCodeStartupWithAbort(
-        this.populateModelContextWindowCache(client, openCodeConfig.cwd),
-        options?.signal,
-      );
+      await this.populateModelContextWindowCache(client, openCodeConfig.cwd, signal);
 
       return new OpenCodeAgentSession(
         openCodeConfig,
@@ -1484,11 +1509,12 @@ export class OpenCodeAgentClient implements AgentClient {
         this.logger,
         new Map(this.modelContextWindows),
         acquisition.release,
-        options?.persistSession,
+        persistSession,
         launchContext?.agentId,
         url,
         false,
         this.claimSessionGeneration(url, session.id),
+        this.ownSessionOperation,
       );
     } catch (error) {
       createRequestController.abort(error);
@@ -1509,11 +1535,22 @@ export class OpenCodeAgentClient implements AgentClient {
     }
   }
 
-  async resumeSession(
+  resumeSession(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
     options?: AgentResumeSessionOptions,
+  ): Promise<AgentSession> {
+    return this.runSessionStartup(options?.signal, (signal) =>
+      this.resumeSessionInternal(handle, overrides, launchContext, signal),
+    );
+  }
+
+  private async resumeSessionInternal(
+    handle: AgentPersistenceHandle,
+    overrides: Partial<AgentSessionConfig> | undefined,
+    launchContext: AgentLaunchContext | undefined,
+    signal: AbortSignal,
   ): Promise<AgentSession> {
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
     const cwd = overrides?.cwd ?? metadata.cwd;
@@ -1537,14 +1574,14 @@ export class OpenCodeAgentClient implements AgentClient {
     if (registeredAcquisition) {
       acquisitionPromise = Promise.resolve(registeredAcquisition);
     } else if (launchContext?.env) {
-      acquisitionPromise = serverManager.acquireDedicated(launchContext.env, options?.signal);
+      acquisitionPromise = serverManager.acquireDedicated(launchContext.env, signal);
     } else {
-      acquisitionPromise = serverManager.acquireCurrent(options?.signal);
+      acquisitionPromise = serverManager.acquireCurrent(signal);
     }
     const acquisition = await acquisitionPromise;
-    if (options?.signal?.aborted) {
+    if (signal.aborted) {
       await this.releaseFailedSessionStartup(acquisition);
-      options.signal.throwIfAborted();
+      signal.throwIfAborted();
     }
     const { url } = acquisition.server;
     const client = this.createOpenCodeClient({
@@ -1553,10 +1590,7 @@ export class OpenCodeAgentClient implements AgentClient {
     });
 
     try {
-      await awaitOpenCodeStartupWithAbort(
-        this.populateModelContextWindowCache(client, openCodeConfig.cwd),
-        options?.signal,
-      );
+      await this.populateModelContextWindowCache(client, openCodeConfig.cwd, signal);
 
       return new OpenCodeAgentSession(
         openCodeConfig,
@@ -1570,6 +1604,7 @@ export class OpenCodeAgentClient implements AgentClient {
         url,
         registeredAcquisition !== null,
         this.claimSessionGeneration(url, handle.sessionId),
+        this.ownSessionOperation,
       );
     } catch (error) {
       await this.releaseFailedSessionStartup(acquisition);
@@ -1761,7 +1796,11 @@ export class OpenCodeAgentClient implements AgentClient {
       return this.shutdownPromise;
     }
     this.shutDown = true;
+    this.sessionStartupShutdownController.abort(new Error("OpenCode agent client shutting down"));
     this.shutdownPromise = (async () => {
+      while (this.activeSessionStartups.size > 0) {
+        await Promise.allSettled(this.activeSessionStartups);
+      }
       while (this.failedSessionStartupCleanupTasks.size > 0) {
         await Promise.allSettled(this.failedSessionStartupCleanupTasks);
       }
@@ -1773,6 +1812,36 @@ export class OpenCodeAgentClient implements AgentClient {
     })();
     return this.shutdownPromise;
   }
+
+  private runSessionStartup(
+    signal: AbortSignal | undefined,
+    start: (startupSignal: AbortSignal) => Promise<AgentSession>,
+  ): Promise<AgentSession> {
+    if (this.shutDown) {
+      return Promise.reject(new Error("OpenCode agent client has shut down"));
+    }
+    const startupSignal = signal
+      ? AbortSignal.any([signal, this.sessionStartupShutdownController.signal])
+      : this.sessionStartupShutdownController.signal;
+    const startup = Promise.resolve().then(async () => await start(startupSignal));
+    this.activeSessionStartups.add(startup);
+    void startup.then(
+      () => this.activeSessionStartups.delete(startup),
+      () => this.activeSessionStartups.delete(startup),
+    );
+    return startup;
+  }
+
+  private readonly ownSessionOperation: OpenCodeLifecycleOperationOwner = <T>(
+    operation: Promise<T>,
+  ): Promise<T> => {
+    this.unsettledSessionOperations.add(operation);
+    void operation.then(
+      () => this.unsettledSessionOperations.delete(operation),
+      () => this.unsettledSessionOperations.delete(operation),
+    );
+    return operation;
+  };
 
   private ownFailedSessionStartupCleanup(task: Promise<void>): void {
     const ownedTask = task.catch((error) => {
@@ -1791,7 +1860,7 @@ export class OpenCodeAgentClient implements AgentClient {
   ): Promise<void> {
     try {
       const response = await withTimeout(
-        client.session.delete({ sessionID: sessionId, directory }),
+        this.ownSessionOperation(client.session.delete({ sessionID: sessionId, directory })),
         OPENCODE_FAILED_CREATE_DELETE_TIMEOUT_MS,
         `OpenCode failed session cleanup timed out after ${OPENCODE_FAILED_CREATE_DELETE_TIMEOUT_MS}ms`,
       );
@@ -1986,8 +2055,16 @@ export class OpenCodeAgentClient implements AgentClient {
   private async populateModelContextWindowCache(
     client: OpencodeClient,
     cwd: string,
+    signal: AbortSignal,
   ): Promise<void> {
-    const response = await openCodeMetadataLimit(() => client.provider.list({ directory: cwd }));
+    const response = await runOpenCodeMetadataRequest(
+      signal,
+      OPENCODE_PROVIDER_LIST_TIMEOUT_MS,
+      `OpenCode startup provider.list timed out after ${OPENCODE_PROVIDER_LIST_TIMEOUT_MS / 1000}s`,
+      (requestSignal) => client.provider.list({ directory: cwd }, { signal: requestSignal }),
+      this.ownSessionOperation,
+      true,
+    );
     if (response.error || !response.data) {
       return;
     }
@@ -3287,6 +3364,8 @@ class OpenCodeAgentSession implements AgentSession {
     private readonly serverUrl?: string,
     private readonly externallyDriven = false,
     private readonly sessionGeneration: OpenCodeSessionGeneration = standaloneOpenCodeSessionGeneration,
+    private readonly ownLifecycleOperation: OpenCodeLifecycleOperationOwner = (operation) =>
+      operation,
   ) {
     this.config = config;
     this.client = client;
@@ -4521,10 +4600,16 @@ class OpenCodeAgentSession implements AgentSession {
     }
     this.deletedFromProvider = true;
     try {
-      const response = await this.client.session.delete({
-        sessionID: this.sessionId,
-        directory: this.config.cwd,
-      });
+      const response = await withTimeout(
+        this.ownLifecycleOperation(
+          this.client.session.delete({
+            sessionID: this.sessionId,
+            directory: this.config.cwd,
+          }),
+        ),
+        OPENCODE_SESSION_CLOSE_DELETE_TIMEOUT_MS,
+        `OpenCode session.delete timed out after ${OPENCODE_SESSION_CLOSE_DELETE_TIMEOUT_MS}ms`,
+      );
       if (response.error) {
         throw new Error(`OpenCode session.delete failed: ${JSON.stringify(response.error)}`);
       }

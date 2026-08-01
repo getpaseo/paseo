@@ -1005,6 +1005,124 @@ test("reload closes both sessions when the closed snapshot cannot be persisted",
   }
 });
 
+test("concurrent reload swaps follow completion order and close the displaced replacement", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-concurrent-reload-test-"));
+  const agentId = "00000000-0000-4000-8000-000000000094";
+  const resumeGates: Array<Deferred<AgentSession>> = [];
+  let originalCloseCount = 0;
+  let firstReplacementCloseCount = 0;
+  let secondReplacementCloseCount = 0;
+  const config: AgentSessionConfig = { provider: "codex", cwd: workdir };
+  const firstReplacement = new (class extends TestAgentSession {
+    override async close(): Promise<void> {
+      firstReplacementCloseCount += 1;
+    }
+  })(config);
+  const secondReplacement = new (class extends TestAgentSession {
+    override async close(): Promise<void> {
+      secondReplacementCloseCount += 1;
+    }
+  })(config);
+  const client = new (class extends TestAgentClient {
+    override async createSession(sessionConfig: AgentSessionConfig): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override async close(): Promise<void> {
+          originalCloseCount += 1;
+        }
+      })(sessionConfig);
+    }
+
+    override async resumeSession(): Promise<AgentSession> {
+      const gate = deferred<AgentSession>();
+      resumeGates.push(gate);
+      return await gate.promise;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    await manager.createAgent(config, undefined, { workspaceId: undefined });
+    const firstReload = manager.reloadAgentSession(agentId);
+    await vi.waitFor(() => expect(resumeGates).toHaveLength(1));
+    const secondReload = manager.reloadAgentSession(agentId);
+    await vi.waitFor(() => expect(resumeGates).toHaveLength(2));
+
+    resumeGates[1]?.resolve(secondReplacement);
+    await secondReload;
+    resumeGates[0]?.resolve(firstReplacement);
+    await firstReload;
+
+    expect(manager.listAgents()[0]?.session).toBe(firstReplacement);
+    expect({ originalCloseCount, firstReplacementCloseCount, secondReplacementCloseCount }).toEqual(
+      {
+        originalCloseCount: 1,
+        firstReplacementCloseCount: 0,
+        secondReplacementCloseCount: 1,
+      },
+    );
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("close waits for an active reload swap and closes its replacement", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-close-test-"));
+  const agentId = "00000000-0000-4000-8000-000000000095";
+  const originalCloseStarted = deferred<void>();
+  const allowOriginalClose = deferred<void>();
+  const resumeGate = deferred<AgentSession>();
+  let replacementCloseCount = 0;
+  const config: AgentSessionConfig = { provider: "codex", cwd: workdir };
+  const replacement = new (class extends TestAgentSession {
+    override async close(): Promise<void> {
+      replacementCloseCount += 1;
+    }
+  })(config);
+  const client = new (class extends TestAgentClient {
+    override async createSession(sessionConfig: AgentSessionConfig): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override async close(): Promise<void> {
+          originalCloseStarted.resolve();
+          await allowOriginalClose.promise;
+        }
+      })(sessionConfig);
+    }
+
+    override async resumeSession(): Promise<AgentSession> {
+      return await resumeGate.promise;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    await manager.createAgent(config, undefined, { workspaceId: undefined });
+    const reload = manager.reloadAgentSession(agentId);
+    resumeGate.resolve(replacement);
+    await originalCloseStarted.promise;
+
+    const close = manager.closeAgent(agentId);
+    allowOriginalClose.resolve();
+    await reload;
+    await close;
+
+    expect(manager.listAgents()).toEqual([]);
+    expect(replacementCloseCount).toBe(1);
+  } finally {
+    allowOriginalClose.resolve();
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("normalizeConfig injects the provider default model when omitted", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");

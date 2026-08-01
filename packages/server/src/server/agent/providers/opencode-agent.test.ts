@@ -307,11 +307,12 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
       signal: controller.signal,
     });
     await vi.waitFor(() => expect(openCode.calls.sessionCreate).toHaveLength(1));
-    expect(runtime.acquisitionSignals[0]).toBe(controller.signal);
+    expect(runtime.acquisitionSignals[0]?.aborted).toBe(false);
 
     controller.abort(new Error("OpenCode startup canceled"));
 
     await expect(creation).rejects.toThrow("OpenCode startup canceled");
+    expect(runtime.acquisitionSignals[0]?.aborted).toBe(true);
     expect(runtime.acquisitions[0]?.releaseCount).toBe(0);
     const shutdown = client.shutdown();
     expect(runtime.shutdownCallCount).toBe(0);
@@ -360,6 +361,80 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
       expect(runtime.shutdownCallCount).toBe(1);
     } finally {
       vi.useRealTimers();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("shutdown cancels and bounds a session.create request that never settles", async () => {
+    vi.useFakeTimers();
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    let createSignal: AbortSignal | undefined;
+    openCode.sessionCreateImplementation = async (_parameters, options) => {
+      createSignal = (options as { signal?: AbortSignal } | undefined)?.signal;
+      return await new Promise<never>(() => {});
+    };
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+
+    try {
+      const creation = client.createSession(buildConfig(cwd));
+      await vi.waitFor(() => expect(openCode.calls.sessionCreate).toHaveLength(1));
+
+      const shutdown = client.shutdown();
+
+      expect(createSignal?.aborted).toBe(true);
+      await expect(creation).rejects.toThrow("OpenCode agent client shutting down");
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(runtime.acquisitions[0]?.releaseCount).toBe(0);
+      expect(runtime.shutdownCallCount).toBe(0);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await shutdown;
+      expect(openCode.calls.sessionDelete).toEqual([]);
+      expect(runtime.acquisitions[0]?.releaseCount).toBe(1);
+      expect(runtime.shutdownCallCount).toBe(1);
+    } finally {
+      vi.useRealTimers();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("shutdown cleans up a created session when startup provider.list never settles", async () => {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    let providerListSignal: AbortSignal | undefined;
+    openCode.sessionCreateResponse = { data: { id: "created-before-provider-list" } };
+    openCode.providerListImplementation = async (options) => {
+      providerListSignal = (options as { signal?: AbortSignal } | undefined)?.signal;
+      return await new Promise<never>(() => {});
+    };
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+
+    try {
+      const creation = client.createSession(buildConfig(cwd));
+      await vi.waitFor(() => expect(openCode.calls.providerList).toHaveLength(1));
+
+      const shutdown = client.shutdown();
+
+      expect(providerListSignal?.aborted).toBe(true);
+      await expect(creation).rejects.toThrow("OpenCode agent client shutting down");
+      await shutdown;
+      expect(openCode.calls.sessionDelete).toEqual([
+        { sessionID: "created-before-provider-list", directory: cwd },
+      ]);
+      expect(runtime.acquisitions[0]?.releaseCount).toBe(1);
+      expect(runtime.shutdownCallCount).toBe(1);
+    } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
   });
@@ -1779,6 +1854,39 @@ describe("OpenCode adapter startTurn error handling", () => {
     });
   });
 
+  test("bounds an ephemeral session.delete that never settles before releasing its server", async () => {
+    vi.useFakeTimers();
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    openCode.sessionDeleteImplementation = async () => await new Promise<never>(() => {});
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+
+    try {
+      const session = await client.createSession({ provider: "opencode", cwd }, undefined, {
+        persistSession: false,
+      });
+      const close = session.close();
+
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(openCode.calls.sessionDelete).toEqual([{ sessionID: "session-1", directory: cwd }]);
+      expect(runtime.acquisitions[0]?.releaseCount).toBe(0);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await close;
+      expect(runtime.acquisitions[0]?.releaseCount).toBe(1);
+      await client.shutdown();
+      expect(runtime.shutdownCallCount).toBe(1);
+    } finally {
+      vi.useRealTimers();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("does not delete provider session on close by default", async () => {
     const fakeClient = {
       session: {
@@ -2963,6 +3071,58 @@ describe("OpenCode adapter startTurn error handling", () => {
       await provider.shutdown();
     } finally {
       vi.useRealTimers();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("same-session resume generations follow completion order", async () => {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const firstClient = new TestOpenCodeClient();
+    const secondClient = new TestOpenCodeClient();
+    const firstProviderList = deferred<{
+      data: { connected: unknown[]; all: unknown[] };
+    }>();
+    const secondProviderList = deferred<{
+      data: { connected: unknown[]; all: unknown[] };
+    }>();
+    firstClient.providerListImplementation = async () => await firstProviderList.promise;
+    secondClient.providerListImplementation = async () => await secondProviderList.promise;
+    runtime.enqueueClient(firstClient);
+    runtime.enqueueClient(secondClient);
+    const provider = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const handle = {
+      provider: "opencode" as const,
+      sessionId: "ses_concurrent_reload",
+      nativeHandle: "ses_concurrent_reload",
+      metadata: { cwd },
+    };
+
+    try {
+      const firstResume = provider.resumeSession(handle);
+      await vi.waitFor(() => expect(firstClient.calls.providerList).toHaveLength(1));
+      const secondResume = provider.resumeSession(handle);
+      await vi.waitFor(() => expect(secondClient.calls.providerList).toHaveLength(1));
+
+      secondProviderList.resolve({ data: { connected: [], all: [] } });
+      const secondSession = await secondResume;
+      firstProviderList.resolve({ data: { connected: [], all: [] } });
+      const firstSession = await firstResume;
+
+      await secondSession.close();
+      expect(secondClient.calls.sessionAbort).toEqual([]);
+      await firstSession.close();
+      expect(firstClient.calls.sessionAbort).toEqual([
+        { sessionID: "ses_concurrent_reload", directory: cwd },
+      ]);
+      expect(runtime.acquisitions.every((acquisition) => acquisition.releaseCount === 1)).toBe(
+        true,
+      );
+      await provider.shutdown();
+    } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
   });
