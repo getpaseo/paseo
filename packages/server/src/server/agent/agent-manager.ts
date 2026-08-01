@@ -315,6 +315,10 @@ interface HandleStreamEventOptions {
 
 interface ActiveHistoryHydration {
   token: symbol;
+  preGateCoalescerToken: symbol;
+  preGateCoalescerOpen: boolean;
+  preGateSessionEventTokens: Set<symbol>;
+  preGateBufferedOperations: BufferedHistoryHydrationOperation[];
   bufferedOperations: BufferedHistoryHydrationOperation[];
 }
 
@@ -622,6 +626,7 @@ export class AgentManager {
   private readonly providerSubagents = new ProviderSubagentStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
+  private readonly sessionEventAdmissionTokens = new Map<string, Set<symbol>>();
   private readonly historyHydrationTails = new Map<string, Promise<void>>();
   private readonly activeHistoryHydrations = new Map<string, ActiveHistoryHydration>();
   private readonly coalescerHistoryHydrationTokens = new Map<string, symbol>();
@@ -669,13 +674,19 @@ export class AgentManager {
       windowMs: options.agentStreamCoalesceWindowMs ?? AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS,
       timers: { setTimeout, clearTimeout },
       onFlush: ({ agentId, item, provider, turnId }) => {
+        const activeHydration = this.activeHistoryHydrations.get(agentId);
+        const historyHydrationToken =
+          this.coalescerHistoryHydrationTokens.get(agentId) ??
+          (activeHydration?.preGateCoalescerOpen
+            ? activeHydration.preGateCoalescerToken
+            : undefined);
         void this.runOrBufferTimelineWriter(
           agentId,
           async () => {
             const event = this.recordAndDispatchTimelineItem(agentId, item, provider, turnId);
             this.notifyForegroundTurnWaiters(agentId, event);
           },
-          this.coalescerHistoryHydrationTokens.get(agentId),
+          historyHydrationToken,
         ).catch((err) => {
           this.logger.error(
             { err, agentId, itemType: item.type },
@@ -2577,7 +2588,7 @@ export class AgentManager {
       await this.drainSessionEvents(agentId);
       // Preserve coalesced output admitted before or during the drain. The already-installed gate
       // turns this flush into an ordered buffered writer that will replay after history commits.
-      this.agentStreamCoalescer.flushAndDiscard(agentId);
+      this.flushPreGateCoalescedTimelineItems(agentId, hydrationToken);
       const agent = this.requireSessionAgent(agentId);
       await this.hydrateTimelineFromLegacyProviderHistory(agent, options);
     } finally {
@@ -3095,8 +3106,11 @@ export class AgentManager {
       return { timestamp: now.toISOString() };
     }
 
+    const committed = await this.durableTimelineStore.fetchCommitted(agentId, { limit: 0 });
     return {
-      nextSeq: (await this.durableTimelineStore.getLatestCommittedSeq(agentId)) + 1,
+      epoch: committed.epoch,
+      rows: committed.rows,
+      nextSeq: committed.window.nextSeq,
       timestamp: now.toISOString(),
     };
   }
@@ -3181,15 +3195,28 @@ export class AgentManager {
       pendingRun.stagedEvents.push(event);
       return;
     }
+    const admissionToken = Symbol(agentId);
+    let admissionTokens = this.sessionEventAdmissionTokens.get(agentId);
+    if (!admissionTokens) {
+      admissionTokens = new Set();
+      this.sessionEventAdmissionTokens.set(agentId, admissionTokens);
+    }
+    admissionTokens.add(admissionToken);
     const previous = this.sessionEventTails.get(agentId) ?? Promise.resolve();
     const next = previous
       .catch(() => undefined)
-      .then(async () => this.processSessionEvent(agentId, event))
+      .then(async () => this.processSessionEvent(agentId, event, admissionToken))
       .catch((err) => {
         this.logger.error(
           { err, agentId, eventType: event.type },
           "Failed to process session event",
         );
+      })
+      .finally(() => {
+        admissionTokens.delete(admissionToken);
+        if (admissionTokens.size === 0) {
+          this.sessionEventAdmissionTokens.delete(agentId);
+        }
       });
 
     this.sessionEventTails.set(agentId, next);
@@ -3547,7 +3574,14 @@ export class AgentManager {
       return activeHydration.token;
     }
     const token = Symbol(agentId);
-    this.activeHistoryHydrations.set(agentId, { token, bufferedOperations: [] });
+    this.activeHistoryHydrations.set(agentId, {
+      token,
+      preGateCoalescerToken: Symbol(`${agentId}:pre-gate-coalescer`),
+      preGateCoalescerOpen: true,
+      preGateSessionEventTokens: new Set(this.sessionEventAdmissionTokens.get(agentId) ?? []),
+      preGateBufferedOperations: [],
+      bufferedOperations: [],
+    });
     return token;
   }
 
@@ -3563,7 +3597,9 @@ export class AgentManager {
 
     await this.drainSessionEvents(agentId);
     while (true) {
-      const operation = activeHydration.bufferedOperations.shift();
+      const operation =
+        activeHydration.preGateBufferedOperations.shift() ??
+        activeHydration.bufferedOperations.shift();
       if (operation) {
         try {
           if (operation.kind === "timeline_writer") {
@@ -3582,7 +3618,10 @@ export class AgentManager {
       }
 
       this.flushCoalescedTimelineItems(agentId, token);
-      if (activeHydration.bufferedOperations.length > 0) {
+      if (
+        activeHydration.preGateBufferedOperations.length > 0 ||
+        activeHydration.bufferedOperations.length > 0
+      ) {
         continue;
       }
       if (!stillOwnsTail()) {
@@ -3610,6 +3649,18 @@ export class AgentManager {
       }
     }
 
+    if (
+      historyHydrationToken === activeHydration.preGateCoalescerToken ||
+      (historyHydrationToken !== undefined &&
+        activeHydration.preGateSessionEventTokens.has(historyHydrationToken))
+    ) {
+      activeHydration.preGateBufferedOperations.push({
+        kind: "timeline_writer",
+        run: async () => run(),
+      });
+      return Promise.resolve();
+    }
+
     return new Promise<void>((promiseResolve, promiseReject) => {
       activeHydration.bufferedOperations.push({
         kind: "timeline_writer",
@@ -3624,6 +3675,18 @@ export class AgentManager {
     this.withCoalescerHistoryHydrationToken(agentId, historyHydrationToken, () => {
       this.agentStreamCoalescer.flushFor(agentId);
     });
+  }
+
+  private flushPreGateCoalescedTimelineItems(agentId: string, hydrationToken: symbol): void {
+    const activeHydration = this.activeHistoryHydrations.get(agentId);
+    if (!activeHydration || activeHydration.token !== hydrationToken) {
+      throw new Error(`Agent ${agentId} history hydration ownership was lost`);
+    }
+    try {
+      this.agentStreamCoalescer.flushAndDiscard(agentId);
+    } finally {
+      activeHydration.preGateCoalescerOpen = false;
+    }
   }
 
   private withCoalescerHistoryHydrationToken<T>(

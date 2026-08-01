@@ -41,6 +41,7 @@ import type {
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
 import type { AgentTimelineRow, AgentTimelineStore } from "./agent-timeline-store-types.js";
+import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -469,8 +470,15 @@ class AtomicTestTimelineStore implements AgentTimelineStore {
     return structuredClone(row);
   }
 
-  async fetchCommitted(): Promise<never> {
-    throw new Error("fetchCommitted is not used by this test store");
+  async fetchCommitted(agentId: string) {
+    const store = new InMemoryAgentTimelineStore();
+    const rows = await this.getCommittedRows(agentId);
+    store.initialize(agentId, {
+      epoch: `test-epoch-${agentId}`,
+      rows,
+      nextSeq: (rows.at(-1)?.seq ?? 0) + 1,
+    });
+    return store.fetch(agentId, { limit: 0 });
   }
 
   async getLatestCommittedSeq(agentId: string): Promise<number> {
@@ -3174,6 +3182,69 @@ test("provider hydration gates a microtask live event before draining the sessio
   }
 });
 
+test("provider hydration drains a queued pre-gate event and replays it before post-gate events", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-hydration-admission-"));
+  const agentId = "00000000-0000-4000-8000-000000000153";
+  let session: TestAgentSession | null = null;
+
+  class ReplacementHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: "replacement history" },
+      };
+    }
+  }
+
+  class ReplacementHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new ReplacementHistorySession(config);
+      return session;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ReplacementHistoryClient() },
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    session?.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "user_message", text: "queued before hydration admission" },
+    });
+    session?.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "assistant_message", text: "coalesced before hydration admission" },
+    });
+    const hydration = manager.hydrateTimelineFromProvider(created.id, { force: true });
+    session?.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "user_message", text: "admitted after hydration gate" },
+    });
+
+    await hydration;
+
+    expect(manager.getTimeline(created.id)).toEqual([
+      { type: "user_message", text: "replacement history" },
+      { type: "user_message", text: "queued before hydration admission" },
+      { type: "assistant_message", text: "coalesced before hydration admission" },
+      { type: "user_message", text: "admitted after hydration gate" },
+    ]);
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("provider hydration awaits one atomic durable replacement before a restart can prime", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-hydration-durable-"));
   const agentId = "00000000-0000-4000-8000-000000000151";
@@ -3282,6 +3353,7 @@ test("provider hydration awaits one atomic durable replacement before a restart 
       );
       await restartedManager.hydrateTimelineFromProvider(restarted.id);
       expect(historyCalls).toBe(1);
+      expect(restartedManager.getTimeline(restarted.id)).toEqual(committed.map((row) => row.item));
       expect((await restartedManager.getTimelineRows(restarted.id)).map((row) => row.item)).toEqual(
         committed.map((row) => row.item),
       );
