@@ -596,6 +596,7 @@ export class AgentManager {
   private readonly durableTimelineStore?: AgentTimelineStore;
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly backgroundTasks = new Set<Promise<void>>();
+  private readonly durableTimelineMutationTails = new Map<string, Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
@@ -2546,10 +2547,11 @@ export class AgentManager {
   }
 
   async deleteCommittedTimeline(agentId: string): Promise<void> {
-    if (!this.durableTimelineStore) {
+    const durableTimelineStore = this.durableTimelineStore;
+    if (!durableTimelineStore) {
       return;
     }
-    await this.durableTimelineStore.deleteAgent(agentId);
+    await this.runDurableTimelineMutation(agentId, () => durableTimelineStore.deleteAgent(agentId));
   }
 
   async deleteAgentState(agentId: string): Promise<void> {
@@ -2822,9 +2824,11 @@ export class AgentManager {
     let registered = false;
     let published = false;
     let managed: ActiveManagedAgent | null = null;
+    let resolvedAgentId: string | null = null;
+    let timelineCreatedByRegistration = false;
     try {
       this.assertAcceptingAgentRegistrations();
-      const resolvedAgentId = validateAgentId(agentId, "registerSession");
+      resolvedAgentId = validateAgentId(agentId, "registerSession");
       if (this.agents.has(resolvedAgentId)) {
         throw new Error(`Agent with id ${resolvedAgentId} already exists`);
       }
@@ -2835,11 +2839,13 @@ export class AgentManager {
       );
 
       const now = new Date();
-      const { durableTimelineHasRows } = await this.initializeAgentTimelineForRegister({
+      const timelineInitialization = await this.initializeAgentTimelineForRegister({
         agentId: resolvedAgentId,
         now,
         options,
       });
+      const { durableTimelineHasRows } = timelineInitialization;
+      timelineCreatedByRegistration = timelineInitialization.timelineCreated;
 
       managed = this.buildManagedAgentForRegister({
         resolvedAgentId,
@@ -2877,6 +2883,13 @@ export class AgentManager {
       this.subscribeToSession(managed);
       return { ...managed };
     } catch (error) {
+      if (
+        timelineCreatedByRegistration &&
+        resolvedAgentId &&
+        (!this.agents.has(resolvedAgentId) || this.agents.get(resolvedAgentId) === managed)
+      ) {
+        this.timelineStore.delete(resolvedAgentId);
+      }
       if (!registered) {
         await this.closeUnregisteredSession(session);
       } else if (managed && this.agents.get(managed.id) === managed) {
@@ -2929,7 +2942,7 @@ export class AgentManager {
           updatedAt?: Date;
         }
       | undefined;
-  }): Promise<{ durableTimelineHasRows: boolean }> {
+  }): Promise<{ durableTimelineHasRows: boolean; timelineCreated: boolean }> {
     const { agentId, now, options } = params;
     const timelineAlreadyPrimed = this.timelineStore.has(agentId);
     const explicitTimelineSeed = buildExplicitTimelineSeedForRegister(now, options);
@@ -2944,13 +2957,15 @@ export class AgentManager {
       timelineAlreadyPrimed ||
       (durableTimelineSeed != null && (durableTimelineSeed.nextSeq ?? 1) > 1);
     const timelineSeed = explicitTimelineSeed ?? durableTimelineSeed;
+    let timelineCreated = false;
     if (timelineSeed || !this.timelineStore.has(agentId)) {
+      timelineCreated = !this.timelineStore.has(agentId);
       this.timelineStore.initialize(agentId, timelineSeed ?? { timestamp: now.toISOString() });
     }
     if (options?.timelineRows?.length) {
       this.enqueueDurableTimelineBulkInsert(agentId, options.timelineRows);
     }
-    return { durableTimelineHasRows };
+    return { durableTimelineHasRows, timelineCreated };
   }
 
   private buildManagedAgentForRegister(params: {
@@ -3356,7 +3371,7 @@ export class AgentManager {
     }
 
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
-    await this.deleteCommittedTimeline(agent.id);
+    await this.deleteCommittedTimelineForAgent(agent);
     if (this.agents.get(agent.id) !== agent) {
       return;
     }
@@ -4291,11 +4306,13 @@ export class AgentManager {
   }
 
   private enqueueDurableTimelineAppend(agentId: string, row: AgentTimelineRow): void {
-    if (!this.durableTimelineStore) {
+    const durableTimelineStore = this.durableTimelineStore;
+    if (!durableTimelineStore) {
       return;
     }
-    const task = this.durableTimelineStore
-      .bulkInsert(agentId, [row])
+    const task = this.runDurableTimelineMutation(agentId, () =>
+      durableTimelineStore.bulkInsert(agentId, [row]),
+    )
       .then(() => undefined)
       .catch((err) => {
         this.logger.error(
@@ -4310,16 +4327,48 @@ export class AgentManager {
     agentId: string,
     rows: readonly AgentTimelineRow[],
   ): void {
-    if (!this.durableTimelineStore || rows.length === 0) {
+    const durableTimelineStore = this.durableTimelineStore;
+    if (!durableTimelineStore || rows.length === 0) {
       return;
     }
-    const task = this.durableTimelineStore.bulkInsert(agentId, rows).catch((err) => {
+    const task = this.runDurableTimelineMutation(agentId, () =>
+      durableTimelineStore.bulkInsert(agentId, rows),
+    ).catch((err) => {
       this.logger.error(
         { err, agentId, rowCount: rows.length },
         "Failed to seed durable timeline store",
       );
     });
     this.trackBackgroundTask(task);
+  }
+
+  private async deleteCommittedTimelineForAgent(agent: ActiveManagedAgent): Promise<void> {
+    const durableTimelineStore = this.durableTimelineStore;
+    if (!durableTimelineStore) {
+      return;
+    }
+    await this.runDurableTimelineMutation(agent.id, async () => {
+      if (this.agents.get(agent.id) !== agent) {
+        return;
+      }
+      await durableTimelineStore.deleteAgent(agent.id);
+    });
+  }
+
+  private runDurableTimelineMutation(
+    agentId: string,
+    mutation: () => Promise<void>,
+  ): Promise<void> {
+    const previous = this.durableTimelineMutationTails.get(agentId) ?? Promise.resolve();
+    const task = previous.catch(() => undefined).then(mutation);
+    this.durableTimelineMutationTails.set(agentId, task);
+    const clearTail = () => {
+      if (this.durableTimelineMutationTails.get(agentId) === task) {
+        this.durableTimelineMutationTails.delete(agentId);
+      }
+    };
+    void task.then(clearTail, clearTail);
+    return task;
   }
 
   private trackBackgroundTask(task: Promise<void>): void {

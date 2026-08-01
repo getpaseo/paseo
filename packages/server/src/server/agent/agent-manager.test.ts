@@ -44,6 +44,12 @@ import type {
 } from "./agent-sdk-types.js";
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
+import type {
+  AgentTimelineFetchOptions,
+  AgentTimelineFetchResult,
+  AgentTimelineRow,
+  AgentTimelineStore,
+} from "./agent-timeline-store-types.js";
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -59,6 +65,86 @@ function deferred<T>(): Deferred<T> {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+class TestDurableTimelineStore implements AgentTimelineStore {
+  readonly rowsByAgent = new Map<string, AgentTimelineRow[]>();
+  beforeBulkInsert?: (agentId: string, rows: readonly AgentTimelineRow[]) => Promise<void>;
+  beforeDeleteAgent?: (agentId: string) => Promise<void>;
+
+  async appendCommitted(
+    agentId: string,
+    item: AgentTimelineItem,
+    options?: { timestamp?: string },
+  ): Promise<AgentTimelineRow> {
+    const row = {
+      seq: (await this.getLatestCommittedSeq(agentId)) + 1,
+      timestamp: options?.timestamp ?? new Date().toISOString(),
+      item,
+    };
+    await this.bulkInsert(agentId, [row]);
+    return row;
+  }
+
+  async fetchCommitted(
+    agentId: string,
+    options?: AgentTimelineFetchOptions,
+  ): Promise<AgentTimelineFetchResult> {
+    const rows = await this.getCommittedRows(agentId);
+    const minSeq = rows[0]?.seq ?? 0;
+    const maxSeq = rows.at(-1)?.seq ?? 0;
+    return {
+      epoch: "test-durable-epoch",
+      direction: options?.direction ?? "tail",
+      reset: false,
+      staleCursor: false,
+      gap: false,
+      window: { minSeq, maxSeq, nextSeq: maxSeq + 1 },
+      hasOlder: false,
+      hasNewer: false,
+      rows,
+    };
+  }
+
+  async getLatestCommittedSeq(agentId: string): Promise<number> {
+    return this.rowsByAgent.get(agentId)?.at(-1)?.seq ?? 0;
+  }
+
+  async getCommittedRows(agentId: string): Promise<AgentTimelineRow[]> {
+    return Array.from(this.rowsByAgent.get(agentId) ?? []);
+  }
+
+  async getLastItem(agentId: string): Promise<AgentTimelineItem | null> {
+    return this.rowsByAgent.get(agentId)?.at(-1)?.item ?? null;
+  }
+
+  async getLastAssistantMessage(agentId: string): Promise<string | null> {
+    const rows = this.rowsByAgent.get(agentId) ?? [];
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const item = rows[index]?.item;
+      if (item?.type === "assistant_message") {
+        return item.text;
+      }
+    }
+    return null;
+  }
+
+  async deleteAgent(agentId: string): Promise<void> {
+    await this.beforeDeleteAgent?.(agentId);
+    this.rowsByAgent.delete(agentId);
+  }
+
+  async bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void> {
+    await this.beforeBulkInsert?.(agentId, rows);
+    const bySeq = new Map((this.rowsByAgent.get(agentId) ?? []).map((row) => [row.seq, row]));
+    for (const row of rows) {
+      bySeq.set(row.seq, { ...row });
+    }
+    this.rowsByAgent.set(
+      agentId,
+      Array.from(bySeq.values()).sort((left, right) => left.seq - right.seq),
+    );
+  }
 }
 
 function waitForAgentLifecycle(
@@ -3068,19 +3154,34 @@ test("closing a resume drops old history and buffered events before reusing the 
   }
 });
 
-test("failed resumed registration rolls back the live agent and rejects gated writers", async () => {
+test("failed resumed registration rolls back timeline state so retry hydrates history", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-resume-registration-rollback-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
   const agentId = randomUUID();
   const runtimeInfoStarted = deferred<void>();
   const runtimeInfoAllowed = deferred<void>();
   let sessionClosed = false;
+  let resumeCalls = 0;
+  let historyReads = 0;
 
   const client = new (class extends TestAgentClient {
     override async resumeSession(
       _handle: AgentPersistenceHandle,
       config?: Partial<AgentSessionConfig>,
     ): Promise<AgentSession> {
+      resumeCalls += 1;
+      if (resumeCalls > 1) {
+        return new (class extends TestAgentSession {
+          override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+            historyReads += 1;
+            yield {
+              type: "timeline",
+              provider: "codex",
+              item: { type: "assistant_message", text: "history restored on retry" },
+            };
+          }
+        })({ provider: "codex", cwd: config?.cwd ?? workdir });
+      }
       return new (class extends TestAgentSession {
         override async getRuntimeInfo() {
           runtimeInfoStarted.resolve();
@@ -3128,6 +3229,23 @@ test("failed resumed registration rolls back the live agent and rejects gated wr
       agent: null,
       sessionClosed: true,
       record: { lastStatus: "closed" },
+    });
+
+    const retried = await manager.resumeAgentFromPersistence(
+      { provider: "codex", sessionId: "failed-session", metadata: { cwd: workdir } },
+      undefined,
+      agentId,
+    );
+    expect({
+      resumeCalls,
+      historyReads,
+      historyPrimed: retried.historyPrimed,
+      timeline: manager.getTimeline(agentId),
+    }).toEqual({
+      resumeCalls: 2,
+      historyReads: 1,
+      historyPrimed: true,
+      timeline: [{ type: "assistant_message", text: "history restored on retry" }],
     });
   } finally {
     runtimeInfoAllowed.resolve();
@@ -3365,6 +3483,146 @@ test("force provider hydration commits history before releasing interleaved live
     ]);
   } finally {
     await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("force provider hydration drains earlier durable inserts before replacing rows", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-force-durable-order-"));
+  const agentId = randomUUID();
+  const oldInsertEntered = deferred<void>();
+  const releaseOldInsert = deferred<void>();
+  const durableTimelineStore = new TestDurableTimelineStore();
+  let blockOldInsert = true;
+  durableTimelineStore.beforeBulkInsert = async (_insertAgentId, rows) => {
+    if (
+      blockOldInsert &&
+      rows.some((row) => row.item.type === "user_message" && row.item.text === "old row")
+    ) {
+      blockOldInsert = false;
+      oldInsertEntered.resolve();
+      await releaseOldInsert.promise;
+    }
+  };
+
+  class ReplacementHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: "replacement row" },
+      };
+    }
+  }
+  class ReplacementHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new ReplacementHistorySession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ReplacementHistoryClient() },
+    durableTimelineStore,
+    logger,
+    idFactory: () => agentId,
+  });
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.appendTimelineItem(created.id, { type: "user_message", text: "old row" });
+    await oldInsertEntered.promise;
+
+    const hydration = manager.hydrateTimelineFromProvider(created.id, { force: true });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    releaseOldInsert.resolve();
+    await hydration;
+    await manager.flush();
+
+    expect(manager.getTimeline(agentId)).toEqual([
+      { type: "user_message", text: "replacement row" },
+    ]);
+    expect((await durableTimelineStore.getCommittedRows(agentId)).map((row) => row.item)).toEqual([
+      { type: "user_message", text: "replacement row" },
+    ]);
+  } finally {
+    releaseOldInsert.resolve();
+    await manager.closeAgent(agentId).catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("old force hydration cannot erase same-id replacement durable rows", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-force-durable-generation-"));
+  const agentId = randomUUID();
+  const deleteEntered = deferred<void>();
+  const releaseDelete = deferred<void>();
+  const durableTimelineStore = new TestDurableTimelineStore();
+
+  class OldHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: "old replacement history" },
+      };
+    }
+  }
+  class OldHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new OldHistorySession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new OldHistoryClient() },
+    durableTimelineStore,
+    logger,
+    idFactory: () => agentId,
+  });
+  try {
+    const oldAgent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    durableTimelineStore.rowsByAgent.set(agentId, [
+      {
+        seq: 1,
+        timestamp: "2026-08-01T00:00:00.000Z",
+        item: { type: "user_message", text: "old durable row" },
+      },
+    ]);
+    durableTimelineStore.beforeDeleteAgent = async () => {
+      deleteEntered.resolve();
+      await releaseDelete.promise;
+    };
+    const oldHydration = manager.hydrateTimelineFromProvider(oldAgent.id, { force: true });
+    await deleteEntered.promise;
+
+    await manager.closeAgent(oldAgent.id);
+    const replacement = await manager.resumeAgentFromPersistence(
+      { provider: "codex", sessionId: "replacement-session", metadata: { cwd: workdir } },
+      undefined,
+      oldAgent.id,
+    );
+    await manager.appendTimelineItem(replacement.id, {
+      type: "assistant_message",
+      text: "same-id replacement",
+    });
+    releaseDelete.resolve();
+
+    await oldHydration;
+    await manager.flush();
+    expect(manager.getTimeline(agentId)).toEqual([
+      { type: "assistant_message", text: "same-id replacement" },
+    ]);
+    expect((await durableTimelineStore.getCommittedRows(agentId)).map((row) => row.item)).toEqual([
+      { type: "assistant_message", text: "same-id replacement" },
+    ]);
+  } finally {
+    releaseDelete.resolve();
+    await manager.closeAgent(agentId).catch(() => undefined);
+    await manager.flush().catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
   }
 });

@@ -4970,6 +4970,77 @@ test("refresh_agent_request leaves workspace archival independent when its direc
   expect(findByType(emitted, "rpc_error")).toBeUndefined();
 });
 
+test("resume_agent_request emits agent_resumed through the session route", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+  });
+  const agentId = "00000000-0000-4000-8000-000000000560";
+  const managed = makeManagedAgent({
+    id: agentId,
+    cwd: REPO_CWD,
+    workspaceId: "ws-repo-running",
+    lifecycle: "idle",
+    updatedAt: "2026-08-01T00:00:00.000Z",
+  });
+  const resumeAgentFromPersistence = vi.fn().mockResolvedValue(managed);
+  session.agentManager.resumeAgentFromPersistence = resumeAgentFromPersistence;
+  session.agentManager.getTimeline = () => [
+    { type: "assistant_message", text: "restored timeline" },
+  ];
+  session.agentUpdates.forwardLiveAgent = vi.fn().mockResolvedValue(undefined);
+
+  await session.handleMessage({
+    type: "resume_agent_request",
+    handle: { provider: "codex", sessionId: "provider-session-560" },
+    requestId: "req-resume-success",
+  });
+
+  expect(resumeAgentFromPersistence).toHaveBeenCalledWith(
+    { provider: "codex", sessionId: "provider-session-560" },
+    undefined,
+  );
+  expect(findByType(emitted, "status")?.payload).toMatchObject({
+    status: "agent_resumed",
+    requestId: "req-resume-success",
+    agentId,
+    timelineSize: 1,
+    agent: { id: agentId, status: "idle" },
+  });
+  expect(findByType(emitted, "rpc_error")).toBeUndefined();
+});
+
+test("resume_agent_request emits agent_resume_failed through the session route", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+  });
+  session.agentManager.resumeAgentFromPersistence = vi
+    .fn()
+    .mockRejectedValue(new Error("provider resume failed"));
+
+  await session.handleMessage({
+    type: "resume_agent_request",
+    handle: { provider: "codex", sessionId: "provider-session-failed" },
+    requestId: "req-resume-failure",
+  });
+
+  expect(findByType(emitted, "rpc_error")).toEqual({
+    type: "rpc_error",
+    payload: {
+      requestId: "req-resume-failure",
+      requestType: "resume_agent_request",
+      error: "provider resume failed",
+      code: "agent_resume_failed",
+    },
+  });
+  expect(findByType(emitted, "activity_log")?.payload).toMatchObject({
+    type: "error",
+    content: "Failed to resume agent: provider resume failed",
+  });
+  expect(findByType(emitted, "status")).toBeUndefined();
+});
+
 test("refresh_agent_request leaves workspace archival independent when its directory is missing", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests({
