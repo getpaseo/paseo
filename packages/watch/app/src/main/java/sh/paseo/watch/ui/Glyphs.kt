@@ -15,7 +15,7 @@ import androidx.compose.ui.unit.dp
 /**
  * Hand-drawn glyphs instead of a vector-asset dependency.
  *
- * These are the only five icons the app needs, they are all simple strokes, and
+ * These are the only icons the app needs, they are all simple strokes, and
  * drawing them keeps the APK free of a material-icons dependency — which matters
  * more than usual on a watch.
  */
@@ -58,6 +58,88 @@ fun MicGlyph(tint: Color, size: Int = 22) {
       strokeWidth = w * 0.09f,
       cap = StrokeCap.Round,
     )
+  }
+}
+
+/**
+ * [MicGlyph] with a slash through it.
+ *
+ * The slash is drawn last so it reads as struck-through rather than as a stray
+ * diagonal — the same convention every call UI uses for a muted microphone.
+ */
+@Composable
+fun MicOffGlyph(tint: Color, size: Int = 22) {
+  Canvas(modifier = Modifier.size(size.dp)) {
+    val w = this.size.width
+    val h = this.size.height
+    val stroke = Stroke(width = w * 0.09f, cap = StrokeCap.Round)
+
+    val capsuleWidth = w * 0.26f
+    val capsuleHeight = h * 0.42f
+    drawRoundRect(
+      color = tint,
+      topLeft = Offset((w - capsuleWidth) / 2f, h * 0.12f),
+      size = Size(capsuleWidth, capsuleHeight),
+      cornerRadius = androidx.compose.ui.geometry.CornerRadius(capsuleWidth / 2f),
+      style = stroke,
+    )
+
+    val cradleInset = w * 0.22f
+    drawArc(
+      color = tint,
+      startAngle = 0f,
+      sweepAngle = 180f,
+      useCenter = false,
+      topLeft = Offset(cradleInset, h * 0.35f),
+      size = Size(w - cradleInset * 2f, h * 0.42f),
+      style = stroke,
+    )
+
+    drawLine(
+      color = tint,
+      start = Offset(w / 2f, h * 0.78f),
+      end = Offset(w / 2f, h * 0.9f),
+      strokeWidth = w * 0.09f,
+      cap = StrokeCap.Round,
+    )
+
+    drawLine(
+      color = tint,
+      start = Offset(w * 0.16f, h * 0.14f),
+      end = Offset(w * 0.84f, h * 0.86f),
+      strokeWidth = w * 0.11f,
+      cap = StrokeCap.Round,
+    )
+  }
+}
+
+/**
+ * A handset rotated down, the universal hang-up mark.
+ *
+ * Drawn as a thick rounded bar with two earpiece stubs rather than a traced
+ * receiver outline: at 20dp the outline turns to mud, and the silhouette is what
+ * actually carries the meaning.
+ */
+@Composable
+fun HangUpGlyph(tint: Color, size: Int = 22) {
+  Canvas(modifier = Modifier.size(size.dp)) {
+    val w = this.size.width
+    val h = this.size.height
+
+    drawRoundRect(
+      color = tint,
+      topLeft = Offset(w * 0.1f, h * 0.42f),
+      size = Size(w * 0.8f, h * 0.16f),
+      cornerRadius = androidx.compose.ui.geometry.CornerRadius(h * 0.08f),
+    )
+    for (x in listOf(0.18f, 0.82f)) {
+      drawRoundRect(
+        color = tint,
+        topLeft = Offset(w * (x - 0.09f), h * 0.58f),
+        size = Size(w * 0.18f, h * 0.16f),
+        cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.05f),
+      )
+    }
   }
 }
 

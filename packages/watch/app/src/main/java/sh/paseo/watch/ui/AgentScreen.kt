@@ -386,7 +386,12 @@ private fun statusText(agent: AgentSession): String =
     ActivityState.Idle -> "idle ${agent.age}"
   }
 
-/** Round icon button with a caption, at whatever weight the screen calls for. */
+/**
+ * Round icon button with a caption, at whatever weight the screen calls for.
+ *
+ * [background] overrides the weight's colour for the rare control that is
+ * prominent *and* destructive — hanging up a call is the only one today.
+ */
 @Composable
 fun ActionButton(
   label: String,
@@ -394,6 +399,7 @@ fun ActionButton(
   onClick: () -> Unit,
   modifier: Modifier = Modifier,
   size: Int = 52,
+  background: Color? = null,
   content: @Composable () -> Unit,
 ) {
   Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
@@ -401,7 +407,8 @@ fun ActionButton(
       onClick = onClick,
       colors =
         ButtonDefaults.buttonColors(
-          backgroundColor = if (primary) PaseoColors.accent else PaseoColors.surface2,
+          backgroundColor =
+            background ?: if (primary) PaseoColors.accent else PaseoColors.surface2,
         ),
       modifier = Modifier.size(size.dp),
     ) {

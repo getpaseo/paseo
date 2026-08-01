@@ -93,6 +93,62 @@ export interface WearTranscript {
   truncated: boolean;
 }
 
+/**
+ * Live Voice as the watch sees it.
+ *
+ * The call itself stays on the phone — the WebRTC peer and the daemon socket are
+ * both phone-side, and the watch is a remote control for them. Where the audio
+ * plays is decided separately, by the phone's communication-device routing, and
+ * never travels over this protocol. See packages/watch/README.md.
+ *
+ * Published on its own DataItem path rather than folded into [WearSnapshot]: a
+ * call emits transcript deltas continuously, and putting them in the snapshot
+ * would rewrite the whole workspace list on every phrase.
+ */
+export type WearLiveVoicePhase = "idle" | "starting" | "active" | "stopping" | "error";
+
+/** One host the watch may place a call on. */
+export interface WearLiveVoiceHost {
+  serverId: string;
+  /** Host display label, already resolved by the phone. */
+  label: string;
+}
+
+export interface WearLiveVoiceTranscriptEntry {
+  id: string;
+  role: "user" | "assistant";
+  /** Already trimmed and capped — the watch renders it verbatim. */
+  text: string;
+}
+
+export interface WearLiveVoiceState {
+  v: number;
+  updatedAt: number;
+  phase: WearLiveVoicePhase;
+  /** The host the current (or last) call is on. */
+  serverId: string | null;
+  /** That host's label, so the watch never has to join against the snapshot. */
+  hostLabel: string | null;
+  isMuted: boolean;
+  /**
+   * Hosts that can take a call right now. Empty means the watch shows why from
+   * [unavailableReason] instead of offering a start button.
+   */
+  hosts: WearLiveVoiceHost[];
+  /**
+   * Why no host is callable, when `hosts` is empty. An open string: the phone's
+   * reason set can grow, and the watch falls back to generic copy for anything
+   * it doesn't recognise.
+   */
+  unavailableReason: string | null;
+  /** Newest last, capped for a wrist. */
+  transcripts: WearLiveVoiceTranscriptEntry[];
+  errorCode: string | null;
+  errorMessage: string | null;
+  /** `cause` of the last close, so the watch can explain a call that ended. */
+  closedCause: string | null;
+}
+
 export type WearCommand =
   | { kind: "sendPrompt"; serverId: string; agentId: string; text: string }
   | { kind: "createAgent"; serverId: string; workspaceId: string; text: string }
@@ -105,6 +161,9 @@ export type WearCommand =
     }
   | { kind: "stopAgent"; serverId: string; agentId: string }
   | { kind: "requestTranscript"; serverId: string; agentId: string }
+  | { kind: "startLiveVoice"; serverId: string }
+  | { kind: "stopLiveVoice" }
+  | { kind: "toggleLiveVoiceMute" }
   | { kind: "refresh" };
 
 function str(record: Record<string, unknown>, key: string): string | null {
@@ -164,8 +223,18 @@ export function parseWearCommand(raw: string): WearCommand | null {
   // Every other command must come from a protocol version we speak.
   if (record.v !== undefined && record.v !== WEAR_PROTOCOL_VERSION) return null;
 
+  // A Live Voice call is app-global — there is only ever one, and the runtime
+  // already knows which host it is on. Requiring a serverId here would let a
+  // watch holding a stale state item address a call that has since moved.
+  if (kind === "stopLiveVoice") return { kind: "stopLiveVoice" };
+  if (kind === "toggleLiveVoiceMute") return { kind: "toggleLiveVoiceMute" };
+
   const serverId = str(record, "serverId");
   if (!serverId) return null;
+
+  // Starting is the one Live Voice command that names a host, because picking
+  // which daemon answers is exactly what the watch is deciding.
+  if (kind === "startLiveVoice") return { kind: "startLiveVoice", serverId };
 
   return buildCommand(kind, serverId, record);
 }

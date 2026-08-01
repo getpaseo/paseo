@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
   <string name="app_name">Paseo</string>
+  <!-- Labels the second launcher entry and the tile. Deliberately not "Paseo
+       Live Voice": the launcher already groups it under the app. -->
+  <string name="live_voice_label">Live Voice</string>
 </resources>

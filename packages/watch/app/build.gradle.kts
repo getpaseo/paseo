@@ -74,6 +74,12 @@ dependencies {
   implementation(libs.wear.compose.navigation)
   implementation(libs.wear.input)
 
+  implementation(libs.wear.tiles)
+  implementation(libs.wear.protolayout)
+  implementation(libs.wear.protolayout.material)
+  implementation(libs.wear.protolayout.expression)
+  implementation(libs.concurrent.futures)
+
   implementation(libs.play.services.wearable)
   implementation(libs.kotlinx.serialization.json)
   implementation(libs.kotlinx.coroutines.play.services)

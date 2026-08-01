@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { LiveVoiceAvailability } from "@/live-voice/live-voice-availability-policy";
+import type { LiveVoiceSnapshot } from "@/live-voice/live-voice-runtime";
 import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
-import { WearBridge, type WearBridgeTransport } from "./wear-bridge";
+import { WearBridge, type WearBridgeTransport, type WearLiveVoiceController } from "./wear-bridge";
 import { parseWearCommand, WEAR_PROTOCOL_VERSION } from "./wear-protocol";
 import { buildWearSnapshot, formatAge, providerLabel } from "./wear-snapshot";
 
@@ -318,6 +320,34 @@ describe("parseWearCommand", () => {
     ).toBeNull();
   });
 
+  it("parses startLiveVoice with the host it names", () => {
+    expect(
+      parseWearCommand(JSON.stringify({ v: 1, kind: "startLiveVoice", serverId: "s" })),
+    ).toEqual({ kind: "startLiveVoice", serverId: "s" });
+  });
+
+  it("parses stop and mute without a serverId", () => {
+    // The runtime owns the single app-global call and already knows its host, so
+    // a watch holding a stale state item cannot address a call that has moved.
+    expect(parseWearCommand(JSON.stringify({ v: 1, kind: "stopLiveVoice" }))).toEqual({
+      kind: "stopLiveVoice",
+    });
+    expect(parseWearCommand(JSON.stringify({ v: 1, kind: "toggleLiveVoiceMute" }))).toEqual({
+      kind: "toggleLiveVoiceMute",
+    });
+  });
+
+  it("rejects a startLiveVoice with no host to call", () => {
+    expect(parseWearCommand(JSON.stringify({ v: 1, kind: "startLiveVoice" }))).toBeNull();
+  });
+
+  it("version-gates the live voice commands, unlike refresh", () => {
+    expect(parseWearCommand(JSON.stringify({ v: 99, kind: "stopLiveVoice" }))).toBeNull();
+    expect(parseWearCommand(JSON.stringify({ v: 99, kind: "refresh" }))).toEqual({
+      kind: "refresh",
+    });
+  });
+
   it("rejects malformed, incomplete, and wrong-version commands", () => {
     expect(parseWearCommand("{ not json")).toBeNull();
     expect(parseWearCommand(JSON.stringify({ kind: "sendPrompt", serverId: "s" }))).toBeNull();
@@ -344,16 +374,19 @@ function makeTransport(): WearBridgeTransport & {
   published: string[];
   transcripts: Array<{ agentId: string; payload: string }>;
   icons: Array<{ projectKey: string; data: string; mimeType: string }>;
+  liveVoice: string[];
   emit: (payload: string) => void;
 } {
   const published: string[] = [];
   const transcripts: Array<{ agentId: string; payload: string }> = [];
   const icons: Array<{ projectKey: string; data: string; mimeType: string }> = [];
+  const liveVoice: string[] = [];
   let listener: ((payload: string) => void) | null = null;
   return {
     published,
     transcripts,
     icons,
+    liveVoice,
     emit: (payload) => listener?.(payload),
     publishSnapshot: async (payload) => {
       published.push(payload);
@@ -365,6 +398,10 @@ function makeTransport(): WearBridgeTransport & {
     },
     publishProjectIcon: async (projectKey, data, mimeType) => {
       icons.push({ projectKey, data, mimeType });
+      return true;
+    },
+    publishLiveVoice: async (payload) => {
+      liveVoice.push(payload);
       return true;
     },
     addCommandListener: (next) => {
@@ -1444,6 +1481,220 @@ describe("WearBridge project icons", () => {
     await flushIconSync();
 
     expect(transport.icons).toHaveLength(0);
+    bridge.stop();
+  });
+});
+
+const LIVE_VOICE_COALESCE_MS = 700;
+
+describe("WearBridge live voice", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const AVAILABLE: LiveVoiceAvailability = {
+    kind: "available",
+    hosts: [
+      {
+        serverId: "srv-1",
+        label: "workstation",
+        connectionStatus: "online",
+        version: "0.2.5",
+        supportsLiveVoice: true,
+      },
+    ],
+  };
+
+  const IDLE_SNAPSHOT: LiveVoiceSnapshot = {
+    phase: "idle",
+    serverId: null,
+    liveSessionId: null,
+    sessionMode: null,
+    isMuted: false,
+    isAudioBlocked: false,
+    transcripts: [],
+    error: null,
+    closedCause: null,
+  };
+
+  function makeLiveVoiceBridge() {
+    const transport = makeTransport();
+    const listeners = new Set<() => void>();
+    let snapshot = IDLE_SNAPSHOT;
+
+    const calls = {
+      start: vi.fn(async (_serverId: string) => {}),
+      stop: vi.fn(async () => {}),
+      toggleMute: vi.fn(),
+    };
+
+    /** Move the runtime the way a real call would, then notify subscribers. */
+    const emit = (next: Partial<LiveVoiceSnapshot>) => {
+      snapshot = { ...snapshot, ...next };
+      for (const listener of listeners) listener();
+    };
+
+    const liveVoice: WearLiveVoiceController = {
+      subscribe: (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      getSnapshot: () => snapshot,
+      readAvailability: () => AVAILABLE,
+      start: calls.start,
+      stop: calls.stop,
+      toggleMute: calls.toggleMute,
+    };
+
+    const bridge = new WearBridge({
+      transport,
+      readState: () => [
+        { serverId: "srv-1", agents: [agent()], workspaces: workspaceMap(workspace()) },
+      ],
+      getClient: () => null,
+      resolveNewAgentConfig: () => null,
+      liveVoice,
+      now: () => NOW,
+      logger: { warn: vi.fn() },
+    });
+
+    const last = () => JSON.parse(transport.liveVoice.at(-1) ?? "null");
+
+    return { bridge, transport, emit, calls, last };
+  }
+
+  it("publishes the current state on start, so a call already up is on the wrist", async () => {
+    const { bridge, transport, last } = makeLiveVoiceBridge();
+    await bridge.start();
+
+    expect(transport.liveVoice).toHaveLength(1);
+    expect(last()).toMatchObject({ phase: "idle", hosts: [{ serverId: "srv-1" }] });
+    bridge.stop();
+  });
+
+  it("publishes a phase change immediately", async () => {
+    const { bridge, transport, emit, last } = makeLiveVoiceBridge();
+    await bridge.start();
+
+    emit({ phase: "active", serverId: "srv-1", liveSessionId: "live-1" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(transport.liveVoice).toHaveLength(2);
+    expect(last()).toMatchObject({ phase: "active", hostLabel: "workstation" });
+    bridge.stop();
+  });
+
+  it("coalesces a burst of transcript deltas into one publish", async () => {
+    const { bridge, transport, emit } = makeLiveVoiceBridge();
+    await bridge.start();
+
+    emit({ phase: "active", serverId: "srv-1", liveSessionId: "live-1" });
+    await vi.advanceTimersByTimeAsync(0);
+    const afterPhase = transport.liveVoice.length;
+
+    // A call emits deltas several times a second; each one must not be a Data
+    // Layer write over Bluetooth.
+    for (let index = 0; index < 6; index += 1) {
+      emit({ transcripts: [{ id: "t1", role: "assistant", text: `word ${index}` }] });
+      await vi.advanceTimersByTimeAsync(50);
+    }
+
+    expect(transport.liveVoice).toHaveLength(afterPhase);
+    await vi.advanceTimersByTimeAsync(LIVE_VOICE_COALESCE_MS);
+    expect(transport.liveVoice).toHaveLength(afterPhase + 1);
+    bridge.stop();
+  });
+
+  it("lets a mute land immediately even while transcripts are coalescing", async () => {
+    const { bridge, transport, emit, last } = makeLiveVoiceBridge();
+    await bridge.start();
+    emit({ phase: "active", serverId: "srv-1", liveSessionId: "live-1" });
+    await vi.advanceTimersByTimeAsync(0);
+    const afterPhase = transport.liveVoice.length;
+
+    emit({ transcripts: [{ id: "t1", role: "assistant", text: "still talking" }] });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(transport.liveVoice).toHaveLength(afterPhase);
+
+    // Mute moves a control, so it must not wait behind the words.
+    emit({ isMuted: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(transport.liveVoice).toHaveLength(afterPhase + 1);
+    expect(last()).toMatchObject({ isMuted: true });
+    bridge.stop();
+  });
+
+  it("does not republish an unchanged state", async () => {
+    const { bridge, transport, emit } = makeLiveVoiceBridge();
+    await bridge.start();
+    const initial = transport.liveVoice.length;
+
+    emit({});
+    await vi.advanceTimersByTimeAsync(LIVE_VOICE_COALESCE_MS);
+
+    expect(transport.liveVoice).toHaveLength(initial);
+    bridge.stop();
+  });
+
+  it("runs the three commands and publishes the result", async () => {
+    const { bridge, transport, calls } = makeLiveVoiceBridge();
+    await bridge.start();
+
+    transport.emit(JSON.stringify({ v: 1, kind: "startLiveVoice", serverId: "srv-1" }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls.start).toHaveBeenCalledWith("srv-1");
+
+    transport.emit(JSON.stringify({ v: 1, kind: "toggleLiveVoiceMute" }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls.toggleMute).toHaveBeenCalled();
+
+    transport.emit(JSON.stringify({ v: 1, kind: "stopLiveVoice" }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls.stop).toHaveBeenCalled();
+    bridge.stop();
+  });
+
+  it("keeps publishing after a start the runtime refuses", async () => {
+    const { bridge, transport, emit, calls, last } = makeLiveVoiceBridge();
+    await bridge.start();
+
+    // The runtime records the failure in its own snapshot and rethrows; the
+    // wrist needs the error on screen, not a spinner.
+    calls.start.mockImplementationOnce(async () => {
+      emit({ phase: "error", serverId: "srv-1", error: { code: "mic_busy", message: null } });
+      throw new Error("mic_busy");
+    });
+
+    transport.emit(JSON.stringify({ v: 1, kind: "startLiveVoice", serverId: "srv-1" }));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(last()).toMatchObject({ phase: "error", errorCode: "mic_busy" });
+    bridge.stop();
+  });
+
+  it("publishes nothing at all when the app has no live voice runtime", async () => {
+    const transport = makeTransport();
+    const bridge = new WearBridge({
+      transport,
+      readState: () => [
+        { serverId: "srv-1", agents: [agent()], workspaces: workspaceMap(workspace()) },
+      ],
+      getClient: () => null,
+      resolveNewAgentConfig: () => null,
+      now: () => NOW,
+      logger: { warn: vi.fn() },
+    });
+
+    await bridge.start();
+    transport.emit(JSON.stringify({ v: 1, kind: "startLiveVoice", serverId: "srv-1" }));
+    await vi.advanceTimersByTimeAsync(0);
+
+    // An absent item is how the watch reads "this phone build has no Live Voice".
+    expect(transport.liveVoice).toHaveLength(0);
     bridge.stop();
   });
 });

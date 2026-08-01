@@ -19,6 +19,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import sh.paseo.watch.model.AgentSession
+import sh.paseo.watch.model.LiveVoiceState
 import sh.paseo.watch.model.Transcript
 import sh.paseo.watch.model.Workspace
 
@@ -67,6 +68,9 @@ class DataLayerRepository(
   private val iconState = MutableStateFlow<Map<String, ByteArray>>(emptyMap())
   override val icons: StateFlow<Map<String, ByteArray>> = iconState
 
+  private val liveVoiceState = MutableStateFlow(LiveVoiceState.Unknown)
+  override val liveVoice: StateFlow<LiveVoiceState> = liveVoiceState
+
   private val link = MutableStateFlow(LinkState.Waiting)
   val linkState: StateFlow<LinkState> = link.asStateFlow()
 
@@ -94,6 +98,12 @@ class DataLayerRepository(
       override fun onDataChanged(events: DataEventBuffer) = handleEvents(events)
     }
 
+  /** A fourth filter, so — per the rule above — a fourth listener object. */
+  private val liveVoiceListener =
+    object : DataClient.OnDataChangedListener {
+      override fun onDataChanged(events: DataEventBuffer) = handleEvents(events)
+    }
+
   fun start() {
     dataClient.addListener(this, android.net.Uri.parse("wear://*$SNAPSHOT_PATH_SUFFIX"), DataClient.FILTER_PREFIX)
     // Transcripts live one-per-agent under a prefix, so this filter is a prefix
@@ -109,6 +119,12 @@ class DataLayerRepository(
       android.net.Uri.parse("wear://*$ICON_PATH_PREFIX/"),
       DataClient.FILTER_PREFIX,
     )
+    // Live Voice is a single item, like the snapshot, so this is a suffix match.
+    dataClient.addListener(
+      liveVoiceListener,
+      android.net.Uri.parse("wear://*$LIVE_VOICE_PATH_SUFFIX"),
+      DataClient.FILTER_PREFIX,
+    )
     // Read whatever is already cached before asking for anything new: this is what
     // makes the list appear instantly on launch instead of after a round trip. The
     // same pass picks up transcripts, so reopening an agent renders its scrollback
@@ -121,6 +137,7 @@ class DataLayerRepository(
     dataClient.removeListener(this)
     dataClient.removeListener(transcriptListener)
     dataClient.removeListener(iconListener)
+    dataClient.removeListener(liveVoiceListener)
   }
 
   override fun onDataChanged(events: DataEventBuffer) = handleEvents(events)
@@ -139,10 +156,18 @@ class DataLayerRepository(
         if (event.type == DataEvent.TYPE_DELETED) dropIcon(path) else applyIconItem(path, event.dataItem)
         continue
       }
+      // A deleted Live Voice item means the phone signed out or dropped the
+      // feature. Keeping the last state we saw would leave a hang-up button that
+      // can never reach a call.
+      if (path.endsWith(LIVE_VOICE_PATH_SUFFIX) && event.type == DataEvent.TYPE_DELETED) {
+        liveVoiceState.value = LiveVoiceState.Unknown
+        continue
+      }
       if (event.type != DataEvent.TYPE_CHANGED) continue
       val raw = DataMapItem.fromDataItem(event.dataItem).dataMap.getString(WearBridge.SNAPSHOT_KEY)
       when {
         path.endsWith(SNAPSHOT_PATH_SUFFIX) -> applySnapshot(raw)
+        path.endsWith(LIVE_VOICE_PATH_SUFFIX) -> applyLiveVoice(raw)
         path.contains(TRANSCRIPT_PATH_MARKER) -> applyTranscript(raw)
       }
     }
@@ -164,6 +189,7 @@ class DataLayerRepository(
         val raw = DataMapItem.fromDataItem(item).dataMap.getString(WearBridge.SNAPSHOT_KEY)
         when {
           path.endsWith(SNAPSHOT_PATH_SUFFIX) -> applySnapshot(raw)
+          path.endsWith(LIVE_VOICE_PATH_SUFFIX) -> applyLiveVoice(raw)
           path.contains(TRANSCRIPT_PATH_MARKER) -> applyTranscript(raw)
         }
       }
@@ -249,6 +275,20 @@ class DataLayerRepository(
     val incoming = wire.toTranscript()
     if (!shouldApplyTranscript(transcriptState.value[wire.agentId], incoming)) return
     transcriptState.value = transcriptState.value + (wire.agentId to incoming)
+  }
+
+  private fun applyLiveVoice(raw: String?) {
+    if (raw == null) return
+    val wire = decodeLiveVoice(raw)
+    if (wire == null) {
+      // Malformed, or a protocol version we don't speak. Unlike a snapshot this
+      // needs no separate complaint: the snapshot path already raises the version
+      // mismatch, and the Live Voice screen's unavailable state is a fine landing
+      // place in the meantime.
+      Log.w(TAG, "Dropped unparseable or version-mismatched live voice state")
+      return
+    }
+    liveVoiceState.value = wire.toLiveVoiceState()
   }
 
   private fun applySnapshot(raw: String?) {
@@ -362,6 +402,23 @@ class DataLayerRepository(
     )
   }
 
+  override suspend fun startLiveVoice(serverId: String) {
+    send(WireCommand(kind = WireCommand.START_LIVE_VOICE, serverId = serverId))
+  }
+
+  /**
+   * Both of these omit serverId: the phone's runtime owns the single active call
+   * and already knows which host it is on. Naming one here would let a watch
+   * holding a stale state item address a call that has since moved.
+   */
+  override suspend fun stopLiveVoice() {
+    send(WireCommand(kind = WireCommand.STOP_LIVE_VOICE))
+  }
+
+  override suspend fun toggleLiveVoiceMute() {
+    send(WireCommand(kind = WireCommand.TOGGLE_LIVE_VOICE_MUTE))
+  }
+
   private suspend fun requestRefresh() {
     val payload = ByteArray(0)
     broadcast(WearBridge.REFRESH_PATH, payload)
@@ -432,5 +489,8 @@ class DataLayerRepository(
 
     /** Same shape as [TRANSCRIPT_PATH_MARKER]: the path ends in an encoded key. */
     const val ICON_PATH_MARKER = "$ICON_PATH_PREFIX/"
+
+    /** A single item, so a suffix match like the snapshot's. */
+    const val LIVE_VOICE_PATH_SUFFIX = WearBridge.LIVE_VOICE_PATH
   }
 }

@@ -3,4 +3,8 @@
   <!-- Adaptive-icon background, matching the phone app's adaptiveIcon.backgroundColor
        in packages/app/app.config.js. -->
   <color name="ic_launcher_background">#000000</color>
+
+  <!-- PaseoColors.surface0 from theme/Theme.kt. A tile preview is a drawable, so
+       it cannot read the Compose theme; keep this in step with that file. -->
+  <color name="tile_preview_background">#181B1A</color>
 </resources>

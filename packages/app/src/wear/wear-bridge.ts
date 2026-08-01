@@ -1,6 +1,14 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 
-import { parseWearCommand, type WearCommand, type WearSnapshot } from "./wear-protocol";
+import type { LiveVoiceAvailability } from "@/live-voice/live-voice-availability-policy";
+import type { LiveVoiceSnapshot } from "@/live-voice/live-voice-runtime";
+import {
+  parseWearCommand,
+  type WearCommand,
+  type WearLiveVoiceState,
+  type WearSnapshot,
+} from "./wear-protocol";
+import { buildWearLiveVoiceState, stableLiveVoiceKey } from "./wear-live-voice";
 import { buildWearSnapshot, type WearSnapshotInput } from "./wear-snapshot";
 import { buildWearTranscript, isTranscriptEntry, MAX_TRANSCRIPT_ENTRIES } from "./wear-transcript";
 
@@ -10,8 +18,31 @@ export interface WearBridgeTransport {
   publishTranscript(agentId: string, payload: string): Promise<boolean>;
   /** Publishes one project's icon bytes, keyed by the snapshot's projectKey. */
   publishProjectIcon(projectKey: string, dataBase64: string, mimeType: string): Promise<boolean>;
+  /** Publishes the single Live Voice state item. Absent on older phone builds. */
+  publishLiveVoice(payload: string): Promise<boolean>;
   addCommandListener(listener: (payload: string) => void): { remove(): void };
   drainPendingCommands(): Promise<string[]>;
+}
+
+/**
+ * The slice of the app's Live Voice runtime the bridge drives, plus the host
+ * availability the watch needs to offer a choice.
+ *
+ * Narrowed to five calls so tests can pass a plain object, and so the bridge
+ * stays ignorant of React — the runtime is already a plain subscribe/snapshot
+ * store, which is what makes this possible.
+ */
+export interface WearLiveVoiceController {
+  subscribe(listener: () => void): () => void;
+  getSnapshot(): LiveVoiceSnapshot;
+  readAvailability(): LiveVoiceAvailability;
+  /**
+   * Place a call on this host. The adapter picks background mode — a call driven
+   * from the wrist is by definition one where nobody is looking at the phone.
+   */
+  start(serverId: string): Promise<void>;
+  stop(): Promise<void>;
+  toggleMute(): void;
 }
 
 /**
@@ -42,6 +73,16 @@ const LEASE_MS = 150_000;
  * into one fetch while still landing on the wrist within a couple of seconds.
  */
 const COALESCE_MS = 2_000;
+
+/**
+ * Trailing delay before a transcript-only Live Voice change is published.
+ *
+ * A call emits transcript deltas continuously — several a second while either
+ * side is talking — and each publish is a Data Layer write over Bluetooth.
+ * Anything that changes what the *controls* do (phase, mute, host list, error)
+ * skips this and publishes immediately; only the words wait.
+ */
+const LIVE_VOICE_COALESCE_MS = 700;
 
 /** A watch is currently reading this agent's transcript. */
 interface TranscriptLease {
@@ -74,6 +115,12 @@ export interface WearBridgeDeps {
    * that workspace last used. Returning null refuses the create.
    */
   resolveNewAgentConfig: (serverId: string, workspaceId: string) => NewAgentConfig | null;
+  /**
+   * Live Voice control. Absent on hosts that have no runtime (tests, and any
+   * build without the feature), in which case the bridge never publishes the
+   * state item and the watch shows its "not available" screen.
+   */
+  liveVoice?: WearLiveVoiceController;
   now?: () => number;
   logger?: {
     warn(message: string, error?: unknown): void;
@@ -115,6 +162,11 @@ export class WearBridge {
   private readonly publishedIcons = new Map<string, string>();
   /** Icon syncs are serial: two overlapping runs would race on publishedIcons. */
   private iconSyncRunning = false;
+  /** Last Live Voice state that landed, so an unchanged one isn't rewritten. */
+  private lastPublishedLiveVoice: WearLiveVoiceState | null = null;
+  /** Set while a transcript-only change is waiting out LIVE_VOICE_COALESCE_MS. */
+  private liveVoiceTimer: ReturnType<typeof setTimeout> | null = null;
+  private liveVoiceSubscription: (() => void) | null = null;
   private disposed = false;
 
   constructor(deps: WearBridgeDeps) {
@@ -127,23 +179,104 @@ export class WearBridge {
       void this.handleCommandPayload(payload);
     });
 
+    // A call can already be running when the bridge starts — the runtime survives
+    // any remount of the listener — so subscribe before the first publish rather
+    // than waiting for the next change to reveal it.
+    this.liveVoiceSubscription =
+      this.deps.liveVoice?.subscribe(() => {
+        this.handleLiveVoiceChange();
+      }) ?? null;
+
     // Commands can arrive while the app process is dead — Play Services starts only
     // the native listener service, which persists them. Drain before the first
     // publish so a queued approval isn't overwritten by a snapshot that still shows
     // it pending.
     await this.drainQueued();
     await this.publish();
+    await this.publishLiveVoice();
   }
 
   stop(): void {
     this.disposed = true;
     this.subscription?.remove();
     this.subscription = null;
+    this.liveVoiceSubscription?.();
+    this.liveVoiceSubscription = null;
+    if (this.liveVoiceTimer !== null) {
+      clearTimeout(this.liveVoiceTimer);
+      this.liveVoiceTimer = null;
+    }
     for (const timer of this.transcriptTimers.values()) {
       clearTimeout(timer);
     }
     this.transcriptTimers.clear();
     this.transcriptLeases.clear();
+  }
+
+  /**
+   * Decide whether a runtime change goes out now or waits.
+   *
+   * The split is by what the change means to someone looking at their wrist: a
+   * phase, mute, host or error change moves a control and must land immediately;
+   * a new phrase can wait out the coalescing window with the phrases behind it.
+   */
+  private handleLiveVoiceChange(): void {
+    if (this.disposed || !this.deps.liveVoice) return;
+
+    const next = this.buildLiveVoiceState();
+    if (next === null) return;
+    const previous = this.lastPublishedLiveVoice;
+    if (previous !== null && stableLiveVoiceKey(next) === stableLiveVoiceKey(previous)) return;
+
+    if (previous === null || isLiveVoiceControlChange(previous, next)) {
+      if (this.liveVoiceTimer !== null) {
+        clearTimeout(this.liveVoiceTimer);
+        this.liveVoiceTimer = null;
+      }
+      void this.publishLiveVoice();
+      return;
+    }
+
+    if (this.liveVoiceTimer !== null) return;
+    this.liveVoiceTimer = setTimeout(() => {
+      this.liveVoiceTimer = null;
+      void this.publishLiveVoice();
+    }, LIVE_VOICE_COALESCE_MS);
+  }
+
+  private buildLiveVoiceState(): WearLiveVoiceState | null {
+    const liveVoice = this.deps.liveVoice;
+    if (!liveVoice) return null;
+    return buildWearLiveVoiceState(
+      { snapshot: liveVoice.getSnapshot(), availability: liveVoice.readAvailability() },
+      this.deps.now?.() ?? Date.now(),
+    );
+  }
+
+  /**
+   * Publish the Live Voice state item.
+   *
+   * Skipped entirely when there is no runtime: an absent item is what the watch
+   * reads as "this phone build has no Live Voice", which is the honest answer and
+   * needs no separate flag on the wire.
+   */
+  private async publishLiveVoice(): Promise<void> {
+    if (this.disposed) return;
+    const state = this.buildLiveVoiceState();
+    if (state === null) return;
+
+    const previous = this.lastPublishedLiveVoice;
+    if (previous !== null && stableLiveVoiceKey(state) === stableLiveVoiceKey(previous)) return;
+
+    const ok = await this.deps.transport
+      .publishLiveVoice(JSON.stringify(state))
+      .catch((error: unknown) => {
+        this.deps.logger?.warn("Failed to publish wear live voice state", error);
+        return false;
+      });
+    if (ok) {
+      this.lastPublishedLiveVoice = state;
+    }
   }
 
   private async drainQueued(): Promise<void> {
@@ -441,6 +574,15 @@ export class WearBridge {
       return;
     }
 
+    if (
+      command.kind === "startLiveVoice" ||
+      command.kind === "stopLiveVoice" ||
+      command.kind === "toggleLiveVoiceMute"
+    ) {
+      await this.executeLiveVoice(command);
+      return;
+    }
+
     const client = this.deps.getClient(command.serverId);
     if (!client) {
       // The watch already reported the send as delivered; there is nothing useful to
@@ -490,6 +632,57 @@ export class WearBridge {
     // so the wrist reflects the action it just took.
     await this.publish({ force: true });
   }
+
+  /**
+   * Run a Live Voice command from the watch.
+   *
+   * Every path ends in a publish, including the failures: a start that is refused
+   * (microphone busy, host gone) leaves the runtime in `error` with a code, and
+   * that is exactly what the watch needs on screen instead of a spinner.
+   */
+  private async executeLiveVoice(
+    command: Extract<
+      WearCommand,
+      { kind: "startLiveVoice" | "stopLiveVoice" | "toggleLiveVoiceMute" }
+    >,
+  ): Promise<void> {
+    const liveVoice = this.deps.liveVoice;
+    if (!liveVoice) {
+      this.deps.logger?.warn(`No live voice runtime; dropping wear command ${command.kind}`);
+      return;
+    }
+
+    try {
+      switch (command.kind) {
+        case "startLiveVoice":
+          await liveVoice.start(command.serverId);
+          break;
+        case "stopLiveVoice":
+          await liveVoice.stop();
+          break;
+        case "toggleLiveVoiceMute":
+          liveVoice.toggleMute();
+          break;
+      }
+    } catch (error) {
+      // The runtime has already recorded the failure in its own snapshot, so the
+      // publish below carries it to the wrist; this is only for the phone's log.
+      this.deps.logger?.warn(`Wear command ${command.kind} failed`, error);
+    }
+
+    await this.publishLiveVoice();
+  }
+}
+
+/**
+ * True when anything other than the transcript moved between two Live Voice
+ * states — that is, when the change alters what the watch's controls say or do.
+ */
+function isLiveVoiceControlChange(previous: WearLiveVoiceState, next: WearLiveVoiceState): boolean {
+  return (
+    stableLiveVoiceKey({ ...next, transcripts: previous.transcripts }) !==
+    stableLiveVoiceKey(previous)
+  );
 }
 
 /**

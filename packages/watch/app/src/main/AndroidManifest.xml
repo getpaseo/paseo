@@ -35,6 +35,58 @@
         <category android:name="android.intent.category.LAUNCHER" />
       </intent-filter>
     </activity>
+
+    <!-- Its own launcher entry rather than a destination inside MainActivity's
+         nav graph. Live Voice is one action you want without walking the triage
+         list, and the tile needs something to open directly. taskAffinity=""
+         keeps it out of MainActivity's task, so opening a call from the tile
+         never buries the workspace list underneath it. -->
+    <activity
+      android:name=".LiveVoiceActivity"
+      android:exported="true"
+      android:label="@string/live_voice_label"
+      android:taskAffinity=""
+      android:theme="@android:style/Theme.DeviceDefault">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+    </activity>
+
+    <!-- BIND_TILE_PROVIDER is held by the system, not requested by us: the
+         android:permission attribute is what keeps any other app from binding
+         this service. PREVIEW is what the carousel shows while the user is
+         picking which tiles to add. -->
+    <service
+      android:name=".tile.LiveVoiceTileService"
+      android:exported="true"
+      android:label="@string/live_voice_label"
+      android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
+      <intent-filter>
+        <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" />
+      </intent-filter>
+
+      <meta-data
+        android:name="androidx.wear.tiles.PREVIEW"
+        android:resource="@drawable/tile_preview_live_voice" />
+    </service>
+
+    <!-- Wakes the tile when the phone publishes new call state. Play Services
+         starts this with no activity running, which is the whole point: a tile
+         that only refreshed while the app was open would be wrong for most of a
+         call. The path must match WearBridge.LIVE_VOICE_PATH exactly — a
+         manifest cannot reference a Kotlin constant. -->
+    <service
+      android:name=".tile.LiveVoiceTileUpdateService"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+        <data
+          android:scheme="wear"
+          android:host="*"
+          android:pathPrefix="/paseo/livevoice" />
+      </intent-filter>
+    </service>
   </application>
 
 </manifest>

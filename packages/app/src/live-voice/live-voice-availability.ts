@@ -6,8 +6,41 @@ import {
   type LiveVoiceAvailability,
   type LiveVoiceHostAvailability,
 } from "@/live-voice/live-voice-availability-policy";
-import { useHosts, useHostRuntimeConnectionStatuses } from "@/runtime/host-runtime";
+import {
+  getHostRuntimeStore,
+  useHosts,
+  useHostRuntimeConnectionStatuses,
+} from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
+
+/**
+ * Availability read straight from the stores, for callers that live outside
+ * React — the Wear bridge, which publishes to the watch on a subscription rather
+ * than a render. Same policy as [useLiveVoiceAvailability]; only the plumbing
+ * differs, so the wrist and the phone can never disagree about what is callable.
+ */
+export function readLiveVoiceHostAvailability(): LiveVoiceHostAvailability[] {
+  const sessions = useSessionStore.getState().sessions;
+  const store = getHostRuntimeStore();
+  return store.getHosts().map((host): LiveVoiceHostAvailability => {
+    const serverInfo = sessions[host.serverId]?.serverInfo ?? null;
+    return {
+      serverId: host.serverId,
+      label: host.label,
+      connectionStatus: store.getSnapshot(host.serverId)?.connectionStatus ?? "connecting",
+      version: serverInfo?.version ?? null,
+      // COMPAT(liveVoice): added in v0.2.5, drop the gate when floor >= v0.2.5.
+      supportsLiveVoice: serverInfo ? serverInfo.features?.liveVoice === true : null,
+    };
+  });
+}
+
+export function readLiveVoiceAvailability(): LiveVoiceAvailability {
+  return resolveLiveVoiceAvailability({
+    isPlatformSupported: isLiveVoiceSessionSupported,
+    hosts: readLiveVoiceHostAvailability(),
+  });
+}
 
 /**
  * Every configured host with the facts live voice availability is decided from,

@@ -3,14 +3,17 @@ import {
   addWearCommandListener,
   drainPendingWearCommands,
   isWearBridgeSupported,
+  publishWearLiveVoice,
   publishWearProjectIcon,
   publishWearSnapshot,
   publishWearTranscript,
 } from "@getpaseo/expo-wear-bridge";
 
+import { useLiveVoiceRuntimeOptional } from "@/contexts/live-voice-context";
+import { readLiveVoiceAvailability } from "@/live-voice/live-voice-availability";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
-import { WearBridge, type NewAgentConfig } from "./wear-bridge";
+import { WearBridge, type NewAgentConfig, type WearLiveVoiceController } from "./wear-bridge";
 import type { WearSnapshotInput } from "./wear-snapshot";
 
 /**
@@ -28,6 +31,10 @@ const AGE_REFRESH_MS = 60_000;
  */
 export function useWearBridge(): void {
   const bridgeRef = useRef<WearBridge | null>(null);
+  // Stable for the provider's lifetime, so this only re-runs if Live Voice is
+  // torn down entirely — not on any call state change, which the bridge
+  // subscribes to itself.
+  const liveVoiceRuntime = useLiveVoiceRuntimeOptional();
 
   useEffect(() => {
     if (!isWearBridgeSupported) return;
@@ -62,17 +69,32 @@ export function useWearBridge(): void {
       return { provider, cwd: workspace.workspaceDirectory };
     };
 
+    const liveVoice: WearLiveVoiceController | undefined = liveVoiceRuntime
+      ? {
+          subscribe: liveVoiceRuntime.subscribe,
+          getSnapshot: liveVoiceRuntime.getSnapshot,
+          readAvailability: readLiveVoiceAvailability,
+          // Background mode: a call placed from the wrist is one where the phone
+          // is in a pocket, so it has to survive the screen going off.
+          start: (serverId) => liveVoiceRuntime.start(serverId, "background"),
+          stop: liveVoiceRuntime.stop,
+          toggleMute: liveVoiceRuntime.toggleMute,
+        }
+      : undefined;
+
     const bridge = new WearBridge({
       transport: {
         publishSnapshot: publishWearSnapshot,
         publishTranscript: publishWearTranscript,
         publishProjectIcon: publishWearProjectIcon,
+        publishLiveVoice: publishWearLiveVoice,
         addCommandListener: addWearCommandListener,
         drainPendingCommands: drainPendingWearCommands,
       },
       readState,
       getClient: (serverId) => getHostRuntimeStore().getClient(serverId),
       resolveNewAgentConfig,
+      ...(liveVoice ? { liveVoice } : {}),
       logger: {
         warn: (message, error) => console.warn(`[wear] ${message}`, error ?? ""),
       },
@@ -96,5 +118,5 @@ export function useWearBridge(): void {
       bridge.stop();
       bridgeRef.current = null;
     };
-  }, []);
+  }, [liveVoiceRuntime]);
 }

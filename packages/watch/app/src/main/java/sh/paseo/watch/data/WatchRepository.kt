@@ -4,6 +4,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import sh.paseo.watch.model.ActivityState
 import sh.paseo.watch.model.AgentSession
+import sh.paseo.watch.model.LiveVoiceHost
+import sh.paseo.watch.model.LiveVoicePhase
+import sh.paseo.watch.model.LiveVoiceState
+import sh.paseo.watch.model.LiveVoiceTranscriptEntry
 import sh.paseo.watch.model.PermissionRequest
 import sh.paseo.watch.model.Transcript
 import sh.paseo.watch.model.TranscriptEntry
@@ -40,6 +44,16 @@ interface WatchRepository {
    */
   val icons: StateFlow<Map<String, ByteArray>>
 
+  /**
+   * The phone's Live Voice call, or [LiveVoiceState.Unknown] until an item
+   * arrives.
+   *
+   * Unknown is also the terminal state on a phone too old to publish one, which
+   * is why it is a value rather than a null: the Live Voice screen renders the
+   * same "unavailable" copy either way, and has nothing to distinguish.
+   */
+  val liveVoice: StateFlow<LiveVoiceState>
+
   fun workspace(id: String): Workspace?
 
   fun agent(id: String): AgentSession?
@@ -59,6 +73,15 @@ interface WatchRepository {
   suspend fun respondToPermission(requestId: String, allow: Boolean)
 
   suspend fun stopAgent(agentId: String)
+
+  /** Ask the phone to place a Live Voice call on [serverId]. */
+  suspend fun startLiveVoice(serverId: String)
+
+  /** Hang up whichever call the phone has running. */
+  suspend fun stopLiveVoice()
+
+  /** Toggle the phone's microphone for the running call. */
+  suspend fun toggleLiveVoiceMute()
 }
 
 /**
@@ -82,6 +105,15 @@ class MockWatchRepository : WatchRepository {
    * in the real app.
    */
   override val icons: StateFlow<Map<String, ByteArray>> = MutableStateFlow(emptyMap())
+
+  private val liveVoiceState =
+    MutableStateFlow(
+      LiveVoiceState.Unknown.copy(
+        hosts = listOf(LiveVoiceHost(serverId = MOCK_SERVER, label = "workstation")),
+      ),
+    )
+
+  override val liveVoice: StateFlow<LiveVoiceState> = liveVoiceState
 
   override fun workspace(id: String): Workspace? = state.value.firstOrNull { it.id == id }
 
@@ -148,6 +180,34 @@ class MockWatchRepository : WatchRepository {
     mutateAgent(agentId) { it.copy(state = ActivityState.Idle, age = "now") }
   }
 
+  /**
+   * The mock jumps straight to [LiveVoicePhase.Active] with a seeded exchange —
+   * there is no phone to negotiate with, and `starting` is a state you can only
+   * usefully look at for the second it really lasts.
+   */
+  override suspend fun startLiveVoice(serverId: String) {
+    liveVoiceState.value =
+      liveVoiceState.value.copy(
+        phase = LiveVoicePhase.Active,
+        serverId = serverId,
+        hostLabel = liveVoiceState.value.hosts.firstOrNull { it.serverId == serverId }?.label,
+        isMuted = false,
+        transcripts = seedCallTranscript(),
+        errorCode = null,
+        errorMessage = null,
+        closedCause = null,
+      )
+  }
+
+  override suspend fun stopLiveVoice() {
+    liveVoiceState.value =
+      liveVoiceState.value.copy(phase = LiveVoicePhase.Idle, closedCause = "client_stopped")
+  }
+
+  override suspend fun toggleLiveVoiceMute() {
+    liveVoiceState.value = liveVoiceState.value.copy(isMuted = !liveVoiceState.value.isMuted)
+  }
+
   private fun mutateAgent(agentId: String, transform: (AgentSession) -> AgentSession) {
     state.value =
       state.value.map { workspace ->
@@ -159,6 +219,21 @@ class MockWatchRepository : WatchRepository {
 
   private companion object {
     const val MOCK_SERVER = "mock-daemon"
+
+    /** Long enough to overflow the display, so scrolling and wrapping are real. */
+    fun seedCallTranscript(): List<LiveVoiceTranscriptEntry> =
+      listOf(
+        LiveVoiceTranscriptEntry("t1", fromUser = true, text = "What's running right now?"),
+        LiveVoiceTranscriptEntry(
+          "t2",
+          fromUser = false,
+          text =
+            "Three sessions. crimson-falcon is running the relay transport tests, and " +
+              "jubilant-wombat is waiting on you to approve a push.",
+        ),
+        LiveVoiceTranscriptEntry("t3", fromUser = true, text = "Approve the push"),
+        LiveVoiceTranscriptEntry("t4", fromUser = false, text = "Approved. It's pushing now."),
+      )
 
     /**
      * Covers every case the transcript screen has to render: all four known kinds,

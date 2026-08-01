@@ -15,6 +15,7 @@ interface ExpoWearBridgeNativeModule {
   publishSnapshot(payload: string): Promise<boolean>;
   publishTranscript(agentId: string, payload: string): Promise<boolean>;
   publishProjectIcon(projectKey: string, dataBase64: string, mimeType: string): Promise<boolean>;
+  publishLiveVoice(payload: string): Promise<boolean>;
   clearSnapshot(): Promise<boolean>;
   drainPendingCommands(): Promise<string[]>;
   addListener(
@@ -74,8 +75,17 @@ export async function publishWearProjectIcon(
 }
 
 /**
- * Removes everything Paseo published — the snapshot, every agent transcript, and
- * every project icon.
+ * Publish the single Live Voice state item — phase, host, mute, and the tail of
+ * the call transcript. One path, not one per call: there is only ever one call.
+ */
+export async function publishWearLiveVoice(payload: string): Promise<boolean> {
+  if (!native) return false;
+  return native.publishLiveVoice(payload);
+}
+
+/**
+ * Removes everything Paseo published — the snapshot, every agent transcript,
+ * every project icon, and the Live Voice state.
  */
 export async function clearWearSnapshot(): Promise<boolean> {
   if (!native) return false;

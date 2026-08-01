@@ -74,6 +74,17 @@ function asLiveVoiceDaemonClient(client: DaemonClient): LiveVoiceDaemonClient {
   };
 }
 
+/**
+ * The runtime object itself, not a snapshot of it.
+ *
+ * For consumers that subscribe on their own rather than re-rendering — the Wear
+ * bridge is the one that exists today. The identity is stable for the provider's
+ * lifetime, so an effect can depend on it without re-running.
+ */
+export function useLiveVoiceRuntimeOptional(): LiveVoiceRuntime | null {
+  return useContext(LiveVoiceRuntimeContext);
+}
+
 export function useLiveVoiceOptional(): LiveVoiceContextValue | null {
   const runtime = useContext(LiveVoiceRuntimeContext);
   const snapshot = useSyncExternalStore(

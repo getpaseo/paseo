@@ -135,6 +135,21 @@ class ExpoWearBridgeModule : Module() {
       }
 
     /**
+     * Publish the Live Voice state. A single path, because a call is app-global:
+     * the watch observes exactly one item and never has to reconcile several.
+     */
+    AsyncFunction("publishLiveVoice").SuspendBody<Boolean, String> { payload ->
+      val context = appContext.reactContext
+      if (context == null) {
+        false
+      } else {
+        runCatching { putLiveVoice(context, payload) }
+          .onFailure { Log.w(TAG, "publishLiveVoice failed", it) }
+          .getOrDefault(false)
+      }
+    }
+
+    /**
      * Remove everything we published — used on sign-out so a stale list or
      * conversation can't linger on the wrist.
      */
@@ -177,6 +192,20 @@ class ExpoWearBridgeModule : Module() {
         dataMap.putString(SNAPSHOT_KEY, payload)
         // Same reason as putSnapshot: DataClient drops a byte-identical put, and
         // re-requesting an unchanged transcript must still reach the watch.
+        dataMap.putLong("stamp", System.currentTimeMillis())
+      }
+    Wearable.getDataClient(context)
+      .putDataItem(request.asPutDataRequest().setUrgent())
+      .await()
+    return true
+  }
+
+  private suspend fun putLiveVoice(context: Context, payload: String): Boolean {
+    val request =
+      PutDataMapRequest.create(LIVE_VOICE_PATH).apply {
+        dataMap.putString(SNAPSHOT_KEY, payload)
+        // Same reason as putSnapshot: DataClient drops a byte-identical put, and
+        // the JS side has already decided this state is worth sending.
         dataMap.putLong("stamp", System.currentTimeMillis())
       }
     Wearable.getDataClient(context)
@@ -232,6 +261,9 @@ class ExpoWearBridgeModule : Module() {
         DataClient.FILTER_PREFIX,
       )
       .await()
+    // A single item, like the snapshot: the watch reads its absence as "this phone
+    // has no Live Voice", which is the right thing to show after a sign-out.
+    dataClient.deleteDataItems(android.net.Uri.parse("wear://${local.id}$LIVE_VOICE_PATH")).await()
     return true
   }
 
@@ -244,6 +276,7 @@ class ExpoWearBridgeModule : Module() {
     const val ICON_PATH_PREFIX = "/paseo/icon"
     const val ICON_PAYLOAD_KEY = "payload"
     const val ICON_MIME_KEY = "mimeType"
+    const val LIVE_VOICE_PATH = "/paseo/livevoice"
     const val SNAPSHOT_KEY = "payload"
   }
 }

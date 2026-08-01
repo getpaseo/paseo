@@ -5,6 +5,10 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import sh.paseo.watch.model.ActivityState
 import sh.paseo.watch.model.AgentSession
+import sh.paseo.watch.model.LiveVoiceHost
+import sh.paseo.watch.model.LiveVoicePhase
+import sh.paseo.watch.model.LiveVoiceState
+import sh.paseo.watch.model.LiveVoiceTranscriptEntry
 import sh.paseo.watch.model.PermissionRequest
 import sh.paseo.watch.model.Transcript
 import sh.paseo.watch.model.TranscriptEntry
@@ -73,6 +77,20 @@ object WearBridge {
 
   /** DataMap key holding the icon's mime type, for diagnostics only. */
   const val ICON_MIME_KEY = "mimeType"
+
+  /**
+   * DataClient path carrying Live Voice call state.
+   *
+   * A single item, not a prefix: a Live Voice call is app-global on the phone —
+   * one call, one owning socket — so the watch observes exactly one item and
+   * never reconciles several.
+   *
+   * The item being absent entirely is meaningful and normal: it is what a phone
+   * without Live Voice looks like, and what a signed-out phone leaves behind.
+   * The watch shows its unavailable state for that rather than treating it as an
+   * error, the same way a missing transcript falls back to the summary card.
+   */
+  const val LIVE_VOICE_PATH = "/paseo/livevoice"
 
   /** MessageClient path for watch -> phone commands. */
   const val COMMAND_PATH = "/paseo/command"
@@ -167,7 +185,11 @@ data class WireTranscriptEntry(
 data class WireCommand(
   @SerialName("v") val version: Int = WearBridge.PROTOCOL_VERSION,
   val kind: String,
-  val serverId: String,
+  /**
+   * Null only for the Live Voice commands that act on the single app-global
+   * call; every agent-scoped command must name the daemon to route back to.
+   */
+  val serverId: String? = null,
   val agentId: String? = null,
   val workspaceId: String? = null,
   val requestId: String? = null,
@@ -187,8 +209,56 @@ data class WireCommand(
      * it keeps showing the summary card — rather than as an error.
      */
     const val REQUEST_TRANSCRIPT = "requestTranscript"
+
+    /**
+     * Place a Live Voice call on [WireCommand.serverId].
+     *
+     * The only Live Voice command that names a host, because choosing which
+     * daemon answers is exactly what the watch is deciding. The other two act on
+     * the one call the phone already knows about.
+     */
+    const val START_LIVE_VOICE = "startLiveVoice"
+
+    /** Hang up the active call. Carries no serverId — see [START_LIVE_VOICE]. */
+    const val STOP_LIVE_VOICE = "stopLiveVoice"
+
+    /** Toggle the phone's microphone. Carries no serverId. */
+    const val TOGGLE_LIVE_VOICE_MUTE = "toggleLiveVoiceMute"
   }
 }
+
+// ---------------------------------------------------------------------------
+// Live Voice: phone -> watch, one item for the single app-global call
+// ---------------------------------------------------------------------------
+
+@Serializable
+data class WireLiveVoice(
+  @SerialName("v") val version: Int = WearBridge.PROTOCOL_VERSION,
+  val updatedAt: Long = 0,
+  /** "idle" | "starting" | "active" | "stopping" | "error"; unknown reads as idle. */
+  val phase: String = "idle",
+  val serverId: String? = null,
+  val hostLabel: String? = null,
+  val isMuted: Boolean = false,
+  /** Hosts that can take a call right now. Empty means see [unavailableReason]. */
+  val hosts: List<WireLiveVoiceHost> = emptyList(),
+  val unavailableReason: String? = null,
+  /** Newest last, capped by the phone. */
+  val transcripts: List<WireLiveVoiceTranscript> = emptyList(),
+  val errorCode: String? = null,
+  val errorMessage: String? = null,
+  val closedCause: String? = null,
+)
+
+@Serializable data class WireLiveVoiceHost(val serverId: String = "", val label: String = "")
+
+@Serializable
+data class WireLiveVoiceTranscript(
+  val id: String = "",
+  /** "user" | "assistant". */
+  val role: String = "",
+  val text: String = "",
+)
 
 // ---------------------------------------------------------------------------
 // Mapping to the UI model
@@ -275,3 +345,41 @@ fun decodeTranscript(raw: String): WireTranscript? =
   runCatching { WearBridge.json.decodeFromString<WireTranscript>(raw) }
     .getOrNull()
     ?.takeIf { it.version == WearBridge.PROTOCOL_VERSION }
+
+/** Same version-gate discipline as [decodeSnapshot]. */
+fun decodeLiveVoice(raw: String): WireLiveVoice? =
+  runCatching { WearBridge.json.decodeFromString<WireLiveVoice>(raw) }
+    .getOrNull()
+    ?.takeIf { it.version == WearBridge.PROTOCOL_VERSION }
+
+private fun String.toLiveVoicePhase(): LiveVoicePhase =
+  when (this) {
+    "starting" -> LiveVoicePhase.Starting
+    "active" -> LiveVoicePhase.Active
+    "stopping" -> LiveVoicePhase.Stopping
+    "error" -> LiveVoicePhase.Error
+    // Idle is the safe default for a phase this build doesn't know: it offers to
+    // start a call rather than claiming one is running that the watch can't end.
+    else -> LiveVoicePhase.Idle
+  }
+
+fun WireLiveVoice.toLiveVoiceState(): LiveVoiceState =
+  LiveVoiceState(
+    phase = phase.toLiveVoicePhase(),
+    serverId = serverId,
+    hostLabel = hostLabel,
+    isMuted = isMuted,
+    hosts = hosts.filter { it.serverId.isNotEmpty() }.map { LiveVoiceHost(it.serverId, it.label) },
+    unavailableReason = unavailableReason,
+    transcripts =
+      transcripts
+        // An entry with no text is a turn the model is still filling in; it would
+        // render as an empty bubble.
+        .filter { it.text.isNotBlank() }
+        .map {
+          LiveVoiceTranscriptEntry(id = it.id, fromUser = it.role == "user", text = it.text)
+        },
+    errorCode = errorCode,
+    errorMessage = errorMessage,
+    closedCause = closedCause,
+  )

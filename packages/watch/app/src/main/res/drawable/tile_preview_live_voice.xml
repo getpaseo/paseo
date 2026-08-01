@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- What the tile carousel shows while the user is choosing tiles to add. The
+     system renders this at card size, so it is the Paseo mark on the app's
+     surface colour rather than a mock of the live layout — a shrunk screenshot
+     of text would be illegible at that scale, and would go stale the first time
+     the copy changes. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+  <item>
+    <shape android:shape="rectangle">
+      <solid android:color="@color/tile_preview_background" />
+    </shape>
+  </item>
+  <item
+    android:drawable="@drawable/ic_launcher_foreground"
+    android:gravity="center" />
+</layer-list>
