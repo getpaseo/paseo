@@ -10,7 +10,7 @@
       },
       "candidate": {
         "branch": "review/v025-host-capacity-admission",
-        "commit": "99cef055cba323ed5c1f05e8f14c11a0360174ef"
+        "commit": "dc5cf93b92bf1ac0782e4a91bdac9d905fb1d1f0"
       },
       "sources": [
         "docs/data-model.md",
@@ -58,8 +58,8 @@
         "the generated public JSON schema accepts the positive runtime limit and rejects zero"
       ],
       "verification": {
-        "commit": "99cef055cba323ed5c1f05e8f14c11a0360174ef",
-        "completedAt": "2026-08-01T03:19:36Z",
+        "commit": "dc5cf93b92bf1ac0782e4a91bdac9d905fb1d1f0",
+        "completedAt": "2026-08-01T03:24:30Z",
         "commands": [
           "PATH=/opt/homebrew/Cellar/node@24/24.18.1/bin:$PATH npx vitest run packages/server/src/server/agent/agent-runtime-capacity.test.ts packages/server/src/server/agent/providers/opencode/server-manager.test.ts packages/server/src/server/agent/providers/opencode-agent.test.ts packages/server/src/server/agent/providers/acp-agent.test.ts packages/server/src/server/agent/provider-registry.test.ts packages/server/src/server/agent/agent-manager.test.ts --bail=1",
           "npm run build:server",
@@ -68,6 +68,7 @@
           "npm run format",
           "npm run format:check",
           "git diff --check",
+          "git merge-tree --write-tree origin/main HEAD",
           "jq empty patches/local-patches.json"
         ],
         "result": {
@@ -76,6 +77,7 @@
           "serverBuild": "passed",
           "workspaceTypechecks": "passed",
           "lint": "0 warnings, 0 errors",
+          "currentMainMechanicalMerge": "passed",
           "formatDiffAndManifest": "passed"
         }
       },
