@@ -64,6 +64,27 @@ describe("createSidebarWorkspaceEntry forge threading", () => {
   });
 });
 
+describe("createSidebarWorkspaceEntry workspace directory label", () => {
+  it("uses the daemon-provided slug for a Paseo-owned worktree", () => {
+    const descriptor = workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42");
+    descriptor.workspaceDirectory = "/worktrees/feature/packages/app";
+    descriptor.worktreeSlug = "feature";
+
+    const entry = createSidebarWorkspaceEntry({ serverId: "srv", workspace: descriptor });
+
+    expect(entry.workspaceDirectoryLabel).toBe("feature");
+  });
+
+  it("shortens the workspace path when the daemon omits a worktree slug", () => {
+    const descriptor = workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42");
+    descriptor.workspaceDirectory = "/home/alice/external/feature";
+
+    const entry = createSidebarWorkspaceEntry({ serverId: "srv", workspace: descriptor });
+
+    expect(entry.workspaceDirectoryLabel).toBe("~/external/feature");
+  });
+});
+
 interface OrderedItem {
   key: string;
 }

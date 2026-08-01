@@ -27,6 +27,7 @@ function workspace(input: {
     projectViewKey: input.projectKey ?? "project-default",
     projectName: input.projectKey ?? "Project",
     workspaceDirectory: input.workspaceDirectory,
+    workspaceDirectoryLabel: input.workspaceDirectory,
     projectKind: "git",
     workspaceKind: "checkout",
     name: input.name,

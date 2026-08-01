@@ -1438,9 +1438,21 @@ export const ja: TranslationResources = {
       failedToLoadOffer: "ペアリングオファーの読み込みに失敗しました。",
       relayDisabled:
         "リレーが有効になっていません。デバイスをペアリングするにはリレーを有効にしてください。",
+      enableTitle: "リレーを有効にしますか？",
+      enableDescription:
+        "リレーを使うと、このデバイスからどこでも接続できます。ペアリング通信はエンドツーエンドで暗号化されます。",
+      relayDocs: "リレーの仕組み",
+      relayDocsAccessibility: "Paseo リレーの仕組みを読む",
+      enableRelay: "リレーを有効にする",
+      enablingRelay: "有効化中...",
+      notNow: "今はしない",
+      directConnectionHint:
+        "リレーを使わない場合は、TCP、Tailscale、または別の VPN で直接接続してください。QR コードは作成されません。",
+      updateRequired: "Paseo Desktop からリレーを有効にするにはホストを更新してください。",
       unavailable: "ペアリングオファーが利用できません。",
       hint: "スマートフォンのPaseoでこのQRコードをスキャンするか、以下のリンクをコピーしてください。",
       qrUnavailable: "QRコードが利用できません。",
+      qrAccessibility: "ペアリング QR コード",
       retry: "再試行",
       copy: "コピー",
       copied: "コピーしました",

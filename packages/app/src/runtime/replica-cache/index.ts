@@ -199,6 +199,7 @@ function serializeWorkspace(workspace: WorkspaceDescriptor): WorkspaceDescriptor
     projectCustomIconRevision: workspace.projectCustomIconRevision ?? null,
     projectRootPath: workspace.projectRootPath,
     workspaceDirectory: workspace.workspaceDirectory,
+    worktreeSlug: workspace.worktreeSlug,
     projectKind: workspace.projectKind,
     workspaceKind: workspace.workspaceKind,
     name: workspace.name,

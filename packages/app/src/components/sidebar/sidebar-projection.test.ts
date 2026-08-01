@@ -19,6 +19,8 @@ function makeWorkspace(id: string, statusBucket: SidebarWorkspaceEntry["statusBu
   };
   const entry: SidebarWorkspaceEntry = {
     ...placement,
+    workspaceDirectory: "",
+    workspaceDirectoryLabel: "",
     title: null,
     currentBranch: null,
     statusBucket,

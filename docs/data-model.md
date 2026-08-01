@@ -189,7 +189,7 @@ Single file, validated with `PersistedConfigSchema`.
     mcp: { enabled: boolean, injectIntoAgents: boolean },
     appendSystemPrompt: string,    // appended to supported provider system/developer prompts
     cors: { allowedOrigins: string[] },
-    relay: { enabled: boolean, endpoint: string, publicEndpoint: string, useTls: boolean, publicUseTls: boolean },
+    relay: { enabled: boolean, endpoint: string, publicEndpoint: string, useTls: boolean, publicUseTls: boolean }, // new homes materialize enabled: false
     auth: { password: string }    // bcrypt hash, optional
   },
   app: {

@@ -139,8 +139,15 @@ const MutableBrowserToolsConfigSchema = z
     enabled: z.boolean().default(false),
   })
   .passthrough();
+const MutableRelayConfigSchema = z
+  .object({
+    enabled: z.boolean(),
+  })
+  .passthrough();
 export const MutableDaemonConfigSchema = z
   .object({
+    // COMPAT(relayConfig): added in v0.2.6, remove after 2027-01-31 when old daemons are unsupported.
+    relay: MutableRelayConfigSchema.optional(),
     mcp: z
       .object({
         injectIntoAgents: z.boolean(),
@@ -158,6 +165,7 @@ export const MutableDaemonConfigSchema = z
 
 export const MutableDaemonConfigPatchSchema = z
   .object({
+    relay: MutableRelayConfigSchema.partial().optional(),
     mcp: MutableDaemonConfigSchema.shape.mcp.partial().optional(),
     browserTools: MutableBrowserToolsConfigSchema.partial().optional(),
     providers: z
@@ -2808,6 +2816,8 @@ export const ServerInfoStatusPayloadSchema = z
         forgeSearch: z.boolean().optional(),
         // COMPAT(daemonStatusRpc): added in v0.1.76, remove gate after 2026-11-18.
         daemonStatusRpc: z.boolean().optional(),
+        // COMPAT(relayConfig): added in v0.2.6, remove gate after 2027-01-31.
+        relayConfig: z.boolean().optional(),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
         "terminal-restore-modes": z.boolean().optional(),
         // COMPAT(rewind): added in v0.1.X, drop the gate when floor >= v0.1.X.
@@ -3145,6 +3155,9 @@ export const WorkspaceDescriptorPayloadSchema = z
     projectCustomIconRevision: z.string().nullable().optional(),
     projectRootPath: z.string(),
     workspaceDirectory: z.string().optional(),
+    // COMPAT(worktreeSlug): added in v0.2.6, remove optional after 2027-01-31.
+    // Present only for Paseo-owned worktrees; this is the basename of their root directory.
+    worktreeSlug: z.string().optional(),
     projectKind: z.enum(["git", "non_git", "directory"]),
     // COMPAT(workspaces): keep legacy directory workspace kind parseable.
     workspaceKind: z.enum(["directory", "local_checkout", "checkout", "worktree"]),

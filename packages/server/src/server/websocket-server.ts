@@ -131,6 +131,8 @@ interface WebSocketConnectionIdentity {
 interface WebSocketServerConfig {
   allowedOrigins: Set<string>;
   hostnames?: HostnamesConfig;
+  daemonStatusRpc?: boolean;
+  relayConfig?: boolean;
 }
 
 type WebSocketRuntimeMetrics = SessionRuntimeMetrics & CheckoutDiffMetrics;
@@ -554,6 +556,8 @@ export class VoiceAssistantWebSocketServer {
   private readonly hubRelationships: HubRelationshipManagement | null;
   private readonly browserToolsRegistrations = new Map<string, BrowserToolsRegistration>();
   private acceptingConnections = true;
+  private readonly advertiseDaemonStatusRpc: boolean;
+  private readonly advertiseRelayConfig: boolean;
 
   constructor(
     server: HTTPServer,
@@ -601,6 +605,8 @@ export class VoiceAssistantWebSocketServer {
     hubRelationships?: HubRelationshipManagement | null,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
+    this.advertiseDaemonStatusRpc = wsConfig.daemonStatusRpc !== false;
+    this.advertiseRelayConfig = wsConfig.relayConfig !== false;
     this.serverId = serverId;
     if (typeof daemonVersion !== "string" || daemonVersion.trim().length === 0) {
       throw new MissingDaemonVersionError();
@@ -1520,7 +1526,9 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(forgeSearch): added in v0.1.106, remove github_search fallback after 2026-12-28.
         forgeSearch: true,
         // COMPAT(daemonStatusRpc): added in v0.1.76, remove gate after 2026-11-18.
-        daemonStatusRpc: true,
+        ...(this.advertiseDaemonStatusRpc ? { daemonStatusRpc: true } : {}),
+        // COMPAT(relayConfig): added in v0.2.6, remove gate after 2027-01-31.
+        ...(this.advertiseRelayConfig ? { relayConfig: true } : {}),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
         "terminal-restore-modes": true,
         // COMPAT(rewind): added in v0.1.X, drop the gate when floor >= v0.1.X.
