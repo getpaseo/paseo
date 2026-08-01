@@ -2503,8 +2503,37 @@ export const ko: TranslationResources = {
       updateErrorTitle: "프로바이더를 업데이트할 수 없습니다",
       actions: {
         menu: "{{name}} 작업",
+        configureTools: "도구 구성",
         remove: "프로바이더 제거",
         removing: "제거 중...",
+      },
+      tools: {
+        title: "{{name}} 도구 구성",
+        searchPlaceholder: "도구 검색",
+        updateRequired: {
+          title: "Paseo 도구를 구성하려면 호스트를 업데이트하세요",
+          description: "이 호스트에서는 프로바이더별 도구 설정을 사용할 수 없습니다.",
+        },
+        master: {
+          title: "Paseo 도구 활성화",
+          hint: "이 프로바이더가 Paseo 도구를 사용하도록 허용합니다",
+          accessibilityLabel: "{{name}}에 대한 Paseo 도구 활성화",
+        },
+        enableAll: "모두 활성화",
+        disableAll: "모두 비활성화",
+        globalOverride: {
+          title: "Paseo 도구가 비활성화되었습니다",
+          description:
+            "전역 Paseo 도구 주입 설정이 저장된 프로바이더 및 도구 선택 항목보다 우선 적용됩니다.",
+        },
+        browserUnavailable: {
+          title: "브라우저 도구를 사용할 수 없습니다",
+          description:
+            "이 도구들을 사용하려면 호스트 설정에서 브라우저 도구를 켜세요. 저장된 선택 항목은 변경되지 않습니다.",
+        },
+        toolAccessibilityLabel: "{{name}} Paseo 도구",
+        noSearchMatches: "검색과 일치하는 도구가 없습니다",
+        updateErrorTitle: "Paseo 도구 설정을 업데이트할 수 없습니다",
       },
       remove: {
         confirmTitle: "{{name}}를 제거하시겠습니까?",

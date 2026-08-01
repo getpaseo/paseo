@@ -7,41 +7,50 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { MutableDaemonConfig } from "@getpaseo/protocol/messages";
 
-const { theme, snapshotState, configState, patchConfigMock, openProviderSettingsMock } = vi.hoisted(
-  () => ({
-    theme: {
-      spacing: { 1: 4, "1.5": 6, 2: 8, 3: 12, 4: 16, 6: 24 },
-      iconSize: { sm: 14, md: 20 },
-      fontSize: { xs: 11, sm: 13, base: 15 },
-      fontWeight: { normal: "400" },
-      borderRadius: { lg: 8 },
-      opacity: { 50: 0.5 },
-      colors: {
-        surface1: "#111",
-        surface2: "#222",
-        surface3: "#333",
-        foreground: "#fff",
-        foregroundMuted: "#aaa",
-        border: "#555",
-        accent: "#0a84ff",
-        statusSuccess: "#00ff00",
-        statusWarning: "#ff9500",
-        statusDanger: "#ff0000",
-        palette: { red: { 300: "#ff6b6b" }, white: "#fff" },
-      },
+const {
+  theme,
+  snapshotState,
+  configState,
+  patchConfigMock,
+  openProviderSettingsMock,
+  hostFeatureState,
+} = vi.hoisted(() => ({
+  theme: {
+    spacing: { 1: 4, "1.5": 6, 2: 8, 3: 12, 4: 16, 6: 24 },
+    iconSize: { sm: 14, md: 20 },
+    fontSize: { xs: 11, sm: 13, base: 15 },
+    fontWeight: { normal: "400" },
+    borderRadius: { lg: 8 },
+    opacity: { 50: 0.5 },
+    colors: {
+      surface1: "#111",
+      surface2: "#222",
+      surface3: "#333",
+      foreground: "#fff",
+      foregroundMuted: "#aaa",
+      border: "#555",
+      accent: "#0a84ff",
+      statusSuccess: "#00ff00",
+      statusWarning: "#ff9500",
+      statusDanger: "#ff0000",
+      palette: { red: { 300: "#ff6b6b" }, white: "#fff" },
     },
-    snapshotState: {
-      entries: undefined as ProviderSnapshotEntry[] | undefined,
-      isLoading: false,
-      isRefreshing: false,
-    },
-    configState: {
-      config: null as MutableDaemonConfig | null,
-    },
-    patchConfigMock: vi.fn(async () => undefined),
-    openProviderSettingsMock: vi.fn(),
-  }),
-);
+  },
+  snapshotState: {
+    entries: undefined as ProviderSnapshotEntry[] | undefined,
+    isLoading: false,
+    isRefreshing: false,
+  },
+  configState: {
+    config: null as MutableDaemonConfig | null,
+  },
+  patchConfigMock: vi.fn(async () => undefined),
+  openProviderSettingsMock: vi.fn(),
+  hostFeatureState: {
+    providerRemoval: false,
+    paseoToolPolicies: true,
+  },
+}));
 
 vi.mock("react-native", () => ({
   Platform: { OS: "web" },
@@ -94,11 +103,25 @@ vi.mock("react-native-unistyles", () => ({
   useUnistyles: () => ({ theme, rt: { breakpoint: "md" } }),
 }));
 
+vi.mock("@/components/ui/alert", () => ({
+  Alert: ({
+    title,
+    description,
+    testID,
+  }: {
+    title?: string;
+    description?: string;
+    testID?: string;
+  }) =>
+    React.createElement("div", { "data-testid": testID }, `${title ?? ""} ${description ?? ""}`),
+}));
+
 vi.mock("lucide-react-native", () => {
   const icon = (name: string) => () => React.createElement("span", { "data-icon": name });
   return {
     ChevronRight: icon("ChevronRight"),
     MoreHorizontal: icon("MoreHorizontal"),
+    Settings2: icon("Settings2"),
     Trash2: icon("Trash2"),
   };
 });
@@ -120,6 +143,11 @@ vi.mock("react-i18next", () => ({
           "settings.providers.addErrorTitle": "Unable to add provider",
           "settings.providers.updateErrorTitle": "Unable to update provider",
           "settings.providers.actions.menu": "{{name}} actions",
+          "settings.providers.actions.configureTools": "Configure tools",
+          "settings.providers.tools.updateRequired.title":
+            "Update the host to configure Paseo tools",
+          "settings.providers.tools.updateRequired.description":
+            "Per-provider tool settings are unavailable on this host.",
           "settings.providers.actions.remove": "Remove provider",
           "settings.providers.actions.removing": "Removing...",
           "settings.providers.remove.confirmTitle": "Remove {{name}}?",
@@ -242,6 +270,15 @@ vi.mock("@/components/provider-catalog-list", () => ({
   ProviderCatalogList: () => null,
 }));
 
+vi.mock("@/screens/settings/paseo-tools-policy-sheet", () => ({
+  PaseoToolsPolicySheet: ({ providerId, visible }: { providerId: string; visible: boolean }) =>
+    React.createElement("div", {
+      "data-testid": "paseo-tools-policy-sheet",
+      "data-provider-id": providerId,
+      "data-visible": visible ? "true" : "false",
+    }),
+}));
+
 vi.mock("@/hooks/use-providers-snapshot", () => ({
   useProvidersSnapshot: () => ({
     entries: snapshotState.entries,
@@ -268,7 +305,8 @@ vi.mock("@/runtime/host-runtime", () => ({
 }));
 
 vi.mock("@/runtime/host-features", () => ({
-  useHostFeature: () => false,
+  useHostFeature: (_serverId: string, feature: keyof typeof hostFeatureState) =>
+    hostFeatureState[feature],
 }));
 
 vi.mock("@/utils/confirm-dialog", () => ({
@@ -343,6 +381,8 @@ describe("ProvidersSection", () => {
     snapshotState.isLoading = false;
     snapshotState.isRefreshing = false;
     configState.config = null;
+    hostFeatureState.providerRemoval = false;
+    hostFeatureState.paseoToolPolicies = true;
     patchConfigMock.mockReset();
     patchConfigMock.mockResolvedValue(undefined);
     openProviderSettingsMock.mockReset();
@@ -458,5 +498,41 @@ describe("ProvidersSection", () => {
     expect(patchConfigMock).toHaveBeenCalledWith({
       providers: { claude: { enabled: false } },
     });
+  });
+
+  it("opens the Paseo tool policy from the provider actions menu", () => {
+    snapshotState.entries = [claudeEntry];
+    configState.config = makeConfig();
+
+    render();
+
+    const configureTools = container?.querySelector<HTMLElement>(
+      '[data-testid="provider-configure-tools-claude"]',
+    );
+    expect(configureTools).not.toBeNull();
+
+    act(() => {
+      configureTools?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    });
+
+    const sheet = container?.querySelector<HTMLElement>('[data-testid="paseo-tools-policy-sheet"]');
+    expect(sheet?.getAttribute("data-provider-id")).toBe("claude");
+    expect(sheet?.getAttribute("data-visible")).toBe("true");
+  });
+
+  it("hides tool policy controls and requests a host update when unsupported", () => {
+    hostFeatureState.paseoToolPolicies = false;
+    snapshotState.entries = [claudeEntry];
+    configState.config = makeConfig();
+
+    render();
+
+    expect(container?.querySelector('[data-testid="provider-configure-tools-claude"]')).toBeNull();
+    expect(container?.querySelector('[data-testid="paseo-tools-policy-sheet"]')).toBeNull();
+    expect(
+      container?.querySelector('[data-testid="provider-tools-update-required"]')?.textContent,
+    ).toBe(
+      "Update the host to configure Paseo tools Per-provider tool settings are unavailable on this host.",
+    );
   });
 });

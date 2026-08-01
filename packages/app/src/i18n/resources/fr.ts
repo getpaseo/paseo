@@ -2553,8 +2553,38 @@ export const fr: TranslationResources = {
       updateErrorTitle: "Impossible de mettre à jour le fournisseur",
       actions: {
         menu: "{{name}} actions",
+        configureTools: "Configurer les outils",
         remove: "Remove provider",
         removing: "Removing...",
+      },
+      tools: {
+        title: "Configurer les outils de {{name}}",
+        searchPlaceholder: "Rechercher des outils",
+        updateRequired: {
+          title: "Mettez à jour l’hôte pour configurer les outils Paseo",
+          description:
+            "Les réglages des outils par fournisseur ne sont pas disponibles sur cet hôte.",
+        },
+        master: {
+          title: "Activer les outils Paseo",
+          hint: "Autoriser ce fournisseur à utiliser les outils Paseo",
+          accessibilityLabel: "Activer les outils Paseo pour {{name}}",
+        },
+        enableAll: "Tout activer",
+        disableAll: "Tout désactiver",
+        globalOverride: {
+          title: "Les outils Paseo sont désactivés",
+          description:
+            "Le réglage global d'injection des outils Paseo remplace ces choix enregistrés",
+        },
+        browserUnavailable: {
+          title: "Les outils du navigateur sont indisponibles",
+          description:
+            "Activez les outils du navigateur dans les réglages de l'hôte pour les utiliser. Les choix enregistrés restent inchangés",
+        },
+        toolAccessibilityLabel: "Outil Paseo : {{name}}",
+        noSearchMatches: "Aucun outil ne correspond à votre recherche",
+        updateErrorTitle: "Impossible de mettre à jour les réglages des outils Paseo",
       },
       remove: {
         confirmTitle: "Remove {{name}}?",
