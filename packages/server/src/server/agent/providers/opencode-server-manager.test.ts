@@ -719,7 +719,6 @@ function createTestManager(
       createManagedProcessIdentityToken: () => "test-managed-process-token",
       verifyProcessGroupIdentity: runtime.verifyProcessGroupIdentity,
       verifyProcessIdentity: runtime.verifyProcessIdentity,
-      getWindowsJobProofMarker: () => "test-windows-job-empty",
     }),
     runtime,
   };

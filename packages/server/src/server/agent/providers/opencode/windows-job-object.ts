@@ -1,5 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import net from "node:net";
 import { extname } from "node:path";
 import { gzipSync } from "node:zlib";
 
@@ -10,17 +11,20 @@ import type { TreeKillTarget } from "../../../../utils/tree-kill.js";
 const WINDOWS_JOB_COMMAND_ENV = "PASEO_WINDOWS_JOB_COMMAND";
 const WINDOWS_JOB_COMMAND_LINE_ENV = "PASEO_WINDOWS_JOB_COMMAND_LINE";
 const WINDOWS_JOB_PROOF_ENV = "PASEO_WINDOWS_JOB_PROOF";
+const WINDOWS_JOB_CONTROL_PIPE_ENV = "PASEO_WINDOWS_JOB_CONTROL_PIPE";
 const WINDOWS_JOB_PROOF_PREFIX = "PASEO_WINDOWS_JOB_EMPTY:";
-const WINDOWS_JOB_TERMINATE_PREFIX = "PASEO_WINDOWS_JOB_TERMINATE:";
 const WINDOWS_JOB_LEADER_EXIT_PREFIX = "PASEO_WINDOWS_JOB_LEADER_EXIT:";
 const WINDOWS_COMMAND_HOST_COMMAND_ENV = "PASEO_WINDOWS_COMMAND_HOST_COMMAND";
-const WINDOWS_COMMAND_HOST_ARG_COUNT_ENV = "PASEO_WINDOWS_COMMAND_HOST_ARG_COUNT";
-const WINDOWS_COMMAND_HOST_ARG_PREFIX = "PASEO_WINDOWS_COMMAND_HOST_ARG_";
+const WINDOWS_COMMAND_HOST_ARGUMENT_LINE_ENV = "PASEO_WINDOWS_COMMAND_HOST_ARGUMENT_LINE";
+const WINDOWS_CREATE_PROCESS_COMMAND_LINE_LIMIT = 32_767;
+const WINDOWS_ENVIRONMENT_VALUE_LIMIT = 32_767;
+const WINDOWS_ENVIRONMENT_BLOCK_LIMIT = 65_536;
+const WINDOWS_CONTROL_PIPE_RETRY_MS = 10;
 
 interface WindowsJobObjectMetadata {
   proofMarker: string;
   leaderExitMarker: string;
-  terminationRequest: string;
+  requestTermination: () => boolean;
   completion: Promise<boolean>;
   leaderExit: Promise<number>;
 }
@@ -32,20 +36,23 @@ $ErrorActionPreference = "Stop"
 $command = [Text.Encoding]::UTF8.GetString(
   [Convert]::FromBase64String($env:${WINDOWS_COMMAND_HOST_COMMAND_ENV})
 )
-$argCount = [int]$env:${WINDOWS_COMMAND_HOST_ARG_COUNT_ENV}
+$argumentLine = [Text.Encoding]::UTF8.GetString(
+  [Convert]::FromBase64String($env:${WINDOWS_COMMAND_HOST_ARGUMENT_LINE_ENV})
+)
 [Environment]::SetEnvironmentVariable("${WINDOWS_COMMAND_HOST_COMMAND_ENV}", $null)
-[Environment]::SetEnvironmentVariable("${WINDOWS_COMMAND_HOST_ARG_COUNT_ENV}", $null)
-$targetArgs = [System.Collections.Generic.List[string]]::new()
-for ($index = 0; $index -lt $argCount; $index++) {
-  $name = "${WINDOWS_COMMAND_HOST_ARG_PREFIX}" + $index
-  $encoded = [Environment]::GetEnvironmentVariable($name)
-  [Environment]::SetEnvironmentVariable($name, $null)
-  $targetArgs.Add([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encoded)))
-}
+[Environment]::SetEnvironmentVariable("${WINDOWS_COMMAND_HOST_ARGUMENT_LINE_ENV}", $null)
 try {
-  & $command @targetArgs
-  if ($null -eq $LASTEXITCODE) { exit 0 }
-  exit $LASTEXITCODE
+  $options = @{
+    FilePath = $command
+    NoNewWindow = $true
+    PassThru = $true
+  }
+  if ($argumentLine.Length -gt 0) {
+    $options.ArgumentList = $argumentLine
+  }
+  $target = Start-Process @options
+  $target.WaitForExit()
+  exit $target.ExitCode
 } catch {
   [Console]::Error.WriteLine($_.Exception.Message)
   exit 1
@@ -61,9 +68,12 @@ $ErrorActionPreference = "Stop"
 $source = @'
 using System;
 using System.ComponentModel;
+using System.IO;
+using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
+using Microsoft.Win32.SafeHandles;
 
 public static class PaseoWindowsJobSupervisor
 {
@@ -216,28 +226,30 @@ public static class PaseoWindowsJobSupervisor
         uint mask,
         uint flags);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool WriteFile(
-        IntPtr file,
-        byte[] buffer,
-        uint bytesToWrite,
-        out uint bytesWritten,
-        IntPtr overlapped);
-
     public static int Run(
         string applicationName,
         string commandLine,
         string proof,
-        string terminationRequest)
+        string controlPipeName)
     {
         LastRunProvedEmpty = false;
         IntPtr job = IntPtr.Zero;
         IntPtr targetInputRead = IntPtr.Zero;
         IntPtr targetInputWrite = IntPtr.Zero;
+        NamedPipeServerStream controlPipe = null;
+        Stream targetInput = null;
         PROCESS_INFORMATION process = new PROCESS_INFORMATION();
         bool assigned = false;
         try
         {
+            controlPipe = new NamedPipeServerStream(
+                controlPipeName,
+                PipeDirection.In,
+                1,
+                PipeTransmissionMode.Byte,
+                PipeOptions.Asynchronous);
+            Task controlConnection = controlPipe.WaitForConnectionAsync();
+
             job = CreateJobObject(IntPtr.Zero, null);
             CheckHandle(job, "CreateJobObject");
 
@@ -271,6 +283,8 @@ public static class PaseoWindowsJobSupervisor
             startup.hStdInput = targetInputRead;
             startup.hStdOutput = GetStdHandle(-11);
             startup.hStdError = GetStdHandle(-12);
+            CheckHandle(startup.hStdOutput, "GetStdHandle(stdout)");
+            CheckHandle(startup.hStdError, "GetStdHandle(stderr)");
             if (!CreateProcessW(
                 applicationName,
                 new StringBuilder(commandLine),
@@ -299,19 +313,16 @@ public static class PaseoWindowsJobSupervisor
             CloseHandle(process.hThread);
             process.hThread = IntPtr.Zero;
 
-            Task<string> control = Console.In.ReadLineAsync();
+            SafeFileHandle targetInputHandle = new SafeFileHandle(targetInputWrite, true);
+            targetInputWrite = IntPtr.Zero;
+            targetInput = new FileStream(targetInputHandle, FileAccess.Write, 4096, false);
+            Task inputPump = PumpStandardInput(targetInput);
+            byte[] controlBuffer = new byte[1];
+            Task<int> controlRead = null;
             bool leaderExited = false;
             while (true)
             {
                 uint wait = WaitForSingleObject(job, 10);
-                if (wait == WAIT_OBJECT_0)
-                {
-                    break;
-                }
-                if (wait != WAIT_TIMEOUT)
-                {
-                    ThrowLastError("WaitForSingleObject(job)");
-                }
                 if (!leaderExited)
                 {
                     uint leaderWait = WaitForSingleObject(process.hProcess, 0);
@@ -324,11 +335,7 @@ public static class PaseoWindowsJobSupervisor
                             ThrowLastError("GetExitCodeProcess(leader)");
                         }
                         leaderExited = true;
-                        if (targetInputWrite != IntPtr.Zero)
-                        {
-                            CloseHandle(targetInputWrite);
-                            targetInputWrite = IntPtr.Zero;
-                        }
+                        targetInput.Dispose();
                         Console.Error.WriteLine(
                             "${WINDOWS_JOB_LEADER_EXIT_PREFIX}" + proof + ":" + leaderExitCode);
                         Console.Error.Flush();
@@ -338,47 +345,35 @@ public static class PaseoWindowsJobSupervisor
                         ThrowLastError("WaitForSingleObject(leader)");
                     }
                 }
-                bool terminationRequested = false;
-                while (control.IsCompleted)
+                if (wait == WAIT_OBJECT_0)
                 {
-                    string request = control.Result;
-                    if (request == null ||
-                        String.Equals(request, terminationRequest, StringComparison.Ordinal))
-                    {
-                        if (targetInputWrite != IntPtr.Zero)
-                        {
-                            CloseHandle(targetInputWrite);
-                            targetInputWrite = IntPtr.Zero;
-                        }
-                        if (!TerminateJobObject(job, 1))
-                        {
-                            ThrowLastError("TerminateJobObject");
-                        }
-                        if (WaitForSingleObject(job, INFINITE) != WAIT_OBJECT_0)
-                        {
-                            ThrowLastError("WaitForSingleObject(terminated job)");
-                        }
-                        terminationRequested = true;
-                        break;
-                    }
-                    if (!leaderExited)
-                    {
-                        byte[] input = new UTF8Encoding(false).GetBytes(request + "\n");
-                        uint written;
-                        if (!WriteFile(
-                            targetInputWrite,
-                            input,
-                            (uint)input.Length,
-                            out written,
-                            IntPtr.Zero) || written != (uint)input.Length)
-                        {
-                            ThrowLastError("WriteFile(target stdin)");
-                        }
-                    }
-                    control = Console.In.ReadLineAsync();
+                    break;
                 }
-                if (terminationRequested)
+                if (wait != WAIT_TIMEOUT)
                 {
+                    ThrowLastError("WaitForSingleObject(job)");
+                }
+                if (controlConnection.IsFaulted || controlConnection.IsCanceled)
+                {
+                    controlConnection.GetAwaiter().GetResult();
+                }
+                if (controlConnection.IsCompleted && controlRead == null)
+                {
+                    controlConnection.GetAwaiter().GetResult();
+                    controlRead = controlPipe.ReadAsync(controlBuffer, 0, controlBuffer.Length);
+                }
+                if (controlRead != null && controlRead.IsCompleted)
+                {
+                    controlRead.GetAwaiter().GetResult();
+                    targetInput.Dispose();
+                    if (!TerminateJobObject(job, 1))
+                    {
+                        ThrowLastError("TerminateJobObject");
+                    }
+                    if (WaitForSingleObject(job, INFINITE) != WAIT_OBJECT_0)
+                    {
+                        ThrowLastError("WaitForSingleObject(terminated job)");
+                    }
                     break;
                 }
             }
@@ -429,7 +424,32 @@ public static class PaseoWindowsJobSupervisor
             if (process.hProcess != IntPtr.Zero) CloseHandle(process.hProcess);
             if (targetInputRead != IntPtr.Zero) CloseHandle(targetInputRead);
             if (targetInputWrite != IntPtr.Zero) CloseHandle(targetInputWrite);
+            if (targetInput != null) targetInput.Dispose();
+            if (controlPipe != null) controlPipe.Dispose();
             if (job != IntPtr.Zero) CloseHandle(job);
+        }
+    }
+
+    private static async Task PumpStandardInput(Stream targetInput)
+    {
+        try
+        {
+            using (Stream input = Console.OpenStandardInput())
+            {
+                await input.CopyToAsync(targetInput).ConfigureAwait(false);
+            }
+        }
+        catch (IOException)
+        {
+            // The target can close stdin before the owning Job becomes empty.
+        }
+        catch (ObjectDisposedException)
+        {
+            // Leader exit or explicit termination closes the target side.
+        }
+        finally
+        {
+            targetInput.Dispose();
         }
     }
 
@@ -450,17 +470,18 @@ $commandLine = [Text.Encoding]::UTF8.GetString(
   [Convert]::FromBase64String($env:${WINDOWS_JOB_COMMAND_LINE_ENV})
 )
 $proof = $env:${WINDOWS_JOB_PROOF_ENV}
-$terminationRequest = "${WINDOWS_JOB_TERMINATE_PREFIX}" + $proof
+$controlPipeName = $env:${WINDOWS_JOB_CONTROL_PIPE_ENV}
 Remove-Item Env:${WINDOWS_JOB_COMMAND_ENV}
 Remove-Item Env:${WINDOWS_JOB_COMMAND_LINE_ENV}
 Remove-Item Env:${WINDOWS_JOB_PROOF_ENV}
+Remove-Item Env:${WINDOWS_JOB_CONTROL_PIPE_ENV}
 $exitCode = 1
 try {
   $exitCode = [PaseoWindowsJobSupervisor]::Run(
     $applicationName,
     $commandLine,
     $proof,
-    $terminationRequest
+    $controlPipeName
   )
 } catch {
   [Console]::Error.WriteLine($_.Exception.Message)
@@ -493,14 +514,25 @@ const WINDOWS_JOB_ENCODED_COMMAND = Buffer.from(WINDOWS_JOB_BOOTSTRAP, "utf16le"
   "base64",
 );
 
+export const __windowsJobObjectInternals = {
+  commandHost: WINDOWS_COMMAND_HOST,
+  supervisor: WINDOWS_JOB_SUPERVISOR,
+};
+
 export type WindowsJobObjectChildSpawner = (
   command: string,
   args: string[],
   options: SpawnProcessOptions,
 ) => ChildProcess;
 
+export type WindowsJobObjectControlFactory = (
+  process: ChildProcess,
+  pipeName: string,
+) => () => boolean;
+
 export function createWindowsJobObjectProcessSpawner(
   spawnChild: WindowsJobObjectChildSpawner = spawnProcess,
+  createControl: WindowsJobObjectControlFactory = createWindowsJobControl,
 ): WindowsJobObjectChildSpawner {
   return (command, args, options) => {
     const { baseEnv, env, envOverlay, ...spawnOptions } = options;
@@ -511,20 +543,24 @@ export function createWindowsJobObjectProcessSpawner(
     const proof = randomUUID();
     const proofMarker = `${WINDOWS_JOB_PROOF_PREFIX}${proof}`;
     const leaderExitMarker = `${WINDOWS_JOB_LEADER_EXIT_PREFIX}${proof}:`;
-    const terminationRequest = `${WINDOWS_JOB_TERMINATE_PREFIX}${proof}`;
+    const controlPipeName = `paseo-windows-job-${proof}`;
+    const supervisorEnv = { ...targetEnv, ...target.envOverlay };
+    const supervisorEnvOverlay: ProcessEnvRecord = {
+      [WINDOWS_JOB_COMMAND_ENV]: target.command,
+      [WINDOWS_JOB_COMMAND_LINE_ENV]: Buffer.from(commandLine, "utf8").toString("base64"),
+      [WINDOWS_JOB_PROOF_ENV]: proof,
+      [WINDOWS_JOB_CONTROL_PIPE_ENV]: controlPipeName,
+    };
+    validateWindowsJobLaunch(command, args, commandLine, supervisorEnv, supervisorEnvOverlay);
 
     const supervisor = spawnChild(
       "powershell.exe",
       ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", WINDOWS_JOB_ENCODED_COMMAND],
       {
         ...spawnOptions,
-        env: { ...targetEnv, ...target.envOverlay },
+        env: supervisorEnv,
         envMode: "internal",
-        envOverlay: {
-          [WINDOWS_JOB_COMMAND_ENV]: target.command,
-          [WINDOWS_JOB_COMMAND_LINE_ENV]: Buffer.from(commandLine, "utf8").toString("base64"),
-          [WINDOWS_JOB_PROOF_ENV]: proof,
-        },
+        envOverlay: supervisorEnvOverlay,
         shell: false,
         stdio: ["pipe", "pipe", "pipe"],
       },
@@ -533,7 +569,7 @@ export function createWindowsJobObjectProcessSpawner(
     windowsJobMetadata.set(supervisor, {
       proofMarker,
       leaderExitMarker,
-      terminationRequest,
+      requestTermination: createControl(supervisor, controlPipeName),
       completion: observation.completion,
       leaderExit: observation.leaderExit,
     });
@@ -560,7 +596,7 @@ export function getWindowsJobObjectLeaderExitMarker(process: ChildProcess): stri
 }
 
 export function createWindowsJobObjectTerminationTarget(process: ChildProcess): TreeKillTarget {
-  const terminationRequest = windowsJobMetadata.get(process)?.terminationRequest ?? "terminate";
+  const metadata = windowsJobMetadata.get(process);
   return {
     get exitCode() {
       return process.exitCode;
@@ -568,9 +604,21 @@ export function createWindowsJobObjectTerminationTarget(process: ChildProcess): 
     get signalCode() {
       return process.signalCode;
     },
-    kill: () => process.stdin?.write(`${terminationRequest}\n`) ?? false,
+    kill: () => metadata?.requestTermination() ?? false,
     once: (event, listener) => process.once(event, listener),
     off: (event, listener) => process.off(event, listener),
+    observeExit: (listener) => {
+      let active = true;
+      void metadata?.completion.then(() => {
+        if (active) {
+          listener();
+        }
+        return undefined;
+      });
+      return () => {
+        active = false;
+      };
+    },
   };
 }
 
@@ -606,14 +654,11 @@ function resolveWindowsJobTarget(
 
   const envOverlay: ProcessEnvRecord = {
     [WINDOWS_COMMAND_HOST_COMMAND_ENV]: Buffer.from(command, "utf8").toString("base64"),
-    [WINDOWS_COMMAND_HOST_ARG_COUNT_ENV]: String(args.length),
-  };
-  args.forEach((argument, index) => {
-    envOverlay[`${WINDOWS_COMMAND_HOST_ARG_PREFIX}${index}`] = Buffer.from(
-      argument,
+    [WINDOWS_COMMAND_HOST_ARGUMENT_LINE_ENV]: Buffer.from(
+      args.map(quoteCreateProcessArgument).join(" "),
       "utf8",
-    ).toString("base64");
-  });
+    ).toString("base64"),
+  };
   return {
     command: "powershell.exe",
     args: [
@@ -642,6 +687,9 @@ function observeWindowsJob(
   });
   let proofBuffer = "";
   let proven = false;
+  let spawned = false;
+  let spawnFailed = false;
+  let completionResolved = false;
   let leaderExitResolved = false;
   process.stderr?.on("data", (data: Buffer | string) => {
     proofBuffer = (proofBuffer + data.toString()).slice(-512);
@@ -661,12 +709,149 @@ function observeWindowsJob(
       }
     }
   });
+  process.once("spawn", () => {
+    spawned = true;
+  });
+  process.once("error", () => {
+    if (spawned) {
+      return;
+    }
+    spawnFailed = true;
+    if (!leaderExitResolved) {
+      leaderExitResolved = true;
+      resolveLeaderExit(1);
+    }
+    if (!completionResolved) {
+      completionResolved = true;
+      resolveCompletion(true);
+    }
+  });
   process.once("close", () => {
     if (!leaderExitResolved) {
       leaderExitResolved = true;
       resolveLeaderExit(process.exitCode ?? 1);
     }
-    resolveCompletion(proven);
+    if (!completionResolved) {
+      completionResolved = true;
+      resolveCompletion(proven || spawnFailed);
+    }
   });
   return { completion, leaderExit };
+}
+
+function createWindowsJobControl(process: ChildProcess, pipeName: string): () => boolean {
+  let socket: net.Socket | null = null;
+  let retryTimer: NodeJS.Timeout | null = null;
+  let processClosed = false;
+  let terminationRequested = false;
+  let terminationSent = false;
+
+  const clearRetry = () => {
+    if (retryTimer) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+  };
+  const disconnect = () => {
+    clearRetry();
+    socket?.destroy();
+    socket = null;
+  };
+  const sendTermination = () => {
+    if (!terminationRequested || terminationSent || !socket || !socket.writable) {
+      return;
+    }
+    terminationSent = true;
+    socket.end(Buffer.from([1]));
+  };
+  const connect = () => {
+    if (processClosed || socket || retryTimer) {
+      return;
+    }
+    const nextSocket = net.createConnection(`\\\\.\\pipe\\${pipeName}`);
+    socket = nextSocket;
+    nextSocket.once("connect", sendTermination);
+    nextSocket.once("error", () => {
+      if (socket === nextSocket) {
+        socket = null;
+      }
+      nextSocket.destroy();
+      if (!processClosed) {
+        retryTimer = setTimeout(() => {
+          retryTimer = null;
+          connect();
+        }, WINDOWS_CONTROL_PIPE_RETRY_MS);
+        retryTimer.unref();
+      }
+    });
+    nextSocket.once("close", () => {
+      if (socket === nextSocket) {
+        socket = null;
+      }
+    });
+  };
+
+  process.once("spawn", connect);
+  process.once("close", () => {
+    processClosed = true;
+    disconnect();
+  });
+  process.once("error", () => {
+    if (process.pid === undefined) {
+      processClosed = true;
+      disconnect();
+    }
+  });
+
+  return () => {
+    if (processClosed) {
+      return false;
+    }
+    terminationRequested = true;
+    sendTermination();
+    return true;
+  };
+}
+
+function validateWindowsJobLaunch(
+  command: string,
+  args: readonly string[],
+  commandLine: string,
+  environment: ProcessEnvRecord,
+  overlay: ProcessEnvRecord,
+): void {
+  validateNoNul("command", command);
+  args.forEach((argument, index) => validateNoNul(`argument ${index}`, argument));
+  if (commandLine.length + 1 > WINDOWS_CREATE_PROCESS_COMMAND_LINE_LIMIT) {
+    throw new Error(
+      `Windows target command line exceeds ${WINDOWS_CREATE_PROCESS_COMMAND_LINE_LIMIT} characters`,
+    );
+  }
+
+  const mergedEnvironment = { ...environment, ...overlay };
+  let environmentBlockLength = 1;
+  for (const [name, value] of Object.entries(mergedEnvironment)) {
+    if (value === undefined) {
+      continue;
+    }
+    validateNoNul(`environment variable name '${name}'`, name);
+    validateNoNul(`environment variable '${name}'`, value);
+    if (value.length + 1 > WINDOWS_ENVIRONMENT_VALUE_LIMIT) {
+      throw new Error(
+        `Windows environment variable '${name}' exceeds ${WINDOWS_ENVIRONMENT_VALUE_LIMIT} characters`,
+      );
+    }
+    environmentBlockLength += name.length + 1 + value.length + 1;
+  }
+  if (environmentBlockLength > WINDOWS_ENVIRONMENT_BLOCK_LIMIT) {
+    throw new Error(
+      `Windows environment block exceeds ${WINDOWS_ENVIRONMENT_BLOCK_LIMIT} characters`,
+    );
+  }
+}
+
+function validateNoNul(label: string, value: string): void {
+  if (value.includes("\0")) {
+    throw new Error(`Windows ${label} contains a null character`);
+  }
 }

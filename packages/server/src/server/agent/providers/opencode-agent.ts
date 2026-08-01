@@ -1344,6 +1344,8 @@ export class OpenCodeAgentClient implements AgentClient {
         options?.persistSession,
         launchContext?.agentId,
         url,
+        false,
+        acquisition.server.leaderExit,
       );
     } catch (error) {
       await acquisition.release();
@@ -1398,6 +1400,7 @@ export class OpenCodeAgentClient implements AgentClient {
         launchContext?.agentId,
         url,
         registered,
+        acquisition.server.leaderExit,
       );
     } catch (error) {
       await acquisition.release();
@@ -3023,6 +3026,7 @@ class OpenCodeAgentSession implements AgentSession {
   private eventStreamReady: Deferred<void> | null = null;
   private eventStreamTask: Promise<void> | null = null;
   private closed = false;
+  private providerExitError: Error | null = null;
   private readonly persistSession: boolean;
   private deletedFromProvider = false;
   constructor(
@@ -3036,6 +3040,7 @@ class OpenCodeAgentSession implements AgentSession {
     private readonly agentId?: string,
     private readonly serverUrl?: string,
     private readonly externallyDriven = false,
+    providerExit?: Promise<number>,
   ) {
     this.config = config;
     this.client = client;
@@ -3049,6 +3054,9 @@ class OpenCodeAgentSession implements AgentSession {
     this.selectedModelContextWindowMaxTokens = this.resolveConfiguredModelContextWindowMaxTokens(
       config.model,
     );
+    if (providerExit) {
+      void providerExit.then((exitCode) => this.handleProviderExit(exitCode));
+    }
     this.startEventStream();
   }
 
@@ -3276,6 +3284,7 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private assertTurnStartActive(start: OpenCodeTurnStart): void {
+    this.throwIfProviderExited();
     if (this.turnState.status === "running") {
       throw new Error("A foreground turn became active before prompt submission");
     }
@@ -3296,6 +3305,7 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private assertTurnCanStart(): void {
+    this.throwIfProviderExited();
     if (this.turnState.status === "running") {
       throw new Error("A foreground turn is already active");
     }
@@ -3325,6 +3335,7 @@ class OpenCodeAgentSession implements AgentSession {
   ): Promise<{ turnId: string }> {
     this.assertTurnCanStart();
     await this.awaitRunnerQuiescence();
+    this.throwIfProviderExited();
     if (this.turnState.status !== "idle") {
       throw new AgentTurnStartRejectedError(
         "previous_turn_still_stopping",
@@ -3697,6 +3708,9 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private ensureEventStreamReady(): Promise<void> {
+    if (this.providerExitError) {
+      return Promise.reject(this.providerExitError);
+    }
     if (this.closed) {
       return Promise.reject(new Error("OpenCode session is closed"));
     }
@@ -3964,6 +3978,42 @@ class OpenCodeAgentSession implements AgentSession {
     this.turnState = { status: "idle" };
     this.abortController = null;
     this.notifySubscribers(event, turnId);
+  }
+
+  private handleProviderExit(exitCode: number): void {
+    if (this.closed || this.providerExitError) {
+      return;
+    }
+    const error = new Error(`OpenCode server target exited with code ${exitCode}`);
+    this.providerExitError = error;
+    this.eventStreamAbortController?.abort(error);
+    this.abortController?.abort(error);
+    this.pendingPermissions.clear();
+    this.pendingPermissionDirectories.clear();
+
+    const activeTurnId = this.activeForegroundTurnId;
+    if (activeTurnId) {
+      this.finishForegroundTurn(
+        { type: "turn_failed", provider: "opencode", error: error.message },
+        activeTurnId,
+      );
+      return;
+    }
+    if (this.turnState.status === "starting") {
+      this.cancelStartingTurn();
+      return;
+    }
+    if (this.turnState.status === "stopping") {
+      const stop = this.turnState.stop;
+      this.turnState = { status: "idle" };
+      stop.terminal.resolve();
+    }
+  }
+
+  private throwIfProviderExited(): void {
+    if (this.providerExitError) {
+      throw this.providerExitError;
+    }
   }
 
   private isStopping(stop: OpenCodeStop): boolean {

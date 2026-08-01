@@ -30,7 +30,8 @@ import {
 import { resolveOpenCodeHomeDir } from "./paths.js";
 import {
   createWindowsJobObjectTerminationTarget,
-  getWindowsJobObjectProofMarker,
+  getWindowsJobObjectCompletion,
+  getWindowsJobObjectLeaderExit,
   spawnWindowsJobObjectProcess,
 } from "./windows-job-object.js";
 import type {
@@ -50,7 +51,7 @@ function hasProcessExited(process: ChildProcess): boolean {
 }
 
 export interface OpenCodeServerAcquisition {
-  server: { port: number; url: string };
+  server: { port: number; url: string; leaderExit?: Promise<number> };
   release: () => Promise<void>;
 }
 
@@ -76,6 +77,8 @@ export interface OpenCodeServerGeneration {
   ownsProcessGroup: boolean;
   ownsWindowsJob: boolean;
   windowsJobCompletion?: Promise<boolean>;
+  targetLeaderExit?: Promise<number>;
+  targetLeaderExited: boolean;
   identityToken?: string;
   cleanupComplete: boolean;
   abortStartup?: (error: Error) => void;
@@ -93,7 +96,12 @@ export type OpenCodeProcessGroupIdentityVerifier = (
   identityToken: string,
 ) => Promise<ManagedProcessGroupInspection>;
 export type OpenCodeProcessIdentityVerifier = (record: ManagedProcessRecord) => Promise<boolean>;
-export type OpenCodeWindowsJobProofResolver = (process: ChildProcess) => string | undefined;
+export type OpenCodeWindowsJobCompletionResolver = (
+  process: ChildProcess,
+) => Promise<boolean> | undefined;
+export type OpenCodeWindowsJobLeaderExitResolver = (
+  process: ChildProcess,
+) => Promise<number> | undefined;
 
 export interface OpenCodeServerManagerOptions {
   logger: Logger;
@@ -108,7 +116,8 @@ export interface OpenCodeServerManagerOptions {
   createManagedProcessIdentityToken?: () => string;
   verifyProcessGroupIdentity?: OpenCodeProcessGroupIdentityVerifier;
   verifyProcessIdentity?: OpenCodeProcessIdentityVerifier;
-  getWindowsJobProofMarker?: OpenCodeWindowsJobProofResolver;
+  getWindowsJobCompletion?: OpenCodeWindowsJobCompletionResolver;
+  getWindowsJobLeaderExit?: OpenCodeWindowsJobLeaderExitResolver;
   platform?: NodeJS.Platform;
 }
 
@@ -139,7 +148,8 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private readonly verifyProcessGroupIdentity: OpenCodeProcessGroupIdentityVerifier;
   private readonly verifyProcessIdentity: OpenCodeProcessIdentityVerifier;
   private readonly platform: NodeJS.Platform;
-  private readonly getWindowsJobProofMarker: OpenCodeWindowsJobProofResolver;
+  private readonly getWindowsJobCompletion: OpenCodeWindowsJobCompletionResolver;
+  private readonly getWindowsJobLeaderExit: OpenCodeWindowsJobLeaderExitResolver;
 
   constructor(options: OpenCodeServerManagerOptions) {
     this.logger = options.logger;
@@ -154,8 +164,8 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       (() => resolveProviderCommandPrefix(this.runtimeSettings?.command, resolveOpenCodeBinary));
     this.resolveHomeDir = options.resolveHomeDir ?? resolveOpenCodeHomeDir;
     this.platform = options.platform ?? process.platform;
-    this.getWindowsJobProofMarker =
-      options.getWindowsJobProofMarker ?? getWindowsJobObjectProofMarker;
+    this.getWindowsJobCompletion = options.getWindowsJobCompletion ?? getWindowsJobObjectCompletion;
+    this.getWindowsJobLeaderExit = options.getWindowsJobLeaderExit ?? getWindowsJobObjectLeaderExit;
     const defaultSpawner = this.platform === "win32" ? spawnWindowsJobObjectProcess : spawnProcess;
     const spawnServerProcess = options.spawnServerProcess ?? defaultSpawner;
     this.spawnServerProcess = (command, args, spawnOptions) => {
@@ -248,8 +258,12 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     if (this.shutdownPromise) {
       await this.shutdownPromise;
     }
-    const server = await this.getNewServer();
-    return this.acquireServer(server);
+    while (true) {
+      const server = await this.getNewServer();
+      if (this.isServerLive(server)) {
+        return this.acquireServer(server);
+      }
+    }
   }
 
   async acquireDedicated(env: Record<string, string>): Promise<OpenCodeServerAcquisition> {
@@ -266,6 +280,9 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     const acquisition = this.acquireServer(server);
     try {
       await server.ready;
+      if (!this.isServerLive(server)) {
+        throw new Error("Dedicated OpenCode server exited before acquisition completed");
+      }
       return acquisition;
     } catch (error) {
       await acquisition.release();
@@ -288,6 +305,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
 
   private isServerLive(server: OpenCodeServerGeneration): boolean {
     return (
+      !server.targetLeaderExited &&
       !server.process.killed &&
       server.process.exitCode === null &&
       server.process.signalCode === null
@@ -298,7 +316,11 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     server.refCount += 1;
     let releasePromise: Promise<void> | null = null;
     return {
-      server: { port: server.port, url: server.url },
+      server: {
+        port: server.port,
+        url: server.url,
+        ...(server.targetLeaderExit ? { leaderExit: server.targetLeaderExit } : {}),
+      },
       release: async () => {
         if (releasePromise) {
           return releasePromise;
@@ -354,18 +376,34 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
 
   private async getCurrentServer(): Promise<OpenCodeServerGeneration> {
     if (this.newServerPromise) {
-      return this.newServerPromise;
+      const server = await this.newServerPromise;
+      return this.isServerLive(server) ? server : this.getCurrentServer();
     }
 
     if (this.startPromise) {
-      const server = await this.startPromise;
+      const currentStart = this.startPromise;
+      const server = await currentStart;
       await server.ready;
-      return server;
+      if (this.isServerLive(server)) {
+        return server;
+      }
+      if (this.startPromise === currentStart) {
+        this.startPromise = null;
+      }
+      return this.getCurrentServer();
     }
 
-    if (this.currentServer && !this.currentServer.process.killed) {
-      await this.currentServer.ready;
-      return this.currentServer;
+    if (this.currentServer) {
+      const existing = this.currentServer;
+      if (this.isServerLive(existing)) {
+        await existing.ready;
+        if (this.isServerLive(existing)) {
+          return existing;
+        }
+      }
+      if (this.currentServer === existing) {
+        this.currentServer = null;
+      }
     }
 
     this.startPromise = this.trackPendingStart(
@@ -383,7 +421,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       }
     });
     await result.ready;
-    return result;
+    return this.isServerLive(result) ? result : this.getCurrentServer();
   }
 
   private async rotateCurrentServer(): Promise<void> {
@@ -430,15 +468,29 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
         ],
       }),
     });
-    const windowsJobProofMarker = ownsWindowsJob
-      ? this.getWindowsJobProofMarker(serverProcess)
-      : undefined;
-    let resolveWindowsJobCompletion: ((proven: boolean) => void) | undefined;
     const windowsJobCompletion = ownsWindowsJob
-      ? new Promise<boolean>((resolve) => {
-          resolveWindowsJobCompletion = resolve;
-        })
+      ? this.getWindowsJobCompletion(serverProcess)
       : undefined;
+    const targetLeaderExit = ownsWindowsJob
+      ? this.getWindowsJobLeaderExit(serverProcess)
+      : undefined;
+    if (ownsWindowsJob && (!windowsJobCompletion || !targetLeaderExit)) {
+      let cleanupProven = false;
+      try {
+        const result = await this.terminateProcess(createDirectChildTarget(serverProcess), {
+          gracefulTimeoutMs: OPENCODE_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS,
+          forceTimeoutMs: OPENCODE_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS,
+        });
+        cleanupProven = result !== "kill-timeout" && result !== "signal-skipped";
+      } catch (error) {
+        this.logger.warn({ err: error }, "Failed to clean up invalid Windows OpenCode launch");
+      } finally {
+        if (cleanupProven) {
+          this.runtimeCapacity?.release(serverProcess);
+        }
+      }
+      throw new Error("Windows OpenCode server launch did not create a Job Object lifecycle");
+    }
     let capturedManagedProcessIdentity: ManagedProcessRecord | undefined;
     const serverRef: { current?: OpenCodeServerGeneration } = {};
     const managedProcessRecord = this.recordManagedServerProcess({
@@ -467,6 +519,8 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       ownsProcessGroup,
       ownsWindowsJob,
       windowsJobCompletion,
+      targetLeaderExit,
+      targetLeaderExited: false,
       identityToken,
       cleanupComplete: false,
     };
@@ -485,7 +539,6 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     let settled = false;
     let stderrBuffer = "";
     let stdoutBuffer = "";
-    let windowsJobProofBuffer = "";
     const STARTUP_BUFFER_CAP = 8192;
     const appendCapped = (current: string, chunk: string): string => {
       if (current.length >= STARTUP_BUFFER_CAP) {
@@ -541,13 +594,6 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
 
       serverProcess.stderr?.on("data", (data: Buffer) => {
         const output = data.toString();
-        if (windowsJobProofMarker) {
-          windowsJobProofBuffer = appendProofBuffer(windowsJobProofBuffer, output);
-          if (windowsJobProofBuffer.includes(windowsJobProofMarker)) {
-            resolveWindowsJobCompletion?.(true);
-            resolveWindowsJobCompletion = undefined;
-          }
-        }
         stderrBuffer = appendCapped(stderrBuffer, output);
         this.logger.error({ stderr: output.trim() }, "OpenCode server stderr");
       });
@@ -582,14 +628,16 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
         if (!server.ownsWindowsJob) {
           return;
         }
-        resolveWindowsJobCompletion?.(false);
-        resolveWindowsJobCompletion = undefined;
         if (!this.terminationPromises.has(server)) {
           void this.finishWindowsJobAfterExit(server);
         }
       });
       server.abortStartup = failStartup;
     });
+
+    if (targetLeaderExit) {
+      void targetLeaderExit.then((exitCode) => this.handleTargetLeaderExit(server, exitCode));
+    }
 
     server.ready = ready.catch(async (error) => {
       await this.killServer(server);
@@ -664,6 +712,20 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     await Promise.all(cleanup);
   }
 
+  private handleTargetLeaderExit(server: OpenCodeServerGeneration, exitCode: number): void {
+    if (server.targetLeaderExited) {
+      return;
+    }
+    server.targetLeaderExited = true;
+    server.retired = true;
+    this.retiredServers.add(server);
+    if (this.currentServer === server) {
+      this.currentServer = null;
+    }
+    server.abortStartup?.(new Error(`OpenCode server target exited with code ${exitCode}`));
+    queueMicrotask(() => void this.killServer(server));
+  }
+
   private async killServer(server: OpenCodeServerGeneration): Promise<void> {
     if (server.cleanupComplete) {
       return;
@@ -723,6 +785,9 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     } catch (error) {
       this.logger.warn({ err: error }, "OpenCode server cleanup failed");
       await this.retainForCleanupRetry(server);
+      return;
+    }
+    if (server.cleanupComplete) {
       return;
     }
     if (result === "signal-skipped" && processGroupState.inspection?.status === "not-found") {
@@ -924,11 +989,6 @@ function createServerTerminationTarget(server: OpenCodeServerGeneration): TreeKi
     return createWindowsJobObjectTerminationTarget(server.process);
   }
   return createDirectChildTarget(server.process);
-}
-
-function appendProofBuffer(current: string, output: string): string {
-  const proofBufferCap = 256;
-  return (current + output).slice(-proofBufferCap);
 }
 
 function hasExitedWithoutContainer(server: OpenCodeServerGeneration): boolean {

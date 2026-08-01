@@ -3382,13 +3382,16 @@ describe("ACPAgentClient probe cleanup", () => {
     }
 
     const supervisor = createProbeChildStub();
-    const spawnACPProcess = createWindowsJobObjectProcessSpawner(() => supervisor);
+    let terminationRequests = 0;
+    const spawnACPProcess = createWindowsJobObjectProcessSpawner(
+      () => supervisor,
+      () => () => {
+        terminationRequests += 1;
+        return true;
+      },
+    );
     const runtimeCapacity = new HostAgentRuntimeCapacityController(1);
     const releaseCapacity = vi.spyOn(runtimeCapacity, "release");
-    let control = "";
-    supervisor.stdin.on("data", (data: Buffer) => {
-      control += data.toString();
-    });
     const terminate: ProcessTerminator = async (target) => {
       expect(target.pid).toBeUndefined();
       expect(target.kill("SIGTERM")).toBe(true);
@@ -3421,13 +3424,52 @@ describe("ACPAgentClient probe cleanup", () => {
 
     await held.close();
 
-    expect(control).toMatch(/^PASEO_WINDOWS_JOB_TERMINATE:[0-9a-f-]+\n$/u);
+    expect(terminationRequests).toBe(1);
     expect(releaseCapacity).toHaveBeenCalledTimes(1);
     supervisor.emit("close", 0, null);
     await Promise.resolve();
     expect(releaseCapacity).toHaveBeenCalledTimes(1);
     const replacement = runtimeCapacity.reserve();
     replacement.release();
+  });
+
+  test("releases Windows ACP capacity once when the supervisor emits a pre-spawn error", async () => {
+    class CapacityTestClient extends ACPAgentClient {
+      protected override async resolveLaunchCommand() {
+        return { command: "test-acp", args: [] };
+      }
+
+      async startHeldProbe() {
+        return await this.spawnTransport();
+      }
+    }
+
+    const supervisor = createProbeChildStub();
+    const runtimeCapacity = new HostAgentRuntimeCapacityController(1);
+    const releaseCapacity = vi.spyOn(runtimeCapacity, "release");
+    const client = new CapacityTestClient({
+      provider: "claude-acp",
+      logger: createTestLogger(),
+      defaultCommand: ["claude", "--acp"],
+      platform: "win32",
+      spawnACPProcess: createWindowsJobObjectProcessSpawner(() => supervisor),
+    });
+    client.configureRuntimeCapacityController(runtimeCapacity);
+
+    const held = await client.startHeldProbe();
+    const spawnFailure = held.spawnError.catch((error: unknown) => error);
+    supervisor.emit("error", new Error("spawn powershell.exe ENOENT"));
+    await vi.waitFor(() => expect(releaseCapacity).toHaveBeenCalledTimes(1));
+    await expect(spawnFailure).resolves.toBeInstanceOf(Error);
+
+    supervisor.emit("close", -1, null);
+    await Promise.resolve();
+    expect(releaseCapacity).toHaveBeenCalledTimes(1);
+    const replacement = runtimeCapacity.reserve();
+    replacement.release();
+    supervisor.stdin.destroy();
+    supervisor.stdout.destroy();
+    supervisor.stderr.destroy();
   });
 
   test("releases Windows ACP capacity exactly once after a normal proven Job Object exit", async () => {

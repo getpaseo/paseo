@@ -113,6 +113,10 @@ function turnEventSignatures(events: AgentStreamEvent[]): TurnEventSignature[] {
   return events.map((event) => [event.type, "turnId" in event ? event.turnId : undefined]);
 }
 
+function countEventsByType(events: AgentStreamEvent[], type: AgentStreamEvent["type"]): number {
+  return events.filter((event) => event.type === type).length;
+}
+
 function userMessageEvents(params: {
   sessionId: string;
   messageId: string;
@@ -1412,6 +1416,57 @@ describe("OpenCode adapter startTurn error handling", () => {
       "opencode-turn-0",
       "opencode-turn-0",
     ]);
+  });
+
+  test("fails the active turn once and rejects reuse when the server target exits", async () => {
+    const providerExit = deferred<number>();
+    const streamGate = deferred<void>();
+    const fakeClient = {
+      global: {
+        event: vi.fn().mockResolvedValue({
+          stream: (async function* () {
+            await streamGate.promise;
+            yield { type: "server.connected", properties: {} };
+          })(),
+        }),
+      },
+      session: {
+        promptAsync: vi.fn().mockResolvedValue({ data: {}, error: undefined }),
+        abort: vi.fn().mockResolvedValue({ data: true, error: undefined }),
+      },
+    } as never;
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_provider_exit",
+      createTestLogger(),
+      new Map(),
+      undefined,
+      true,
+      undefined,
+      undefined,
+      false,
+      providerExit.promise,
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    await session.startTurn("hello");
+
+    providerExit.resolve(23);
+    await vi.waitFor(() => expect(countEventsByType(events, "turn_failed")).toBe(1));
+
+    expect(events.at(-1)).toMatchObject({
+      type: "turn_failed",
+      provider: "opencode",
+      error: "OpenCode server target exited with code 23",
+    });
+    await expect(session.startTurn("again")).rejects.toThrow(
+      "OpenCode server target exited with code 23",
+    );
+    expect(countEventsByType(events, "turn_failed")).toBe(1);
+
+    streamGate.resolve();
+    await session.close();
   });
 
   test("unwraps OpenCode global event payloads during a turn", async () => {

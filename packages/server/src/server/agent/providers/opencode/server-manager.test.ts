@@ -16,6 +16,7 @@ import {
   HostAgentRuntimeCapacityController,
 } from "../../agent-runtime-capacity.js";
 import { OpenCodeServerManager } from "./server-manager.js";
+import { createWindowsJobObjectProcessSpawner } from "./windows-job-object.js";
 
 const tempDirs: string[] = [];
 
@@ -41,6 +42,28 @@ function createChild(): ChildProcess {
   return child;
 }
 
+interface FakeWindowsJobLifecycle {
+  completion: Promise<boolean>;
+  leaderExit: Promise<number>;
+  resolveCompletion: (proven: boolean) => void;
+  resolveLeaderExit: (exitCode: number) => void;
+}
+
+function createWindowsJobLifecycle(): FakeWindowsJobLifecycle {
+  let resolveCompletion: (proven: boolean) => void = () => undefined;
+  let resolveLeaderExit: (exitCode: number) => void = () => undefined;
+  return {
+    completion: new Promise((resolve) => {
+      resolveCompletion = resolve;
+    }),
+    leaderExit: new Promise((resolve) => {
+      resolveLeaderExit = resolve;
+    }),
+    resolveCompletion: (proven) => resolveCompletion(proven),
+    resolveLeaderExit: (exitCode) => resolveLeaderExit(exitCode),
+  };
+}
+
 function createManager(options: {
   terminateResult?: TerminateWithTreeKillResult;
   terminateResults?: TerminateWithTreeKillResult[];
@@ -53,6 +76,7 @@ function createManager(options: {
   const directory = mkdtempSync(path.join(os.tmpdir(), "paseo-opencode-capacity-"));
   tempDirs.push(directory);
   const children: ChildProcess[] = [];
+  const windowsJobs = new Map<ChildProcess, FakeWindowsJobLifecycle>();
   const terminateProcess = vi.fn<ProcessTerminator>(
     options.terminateImplementation ??
       (async () => {
@@ -64,8 +88,9 @@ function createManager(options: {
         ) {
           const child = children.find((candidate) => candidate.exitCode === null);
           if (child) {
+            windowsJobs.get(child)?.resolveLeaderExit(1);
+            windowsJobs.get(child)?.resolveCompletion(true);
             Object.defineProperty(child, "exitCode", { configurable: true, value: 1 });
-            (child.stderr as EventEmitter).emit("data", Buffer.from("test-windows-job-empty\n"));
             child.emit("exit", 1, null);
             child.emit("close", 1, null);
           }
@@ -88,6 +113,9 @@ function createManager(options: {
       }
       const child = createChild();
       children.push(child);
+      if (options.platform === "win32") {
+        windowsJobs.set(child, createWindowsJobLifecycle());
+      }
       queueMicrotask(() => {
         (child.stdout as EventEmitter).emit("data", Buffer.from("listening on"));
       });
@@ -96,7 +124,8 @@ function createManager(options: {
     terminateProcess,
     createManagedProcessIdentityToken: () => "capacity-test-token",
     verifyProcessGroupIdentity: async () => processGroupInspection,
-    getWindowsJobProofMarker: () => "test-windows-job-empty",
+    getWindowsJobCompletion: (child) => windowsJobs.get(child)?.completion,
+    getWindowsJobLeaderExit: (child) => windowsJobs.get(child)?.leaderExit,
     platform: options.platform,
   });
   const runtimeCapacity = new HostAgentRuntimeCapacityController(options.capacity ?? 1);
@@ -111,6 +140,16 @@ function createManager(options: {
       processGroupInspection = inspection;
     },
     terminateProcess,
+    completeWindowsJob: (child: ChildProcess, proven: boolean, exitCode = 0) => {
+      windowsJobs.get(child)?.resolveLeaderExit(exitCode);
+      windowsJobs.get(child)?.resolveCompletion(proven);
+      Object.defineProperty(child, "exitCode", { configurable: true, value: exitCode });
+      child.emit("exit", exitCode, null);
+      child.emit("close", exitCode, null);
+    },
+    exitWindowsLeader: (child: ChildProcess, exitCode = 1) => {
+      windowsJobs.get(child)?.resolveLeaderExit(exitCode);
+    },
   };
 }
 
@@ -153,8 +192,46 @@ describe("OpenCodeServerManager runtime capacity", () => {
     await replacement.release();
   });
 
+  test("releases a Windows reservation once when Node reports an asynchronous spawn error", async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "paseo-opencode-async-spawn-"));
+    tempDirs.push(directory);
+    const supervisor = createChild();
+    Object.defineProperty(supervisor, "pid", { configurable: true, value: undefined });
+    const spawnServerProcess = createWindowsJobObjectProcessSpawner(() => supervisor);
+    const terminateProcess = vi.fn<ProcessTerminator>(async (target) => {
+      target.kill("SIGTERM");
+      return "terminated";
+    });
+    const manager = new OpenCodeServerManager({
+      logger: createTestLogger(),
+      portAllocator: async () => 4199,
+      resolveCommandPrefix: async () => ({ command: "opencode.exe", args: [] }),
+      resolveHomeDir: () => directory,
+      spawnServerProcess,
+      terminateProcess,
+      platform: "win32",
+    });
+    const runtimeCapacity = new HostAgentRuntimeCapacityController(1);
+    const releaseCapacity = vi.spyOn(runtimeCapacity, "release");
+    manager.configureRuntimeCapacityController(runtimeCapacity);
+
+    const acquisition = manager.acquireCurrent();
+    await vi.waitFor(() => expect(supervisor.listenerCount("error")).toBeGreaterThan(1));
+    supervisor.emit("error", new Error("spawn powershell.exe ENOENT"));
+
+    await expect(acquisition).rejects.toThrow("spawn powershell.exe ENOENT");
+    await vi.waitFor(() => expect(releaseCapacity).toHaveBeenCalledTimes(1));
+    supervisor.emit("close", -1, null);
+    await Promise.resolve();
+    expect(releaseCapacity).toHaveBeenCalledTimes(1);
+    const replacement = runtimeCapacity.reserve();
+    replacement.release();
+  });
+
   test("retains the Windows charge until the Job Object supervisor reports empty", async () => {
-    const { children, manager, releaseCapacity } = createManager({ platform: "win32" });
+    const { children, manager, releaseCapacity, completeWindowsJob } = createManager({
+      platform: "win32",
+    });
     const current = await manager.acquireCurrent();
 
     await expect(manager.acquireDedicated({ TEST: "descendant-survives" })).rejects.toBeInstanceOf(
@@ -163,10 +240,7 @@ describe("OpenCodeServerManager runtime capacity", () => {
     expect(releaseCapacity).not.toHaveBeenCalled();
 
     const supervisor = children[0]!;
-    Object.defineProperty(supervisor, "exitCode", { configurable: true, value: 0 });
-    (supervisor.stderr as EventEmitter).emit("data", Buffer.from("test-windows-job-empty\n"));
-    supervisor.emit("exit", 0, null);
-    supervisor.emit("close", 0, null);
+    completeWindowsJob(supervisor, true);
     await vi.waitFor(() => expect(releaseCapacity).toHaveBeenCalledTimes(1));
 
     const replacement = await manager.acquireDedicated({ TEST: "job-empty" });
@@ -174,14 +248,45 @@ describe("OpenCodeServerManager runtime capacity", () => {
     await replacement.release();
   });
 
+  test("invalidates a Windows server at target-leader exit while retaining capacity for descendants", async () => {
+    const {
+      children,
+      manager,
+      releaseCapacity,
+      terminateProcess,
+      completeWindowsJob,
+      exitWindowsLeader,
+    } = createManager({ platform: "win32", capacity: 2, terminateResult: "kill-timeout" });
+    const dead = await manager.acquireCurrent();
+
+    exitWindowsLeader(children[0]!, 23);
+    await expect(dead.server.leaderExit).resolves.toBe(23);
+    await vi.waitFor(() => expect(terminateProcess).toHaveBeenCalledTimes(1));
+
+    expect(manager.acquireExisting(dead.server.url)).toBeNull();
+    expect(releaseCapacity).not.toHaveBeenCalled();
+
+    const replacement = await manager.acquireCurrent();
+    expect(replacement.server.url).not.toBe(dead.server.url);
+    expect(children).toHaveLength(2);
+    expect(releaseCapacity).not.toHaveBeenCalled();
+
+    completeWindowsJob(children[0]!, true, 23);
+    await vi.waitFor(() => expect(releaseCapacity).toHaveBeenCalledTimes(1));
+    await dead.release();
+    await replacement.release();
+    completeWindowsJob(children[1]!, true);
+    await vi.waitFor(() => expect(releaseCapacity).toHaveBeenCalledTimes(2));
+  });
+
   test("retains the Windows charge when the supervisor exits without empty proof", async () => {
     vi.useFakeTimers();
-    const { children, manager, releaseCapacity } = createManager({ platform: "win32" });
+    const { children, manager, releaseCapacity, completeWindowsJob } = createManager({
+      platform: "win32",
+    });
     await manager.acquireCurrent();
 
-    Object.defineProperty(children[0], "exitCode", { configurable: true, value: 1 });
-    children[0]?.emit("exit", 1, null);
-    children[0]?.emit("close", 1, null);
+    completeWindowsJob(children[0]!, false, 1);
     await vi.advanceTimersByTimeAsync(0);
 
     expect(releaseCapacity).not.toHaveBeenCalled();
