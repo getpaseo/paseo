@@ -4233,7 +4233,7 @@ test("material progress stops at a known continuation boundary in a tail without
     );
 
     const snapshot = await resumedManager.getMaterialProgressSnapshot(created.id);
-    expect(snapshot.rows?.slice(-2)).toMatchObject([
+    expect(snapshot.rows).toMatchObject([
       { seq: 10_004, item: { type: "tool_call", detail: { type: "write" } } },
       { seq: 10_005, item: { type: "reasoning" } },
     ]);
@@ -4519,7 +4519,7 @@ test("an old autonomous terminal cannot end a newer foreground continuation", as
   }
 });
 
-test("a stale native Codex completion cannot cross the provider boundary into a newer turn", async () => {
+test("Codex binds only the exact native terminal across consecutive managed turns", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-codex-native-stale-terminal-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
   const appServer = createFakeCodexAppServer();
@@ -4591,9 +4591,11 @@ test("a stale native Codex completion cannot cross the provider boundary into a 
     );
     await manager.flush();
 
+    const currentForegroundTurnId = manager.getAgent(agent.id)?.activeForegroundTurnId;
+    expect(currentForegroundTurnId).toEqual(expect.any(String));
     expect(manager.getAgent(agent.id)).toMatchObject({
       lifecycle: "running",
-      activeForegroundTurnId: expect.any(String),
+      activeForegroundTurnId: currentForegroundTurnId,
       materialProgressContinuationActive: true,
       lastTurnOutcome: null,
     });
@@ -4603,9 +4605,24 @@ test("a stale native Codex completion cannot cross the provider boundary into a 
     expect(foregroundSettled).toBe(false);
     expect(waiterSettled).toBe(false);
 
-    appServer.completeTurn({ turnId: "native-new-turn" });
+    appServer.setThreadTurnStatus({
+      threadId: "thread-1",
+      turnId: "native-new-turn",
+      status: "completed",
+    });
+    appServer.completeTurn({ omitTurnId: true });
     await foregroundDrain;
     await waitForAgent;
+    await manager.flush();
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+      materialProgressContinuationActive: false,
+      lastTurnOutcome: "completed",
+    });
+    expect(streamedEvents).toContainEqual(
+      expect.objectContaining({ type: "turn_completed", turnId: currentForegroundTurnId }),
+    );
     appServer.assertNoErrors();
   } finally {
     unsubscribe?.();

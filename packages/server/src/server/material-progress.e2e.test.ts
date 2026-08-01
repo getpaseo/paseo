@@ -156,9 +156,9 @@ test("fetch agent does not inherit a previous stall after a new turn is accepted
       lastMaterialProgressKind: null,
       reason: "No material progress has been recorded for the current continuation.",
     });
-    expect(
-      (await daemon.daemon.agentManager.getMaterialProgressSnapshot(created.id)).rows,
-    ).toHaveLength(3);
+    expect((await daemon.daemon.agentManager.getMaterialProgressSnapshot(created.id)).rows).toEqual(
+      [],
+    );
   } finally {
     if (agentId) await client.cancelAgent(agentId).catch(() => undefined);
     await client.close();

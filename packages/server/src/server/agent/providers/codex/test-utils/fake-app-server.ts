@@ -51,7 +51,8 @@ export interface FakeCodexAppServer {
   waitForTurnStart(): Promise<JsonObject>;
   nextResponse(): Promise<string>;
   startsTurn(params: { threadId: string; turnId?: string }): void;
-  completeTurn(params?: { threadId?: string; turnId?: string }): void;
+  setThreadTurnStatus(params: { threadId: string; turnId: string; status: string }): void;
+  completeTurn(params?: { threadId?: string; turnId?: string; omitTurnId?: boolean }): void;
   startsSubAgent(params: {
     callId: string;
     threadId: string;
@@ -115,6 +116,7 @@ export function createFakeCodexAppServer(
   const child = createCodexAppServerChildProcess();
   const recordedRollbacks: JsonObject[] = [];
   const activeTurnIdByThreadId = new Map<string, string>();
+  const turnStatusesByThreadId = new Map<string, Map<string, string>>();
   const responseHandlers: Record<string, FakeCodexAppServerHandler> = {
     initialize: () => ({}),
     "collaborationMode/list": () => ({ data: [] }),
@@ -165,7 +167,16 @@ export function createFakeCodexAppServer(
         },
       };
     },
-    "thread/read": () => ({ thread: { turns: [] } }),
+    "thread/read": (params) => {
+      const threadId = toJsonObject(params).threadId;
+      const statuses =
+        typeof threadId === "string" ? turnStatusesByThreadId.get(threadId) : undefined;
+      return {
+        thread: {
+          turns: Array.from(statuses ?? []).map(([id, status]) => ({ id, status, items: [] })),
+        },
+      };
+    },
     ...handlers,
   };
   const messages: JsonObject[] = [];
@@ -312,6 +323,9 @@ export function createFakeCodexAppServer(
     startsTurn(params) {
       const turnId = params.turnId ?? `turn-${params.threadId}`;
       activeTurnIdByThreadId.set(params.threadId, turnId);
+      const statuses = turnStatusesByThreadId.get(params.threadId) ?? new Map<string, string>();
+      statuses.set(turnId, "inProgress");
+      turnStatusesByThreadId.set(params.threadId, statuses);
       child.stdout.write(
         `${JSON.stringify({
           method: "turn/started",
@@ -322,16 +336,34 @@ export function createFakeCodexAppServer(
         })}\n`,
       );
     },
+    setThreadTurnStatus(params) {
+      const statuses = turnStatusesByThreadId.get(params.threadId) ?? new Map<string, string>();
+      statuses.set(params.turnId, params.status);
+      turnStatusesByThreadId.set(params.threadId, statuses);
+    },
     completeTurn(params = {}) {
       const threadId = params.threadId ?? "thread-1";
-      const turnId = params.turnId ?? activeTurnIdByThreadId.get(threadId);
+      let turnId = params.turnId ?? activeTurnIdByThreadId.get(threadId);
+      if (!turnId && !params.omitTurnId && threadId === "thread-1") {
+        turnId = `turn-${threadId}`;
+        activeTurnIdByThreadId.set(threadId, turnId);
+        const statuses = turnStatusesByThreadId.get(threadId) ?? new Map<string, string>();
+        statuses.set(turnId, "inProgress");
+        turnStatusesByThreadId.set(threadId, statuses);
+        writeNotification("turn/started", { threadId, turn: { id: turnId } });
+      }
+      if (turnId) {
+        const statuses = turnStatusesByThreadId.get(threadId) ?? new Map<string, string>();
+        statuses.set(turnId, "completed");
+        turnStatusesByThreadId.set(threadId, statuses);
+      }
       child.stdout.write(
         `${JSON.stringify({
           method: "turn/completed",
           params: {
             threadId,
             turn: {
-              ...(turnId ? { id: turnId } : {}),
+              ...(turnId && !params.omitTurnId ? { id: turnId } : {}),
               status: "completed",
             },
           },

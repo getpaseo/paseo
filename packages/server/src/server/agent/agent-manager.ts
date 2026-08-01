@@ -170,7 +170,7 @@ function selectMaterialProgressRows(
 ): AgentTimelineRow[] | null {
   if (continuationBoundarySeq !== null) {
     if (!reachedStart) return null;
-    return currentContinuationRows(rows);
+    return rows.filter((row) => row.seq >= continuationBoundarySeq);
   }
   if (!reachedStart && rows[0]?.seq !== 1) return null;
   return currentContinuationRows(rows);
@@ -187,7 +187,7 @@ async function pageMaterialProgressRows(
   if (continuationBoundarySeq !== null) {
     if (continuationBoundarySeq > page.window.nextSeq) return null;
     if (continuationBoundarySeq === page.window.nextSeq) {
-      return currentContinuationRows(page.rows);
+      return [];
     }
   }
   let reachedStart = materialProgressScanReachedStart(page.rows, continuationBoundarySeq);
