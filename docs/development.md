@@ -257,6 +257,14 @@ tools, and the browser-tools delta. It defaults to the agent-scoped catalog; use
 `-- --scope=top-level` for the unaffiliated `/mcp/agents` shape and `-- --json`
 for machine-readable output.
 
+## Worktree starting refs
+
+The New workspace branch picker treats local and `origin/*` refs as distinct starting points when
+they differ. Local `main` is sent as `refs/heads/main`; remote `origin/main` is sent as
+`refs/remotes/origin/main`. Matching local/remote refs collapse to one local row. Unqualified refs
+from older clients resolve local-first, then fall back to `origin`. Worktrees inherit committed Git
+state only; uncommitted source-checkout changes are not copied.
+
 ## paseo.json service scripts
 
 `worktree.setup` and `worktree.teardown` accept either a multiline shell script or an array
