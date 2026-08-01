@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, test } from "vitest";
 
@@ -14,6 +14,7 @@ import {
   createWindowsJobObjectProcessSpawner,
   getWindowsJobObjectCompletion,
   getWindowsJobObjectLeaderExit,
+  getWindowsJobObjectLeaderExitMarker,
   getWindowsJobObjectProofMarker,
 } from "./windows-job-object.js";
 
@@ -94,42 +95,94 @@ describe("Windows Job Object process spawner", () => {
     );
   });
 
-  test.each(["npx", "C:\\Users\\dev\\AppData\\Roaming\\npm\\opencode.cmd"])(
-    "launches Windows command shim %s through a data-only PowerShell argv bridge",
-    (command) => {
+  test.each([".cmd", ".bat"])(
+    "launches an explicit Windows %s command through cmd.exe with escaped arguments",
+    (extension) => {
       const child = createFakeChild();
       const calls: Array<{ command: string; args: string[]; options: SpawnProcessOptions }> = [];
       const spawn = createWindowsJobObjectProcessSpawner((spawnCommand, args, options) => {
         calls.push({ command: spawnCommand, args, options });
         return child;
       });
-      const targetArgs = ["opencode", "serve", "two words", "x & whoami", "%PATH%", 'quote"'];
+      const command = `C:\\Users\\dev\\AppData\\Roaming\\npm\\opencode${extension}`;
+      const targetArgs = ["serve", "two words", "x & whoami", "%PATH%", 'quote"'];
 
       spawn(command, targetArgs, {
         cwd: "C:\\workspace",
         envMode: "internal",
-        env: { PATH: "C:\\Windows\\System32" },
+        env: { COMSPEC: "C:\\Windows\\System32\\cmd.exe", PATH: "do-not-expand" },
         stdio: ["ignore", "pipe", "pipe"],
       });
 
       const call = calls[0]!;
-      expect(call.options.envOverlay?.PASEO_WINDOWS_JOB_COMMAND).toBe("powershell.exe");
-      const jobCommandLine = Buffer.from(
-        call.options.envOverlay?.PASEO_WINDOWS_JOB_COMMAND_LINE ?? "",
-        "base64",
-      ).toString("utf8");
-      expect(jobCommandLine).toMatch(
-        /^powershell\.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand /u,
+      expect(call.options.envOverlay?.PASEO_WINDOWS_JOB_COMMAND).toBe(
+        "C:\\Windows\\System32\\cmd.exe",
       );
-      expect(jobCommandLine).not.toContain(command);
-      expect(jobCommandLine).not.toContain("whoami");
-
-      expect(decodeBase64(call.options.env?.PASEO_WINDOWS_COMMAND_HOST_COMMAND)).toBe(command);
-      expect(decodeBase64(call.options.env?.PASEO_WINDOWS_COMMAND_HOST_ARGUMENT_LINE)).toBe(
-        'opencode serve "two words" "x & whoami" %PATH% "quote\\\""',
+      const jobCommandLine = decodeBase64(call.options.envOverlay?.PASEO_WINDOWS_JOB_COMMAND_LINE);
+      expect(jobCommandLine).toContain(" /d /v:off /s /c ");
+      expect(jobCommandLine).toContain("x^ ^&^ whoami");
+      expect(jobCommandLine).toContain(
+        "%PASEO_WINDOWS_BATCH_LITERAL_PERCENT%PATH%PASEO_WINDOWS_BATCH_LITERAL_PERCENT%",
       );
+      expect(call.options.env?.PASEO_WINDOWS_BATCH_LITERAL_PERCENT).toBe("%");
     },
   );
+
+  test("resolves a bare Windows command against the target PATH and PATHEXT", () => {
+    const child = createFakeChild();
+    const calls: Array<{ command: string; args: string[]; options: SpawnProcessOptions }> = [];
+    const resolutionCalls: Array<{ command: string; environment: Record<string, string> }> = [];
+    const spawn = createWindowsJobObjectProcessSpawner(
+      (spawnCommand, args, options) => {
+        calls.push({ command: spawnCommand, args, options });
+        return child;
+      },
+      undefined,
+      (command, environment) => {
+        resolutionCalls.push({ command, environment });
+        return "C:\\provider-bin\\opencode.cmd";
+      },
+    );
+
+    spawn("opencode", ["serve"], {
+      envMode: "internal",
+      env: { Path: "C:\\provider-bin", PathExt: ".EXE;.CMD;.BAT" },
+    });
+
+    expect(resolutionCalls).toEqual([
+      {
+        command: "opencode",
+        environment: { Path: "C:\\provider-bin", PathExt: ".EXE;.CMD;.BAT" },
+      },
+    ]);
+    expect(calls[0]?.options.envOverlay?.PASEO_WINDOWS_JOB_COMMAND).toBe("cmd.exe");
+    expect(decodeBase64(calls[0]?.options.envOverlay?.PASEO_WINDOWS_JOB_COMMAND_LINE)).toContain(
+      "C:\\provider-bin\\opencode.cmd",
+    );
+  });
+
+  test("keeps non-native, non-batch commands on the data-only PowerShell argv bridge", () => {
+    const child = createFakeChild();
+    const calls: Array<{ command: string; args: string[]; options: SpawnProcessOptions }> = [];
+    const spawn = createWindowsJobObjectProcessSpawner((spawnCommand, args, options) => {
+      calls.push({ command: spawnCommand, args, options });
+      return child;
+    });
+    const command = "C:\\provider\\launch.ps1";
+    const targetArgs = ["two words", "x & whoami", "%PATH%", 'quote"'];
+
+    spawn(command, targetArgs, {
+      envMode: "internal",
+      env: { PATH: "C:\\Windows\\System32" },
+    });
+
+    const call = calls[0]!;
+    expect(call.options.envOverlay?.PASEO_WINDOWS_JOB_COMMAND).toBe("powershell.exe");
+    expect(decodeBase64(call.options.env?.PASEO_WINDOWS_COMMAND_HOST_COMMAND)).toBe(command);
+    expect(decodeBase64(call.options.env?.PASEO_WINDOWS_COMMAND_HOST_ARGUMENT_LINE)).toBe(
+      '"two words" "x & whoami" %PATH% "quote\\\""',
+    );
+  });
 
   test("rejects oversized command lines and environment values before spawning", () => {
     const child = createFakeChild();
@@ -180,6 +233,106 @@ describe("Windows Job Object process spawner", () => {
     await expect(getWindowsJobObjectLeaderExit(supervisor)).resolves.toBe(1);
     expect(createWindowsJobObjectTerminationTarget(supervisor).kill()).toBe(false);
     child.emit("close", -1, null);
+    await expect(getWindowsJobObjectCompletion(supervisor)).resolves.toBe(true);
+  });
+
+  test("waits for complete leader-exit records across adversarial chunk boundaries", async () => {
+    const proofMarker = "PASEO_WINDOWS_JOB_EMPTY:test-proof";
+    const leaderExitMarker = "PASEO_WINDOWS_JOB_LEADER_EXIT:test-proof:";
+    const record = `${leaderExitMarker}4294967295\r\n`;
+
+    for (let split = 1; split < record.length; split += 1) {
+      const exitCodes: number[] = [];
+      const parser = __windowsJobObjectInternals.createRecordParser(
+        proofMarker,
+        leaderExitMarker,
+        () => undefined,
+        (exitCode) => exitCodes.push(exitCode),
+      );
+      parser.write(record.slice(0, split));
+      expect(exitCodes, `split ${split}`).toEqual([]);
+      parser.write(record.slice(split));
+      expect(exitCodes, `split ${split}`).toEqual([4_294_967_295]);
+    }
+  });
+
+  test("requires a newline before resolving a split multi-digit leader exit", () => {
+    const exitCodes: number[] = [];
+    const leaderExitMarker = "PASEO_WINDOWS_JOB_LEADER_EXIT:test-proof:";
+    const parser = __windowsJobObjectInternals.createRecordParser(
+      "PASEO_WINDOWS_JOB_EMPTY:test-proof",
+      leaderExitMarker,
+      () => undefined,
+      (exitCode) => exitCodes.push(exitCode),
+    );
+
+    parser.write(`${leaderExitMarker}2`);
+    expect(exitCodes).toEqual([]);
+    parser.write("3\r");
+    expect(exitCodes).toEqual([]);
+    parser.write("\n");
+    expect(exitCodes).toEqual([23]);
+  });
+
+  test("rejects out-of-range leader exits and resumes scanning", () => {
+    const exitCodes: number[] = [];
+    const leaderExitMarker = "PASEO_WINDOWS_JOB_LEADER_EXIT:test-proof:";
+    const parser = __windowsJobObjectInternals.createRecordParser(
+      "PASEO_WINDOWS_JOB_EMPTY:test-proof",
+      leaderExitMarker,
+      () => undefined,
+      (exitCode) => exitCodes.push(exitCode),
+    );
+
+    parser.write(`${leaderExitMarker}4294967296\n`);
+    parser.write(`${leaderExitMarker}12345678901\n`);
+    parser.write(`${leaderExitMarker}17\n`);
+
+    expect(exitCodes).toEqual([17]);
+  });
+
+  test("retains bounded parser state across large descendant output", () => {
+    const proofs: string[] = [];
+    const exitCodes: number[] = [];
+    const proofMarker = "PASEO_WINDOWS_JOB_EMPTY:test-proof";
+    const leaderExitMarker = "PASEO_WINDOWS_JOB_LEADER_EXIT:test-proof:";
+    const parser = __windowsJobObjectInternals.createRecordParser(
+      proofMarker,
+      leaderExitMarker,
+      () => proofs.push("proved"),
+      (exitCode) => exitCodes.push(exitCode),
+    );
+
+    parser.write("descendant output\n".repeat(100_000));
+    expect(parser.getBufferedLength()).toBeLessThan(
+      Math.max(proofMarker.length, leaderExitMarker.length),
+    );
+    parser.write(`${leaderExitMarker}23\n${"after exit\n".repeat(1_000)}`);
+    parser.write(`${proofMarker}\n${"after proof\n".repeat(1_000)}`);
+
+    expect(exitCodes).toEqual([23]);
+    expect(proofs).toEqual(["proved"]);
+    expect(parser.getBufferedLength()).toBeLessThan(
+      Math.max(proofMarker.length, leaderExitMarker.length),
+    );
+  });
+
+  test("observes complete records followed by more than the legacy 512-character tail", async () => {
+    const child = createFakeChild();
+    const spawn = createWindowsJobObjectProcessSpawner(() => child);
+    const supervisor = spawn("C:\\opencode.exe", [], {
+      envMode: "internal",
+      env: {},
+    });
+    const proofMarker = getWindowsJobObjectProofMarker(supervisor)!;
+    const leaderExitMarker = getWindowsJobObjectLeaderExitMarker(supervisor)!;
+
+    child.stderr.write(
+      `${leaderExitMarker}23\n${proofMarker}\n${"descendant output".repeat(1_000)}`,
+    );
+    await expect(getWindowsJobObjectLeaderExit(supervisor)).resolves.toBe(23);
+    Object.defineProperty(child, "exitCode", { configurable: true, value: 23 });
+    child.emit("close", 23, null);
     await expect(getWindowsJobObjectCompletion(supervisor)).resolves.toBe(true);
   });
 
@@ -270,6 +423,56 @@ describe("Windows Job Object process spawner", () => {
       await waitForExit(supervisor, 10_000);
       expect(supervisor.exitCode).toBe(0);
       await expect(output).resolves.toEqual(input);
+    },
+    30_000,
+  );
+
+  test.each(
+    process.platform === "win32"
+      ? [
+          { extension: ".cmd", usePath: false },
+          { extension: ".bat", usePath: false },
+          { extension: ".cmd", usePath: true },
+        ]
+      : [],
+  )(
+    "preserves adversarial arguments through $extension (PATH lookup: $usePath)",
+    async ({ extension, usePath }) => {
+      const directory = await mkdtemp(join(tmpdir(), "paseo-windows-job-args-"));
+      tempDirs.push(directory);
+      const commandName = "custom-opencode";
+      const command = join(directory, `${commandName}${extension}`);
+      const target = join(directory, "print-args.js");
+      await writeFile(
+        target,
+        "process.stdout.write(JSON.stringify(process.argv.slice(2)));\r\n",
+        "utf8",
+      );
+      await writeFile(
+        command,
+        `@echo off\r\n"${process.execPath}" "%~dp0print-args.js" %*\r\n`,
+        "utf8",
+      );
+      const targetArgs = [
+        "two words",
+        "x & whoami",
+        "%PATH%",
+        "(parentheses)",
+        "pipe|redirect>file",
+      ];
+      const pathValue = `${directory}${delimiter}${process.env.PATH ?? ""}`;
+      const spawn = createWindowsJobObjectProcessSpawner();
+      const supervisor = spawn(usePath ? commandName : command, targetArgs, {
+        envMode: "internal",
+        env: { ...process.env, PATH: pathValue, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      liveSupervisors.push(supervisor);
+      const output = collectOutput(supervisor);
+
+      await waitForExit(supervisor, 10_000);
+      expect(supervisor.exitCode).toBe(0);
+      await expect(output).resolves.toEqual(Buffer.from(JSON.stringify(targetArgs)));
     },
     30_000,
   );

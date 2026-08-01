@@ -1,5 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import net from "node:net";
 import { extname } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -16,10 +17,21 @@ const WINDOWS_JOB_PROOF_PREFIX = "PASEO_WINDOWS_JOB_EMPTY:";
 const WINDOWS_JOB_LEADER_EXIT_PREFIX = "PASEO_WINDOWS_JOB_LEADER_EXIT:";
 const WINDOWS_COMMAND_HOST_COMMAND_ENV = "PASEO_WINDOWS_COMMAND_HOST_COMMAND";
 const WINDOWS_COMMAND_HOST_ARGUMENT_LINE_ENV = "PASEO_WINDOWS_COMMAND_HOST_ARGUMENT_LINE";
+const WINDOWS_BATCH_LITERAL_PERCENT_ENV = "PASEO_WINDOWS_BATCH_LITERAL_PERCENT";
 const WINDOWS_CREATE_PROCESS_COMMAND_LINE_LIMIT = 32_767;
 const WINDOWS_ENVIRONMENT_VALUE_LIMIT = 32_767;
 const WINDOWS_ENVIRONMENT_BLOCK_LIMIT = 65_536;
 const WINDOWS_CONTROL_PIPE_RETRY_MS = 10;
+const WINDOWS_EXIT_CODE_MAX_DIGITS = 10;
+const WINDOWS_EXIT_CODE_MAX = 0xffff_ffff;
+const WINDOWS_RECORD_SCAN_CHUNK_SIZE = 256;
+
+interface Which {
+  sync(command: string, options: { nothrow: true; path?: string; pathExt?: string }): string | null;
+}
+
+const require = createRequire(import.meta.url);
+const which = require("which") as Which;
 
 interface WindowsJobObjectMetadata {
   proofMarker: string;
@@ -516,6 +528,7 @@ const WINDOWS_JOB_ENCODED_COMMAND = Buffer.from(WINDOWS_JOB_BOOTSTRAP, "utf16le"
 
 export const __windowsJobObjectInternals = {
   commandHost: WINDOWS_COMMAND_HOST,
+  createRecordParser: createWindowsJobRecordParser,
   supervisor: WINDOWS_JOB_SUPERVISOR,
 };
 
@@ -530,16 +543,22 @@ export type WindowsJobObjectControlFactory = (
   pipeName: string,
 ) => () => boolean;
 
+export type WindowsJobObjectCommandResolver = (
+  command: string,
+  environment: ProcessEnvRecord,
+) => string;
+
 export function createWindowsJobObjectProcessSpawner(
   spawnChild: WindowsJobObjectChildSpawner = spawnProcess,
   createControl: WindowsJobObjectControlFactory = createWindowsJobControl,
+  resolveCommand: WindowsJobObjectCommandResolver = resolveWindowsJobCommand,
 ): WindowsJobObjectChildSpawner {
   return (command, args, options) => {
     const { baseEnv, env, envOverlay, ...spawnOptions } = options;
     const resolvedBaseEnv = env ?? baseEnv ?? process.env;
     const targetEnv = resolveTargetEnvironment(options.envMode, resolvedBaseEnv, envOverlay);
-    const target = resolveWindowsJobTarget(command, args);
-    const commandLine = [target.command, ...target.args].map(quoteCreateProcessArgument).join(" ");
+    const target = resolveWindowsJobTarget(command, args, targetEnv, resolveCommand);
+    const commandLine = target.commandLine;
     const proof = randomUUID();
     const proofMarker = `${WINDOWS_JOB_PROOF_PREFIX}${proof}`;
     const leaderExitMarker = `${WINDOWS_JOB_LEADER_EXIT_PREFIX}${proof}:`;
@@ -643,17 +662,91 @@ function quoteCreateProcessArgument(value: string): string {
   return `"${escaped}"`;
 }
 
+function escapeWindowsBatchCommand(value: string): string {
+  return encodeWindowsBatchPercents(value).replace(/([()\][!^"`<>&|;, *?])/gu, "^$1");
+}
+
+function escapeWindowsBatchArgument(value: string, doubleEscapeMetaCharacters: boolean): string {
+  let escaped = encodeWindowsBatchPercents(value)
+    .replace(/(\\*)"/gu, (_match, slashes: string) => `${slashes}${slashes}\\"`)
+    .replace(/\\+$/u, (slashes) => `${slashes}${slashes}`);
+  escaped = `"${escaped}"`.replace(/([()\][!^"`<>&|;, *?])/gu, "^$1");
+  return doubleEscapeMetaCharacters ? escaped.replace(/([()\][!^"`<>&|;, *?])/gu, "^$1") : escaped;
+}
+
+function encodeWindowsBatchPercents(value: string): string {
+  return value.replaceAll("%", `%${WINDOWS_BATCH_LITERAL_PERCENT_ENV}%`);
+}
+
+function buildWindowsBatchCommandLine(
+  commandProcessor: string,
+  command: string,
+  args: string[],
+): string {
+  if (args.some((argument) => /[\r\n]/u.test(argument))) {
+    throw new Error("Windows batch arguments cannot contain line breaks");
+  }
+  const doubleEscapeMetaCharacters = /node_modules[\\/]\.bin[\\/][^\\/]+\.(?:cmd|bat)$/iu.test(
+    command,
+  );
+  const shellCommand = [
+    escapeWindowsBatchCommand(command),
+    ...args.map((argument) => escapeWindowsBatchArgument(argument, doubleEscapeMetaCharacters)),
+  ].join(" ");
+  return `${quoteCreateProcessArgument(commandProcessor)} /d /v:off /s /c "${shellCommand}"`;
+}
+
+function getWindowsEnvironmentValue(
+  environment: ProcessEnvRecord,
+  requestedName: string,
+): string | undefined {
+  const normalizedName = requestedName.toLowerCase();
+  for (const [name, value] of Object.entries(environment)) {
+    if (name.toLowerCase() === normalizedName) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function resolveWindowsJobCommand(command: string, environment: ProcessEnvRecord): string {
+  if (command.includes("/") || command.includes("\\")) {
+    return command;
+  }
+  return (
+    which.sync(command, {
+      nothrow: true,
+      path: getWindowsEnvironmentValue(environment, "PATH"),
+      pathExt: getWindowsEnvironmentValue(environment, "PATHEXT"),
+    }) ?? command
+  );
+}
+
 function resolveWindowsJobTarget(
   command: string,
   args: string[],
-): { command: string; args: string[]; envOverlay?: ProcessEnvRecord } {
-  const extension = extname(command).toLowerCase();
+  environment: ProcessEnvRecord,
+  resolveCommand: WindowsJobObjectCommandResolver,
+): { command: string; commandLine: string; envOverlay?: ProcessEnvRecord } {
+  const resolvedCommand = resolveCommand(command, environment);
+  const extension = extname(resolvedCommand).toLowerCase();
   if (extension === ".exe" || extension === ".com") {
-    return { command, args };
+    return {
+      command: resolvedCommand,
+      commandLine: [resolvedCommand, ...args].map(quoteCreateProcessArgument).join(" "),
+    };
+  }
+  if (extension === ".cmd" || extension === ".bat") {
+    const commandProcessor = getWindowsEnvironmentValue(environment, "COMSPEC") ?? "cmd.exe";
+    return {
+      command: commandProcessor,
+      commandLine: buildWindowsBatchCommandLine(commandProcessor, resolvedCommand, args),
+      envOverlay: { [WINDOWS_BATCH_LITERAL_PERCENT_ENV]: "%" },
+    };
   }
 
   const envOverlay: ProcessEnvRecord = {
-    [WINDOWS_COMMAND_HOST_COMMAND_ENV]: Buffer.from(command, "utf8").toString("base64"),
+    [WINDOWS_COMMAND_HOST_COMMAND_ENV]: Buffer.from(resolvedCommand, "utf8").toString("base64"),
     [WINDOWS_COMMAND_HOST_ARGUMENT_LINE_ENV]: Buffer.from(
       args.map(quoteCreateProcessArgument).join(" "),
       "utf8",
@@ -661,14 +754,151 @@ function resolveWindowsJobTarget(
   };
   return {
     command: "powershell.exe",
-    args: [
+    commandLine: [
+      "powershell.exe",
       "-NoLogo",
       "-NoProfile",
       "-NonInteractive",
       "-EncodedCommand",
       WINDOWS_COMMAND_HOST_ENCODED_COMMAND,
-    ],
+    ]
+      .map(quoteCreateProcessArgument)
+      .join(" "),
     envOverlay,
+  };
+}
+
+interface WindowsJobRecordParser {
+  getBufferedLength(): number;
+  write(data: Buffer | string): void;
+}
+
+interface WindowsJobRecordMatch {
+  index: number;
+  kind: "leader-exit" | "proof";
+}
+
+type WindowsJobRecordParseResult =
+  | { status: "complete"; consumed: number; exitCode?: number }
+  | { status: "incomplete" }
+  | { status: "invalid" };
+
+function findWindowsJobRecord(
+  buffer: string,
+  proofMarker: string,
+  leaderExitMarker: string,
+  proofFound: boolean,
+  leaderExitFound: boolean,
+): WindowsJobRecordMatch | undefined {
+  const proofIndex = proofFound ? -1 : buffer.indexOf(proofMarker);
+  const leaderExitIndex = leaderExitFound ? -1 : buffer.indexOf(leaderExitMarker);
+  if (proofIndex < 0 && leaderExitIndex < 0) {
+    return undefined;
+  }
+  if (proofIndex >= 0 && (leaderExitIndex < 0 || proofIndex < leaderExitIndex)) {
+    return { index: proofIndex, kind: "proof" };
+  }
+  return { index: leaderExitIndex, kind: "leader-exit" };
+}
+
+function parseWindowsRecordTerminator(buffer: string, start: number): WindowsJobRecordParseResult {
+  if (start >= buffer.length) {
+    return { status: "incomplete" };
+  }
+  const newlineIndex = buffer[start] === "\r" ? start + 1 : start;
+  if (newlineIndex >= buffer.length) {
+    return { status: "incomplete" };
+  }
+  if (buffer[newlineIndex] !== "\n") {
+    return { status: "invalid" };
+  }
+  return { status: "complete", consumed: newlineIndex + 1 };
+}
+
+function parseWindowsLeaderExitRecord(
+  buffer: string,
+  markerLength: number,
+): WindowsJobRecordParseResult {
+  let cursor = markerLength;
+  while (cursor < buffer.length && /\d/u.test(buffer[cursor]!)) {
+    cursor += 1;
+    if (cursor - markerLength > WINDOWS_EXIT_CODE_MAX_DIGITS) {
+      return { status: "invalid" };
+    }
+  }
+  if (cursor === markerLength) {
+    return cursor === buffer.length ? { status: "incomplete" } : { status: "invalid" };
+  }
+  const terminator = parseWindowsRecordTerminator(buffer, cursor);
+  if (terminator.status !== "complete") {
+    return terminator;
+  }
+  const exitCode = Number(buffer.slice(markerLength, cursor));
+  if (exitCode > WINDOWS_EXIT_CODE_MAX) {
+    return { status: "invalid" };
+  }
+  return { ...terminator, exitCode };
+}
+
+function createWindowsJobRecordParser(
+  proofMarker: string,
+  leaderExitMarker: string,
+  onProof: () => void,
+  onLeaderExit: (exitCode: number) => void,
+): WindowsJobRecordParser {
+  const searchTailLength = Math.max(proofMarker.length, leaderExitMarker.length) - 1;
+  let buffer = "";
+  let proofFound = false;
+  let leaderExitFound = false;
+
+  const scan = () => {
+    for (;;) {
+      const match = findWindowsJobRecord(
+        buffer,
+        proofMarker,
+        leaderExitMarker,
+        proofFound,
+        leaderExitFound,
+      );
+      if (!match) {
+        buffer = buffer.slice(-searchTailLength);
+        return;
+      }
+      if (match.index > 0) {
+        buffer = buffer.slice(match.index);
+      }
+
+      const result =
+        match.kind === "proof"
+          ? parseWindowsRecordTerminator(buffer, proofMarker.length)
+          : parseWindowsLeaderExitRecord(buffer, leaderExitMarker.length);
+      if (result.status === "incomplete") {
+        return;
+      }
+      if (result.status === "invalid") {
+        buffer = buffer.slice(1);
+        continue;
+      }
+      buffer = buffer.slice(result.consumed);
+      if (match.kind === "proof") {
+        proofFound = true;
+        onProof();
+        continue;
+      }
+      leaderExitFound = true;
+      onLeaderExit(result.exitCode!);
+    }
+  };
+
+  return {
+    getBufferedLength: () => buffer.length,
+    write(data) {
+      const text = data.toString();
+      for (let offset = 0; offset < text.length; offset += WINDOWS_RECORD_SCAN_CHUNK_SIZE) {
+        buffer += text.slice(offset, offset + WINDOWS_RECORD_SCAN_CHUNK_SIZE);
+        scan();
+      }
+    },
   };
 }
 
@@ -685,29 +915,26 @@ function observeWindowsJob(
   const leaderExit = new Promise<number>((resolve) => {
     resolveLeaderExit = resolve;
   });
-  let proofBuffer = "";
   let proven = false;
   let spawned = false;
   let spawnFailed = false;
   let completionResolved = false;
   let leaderExitResolved = false;
-  process.stderr?.on("data", (data: Buffer | string) => {
-    proofBuffer = (proofBuffer + data.toString()).slice(-512);
-    if (proofBuffer.includes(proofMarker)) {
+  const recordParser = createWindowsJobRecordParser(
+    proofMarker,
+    leaderExitMarker,
+    () => {
       proven = true;
-    }
-    if (!leaderExitResolved) {
-      const markerIndex = proofBuffer.indexOf(leaderExitMarker);
-      if (markerIndex >= 0) {
-        const exitCodeText = proofBuffer
-          .slice(markerIndex + leaderExitMarker.length)
-          .match(/^(\d+)/u)?.[1];
-        if (exitCodeText !== undefined) {
-          leaderExitResolved = true;
-          resolveLeaderExit(Number(exitCodeText));
-        }
+    },
+    (exitCode) => {
+      if (!leaderExitResolved) {
+        leaderExitResolved = true;
+        resolveLeaderExit(exitCode);
       }
-    }
+    },
+  );
+  process.stderr?.on("data", (data: Buffer | string) => {
+    recordParser.write(data);
   });
   process.once("spawn", () => {
     spawned = true;
