@@ -61,14 +61,21 @@ class FakeManagedProcesses implements ManagedProcessRegistry {
   reapCount = 0;
 
   async record(input: ManagedProcessRecordInput): Promise<ManagedProcessRecord> {
+    const { identityToken, ...recordInput } = input;
     return {
       id: "unused",
-      ...input,
+      ...recordInput,
       metadata: input.metadata ?? {},
-      identity: { commandLine: null, startedAt: null },
+      lifecycle: input.lifecycle ?? {
+        execTransition: "none",
+        terminationScope: "process",
+      },
+      identity: { commandLine: null, startedAt: null, token: identityToken ?? null },
       createdAt: "unused",
     };
   }
+
+  async confirmExecTransition(): Promise<void> {}
 
   async remove(): Promise<void> {}
 
