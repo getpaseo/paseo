@@ -1559,6 +1559,44 @@ describe("processTimelineResponse", () => {
     expect(result.acknowledgedClientMessageIds).toEqual(["client-message"]);
   });
 
+  it("acknowledges a submitted prompt from an otherwise unchanged tail snapshot", () => {
+    const clientMessageId = "client-message";
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [makeSubmittedUserMessage("local presentation", clientMessageId)],
+      currentCursor: { epoch: "epoch-1", startSeq: 2, endSeq: 4 },
+      sendingClientMessageIds: [clientMessageId],
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "tail",
+        window: { minSeq: 1, maxSeq: 4, nextSeq: 5 },
+        startCursor: { seq: 1 },
+        endCursor: { seq: 4 },
+        entries: [
+          {
+            ...makeTimelineEntry(1, "provider presentation", "user_message"),
+            item: {
+              type: "user_message",
+              text: "provider presentation",
+              messageId: clientMessageId,
+              clientMessageId,
+            },
+          },
+          {
+            ...makeTimelineEntry(2, "assistant response", "assistant_message", 4),
+            item: {
+              type: "assistant_message",
+              text: "assistant response",
+              messageId: "assistant-message",
+            },
+          },
+        ],
+      },
+    });
+
+    expect(result.acknowledgedClientMessageIds).toEqual([clientMessageId]);
+  });
+
   it("reconciles multiple submitted user messages in canonical order", () => {
     const result = processTimelineResponse({
       ...baseTimelineInput,

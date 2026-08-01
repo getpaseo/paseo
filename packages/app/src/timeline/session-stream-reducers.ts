@@ -975,7 +975,12 @@ export function processTimelineResponse(
       cursorChanged: false,
       older: "unchanged",
       sideEffects: [],
-      acknowledgedClientMessageIds: [],
+      acknowledgedClientMessageIds: deriveCanonicalAcknowledgements({
+        units: timelineUnits,
+        epoch: payload.epoch,
+        currentTail,
+        currentHead,
+      }).filter((clientMessageId) => sendingClientMessageIds.includes(clientMessageId)),
     };
   } else if (replace || resumeTailPolicy.kind === "replace") {
     const isResumeReplacement = resumeTailPolicy.kind === "replace";
