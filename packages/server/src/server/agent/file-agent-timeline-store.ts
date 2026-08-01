@@ -10,6 +10,7 @@ import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import type {
   AgentTimelineFetchOptions,
   AgentTimelineFetchResult,
+  AgentTimelineReplacementResult,
   AgentTimelineRow,
   AgentTimelineStore,
 } from "./agent-timeline-store-types.js";
@@ -97,13 +98,14 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
   async appendCommitted(
     agentId: string,
     item: AgentTimelineItem,
-    options?: { timestamp?: string },
+    options?: { timestamp?: string; turnId?: string },
   ): Promise<AgentTimelineRow> {
     return await this.queueMutation(agentId, (current) => {
       const row: AgentTimelineRow = {
         seq: (current.rows.at(-1)?.seq ?? 0) + 1,
         timestamp: options?.timestamp ?? new Date().toISOString(),
         item: structuredClone(item),
+        ...(options?.turnId ? { turnId: options.turnId } : {}),
       };
       return {
         next: { ...current, rows: [...current.rows, row] },
@@ -172,12 +174,18 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
     });
   }
 
-  async replaceCommitted(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void> {
+  async replaceCommitted(
+    agentId: string,
+    rows: readonly AgentTimelineRow[],
+  ): Promise<AgentTimelineReplacementResult> {
     const replacement = normalizeRows(rows);
-    await this.queueMutation(agentId, () => ({
-      next: { version: 1, epoch: this.epochFactory(), rows: replacement },
-      result: undefined,
-    }));
+    return await this.queueMutation(agentId, () => {
+      const epoch = this.epochFactory();
+      return {
+        next: { version: 1, epoch, rows: replacement },
+        result: { epoch },
+      };
+    });
   }
 
   async bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void> {

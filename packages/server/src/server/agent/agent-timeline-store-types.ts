@@ -5,6 +5,12 @@ export interface AgentTimelineRow {
   timestamp: string;
   item: AgentTimelineItem;
   readonly providerMessageId?: string;
+  /** Provider turn that produced this row, when known. */
+  readonly turnId?: string;
+}
+
+export interface AgentTimelineReplacementResult {
+  epoch: string;
 }
 
 export interface AgentTimelineCursor {
@@ -47,7 +53,7 @@ export interface AgentTimelineStore {
   appendCommitted(
     agentId: string,
     item: AgentTimelineItem,
-    options?: { timestamp?: string },
+    options?: { timestamp?: string; turnId?: string },
   ): Promise<AgentTimelineRow>;
   fetchCommitted(
     agentId: string,
@@ -59,7 +65,10 @@ export interface AgentTimelineStore {
   getLastAssistantMessage(agentId: string): Promise<string | null>;
   deleteAgent(agentId: string): Promise<void>;
   /** Atomically replaces the complete committed timeline for one agent. */
-  replaceCommitted(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void>;
+  replaceCommitted(
+    agentId: string,
+    rows: readonly AgentTimelineRow[],
+  ): Promise<AgentTimelineReplacementResult>;
   bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void>;
   updateCommittedRow(agentId: string, row: AgentTimelineRow): Promise<void>;
 }

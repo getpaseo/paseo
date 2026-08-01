@@ -70,7 +70,9 @@ describe("FileAgentTimelineStore", () => {
     await expect(restartedAfterFailure.getCommittedRows(agentId)).resolves.toEqual(priorRows);
 
     rejectWrites = false;
-    await store.replaceCommitted(agentId, replacementRows);
+    await expect(store.replaceCommitted(agentId, replacementRows)).resolves.toEqual({
+      epoch: "replacement-epoch",
+    });
 
     const restartedAfterSuccess = new FileAgentTimelineStore(directory, logger);
     await expect(restartedAfterSuccess.getCommittedRows(agentId)).resolves.toEqual(replacementRows);
