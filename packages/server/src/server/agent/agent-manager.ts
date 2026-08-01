@@ -443,6 +443,25 @@ function attachManagedTurnIdentity(
   }
 }
 
+function findSubmittedPromptEcho(
+  events: readonly AgentStreamEvent[],
+  clientMessageId: string | undefined,
+): Extract<AgentStreamEvent, { type: "timeline" }> | undefined {
+  if (!clientMessageId) {
+    return undefined;
+  }
+  return events.find(
+    (event): event is Extract<AgentStreamEvent, { type: "timeline" }> =>
+      event.type === "timeline" &&
+      event.item.type === "user_message" &&
+      event.item.clientMessageId === clientMessageId,
+  );
+}
+
+function isTurnStartedEventFor(event: AgentStreamEvent, turnId: string): boolean {
+  return event.type === "turn_started" && getAgentStreamEventTurnId(event) === turnId;
+}
+
 function limitAgentStreamEventContent(event: AgentStreamEvent): AgentStreamEvent {
   return event.type === "timeline"
     ? { ...event, item: limitAgentTimelineItemContent(event.item) }
@@ -2036,10 +2055,16 @@ export class AgentManager {
     const streamForwarder = async function* streamForwarder(this: AgentManager) {
       let turnId: string;
       let turnStream: ReturnType<AgentRunState["createTurnStream"]> | null = null;
+      if (!this.runs.isPendingRun(agentId, pendingRun.token)) {
+        return;
+      }
       try {
         const result = await agent.session.startTurn(prompt, options);
         turnId = result.turnId;
       } catch (error) {
+        if (!this.runs.isPendingRun(agentId, pendingRun.token)) {
+          return;
+        }
         agent.pendingReplacement = false;
         const errorMsg = error instanceof Error ? error.message : "Failed to start turn";
         await this.handleStreamEvent(agent, {
@@ -2052,12 +2077,15 @@ export class AgentManager {
         throw error;
       }
 
+      const stagedEvents = this.runs.bindPendingRun(agentId, pendingRun.token, turnId);
+      if (stagedEvents === null) {
+        this.runs.rememberFinalizedTurn(agent, turnId);
+        return;
+      }
       if (isReplacement) {
         agent.pendingReplacement = false;
       }
       const turnStartedAt = new Date();
-      pendingRun.started = true;
-      pendingRun.turnId = turnId;
       agent.activeForegroundTurnId = turnId;
       this.openActiveTurn(agent, turnId, turnStartedAt);
       agent.lifecycle = "running";
@@ -2070,14 +2098,10 @@ export class AgentManager {
         { type: "turn_started", provider: agent.provider, turnId },
         { timestamp: turnStartedAt.toISOString() },
       );
-      const stagedSubmittedPromptEcho = options?.clientMessageId
-        ? pendingRun.stagedEvents.find(
-            (event): event is Extract<AgentStreamEvent, { type: "timeline" }> =>
-              event.type === "timeline" &&
-              event.item.type === "user_message" &&
-              event.item.clientMessageId === options.clientMessageId,
-          )
-        : undefined;
+      const stagedSubmittedPromptEcho = findSubmittedPromptEcho(
+        stagedEvents,
+        options?.clientMessageId,
+      );
       if (options?.clientMessageId) {
         this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, {
           messageId: options.clientMessageId,
@@ -2087,9 +2111,8 @@ export class AgentManager {
               : undefined,
         });
       }
-      for (const stagedEvent of pendingRun.stagedEvents.splice(0)) {
-        const isAcceptedTurnStart =
-          stagedEvent.type === "turn_started" && getAgentStreamEventTurnId(stagedEvent) === turnId;
+      for (const stagedEvent of stagedEvents) {
+        const isAcceptedTurnStart = isTurnStartedEventFor(stagedEvent, turnId);
         if (isAcceptedTurnStart || stagedEvent === stagedSubmittedPromptEcho) {
           continue;
         }
@@ -2380,6 +2403,15 @@ export class AgentManager {
     }
 
     const interruptAcknowledged = await this.interruptSession(agent.session, agentId);
+    if (
+      interruptAcknowledged &&
+      run.kind === "foreground" &&
+      run.turnId === null &&
+      this.runs.settleForegroundRun(agentId, run.token)
+    ) {
+      agent.lastError = undefined;
+      this.finalizeForegroundTurn(agent);
+    }
     const settlement = await this.waitWithTimeout({
       operation: run.settledPromise,
       timeoutMs: interruptAcknowledged

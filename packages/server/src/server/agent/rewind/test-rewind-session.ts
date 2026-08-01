@@ -37,7 +37,7 @@ export class FakeRewindSession implements AgentSession {
   history: AgentTimelineItem[] = [{ type: "user_message", text: "before", messageId: "message-1" }];
 
   private subscribers = new Set<(event: AgentStreamEvent) => void>();
-  private activeTurnId: string | null = null;
+  protected activeTurnId: string | null = null;
 
   constructor(private readonly waitBeforeHistory?: () => Promise<void>) {}
 
@@ -103,6 +103,13 @@ export class FakeRewindSession implements AgentSession {
     }
   }
 
+  completeActiveTurn(): void {
+    if (!this.activeTurnId) return;
+    const turnId = this.activeTurnId;
+    this.activeTurnId = null;
+    this.emit({ type: "turn_completed", provider: this.provider, turnId });
+  }
+
   async close(): Promise<void> {}
 
   async revertConversation(input: { messageId: string }): Promise<void> {
@@ -117,7 +124,7 @@ export class FakeRewindSession implements AgentSession {
     this.recordedRewinds.push({ mode: "both", messageId: input.messageId });
   }
 
-  private emit(event: AgentStreamEvent): void {
+  protected emit(event: AgentStreamEvent): void {
     for (const subscriber of this.subscribers) {
       subscriber(event);
     }

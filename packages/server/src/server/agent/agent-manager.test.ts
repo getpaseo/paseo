@@ -465,6 +465,99 @@ class ControlledInterruptSession extends TestAgentSession {
   }
 }
 
+class PendingStartSession extends TestAgentSession {
+  private readonly firstStartRequested = deferred<void>();
+  private readonly firstStartAllowed = deferred<void>();
+  private turnCount = 0;
+
+  override async startTurn(): Promise<{ turnId: string }> {
+    const turnId = `pending-start-turn-${++this.turnCount}`;
+    if (this.turnCount === 1) {
+      this.firstStartRequested.resolve();
+      await this.firstStartAllowed.promise;
+      return { turnId };
+    }
+
+    setTimeout(() => {
+      this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+      this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+    }, 0);
+    return { turnId };
+  }
+
+  waitForPendingStart(): Promise<void> {
+    return this.firstStartRequested.promise;
+  }
+
+  resolvePendingStart(): void {
+    this.firstStartAllowed.resolve();
+  }
+
+  completePendingStartBeforeResolution(): void {
+    const turnId = "pending-start-turn-1";
+    this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+    this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+  }
+
+  override async interrupt(): Promise<void> {}
+}
+
+interface PendingStartFixture {
+  agentId: string;
+  manager: AgentManager;
+  session: PendingStartSession;
+  startEvents: AgentStreamEvent[];
+  startDrain: Promise<void>;
+  cleanup(): Promise<void>;
+}
+
+async function createPendingStartFixture(
+  name: string,
+  agentId: string,
+): Promise<PendingStartFixture> {
+  const workdir = mkdtempSync(join(tmpdir(), `agent-manager-${name}-`));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const session = new PendingStartSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10 },
+    idFactory: () => agentId,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const stream = manager.streamAgent(agent.id, "hold start resolution");
+  const startEvents: AgentStreamEvent[] = [];
+  const startDrain = (async () => {
+    for await (const event of stream) {
+      startEvents.push(event);
+    }
+  })();
+  await session.waitForPendingStart();
+
+  return {
+    agentId: agent.id,
+    manager,
+    session,
+    startEvents,
+    startDrain,
+    async cleanup() {
+      session.resolvePendingStart();
+      await startDrain.catch(() => undefined);
+      await manager.flush().catch(() => undefined);
+      await storage.flush().catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    },
+  };
+}
+
 interface ControlledInterruptFixture {
   agentId: string;
   manager: AgentManager;
@@ -1625,6 +1718,106 @@ test("cancelAgentRun succeeds when the provider queues completion before rejecti
     });
   } finally {
     fixture.cleanup();
+  }
+});
+
+test("cancelAgentRun invalidates an acknowledged pending start generation", async () => {
+  const fixture = await createPendingStartFixture(
+    "cancel-pending-start",
+    "00000000-0000-4000-8000-000000000310",
+  );
+
+  try {
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
+      status: "settled",
+    });
+    fixture.session.resolvePendingStart();
+    await fixture.startDrain;
+
+    expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+    });
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("streamAgent replays a terminal emitted before the pending start returns", async () => {
+  const fixture = await createPendingStartFixture(
+    "terminal-before-start-return",
+    "00000000-0000-4000-8000-000000000313",
+  );
+
+  try {
+    fixture.session.completePendingStartBeforeResolution();
+    fixture.session.resolvePendingStart();
+    await fixture.startDrain;
+
+    expect(fixture.startEvents).toContainEqual({
+      type: "turn_completed",
+      provider: "codex",
+      turnId: "pending-start-turn-1",
+    });
+    expect(fixture.manager.hasInFlightRun(fixture.agentId)).toBe(false);
+    expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+    });
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("replaceAgentRun keeps ownership when the canceled pending start resolves late", async () => {
+  const fixture = await createPendingStartFixture(
+    "replace-pending-start",
+    "00000000-0000-4000-8000-000000000311",
+  );
+
+  try {
+    const replacement = await fixture.manager.replaceAgentRun(fixture.agentId, "replacement work");
+    fixture.session.resolvePendingStart();
+    await fixture.startDrain;
+
+    const replacementEvents: AgentStreamEvent[] = [];
+    for await (const event of replacement) replacementEvents.push(event);
+    expect(replacementEvents.map((event) => event.type)).toContain("turn_completed");
+    expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+    });
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("reloadAgentSession does not restore a canceled pending start", async () => {
+  const fixture = await createPendingStartFixture(
+    "reload-pending-start",
+    "00000000-0000-4000-8000-000000000312",
+  );
+
+  try {
+    await expect(fixture.manager.reloadAgentSession(fixture.agentId)).resolves.toMatchObject({
+      id: fixture.agentId,
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+    });
+    fixture.session.resolvePendingStart();
+    await fixture.startDrain;
+
+    expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+    });
+    await fixture.manager.runAgent(fixture.agentId, "work after reload");
+    expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+    });
+  } finally {
+    await fixture.cleanup();
   }
 });
 

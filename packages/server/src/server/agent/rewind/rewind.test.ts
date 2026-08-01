@@ -129,6 +129,57 @@ describe("AgentManager rewind", () => {
     });
   });
 
+  test("rewinds after invalidating an acknowledged pending start generation", async () => {
+    let resolveStart!: () => void;
+    let startRequested!: () => void;
+    const startGate = new Promise<void>((resolve) => {
+      resolveStart = resolve;
+    });
+    const requested = new Promise<void>((resolve) => {
+      startRequested = resolve;
+    });
+
+    class PendingStartRewindSession extends FakeRewindSession {
+      override async startTurn(): Promise<{ turnId: string }> {
+        startRequested();
+        await startGate;
+        this.activeTurnId = "pending-rewind-turn";
+        return { turnId: this.activeTurnId };
+      }
+
+      override async interrupt(): Promise<void> {
+        this.aborted = true;
+      }
+    }
+
+    const session = new PendingStartRewindSession();
+    const manager = new AgentManager({
+      clients: { claude: new FakeRewindClient(session) },
+      logger: createTestLogger(),
+      idFactory: () => "00000000-0000-4000-8000-000000000904",
+    });
+    const agent = await manager.createAgent({ provider: "claude", cwd: process.cwd() }, undefined, {
+      workspaceId: undefined,
+    });
+    const stream = manager.streamAgent(agent.id, "keep working");
+    const drain = (async () => {
+      for await (const _event of stream) {
+        // Drain until the invalidated pending generation exits.
+      }
+    })();
+    await requested;
+
+    await manager.rewind(agent.id, "message-1", "files");
+    resolveStart();
+    await drain;
+
+    expect(session.recordedRewinds).toEqual([{ mode: "files", messageId: "message-1" }]);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+    });
+  });
+
   test("blocks new prompts until the rehydrate epoch broadcasts", async () => {
     const historyGate = new RewindHistoryGate();
     historyGate.hold();

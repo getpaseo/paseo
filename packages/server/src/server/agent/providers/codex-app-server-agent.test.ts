@@ -2554,13 +2554,17 @@ describe("Codex app-server provider", () => {
 
     asInternals(session).handleNotification("turn/completed", {
       threadId: "unmapped-child-thread",
-      turn: { status: "completed" },
+      turn: { id: "foreign-turn", status: "completed" },
     });
     expect(events).toEqual([]);
 
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "test-thread",
+      turn: { id: "first-root-turn" },
+    });
     asInternals(session).handleNotification("turn/completed", {
       threadId: "test-thread",
-      turn: { status: "completed" },
+      turn: { id: "first-root-turn", status: "completed" },
     });
     expect(events.filter((event) => event.type === "turn_completed")).toHaveLength(1);
 
@@ -2584,10 +2588,25 @@ describe("Codex app-server provider", () => {
     });
   });
 
-  test("routes msg-scoped legacy Codex events to their child thread", () => {
+  test("routes msg-scoped legacy Codex events to their child thread", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
+    session.client = createStub<CodexClientLike>({
+      request: async (method) => {
+        if (method === "thread/read") {
+          return {
+            thread: { turns: [{ id: "root-turn", status: "completed", items: [] }] },
+          };
+        }
+        throw new Error(`Unexpected request: ${method}`);
+      },
+    });
+
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "test-thread",
+      turn: { id: "root-turn" },
+    });
 
     asInternals(session).handleNotification("item/completed", {
       threadId: "test-thread",
@@ -2648,6 +2667,7 @@ describe("Codex app-server provider", () => {
     asInternals(session).handleNotification("codex/event/task_complete", {
       msg: { type: "task_complete" },
     });
+    await vi.waitFor(() => expect(session.activeForegroundTurnId).toBeNull());
     expect(events.filter((event) => event.type === "turn_completed")).toHaveLength(1);
   });
 
@@ -3934,7 +3954,7 @@ describe("Codex app-server provider", () => {
       ],
     });
     asInternals(session).handleNotification("turn/completed", {
-      turn: { status: "completed", error: null },
+      turn: { id: "turn-plan-1", status: "completed", error: null },
     });
 
     expect(
@@ -3997,7 +4017,7 @@ describe("Codex app-server provider", () => {
       },
     });
     asInternals(session).handleNotification("turn/completed", {
-      turn: { status: "completed", error: null },
+      turn: { id: "turn-plan-thread-item", status: "completed", error: null },
     });
 
     expect(events).not.toContainEqual(
@@ -4036,7 +4056,7 @@ describe("Codex app-server provider", () => {
       plan: [{ step: "Implement the first plan", status: "pending" }],
     });
     asInternals(session).handleNotification("turn/completed", {
-      turn: { status: "completed", error: null },
+      turn: { id: "turn-plan-first", status: "completed", error: null },
     });
 
     asInternals(session).handleNotification("turn/started", {
@@ -4046,7 +4066,7 @@ describe("Codex app-server provider", () => {
       plan: [{ step: "Implement the revised plan", status: "pending" }],
     });
     asInternals(session).handleNotification("turn/completed", {
-      turn: { status: "completed", error: null },
+      turn: { id: "turn-plan-second", status: "completed", error: null },
     });
 
     expect(session.getPendingPermissions()).toEqual([
@@ -4071,7 +4091,7 @@ describe("Codex app-server provider", () => {
       plan: [{ step: "Implement the original plan", status: "pending" }],
     });
     asInternals(session).handleNotification("turn/completed", {
-      turn: { status: "completed", error: null },
+      turn: { id: "turn-plan-pending", status: "completed", error: null },
     });
     const pendingPlan = session.getPendingPermissions()[0];
     expect(pendingPlan).toBeDefined();
@@ -4111,7 +4131,7 @@ describe("Codex app-server provider", () => {
       plan: [{ step: "Implement the original plan", status: "pending" }],
     });
     asInternals(session).handleNotification("turn/completed", {
-      turn: { status: "completed", error: null },
+      turn: { id: "turn-plan-pending", status: "completed", error: null },
     });
     const pendingPlan = session.getPendingPermissions()[0];
     expect(pendingPlan).toBeDefined();
@@ -4165,7 +4185,7 @@ describe("Codex app-server provider", () => {
       plan: [{ step: "Implement the original plan", status: "pending" }],
     });
     asInternals(session).handleNotification("turn/completed", {
-      turn: { status: "completed", error: null },
+      turn: { id: "turn-plan-pending", status: "completed", error: null },
     });
 
     let acceptPrompt: (() => void) | undefined;
@@ -4189,11 +4209,14 @@ describe("Codex app-server provider", () => {
 
     const startTurn = session.startTurn("Revise the plan");
     await promptRequested;
+    asInternals(session).handleNotification("turn/started", {
+      turn: { id: "turn-plan-newer" },
+    });
     asInternals(session).handleNotification("turn/plan/updated", {
       plan: [{ step: "Implement the newer plan", status: "pending" }],
     });
     asInternals(session).handleNotification("turn/completed", {
-      turn: { status: "completed", error: null },
+      turn: { id: "turn-plan-newer", status: "completed", error: null },
     });
     acceptPrompt?.();
     await startTurn;
@@ -4215,7 +4238,7 @@ describe("Codex app-server provider", () => {
       plan: [{ step: "Implement the original plan", status: "pending" }],
     });
     asInternals(session).handleNotification("turn/completed", {
-      turn: { status: "completed", error: null },
+      turn: { id: "turn-plan-pending", status: "completed", error: null },
     });
     const pendingPlan = session.getPendingPermissions()[0];
     expect(pendingPlan).toBeDefined();
@@ -4461,7 +4484,7 @@ describe("Codex app-server provider", () => {
       }),
     ).not.toThrow();
     asInternals(session).handleNotification("turn/completed", {
-      turn: { status: "completed", error: null },
+      turn: { id: "test-turn", status: "completed", error: null },
     });
 
     expect(events).toEqual([
@@ -4491,7 +4514,7 @@ describe("Codex app-server provider", () => {
       },
     });
     asInternals(session).handleNotification("turn/completed", {
-      turn: { status: "completed", error: null },
+      turn: { id: "test-turn", status: "completed", error: null },
     });
 
     expect(events).toContainEqual({
@@ -4517,6 +4540,120 @@ describe("Codex app-server provider", () => {
         contextWindowMaxTokens: 200000,
         contextWindowUsedTokens: 50000,
       },
+    });
+  });
+
+  test("ignores an ID-less terminal without a correlated native turn", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "test-thread",
+      turn: { status: "completed", error: null },
+    });
+
+    expect(events).toEqual([]);
+    expect(session.activeForegroundTurnId).toBe("test-turn");
+  });
+
+  test("reconciles an ID-less terminal for the exact current native turn", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/read") {
+        return {
+          thread: { turns: [{ id: "native-current", status: "completed", items: [] }] },
+        };
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    session.client = createStub<CodexClientLike>({ request });
+
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "test-thread",
+      turn: { id: "native-current" },
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "test-thread",
+      turn: { status: "completed", error: null },
+    });
+
+    await vi.waitFor(() => expect(session.activeForegroundTurnId).toBeNull());
+    expect(request).toHaveBeenCalledWith("thread/read", {
+      threadId: "test-thread",
+      includeTurns: true,
+    });
+    expect(events.at(-1)).toEqual({
+      type: "turn_completed",
+      provider: "codex",
+      turnId: "test-turn",
+      usage: undefined,
+    });
+  });
+
+  test("does not bind an ID-less completion to an in-progress native turn", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/read") {
+        return {
+          thread: { turns: [{ id: "native-current", status: "inProgress", items: [] }] },
+        };
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    session.client = createStub<CodexClientLike>({ request });
+
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "test-thread",
+      turn: { id: "native-current" },
+    });
+    const eventCount = events.length;
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "test-thread",
+      turn: { status: "completed", error: null },
+    });
+
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+    expect(session.activeForegroundTurnId).toBe("test-turn");
+    expect(events).toHaveLength(eventCount);
+  });
+
+  test("does not let an explicit stale terminal close the current native turn", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "test-thread",
+      turn: { id: "native-current" },
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "test-thread",
+      turn: { id: "native-stale", status: "completed", error: null },
+    });
+
+    expect(session.activeForegroundTurnId).toBe("test-turn");
+    expect(events.at(-1)).toEqual({
+      type: "turn_completed",
+      provider: "codex",
+      turnId: "native-stale",
+      usage: undefined,
+    });
+
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "test-thread",
+      turn: { id: "native-current", status: "completed", error: null },
+    });
+    expect(session.activeForegroundTurnId).toBeNull();
+    expect(events.at(-1)).toEqual({
+      type: "turn_completed",
+      provider: "codex",
+      turnId: "test-turn",
+      usage: undefined,
     });
   });
 
@@ -4741,7 +4878,7 @@ describe("Codex app-server provider", () => {
       plan: [{ step: "Implement the new flow", status: "pending" }],
     });
     asInternals(session).handleNotification("turn/completed", {
-      turn: { status: "completed", error: null },
+      turn: { id: "turn-plan-2", status: "completed", error: null },
     });
 
     const request = events.find(
@@ -4795,7 +4932,7 @@ describe("Codex app-server provider", () => {
       plan: [{ step: "Implement the safe flow", status: "pending" }],
     });
     asInternals(session).handleNotification("turn/completed", {
-      turn: { status: "completed", error: null },
+      turn: { id: "turn-plan-3", status: "completed", error: null },
     });
 
     const request = events.find(
@@ -4863,7 +5000,7 @@ describe("Codex app-server provider", () => {
       plan: [{ step: "Implement the fast flow", status: "pending" }],
     });
     asInternals(session).handleNotification("turn/completed", {
-      turn: { status: "completed", error: null },
+      turn: { id: "turn-plan-4", status: "completed", error: null },
     });
 
     const permissionRequest = events.find(
