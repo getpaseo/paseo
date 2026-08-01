@@ -881,18 +881,20 @@ export class MockLoadTestAgentSession implements AgentSession {
     this.listeners.clear();
   }
 
-  async revertConversation(_input: { messageId: string }): Promise<void> {
+  async revertConversation(input: { messageId: string }): Promise<void> {
     this.failConfiguredRewind();
+    this.validateRewindTarget(input.messageId);
     this.keepFirstUserMessageHistory();
   }
 
-  async revertFiles(_input: { messageId: string }): Promise<void> {
+  async revertFiles(input: { messageId: string }): Promise<void> {
     this.failConfiguredRewind();
-    this.keepFirstUserMessageHistory();
+    this.validateRewindTarget(input.messageId);
   }
 
-  async revertBoth(_input: { messageId: string }): Promise<void> {
+  async revertBoth(input: { messageId: string }): Promise<void> {
     this.failConfiguredRewind();
+    this.validateRewindTarget(input.messageId);
     this.keepFirstUserMessageHistory();
   }
 
@@ -922,6 +924,18 @@ export class MockLoadTestAgentSession implements AgentSession {
   private failConfiguredRewind(): void {
     if (this.rewindError) {
       throw new Error(this.rewindError);
+    }
+  }
+
+  private validateRewindTarget(messageId: string): void {
+    const isKnownUserMessage = this.history.some(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "user_message" &&
+        event.item.messageId === messageId,
+    );
+    if (!isKnownUserMessage) {
+      throw new Error(`Mock rewind target ${messageId} was not found in session history`);
     }
   }
 
