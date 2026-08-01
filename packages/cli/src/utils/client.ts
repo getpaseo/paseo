@@ -216,7 +216,10 @@ function stripIpcPrefix(trimmed: string): string {
 }
 
 export function resolveDaemonTarget(host: string): DaemonTarget {
-  const trimmed = host.trim();
+  const trimmed = normalizeDaemonHost(host);
+  if (!trimmed) {
+    throw new Error(`Invalid daemon target: ${host}`);
+  }
   if (
     trimmed.startsWith("unix://") ||
     trimmed.startsWith("pipe://") ||

@@ -162,7 +162,11 @@ export function WorkspaceTabIcon({
 
   if (shouldShowLoader) {
     return (
-      <View style={agentIconWrapperStyle}>
+      <View
+        style={agentIconWrapperStyle}
+        accessibilityRole="progressbar"
+        accessibilityLabel="Agent running"
+      >
         <SyncedLoader size={size - 1} color={styles.syncedLoader.color} />
       </View>
     );

@@ -1,7 +1,7 @@
 import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
 import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
-import { resolve, sep } from "path";
+import { basename, resolve, sep } from "path";
 import { homedir } from "node:os";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import {
@@ -86,11 +86,7 @@ import {
   setAgentModeCommand,
   updateAgentCommand,
 } from "./agent/lifecycle-command.js";
-import {
-  buildStoredAgentPayload,
-  resolveStoredAgentPayloadUpdatedAt,
-  toAgentPayload,
-} from "./agent/agent-projections.js";
+import { buildStoredAgentPayload, toAgentPayload } from "./agent/agent-projections.js";
 import {
   appendTimelineItemIfAgentKnown,
   emitLiveTimelineItemIfAgentKnown,
@@ -138,6 +134,11 @@ import {
 } from "./workspace-registry.js";
 import { wrapSpokenInput } from "./voice-config.js";
 import { isVoicePermissionAllowed } from "./voice-permission-policy.js";
+import {
+  readProjectIcon,
+  removeProjectCustomIcon,
+  setProjectCustomIcon,
+} from "../utils/project-custom-icon.js";
 import { VoiceSession } from "./session/voice/voice-session.js";
 import { CheckoutSession } from "./session/checkout/checkout-session.js";
 import {
@@ -897,7 +898,7 @@ export class Session {
     });
     this.agentUpdates = createAgentUpdatesService({
       emit: (message) => this.emit(message),
-      buildAgentPayload: (agent) => this.buildAgentPayload(agent),
+      enrichAgentPayload: (payload) => this.enrichAgentPayload(payload),
       buildStoredAgentPayload: (record) => this.buildStoredAgentPayload(record),
       isProviderVisibleToClient: (provider) => this.isProviderVisibleToClient(provider),
       buildProjectPlacementForWorkspaceId: (workspaceId) =>
@@ -1684,20 +1685,15 @@ export class Session {
     };
   }
 
-  private async buildAgentPayload(agent: ManagedAgent): Promise<AgentSnapshotPayload> {
-    const storedRecord = await this.agentStorage.get(agent.id);
-    const title = storedRecord?.title ?? null;
-    const payload = toAgentPayload(agent, { title });
-    const storedUpdatedAt = storedRecord ? resolveStoredAgentPayloadUpdatedAt(storedRecord) : null;
-    if (storedUpdatedAt) {
-      const liveUpdatedAt = Date.parse(payload.updatedAt);
-      const persistedUpdatedAt = Date.parse(storedUpdatedAt);
-      if (Number.isNaN(liveUpdatedAt) || persistedUpdatedAt > liveUpdatedAt) {
-        payload.updatedAt = storedUpdatedAt;
-      }
-    }
+  private async enrichAgentPayload(payload: AgentSnapshotPayload): Promise<AgentSnapshotPayload> {
+    const storedRecord = await this.agentStorage.get(payload.id);
+    payload.title = storedRecord?.title ?? null;
     payload.archivedAt = storedRecord?.archivedAt ?? null;
     return payload;
+  }
+
+  private buildAgentPayload(agent: ManagedAgent): Promise<AgentSnapshotPayload> {
+    return this.enrichAgentPayload(toAgentPayload(agent));
   }
 
   private buildStoredAgentPayload(
@@ -1918,7 +1914,7 @@ export class Session {
   ): Promise<void> | undefined {
     switch (msg.type) {
       case "fetch_agent_timeline_request":
-        return this.handleFetchAgentTimelineRequest(msg);
+        return this.handleFetchAgentTimelineRequest(msg, source);
       case "agent.provider_subagents.list.request":
         return this.handleProviderSubagentListRequest(msg, source);
       case "agent.provider_subagents.timeline.get.request":
@@ -1977,6 +1973,8 @@ export class Session {
         return this.handleUpdateAgentRequest(msg.agentId, msg.name, msg.labels, msg.requestId);
       case "project.rename.request":
         return this.handleProjectRenameRequest(msg.projectId, msg.customName, msg.requestId);
+      case "project.icon.set.request":
+        return this.handleProjectIconSetRequest(msg);
       case "send_agent_message_request":
         return this.handleSendAgentMessageRequest(msg);
       case "wait_for_finish_request":
@@ -2174,6 +2172,8 @@ export class Session {
         return this.workspaceFilesSession.handleFileWriteRequest(msg);
       case "project_icon_request":
         return this.workspaceFilesSession.handleProjectIconRequest(msg);
+      case "project.icon.get.request":
+        return this.handleProjectIconGetRequest(msg.projectId, msg.requestId);
       case "file_download_token_request":
         return this.workspaceFilesSession.handleFileDownloadTokenRequest(msg);
       case "file.upload.request":
@@ -2405,7 +2405,7 @@ export class Session {
       },
     });
 
-    this.agentUpdates.removeAgent(agentId);
+    await this.agentUpdates.removeAgent(agentId);
 
     if (knownWorkspaceId) {
       await this.emitWorkspaceUpdateForWorkspaceId(knownWorkspaceId);
@@ -2708,6 +2708,61 @@ export class Session {
     }
   }
 
+  private async handleProjectIconSetRequest(
+    request: Extract<SessionInboundMessage, { type: "project.icon.set.request" }>,
+  ): Promise<void> {
+    const { projectId, requestId } = request;
+    try {
+      const updated = await setProjectCustomIcon({
+        paseoHome: this.paseoHome,
+        projectId,
+        source: request.source,
+        projects: this.projectRegistry,
+      });
+
+      this.emit({
+        type: "project.icon.set.response",
+        payload: { requestId, projectId, accepted: true, error: null },
+      });
+      this.emitProjectUpdate({ kind: "upsert", project: updated });
+
+      const affectedWorkspaceIds = (await this.workspaceRegistry.list())
+        .filter((workspace) => workspace.projectId === projectId)
+        .map((workspace) => workspace.workspaceId);
+      if (affectedWorkspaceIds.length > 0) {
+        await this.emitWorkspaceUpdatesForWorkspaceIds(affectedWorkspaceIds);
+      }
+    } catch (error) {
+      this.emit({
+        type: "project.icon.set.response",
+        payload: {
+          requestId,
+          projectId,
+          accepted: false,
+          error: getErrorMessageOr(error, "Failed to update project icon"),
+        },
+      });
+    }
+  }
+
+  private async handleProjectIconGetRequest(projectId: string, requestId: string): Promise<void> {
+    try {
+      const project = await this.projectRegistry.get(projectId);
+      if (!project) throw new Error("Project not found");
+
+      const icon = await readProjectIcon({ paseoHome: this.paseoHome, project });
+      this.emit({
+        type: "project.icon.get.response",
+        payload: { projectId, icon, error: null, requestId },
+      });
+    } catch (error) {
+      this.emit({
+        type: "project.icon.get.response",
+        payload: { projectId, icon: null, error: getErrorMessage(error), requestId },
+      });
+    }
+  }
+
   private async handleProjectRemoveRequest(
     request: Extract<SessionInboundMessage, { type: "project.remove.request" }>,
   ): Promise<void> {
@@ -2747,6 +2802,15 @@ export class Session {
         }
 
         await this.projectRegistry.remove(resolvedProjectId);
+        await removeProjectCustomIcon({
+          paseoHome: this.paseoHome,
+          projectId: resolvedProjectId,
+        }).catch((error) => {
+          this.sessionLogger.warn(
+            { err: error, projectId: resolvedProjectId },
+            "Failed to clean up removed project icon",
+          );
+        });
       } finally {
         if (activeWorkspaceIds.length > 0) {
           this.clearWorkspaceArchiving(activeWorkspaceIds);
@@ -4246,6 +4310,11 @@ export class Session {
       diffStat = snapshot.git.diffStat;
     }
 
+    const worktreeSlug =
+      workspace.isPaseoOwnedWorktree && workspace.worktreeRoot
+        ? basename(workspace.worktreeRoot)
+        : undefined;
+
     return {
       id: workspace.workspaceId,
       projectId: workspace.projectId,
@@ -4253,8 +4322,10 @@ export class Session {
         ? resolveProjectDisplayName(resolvedProjectRecord)
         : workspace.projectId,
       projectCustomName: resolvedProjectRecord?.customName ?? null,
+      projectCustomIconRevision: resolvedProjectRecord?.customIconRevision ?? null,
       projectRootPath: resolvedProjectRecord?.rootPath ?? workspace.cwd,
       workspaceDirectory: workspace.cwd,
+      worktreeSlug,
       projectKind: (resolvedProjectRecord?.kind ?? "directory") === "git" ? "git" : "non_git",
       workspaceKind: workspace.kind,
       name: resolveWorkspaceDisplayName(workspace),
@@ -4339,8 +4410,10 @@ export class Session {
         ? resolveProjectDisplayName(projectRecord)
         : result.workspace.projectId,
       projectCustomName: projectRecord?.customName ?? null,
+      projectCustomIconRevision: projectRecord?.customIconRevision ?? null,
       projectRootPath: projectRecord?.rootPath ?? result.repoRoot,
       workspaceDirectory: result.workspace.cwd,
+      worktreeSlug: basename(result.worktree.worktreePath),
       projectKind: projectRecord?.kind ?? "git",
       workspaceKind: result.workspace.kind,
       name: resolveWorkspaceName({
@@ -4510,6 +4583,7 @@ export class Session {
       ...(project.projectKey ? { projectKey: project.projectKey } : {}),
       projectDisplayName: resolveProjectDisplayName(project),
       projectCustomName: project.customName ?? null,
+      projectCustomIconRevision: project.customIconRevision ?? null,
       projectRootPath: project.rootPath,
       projectKind: project.kind,
     };
@@ -6054,27 +6128,30 @@ export class Session {
     direction: AgentTimelineFetchDirection;
     cursor?: AgentTimelineCursor;
     pageLimit: number;
+    fullTimeline?: AgentTimelineFetchResult;
   }): AgentTimelineProjectionSelection {
-    const timeline = this.shouldUseFullTimelineForProjectedPage({
+    const selectedTimeline = this.shouldUseFullTimelineForProjectedPage({
       timeline: input.controlTimeline,
       pageLimit: input.pageLimit,
     })
-      ? this.agentManager.fetchTimeline(input.agentId, { direction: "tail", limit: 0 })
+      ? (input.fullTimeline ??
+        this.agentManager.fetchTimeline(input.agentId, { direction: "tail", limit: 0 }))
       : input.controlTimeline;
     const page = selectProjectedTimelinePage({
-      rows: timeline.rows,
-      bounds: timeline.window,
+      rows: selectedTimeline.rows,
+      bounds: selectedTimeline.window,
       direction: input.controlTimeline.reset ? "tail" : input.direction,
       ...(input.cursor ? { cursorSeq: input.cursor.seq } : {}),
       limit: input.pageLimit,
     });
 
     return {
-      timeline,
+      timeline: selectedTimeline,
       entries: page.entries,
       startSeq: page.startSeq,
       endSeq: page.endSeq,
-      hasOlder: page.hasOlder || (page.startSeq !== null && page.startSeq > timeline.window.minSeq),
+      hasOlder:
+        page.hasOlder || (page.startSeq !== null && page.startSeq > selectedTimeline.window.minSeq),
       hasNewer: page.hasNewer,
     };
   }
@@ -6086,6 +6163,7 @@ export class Session {
     direction: AgentTimelineFetchDirection;
     cursor?: AgentTimelineCursor;
     pageLimit: number;
+    fullTimeline?: AgentTimelineFetchResult;
   }): AgentTimelineProjectionSelection {
     if (input.projection === "canonical") {
       return this.selectCanonicalTimelineProjection({ timeline: input.controlTimeline });
@@ -6096,6 +6174,7 @@ export class Session {
 
   private async handleFetchAgentTimelineRequest(
     msg: Extract<SessionInboundMessage, { type: "fetch_agent_timeline_request" }>,
+    source?: object,
   ): Promise<void> {
     const direction: AgentTimelineFetchDirection = msg.direction ?? (msg.cursor ? "after" : "tail");
     const projection: TimelineProjectionMode = msg.projection ?? "projected";
@@ -6116,7 +6195,7 @@ export class Session {
       });
       const agentPayload = await this.buildAgentPayload(snapshot);
 
-      const controlTimeline = this.agentManager.fetchTimeline(msg.agentId, {
+      const fetchedControlTimeline = this.agentManager.fetchTimeline(msg.agentId, {
         direction,
         cursor,
         limit: pageLimit,
@@ -6124,7 +6203,7 @@ export class Session {
       const selectedTimeline = this.selectTimelineProjection({
         agentId: msg.agentId,
         projection,
-        controlTimeline,
+        controlTimeline: fetchedControlTimeline,
         direction,
         ...(cursor ? { cursor } : {}),
         pageLimit,
@@ -6138,63 +6217,73 @@ export class Session {
           ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.endSeq }
           : null;
 
-      this.emit({
-        type: "fetch_agent_timeline_response",
-        payload: {
-          requestId: msg.requestId,
-          agentId: msg.agentId,
-          agent: agentPayload,
-          direction,
-          projection,
-          epoch: selectedTimeline.timeline.epoch,
-          reset: controlTimeline.reset,
-          staleCursor: controlTimeline.staleCursor,
-          gap: controlTimeline.gap,
-          window: selectedTimeline.timeline.window,
-          startCursor,
-          endCursor,
-          hasOlder: selectedTimeline.hasOlder,
-          hasNewer: selectedTimeline.hasNewer,
-          entries: selectedTimeline.entries.map((entry) => ({
-            provider: snapshot.provider,
-            item: entry.item,
-            timestamp: entry.timestamp,
-            seqStart: entry.seqStart,
-            seqEnd: entry.seqEnd,
-            sourceSeqRanges: entry.sourceSeqRanges,
-            collapsed: this.supports(CLIENT_CAPS.reasoningMergeEnum)
-              ? entry.collapsed
-              : entry.collapsed.filter((value) => value !== "reasoning_merge"),
-          })),
-          error: null,
+      this.emitForSource(
+        {
+          type: "fetch_agent_timeline_response",
+          payload: {
+            requestId: msg.requestId,
+            agentId: msg.agentId,
+            agent: agentPayload,
+            direction,
+            projection,
+            epoch: selectedTimeline.timeline.epoch,
+            reset: fetchedControlTimeline.reset,
+            staleCursor: fetchedControlTimeline.staleCursor,
+            gap: fetchedControlTimeline.gap,
+            window: selectedTimeline.timeline.window,
+            startCursor,
+            endCursor,
+            hasOlder: selectedTimeline.hasOlder,
+            hasNewer: selectedTimeline.hasNewer,
+            entries: selectedTimeline.entries.map((entry) => ({
+              provider: snapshot.provider,
+              item: entry.item,
+              timestamp: entry.timestamp,
+              seqStart: entry.seqStart,
+              seqEnd: entry.seqEnd,
+              sourceSeqRanges: entry.sourceSeqRanges,
+              collapsed: (
+                source
+                  ? this.supportsForSource(CLIENT_CAPS.reasoningMergeEnum, source)
+                  : this.supports(CLIENT_CAPS.reasoningMergeEnum)
+              )
+                ? entry.collapsed
+                : entry.collapsed.filter((value) => value !== "reasoning_merge"),
+            })),
+            error: null,
+          },
         },
-      });
+        source,
+      );
     } catch (error) {
       this.sessionLogger.error(
         { err: error, agentId: msg.agentId },
         "Failed to handle fetch_agent_timeline_request",
       );
-      this.emit({
-        type: "fetch_agent_timeline_response",
-        payload: {
-          requestId: msg.requestId,
-          agentId: msg.agentId,
-          agent: null,
-          direction,
-          projection,
-          epoch: "",
-          reset: false,
-          staleCursor: false,
-          gap: false,
-          window: { minSeq: 0, maxSeq: 0, nextSeq: 0 },
-          startCursor: null,
-          endCursor: null,
-          hasOlder: false,
-          hasNewer: false,
-          entries: [],
-          error: error instanceof Error ? error.message : String(error),
+      this.emitForSource(
+        {
+          type: "fetch_agent_timeline_response",
+          payload: {
+            requestId: msg.requestId,
+            agentId: msg.agentId,
+            agent: null,
+            direction,
+            projection,
+            epoch: "",
+            reset: false,
+            staleCursor: false,
+            gap: false,
+            window: { minSeq: 0, maxSeq: 0, nextSeq: 0 },
+            startCursor: null,
+            endCursor: null,
+            hasOlder: false,
+            hasNewer: false,
+            entries: [],
+            error: error instanceof Error ? error.message : String(error),
+          },
         },
-      });
+        source,
+      );
     }
   }
 

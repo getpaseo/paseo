@@ -4,6 +4,22 @@ import type { AgentStreamEvent } from "./agent/agent-sdk-types.js";
 import { SessionInboundMessageSchema, serializeAgentStreamEvent } from "./messages.js";
 
 describe("serializeAgentStreamEvent", () => {
+  test("preserves daemon turn identity on lifecycle events", () => {
+    expect(
+      serializeAgentStreamEvent({
+        type: "turn_canceled",
+        provider: "codex",
+        turnId: "turn-accepted-1",
+        reason: "interrupted",
+      }),
+    ).toEqual({
+      type: "turn_canceled",
+      provider: "codex",
+      turnId: "turn-accepted-1",
+      reason: "interrupted",
+    });
+  });
+
   test("accepts create_agent_request env records", () => {
     const parsed = SessionInboundMessageSchema.parse({
       type: "create_agent_request",

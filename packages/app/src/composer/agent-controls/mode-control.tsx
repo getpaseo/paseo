@@ -1,38 +1,15 @@
-import {
-  useCallback,
-  useMemo,
-  useRef,
-  useState,
-  type ComponentType,
-  type ReactElement,
-} from "react";
+import { useCallback, useMemo, useRef, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
-import {
-  Bot,
-  Shield,
-  ShieldAlert,
-  ShieldCheck,
-  ShieldEllipsis,
-  ShieldOff,
-  ShieldPlus,
-  ShieldQuestionMark,
-} from "lucide-react-native";
 import { type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
-import { useSessionStore } from "@/stores/session-store";
-import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
-import { mergeProviderPreferences, useFormPreferences } from "@/hooks/use-form-preferences";
-import { resolveProviderDefinition } from "@/utils/provider-definitions";
-import { useToast } from "@/contexts/toast-context";
-import { toErrorMessage } from "@/utils/error-messages";
-import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
-import { formatAgentModeLabel, getAgentControlHintKey } from "@/composer/agent-controls/utils";
+import { formatAgentModeLabel } from "@/agent-controls/labels";
+import { getAgentControlHintKey } from "@/composer/agent-controls/utils";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
@@ -40,25 +17,16 @@ import { resolveNextAgentModeId } from "@/composer/agent-controls/mode";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { useComposerControlLayout } from "@/composer/agent-controls/layout-context";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
+import { useSessionStore } from "@/stores/session-store";
+import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import { mergeProviderPreferences, useFormPreferences } from "@/hooks/use-form-preferences";
+import { resolveProviderDefinition } from "@/utils/provider-definitions";
+import { useToast } from "@/contexts/toast-context";
+import { toErrorMessage } from "@/utils/error-messages";
+import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
 import type { AgentMode } from "@getpaseo/protocol/agent-types";
-import { getModeVisuals, type AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
-
-interface ModeIconProps {
-  size?: number;
-  color?: string;
-}
-
-const MODE_ICONS: Record<string, ComponentType<ModeIconProps>> = {
-  Bot,
-  Shield,
-  ShieldCheck,
-  ShieldAlert,
-  ShieldEllipsis,
-  ShieldOff,
-  ShieldPlus,
-  ShieldQuestionMark,
-};
-
+import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
+import { getAgentModeIcon, getAgentModeOptionIcon } from "@/agent-controls/icons";
 interface ModeComboboxOptionProps {
   option: ComboboxOption;
   selected: boolean;
@@ -78,8 +46,7 @@ function ModeComboboxOption({
   providerDefinitions,
   iconColor,
 }: ModeComboboxOptionProps) {
-  const visuals = getModeVisuals(provider, option.id, providerDefinitions);
-  const IconComponent = visuals?.icon ? MODE_ICONS[visuals.icon] : undefined;
+  const IconComponent = getAgentModeOptionIcon(provider, option.id, providerDefinitions);
   const leadingSlot = useMemo(
     () => (IconComponent ? <IconComponent size={16} color={iconColor} /> : null),
     [IconComponent, iconColor],
@@ -134,10 +101,7 @@ export function AgentModeControl({
     return modeOptions.find((m) => m.id === selectedModeId) ?? modeOptions[0];
   }, [modeOptions, selectedModeId]);
 
-  const visuals = selectedMode
-    ? getModeVisuals(provider, selectedMode.id, providerDefinitions)
-    : undefined;
-  const Icon = visuals?.icon ? (MODE_ICONS[visuals.icon] ?? Bot) : Bot;
+  const Icon = getAgentModeIcon(provider, selectedMode?.id ?? "", providerDefinitions);
   const iconColor = theme.colors.foregroundMuted;
   const selectedModeLabel = selectedMode ? formatAgentModeLabel(selectedMode) : "";
 
@@ -316,9 +280,7 @@ export function useLiveAgentModeControl(
         mergeProviderPreferences({
           preferences: current,
           provider: slice.provider,
-          updates: {
-            mode: modeId || undefined,
-          },
+          updates: { mode: modeId || undefined },
         }),
       ).catch((error) => {
         console.warn("[AgentModeControl] persist mode preference failed", error);

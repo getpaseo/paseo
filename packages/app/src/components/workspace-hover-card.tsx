@@ -34,7 +34,6 @@ import { useBottomSheetModalInternal } from "@gorhom/bottom-sheet";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { PrHint } from "@/git/use-pr-status-query";
 import { openExternalUrl } from "@/utils/open-external-url";
-import { shortenPath } from "@/utils/shorten-path";
 import { copyToClipboard } from "@/utils/copy-to-clipboard";
 import { PrBadge } from "@/components/sidebar-workspace-list";
 import { useHoverSafeZone } from "@/hooks/use-hover-safe-zone";
@@ -214,7 +213,6 @@ function WorkspaceHoverCardContent({
   contentRef: React.RefObject<View | null>;
 }): ReactElement | null {
   const { t } = useTranslation();
-  const cwdDisplay = shortenPath(workspace.workspaceDirectory);
   const bottomSheetInternal = useBottomSheetModalInternal(true);
   const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
   const [contentSize, setContentSize] = useState<{ width: number; height: number } | null>(null);
@@ -297,11 +295,11 @@ function WorkspaceHoverCardContent({
               testID="hover-card-workspace-branch"
             />
           ) : null}
-          {cwdDisplay ? (
+          {workspace.workspaceDirectoryLabel ? (
             <CopyableInfoRow
               icon={ThemedFolder}
-              value={cwdDisplay}
-              copyValue={workspace.workspaceDirectory ?? ""}
+              value={workspace.workspaceDirectoryLabel}
+              copyValue={workspace.workspaceDirectory}
               copyLabel={t("workspace.hoverCard.copyPath")}
               testID="hover-card-workspace-cwd"
             />
