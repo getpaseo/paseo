@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { describe, expect, test, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
-const { stopCliDaemonAndVerify, waitForProcessExit } = require("./smoke-packaged-desktop-app.js");
+const { stopCliDaemonAndVerify, waitForProcessExit } = require("../e2e/packaged-app-smoke.js");
 
 describe("packaged desktop daemon cleanup", () => {
   test("fails when the CLI fallback cannot stop the isolated daemon", async () => {
