@@ -55,6 +55,9 @@ const PersistedWorkspaceCleanupReceiptSchema = z.object({
     .optional()
     .transform((value) => value ?? null),
   worktreeIncarnationId: z.string().uuid().nullable().optional(),
+  // COMPAT(cleanupQuarantineMarker): added in v0.2.6; receipts without it can
+  // still quarantine an authenticated original path, but cannot claim an existing quarantine.
+  quarantineMarker: z.string().uuid().nullable().optional(),
   createdAt: z.string(),
   lastAttemptAt: z.string().nullable(),
   attemptCount: z.number().int().nonnegative(),
@@ -124,7 +127,7 @@ export type PersistedWorkspaceCleanupReceipt = z.infer<
 export type PersistedWorkspaceRecord = z.infer<typeof PersistedWorkspaceRecordSchema>;
 
 export function workspaceCleanupReceiptToken(receipt: PersistedWorkspaceCleanupReceipt): string {
-  return `${resolve(receipt.backingPath)}\0${receipt.worktreeIncarnationId ?? "legacy"}\0${receipt.workspaceId}\0${receipt.createdAt}`;
+  return `${resolve(receipt.backingPath)}\0${receipt.worktreeIncarnationId ?? "legacy"}\0${receipt.quarantineMarker ?? "unmarked"}\0${receipt.workspaceId}\0${receipt.createdAt}`;
 }
 
 export interface WorkspaceMutation {

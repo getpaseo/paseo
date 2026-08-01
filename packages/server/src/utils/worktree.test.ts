@@ -3,6 +3,7 @@ import {
   createWorktree as createWorktreePrimitive,
   deriveWorktreeProjectHash,
   deletePaseoWorktree,
+  getPaseoWorktreeCleanupMarkerPath,
   isPaseoOwnedWorktreeCwd,
   mapWorkspaceCwdToWorktree,
   slugify,
@@ -191,6 +192,12 @@ describe("paseo worktree manager", () => {
     await expect(isPaseoOwnedWorktreeCwd(projectHashDir, { paseoHome })).resolves.toMatchObject({
       allowed: false,
     });
+  });
+
+  it("rejects malformed cleanup quarantine markers", () => {
+    expect(() => getPaseoWorktreeCleanupMarkerPath(repoDir, "../../outside")).toThrow(
+      "Invalid cleanup quarantine marker",
+    );
   });
 
   it("refuses to delete a worktree whose durable marker is no longer readable", async () => {

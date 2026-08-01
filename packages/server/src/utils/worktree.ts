@@ -1,10 +1,10 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { existsSync, mkdirSync, realpathSync, rmSync, statSync } from "fs";
-import { copyFile, rename, rm, stat } from "fs/promises";
+import { copyFile, lstat, rename, rm, stat, writeFile } from "fs/promises";
 import { join, basename, dirname, isAbsolute, resolve, sep } from "path";
 import net from "node:net";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import stripAnsi from "strip-ansi";
 import {
   buildStringCommandShellInvocation,
@@ -46,6 +46,8 @@ const execFileAsync = promisify(execFile);
 const READ_ONLY_GIT_ENV = {
   GIT_OPTIONAL_LOCKS: "0",
 } as const;
+const WORKTREE_CLEANUP_MARKER_PREFIX = ".paseo-cleanup-marker-";
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export interface WorktreeConfig {
   branchName: string;
@@ -1090,6 +1092,7 @@ export interface DeletePaseoWorktreeOptions {
   paseoHome?: string;
   worktreesBaseRoot?: string;
   expectedWorktreeIncarnationId?: string | null;
+  expectedQuarantineMarker?: string | null;
   signal?: AbortSignal;
 }
 
@@ -1098,6 +1101,7 @@ export class WorktreeCleanupRelocatedError extends Error {
     readonly remainingPath: string,
     readonly worktreeIncarnationId: string,
     cause: unknown,
+    readonly quarantineMarker?: string,
   ) {
     super(`Worktree cleanup remains at ${remainingPath}`, { cause });
     this.name = "WorktreeCleanupRelocatedError";
@@ -1113,6 +1117,7 @@ export async function deletePaseoWorktree({
   paseoHome,
   worktreesBaseRoot,
   expectedWorktreeIncarnationId,
+  expectedQuarantineMarker,
   signal,
 }: DeletePaseoWorktreeOptions): Promise<void> {
   signal?.throwIfAborted();
@@ -1144,8 +1149,17 @@ export async function deletePaseoWorktree({
     throw new Error("Refusing to delete non-Paseo worktree");
   }
 
-  const { initialIdentity, requestedQuarantine, existingQuarantine, worktreeIncarnationId } =
-    await resolveWorktreeCleanupTarget(resolvedWorktree, expectedWorktreeIncarnationId);
+  const {
+    initialIdentity,
+    requestedQuarantine,
+    existingQuarantine,
+    worktreeIncarnationId,
+    quarantineMarker,
+  } = await resolveWorktreeCleanupTarget(
+    resolvedWorktree,
+    expectedWorktreeIncarnationId,
+    expectedQuarantineMarker,
+  );
   if (!existingQuarantine && !requestedQuarantine && initialIdentity !== null) {
     for (const teardownCwd of teardownCwds ?? [resolvedWorktree]) {
       await runWorktreeTeardownCommands({
@@ -1163,6 +1177,8 @@ export async function deletePaseoWorktree({
       directoryPath: resolvedWorktree,
       expectedIdentity: initialIdentity,
       worktreeIncarnationId,
+      quarantineMarker,
+      requestedQuarantine,
     }));
   await removeQuarantinedWorktree({ cwd, quarantined, signal });
 }
@@ -1172,11 +1188,13 @@ interface WorktreeCleanupTarget {
   requestedQuarantine: boolean;
   existingQuarantine: QuarantinedDirectory | null;
   worktreeIncarnationId: string | null;
+  quarantineMarker: string;
 }
 
 async function resolveWorktreeCleanupTarget(
   resolvedWorktree: string,
   expectedWorktreeIncarnationId: string | null | undefined,
+  expectedQuarantineMarker: string | null | undefined,
 ): Promise<WorktreeCleanupTarget> {
   const initialIdentity = await readDirectoryIdentity(resolvedWorktree);
   const requestedQuarantine = Boolean(
@@ -1187,19 +1205,13 @@ async function resolveWorktreeCleanupTarget(
     !requestedQuarantine && initialIdentity !== null
       ? readPaseoWorktreeIncarnationId(resolvedWorktree)
       : null;
-  let quarantineCandidate: QuarantinedDirectory | null = null;
-  if (requestedQuarantine && initialIdentity !== null && expectedWorktreeIncarnationId) {
-    quarantineCandidate = {
-      path: resolvedWorktree,
-      identity: initialIdentity,
-      worktreeIncarnationId: expectedWorktreeIncarnationId,
-    };
-  } else if (expectedWorktreeIncarnationId) {
-    quarantineCandidate = await readExistingCleanupQuarantine(
-      resolvedWorktree,
-      expectedWorktreeIncarnationId,
-    );
-  }
+  const quarantineCandidate = await resolveCleanupQuarantineCandidate({
+    resolvedWorktree,
+    initialIdentity,
+    requestedQuarantine,
+    expectedWorktreeIncarnationId,
+    expectedQuarantineMarker,
+  });
   const existingQuarantine =
     quarantineCandidate &&
     (requestedQuarantine || currentIncarnationId !== expectedWorktreeIncarnationId)
@@ -1212,6 +1224,8 @@ async function resolveWorktreeCleanupTarget(
         initialIdentity,
         expectedWorktreeIncarnationId,
       );
+  const quarantineMarker =
+    existingQuarantine?.quarantineMarker ?? expectedQuarantineMarker ?? randomUUID();
   if (
     !existingQuarantine &&
     initialIdentity !== null &&
@@ -1226,6 +1240,37 @@ async function resolveWorktreeCleanupTarget(
     requestedQuarantine,
     existingQuarantine,
     worktreeIncarnationId,
+    quarantineMarker,
+  };
+}
+
+async function resolveCleanupQuarantineCandidate(input: {
+  resolvedWorktree: string;
+  initialIdentity: string | null;
+  requestedQuarantine: boolean;
+  expectedWorktreeIncarnationId: string | null | undefined;
+  expectedQuarantineMarker: string | null | undefined;
+}): Promise<QuarantinedDirectory | null> {
+  if (!input.expectedWorktreeIncarnationId) return null;
+  if (!input.requestedQuarantine) {
+    return readExistingCleanupQuarantine(
+      input.resolvedWorktree,
+      input.expectedWorktreeIncarnationId,
+      input.expectedQuarantineMarker,
+    );
+  }
+  if (input.initialIdentity === null) return null;
+  if (
+    !input.expectedQuarantineMarker ||
+    !(await hasPaseoWorktreeCleanupMarker(input.resolvedWorktree, input.expectedQuarantineMarker))
+  ) {
+    throw new Error(`Cleanup quarantine marker changed for ${input.resolvedWorktree}`);
+  }
+  return {
+    path: input.resolvedWorktree,
+    identity: input.initialIdentity,
+    worktreeIncarnationId: input.expectedWorktreeIncarnationId,
+    quarantineMarker: input.expectedQuarantineMarker,
   };
 }
 
@@ -1282,6 +1327,7 @@ async function removeQuarantinedWorktree(input: {
       await removeDirectoryWithRetries(
         input.quarantined.path,
         input.quarantined.identity,
+        input.quarantined.quarantineMarker,
         input.signal,
       );
     }
@@ -1291,6 +1337,7 @@ async function removeQuarantinedWorktree(input: {
         input.quarantined.path,
         input.quarantined.worktreeIncarnationId,
         error,
+        input.quarantined.quarantineMarker,
       );
     }
     throw error;
@@ -1301,18 +1348,26 @@ interface QuarantinedDirectory {
   path: string;
   identity: string;
   worktreeIncarnationId: string;
+  quarantineMarker: string;
 }
 
 async function quarantineDirectory(input: {
   directoryPath: string;
   expectedIdentity: string | null;
   worktreeIncarnationId: string | null;
+  quarantineMarker: string;
+  requestedQuarantine: boolean;
 }): Promise<QuarantinedDirectory | null> {
   const identity = await readDirectoryIdentity(input.directoryPath);
   if (identity === null) {
     if (input.expectedIdentity === null) return null;
     if (input.worktreeIncarnationId === null) return null;
-    return readExistingCleanupQuarantine(input.directoryPath, input.worktreeIncarnationId);
+    if (input.requestedQuarantine) return null;
+    return readExistingCleanupQuarantine(
+      input.directoryPath,
+      input.worktreeIncarnationId,
+      input.quarantineMarker,
+    );
   }
   if (identity !== input.expectedIdentity) {
     throw new Error(`Cleanup path identity changed for ${input.directoryPath}`);
@@ -1327,15 +1382,25 @@ async function quarantineDirectory(input: {
   if ((await readDirectoryIdentity(quarantinePath)) !== null) {
     throw new Error(`Cleanup quarantine path already exists: ${quarantinePath}`);
   }
+  await ensurePaseoWorktreeCleanupMarker(input.directoryPath, input.quarantineMarker);
+  if ((await readDirectoryIdentity(input.directoryPath)) !== identity) {
+    throw new Error(`Cleanup path identity changed for ${input.directoryPath}`);
+  }
   await rename(input.directoryPath, quarantinePath);
   if ((await readDirectoryIdentity(quarantinePath)) !== identity) {
     throw new WorktreeCleanupRelocatedError(
       quarantinePath,
       input.worktreeIncarnationId,
       new Error(`Cleanup path identity changed for ${input.directoryPath}`),
+      input.quarantineMarker,
     );
   }
-  return { path: quarantinePath, identity, worktreeIncarnationId: input.worktreeIncarnationId };
+  return {
+    path: quarantinePath,
+    identity,
+    worktreeIncarnationId: input.worktreeIncarnationId,
+    quarantineMarker: input.quarantineMarker,
+  };
 }
 
 export function getPaseoWorktreeCleanupQuarantinePath(
@@ -1359,24 +1424,78 @@ export function isPaseoWorktreeCleanupQuarantinePath(
 async function readExistingCleanupQuarantine(
   directoryPath: string,
   worktreeIncarnationId: string,
+  quarantineMarker: string | null | undefined,
 ): Promise<QuarantinedDirectory | null> {
-  const quarantinePath = getPaseoWorktreeCleanupQuarantinePath(
-    directoryPath,
-    worktreeIncarnationId,
-  );
+  const quarantinePath = isPaseoWorktreeCleanupQuarantinePath(directoryPath, worktreeIncarnationId)
+    ? directoryPath
+    : getPaseoWorktreeCleanupQuarantinePath(directoryPath, worktreeIncarnationId);
   const identity = await readDirectoryIdentity(quarantinePath);
   if (identity === null) return null;
-  return { path: quarantinePath, identity, worktreeIncarnationId };
+  if (
+    !quarantineMarker ||
+    !(await hasPaseoWorktreeCleanupMarker(quarantinePath, quarantineMarker))
+  ) {
+    throw new Error(`Cleanup quarantine marker changed for ${quarantinePath}`);
+  }
+  return { path: quarantinePath, identity, worktreeIncarnationId, quarantineMarker };
 }
 
 export async function hasPaseoWorktreeCleanupQuarantine(
   directoryPath: string,
   worktreeIncarnationId: string,
+  quarantineMarker?: string | null,
 ): Promise<boolean> {
   try {
-    return (await readExistingCleanupQuarantine(directoryPath, worktreeIncarnationId)) !== null;
+    return (
+      (await readExistingCleanupQuarantine(
+        directoryPath,
+        worktreeIncarnationId,
+        quarantineMarker,
+      )) !== null
+    );
   } catch {
     return false;
+  }
+}
+
+export function getPaseoWorktreeCleanupMarkerPath(
+  directoryPath: string,
+  quarantineMarker: string,
+): string {
+  if (!UUID_PATTERN.test(quarantineMarker)) {
+    throw new Error("Invalid cleanup quarantine marker");
+  }
+  return join(directoryPath, `${WORKTREE_CLEANUP_MARKER_PREFIX}${quarantineMarker}`);
+}
+
+async function hasPaseoWorktreeCleanupMarker(
+  directoryPath: string,
+  quarantineMarker: string,
+): Promise<boolean> {
+  try {
+    const stats = await lstat(getPaseoWorktreeCleanupMarkerPath(directoryPath, quarantineMarker));
+    return stats.isFile();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+async function ensurePaseoWorktreeCleanupMarker(
+  directoryPath: string,
+  quarantineMarker: string,
+): Promise<void> {
+  const markerPath = getPaseoWorktreeCleanupMarkerPath(directoryPath, quarantineMarker);
+  try {
+    await writeFile(markerPath, "", { flag: "wx", mode: 0o600 });
+  } catch (error) {
+    if (
+      (error as NodeJS.ErrnoException).code === "EEXIST" &&
+      (await hasPaseoWorktreeCleanupMarker(directoryPath, quarantineMarker))
+    ) {
+      return;
+    }
+    throw error;
   }
 }
 
@@ -1438,8 +1557,12 @@ async function pathExists(path: string): Promise<boolean> {
 async function removeDirectoryWithRetries(
   path: string,
   expectedDirectoryIdentity: string,
+  quarantineMarker: string,
   signal?: AbortSignal,
 ): Promise<void> {
+  if (!(await hasPaseoWorktreeCleanupMarker(path, quarantineMarker))) {
+    throw new Error(`Cleanup quarantine marker changed for ${path}`);
+  }
   if (!(await assertDirectoryIdentity(path, expectedDirectoryIdentity))) {
     return;
   }
@@ -1452,6 +1575,9 @@ async function removeDirectoryWithRetries(
       await waitForRemovalRetry(delay, signal);
     }
     try {
+      if (!(await hasPaseoWorktreeCleanupMarker(path, quarantineMarker))) {
+        throw new Error(`Cleanup quarantine marker changed for ${path}`);
+      }
       if (!(await assertDirectoryIdentity(path, expectedDirectoryIdentity))) {
         return;
       }

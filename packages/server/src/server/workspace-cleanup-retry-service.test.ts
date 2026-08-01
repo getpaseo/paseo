@@ -19,6 +19,7 @@ function cleanupWorkspace(input: {
   backingPath?: string;
   directoryIdentity?: string | null;
   worktreeIncarnationId?: string;
+  quarantineMarker?: string;
   createdAt?: string;
   lastAttemptAt?: string | null;
   attemptCount?: number;
@@ -43,6 +44,7 @@ function cleanupWorkspace(input: {
       paseoWorktreesRoot: "/tmp/paseo/worktrees/repo",
       directoryIdentity: input.directoryIdentity ?? "1:42",
       worktreeIncarnationId: input.worktreeIncarnationId,
+      quarantineMarker: input.quarantineMarker,
       createdAt,
       lastAttemptAt: input.lastAttemptAt ?? null,
       attemptCount: input.attemptCount ?? 0,
@@ -132,6 +134,36 @@ describe("WorkspaceCleanupRetryService", () => {
     expect(retryWorkspaceCleanup.mock.calls.map(([target]) => target.workspaceId)).toEqual([
       "due",
       "never-attempted",
+    ]);
+  });
+
+  test("does not combine cleanup receipts with different quarantine markers", async () => {
+    const retryWorkspaceCleanup = vi.fn(async () => undefined);
+    const incarnationId = "00000000-0000-4000-8000-000000000042";
+    const service = new WorkspaceCleanupRetryService({
+      workspaceRegistry: {
+        list: async () => [
+          cleanupWorkspace({
+            workspaceId: "first",
+            worktreeIncarnationId: incarnationId,
+            quarantineMarker: "00000000-0000-4000-8000-000000000043",
+          }),
+          cleanupWorkspace({
+            workspaceId: "second",
+            worktreeIncarnationId: incarnationId,
+            quarantineMarker: "00000000-0000-4000-8000-000000000044",
+          }),
+        ],
+      },
+      retryWorkspaceCleanup,
+      logger: createTestLogger(),
+    });
+
+    await service.runNow();
+
+    expect(retryWorkspaceCleanup.mock.calls.map(([target]) => target.workspaceId)).toEqual([
+      "first",
+      "second",
     ]);
   });
 

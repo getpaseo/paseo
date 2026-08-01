@@ -1397,6 +1397,7 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       const relocated = cleanupError as {
         worktreeIncarnationId: string;
         remainingPath: string;
+        quarantineMarker: string;
       };
       expect(existsSync(relocated.remainingPath)).toBe(true);
 
@@ -1406,6 +1407,7 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
         teardownCwds: [],
         paseoHome,
         expectedWorktreeIncarnationId: relocated.worktreeIncarnationId,
+        expectedQuarantineMarker: relocated.quarantineMarker,
       });
 
       expect(readFileSync(join(created.worktreePath, "replacement.txt"), "utf8")).toBe("keep");
@@ -1474,7 +1476,7 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
           paseoHome,
           expectedWorktreeIncarnationId: incarnationId!,
         }),
-      ).rejects.toThrow("Cleanup quarantine path already exists");
+      ).rejects.toThrow("Cleanup quarantine marker changed");
 
       expect(existsSync(created.worktreePath)).toBe(true);
       expect(readFileSync(join(quarantinePath, "keep.txt"), "utf8")).toBe("keep");

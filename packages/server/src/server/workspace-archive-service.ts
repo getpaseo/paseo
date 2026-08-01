@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 
 import type { Logger } from "pino";
@@ -451,12 +452,17 @@ async function maybeRemoveDirectory(
     cleanupWorkspaceIds.length === 0
       ? undefined
       : await readExpectedWorktreeIncarnationId(dependencies, cleanupWorkspaceIds);
+  const receiptQuarantineMarker =
+    cleanupWorkspaceIds.length === 0
+      ? undefined
+      : await readExpectedQuarantineMarker(dependencies, cleanupWorkspaceIds);
   const initialIdentity = await validateCleanupWorktreeIncarnation(
     dependencies,
     request,
     cleanupWorkspaceIds,
     backing.path,
     receiptIncarnationId,
+    receiptQuarantineMarker,
   );
   if (initialIdentity.status === "changed" || initialIdentity.status === "released") {
     return false;
@@ -510,6 +516,7 @@ async function maybeRemoveDirectory(
     archivedWorkspaceIds,
     cleanupWorkspaceIds,
     expectedIncarnationId,
+    receiptQuarantineMarker,
   );
 }
 
@@ -520,6 +527,7 @@ async function removeDirectoryUnderLock(
   archivedWorkspaceIds: string[],
   cleanupWorkspaceIds: string[],
   expectedWorktreeIncarnationId: string | null | undefined,
+  expectedQuarantineMarker: string | null | undefined,
 ): Promise<boolean> {
   const remainingActive = await dependencies.listActiveWorkspaces();
   if (
@@ -540,6 +548,7 @@ async function removeDirectoryUnderLock(
     cleanupWorkspaceIds,
     backing.path,
     expectedWorktreeIncarnationId,
+    expectedQuarantineMarker,
   );
   if (identityAtRemoval.status === "changed" || identityAtRemoval.status === "released") {
     return false;
@@ -554,6 +563,7 @@ async function removeDirectoryUnderLock(
       paseoHome: dependencies.paseoHome,
       worktreesBaseRoot: dependencies.paseoWorktreesBaseRoot,
       expectedWorktreeIncarnationId,
+      expectedQuarantineMarker,
       signal: request.signal,
     });
     dependencies.github.invalidate({ cwd: backing.path });
@@ -565,6 +575,7 @@ async function removeDirectoryUnderLock(
         ...receipt,
         backingPath: error.remainingPath,
         worktreeIncarnationId: error.worktreeIncarnationId,
+        quarantineMarker: error.quarantineMarker ?? receipt.quarantineMarker,
       }));
     }
     await recordCleanupFailure(dependencies, cleanupWorkspaceIds, errorMessage(error));
@@ -588,6 +599,7 @@ async function createCleanupReceipts(
 
   const directoryIdentity = await readDirectoryIdentity(backing.path);
   const worktreeIncarnationId = ensurePaseoWorktreeIncarnationId(backing.path);
+  const quarantineMarker = randomUUID();
   const createdAt = nowIso(dependencies);
   for (const workspaceId of target.workspaceIds) {
     const teardownCwds = uniqueFilesystemPaths(
@@ -603,6 +615,7 @@ async function createCleanupReceipts(
       paseoWorktreesRoot: backing.paseoWorktreesRoot ?? dirname(resolve(backing.path)),
       directoryIdentity,
       worktreeIncarnationId,
+      quarantineMarker,
       createdAt,
       lastAttemptAt: null,
       attemptCount: 0,
@@ -637,6 +650,7 @@ async function validateCleanupWorktreeIncarnation(
   cleanupWorkspaceIds: string[],
   directoryPath: string,
   expectedWorktreeIncarnationId: string | null | undefined,
+  expectedQuarantineMarker: string | null | undefined,
 ): Promise<CleanupWorktreeIncarnationValidation> {
   if (
     cleanupWorkspaceIds.length > 0 &&
@@ -646,6 +660,29 @@ async function validateCleanupWorktreeIncarnation(
   }
   if (expectedWorktreeIncarnationId) {
     if (isPaseoWorktreeCleanupQuarantinePath(directoryPath, expectedWorktreeIncarnationId)) {
+      const currentIdentity = await readDirectoryIdentity(directoryPath);
+      if (currentIdentity === null) {
+        return { status: "missing" };
+      }
+      if (
+        !expectedQuarantineMarker ||
+        !(await hasPaseoWorktreeCleanupQuarantine(
+          directoryPath,
+          expectedWorktreeIncarnationId,
+          expectedQuarantineMarker,
+        ))
+      ) {
+        await recordCleanupFailure(
+          dependencies,
+          cleanupWorkspaceIds,
+          `Cleanup quarantine marker changed for ${directoryPath}`,
+        );
+        dependencies.sessionLogger?.warn(
+          { targetPath: directoryPath, requestId: request.requestId },
+          "Refusing to remove an unauthenticated quarantine during archive cleanup",
+        );
+        return { status: "changed" };
+      }
       return {
         status: "quarantined",
         path: directoryPath,
@@ -671,7 +708,11 @@ async function validateCleanupWorktreeIncarnation(
   if (
     expectedWorktreeIncarnationId &&
     currentIncarnationId !== expectedWorktreeIncarnationId &&
-    (await hasPaseoWorktreeCleanupQuarantine(directoryPath, expectedWorktreeIncarnationId))
+    (await hasPaseoWorktreeCleanupQuarantine(
+      directoryPath,
+      expectedWorktreeIncarnationId,
+      expectedQuarantineMarker,
+    ))
   ) {
     return {
       status: "quarantined",
@@ -739,7 +780,7 @@ async function matchingCleanupWorkspaceIds(
 
 function cleanupReceiptKey(receipt: PersistedWorkspaceCleanupReceipt): string {
   return receipt.worktreeIncarnationId
-    ? `incarnation\0${receipt.worktreeIncarnationId}`
+    ? `incarnation\0${receipt.worktreeIncarnationId}\0${receipt.quarantineMarker ?? "unmarked"}`
     : `legacy\0${resolve(receipt.backingPath)}\0${receipt.directoryIdentity ?? "missing"}`;
 }
 
@@ -764,6 +805,19 @@ async function readExpectedWorktreeIncarnationId(
     const workspace = await dependencies.workspaceRegistry.get(workspaceId);
     if (workspace?.cleanupPending) {
       return workspace.cleanupPending.worktreeIncarnationId ?? null;
+    }
+  }
+  return null;
+}
+
+async function readExpectedQuarantineMarker(
+  dependencies: ArchiveDependencies,
+  workspaceIds: string[],
+): Promise<string | null> {
+  for (const workspaceId of workspaceIds) {
+    const workspace = await dependencies.workspaceRegistry.get(workspaceId);
+    if (workspace?.cleanupPending) {
+      return workspace.cleanupPending.quarantineMarker ?? null;
     }
   }
   return null;

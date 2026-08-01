@@ -20,6 +20,7 @@ import { createRealpathAwarePathMatcher } from "../utils/path.js";
 import {
   createWorktree,
   deletePaseoWorktree,
+  getPaseoWorktreeCleanupMarkerPath,
   getPaseoWorktreeCleanupQuarantinePath,
   hasPaseoWorktreeCleanupQuarantine,
   type WorktreeConfig,
@@ -56,6 +57,16 @@ function createLogger(): Logger {
   vi.spyOn(logger, "warn").mockImplementation(() => undefined);
   vi.spyOn(logger, "error").mockImplementation(() => undefined);
   return logger;
+}
+
+function createPostQuarantineAbortSignal(): AbortSignal {
+  const abortController = new AbortController();
+  let cancellationChecks = 0;
+  vi.spyOn(abortController.signal, "throwIfAborted").mockImplementation(() => {
+    cancellationChecks += 1;
+    if (cancellationChecks === 3) throw new Error("stop after quarantine");
+  });
+  return abortController.signal;
 }
 
 function createGitHubServiceStub(): ForgeService {
@@ -1029,14 +1040,23 @@ describe("archiveByScope", () => {
     });
     const receipt = (await deps.workspaceRegistry.get(workspaceId))?.cleanupPending;
     expect(receipt?.worktreeIncarnationId).toEqual(expect.any(String));
+    expect(receipt?.quarantineMarker).toEqual(expect.any(String));
 
     const quarantinePath = getPaseoWorktreeCleanupQuarantinePath(
       worktree.worktreePath,
       receipt!.worktreeIncarnationId!,
     );
+    writeFileSync(
+      getPaseoWorktreeCleanupMarkerPath(worktree.worktreePath, receipt!.quarantineMarker!),
+      "",
+    );
     renameSync(worktree.worktreePath, quarantinePath);
     await expect(
-      hasPaseoWorktreeCleanupQuarantine(worktree.worktreePath, receipt!.worktreeIncarnationId!),
+      hasPaseoWorktreeCleanupQuarantine(
+        worktree.worktreePath,
+        receipt!.worktreeIncarnationId!,
+        receipt!.quarantineMarker,
+      ),
     ).resolves.toBe(true);
     mkdirSync(worktree.worktreePath, { recursive: true });
     writeFileSync(path.join(worktree.worktreePath, "replacement.txt"), "keep");
@@ -1068,6 +1088,110 @@ describe("archiveByScope", () => {
     });
     expect(readFileSync(path.join(worktree.worktreePath, "replacement.txt"), "utf8")).toBe("keep");
     expect(existsSync(quarantinePath)).toBe(false);
+  });
+
+  test("keeps cleanup pending when a quarantine path is replaced", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "cleanup-quarantine-swap");
+    const workspaceId = "ws-cleanup-quarantine-swap";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [{ workspaceId, cwd: worktree.worktreePath, kind: "worktree" }],
+    });
+    let genuineQuarantinePath = "";
+    deps.deleteWorktree = vi.fn(async (options) => {
+      try {
+        await deletePaseoWorktree({ ...options, signal: createPostQuarantineAbortSignal() });
+      } catch (error) {
+        if (!(error instanceof WorktreeCleanupRelocatedError)) throw error;
+        genuineQuarantinePath = `${error.remainingPath}.moved`;
+        renameSync(error.remainingPath, genuineQuarantinePath);
+        mkdirSync(error.remainingPath);
+        writeFileSync(path.join(error.remainingPath, "replacement.txt"), "keep");
+        throw error;
+      }
+    });
+
+    const first = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-cleanup-quarantine-swap-first",
+    });
+    const receipt = (await deps.workspaceRegistry.get(workspaceId))?.cleanupPending;
+    expect(first.cleanupPending).toBe(true);
+    expect(receipt?.backingPath).toContain(".paseo-cleanup-cleanup-quarantine-swap-");
+    expect(existsSync(genuineQuarantinePath)).toBe(true);
+    expect(readFileSync(path.join(receipt!.backingPath, "replacement.txt"), "utf8")).toBe("keep");
+
+    deps.deleteWorktree = vi.fn(deletePaseoWorktree);
+    const retried = await archiveByScope(deps, {
+      scope: { kind: "cleanup", workspaceId, receipt: receipt! },
+      requestId: "req-cleanup-quarantine-swap-retry",
+    });
+
+    const remainingReceipt = (await deps.workspaceRegistry.get(workspaceId))?.cleanupPending;
+    expect(retried).toMatchObject({ removedDirectory: false, cleanupPending: true });
+    expect(deps.deleteWorktree).not.toHaveBeenCalled();
+    expect(readFileSync(path.join(receipt!.backingPath, "replacement.txt"), "utf8")).toBe("keep");
+    expect(existsSync(genuineQuarantinePath)).toBe(true);
+    expect(remainingReceipt?.lastError).toContain("quarantine marker changed");
+  });
+
+  test("adds a quarantine marker when retrying a markerless receipt", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "cleanup-legacy-marker");
+    const workspaceId = "ws-cleanup-legacy-marker";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [{ workspaceId, cwd: worktree.worktreePath, kind: "worktree" }],
+    });
+    deps.deleteWorktree = vi.fn(async () => {
+      throw new Error("leave cleanup pending");
+    });
+    await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-cleanup-legacy-marker-first",
+    });
+    await deps.workspaceRegistry.update(workspaceId, (workspace) => ({
+      ...workspace,
+      cleanupPending: workspace.cleanupPending
+        ? { ...workspace.cleanupPending, quarantineMarker: undefined }
+        : null,
+    }));
+    const markerlessReceipt = (await deps.workspaceRegistry.get(workspaceId))?.cleanupPending;
+    deps.deleteWorktree = vi.fn((options) =>
+      deletePaseoWorktree({ ...options, signal: createPostQuarantineAbortSignal() }),
+    );
+
+    const interrupted = await archiveByScope(deps, {
+      scope: { kind: "cleanup", workspaceId, receipt: markerlessReceipt! },
+      requestId: "req-cleanup-legacy-marker-interrupted",
+    });
+    const relocatedReceipt = (await deps.workspaceRegistry.get(workspaceId))?.cleanupPending;
+
+    expect(interrupted).toMatchObject({ removedDirectory: false, cleanupPending: true });
+    expect(relocatedReceipt).toMatchObject({
+      backingPath: expect.stringContaining(".paseo-cleanup-cleanup-legacy-marker-"),
+      quarantineMarker: expect.any(String),
+    });
+    expect(
+      existsSync(
+        getPaseoWorktreeCleanupMarkerPath(
+          relocatedReceipt!.backingPath,
+          relocatedReceipt!.quarantineMarker!,
+        ),
+      ),
+    ).toBe(true);
+
+    deps.deleteWorktree = vi.fn(deletePaseoWorktree);
+    const retried = await archiveByScope(deps, {
+      scope: { kind: "cleanup", workspaceId, receipt: relocatedReceipt! },
+      requestId: "req-cleanup-legacy-marker-retry",
+    });
+
+    expect(retried).toMatchObject({ removedDirectory: true, cleanupPending: false });
+    expect((await deps.workspaceRegistry.get(workspaceId))?.cleanupPending).toBeNull();
   });
 
   test("does not retry cleanup selected before the workspace was restored", async () => {

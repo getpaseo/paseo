@@ -105,7 +105,7 @@ function selectCleanupRetryTargets(
       continue;
     }
     const key = receipt.worktreeIncarnationId
-      ? `incarnation\0${receipt.worktreeIncarnationId}`
+      ? `incarnation\0${receipt.worktreeIncarnationId}\0${receipt.quarantineMarker ?? "unmarked"}`
       : `legacy\0${receipt.backingPath}\0${receipt.directoryIdentity ?? "missing"}`;
     const existing = byDirectory.get(key);
     if (
