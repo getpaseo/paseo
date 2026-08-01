@@ -2,7 +2,7 @@ import os from "node:os";
 import http from "node:http";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
@@ -21,6 +21,7 @@ import { findFreePort } from "./service-proxy.js";
 import { defaultWorkspaceLifecycleCoordinator } from "./workspace-lifecycle-coordinator.js";
 import { readPaseoWorktreeIncarnationId } from "../utils/worktree-metadata.js";
 import { getPaseoWorktreesRoot } from "../utils/worktree.js";
+import { createRealpathAwarePathMatcher } from "../utils/path.js";
 import { Session } from "./session.js";
 import { FileBackedProjectRegistry, FileBackedWorkspaceRegistry } from "./workspace-registry.js";
 import type {
@@ -853,24 +854,46 @@ describe("paseo daemon bootstrap", () => {
     let firstDaemon: Awaited<ReturnType<typeof createTestPaseoDaemon>> | null = null;
     let secondDaemon: Awaited<ReturnType<typeof createTestPaseoDaemon>> | null = null;
     let firstMcpClient: Awaited<ReturnType<typeof createBootstrapAgentMcpClient>> | null = null;
+    let secondDaemonClient: DaemonClient | null = null;
     const staticDirs: string[] = [];
 
     try {
       firstDaemon = await createTestPaseoDaemon({ paseoHomeRoot, cleanup: false });
       staticDirs.push(firstDaemon.staticDir);
       firstMcpClient = await createBootstrapAgentMcpClient(firstDaemon.port);
+      const originalWorkspaceResult = await firstMcpClient.callTool({
+        name: "create_workspace",
+        args: {
+          isolation: "worktree",
+          path: repoDir,
+          worktreeSlug: "same-slug-retry",
+          branchName: "same-slug-retry",
+          baseBranch: "main",
+        },
+      });
+      const originalWorkspace = originalWorkspaceResult.structuredContent as
+        | { cwd?: unknown; workspaceId?: unknown }
+        | undefined;
+      if (
+        typeof originalWorkspace?.cwd !== "string" ||
+        typeof originalWorkspace.workspaceId !== "string"
+      ) {
+        throw new Error("Expected original MCP worktree workspace identifiers");
+      }
+      const worktreeCwd = originalWorkspace.cwd;
+      const originalWorkspaceId = originalWorkspace.workspaceId;
+      expect(listGitWorktreePaths(repoDir)).toContain(worktreeCwd);
 
       const failed = await firstMcpClient.callTool({
         name: "create_agent",
         args: {
           cwd: repoDir,
           worktreeName: "same-slug-retry",
-          branchName: "same-slug-retry",
-          baseBranch: "main",
+          refName: "same-slug-retry",
           title: "Failed same-slug create",
           provider: "codex/gpt-5.4",
           mode: "invalid-test-mode",
-          initialPrompt: "This create should fail after making its worktree",
+          initialPrompt: "This create should fail after reusing its worktree",
           background: true,
         },
       });
@@ -878,7 +901,10 @@ describe("paseo daemon bootstrap", () => {
       await expect(firstDaemon.daemon.agentStorage.listPendingAgentCreations()).resolves.toEqual(
         [],
       );
-      expect(listGitWorktreePaths(repoDir)).toHaveLength(1);
+      expect(await activeWorkspaceIdsAtWorktreeRoot(firstDaemon.paseoHome, worktreeCwd)).toEqual([
+        originalWorkspaceId,
+      ]);
+      expect(listGitWorktreePaths(repoDir)).toContain(worktreeCwd);
 
       const retried = await firstMcpClient.callTool({
         name: "create_agent",
@@ -909,10 +935,14 @@ describe("paseo daemon bootstrap", () => {
         cwd: string;
         workspaceId: string;
       };
-      expect(path.basename(cwd)).toBe("same-slug-retry");
+      expect(cwd).toBe(worktreeCwd);
+      expect(workspaceId).toBe(originalWorkspaceId);
       await expect(firstDaemon.daemon.agentStorage.listPendingAgentCreations()).resolves.toEqual(
         [],
       );
+      expect(await activeWorkspaceIdsAtWorktreeRoot(firstDaemon.paseoHome, worktreeCwd)).toEqual([
+        originalWorkspaceId,
+      ]);
 
       await firstMcpClient.close();
       firstMcpClient = null;
@@ -921,6 +951,11 @@ describe("paseo daemon bootstrap", () => {
 
       secondDaemon = await createTestPaseoDaemon({ paseoHomeRoot, cleanup: false });
       staticDirs.push(secondDaemon.staticDir);
+      secondDaemonClient = new DaemonClient({
+        url: `ws://127.0.0.1:${secondDaemon.port}/ws`,
+        appVersion: "0.1.82",
+      });
+      await secondDaemonClient.connect();
 
       const recoveredAgent = await secondDaemon.daemon.agentStorage.get(agentId);
       expect(recoveredAgent).toMatchObject({ id: agentId, workspaceId });
@@ -930,7 +965,21 @@ describe("paseo daemon bootstrap", () => {
       );
       await expect(stat(cwd)).resolves.toMatchObject({});
       expect(listGitWorktreePaths(repoDir)).toContain(cwd);
+      expect(await activeWorkspaceIdsAtWorktreeRoot(secondDaemon.paseoHome, worktreeCwd)).toEqual([
+        workspaceId,
+      ]);
+
+      await expect(secondDaemonClient.archiveWorkspace(workspaceId)).resolves.toMatchObject({
+        workspaceId,
+        error: null,
+      });
+      await expect(stat(worktreeCwd)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(listGitWorktreePaths(repoDir)).not.toContain(worktreeCwd);
+      expect(await activeWorkspaceIdsAtWorktreeRoot(secondDaemon.paseoHome, worktreeCwd)).toEqual(
+        [],
+      );
     } finally {
+      await secondDaemonClient?.close().catch(() => undefined);
       await firstMcpClient?.close().catch(() => undefined);
       await secondDaemon?.close().catch(() => undefined);
       await firstDaemon?.close().catch(() => undefined);
@@ -1559,6 +1608,28 @@ function listGitWorktreePaths(repoDir: string): string[] {
     .toString()
     .split("\n")
     .flatMap((line) => (line.startsWith("worktree ") ? [line.slice("worktree ".length)] : []));
+}
+
+async function activeWorkspaceIdsAtWorktreeRoot(
+  paseoHome: string,
+  worktreeRoot: string,
+): Promise<string[]> {
+  const records = JSON.parse(
+    await readFile(path.join(paseoHome, "projects", "workspaces.json"), "utf8"),
+  ) as Array<{
+    workspaceId: string;
+    cwd: string;
+    worktreeRoot?: string | null;
+    archivedAt?: string | null;
+  }>;
+  const matchesWorktreeRoot = createRealpathAwarePathMatcher(worktreeRoot);
+  return records
+    .filter(
+      (workspace) =>
+        !workspace.archivedAt && matchesWorktreeRoot(workspace.worktreeRoot ?? workspace.cwd),
+    )
+    .map((workspace) => workspace.workspaceId)
+    .sort();
 }
 
 async function beginDaemonShutdownWithAgentClosing(): Promise<BlockedDaemonShutdown> {

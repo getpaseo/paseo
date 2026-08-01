@@ -145,6 +145,44 @@ test("re-opening an active workspace by exact path returns the same record witho
   expect(await workspaceRegistry.list()).toHaveLength(1);
 });
 
+test("concurrent managed worktree provisioning preserves one canonical active owner", async () => {
+  const repoRoot = path.join(tmpDir, "repo");
+  const worktreeRoot = path.join(tmpDir, "worktrees", "same-slug");
+  gitRoots.add(repoRoot);
+  gitRoots.add(worktreeRoot);
+  gitBranches.set(worktreeRoot, "same-slug");
+  const project = await projectRegistry.getOrCreateActiveByRoot({
+    rootPath: repoRoot,
+    kind: "git",
+    displayName: "repo",
+    timestamp: "2026-08-01T00:00:00.000Z",
+  });
+  const input = {
+    sourceCwd: repoRoot,
+    projectId: project.projectId,
+    repoRoot,
+    cwd: worktreeRoot,
+    worktreeRoot,
+    branch: "same-slug",
+    baseBranch: "main",
+    title: "Canonical owner",
+    expectsInitialAgent: false,
+  };
+
+  const [created, reused] = await Promise.all([
+    provisioning.createWorkspaceForWorktree(input),
+    provisioning.createWorkspaceForWorktree({ ...input, title: "Duplicate attempt" }),
+  ]);
+
+  expect(reused.workspaceId).toBe(created.workspaceId);
+  expect(reused.title).toBe("Canonical owner");
+  expect(
+    (await workspaceRegistry.list()).filter(
+      (workspace) => !workspace.archivedAt && workspace.worktreeRoot === worktreeRoot,
+    ),
+  ).toEqual([created]);
+});
+
 test("re-opening Windows-equivalent workspace cwd spellings reuses the active and archived record", async () => {
   const cwd = path.join(tmpDir, "workspace");
   const created = await provisioning.findOrCreateWorkspaceForDirectory(cwd);
