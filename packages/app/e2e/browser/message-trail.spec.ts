@@ -1,11 +1,11 @@
-import { expect, test } from "./fixtures";
-import { trackPromptJumpRequests } from "./helpers/agent-timeline-gate";
+import { expect, test } from "../support/fixtures";
+import { trackPromptJumpRequests } from "../support/helpers/agent-timeline-gate";
 import {
   expectTimelinePromptNotMounted,
   expectTimelinePromptVisible,
   openAgentTimeline,
   seedLongMockAgentTimeline,
-} from "./helpers/timeline-pagination";
+} from "../support/helpers/timeline-pagination";
 
 test.describe("desktop message trail", () => {
   test("indexes unloaded prompts and jumps with one bounded replacement page", async ({ page }) => {
