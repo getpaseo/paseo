@@ -16,6 +16,7 @@ import {
   type ActiveWorkspaceRef,
   type ArchiveDependencies,
   type ArchiveResult,
+  requireActiveWorkspaceForArchive,
   resolveWorkspaceIdAtPath,
 } from "./workspace-archive-service.js";
 import { WorkspaceLifecycleCoordinator } from "./workspace-lifecycle-coordinator.js";
@@ -205,6 +206,36 @@ function assertArchiveResult(
 }
 
 describe("archiveByScope", () => {
+  test("treats persisted cleanup as a retryable workspace archive target", async () => {
+    const persisted = createPersistedWorkspaceRecord({
+      workspaceId: "ws-cleanup-retry-target",
+      projectId: "project-cleanup-retry-target",
+      cwd: "/tmp/cleanup-retry-target",
+      kind: "worktree",
+      displayName: "Cleanup retry target",
+      createdAt: "2026-07-31T00:00:00.000Z",
+      updatedAt: "2026-07-31T00:00:00.000Z",
+      archivedAt: "2026-07-31T00:01:00.000Z",
+      cleanupPending: {
+        directoryPath: "/tmp/cleanup-retry-target",
+        teardownCwd: "/tmp/cleanup-retry-target",
+        mainRepoRoot: "/tmp/repo",
+        paseoWorktreesRoot: "/tmp/worktrees",
+        worktreeIncarnationId: "incarnation-retry",
+      },
+    });
+
+    await expect(
+      requireActiveWorkspaceForArchive(
+        {
+          listActiveWorkspaces: async () => [],
+          workspaceRegistry: { get: async () => persisted },
+        },
+        persisted.workspaceId,
+      ),
+    ).resolves.toBe(persisted);
+  });
+
   test("waits for registered setup before archiving its workspace", async () => {
     const { tempDir } = createGitRepo();
     const workspaceId = "ws-setup-race";
@@ -285,11 +316,17 @@ describe("archiveByScope", () => {
     });
     await archiveStarted;
     expect(deps.archiveWorkspaceRecord).toHaveBeenCalledTimes(1);
+    expect(() => lifecycleCoordinator.reserveWorkspaceOwnershipMutation(workspaceId)).toThrow(
+      `Workspace ${workspaceId} is being archived`,
+    );
 
     releaseArchive?.();
     const [firstResult, secondResult] = await Promise.all([first, second]);
     expect(secondResult).toEqual(firstResult);
     expect(deps.archiveWorkspaceRecord).toHaveBeenCalledTimes(1);
+    const postArchiveReservation =
+      lifecycleCoordinator.reserveWorkspaceOwnershipMutation(workspaceId);
+    postArchiveReservation.release();
   });
 
   test("archives sibling workspace records separately while serializing shared cleanup", async () => {
@@ -760,14 +797,16 @@ describe("archiveByScope", () => {
       return originalArchiveWorkspaceRecord(workspaceId);
     };
 
-    const result = await archiveByScope(deps, {
-      scope: { kind: "worktree", targetPath: worktree.worktreePath },
-      requestId: "req-partial-failure",
-    });
+    await expect(
+      archiveByScope(deps, {
+        scope: { kind: "worktree", targetPath: worktree.worktreePath },
+        requestId: "req-partial-failure",
+      }),
+    ).rejects.toThrow("Failed to archive one or more workspaces");
 
-    expect(result.archivedWorkspaceIds).toEqual([workspaceB]);
-    expect(result.archivedWorkspaceIds).not.toContain(workspaceA);
-    expect(result.removedDirectory).toBe(false);
+    expect((await deps.listActiveWorkspaces()).map((workspace) => workspace.workspaceId)).toEqual([
+      workspaceA,
+    ]);
     expect(existsSync(worktree.worktreePath)).toBe(true);
   });
 
@@ -831,11 +870,12 @@ describe("archiveByScope", () => {
       await registry.archive(id, new Date().toISOString());
     };
 
-    const firstResult = await archiveByScope(deps, {
-      scope: { kind: "workspace", workspaceId },
-      requestId: "req-cleanup-retry-first",
-    });
-    expect(firstResult.removedDirectory).toBe(false);
+    await expect(
+      archiveByScope(deps, {
+        scope: { kind: "workspace", workspaceId },
+        requestId: "req-cleanup-retry-first",
+      }),
+    ).rejects.toThrow("Worktree teardown command failed");
     expect((await registry.get(workspaceId))?.archivedAt).not.toBeNull();
     expect((await registry.get(workspaceId))?.cleanupPending).toMatchObject({
       directoryPath: worktree.worktreePath,
@@ -852,7 +892,7 @@ describe("archiveByScope", () => {
     expect((await registry.get(workspaceId))?.cleanupPending).toBeNull();
   });
 
-  test("a persisted cleanup retry cannot remove a newer worktree incarnation at the same path", async () => {
+  test("a replacement incarnation archives before an old cleanup retry without cross-blocking", async () => {
     const { tempDir, repoDir } = createGitRepo();
     writeFileSync(
       path.join(repoDir, "paseo.json"),
@@ -907,25 +947,64 @@ describe("archiveByScope", () => {
       await registry.archive(id, new Date().toISOString());
     };
 
-    const firstResult = await archiveByScope(deps, {
-      scope: { kind: "workspace", workspaceId },
-      requestId: "req-reused-incarnation-first",
-    });
-    expect(firstResult.cleanupPendingWorkspaceIds).toEqual([workspaceId]);
+    await expect(
+      archiveByScope(deps, {
+        scope: { kind: "workspace", workspaceId },
+        requestId: "req-reused-incarnation-first",
+      }),
+    ).rejects.toThrow("Worktree teardown command failed");
+    expect((await registry.get(workspaceId))?.cleanupPending).not.toBeNull();
 
     execFileSync("git", ["worktree", "remove", firstWorktree.worktreePath, "--force"], {
       cwd: repoDir,
       stdio: "pipe",
     });
     execFileSync("git", ["branch", "-D", slug], { cwd: repoDir, stdio: "pipe" });
+    writeFileSync(path.join(repoDir, "paseo.json"), JSON.stringify({ worktree: { teardown: [] } }));
+    execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "repair teardown"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
     const replacementWorktree = await createPaseoOwnedWorktree(repoDir, paseoHome, slug);
+    const replacementWorkspaceId = "ws-reused-incarnation-b";
+    await registry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId: replacementWorkspaceId,
+        projectId: "project-reused-incarnation",
+        cwd: replacementWorktree.worktreePath,
+        kind: "worktree",
+        displayName: "Replacement incarnation",
+        worktreeRoot: replacementWorktree.worktreePath,
+        isPaseoOwnedWorktree: true,
+        mainRepoRoot: repoDir,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    deps.activeWorkspaces.push({
+      workspaceId: replacementWorkspaceId,
+      cwd: replacementWorktree.worktreePath,
+      kind: "worktree",
+      worktreeRoot: replacementWorktree.worktreePath,
+      isPaseoOwnedWorktree: true,
+      mainRepoRoot: repoDir,
+    });
+
+    const replacementResult = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId: replacementWorkspaceId },
+      requestId: "req-reused-incarnation-replacement",
+    });
+    expect(replacementResult.removedDirectory).toBe(true);
+    expect(existsSync(replacementWorktree.worktreePath)).toBe(false);
+    expect((await registry.get(replacementWorkspaceId))?.cleanupPending).toBeNull();
+    expect((await registry.get(workspaceId))?.cleanupPending).not.toBeNull();
 
     const retryResult = await archiveByScope(deps, {
       scope: { kind: "workspace", workspaceId },
       requestId: "req-reused-incarnation-retry",
     });
     expect(retryResult.removedDirectory).toBe(false);
-    expect(existsSync(replacementWorktree.worktreePath)).toBe(true);
     expect((await registry.get(workspaceId))?.cleanupPending).toBeNull();
   });
 
@@ -943,13 +1022,13 @@ describe("archiveByScope", () => {
     });
     deps.archiveWorkspaceRecord = vi.fn(deps.archiveWorkspaceRecord);
 
-    const result = await archiveByScope(deps, {
-      scope: { kind: "workspace", workspaceId },
-      requestId: "req-strict-teardown",
-    });
+    await expect(
+      archiveByScope(deps, {
+        scope: { kind: "workspace", workspaceId },
+        requestId: "req-strict-teardown",
+      }),
+    ).rejects.toThrow("Failed to archive one or more workspaces");
 
-    expect(result.archivedWorkspaceIds).toEqual([]);
-    expect(result.removedDirectory).toBe(false);
     expect(deps.archiveWorkspaceRecord).not.toHaveBeenCalled();
     expect(existsSync(worktree.worktreePath)).toBe(true);
   });

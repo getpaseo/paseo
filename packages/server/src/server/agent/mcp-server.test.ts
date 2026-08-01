@@ -56,6 +56,7 @@ import type { BrowserToolsBroker, BrowserToolsExecuteInput } from "../browser-to
 import type { BrowserToolsResponsePayload } from "../browser-tools/errors.js";
 import { readPaseoWorktreeMetadata } from "../../utils/worktree-metadata.js";
 import { createWorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";
+import { WorkspaceLifecycleCoordinator } from "../workspace-lifecycle-coordinator.js";
 
 const REPO_CWD = resolvePath("/tmp/repo");
 const TARGET_CWD = resolvePath("/tmp/target");
@@ -271,6 +272,57 @@ function createTerminalManagerStub(overrides: Partial<TerminalManager> = {}): Te
     ...overrides,
   } as unknown as TerminalManager;
 }
+
+it("holds workspace ownership while an MCP terminal is being attached", async () => {
+  const { agentManager, agentStorage } = createTestDeps();
+  const lifecycleCoordinator = new WorkspaceLifecycleCoordinator();
+  let releaseTerminal: (() => void) | undefined;
+  let markTerminalStarted: (() => void) | undefined;
+  const terminalStarted = new Promise<void>((resolve) => {
+    markTerminalStarted = resolve;
+  });
+  const terminalGate = new Promise<void>((resolve) => {
+    releaseTerminal = resolve;
+  });
+  const createTerminal = vi.fn(async ({ cwd }: { cwd: string }) => {
+    markTerminalStarted?.();
+    await terminalGate;
+    return { id: "terminal-owned", name: "Owned terminal", cwd };
+  });
+  const server = await createAgentMcpServer({
+    agentManager,
+    agentStorage,
+    terminalManager: createTerminalManagerStub({
+      createTerminal: createTerminal as unknown as TerminalManager["createTerminal"],
+    }),
+    providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+    ensureWorkspaceForCreate: async () => "ws-terminal-owned",
+    lifecycleCoordinator,
+    logger: createTestLogger(),
+  });
+
+  const terminalTask = registeredTool(server, "create_terminal").handler({
+    cwd: "/tmp/terminal-owned",
+    name: "Owned terminal",
+  });
+  await terminalStarted;
+  const archiveReservation = lifecycleCoordinator.reserveWorkspaceArchive(["ws-terminal-owned"]);
+  let ownershipReleased = false;
+  const waitTask = lifecycleCoordinator
+    .waitForWorkspaceOwnershipMutations(["ws-terminal-owned"])
+    .then(() => {
+      ownershipReleased = true;
+      return undefined;
+    });
+  await Promise.resolve();
+  expect(ownershipReleased).toBe(false);
+
+  releaseTerminal?.();
+  await terminalTask;
+  await waitTask;
+  expect(ownershipReleased).toBe(true);
+  archiveReservation.release();
+});
 
 type ProviderSnapshotManagerStub = ReturnType<typeof createProviderSnapshotManagerStub>;
 

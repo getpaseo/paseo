@@ -90,6 +90,10 @@ import type {
   PaseoToolExecutionContext,
   PaseoToolResult,
 } from "./types.js";
+import {
+  defaultWorkspaceLifecycleCoordinator,
+  type WorkspaceLifecycleCoordinator,
+} from "../../workspace-lifecycle-coordinator.js";
 
 export interface PaseoToolHostDependencies {
   agentManager: AgentManager;
@@ -127,6 +131,7 @@ export interface PaseoToolHostDependencies {
   browserToolsBroker?: BrowserToolsBroker | null;
   paseoHome?: string;
   worktreesRoot?: string;
+  lifecycleCoordinator?: WorkspaceLifecycleCoordinator;
   /**
    * ID of the agent that is using this tool catalog.
    * Used for cwd/mode inheritance when agents spawn child agents.
@@ -1365,7 +1370,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         throw new Error("Active workspace lister is required to archive workspaces");
       }
       const workspace = await requireActiveWorkspaceForArchive(
-        { listActiveWorkspaces: options.listActiveWorkspaces },
+        {
+          listActiveWorkspaces: options.listActiveWorkspaces,
+          workspaceRegistry: options.workspaceRegistry,
+        },
         workspaceId,
       );
       const result = await archiveByScope(
@@ -1437,6 +1445,8 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           worktreesRoot: options.worktreesRoot,
           terminalManager,
           providerSnapshotManager,
+          lifecycleCoordinator:
+            options.lifecycleCoordinator ?? defaultWorkspaceLifecycleCoordinator,
           createPaseoWorktree: options.createPaseoWorktree,
           ...(options.ensureWorkspaceForCreate
             ? { ensureWorkspaceForCreate: options.ensureWorkspaceForCreate }
@@ -2372,12 +2382,19 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
 
       const resolvedCwd = resolveScopedCwd(cwd, { required: true });
       const workspaceId = await resolveTerminalWorkspaceId(resolvedCwd);
-
-      const terminal = await terminalManager.createTerminal({
-        cwd: resolvedCwd,
-        workspaceId,
-        ...(name?.trim() ? { name: name.trim() } : {}),
-      });
+      const ownershipReservation = (
+        options.lifecycleCoordinator ?? defaultWorkspaceLifecycleCoordinator
+      ).reserveWorkspaceOwnershipMutation(workspaceId);
+      let terminal;
+      try {
+        terminal = await terminalManager.createTerminal({
+          cwd: resolvedCwd,
+          workspaceId,
+          ...(name?.trim() ? { name: name.trim() } : {}),
+        });
+      } finally {
+        ownershipReservation.release();
+      }
 
       return {
         content: [],
@@ -3173,6 +3190,7 @@ function archiveWorktreeDependencies(
     emitWorkspaceUpdatesForWorkspaceIds: options.emitWorkspaceUpdatesForWorkspaceIds,
     markWorkspaceArchiving: options.markWorkspaceArchiving,
     clearWorkspaceArchiving: options.clearWorkspaceArchiving,
+    lifecycleCoordinator: options.lifecycleCoordinator ?? defaultWorkspaceLifecycleCoordinator,
     killTerminalsForWorkspace: (workspaceId: string) =>
       killTerminalsForWorkspace(
         {

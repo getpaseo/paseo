@@ -231,6 +231,7 @@ import {
   cacheWorkspaceSetupSnapshot,
 } from "./worktree-session.js";
 import { archiveByScope, type ActiveWorkspaceRef } from "./workspace-archive-service.js";
+import { defaultWorkspaceLifecycleCoordinator } from "./workspace-lifecycle-coordinator.js";
 import { WorktreeRequestError, toWorktreeWireError } from "./worktree-errors.js";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import {
@@ -3041,6 +3042,7 @@ export class Session {
           paseoHome: this.paseoHome,
           worktreesRoot: this.worktreesRoot,
           providerSnapshotManager: this.providerSnapshotManager,
+          lifecycleCoordinator: defaultWorkspaceLifecycleCoordinator,
         },
         {
           kind: "session",
@@ -5738,7 +5740,10 @@ export class Session {
   ): Promise<void> {
     try {
       const existing = await requireActiveWorkspaceForArchive(
-        { listActiveWorkspaces: () => this.listActiveWorkspaceRefs() },
+        {
+          listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
+          workspaceRegistry: this.workspaceRegistry,
+        },
         request.workspaceId,
       );
 
@@ -5770,7 +5775,10 @@ export class Session {
       );
 
       const archivedWorkspace = await this.workspaceRegistry.get(request.workspaceId);
-      const archivedAt = archivedWorkspace?.archivedAt ?? new Date().toISOString();
+      if (!archivedWorkspace?.archivedAt) {
+        throw new Error(`Workspace archive did not persist: ${request.workspaceId}`);
+      }
+      const archivedAt = archivedWorkspace.archivedAt;
       this.emit({
         type: "archive_workspace_response",
         payload: {

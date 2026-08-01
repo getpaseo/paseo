@@ -26,6 +26,10 @@ import {
   emitLiveTimelineItemIfAgentKnown,
 } from "../timeline-append.js";
 import { resolveCreateAgentIntent } from "./intent.js";
+import {
+  defaultWorkspaceLifecycleCoordinator,
+  type WorkspaceLifecycleCoordinator,
+} from "../../workspace-lifecycle-coordinator.js";
 
 export interface CreateAgentSessionWorktreeResult {
   sessionConfig: AgentSessionConfig;
@@ -46,6 +50,7 @@ export interface CreateAgentCommandDependencies {
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
   // Mints a fresh directory workspace for a cwd and returns its id.
   ensureWorkspaceForCreate?: EnsureWorkspaceForCreate;
+  lifecycleCoordinator?: WorkspaceLifecycleCoordinator;
 }
 
 export type EnsureWorkspaceForCreate = (
@@ -180,6 +185,17 @@ export async function createAgentCommand(
       : await resolveMcpCreateAgent(dependencies, input);
 
   let snapshot: ManagedAgent;
+  const lifecycleCoordinator =
+    dependencies.lifecycleCoordinator ?? defaultWorkspaceLifecycleCoordinator;
+  let ownershipReservation;
+  try {
+    ownershipReservation = lifecycleCoordinator.reserveWorkspaceOwnershipMutation(
+      requireResolvedWorkspaceId(resolved.createOptions.workspaceId),
+    );
+  } catch (error) {
+    resolved.setupContinuation?.releaseWithoutStarting();
+    throw error;
+  }
   try {
     snapshot = await dependencies.agentManager.createAgent(
       resolved.config,
@@ -189,6 +205,8 @@ export async function createAgentCommand(
   } catch (error) {
     resolved.setupContinuation?.releaseWithoutStarting();
     throw error;
+  } finally {
+    ownershipReservation.release();
   }
 
   resolved.setupContinuation?.startAfterAgentCreate({
@@ -327,55 +345,60 @@ async function resolveMcpCreateAgent(
       worktree: input.worktree,
       initialPrompt: input.initialPrompt ?? "",
     });
-  if (createdWorktree) input.onWorktreeCreated?.(createdWorktree);
+  try {
+    if (createdWorktree) input.onWorktreeCreated?.(createdWorktree);
 
-  const intent = await resolveCreateAgentIntent({
-    explicitWorkspaceId: setupContinuation ? createdWorkspaceId : input.workspaceId,
-    caller: parentAgent
-      ? { id: parentAgent.id, cwd: parentAgent.cwd, workspaceId: parentAgent.workspaceId }
-      : null,
-    labels: input.labels,
-    childAgentDefaultLabels: input.callerContext?.childAgentDefaultLabels,
-    legacyDetached: input.detached ?? false,
-    resolveWorkspace: async (workspaceId) => ({ workspaceId, cwd: resolvedCwd }),
-    createWorkspace: async () => ({
-      workspaceId: requireResolvedWorkspaceId(
-        await ensureWorkspaceForMcpCreate(dependencies, resolvedCwd, input.initialPrompt ?? ""),
-      ),
-      cwd: resolvedCwd,
-    }),
-  });
-  const resolvedCreateConfig = await resolveMcpProviderCreateConfig({
-    dependencies,
-    input,
-    provider,
-    resolvedCwd,
-    parentAgent,
-  });
-
-  const trimmedPrompt = input.initialPrompt?.trim() ?? "";
-  return {
-    config: buildMcpSessionConfig({
+    const intent = await resolveCreateAgentIntent({
+      explicitWorkspaceId: setupContinuation ? createdWorkspaceId : input.workspaceId,
+      caller: parentAgent
+        ? { id: parentAgent.id, cwd: parentAgent.cwd, workspaceId: parentAgent.workspaceId }
+        : null,
+      labels: input.labels,
+      childAgentDefaultLabels: input.callerContext?.childAgentDefaultLabels,
+      legacyDetached: input.detached ?? false,
+      resolveWorkspace: async (workspaceId) => ({ workspaceId, cwd: resolvedCwd }),
+      createWorkspace: async () => ({
+        workspaceId: requireResolvedWorkspaceId(
+          await ensureWorkspaceForMcpCreate(dependencies, resolvedCwd, input.initialPrompt ?? ""),
+        ),
+        cwd: resolvedCwd,
+      }),
+    });
+    const resolvedCreateConfig = await resolveMcpProviderCreateConfig({
+      dependencies,
       input,
-      resolvedProviderModel,
       provider,
-      resolvedCwd: intent.cwd,
-      trimmedPrompt,
-      resolvedMode: resolvedCreateConfig.modeId,
-      resolvedFeatures: resolvedCreateConfig.featureValues,
-    }),
-    createOptions: {
-      ...(Object.keys(intent.labels).length > 0 ? { labels: intent.labels } : {}),
-      workspaceId: intent.workspaceId,
-      owner: input.owner,
-      env: input.env,
-    },
-    prompt: trimmedPrompt ? trimmedPrompt : undefined,
-    setupContinuation,
-    createdWorktree,
-    background: input.background,
-    promptFailure: input.promptFailure ?? "log",
-  };
+      resolvedCwd,
+      parentAgent,
+    });
+
+    const trimmedPrompt = input.initialPrompt?.trim() ?? "";
+    return {
+      config: buildMcpSessionConfig({
+        input,
+        resolvedProviderModel,
+        provider,
+        resolvedCwd: intent.cwd,
+        trimmedPrompt,
+        resolvedMode: resolvedCreateConfig.modeId,
+        resolvedFeatures: resolvedCreateConfig.featureValues,
+      }),
+      createOptions: {
+        ...(Object.keys(intent.labels).length > 0 ? { labels: intent.labels } : {}),
+        workspaceId: intent.workspaceId,
+        owner: input.owner,
+        env: input.env,
+      },
+      prompt: trimmedPrompt ? trimmedPrompt : undefined,
+      setupContinuation,
+      createdWorktree,
+      background: input.background,
+      promptFailure: input.promptFailure ?? "log",
+    };
+  } catch (error) {
+    setupContinuation?.releaseWithoutStarting();
+    throw error;
+  }
 }
 
 function resolveMcpInitialCwd(

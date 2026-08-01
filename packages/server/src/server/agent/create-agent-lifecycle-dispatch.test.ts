@@ -1,7 +1,11 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 
 import type { AgentManagerEvent, AgentSubscriber } from "./agent-manager.js";
-import { registerAgentAutoArchive } from "./create-agent-lifecycle-dispatch.js";
+import { createTestLogger } from "../../test-utils/test-logger.js";
+import {
+  CreateAgentLifecycleDispatch,
+  registerAgentAutoArchive,
+} from "./create-agent-lifecycle-dispatch.js";
 
 class AgentLifecycleEvents {
   private readonly listeners = new Set<AgentSubscriber>();
@@ -43,5 +47,75 @@ test("auto-archive self-releases once and later cancellation waits harmlessly", 
   agents.completeTurn(agentId);
 
   expect(archiveCount).toBe(1);
+  expect(agents.listenerCount()).toBe(0);
+});
+
+test("auto-archive retries a later terminal event after a transient failure", async () => {
+  const agentId = "agent-auto-archive-retry";
+  const agents = new AgentLifecycleEvents();
+  const archive = vi
+    .fn<() => Promise<void>>()
+    .mockRejectedValueOnce(new Error("transient archive failure"))
+    .mockResolvedValueOnce(undefined);
+  const registration = registerAgentAutoArchive({
+    agentManager: agents,
+    agentId,
+    archive,
+  });
+
+  agents.completeTurn(agentId);
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(archive).toHaveBeenCalledTimes(1);
+  expect(agents.listenerCount()).toBe(1);
+
+  agents.completeTurn(agentId);
+  await registration.cancel();
+  expect(archive).toHaveBeenCalledTimes(2);
+  expect(agents.listenerCount()).toBe(0);
+});
+
+test("auto-archive cancellation observes an in-flight archive rejection", async () => {
+  const agentId = "agent-auto-archive-cancel-failure";
+  const agents = new AgentLifecycleEvents();
+  const failure = new Error("archive failed during cancellation");
+  const registration = registerAgentAutoArchive({
+    agentManager: agents,
+    agentId,
+    archive: async () => {
+      throw failure;
+    },
+  });
+
+  agents.completeTurn(agentId);
+  await expect(registration.cancel()).rejects.toBe(failure);
+  expect(agents.listenerCount()).toBe(0);
+});
+
+test("lifecycle dispatch does not permanently suppress an agent after archive failure", async () => {
+  const agentId = "agent-dispatch-auto-archive-retry";
+  const agents = new AgentLifecycleEvents();
+  const archiveAgentForClose = vi
+    .fn<(agentId: string) => Promise<void>>()
+    .mockRejectedValueOnce(new Error("transient close failure"))
+    .mockResolvedValueOnce(undefined);
+  const dependencies = {
+    agentManager: agents,
+    archiveAgentForClose,
+    logger: createTestLogger(),
+  } as unknown as ConstructorParameters<typeof CreateAgentLifecycleDispatch>[0];
+  const dispatch = new CreateAgentLifecycleDispatch(dependencies);
+  const registration = dispatch.registerAutoArchiveIfRequested({
+    autoArchive: true,
+    agentId,
+    createdWorktree: null,
+  });
+
+  agents.completeTurn(agentId);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  agents.completeTurn(agentId);
+  await registration.cancel();
+
+  expect(archiveAgentForClose).toHaveBeenCalledTimes(2);
   expect(agents.listenerCount()).toBe(0);
 });

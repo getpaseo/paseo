@@ -11,6 +11,7 @@ import { AgentStorage } from "../agent-storage.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
 import { createAgentCommand } from "./create.js";
 import type { ManagedAgent } from "../agent-manager.js";
+import { WorkspaceLifecycleCoordinator } from "../../workspace-lifecycle-coordinator.js";
 
 const logger = createTestLogger();
 
@@ -207,6 +208,129 @@ test("session create releases setup reservation when agent creation fails", asyn
 
   expect(releaseWithoutStarting).toHaveBeenCalledOnce();
   expect(startAfterAgentCreate).not.toHaveBeenCalled();
+});
+
+test.each(["worktree callback", "provider resolution"] as const)(
+  "MCP create releases a reserved setup continuation after %s fails",
+  async (failurePoint) => {
+    const releaseWithoutStarting = vi.fn();
+    const startAfterAgentCreate = vi.fn();
+    const createAgent = vi.fn();
+    const providerSnapshotManager = createProviderSnapshotManagerStub();
+    if (failurePoint === "provider resolution") {
+      providerSnapshotManager.resolveCreateConfig.mockRejectedValue(
+        new Error("provider resolution failed"),
+      );
+    }
+    const createdWorktree = {
+      worktree: { worktreePath: "/tmp/paseo-mcp-create/worktree" },
+      intent: {},
+      workspace: {
+        workspaceId: "ws-mcp-created",
+        cwd: "/tmp/paseo-mcp-create/worktree",
+      },
+      repoRoot: "/tmp/paseo-mcp-create",
+      created: true,
+      setupContinuation: {
+        kind: "agent" as const,
+        startAfterAgentCreate,
+        releaseWithoutStarting,
+      },
+    } as unknown as CreatePaseoWorktreeWorkflowResult;
+
+    await expect(
+      createAgentCommand(
+        {
+          agentManager: { createAgent } as unknown as AgentManager,
+          agentStorage: {} as AgentStorage,
+          logger,
+          providerSnapshotManager: providerSnapshotManager.manager,
+          createPaseoWorktree: vi.fn(async () => createdWorktree),
+        },
+        {
+          kind: "mcp",
+          provider: "opencode/test-model",
+          title: "MCP worktree child",
+          initialPrompt: "do the work",
+          background: true,
+          notifyOnFinish: false,
+          worktree: { worktreeName: "worktree", baseBranch: "main" },
+          ...(failurePoint === "worktree callback"
+            ? {
+                onWorktreeCreated: () => {
+                  throw new Error("worktree callback failed");
+                },
+              }
+            : {}),
+        },
+      ),
+    ).rejects.toThrow(failurePoint === "worktree callback" ? "callback" : "provider resolution");
+
+    expect(releaseWithoutStarting).toHaveBeenCalledOnce();
+    expect(startAfterAgentCreate).not.toHaveBeenCalled();
+    expect(createAgent).not.toHaveBeenCalled();
+  },
+);
+
+test("agent creation holds workspace ownership until the agent is attached", async () => {
+  const lifecycleCoordinator = new WorkspaceLifecycleCoordinator();
+  let releaseCreate: (() => void) | undefined;
+  let markCreateStarted: (() => void) | undefined;
+  const createStarted = new Promise<void>((resolve) => {
+    markCreateStarted = resolve;
+  });
+  const createGate = new Promise<void>((resolve) => {
+    releaseCreate = resolve;
+  });
+  const snapshot = {
+    id: "agent-owned",
+    provider: "codex",
+    cwd: "/tmp/paseo-create-owned",
+    workspaceId: "ws-owned",
+    runtimeInfo: null,
+  } as ManagedAgent;
+  const createTask = createAgentCommand(
+    {
+      agentManager: {
+        createAgent: vi.fn(async () => {
+          markCreateStarted?.();
+          await createGate;
+          return snapshot;
+        }),
+      } as unknown as AgentManager,
+      agentStorage: {} as AgentStorage,
+      logger,
+      providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+      lifecycleCoordinator,
+    },
+    {
+      kind: "session",
+      config: { provider: "codex", cwd: snapshot.cwd },
+      workspaceId: "ws-owned",
+      labels: {},
+      provisionalTitle: null,
+      firstAgentContext: {},
+      buildSessionConfig: async (config) => ({ sessionConfig: config }),
+    },
+  );
+
+  await createStarted;
+  const archiveReservation = lifecycleCoordinator.reserveWorkspaceArchive(["ws-owned"]);
+  let ownershipReleased = false;
+  const waitTask = lifecycleCoordinator
+    .waitForWorkspaceOwnershipMutations(["ws-owned"])
+    .then(() => {
+      ownershipReleased = true;
+      return undefined;
+    });
+  await Promise.resolve();
+  expect(ownershipReleased).toBe(false);
+
+  releaseCreate?.();
+  await createTask;
+  await waitTask;
+  expect(ownershipReleased).toBe(true);
+  archiveReservation.release();
 });
 
 test("session create applies the resolved mode from the provider create config", async () => {

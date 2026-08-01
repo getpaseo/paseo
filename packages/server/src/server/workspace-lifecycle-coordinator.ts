@@ -4,6 +4,8 @@ export class WorkspaceLifecycleCoordinator {
   private readonly archiveOperations = new Map<string, Promise<unknown>>();
   private readonly directoryOperations = new Map<string, Promise<unknown>>();
   private readonly worktreeMutationOperations = new Map<string, Promise<unknown>>();
+  private readonly ownershipMutationTasks = new Map<string, Set<Promise<void>>>();
+  private readonly archivingWorkspaceIds = new Map<string, number>();
 
   trackWorkspaceSetup(workspaceId: string, task: Promise<void>, directoryPath?: string): void {
     this.setupTasks.set(workspaceId, task);
@@ -53,6 +55,71 @@ export class WorkspaceLifecycleCoordinator {
     const tasks = Array.from(workspaceIds, (workspaceId) =>
       this.setupTasks.get(workspaceId),
     ).filter((task): task is Promise<void> => task !== undefined);
+    await Promise.allSettled(tasks);
+  }
+
+  reserveWorkspaceOwnershipMutation(workspaceId: string): WorkspaceOwnershipMutationReservation {
+    if ((this.archivingWorkspaceIds.get(workspaceId) ?? 0) > 0) {
+      throw new Error(`Workspace ${workspaceId} is being archived`);
+    }
+
+    let releaseReservation: (() => void) | null = null;
+    const reservationTask = new Promise<void>((resolve) => {
+      releaseReservation = resolve;
+    });
+    const tasks = this.ownershipMutationTasks.get(workspaceId) ?? new Set<Promise<void>>();
+    tasks.add(reservationTask);
+    this.ownershipMutationTasks.set(workspaceId, tasks);
+
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      releaseReservation?.();
+      tasks.delete(reservationTask);
+      if (tasks.size === 0) {
+        this.ownershipMutationTasks.delete(workspaceId);
+      }
+    };
+    return { release };
+  }
+
+  reserveWorkspaceArchive(workspaceIds: Iterable<string>): WorkspaceArchiveReservation {
+    const ownedWorkspaceIds = new Set<string>();
+    const add = (additionalWorkspaceIds: Iterable<string>) => {
+      for (const workspaceId of additionalWorkspaceIds) {
+        if (ownedWorkspaceIds.has(workspaceId)) continue;
+        this.archivingWorkspaceIds.set(
+          workspaceId,
+          (this.archivingWorkspaceIds.get(workspaceId) ?? 0) + 1,
+        );
+        ownedWorkspaceIds.add(workspaceId);
+      }
+    };
+    add(workspaceIds);
+
+    let released = false;
+    return {
+      add,
+      release: () => {
+        if (released) return;
+        released = true;
+        for (const workspaceId of ownedWorkspaceIds) {
+          const remainingReservations = (this.archivingWorkspaceIds.get(workspaceId) ?? 1) - 1;
+          if (remainingReservations === 0) {
+            this.archivingWorkspaceIds.delete(workspaceId);
+          } else {
+            this.archivingWorkspaceIds.set(workspaceId, remainingReservations);
+          }
+        }
+      },
+    };
+  }
+
+  async waitForWorkspaceOwnershipMutations(workspaceIds: Iterable<string>): Promise<void> {
+    const tasks = Array.from(workspaceIds).flatMap((workspaceId) =>
+      Array.from(this.ownershipMutationTasks.get(workspaceId) ?? []),
+    );
     await Promise.allSettled(tasks);
   }
 
@@ -111,6 +178,15 @@ export class WorkspaceLifecycleCoordinator {
 
 export interface WorkspaceSetupReservation {
   completeWith(task: Promise<void>): void;
+  release(): void;
+}
+
+export interface WorkspaceOwnershipMutationReservation {
+  release(): void;
+}
+
+export interface WorkspaceArchiveReservation {
+  add(workspaceIds: Iterable<string>): void;
   release(): void;
 }
 

@@ -5496,6 +5496,79 @@ test("archive_workspace_request hides non-destructive workspace records", async 
   expect(response?.payload.error).toBeNull();
 });
 
+test("archive_workspace_request never fabricates success when persistence fails", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests();
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-archive-persistence-failure",
+    projectId: "proj-archive-persistence-failure",
+    cwd: REPO_CWD,
+    kind: "directory",
+    displayName: "repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+
+  session.emit = (message) => {
+    if (isSessionOutboundMessage(message)) emitted.push(message);
+  };
+  session.workspaceRegistry.get = async () => workspace;
+  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.archive = async () => {
+    throw new Error("workspace persistence failed");
+  };
+
+  await session.handleMessage({
+    type: "archive_workspace_request",
+    workspaceId: workspace.workspaceId,
+    requestId: "req-archive-persistence-failure",
+  });
+
+  expect(workspace.archivedAt).toBeNull();
+  const response = emitted.find((message) => message.type === "archive_workspace_response") as
+    | { payload: Record<string, unknown> }
+    | undefined;
+  expect(response?.payload).toMatchObject({
+    archivedAt: null,
+    error: "Failed to archive one or more workspaces",
+  });
+});
+
+test("archive_workspace_request requires a persisted archived timestamp", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests();
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-archive-no-timestamp",
+    projectId: "proj-archive-no-timestamp",
+    cwd: REPO_CWD,
+    kind: "directory",
+    displayName: "repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+
+  session.emit = (message) => {
+    if (isSessionOutboundMessage(message)) emitted.push(message);
+  };
+  session.workspaceRegistry.get = async () => workspace;
+  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.archive = async () => {};
+
+  await session.handleMessage({
+    type: "archive_workspace_request",
+    workspaceId: workspace.workspaceId,
+    requestId: "req-archive-no-timestamp",
+  });
+
+  const response = emitted.find((message) => message.type === "archive_workspace_response") as
+    | { payload: Record<string, unknown> }
+    | undefined;
+  expect(response?.payload).toMatchObject({
+    archivedAt: null,
+    error: `Workspace archive did not persist: ${workspace.workspaceId}`,
+  });
+});
+
 test("archive_workspace_request archives a worktree-kind workspace and removes the directory on last reference", async () => {
   const tempDir = mkdtempSync(path.join(tmpdir(), "session-worktree-kind-archive-"));
   const repoDir = path.join(tempDir, "repo");

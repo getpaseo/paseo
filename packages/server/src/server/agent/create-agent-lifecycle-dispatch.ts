@@ -55,7 +55,7 @@ type AutoArchiveTarget =
   | { kind: "created-worktree"; result: CreatePaseoWorktreeWorkflowResult };
 
 export class CreateAgentLifecycleDispatch {
-  private readonly autoArchiveAgentIds = new Set<string>();
+  private readonly autoArchiveTasks = new Map<string, Promise<void>>();
 
   constructor(private readonly dependencies: CreateAgentLifecycleDispatchDependencies) {}
 
@@ -166,24 +166,33 @@ export class CreateAgentLifecycleDispatch {
   }
 
   private async autoArchiveAgentOnce(agentId: string, target: AutoArchiveTarget): Promise<void> {
-    if (this.autoArchiveAgentIds.has(agentId)) {
-      return;
-    }
-    this.autoArchiveAgentIds.add(agentId);
+    const existingTask = this.autoArchiveTasks.get(agentId);
+    if (existingTask) return existingTask;
 
+    const archiveTask = this.runAutoArchiveAgent(agentId, target);
+    this.autoArchiveTasks.set(agentId, archiveTask);
     try {
-      if (target.kind === "created-worktree") {
-        await this.archiveAutoCreatedWorktree({
-          agentId,
-          createdWorktree: target.result,
-        });
-        return;
-      }
-
-      await this.dependencies.archiveAgentForClose(agentId);
+      await archiveTask;
     } catch (error) {
       this.dependencies.logger.warn({ err: error, agentId }, "Failed to auto-archive agent");
+      throw error;
+    } finally {
+      if (this.autoArchiveTasks.get(agentId) === archiveTask) {
+        this.autoArchiveTasks.delete(agentId);
+      }
     }
+  }
+
+  private async runAutoArchiveAgent(agentId: string, target: AutoArchiveTarget): Promise<void> {
+    if (target.kind === "created-worktree") {
+      await this.archiveAutoCreatedWorktree({
+        agentId,
+        createdWorktree: target.result,
+      });
+      return;
+    }
+
+    await this.dependencies.archiveAgentForClose(agentId);
   }
 
   private async archiveAutoCreatedWorktree(options: {
@@ -237,6 +246,7 @@ export function registerAgentAutoArchive(input: {
 }): LifecycleRegistration {
   let unsubscribe: (() => void) | null = null;
   let archiveTask: Promise<unknown> | null = null;
+  let lastArchiveFailure: unknown | null = null;
   const release = () => {
     if (!unsubscribe) return;
     const subscribed = unsubscribe;
@@ -246,7 +256,13 @@ export function registerAgentAutoArchive(input: {
   const registration: LifecycleRegistration = {
     async cancel() {
       release();
-      await archiveTask;
+      const pendingArchive = archiveTask;
+      if (pendingArchive) {
+        await pendingArchive;
+      }
+      if (lastArchiveFailure) {
+        throw lastArchiveFailure;
+      }
     },
   };
   unsubscribe = input.agentManager.subscribe(
@@ -259,8 +275,24 @@ export function registerAgentAutoArchive(input: {
       ) {
         return;
       }
-      release();
-      archiveTask = input.archive();
+      if (archiveTask) return;
+      const task = input.archive();
+      archiveTask = task;
+      void task.then(
+        () => {
+          if (archiveTask !== task) return;
+          archiveTask = null;
+          lastArchiveFailure = null;
+          release();
+          return undefined;
+        },
+        (error: unknown) => {
+          if (archiveTask !== task) return;
+          archiveTask = null;
+          lastArchiveFailure = error;
+          return undefined;
+        },
+      );
     },
     { agentId: input.agentId, replayState: false },
   );
