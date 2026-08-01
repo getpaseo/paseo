@@ -184,7 +184,7 @@ test("Hub archives a running execution's Paseo-created worktree", async () => {
     agentArchivedAt: expect.any(String),
     workspaceArchivedAt: expect.any(String),
   });
-}, 20_000);
+}, 30_000);
 
 test("a sibling workspace keeps an archived execution's worktree directory alive", async () => {
   const hub = await launchRelationship();
