@@ -388,10 +388,11 @@ async function archiveTargetRecords(
 ): Promise<{ archivedAgents: Set<string>; archivedWorkspaceIds: string[] }> {
   const archivedAgents = new Set<string>();
   const archivedWorkspaceIds: string[] = [];
+  const archiveWorkspaceIds = new Set(targetWorkspaceIds);
 
   const results = await Promise.allSettled(
     targetWorkspaceIds.map(async (workspaceId) => {
-      const agents = await archiveWorkspaceContents(dependencies, workspaceId);
+      const agents = await archiveWorkspaceContents(dependencies, workspaceId, archiveWorkspaceIds);
       await dependencies.archiveWorkspaceRecord(workspaceId);
       return { workspaceId, agents };
     }),
@@ -512,12 +513,12 @@ export type ArchiveWorkspaceContentsDependencies = Pick<
 export async function archiveWorkspaceContents(
   dependencies: ArchiveWorkspaceContentsDependencies,
   workspaceId: string,
+  archiveWorkspaceIds: ReadonlySet<string> = new Set([workspaceId]),
 ): Promise<Set<string>> {
   const archivedAgents = new Set<string>();
 
-  const liveAgents = dependencies.agentManager
-    .listAgents()
-    .filter((agent) => agent.workspaceId === workspaceId);
+  const allLiveAgents = dependencies.agentManager.listAgents();
+  const liveAgents = allLiveAgents.filter((agent) => agent.workspaceId === workspaceId);
   for (const agent of liveAgents) {
     archivedAgents.add(agent.id);
   }
@@ -540,10 +541,32 @@ export async function archiveWorkspaceContents(
   }
 
   const archivedAt = new Date().toISOString();
+  const archiveCandidateIds = new Set<string>();
+  const parentAgentIds = new Map<string, string | undefined>();
+  for (const record of storedRecords) {
+    if (!record.archivedAt && record.workspaceId && archiveWorkspaceIds.has(record.workspaceId)) {
+      archiveCandidateIds.add(record.id);
+      parentAgentIds.set(record.id, record.labels?.[PARENT_AGENT_ID_LABEL]);
+    }
+  }
+  for (const agent of allLiveAgents) {
+    if (agent.workspaceId && archiveWorkspaceIds.has(agent.workspaceId)) {
+      archiveCandidateIds.add(agent.id);
+      parentAgentIds.set(agent.id, agent.labels?.[PARENT_AGENT_ID_LABEL]);
+    }
+  }
+  const isArchiveRoot = (agentId: string): boolean => {
+    const parentAgentId = parentAgentIds.get(agentId);
+    return !parentAgentId || !archiveCandidateIds.has(parentAgentId);
+  };
   const archiveResults = await Promise.allSettled([
-    ...liveAgents.map((agent) => dependencies.agentManager.archiveAgent(agent.id)),
+    ...liveAgents
+      .filter((agent) => isArchiveRoot(agent.id))
+      .map((agent) => dependencies.agentManager.archiveAgent(agent.id)),
     ...matchingStoredRecords
-      .filter((record) => !liveAgentIds.has(record.id) && !record.archivedAt)
+      .filter(
+        (record) => !liveAgentIds.has(record.id) && !record.archivedAt && isArchiveRoot(record.id),
+      )
       .map((record) => dependencies.agentManager.archiveSnapshot(record.id, archivedAt)),
     dependencies.killTerminalsForWorkspace(workspaceId),
   ]);

@@ -33,6 +33,7 @@ interface WorkspaceLane {
 
 interface MutationContext {
   active: boolean;
+  ownedTasks: Set<Promise<void>>;
   workspaceIds: ReadonlySet<string>;
 }
 
@@ -107,7 +108,14 @@ export class LifecycleMutationCoordinator {
       if (!workspaceIds.every((workspaceId) => currentContext.workspaceIds.has(workspaceId))) {
         return Promise.reject(new LifecycleMutationReentrancyError());
       }
-      return this.runOperation(request.validation, operation);
+      const result = this.runOperation(request.validation, operation);
+      const tracked = result.then(
+        () => undefined,
+        () => undefined,
+      );
+      currentContext.ownedTasks.add(tracked);
+      void tracked.finally(() => currentContext.ownedTasks.delete(tracked));
+      return result;
     }
 
     if (!this.accepting) {
@@ -213,12 +221,16 @@ export class LifecycleMutationCoordinator {
       }
       const context: MutationContext = {
         active: true,
+        ownedTasks: new Set(),
         workspaceIds: new Set(input.workspaceIds),
       };
       return await this.context.run(context, async () => {
         try {
           return await this.runOperation(input.validation, input.operation);
         } finally {
+          while (context.ownedTasks.size > 0) {
+            await Promise.all(context.ownedTasks);
+          }
           context.active = false;
         }
       });

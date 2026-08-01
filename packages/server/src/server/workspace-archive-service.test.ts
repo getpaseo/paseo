@@ -725,6 +725,59 @@ describe("archiveByScope", () => {
     expect(existsSync(worktree.worktreePath)).toBe(false);
   });
 
+  test("archives a parent and child once through the parent cascade", async () => {
+    const { tempDir } = createGitRepo();
+    const workspaceId = "ws-parent-child";
+    const parentAgentId = "agent-parent";
+    const childAgentId = "agent-child";
+    const deps = createArchiveDeps({
+      paseoHome: path.join(tempDir, ".paseo"),
+      activeWorkspaces: [{ workspaceId, cwd: tempDir, kind: "local_checkout" }],
+    });
+    const agents = [
+      { id: parentAgentId, cwd: tempDir, workspaceId },
+      {
+        id: childAgentId,
+        cwd: tempDir,
+        workspaceId,
+        labels: { "paseo.parent-agent-id": parentAgentId },
+      },
+    ] as ManagedAgent[];
+    deps.agentManager = {
+      listAgents: () => agents,
+      archiveAgent: vi.fn(async (agentId: string) => {
+        deps.archivedAgentIds.push(agentId);
+        if (agentId === parentAgentId) {
+          deps.archivedAgentIds.push(childAgentId);
+        }
+        return { archivedAt: new Date().toISOString() };
+      }),
+      archiveSnapshot: vi.fn(async () => ({})),
+    };
+    deps.agentStorage = {
+      list: async () =>
+        agents.map((agent) => ({
+          id: agent.id,
+          cwd: agent.cwd,
+          workspaceId: agent.workspaceId,
+          archivedAt: null,
+          labels: agent.labels,
+        })) as StoredAgentRecord[],
+    } as Pick<AgentStorage, "list">;
+
+    const result = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-parent-child",
+    });
+
+    expect(result.archivedWorkspaceIds).toEqual([workspaceId]);
+    expect(result.archivedAgentIds).toEqual(expect.arrayContaining([parentAgentId, childAgentId]));
+    expect(result.archivedAgentIds).toHaveLength(2);
+    expect(deps.agentManager.archiveAgent).toHaveBeenCalledTimes(1);
+    expect(deps.agentManager.archiveAgent).toHaveBeenCalledWith(parentAgentId);
+    expect(deps.archivedAgentIds).toEqual([parentAgentId, childAgentId]);
+  });
+
   test("does not archive the root when a late descendant adds an uncovered workspace", async () => {
     const { tempDir } = createGitRepo();
     const targetWorkspaceId = "ws-late-root";

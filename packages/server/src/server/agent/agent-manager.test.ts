@@ -7953,6 +7953,77 @@ test("shutdown close survives a lifecycle event admitted before it", async () =>
   }
 });
 
+test("shutdown replaces a queued validation-bound close with a terminal close", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-shutdown-replace-close-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const coordinator = new LifecycleMutationCoordinator();
+  const client = new (class extends TestAgentClient {
+    session: TestAgentSession | null = null;
+    closeCount = 0;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const recordClose = () => {
+        this.closeCount += 1;
+      };
+      this.session = new (class extends TestAgentSession {
+        override async close(): Promise<void> {
+          recordClose();
+        }
+      })(config);
+      return this.session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    lifecycleMutationCoordinator: coordinator,
+    logger,
+  });
+  const laneStarted = deferred<void>();
+  const releaseLane = deferred<void>();
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "workspace-shutdown-replace-close",
+    });
+    const blocker = coordinator.run(
+      { workspaceIds: ["workspace-shutdown-replace-close"] },
+      async () => {
+        laneStarted.resolve();
+        await releaseLane.promise;
+      },
+    );
+    await laneStarted.promise;
+    client.session?.pushEvent({
+      type: "turn_started",
+      provider: "codex",
+      turnId: "advance-before-validation-bound-close",
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const validationBoundClose = manager.closeAgent(agent.id);
+
+    manager.prepareForShutdown();
+    const terminalClose = manager.closeAgent(agent.id);
+    expect(terminalClose).not.toBe(validationBoundClose);
+    coordinator.closeAdmission();
+    releaseLane.resolve();
+
+    await blocker;
+    await expect(validationBoundClose).rejects.toBeInstanceOf(LifecycleMutationStaleError);
+    await expect(terminalClose).resolves.toBeUndefined();
+    expect(client.closeCount).toBe(1);
+    expect(manager.getAgent(agent.id)).toBeNull();
+    const stored = await storage.get(agent.id);
+    expect(stored).toMatchObject({ lastStatus: "closed" });
+    expect(stored?.archivedAt).toBeFalsy();
+  } finally {
+    releaseLane.resolve();
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("shared resume also invalidates a queued stored archive identity", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archived-shared-resume-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);

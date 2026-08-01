@@ -39,6 +39,10 @@ async function observeDrain(drain: Promise<void>, state: { drained: boolean }): 
   state.drained = true;
 }
 
+async function waitForEventLoopTurn(): Promise<void> {
+  await new Promise<void>((resolve) => setImmediate(resolve));
+}
+
 describe("LifecycleMutationCoordinator", () => {
   test("runs same-workspace mutations in admission order", async () => {
     const coordinator = new LifecycleMutationCoordinator();
@@ -193,6 +197,102 @@ describe("LifecycleMutationCoordinator", () => {
     activeGate.resolve();
     await Promise.all([active, detached]);
     expect(order).toEqual(["active-start", "active-end", "detached"]);
+  });
+
+  test("keeps lane ownership until a detached reentrant mutation settles", async () => {
+    const coordinator = new LifecycleMutationCoordinator();
+    const detachedStarted = deferred();
+    const detachedBlocked = deferred();
+    const outerBlocked = deferred();
+    const order: string[] = [];
+    let activeOperations = 0;
+    let maximumActiveOperations = 0;
+    let detached!: Promise<void>;
+
+    async function runDetached(): Promise<void> {
+      activeOperations += 1;
+      maximumActiveOperations = Math.max(maximumActiveOperations, activeOperations);
+      order.push("detached-start");
+      detachedStarted.resolve();
+      await detachedBlocked.promise;
+      order.push("detached-end");
+      activeOperations -= 1;
+    }
+
+    async function runOuter(): Promise<void> {
+      order.push("outer-start");
+      detached = coordinator.run({ workspaceIds: ["workspace-1"] }, runDetached);
+      await outerBlocked.promise;
+      order.push("outer-return");
+    }
+
+    const outer = coordinator.run({ workspaceIds: ["workspace-1"] }, runOuter);
+    await detachedStarted.promise;
+
+    const competitor = coordinator.run({ workspaceIds: ["workspace-1"] }, async () => {
+      activeOperations += 1;
+      maximumActiveOperations = Math.max(maximumActiveOperations, activeOperations);
+      order.push("competitor");
+      activeOperations -= 1;
+    });
+    outerBlocked.resolve();
+
+    try {
+      await waitForEventLoopTurn();
+      expect(order).toEqual(["outer-start", "detached-start", "outer-return"]);
+      expect(maximumActiveOperations).toBe(1);
+    } finally {
+      detachedBlocked.resolve();
+      await Promise.allSettled([outer, detached, competitor]);
+    }
+
+    expect(order).toEqual([
+      "outer-start",
+      "detached-start",
+      "outer-return",
+      "detached-end",
+      "competitor",
+    ]);
+    expect(maximumActiveOperations).toBe(1);
+  });
+
+  test("drain waits for a detached reentrant mutation", async () => {
+    const coordinator = new LifecycleMutationCoordinator();
+    const detachedStarted = deferred();
+    const detachedBlocked = deferred();
+    const outerBlocked = deferred();
+    let detachedCompleted = false;
+    let detached!: Promise<void>;
+
+    async function runDetached(): Promise<void> {
+      detachedStarted.resolve();
+      await detachedBlocked.promise;
+      detachedCompleted = true;
+    }
+
+    async function runOuter(): Promise<void> {
+      detached = coordinator.run({ workspaceIds: ["workspace-1"] }, runDetached);
+      await outerBlocked.promise;
+    }
+
+    const outer = coordinator.run({ workspaceIds: ["workspace-1"] }, runOuter);
+    await detachedStarted.promise;
+    coordinator.closeAdmission();
+    const drainState = { drained: false };
+    const drain = observeDrain(coordinator.drain(), drainState);
+    outerBlocked.resolve();
+
+    try {
+      await waitForEventLoopTurn();
+      expect(drainState.drained).toBe(false);
+      expect(detachedCompleted).toBe(false);
+    } finally {
+      detachedBlocked.resolve();
+      await Promise.allSettled([outer, detached, drain]);
+    }
+
+    expect(detachedCompleted).toBe(true);
+    expect(drainState.drained).toBe(true);
   });
 
   test("acquires multiple workspaces as one deterministic turn", async () => {

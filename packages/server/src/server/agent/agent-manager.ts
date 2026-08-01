@@ -623,7 +623,10 @@ export class AgentManager {
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
-  private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
+  private readonly inFlightAgentCloses = new Map<
+    string,
+    { promise: Promise<void>; terminal: boolean }
+  >();
   private readonly lifecycleMutationCoordinator: LifecycleMutationCoordinator;
   private readonly agentLifecycleIdentities = new Map<
     string,
@@ -1020,7 +1023,7 @@ export class AgentManager {
   }
 
   async waitForAgentClose(agentId: string): Promise<void> {
-    await this.inFlightAgentCloses?.get(agentId)?.catch(() => undefined);
+    await this.inFlightAgentCloses.get(agentId)?.promise.catch(() => undefined);
   }
 
   getTimeline(id: string): AgentTimelineItem[] {
@@ -1457,20 +1460,24 @@ export class AgentManager {
   }
 
   closeAgent(agentId: string): Promise<void> {
+    const terminal = this.preparingForShutdown;
     const existing = this.inFlightAgentCloses.get(agentId);
-    if (existing) {
-      return existing;
+    if (existing && (!terminal || existing.terminal)) {
+      return existing.promise;
     }
 
     const expected = this.requireLiveLifecycleIdentity(agentId);
     const closeMutation = this.lifecycleMutationCoordinator.run(
       {
         workspaceIds: [expected.workspaceId],
-        ...(this.preparingForShutdown
-          ? {}
-          : { validation: this.liveLifecycleValidation(expected) }),
+        ...(terminal ? {} : { validation: this.liveLifecycleValidation(expected) }),
       },
-      () => this.closeAgentRuntime(agentId),
+      async () => {
+        if (terminal && !this.agents.has(agentId)) {
+          return;
+        }
+        await this.closeAgentRuntime(agentId);
+      },
     );
     const close = closeMutation.then(
       async () => {
@@ -1482,9 +1489,10 @@ export class AgentManager {
         throw error;
       },
     );
-    this.inFlightAgentCloses.set(agentId, close);
+    const closeRecord = { promise: close, terminal };
+    this.inFlightAgentCloses.set(agentId, closeRecord);
     const clearClose = () => {
-      if (this.inFlightAgentCloses.get(agentId) === close) {
+      if (this.inFlightAgentCloses.get(agentId) === closeRecord) {
         this.inFlightAgentCloses.delete(agentId);
       }
     };
