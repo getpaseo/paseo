@@ -208,6 +208,19 @@ export interface CreateWorktreeOptions {
   runSetup: boolean;
   paseoHome?: string;
   worktreesRoot?: string;
+  onWorktreePathResolved?: (
+    worktreePath: string,
+    reservation: WorktreeCreationReservation,
+  ) => Promise<void>;
+}
+
+export interface WorktreeCreationReservation {
+  worktreeIncarnationId: string;
+  directoryIdentity: {
+    device: string;
+    inode: string;
+  };
+  metadataBaseRefName: string;
 }
 
 interface ResolveExistingWorktreeForSlugOptions {
@@ -1268,17 +1281,51 @@ export const createWorktree = async ({
   runSetup,
   paseoHome,
   worktreesRoot,
+  onWorktreePathResolved,
 }: CreateWorktreeOptions): Promise<WorktreeConfig> => {
   const sourcePlan = await resolveWorktreeSourcePlan({ cwd, source, desiredSlug: worktreeSlug });
   let worktreePath = join(await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot), worktreeSlug);
   mkdirSync(dirname(worktreePath), { recursive: true });
 
-  // Also handle worktree path collision
+  // Also handle worktree path collision. When creation is journaled, reserve
+  // the directory so the journal can identify this exact path incarnation.
   let finalWorktreePath = worktreePath;
   let pathSuffix = 1;
-  while (existsSync(finalWorktreePath)) {
-    finalWorktreePath = `${worktreePath}-${pathSuffix}`;
-    pathSuffix++;
+  if (onWorktreePathResolved) {
+    while (true) {
+      try {
+        mkdirSync(finalWorktreePath);
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        finalWorktreePath = `${worktreePath}-${pathSuffix}`;
+        pathSuffix++;
+      }
+    }
+  } else {
+    while (existsSync(finalWorktreePath)) {
+      finalWorktreePath = `${worktreePath}-${pathSuffix}`;
+      pathSuffix++;
+    }
+  }
+
+  const normalizedWorktreePath = normalizePathForOwnership(finalWorktreePath);
+  const worktreeIncarnationId = randomUUID();
+  if (onWorktreePathResolved) {
+    const directoryStat = statSync(normalizedWorktreePath, { bigint: true });
+    try {
+      await onWorktreePathResolved(normalizedWorktreePath, {
+        worktreeIncarnationId,
+        directoryIdentity: {
+          device: directoryStat.dev.toString(),
+          inode: directoryStat.ino.toString(),
+        },
+        metadataBaseRefName: sourcePlan.metadataBaseRefName,
+      });
+    } catch (error) {
+      rmSync(normalizedWorktreePath, { recursive: true, force: true });
+      throw error;
+    }
   }
 
   // Primitive owner for `git worktree add`; callers route through createWorktreeCore.
@@ -1286,7 +1333,7 @@ export const createWorktree = async ({
     cwd,
     timeout: 120_000,
   });
-  worktreePath = normalizePathForOwnership(finalWorktreePath);
+  worktreePath = normalizedWorktreePath;
 
   if (sourcePlan.pushRemote) {
     await configureWorktreePushRemote({
@@ -1305,7 +1352,7 @@ export const createWorktree = async ({
 
   writePaseoWorktreeMetadata(worktreePath, {
     baseRefName: sourcePlan.metadataBaseRefName,
-    incarnationId: randomUUID(),
+    incarnationId: worktreeIncarnationId,
     ...(sourcePlan.changeRequestLookupTarget
       ? { changeRequestLookupTarget: sourcePlan.changeRequestLookupTarget }
       : {}),

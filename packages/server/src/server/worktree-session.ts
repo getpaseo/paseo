@@ -33,6 +33,7 @@ import {
   runWorktreeSetupCommands,
   slugify,
   validateBranchSlug,
+  type WorktreeCreationReservation,
   type WorktreeConfig,
   type WorktreeSetupCommandResult,
   WorktreeSetupError,
@@ -221,6 +222,10 @@ export async function buildAgentSessionConfig(
   gitOptions?: GitSetupOptions,
   legacyWorktreeName?: string,
   firstAgentContext?: FirstAgentContext,
+  onWorktreePathResolved?: (
+    worktreePath: string,
+    reservation: WorktreeCreationReservation,
+  ) => Promise<void>,
 ): Promise<{
   sessionConfig: AgentSessionConfig;
   setupContinuation?: AgentWorktreeSetupContinuation;
@@ -258,6 +263,7 @@ export async function buildAgentSessionConfig(
         runSetup: false,
         paseoHome: dependencies.paseoHome,
         worktreesRoot: dependencies.worktreesRoot,
+        onWorktreePathResolved,
       },
       {
         resolveDefaultBranch: normalized.baseBranch

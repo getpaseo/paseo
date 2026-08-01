@@ -6,6 +6,7 @@ import {
   resolveExistingWorktreeForSlug,
   slugify,
   validateBranchSlug,
+  type WorktreeCreationReservation,
   type WorktreeConfig,
 } from "../utils/worktree.js";
 import {
@@ -29,6 +30,10 @@ export interface CreateWorktreeCoreInput {
   paseoHome?: string;
   worktreesRoot?: string;
   runSetup?: boolean;
+  onWorktreePathResolved?: (
+    worktreePath: string,
+    reservation: WorktreeCreationReservation,
+  ) => Promise<void>;
 }
 
 export interface CreateWorktreeCoreDeps {
@@ -128,6 +133,7 @@ export async function createWorktreeCore(
       runSetup: input.runSetup ?? true,
       paseoHome: input.paseoHome,
       worktreesRoot: input.worktreesRoot,
+      onWorktreePathResolved: input.onWorktreePathResolved,
     }),
     intent,
     repoRoot,

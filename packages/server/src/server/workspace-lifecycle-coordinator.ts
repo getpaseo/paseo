@@ -183,6 +183,25 @@ export class WorkspaceLifecycleCoordinator {
     );
   }
 
+  async drain(): Promise<void> {
+    while (true) {
+      const tasks = new Set<Promise<unknown>>([
+        ...this.setupTasks.values(),
+        ...Array.from(this.setupTasksByDirectory.values()).flatMap((directoryTasks) =>
+          Array.from(directoryTasks),
+        ),
+        ...this.archiveOperations.values(),
+        ...this.directoryOperations.values(),
+        ...this.worktreeMutationOperations.values(),
+        ...Array.from(this.ownershipMutationTasks.values()).flatMap((ownershipTasks) =>
+          Array.from(ownershipTasks),
+        ),
+      ]);
+      if (tasks.size === 0) return;
+      await Promise.allSettled(tasks);
+    }
+  }
+
   runArchive<T>(key: string, operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     const existing = this.archiveOperations.get(key);
     if (existing) {

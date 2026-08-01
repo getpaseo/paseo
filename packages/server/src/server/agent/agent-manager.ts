@@ -1007,6 +1007,10 @@ export class AgentManager {
     return this.trackAgentRegistrationOperation(this.createAgentInternal(config, agentId, options));
   }
 
+  allocateAgentId(): string {
+    return validateAgentId(this.idFactory(), "allocateAgentId");
+  }
+
   private async createAgentInternal(
     config: AgentSessionConfig,
     agentId: string | undefined,
@@ -1083,6 +1087,7 @@ export class AgentManager {
       labels?: Record<string, string>;
       workspaceId?: string;
       owner?: AgentOwner;
+      autoArchiveObligation?: AutoArchiveObligation;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {

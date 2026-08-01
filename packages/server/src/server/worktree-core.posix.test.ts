@@ -8,6 +8,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,7 +25,7 @@ import {
   getPaseoWorktreeMetadataPath,
   readPaseoWorktreeMetadata,
 } from "../utils/worktree-metadata.js";
-import { UnknownBranchError } from "../utils/worktree.js";
+import { computeWorktreePath, UnknownBranchError } from "../utils/worktree.js";
 import { createWorktreeCore as createCoreWorktree } from "./worktree-core.js";
 import { isPlatform } from "../test-utils/platform.js";
 
@@ -418,6 +419,43 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(result.created).toBe(true);
       expect(result.worktree.branchName).toBe("legacy-rpc");
       expect(existsSync(result.worktree.worktreePath)).toBe(true);
+    });
+
+    test("publishes the collision-resolved path before creating the worktree", async () => {
+      const { tempDir, repoDir, paseoHome } = createGitRepo();
+      cleanupPaths.push(tempDir);
+      const occupiedPath = await computeWorktreePath(repoDir, "collision", paseoHome);
+      mkdirSync(occupiedPath, { recursive: true });
+      const resolvedPath = `${occupiedPath}-1`;
+      let observedPath: string | null = null;
+      let observedIncarnationId: string | null = null;
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          worktreeSlug: "collision",
+          paseoHome,
+          runSetup: false,
+          onWorktreePathResolved: async (worktreePath, reservation) => {
+            observedPath = worktreePath;
+            observedIncarnationId = reservation.worktreeIncarnationId;
+            expect(worktreePath).toBe(resolvedPath);
+            expect(existsSync(worktreePath)).toBe(true);
+            const directoryStat = statSync(worktreePath, { bigint: true });
+            expect(reservation.directoryIdentity).toEqual({
+              device: directoryStat.dev.toString(),
+              inode: directoryStat.ino.toString(),
+            });
+            expect(reservation.metadataBaseRefName).toBe("main");
+          },
+        },
+        createCoreDeps(),
+      );
+
+      expect(observedPath).toBe(resolvedPath);
+      expect(result.worktree.worktreePath).toBe(resolvedPath);
+      expect(existsSync(resolvedPath)).toBe(true);
+      expect(readPaseoWorktreeMetadata(resolvedPath)?.incarnationId).toBe(observedIncarnationId);
     });
 
     test("creates branch-off worktrees from origin main without tracking origin main", async () => {
@@ -1443,19 +1481,29 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       const { tempDir, repoDir, paseoHome } = createGitRepo();
       cleanupPaths.push(tempDir);
       const deps = createCoreDeps();
+      const resolvedPaths: string[] = [];
 
       const first = await createCoreWorktree(
         { cwd: repoDir, worktreeSlug: "reused-worktree", paseoHome, runSetup: false },
         deps,
       );
       const second = await createCoreWorktree(
-        { cwd: repoDir, worktreeSlug: "reused-worktree", paseoHome, runSetup: false },
+        {
+          cwd: repoDir,
+          worktreeSlug: "reused-worktree",
+          paseoHome,
+          runSetup: false,
+          onWorktreePathResolved: async (worktreePath) => {
+            resolvedPaths.push(worktreePath);
+          },
+        },
         deps,
       );
 
       expect(first.created).toBe(true);
       expect(second.created).toBe(false);
       expect(second.worktree).toEqual(first.worktree);
+      expect(resolvedPaths).toEqual([]);
     });
 
     // POSIX-only: Windows git worktree paths need separate canonicalization coverage.

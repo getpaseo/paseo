@@ -15,6 +15,7 @@ import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
 import { DaemonClient } from "./test-utils/daemon-client.js";
 import { isPlatform } from "../test-utils/platform.js";
 import { findFreePort } from "./service-proxy.js";
+import { defaultWorkspaceLifecycleCoordinator } from "./workspace-lifecycle-coordinator.js";
 import type {
   HubEnrollment,
   HubEnrollmentResult,
@@ -353,6 +354,41 @@ describe("paseo daemon bootstrap", () => {
       );
       await expect(fetch(`http://127.0.0.1:${daemonHandle.port}/api/health`)).rejects.toThrow();
     } finally {
+      await daemonHandle.close();
+    }
+  });
+
+  test("shutdown waits for a real workspace operation after its abortable wrapper rejects", async () => {
+    const daemonHandle = await createTestPaseoDaemon();
+    const controller = new AbortController();
+    let releaseOperation = () => {};
+    const physicalOperation = new Promise<void>((resolve) => {
+      releaseOperation = resolve;
+    });
+    const wrappedOperation = defaultWorkspaceLifecycleCoordinator.runArchive(
+      `bootstrap-drain-${daemonHandle.port}`,
+      () => physicalOperation,
+      controller.signal,
+    );
+    let stopSettled = false;
+
+    try {
+      await Promise.resolve();
+      controller.abort();
+      await expect(wrappedOperation).rejects.toThrow("Workspace lifecycle operation canceled");
+
+      const stopping = daemonHandle.daemon.stop().then(() => {
+        stopSettled = true;
+        return undefined;
+      });
+      await Promise.resolve();
+      expect(stopSettled).toBe(false);
+
+      releaseOperation();
+      await stopping;
+      expect(stopSettled).toBe(true);
+    } finally {
+      releaseOperation();
       await daemonHandle.close();
     }
   });

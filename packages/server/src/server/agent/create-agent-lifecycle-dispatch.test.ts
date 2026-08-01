@@ -1,3 +1,6 @@
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve as resolvePath } from "node:path";
 import { expect, test, vi } from "vitest";
 
 import type { AgentManagerEvent, AgentSubscriber } from "./agent-manager.js";
@@ -10,7 +13,28 @@ import {
   requireArchiveCleanupComplete,
   WorkspaceCleanupPendingError,
 } from "../workspace-archive-service.js";
-import type { StoredAgentRecord } from "./agent-storage.js";
+import type { PendingAgentCreation, StoredAgentRecord } from "./agent-storage.js";
+import type { PersistedWorkspaceRecord } from "../workspace-registry.js";
+import type { CreatePaseoWorktreeWorkflowResult } from "../worktree-session.js";
+import { readPaseoWorktreeMetadata } from "../../utils/worktree-metadata.js";
+
+const PENDING_WORKTREE_INCARNATION_ID = "4d2ce498-4c27-4ea2-8ed3-46720de7194e";
+
+function pendingWorktreeTarget(
+  targetPath: string,
+): Extract<PendingAgentCreation["cleanupTarget"], { kind: "worktree" }> {
+  const directoryStat = statSync(targetPath, { bigint: true });
+  return {
+    kind: "worktree",
+    targetPath,
+    worktreeIncarnationId: PENDING_WORKTREE_INCARNATION_ID,
+    directoryIdentity: {
+      device: directoryStat.dev.toString(),
+      inode: directoryStat.ino.toString(),
+    },
+    metadataBaseRefName: "main",
+  };
+}
 
 class AgentLifecycleEvents {
   private readonly listeners = new Set<AgentSubscriber>();
@@ -57,14 +81,24 @@ function createLifecycleDispatch(
   options?: {
     records?: Map<string, StoredAgentRecord>;
     archiveWorkspaceForClose?: (workspaceId: string, signal?: AbortSignal) => Promise<void>;
+    drainWorkspaceLifecycleOperations?: () => Promise<void>;
+    getWorkspace?: (workspaceId: string) => Promise<PersistedWorkspaceRecord | null>;
+    pendingCreations?: Map<string, PendingAgentCreation>;
+    workspaces?: PersistedWorkspaceRecord[];
   },
 ): CreateAgentLifecycleDispatch {
   const records = options?.records ?? new Map<string, StoredAgentRecord>();
+  const pendingCreations = options?.pendingCreations ?? new Map<string, PendingAgentCreation>();
   const dependencies = {
     paseoHome: "/tmp/paseo",
     agentManager: agents,
     agentStorage: {
       list: async () => Array.from(records.values()),
+      get: async (agentId: string) => records.get(agentId) ?? null,
+      listPendingAgentCreations: async () => Array.from(pendingCreations.values()),
+      removePendingAgentCreation: async (agentId: string) => {
+        pendingCreations.delete(agentId);
+      },
       update: async (
         agentId: string,
         mutation: (record: StoredAgentRecord) => StoredAgentRecord,
@@ -79,10 +113,22 @@ function createLifecycleDispatch(
     workspaceGitService: {},
     archiveAgentForClose,
     archiveWorkspaceForClose: options?.archiveWorkspaceForClose ?? (async () => undefined),
+    drainWorkspaceLifecycleOperations:
+      options?.drainWorkspaceLifecycleOperations ?? (async () => undefined),
     findWorkspaceIdForCwd: async () => null,
     listActiveWorkspaces: async () => [],
     archiveWorkspaceRecord: async () => undefined,
-    workspaceRegistry: {},
+    workspaceRegistry: {
+      get:
+        options?.getWorkspace ??
+        (async (workspaceId: string) =>
+          ({
+            workspaceId,
+            archivedAt: "2025-01-01T00:00:00.000Z",
+            cleanupPending: null,
+          }) as PersistedWorkspaceRecord),
+      list: async () => options?.workspaces ?? [],
+    },
     emit: () => undefined,
     emitAgentRemove: () => undefined,
     emitWorkspaceUpdatesForWorkspaceIds: async () => undefined,
@@ -93,6 +139,224 @@ function createLifecycleDispatch(
   } as unknown as ConstructorParameters<typeof CreateAgentLifecycleDispatch>[0];
   return new CreateAgentLifecycleDispatch(dependencies);
 }
+
+test("startup removes a side-effect-free pending creation reservation", async () => {
+  const agentId = "agent-pending-no-side-effects";
+  const pendingCreations = new Map<string, PendingAgentCreation>([
+    [
+      agentId,
+      {
+        agentId,
+        createdAt: "2025-01-01T00:00:00.000Z",
+        cleanupTarget: { kind: "agent" },
+      },
+    ],
+  ]);
+  const dispatch = createLifecycleDispatch(new AgentLifecycleEvents(), async () => undefined, {
+    pendingCreations,
+  });
+
+  await dispatch.recoverPendingAgentCreations();
+
+  expect(pendingCreations.size).toBe(0);
+});
+
+test("startup leaves persisted agent cleanup to its durable obligation", async () => {
+  const agentId = "agent-pending-now-persisted";
+  const pendingCreations = new Map<string, PendingAgentCreation>([
+    [
+      agentId,
+      {
+        agentId,
+        createdAt: "2025-01-01T00:00:00.000Z",
+        cleanupTarget: {
+          kind: "worktree",
+          targetPath: "/tmp/persisted-agent-worktree",
+          worktreeIncarnationId: PENDING_WORKTREE_INCARNATION_ID,
+          directoryIdentity: { device: "7", inode: "42" },
+          metadataBaseRefName: "main",
+        },
+      },
+    ],
+  ]);
+  const records = new Map<string, StoredAgentRecord>([
+    [
+      agentId,
+      {
+        id: agentId,
+        autoArchiveObligation: { phase: "armed", target: { kind: "agent" } },
+      } as StoredAgentRecord,
+    ],
+  ]);
+  const dispatch = createLifecycleDispatch(new AgentLifecycleEvents(), async () => undefined, {
+    pendingCreations,
+    records,
+  });
+  const archiveWorktreePath = vi.spyOn(
+    dispatch as unknown as {
+      archiveWorktreePath(worktreePath: string, workspaceId?: string): Promise<void>;
+    },
+    "archiveWorktreePath",
+  );
+
+  await dispatch.recoverPendingAgentCreations();
+
+  expect(archiveWorktreePath).not.toHaveBeenCalled();
+  expect(pendingCreations.size).toBe(0);
+});
+
+test("startup removes an exact pre-git worktree reservation without archiving", async () => {
+  const worktreePath = mkdtempSync(join(tmpdir(), "paseo-pre-git-reservation-"));
+  const agentId = "agent-pending-pre-git-reservation";
+  const pendingCreations = new Map<string, PendingAgentCreation>([
+    [
+      agentId,
+      {
+        agentId,
+        createdAt: "2025-01-01T00:00:00.000Z",
+        cleanupTarget: pendingWorktreeTarget(worktreePath),
+      },
+    ],
+  ]);
+  const dispatch = createLifecycleDispatch(new AgentLifecycleEvents(), async () => undefined, {
+    pendingCreations,
+  });
+  const archiveWorktreePath = vi.spyOn(
+    dispatch as unknown as {
+      archiveWorktreePath(worktreePath: string, workspaceId?: string): Promise<void>;
+    },
+    "archiveWorktreePath",
+  );
+
+  try {
+    await dispatch.recoverPendingAgentCreations();
+
+    expect(archiveWorktreePath).not.toHaveBeenCalled();
+    expect(pendingCreations.size).toBe(0);
+    expect(existsSync(worktreePath)).toBe(false);
+  } finally {
+    rmSync(worktreePath, { recursive: true, force: true });
+  }
+});
+
+test("startup retains and retries an orphan worktree pending creation", async () => {
+  const worktreePath = mkdtempSync(join(tmpdir(), "paseo-orphan-worktree-"));
+  mkdirSync(join(worktreePath, ".git"));
+  const agentId = "agent-pending-orphan-worktree";
+  const pendingCreations = new Map<string, PendingAgentCreation>([
+    [
+      agentId,
+      {
+        agentId,
+        createdAt: "2025-01-01T00:00:00.000Z",
+        cleanupTarget: pendingWorktreeTarget(worktreePath),
+      },
+    ],
+  ]);
+  const dispatch = createLifecycleDispatch(new AgentLifecycleEvents(), async () => undefined, {
+    pendingCreations,
+  });
+  const archiveWorktreePath = vi
+    .spyOn(
+      dispatch as unknown as {
+        archiveWorktreePath(worktreePath: string, workspaceId?: string): Promise<void>;
+      },
+      "archiveWorktreePath",
+    )
+    .mockRejectedValueOnce(new Error("physical archive failed"))
+    .mockResolvedValue(undefined);
+
+  try {
+    await dispatch.recoverPendingAgentCreations();
+    expect(pendingCreations.has(agentId)).toBe(true);
+
+    await dispatch.recoverPendingAgentCreations();
+
+    expect(archiveWorktreePath).toHaveBeenCalledTimes(2);
+    expect(archiveWorktreePath).toHaveBeenLastCalledWith(resolvePath(worktreePath));
+    expect(pendingCreations.size).toBe(0);
+  } finally {
+    rmSync(worktreePath, { recursive: true, force: true });
+  }
+});
+
+test("startup does not archive a replacement at a reused pending-creation path", async () => {
+  const worktreePath = mkdtempSync(join(tmpdir(), "paseo-replaced-worktree-"));
+  const staleTarget = pendingWorktreeTarget(worktreePath);
+  rmSync(worktreePath, { recursive: true, force: true });
+  mkdirSync(worktreePath);
+  const agentId = "agent-pending-replaced-worktree";
+  const pendingCreations = new Map<string, PendingAgentCreation>([
+    [
+      agentId,
+      {
+        agentId,
+        createdAt: "2025-01-01T00:00:00.000Z",
+        cleanupTarget: staleTarget,
+      },
+    ],
+  ]);
+  const dispatch = createLifecycleDispatch(new AgentLifecycleEvents(), async () => undefined, {
+    pendingCreations,
+  });
+  const archiveWorktreePath = vi.spyOn(
+    dispatch as unknown as {
+      archiveWorktreePath(worktreePath: string, workspaceId?: string): Promise<void>;
+    },
+    "archiveWorktreePath",
+  );
+
+  try {
+    await dispatch.recoverPendingAgentCreations();
+
+    expect(archiveWorktreePath).not.toHaveBeenCalled();
+    expect(pendingCreations.size).toBe(0);
+    expect(statSync(worktreePath).isDirectory()).toBe(true);
+  } finally {
+    rmSync(worktreePath, { recursive: true, force: true });
+  }
+});
+
+test("startup repairs metadata after git creation and before archive recovery", async () => {
+  const worktreePath = mkdtempSync(join(tmpdir(), "paseo-unrecorded-worktree-"));
+  mkdirSync(join(worktreePath, ".git"));
+  const agentId = "agent-pending-metadata-gap";
+  const pendingCreations = new Map<string, PendingAgentCreation>([
+    [
+      agentId,
+      {
+        agentId,
+        createdAt: "2025-01-01T00:00:00.000Z",
+        cleanupTarget: pendingWorktreeTarget(worktreePath),
+      },
+    ],
+  ]);
+  const dispatch = createLifecycleDispatch(new AgentLifecycleEvents(), async () => undefined, {
+    pendingCreations,
+  });
+  const archiveWorktreePath = vi
+    .spyOn(
+      dispatch as unknown as {
+        archiveWorktreePath(worktreePath: string, workspaceId?: string): Promise<void>;
+      },
+      "archiveWorktreePath",
+    )
+    .mockImplementation(async () => {
+      expect(readPaseoWorktreeMetadata(worktreePath)).toMatchObject({
+        baseRefName: "main",
+        incarnationId: PENDING_WORKTREE_INCARNATION_ID,
+      });
+    });
+
+  try {
+    await dispatch.recoverPendingAgentCreations();
+
+    expect(archiveWorktreePath).toHaveBeenCalledWith(resolvePath(worktreePath));
+    expect(pendingCreations.size).toBe(0);
+  } finally {
+    rmSync(worktreePath, { recursive: true, force: true });
+  }
+});
 
 test("auto-archive self-releases once and later cancellation waits harmlessly", async () => {
   const agentId = "4a7e2521-286d-4ad5-af35-e091c55302e3";
@@ -285,6 +549,69 @@ test("lifecycle shutdown cancels listeners and truthfully awaits an active archi
   await expect(registration.settled).resolves.toBe("completed");
 });
 
+test("lifecycle shutdown joins failed-create cleanup that starts during drain", async () => {
+  const agents = new AgentLifecycleEvents();
+  let markDrainStarted!: () => void;
+  let releaseDrain!: () => void;
+  const drainStarted = new Promise<void>((resolve) => {
+    markDrainStarted = resolve;
+  });
+  const drainFinished = new Promise<void>((resolve) => {
+    releaseDrain = resolve;
+  });
+  let drainCount = 0;
+  const dispatch = createLifecycleDispatch(agents, async () => undefined, {
+    drainWorkspaceLifecycleOperations: async () => {
+      drainCount += 1;
+      if (drainCount === 1) {
+        markDrainStarted();
+        await drainFinished;
+      }
+    },
+  });
+  let markCleanupStarted!: () => void;
+  let releaseCleanup!: () => void;
+  const cleanupStarted = new Promise<void>((resolve) => {
+    markCleanupStarted = resolve;
+  });
+  const cleanupFinished = new Promise<void>((resolve) => {
+    releaseCleanup = resolve;
+  });
+  vi.spyOn(
+    dispatch as unknown as {
+      archiveAutoCreatedWorktree(options: unknown): Promise<void>;
+    },
+    "archiveAutoCreatedWorktree",
+  ).mockImplementation(async () => {
+    markCleanupStarted();
+    await cleanupFinished;
+  });
+
+  let shutdownSettled = false;
+  const shutdown = dispatch.shutdown({ timeoutMs: 5_000 }).then((result) => {
+    shutdownSettled = true;
+    return result;
+  });
+  await drainStarted;
+  const cleanup = dispatch.cleanupCreatedWorktreeAfterFailedAgentCreate({
+    createdAgentId: null,
+    createdWorktree: {
+      created: true,
+      worktree: { worktreePath: "/tmp/paseo/worktrees/repo/failed-create" },
+    } as CreatePaseoWorktreeWorkflowResult,
+  });
+  await cleanupStarted;
+  releaseDrain();
+  await Promise.resolve();
+
+  expect(shutdownSettled).toBe(false);
+
+  releaseCleanup();
+  await expect(cleanup).resolves.toBeUndefined();
+  await expect(shutdown).resolves.toEqual({ completed: true, pendingAgentIds: [] });
+  expect(drainCount).toBe(2);
+});
+
 test("one dispatcher keeps one lifecycle registration across repeated callers", async () => {
   const agentId = "agent-shared-lifecycle-registration";
   const agents = new AgentLifecycleEvents();
@@ -471,7 +798,7 @@ test("startup completes an armed agent-only auto-archive obligation", async () =
   await dispatch.recoverPersistedAutoArchives();
   await vi.waitFor(() => expect(archiveAgentForClose).toHaveBeenCalledWith(agentId));
 
-  expect(records.get(agentId)?.autoArchiveObligation).toBeUndefined();
+  await vi.waitFor(() => expect(records.get(agentId)?.autoArchiveObligation).toBeUndefined());
 });
 
 test("startup completes a persisted workspace auto-archive obligation", async () => {
@@ -499,8 +826,47 @@ test("startup completes a persisted workspace auto-archive obligation", async ()
     expect(archiveWorkspaceForClose).toHaveBeenCalledWith("ws-restart", expect.any(AbortSignal)),
   );
 
-  expect(records.get(agentId)?.autoArchiveObligation).toBeUndefined();
+  await vi.waitFor(() => expect(records.get(agentId)?.autoArchiveObligation).toBeUndefined());
 });
+
+test.each([
+  ["missing", async () => null],
+  [
+    "still active",
+    async (workspaceId: string) =>
+      ({ workspaceId, archivedAt: null, cleanupPending: null }) as PersistedWorkspaceRecord,
+  ],
+  [
+    "cleanup pending",
+    async (workspaceId: string) =>
+      ({
+        workspaceId,
+        archivedAt: "2025-01-01T00:00:00.000Z",
+        cleanupPending: { directoryPath: "/tmp/worktree" },
+      }) as PersistedWorkspaceRecord,
+  ],
+])(
+  "startup retains a workspace obligation when archive readback is %s",
+  async (_name, getWorkspace) => {
+    const agentId = "agent-restart-workspace-unverified";
+    const obligation = {
+      phase: "pending",
+      target: { kind: "workspace", workspaceId: "ws-unverified" },
+    } as const;
+    const records = new Map<string, StoredAgentRecord>([
+      [agentId, { id: agentId, autoArchiveObligation: obligation } as StoredAgentRecord],
+    ]);
+    const getWorkspaceSpy = vi.fn(getWorkspace);
+    const dispatch = createLifecycleDispatch(new AgentLifecycleEvents(), async () => undefined, {
+      records,
+      getWorkspace: getWorkspaceSpy,
+    });
+
+    await dispatch.recoverPersistedAutoArchives();
+    await vi.waitFor(() => expect(getWorkspaceSpy).toHaveBeenCalledWith("ws-unverified"));
+    expect(records.get(agentId)?.autoArchiveObligation).toEqual(obligation);
+  },
+);
 
 test.each([
   ["workspace cleanup failure", new WorkspaceCleanupPendingError("archive", ["ws-restart"])],
@@ -546,5 +912,5 @@ test.each([
   await vi.waitFor(() =>
     expect(retryArchive).toHaveBeenCalledWith("ws-restart", expect.any(AbortSignal)),
   );
-  expect(records.get(agentId)?.autoArchiveObligation).toBeUndefined();
+  await vi.waitFor(() => expect(records.get(agentId)?.autoArchiveObligation).toBeUndefined());
 });

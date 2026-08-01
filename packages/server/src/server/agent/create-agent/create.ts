@@ -1,6 +1,7 @@
 import type { Logger } from "pino";
 
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
+import type { WorktreeCreationReservation } from "../../../utils/worktree.js";
 import type { CreatePaseoWorktreeInput } from "../../paseo-worktree-service.js";
 import { expandUserPath, resolvePathFromBase } from "../../path-utils.js";
 import { toWorktreeRequestError } from "../../worktree-errors.js";
@@ -75,12 +76,17 @@ export interface CreateAgentFromSessionInput {
   provisionalTitle: string | null;
   firstAgentContext: FirstAgentContext;
   autoArchiveObligation?: AutoArchiveObligation;
-  onCreated?: (created: { agentId: string }) => void;
+  agentId?: string;
+  onCreated?: (created: { agentId: string; autoArchiveObligation?: AutoArchiveObligation }) => void;
   buildSessionConfig: (
     config: AgentSessionConfig,
     gitOptions?: GitSetupOptions,
     legacyWorktreeName?: string,
     firstAgentContext?: FirstAgentContext,
+    onWorktreePathResolved?: (
+      worktreePath: string,
+      reservation: WorktreeCreationReservation,
+    ) => Promise<void>,
   ) => Promise<CreateAgentSessionWorktreeResult>;
 }
 
@@ -198,7 +204,11 @@ export async function createAgentCommand(
         await dependencies.requireActiveWorkspaceForOwnership?.(workspaceId);
       },
       () =>
-        dependencies.agentManager.createAgent(resolved.config, undefined, resolved.createOptions),
+        dependencies.agentManager.createAgent(
+          resolved.config,
+          input.kind === "session" ? input.agentId : undefined,
+          resolved.createOptions,
+        ),
     );
   } catch (error) {
     resolved.setupContinuation?.releaseWithoutStarting();
@@ -213,7 +223,18 @@ export async function createAgentCommand(
   let initialPromptStarted = false;
   let initialPromptError: unknown | null = null;
   if (input.kind === "session") {
-    input.onCreated?.({ agentId: snapshot.id });
+    if (input.agentId) {
+      await dependencies.agentStorage.removePendingAgentCreation(input.agentId).catch((error) => {
+        dependencies.logger.warn(
+          { err: error, agentId: input.agentId },
+          "Failed to remove completed agent creation journal",
+        );
+      });
+    }
+    input.onCreated?.({
+      agentId: snapshot.id,
+      autoArchiveObligation: resolved.createOptions.autoArchiveObligation,
+    });
   } else {
     input.onCreated?.({ agentId: snapshot.id, createdWorktree: resolved.createdWorktree ?? null });
   }
@@ -250,6 +271,7 @@ async function resolveSessionCreateAgent(
   input: CreateAgentFromSessionInput,
 ): Promise<ResolvedCreateAgent> {
   const trimmedPrompt = input.initialPrompt?.trim();
+  const pendingAgentId = input.agentId;
   const {
     sessionConfig: builtSessionConfig,
     setupContinuation,
@@ -259,6 +281,14 @@ async function resolveSessionCreateAgent(
     input.git,
     input.worktreeName,
     input.firstAgentContext,
+    pendingAgentId
+      ? (worktreePath, reservation) =>
+          dependencies.agentStorage.setPendingAgentCreationWorktree(
+            pendingAgentId,
+            worktreePath,
+            reservation,
+          )
+      : undefined,
   );
   // Validate the requested mode against the provider's modes for the resolved
   // cwd. The app remembers mode preferences globally, so a saved mode can be
@@ -310,7 +340,16 @@ async function resolveSessionCreateAgent(
         // agent belongs to that workspace, not the source one. createdWorkspaceId
         // is the freshly created worktree's workspace.
         workspaceId: requireResolvedWorkspaceId(workspaceId),
-        autoArchiveObligation: input.autoArchiveObligation,
+        autoArchiveObligation:
+          input.autoArchiveObligation && setupContinuation
+            ? {
+                phase: input.autoArchiveObligation.phase,
+                target: {
+                  kind: "workspace",
+                  workspaceId: requireResolvedWorkspaceId(createdWorkspaceId),
+                },
+              }
+            : input.autoArchiveObligation,
       },
       prompt: hasPromptContent ? prompt : undefined,
       runOptions,

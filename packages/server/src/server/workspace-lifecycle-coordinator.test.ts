@@ -38,3 +38,67 @@ test("cancels a queued worktree mutation before it starts", async () => {
   await Promise.resolve();
   expect(secondOperation).not.toHaveBeenCalled();
 });
+
+test("drain waits for the real archive after its abortable wrapper rejects", async () => {
+  const coordinator = new WorkspaceLifecycleCoordinator();
+  const controller = new AbortController();
+  let releaseArchive = () => {};
+  const physicalArchive = new Promise<void>((resolve) => {
+    releaseArchive = resolve;
+  });
+  const archive = coordinator.runArchive(
+    "workspace:ws-drain",
+    () => physicalArchive,
+    controller.signal,
+  );
+  await Promise.resolve();
+
+  controller.abort();
+  await expect(archive).rejects.toThrow("Workspace lifecycle operation canceled");
+
+  let drained = false;
+  const drain = coordinator.drain().then(() => {
+    drained = true;
+    return undefined;
+  });
+  await Promise.resolve();
+  expect(drained).toBe(false);
+
+  releaseArchive();
+  await drain;
+  expect(drained).toBe(true);
+});
+
+test("drain waits for workspace setup reservations", async () => {
+  const coordinator = new WorkspaceLifecycleCoordinator();
+  const reservation = coordinator.reserveWorkspaceSetup("ws-setup", "/worktrees/setup");
+
+  let drained = false;
+  const drain = coordinator.drain().then(() => {
+    drained = true;
+    return undefined;
+  });
+  await Promise.resolve();
+  expect(drained).toBe(false);
+
+  reservation.release();
+  await drain;
+  expect(drained).toBe(true);
+});
+
+test("drain waits for workspace ownership mutation reservations", async () => {
+  const coordinator = new WorkspaceLifecycleCoordinator();
+  const reservation = coordinator.reserveWorkspaceOwnershipMutation("ws-ownership");
+
+  let drained = false;
+  const drain = coordinator.drain().then(() => {
+    drained = true;
+    return undefined;
+  });
+  await Promise.resolve();
+  expect(drained).toBe(false);
+
+  reservation.release();
+  await drain;
+  expect(drained).toBe(true);
+});

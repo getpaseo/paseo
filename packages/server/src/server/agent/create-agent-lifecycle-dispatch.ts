@@ -1,9 +1,16 @@
 import { randomUUID } from "node:crypto";
+import { existsSync, statSync } from "node:fs";
+import { rm } from "node:fs/promises";
+import { resolve as resolvePath } from "node:path";
 import type pino from "pino";
 
 import type { ForgeService } from "../../services/forge-service.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
 import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
+import {
+  readPaseoWorktreeMetadata,
+  writePaseoWorktreeMetadata,
+} from "../../utils/worktree-metadata.js";
 import {
   archiveByScope,
   requireArchiveCleanupComplete,
@@ -26,6 +33,7 @@ interface CreateAgentLifecycleDispatchDependencies {
   workspaceGitService: WorkspaceGitService;
   archiveAgentForClose: (agentId: string) => Promise<unknown>;
   archiveWorkspaceForClose: (workspaceId: string, signal?: AbortSignal) => Promise<unknown>;
+  drainWorkspaceLifecycleOperations: () => Promise<void>;
   findWorkspaceIdForCwd: (cwd: string) => Promise<string | null>;
   listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
   archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
@@ -61,6 +69,7 @@ export interface LifecycleDispatchShutdownResult {
 export class CreateAgentLifecycleDispatch {
   private readonly autoArchiveTasks = new Map<string, Promise<void>>();
   private readonly autoArchiveRegistrations = new Map<string, LifecycleRegistration>();
+  private readonly failedCreateCleanupTasks = new Map<string, Promise<void>>();
   private readonly shutdownController = new AbortController();
   private shuttingDown = false;
 
@@ -107,27 +116,128 @@ export class CreateAgentLifecycleDispatch {
     }
   }
 
+  async recoverPendingAgentCreations(): Promise<void> {
+    const records = await this.dependencies.agentStorage.listPendingAgentCreations();
+    for (const record of records) {
+      await this.recoverPendingAgentCreation(record.agentId);
+    }
+  }
+
+  async recoverPendingAgentCreation(agentId: string): Promise<void> {
+    const pending = (await this.dependencies.agentStorage.listPendingAgentCreations()).find(
+      (record) => record.agentId === agentId,
+    );
+    if (!pending) return;
+
+    if (
+      (await this.dependencies.agentStorage.get(agentId)) ||
+      pending.cleanupTarget.kind === "agent"
+    ) {
+      await this.dependencies.agentStorage.removePendingAgentCreation(agentId);
+      return;
+    }
+
+    const targetPath = resolvePath(pending.cleanupTarget.targetPath);
+    try {
+      if (!existsSync(targetPath)) {
+        const ownsActiveWorkspace = (await this.dependencies.workspaceRegistry.list()).some(
+          (workspace) =>
+            !workspace.archivedAt &&
+            resolvePath(workspace.worktreeRoot ?? workspace.cwd) === targetPath,
+        );
+        if (!ownsActiveWorkspace) {
+          await this.dependencies.agentStorage.removePendingAgentCreation(agentId);
+          return;
+        }
+      }
+
+      if (existsSync(targetPath)) {
+        const targetStat = statSync(targetPath, { bigint: true });
+        const currentDirectoryIdentity = {
+          device: targetStat.dev.toString(),
+          inode: targetStat.ino.toString(),
+        };
+        if (
+          currentDirectoryIdentity.device !== pending.cleanupTarget.directoryIdentity.device ||
+          currentDirectoryIdentity.inode !== pending.cleanupTarget.directoryIdentity.inode
+        ) {
+          this.dependencies.logger.warn(
+            { agentId, worktreePath: targetPath },
+            "Pending agent creation no longer owns its worktree path",
+          );
+          await this.dependencies.agentStorage.removePendingAgentCreation(agentId);
+          return;
+        }
+
+        const gitPath = resolvePath(targetPath, ".git");
+        if (!existsSync(gitPath)) {
+          await rm(targetPath, { recursive: true, force: true });
+          await this.dependencies.agentStorage.removePendingAgentCreation(agentId);
+          return;
+        }
+        const metadata = readPaseoWorktreeMetadata(targetPath);
+        if (
+          metadata?.incarnationId &&
+          metadata.incarnationId !== pending.cleanupTarget.worktreeIncarnationId
+        ) {
+          this.dependencies.logger.warn(
+            { agentId, worktreePath: targetPath },
+            "Pending agent creation found a replacement worktree incarnation",
+          );
+          await this.dependencies.agentStorage.removePendingAgentCreation(agentId);
+          return;
+        }
+        if (!metadata?.incarnationId) {
+          writePaseoWorktreeMetadata(targetPath, {
+            baseRefName: metadata?.baseRefName ?? pending.cleanupTarget.metadataBaseRefName,
+            incarnationId: pending.cleanupTarget.worktreeIncarnationId,
+            ...(metadata?.changeRequestLookupTarget
+              ? { changeRequestLookupTarget: metadata.changeRequestLookupTarget }
+              : {}),
+          });
+        }
+      }
+
+      await this.archiveWorktreePath(targetPath);
+      await this.dependencies.agentStorage.removePendingAgentCreation(agentId);
+    } catch (error) {
+      this.dependencies.logger.warn(
+        { err: error, agentId, worktreePath: targetPath },
+        "Failed to recover pending agent creation",
+      );
+    }
+  }
+
   async cleanupCreatedWorktreeAfterFailedAgentCreate(input: {
     createdWorktree: CreatePaseoWorktreeWorkflowResult | null;
     createdAgentId: string | null;
   }): Promise<void> {
     const { createdWorktree, createdAgentId } = input;
-    if (!createdWorktree || createdAgentId) {
+    if (!createdWorktree?.created || createdAgentId) {
       return;
     }
 
-    await this.archiveAutoCreatedWorktree({
+    const worktreePath = createdWorktree.worktree.worktreePath;
+    const existingTask = this.failedCreateCleanupTasks.get(worktreePath);
+    if (existingTask) return existingTask;
+
+    const cleanupTask = this.archiveAutoCreatedWorktree({
       agentId: null,
       createdWorktree,
     }).catch((archiveError) => {
       this.dependencies.logger.warn(
-        {
-          err: archiveError,
-          worktreePath: createdWorktree.worktree.worktreePath,
-        },
+        { err: archiveError, worktreePath },
         "Failed to clean up worktree after create_agent_request failed",
       );
     });
+    this.failedCreateCleanupTasks.set(worktreePath, cleanupTask);
+    try {
+      await cleanupTask;
+    } finally {
+      if (this.failedCreateCleanupTasks.get(worktreePath) === cleanupTask) {
+        this.failedCreateCleanupTasks.delete(worktreePath);
+      }
+    }
   }
 
   private registerAutoArchiveOnTerminalState(
@@ -170,6 +280,9 @@ export class CreateAgentLifecycleDispatch {
       registrations.map(([, registration]) => registration.cancel()),
     ).then(async (results) => {
       await Promise.allSettled(Array.from(this.autoArchiveTasks.values()));
+      await this.dependencies.drainWorkspaceLifecycleOperations();
+      await Promise.allSettled(Array.from(this.failedCreateCleanupTasks.values()));
+      await this.dependencies.drainWorkspaceLifecycleOperations();
       return results;
     });
     let cancellationResults: PromiseSettledResult<void>[] | null = null;
@@ -197,7 +310,13 @@ export class CreateAgentLifecycleDispatch {
         ...this.autoArchiveTasks.keys(),
       ]),
     );
-    return { completed: pendingAgentIds.length === 0, pendingAgentIds };
+    return {
+      completed:
+        cancellationResults !== null &&
+        pendingAgentIds.length === 0 &&
+        this.failedCreateCleanupTasks.size === 0,
+      pendingAgentIds,
+    };
   }
 
   private async autoArchiveAgentOnce(
@@ -234,6 +353,12 @@ export class CreateAgentLifecycleDispatch {
         target.workspaceId,
         this.shutdownController.signal,
       );
+      const workspace = await this.dependencies.workspaceRegistry.get(target.workspaceId);
+      if (!workspace?.archivedAt || workspace.cleanupPending) {
+        throw new WorkspaceCleanupPendingError("Workspace auto-archive verification", [
+          target.workspaceId,
+        ]);
+      }
     } else {
       await this.dependencies.archiveAgentForClose(agentId);
     }
@@ -256,6 +381,14 @@ export class CreateAgentLifecycleDispatch {
       throw new Error("Auto-created worktree is not a Paseo-owned worktree");
     }
 
+    await this.archiveWorktreePath(worktreePath, createdWorktree.workspace.workspaceId);
+
+    if (options.agentId) {
+      this.dependencies.emitAgentRemove(options.agentId);
+    }
+  }
+
+  private async archiveWorktreePath(worktreePath: string, workspaceId?: string): Promise<void> {
     const archiveResult = await archiveByScope(
       {
         paseoHome: this.dependencies.paseoHome,
@@ -275,16 +408,13 @@ export class CreateAgentLifecycleDispatch {
         sessionLogger: this.dependencies.logger,
       },
       {
-        scope: { kind: "workspace", workspaceId: createdWorktree.workspace.workspaceId },
+        scope: workspaceId
+          ? { kind: "workspace", workspaceId }
+          : { kind: "worktree", targetPath: worktreePath },
         requestId: randomUUID(),
-        signal: this.shutdownController.signal,
       },
     );
     requireArchiveCleanupComplete(archiveResult, "Auto-created worktree archive");
-
-    if (options.agentId) {
-      this.dependencies.emitAgentRemove(options.agentId);
-    }
   }
 }
 

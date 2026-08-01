@@ -136,6 +136,87 @@ test("session create persists and arms auto-archive before starting the initial 
   expect(order).toEqual(["persisted", "armed", "prompt"]);
 });
 
+test("legacy worktree create keeps its journal through durable agent registration", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "create-agent-journal-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentManager = createRealAgentManager(storage);
+  const agentId = agentManager.allocateAgentId();
+  const resolvedWorktreePath = join(workdir, "worktrees", "feature-2");
+  const removalOrder: string[] = [];
+  const removePendingAgentCreation = storage.removePendingAgentCreation.bind(storage);
+
+  try {
+    await storage.beginPendingAgentCreation(agentId);
+    vi.spyOn(storage, "removePendingAgentCreation").mockImplementation(async (removingAgentId) => {
+      expect(removingAgentId).toBe(agentId);
+      expect(await storage.get(agentId)).toMatchObject({
+        id: agentId,
+        autoArchiveObligation: {
+          phase: "armed",
+          target: { kind: "workspace", workspaceId: "ws-created-worktree" },
+        },
+      });
+      removalOrder.push("registered");
+      await removePendingAgentCreation(removingAgentId);
+    });
+
+    const { snapshot } = await createAgentCommand(
+      {
+        agentManager,
+        agentStorage: storage,
+        logger,
+        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+      },
+      {
+        kind: "session",
+        agentId,
+        config: { provider: "codex", cwd: workdir },
+        workspaceId: "ws-source",
+        labels: {},
+        provisionalTitle: null,
+        firstAgentContext: { attachments: [] },
+        autoArchiveObligation: { phase: "armed", target: { kind: "agent" } },
+        buildSessionConfig: async (config, _git, _worktreeName, _context, onPath) => {
+          await onPath?.(resolvedWorktreePath, {
+            worktreeIncarnationId: "30704df3-6339-4c9c-8277-1416544ed7cc",
+            directoryIdentity: { device: "7", inode: "42" },
+            metadataBaseRefName: "main",
+          });
+          expect(await storage.listPendingAgentCreations()).toEqual([
+            expect.objectContaining({
+              agentId,
+              cleanupTarget: {
+                kind: "worktree",
+                targetPath: resolvedWorktreePath,
+                worktreeIncarnationId: "30704df3-6339-4c9c-8277-1416544ed7cc",
+                directoryIdentity: { device: "7", inode: "42" },
+                metadataBaseRefName: "main",
+              },
+            }),
+          ]);
+          removalOrder.push("worktree-resolved");
+          mkdirSync(resolvedWorktreePath, { recursive: true });
+          return {
+            sessionConfig: { ...config, cwd: resolvedWorktreePath },
+            setupContinuation: {
+              kind: "agent",
+              startAfterAgentCreate: () => undefined,
+              releaseWithoutStarting: () => undefined,
+            },
+            createdWorkspaceId: "ws-created-worktree",
+          };
+        },
+      },
+    );
+
+    expect(snapshot.id).toBe(agentId);
+    expect(removalOrder).toEqual(["worktree-resolved", "registered"]);
+    await expect(storage.listPendingAgentCreations()).resolves.toEqual([]);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("session create validates the requested mode against the provider's modes", async () => {
   const snapshot = {
     id: "agent-1",

@@ -209,6 +209,60 @@ describe("AgentStorage", () => {
     });
   });
 
+  test("persists pending creation intent separately from visible agents", async () => {
+    await storage.beginPendingAgentCreation("agent-pending-create");
+    await storage.setPendingAgentCreationWorktree(
+      "agent-pending-create",
+      "/tmp/paseo/worktrees/project/feature-2",
+      {
+        worktreeIncarnationId: "4d2ce498-4c27-4ea2-8ed3-46720de7194e",
+        directoryIdentity: { device: "7", inode: "42" },
+        metadataBaseRefName: "main",
+      },
+    );
+
+    const reloaded = new AgentStorage(storagePath, logger);
+    await expect(reloaded.list()).resolves.toEqual([]);
+    await expect(reloaded.listPendingAgentCreations()).resolves.toEqual([
+      {
+        agentId: "agent-pending-create",
+        createdAt: expect.any(String),
+        cleanupTarget: {
+          kind: "worktree",
+          targetPath: "/tmp/paseo/worktrees/project/feature-2",
+          worktreeIncarnationId: "4d2ce498-4c27-4ea2-8ed3-46720de7194e",
+          directoryIdentity: { device: "7", inode: "42" },
+          metadataBaseRefName: "main",
+        },
+      },
+    ]);
+
+    await reloaded.removePendingAgentCreation("agent-pending-create");
+    await expect(reloaded.listPendingAgentCreations()).resolves.toEqual([]);
+  });
+
+  test.each(["armed", "pending"] as const)(
+    "explicit undefined preserves a persisted %s auto-archive obligation",
+    async (phase) => {
+      const agent = createManagedAgent({ id: `agent-auto-archive-${phase}` });
+      await storage.applySnapshot(agent, {
+        autoArchiveObligation: { phase, target: { kind: "agent" } },
+      });
+
+      await storage.applySnapshot(
+        { ...agent, updatedAt: new Date("2025-02-01") },
+        {
+          autoArchiveObligation: undefined,
+        },
+      );
+
+      const reloaded = new AgentStorage(storagePath, logger);
+      await expect(reloaded.get(agent.id)).resolves.toMatchObject({
+        autoArchiveObligation: { phase, target: { kind: "agent" } },
+      });
+    },
+  );
+
   test("serialized snapshots cannot overwrite a pending auto-archive obligation", async () => {
     const agent = createManagedAgent({ id: "agent-auto-archive-race" });
     await storage.applySnapshot(agent, {

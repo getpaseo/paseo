@@ -157,6 +157,7 @@ import {
   type ActiveWorkspaceRef,
 } from "./workspace-archive-service.js";
 import { WorkspaceCleanupRetryService } from "./workspace-cleanup-retry-service.js";
+import { defaultWorkspaceLifecycleCoordinator } from "./workspace-lifecycle-coordinator.js";
 import { setupAutoArchiveOnMerge } from "./auto-archive-on-merge/index.js";
 import { wrapSessionMessage, type SessionOutboundMessage } from "./messages.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
@@ -1190,6 +1191,7 @@ export async function createPaseoDaemon(
       archiveAgentCommand({ agentManager, agentStorage, logger }, agentId),
     archiveWorkspaceForClose: (workspaceId, signal) =>
       archiveWorkspaceByIdExternal(workspaceId, randomUUID(), signal),
+    drainWorkspaceLifecycleOperations: () => defaultWorkspaceLifecycleCoordinator.drain(),
     findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
     listActiveWorkspaces: listActiveWorkspacesExternal,
     archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
@@ -1322,6 +1324,7 @@ export async function createPaseoDaemon(
   logger.info({ elapsed: elapsed() }, "Schedule service initialized");
   logger.info({ elapsed: elapsed() }, "Loading persisted agent registry");
   const persistedRecords = await agentStorage.list();
+  await hubAgentLifecycle.recoverPendingAgentCreations();
   await hubAgentLifecycle.recoverPersistedAutoArchives();
   logger.info(
     { elapsed: elapsed() },

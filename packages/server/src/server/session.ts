@@ -27,6 +27,7 @@ import type {
   TerminalManager,
   TerminalWorkspaceContributionChangedEvent,
 } from "../terminal/terminal-manager.js";
+import type { WorktreeCreationReservation } from "../utils/worktree.js";
 import { TerminalSessionController } from "../terminal/terminal-session-controller.js";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import type { BinaryFrame } from "@getpaseo/protocol/binary-frames/index";
@@ -350,6 +351,14 @@ interface ResolvedSessionCreateAgentIntent {
   config: AgentSessionConfig;
   intent: CreateAgentIntent;
   createdDirectoryWorkspace: boolean;
+}
+
+interface PendingAgentCreationReservation {
+  agentId?: string;
+  onWorktreePathResolved?: (
+    worktreePath: string,
+    reservation: WorktreeCreationReservation,
+  ) => Promise<void>;
 }
 
 type FetchWorkspacesRequestMessage = Extract<
@@ -3061,6 +3070,7 @@ export class Session {
 
     let createdWorktreeForCleanup: CreatePaseoWorktreeWorkflowResult | null = null;
     let createdAgentId: string | null = null;
+    let pendingCreationAgentId: string | undefined;
     try {
       const requestedCwd = resolve(config.cwd);
       const needsRequestedDirectory =
@@ -3079,11 +3089,14 @@ export class Session {
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
       };
       const workspacePromptTitle = resolveFirstAgentPromptTitle(firstAgentContext);
+      const pendingCreation = await this.reservePendingAgentCreation(autoArchive);
+      pendingCreationAgentId = pendingCreation.agentId;
       const createdWorktree = await this.createWorktreeForCreateAgentRequest({
         cwd: config.cwd,
         target: worktree,
         firstAgentContext,
         hasLegacyGitOptions: Boolean(git),
+        onWorktreePathResolved: pendingCreation.onWorktreePathResolved,
       });
       createdWorktreeForCleanup = createdWorktree;
       const resolvedIntent = await this.resolveSessionCreateAgentIntent({
@@ -3137,17 +3150,19 @@ export class Session {
           provisionalTitle,
           firstAgentContext,
           autoArchiveObligation,
-          onCreated: ({ agentId }) => {
+          agentId: pendingCreationAgentId,
+          onCreated: ({ agentId, autoArchiveObligation: persistedObligation }) => {
             createdAgentId = agentId;
-            if (autoArchiveObligation) {
-              this.createAgentLifecycleDispatch.registerAutoArchive({
-                agentId,
-                obligation: autoArchiveObligation,
-              });
-            }
+            this.registerCreatedAgentAutoArchive(agentId, persistedObligation);
           },
-          buildSessionConfig: (sessionConfig, gitOptions, legacyWorktreeName, ctx) =>
-            this.buildAgentSessionConfig(sessionConfig, gitOptions, legacyWorktreeName, ctx),
+          buildSessionConfig: (sessionConfig, gitOptions, legacyWorktreeName, ctx, onPath) =>
+            this.buildAgentSessionConfig(
+              sessionConfig,
+              gitOptions,
+              legacyWorktreeName,
+              ctx,
+              onPath,
+            ),
         },
       );
       await this.agentUpdates.forwardLiveAgent(snapshot);
@@ -3183,6 +3198,7 @@ export class Session {
         createdWorktree: createdWorktreeForCleanup,
         createdAgentId,
       });
+      await this.recoverPendingAgentCreation(pendingCreationAgentId);
       const wireError = toWorktreeWireError(error);
       this.sessionLogger.error({ err: error }, "Failed to create agent");
       if (requestId) {
@@ -3206,6 +3222,33 @@ export class Session {
         },
       });
     }
+  }
+
+  private async reservePendingAgentCreation(
+    autoArchive: boolean | undefined,
+  ): Promise<PendingAgentCreationReservation> {
+    if (autoArchive !== true) return {};
+
+    const agentId = this.agentManager.allocateAgentId();
+    await this.agentStorage.beginPendingAgentCreation(agentId);
+    return {
+      agentId,
+      onWorktreePathResolved: (worktreePath, reservation) =>
+        this.agentStorage.setPendingAgentCreationWorktree(agentId, worktreePath, reservation),
+    };
+  }
+
+  private registerCreatedAgentAutoArchive(
+    agentId: string,
+    obligation: AutoArchiveObligation | undefined,
+  ): void {
+    if (!obligation) return;
+    this.createAgentLifecycleDispatch.registerAutoArchive({ agentId, obligation });
+  }
+
+  private async recoverPendingAgentCreation(agentId: string | undefined): Promise<void> {
+    if (!agentId) return;
+    await this.createAgentLifecycleDispatch.recoverPendingAgentCreation(agentId);
   }
 
   private async resolveSessionCreateAgentIntent(input: {
@@ -3558,6 +3601,10 @@ export class Session {
     gitOptions?: GitSetupOptions,
     legacyWorktreeName?: string,
     firstAgentContext?: FirstAgentContext,
+    onWorktreePathResolved?: (
+      worktreePath: string,
+      reservation: WorktreeCreationReservation,
+    ) => Promise<void>,
   ): Promise<{
     sessionConfig: AgentSessionConfig;
     setupContinuation?: CreatePaseoWorktreeWorkflowResult["setupContinuation"];
@@ -3598,6 +3645,7 @@ export class Session {
       gitOptions,
       legacyWorktreeName,
       firstAgentContext,
+      onWorktreePathResolved,
     );
   }
 
@@ -5819,6 +5867,10 @@ export class Session {
     target: CreateAgentWorktreeTarget | undefined;
     firstAgentContext: FirstAgentContext;
     hasLegacyGitOptions: boolean;
+    onWorktreePathResolved?: (
+      worktreePath: string,
+      reservation: WorktreeCreationReservation,
+    ) => Promise<void>;
   }): Promise<CreatePaseoWorktreeWorkflowResult | null> {
     if (input.target && input.hasLegacyGitOptions) {
       throw new Error("create_agent_request worktree cannot be combined with git options");
@@ -5833,6 +5885,7 @@ export class Session {
       runSetup: false,
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
+      onWorktreePathResolved: input.onWorktreePathResolved,
     } as const;
     switch (input.target.mode) {
       case "branch-off": {
