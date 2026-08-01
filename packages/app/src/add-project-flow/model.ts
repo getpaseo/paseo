@@ -25,9 +25,7 @@ interface SearchPageState {
 
 export type AddProjectPage =
   | ({ kind: "host" } & SearchPageState)
-  | ({ kind: "method"; hostId: string } & SearchPageState)
-  | ({ kind: "directory-search"; hostId: string; isSubmitting: boolean } & SearchPageState)
-  | ({ kind: "github-search"; hostId: string } & SearchPageState)
+  | ({ kind: "search"; hostId: string; isSubmitting: boolean } & SearchPageState)
   | ({
       kind: "github-location";
       hostId: string;
@@ -61,8 +59,8 @@ function searchPage<TKind extends AddProjectPage["kind"]>(kind: TKind) {
   return { kind, query: "", activeIndex: 0, error: null } as const;
 }
 
-function methodPage(hostId: string): AddProjectPage {
-  return { ...searchPage("method"), hostId };
+function unifiedSearchPage(hostId: string): AddProjectPage {
+  return { ...searchPage("search"), hostId, isSubmitting: false };
 }
 
 export function openAddProjectFlow(input: OpenAddProjectFlowInput): AddProjectFlowState {
@@ -74,7 +72,7 @@ export function openAddProjectFlow(input: OpenAddProjectFlowInput): AddProjectFl
 
   return {
     hosts: input.hosts,
-    pages: initialHost ? [methodPage(initialHost.serverId)] : [searchPage("host")],
+    pages: initialHost ? [unifiedSearchPage(initialHost.serverId)] : [searchPage("host")],
     newDirectoryNameDrafts: {},
     githubLocationDrafts: {},
   };
@@ -97,7 +95,7 @@ export function applyAvailableAddProjectHosts(
   return {
     ...state,
     hosts,
-    pages: initialHost ? [methodPage(initialHost.serverId)] : state.pages,
+    pages: initialHost ? [unifiedSearchPage(initialHost.serverId)] : state.pages,
   };
 }
 
@@ -138,25 +136,7 @@ export function chooseAddProjectHost(
   state: AddProjectFlowState,
   hostId: string,
 ): AddProjectFlowState {
-  return pushAddProjectPage(state, methodPage(hostId));
-}
-
-export function openDirectorySearchPage(
-  state: AddProjectFlowState,
-  hostId: string,
-): AddProjectFlowState {
-  return pushAddProjectPage(state, {
-    ...searchPage("directory-search"),
-    hostId,
-    isSubmitting: false,
-  });
-}
-
-export function openGithubSearchPage(
-  state: AddProjectFlowState,
-  hostId: string,
-): AddProjectFlowState {
-  return pushAddProjectPage(state, { ...searchPage("github-search"), hostId });
+  return pushAddProjectPage(state, unifiedSearchPage(hostId));
 }
 
 export function openGithubLocationPage(

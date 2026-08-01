@@ -8,7 +8,6 @@ import {
   Github,
   HardDrive,
   Plus,
-  Search,
   Server,
 } from "lucide-react-native";
 import {
@@ -37,9 +36,7 @@ import {
   currentAddProjectPage,
   moveAddProjectSelection,
   openAddProjectFlow,
-  openDirectorySearchPage,
   openGithubLocationPage,
-  openGithubSearchPage,
   openNewDirectoryNamePage,
   openNewDirectoryParentPage,
   setAddProjectActiveIndex,
@@ -52,16 +49,21 @@ import {
   type GithubRepositoryChoice,
 } from "@/add-project-flow/model";
 import {
-  buildAddProjectMethods,
-  addProjectMethodEmptyText,
+  buildAddProjectSourceOptions,
   buildCloneLocationOptions,
   buildManualGithubRepositoryChoices,
   buildSuggestedParentDirectories,
+  canUseGithubSource,
   filterAddProjectHosts,
   joinDirectoryPath,
   pathBaseName,
-  type AddProjectMethodId,
+  resolveAddProjectSourceFilter,
+  type AddProjectSourceFilter,
 } from "@/add-project-flow/options";
+import {
+  readAddProjectSourceFilter,
+  useAddProjectFilterStore,
+} from "@/add-project-flow/filter-store";
 import {
   buildProjectPickerOptions,
   type ProjectPickerOption,
@@ -103,6 +105,8 @@ interface FlowRowOption {
   subtitle: string | null;
   icon: ComponentType<{ size?: number; color?: string }>;
   disabled?: boolean;
+  /** Group headers render as plain labels and are never selectable. */
+  header?: boolean;
   testID: string;
   select: () => void;
 }
@@ -156,13 +160,6 @@ function FlowBackButton({ onPress }: { onPress: () => void }) {
   );
 }
 
-function methodIcon(method: AddProjectMethodId): FlowRowOption["icon"] {
-  if (method === "github") return Github;
-  if (method === "browse") return FolderOpen;
-  if (method === "new-directory") return FolderPlus;
-  return Search;
-}
-
 function directoryOptionSubtitle(option: ProjectPickerOption, shortPath: string): string | null {
   if (option.kind === "path") return "Open this path";
   if (shortPath === option.path) return null;
@@ -177,8 +174,11 @@ function progressText(page: AddProjectPage): string {
 
 function emptyText(page: AddProjectPage, host: AddProjectHost | null): string {
   if (page.kind === "host") return "No connected hosts";
-  if (page.kind === "github-search") return "Enter a GitHub URL or owner/repo";
-  if (page.kind === "method") return addProjectMethodEmptyText(host);
+  if (page.kind === "search") {
+    return host?.canAddProject === false
+      ? "Update the host to use Add Project."
+      : "No matching options";
+  }
   return "No matching options";
 }
 
@@ -206,12 +206,8 @@ function pageTitle(page: AddProjectPage): string {
   switch (page.kind) {
     case "host":
       return "Choose host";
-    case "method":
+    case "search":
       return "Add project";
-    case "directory-search":
-      return "Search for directory";
-    case "github-search":
-      return "Clone from GitHub";
     case "github-location":
       return "Choose destination";
     case "new-directory-parent":
@@ -225,12 +221,8 @@ function pagePlaceholder(page: AddProjectPage): string {
   switch (page.kind) {
     case "host":
       return "Search hosts...";
-    case "method":
-      return "Search methods...";
-    case "directory-search":
-      return "Search directories or enter a path...";
-    case "github-search":
-      return "Search or enter a GitHub repository...";
+    case "search":
+      return "Search directories and GitHub, or enter a path...";
     case "github-location":
     case "new-directory-parent":
       return "Search parent directories or enter a path...";
@@ -260,6 +252,13 @@ function FlowRow({ option, active }: { option: FlowRowOption; active: boolean })
     ],
     [active, option.disabled],
   );
+  if (option.header) {
+    return (
+      <Text style={styles.groupHeader} testID={option.testID}>
+        {option.title}
+      </Text>
+    );
+  }
   return (
     <Pressable
       accessibilityRole="button"
@@ -293,6 +292,175 @@ function FlowHint({ keys, action }: { keys: string[]; action: string }) {
       <Text style={styles.footerAction}>{action}</Text>
     </View>
   );
+}
+
+function SourcePill({
+  id,
+  label,
+  active,
+  testID,
+  onSelect,
+}: {
+  id: AddProjectSourceFilter;
+  label: string;
+  active: boolean;
+  testID: string;
+  onSelect: (filter: AddProjectSourceFilter) => void;
+}) {
+  const accessibilityState = useMemo(() => ({ selected: active }), [active]);
+  const handlePress = useCallback(() => onSelect(id), [id, onSelect]);
+  const pillStyle = useCallback(
+    ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.pill,
+      (active || hovered || pressed) && styles.pillActive,
+    ],
+    [active],
+  );
+  return (
+    <Pressable
+      onPress={handlePress}
+      accessibilityRole="button"
+      accessibilityState={accessibilityState}
+      testID={testID}
+      style={pillStyle}
+    >
+      <Text style={[styles.pillText, active && styles.pillTextActive]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+type SearchPage = Extract<AddProjectPage, { kind: "search" }>;
+
+function buildSearchRows(input: {
+  page: SearchPage;
+  host: AddProjectHost;
+  sourceFilter: AddProjectSourceFilter;
+  pathOptions: ProjectPickerOption[];
+  githubPayload: { repositories?: GithubRepositoryChoice[] } | null;
+  query: string;
+  openAddedProject: (path: string) => void;
+  browse: () => void;
+  setState: (update: (current: AddProjectFlowState) => AddProjectFlowState) => void;
+}): FlowRowOption[] {
+  const { page, host, sourceFilter, pathOptions, query } = input;
+  if (!host.canAddProject) {
+    return [
+      {
+        id: "host-update-required",
+        title: "Update the host to use Add Project.",
+        subtitle: null,
+        icon: Server,
+        disabled: true,
+        testID: "add-project-flow-host-update-required",
+        select: () => undefined,
+      },
+    ];
+  }
+  const rows: FlowRowOption[] = [];
+  if (sourceFilter !== "github") {
+    rows.push({
+      id: "header:local",
+      title: "Local",
+      subtitle: null,
+      icon: Folder,
+      header: true,
+      disabled: true,
+      testID: "add-project-flow-group-local",
+      select: () => undefined,
+    });
+    for (const option of pathOptions) {
+      const shortPath = shortenPath(option.path);
+      rows.push({
+        id: option.path,
+        title: shortPath,
+        subtitle: directoryOptionSubtitle(option, shortPath),
+        icon: Folder,
+        testID: pathTestId(option.path),
+        select: () => input.openAddedProject(option.path),
+      });
+    }
+    if (pathOptions.length === 0) {
+      rows.push({
+        id: "empty:local",
+        title: "No matching directories",
+        subtitle: null,
+        icon: Folder,
+        disabled: true,
+        testID: "add-project-flow-empty-local",
+        select: () => undefined,
+      });
+    }
+    if (host.canCreateDirectory) {
+      rows.push({
+        id: "action:new-directory",
+        title: "New directory",
+        subtitle: `Create an empty directory on ${host.label}`,
+        icon: FolderPlus,
+        testID: "add-project-flow-action-new-directory",
+        select: () => input.setState((current) => openNewDirectoryParentPage(current, page.hostId)),
+      });
+    }
+    if (host.canBrowse) {
+      rows.push({
+        id: "action:browse",
+        title: "Browse",
+        subtitle: "Choose or create a directory in Finder",
+        icon: FolderOpen,
+        testID: "add-project-flow-action-browse",
+        select: () => input.browse(),
+      });
+    }
+  }
+  if (sourceFilter !== "local" && canUseGithubSource(host)) {
+    rows.push({
+      id: "header:github",
+      title: "GitHub",
+      subtitle: null,
+      icon: Github,
+      header: true,
+      disabled: true,
+      testID: "add-project-flow-group-github",
+      select: () => undefined,
+    });
+    const repositories = input.githubPayload?.repositories ?? [];
+    const normalizedQuery = query.trim().toLowerCase();
+    const hasExactSearchResult = repositories.some(
+      (repository) =>
+        repository.nameWithOwner.toLowerCase() === normalizedQuery ||
+        repository.cloneUrl.toLowerCase() === normalizedQuery,
+    );
+    const manualRepositories = hasExactSearchResult
+      ? []
+      : buildManualGithubRepositoryChoices(query);
+    const repositoryChoices: GithubRepositoryChoice[] = [...manualRepositories, ...repositories];
+    for (const repository of repositoryChoices) {
+      rows.push({
+        id: repository.id,
+        title: repository.cloneProtocol
+          ? `${repository.nameWithOwner} via ${repository.cloneProtocol.toUpperCase()}`
+          : repository.nameWithOwner,
+        subtitle: repository.description,
+        icon: Github,
+        testID: `add-project-flow-repository-${repository.id}`,
+        select: () =>
+          input.setState((current) => openGithubLocationPage(current, page.hostId, repository)),
+      });
+    }
+    if (repositoryChoices.length === 0) {
+      rows.push({
+        id: "empty:github",
+        title: host.canSearchGithubRepositories
+          ? "No matching repositories"
+          : "Enter a GitHub URL or owner/repo",
+        subtitle: null,
+        icon: Github,
+        disabled: true,
+        testID: "add-project-flow-empty-github",
+        select: () => undefined,
+      });
+    }
+  }
+  return rows;
 }
 
 function setPageStatus(
@@ -372,6 +540,14 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   const browseInFlightRef = useRef(false);
   const query = page.kind === "new-directory-name" ? "" : page.query;
   const [debouncedQuery, setDebouncedQuery] = useState(query);
+  const [debouncedGithubQuery, setDebouncedGithubQuery] = useState(query);
+  const storedSourceFilter = useAddProjectFilterStore((store) =>
+    readAddProjectSourceFilter(store.filterByHost, hostId),
+  );
+  const setHostFilter = useAddProjectFilterStore((store) => store.setHostFilter);
+  const sourceFilter = host
+    ? resolveAddProjectSourceFilter(host, storedSourceFilter)
+    : ("all" as AddProjectSourceFilter);
 
   useEffect(() => {
     setState((current) =>
@@ -384,13 +560,20 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     return () => clearTimeout(timer);
   }, [query]);
 
+  // GitHub search rides a slower, rate-limited API: pace it well behind the
+  // local debounce instead of firing on every keystroke.
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedGithubQuery(query), 600);
+    return () => clearTimeout(timer);
+  }, [query]);
+
   useEffect(() => {
     const timer = setTimeout(() => inputRef.current?.focus(), 0);
     return () => clearTimeout(timer);
   }, [page.kind]);
 
   const searchesDirectories =
-    page.kind === "directory-search" ||
+    (page.kind === "search" && sourceFilter !== "github") ||
     page.kind === "github-location" ||
     page.kind === "new-directory-parent";
   const directoryQuery = useFetchQuery({
@@ -416,13 +599,21 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     staleTimeMs: 15_000,
   });
   const githubQuery = useFetchQuery({
-    queryKey: ["add-project-flow-github", hostId, debouncedQuery],
+    queryKey: ["add-project-flow-github", hostId, debouncedGithubQuery],
     queryFn: async () => {
       if (!client) throw new Error("Host is unavailable");
-      const payload = await client.searchGithubRepositories({ query: debouncedQuery, limit: 30 });
-      return { query: debouncedQuery, payload };
+      const payload = await client.searchGithubRepositories({
+        query: debouncedGithubQuery,
+        limit: 30,
+      });
+      return { query: debouncedGithubQuery, payload };
     },
-    enabled: Boolean(client && page.kind === "github-search" && host?.canSearchGithubRepositories),
+    enabled: Boolean(
+      client &&
+      page.kind === "search" &&
+      sourceFilter !== "local" &&
+      host?.canSearchGithubRepositories,
+    ),
     dataShape: "value",
     retry: false,
     staleTimeMs: 15_000,
@@ -453,12 +644,10 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   );
 
   const openAddedProject = useCallback(
-    async (path: string, sourceKind: "directory-search" | "method") => {
+    async (path: string) => {
       if (!hostId || submissionInFlightRef.current) return;
       submissionInFlightRef.current = true;
-      setState((current) =>
-        setPageStatus(current, sourceKind, { isSubmitting: true, error: null }),
-      );
+      setState((current) => setPageStatus(current, "search", { isSubmitting: true, error: null }));
       try {
         const result = await openProject(path);
         if (result.ok) {
@@ -469,11 +658,11 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         const message =
           reason === "directory_not_found" ? "Directory not found" : "Unable to add project";
         setState((current) =>
-          setPageStatus(current, sourceKind, { isSubmitting: false, error: message }),
+          setPageStatus(current, "search", { isSubmitting: false, error: message }),
         );
       } catch {
         setState((current) =>
-          setPageStatus(current, sourceKind, {
+          setPageStatus(current, "search", {
             isSubmitting: false,
             error: "Unable to add project",
           }),
@@ -490,30 +679,34 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     browseInFlightRef.current = true;
     try {
       const path = await pickDirectory();
-      if (path) await openAddedProject(path, "method");
+      if (path) await openAddedProject(path);
     } catch {
       setState((current) =>
-        setPageStatus(current, "method", { error: "Unable to browse for a directory" }),
+        setPageStatus(current, "search", { error: "Unable to browse for a directory" }),
       );
     } finally {
       browseInFlightRef.current = false;
     }
   }, [hostId, isLocalDaemon, openAddedProject]);
 
-  const selectMethod = useCallback(
-    (method: AddProjectMethodId) => {
+  const selectSourceFilter = useCallback(
+    (filter: AddProjectSourceFilter) => {
       if (!hostId) return;
-      if (method === "directory-search") {
-        setState((current) => openDirectorySearchPage(current, hostId));
-      } else if (method === "browse") {
-        void browse();
-      } else if (method === "github") {
-        setState((current) => openGithubSearchPage(current, hostId));
-      } else {
-        setState((current) => openNewDirectoryParentPage(current, hostId));
-      }
+      setHostFilter(hostId, filter);
+      setState((current) => setAddProjectActiveIndex(current, 0));
     },
-    [browse, hostId],
+    [hostId, setHostFilter],
+  );
+
+  const cycleSourceFilter = useCallback(
+    (direction: 1 | -1) => {
+      if (!host) return;
+      const options = buildAddProjectSourceOptions(host);
+      const index = options.findIndex((option) => option.id === sourceFilter);
+      const next = options[(index + direction + options.length) % options.length];
+      if (next) selectSourceFilter(next.id);
+    },
+    [host, selectSourceFilter, sourceFilter],
   );
 
   const directoryPaths = useMemo(
@@ -593,63 +786,19 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       }
       return choices;
     }
-    if (page.kind === "method") {
+    if (page.kind === "search") {
       if (!host) return [];
-      const normalized = page.query.trim().toLowerCase();
-      return buildAddProjectMethods(host)
-        .filter(
-          (method) =>
-            !normalized ||
-            method.label.toLowerCase().includes(normalized) ||
-            method.description.toLowerCase().includes(normalized),
-        )
-        .map((method) => ({
-          id: method.id,
-          title: method.label,
-          subtitle: method.description,
-          icon: methodIcon(method.id),
-          disabled: method.disabled,
-          testID: `add-project-flow-method-${method.id}`,
-          select: () => selectMethod(method.id),
-        }));
-    }
-    if (page.kind === "directory-search") {
-      return pathOptions.map((option) => {
-        const shortPath = shortenPath(option.path);
-        return {
-          id: option.path,
-          title: shortPath,
-          subtitle: directoryOptionSubtitle(option, shortPath),
-          icon: Folder,
-          testID: pathTestId(option.path),
-          select: () => void openAddedProject(option.path, "directory-search"),
-        };
+      return buildSearchRows({
+        page,
+        host,
+        sourceFilter,
+        pathOptions,
+        githubPayload: githubQuery.data?.query === query ? githubQuery.data.payload : null,
+        query,
+        openAddedProject,
+        browse,
+        setState,
       });
-    }
-    if (page.kind === "github-search") {
-      const search = githubQuery.data?.query === page.query ? githubQuery.data.payload : null;
-      const repositories = search?.repositories ?? [];
-      const normalizedQuery = page.query.trim().toLowerCase();
-      const hasExactSearchResult = repositories.some(
-        (repository) =>
-          repository.nameWithOwner.toLowerCase() === normalizedQuery ||
-          repository.cloneUrl.toLowerCase() === normalizedQuery,
-      );
-      const manualRepositories = hasExactSearchResult
-        ? []
-        : buildManualGithubRepositoryChoices(page.query);
-      const repositoryChoices: GithubRepositoryChoice[] = [...manualRepositories, ...repositories];
-      return repositoryChoices.map((repository) => ({
-        id: repository.id,
-        title: repository.cloneProtocol
-          ? `${repository.nameWithOwner} via ${repository.cloneProtocol.toUpperCase()}`
-          : repository.nameWithOwner,
-        subtitle: repository.description,
-        icon: Github,
-        testID: `add-project-flow-repository-${repository.id}`,
-        select: () =>
-          setState((current) => openGithubLocationPage(current, page.hostId, repository)),
-      }));
     }
     if (page.kind === "github-location") {
       const repositoryName = pathBaseName(page.repository.nameWithOwner);
@@ -690,6 +839,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     }
     return [];
   }, [
+    browse,
     cloneRepository,
     directoryPaths,
     githubQuery.data,
@@ -698,8 +848,9 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     openAddedProject,
     page,
     pathOptions,
+    query,
     recommendedPaths,
-    selectMethod,
+    sourceFilter,
     state.hosts,
   ]);
 
@@ -770,6 +921,11 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         submitActive();
         return true;
       }
+      if (key === "ArrowLeft" || key === "ArrowRight") {
+        if (page.kind !== "search") return false;
+        cycleSourceFilter(key === "ArrowRight" ? 1 : -1);
+        return true;
+      }
       if (key !== "ArrowDown" && key !== "ArrowUp") return false;
       const next = moveAddProjectSelection(
         activeIndex,
@@ -779,7 +935,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       setState((current) => setAddProjectActiveIndex(current, next));
       return true;
     },
-    [activeIndex, handleBack, rows, submitActive],
+    [activeIndex, cycleSourceFilter, handleBack, page.kind, rows, submitActive],
   );
 
   const modalLayer = useGlobalWebOverlayLayer("modal", isWeb);
@@ -799,7 +955,13 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
 
   const handleNativeKeyPress = useCallback(
     ({ nativeEvent: { key } }: { nativeEvent: { key: string } }) => {
-      if (key === "ArrowDown" || key === "ArrowUp" || key === "Escape") {
+      if (
+        key === "ArrowDown" ||
+        key === "ArrowUp" ||
+        key === "ArrowLeft" ||
+        key === "ArrowRight" ||
+        key === "Escape"
+      ) {
         handleKey(key);
       }
     },
@@ -815,21 +977,23 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   }, []);
   const isSubmitting = "isSubmitting" in page && page.isSubmitting;
   const currentGithubSearch =
-    page.kind === "github-search" && githubQuery.data?.query === page.query
+    page.kind === "search" && githubQuery.data?.query === page.query
       ? githubQuery.data.payload
       : null;
   const loading =
     (searchesDirectories && (query !== debouncedQuery || directoryQuery.isFetching)) ||
-    (page.kind === "github-search" &&
+    (page.kind === "search" &&
       host?.canSearchGithubRepositories === true &&
-      (query !== debouncedQuery || githubQuery.isFetching));
+      sourceFilter !== "local" &&
+      (query !== debouncedGithubQuery || githubQuery.isFetching));
   const queryError = queryErrorText({
     searchesDirectories,
     directoryFailed: directoryQuery.isError,
-    githubFailed: page.kind === "github-search" && githubQuery.isError,
+    githubFailed: page.kind === "search" && githubQuery.isError,
     githubAvailable: currentGithubSearch?.available ?? null,
     githubError: currentGithubSearch?.error ?? null,
   });
+  const sourceOptions = host ? buildAddProjectSourceOptions(host) : [];
   const preview =
     page.kind === "new-directory-name" && page.name.trim()
       ? joinDirectoryPath(page.parentPath, page.name.trim())
@@ -874,6 +1038,27 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
               returnKeyType="go"
               testID="add-project-flow-input"
             />
+            {page.kind === "search" && sourceOptions.length > 0 ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.pillRow}
+                contentContainerStyle={styles.pillRowContent}
+                keyboardShouldPersistTaps="always"
+                testID="add-project-flow-sources"
+              >
+                {sourceOptions.map((option) => (
+                  <SourcePill
+                    key={option.id}
+                    id={option.id}
+                    label={option.label}
+                    active={sourceFilter === option.id}
+                    testID={`add-project-flow-source-${option.id}`}
+                    onSelect={selectSourceFilter}
+                  />
+                ))}
+              </ScrollView>
+            ) : null}
           </View>
           <ScrollView
             style={styles.results}
@@ -907,9 +1092,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
                 Loading...
               </Text>
             ) : null}
-            {!isSubmitting &&
-            (!loading || page.kind === "github-search") &&
-            (!queryError || page.kind === "github-search")
+            {!isSubmitting && !loading && !queryError
               ? rows.map((option, index) => (
                   <FlowRow key={option.id} option={option} active={index === activeIndex} />
                 ))
@@ -1008,6 +1191,25 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[1],
     outlineStyle: "none",
   } as object,
+  pillRow: { flexGrow: 0, flexShrink: 0 },
+  pillRowContent: { gap: theme.spacing[2], paddingVertical: theme.spacing[1] },
+  pill: {
+    borderRadius: theme.borderRadius.full,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[1],
+    backgroundColor: theme.colors.surface1,
+  },
+  pillActive: { backgroundColor: theme.colors.surface2 },
+  pillText: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.xs },
+  pillTextActive: { color: theme.colors.foreground },
+  groupHeader: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.medium,
+    paddingHorizontal: theme.spacing[4],
+    paddingTop: theme.spacing[2],
+    paddingBottom: theme.spacing[1],
+  },
   results: { flexGrow: 0, flexShrink: 1, minHeight: 0 },
   resultsContent: { paddingVertical: theme.spacing[2] },
   row: {
