@@ -30,7 +30,7 @@ import {
   createHistoryStartSettleScheduler,
   type HistoryStartSettleScheduler,
 } from "./history-start-settle-scheduler";
-import { useTrailAnchorProbe } from "./use-trail-anchor-probe.web";
+import { useScrollToMessage } from "./use-scroll-to-message.web";
 
 interface CreateWebStreamStrategyInput {
   isMobileBreakpoint: boolean;
@@ -152,8 +152,6 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     olderHistoryProgressKey,
     scrollEnabled,
     isMobileBreakpoint,
-    trailItemIds,
-    trailAnchor,
   } = props;
   const scrollContainerRef = useRef<HTMLElement | null>(null);
   const contentRef = useRef<HTMLElement | null>(null);
@@ -478,24 +476,10 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     syncNearBottom(scrollContainer, onNearBottomChange);
   }, [onNearBottomChange]);
 
-  // Message-trail "current reading position" seam. All the anchor-probe machinery
-  // (offset resolution + caching, rAF scheduling, scroll-to-message, invalidation) lives
-  // in the hook; this component only wires the scroll listener, ResizeObserver, and the
-  // virtual-rows container ref into it.
-  const {
-    scheduleTrailAnchorProbe,
-    scrollToMessage,
-    handleVirtualRowsContainerRef,
-    onScrollAreaResized,
-  } = useTrailAnchorProbe({
+  const scrollToMessage = useScrollToMessage({
     scrollContainerRef,
     rowVirtualizer,
     historyVirtualized: segments.historyVirtualized,
-    historyMounted: segments.historyMounted,
-    liveHead: segments.liveHead,
-    virtualTotalSize,
-    trailItemIds,
-    trailAnchor,
     cancelPendingStickToBottom,
     setFollowOutput,
     onNearBottomChange,
@@ -533,13 +517,11 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
 
     lastKnownScrollTopRef.current = currentScrollTop;
     updateScrollMetrics();
-    scheduleTrailAnchorProbe();
     evaluateHistoryStart();
   }, [
     cancelPendingStickToBottom,
     evaluateHistoryStart,
     rearmHistoryStartFromUserIntent,
-    scheduleTrailAnchorProbe,
     updateScrollMetrics,
   ]);
 
@@ -649,8 +631,6 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       }
       updateScrollMetrics();
       evaluateHistoryStart();
-      // Container/content resize moves row offsets; invalidate the trail cache and re-probe.
-      onScrollAreaResized();
       if (!followOutputRef.current) {
         return;
       }
@@ -666,7 +646,6 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   }, [
     applyHistoryStartPrependAnchor,
     evaluateHistoryStart,
-    onScrollAreaResized,
     scheduleHistoryStartPrependSettle,
     scheduleStickToBottom,
     updateScrollMetrics,
@@ -840,7 +819,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       <div ref={handleContentRef} style={contentContainerStyle}>
         {historyStartSlot}
         {shouldUseVirtualizer ? (
-          <div ref={handleVirtualRowsContainerRef} style={virtualRowsContainerStyle}>
+          <div style={virtualRowsContainerStyle}>
             {virtualRows.map((virtualRow) => {
               const item = segments.historyVirtualized[virtualRow.index];
               if (!item) {

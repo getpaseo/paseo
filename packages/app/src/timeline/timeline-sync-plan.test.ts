@@ -4,6 +4,7 @@ import {
   isTimelineCatchUpComplete,
   isTimelineResumeSnapshotAuthoritative,
   planTimelineOlderFetch,
+  planTimelinePromptJump,
   planTimelineTailFetch,
 } from "./timeline-sync-plan";
 
@@ -26,6 +27,16 @@ describe("timeline sync planning", () => {
       cursor: { epoch: "epoch-1", seq: 25 },
       limit: TIMELINE_FETCH_PAGE_SIZE,
       projection: "projected",
+    });
+  });
+
+  test("an unloaded prompt jump replaces the window with one bounded page ending at the target", () => {
+    expect(planTimelinePromptJump({ epoch: "epoch-1", seq: 42 })).toEqual({
+      direction: "before",
+      cursor: { epoch: "epoch-1", seq: 43 },
+      limit: TIMELINE_FETCH_PAGE_SIZE,
+      projection: "projected",
+      replaceWindow: true,
     });
   });
 

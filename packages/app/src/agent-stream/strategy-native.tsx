@@ -123,10 +123,6 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   const scrollKeyboardDismiss = useScrollKeyboardDismiss();
   const userScrollEndFrameIdRef = useRef<number | null>(null);
   const programmaticScrollEventBudgetRef = useRef(0);
-  // Guards onScrollToIndexFailed so a failed scrollToIndex retries at most once.
-  const scrollToIndexRetriedRef = useRef(false);
-  // Handle for the retry rAF so it can be cancelled if the component unmounts before it fires.
-  const scrollToIndexRetryFrameRef = useRef<number | null>(null);
   const [isNativeViewportSettling, setIsNativeViewportSettling] = useState(false);
   const nativeViewportSettlingFrameIdRef = useRef<number | null>(null);
   const historyStartReadyRef = useRef(false);
@@ -315,67 +311,6 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       ? undefined
       : DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION;
 
-  // Native has no message-trail rail/TOC UI yet (those render null on native); this
-  // implements the StreamViewportHandle contract for interface completeness and is
-  // currently unreachable from the UI.
-  const scrollToMessage = useCallback(
-    (itemId: string) => {
-      // historyRows is newest-first (orderTailReverse) and the FlatList is inverted, so
-      // its array index maps directly to a FlatList row index.
-      const index = historyRows.findIndex((item) => item.id === itemId);
-      if (index < 0) {
-        // Not in the mounted history list (e.g. lives only in the live head, or absent).
-        // No-op — there's no addressable row to jump to.
-        return;
-      }
-      // Detach from sticky-bottom first so the controller doesn't fight this upward jump.
-      bottomAnchorController.detachByUser();
-      scrollToIndexRetriedRef.current = false;
-      // Under inversion the vertical axis is flipped: viewPosition 0.8 lands the row
-      // ~20% down from the visual top.
-      flatListRef.current?.scrollToIndex({ index, viewPosition: 0.8, animated: true });
-    },
-    [bottomAnchorController, historyRows],
-  );
-
-  const handleScrollToIndexFailed = useCallback(
-    (info: { index: number; averageItemLength: number }) => {
-      const flatList = flatListRef.current;
-      if (!flatList) {
-        return;
-      }
-      // Approximate the target using the average item length, then retry once after a
-      // frame so the offscreen rows have had a chance to render. Guarded to avoid loops.
-      flatList.scrollToOffset({
-        offset: info.averageItemLength * info.index,
-        animated: false,
-      });
-      if (scrollToIndexRetriedRef.current) {
-        return;
-      }
-      scrollToIndexRetriedRef.current = true;
-      scrollToIndexRetryFrameRef.current = requestAnimationFrame(() => {
-        scrollToIndexRetryFrameRef.current = null;
-        flatListRef.current?.scrollToIndex({
-          index: info.index,
-          viewPosition: 0.8,
-          animated: true,
-        });
-      });
-    },
-    [],
-  );
-
-  // Cancel a pending retry frame if the component unmounts before it fires.
-  useEffect(
-    () => () => {
-      if (scrollToIndexRetryFrameRef.current !== null) {
-        cancelAnimationFrame(scrollToIndexRetryFrameRef.current);
-      }
-    },
-    [],
-  );
-
   useEffect(() => {
     streamViewportMetricsRef.current = {
       containerKey: "native-virtualized",
@@ -445,7 +380,6 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         bottomAnchorController.prepareForStickyViewportChange();
         markNativeViewportSettling();
       },
-      scrollToMessage,
     };
     viewportRef.current = handle;
     return () => {
@@ -453,7 +387,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         viewportRef.current = null;
       }
     };
-  }, [agentId, bottomAnchorController, markNativeViewportSettling, scrollToMessage, viewportRef]);
+  }, [agentId, bottomAnchorController, markNativeViewportSettling, viewportRef]);
 
   const isScrollEventNearBottom = useStableEvent(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -682,7 +616,6 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       onMomentumScrollEnd={handleMomentumScrollEnd}
       scrollEventThrottle={16}
       onContentSizeChange={handleContentSizeChange}
-      onScrollToIndexFailed={handleScrollToIndexFailed}
       maintainVisibleContentPosition={maintainVisibleContentPosition}
       initialNumToRender={40}
       maxToRenderPerBatch={40}

@@ -55,6 +55,7 @@ import { useLoadOlderAgentHistory } from "@/hooks/use-load-older-agent-history";
 import { useSettings } from "@/hooks/use-settings";
 import type { ToastApi } from "@/components/toast-host";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { AgentTimelinePromptIndexPayload } from "@getpaseo/client/internal/daemon-client";
 import { ToolCallDetailsContent } from "@/components/tool-call-details";
 import { QuestionFormCard } from "@/components/question-form-card";
 import { ToolCallSheetProvider } from "@/components/tool-call-sheet";
@@ -66,10 +67,9 @@ import { OverviewToolCallGroupView } from "@/tool-calls/detail-level/overview/vi
 import { type AgentStreamRenderModel, buildAgentStreamRenderModel } from "./model";
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
 import { type StreamSegmentRenderers, type StreamViewportHandle } from "./strategy";
-import { deriveMessageTrailItems } from "./message-trail-items";
-import { createTrailAnchorStore } from "./message-trail-anchor";
 import { MessageTrailRail } from "@/agent-stream/message-trail-rail";
-import { MessageTrailToc } from "@/agent-stream/message-trail-toc";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import { planTimelinePromptJump, planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import {
   CompletedTurnFooterRow,
   TurnFooter,
@@ -230,7 +230,6 @@ function renderLiveHeadStreamItem(input: {
 export interface AgentStreamViewHandle {
   scrollToBottom(reason?: BottomAnchorLocalRequest["reason"]): void;
   prepareForViewportChange(): void;
-  scrollToMessage(itemId: string): void;
 }
 
 export interface AgentStreamViewProps {
@@ -270,6 +269,88 @@ const AGENT_CAPABILITY_FLAG_KEYS: (keyof AgentCapabilityFlags)[] = [
 const EMPTY_STREAM_HEAD: StreamItem[] = [];
 const EMPTY_PENDING_MESSAGE_SUBMISSIONS: readonly PendingMessageSubmission[] = [];
 const GROUPED_TOOL_CALL_DETAIL_MAX_HEIGHT = 200;
+
+interface UseMessageTrailInput {
+  agentId: string;
+  serverId: string;
+  tail: StreamItem[];
+  head: StreamItem[] | undefined;
+  enabled: boolean;
+  viewportRef: React.RefObject<StreamViewportHandle | null>;
+}
+
+function useMessageTrail({
+  agentId,
+  serverId,
+  tail,
+  head,
+  enabled,
+  viewportRef,
+}: UseMessageTrailInput) {
+  const [index, setIndex] = useState<AgentTimelinePromptIndexPayload | null>(null);
+  const [pendingSeq, setPendingSeq] = useState<number | null>(null);
+  const loadedItems = useMemo(() => [...tail, ...(head ?? EMPTY_STREAM_HEAD)], [head, tail]);
+
+  useEffect(() => {
+    if (!isWeb || !enabled) {
+      setIndex(null);
+      return;
+    }
+    const client = getHostRuntimeStore().getClient(serverId);
+    if (!client) return;
+    let active = true;
+    const refresh = () => {
+      void client
+        .listAgentTimelinePrompts(agentId)
+        .then((payload) => {
+          if (active) setIndex(payload);
+          return undefined;
+        })
+        .catch(() => undefined);
+    };
+    refresh();
+    const unsubscribe = client.on("agent_stream", (message) => {
+      if (
+        message.type === "agent_stream" &&
+        message.payload.agentId === agentId &&
+        message.payload.event.type === "timeline" &&
+        message.payload.event.item.type === "user_message"
+      ) {
+        refresh();
+      }
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [agentId, enabled, serverId]);
+
+  useEffect(() => {
+    if (pendingSeq === null) return;
+    const target = loadedItems.find((item) => item.timelineCursor?.seq === pendingSeq);
+    if (!target) return;
+    setPendingSeq(null);
+    viewportRef.current?.scrollToMessage?.(target.id);
+  }, [loadedItems, pendingSeq, viewportRef]);
+
+  const jumpToPrompt = useCallback(
+    (seq: number) => {
+      const loaded = loadedItems.find((item) => item.timelineCursor?.seq === seq);
+      if (loaded) {
+        viewportRef.current?.scrollToMessage?.(loaded.id);
+        return;
+      }
+      if (!index) return;
+      setPendingSeq(seq);
+      void getHostRuntimeStore()
+        .fetchAgentTimeline(serverId, agentId, planTimelinePromptJump({ epoch: index.epoch, seq }))
+        .catch(() => setPendingSeq(null));
+    },
+    [agentId, index, loadedItems, serverId, viewportRef],
+  );
+
+  return { prompts: enabled ? (index?.prompts ?? []) : [], jumpToPrompt };
+}
 
 const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamViewProps>(
   function AgentStreamView(
@@ -330,6 +411,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const supportsAgentForkContextCursor = useSessionStore(
       (state) =>
         state.sessions[resolvedServerId]?.serverInfo?.features?.agentForkContextCursor === true,
+    );
+    const supportsMessageTrail = useSessionStore(
+      (state) =>
+        state.sessions[resolvedServerId]?.serverInfo?.features?.agentTimelinePromptIndex === true,
+    );
+    const isTimelineDetached = useSessionStore(
+      (state) => state.sessions[resolvedServerId]?.agentTimelineHasNewer.get(agentId) === true,
     );
 
     const workspaceRoot = context.cwd?.trim() || "";
@@ -523,21 +611,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         streamRenderStrategy,
       ],
     );
-    // Message-trail rail (web/desktop only). Extracted into a hook to keep this component's
-    // complexity in check; it derives ticks, owns the anchor store, and tracks whether the
-    // rail's own live measurement says it currently fits.
-    const {
-      messageTrailItems,
-      trailItemIds,
-      trailAnchorStore,
-      handleRailFitChange,
-      handleJumpToMessage,
-      showMessageTrail,
-      showMessageTrailToc,
-    } = useMessageTrail({
+    const { prompts: messageTrailPrompts, jumpToPrompt } = useMessageTrail({
+      agentId,
+      serverId: resolvedServerId,
       tail: effectiveStreamItems,
       head: effectiveStreamHead,
-      isMobile,
+      enabled: supportsMessageTrail,
       viewportRef,
     });
 
@@ -550,16 +629,22 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         prepareForViewportChange() {
           viewportRef.current?.prepareForViewportChange();
         },
-        scrollToMessage(itemId: string) {
-          viewportRef.current?.scrollToMessage(itemId);
-        },
       }),
       [],
     );
 
     const scrollToBottom = useCallback(() => {
-      viewportRef.current?.scrollToBottom("jump-to-bottom");
-    }, []);
+      if (!isTimelineDetached) {
+        viewportRef.current?.scrollToBottom("jump-to-bottom");
+        return;
+      }
+      void getHostRuntimeStore()
+        .fetchAgentTimeline(resolvedServerId, agentId, {
+          ...planTimelineTailFetch(),
+          replaceWindow: true,
+        })
+        .then(() => viewportRef.current?.scrollToBottom("jump-to-bottom"));
+    }, [agentId, isTimelineDetached, resolvedServerId]);
 
     const setInlineDetailsExpanded = useCallback(
       (itemId: string, expanded: boolean) => {
@@ -983,19 +1068,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               listStyle: stylesheet.list,
               baseListContentContainerStyle: stylesheet.listContentContainer,
               forwardListContentContainerStyle: stylesheet.forwardListContentContainer,
-              trailItemIds: showMessageTrail ? trailItemIds : undefined,
-              trailAnchor: showMessageTrail ? (trailAnchorStore ?? undefined) : undefined,
             })}
           </MessageOuterSpacingProvider>
-          {showMessageTrail && trailAnchorStore ? (
-            <MessageTrailRail
-              items={messageTrailItems}
-              anchor={trailAnchorStore}
-              onJumpToMessage={handleJumpToMessage}
-              onFitChange={handleRailFitChange}
-            />
-          ) : null}
-          {!isNearBottom && (
+          <MessageTrailRail prompts={messageTrailPrompts} onJumpToPrompt={jumpToPrompt} />
+          {(!isNearBottom || isTimelineDetached) && (
             <View style={stylesheet.scrollToBottomContainer} pointerEvents="box-none">
               <Animated.View entering={scrollIndicatorFadeIn} exiting={scrollIndicatorFadeOut}>
                 <Pressable
@@ -1010,11 +1086,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               </Animated.View>
             </View>
           )}
-          {/* Rendered last so it stacks above the (full-width) scroll-to-bottom overlay,
-              which would otherwise swallow the button's clicks when scrolled up. */}
-          {showMessageTrailToc ? (
-            <MessageTrailToc items={messageTrailItems} onJumpToMessage={handleJumpToMessage} />
-          ) : null}
         </View>
       </ToolCallSheetProvider>
     );
@@ -1600,17 +1671,10 @@ interface StreamItemWrapperProps {
   children: ReactNode;
 }
 
-function StreamItemWrapper({ itemId, gapBelow, children }: StreamItemWrapperProps) {
+function StreamItemWrapper({ gapBelow, children }: StreamItemWrapperProps) {
   const wrapperStyle = useMemo(
     () => [stylesheet.streamItemWrapper, { marginBottom: gapBelow }],
     [gapBelow],
   );
-  // `nativeID` maps to a DOM `id` on react-native-web (inert on native), so mounted
-  // rows are addressable via document.getElementById(`stream-item-${itemId}`) for
-  // scrollToMessage on web.
-  return (
-    <View style={wrapperStyle} nativeID={`stream-item-${itemId}`}>
-      {children}
-    </View>
-  );
+  return <View style={wrapperStyle}>{children}</View>;
 }

@@ -26,6 +26,54 @@ export interface DaemonHydrationGate {
   release(): void;
 }
 
+export interface PromptJumpRequestTracker {
+  requests(): Array<{ cursorSeq: number | null; limit: number | null; replaceWindow: boolean }>;
+  timelineRequests(): Array<{ direction: string | null; replaceWindow: boolean }>;
+}
+
+export async function trackPromptJumpRequests(
+  page: Page,
+  agentId: string,
+): Promise<PromptJumpRequestTracker> {
+  const seen: Array<{ cursorSeq: number | null; limit: number | null; replaceWindow: boolean }> =
+    [];
+  const timelineRequests: Array<{ direction: string | null; replaceWindow: boolean }> = [];
+  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((message) => {
+      const sessionMessage = getSessionMessage(message);
+      if (
+        sessionMessage?.type === "fetch_agent_timeline_request" &&
+        sessionMessage.agentId === agentId
+      ) {
+        timelineRequests.push({
+          direction: typeof sessionMessage.direction === "string" ? sessionMessage.direction : null,
+          replaceWindow: sessionMessage.replaceWindow === true,
+        });
+      }
+      if (
+        sessionMessage?.type === "fetch_agent_timeline_request" &&
+        sessionMessage.agentId === agentId &&
+        sessionMessage.direction === "before" &&
+        sessionMessage.replaceWindow === true
+      ) {
+        const cursor = sessionMessage.cursor as { seq?: unknown } | undefined;
+        seen.push({
+          cursorSeq: typeof cursor?.seq === "number" ? cursor.seq : null,
+          limit: typeof sessionMessage.limit === "number" ? sessionMessage.limit : null,
+          replaceWindow: true,
+        });
+      }
+      server.send(message);
+    });
+    server.onMessage((message) => ws.send(message));
+  });
+  return {
+    requests: () => [...seen],
+    timelineRequests: () => [...timelineRequests],
+  };
+}
+
 export interface BootstrapTimelineGate extends AgentTimelineResponseGate {
   releaseCatchUp(): void;
   waitForDelayedCatchUp(): Promise<void>;

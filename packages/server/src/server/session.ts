@@ -68,6 +68,7 @@ import {
 } from "./lifecycle-reasons.js";
 
 import { AgentManager, AgentRunCancellationError } from "./agent/agent-manager.js";
+import { buildTimelinePromptIndex } from "./agent/timeline-prompt-index.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type {
   AgentManagerEvent,
@@ -1872,6 +1873,8 @@ export class Session {
     switch (msg.type) {
       case "fetch_agent_timeline_request":
         return this.handleFetchAgentTimelineRequest(msg, source);
+      case "agent.timeline.list_prompts.request":
+        return this.handleAgentTimelineListPromptsRequest(msg, source);
       case "agent.provider_subagents.list.request":
         return this.handleProviderSubagentListRequest(msg);
       case "agent.provider_subagents.timeline.get.request":
@@ -6192,6 +6195,7 @@ export class Session {
             endCursor,
             hasOlder: selectedTimeline.hasOlder,
             hasNewer: selectedTimeline.hasNewer,
+            ...(msg.replaceWindow === true ? { replaceWindow: true } : {}),
             entries: selectedTimeline.entries.map((entry) => ({
               provider: snapshot.provider,
               item: entry.item,
@@ -6235,7 +6239,57 @@ export class Session {
             endCursor: null,
             hasOlder: false,
             hasNewer: false,
+            ...(msg.replaceWindow === true ? { replaceWindow: true } : {}),
             entries: [],
+            error: error instanceof Error ? error.message : String(error),
+          },
+        },
+        source,
+      );
+    }
+  }
+
+  private async handleAgentTimelineListPromptsRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.timeline.list_prompts.request" }>,
+    source?: object,
+  ): Promise<void> {
+    try {
+      await ensureAgentLoaded(msg.agentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
+      const rows = await this.agentManager.getTimelineRows(msg.agentId);
+      const timeline = this.agentManager.fetchTimeline(msg.agentId, {
+        direction: "tail",
+        limit: 1,
+      });
+      const index = buildTimelinePromptIndex(timeline.epoch, rows);
+      this.emitForSource(
+        {
+          type: "agent.timeline.list_prompts.response",
+          payload: {
+            requestId: msg.requestId,
+            agentId: msg.agentId,
+            ...index,
+            error: null,
+          },
+        },
+        source,
+      );
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, agentId: msg.agentId },
+        "Failed to handle agent.timeline.list_prompts.request",
+      );
+      this.emitForSource(
+        {
+          type: "agent.timeline.list_prompts.response",
+          payload: {
+            requestId: msg.requestId,
+            agentId: msg.agentId,
+            epoch: "",
+            prompts: [],
             error: error instanceof Error ? error.message : String(error),
           },
         },

@@ -1081,6 +1081,51 @@ test("honors explicit fetchAgentTimeline timeout below the session RPC default",
   await expect(responsePromise).rejects.toThrow("Timeout waiting for message (2000ms)");
 });
 
+test("lists the full agent prompt index", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.listAgentTimelinePrompts("agent-1", {
+    requestId: "req-prompts-1",
+  });
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "agent.timeline.list_prompts.request",
+    requestId: "req-prompts-1",
+    agentId: "agent-1",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.timeline.list_prompts.response",
+      payload: {
+        requestId: "req-prompts-1",
+        agentId: "agent-1",
+        epoch: "epoch-1",
+        prompts: [{ seq: 1, timestamp: "2026-01-01T00:00:00.000Z", preview: "First prompt" }],
+        error: null,
+      },
+    }),
+  );
+
+  await expect(responsePromise).resolves.toMatchObject({
+    epoch: "epoch-1",
+    prompts: [{ seq: 1, preview: "First prompt" }],
+  });
+});
+
 test("honors explicit fetchAgents timeout below the session RPC default", async () => {
   useHeartbeatClock();
   const logger = createMockLogger();

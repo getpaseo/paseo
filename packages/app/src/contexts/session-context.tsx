@@ -633,6 +633,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
           head: result.head,
           range: result.cursorChanged ? (result.cursor ?? null) : (currentCursor ?? null),
           older: result.older,
+          newer: payload.hasNewer,
           synchronized: shouldMarkAuthoritativeHistoryApplied,
           acknowledgedClientMessageIds: result.acknowledgedClientMessageIds,
         });
@@ -729,6 +730,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   useEffect(
     () =>
       getHostRuntimeStore().subscribeAgentStoppedRunning(serverId, (agentId) => {
+        const session = useSessionStore.getState().sessions[serverId];
+        const timeline = selectAgentTimelineState(session, agentId);
+        if (timeline.status === "synced" && timeline.newer === "available") {
+          return;
+        }
         viewedTimelineSyncRef.current?.reconcileAgent(agentId);
       }),
     [serverId],

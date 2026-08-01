@@ -83,6 +83,7 @@ export interface ProcessTimelineResponseInput {
     error: string | null;
     hasNewer: boolean;
     hasOlder: boolean;
+    replaceWindow?: boolean;
   };
   currentTail: StreamItem[];
   currentHead: StreamItem[];
@@ -213,6 +214,21 @@ function deriveResumeTailPolicy(input: {
     return { kind: "append" };
   }
   return { kind: "replace", preserveContinuity: true };
+}
+
+function shouldPreserveReplacementContinuity(input: {
+  isResumeReplacement: boolean;
+  resumePolicy: ResumeTailPolicy;
+  replaceWindow: boolean;
+  currentEpoch: string | undefined;
+  responseEpoch: string;
+  reset: boolean;
+}): boolean {
+  if (input.isResumeReplacement && input.resumePolicy.kind === "replace") {
+    return input.resumePolicy.preserveContinuity;
+  }
+  if (input.replaceWindow) return false;
+  return input.currentEpoch === input.responseEpoch || !input.reset;
 }
 
 function shouldResolveTimelineInit({
@@ -954,7 +970,7 @@ export function processTimelineResponse(
     isInitializing,
     hasActiveInitDeferred,
   });
-  const replace = bootstrapPolicy.replace;
+  const replace = bootstrapPolicy.replace || payload.replaceWindow === true;
   const sideEffects: TimelineReducerSideEffect[] = [];
   const resumeTailPolicy = deriveResumeTailPolicy({
     direction: payload.direction,
@@ -993,9 +1009,14 @@ export function processTimelineResponse(
       currentTail,
       currentHead,
       sendingClientMessageIds,
-      preserveContinuity: isResumeReplacement
-        ? resumeTailPolicy.preserveContinuity
-        : currentCursor?.epoch === payload.epoch || !payload.reset,
+      preserveContinuity: shouldPreserveReplacementContinuity({
+        isResumeReplacement,
+        resumePolicy: resumeTailPolicy,
+        replaceWindow: payload.replaceWindow === true,
+        currentEpoch: currentCursor?.epoch,
+        responseEpoch: payload.epoch,
+        reset: payload.reset,
+      }),
       toHydratedEvents,
     });
   } else {
@@ -1104,6 +1125,7 @@ export interface ProcessAgentStreamEventsInput {
   currentHead: StreamItem[];
   currentCursor: TimelineCursor | undefined;
   hasAuthoritativeBaseline?: boolean;
+  isDetached?: boolean;
 }
 
 export type AgentStreamReducerSnapshot = Omit<ProcessAgentStreamEventsInput, "events">;
@@ -1292,6 +1314,18 @@ export function processAgentStreamEvent(
 export function processAgentStreamEvents(
   input: ProcessAgentStreamEventsInput,
 ): ProcessAgentStreamEventOutput {
+  if (input.isDetached) {
+    return {
+      tail: input.currentTail,
+      head: input.currentHead,
+      changedTail: false,
+      changedHead: false,
+      cursor: input.currentCursor ?? null,
+      cursorChanged: false,
+      acknowledgedClientMessageIds: [],
+      sideEffects: [],
+    };
+  }
   let tail = input.currentTail;
   let head = input.currentHead;
   let cursor = input.currentCursor;
@@ -1474,6 +1508,7 @@ export function createSessionAgentStreamReducerQueue(
         currentHead: session?.agentStreamHead.get(agentId) ?? [],
         currentCursor: timeline.status === "synced" ? (timeline.range ?? undefined) : undefined,
         hasAuthoritativeBaseline: timeline.status === "synced",
+        isDetached: timeline.status === "synced" && timeline.newer === "available",
       };
     },
     commit: (agentId, result, events) => {
