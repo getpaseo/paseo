@@ -407,7 +407,7 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(currentBranch).toBe("Feature.X");
     });
 
-    it("prefers origin/{branch} over local {branch} when both exist", async () => {
+    it("uses the selected local or origin ref when both exist", async () => {
       const remoteDir = join(tempDir, "remote.git");
       const remoteCloneDir = join(tempDir, "remote-clone");
       execFileSync("git", ["init", "--bare", remoteDir]);
@@ -433,19 +433,33 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
 
       execFileSync("git", ["fetch", "origin"], { cwd: repoDir });
 
-      const result = await createLegacyWorktreeForTest({
-        branchName: "prefer-origin-feature",
+      const localResult = await createLegacyWorktreeForTest({
+        branchName: "prefer-local-feature",
         cwd: repoDir,
         baseBranch: "main",
+        worktreeSlug: "prefer-local-feature",
+        runSetup: false,
+        paseoHome,
+      });
+      const originResult = await createLegacyWorktreeForTest({
+        branchName: "prefer-origin-feature",
+        cwd: repoDir,
+        baseBranch: "refs/remotes/origin/main",
         worktreeSlug: "prefer-origin-feature",
         runSetup: false,
         paseoHome,
       });
 
-      expect(readFileSync(join(result.worktreePath, "file.txt"), "utf8")).toBe("from-origin\n");
+      expect(readFileSync(join(localResult.worktreePath, "file.txt"), "utf8")).toBe("from-local\n");
+      expect(readFileSync(join(originResult.worktreePath, "file.txt"), "utf8")).toBe(
+        "from-origin\n",
+      );
+      expect(
+        JSON.parse(readFileSync(getPaseoWorktreeMetadataPath(originResult.worktreePath), "utf8")),
+      ).toMatchObject({ baseRefName: "main" });
     });
 
-    it("falls back to local {branch} when origin/{branch} does not exist", async () => {
+    it("uses a local branch when origin/{branch} does not exist", async () => {
       writeFileSync(join(repoDir, "file.txt"), "from-local-only\n");
       execFileSync("git", ["add", "file.txt"], { cwd: repoDir });
       execFileSync(
