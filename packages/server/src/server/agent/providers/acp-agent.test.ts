@@ -1152,6 +1152,256 @@ describe("ACPAgentSession Zed parity", () => {
     });
   });
 
+  test("infers edit detail for ACP permission requests with edit-shaped rawInput", async () => {
+    const session = createSessionWithConfig({
+      provider: "kimi-acp",
+      modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    });
+    const events: AgentStreamEvent[] = [];
+    const permissionOptions: PermissionOption[] = [
+      { optionId: "allow-once", name: "Allow", kind: "allow_once" },
+      { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+    ];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    void session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "tool-1",
+        title: "Edit file",
+        kind: "other",
+        status: "pending",
+        rawInput: {
+          path: "src/example.ts",
+          oldString: "const x = 1;",
+          newString: "const x = 2;",
+        },
+      },
+      options: permissionOptions,
+    } satisfies RequestPermissionRequest);
+
+    await Promise.resolve();
+
+    const requested = events.find((event) => event.type === "permission_requested");
+    expect(requested).toMatchObject({
+      type: "permission_requested",
+      provider: "kimi-acp",
+      request: {
+        name: "other",
+        kind: "tool",
+        title: "Edit file",
+        detail: {
+          type: "edit",
+          filePath: "src/example.ts",
+          oldString: "const x = 1;",
+          newString: "const x = 2;",
+        },
+      },
+    });
+  });
+
+  test("infers edit detail from snake_case diff fields when ACP kind is unrecognized", async () => {
+    const session = createSessionWithConfig({
+      provider: "kimi-acp",
+      modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    });
+    const events: AgentStreamEvent[] = [];
+    const permissionOptions: PermissionOption[] = [
+      { optionId: "allow-once", name: "Allow", kind: "allow_once" },
+      { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+    ];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    void session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "tool-1",
+        title: "Edit file",
+        status: "pending",
+        rawInput: {
+          file_path: "src/example.ts",
+          old_string: "const x = 1;",
+          new_string: "const x = 2;",
+        },
+      },
+      options: permissionOptions,
+    } satisfies RequestPermissionRequest);
+
+    await Promise.resolve();
+
+    const requested = events.find((event) => event.type === "permission_requested");
+    expect(requested).toMatchObject({
+      type: "permission_requested",
+      request: {
+        detail: {
+          type: "edit",
+          filePath: "src/example.ts",
+          oldString: "const x = 1;",
+          newString: "const x = 2;",
+        },
+      },
+    });
+  });
+
+  test("infers edit detail when edit JSON is embedded in text content", async () => {
+    const session = createSessionWithConfig({
+      provider: "kimi-acp",
+      modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    });
+    const events: AgentStreamEvent[] = [];
+    const permissionOptions: PermissionOption[] = [
+      { optionId: "allow-once", name: "Allow", kind: "allow_once" },
+      { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+    ];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    void session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "tool-1",
+        title: "Edit file",
+        kind: "edit",
+        status: "pending",
+        content: [
+          {
+            type: "content",
+            content: {
+              type: "text",
+              text: JSON.stringify({
+                path: "src/example.ts",
+                old_string: "const x = 1;",
+                new_string: "const x = 2;",
+              }),
+            },
+          },
+        ],
+      },
+      options: permissionOptions,
+    } satisfies RequestPermissionRequest);
+
+    await Promise.resolve();
+
+    const requested = events.find((event) => event.type === "permission_requested");
+    expect(requested).toMatchObject({
+      type: "permission_requested",
+      request: {
+        detail: {
+          type: "edit",
+          filePath: "src/example.ts",
+          oldString: "const x = 1;",
+          newString: "const x = 2;",
+          unifiedDiff: undefined,
+        },
+      },
+    });
+  });
+
+  test("infers read detail for ACP permission requests with read-shaped rawInput", async () => {
+    const session = createSessionWithConfig({
+      provider: "kimi-acp",
+      modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    });
+    const events: AgentStreamEvent[] = [];
+    const permissionOptions: PermissionOption[] = [
+      { optionId: "allow-once", name: "Allow", kind: "allow_once" },
+      { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+    ];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    void session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "tool-1",
+        title: "Read file",
+        kind: "other",
+        status: "pending",
+        rawInput: {
+          path: "src/example.ts",
+          offset: 10,
+          limit: 20,
+        },
+      },
+      options: permissionOptions,
+    } satisfies RequestPermissionRequest);
+
+    await Promise.resolve();
+
+    const requested = events.find((event) => event.type === "permission_requested");
+    expect(requested).toMatchObject({
+      type: "permission_requested",
+      request: {
+        detail: {
+          type: "read",
+          filePath: "src/example.ts",
+          offset: 10,
+          limit: 20,
+        },
+      },
+    });
+  });
+
+  test("infers shell detail for ACP permission requests with shell-shaped rawInput", async () => {
+    const session = createSessionWithConfig({
+      provider: "kimi-acp",
+      modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    });
+    const events: AgentStreamEvent[] = [];
+    const permissionOptions: PermissionOption[] = [
+      { optionId: "allow-once", name: "Allow", kind: "allow_once" },
+      { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+    ];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    void session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "tool-1",
+        title: "Run command",
+        kind: "other",
+        status: "pending",
+        rawInput: {
+          command: "npm test",
+          cwd: "/workspace",
+        },
+      },
+      options: permissionOptions,
+    } satisfies RequestPermissionRequest);
+
+    await Promise.resolve();
+
+    const requested = events.find((event) => event.type === "permission_requested");
+    expect(requested).toMatchObject({
+      type: "permission_requested",
+      request: {
+        detail: {
+          type: "shell",
+          command: "npm test",
+          cwd: "/workspace",
+        },
+      },
+    });
+  });
+
   test("maps Copilot Allow All mode to allow_all ACP config on session start", async () => {
     const setSessionConfigOption = vi.fn(async () => ({
       configOptions: [

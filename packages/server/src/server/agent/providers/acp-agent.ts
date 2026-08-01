@@ -113,6 +113,26 @@ import {
   truncateForDiagnostic,
 } from "./diagnostic-utils.js";
 import { withTimeout } from "../../../utils/promise-timeout.js";
+import {
+  ToolEditInputSchema,
+  ToolEditOutputSchema,
+  ToolReadInputSchema,
+  ToolReadOutputSchema,
+  ToolSearchInputSchema,
+  ToolShellInputSchema,
+  ToolShellOutputSchema,
+  ToolWebFetchInputSchema,
+  ToolWebFetchOutputSchema,
+  ToolWriteInputSchema,
+  ToolWriteOutputSchema,
+  toEditToolDetail,
+  toFetchToolDetail,
+  toReadToolDetail,
+  toSearchToolDetail,
+  toShellToolDetail,
+  toWriteToolDetail,
+  type ParsedToolSearchInput,
+} from "./tool-call-detail-primitives.js";
 
 function assertChildWithPipes(
   child: ChildProcess,
@@ -3160,6 +3180,118 @@ interface MapToolDetailContext {
   rawOutput: ReturnType<typeof readRecord>;
 }
 
+const EDIT_INFERENCE_FIELDS = [
+  "oldString",
+  "oldText",
+  "old_string",
+  "old_str",
+  "oldContent",
+  "old_content",
+  "newString",
+  "newText",
+  "new_string",
+  "new_str",
+  "newContent",
+  "new_content",
+  "patch",
+  "diff",
+  "unified_diff",
+  "unifiedDiff",
+];
+const WRITE_INFERENCE_FIELDS = ["content", "new_content", "newContent"];
+
+function hasAnyKey(record: Record<string, unknown> | null, keys: readonly string[]): boolean {
+  if (!record) {
+    return false;
+  }
+  return keys.some((key) => record[key] !== undefined);
+}
+
+function inferShellDetail(rawInput: unknown, rawOutput: unknown): ToolCallDetail | undefined {
+  const shellInput = ToolShellInputSchema.safeParse(rawInput);
+  const shellOutput = ToolShellOutputSchema.safeParse(rawOutput);
+  return toShellToolDetail(
+    shellInput.success ? shellInput.data : null,
+    shellOutput.success ? shellOutput.data : null,
+  );
+}
+
+function inferSearchDetail(rawInput: unknown): ToolCallDetail | undefined {
+  const searchInput = ToolSearchInputSchema.safeParse(rawInput);
+  if (!searchInput.success) {
+    return undefined;
+  }
+  return toSearchToolDetail({
+    input: searchInput.data as ParsedToolSearchInput,
+  });
+}
+
+function inferFetchDetail(rawInput: unknown, rawOutput: unknown): ToolCallDetail | undefined {
+  const fetchInput = ToolWebFetchInputSchema.safeParse(rawInput);
+  const fetchOutput = ToolWebFetchOutputSchema.safeParse(rawOutput);
+  return toFetchToolDetail(
+    fetchInput.success ? fetchInput.data : null,
+    fetchOutput.success ? fetchOutput.data : null,
+  );
+}
+
+function inferEditDetail(rawInput: unknown, rawOutput: unknown): ToolCallDetail | undefined {
+  const editInput = ToolEditInputSchema.safeParse(rawInput);
+  const editOutput = ToolEditOutputSchema.safeParse(rawOutput);
+  return toEditToolDetail(
+    editInput.success ? editInput.data : null,
+    editOutput.success ? editOutput.data : null,
+  );
+}
+
+function inferWriteDetail(rawInput: unknown, rawOutput: unknown): ToolCallDetail | undefined {
+  const writeInput = ToolWriteInputSchema.safeParse(rawInput);
+  const writeOutput = ToolWriteOutputSchema.safeParse(rawOutput);
+  return toWriteToolDetail(
+    writeInput.success ? writeInput.data : null,
+    writeOutput.success ? writeOutput.data : null,
+  );
+}
+
+function inferReadDetail(rawInput: unknown, rawOutput: unknown): ToolCallDetail | undefined {
+  const readInput = ToolReadInputSchema.safeParse(rawInput);
+  const readOutput = ToolReadOutputSchema.safeParse(rawOutput);
+  return toReadToolDetail(
+    readInput.success ? readInput.data : null,
+    readOutput.success ? readOutput.data : null,
+  );
+}
+
+function inferToolDetailFromRawInputOutput(snapshot: ACPToolSnapshot): ToolCallDetail | undefined {
+  const rawInput = snapshot.rawInput;
+  const rawOutput = snapshot.rawOutput;
+  const rawInputRecord = readRecord(rawInput);
+  const rawOutputRecord = readRecord(rawOutput);
+
+  // Some ACP providers embed the tool arguments as a JSON string inside the
+  // text content rather than in rawInput. Treat that as the input record for
+  // inference when rawInput is empty.
+  const textContent = extractToolText(snapshot.content);
+  const textInputRecord = parseEditJsonFromText(textContent);
+  const effectiveInputRecord = rawInputRecord ?? textInputRecord;
+  const effectiveInput = effectiveInputRecord ?? rawInput;
+
+  return (
+    inferShellDetail(effectiveInput, rawOutput) ??
+    inferSearchDetail(effectiveInput) ??
+    inferFetchDetail(effectiveInput, rawOutput) ??
+    (hasAnyKey(effectiveInputRecord, EDIT_INFERENCE_FIELDS) ||
+    hasAnyKey(rawOutputRecord, EDIT_INFERENCE_FIELDS)
+      ? inferEditDetail(effectiveInput, rawOutput)
+      : undefined) ??
+    (hasAnyKey(effectiveInputRecord, WRITE_INFERENCE_FIELDS) ||
+    hasAnyKey(rawOutputRecord, WRITE_INFERENCE_FIELDS)
+      ? inferWriteDetail(effectiveInput, rawOutput)
+      : undefined) ??
+    inferReadDetail(effectiveInput, rawOutput)
+  );
+}
+
 function mapToolDetail(
   snapshot: ACPToolSnapshot,
   terminals: Map<string, TerminalEntry>,
@@ -3200,8 +3332,13 @@ function mapToolDetail(
         icon: "sparkles",
         text: context.textContent ?? stringifyUnknown(snapshot.rawInput),
       };
-    default:
+    default: {
+      const inferred = inferToolDetailFromRawInputOutput(snapshot);
+      if (inferred) {
+        return inferred;
+      }
       return buildDefaultToolDetail(context);
+    }
   }
 }
 
@@ -3216,17 +3353,39 @@ function buildReadToolDetail(context: MapToolDetailContext): ToolCallDetail {
   };
 }
 
+function isUnifiedDiffText(text: string | undefined): boolean {
+  if (!text) {
+    return false;
+  }
+  const trimmed = text.trim();
+  return (
+    trimmed.startsWith("--- ") ||
+    trimmed.startsWith("diff ") ||
+    trimmed.startsWith("@@") ||
+    /^[-+@]/.test(trimmed)
+  );
+}
+
 function buildEditToolDetail(context: MapToolDetailContext): ToolCallDetail {
   const { snapshot, firstLocation, textContent, diffContent, rawInput } = context;
+  const oldString =
+    diffContent?.oldText ??
+    readEditString(rawInput, textContent, ["oldText", "oldString", "old_string", "old_str"]);
+  const newString =
+    snapshot.kind === "delete"
+      ? ""
+      : (diffContent?.newText ??
+        readEditString(rawInput, textContent, ["newText", "newString", "new_string", "new_str"]));
   return {
     type: "edit",
-    filePath: firstLocation ?? readString(rawInput, ["path", "filePath", "file"]) ?? snapshot.title,
-    oldString: diffContent?.oldText ?? readString(rawInput, ["oldText", "oldString"]),
-    newString:
-      snapshot.kind === "delete"
-        ? ""
-        : (diffContent?.newText ?? readString(rawInput, ["newText", "newString"])),
-    unifiedDiff: textContent ?? undefined,
+    filePath:
+      firstLocation ??
+      readEditString(rawInput, textContent, ["path", "filePath", "file"]) ??
+      snapshot.title,
+    oldString,
+    newString,
+    unifiedDiff:
+      isUnifiedDiffText(textContent) && !oldString && !newString ? textContent : undefined,
   };
 }
 
@@ -3422,6 +3581,38 @@ function readNumber(record: Record<string, unknown> | null, keys: string[]): num
     if (typeof value === "number" && Number.isFinite(value)) {
       return value;
     }
+  }
+  return undefined;
+}
+
+function parseEditJsonFromText(text: string | undefined): Record<string, unknown> | null {
+  if (!text) {
+    return null;
+  }
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function readEditString(
+  record: Record<string, unknown> | null,
+  textContent: string | undefined,
+  keys: string[],
+): string | undefined {
+  const fromRecord = readString(record, keys);
+  if (fromRecord) {
+    return fromRecord;
+  }
+  const fromText = parseEditJsonFromText(textContent);
+  if (fromText) {
+    return readString(fromText, keys);
   }
   return undefined;
 }
