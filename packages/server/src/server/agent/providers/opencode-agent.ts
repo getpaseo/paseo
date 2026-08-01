@@ -33,7 +33,7 @@ import {
   type AgentPromptInput,
   type AgentRunOptions,
   type AgentRunResult,
-  type AgentRuntimeLifecycleObserver,
+  type AgentRuntimeCapacityController,
   type AgentRuntimeInfo,
   type AgentSession,
   type AgentSessionConfig,
@@ -1257,7 +1257,7 @@ function createSdkOpenCodeClient(options: { baseUrl: string; directory: string }
 export class OpenCodeAgentClient implements AgentClient {
   readonly provider = "opencode" as const;
   readonly capabilities = OPENCODE_CAPABILITIES;
-  readonly draftDiscoveryRuntimeMethods = { listCommands: true } as const;
+  readonly managesRuntimeCapacityAtSource = true as const;
   readonly resolveCreateConfig = resolveOpenCodeCreateConfig;
   readonly isCreateConfigUnattended = isOpenCodeCreateConfigUnattended;
 
@@ -1283,6 +1283,10 @@ export class OpenCodeAgentClient implements AgentClient {
       });
     this.createOpenCodeClient = deps.createClient ?? createSdkOpenCodeClient;
     this.resolveHomeDir = deps.resolveHomeDir ?? resolveOpenCodeHomeDir;
+  }
+
+  configureRuntimeCapacityController(controller: AgentRuntimeCapacityController): void {
+    this.serverManager.configureRuntimeCapacityController?.(controller);
   }
 
   async createSession(
@@ -1420,14 +1424,9 @@ export class OpenCodeAgentClient implements AgentClient {
     }
   }
 
-  async listCommands(
-    config: AgentSessionConfig,
-    runtimeLifecycle?: AgentRuntimeLifecycleObserver,
-  ): Promise<AgentSlashCommand[]> {
+  async listCommands(config: AgentSessionConfig): Promise<AgentSlashCommand[]> {
     const openCodeConfig = this.assertConfig(config);
     const acquisition = await this.serverManager.acquireCurrent();
-    runtimeLifecycle?.runtimeStarted();
-
     try {
       const { url } = acquisition.server;
       const client = this.createOpenCodeClient({
@@ -1437,7 +1436,6 @@ export class OpenCodeAgentClient implements AgentClient {
       return await listOpenCodeCommandsFromSdk(client, openCodeConfig.cwd);
     } finally {
       await acquisition.release();
-      runtimeLifecycle?.runtimeClosed();
     }
   }
 

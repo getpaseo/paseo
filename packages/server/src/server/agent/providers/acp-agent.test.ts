@@ -1,5 +1,6 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   AgentSideConnection,
@@ -42,6 +43,10 @@ import {
   writeCopilotProviderMode,
 } from "./copilot-acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
+import {
+  AgentRuntimeCapacityError,
+  HostAgentRuntimeCapacityController,
+} from "../agent-runtime-capacity.js";
 import { parseKiroExtensionCommands } from "./kiro-acp-agent.js";
 import { transformPiModels } from "./pi/agent.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
@@ -238,21 +243,11 @@ function createTerminalChildStub(): ChildProcess {
   return child;
 }
 
-function createDestroyableStream(): { destroyed: boolean; destroy: () => void } {
-  const stream = {
-    destroyed: false,
-    destroy() {
-      stream.destroyed = true;
-    },
-  };
-  return stream;
-}
-
 function createProbeChildStub(): ChildProcessWithoutNullStreams {
   const child = new EventEmitter() as ChildProcessWithoutNullStreams;
-  child.stdin = createDestroyableStream() as unknown as ChildProcessWithoutNullStreams["stdin"];
-  child.stdout = createDestroyableStream() as unknown as ChildProcessWithoutNullStreams["stdout"];
-  child.stderr = createDestroyableStream() as unknown as ChildProcessWithoutNullStreams["stderr"];
+  child.stdin = new PassThrough();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
   child.kill = vi.fn(() => true) as ChildProcessWithoutNullStreams["kill"];
   return child;
 }
@@ -1530,19 +1525,11 @@ describe("ACPAgentClient config features", () => {
       defaultCommand: ["copilot", "--acp"],
       configFeatureOptions: [COPILOT_AGENT_FEATURE_OPTION],
     });
-    const lifecycle: string[] = [];
-
     await expect(
-      client.listFeatures(
-        {
-          provider: "copilot",
-          cwd: "/tmp/acp-features",
-        },
-        {
-          runtimeStarted: () => lifecycle.push("started"),
-          runtimeClosed: () => lifecycle.push("closed"),
-        },
-      ),
+      client.listFeatures({
+        provider: "copilot",
+        cwd: "/tmp/acp-features",
+      }),
     ).resolves.toEqual([
       expect.objectContaining({
         type: "select",
@@ -1554,7 +1541,6 @@ describe("ACPAgentClient config features", () => {
         ],
       }),
     ]);
-    expect(lifecycle).toEqual(["started", "closed"]);
   });
 
   test("does not report an ACP feature probe closed when process cleanup fails", async () => {
@@ -1583,18 +1569,9 @@ describe("ACPAgentClient config features", () => {
       defaultCommand: ["copilot", "--acp"],
       configFeatureOptions: [COPILOT_AGENT_FEATURE_OPTION],
     });
-    const lifecycle: string[] = [];
-
     await expect(
-      client.listFeatures(
-        { provider: "copilot", cwd: "/tmp/acp-features" },
-        {
-          runtimeStarted: () => lifecycle.push("started"),
-          runtimeClosed: () => lifecycle.push("closed"),
-        },
-      ),
+      client.listFeatures({ provider: "copilot", cwd: "/tmp/acp-features" }),
     ).rejects.toThrow("probe cleanup failed");
-    expect(lifecycle).toEqual(["started"]);
   });
 });
 
@@ -3076,6 +3053,84 @@ describe("ACPAgentClient probe cleanup", () => {
     expect(child.stdin.destroyed).toBe(true);
     expect(child.stdout.destroyed).toBe(true);
     expect(child.stderr.destroyed).toBe(true);
+  });
+
+  test("admits ACP subprocesses atomically at the shared spawn boundary", async () => {
+    class CapacityTestClient extends ACPAgentClient {
+      protected override async resolveLaunchCommand() {
+        return { command: "test-acp", args: [] };
+      }
+
+      async startHeldProbe() {
+        const transport = await this.spawnTransport();
+        return {
+          child: transport.child,
+          close: async () =>
+            await this.closeProbe({
+              child: transport.child,
+              connection: transport.connection,
+              stderrChunks: transport.stderrChunks,
+            }),
+        };
+      }
+    }
+
+    const terminator = new FakeTerminator();
+    const firstChild = createProbeChildStub();
+    const secondChild = createProbeChildStub();
+    const spawn = vi
+      .spyOn(spawnUtils, "spawnProcess")
+      .mockReturnValueOnce(firstChild)
+      .mockReturnValueOnce(secondChild);
+    const client = new CapacityTestClient({
+      provider: "claude-acp",
+      logger: createTestLogger(),
+      defaultCommand: ["claude", "--acp"],
+      terminateProcess: terminator.terminate,
+    });
+    client.configureRuntimeCapacityController(new HostAgentRuntimeCapacityController(1));
+
+    const first = await client.startHeldProbe();
+    await expect(client.startHeldProbe()).rejects.toBeInstanceOf(AgentRuntimeCapacityError);
+    expect(spawn).toHaveBeenCalledTimes(1);
+
+    await first.close();
+    const second = await client.startHeldProbe();
+    expect(second.child).toBe(secondChild);
+    await second.close();
+  });
+
+  test("retains ACP subprocess capacity when termination cannot prove exit", async () => {
+    class CapacityTestClient extends ACPAgentClient {
+      protected override async resolveLaunchCommand() {
+        return { command: "test-acp", args: [] };
+      }
+
+      async startAndCloseProbe(): Promise<void> {
+        const transport = await this.spawnTransport();
+        await this.closeProbe({
+          child: transport.child,
+          connection: transport.connection,
+          stderrChunks: transport.stderrChunks,
+        });
+      }
+    }
+
+    const child = createProbeChildStub();
+    const spawn = vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
+    const client = new CapacityTestClient({
+      provider: "claude-acp",
+      logger: createTestLogger(),
+      defaultCommand: ["claude", "--acp"],
+      terminateProcess: async () => "kill-timeout",
+    });
+    client.configureRuntimeCapacityController(new HostAgentRuntimeCapacityController(1));
+
+    await expect(client.startAndCloseProbe()).rejects.toThrow(
+      "ACP process termination did not report process exit",
+    );
+    await expect(client.startAndCloseProbe()).rejects.toBeInstanceOf(AgentRuntimeCapacityError);
+    expect(spawn).toHaveBeenCalledTimes(1);
   });
 });
 

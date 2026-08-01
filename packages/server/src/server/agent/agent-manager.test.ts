@@ -29,7 +29,7 @@ import type {
   AgentPersistenceHandle,
   AgentRunOptions,
   AgentRunResult,
-  AgentRuntimeLifecycleObserver,
+  AgentRuntimeCapacityController,
   AgentSession,
   AgentSessionConfig,
   AgentSlashCommand,
@@ -808,6 +808,58 @@ test("reserves host runtime capacity before concurrent provider startup", async 
   await manager.closeAgent(created.id);
 });
 
+test("lets a source-managed provider admit normal agent creation without double charging", async () => {
+  class SourceManagedClient extends TestAgentClient {
+    readonly managesRuntimeCapacityAtSource = true as const;
+    private controller: AgentRuntimeCapacityController | null = null;
+
+    configureRuntimeCapacityController(controller: AgentRuntimeCapacityController): void {
+      this.controller = controller;
+    }
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      if (!this.controller) throw new Error("missing runtime capacity controller");
+      const reservation = this.controller.reserve();
+      const session = await super.createSession(config);
+      reservation.track(session);
+      const close = session.close.bind(session);
+      session.close = async () => {
+        await close();
+        this.controller?.release(session);
+      };
+      return session;
+    }
+  }
+
+  const client = new SourceManagedClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    maxActiveAgentRuntimes: 1,
+  });
+  const first = await manager.createAgent(
+    { provider: "codex", cwd: process.cwd() },
+    "00000000-0000-4000-8000-000000000089",
+    {},
+  );
+
+  await expect(
+    manager.createAgent(
+      { provider: "codex", cwd: process.cwd() },
+      "00000000-0000-4000-8000-000000000090",
+      {},
+    ),
+  ).rejects.toMatchObject({ name: "AgentRuntimeCapacityError", live: 1, reserved: 0 });
+
+  await manager.closeAgent(first.id);
+  const second = await manager.createAgent(
+    { provider: "codex", cwd: process.cwd() },
+    "00000000-0000-4000-8000-000000000090",
+    {},
+  );
+  await manager.closeAgent(second.id);
+});
+
 test("applies host runtime capacity before fallback draft discovery starts a session", async () => {
   class DraftDiscoveryClient extends TestAgentClient {
     createSessionCalls = 0;
@@ -837,37 +889,6 @@ test("applies host runtime capacity before fallback draft discovery starts a ses
     manager.listDraftFeatures({ provider: "codex", cwd: process.cwd(), model: "gpt-5.4" }),
   ).rejects.toMatchObject({ name: "AgentRuntimeCapacityError", live: 1, reserved: 0 });
   expect(client.createSessionCalls).toBe(1);
-
-  await manager.closeAgent(live.id);
-});
-
-test("rejects runtime-producing direct draft discovery before invoking a full provider", async () => {
-  class RuntimeProducingCommandClient extends TestAgentClient {
-    readonly draftDiscoveryRuntimeMethods = { listCommands: true } as const;
-    listCommandCalls = 0;
-
-    async listCommands(): Promise<AgentSlashCommand[]> {
-      this.listCommandCalls += 1;
-      throw new Error("capacity should reject before provider invocation");
-    }
-  }
-
-  const client = new RuntimeProducingCommandClient();
-  const manager = new AgentManager({
-    clients: { codex: client },
-    logger,
-    maxActiveAgentRuntimes: 1,
-  });
-  const live = await manager.createAgent(
-    { provider: "codex", cwd: process.cwd() },
-    "00000000-0000-4000-8000-000000000099",
-    { workspaceId: undefined },
-  );
-
-  await expect(
-    manager.listDraftCommands({ provider: "codex", cwd: process.cwd(), model: "gpt-5.4" }),
-  ).rejects.toMatchObject({ name: "AgentRuntimeCapacityError", live: 1, reserved: 0 });
-  expect(client.listCommandCalls).toBe(0);
 
   await manager.closeAgent(live.id);
 });
@@ -909,83 +930,6 @@ test("keeps fallback draft discovery charged when its session does not close", a
     ),
   ).rejects.toMatchObject({ name: "AgentRuntimeCapacityError", live: 1, reserved: 0 });
   expect(client.createSessionCalls).toBe(1);
-});
-
-test("keeps direct draft discovery charged when provider cleanup fails", async () => {
-  class RuntimeProducingFeatureClient extends TestAgentClient {
-    readonly draftDiscoveryRuntimeMethods = { listFeatures: true } as const;
-    listFeatureCalls = 0;
-
-    async listFeatures(
-      _config: AgentSessionConfig,
-      runtimeLifecycle?: AgentRuntimeLifecycleObserver,
-    ): Promise<AgentFeature[]> {
-      this.listFeatureCalls += 1;
-      runtimeLifecycle?.runtimeStarted();
-      throw new Error("draft feature cleanup failed");
-    }
-  }
-
-  const client = new RuntimeProducingFeatureClient();
-  const manager = new AgentManager({
-    clients: { codex: client },
-    logger,
-    maxActiveAgentRuntimes: 1,
-  });
-
-  await expect(
-    manager.listDraftFeatures({ provider: "codex", cwd: process.cwd(), model: "gpt-5.4" }),
-  ).rejects.toThrow("draft feature cleanup failed");
-  await expect(
-    manager.listDraftFeatures({ provider: "codex", cwd: process.cwd(), model: "gpt-5.4" }),
-  ).rejects.toMatchObject({ name: "AgentRuntimeCapacityError", live: 1, reserved: 0 });
-  expect(client.listFeatureCalls).toBe(1);
-});
-
-test("serializes runtime-producing direct draft discovery through capacity admission", async () => {
-  class RuntimeProducingFeatureClient extends TestAgentClient {
-    readonly draftDiscoveryRuntimeMethods = { listFeatures: true } as const;
-    readonly started = deferred<void>();
-    readonly finish = deferred<void>();
-    listFeatureCalls = 0;
-
-    async listFeatures(
-      _config: AgentSessionConfig,
-      runtimeLifecycle?: AgentRuntimeLifecycleObserver,
-    ): Promise<AgentFeature[]> {
-      this.listFeatureCalls += 1;
-      runtimeLifecycle?.runtimeStarted();
-      this.started.resolve();
-      await this.finish.promise;
-      runtimeLifecycle?.runtimeClosed();
-      return [];
-    }
-  }
-
-  const client = new RuntimeProducingFeatureClient();
-  const manager = new AgentManager({
-    clients: { codex: client },
-    logger,
-    maxActiveAgentRuntimes: 1,
-  });
-  const first = manager.listDraftFeatures({
-    provider: "codex",
-    cwd: process.cwd(),
-    model: "gpt-5.4",
-  });
-  await client.started.promise;
-
-  await expect(
-    manager.listDraftFeatures({ provider: "codex", cwd: process.cwd(), model: "gpt-5.4" }),
-  ).rejects.toMatchObject({ name: "AgentRuntimeCapacityError", live: 1, reserved: 0 });
-  expect(client.listFeatureCalls).toBe(1);
-
-  client.finish.resolve();
-  await expect(first).resolves.toEqual([]);
-  await expect(
-    manager.listDraftFeatures({ provider: "codex", cwd: process.cwd(), model: "gpt-5.4" }),
-  ).resolves.toEqual([]);
-  expect(client.listFeatureCalls).toBe(2);
 });
 
 test("counts errored provider runtimes until they are closed", async () => {

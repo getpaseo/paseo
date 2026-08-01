@@ -268,7 +268,7 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     }
   }
 
-  test("admits only one concurrent OpenCode draft command runtime", async () => {
+  test("charges the shared OpenCode runtime once across concurrent draft commands", async () => {
     const runtime = new TestOpenCodeHarness();
     const firstOpenCode = new TestOpenCodeClient();
     const firstCommandStarted = deferred<void>();
@@ -306,48 +306,24 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
 
     const first = manager.listDraftCommands(config);
     await firstCommandStarted.promise;
-    await expect(manager.listDraftCommands(config)).rejects.toMatchObject({
-      name: "AgentRuntimeCapacityError",
-      live: 1,
-      reserved: 0,
-    });
+    const second = manager.listDraftCommands(config);
     expect({
-      methods: client.draftDiscoveryRuntimeMethods,
       acquisitions: runtime.acquisitions,
     }).toEqual({
-      methods: { listCommands: true },
       acquisitions: [{ kind: "current", releaseCount: 0 }],
     });
 
     finishFirstCommand.resolve();
     await expect(first).resolves.toEqual(expectedCommands);
-    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
-
-    const secondOpenCode = new TestOpenCodeClient();
-    runtime.enqueueClient(secondOpenCode);
-    await expect(manager.listDraftCommands(config)).resolves.toEqual(expectedCommands);
+    await expect(second).resolves.toEqual(expectedCommands);
     expect(runtime.acquisitions).toEqual([
       { kind: "current", releaseCount: 1 },
       { kind: "current", releaseCount: 1 },
     ]);
   });
 
-  test("keeps failed OpenCode draft command release charged", async () => {
-    class ReleaseFailureHarness extends TestOpenCodeHarness {
-      override async acquireCurrent() {
-        const acquisition = await super.acquireCurrent();
-        return {
-          ...acquisition,
-          release: async () => {
-            await acquisition.release();
-            throw new Error("OpenCode command release failed");
-          },
-        };
-      }
-    }
-
-    const runtime = new ReleaseFailureHarness();
-    runtime.enqueueClient(new TestOpenCodeClient());
+  test("routes catalog, import, draft, and agent creation through source admission", async () => {
+    const runtime = new TestOpenCodeHarness();
     const client = new AvailableOpenCodeAgentClient(logger, undefined, {
       serverManager: runtime,
       createClient: runtime.createClient,
@@ -359,15 +335,35 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     });
     const config = buildConfig(process.cwd());
 
-    await expect(manager.listDraftCommands(config)).rejects.toThrow(
-      "OpenCode command release failed",
-    );
-    await expect(manager.listDraftCommands(config)).rejects.toMatchObject({
-      name: "AgentRuntimeCapacityError",
-      live: 1,
-      reserved: 0,
-    });
-    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+    const catalogClient = new TestOpenCodeClient();
+    catalogClient.providerListResponse = {
+      data: {
+        connected: ["opencode"],
+        all: [{ id: "opencode", name: "OpenCode", source: "api", models: {} }],
+      },
+    };
+    runtime.enqueueClient(catalogClient);
+    await expect(
+      client.fetchCatalog({ scope: "workspace", cwd: process.cwd(), force: false }),
+    ).resolves.toMatchObject({ models: [] });
+
+    runtime.enqueueClient(new TestOpenCodeClient());
+    await expect(manager.listImportableSessions()).resolves.toEqual([]);
+
+    runtime.enqueueClient(new TestOpenCodeClient());
+    await expect(manager.listDraftCommands(config)).resolves.toHaveLength(2);
+    await expect(manager.listDraftFeatures(config)).resolves.toHaveLength(1);
+
+    runtime.enqueueClient(new TestOpenCodeClient());
+    const agent = await manager.createAgent(config, undefined, {});
+    await manager.closeAgent(agent.id);
+
+    expect(runtime.acquisitions.map(({ kind, releaseCount }) => ({ kind, releaseCount }))).toEqual([
+      { kind: "current", releaseCount: 1 },
+      { kind: "current", releaseCount: 1 },
+      { kind: "current", releaseCount: 1 },
+      { kind: "dedicated", releaseCount: 1 },
+    ]);
   });
 
   test("creates a session with valid id and provider", async () => {

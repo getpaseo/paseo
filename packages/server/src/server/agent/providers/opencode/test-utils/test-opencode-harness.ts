@@ -1,6 +1,7 @@
 import type { OpencodeClient } from "@opencode-ai/sdk/v2/client";
 
 import type { OpenCodeServerAcquisition, OpenCodeServerManagerLike } from "../server-manager.js";
+import type { AgentRuntimeCapacityController } from "../../../agent-sdk-types.js";
 
 interface OpenCodeResponse {
   data?: unknown;
@@ -16,11 +17,17 @@ export class TestOpenCodeHarness implements OpenCodeServerManagerLike {
   }> = [];
   readonly clientCreations: Array<{ baseUrl: string; directory: string }> = [];
   private readonly clients: TestOpenCodeClient[] = [];
+  private runtimeCapacity: AgentRuntimeCapacityController | null = null;
+  private currentRuntime: { token: object; refCount: number } | null = null;
 
   server = { port: 1234, url: "http://127.0.0.1:1234" };
 
   enqueueClient(client: TestOpenCodeClient): void {
     this.clients.push(client);
+  }
+
+  configureRuntimeCapacityController(controller: AgentRuntimeCapacityController): void {
+    this.runtimeCapacity = controller;
   }
 
   async acquireCurrent(): Promise<OpenCodeServerAcquisition> {
@@ -44,6 +51,22 @@ export class TestOpenCodeHarness implements OpenCodeServerManagerLike {
     env?: Record<string, string>;
     url?: string;
   }): OpenCodeServerAcquisition {
+    const createRuntime = () => {
+      const runtime = { token: {}, refCount: 0 };
+      this.runtimeCapacity?.reserve().track(runtime.token);
+      return runtime;
+    };
+    let runtime: { token: object; refCount: number };
+    if (input.kind === "dedicated") {
+      runtime = createRuntime();
+    } else if (input.kind === "new") {
+      runtime = createRuntime();
+      this.currentRuntime = runtime;
+    } else {
+      this.currentRuntime ??= createRuntime();
+      runtime = this.currentRuntime;
+    }
+    runtime.refCount += 1;
     const acquisition = {
       kind: input.kind,
       releaseCount: 0,
@@ -55,6 +78,13 @@ export class TestOpenCodeHarness implements OpenCodeServerManagerLike {
       server: this.server,
       release: async () => {
         acquisition.releaseCount += 1;
+        runtime.refCount -= 1;
+        if (runtime.refCount === 0) {
+          this.runtimeCapacity?.release(runtime.token);
+          if (this.currentRuntime === runtime) {
+            this.currentRuntime = null;
+          }
+        }
       },
     };
   }
@@ -65,7 +95,12 @@ export class TestOpenCodeHarness implements OpenCodeServerManagerLike {
     return client.asSdkClient();
   };
 
-  async shutdown(): Promise<void> {}
+  async shutdown(): Promise<void> {
+    if (this.currentRuntime) {
+      this.runtimeCapacity?.release(this.currentRuntime.token);
+      this.currentRuntime = null;
+    }
+  }
 }
 
 export class TestOpenCodeClient {

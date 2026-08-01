@@ -15,6 +15,10 @@ import {
   type ProviderRuntimeSettings,
 } from "../../provider-launch-config.js";
 import { resolveOpenCodeHomeDir } from "./paths.js";
+import type {
+  AgentRuntimeCapacityController,
+  AgentRuntimeCapacityReservation,
+} from "../../agent-sdk-types.js";
 
 const OPENCODE_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 5_000;
 const OPENCODE_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
@@ -25,6 +29,7 @@ export interface OpenCodeServerAcquisition {
 }
 
 export interface OpenCodeServerManagerLike {
+  configureRuntimeCapacityController?(controller: AgentRuntimeCapacityController): void;
   acquireCurrent(): Promise<OpenCodeServerAcquisition>;
   acquireNew(): Promise<OpenCodeServerAcquisition>;
   acquireDedicated(env: Record<string, string>): Promise<OpenCodeServerAcquisition>;
@@ -78,6 +83,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private readonly resolveCommandPrefix: OpenCodeCommandPrefixResolver;
   private readonly resolveHomeDir: () => string;
   private readonly spawnServerProcess: OpenCodeServerProcessSpawner;
+  private runtimeCapacity: AgentRuntimeCapacityController | null = null;
 
   constructor(options: OpenCodeServerManagerOptions) {
     this.logger = options.logger;
@@ -91,6 +97,22 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       (() => resolveProviderCommandPrefix(this.runtimeSettings?.command, resolveOpenCodeBinary));
     this.resolveHomeDir = options.resolveHomeDir ?? resolveOpenCodeHomeDir;
     this.spawnServerProcess = options.spawnServerProcess ?? spawnProcess;
+  }
+
+  configureRuntimeCapacityController(controller: AgentRuntimeCapacityController): void {
+    if (
+      this.runtimeCapacity &&
+      this.runtimeCapacity !== controller &&
+      (this.currentServer ||
+        this.retiredServers.size > 0 ||
+        this.startPromise ||
+        this.newServerPromise)
+    ) {
+      throw new Error(
+        "OpenCode server manager already has a different runtime capacity controller",
+      );
+    }
+    this.runtimeCapacity = controller;
   }
 
   static getInstance(
@@ -208,8 +230,13 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       return;
     }
 
-    this.retiredServers.delete(server);
-    await this.killServer(server);
+    const closed = await this.killServer(server);
+    if (closed) {
+      this.retiredServers.delete(server);
+    } else {
+      this.retiredServers.add(server);
+      throw new Error("OpenCode server termination did not report process exit");
+    }
   }
 
   private async getNewServer(): Promise<OpenCodeServerGeneration> {
@@ -293,15 +320,25 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     const serverCwd = this.resolveHomeDir();
     mkdirSync(serverCwd, { recursive: true });
 
-    const serverProcess = this.spawnServerProcess(launchPrefix.command, serverArgs, {
-      cwd: serverCwd,
-      detached: process.platform !== "win32",
-      stdio: ["ignore", "pipe", "pipe"],
-      ...createProviderEnvSpec({
-        runtimeSettings: this.runtimeSettings,
-        overlays: [launchEnv],
-      }),
-    });
+    let reservation: AgentRuntimeCapacityReservation | null =
+      this.runtimeCapacity?.reserve() ?? null;
+    let serverProcess: ChildProcess;
+    try {
+      serverProcess = this.spawnServerProcess(launchPrefix.command, serverArgs, {
+        cwd: serverCwd,
+        detached: process.platform !== "win32",
+        stdio: ["ignore", "pipe", "pipe"],
+        ...createProviderEnvSpec({
+          runtimeSettings: this.runtimeSettings,
+          overlays: [launchEnv],
+        }),
+      });
+      reservation?.track(serverProcess);
+      reservation = null;
+    } catch (error) {
+      reservation?.release();
+      throw error;
+    }
     const managedProcessRecord = this.recordManagedServerProcess({
       process: serverProcess,
       command: launchPrefix.command,
@@ -388,6 +425,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       });
 
       serverProcess.on("exit", (code) => {
+        this.runtimeCapacity?.release(serverProcess);
         this.removeManagedServerRecord(server);
         if (!started) {
           failStartup(
@@ -406,11 +444,16 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     });
 
     server.ready = ready.catch(async (error) => {
-      await this.killServer(server);
+      const closed = await this.killServer(server);
       if (this.currentServer === server) {
         this.currentServer = null;
       }
-      this.retiredServers.delete(server);
+      if (closed) {
+        this.retiredServers.delete(server);
+      } else {
+        server.retired = true;
+        this.retiredServers.add(server);
+      }
       throw error;
     });
 
@@ -422,28 +465,39 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       ...(this.currentServer ? [this.currentServer] : []),
       ...Array.from(this.retiredServers),
     ];
-    await Promise.all(servers.map((server) => this.killServer(server)));
+    const closeResults = await Promise.all(
+      servers.map(async (server) => ({ server, closed: await this.killServer(server) })),
+    );
     this.currentServer = null;
-    this.retiredServers.clear();
+    this.retiredServers = new Set(
+      closeResults.filter((result) => !result.closed).map((result) => result.server),
+    );
   }
 
   private async cleanupRetiredServers(): Promise<void> {
     const cleanup: Promise<void>[] = [];
     for (const server of Array.from(this.retiredServers)) {
       if (server.refCount === 0) {
-        this.retiredServers.delete(server);
-        cleanup.push(this.killServer(server));
+        cleanup.push(
+          this.killServer(server).then((closed) => {
+            if (closed) {
+              this.retiredServers.delete(server);
+            }
+            return undefined;
+          }),
+        );
       }
     }
     await Promise.all(cleanup);
   }
 
-  private async killServer(server: OpenCodeServerGeneration): Promise<void> {
+  private async killServer(server: OpenCodeServerGeneration): Promise<boolean> {
     if (
       (server.process.exitCode !== null && server.process.exitCode !== undefined) ||
       (server.process.signalCode !== null && server.process.signalCode !== undefined)
     ) {
-      return;
+      this.runtimeCapacity?.release(server.process);
+      return true;
     }
     const result = await this.terminateProcess(server.process, {
       gracefulTimeoutMs: OPENCODE_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS,
@@ -460,7 +514,9 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
         { timeoutMs: OPENCODE_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS },
         "OpenCode server did not report exit after SIGKILL",
       );
+      return false;
     }
+    this.runtimeCapacity?.release(server.process);
     if (server.managedProcessId) {
       await this.removeManagedProcessId(server.managedProcessId);
       server.managedProcessId = undefined;
@@ -468,6 +524,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     } else {
       this.removeManagedServerRecord(server);
     }
+    return true;
   }
 
   private async recordManagedServerProcess(options: {

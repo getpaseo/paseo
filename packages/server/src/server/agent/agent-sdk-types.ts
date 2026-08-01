@@ -682,21 +682,22 @@ export interface ResolveAgentDefaultModeInput {
   env?: Record<string, string>;
 }
 
-export interface AgentRuntimeLifecycleObserver {
-  runtimeStarted(): void;
-  runtimeClosed(): void;
+export interface AgentRuntimeCapacityReservation {
+  track(runtime: object): void;
+  release(): void;
 }
 
-export interface AgentDraftDiscoveryRuntimeMethods {
-  listCommands?: true;
-  listFeatures?: true;
+export interface AgentRuntimeCapacityController {
+  reserve(): AgentRuntimeCapacityReservation;
+  release(runtime: object): void;
 }
 
 export interface AgentClient {
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
-  /** Draft discovery methods that can start a provider runtime and therefore need admission. */
-  readonly draftDiscoveryRuntimeMethods?: AgentDraftDiscoveryRuntimeMethods;
+  /** The provider admits each runtime at its actual process/server start boundary. */
+  readonly managesRuntimeCapacityAtSource?: true;
+  configureRuntimeCapacityController?(controller: AgentRuntimeCapacityController): void;
   createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
@@ -718,14 +719,8 @@ export interface AgentClient {
   resolveDefaultModeId?(input: ResolveAgentDefaultModeInput): Promise<string | undefined>;
   resolveCreateConfig?(input: ResolveAgentCreateConfigInput): ResolveAgentCreateConfigResult;
   isCreateConfigUnattended?(input: AgentCreateConfigUnattendedInput): boolean;
-  listCommands?(
-    config: AgentSessionConfig,
-    runtimeLifecycle?: AgentRuntimeLifecycleObserver,
-  ): Promise<AgentSlashCommand[]>;
-  listFeatures?(
-    config: AgentSessionConfig,
-    runtimeLifecycle?: AgentRuntimeLifecycleObserver,
-  ): Promise<AgentFeature[]>;
+  listCommands?(config: AgentSessionConfig): Promise<AgentSlashCommand[]>;
+  listFeatures?(config: AgentSessionConfig): Promise<AgentFeature[]>;
   listImportableSessions?(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]>;

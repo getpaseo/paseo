@@ -398,7 +398,8 @@ function wrapClientProvider(
   return {
     provider,
     capabilities: inner.capabilities,
-    draftDiscoveryRuntimeMethods: inner.draftDiscoveryRuntimeMethods,
+    managesRuntimeCapacityAtSource: inner.managesRuntimeCapacityAtSource,
+    configureRuntimeCapacityController: inner.configureRuntimeCapacityController?.bind(inner),
     createSession: async (config, launchContext) =>
       wrapSessionProvider(
         provider,
@@ -448,12 +449,10 @@ function wrapClientProvider(
     resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
     isCreateConfigUnattended: inner.isCreateConfigUnattended?.bind(inner),
     listCommands: listCommands
-      ? async (config, runtimeLifecycle) =>
-          await listCommands({ ...config, provider: inner.provider }, runtimeLifecycle)
+      ? async (config) => await listCommands({ ...config, provider: inner.provider })
       : undefined,
     listFeatures: listFeatures
-      ? async (config, runtimeLifecycle) =>
-          await listFeatures({ ...config, provider: inner.provider }, runtimeLifecycle)
+      ? async (config) => await listFeatures({ ...config, provider: inner.provider })
       : undefined,
     listImportableSessions: listImportableSessions
       ? async (options) => await listImportableSessions(options)
