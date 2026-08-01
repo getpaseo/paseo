@@ -45,6 +45,7 @@ import {
   isPaseoWorktreePath,
   isDescendantPath,
   warmCheckoutShortstatInBackground,
+  type CheckoutRepositoryFactReader,
 } from "./checkout-git.js";
 import { startGitCommandMetrics, stopGitCommandMetrics } from "./run-git-command.js";
 import { createForgeResolver } from "../services/forge-resolver.js";
@@ -524,6 +525,88 @@ describe("checkout git utilities", () => {
 
     expect(facts.isGit).toBe(true);
     expect(originUrlCommands).toHaveLength(1);
+  });
+
+  it("shares repository-common refs across sibling worktrees but keeps config and status local", async () => {
+    const worktreeDir = join(tempDir, "feature-worktree");
+    execFileSync("git", ["branch", "feature/common-facts"], { cwd: repoDir });
+    execFileSync("git", ["worktree", "add", worktreeDir, "feature/common-facts"], { cwd: repoDir });
+
+    const cache = new Map<string, Promise<unknown>>();
+    const repositoryFacts: CheckoutRepositoryFactReader = {
+      read<T>(gitCommonDir: string, operation: string, load: () => Promise<T>): Promise<T> {
+        const key = JSON.stringify([gitCommonDir, operation]);
+        const existing = cache.get(key);
+        if (existing) {
+          return existing as Promise<T>;
+        }
+        const promise = load();
+        cache.set(key, promise);
+        return promise;
+      },
+    };
+
+    startGitCommandMetrics();
+    await Promise.all([
+      getCheckoutStatus(repoDir, { paseoHome, repositoryFacts }),
+      getCheckoutStatus(worktreeDir, { paseoHome, repositoryFacts }),
+    ]);
+    const commands = stopGitCommandMetrics().commands.map((command) => command.args.join(" "));
+
+    expect(commands.filter((command) => command === "config --get remote.origin.url")).toHaveLength(
+      2,
+    );
+    expect(
+      commands.filter((command) => command === "symbolic-ref --quiet refs/remotes/origin/HEAD"),
+    ).toHaveLength(1);
+    expect(
+      commands.filter((command) => command === "branch --format=%(refname:short)"),
+    ).toHaveLength(1);
+    expect(commands.filter((command) => command === "status --porcelain")).toHaveLength(2);
+    expect(commands.filter((command) => command === "rev-parse --git-common-dir")).toHaveLength(2);
+  });
+
+  it("keeps worktree-specific Git config out of the repository fact cache", async () => {
+    const worktreeDir = join(tempDir, "config-worktree");
+    execFileSync("git", ["config", "extensions.worktreeConfig", "true"], { cwd: repoDir });
+    execFileSync("git", ["branch", "feature/worktree-config"], { cwd: repoDir });
+    execFileSync("git", ["worktree", "add", worktreeDir, "feature/worktree-config"], {
+      cwd: repoDir,
+    });
+    execFileSync(
+      "git",
+      ["config", "--worktree", "remote.origin.url", "https://github.com/acme/source.git"],
+      { cwd: repoDir },
+    );
+    execFileSync(
+      "git",
+      ["config", "--worktree", "remote.origin.url", "https://github.com/acme/worktree.git"],
+      { cwd: worktreeDir },
+    );
+
+    const cache = new Map<string, Promise<unknown>>();
+    const repositoryFacts: CheckoutRepositoryFactReader = {
+      read<T>(gitCommonDir: string, operation: string, load: () => Promise<T>): Promise<T> {
+        const key = JSON.stringify([gitCommonDir, operation]);
+        const existing = cache.get(key);
+        if (existing) {
+          return existing as Promise<T>;
+        }
+        const promise = load();
+        cache.set(key, promise);
+        return promise;
+      },
+    };
+
+    const [sourceFacts, worktreeFacts] = await Promise.all([
+      getCheckoutSnapshotFacts(repoDir, { paseoHome, repositoryFacts }),
+      getCheckoutSnapshotFacts(worktreeDir, { paseoHome, repositoryFacts }),
+    ]);
+
+    expect(sourceFacts.isGit && sourceFacts.remoteUrl).toBe("https://github.com/acme/source.git");
+    expect(worktreeFacts.isGit && worktreeFacts.remoteUrl).toBe(
+      "https://github.com/acme/worktree.git",
+    );
   });
 
   it("reads a non-origin branch remote without replacing it with the origin URL", async () => {

@@ -230,6 +230,8 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
     }),
     scheduleRefreshForCwd: () => {},
     onWorkspaceStateMayHaveChanged: () => {},
+    invalidateCheckoutDiff: () => {},
+    invalidateRepositoryFacts: () => {},
     invalidateForge: () => {},
     getMetrics: () => ({
       workspaceTargetCount: 0,
@@ -244,6 +246,13 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
       workspaceRefreshQueuedCount: 0,
       fetchInFlightCount: 0,
       snapshotUpdatedListenerCount: 0,
+      repositoryFactCacheEntryCount: 0,
+      repositoryFactHitCount: 0,
+      repositoryFactMissCount: 0,
+      repositoryFactInFlightJoinCount: 0,
+      repositoryFactInvalidationCount: 0,
+      repositoryFactLoadCountByOperation: {},
+      workspaceRefreshCountByReason: {},
     }),
     dispose: () => {},
   };

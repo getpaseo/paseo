@@ -855,7 +855,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     await flushPromises();
 
-    expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(3);
     expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
     expect(getPullRequestStatus).toHaveBeenCalledWith(
       REPO_CWD,
@@ -1403,7 +1403,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     await flushPromises();
 
-    expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(3);
 
     first.unsubscribe();
     second.unsubscribe();

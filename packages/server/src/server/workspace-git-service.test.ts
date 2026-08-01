@@ -4,12 +4,14 @@ import path, { join } from "node:path";
 import type { FSWatcher } from "node:fs";
 import type pino from "pino";
 import type { ForgeService } from "../services/forge-service.js";
+import { createGitMutationService } from "./session/git-mutation/git-mutation-service.js";
 import type {
   CheckoutSnapshotFacts,
   CheckoutStatusGit,
   PullRequestStatusResult,
 } from "../utils/checkout-git.js";
 import {
+  WORKSPACE_GIT_SELF_HEAL_INTERVAL_MS,
   WorkspaceGitServiceImpl,
   type WorkspaceGitRuntimeSnapshot,
 } from "./workspace-git-service.js";
@@ -447,10 +449,12 @@ describe("WorkspaceGitServiceImpl", () => {
 
   test("non-forced workspace refresh does not reload GitHub or emit when state is unchanged", async () => {
     let nowMs = Date.parse("2026-04-12T00:00:00.000Z");
+    const fetchDeferred = createDeferred<void>();
     const getPullRequestStatus = vi.fn(async () => createPullRequestStatusResult());
     const service = createService({
       getPullRequestStatus,
       now: () => new Date(nowMs),
+      runGitFetch: vi.fn(async () => fetchDeferred.promise),
     });
     const listener = vi.fn();
     await service.getSnapshot(REPO_CWD);
@@ -463,6 +467,8 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(listener).not.toHaveBeenCalled();
 
     subscription.unsubscribe();
+    fetchDeferred.resolve();
+    await flushPromises();
     service.dispose();
   });
 
@@ -502,6 +508,502 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
     expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
 
+    service.dispose();
+  });
+
+  test("N sibling worktrees share repository facts while retaining per-CWD status", async () => {
+    const commonDir = join(REPO_CWD, ".git");
+    const worktreeCwds = [
+      REPO_CWD,
+      ...Array.from({ length: 7 }, (_, index) => join("/tmp/worktrees", `feature-${index}`)),
+    ];
+    const loadDefaultBranch = vi.fn(async () => "main");
+    const getCheckoutSnapshotFacts = vi.fn(
+      async (cwd: string, context?: import("../utils/checkout-git.js").CheckoutContext) => {
+        await context?.repositoryFacts?.read(commonDir, "default-branch", loadDefaultBranch);
+        return {
+          ...createCheckoutSnapshotFacts(cwd),
+          gitCommonDir: commonDir,
+        };
+      },
+    );
+    const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
+    const service = createService({ getCheckoutSnapshotFacts, getCheckoutStatus });
+
+    await Promise.all(worktreeCwds.map((cwd) => service.getSnapshot(cwd, { includeForge: false })));
+
+    expect(loadDefaultBranch).toHaveBeenCalledTimes(1);
+    expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(worktreeCwds.length);
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(worktreeCwds.length);
+    expect(new Set(getCheckoutStatus.mock.calls.map(([cwd]) => cwd))).toEqual(
+      new Set(worktreeCwds),
+    );
+    expect(service.getMetrics()).toMatchObject({
+      repositoryFactCacheEntryCount: 1,
+      repositoryFactMissCount: 1,
+      repositoryFactInFlightJoinCount: worktreeCwds.length - 1,
+      repositoryFactLoadCountByOperation: { "default-branch": 1 },
+      workspaceRefreshCountByReason: { getSnapshot: worktreeCwds.length },
+    });
+
+    service.dispose();
+  });
+
+  test("repository facts stay warm after workspace cleanup and reload once after invalidation", async () => {
+    const commonDir = join(REPO_CWD, ".git");
+    const newWorktreeCwd = join("/tmp/worktrees", "new-feature");
+    const loadDefaultBranch = vi.fn(async () => "main");
+    const getCheckoutSnapshotFacts = vi.fn(
+      async (cwd: string, context?: import("../utils/checkout-git.js").CheckoutContext) => {
+        await context?.repositoryFacts?.read(commonDir, "default-branch", loadDefaultBranch);
+        return {
+          ...createCheckoutSnapshotFacts(cwd),
+          gitCommonDir: commonDir,
+        };
+      },
+    );
+    const service = createService({ getCheckoutSnapshotFacts });
+
+    await service.getSnapshot(REPO_CWD, { includeForge: false });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    subscription.unsubscribe();
+
+    expect(service.getMetrics()).toMatchObject({
+      workspaceTargetCount: 0,
+      repositoryFactCacheEntryCount: 1,
+    });
+
+    await service.getSnapshot(REPO_CWD, { includeForge: false });
+    expect(loadDefaultBranch).toHaveBeenCalledTimes(1);
+
+    service.invalidateRepositoryFacts(REPO_CWD);
+    await Promise.all([
+      service.getSnapshot(REPO_CWD, {
+        force: true,
+        includeForge: false,
+        reason: "post-mutation-source",
+      }),
+      service.getSnapshot(newWorktreeCwd, { includeForge: false }),
+    ]);
+
+    expect(loadDefaultBranch).toHaveBeenCalledTimes(2);
+    expect(service.getMetrics()).toMatchObject({
+      repositoryFactInvalidationCount: 1,
+      repositoryFactMissCount: 2,
+      repositoryFactInFlightJoinCount: 1,
+      repositoryFactHitCount: 1,
+      repositoryFactLoadCountByOperation: { "default-branch": 2 },
+    });
+
+    service.dispose();
+  });
+
+  test("external workspace changes invalidate repository facts before refreshing", async () => {
+    const commonDir = join(REPO_CWD, ".git");
+    const loadDefaultBranch = vi.fn(async () => "main");
+    const getCheckoutSnapshotFacts = vi.fn(
+      async (cwd: string, context?: import("../utils/checkout-git.js").CheckoutContext) => {
+        await context?.repositoryFacts?.read(commonDir, "default-branch", loadDefaultBranch);
+        return { ...createCheckoutSnapshotFacts(cwd), gitCommonDir: commonDir };
+      },
+    );
+    const service = createService({ getCheckoutSnapshotFacts });
+
+    await service.getSnapshot(REPO_CWD, { includeForge: false });
+    service.onWorkspaceStateMayHaveChanged(REPO_CWD);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await flushPromises();
+
+    expect(loadDefaultBranch).toHaveBeenCalledTimes(2);
+    expect(service.getMetrics()).toMatchObject({
+      repositoryFactInvalidationCount: 1,
+      workspaceRefreshCountByReason: { getSnapshot: 1, "external-state-change": 1 },
+    });
+
+    service.dispose();
+  });
+
+  test("external workspace changes invalidate warm facts after workspace cleanup", async () => {
+    const commonDir = join(REPO_CWD, ".git");
+    const loadDefaultBranch = vi.fn(async () => "main");
+    const getCheckoutSnapshotFacts = vi.fn(
+      async (cwd: string, context?: import("../utils/checkout-git.js").CheckoutContext) => {
+        await context?.repositoryFacts?.read(commonDir, "default-branch", loadDefaultBranch);
+        return { ...createCheckoutSnapshotFacts(cwd), gitCommonDir: commonDir };
+      },
+    );
+    const service = createService({ getCheckoutSnapshotFacts });
+
+    await service.getSnapshot(REPO_CWD, { includeForge: false });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    subscription.unsubscribe();
+    service.onWorkspaceStateMayHaveChanged(REPO_CWD);
+    await service.getSnapshot(REPO_CWD, { includeForge: false });
+
+    expect(loadDefaultBranch).toHaveBeenCalledTimes(2);
+    expect(service.getMetrics()).toMatchObject({ repositoryFactInvalidationCount: 1 });
+
+    service.dispose();
+  });
+
+  test("a post-invalidation read does not join an invalidated in-flight fact load", async () => {
+    const commonDir = join(REPO_CWD, ".git");
+    const siblingCwd = join("/tmp/worktrees", "post-invalidation");
+    const oldLoad = createDeferred<string>();
+    const freshLoad = createDeferred<string>();
+    const loadDefaultBranch = vi
+      .fn<() => Promise<string>>()
+      .mockImplementationOnce(async () => oldLoad.promise)
+      .mockImplementationOnce(async () => freshLoad.promise);
+    const getCheckoutSnapshotFacts = vi.fn(
+      async (cwd: string, context?: import("../utils/checkout-git.js").CheckoutContext) => {
+        await context?.repositoryFacts?.read(commonDir, "default-branch", loadDefaultBranch);
+        return { ...createCheckoutSnapshotFacts(cwd), gitCommonDir: commonDir };
+      },
+    );
+    const service = createService({ getCheckoutSnapshotFacts });
+
+    const oldSnapshot = service.getSnapshot(REPO_CWD, { includeForge: false });
+    await vi.waitFor(() => expect(loadDefaultBranch).toHaveBeenCalledTimes(1));
+    service.invalidateRepositoryFacts(REPO_CWD);
+    const freshSnapshot = service.getSnapshot(siblingCwd, { includeForge: false });
+    await vi.waitFor(() => expect(loadDefaultBranch).toHaveBeenCalledTimes(2));
+
+    freshLoad.resolve("develop");
+    await freshSnapshot;
+    oldLoad.resolve("main");
+    await oldSnapshot;
+
+    await service.getSnapshot(join("/tmp/worktrees", "cached-after-invalidation"), {
+      includeForge: false,
+    });
+    expect(loadDefaultBranch).toHaveBeenCalledTimes(2);
+    expect(service.getMetrics()).toMatchObject({
+      repositoryFactInvalidationCount: 1,
+      repositoryFactInFlightJoinCount: 0,
+      repositoryFactMissCount: 2,
+    });
+
+    service.dispose();
+  });
+
+  test("invalidation queues a fresh pass behind an already-forced refresh", async () => {
+    const commonDir = join(REPO_CWD, ".git");
+    const staleLoad = createDeferred<string>();
+    const loadDefaultBranch = vi
+      .fn<() => Promise<string>>()
+      .mockResolvedValueOnce("main")
+      .mockImplementationOnce(async () => staleLoad.promise)
+      .mockResolvedValueOnce("develop");
+    const getCheckoutSnapshotFacts = vi.fn(
+      async (cwd: string, context?: import("../utils/checkout-git.js").CheckoutContext) => {
+        await context?.repositoryFacts?.read(commonDir, "default-branch", loadDefaultBranch);
+        return { ...createCheckoutSnapshotFacts(cwd), gitCommonDir: commonDir };
+      },
+    );
+    const service = createService({ getCheckoutSnapshotFacts });
+
+    await service.getSnapshot(REPO_CWD, { includeForge: false });
+    service.invalidateRepositoryFacts(REPO_CWD);
+    const staleRefresh = service.getSnapshot(REPO_CWD, {
+      force: true,
+      includeForge: false,
+      reason: "forced-before-invalidation",
+    });
+    await vi.waitFor(() => expect(loadDefaultBranch).toHaveBeenCalledTimes(2));
+
+    service.invalidateRepositoryFacts(REPO_CWD);
+    const freshRefresh = service.getSnapshot(REPO_CWD, {
+      force: true,
+      includeForge: false,
+      reason: "forced-after-invalidation",
+    });
+    staleLoad.resolve("main");
+    await Promise.all([staleRefresh, freshRefresh]);
+
+    expect(loadDefaultBranch).toHaveBeenCalledTimes(3);
+    expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(3);
+    expect(service.getMetrics()).toMatchObject({
+      repositoryFactInvalidationCount: 2,
+      workspaceRefreshCountByReason: {
+        getSnapshot: 1,
+        "forced-before-invalidation": 1,
+        "forced-after-invalidation": 1,
+      },
+    });
+
+    service.dispose();
+  });
+
+  test("a forced refresh does not join checkout facts started before invalidation", async () => {
+    const staleFacts = createDeferred<CheckoutSnapshotFacts>();
+    const getCheckoutSnapshotFacts = vi
+      .fn<(cwd: string) => Promise<CheckoutSnapshotFacts>>()
+      .mockImplementationOnce(async (cwd) => ({
+        ...createCheckoutSnapshotFacts(cwd),
+        remoteUrl: null,
+      }))
+      .mockImplementationOnce(async () => staleFacts.promise)
+      .mockImplementationOnce(async (cwd) => ({
+        ...createCheckoutSnapshotFacts(cwd),
+        currentBranch: "fresh-after-invalidation",
+        remoteUrl: null,
+      }));
+    let nowMs = 0;
+    const service = createService({
+      getCheckoutSnapshotFacts,
+      getCheckoutStatus: vi.fn(
+        async (cwd: string, context?: import("../utils/checkout-git.js").CheckoutContext) =>
+          createCheckoutStatus(cwd, {
+            currentBranch: context?.facts?.isGit ? context.facts.currentBranch : null,
+          }),
+      ),
+      now: () => new Date(nowMs),
+    });
+
+    await service.getSnapshot(REPO_CWD, { includeForge: false });
+    nowMs = 6_000;
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    await vi.waitFor(() => expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2));
+
+    service.invalidateRepositoryFacts(REPO_CWD);
+    const refresh = service.getSnapshot(REPO_CWD, {
+      force: true,
+      includeForge: false,
+      reason: "after-facts-invalidation",
+    });
+    await vi.waitFor(() => expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(3));
+    await refresh;
+
+    staleFacts.resolve({
+      ...createCheckoutSnapshotFacts(REPO_CWD),
+      currentBranch: "stale-before-invalidation",
+      remoteUrl: null,
+    });
+    await flushPromises();
+
+    expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(3);
+    expect(service.peekSnapshot(REPO_CWD)?.git.currentBranch).toBe("fresh-after-invalidation");
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
+  test("repository fact operations are bounded within one physical repository", async () => {
+    const commonDir = join(REPO_CWD, ".git");
+    const loadFact = vi.fn(async () => true);
+    const getCheckoutSnapshotFacts = vi.fn(
+      async (cwd: string, context?: import("../utils/checkout-git.js").CheckoutContext) => {
+        await context?.repositoryFacts?.read(commonDir, `ref-exists:${cwd}`, loadFact);
+        return { ...createCheckoutSnapshotFacts(cwd), gitCommonDir: commonDir };
+      },
+    );
+    const service = createService({ getCheckoutSnapshotFacts });
+    const cwds = Array.from({ length: 65 }, (_, index) => join("/tmp/worktrees", String(index)));
+
+    for (const cwd of cwds) {
+      await service.getSnapshot(cwd, { includeForge: false });
+    }
+    await service.getSnapshot(cwds[0], {
+      force: true,
+      includeForge: false,
+      reason: "verify-operation-eviction",
+    });
+
+    expect(loadFact).toHaveBeenCalledTimes(66);
+    expect(service.getMetrics()).toMatchObject({
+      repositoryFactCacheEntryCount: 1,
+      repositoryFactMissCount: 66,
+    });
+
+    service.dispose();
+  });
+
+  test("repository fact single-flight survives ready-cache repository eviction", async () => {
+    const commonDir = join(REPO_CWD, ".git");
+    const siblingCwd = join("/tmp/worktrees", "shared-sibling");
+    const sharedLoad = createDeferred<string>();
+    const loadSharedFact = vi.fn(async () => sharedLoad.promise);
+    const loadReadyFact = vi.fn(async () => "main");
+    const getCheckoutSnapshotFacts = vi.fn(
+      async (cwd: string, context?: import("../utils/checkout-git.js").CheckoutContext) => {
+        const isSharedRepository = cwd === REPO_CWD || cwd === siblingCwd;
+        const repositoryDir = isSharedRepository ? commonDir : join(cwd, ".git");
+        await context?.repositoryFacts?.read(
+          repositoryDir,
+          "default-branch",
+          isSharedRepository ? loadSharedFact : loadReadyFact,
+        );
+        return { ...createCheckoutSnapshotFacts(cwd), gitCommonDir: repositoryDir };
+      },
+    );
+    const service = createService({ getCheckoutSnapshotFacts });
+
+    const firstSnapshot = service.getSnapshot(REPO_CWD, { includeForge: false });
+    await vi.waitFor(() => expect(loadSharedFact).toHaveBeenCalledTimes(1));
+    for (let index = 0; index < 129; index += 1) {
+      await service.getSnapshot(join("/tmp/repositories", String(index)), {
+        includeForge: false,
+      });
+    }
+    const siblingSnapshot = service.getSnapshot(siblingCwd, { includeForge: false });
+    await flushPromises();
+
+    expect(loadSharedFact).toHaveBeenCalledTimes(1);
+    sharedLoad.resolve("main");
+    await Promise.all([firstSnapshot, siblingSnapshot]);
+    expect(service.getMetrics()).toMatchObject({ repositoryFactInFlightJoinCount: 1 });
+
+    service.dispose();
+  });
+
+  test("invalidation remains safe after the CWD-to-repository mapping is evicted", async () => {
+    const commonDir = join(REPO_CWD, ".git");
+    const loadDefaultBranch = vi.fn(async () => "main");
+    const getCheckoutSnapshotFacts = vi.fn(
+      async (cwd: string, context?: import("../utils/checkout-git.js").CheckoutContext) => {
+        await context?.repositoryFacts?.read(commonDir, "default-branch", loadDefaultBranch);
+        return { ...createCheckoutSnapshotFacts(cwd), gitCommonDir: commonDir };
+      },
+    );
+    const service = createService({ getCheckoutSnapshotFacts });
+    const cwds = Array.from({ length: 513 }, (_, index) => join("/tmp/worktrees", String(index)));
+
+    for (const cwd of cwds) {
+      await service.getSnapshot(cwd, { includeForge: false });
+    }
+    service.invalidateRepositoryFacts(cwds[0]);
+    await service.getSnapshot(cwds[0], {
+      force: true,
+      includeForge: false,
+      reason: "post-eviction-invalidation",
+    });
+
+    expect(loadDefaultBranch).toHaveBeenCalledTimes(2);
+    expect(service.getMetrics()).toMatchObject({ repositoryFactInvalidationCount: 1 });
+
+    service.dispose();
+  });
+
+  test("repository fact cache is bounded by physical repository count", async () => {
+    const loadDefaultBranch = vi.fn(async () => "main");
+    const getCheckoutSnapshotFacts = vi.fn(
+      async (cwd: string, context?: import("../utils/checkout-git.js").CheckoutContext) => {
+        const commonDir = join(cwd, ".git");
+        await context?.repositoryFacts?.read(commonDir, "default-branch", loadDefaultBranch);
+        return createCheckoutSnapshotFacts(cwd);
+      },
+    );
+    const service = createService({ getCheckoutSnapshotFacts });
+
+    for (let index = 0; index < 129; index += 1) {
+      await service.getSnapshot(join("/tmp/repositories", String(index)), { includeForge: false });
+    }
+
+    expect(service.getMetrics()).toMatchObject({
+      repositoryFactCacheEntryCount: 128,
+      repositoryFactMissCount: 129,
+      repositoryFactLoadCountByOperation: { "default-branch": 129 },
+    });
+
+    service.dispose();
+  });
+
+  test("repository refs watcher invalidates common facts before refreshing", async () => {
+    const commonDir = join(REPO_CWD, ".git");
+    type WatchCallback = (eventType: "rename" | "change", filename: string | null) => void;
+    const watchCallbacks = new Map<string, WatchCallback>();
+    const watch = vi.fn(
+      (watchPath: string, _options: { recursive: boolean }, callback: WatchCallback) => {
+        watchCallbacks.set(watchPath, callback);
+        return createWatcher();
+      },
+    );
+    const loadDefaultBranch = vi.fn(async () => "main");
+    const getCheckoutSnapshotFacts = vi.fn(
+      async (cwd: string, context?: import("../utils/checkout-git.js").CheckoutContext) => {
+        await context?.repositoryFacts?.read(commonDir, "default-branch", loadDefaultBranch);
+        return { ...createCheckoutSnapshotFacts(cwd), remoteUrl: null };
+      },
+    );
+    const service = createService({ getCheckoutSnapshotFacts, watch });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    await vi.waitFor(() => {
+      expect(loadDefaultBranch).toHaveBeenCalledTimes(1);
+      expect(watchCallbacks.get(join(commonDir, "refs"))).toBeDefined();
+    });
+
+    watchCallbacks.get(join(commonDir, "refs"))?.("change", "heads/main");
+    await vi.advanceTimersByTimeAsync(1_000);
+    await flushPromises();
+
+    expect(loadDefaultBranch).toHaveBeenCalledTimes(2);
+
+    watchCallbacks.get(commonDir)?.("rename", null);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await flushPromises();
+
+    expect(loadDefaultBranch).toHaveBeenCalledTimes(3);
+    expect(service.getMetrics()).toMatchObject({
+      repositoryFactInvalidationCount: 2,
+      repositoryFactLoadCountByOperation: { "default-branch": 3 },
+      workspaceRefreshCountByReason: { initial: 1, "repository-watch": 2 },
+    });
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
+  test("self-heal refreshes repository facts when recursive refs watching is unavailable", async () => {
+    const commonDir = join(REPO_CWD, ".git");
+    let nowMs = Date.parse("2026-04-12T00:00:00.000Z");
+    const watch = vi.fn(
+      (
+        _watchPath: string,
+        options: { recursive: boolean },
+        _callback: (eventType: "rename" | "change", filename: string | null) => void,
+      ) => {
+        if (options.recursive) {
+          throw new Error("recursive watch unavailable");
+        }
+        return createWatcher();
+      },
+    );
+    const loadDefaultBranch = vi.fn(async () => "main");
+    const getCheckoutSnapshotFacts = vi.fn(
+      async (cwd: string, context?: import("../utils/checkout-git.js").CheckoutContext) => {
+        await context?.repositoryFacts?.read(commonDir, "default-branch", loadDefaultBranch);
+        return { ...createCheckoutSnapshotFacts(cwd), gitCommonDir: commonDir, remoteUrl: null };
+      },
+    );
+    const service = createService({
+      getCheckoutSnapshotFacts,
+      watch,
+      now: () => new Date(nowMs),
+    });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    await vi.waitFor(() => {
+      expect(loadDefaultBranch).toHaveBeenCalledTimes(1);
+      expect(watch).toHaveBeenCalledWith(
+        join(commonDir, "refs"),
+        { recursive: true },
+        expect.any(Function),
+      );
+    });
+
+    nowMs += WORKSPACE_GIT_SELF_HEAL_INTERVAL_MS - 1_000;
+    await service.refresh(REPO_CWD);
+    nowMs += 1_000;
+    await vi.advanceTimersByTimeAsync(WORKSPACE_GIT_SELF_HEAL_INTERVAL_MS);
+    await flushPromises();
+
+    expect(loadDefaultBranch).toHaveBeenCalledTimes(2);
+    expect(service.getMetrics()).toMatchObject({
+      repositoryFactInvalidationCount: 1,
+      workspaceRefreshCountByReason: { initial: 1, refresh: 1, "self-heal-git": 1 },
+    });
+
+    subscription.unsubscribe();
     service.dispose();
   });
 
@@ -585,8 +1087,10 @@ describe("WorkspaceGitServiceImpl", () => {
       vi.fn(),
     );
     await vi.waitFor(() => {
-      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
       expect(runGitFetch).toHaveBeenCalledTimes(1);
+    });
+    await vi.waitFor(() => {
+      expect(getCheckoutSnapshotFacts.mock.calls.length).toBeGreaterThan(2);
     });
 
     expect(resolveAbsoluteGitDir).toHaveBeenCalledTimes(0);
@@ -671,6 +1175,7 @@ describe("WorkspaceGitServiceImpl", () => {
   });
 
   test("unchanged runtime snapshots do not emit duplicate updates", async () => {
+    const fetchDeferred = createDeferred<void>();
     const getCheckoutStatus = vi
       .fn<() => Promise<CheckoutStatusGit>>()
       .mockResolvedValueOnce(createCheckoutStatus(REPO_CWD, { remoteUrl: null }))
@@ -708,6 +1213,7 @@ describe("WorkspaceGitServiceImpl", () => {
       getCheckoutStatus,
       getPullRequestStatus,
       now: () => new Date(nowMs),
+      runGitFetch: vi.fn(async () => fetchDeferred.promise),
     });
 
     const listener = vi.fn();
@@ -741,6 +1247,8 @@ describe("WorkspaceGitServiceImpl", () => {
     );
 
     subscription.unsubscribe();
+    fetchDeferred.resolve();
+    await flushPromises();
     service.dispose();
   });
 
@@ -766,6 +1274,53 @@ describe("WorkspaceGitServiceImpl", () => {
 
     expect(listener).toHaveBeenCalledTimes(1);
     expect(listener).toHaveBeenCalledWith(createSnapshot(REPO_CWD));
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
+  test("explicit forced refresh preserves its emission behind a silent forced refresh", async () => {
+    const internalRefresh = createDeferred<CheckoutStatusGit>();
+    const explicitPass = createDeferred<CheckoutStatusGit>();
+    const getCheckoutStatus = vi
+      .fn<(cwd: string) => Promise<CheckoutStatusGit>>()
+      .mockImplementationOnce(async (cwd) => createCheckoutStatus(cwd, { remoteUrl: null }))
+      .mockImplementationOnce(async () => internalRefresh.promise)
+      .mockImplementationOnce(async () => explicitPass.promise);
+    const service = createService({
+      getCheckoutSnapshotFacts: vi.fn(async (cwd: string) => ({
+        ...createCheckoutSnapshotFacts(cwd),
+        remoteUrl: null,
+      })),
+      getCheckoutStatus,
+    });
+
+    await service.getSnapshot(REPO_CWD, { includeForge: false });
+    const listener = vi.fn();
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, listener);
+    service.onWorkspaceStateMayHaveChanged(REPO_CWD);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => expect(getCheckoutStatus).toHaveBeenCalledTimes(2));
+
+    const firstExplicitRefresh = service.getSnapshot(REPO_CWD, {
+      force: true,
+      includeForge: false,
+      reason: "explicit-force-emit",
+    });
+    internalRefresh.resolve(createCheckoutStatus(REPO_CWD, { remoteUrl: null }));
+    await vi.waitFor(() => expect(getCheckoutStatus).toHaveBeenCalledTimes(3));
+
+    const secondExplicitRefresh = service.getSnapshot(REPO_CWD, {
+      force: true,
+      includeForge: false,
+      reason: "second-explicit-force-emit",
+    });
+    explicitPass.resolve(createCheckoutStatus(REPO_CWD, { remoteUrl: null }));
+    await Promise.all([firstExplicitRefresh, secondExplicitRefresh]);
+    await flushPromises();
+
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(3);
+    expect(listener).toHaveBeenCalledTimes(1);
 
     subscription.unsubscribe();
     service.dispose();
@@ -998,6 +1553,32 @@ describe("WorkspaceGitServiceImpl", () => {
 
     await service.getCheckoutDiff("/tmp/repo-0", { mode: "uncommitted" });
     expect(getCheckoutDiff).toHaveBeenCalledTimes(CACHE_MAX + OVERFLOW + 1);
+
+    service.dispose();
+  });
+
+  test("git mutation invalidates a cached dirty checkout diff before the immediate read", async () => {
+    let committed = false;
+    const getCheckoutDiff = vi.fn(async () => ({
+      diff: committed ? "" : "diff --git a/file.txt b/file.txt\n+dirty change",
+    }));
+    const service = createService({
+      getCheckoutDiff: getCheckoutDiff as unknown as ReturnType<typeof vi.fn>,
+    });
+    const mutation = createGitMutationService({
+      workspaceGitService: service,
+      logger: createLogger() as never,
+    });
+
+    const dirtyDiff = await service.getCheckoutDiff(REPO_CWD, { mode: "uncommitted" });
+    expect(dirtyDiff.diff).toContain("dirty change");
+
+    committed = true;
+    await mutation.notifyGitMutation(REPO_CWD, "commit-changes");
+    const cleanDiff = await service.getCheckoutDiff(REPO_CWD, { mode: "uncommitted" });
+
+    expect(cleanDiff.diff).toBe("");
+    expect(getCheckoutDiff).toHaveBeenCalledTimes(2);
 
     service.dispose();
   });
