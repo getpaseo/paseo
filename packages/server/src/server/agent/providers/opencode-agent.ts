@@ -18,6 +18,7 @@ import type { Logger } from "pino";
 import { z } from "zod";
 
 import {
+  AgentTurnStartRejectedError,
   getAgentStreamEventTurnId,
   type AgentCapabilityFlags,
   type AgentClient,
@@ -3131,11 +3132,28 @@ class OpenCodeAgentSession implements AgentSession {
     if (this.turnState.status !== "stopping") {
       return;
     }
-    await withTimeout(
-      this.observeProviderStopBoundary(this.turnState.stop),
-      OPENCODE_PENDING_ABORT_START_TIMEOUT_MS,
-      "OpenCode previous turn to stop",
-    );
+
+    const stop = this.turnState.stop;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        this.observeProviderStopBoundary(stop),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => {
+            reject(
+              new AgentTurnStartRejectedError(
+                "previous_turn_still_stopping",
+                "OpenCode previous turn to stop",
+              ),
+            );
+          }, OPENCODE_PENDING_ABORT_START_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+    }
   }
 
   private async observeProviderStopBoundary(stop: OpenCodeStop): Promise<void> {
@@ -3211,7 +3229,10 @@ class OpenCodeAgentSession implements AgentSession {
     }
     await this.awaitRunnerQuiescence();
     if (this.turnState.status !== "idle") {
-      throw new Error("OpenCode is still stopping the previous turn");
+      throw new AgentTurnStartRejectedError(
+        "previous_turn_still_stopping",
+        "OpenCode is still stopping the previous turn",
+      );
     }
 
     this.runningToolCalls.clear();

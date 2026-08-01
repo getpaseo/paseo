@@ -16,12 +16,13 @@ import {
   TestOpenCodeClient,
   TestOpenCodeHarness,
 } from "./opencode/test-utils/test-opencode-harness.js";
-import type {
-  AgentSessionConfig,
-  AgentStreamEvent,
-  ToolCallTimelineItem,
-  AssistantMessageTimelineItem,
-  AgentTimelineItem,
+import {
+  AgentTurnStartRejectedError,
+  type AgentSessionConfig,
+  type AgentStreamEvent,
+  type ToolCallTimelineItem,
+  type AssistantMessageTimelineItem,
+  type AgentTimelineItem,
 } from "../agent-sdk-types.js";
 
 function tmpCwd(): string {
@@ -2544,9 +2545,11 @@ describe("OpenCode adapter startTurn error handling", () => {
       await session.startTurn("first");
       await session.interrupt();
 
-      const secondTurn = expect(session.startTurn("second")).rejects.toThrow(
-        "OpenCode previous turn to stop",
-      );
+      const secondTurn = expect(session.startTurn("second")).rejects.toMatchObject({
+        name: "AgentTurnStartRejectedError",
+        reason: "previous_turn_still_stopping",
+        message: "OpenCode previous turn to stop",
+      } satisfies Partial<AgentTurnStartRejectedError>);
       await vi.advanceTimersByTimeAsync(10_000);
       await secondTurn;
       expect(openCode.calls.sessionPromptAsync).toHaveLength(1);

@@ -195,6 +195,19 @@ export type AgentPromptContentBlock =
 
 export type AgentPromptInput = string | AgentPromptContentBlock[];
 
+export type AgentTurnStartRejectionReason = "previous_turn_still_stopping";
+
+/** The provider adapter rejected startTurn before submitting the prompt. */
+export class AgentTurnStartRejectedError extends Error {
+  constructor(
+    public readonly reason: AgentTurnStartRejectionReason,
+    message: string,
+  ) {
+    super(message);
+    this.name = "AgentTurnStartRejectedError";
+  }
+}
+
 export interface AgentRunOptions {
   outputSchema?: unknown;
   resumeFrom?: AgentPersistenceHandle;
