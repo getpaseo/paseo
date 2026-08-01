@@ -1406,6 +1406,121 @@ describe("ProviderSnapshotManager lifecycle", () => {
     }
   });
 
+  test("shutdown terminalizes a never-settling availability probe within the drain bound", async () => {
+    vi.useFakeTimers();
+    const availabilityEntered = createDeferred<void>();
+    const shutdown = vi.fn(async () => {});
+    const laterCleanup = vi.fn();
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      refreshTimeoutMs: 1,
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: vi.fn(async () => {
+            availabilityEntered.resolve();
+            return await new Promise<boolean>(() => {});
+          }),
+          shutdown,
+        }),
+      },
+    });
+
+    try {
+      const refresh = manager.refreshSnapshotForCwd({
+        cwd: "/tmp/project",
+        providers: ["codex"],
+      });
+      await availabilityEntered.promise;
+      await vi.advanceTimersByTimeAsync(1);
+      await refresh;
+
+      const shutdownAndLaterCleanup = manager.shutdown().then(laterCleanup);
+      await vi.advanceTimersByTimeAsync(14_999);
+      expect(shutdown).not.toHaveBeenCalled();
+      expect(laterCleanup).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      await shutdownAndLaterCleanup;
+
+      expect(shutdown).toHaveBeenCalledTimes(1);
+      expect(laterCleanup).toHaveBeenCalledTimes(1);
+      expect(
+        manager.getSnapshot("/tmp/project").find((entry) => entry.provider === "codex"),
+      ).toMatchObject({
+        status: "unavailable",
+        error: "Provider runtime has shut down",
+      });
+    } finally {
+      manager.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  test("shutdown terminalizes a never-settling catalog probe within the drain bound", async () => {
+    vi.useFakeTimers();
+    const catalogEntered = createDeferred<void>();
+    const shutdown = vi.fn(async () => {});
+    const laterCleanup = vi.fn();
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      refreshTimeoutMs: 1,
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: vi.fn(async () => true),
+          fetchCatalog: vi.fn(async () => {
+            catalogEntered.resolve();
+            return await new Promise<{ models: AgentModelDefinition[]; modes: AgentMode[] }>(
+              () => {},
+            );
+          }),
+          shutdown,
+        }),
+      },
+    });
+
+    try {
+      const refresh = manager.refreshSnapshotForCwd({
+        cwd: "/tmp/project",
+        providers: ["codex"],
+      });
+      await catalogEntered.promise;
+      await vi.advanceTimersByTimeAsync(1);
+      await refresh;
+
+      const shutdownAndLaterCleanup = manager.shutdown().then(laterCleanup);
+      await vi.advanceTimersByTimeAsync(14_999);
+      expect(shutdown).not.toHaveBeenCalled();
+      expect(laterCleanup).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      await shutdownAndLaterCleanup;
+
+      expect(shutdown).toHaveBeenCalledTimes(1);
+      expect(laterCleanup).toHaveBeenCalledTimes(1);
+      expect(
+        manager.getSnapshot("/tmp/project").find((entry) => entry.provider === "codex"),
+      ).toMatchObject({
+        status: "unavailable",
+        error: "Provider runtime has shut down",
+      });
+    } finally {
+      manager.destroy();
+      vi.useRealTimers();
+    }
+  });
+
   test("overlapping forced loads remain tracked and every generation aborts on shutdown", async () => {
     const catalogSignals: AbortSignal[] = [];
     const fetchCatalog = vi.fn(

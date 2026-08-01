@@ -37,6 +37,7 @@ import type { MutableDaemonConfig } from "../daemon-config-store.js";
 
 const DEFAULT_REFRESH_TIMEOUT_MS = 60_000;
 const DEFAULT_DIAGNOSTIC_TIMEOUT_MS = 120_000;
+const PROVIDER_LOAD_DRAIN_TIMEOUT_MS = 15_000;
 const REFRESH_TIMEOUT_ENV_VAR = "PASEO_PROVIDER_REFRESH_TIMEOUT_MS";
 export const GLOBAL_PROVIDER_SNAPSHOT_KEY = "paseo:global";
 
@@ -485,7 +486,10 @@ export class ProviderSnapshotManager {
     const pendingClientShutdowns = Array.from(this.pendingClientShutdowns);
     const shutdownPromise = Promise.resolve()
       .then(() =>
-        Promise.all([...activeLoads.map((load) => load.drained), ...pendingClientShutdowns]),
+        Promise.all([
+          this.drainProviderLoadsBeforeClientShutdown(activeLoads, "provider runtime shutdown"),
+          ...pendingClientShutdowns,
+        ]),
       )
       .then(() => shutdownAgentClients(clients, this.logger))
       .then(() => undefined)
@@ -1024,7 +1028,10 @@ export class ProviderSnapshotManager {
     if (clients.length === 0) {
       return;
     }
-    const shutdown = Promise.all(loads.map((load) => load.drained))
+    const shutdown = this.drainProviderLoadsBeforeClientShutdown(
+      loads,
+      "retired provider client cleanup",
+    )
       .then(() => shutdownAgentClients(clients, this.logger))
       .then(() => undefined);
     this.pendingClientShutdowns.add(shutdown);
@@ -1035,6 +1042,32 @@ export class ProviderSnapshotManager {
         this.logger.warn({ err: error }, "Retired provider client cleanup failed");
       },
     );
+  }
+
+  private async drainProviderLoadsBeforeClientShutdown(
+    loads: ProviderLoad[],
+    context: string,
+  ): Promise<void> {
+    if (loads.length === 0) {
+      return;
+    }
+    try {
+      await withTimeout(
+        Promise.all(loads.map((load) => load.drained)).then(() => undefined),
+        PROVIDER_LOAD_DRAIN_TIMEOUT_MS,
+        `Timed out draining provider loads before ${context}`,
+      );
+    } catch (error) {
+      // Keep unresolved loads owned by activeProviderLoads until their real operations settle.
+      // Client shutdown is the bounded terminal boundary for provider-owned resources.
+      this.logger.warn(
+        {
+          err: error,
+          loads: loads.map((load) => ({ provider: load.provider, cwd: load.snapshotCwd })),
+        },
+        "Provider load drain timed out; proceeding with client shutdown",
+      );
+    }
   }
 
   private isProviderLoadRuntimeActive(load: ProviderLoad): boolean {
