@@ -103,6 +103,13 @@ export class FakeRewindSession implements AgentSession {
     }
   }
 
+  completeActiveTurn(): void {
+    if (!this.activeTurnId) return;
+    const turnId = this.activeTurnId;
+    this.activeTurnId = null;
+    this.emit({ type: "turn_completed", provider: this.provider, turnId });
+  }
+
   async close(): Promise<void> {}
 
   async revertConversation(input: { messageId: string }): Promise<void> {

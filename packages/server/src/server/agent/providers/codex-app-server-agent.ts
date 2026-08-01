@@ -5351,10 +5351,6 @@ export class CodexAppServerAgentSession implements AgentSession {
         : undefined;
       if (!nativeTurnId || !managerTurnId) return;
       if (this.finalizedNativeTurnIds.has(nativeTurnId)) return;
-      if (this.finalizedNativeTurnIds.size === 0) {
-        this.finishTurnCompletedNotification(parsed, nativeTurnId, managerTurnId);
-        return;
-      }
       void this.reconcileIdlessTurnCompletedNotification(parsed, nativeTurnId, managerTurnId);
       return;
     }

@@ -139,6 +139,36 @@ class TestDurableTimelineStore implements AgentTimelineStore {
   }
 }
 
+class HeldSnapshotStorage extends AgentStorage {
+  private readonly applyStarted = deferred<void>();
+  private readonly applyAllowed = deferred<void>();
+  private holdNextApply = false;
+
+  holdNextSnapshot(): void {
+    this.holdNextApply = true;
+  }
+
+  waitForHeldSnapshot(): Promise<void> {
+    return this.applyStarted.promise;
+  }
+
+  releaseHeldSnapshot(): void {
+    this.applyAllowed.resolve();
+  }
+
+  override async applySnapshot(
+    agent: ManagedAgent,
+    options?: Parameters<AgentStorage["applySnapshot"]>[1],
+  ): Promise<void> {
+    if (this.holdNextApply) {
+      this.holdNextApply = false;
+      this.applyStarted.resolve();
+      await this.applyAllowed.promise;
+    }
+    await super.applySnapshot(agent, options);
+  }
+}
+
 function waitForAgentLifecycle(
   manager: AgentManager,
   agentId: string,
@@ -530,14 +560,17 @@ class ControlledInterruptSession extends TestAgentSession {
     config: AgentSessionConfig,
     readonly turnId: string,
     private readonly interruptBehavior: (session: ControlledInterruptSession) => Promise<void>,
+    private readonly deferTurnStarted: boolean,
   ) {
     super(config);
   }
 
   override async startTurn(): Promise<{ turnId: string }> {
-    setTimeout(() => {
-      this.pushEvent({ type: "turn_started", provider: this.provider, turnId: this.turnId });
-    }, 0);
+    if (!this.deferTurnStarted) {
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId: this.turnId });
+      }, 0);
+    }
     return { turnId: this.turnId };
   }
 
@@ -551,8 +584,11 @@ interface ControlledInterruptFixture {
   agentId: string;
   manager: AgentManager;
   session: ControlledInterruptSession;
+  holdNextSnapshotPersist(): void;
+  waitForSnapshotPersistStart(): Promise<void>;
+  releaseSnapshotPersist(): void;
   startForegroundRun(): Promise<void>;
-  cleanup(): void;
+  cleanup(): Promise<void>;
 }
 
 async function createControlledInterruptFixture(options: {
@@ -560,12 +596,15 @@ async function createControlledInterruptFixture(options: {
   agentId: string;
   turnId: string;
   interrupt: (session: ControlledInterruptSession) => Promise<void>;
+  deferTurnStarted?: boolean;
 }): Promise<ControlledInterruptFixture> {
   const workdir = mkdtempSync(join(tmpdir(), `agent-manager-${options.name}-`));
+  const storage = new HeldSnapshotStorage(join(workdir, "agents"), logger);
   const session = new ControlledInterruptSession(
     { provider: "codex", cwd: workdir },
     options.turnId,
     options.interrupt,
+    options.deferTurnStarted ?? false,
   );
   const client = new (class extends TestAgentClient {
     override async createSession(): Promise<AgentSession> {
@@ -574,7 +613,7 @@ async function createControlledInterruptFixture(options: {
   })();
   const manager = new AgentManager({
     clients: { codex: client },
-    registry: new AgentStorage(join(workdir, "agents"), logger),
+    registry: storage,
     logger,
     rescueTimeouts: { interruptSessionMs: 10 },
     idFactory: () => options.agentId,
@@ -587,6 +626,15 @@ async function createControlledInterruptFixture(options: {
     agentId: agent.id,
     manager,
     session,
+    holdNextSnapshotPersist() {
+      storage.holdNextSnapshot();
+    },
+    waitForSnapshotPersistStart() {
+      return storage.waitForHeldSnapshot();
+    },
+    releaseSnapshotPersist() {
+      storage.releaseHeldSnapshot();
+    },
     async startForegroundRun() {
       const run = manager.streamAgent(agent.id, "exercise cancellation");
       void (async () => {
@@ -596,7 +644,12 @@ async function createControlledInterruptFixture(options: {
       })();
       await manager.waitForAgentRunStart(agent.id);
     },
-    cleanup: () => rmSync(workdir, { recursive: true, force: true }),
+    async cleanup() {
+      storage.releaseHeldSnapshot();
+      await manager.flush().catch(() => undefined);
+      await storage.flush().catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    },
   };
 }
 
@@ -1612,7 +1665,7 @@ test("cancelAgentRun preserves running state when the provider interrupt hangs",
     expect(fixture.session.interruptCalled).toBe(true);
     expect(fixture.manager.getAgent(fixture.agentId)?.lifecycle).toBe("running");
   } finally {
-    fixture.cleanup();
+    await fixture.cleanup();
   }
 });
 
@@ -1643,7 +1696,7 @@ test("cancelAgentRun preserves the active turn when the provider rejects the int
       turnId: "provider-still-active-turn",
     });
   } finally {
-    fixture.cleanup();
+    await fixture.cleanup();
   }
 });
 
@@ -1676,15 +1729,16 @@ test("cancelAgentRun succeeds when the foreground turn finishes before the provi
       activeForegroundTurnId: null,
     });
   } finally {
-    fixture.cleanup();
+    await fixture.cleanup();
   }
 });
 
-test("cancelAgentRun succeeds when the provider queues completion before rejecting the interrupt", async () => {
+test("cancelAgentRun settles a queued completion while turn-start persistence is blocked", async () => {
   const fixture = await createControlledInterruptFixture({
     name: "interrupt-queued-completion",
     agentId: "00000000-0000-4000-8000-000000000306",
     turnId: "queued-completion-turn",
+    deferTurnStarted: true,
     interrupt: async (session) => {
       session.pushEvent({
         type: "turn_completed",
@@ -1697,6 +1751,13 @@ test("cancelAgentRun succeeds when the provider queues completion before rejecti
 
   try {
     await fixture.startForegroundRun();
+    fixture.holdNextSnapshotPersist();
+    fixture.session.pushEvent({
+      type: "turn_started",
+      provider: "codex",
+      turnId: "queued-completion-turn",
+    });
+    await fixture.waitForSnapshotPersistStart();
 
     await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
       status: "settled",
@@ -1706,7 +1767,66 @@ test("cancelAgentRun succeeds when the provider queues completion before rejecti
       activeForegroundTurnId: null,
     });
   } finally {
-    fixture.cleanup();
+    fixture.releaseSnapshotPersist();
+    await fixture.cleanup();
+  }
+});
+
+test("reloadAgentSession proceeds when the active run completes before interrupt rejection", async () => {
+  let fixture!: ControlledInterruptFixture;
+  fixture = await createControlledInterruptFixture({
+    name: "reload-after-completion",
+    agentId: "00000000-0000-4000-8000-000000000307",
+    turnId: "reload-completed-turn",
+    interrupt: async (session) => {
+      const settled = waitForAgentLifecycle(fixture.manager, fixture.agentId, "idle");
+      session.pushEvent({
+        type: "turn_completed",
+        provider: session.provider,
+        turnId: "reload-completed-turn",
+      });
+      await settled;
+      throw new Error("turn already completed");
+    },
+  });
+
+  try {
+    await fixture.startForegroundRun();
+
+    await expect(fixture.manager.reloadAgentSession(fixture.agentId)).resolves.toMatchObject({
+      id: fixture.agentId,
+      lifecycle: "idle",
+    });
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("replaceAgentRun proceeds when the active run completes before interrupt rejection", async () => {
+  const fixture = await createControlledInterruptFixture({
+    name: "replace-after-completion",
+    agentId: "00000000-0000-4000-8000-000000000308",
+    turnId: "replace-completed-turn",
+    interrupt: async (session) => {
+      session.pushEvent({
+        type: "turn_completed",
+        provider: session.provider,
+        turnId: "replace-completed-turn",
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      throw new Error("turn already completed");
+    },
+  });
+
+  try {
+    await fixture.startForegroundRun();
+
+    await expect(
+      fixture.manager.replaceAgentRun(fixture.agentId, "replacement work"),
+    ).resolves.toBeDefined();
+    expect(fixture.manager.getAgent(fixture.agentId)?.activeForegroundTurnId).toBeNull();
+  } finally {
+    await fixture.cleanup();
   }
 });
 
@@ -5380,7 +5500,6 @@ test("replaceAgentRun does not emit idle or resolve waiters between interrupted 
   })();
 
   await manager.waitForAgentRunStart(snapshot.id);
-
   const waitPromise = manager.waitForAgentEvent(snapshot.id);
   const secondRun = await manager.replaceAgentRun(snapshot.id, "second run");
   const secondRunDrain = (async () => {

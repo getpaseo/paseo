@@ -2143,7 +2143,7 @@ export class AgentManager {
       turnStream = this.runs.createTurnStream(turnId);
       this.runs.addWaiter(agent, turnStream.waiter);
       this.touchUpdatedAt(agent);
-      await this.persistSnapshot(agent);
+      this.enqueueBackgroundPersist(agent);
       this.emitState(agent, { persist: false });
       this.logger.trace(
         {
@@ -3564,6 +3564,13 @@ export class AgentManager {
     const eventTurnId = getAgentStreamEventTurnId(event);
     const isForegroundEvent = Boolean(eventTurnId && agent.activeForegroundTurnId === eventTurnId);
     this.traceHandleStreamEventStart(agent, event, eventTurnId, isForegroundEvent);
+    if (
+      event.type === "turn_started" &&
+      eventTurnId &&
+      this.runs.hasFinalizedTurn(agent, eventTurnId)
+    ) {
+      return false;
+    }
     if (this.shouldIgnoreTerminalEvent(agent, event, eventTurnId)) {
       return false;
     }
@@ -3746,7 +3753,8 @@ export class AgentManager {
         this.onStreamTurnCanceled({ agent, event, eventTurnId, isForegroundEvent, options });
         return undefined;
       case "turn_started":
-        return this.onStreamTurnStarted({ agent, eventTurnId, isForegroundEvent, options });
+        this.onStreamTurnStarted({ agent, eventTurnId, isForegroundEvent, options });
+        return undefined;
       case "permission_requested":
         this.onStreamPermissionRequested(agent, event);
         return undefined;
@@ -3928,12 +3936,12 @@ export class AgentManager {
     }
   }
 
-  private async onStreamTurnStarted(params: {
+  private onStreamTurnStarted(params: {
     agent: ActiveManagedAgent;
     eventTurnId: string | undefined;
     isForegroundEvent: boolean;
     options: HandleStreamEventOptions | undefined;
-  }): Promise<void> {
+  }): void {
     const { agent, eventTurnId, isForegroundEvent, options } = params;
     if (options?.fromHistory) {
       agent.lastTurnOutcome = null;
@@ -3954,11 +3962,11 @@ export class AgentManager {
     if (!isForegroundEvent) {
       this.runs.trackAutonomousRun(agent.id, eventTurnId ?? null);
       agent.lifecycle = "running";
-      await this.persistSnapshot(agent);
+      this.enqueueBackgroundPersist(agent);
       this.emitState(agent, { persist: false });
       return;
     }
-    await this.persistSnapshot(agent);
+    this.enqueueBackgroundPersist(agent);
   }
 
   private beginMaterialProgressContinuation(

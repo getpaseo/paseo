@@ -129,6 +129,36 @@ describe("AgentManager rewind", () => {
     });
   });
 
+  test("rewinds when the active turn completes before interrupt rejection", async () => {
+    let manager!: AgentManager;
+    let agentId!: string;
+
+    class CompletingInterruptSession extends FakeRewindSession {
+      override async interrupt(): Promise<void> {
+        const settled = manager.waitForAgentEvent(agentId);
+        this.completeActiveTurn();
+        await settled;
+        throw new Error("turn already completed");
+      }
+    }
+
+    const session = new CompletingInterruptSession();
+    manager = new AgentManager({
+      clients: { claude: new FakeRewindClient(session) },
+      logger: createTestLogger(),
+      idFactory: () => "00000000-0000-4000-8000-000000000903",
+    });
+    const agent = await manager.createAgent({ provider: "claude", cwd: process.cwd() }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const run = manager.streamAgent(agentId, "keep working");
+    await run.next();
+
+    await expect(manager.rewind(agentId, "message-1", "files")).resolves.toBeUndefined();
+    expect(session.recordedRewinds).toEqual([{ mode: "files", messageId: "message-1" }]);
+  });
+
   test("blocks new prompts until the rehydrate epoch broadcasts", async () => {
     const historyGate = new RewindHistoryGate();
     historyGate.hold();
