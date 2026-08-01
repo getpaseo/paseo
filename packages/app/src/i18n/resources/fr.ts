@@ -2384,5 +2384,8 @@ export const fr: TranslationResources = {
     unlockMenu: "Déverrouiller l'écran",
     lockedA11y: "Verrouillage d'interaction activé. Déverrouillez pour interagir.",
     lockedToast: "Déverrouillez pour contrôler cet agent",
+    authPrompt: "Unlock Paseo",
+    unlockFailed: "Couldn't unlock. Try again.",
+    navigationBlocked: "Unlock to navigate",
   },
 };

@@ -2362,5 +2362,8 @@ export const ptBR: TranslationResources = {
     unlockMenu: "Desbloquear tela",
     lockedA11y: "Bloqueio de interação ativo. Desbloqueie para interagir.",
     lockedToast: "Desbloqueie para controlar este agente",
+    authPrompt: "Unlock Paseo",
+    unlockFailed: "Couldn't unlock. Try again.",
+    navigationBlocked: "Unlock to navigate",
   },
 };

@@ -2369,5 +2369,8 @@ export const ru: TranslationResources = {
     unlockMenu: "Разблокировать экран",
     lockedA11y: "Блокировка взаимодействия включена. Разблокируйте, чтобы взаимодействовать.",
     lockedToast: "Разблокируйте, чтобы управлять этим агентом",
+    authPrompt: "Unlock Paseo",
+    unlockFailed: "Couldn't unlock. Try again.",
+    navigationBlocked: "Unlock to navigate",
   },
 };

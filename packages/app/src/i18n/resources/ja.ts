@@ -2349,5 +2349,8 @@ export const ja: TranslationResources = {
     unlockMenu: "画面ロックを解除",
     lockedA11y: "操作ロック中です。操作するには解除してください。",
     lockedToast: "このエージェントを操作するにはロックを解除してください",
+    authPrompt: "Unlock Paseo",
+    unlockFailed: "Couldn't unlock. Try again.",
+    navigationBlocked: "Unlock to navigate",
   },
 } as const;

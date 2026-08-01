@@ -6,6 +6,8 @@ export interface ComposerInteractionPolicy {
   canStartVoice: boolean;
   canRespondToPermissions: boolean;
   canMutateAgent: boolean;
+  /** Switch agents/workspaces, open settings, command center navigation. */
+  canNavigate: boolean;
 }
 
 export function resolveComposerInteractionPolicy(input: {
@@ -20,6 +22,7 @@ export function resolveComposerInteractionPolicy(input: {
       canStartVoice: true,
       canRespondToPermissions: true,
       canMutateAgent: true,
+      canNavigate: true,
     };
   }
   return {
@@ -30,5 +33,6 @@ export function resolveComposerInteractionPolicy(input: {
     canStartVoice: false,
     canRespondToPermissions: false,
     canMutateAgent: false,
+    canNavigate: false,
   };
 }

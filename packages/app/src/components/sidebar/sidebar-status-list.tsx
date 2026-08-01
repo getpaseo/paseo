@@ -414,6 +414,7 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
 
   const handlePress = useCallback(() => {
     if (!workspace.serverId) return;
+    // navigateToWorkspace no-ops when interaction-locked; keep handler simple.
     onWorkspacePress?.();
     navigateToWorkspace({ serverId: workspace.serverId, workspaceId: workspace.workspaceId });
   }, [onWorkspacePress, workspace.serverId, workspace.workspaceId]);

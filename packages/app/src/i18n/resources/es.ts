@@ -2378,5 +2378,8 @@ export const es: TranslationResources = {
     unlockMenu: "Desbloquear pantalla",
     lockedA11y: "Bloqueo de interacción activado. Desbloquea para interactuar.",
     lockedToast: "Desbloquea para controlar este agente",
+    authPrompt: "Unlock Paseo",
+    unlockFailed: "Couldn't unlock. Try again.",
+    navigationBlocked: "Unlock to navigate",
   },
 };
