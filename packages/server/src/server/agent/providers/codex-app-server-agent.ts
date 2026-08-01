@@ -2264,7 +2264,6 @@ type ParsedCodexNotification =
   | { kind: "turn_started"; turnId: string; threadId: string | null }
   | {
       kind: "turn_completed";
-      turnId: string | null;
       status: string;
       errorMessage: string | null;
       threadId: string | null;
@@ -2415,7 +2414,6 @@ const CodexNotificationSchema = z.union([
     .transform(
       ({ params }): ParsedCodexNotification => ({
         kind: "turn_completed",
-        turnId: params.turn.id ?? null,
         status: params.turn.status,
         errorMessage: params.turn.error?.message ?? null,
         threadId: params.threadId ?? null,
@@ -2836,7 +2834,6 @@ const CodexNotificationSchema = z.union([
     .transform(
       ({ params }): ParsedCodexNotification => ({
         kind: "turn_completed",
-        turnId: null,
         status: "interrupted",
         errorMessage: null,
         threadId: getCodexEventThreadId(params),
@@ -2857,7 +2854,6 @@ const CodexNotificationSchema = z.union([
     .transform(
       ({ params }): ParsedCodexNotification => ({
         kind: "turn_completed",
-        turnId: null,
         status: "completed",
         errorMessage: null,
         threadId: getCodexEventThreadId(params),
@@ -3113,7 +3109,6 @@ export class CodexAppServerAgentSession implements AgentSession {
   private currentMode: string;
   private currentThreadId: string | null = null;
   private currentTurnId: string | null = null;
-  private readonly finalizedNativeTurnIds = new Set<string>();
   private pendingForegroundTurnIdentification: {
     foregroundTurnId: string;
     promise: Promise<string | null>;
@@ -5336,9 +5331,6 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.emitSubAgentActivityUpdate(subAgentCallId, "running");
       return;
     }
-    if (this.finalizedNativeTurnIds.has(parsed.turnId)) {
-      return;
-    }
     this.currentTurnId = parsed.turnId;
     const pendingIdentification = this.pendingForegroundTurnIdentification;
     if (
@@ -5365,10 +5357,6 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
       this.emitSubAgentActivityUpdate(subAgentCallId, status);
       return;
-    }
-    const finalizedTurnId = parsed.turnId ?? this.currentTurnId;
-    if (finalizedTurnId) {
-      this.finalizedNativeTurnIds.add(finalizedTurnId);
     }
     if (parsed.status === "failed") {
       this.emitEvent({

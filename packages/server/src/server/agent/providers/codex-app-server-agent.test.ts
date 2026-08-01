@@ -66,7 +66,6 @@ interface CodexClientLike {
 type CodexTestSession = AgentSession & {
   connected: boolean;
   currentThreadId: string | null;
-  currentTurnId: string | null;
   activeForegroundTurnId: string | null;
   client: CodexClientLike | null;
 };
@@ -2793,56 +2792,6 @@ describe("Codex app-server provider", () => {
       );
       await resultPromise;
       expect(interruptedTurns).toEqual([]);
-      appServer.assertNoErrors();
-    } finally {
-      await session.close();
-    }
-  });
-
-  test("interrupts the next turn after a prior identification wait is abandoned", async () => {
-    let turnStartCount = 0;
-    const interruptedTurns: unknown[] = [];
-    const appServer = createFakeCodexAppServer({
-      "turn/start": async () => {
-        turnStartCount += 1;
-        return {};
-      },
-      "turn/interrupt": async (params) => {
-        interruptedTurns.push(params);
-        return {};
-      },
-    });
-    const session = new CodexAppServerAgentSession(
-      createConfig({ cwd: "/workspace/project" }),
-      null,
-      createTestLogger(),
-      async () => appServer.child,
-    );
-
-    try {
-      const firstResult = session.run("First turn.");
-      await vi.waitFor(() => expect(turnStartCount).toBe(1));
-      const firstInterrupt = session.interrupt();
-      appServer.completeTurn({ turnId: "turn-first" });
-      await expect(firstInterrupt).rejects.toThrow(
-        "Cannot interrupt Codex before turn/started identifies the active turn",
-      );
-      await firstResult;
-
-      const secondResult = session.run("Second turn.");
-      await vi.waitFor(() => expect(turnStartCount).toBe(2));
-      const secondInterrupt = session.interrupt();
-      appServer.startsTurn({ threadId: "thread-1", turnId: "turn-first" });
-
-      await vi.waitFor(() => expect(session.currentTurnId).toBeNull());
-      expect(interruptedTurns).toEqual([]);
-
-      appServer.startsTurn({ threadId: "thread-1", turnId: "turn-second" });
-      await secondInterrupt;
-
-      expect(interruptedTurns).toEqual([{ threadId: "thread-1", turnId: "turn-second" }]);
-      appServer.completeTurn({ turnId: "turn-second" });
-      await secondResult;
       appServer.assertNoErrors();
     } finally {
       await session.close();

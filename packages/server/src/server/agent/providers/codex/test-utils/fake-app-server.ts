@@ -51,7 +51,7 @@ export interface FakeCodexAppServer {
   waitForTurnStart(): Promise<JsonObject>;
   nextResponse(): Promise<string>;
   startsTurn(params: { threadId: string; turnId?: string }): void;
-  completeTurn(params?: { threadId?: string; turnId?: string }): void;
+  completeTurn(params?: { threadId?: string }): void;
   startsSubAgent(params: {
     callId: string;
     threadId: string;
@@ -325,7 +325,7 @@ export function createFakeCodexAppServer(
           method: "turn/completed",
           params: {
             threadId: params.threadId ?? "thread-1",
-            turn: { id: params.turnId, status: "completed" },
+            turn: { status: "completed" },
           },
         })}\n`,
       );
