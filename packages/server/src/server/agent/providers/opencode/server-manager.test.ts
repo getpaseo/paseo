@@ -6,6 +6,11 @@ import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
+import type { ManagedProcessGroupInspection } from "../../../managed-processes/managed-processes.js";
+import type {
+  ProcessTerminator,
+  TerminateWithTreeKillResult,
+} from "../../../../utils/tree-kill.js";
 import {
   AgentRuntimeCapacityError,
   HostAgentRuntimeCapacityController,
@@ -15,6 +20,7 @@ import { OpenCodeServerManager } from "./server-manager.js";
 const tempDirs: string[] = [];
 
 afterEach(() => {
+  vi.useRealTimers();
   for (const directory of tempDirs.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -36,18 +42,22 @@ function createChild(): ChildProcess {
 }
 
 function createManager(options: {
-  terminateResult?: "terminated" | "kill-timeout";
-  terminateResults?: Array<"terminated" | "kill-timeout">;
-  terminateImplementation?: () => Promise<"terminated" | "kill-timeout">;
+  terminateResult?: TerminateWithTreeKillResult;
+  terminateResults?: TerminateWithTreeKillResult[];
+  terminateImplementation?: ProcessTerminator;
+  processGroupInspection?: ManagedProcessGroupInspection;
   capacity?: number;
 }) {
   const directory = mkdtempSync(path.join(os.tmpdir(), "paseo-opencode-capacity-"));
   tempDirs.push(directory);
   const children: ChildProcess[] = [];
-  const terminateProcess = vi.fn(
+  const terminateProcess = vi.fn<ProcessTerminator>(
     options.terminateImplementation ??
       (async () => options.terminateResults?.shift() ?? options.terminateResult ?? "terminated"),
   );
+  let processGroupInspection: ManagedProcessGroupInspection = options.processGroupInspection ?? {
+    status: "owned",
+  };
   const manager = new OpenCodeServerManager({
     logger: createTestLogger(),
     portAllocator: async () => 4100 + children.length,
@@ -62,11 +72,22 @@ function createManager(options: {
       return child;
     },
     terminateProcess,
+    createManagedProcessIdentityToken: () => "capacity-test-token",
+    verifyProcessGroupIdentity: async () => processGroupInspection,
   });
-  manager.configureRuntimeCapacityController(
-    new HostAgentRuntimeCapacityController(options.capacity ?? 1),
-  );
-  return { children, manager, terminateProcess };
+  const runtimeCapacity = new HostAgentRuntimeCapacityController(options.capacity ?? 1);
+  const releaseCapacity = vi.spyOn(runtimeCapacity, "release");
+  manager.configureRuntimeCapacityController(runtimeCapacity);
+  return {
+    children,
+    manager,
+    releaseCapacity,
+    runtimeCapacity,
+    setProcessGroupInspection: (inspection: ManagedProcessGroupInspection) => {
+      processGroupInspection = inspection;
+    },
+    terminateProcess,
+  };
 }
 
 describe("OpenCodeServerManager runtime capacity", () => {
@@ -96,83 +117,124 @@ describe("OpenCodeServerManager runtime capacity", () => {
     await manager.shutdown();
   });
 
-  test("retains the charge while dedicated server termination remains unproven", async () => {
-    const { manager, terminateProcess } = createManager({ terminateResult: "kill-timeout" });
-    const first = await manager.acquireDedicated({ TEST: "one" });
+  test.runIf(process.platform !== "win32")(
+    "retains the charge when the process-group leader exits before its descendants",
+    async () => {
+      vi.useFakeTimers();
+      const { children, manager, releaseCapacity, terminateProcess } = createManager({
+        terminateResults: ["kill-timeout", "terminated", "terminated"],
+      });
+      await manager.acquireCurrent();
 
-    await expect(first.release()).rejects.toThrow(
-      "OpenCode server termination did not report process exit",
-    );
-    await expect(manager.acquireDedicated({ TEST: "two" })).rejects.toBeInstanceOf(
-      AgentRuntimeCapacityError,
-    );
-    expect(terminateProcess).toHaveBeenCalledTimes(2);
-  });
+      Object.defineProperty(children[0], "exitCode", { configurable: true, value: 0 });
+      children[0]?.emit("exit", 0, null);
+      await vi.waitFor(() => expect(terminateProcess).toHaveBeenCalledTimes(1));
 
-  test.each([
-    ["dedicated", (manager: OpenCodeServerManager) => manager.acquireDedicated({ TEST: "two" })],
-    ["current", (manager: OpenCodeServerManager) => manager.acquireCurrent()],
-    ["new", (manager: OpenCodeServerManager) => manager.acquireNew()],
-  ])("retries retained cleanup before %s admission", async (_kind, acquireReplacement) => {
-    const { children, manager, terminateProcess } = createManager({
+      expect(releaseCapacity).not.toHaveBeenCalled();
+      await expect(manager.acquireDedicated({ TEST: "blocked" })).rejects.toBeInstanceOf(
+        AgentRuntimeCapacityError,
+      );
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(releaseCapacity).toHaveBeenCalledTimes(1);
+      const replacement = await manager.acquireDedicated({ TEST: "replacement" });
+      await replacement.release();
+    },
+  );
+
+  test("retains a timed-out cleanup charge until one late retry succeeds", async () => {
+    vi.useFakeTimers();
+    const { children, manager, releaseCapacity, terminateProcess } = createManager({
       terminateResults: ["kill-timeout", "terminated", "terminated"],
     });
     const first = await manager.acquireDedicated({ TEST: "one" });
-    await expect(first.release()).rejects.toThrow(
-      "OpenCode server termination did not report process exit",
+
+    await first.release();
+    expect(releaseCapacity).not.toHaveBeenCalled();
+    await expect(manager.acquireDedicated({ TEST: "blocked" })).rejects.toBeInstanceOf(
+      AgentRuntimeCapacityError,
     );
 
-    const replacement = await acquireReplacement(manager);
-    expect(children).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(terminateProcess).toHaveBeenCalledTimes(2);
+    expect(releaseCapacity).toHaveBeenCalledTimes(1);
+
+    children[0]?.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(releaseCapacity).toHaveBeenCalledTimes(1);
+
+    const replacement = await manager.acquireDedicated({ TEST: "replacement" });
     await replacement.release();
   });
 
-  test("coalesces concurrent pre-admission cleanup retries", async () => {
-    let terminationAttempt = 0;
-    let allowCleanup!: () => void;
-    const cleanupAllowed = new Promise<void>((resolve) => {
-      allowCleanup = resolve;
-    });
-    const { children, manager, terminateProcess } = createManager({
-      terminateImplementation: async () => {
-        terminationAttempt += 1;
-        if (terminationAttempt === 1) {
-          return "kill-timeout";
-        }
-        if (terminationAttempt === 2) {
-          await cleanupAllowed;
-        }
-        return "terminated";
-      },
+  test.runIf(process.platform !== "win32")(
+    "retains the charge while process-group identity is unverifiable",
+    async () => {
+      vi.useFakeTimers();
+      const terminateAfterIdentityCheck: ProcessTerminator = async (_target, terminateOptions) =>
+        (await terminateOptions.beforeSignal?.("SIGTERM")) === false
+          ? "signal-skipped"
+          : "terminated";
+      const { manager, releaseCapacity, setProcessGroupInspection } = createManager({
+        terminateImplementation: terminateAfterIdentityCheck,
+        processGroupInspection: { status: "unverifiable", message: "token mismatch" },
+      });
+      const first = await manager.acquireDedicated({ TEST: "one" });
+
+      await first.release();
+      expect(releaseCapacity).not.toHaveBeenCalled();
+      await expect(manager.acquireDedicated({ TEST: "blocked" })).rejects.toBeInstanceOf(
+        AgentRuntimeCapacityError,
+      );
+
+      setProcessGroupInspection({ status: "owned" });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(releaseCapacity).toHaveBeenCalledTimes(1);
+
+      const replacement = await manager.acquireDedicated({ TEST: "replacement" });
+      await replacement.release();
+    },
+  );
+
+  test.runIf(process.platform !== "win32")(
+    "releases the charge when process-group inspection proves not-found",
+    async () => {
+      const terminateAfterIdentityCheck: ProcessTerminator = async (_target, terminateOptions) =>
+        (await terminateOptions.beforeSignal?.("SIGTERM")) === false
+          ? "signal-skipped"
+          : "terminated";
+      const { manager, releaseCapacity } = createManager({
+        terminateImplementation: terminateAfterIdentityCheck,
+        processGroupInspection: { status: "not-found" },
+      });
+      const first = await manager.acquireDedicated({ TEST: "one" });
+
+      await first.release();
+      expect(releaseCapacity).toHaveBeenCalledTimes(1);
+
+      const replacement = await manager.acquireDedicated({ TEST: "replacement" });
+      await replacement.release();
+    },
+  );
+
+  test("retains the charge through shutdown until a later shutdown proves cleanup", async () => {
+    const { manager, releaseCapacity } = createManager({
+      terminateResults: ["kill-timeout", "kill-timeout", "terminated", "terminated"],
     });
     const first = await manager.acquireDedicated({ TEST: "one" });
-    await expect(first.release()).rejects.toThrow(
-      "OpenCode server termination did not report process exit",
+
+    await first.release();
+    await manager.shutdown();
+    expect(releaseCapacity).not.toHaveBeenCalled();
+    await expect(manager.acquireDedicated({ TEST: "blocked" })).rejects.toBeInstanceOf(
+      AgentRuntimeCapacityError,
     );
 
-    const replacements = [
-      manager.acquireDedicated({ TEST: "two" }),
-      manager.acquireDedicated({ TEST: "three" }),
-    ];
-    await vi.waitFor(() => expect(terminateProcess).toHaveBeenCalledTimes(2));
-    expect(children).toHaveLength(1);
-    allowCleanup();
+    await manager.shutdown();
+    expect(releaseCapacity).toHaveBeenCalledTimes(1);
 
-    const results = await Promise.allSettled(replacements);
-    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
-    expect(
-      results.filter(
-        (result) =>
-          result.status === "rejected" && result.reason instanceof AgentRuntimeCapacityError,
-      ),
-    ).toHaveLength(1);
-    expect(children).toHaveLength(2);
-    expect(terminateProcess).toHaveBeenCalledTimes(2);
-    const acquired = results.find((result) => result.status === "fulfilled");
-    if (acquired?.status === "fulfilled") {
-      await acquired.value.release();
-    }
+    const replacement = await manager.acquireDedicated({ TEST: "replacement" });
+    await replacement.release();
   });
 
   test("releases the charge after proven dedicated server termination", async () => {
@@ -193,6 +255,24 @@ describe("OpenCodeServerManager runtime capacity", () => {
     ).toThrow("OpenCode server manager already has a different runtime capacity controller");
 
     await current.release();
+    expect(() =>
+      manager.configureRuntimeCapacityController(new HostAgentRuntimeCapacityController(1)),
+    ).not.toThrow();
+  });
+
+  test("rejects a fresh controller while retired cleanup still owns capacity", async () => {
+    vi.useFakeTimers();
+    const { manager } = createManager({
+      terminateResults: ["kill-timeout", "terminated"],
+    });
+    const first = await manager.acquireDedicated({ TEST: "one" });
+    await first.release();
+
+    expect(() =>
+      manager.configureRuntimeCapacityController(new HostAgentRuntimeCapacityController(1)),
+    ).toThrow("OpenCode server manager already has a different runtime capacity controller");
+
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(() =>
       manager.configureRuntimeCapacityController(new HostAgentRuntimeCapacityController(1)),
     ).not.toThrow();
