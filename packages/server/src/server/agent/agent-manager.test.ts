@@ -4293,6 +4293,10 @@ test("persists terminal outcomes and clears the previous outcome when a new turn
     expect((await manager.getMaterialProgressSnapshot(agent.id)).turnOutcome).toBeNull();
     expect((await storage.get(agent.id))?.lastTurnOutcome ?? null).toBeNull();
 
+    const staleRecord = await storage.get(agent.id);
+    await storage.upsert({ ...staleRecord!, lastTurnOutcome: "completed" });
+    expect((await manager.getMaterialProgressSnapshot(agent.id)).turnOutcome).toBeNull();
+
     session.pushEvent({
       type: "turn_canceled",
       provider: "codex",

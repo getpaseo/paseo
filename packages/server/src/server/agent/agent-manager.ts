@@ -1053,7 +1053,7 @@ export class AgentManager {
     ]);
     return {
       rows,
-      turnOutcome: live?.lastTurnOutcome ?? record?.lastTurnOutcome ?? null,
+      turnOutcome: live ? (live.lastTurnOutcome ?? null) : (record?.lastTurnOutcome ?? null),
       persisted: record?.materialProgress ?? null,
     };
   }
