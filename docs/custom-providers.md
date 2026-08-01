@@ -586,7 +586,8 @@ When you launch an agent with an ACP provider:
 
 Every ACP provider exposes an **Auto Accept** toggle. Enable it per session to let Paseo approve
 ACP permission requests without surfacing each prompt. If the provider sends no allow option,
-Paseo leaves the request for you to answer.
+Paseo leaves the request for you to answer. Unattended agents enable Auto Accept unless you
+explicitly disable it.
 
 Models and modes are discovered dynamically at runtime from the agent process. If you want to override the model list (e.g., to curate which models appear in the UI), use the `models` field:
 

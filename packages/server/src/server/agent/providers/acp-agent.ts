@@ -63,6 +63,7 @@ import {
   getAgentStreamEventTurnId,
   type AgentCapabilityFlags,
   type AgentClient,
+  type AgentCreateConfigUnattendedInput,
   type AgentFeature,
   type AgentLaunchContext,
   type AgentMetadata,
@@ -90,9 +91,15 @@ import {
   type ListImportableSessionsOptions,
   type McpServerConfig,
   type ProviderCatalog,
+  type ResolveAgentCreateConfigInput,
+  type ResolveAgentCreateConfigResult,
   type ToolCallDetail,
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
+import {
+  isDefaultAgentCreateConfigUnattended,
+  resolveDefaultAgentCreateConfig,
+} from "../create-agent-mode.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import {
   checkProviderLaunchAvailable,
@@ -712,9 +719,45 @@ function buildACPAutoAcceptFeature(config: AgentSessionConfig): AgentFeature {
   };
 }
 
+function resolveACPCreateConfig(
+  input: ResolveAgentCreateConfigInput,
+): ResolveAgentCreateConfigResult {
+  const isUnattendedCreate = input.unattended || input.parent?.isUnattended === true;
+  const featureValues =
+    isUnattendedCreate && input.featureValues?.[ACP_AUTO_ACCEPT_FEATURE_ID] === undefined
+      ? { ...input.featureValues, [ACP_AUTO_ACCEPT_FEATURE_ID]: true }
+      : input.featureValues;
+
+  if (
+    input.requestedMode === undefined &&
+    isUnattendedCreate &&
+    input.parent !== null &&
+    input.parent.provider !== input.provider
+  ) {
+    return { modeId: undefined, featureValues };
+  }
+
+  return resolveDefaultAgentCreateConfig({ ...input, featureValues });
+}
+
+function isACPCreateConfigUnattended(input: AgentCreateConfigUnattendedInput): boolean {
+  return (
+    isDefaultAgentCreateConfigUnattended(input) ||
+    input.config.featureValues?.[ACP_AUTO_ACCEPT_FEATURE_ID] === true ||
+    input.features?.some(
+      (feature) =>
+        feature.id === ACP_AUTO_ACCEPT_FEATURE_ID &&
+        feature.type === "toggle" &&
+        feature.value === true,
+    ) === true
+  );
+}
+
 export class ACPAgentClient implements AgentClient {
   readonly provider: string;
   readonly capabilities: AgentCapabilityFlags;
+  readonly resolveCreateConfig = resolveACPCreateConfig;
+  readonly isCreateConfigUnattended = isACPCreateConfigUnattended;
 
   protected readonly logger: Logger;
   protected readonly runtimeSettings?: ProviderRuntimeSettings;

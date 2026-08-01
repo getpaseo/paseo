@@ -1609,6 +1609,90 @@ describe("ACPAgentClient modelTransformer", () => {
 });
 
 describe("ACPAgentClient config features", () => {
+  test("enables Auto Accept for unattended ACP creation", () => {
+    const client = new ACPAgentClient({
+      provider: "generic-acp",
+      logger: createTestLogger(),
+      defaultCommand: ["generic-acp", "acp"],
+    });
+
+    expect(
+      client.resolveCreateConfig({
+        provider: "generic-acp",
+        requestedMode: undefined,
+        featureValues: { provider_feature: "kept" },
+        parent: null,
+        unattended: true,
+        availableModes: [],
+      }),
+    ).toEqual({
+      modeId: undefined,
+      featureValues: { provider_feature: "kept", auto_accept: true },
+    });
+  });
+
+  test("preserves an explicit Auto Accept override for unattended ACP creation", () => {
+    const client = new ACPAgentClient({
+      provider: "generic-acp",
+      logger: createTestLogger(),
+      defaultCommand: ["generic-acp", "acp"],
+    });
+
+    expect(
+      client.resolveCreateConfig({
+        provider: "generic-acp",
+        requestedMode: undefined,
+        featureValues: { auto_accept: false },
+        parent: null,
+        unattended: true,
+        availableModes: [],
+      }),
+    ).toEqual({ modeId: undefined, featureValues: { auto_accept: false } });
+  });
+
+  test("maps an unattended cross-provider parent to ACP Auto Accept", () => {
+    const client = new ACPAgentClient({
+      provider: "generic-acp",
+      logger: createTestLogger(),
+      defaultCommand: ["generic-acp", "acp"],
+    });
+
+    expect(
+      client.resolveCreateConfig({
+        provider: "generic-acp",
+        requestedMode: undefined,
+        featureValues: undefined,
+        parent: {
+          provider: "claude",
+          modeId: "bypassPermissions",
+          isUnattended: true,
+        },
+        unattended: false,
+        availableModes: [{ id: "agent", label: "Agent" }],
+      }),
+    ).toEqual({ modeId: undefined, featureValues: { auto_accept: true } });
+  });
+
+  test("treats Auto Accept as an unattended ACP configuration", () => {
+    const client = new ACPAgentClient({
+      provider: "generic-acp",
+      logger: createTestLogger(),
+      defaultCommand: ["generic-acp", "acp"],
+    });
+
+    expect(
+      client.isCreateConfigUnattended({
+        modeId: null,
+        config: {
+          provider: "generic-acp",
+          cwd: "/tmp/acp-features",
+          featureValues: { auto_accept: true },
+        },
+        availableModes: [],
+      }),
+    ).toBe(true);
+  });
+
   test("exposes Auto Accept for every ACP provider without starting a probe", async () => {
     const client = new ACPAgentClient({
       provider: "generic-acp",
