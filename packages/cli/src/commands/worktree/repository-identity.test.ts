@@ -137,6 +137,29 @@ describe("resolveWorktreeRepositoryIdentity", () => {
     });
   });
 
+  test("rejects duplicate canonical project roots while preserving explicit identity", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "worktree-cli-identity-"));
+    cleanupPaths.push(tempDir);
+    const repoRoot = createGitRepository(tempDir, "repo");
+    const nested = join(repoRoot, "packages", "service");
+    const firstAlias = join(tempDir, "repo-alias-first");
+    const secondAlias = join(tempDir, "repo-alias-second");
+    mkdirSync(nested, { recursive: true });
+    symlinkSync(repoRoot, firstAlias);
+    symlinkSync(repoRoot, secondAlias);
+    const client = createLocalClient([
+      { projectId: "prj_first", projectRootPath: firstAlias },
+      { projectId: "prj_second", projectRootPath: secondAlias },
+    ]);
+
+    await expect(resolveWorktreeRepositoryIdentity({}, client, nested)).rejects.toMatchObject({
+      code: "AMBIGUOUS_REPOSITORY_IDENTITY",
+    });
+    await expect(
+      resolveWorktreeRepositoryIdentity({ project: "prj_second" }, client, nested),
+    ).resolves.toEqual({ projectId: "prj_second" });
+  });
+
   test("resolves a linked worktree through its registered main repository", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "worktree-cli-identity-"));
     cleanupPaths.push(tempDir);

@@ -105,7 +105,7 @@ describe("resolveWorktreeRepositoryIdentity", () => {
     ).rejects.toThrow("do not identify");
   });
 
-  test("prefers an exact lexical root and rejects ambiguous canonical aliases", async () => {
+  test("preserves explicit identity and rejects ambiguous canonical aliases", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "worktree-repository-identity-"));
     cleanupPaths.push(tempDir);
     const repoRoot = join(tempDir, "repo");
@@ -133,6 +133,15 @@ describe("resolveWorktreeRepositoryIdentity", () => {
 
     await expect(
       resolveWorktreeRepositoryIdentity({ repoRoot: repoAlias }, projects),
+    ).resolves.toEqual({
+      projectId: "prj_repo_alias",
+      repoRoot: realpathSync.native(repoRoot),
+    });
+    await expect(
+      resolveWorktreeRepositoryIdentity(
+        { projectId: "prj_repo_alias", repoRoot: `${repoRoot}/.` },
+        projects,
+      ),
     ).resolves.toEqual({
       projectId: "prj_repo_alias",
       repoRoot: realpathSync.native(repoRoot),

@@ -74,27 +74,38 @@ function selectRegisteredProjectByCanonicalPath(
   canonicalCwd: string,
   projects: Array<{ projectId: string; projectRootPath: string }>,
 ): { projectId: string; projectRootPath: string } | null {
-  return (
-    projects
-      .map((project) => {
-        try {
-          return { ...project, projectRootPath: realpathSync.native(project.projectRootPath) };
-        } catch {
-          return null;
-        }
-      })
-      .filter((project): project is { projectId: string; projectRootPath: string } => {
-        if (!project) return false;
-        const relativePath = path.relative(project.projectRootPath, canonicalCwd);
-        return (
-          relativePath === "" ||
-          (!relativePath.startsWith(`..${path.sep}`) &&
-            relativePath !== ".." &&
-            !path.isAbsolute(relativePath))
-        );
-      })
-      .sort((left, right) => right.projectRootPath.length - left.projectRootPath.length)[0] ?? null
+  const containingProjects = projects
+    .map((project) => {
+      try {
+        return { ...project, projectRootPath: realpathSync.native(project.projectRootPath) };
+      } catch {
+        return null;
+      }
+    })
+    .filter((project): project is { projectId: string; projectRootPath: string } => {
+      if (!project) return false;
+      const relativePath = path.relative(project.projectRootPath, canonicalCwd);
+      return (
+        relativePath === "" ||
+        (!relativePath.startsWith(`..${path.sep}`) &&
+          relativePath !== ".." &&
+          !path.isAbsolute(relativePath))
+      );
+    });
+  const deepestRootLength = Math.max(
+    0,
+    ...containingProjects.map((project) => project.projectRootPath.length),
   );
+  const deepestProjects = containingProjects.filter(
+    (project) => project.projectRootPath.length === deepestRootLength,
+  );
+  if (deepestProjects.length > 1) {
+    throw commandError(
+      "AMBIGUOUS_REPOSITORY_IDENTITY",
+      "Caller path identifies multiple equally deep registered projects; specify --project",
+    );
+  }
+  return deepestProjects[0] ?? null;
 }
 
 function resolveLocalGitTopLevel(cwd: string): string | null {
