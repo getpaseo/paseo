@@ -2837,6 +2837,7 @@ type OpenCodeForegroundOwnership =
   | { status: "inactive" }
   | {
       status: "unowned";
+      runnerBoundaryReached: boolean;
       startingTotalCostUsd: number | undefined;
     }
   | {
@@ -3040,7 +3041,6 @@ class OpenCodeAgentSession implements AgentSession {
   private eventStreamReady: Deferred<void> | null = null;
   private eventStreamTask: Promise<void> | null = null;
   private foregroundOwnership: OpenCodeForegroundOwnership = { status: "inactive" };
-  private pendingAutonomousInitiatingMessageId: string | null = null;
   private closed = false;
   private readonly persistSession: boolean;
   private deletedFromProvider = false;
@@ -3322,29 +3322,26 @@ class OpenCodeAgentSession implements AgentSession {
     const turnId = this.createTurnId();
     this.turnState = { status: "running", turnId };
     this.foregroundOwnership = { status: "inactive" };
-    this.pendingAutonomousInitiatingMessageId = null;
     this.notifySubscribers({ type: "turn_started", provider: "opencode" }, turnId);
 
     const slashCommand = await this.resolveSlashCommandInvocation(prompt);
     if (this.activeForegroundTurnId !== turnId) {
       return { turnId };
     }
-    if (slashCommand) {
-      const startingTotalCostUsd = this.sessionTotalCostUsd;
-      const foregroundMessages = await this.readForegroundSessionMessages(
-        turnAbortController.signal,
-      );
-      if (this.isForegroundTurnCanceled(turnId, turnAbortController.signal)) {
-        return { turnId };
-      }
-      this.foregroundOwnership = foregroundMessages
-        ? {
-            status: "baseline",
-            knownMessageIds: new Set(foregroundMessages.map((message) => message.info.id)),
-            startingTotalCostUsd,
-          }
-        : { status: "unowned", startingTotalCostUsd };
+    const startingTotalCostUsd = this.sessionTotalCostUsd;
+    const foregroundMessages = await this.readForegroundSessionMessages(turnAbortController.signal);
+    if (this.isForegroundTurnCanceled(turnId, turnAbortController.signal)) {
+      return { turnId };
+    }
+    this.foregroundOwnership = foregroundMessages
+      ? {
+          status: "baseline",
+          knownMessageIds: new Set(foregroundMessages.map((message) => message.info.id)),
+          startingTotalCostUsd,
+        }
+      : { status: "unowned", runnerBoundaryReached: true, startingTotalCostUsd };
 
+    if (slashCommand) {
       if (slashCommand.commandName === "compact" || slashCommand.commandName === "summarize") {
         this.suppressAssistantMessagesUntilIdle.active = true;
         void this.client.session
@@ -3449,10 +3446,6 @@ class OpenCodeAgentSession implements AgentSession {
             this.config.systemPrompt,
             this.config.daemonAppendSystemPrompt,
           );
-          this.foregroundOwnership = {
-            status: "unowned",
-            startingTotalCostUsd: this.sessionTotalCostUsd,
-          };
           const promptResponse = await this.client.session.promptAsync({
             sessionID: this.sessionId,
             directory: this.config.cwd,
@@ -3541,7 +3534,7 @@ class OpenCodeAgentSession implements AgentSession {
     ) {
       return;
     }
-    this.startAutonomousTurn(null);
+    this.startAutonomousTurn(true);
   }
 
   private startChildSessionHydration(): void {
@@ -3937,6 +3930,13 @@ class OpenCodeAgentSession implements AgentSession {
       if (message.info.role !== "assistant") {
         continue;
       }
+      if (signal.aborted || this.activeForegroundTurnId !== turnId) {
+        return false;
+      }
+      if (this.shouldSuppressPersistedAssistantMessage(message)) {
+        this.compactionSummaryMessageIds.add(message.info.id);
+        continue;
+      }
       for (const part of message.parts) {
         if (signal.aborted || this.activeForegroundTurnId !== turnId) {
           return false;
@@ -3973,8 +3973,40 @@ class OpenCodeAgentSession implements AgentSession {
         }
         this.notifySubscribers(event, turnId);
       }
+      this.replayPersistedStructuredAssistantMessage(message.info, message.parts, turnId);
     }
     return true;
+  }
+
+  private shouldSuppressPersistedAssistantMessage(message: OpenCodeSessionMessage): boolean {
+    return (
+      this.suppressAssistantMessagesUntilIdle.active ||
+      this.compactionSummaryMessageIds.has(message.info.id) ||
+      isOpenCodeCompactionSummaryMessage(message.info)
+    );
+  }
+
+  private replayPersistedStructuredAssistantMessage(
+    info: Extract<OpenCodeMessage, { role: "assistant" }>,
+    parts: readonly OpenCodePart[],
+    turnId: string,
+  ): void {
+    const hasTextPart = parts.some((part) => part.type === "text" && part.text);
+    if (hasTextPart || this.emittedStructuredMessageIds.has(info.id)) {
+      return;
+    }
+    const text = stringifyStructuredAssistantMessage(info.structured);
+    if (!text) {
+      return;
+    }
+    this.emittedStructuredMessageIds.add(info.id);
+    this.notifySubscribers(
+      buildOpenCodeReplayTimelineEvent({
+        item: { type: "assistant_message", text, messageId: info.id },
+        message: info,
+      }),
+      turnId,
+    );
   }
 
   private async readForegroundSessionMessages(
@@ -4065,7 +4097,6 @@ class OpenCodeAgentSession implements AgentSession {
       return;
     }
     this.observeRunnerStatusEvent(event);
-    this.observeAutonomousTurnCandidate(event);
     if (this.discardEventWhileStopping(event, eventCount)) {
       return;
     }
@@ -4079,9 +4110,9 @@ class OpenCodeAgentSession implements AgentSession {
       }
     }
     if (!turnId && this.shouldStartAutonomousTurn(event, foregroundEvents)) {
+      const runnerStatus = getOpenCodeRunnerStatusFromEvent(event, this.sessionId);
       turnId = this.startAutonomousTurn(
-        this.getAutonomousTurnInitiatingMessageId(event) ??
-          this.pendingAutonomousInitiatingMessageId,
+        runnerStatus !== null && isOpenCodeRunnerActive(runnerStatus),
       );
     }
     if (!turnId) {
@@ -4185,17 +4216,6 @@ class OpenCodeAgentSession implements AgentSession {
     );
   }
 
-  private observeAutonomousTurnCandidate(event: OpenCodeEvent): void {
-    if (this.turnState.status !== "idle" || getOpenCodeEventSessionId(event) !== this.sessionId) {
-      return;
-    }
-    const initiatingMessageId = this.getAutonomousTurnInitiatingMessageId(event);
-    if (!initiatingMessageId || this.emittedUserMessageIds.has(initiatingMessageId)) {
-      return;
-    }
-    this.pendingAutonomousInitiatingMessageId = initiatingMessageId;
-  }
-
   private getAutonomousTurnInitiatingMessageId(event: OpenCodeEvent): string | null {
     if (event.type !== "message.updated") {
       return null;
@@ -4217,6 +4237,13 @@ class OpenCodeAgentSession implements AgentSession {
     if (ownership.status !== "unowned" && ownership.status !== "baseline") {
       return;
     }
+    if (ownership.status === "unowned" && !ownership.runnerBoundaryReached) {
+      const runnerStatus = getOpenCodeRunnerStatusFromEvent(event, this.sessionId);
+      if (runnerStatus !== null && isOpenCodeRunnerActive(runnerStatus)) {
+        this.foregroundOwnership = { ...ownership, runnerBoundaryReached: true };
+      }
+      return;
+    }
     const initiatingMessageId = this.getAutonomousTurnInitiatingMessageId(event);
     if (
       !initiatingMessageId ||
@@ -4231,17 +4258,14 @@ class OpenCodeAgentSession implements AgentSession {
     };
   }
 
-  private startAutonomousTurn(initiatingMessageId: string | null): string {
+  private startAutonomousTurn(runnerBoundaryReached: boolean): string {
     const turnId = this.createTurnId();
     this.turnState = { status: "running", turnId };
-    this.pendingAutonomousInitiatingMessageId = null;
-    this.foregroundOwnership = initiatingMessageId
-      ? {
-          status: "owned",
-          initiatingMessageId,
-          startingTotalCostUsd: this.sessionTotalCostUsd,
-        }
-      : { status: "unowned", startingTotalCostUsd: this.sessionTotalCostUsd };
+    this.foregroundOwnership = {
+      status: "unowned",
+      runnerBoundaryReached,
+      startingTotalCostUsd: this.sessionTotalCostUsd,
+    };
     this.runningToolCalls.clear();
     this.subAgentsByCallId.clear();
     this.subAgentCallIdByChildSessionId.clear();
@@ -4274,7 +4298,6 @@ class OpenCodeAgentSession implements AgentSession {
     this.pendingUserMessageText = null;
     this.pendingClientMessageId = null;
     this.foregroundOwnership = { status: "inactive" };
-    this.pendingAutonomousInitiatingMessageId = null;
     this.turnState = { status: "idle" };
     this.abortController = null;
     this.notifySubscribers(event, turnId);
@@ -4307,7 +4330,6 @@ class OpenCodeAgentSession implements AgentSession {
     this.pendingUserMessageText = null;
     this.pendingClientMessageId = null;
     this.foregroundOwnership = { status: "inactive" };
-    this.pendingAutonomousInitiatingMessageId = null;
     this.abortController = null;
     return abort;
   }
