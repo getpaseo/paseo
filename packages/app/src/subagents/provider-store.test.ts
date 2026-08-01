@@ -6,6 +6,7 @@ import {
   refreshProviderSubagentTimeline,
   useProviderSubagentStore,
 } from "./provider-store";
+import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
 
 const SERVER_ID = "server-1";
 const PARENT_ID = "parent-1";
@@ -948,5 +949,69 @@ describe("provider subagent client store", () => {
         text: "Older loaded output.Current tail output.",
       }),
     ]);
+  });
+
+  test("replaces a sparse range when a live row reaches the reconnect tail first", () => {
+    const store = useProviderSubagentStore.getState();
+    const timelineRow = (seq: number) => ({
+      seq,
+      timestamp: new Date(seq * 1_000).toISOString(),
+      item: { type: "assistant_message" as const, text: `Output ${seq}.` },
+    });
+    store.replaceTimeline(SERVER_ID, {
+      requestId: "initial-complete-tail",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      direction: "tail",
+      epoch: "epoch-1",
+      reset: false,
+      staleCursor: false,
+      gap: false,
+      window: { minSeq: 1, maxSeq: 2, nextSeq: 3 },
+      hasOlder: false,
+      hasNewer: false,
+      rows: [timelineRow(1), timelineRow(2)],
+      error: null,
+    });
+    store.applyUpdate(SERVER_ID, {
+      kind: "timeline",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      epoch: "epoch-1",
+      seq: 104,
+      timestamp: new Date(104_000).toISOString(),
+      item: timelineRow(104).item,
+    });
+
+    const firstTailSeq = 105 - TIMELINE_FETCH_PAGE_SIZE;
+    const reconnectRows = Array.from({ length: TIMELINE_FETCH_PAGE_SIZE }, (_, index) =>
+      timelineRow(firstTailSeq + index),
+    );
+    store.replaceTimeline(SERVER_ID, {
+      requestId: "bounded-reconnect-tail",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      direction: "tail",
+      epoch: "epoch-1",
+      reset: false,
+      staleCursor: false,
+      gap: false,
+      window: { minSeq: 1, maxSeq: 104, nextSeq: 105 },
+      hasOlder: true,
+      hasNewer: false,
+      rows: reconnectRows,
+      error: null,
+    });
+
+    const timeline = useProviderSubagentStore
+      .getState()
+      .timelines.get(providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID));
+    expect(firstTailSeq).toBe(65);
+    expect([...timeline!.rows.keys()]).toEqual(reconnectRows.map((row) => row.seq));
+    expect(timeline?.lastSeq).toBe(104);
+    expect(timeline?.hasOlder).toBe(true);
   });
 });

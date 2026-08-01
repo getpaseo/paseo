@@ -251,6 +251,17 @@ function buildTimelineState(
   };
 }
 
+function isContiguousSequenceRange(rows: ReadonlyMap<number, unknown>): boolean {
+  if (rows.size <= 1) return true;
+  let firstSeq = Number.POSITIVE_INFINITY;
+  let lastSeq = Number.NEGATIVE_INFINITY;
+  for (const seq of rows.keys()) {
+    firstSeq = Math.min(firstSeq, seq);
+    lastSeq = Math.max(lastSeq, seq);
+  }
+  return lastSeq - firstSeq + 1 === rows.size;
+}
+
 function buildTimelineResponseUpdate(
   existing: ProviderSubagentTimelineState | undefined,
   payload: Extract<
@@ -290,6 +301,10 @@ function buildTimelineResponseUpdate(
 
   const unchangedBoundary = payload.window.maxSeq === existing.lastSeq;
   const responseAlreadyLoaded = payload.rows.every((row) => existing.rows.has(row.seq));
+  const combinedRows = new Map([...existing.rows, ...rows]);
+  if (!isContiguousSequenceRange(combinedRows)) {
+    return { rows, hasOlder: payload.hasOlder };
+  }
   if (unchangedBoundary && responseAlreadyLoaded) {
     return null;
   }
@@ -299,15 +314,8 @@ function buildTimelineResponseUpdate(
 
   const currentFirstSeq = Math.min(...existing.rows.keys());
   const responseFirstSeq = Math.min(...rows.keys());
-  const responseLastSeq = Math.max(...rows.keys());
-  const responseEndsBeforeCurrent = responseLastSeq < currentFirstSeq - 1;
-  const responseStartsAfterCurrent = responseFirstSeq > existing.lastSeq + 1;
-  if (responseEndsBeforeCurrent || responseStartsAfterCurrent) {
-    return { rows, hasOlder: payload.hasOlder };
-  }
-
   return {
-    rows: new Map([...existing.rows, ...rows]),
+    rows: combinedRows,
     hasOlder: responseFirstSeq < currentFirstSeq ? payload.hasOlder : existing.hasOlder,
   };
 }
