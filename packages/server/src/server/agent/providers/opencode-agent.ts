@@ -539,50 +539,70 @@ function isOpenCodeNotFoundError(error: unknown): boolean {
   );
 }
 
-async function abortOpenCodeSession(params: {
+function abortOpenCodeSession(params: {
   client: Pick<OpencodeClient, "session">;
   sessionId: string;
   directory: string;
   logger: Logger;
-}): Promise<void> {
-  const { client, sessionId, directory, logger } = params;
+  ownOperation: OpenCodeLifecycleOperationOwner;
+}): { bounded: Promise<void>; settlement: Promise<void> } {
+  const { client, sessionId, directory, logger, ownOperation } = params;
   const timeoutController = new AbortController();
   const timeout = setTimeout(() => {
     timeoutController.abort(new Error("Timed out aborting OpenCode session during close"));
   }, OPENCODE_SESSION_CLOSE_ABORT_TIMEOUT_MS);
 
-  try {
-    const response = await withTimeout(
-      client.session.abort(
-        {
-          sessionID: sessionId,
-          directory,
-        },
-        { signal: timeoutController.signal },
-      ),
-      OPENCODE_SESSION_CLOSE_ABORT_TIMEOUT_MS,
-      `OpenCode session.abort timed out after ${OPENCODE_SESSION_CLOSE_ABORT_TIMEOUT_MS}ms`,
-    );
-    if (response.error && !isOpenCodeNotFoundError(response.error)) {
+  const settlement = ownOperation(
+    Promise.resolve().then(
+      async () =>
+        await client.session.abort(
+          {
+            sessionID: sessionId,
+            directory,
+          },
+          { signal: timeoutController.signal },
+        ),
+    ),
+  )
+    .then((response) => {
+      if (response.error && !isOpenCodeNotFoundError(response.error)) {
+        logger.warn(
+          {
+            sessionId,
+            error: toDiagnosticErrorMessage(response.error),
+          },
+          "Failed to abort OpenCode session during close",
+        );
+      }
+      return undefined;
+    })
+    .catch((error) => {
       logger.warn(
         {
           sessionId,
-          error: toDiagnosticErrorMessage(response.error),
+          error: toDiagnosticErrorMessage(error),
         },
         "Failed to abort OpenCode session during close",
       );
-    }
-  } catch (error) {
-    logger.warn(
-      {
-        sessionId,
-        error: toDiagnosticErrorMessage(error),
-      },
-      "Failed to abort OpenCode session during close",
-    );
-  } finally {
-    clearTimeout(timeout);
-  }
+    });
+  const bounded = withTimeout(
+    settlement,
+    OPENCODE_SESSION_CLOSE_ABORT_TIMEOUT_MS,
+    `OpenCode session.abort timed out after ${OPENCODE_SESSION_CLOSE_ABORT_TIMEOUT_MS}ms`,
+  )
+    .catch((error) => {
+      logger.warn(
+        {
+          sessionId,
+          error: toDiagnosticErrorMessage(error),
+        },
+        "Failed to abort OpenCode session during close",
+      );
+    })
+    .finally(() => {
+      clearTimeout(timeout);
+    });
+  return { bounded, settlement };
 }
 
 function isOpenCodeHeadersTimeoutFailure(error: unknown): boolean {
@@ -1376,6 +1396,8 @@ type OpenCodeClientFactory = (options: { baseUrl: string; directory: string }) =
 
 interface OpenCodeSessionGeneration {
   isCurrent(): boolean;
+  joinPriorCloseAbort(): Promise<void>;
+  ownCloseAbort(settlement: Promise<void>): void;
   release(): void;
 }
 
@@ -1383,6 +1405,8 @@ type OpenCodeLifecycleOperationOwner = <T>(operation: Promise<T>) => Promise<T>;
 
 const standaloneOpenCodeSessionGeneration: OpenCodeSessionGeneration = {
   isCurrent: () => true,
+  joinPriorCloseAbort: async () => undefined,
+  ownCloseAbort: () => undefined,
   release: () => undefined,
 };
 
@@ -1410,7 +1434,10 @@ export class OpenCodeAgentClient implements AgentClient {
   private readonly activeSessionStartups = new Set<Promise<AgentSession>>();
   private readonly failedSessionStartupCleanupTasks = new Set<Promise<void>>();
   private readonly unsettledSessionOperations = new Set<Promise<unknown>>();
-  private readonly sessionGenerations = new Map<string, symbol>();
+  private readonly sessionGenerations = new Map<
+    string,
+    { closeAbortSettlement: Promise<void> | null }
+  >();
 
   constructor(
     logger: Logger,
@@ -1435,14 +1462,31 @@ export class OpenCodeAgentClient implements AgentClient {
     // AgentManager installs the reload that completes last, so provider ownership
     // follows completion order as well, regardless of invocation order.
     const key = `${serverUrl}\0${sessionId}`;
-    const generation = Symbol(sessionId);
-    this.sessionGenerations.set(key, generation);
+    const previous = this.sessionGenerations.get(key);
+    const entry = {
+      closeAbortSettlement: null as Promise<void> | null,
+    };
+    const priorCloseAbort = previous?.closeAbortSettlement ?? Promise.resolve();
+    this.sessionGenerations.set(key, entry);
     return {
-      isCurrent: () => this.sessionGenerations.get(key) === generation,
+      isCurrent: () => this.sessionGenerations.get(key) === entry,
+      joinPriorCloseAbort: async () => await priorCloseAbort,
+      ownCloseAbort: (settlement) => {
+        entry.closeAbortSettlement = settlement;
+      },
       release: () => {
-        if (this.sessionGenerations.get(key) === generation) {
-          this.sessionGenerations.delete(key);
+        if (this.sessionGenerations.get(key) !== entry) {
+          return;
         }
+        if (!entry.closeAbortSettlement) {
+          this.sessionGenerations.delete(key);
+          return;
+        }
+        void entry.closeAbortSettlement.finally(() => {
+          if (this.sessionGenerations.get(key) === entry) {
+            this.sessionGenerations.delete(key);
+          }
+        });
       },
     };
   }
@@ -1930,20 +1974,35 @@ export class OpenCodeAgentClient implements AgentClient {
     rawCreatePromise: Promise<{ data?: { id?: string } }>,
     acquisition: OpenCodeServerAcquisition,
   ): Promise<void> {
+    const cleanup = rawCreatePromise
+      .then(
+        async (lateResponse) => {
+          const lateSessionId = lateResponse.data?.id;
+          if (lateSessionId) {
+            await this.deleteFailedCreateSession(client, directory, lateSessionId);
+          }
+          return undefined;
+        },
+        (error) => {
+          this.logger.debug(
+            { err: error },
+            "OpenCode failed session create request did not settle cleanly",
+          );
+          return undefined;
+        },
+      )
+      .finally(async () => await this.releaseFailedSessionStartup(acquisition));
     try {
-      const lateResponse = await withTimeout(
-        rawCreatePromise,
+      await withTimeout(
+        cleanup,
         OPENCODE_FAILED_CREATE_JOIN_TIMEOUT_MS,
         `OpenCode failed session create cleanup timed out after ${OPENCODE_FAILED_CREATE_JOIN_TIMEOUT_MS}ms`,
       );
-      const lateSessionId = lateResponse.data?.id;
-      if (lateSessionId) {
-        await this.deleteFailedCreateSession(client, directory, lateSessionId);
-      }
     } catch (error) {
       this.logger.debug({ err: error }, "OpenCode failed session create request did not settle");
-    } finally {
-      await this.releaseFailedSessionStartup(acquisition);
+      // Keep ownership after the bounded wait: an SDK request can ignore abort and
+      // still create a provider session that must be deleted before its server is released.
+      this.ownFailedSessionStartupCleanup(cleanup);
     }
   }
 
@@ -3660,6 +3719,7 @@ class OpenCodeAgentSession implements AgentSession {
     if (this.turnState.status === "running") {
       throw new Error("A foreground turn is already active");
     }
+    await this.sessionGeneration.joinPriorCloseAbort();
     await this.awaitRunnerQuiescence();
     if (this.turnState.status !== "idle") {
       throw new Error("OpenCode is still stopping the previous turn");
@@ -4620,14 +4680,18 @@ class OpenCodeAgentSession implements AgentSession {
       this.abortController?.abort();
       const eventStreamTask = this.eventStreamTask;
       this.eventStreamAbortController?.abort();
-      const abortTask = this.sessionGeneration.isCurrent()
+      const abort = this.sessionGeneration.isCurrent()
         ? abortOpenCodeSession({
             client: this.client,
             sessionId: this.sessionId,
             directory: this.config.cwd,
             logger: this.logger,
+            ownOperation: this.ownLifecycleOperation,
           })
-        : Promise.resolve();
+        : null;
+      if (abort) {
+        this.sessionGeneration.ownCloseAbort(abort.settlement);
+      }
       this.eventStreamAbortController = null;
       this.eventStreamReady = null;
       this.eventStreamTask = null;
@@ -4644,7 +4708,7 @@ class OpenCodeAgentSession implements AgentSession {
             );
           })
         : Promise.resolve();
-      await Promise.all([streamCloseTask, abortTask]);
+      await Promise.all([streamCloseTask, abort?.bounded ?? Promise.resolve()]);
       if (this.sessionGeneration.isCurrent()) {
         await this.deleteProviderSessionIfEphemeral();
       }

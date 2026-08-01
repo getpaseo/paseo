@@ -325,7 +325,7 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     rmSync(cwd, { recursive: true, force: true });
   });
 
-  test("cancels a pending create request and bounds shutdown cleanup when the SDK ignores it", async () => {
+  test("bounds shutdown while retaining a canceled create request the SDK ignores", async () => {
     vi.useFakeTimers();
     const cwd = tmpCwd();
     const runtime = new TestOpenCodeHarness();
@@ -357,7 +357,7 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
       await shutdown;
 
       expect(openCode.calls.sessionDelete).toEqual([]);
-      expect(runtime.acquisitions[0]?.releaseCount).toBe(1);
+      expect(runtime.acquisitions[0]?.releaseCount).toBe(0);
       expect(runtime.shutdownCallCount).toBe(1);
     } finally {
       vi.useRealTimers();
@@ -365,7 +365,48 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     }
   });
 
-  test("shutdown cancels and bounds a session.create request that never settles", async () => {
+  test("deletes a session that resolves after failed create cleanup times out", async () => {
+    vi.useFakeTimers();
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    const createGate = deferred<{ data: { id: string } }>();
+    openCode.sessionCreateImplementation = async () => await createGate.promise;
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const controller = new AbortController();
+
+    try {
+      const creation = client.createSession(buildConfig(cwd), undefined, {
+        signal: controller.signal,
+      });
+      await vi.waitFor(() => expect(openCode.calls.sessionCreate).toHaveLength(1));
+      controller.abort(new Error("OpenCode startup canceled"));
+      await expect(creation).rejects.toThrow("OpenCode startup canceled");
+
+      const shutdown = client.shutdown();
+      await vi.advanceTimersByTimeAsync(5_000);
+      await shutdown;
+      expect(openCode.calls.sessionDelete).toEqual([]);
+      expect(runtime.acquisitions[0]?.releaseCount).toBe(0);
+
+      createGate.resolve({ data: { id: "late-after-cleanup-timeout" } });
+      await vi.waitFor(() =>
+        expect(openCode.calls.sessionDelete).toEqual([
+          { sessionID: "late-after-cleanup-timeout", directory: cwd },
+        ]),
+      );
+      await vi.waitFor(() => expect(runtime.acquisitions[0]?.releaseCount).toBe(1));
+    } finally {
+      vi.useRealTimers();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("shutdown remains bounded when a session.create request never settles", async () => {
     vi.useFakeTimers();
     const cwd = tmpCwd();
     const runtime = new TestOpenCodeHarness();
@@ -396,7 +437,7 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
       await vi.advanceTimersByTimeAsync(1);
       await shutdown;
       expect(openCode.calls.sessionDelete).toEqual([]);
-      expect(runtime.acquisitions[0]?.releaseCount).toBe(1);
+      expect(runtime.acquisitions[0]?.releaseCount).toBe(0);
       expect(runtime.shutdownCallCount).toBe(1);
     } finally {
       vi.useRealTimers();
@@ -3097,22 +3138,18 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
-  test("does not let a superseded reload generation abort its replacement", async () => {
+  test("waits for a timed-out close abort before prompting a replacement generation", async () => {
     vi.useFakeTimers();
     const cwd = tmpCwd();
     const runtime = new TestOpenCodeHarness();
     const previousClient = new TestOpenCodeClient();
     const replacementClient = new TestOpenCodeClient();
+    const settleAbort = deferred<void>();
     previousClient.sessionCreateResponse = { data: { id: "ses_reload_generation" } };
-    previousClient.globalEventImplementation = async () => ({
-      stream: {
-        [Symbol.asyncIterator]() {
-          return {
-            next: async () => await new Promise<IteratorResult<unknown>>(() => {}),
-          };
-        },
-      },
-    });
+    previousClient.sessionAbortImplementation = async () => {
+      await settleAbort.promise;
+      return {};
+    };
     replacementClient.sessionGetResponse = {
       data: { id: "ses_reload_generation", directory: cwd, title: null },
     };
@@ -3125,6 +3162,13 @@ describe("OpenCode adapter startTurn error handling", () => {
 
     try {
       const previous = await provider.createSession({ provider: "opencode", cwd });
+      const previousClose = previous.close();
+      await vi.advanceTimersByTimeAsync(5_000);
+      await previousClose;
+      expect(previousClient.calls.sessionAbort).toEqual([
+        { sessionID: "ses_reload_generation", directory: cwd },
+      ]);
+
       const replacement = await provider.resumeSession(
         {
           provider: "opencode",
@@ -3135,11 +3179,15 @@ describe("OpenCode adapter startTurn error handling", () => {
         undefined,
       );
 
-      const previousClose = previous.close();
-      await vi.advanceTimersByTimeAsync(5_000);
-      await previousClose;
+      const prompt = replacement.startTurn("replacement");
+      for (let index = 0; index < 10; index += 1) {
+        await Promise.resolve();
+      }
+      expect(replacementClient.calls.sessionPromptAsync).toEqual([]);
 
-      expect(previousClient.calls.sessionAbort).toEqual([]);
+      settleAbort.resolve();
+      await prompt;
+      expect(replacementClient.calls.sessionPromptAsync).toHaveLength(1);
       await replacement.close();
       expect(replacementClient.calls.sessionAbort).toEqual([
         { sessionID: "ses_reload_generation", directory: cwd },
