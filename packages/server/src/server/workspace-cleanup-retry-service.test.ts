@@ -130,16 +130,26 @@ test("rotates bounded batches and preserves backoff after a failed target", asyn
   expect(retryWorktreeCleanup).toHaveBeenCalledTimes(attempts.length);
 });
 
-test("shutdown cancels and owns an active cleanup cycle", async () => {
+test("shutdown joins canceled cleanup through process closure and releases once", async () => {
   vi.useFakeTimers();
-  let aborted = false;
+  let abortCount = 0;
+  let closeProcess = () => {};
+  const processClosed = new Promise<void>((resolve) => {
+    closeProcess = resolve;
+  });
+  const rejectAfterProcessClose = (reject: (error: Error) => void) =>
+    processClosed.then(() => {
+      reject(new Error("cleanup canceled after process close"));
+      return undefined;
+    });
+  const releaseSubscription = vi.fn();
   const retryWorktreeCleanup = vi.fn((_target, signal: AbortSignal) => {
     return new Promise<void>((_resolve, reject) => {
       signal.addEventListener(
         "abort",
         () => {
-          aborted = true;
-          reject(new Error("cleanup canceled"));
+          abortCount += 1;
+          void rejectAfterProcessClose(reject);
         },
         { once: true },
       );
@@ -154,7 +164,7 @@ test("shutdown cancels and owns an active cleanup cycle", async () => {
           incarnationId: "inc-hung",
         }),
       ],
-      subscribeToMutations: () => () => undefined,
+      subscribeToMutations: () => releaseSubscription,
     },
     retryWorktreeCleanup,
     logger: createTestLogger(),
@@ -163,6 +173,23 @@ test("shutdown cancels and owns an active cleanup cycle", async () => {
   await expect(service.start()).resolves.toBeUndefined();
   await vi.advanceTimersToNextTimerAsync();
   expect(retryWorktreeCleanup).toHaveBeenCalledTimes(1);
+
+  let stopSettled = false;
+  const stopping = service.stop().then(() => {
+    stopSettled = true;
+    return undefined;
+  });
+  await Promise.resolve();
+
+  expect(abortCount).toBe(1);
+  expect(stopSettled).toBe(false);
+  expect(releaseSubscription).toHaveBeenCalledOnce();
+
+  closeProcess();
+  await expect(stopping).resolves.toBeUndefined();
+  expect(stopSettled).toBe(true);
+
   await expect(service.stop()).resolves.toBeUndefined();
-  expect(aborted).toBe(true);
+  expect(abortCount).toBe(1);
+  expect(releaseSubscription).toHaveBeenCalledOnce();
 });

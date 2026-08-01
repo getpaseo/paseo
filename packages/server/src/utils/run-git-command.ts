@@ -142,6 +142,7 @@ function waitForGitCommand<T>(
   task: Promise<T>,
   signal: AbortSignal | undefined,
   args: readonly string[],
+  hasStarted: () => boolean,
 ): Promise<T> {
   if (!signal) return task;
 
@@ -153,7 +154,13 @@ function waitForGitCommand<T>(
       signal.removeEventListener("abort", onAbort);
       callback();
     };
-    const onAbort = () => finish(() => reject(createGitCancellationError(args)));
+    const onAbort = () => {
+      // A queued command has no process to join, so it can be canceled
+      // immediately. Once the limiter has started the task, its process owns
+      // settlement and will preserve the cancellation error until `close`.
+      if (hasStarted()) return;
+      finish(() => reject(createGitCancellationError(args)));
+    };
     signal.addEventListener("abort", onAbort, { once: true });
     void task.then(
       (value) => finish(() => resolve(value)),
@@ -168,7 +175,9 @@ export function runGitCommand(
   options: GitCommandOptions,
 ): Promise<GitCommandResult> {
   const runtimeMetric = gitRuntimeMetrics.submit(getGitOperation(args));
+  let started = false;
   const promise = gitLimit(() => {
+    started = true;
     if (options.signal?.aborted) {
       gitRuntimeMetrics.start(runtimeMetric);
       gitRuntimeMetrics.finish(runtimeMetric, { success: false, timedOut: false });
@@ -212,6 +221,9 @@ export function runGitCommand(
 
       let settled = false;
       let metricFinished = false;
+      let pendingError: Error | null = null;
+      let pendingErrorTimedOut = false;
+      let requestedSignal: NodeJS.Signals | null = null;
       let truncated = false;
       let stdoutBytes = 0;
       let stderrBytes = 0;
@@ -233,36 +245,26 @@ export function runGitCommand(
         gitRuntimeMetrics.finish(runtimeMetric, { success: metric.success, timedOut });
       };
 
+      const rememberError = (error: Error, timedOut = false) => {
+        if (pendingError) return;
+        pendingError = error;
+        pendingErrorTimedOut = timedOut;
+      };
+
+      const requestTermination = (error: Error, timedOut = false) => {
+        rememberError(error, timedOut);
+        if (requestedSignal) return;
+        requestedSignal = "SIGKILL";
+        child.kill(requestedSignal);
+      };
+
       const timer = setTimeout(() => {
         const error = new Error(`Git command timed out after ${timeout}ms: ${command}`);
-        child.kill("SIGKILL");
-        finishMetricOnce(
-          {
-            args,
-            cwd: options.cwd,
-            startedAtMs: startedAt,
-            durationMs: Date.now() - startedAt,
-            exitCode: null,
-            signal: "SIGKILL",
-            success: false,
-          },
-          true,
-        );
-        settle(() => reject(error));
+        requestTermination(error, true);
       }, timeout);
 
       const onAbort = () => {
-        child.kill("SIGKILL");
-        finishMetricOnce({
-          args,
-          cwd: options.cwd,
-          startedAtMs: startedAt,
-          durationMs: Date.now() - startedAt,
-          exitCode: null,
-          signal: "SIGKILL",
-          success: false,
-        });
-        settle(() => reject(createGitCancellationError(args)));
+        requestTermination(createGitCancellationError(args));
       };
       options.signal?.addEventListener("abort", onAbort, { once: true });
       if (options.signal?.aborted) onAbort();
@@ -308,15 +310,7 @@ export function runGitCommand(
       });
 
       child.on("error", (error) => {
-        finishMetricOnce({
-          args,
-          cwd: options.cwd,
-          startedAtMs: startedAt,
-          durationMs: Date.now() - startedAt,
-          exitCode: null,
-          signal: null,
-          success: false,
-        });
+        rememberError(error);
         if (logger && traceContext) {
           logger.trace(
             {
@@ -327,7 +321,6 @@ export function runGitCommand(
             "Git command process error",
           );
         }
-        settle(() => reject(error));
       });
 
       child.on("close", (exitCode, signal) => {
@@ -351,6 +344,24 @@ export function runGitCommand(
             },
             "Git command closed",
           );
+        }
+
+        if (pendingError) {
+          const error = pendingError;
+          finishMetricOnce(
+            {
+              args,
+              cwd: options.cwd,
+              startedAtMs: startedAt,
+              durationMs: Date.now() - startedAt,
+              exitCode,
+              signal: signal ?? requestedSignal,
+              success: false,
+            },
+            pendingErrorTimedOut,
+          );
+          settle(() => reject(error));
+          return;
         }
 
         if (!truncated && !acceptExitCodes.includes(exitCode ?? -1)) {
@@ -390,7 +401,7 @@ export function runGitCommand(
     });
   });
   gitRuntimeMetrics.observeLimiter(gitLimit.activeCount, gitLimit.pendingCount);
-  return waitForGitCommand(promise, options.signal, args);
+  return waitForGitCommand(promise, options.signal, args, () => started);
 }
 
 function formatGitCommand(args: readonly string[]): string {
