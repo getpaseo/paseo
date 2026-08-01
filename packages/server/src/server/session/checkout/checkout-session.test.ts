@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import pino from "pino";
 import {
   type CheckoutDiffSubscriber,
@@ -13,6 +13,7 @@ import type { SessionOutboundMessage } from "../../messages.js";
 import type {
   CheckoutDiffCompareInput,
   CheckoutDiffSnapshotPayload,
+  CheckoutDiffSubscription,
 } from "../../checkout-diff-manager.js";
 import type {
   WorkspaceGitRuntimeSnapshot,
@@ -38,6 +39,22 @@ interface FakeDiffSubscription {
   compare: CheckoutDiffCompareInput;
   emit(snapshot: CheckoutDiffSnapshotPayload): void;
   unsubscribeCalls: number;
+}
+
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve(value: T): void;
+  reject(error: unknown): void;
+}
+
+function createDeferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }
 
 function createFakeDiffSubscriber(initial: CheckoutDiffSnapshotPayload) {
@@ -514,6 +531,129 @@ describe("CheckoutSession", () => {
       expect(subscriptions).toHaveLength(2);
       expect(subscriptions[0].unsubscribeCalls).toBe(1);
       expect(subscriptions[1].unsubscribeCalls).toBe(0);
+    });
+
+    it("discards a superseded concurrent subscription when it completes after its replacement", async () => {
+      const first = createDeferred<CheckoutDiffSubscription>();
+      const second = createDeferred<CheckoutDiffSubscription>();
+      const firstUnsubscribe = vi.fn();
+      const secondUnsubscribe = vi.fn();
+      let firstListener: ((snapshot: CheckoutDiffSnapshotPayload) => void) | undefined;
+      let subscribeCalls = 0;
+      const diff: CheckoutDiffSubscriber = {
+        subscribe(_params, listener) {
+          subscribeCalls += 1;
+          if (subscribeCalls === 1) {
+            firstListener = listener;
+            return first.promise;
+          }
+          return second.promise;
+        },
+        scheduleRefreshForCwd: vi.fn(),
+      };
+      const { checkout, emitted } = makeCheckoutSession({ diff });
+
+      const firstRequest = checkout.handleSubscribeDiffRequest({
+        type: "subscribe_checkout_diff_request",
+        subscriptionId: "s1",
+        cwd: "/repo",
+        compare: { mode: "uncommitted" },
+        requestId: "first",
+      });
+      const secondRequest = checkout.handleSubscribeDiffRequest({
+        type: "subscribe_checkout_diff_request",
+        subscriptionId: "s1",
+        cwd: "/repo",
+        compare: { mode: "uncommitted" },
+        requestId: "second",
+      });
+
+      second.resolve({
+        initial: { cwd: "/repo", files: [], error: null },
+        unsubscribe: secondUnsubscribe,
+      });
+      await secondRequest;
+      firstListener?.({
+        cwd: "/repo",
+        files: [],
+        error: { code: "UNKNOWN", message: "stale update" },
+      });
+      first.resolve({
+        initial: {
+          cwd: "/repo",
+          files: [],
+          error: { code: "UNKNOWN", message: "stale initial" },
+        },
+        unsubscribe: firstUnsubscribe,
+      });
+      await firstRequest;
+
+      expect(emitted).toEqual([
+        {
+          type: "subscribe_checkout_diff_response",
+          payload: {
+            subscriptionId: "s1",
+            cwd: "/repo",
+            files: [],
+            error: null,
+            requestId: "second",
+          },
+        },
+      ]);
+      expect(firstUnsubscribe).toHaveBeenCalledTimes(1);
+      expect(secondUnsubscribe).not.toHaveBeenCalled();
+    });
+
+    it("ignores a superseded concurrent subscription failure", async () => {
+      const first = createDeferred<CheckoutDiffSubscription>();
+      const secondUnsubscribe = vi.fn();
+      let subscribeCalls = 0;
+      const diff: CheckoutDiffSubscriber = {
+        subscribe() {
+          subscribeCalls += 1;
+          if (subscribeCalls === 1) {
+            return first.promise;
+          }
+          return Promise.resolve({
+            initial: { cwd: "/repo", files: [], error: null },
+            unsubscribe: secondUnsubscribe,
+          });
+        },
+        scheduleRefreshForCwd: vi.fn(),
+      };
+      const { checkout, emitted } = makeCheckoutSession({ diff });
+
+      const firstRequest = checkout.handleSubscribeDiffRequest({
+        type: "subscribe_checkout_diff_request",
+        subscriptionId: "s1",
+        cwd: "/repo",
+        compare: { mode: "uncommitted" },
+        requestId: "first",
+      });
+      await checkout.handleSubscribeDiffRequest({
+        type: "subscribe_checkout_diff_request",
+        subscriptionId: "s1",
+        cwd: "/repo",
+        compare: { mode: "uncommitted" },
+        requestId: "second",
+      });
+
+      first.reject(new Error("stale failure"));
+
+      await expect(firstRequest).resolves.toBeUndefined();
+      expect(emitted).toEqual([
+        {
+          type: "subscribe_checkout_diff_response",
+          payload: {
+            subscriptionId: "s1",
+            cwd: "/repo",
+            files: [],
+            error: null,
+            requestId: "second",
+          },
+        },
+      ]);
+      expect(secondUnsubscribe).not.toHaveBeenCalled();
     });
 
     it("unsubscribes every live subscription on cleanup", async () => {

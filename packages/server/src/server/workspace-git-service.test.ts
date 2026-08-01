@@ -4,6 +4,7 @@ import path, { join } from "node:path";
 import type { FSWatcher } from "node:fs";
 import type pino from "pino";
 import type { ForgeService } from "../services/forge-service.js";
+import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { createGitMutationService } from "./session/git-mutation/git-mutation-service.js";
 import type {
   CheckoutSnapshotFacts,
@@ -1665,6 +1666,46 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(cleanDiff.diff).toBe("");
     expect(getCheckoutDiff).toHaveBeenCalledTimes(2);
 
+    service.dispose();
+  });
+
+  test("diff manager invalidation survives unsubscribe and refreshes a resubscription", async () => {
+    const nestedCwd = join(REPO_CWD, "packages/server");
+    let dirty = true;
+    const getCheckoutDiff = vi.fn(async () => ({
+      diff: "",
+      structured: dirty
+        ? [{ path: "file.txt", additions: 1, deletions: 0, status: "modified" as const }]
+        : [],
+    }));
+    const service = createService({
+      getCheckoutDiff: getCheckoutDiff as unknown as ReturnType<typeof vi.fn>,
+    });
+    const manager = new CheckoutDiffManager({
+      workspaceGitService: service,
+      logger: createLogger() as unknown as pino.Logger,
+      paseoHome: "/tmp/paseo-test",
+    });
+
+    const first = await manager.subscribe(
+      { cwd: nestedCwd, compare: { mode: "uncommitted" } },
+      vi.fn(),
+    );
+    expect(first.initial.files).toHaveLength(1);
+    first.unsubscribe();
+
+    dirty = false;
+    manager.scheduleRefreshForCwd(nestedCwd);
+    const second = await manager.subscribe(
+      { cwd: nestedCwd, compare: { mode: "uncommitted" } },
+      vi.fn(),
+    );
+
+    expect(second.initial.files).toEqual([]);
+    expect(getCheckoutDiff).toHaveBeenCalledTimes(2);
+
+    second.unsubscribe();
+    manager.dispose();
     service.dispose();
   });
 });

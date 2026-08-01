@@ -36,6 +36,7 @@ function createPendingManager() {
   }> = [];
   const workspaceGitService = {
     getCheckoutDiff: async () => ({ diff: "", structured: [] }),
+    invalidateCheckoutDiff: vi.fn(),
     requestWorkingTreeWatch: (cwd: string, onChange: () => void) => {
       const pending = createDeferred<{ repoRoot: string | null; unsubscribe: () => void }>();
       const watch = {
@@ -94,6 +95,7 @@ describe("CheckoutDiffManager", () => {
       getSnapshot: vi.fn(),
       getCheckoutDiff:
         options?.getCheckoutDiffImplementation ?? vi.fn(async () => ({ diff: "", structured: [] })),
+      invalidateCheckoutDiff: vi.fn(),
       refresh: vi.fn(),
       scheduleRefreshForCwd: vi.fn(),
       requestWorkingTreeWatch: mockRequestWorkingTreeWatch,
@@ -299,6 +301,83 @@ describe("CheckoutDiffManager", () => {
       force: true,
       reason: expect.stringContaining("working-tree"),
     });
+  });
+
+  test("explicit refresh invalidates the service diff cache without an open target", () => {
+    const { manager, workspaceGitService } = createManager();
+
+    manager.scheduleRefreshForCwd("/tmp/repo");
+
+    expect(workspaceGitService.invalidateCheckoutDiff).toHaveBeenCalledWith("/tmp/repo");
+  });
+
+  test("watcher invalidation supersedes an in-flight refresh", async () => {
+    const staleRefresh = createDeferred<{
+      diff: string;
+      structured: Array<{
+        path: string;
+        additions: number;
+        deletions: number;
+        status: "modified";
+      }>;
+    }>();
+    const refreshStarted = createDeferred<void>();
+    const updateReceived = createDeferred<{
+      cwd: string;
+      files: Array<{
+        path: string;
+        additions: number;
+        deletions: number;
+        status: "modified";
+      }>;
+      error: null;
+    }>();
+    const getCheckoutDiff = vi
+      .fn()
+      .mockResolvedValueOnce({
+        diff: "",
+        structured: [{ path: "initial.ts", additions: 1, deletions: 0, status: "modified" }],
+      })
+      .mockImplementationOnce(() => {
+        refreshStarted.resolve();
+        return staleRefresh.promise;
+      })
+      .mockResolvedValueOnce({
+        diff: "",
+        structured: [{ path: "latest.ts", additions: 1, deletions: 0, status: "modified" }],
+      });
+    const { manager, workspaceGitService, getOnChange } = createManager({
+      getCheckoutDiffImplementation: getCheckoutDiff,
+    });
+    const subscription = await manager.subscribe(
+      { cwd: "/tmp/repo/packages/server", compare: { mode: "uncommitted" } },
+      (snapshot) => updateReceived.resolve(snapshot),
+    );
+
+    manager.scheduleRefreshForCwd("/tmp/repo/packages/server");
+    vi.advanceTimersByTime(150);
+    await refreshStarted.promise;
+    const invalidationsBeforeWatcher = workspaceGitService.invalidateCheckoutDiff.mock.calls.length;
+
+    getOnChange()?.();
+
+    expect(workspaceGitService.invalidateCheckoutDiff).toHaveBeenCalledWith("/tmp/repo");
+    expect(workspaceGitService.invalidateCheckoutDiff).toHaveBeenCalledTimes(
+      invalidationsBeforeWatcher + 1,
+    );
+
+    staleRefresh.resolve({
+      diff: "",
+      structured: [{ path: "stale.ts", additions: 1, deletions: 0, status: "modified" }],
+    });
+
+    await expect(updateReceived.promise).resolves.toEqual({
+      cwd: "/tmp/repo/packages/server",
+      files: [{ path: "latest.ts", additions: 1, deletions: 0, status: "modified" }],
+      error: null,
+    });
+    expect(getCheckoutDiff).toHaveBeenCalledTimes(3);
+    subscription.unsubscribe();
   });
 
   test("explicit refresh does not reuse the previous payload for a new subscriber", async () => {

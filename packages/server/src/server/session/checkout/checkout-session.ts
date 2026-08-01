@@ -114,6 +114,10 @@ export interface CheckoutDiffSubscriber {
   scheduleRefreshForCwd(cwd: string): void;
 }
 
+interface CheckoutDiffSessionSubscription {
+  unsubscribe(): void;
+}
+
 export interface CheckoutSessionOptions {
   host: CheckoutSessionHost;
   gitMutation: Pick<GitMutationService, "checkoutExistingBranch" | "notifyGitMutation">;
@@ -151,7 +155,7 @@ export class CheckoutSession {
   private readonly paseoHome: string;
   private readonly worktreesRoot: string | undefined;
   private readonly logger: pino.Logger;
-  private readonly diffSubscriptions = new Map<string, () => void>();
+  private readonly diffSubscriptions = new Map<string, CheckoutDiffSessionSubscription>();
 
   constructor(options: CheckoutSessionOptions) {
     this.host = options.host;
@@ -400,15 +404,20 @@ export class CheckoutSession {
 
   async handleSubscribeDiffRequest(msg: SubscribeCheckoutDiffRequest): Promise<void> {
     const cwd = expandTilde(msg.cwd);
-    this.diffSubscriptions.get(msg.subscriptionId)?.();
+    this.diffSubscriptions.get(msg.subscriptionId)?.unsubscribe();
     const abort = new AbortController();
-    const unsubscribe = () => abort.abort();
-    this.diffSubscriptions.set(msg.subscriptionId, unsubscribe);
+    const activeSubscription: CheckoutDiffSessionSubscription = {
+      unsubscribe: () => abort.abort(),
+    };
+    this.diffSubscriptions.set(msg.subscriptionId, activeSubscription);
 
     try {
       const subscription = await this.checkoutDiffManager.subscribe(
         { cwd, compare: msg.compare, signal: abort.signal },
         (snapshot) => {
+          if (this.diffSubscriptions.get(msg.subscriptionId) !== activeSubscription) {
+            return;
+          }
           this.host.emit({
             type: "checkout_diff_update",
             payload: {
@@ -419,6 +428,12 @@ export class CheckoutSession {
         },
       );
 
+      if (this.diffSubscriptions.get(msg.subscriptionId) !== activeSubscription) {
+        subscription.unsubscribe();
+        return;
+      }
+      activeSubscription.unsubscribe = subscription.unsubscribe;
+
       this.host.emit({
         type: "subscribe_checkout_diff_response",
         payload: {
@@ -428,10 +443,12 @@ export class CheckoutSession {
         },
       });
     } catch (error) {
-      if (this.diffSubscriptions.get(msg.subscriptionId) === unsubscribe) {
-        this.diffSubscriptions.delete(msg.subscriptionId);
+      if (this.diffSubscriptions.get(msg.subscriptionId) !== activeSubscription) {
+        activeSubscription.unsubscribe();
+        return;
       }
-      unsubscribe();
+      this.diffSubscriptions.delete(msg.subscriptionId);
+      activeSubscription.unsubscribe();
       throw error;
     }
   }
@@ -439,7 +456,7 @@ export class CheckoutSession {
   handleUnsubscribeDiffRequest(msg: UnsubscribeCheckoutDiffRequest): void {
     const unsubscribe = this.diffSubscriptions.get(msg.subscriptionId);
     this.diffSubscriptions.delete(msg.subscriptionId);
-    unsubscribe?.();
+    unsubscribe?.unsubscribe();
   }
 
   async handleRefreshRequest(msg: CheckoutRefreshRequest): Promise<void> {
@@ -1385,7 +1402,7 @@ export class CheckoutSession {
 
   cleanup(): void {
     for (const unsubscribe of this.diffSubscriptions.values()) {
-      unsubscribe();
+      unsubscribe.unsubscribe();
     }
     this.diffSubscriptions.clear();
   }

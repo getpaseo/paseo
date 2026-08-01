@@ -8,7 +8,7 @@ const CHECKOUT_DIFF_WATCH_DEBOUNCE_MS = 150;
 
 type CheckoutDiffWorkspace = Pick<
   WorkspaceGitService,
-  "getCheckoutDiff" | "requestWorkingTreeWatch"
+  "getCheckoutDiff" | "invalidateCheckoutDiff" | "requestWorkingTreeWatch"
 >;
 
 export type CheckoutDiffCompareInput = SubscribeCheckoutDiffRequest["compare"];
@@ -55,6 +55,7 @@ export interface CheckoutDiffSubscription {
 export class CheckoutDiffManager {
   private readonly workspaceGitService: CheckoutDiffWorkspace;
   private readonly targets = new Map<string, CheckoutDiffWatchTarget>();
+  private readonly diffCwdsByCwd = new Map<string, string>();
 
   constructor(options: {
     logger: pino.Logger;
@@ -112,9 +113,20 @@ export class CheckoutDiffManager {
 
   scheduleRefreshForCwd(cwd: string): void {
     const resolvedCwd = expandTilde(cwd);
+    const invalidatedCwds = new Set([resolvedCwd]);
+    this.workspaceGitService.invalidateCheckoutDiff(resolvedCwd);
+    const knownDiffCwd = this.diffCwdsByCwd.get(resolvedCwd);
+    if (knownDiffCwd && !invalidatedCwds.has(knownDiffCwd)) {
+      invalidatedCwds.add(knownDiffCwd);
+      this.workspaceGitService.invalidateCheckoutDiff(knownDiffCwd);
+    }
     for (const target of this.targets.values()) {
       if (target.cwd !== resolvedCwd && target.diffCwd !== resolvedCwd) {
         continue;
+      }
+      if (!invalidatedCwds.has(target.diffCwd)) {
+        invalidatedCwds.add(target.diffCwd);
+        this.workspaceGitService.invalidateCheckoutDiff(target.diffCwd);
       }
       target.refreshGeneration += 1;
       target.latestPayload = null;
@@ -142,6 +154,7 @@ export class CheckoutDiffManager {
       this.closeTarget(target);
     }
     this.targets.clear();
+    this.diffCwdsByCwd.clear();
   }
 
   private normalizeCompare(compare: CheckoutDiffCompareInput): CheckoutDiffCompareInput {
@@ -196,6 +209,13 @@ export class CheckoutDiffManager {
       target.debounceTimer = null;
       void this.refreshTarget(target);
     }, CHECKOUT_DIFF_WATCH_DEBOUNCE_MS);
+  }
+
+  private handleWorkingTreeChange(target: CheckoutDiffWatchTarget): void {
+    target.refreshGeneration += 1;
+    target.latestPayload = null;
+    this.workspaceGitService.invalidateCheckoutDiff(target.diffCwd);
+    this.scheduleTargetRefresh(target);
   }
 
   private async computeCheckoutDiffSnapshot(
@@ -310,9 +330,10 @@ export class CheckoutDiffManager {
   private async openTarget(target: CheckoutDiffWatchTarget): Promise<void> {
     const { repoRoot, unsubscribe } = await this.workspaceGitService.requestWorkingTreeWatch(
       target.cwd,
-      () => this.scheduleTargetRefresh(target),
+      () => this.handleWorkingTreeChange(target),
     );
     target.diffCwd = repoRoot ?? target.cwd;
+    this.diffCwdsByCwd.set(target.cwd, target.diffCwd);
     if (this.targets.get(target.key) !== target || target.listeners.size === 0) {
       unsubscribe();
       return;
