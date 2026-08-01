@@ -304,69 +304,6 @@ describe("processTimelineResponse", () => {
     expect(result.sideEffects).toEqual([{ type: "flush_pending_updates" }]);
   });
 
-  it("appends only rows newer than the cursor from an overlapping resume tail", () => {
-    const loaded = createUserMessage({
-      id: "local-prompt-30",
-      clientMessageId: "client-message-30",
-      messageId: "client-message-30",
-      text: "local presentation",
-      timestamp: new Date(1030),
-      timelineCursor: { epoch: "epoch-1", seq: 30 },
-      attachments: [{ type: "text", mimeType: "text/plain", text: "local attachment" }],
-    });
-    const unrelated = createUserMessage({
-      id: "unrelated-row",
-      messageId: "unrelated-provider-message",
-      text: "unrelated",
-      timestamp: new Date(1035),
-      timelineCursor: { epoch: "epoch-1", seq: 35 },
-    });
-    const currentTail = [loaded, unrelated];
-    const currentCursor: TimelineCursor = { epoch: "epoch-1", startSeq: 1, endSeq: 40 };
-
-    const result = processTimelineResponse({
-      ...baseTimelineInput,
-      currentTail,
-      currentCursor,
-      payload: {
-        ...baseTimelineInput.payload,
-        direction: "tail",
-        window: { minSeq: 1, maxSeq: 42, nextSeq: 43 },
-        startCursor: { seq: 30 },
-        endCursor: { seq: 42 },
-        entries: [
-          {
-            ...makeTimelineEntry(30, "provider presentation", "user_message"),
-            item: {
-              type: "user_message",
-              text: "provider presentation",
-              clientMessageId: "client-message-30",
-              messageId: "provider-message-30",
-            },
-          },
-          makeTimelineEntry(41, "new output 41"),
-          makeTimelineEntry(42, "new output 42"),
-        ],
-      },
-    });
-
-    expect(result.commit).toBe("apply");
-    expect(result.tail[0]).toBe(loaded);
-    expect(result.tail[1]).toBe(unrelated);
-    expect(
-      [...result.tail, ...result.head].filter(
-        (item) => item.kind === "user_message" && item.clientMessageId === "client-message-30",
-      ),
-    ).toHaveLength(1);
-    expect(getAssistantTexts([...result.tail, ...result.head])).toEqual([
-      "new output 41new output 42",
-    ]);
-    expect(result.cursor).toEqual({ epoch: "epoch-1", startSeq: 1, endSeq: 42 });
-    expect(result.cursorChanged).toBe(true);
-    expect(result.acknowledgedClientMessageIds).toEqual([]);
-    expect(result.sideEffects).toEqual([{ type: "flush_pending_updates" }]);
-  });
-
   it("atomically replaces history when a resume tail leaves a middle gap", () => {
     const result = processTimelineResponse({
       ...baseTimelineInput,

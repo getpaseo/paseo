@@ -3631,7 +3631,7 @@ export class AgentManager {
         this.emitState(agent);
         return undefined;
       case "timeline":
-        return this.onStreamTimelineEvent({ agent, event, options, isForegroundEvent, flags });
+        return this.onStreamTimelineEvent({ agent, event, options, flags });
       case "turn_completed":
         this.onStreamTurnCompleted({
           agent,
@@ -3690,7 +3690,6 @@ export class AgentManager {
     agent: ActiveManagedAgent;
     event: Extract<AgentStreamEvent, { type: "timeline" }>;
     options: { fromHistory?: boolean } | undefined;
-    isForegroundEvent: boolean;
     flags: StreamEventFlags;
   }): Promise<void> {
     const { agent, event, options, flags } = params;

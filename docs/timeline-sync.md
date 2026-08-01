@@ -63,8 +63,7 @@ Focus alone does not mutate timeline state; the tail response is compared with t
 authoritative range first.
 
 - The same epoch and `window.maxSeq` is an exact display no-op. The app advances synchronization
-  bookkeeping and reconciles canonical submission identities without replacing timeline arrays,
-  preserving an upward-scrolled viewport.
+  bookkeeping without replacing timeline arrays, preserving an upward-scrolled viewport.
 - When the page overlaps or is adjacent to the local end cursor, only projected items newer than
   that cursor are applied. Already-covered rows are not replayed.
 - A true middle gap, epoch change, or rewind atomically replaces stale canonical history with the
