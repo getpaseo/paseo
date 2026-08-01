@@ -780,6 +780,7 @@ function startDaemon(args: DaemonSpawnArgs): ChildProcess {
     PASEO_E2E_EDITOR_RECORD_PATH: args.editorRecordPath,
     PASEO_SERVER_ID: "srv_e2e_test_daemon",
     PASEO_LISTEN: `0.0.0.0:${args.port}`,
+    PASEO_RELAY_ENABLED: "true",
     PASEO_RELAY_ENDPOINT: `127.0.0.1:${args.relayPort}`,
     PASEO_CORS_ORIGINS: `http://localhost:${args.metroPort}`,
     PASEO_NODE_ENV: "development",

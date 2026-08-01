@@ -14,6 +14,10 @@ For testing rules, see [testing.md](testing.md).
 - **`interface`** over `type` when both work.
 - **No `index.ts` barrel files** that only re-export — they create indirection and circular-dep risk. Import from the source.
 
+## Shell scripts
+
+- Bash scripts always use `#!/usr/bin/env bash`. Never hard-code `/bin/bash` or `/usr/bin/bash`; those paths are not portable to environments such as NixOS.
+
 ## Comments and noise
 
 - Delete any comment where removing it loses zero information. Comments explain _why_, not _what_.

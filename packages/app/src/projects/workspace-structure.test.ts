@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { ProjectDescriptor, WorkspaceDescriptor } from "@/stores/session-store";
-import { buildWorkspaceStructureProjects } from "./workspace-structure";
+import { buildWorkspaceStructureProjects, createProjectViewKey } from "./workspace-structure";
 
 function project(input: {
   id: string;
@@ -57,6 +57,7 @@ describe("buildWorkspaceStructureProjects", () => {
 
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({
+      viewKey: key,
       projectKey: key,
       hosts: [
         { serverId: "host-a", projectId: "prj_a" },
@@ -85,6 +86,7 @@ describe("buildWorkspaceStructureProjects", () => {
     });
 
     expect(result).toHaveLength(2);
+    expect(result.map((item) => item.projectKey)).toEqual([key, key]);
     expect(result.map((item) => item.hosts[0]?.projectId).sort()).toEqual(["prj_one", "prj_two"]);
     expect(result.map((item) => item.workspaceKeys[0]).sort()).toEqual([
       "host-a:ws-one",
@@ -112,7 +114,7 @@ describe("buildWorkspaceStructureProjects", () => {
     const identitiesByProjectId = (projects: ReturnType<typeof build>) => {
       const identities: Record<string, string> = {};
       for (const group of projects) {
-        for (const host of group.hosts) identities[host.projectId] = group.projectKey;
+        for (const host of group.hosts) identities[host.projectId] = group.viewKey;
       }
       return identities;
     };
@@ -142,6 +144,33 @@ describe("buildWorkspaceStructureProjects", () => {
     });
 
     expect(result).toHaveLength(2);
-    expect(new Set(result.map((item) => item.projectKey)).size).toBe(2);
+    expect(result.map((item) => item.projectKey)).toEqual([null, null]);
+    expect(new Set(result.map((item) => item.viewKey)).size).toBe(2);
+  });
+
+  test("keeps opaque project keys separate from placement view keys", () => {
+    const placementShapedKey = createProjectViewKey({
+      kind: "placement",
+      serverId: "host-a",
+      projectId: "prj_b",
+    });
+    const result = buildWorkspaceStructureProjects({
+      sessions: [
+        {
+          serverId: "host-a",
+          projects: [
+            project({ id: "prj_a", key: placementShapedKey, root: "/repos/a" }),
+            project({ id: "prj_b", key: null, root: "/repos/b" }),
+          ],
+          workspaces: [],
+        },
+      ],
+    });
+
+    expect(result).toHaveLength(2);
+    expect(new Set(result.map((item) => item.viewKey)).size).toBe(2);
+    expect(result.find((item) => item.projectKey === placementShapedKey)?.viewKey).toBe(
+      placementShapedKey,
+    );
   });
 });

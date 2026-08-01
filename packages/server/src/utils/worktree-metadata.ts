@@ -7,6 +7,7 @@ const ChangeRequestLookupTargetSchema = z.object({
   headRef: z.string().min(1),
   headRepositoryOwner: z.string().min(1).optional(),
   changeRequestNumber: z.number().int().positive().optional(),
+  localBranchName: z.string().min(1).optional(),
 });
 
 const PaseoWorktreeMetadataV1Schema = z.object({
@@ -47,9 +48,66 @@ const PaseoWorktreeMetadataSchema = z.union([
 ]);
 
 export type PaseoWorktreeMetadata = z.infer<typeof PaseoWorktreeMetadataSchema>;
-export type PaseoWorktreeChangeRequestLookupTarget = z.infer<
-  typeof ChangeRequestLookupTargetSchema
->;
+export type PaseoWorktreeChangeRequestHint = z.infer<typeof ChangeRequestLookupTargetSchema>;
+
+export function createPaseoWorktreeChangeRequestHint(
+  input: PaseoWorktreeChangeRequestHint,
+): PaseoWorktreeChangeRequestHint {
+  return ChangeRequestLookupTargetSchema.parse(input);
+}
+
+export function getPaseoWorktreeChangeRequestHintForBranch(
+  metadata: PaseoWorktreeMetadata | null,
+  currentBranch: string,
+): PaseoWorktreeChangeRequestHint | null {
+  const target = metadata?.changeRequestLookupTarget;
+  if (!target) {
+    return null;
+  }
+  if (target.localBranchName) {
+    return target.localBranchName === currentBranch ? target : null;
+  }
+
+  // COMPAT(change-request-local-branch): metadata before v0.2.5 omitted the
+  // local binding; remove after 2027-07-31.
+  const canonicalBranches = new Set<string>();
+  if (target.headRepositoryOwner) {
+    canonicalBranches.add(`${target.headRepositoryOwner}/${target.headRef}`);
+    const normalizedOwner = normalizeLegacyGitHubOwnerForBranch(target.headRepositoryOwner);
+    if (normalizedOwner) {
+      canonicalBranches.add(`${normalizedOwner}/${target.headRef}`);
+    }
+  } else {
+    canonicalBranches.add(target.headRef);
+  }
+  return canonicalBranches.has(currentBranch) ? target : null;
+}
+
+function normalizeLegacyGitHubOwnerForBranch(owner: string): string | null {
+  const normalized = owner.trim().toLowerCase();
+  return /^[a-z0-9-]+$/.test(normalized) ? normalized : null;
+}
+
+export function rebindPaseoWorktreeChangeRequestHint(
+  worktreeRoot: string,
+  previousBranch: string,
+  currentBranch: string,
+): boolean {
+  const metadata = readPaseoWorktreeMetadata(worktreeRoot);
+  const target = getPaseoWorktreeChangeRequestHintForBranch(metadata, previousBranch);
+  if (!metadata || !target) {
+    return false;
+  }
+
+  writePaseoWorktreeMetadataFile(worktreeRoot, {
+    ...metadata,
+    changeRequestLookupTarget: {
+      ...target,
+      localBranchName: currentBranch,
+    },
+  });
+  return true;
+}
 
 function getGitDirForWorktreeRoot(worktreeRoot: string): string {
   const gitPath = join(worktreeRoot, ".git");
@@ -93,7 +151,7 @@ export function writePaseoWorktreeMetadata(
   worktreeRoot: string,
   options: {
     baseRefName: string;
-    changeRequestLookupTarget?: PaseoWorktreeChangeRequestLookupTarget;
+    changeRequestLookupTarget?: PaseoWorktreeChangeRequestHint;
     incarnationId?: string;
   },
 ): void {
