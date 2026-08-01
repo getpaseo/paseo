@@ -13,7 +13,6 @@ export interface ForegroundTurnWaiter {
 export interface PendingForegroundRun {
   token: string;
   kind: "foreground";
-  clientMessageId: string | null;
   stagedEvents: AgentStreamEvent[];
   turnId: string | null;
   started: boolean;
@@ -42,8 +41,8 @@ export interface ForegroundRunAgentState {
 export class AgentRunState {
   private readonly runs = new Map<string, TrackedAgentRun>();
 
-  createPendingRun(agentId: string, clientMessageId?: string): PendingForegroundRun {
-    const pendingRun = createPendingForegroundRun(clientMessageId ?? null);
+  createPendingRun(agentId: string): PendingForegroundRun {
+    const pendingRun = createPendingForegroundRun();
     this.runs.set(agentId, pendingRun);
     return pendingRun;
   }
@@ -265,13 +264,12 @@ export class ForegroundTurnStream {
   }
 }
 
-function createPendingForegroundRun(clientMessageId: string | null): PendingForegroundRun {
+function createPendingForegroundRun(): PendingForegroundRun {
   return {
     ...createTrackedRunState(),
     kind: "foreground",
     turnId: null,
     started: false,
-    clientMessageId,
     stagedEvents: [],
   };
 }

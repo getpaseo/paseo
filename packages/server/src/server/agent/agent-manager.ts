@@ -2031,7 +2031,7 @@ export class AgentManager {
     const isReplacement = agent.pendingReplacement;
     agent.lastError = undefined;
 
-    const pendingRun = this.runs.createPendingRun(agentId, options?.clientMessageId);
+    const pendingRun = this.runs.createPendingRun(agentId);
 
     const streamForwarder = async function* streamForwarder(this: AgentManager) {
       let turnId: string;
