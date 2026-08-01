@@ -27,7 +27,7 @@ import type {
   TerminalManager,
   TerminalWorkspaceContributionChangedEvent,
 } from "../terminal/terminal-manager.js";
-import type { WorktreeCreationReservation } from "../utils/worktree.js";
+import type { WorktreeCreationJournalCallbacks } from "../utils/worktree.js";
 import { TerminalSessionController } from "../terminal/terminal-session-controller.js";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import type { BinaryFrame } from "@getpaseo/protocol/binary-frames/index";
@@ -357,10 +357,7 @@ interface ResolvedSessionCreateAgentIntent {
 
 interface PendingAgentCreationReservation {
   agentId?: string;
-  onWorktreePathResolved?: (
-    worktreePath: string,
-    reservation: WorktreeCreationReservation,
-  ) => Promise<void>;
+  worktreeCreationJournal?: WorktreeCreationJournalCallbacks;
 }
 
 type FetchWorkspacesRequestMessage = Extract<
@@ -3095,7 +3092,7 @@ export class Session {
         target: worktree,
         firstAgentContext,
         hasLegacyGitOptions: Boolean(git),
-        onWorktreePathResolved: pendingCreation.onWorktreePathResolved,
+        worktreeCreationJournal: pendingCreation.worktreeCreationJournal,
       });
       createdWorktreeForCleanup = createdWorktree;
       const resolvedIntent = await this.resolveSessionCreateAgentIntent({
@@ -3257,8 +3254,16 @@ export class Session {
     await this.agentStorage.beginPendingAgentCreation(agentId);
     return {
       agentId,
-      onWorktreePathResolved: (worktreePath, reservation) =>
-        this.agentStorage.setPendingAgentCreationWorktree(agentId, worktreePath, reservation),
+      worktreeCreationJournal: {
+        onWorktreePathPlanned: (worktreePath, plan) =>
+          this.agentStorage.planPendingAgentCreationWorktree(agentId, worktreePath, plan),
+        onWorktreePathResolved: (worktreePath, reservation) =>
+          this.agentStorage.identifyPendingAgentCreationWorktree(
+            agentId,
+            worktreePath,
+            reservation,
+          ),
+      },
     };
   }
 
@@ -3625,10 +3630,7 @@ export class Session {
     gitOptions?: GitSetupOptions,
     legacyWorktreeName?: string,
     firstAgentContext?: FirstAgentContext,
-    onWorktreePathResolved?: (
-      worktreePath: string,
-      reservation: WorktreeCreationReservation,
-    ) => Promise<void>,
+    worktreeCreationJournal?: WorktreeCreationJournalCallbacks,
   ): Promise<{
     sessionConfig: AgentSessionConfig;
     setupContinuation?: CreatePaseoWorktreeWorkflowResult["setupContinuation"];
@@ -3669,7 +3671,7 @@ export class Session {
       gitOptions,
       legacyWorktreeName,
       firstAgentContext,
-      onWorktreePathResolved,
+      worktreeCreationJournal,
     );
   }
 
@@ -5863,6 +5865,22 @@ export class Session {
           this.workspaceAutoName.scheduleForWorktree(autoNameInput, {
             currentSelection: this.getFocusedAgentSelectionForCwd(autoNameInput.workspace.cwd),
           }),
+        worktreeCreationJournal: {
+          beginPendingAgentCreation: (creationId, journalOptions) =>
+            this.agentStorage.beginPendingAgentCreation(creationId, journalOptions),
+          planPendingAgentCreationWorktree: (creationId, worktreePath, plan) =>
+            this.agentStorage.planPendingAgentCreationWorktree(creationId, worktreePath, plan),
+          identifyPendingAgentCreationWorktree: (creationId, worktreePath, reservation) =>
+            this.agentStorage.identifyPendingAgentCreationWorktree(
+              creationId,
+              worktreePath,
+              reservation,
+            ),
+          removePendingAgentCreation: (creationId) =>
+            this.agentStorage.removePendingAgentCreation(creationId),
+          recoverPendingCreation: (creationId) =>
+            this.createAgentLifecycleDispatch.recoverPendingAgentCreation(creationId),
+        },
         emitWorkspaceUpdateForWorkspaceId: (workspaceId) =>
           this.emitWorkspaceUpdateForWorkspaceId(workspaceId),
         cacheWorkspaceSetupSnapshot: (workspaceId, snapshot) => {
@@ -5891,10 +5909,7 @@ export class Session {
     target: CreateAgentWorktreeTarget | undefined;
     firstAgentContext: FirstAgentContext;
     hasLegacyGitOptions: boolean;
-    onWorktreePathResolved?: (
-      worktreePath: string,
-      reservation: WorktreeCreationReservation,
-    ) => Promise<void>;
+    worktreeCreationJournal?: WorktreeCreationJournalCallbacks;
   }): Promise<CreatePaseoWorktreeWorkflowResult | null> {
     if (input.target && input.hasLegacyGitOptions) {
       throw new Error("create_agent_request worktree cannot be combined with git options");
@@ -5909,7 +5924,8 @@ export class Session {
       runSetup: false,
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
-      onWorktreePathResolved: input.onWorktreePathResolved,
+      onWorktreePathPlanned: input.worktreeCreationJournal?.onWorktreePathPlanned,
+      onWorktreePathResolved: input.worktreeCreationJournal?.onWorktreePathResolved,
     } as const;
     switch (input.target.mode) {
       case "branch-off": {

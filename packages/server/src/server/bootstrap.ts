@@ -482,6 +482,38 @@ class DaemonShutdownDeadlineError extends Error {
   }
 }
 
+class LifecycleMutationIngressClosedError extends Error {
+  constructor() {
+    super("Lifecycle mutation ingress is closed");
+    this.name = "LifecycleMutationIngressClosedError";
+  }
+}
+
+class LifecycleMutationIngress {
+  private accepting = true;
+  private readonly inFlight = new Set<Promise<unknown>>();
+
+  run<T>(operation: () => Promise<T>): Promise<T> {
+    if (!this.accepting) {
+      return Promise.reject(new LifecycleMutationIngressClosedError());
+    }
+    const task = Promise.resolve().then(operation);
+    this.inFlight.add(task);
+    void task.then(
+      () => this.inFlight.delete(task),
+      () => this.inFlight.delete(task),
+    );
+    return task;
+  }
+
+  async closeAndDrain(): Promise<void> {
+    this.accepting = false;
+    while (this.inFlight.size > 0) {
+      await Promise.allSettled(Array.from(this.inFlight));
+    }
+  }
+}
+
 function waitForShutdownStep(
   task: Promise<void>,
   signal: AbortSignal,
@@ -1075,6 +1107,22 @@ export async function createPaseoDaemon(
         },
         autoNameWorkspaceBranchForFirstAgent: (autoNameInput) =>
           workspaceAutoName.scheduleForWorktree(autoNameInput),
+        worktreeCreationJournal: {
+          beginPendingAgentCreation: (creationId, options) =>
+            agentStorage.beginPendingAgentCreation(creationId, options),
+          planPendingAgentCreationWorktree: (creationId, worktreePath, plan) =>
+            agentStorage.planPendingAgentCreationWorktree(creationId, worktreePath, plan),
+          identifyPendingAgentCreationWorktree: (creationId, worktreePath, reservation) =>
+            agentStorage.identifyPendingAgentCreationWorktree(
+              creationId,
+              worktreePath,
+              reservation,
+            ),
+          removePendingAgentCreation: (creationId) =>
+            agentStorage.removePendingAgentCreation(creationId),
+          recoverPendingCreation: (creationId) =>
+            hubAgentLifecycle.recoverPendingAgentCreation(creationId),
+        },
         emitWorkspaceUpdateForWorkspaceId: async (workspaceId) => {
           await emitWorkspaceUpdatesExternal([workspaceId]);
         },
@@ -1410,6 +1458,7 @@ export async function createPaseoDaemon(
   agentManager.setPaseoToolsEnabled(config.mcpInjectIntoAgents !== false);
 
   const mcpEnabled = config.mcpEnabled ?? true;
+  const agentMcpMutationIngress = new LifecycleMutationIngress();
   let agentMcpBaseUrl: string | null = null;
   if (mcpEnabled) {
     const agentMcpRoute = "/mcp/agents";
@@ -1519,7 +1568,18 @@ export async function createPaseoDaemon(
     };
 
     const handleAgentMcpRequest: express.RequestHandler = (req, res) => {
-      void runAgentMcpRequest(req, res);
+      void agentMcpMutationIngress
+        .run(() => runAgentMcpRequest(req, res))
+        .catch((error) => {
+          if (error instanceof LifecycleMutationIngressClosedError && !res.headersSent) {
+            res.status(503).json({ error: "Daemon is shutting down" });
+            return;
+          }
+          logger.error({ err: error }, "Failed to dispatch Agent MCP request");
+          if (!res.headersSent) {
+            res.status(500).json({ error: "Internal MCP server error" });
+          }
+        });
     };
 
     app.post(agentMcpRoute, handleAgentMcpRequest);
@@ -1751,8 +1811,15 @@ export async function createPaseoDaemon(
     await attempt("workspace cleanup retry service", () => workspaceCleanupRetryService.stop());
     await attempt("workspace reconciliation", () => workspaceReconciliation.dispose());
     await attempt("script health monitor", () => scriptHealthMonitor.stop());
-    // Freeze both ingress and registration before taking the agent closure snapshot.
-    await attempt("WebSocket ingress", () => wsServer?.prepareForShutdown());
+    // Freeze every worktree/agent mutation producer and join operations accepted
+    // before the boundary before taking the agent closure snapshot.
+    await attempt("lifecycle mutation ingress", async () => {
+      await Promise.all([
+        wsServer?.prepareForShutdown(),
+        agentMcpMutationIngress.closeAndDrain(),
+        scheduleService.stop(),
+      ]);
+    });
     await attempt("agent registration", () => agentManager.prepareForShutdown());
     await attempt("create-agent lifecycle", async () => {
       const remainingMs = Math.max(0, shutdownDeadlineAt - Date.now());
@@ -1770,7 +1837,6 @@ export async function createPaseoDaemon(
     await attempt("provider snapshots", () => providerSnapshotManager.shutdown());
     await attempt("terminals", () => terminalManager.killAll());
     await attempt("speech", () => speechService.stop());
-    await attempt("schedules", () => scheduleService.stop());
     await attempt("relay", () => relayRuntime?.stop());
     await attempt("WebSocket server", () => wsServer?.close());
     await attempt("service proxy", () => serviceProxy.stopStandalone());

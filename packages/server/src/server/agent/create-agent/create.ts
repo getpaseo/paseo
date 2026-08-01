@@ -1,7 +1,7 @@
 import type { Logger } from "pino";
 
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
-import type { WorktreeCreationReservation } from "../../../utils/worktree.js";
+import type { WorktreeCreationJournalCallbacks } from "../../../utils/worktree.js";
 import type { CreatePaseoWorktreeInput } from "../../paseo-worktree-service.js";
 import { expandUserPath, resolvePathFromBase } from "../../path-utils.js";
 import { toWorktreeRequestError } from "../../worktree-errors.js";
@@ -83,10 +83,7 @@ export interface CreateAgentFromSessionInput {
     gitOptions?: GitSetupOptions,
     legacyWorktreeName?: string,
     firstAgentContext?: FirstAgentContext,
-    onWorktreePathResolved?: (
-      worktreePath: string,
-      reservation: WorktreeCreationReservation,
-    ) => Promise<void>,
+    worktreeCreationJournal?: WorktreeCreationJournalCallbacks,
   ) => Promise<CreateAgentSessionWorktreeResult>;
 }
 
@@ -346,12 +343,7 @@ async function resolveSessionCreateAgent(
     input.worktreeName,
     input.firstAgentContext,
     pendingAgentId
-      ? (worktreePath, reservation) =>
-          dependencies.agentStorage.setPendingAgentCreationWorktree(
-            pendingAgentId,
-            worktreePath,
-            reservation,
-          )
+      ? pendingWorktreeCreationJournal(dependencies.agentStorage, pendingAgentId)
       : undefined,
   );
   // Validate the requested mode against the provider's modes for the resolved
@@ -450,13 +442,8 @@ async function resolveMcpCreateAgent(
       cwd,
       worktree: input.worktree,
       initialPrompt: input.initialPrompt ?? "",
-      onWorktreePathResolved: pendingAgentId
-        ? (worktreePath, reservation) =>
-            dependencies.agentStorage.setPendingAgentCreationWorktree(
-              pendingAgentId,
-              worktreePath,
-              reservation,
-            )
+      worktreeCreationJournal: pendingAgentId
+        ? pendingWorktreeCreationJournal(dependencies.agentStorage, pendingAgentId)
         : undefined,
     });
   try {
@@ -659,10 +646,7 @@ async function resolveMcpCwd(params: {
   cwd: string;
   initialPrompt: string;
   worktree: CreateAgentFromMcpInput["worktree"];
-  onWorktreePathResolved?: (
-    worktreePath: string,
-    reservation: WorktreeCreationReservation,
-  ) => Promise<void>;
+  worktreeCreationJournal?: WorktreeCreationJournalCallbacks;
 }): Promise<{
   resolvedCwd: string;
   setupContinuation?: AgentWorktreeSetupContinuation;
@@ -699,7 +683,8 @@ async function resolveMcpCwd(params: {
       runSetup: false,
       paseoHome: dependencies.paseoHome,
       worktreesRoot: dependencies.worktreesRoot,
-      onWorktreePathResolved: params.onWorktreePathResolved,
+      onWorktreePathPlanned: params.worktreeCreationJournal?.onWorktreePathPlanned,
+      onWorktreePathResolved: params.worktreeCreationJournal?.onWorktreePathResolved,
     },
     createPaseoWorktree: dependencies.createPaseoWorktree,
     resolveDefaultBranch: baseBranch ? async () => baseBranch : undefined,
@@ -726,6 +711,18 @@ async function resolveMcpCwd(params: {
     setupContinuation: createdWorktree.setupContinuation,
     createdWorkspaceId: createdWorktree.workspace.workspaceId,
     createdWorktree,
+  };
+}
+
+function pendingWorktreeCreationJournal(
+  agentStorage: AgentStorage,
+  agentId: string,
+): WorktreeCreationJournalCallbacks {
+  return {
+    onWorktreePathPlanned: (worktreePath, plan) =>
+      agentStorage.planPendingAgentCreationWorktree(agentId, worktreePath, plan),
+    onWorktreePathResolved: (worktreePath, reservation) =>
+      agentStorage.identifyPendingAgentCreationWorktree(agentId, worktreePath, reservation),
   };
 }
 

@@ -1,4 +1,13 @@
-import { existsSync, mkdirSync, realpathSync, rmSync, statSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
 import { copyFile, rm, stat } from "fs/promises";
 import { join, basename, dirname, isAbsolute, resolve, sep } from "path";
 import net from "node:net";
@@ -208,10 +217,16 @@ export interface CreateWorktreeOptions {
   runSetup: boolean;
   paseoHome?: string;
   worktreesRoot?: string;
+  onWorktreePathPlanned?: (worktreePath: string, plan: WorktreeCreationPlan) => Promise<void>;
   onWorktreePathResolved?: (
     worktreePath: string,
     reservation: WorktreeCreationReservation,
   ) => Promise<void>;
+}
+
+export interface WorktreeCreationPlan {
+  worktreeIncarnationId: string;
+  metadataBaseRefName: string;
 }
 
 export interface WorktreeCreationReservation {
@@ -221,6 +236,24 @@ export interface WorktreeCreationReservation {
     inode: string;
   };
   metadataBaseRefName: string;
+}
+
+export interface WorktreeCreationJournalCallbacks {
+  onWorktreePathPlanned: (worktreePath: string, plan: WorktreeCreationPlan) => Promise<void>;
+  onWorktreePathResolved: (
+    worktreePath: string,
+    reservation: WorktreeCreationReservation,
+  ) => Promise<void>;
+}
+
+const WORKTREE_CREATION_MARKER_FILENAME = ".paseo-worktree-creation";
+
+export function readWorktreeCreationMarker(worktreePath: string): string | null {
+  try {
+    return readFileSync(join(worktreePath, WORKTREE_CREATION_MARKER_FILENAME), "utf8").trim();
+  } catch {
+    return null;
+  }
 }
 
 interface ResolveExistingWorktreeForSlugOptions {
@@ -918,6 +951,19 @@ function normalizePathForOwnership(input: string): string {
   }
 }
 
+function normalizePlannedPathForOwnership(input: string): string {
+  const resolvedInput = resolve(input);
+  const missingSegments: string[] = [];
+  let existingAncestor = resolvedInput;
+  while (!existsSync(existingAncestor)) {
+    const parent = dirname(existingAncestor);
+    if (parent === existingAncestor) break;
+    missingSegments.unshift(basename(existingAncestor));
+    existingAncestor = parent;
+  }
+  return join(normalizePathForOwnership(existingAncestor), ...missingSegments);
+}
+
 function resolveRepoRootFromGitCommonDir(commonDir: string): string {
   const normalizedCommonDir = normalizePathForOwnership(commonDir);
   return basename(normalizedCommonDir) === ".git"
@@ -1281,20 +1327,36 @@ export const createWorktree = async ({
   runSetup,
   paseoHome,
   worktreesRoot,
+  onWorktreePathPlanned,
   onWorktreePathResolved,
 }: CreateWorktreeOptions): Promise<WorktreeConfig> => {
+  if (Boolean(onWorktreePathPlanned) !== Boolean(onWorktreePathResolved)) {
+    throw new Error("Worktree creation journaling requires both planning and identity callbacks");
+  }
   const sourcePlan = await resolveWorktreeSourcePlan({ cwd, source, desiredSlug: worktreeSlug });
   let worktreePath = join(await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot), worktreeSlug);
-  mkdirSync(dirname(worktreePath), { recursive: true });
 
-  // Also handle worktree path collision. When creation is journaled, reserve
-  // the directory so the journal can identify this exact path incarnation.
+  // Also handle worktree path collision. Journaled creation first persists the
+  // exact candidate path and incarnation, then atomically claims the directory.
   let finalWorktreePath = worktreePath;
   let pathSuffix = 1;
-  if (onWorktreePathResolved) {
+  const worktreeIncarnationId = randomUUID();
+  if (onWorktreePathPlanned && onWorktreePathResolved) {
     while (true) {
+      const normalizedCandidatePath = normalizePlannedPathForOwnership(finalWorktreePath);
+      if (existsSync(normalizedCandidatePath)) {
+        finalWorktreePath = `${worktreePath}-${pathSuffix}`;
+        pathSuffix++;
+        continue;
+      }
+      await onWorktreePathPlanned(normalizedCandidatePath, {
+        worktreeIncarnationId,
+        metadataBaseRefName: sourcePlan.metadataBaseRefName,
+      });
+      mkdirSync(dirname(normalizedCandidatePath), { recursive: true });
       try {
-        mkdirSync(finalWorktreePath);
+        mkdirSync(normalizedCandidatePath);
+        finalWorktreePath = normalizedCandidatePath;
         break;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -1303,6 +1365,7 @@ export const createWorktree = async ({
       }
     }
   } else {
+    mkdirSync(dirname(finalWorktreePath), { recursive: true });
     while (existsSync(finalWorktreePath)) {
       finalWorktreePath = `${worktreePath}-${pathSuffix}`;
       pathSuffix++;
@@ -1310,10 +1373,15 @@ export const createWorktree = async ({
   }
 
   const normalizedWorktreePath = normalizePathForOwnership(finalWorktreePath);
-  const worktreeIncarnationId = randomUUID();
-  if (onWorktreePathResolved) {
-    const directoryStat = statSync(normalizedWorktreePath, { bigint: true });
+  if (onWorktreePathPlanned && onWorktreePathResolved) {
+    const markerPath = join(normalizedWorktreePath, WORKTREE_CREATION_MARKER_FILENAME);
     try {
+      writeFileSync(markerPath, `${worktreeIncarnationId}\n`, {
+        encoding: "utf8",
+        flag: "wx",
+        mode: 0o600,
+      });
+      const directoryStat = statSync(normalizedWorktreePath, { bigint: true });
       await onWorktreePathResolved(normalizedWorktreePath, {
         worktreeIncarnationId,
         directoryIdentity: {
@@ -1322,6 +1390,7 @@ export const createWorktree = async ({
         },
         metadataBaseRefName: sourcePlan.metadataBaseRefName,
       });
+      unlinkSync(markerPath);
     } catch (error) {
       rmSync(normalizedWorktreePath, { recursive: true, force: true });
       throw error;

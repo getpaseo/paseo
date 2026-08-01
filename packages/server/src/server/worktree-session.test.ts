@@ -94,6 +94,21 @@ function createLogger(): Logger {
   return logger;
 }
 
+function createWorktreeCreationJournalStub() {
+  return {
+    beginPendingAgentCreation: vi.fn().mockImplementation(async (creationId: string) => ({
+      agentId: creationId,
+      createdAt: new Date().toISOString(),
+      ownerKind: "standalone-worktree" as const,
+      cleanupTarget: { kind: "agent" as const },
+    })),
+    planPendingAgentCreationWorktree: vi.fn().mockResolvedValue(undefined),
+    identifyPendingAgentCreationWorktree: vi.fn().mockResolvedValue(undefined),
+    removePendingAgentCreation: vi.fn().mockResolvedValue(undefined),
+    recoverPendingCreation: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
 function createWorkflowForRequestTest(options: {
   paseoHome: string;
   createPaseoWorktree?: CreatePaseoWorktreeFn;
@@ -115,6 +130,7 @@ function createWorkflowForRequestTest(options: {
         createPaseoWorktree,
         warmWorkspaceGitData: options.warmWorkspaceGitData ?? (async () => {}),
         autoNameWorkspaceBranchForFirstAgent: () => {},
+        worktreeCreationJournal: createWorktreeCreationJournalStub(),
         emitWorkspaceUpdateForWorkspaceId: async () => {},
         cacheWorkspaceSetupSnapshot: () => {},
         emit: () => {},
@@ -458,6 +474,69 @@ describe("resolveGitCreateBaseBranch", () => {
 });
 
 describe("create worktree setup boundary", () => {
+  test("journals standalone creation before mkdir and clears it after workspace publication", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const journal = createWorktreeCreationJournalStub();
+    let plannedCreationId: string | null = null;
+    let plannedPath: string | null = null;
+    let plannedIncarnationId: string | null = null;
+    journal.planPendingAgentCreationWorktree.mockImplementation(
+      async (creationId, worktreePath, plan) => {
+        expect(existsSync(worktreePath)).toBe(false);
+        plannedCreationId = creationId;
+        plannedPath = worktreePath;
+        plannedIncarnationId = plan.worktreeIncarnationId;
+      },
+    );
+    journal.identifyPendingAgentCreationWorktree.mockImplementation(
+      async (creationId, worktreePath, reservation) => {
+        expect(creationId).toBe(plannedCreationId);
+        expect(worktreePath).toBe(plannedPath);
+        expect(reservation.worktreeIncarnationId).toBe(plannedIncarnationId);
+        expect(existsSync(worktreePath)).toBe(true);
+      },
+    );
+
+    try {
+      const result = await createPaseoWorktreeWorkflow(
+        {
+          paseoHome,
+          createPaseoWorktree: createPaseoWorktreeForTest({ paseoHome }),
+          warmWorkspaceGitData: async () => {},
+          autoNameWorkspaceBranchForFirstAgent: () => {},
+          worktreeCreationJournal: journal,
+          emitWorkspaceUpdateForWorkspaceId: async () => {},
+          cacheWorkspaceSetupSnapshot: () => {},
+          emit: () => {},
+          sessionLogger: createLogger(),
+          terminalManager: null,
+          archiveWorkspaceRecord: async () => {},
+          serviceProxy: null,
+          scriptRuntimeStore: null,
+          getDaemonTcpPort: null,
+          getDaemonTcpHost: null,
+          onScriptsChanged: null,
+        },
+        {
+          cwd: repoDir,
+          worktreeSlug: "standalone-journal-order",
+          runSetup: false,
+          paseoHome,
+        },
+      );
+
+      expect(journal.beginPendingAgentCreation).toHaveBeenCalledWith(plannedCreationId, {
+        ownerKind: "standalone-worktree",
+      });
+      expect(journal.identifyPendingAgentCreationWorktree).toHaveBeenCalledOnce();
+      expect(journal.removePendingAgentCreation).toHaveBeenCalledWith(plannedCreationId);
+      expect(existsSync(result.worktree.worktreePath)).toBe(true);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("registers workspace setup before returning the created workspace", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
@@ -475,6 +554,7 @@ describe("create worktree setup boundary", () => {
           createPaseoWorktree: createPaseoWorktreeForTest({ paseoHome }),
           warmWorkspaceGitData: async () => {},
           autoNameWorkspaceBranchForFirstAgent: () => {},
+          worktreeCreationJournal: createWorktreeCreationJournalStub(),
           emitWorkspaceUpdateForWorkspaceId: async () => {},
           cacheWorkspaceSetupSnapshot: () => {},
           emit: () => {},
@@ -522,6 +602,7 @@ describe("create worktree setup boundary", () => {
           createPaseoWorktree: createPaseoWorktreeForTest({ paseoHome }),
           warmWorkspaceGitData: async () => {},
           autoNameWorkspaceBranchForFirstAgent: () => {},
+          worktreeCreationJournal: createWorktreeCreationJournalStub(),
           emitWorkspaceUpdateForWorkspaceId: async () => {},
           cacheWorkspaceSetupSnapshot: () => {},
           emit: (message) => workspaceSetupEvents.push(message),
@@ -595,6 +676,7 @@ describe("create worktree setup boundary", () => {
           createPaseoWorktree: createPaseoWorktreeForTest({ paseoHome }),
           warmWorkspaceGitData: async () => {},
           autoNameWorkspaceBranchForFirstAgent: () => {},
+          worktreeCreationJournal: createWorktreeCreationJournalStub(),
           emitWorkspaceUpdateForWorkspaceId: async () => {},
           cacheWorkspaceSetupSnapshot: () => {},
           emit: () => {},

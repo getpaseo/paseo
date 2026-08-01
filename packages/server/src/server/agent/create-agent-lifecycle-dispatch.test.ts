@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import { expect, test, vi } from "vitest";
@@ -242,6 +242,125 @@ test("startup removes an exact pre-git worktree reservation without archiving", 
     expect(archiveWorktreePath).not.toHaveBeenCalled();
     expect(pendingCreations.size).toBe(0);
     expect(existsSync(worktreePath)).toBe(false);
+  } finally {
+    rmSync(worktreePath, { recursive: true, force: true });
+  }
+});
+
+test("startup retains the journal and directory after a crash between mkdir and identity", async () => {
+  const worktreePath = mkdtempSync(join(tmpdir(), "paseo-pre-identity-crash-"));
+  const agentId = "agent-pending-pre-identity-crash";
+  const pendingCreations = new Map<string, PendingAgentCreation>([
+    [
+      agentId,
+      {
+        agentId,
+        createdAt: "2025-01-01T00:00:00.000Z",
+        cleanupTarget: {
+          kind: "worktree",
+          targetPath: worktreePath,
+          worktreeIncarnationId: PENDING_WORKTREE_INCARNATION_ID,
+          directoryIdentity: null,
+          metadataBaseRefName: "main",
+        },
+      },
+    ],
+  ]);
+  const dispatch = createLifecycleDispatch(new AgentLifecycleEvents(), async () => undefined, {
+    pendingCreations,
+  });
+  const archiveWorktreePath = vi.spyOn(
+    dispatch as unknown as {
+      archiveWorktreePath(worktreePath: string, workspaceId?: string): Promise<void>;
+    },
+    "archiveWorktreePath",
+  );
+
+  try {
+    await dispatch.recoverPendingAgentCreations();
+
+    expect(archiveWorktreePath).not.toHaveBeenCalled();
+    expect(pendingCreations.has(agentId)).toBe(true);
+    expect(existsSync(worktreePath)).toBe(true);
+  } finally {
+    rmSync(worktreePath, { recursive: true, force: true });
+  }
+});
+
+test("startup removes its marked directory after a crash before identity persistence", async () => {
+  const worktreePath = mkdtempSync(join(tmpdir(), "paseo-marked-pre-identity-crash-"));
+  writeFileSync(
+    join(worktreePath, ".paseo-worktree-creation"),
+    `${PENDING_WORKTREE_INCARNATION_ID}\n`,
+  );
+  const agentId = "agent-pending-marked-pre-identity-crash";
+  const pendingCreations = new Map<string, PendingAgentCreation>([
+    [
+      agentId,
+      {
+        agentId,
+        createdAt: "2025-01-01T00:00:00.000Z",
+        cleanupTarget: {
+          kind: "worktree",
+          targetPath: worktreePath,
+          worktreeIncarnationId: PENDING_WORKTREE_INCARNATION_ID,
+          directoryIdentity: null,
+          metadataBaseRefName: "main",
+        },
+      },
+    ],
+  ]);
+  const dispatch = createLifecycleDispatch(new AgentLifecycleEvents(), async () => undefined, {
+    pendingCreations,
+  });
+
+  await dispatch.recoverPendingAgentCreations();
+
+  expect(pendingCreations.size).toBe(0);
+  expect(existsSync(worktreePath)).toBe(false);
+});
+
+test("startup adopts a published standalone worktree instead of archiving it", async () => {
+  const worktreePath = mkdtempSync(join(tmpdir(), "paseo-published-standalone-worktree-"));
+  mkdirSync(join(worktreePath, ".git"));
+  const creationId = "standalone-pending-now-persisted";
+  const workspaceId = "ws-published-standalone";
+  const pendingCreations = new Map<string, PendingAgentCreation>([
+    [
+      creationId,
+      {
+        agentId: creationId,
+        createdAt: "2025-01-01T00:00:00.000Z",
+        ownerKind: "standalone-worktree",
+        cleanupTarget: pendingWorktreeTarget(worktreePath),
+      },
+    ],
+  ]);
+  const workspaces = [
+    {
+      workspaceId,
+      cwd: worktreePath,
+      worktreeRoot: worktreePath,
+      archivedAt: null,
+    } as PersistedWorkspaceRecord,
+  ];
+  const dispatch = createLifecycleDispatch(new AgentLifecycleEvents(), async () => undefined, {
+    pendingCreations,
+    workspaces,
+  });
+  const archiveWorktreePath = vi.spyOn(
+    dispatch as unknown as {
+      archiveWorktreePath(worktreePath: string, workspaceId?: string): Promise<void>;
+    },
+    "archiveWorktreePath",
+  );
+
+  try {
+    await dispatch.recoverPendingAgentCreations();
+
+    expect(archiveWorktreePath).not.toHaveBeenCalled();
+    expect(pendingCreations.size).toBe(0);
+    expect(existsSync(worktreePath)).toBe(true);
   } finally {
     rmSync(worktreePath, { recursive: true, force: true });
   }

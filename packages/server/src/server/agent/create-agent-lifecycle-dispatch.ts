@@ -6,7 +6,7 @@ import type pino from "pino";
 
 import type { ForgeService } from "../../services/forge-service.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
-import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
+import { isPaseoOwnedWorktreeCwd, readWorktreeCreationMarker } from "../../utils/worktree.js";
 import {
   readPaseoWorktreeMetadata,
   writePaseoWorktreeMetadata,
@@ -22,7 +22,7 @@ import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type { WorkspaceRegistry } from "../workspace-registry.js";
 import type { SessionOutboundMessage } from "../messages.js";
 import type { AgentManager, AgentSubscriber, SubscribeOptions } from "./agent-manager.js";
-import type { AgentStorage, AutoArchiveObligation } from "./agent-storage.js";
+import type { AgentStorage, AutoArchiveObligation, PendingAgentCreation } from "./agent-storage.js";
 
 interface CreateAgentLifecycleDispatchDependencies {
   paseoHome: string;
@@ -129,73 +129,28 @@ export class CreateAgentLifecycleDispatch {
     );
     if (!pending) return;
 
-    if (
-      (await this.dependencies.agentStorage.get(agentId)) ||
-      pending.cleanupTarget.kind === "agent"
-    ) {
+    if (pending.cleanupTarget.kind === "agent") {
+      await this.dependencies.agentStorage.removePendingAgentCreation(agentId);
+      return;
+    }
+    if (await this.pendingAgentWasPublished(pending)) {
       await this.dependencies.agentStorage.removePendingAgentCreation(agentId);
       return;
     }
 
-    const targetPath = resolvePath(pending.cleanupTarget.targetPath);
+    const pendingWorktree = { ...pending, cleanupTarget: pending.cleanupTarget };
+    const targetPath = resolvePath(pendingWorktree.cleanupTarget.targetPath);
     try {
-      if (!existsSync(targetPath)) {
-        const ownsActiveWorkspace = (await this.dependencies.workspaceRegistry.list()).some(
-          (workspace) =>
-            !workspace.archivedAt &&
-            resolvePath(workspace.worktreeRoot ?? workspace.cwd) === targetPath,
-        );
-        if (!ownsActiveWorkspace) {
-          await this.dependencies.agentStorage.removePendingAgentCreation(agentId);
-          return;
-        }
+      if (!existsSync(targetPath) && !(await this.activeWorkspaceOwnsPath(targetPath))) {
+        await this.dependencies.agentStorage.removePendingAgentCreation(agentId);
+        return;
       }
 
-      if (existsSync(targetPath)) {
-        const targetStat = statSync(targetPath, { bigint: true });
-        const currentDirectoryIdentity = {
-          device: targetStat.dev.toString(),
-          inode: targetStat.ino.toString(),
-        };
-        if (
-          currentDirectoryIdentity.device !== pending.cleanupTarget.directoryIdentity.device ||
-          currentDirectoryIdentity.inode !== pending.cleanupTarget.directoryIdentity.inode
-        ) {
-          this.dependencies.logger.warn(
-            { agentId, worktreePath: targetPath },
-            "Pending agent creation no longer owns its worktree path",
-          );
-          await this.dependencies.agentStorage.removePendingAgentCreation(agentId);
-          return;
-        }
-
-        const gitPath = resolvePath(targetPath, ".git");
-        if (!existsSync(gitPath)) {
-          await rm(targetPath, { recursive: true, force: true });
-          await this.dependencies.agentStorage.removePendingAgentCreation(agentId);
-          return;
-        }
-        const metadata = readPaseoWorktreeMetadata(targetPath);
-        if (
-          metadata?.incarnationId &&
-          metadata.incarnationId !== pending.cleanupTarget.worktreeIncarnationId
-        ) {
-          this.dependencies.logger.warn(
-            { agentId, worktreePath: targetPath },
-            "Pending agent creation found a replacement worktree incarnation",
-          );
-          await this.dependencies.agentStorage.removePendingAgentCreation(agentId);
-          return;
-        }
-        if (!metadata?.incarnationId) {
-          writePaseoWorktreeMetadata(targetPath, {
-            baseRefName: metadata?.baseRefName ?? pending.cleanupTarget.metadataBaseRefName,
-            incarnationId: pending.cleanupTarget.worktreeIncarnationId,
-            ...(metadata?.changeRequestLookupTarget
-              ? { changeRequestLookupTarget: metadata.changeRequestLookupTarget }
-              : {}),
-          });
-        }
+      if (
+        existsSync(targetPath) &&
+        (await this.recoverExistingPendingDirectory(pendingWorktree, targetPath))
+      ) {
+        return;
       }
 
       await this.archiveWorktreePath(targetPath);
@@ -206,6 +161,103 @@ export class CreateAgentLifecycleDispatch {
         "Failed to recover pending agent creation",
       );
     }
+  }
+
+  private async pendingAgentWasPublished(pending: PendingAgentCreation): Promise<boolean> {
+    if ((pending.ownerKind ?? "agent") !== "agent") return false;
+    return Boolean(await this.dependencies.agentStorage.get(pending.agentId));
+  }
+
+  private async activeWorkspaceOwnsPath(targetPath: string): Promise<boolean> {
+    return (await this.dependencies.workspaceRegistry.list()).some(
+      (workspace) =>
+        !workspace.archivedAt &&
+        resolvePath(workspace.worktreeRoot ?? workspace.cwd) === targetPath,
+    );
+  }
+
+  private classifyPendingDirectoryOwnership(
+    pending: PendingAgentCreation & {
+      cleanupTarget: Extract<PendingAgentCreation["cleanupTarget"], { kind: "worktree" }>;
+    },
+    targetPath: string,
+  ): "owned" | "replaced" | "ambiguous" {
+    const expectedDirectoryIdentity = pending.cleanupTarget.directoryIdentity;
+    if (!expectedDirectoryIdentity) {
+      return readWorktreeCreationMarker(targetPath) === pending.cleanupTarget.worktreeIncarnationId
+        ? "owned"
+        : "ambiguous";
+    }
+    const targetStat = statSync(targetPath, { bigint: true });
+    return targetStat.dev.toString() === expectedDirectoryIdentity.device &&
+      targetStat.ino.toString() === expectedDirectoryIdentity.inode
+      ? "owned"
+      : "replaced";
+  }
+
+  private async recoverExistingPendingDirectory(
+    pending: PendingAgentCreation & {
+      cleanupTarget: Extract<PendingAgentCreation["cleanupTarget"], { kind: "worktree" }>;
+    },
+    targetPath: string,
+  ): Promise<boolean> {
+    const agentId = pending.agentId;
+    const directoryOwnership = this.classifyPendingDirectoryOwnership(pending, targetPath);
+    if (directoryOwnership === "replaced") {
+      this.dependencies.logger.warn(
+        { agentId, worktreePath: targetPath },
+        "Pending agent creation no longer owns its worktree path",
+      );
+      await this.dependencies.agentStorage.removePendingAgentCreation(agentId);
+      return true;
+    }
+    if (directoryOwnership === "ambiguous") {
+      // The process may have stopped after mkdir and before persisting the
+      // directory identity. Without the matching in-directory marker we
+      // cannot distinguish our directory from a replacement, so retain the
+      // durable cleanup obligation and fail closed.
+      this.dependencies.logger.warn(
+        { agentId, worktreePath: targetPath },
+        "Pending agent creation has ambiguous pre-identity worktree ownership",
+      );
+      return true;
+    }
+
+    if (!existsSync(resolvePath(targetPath, ".git"))) {
+      await rm(targetPath, { recursive: true, force: true });
+      await this.dependencies.agentStorage.removePendingAgentCreation(agentId);
+      return true;
+    }
+    const metadata = readPaseoWorktreeMetadata(targetPath);
+    if (
+      metadata?.incarnationId &&
+      metadata.incarnationId !== pending.cleanupTarget.worktreeIncarnationId
+    ) {
+      this.dependencies.logger.warn(
+        { agentId, worktreePath: targetPath },
+        "Pending agent creation found a replacement worktree incarnation",
+      );
+      await this.dependencies.agentStorage.removePendingAgentCreation(agentId);
+      return true;
+    }
+    if (!metadata?.incarnationId) {
+      writePaseoWorktreeMetadata(targetPath, {
+        baseRefName: metadata?.baseRefName ?? pending.cleanupTarget.metadataBaseRefName,
+        incarnationId: pending.cleanupTarget.worktreeIncarnationId,
+        ...(metadata?.changeRequestLookupTarget
+          ? { changeRequestLookupTarget: metadata.changeRequestLookupTarget }
+          : {}),
+      });
+    }
+
+    if (
+      pending.ownerKind === "standalone-worktree" &&
+      (await this.activeWorkspaceOwnsPath(targetPath))
+    ) {
+      await this.dependencies.agentStorage.removePendingAgentCreation(agentId);
+      return true;
+    }
+    return false;
   }
 
   async cleanupCreatedWorktreeAfterFailedAgentCreate(input: {

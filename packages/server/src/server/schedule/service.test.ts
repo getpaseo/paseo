@@ -2055,6 +2055,57 @@ describe("ScheduleService", () => {
     expect(inspected.runs[0]?.status).toBe("succeeded");
   });
 
+  test("stop freezes new runs and joins a run accepted before shutdown", async () => {
+    let markRunStarted: (() => void) | null = null;
+    const runStarted = new Promise<void>((resolve) => {
+      markRunStarted = resolve;
+    });
+    let finishRun: (() => void) | null = null;
+    const runBlocked = new Promise<void>((resolve) => {
+      finishRun = resolve;
+    });
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => {
+        markRunStarted?.();
+        await runBlocked;
+        return { agentId: null, output: "finished before shutdown" };
+      },
+    });
+    const created = await service.create({
+      prompt: "join on shutdown",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", cwd: tempDir },
+      },
+    });
+    now = new Date("2026-01-01T00:01:00.000Z");
+    const tickPromise = service.tick();
+    await runStarted;
+
+    const stopPromise = service.stop();
+    await expect(
+      Promise.race([
+        stopPromise.then(() => "stopped" as const),
+        new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 20)),
+      ]),
+    ).resolves.toBe("pending");
+    await expect(service.runOnce(created.id)).rejects.toThrow("shutting down");
+
+    finishRun?.();
+    await Promise.all([tickPromise, stopPromise]);
+    expect((await service.inspect(created.id)).runs[0]).toMatchObject({
+      status: "succeeded",
+      output: "finished before shutdown",
+    });
+  });
+
   test("rejects archived target agents before loading them", async () => {
     const manager = new AgentManager({ logger: createTestLogger() });
     const service = createScheduleService({

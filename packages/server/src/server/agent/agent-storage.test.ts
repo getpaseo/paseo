@@ -211,7 +211,25 @@ describe("AgentStorage", () => {
 
   test("persists pending creation intent separately from visible agents", async () => {
     await storage.beginPendingAgentCreation("agent-pending-create");
-    await storage.setPendingAgentCreationWorktree(
+    await storage.planPendingAgentCreationWorktree(
+      "agent-pending-create",
+      "/tmp/paseo/worktrees/project/feature-2",
+      {
+        worktreeIncarnationId: "4d2ce498-4c27-4ea2-8ed3-46720de7194e",
+        metadataBaseRefName: "main",
+      },
+    );
+    await expect(storage.listPendingAgentCreations()).resolves.toMatchObject([
+      {
+        cleanupTarget: {
+          kind: "worktree",
+          targetPath: "/tmp/paseo/worktrees/project/feature-2",
+          worktreeIncarnationId: "4d2ce498-4c27-4ea2-8ed3-46720de7194e",
+          directoryIdentity: null,
+        },
+      },
+    ]);
+    await storage.identifyPendingAgentCreationWorktree(
       "agent-pending-create",
       "/tmp/paseo/worktrees/project/feature-2",
       {
@@ -227,6 +245,7 @@ describe("AgentStorage", () => {
       {
         agentId: "agent-pending-create",
         createdAt: expect.any(String),
+        ownerKind: "agent",
         cleanupTarget: {
           kind: "worktree",
           targetPath: "/tmp/paseo/worktrees/project/feature-2",

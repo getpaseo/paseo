@@ -6,6 +6,8 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
+import { experimental_createMCPClient } from "ai";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 import { createPaseoDaemon, parseListenString, type PaseoDaemonConfig } from "./bootstrap.js";
 import { AgentManagerShuttingDownError } from "./agent/agent-manager.js";
@@ -18,6 +20,7 @@ import { isPlatform } from "../test-utils/platform.js";
 import { findFreePort } from "./service-proxy.js";
 import { defaultWorkspaceLifecycleCoordinator } from "./workspace-lifecycle-coordinator.js";
 import { readPaseoWorktreeIncarnationId } from "../utils/worktree-metadata.js";
+import { getPaseoWorktreesRoot } from "../utils/worktree.js";
 import type {
   HubEnrollment,
   HubEnrollmentResult,
@@ -51,6 +54,13 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
     resolve = resolvePromise;
   });
   return { promise, resolve };
+}
+
+async function createBootstrapAgentMcpClient(port: number) {
+  const transport = new StreamableHTTPClientTransport(
+    new URL(`http://127.0.0.1:${port}/mcp/agents`),
+  );
+  return experimental_createMCPClient({ transport });
 }
 
 describe("paseo daemon bootstrap", () => {
@@ -486,7 +496,134 @@ describe("paseo daemon bootstrap", () => {
       await daemonHandle.daemon.stop().catch(() => undefined);
       await daemonHandle.daemon.agentManager.flush().catch(() => undefined);
       await Promise.all([
+        rm(path.dirname(daemonHandle.paseoHome), {
+          recursive: true,
+          force: true,
+        }),
+        rm(daemonHandle.staticDir, { recursive: true, force: true }),
+        rm(initialAgentCwd, { recursive: true, force: true }),
+        rm(tempRoot, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
+  test("shutdown joins a standalone MCP worktree create accepted before ingress freezes", async () => {
+    const daemonHandle = await createTestPaseoDaemon({ cleanup: false });
+    const { repoDir, tempRoot } = await createCommittedGitRepo("mcp-accepted-create");
+    const mcpClient = await createBootstrapAgentMcpClient(daemonHandle.port);
+    const releaseMutation = deferred<void>();
+    const mutationStarted = deferred<void>();
+    const worktreesRoot = await getPaseoWorktreesRoot(repoDir, daemonHandle.paseoHome);
+    const heldMutation = defaultWorkspaceLifecycleCoordinator.runWorktreeMutationExclusive(
+      worktreesRoot,
+      async () => {
+        mutationStarted.resolve();
+        await releaseMutation.promise;
+      },
+    );
+    await mutationStarted.promise;
+
+    try {
+      const createPromise = mcpClient.callTool({
+        name: "create_workspace",
+        args: {
+          isolation: "worktree",
+          path: repoDir,
+          worktreeSlug: "mcp-accepted-before-shutdown",
+          branchName: "feature/mcp-accepted-before-shutdown",
+          baseBranch: "main",
+        },
+      });
+      await vi.waitFor(async () => {
+        const pending = await daemonHandle.daemon.agentStorage.listPendingAgentCreations();
+        expect(pending).toContainEqual(
+          expect.objectContaining({ ownerKind: "standalone-worktree" }),
+        );
+      });
+
+      const stopPromise = daemonHandle.daemon.stop();
+      const earlyStop = await Promise.race([
+        stopPromise.then(() => "stopped" as const),
+        new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 50)),
+      ]);
+      expect(earlyStop).toBe("pending");
+
+      releaseMutation.resolve();
+      const result = await createPromise;
+      expect(result.structuredContent).toMatchObject({
+        isolation: "worktree",
+        cwd: expect.stringContaining("mcp-accepted-before-shutdown"),
+      });
+      await expect(daemonHandle.daemon.agentStorage.listPendingAgentCreations()).resolves.toEqual(
+        [],
+      );
+      await stopPromise;
+    } finally {
+      releaseMutation.resolve();
+      await heldMutation.catch(() => undefined);
+      await mcpClient.close().catch(() => undefined);
+      await daemonHandle.daemon.stop().catch(() => undefined);
+      await daemonHandle.daemon.agentManager.flush().catch(() => undefined);
+      await Promise.all([
         rm(path.dirname(daemonHandle.paseoHome), { recursive: true, force: true }),
+        rm(daemonHandle.staticDir, { recursive: true, force: true }),
+        rm(tempRoot, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
+  test("MCP cannot create a worktree after the shutdown closure snapshot", async () => {
+    const heldAgentClose = holdAgentClose();
+    const daemonHandle = await createTestPaseoDaemon({
+      cleanup: false,
+      agentClients: createTestAgentClients({
+        closeSession: heldAgentClose.closeSession,
+      }),
+    });
+    const { repoDir, tempRoot } = await createCommittedGitRepo("mcp-rejected-create");
+    const initialAgentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-mcp-shutdown-agent-"));
+    const mcpClient = await createBootstrapAgentMcpClient(daemonHandle.port);
+
+    try {
+      await daemonHandle.daemon.agentManager.createAgent(
+        { provider: "codex", cwd: initialAgentCwd },
+        undefined,
+        { workspaceId: undefined },
+      );
+      heldAgentClose.arm();
+      const stopPromise = daemonHandle.daemon.stop();
+      await heldAgentClose.started;
+      const closureWorktrees = listGitWorktreePaths(repoDir);
+
+      await expect(
+        mcpClient.callTool({
+          name: "create_workspace",
+          args: {
+            isolation: "worktree",
+            path: repoDir,
+            worktreeSlug: "mcp-rejected-after-shutdown",
+            branchName: "feature/mcp-rejected-after-shutdown",
+            baseBranch: "main",
+          },
+        }),
+      ).rejects.toThrow();
+      expect(listGitWorktreePaths(repoDir)).toEqual(closureWorktrees);
+      await expect(daemonHandle.daemon.agentStorage.listPendingAgentCreations()).resolves.toEqual(
+        [],
+      );
+
+      heldAgentClose.finish();
+      await stopPromise;
+    } finally {
+      heldAgentClose.finish();
+      await mcpClient.close().catch(() => undefined);
+      await daemonHandle.daemon.stop().catch(() => undefined);
+      await daemonHandle.daemon.agentManager.flush().catch(() => undefined);
+      await Promise.all([
+        rm(path.dirname(daemonHandle.paseoHome), {
+          recursive: true,
+          force: true,
+        }),
         rm(daemonHandle.staticDir, { recursive: true, force: true }),
         rm(initialAgentCwd, { recursive: true, force: true }),
         rm(tempRoot, { recursive: true, force: true }),
@@ -578,7 +715,10 @@ describe("paseo daemon bootstrap", () => {
     } finally {
       await daemonHandle.daemon.agentManager.flush().catch(() => undefined);
       await Promise.all([
-        rm(path.dirname(daemonHandle.paseoHome), { recursive: true, force: true }),
+        rm(path.dirname(daemonHandle.paseoHome), {
+          recursive: true,
+          force: true,
+        }),
         rm(daemonHandle.staticDir, { recursive: true, force: true }),
       ]);
     }

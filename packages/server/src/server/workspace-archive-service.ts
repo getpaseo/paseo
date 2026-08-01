@@ -423,11 +423,8 @@ async function resolveArchiveTarget(
       if (persistedRecord?.cleanupPending) {
         return archiveTargetFromPendingCleanup(workspaceId, persistedRecord.cleanupPending);
       }
-      dependencies.sessionLogger?.warn(
-        { workspaceId },
-        "Workspace not found for archive-by-scope; skipping",
-      );
-      return { backing: null, teardownTargets: [], workspaceIds: [] };
+      dependencies.sessionLogger?.warn({ workspaceId }, "Workspace not found for archive-by-scope");
+      throw new WorkspaceArchiveTargetNotFoundError(workspaceId);
     }
     return {
       backing: await resolveWorkspaceBackingDirectory(record, dependencies),

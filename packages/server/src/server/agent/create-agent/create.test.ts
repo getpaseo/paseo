@@ -237,11 +237,25 @@ test("legacy worktree create keeps its journal through durable agent registratio
         provisionalTitle: null,
         firstAgentContext: { attachments: [] },
         autoArchiveObligation: { phase: "armed", target: { kind: "agent" } },
-        buildSessionConfig: async (config, _git, _worktreeName, _context, onPath) => {
-          await onPath?.(resolvedWorktreePath, {
+        buildSessionConfig: async (config, _git, _worktreeName, _context, journal) => {
+          const plan = {
             worktreeIncarnationId: "30704df3-6339-4c9c-8277-1416544ed7cc",
-            directoryIdentity: { device: "7", inode: "42" },
             metadataBaseRefName: "main",
+          };
+          await journal?.onWorktreePathPlanned(resolvedWorktreePath, plan);
+          expect(await storage.listPendingAgentCreations()).toMatchObject([
+            { cleanupTarget: { kind: "worktree", directoryIdentity: null } },
+          ]);
+          mkdirSync(resolvedWorktreePath, { recursive: true });
+          const directoryStat = statSync(resolvedWorktreePath, {
+            bigint: true,
+          });
+          await journal?.onWorktreePathResolved(resolvedWorktreePath, {
+            ...plan,
+            directoryIdentity: {
+              device: directoryStat.dev.toString(),
+              inode: directoryStat.ino.toString(),
+            },
           });
           expect(await storage.listPendingAgentCreations()).toEqual([
             expect.objectContaining({
@@ -250,13 +264,15 @@ test("legacy worktree create keeps its journal through durable agent registratio
                 kind: "worktree",
                 targetPath: resolvedWorktreePath,
                 worktreeIncarnationId: "30704df3-6339-4c9c-8277-1416544ed7cc",
-                directoryIdentity: { device: "7", inode: "42" },
+                directoryIdentity: {
+                  device: directoryStat.dev.toString(),
+                  inode: directoryStat.ino.toString(),
+                },
                 metadataBaseRefName: "main",
               },
             }),
           ]);
           removalOrder.push("worktree-resolved");
-          mkdirSync(resolvedWorktreePath, { recursive: true });
           return {
             sessionConfig: { ...config, cwd: resolvedWorktreePath },
             setupContinuation: {
@@ -867,6 +883,10 @@ test("mcp worktree create journals the exact path incarnation through durable ag
         logger,
         providerSnapshotManager: createProviderSnapshotManagerStub().manager,
         createPaseoWorktree: async (input: CreatePaseoWorktreeInput) => {
+          await input.onWorktreePathPlanned?.(worktreePath, {
+            worktreeIncarnationId,
+            metadataBaseRefName: "main",
+          });
           mkdirSync(workspaceCwd, { recursive: true });
           const directoryStat = statSync(worktreePath, { bigint: true });
           await input.onWorktreePathResolved?.(worktreePath, {

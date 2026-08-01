@@ -250,6 +250,9 @@ export class ScheduleService {
     runId: string,
   ) => Promise<ScheduleExecutionResult>;
   private readonly runningScheduleIds = new Set<string>();
+  private readonly inFlightTicks = new Set<Promise<void>>();
+  private readonly inFlightRuns = new Set<Promise<void>>();
+  private acceptingRuns = true;
   private tickTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: ScheduleServiceOptions) {
@@ -266,6 +269,7 @@ export class ScheduleService {
   }
 
   async start(): Promise<void> {
+    this.acceptingRuns = true;
     await this.recoverInterruptedRuns();
     await this.sweepOrphanedSchedules();
     if (this.tickTimer) {
@@ -281,9 +285,13 @@ export class ScheduleService {
   }
 
   async stop(): Promise<void> {
+    this.acceptingRuns = false;
     if (this.tickTimer) {
       clearInterval(this.tickTimer);
       this.tickTimer = null;
+    }
+    while (this.inFlightTicks.size > 0 || this.inFlightRuns.size > 0) {
+      await Promise.allSettled([...this.inFlightTicks, ...this.inFlightRuns]);
     }
   }
 
@@ -524,6 +532,9 @@ export class ScheduleService {
   }
 
   async runOnce(id: string): Promise<StoredSchedule> {
+    if (!this.acceptingRuns) {
+      throw new Error("Schedule service is shutting down");
+    }
     const schedule = await this.inspect(id);
     if (schedule.status === "completed") {
       throw new Error(`Schedule ${id} is already completed`);
@@ -531,11 +542,22 @@ export class ScheduleService {
     if (this.runningScheduleIds.has(id)) {
       throw new Error(`Schedule ${id} is already running`);
     }
-    await this.runSchedule(schedule, this.now(), { manual: true });
+    await this.runScheduleTracked(schedule, this.now(), { manual: true });
     return this.inspect(id);
   }
 
   async tick(): Promise<void> {
+    if (!this.acceptingRuns) return;
+    const task = this.tickInternal();
+    this.inFlightTicks.add(task);
+    try {
+      await task;
+    } finally {
+      this.inFlightTicks.delete(task);
+    }
+  }
+
+  private async tickInternal(): Promise<void> {
     const now = this.now();
     const schedules = await this.store.list();
     for (const schedule of schedules) {
@@ -552,7 +574,25 @@ export class ScheduleService {
       if (new Date(schedule.nextRunAt).getTime() > now.getTime()) {
         continue;
       }
-      await this.runSchedule(schedule, now);
+      if (!this.acceptingRuns) return;
+      await this.runScheduleTracked(schedule, now);
+    }
+  }
+
+  private async runScheduleTracked(
+    schedule: StoredSchedule,
+    now: Date,
+    options?: { manual?: boolean },
+  ): Promise<void> {
+    if (!this.acceptingRuns) {
+      throw new Error("Schedule service is shutting down");
+    }
+    const task = this.runSchedule(schedule, now, options);
+    this.inFlightRuns.add(task);
+    try {
+      await task;
+    } finally {
+      this.inFlightRuns.delete(task);
     }
   }
 

@@ -29,6 +29,7 @@ import {
   requireArchiveCleanupComplete,
   retryPendingWorkspaceCleanup,
   resolveWorkspaceIdAtPath,
+  WorkspaceArchiveTargetNotFoundError,
 } from "./workspace-archive-service.js";
 import { WorkspaceCleanupRetryService } from "./workspace-cleanup-retry-service.js";
 import { WorkspaceLifecycleCoordinator } from "./workspace-lifecycle-coordinator.js";
@@ -292,6 +293,34 @@ describe("archiveByScope", () => {
     await expect(archiveTask).resolves.toMatchObject({
       archivedWorkspaceIds: [workspaceId],
     });
+  });
+
+  test("rejects truthfully when an explicit workspace vanishes during final refresh", async () => {
+    const { tempDir } = createGitRepo();
+    const workspaceId = "ws-vanished-before-archive";
+    const workspaceCwd = path.join(tempDir, "local-checkout");
+    mkdirSync(workspaceCwd);
+    const deps = createArchiveDeps({
+      paseoHome: path.join(tempDir, ".paseo"),
+      activeWorkspaces: [{ workspaceId, cwd: workspaceCwd, kind: "local_checkout" }],
+    });
+    let activeReadCount = 0;
+    deps.listActiveWorkspaces = async () => {
+      activeReadCount += 1;
+      return activeReadCount === 1
+        ? [{ workspaceId, cwd: workspaceCwd, kind: "local_checkout" }]
+        : [];
+    };
+    deps.workspaceRegistry = { get: async () => null };
+    deps.archiveWorkspaceRecord = vi.fn(deps.archiveWorkspaceRecord);
+
+    await expect(
+      archiveByScope(deps, {
+        scope: { kind: "workspace", workspaceId },
+        requestId: "req-vanished-before-archive",
+      }),
+    ).rejects.toBeInstanceOf(WorkspaceArchiveTargetNotFoundError);
+    expect(deps.archiveWorkspaceRecord).not.toHaveBeenCalled();
   });
 
   test("waits for ownership on a sibling discovered during final target refresh", async () => {
@@ -1481,7 +1510,7 @@ describe("archiveByScope", () => {
     expect(existsSync(worktree.worktreePath)).toBe(true);
   });
 
-  test("workspace scope with unknown workspace id is a clean no-op", async () => {
+  test("workspace scope rejects an unknown explicit workspace id", async () => {
     const { tempDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
 
@@ -1494,15 +1523,12 @@ describe("archiveByScope", () => {
       return originalArchiveWorkspaceRecord(workspaceId);
     });
 
-    const result = await archiveByScope(deps, {
-      scope: { kind: "workspace", workspaceId: "ws-does-not-exist" },
-      requestId: "req-unknown-workspace",
-    });
-
-    assertArchiveResult(result, {
-      archivedWorkspaceIds: [],
-      removedDirectory: false,
-    });
+    await expect(
+      archiveByScope(deps, {
+        scope: { kind: "workspace", workspaceId: "ws-does-not-exist" },
+        requestId: "req-unknown-workspace",
+      }),
+    ).rejects.toBeInstanceOf(WorkspaceArchiveTargetNotFoundError);
     expect(deps.markWorkspaceArchiving).not.toHaveBeenCalled();
     expect(deps.archiveWorkspaceRecord).not.toHaveBeenCalled();
     expect(deps.emitWorkspaceUpdatesForWorkspaceIds).not.toHaveBeenCalled();

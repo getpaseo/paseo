@@ -46,16 +46,21 @@ const AUTO_ARCHIVE_OBLIGATION_SCHEMA = z.object({
 const PENDING_AGENT_CREATION_SCHEMA = z.object({
   agentId: z.string(),
   createdAt: z.string(),
+  ownerKind: z.enum(["agent", "standalone-worktree"]).optional().default("agent"),
   cleanupTarget: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("agent") }),
     z.object({
       kind: z.literal("worktree"),
       targetPath: z.string(),
       worktreeIncarnationId: z.string().uuid(),
-      directoryIdentity: z.object({
-        device: z.string(),
-        inode: z.string(),
-      }),
+      directoryIdentity: z
+        .object({
+          device: z.string(),
+          inode: z.string(),
+        })
+        .nullable()
+        .optional()
+        .default(null),
       metadataBaseRefName: z.string().min(1),
     }),
   ]),
@@ -158,17 +163,44 @@ export class AgentStorage {
     await this.queueRecordWrite(record);
   }
 
-  async beginPendingAgentCreation(agentId: string): Promise<PendingAgentCreation> {
+  async beginPendingAgentCreation(
+    agentId: string,
+    options?: { ownerKind?: PendingAgentCreation["ownerKind"] },
+  ): Promise<PendingAgentCreation> {
     const record: PendingAgentCreation = {
       agentId,
       createdAt: new Date().toISOString(),
+      ownerKind: options?.ownerKind ?? "agent",
       cleanupTarget: { kind: "agent" },
     };
     await writeJsonFileAtomic(this.pendingCreationPath(agentId), record);
     return record;
   }
 
-  async setPendingAgentCreationWorktree(
+  async planPendingAgentCreationWorktree(
+    agentId: string,
+    targetPath: string,
+    plan: {
+      worktreeIncarnationId: string;
+      metadataBaseRefName: string;
+    },
+  ): Promise<void> {
+    const record = await this.readPendingAgentCreation(agentId);
+    if (!record) {
+      throw new Error(`Pending agent creation ${agentId} not found`);
+    }
+    await writeJsonFileAtomic(this.pendingCreationPath(agentId), {
+      ...record,
+      cleanupTarget: {
+        kind: "worktree",
+        targetPath,
+        ...plan,
+        directoryIdentity: null,
+      },
+    } satisfies PendingAgentCreation);
+  }
+
+  async identifyPendingAgentCreationWorktree(
     agentId: string,
     targetPath: string,
     reservation: {
@@ -178,8 +210,19 @@ export class AgentStorage {
     },
   ): Promise<void> {
     const record = await this.readPendingAgentCreation(agentId);
-    if (!record) {
-      throw new Error(`Pending agent creation ${agentId} not found`);
+    if (
+      !record ||
+      record.cleanupTarget.kind !== "worktree" ||
+      record.cleanupTarget.targetPath !== targetPath ||
+      record.cleanupTarget.worktreeIncarnationId !== reservation.worktreeIncarnationId
+    ) {
+      const recordedTarget =
+        record?.cleanupTarget.kind === "worktree"
+          ? `${record.cleanupTarget.targetPath} (${record.cleanupTarget.worktreeIncarnationId})`
+          : (record?.cleanupTarget.kind ?? "missing");
+      throw new Error(
+        `Pending agent creation ${agentId} does not own ${targetPath} (${reservation.worktreeIncarnationId}); recorded ${recordedTarget}`,
+      );
     }
     await writeJsonFileAtomic(this.pendingCreationPath(agentId), {
       ...record,

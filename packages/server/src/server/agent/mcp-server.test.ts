@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it, vi } from "vitest";
@@ -194,7 +195,9 @@ interface TestDeps {
 }
 
 function buildAgentManagerSpies() {
+  const getAgent = vi.fn();
   return {
+    allocateAgentId: vi.fn(() => randomUUID()),
     createAgent: vi.fn(),
     waitForAgentEvent: vi.fn().mockResolvedValue({
       status: "idle",
@@ -210,7 +213,11 @@ function buildAgentManagerSpies() {
     updateAgentMetadata: vi.fn().mockResolvedValue(undefined),
     archiveAgent: vi.fn().mockResolvedValue({ archivedAt: new Date().toISOString() }),
     notifyAgentState: vi.fn(),
-    getAgent: vi.fn(),
+    getAgent,
+    getAgentInitializationState: vi.fn((agentId: string) => ({
+      agent: getAgent(agentId),
+      closeInFlight: false,
+    })),
     listAgents: vi.fn().mockReturnValue([]),
     getTimeline: vi.fn().mockReturnValue([]),
     resumeAgentFromPersistence: vi.fn(),
@@ -237,6 +244,16 @@ function buildAgentStorageSpies() {
     upsert: vi.fn().mockResolvedValue(undefined),
     applySnapshot: vi.fn(),
     list: vi.fn().mockResolvedValue([]),
+    beginPendingAgentCreation: vi.fn().mockImplementation(async (agentId: string) => ({
+      agentId,
+      createdAt: new Date().toISOString(),
+      ownerKind: "agent" as const,
+      cleanupTarget: { kind: "agent" as const },
+    })),
+    planPendingAgentCreationWorktree: vi.fn().mockResolvedValue(undefined),
+    identifyPendingAgentCreationWorktree: vi.fn().mockResolvedValue(undefined),
+    listPendingAgentCreations: vi.fn().mockResolvedValue([]),
+    removePendingAgentCreation: vi.fn().mockResolvedValue(undefined),
     remove: vi.fn(),
   };
 }
@@ -842,6 +859,10 @@ function createPaseoWorktreeForMcpTest(options: {
     logger: createTestLogger(),
     generateWorkspaceName: options.generateWorkspaceName ?? (async () => null),
   });
+  const worktreeCreationStorage = new AgentStorage(
+    join(options.paseoHome, "test-worktree-creation-journal"),
+    createTestLogger(),
+  );
 
   return async (input, serviceOptions) => {
     options.setupContinuations?.push(serviceOptions?.setupContinuation?.kind);
@@ -860,9 +881,30 @@ function createPaseoWorktreeForMcpTest(options: {
         warmWorkspaceGitData: async () => {},
         autoNameWorkspaceBranchForFirstAgent: (autoNameInput) =>
           workspaceAutoName.scheduleForWorktree(autoNameInput),
-        emitWorkspaceUpdateForWorkspaceId: async (workspaceId) => {
-          options.broadcasts.push(workspaceId);
+        worktreeCreationJournal: {
+          beginPendingAgentCreation: (creationId, journalOptions) =>
+            worktreeCreationStorage.beginPendingAgentCreation(creationId, journalOptions),
+          planPendingAgentCreationWorktree: (creationId, worktreePath, plan) =>
+            worktreeCreationStorage.planPendingAgentCreationWorktree(
+              creationId,
+              worktreePath,
+              plan,
+            ),
+          identifyPendingAgentCreationWorktree: (creationId, worktreePath, reservation) =>
+            worktreeCreationStorage.identifyPendingAgentCreationWorktree(
+              creationId,
+              worktreePath,
+              reservation,
+            ),
+          removePendingAgentCreation: (creationId) =>
+            worktreeCreationStorage.removePendingAgentCreation(creationId),
+          recoverPendingCreation: (creationId) =>
+            worktreeCreationStorage.removePendingAgentCreation(creationId),
         },
+        // The helper records the initial publication synchronously below. Keep
+        // background setup refreshes out of that assertion stream; auto-name
+        // refreshes use the WorkspaceAutoName dependency above.
+        emitWorkspaceUpdateForWorkspaceId: async () => {},
         cacheWorkspaceSetupSnapshot: () => {},
         emit: () => {},
         sessionLogger: createTestLogger(),
@@ -1868,7 +1910,7 @@ describe("create_agent MCP tool", () => {
         expect.objectContaining({
           cwd: expect.stringContaining("agent-worktree"),
         }),
-        undefined,
+        expect.any(String),
         { workspaceId: createdWorkspaceIds[0] },
       );
     } finally {
@@ -2217,7 +2259,7 @@ describe("create_agent MCP tool", () => {
         expect.objectContaining({
           title: "Explicit Agent Title",
         }),
-        undefined,
+        expect.any(String),
         { workspaceId },
       );
       expect(workspace).toMatchObject({
@@ -2541,7 +2583,7 @@ describe("create_agent MCP tool", () => {
     expect(startedAgentSetupIds).toEqual(["agent-pr-worktree"]);
     expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
       expect.objectContaining({ cwd: "/tmp/worktrees/pr-123" }),
-      undefined,
+      expect.any(String),
       { workspaceId: "ws-pr-123" },
     );
     await waitForUnexpectedWorkspaceNamingSideEffects();

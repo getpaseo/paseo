@@ -436,6 +436,11 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           worktreeSlug: "collision",
           paseoHome,
           runSetup: false,
+          onWorktreePathPlanned: async (worktreePath, plan) => {
+            expect(worktreePath).toBe(resolvedPath);
+            expect(existsSync(worktreePath)).toBe(false);
+            observedIncarnationId = plan.worktreeIncarnationId;
+          },
           onWorktreePathResolved: async (worktreePath, reservation) => {
             observedPath = worktreePath;
             observedIncarnationId = reservation.worktreeIncarnationId;
@@ -1493,6 +1498,9 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           worktreeSlug: "reused-worktree",
           paseoHome,
           runSetup: false,
+          onWorktreePathPlanned: async (worktreePath) => {
+            resolvedPaths.push(worktreePath);
+          },
           onWorktreePathResolved: async (worktreePath) => {
             resolvedPaths.push(worktreePath);
           },
