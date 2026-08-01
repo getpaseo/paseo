@@ -8467,3 +8467,81 @@ test("onWorkspaceStateMayHaveChanged is not called for running shell tool calls"
 
   expect(onWorkspaceStateMayHaveChanged).not.toHaveBeenCalled();
 });
+
+test("successful history hydration orders buffered live events after recovered history", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-live-order-"));
+  const agentId = "00000000-0000-4000-8000-000000000148";
+
+  class InterleavedHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: "historical request" },
+      };
+      this.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: "live request" },
+      });
+      this.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "tool_call",
+          callId: "live-write-during-hydration",
+          name: "write",
+          status: "completed",
+          error: null,
+          detail: { type: "write", filePath: "live.txt", content: "live" },
+        },
+      });
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "historical result" },
+      };
+    }
+  }
+
+  class InterleavedHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new InterleavedHistorySession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new InterleavedHistoryClient() },
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.hydrateTimelineFromProvider(created.id);
+    await manager.flush();
+
+    const expectedItems: AgentTimelineItem[] = [
+      { type: "user_message", text: "historical request" },
+      { type: "assistant_message", text: "historical result" },
+      { type: "user_message", text: "live request" },
+      {
+        type: "tool_call",
+        callId: "live-write-during-hydration",
+        name: "write",
+        status: "completed",
+        error: null,
+        detail: { type: "write", filePath: "live.txt", content: "live" },
+      },
+    ];
+    expect(manager.getTimeline(created.id)).toEqual(expectedItems);
+    expect((await manager.getTimelineRows(created.id)).map((row) => row.item)).toEqual(
+      expectedItems,
+    );
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});

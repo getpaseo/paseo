@@ -563,6 +563,8 @@ export class AgentManager {
   private readonly providerSubagents = new ProviderSubagentStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
+  private readonly activeHistoryHydrationAgentIds = new Set<string>();
+  private readonly bufferedHistoryHydrationSessionEvents = new Map<string, AgentStreamEvent[]>();
   private readonly runs = new AgentRunState();
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
@@ -2925,6 +2927,12 @@ export class AgentManager {
   }
 
   private enqueueSessionEvent(agentId: string, event: AgentStreamEvent): void {
+    if (this.activeHistoryHydrationAgentIds.has(agentId)) {
+      const buffered = this.bufferedHistoryHydrationSessionEvents.get(agentId) ?? [];
+      buffered.push(event);
+      this.bufferedHistoryHydrationSessionEvents.set(agentId, buffered);
+      return;
+    }
     this.logger.trace(
       {
         agentId,
@@ -3208,47 +3216,59 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     broadcast: boolean | (() => boolean),
   ): Promise<void> {
+    await this.drainSessionEvents(agent.id);
+    this.activeHistoryHydrationAgentIds.add(agent.id);
     const timelineEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
     const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
-    agent.historyPrimed = true;
     try {
-      for await (const event of agent.session.streamHistory()) {
-        if (event.type === "provider_subagent") {
-          providerSubagentEvents.push(event);
-          continue;
+      agent.historyPrimed = true;
+      try {
+        for await (const event of agent.session.streamHistory()) {
+          if (event.type === "provider_subagent") {
+            providerSubagentEvents.push(event);
+            continue;
+          }
+          if (event.type !== "timeline") {
+            continue;
+          }
+          if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
+            continue;
+          }
+          timelineEvents.push(event);
         }
-        if (event.type !== "timeline") {
-          continue;
-        }
-        if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
-          continue;
-        }
-        timelineEvents.push(event);
+      } catch {
+        agent.historyPrimed = false;
+        // ignore history failures
+        return;
       }
-    } catch {
-      // ignore history failures
-      return;
-    }
 
-    const shouldBroadcast = typeof broadcast === "function" ? broadcast() : broadcast;
-    for (const event of providerSubagentEvents) {
-      const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
-      if (shouldBroadcast) {
-        this.dispatch({ type: "provider_subagent", event: update });
+      const shouldBroadcast = typeof broadcast === "function" ? broadcast() : broadcast;
+      for (const event of providerSubagentEvents) {
+        const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+        if (shouldBroadcast) {
+          this.dispatch({ type: "provider_subagent", event: update });
+        }
       }
-    }
-    for (const event of timelineEvents) {
-      const row = this.recordTimeline(
-        agent.id,
-        event.item,
-        event.timestamp ? { timestamp: event.timestamp } : undefined,
-      );
-      if (shouldBroadcast) {
-        this.dispatchStream(agent.id, event, {
-          seq: row.seq,
-          epoch: this.timelineStore.getEpoch(agent.id),
-          timestamp: row.timestamp,
-        });
+      for (const event of timelineEvents) {
+        const row = this.recordTimeline(
+          agent.id,
+          event.item,
+          event.timestamp ? { timestamp: event.timestamp } : undefined,
+        );
+        if (shouldBroadcast) {
+          this.dispatchStream(agent.id, event, {
+            seq: row.seq,
+            epoch: this.timelineStore.getEpoch(agent.id),
+            timestamp: row.timestamp,
+          });
+        }
+      }
+    } finally {
+      this.activeHistoryHydrationAgentIds.delete(agent.id);
+      const buffered = this.bufferedHistoryHydrationSessionEvents.get(agent.id) ?? [];
+      this.bufferedHistoryHydrationSessionEvents.delete(agent.id);
+      for (const event of buffered) {
+        this.enqueueSessionEvent(agent.id, event);
       }
     }
   }
