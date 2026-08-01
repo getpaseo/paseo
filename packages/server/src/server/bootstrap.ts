@@ -138,7 +138,11 @@ import type { PaseoToolRuntimeContext } from "./agent/tools/types.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
-import { FileBackedProjectRegistry, FileBackedWorkspaceRegistry } from "./workspace-registry.js";
+import {
+  FileBackedProjectRegistry,
+  FileBackedWorkspaceRegistry,
+  type WorkspaceArchiveContext,
+} from "./workspace-registry.js";
 import { FileBackedChatService } from "./chat/chat-service.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { LoopService } from "./loop-service.js";
@@ -876,10 +880,14 @@ export async function createPaseoDaemon(
     paseoHome: config.paseoHome,
     workspaceGitService,
   });
-  const archiveWorkspaceRecordExternal = async (workspaceId: string) => {
+  const archiveWorkspaceRecordExternal = async (
+    workspaceId: string,
+    context?: WorkspaceArchiveContext,
+  ) => {
     const existingWorkspace = await archivePersistedWorkspaceRecord({
       workspaceId,
       workspaceRegistry,
+      context,
     });
     if (!existingWorkspace || existingWorkspace.archivedAt) return;
     teardownArchivedWorkspaceRuntime(workspaceId);
@@ -983,6 +991,8 @@ export async function createPaseoDaemon(
     logger,
     findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
     listActiveWorkspaces: listActiveWorkspacesExternal,
+    getAutoArchivedChangeRequestUrl: async (workspaceId) =>
+      (await workspaceRegistry.get(workspaceId))?.autoArchivedChangeRequestUrl ?? null,
     archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
     markWorkspaceArchiving: markWorkspaceArchivingExternal,
     clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
