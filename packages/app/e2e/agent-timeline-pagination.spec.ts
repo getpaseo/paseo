@@ -24,6 +24,7 @@ import {
   seedRealisticOlderTimeline,
   sendLiveTurnBeforeHydration,
   expectTimelineViewportAnchoredAfterPrepend,
+  userNavigatesTimelineToHistoryStartWithKeyboard,
   userScrollsTimelineToHistoryStart,
 } from "./helpers/timeline-pagination";
 
@@ -67,6 +68,21 @@ test.describe("Agent timeline pagination", () => {
 
       await userScrollsTimelineToHistoryStart(page);
       await history.expectRequestedPages(2);
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
+  test("loads older history when the user navigates to history start with the keyboard", async ({
+    page,
+  }) => {
+    const agent = await seedLongMockAgentTimeline({ turns: 40 });
+    try {
+      const history = await holdOlderHistoryPages(page, agent);
+      await openAgentTimeline(page, agent);
+
+      await userNavigatesTimelineToHistoryStartWithKeyboard(page);
+      await history.expectRequestedPages(1);
     } finally {
       await agent.cleanup();
     }

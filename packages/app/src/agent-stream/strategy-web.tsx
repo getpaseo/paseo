@@ -170,7 +170,6 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   };
   const lastKnownScrollTopRef = useRef(0);
   const pendingUserScrollUpIntentRef = useRef(false);
-  const isPointerScrollActiveRef = useRef(false);
   const lastTouchClientYRef = useRef<number | null>(null);
   const pendingAutoScrollFrameRef = useRef<number | null>(null);
   const pendingAutoScrollTimeoutRef = useRef<number | null>(null);
@@ -489,26 +488,33 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     const scrolledDown =
       currentScrollTop > lastKnownScrollTopRef.current + USER_SCROLL_DELTA_EPSILON;
 
-    if (!followOutputRef.current && isAtBottom && scrolledDown) {
+    if (scrolledUp) {
+      cancelPendingStickToBottom();
+      if (followOutputRef.current) {
+        setFollowOutput(false);
+      }
+      pendingUserScrollUpIntentRef.current = false;
+      rearmHistoryStartFromUserIntent();
+    } else if (!followOutputRef.current && isAtBottom && scrolledDown) {
       setFollowOutput(true);
       pendingUserScrollUpIntentRef.current = false;
     } else if (followOutputRef.current && pendingUserScrollUpIntentRef.current) {
-      if (scrolledUp || !isAtBottom) {
+      if (!isAtBottom) {
         cancelPendingStickToBottom();
         setFollowOutput(false);
       }
       pendingUserScrollUpIntentRef.current = false;
-    } else if (followOutputRef.current && isPointerScrollActiveRef.current) {
-      if (scrolledUp) {
-        cancelPendingStickToBottom();
-        setFollowOutput(false);
-      }
     }
 
     lastKnownScrollTopRef.current = currentScrollTop;
     updateScrollMetrics();
     evaluateHistoryStart();
-  }, [cancelPendingStickToBottom, evaluateHistoryStart, updateScrollMetrics]);
+  }, [
+    cancelPendingStickToBottom,
+    evaluateHistoryStart,
+    rearmHistoryStartFromUserIntent,
+    updateScrollMetrics,
+  ]);
 
   useEffect(() => {
     const initialHistoryStartState = createHistoryStartPaginationState();
@@ -649,12 +655,6 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         rearmHistoryStartFromUserIntent();
       }
     };
-    const handlePointerDown = () => {
-      isPointerScrollActiveRef.current = true;
-    };
-    const handlePointerUp = () => {
-      isPointerScrollActiveRef.current = false;
-    };
     const handleTouchStart = (event: TouchEvent) => {
       const touch = event.touches[0];
       if (!touch) {
@@ -681,9 +681,6 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
 
     scrollContainer.addEventListener("scroll", handleDomScroll, { passive: true });
     scrollContainer.addEventListener("wheel", handleWheel, { passive: true });
-    scrollContainer.addEventListener("pointerdown", handlePointerDown, { passive: true });
-    scrollContainer.addEventListener("pointerup", handlePointerUp, { passive: true });
-    scrollContainer.addEventListener("pointercancel", handlePointerUp, { passive: true });
     scrollContainer.addEventListener("touchstart", handleTouchStart, { passive: true });
     scrollContainer.addEventListener("touchmove", handleTouchMove, { passive: true });
     scrollContainer.addEventListener("touchend", handleTouchEnd, { passive: true });
@@ -692,9 +689,6 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     return () => {
       scrollContainer.removeEventListener("scroll", handleDomScroll);
       scrollContainer.removeEventListener("wheel", handleWheel);
-      scrollContainer.removeEventListener("pointerdown", handlePointerDown);
-      scrollContainer.removeEventListener("pointerup", handlePointerUp);
-      scrollContainer.removeEventListener("pointercancel", handlePointerUp);
       scrollContainer.removeEventListener("touchstart", handleTouchStart);
       scrollContainer.removeEventListener("touchmove", handleTouchMove);
       scrollContainer.removeEventListener("touchend", handleTouchEnd);

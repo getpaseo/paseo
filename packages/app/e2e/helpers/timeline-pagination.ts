@@ -446,6 +446,15 @@ export async function userScrollsTimelineToHistoryStart(page: Page): Promise<voi
     .toBeLessThanOrEqual(HISTORY_START_THRESHOLD_PX);
 }
 
+export async function userNavigatesTimelineToHistoryStartWithKeyboard(page: Page): Promise<void> {
+  const scroll = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+  await scroll.focus();
+  await page.keyboard.press("Home");
+  await expect
+    .poll(async () => (await readTimelineViewport(page)).scrollTop)
+    .toBeLessThanOrEqual(HISTORY_START_THRESHOLD_PX);
+}
+
 export async function scrollTimelineToNewestLoadedEdge(page: Page): Promise<void> {
   const scroll = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
   await scroll.evaluate((element) => {
