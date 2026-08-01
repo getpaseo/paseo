@@ -1,3 +1,5 @@
+import { normalizePathForIdentity } from "../utils/path.js";
+
 export class WorkspaceLifecycleCoordinator {
   private readonly setupTasks = new Map<string, Promise<void>>();
   private readonly setupTasksByDirectory = new Map<string, Set<Promise<void>>>();
@@ -9,21 +11,22 @@ export class WorkspaceLifecycleCoordinator {
 
   trackWorkspaceSetup(workspaceId: string, task: Promise<void>, directoryPath?: string): void {
     this.setupTasks.set(workspaceId, task);
-    const directoryTasks = directoryPath
-      ? (this.setupTasksByDirectory.get(directoryPath) ?? new Set<Promise<void>>())
+    const directoryKey = directoryPath ? normalizePathForIdentity(directoryPath) : null;
+    const directoryTasks = directoryKey
+      ? (this.setupTasksByDirectory.get(directoryKey) ?? new Set<Promise<void>>())
       : null;
-    if (directoryPath && directoryTasks) {
+    if (directoryKey && directoryTasks) {
       directoryTasks.add(task);
-      this.setupTasksByDirectory.set(directoryPath, directoryTasks);
+      this.setupTasksByDirectory.set(directoryKey, directoryTasks);
     }
     const clearTask = () => {
       if (this.setupTasks.get(workspaceId) === task) {
         this.setupTasks.delete(workspaceId);
       }
-      if (directoryPath && directoryTasks) {
+      if (directoryKey && directoryTasks) {
         directoryTasks.delete(task);
         if (directoryTasks.size === 0) {
-          this.setupTasksByDirectory.delete(directoryPath);
+          this.setupTasksByDirectory.delete(directoryKey);
         }
       }
     };
@@ -158,21 +161,22 @@ export class WorkspaceLifecycleCoordinator {
   }
 
   runDirectoryExclusive<T>(directoryPath: string, operation: () => Promise<T>): Promise<T> {
-    const previous = this.directoryOperations.get(directoryPath) ?? Promise.resolve();
+    const directoryKey = normalizePathForIdentity(directoryPath);
+    const previous = this.directoryOperations.get(directoryKey) ?? Promise.resolve();
     const task = previous
       .catch(() => undefined)
       .then(async () => {
         while (true) {
-          const setupTasks = Array.from(this.setupTasksByDirectory.get(directoryPath) ?? []);
+          const setupTasks = Array.from(this.setupTasksByDirectory.get(directoryKey) ?? []);
           if (setupTasks.length === 0) break;
           await Promise.allSettled(setupTasks);
         }
         return operation();
       });
-    this.directoryOperations.set(directoryPath, task);
+    this.directoryOperations.set(directoryKey, task);
     const clearTask = () => {
-      if (this.directoryOperations.get(directoryPath) === task) {
-        this.directoryOperations.delete(directoryPath);
+      if (this.directoryOperations.get(directoryKey) === task) {
+        this.directoryOperations.delete(directoryKey);
       }
     };
     void task.then(clearTask, clearTask);

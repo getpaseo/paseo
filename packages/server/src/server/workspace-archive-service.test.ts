@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import pino, { type Logger } from "pino";
@@ -1346,6 +1354,8 @@ describe("archiveByScope", () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
     const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "cleanup-create-race");
+    const equivalentWorktreePath = path.join(tempDir, "cleanup-create-race-alias");
+    symlinkSync(worktree.worktreePath, equivalentWorktreePath, "dir");
     const incarnationId = readPaseoWorktreeIncarnationId(worktree.worktreePath);
     expect(incarnationId).toBeTruthy();
     const registry = new FileBackedWorkspaceRegistry(
@@ -1429,9 +1439,11 @@ describe("archiveByScope", () => {
       lifecycleCoordinator,
     });
     let creationSettled = false;
-    const creation = provisioning.createWorkspaceForDirectory(worktree.worktreePath).finally(() => {
-      creationSettled = true;
-    });
+    const creation = provisioning
+      .createWorkspaceForDirectory(equivalentWorktreePath)
+      .finally(() => {
+        creationSettled = true;
+      });
     await Promise.resolve();
     expect(creationSettled).toBe(false);
 
