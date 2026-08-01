@@ -22,7 +22,12 @@ import type { AgentUpdatesService } from "./session/agent-updates/agent-updates-
 import type { AgentSnapshotPayload, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { createTerminalManager } from "../terminal/terminal-manager.js";
-import { AgentManager } from "./agent/agent-manager.js";
+import {
+  AgentManager,
+  type EnsureAgentInitializedOptions,
+  type ManagedAgent,
+} from "./agent/agent-manager.js";
+import { ensureAgentLoaded } from "./agent/agent-loading.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
 import type {
   AgentClient,
@@ -550,6 +555,24 @@ class ResumeAgentTestClient extends CreateAgentTestClient {
       throw new Error("provider resume failed");
     }
     return super.resumeSession(handle, overrides);
+  }
+}
+
+class CachedListAgentStorage extends AgentStorage {
+  private cachedRecords: StoredAgentRecord[] | null = null;
+  private resolveFirstList!: () => void;
+  private readonly firstList = new Promise<void>((resolve) => {
+    this.resolveFirstList = resolve;
+  });
+
+  override async list(): Promise<StoredAgentRecord[]> {
+    this.cachedRecords ??= await super.list();
+    this.resolveFirstList();
+    return this.cachedRecords;
+  }
+
+  waitForFirstList(): Promise<void> {
+    return this.firstList;
   }
 }
 
@@ -5174,6 +5197,280 @@ test("overlapping resume_agent_requests share one stored identity owner", async 
   } finally {
     releaseFirstResume?.();
     rmSync(harness.workdir, { recursive: true, force: true });
+  }
+});
+
+test("resume_agent_request waits for the old stored runtime close to drain", async () => {
+  const order: string[] = [];
+  let markCloseStarted: (() => void) | undefined;
+  const closeStarted = new Promise<void>((resolve) => {
+    markCloseStarted = resolve;
+  });
+  let releaseClose: (() => void) | undefined;
+  const closeGate = new Promise<void>((resolve) => {
+    releaseClose = resolve;
+  });
+  let replacementCloseCount = 0;
+
+  class CloseFencedResumeClient extends CreateAgentTestClient {
+    resumeAttempts = 0;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new (class extends CreateAgentTestSession {
+        override readonly id = STORED_RESUME_HANDLE.sessionId;
+
+        override async close(): Promise<void> {
+          markCloseStarted?.();
+          await closeGate;
+          order.push("old close complete");
+        }
+      })(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      overrides?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      this.resumeAttempts += 1;
+      order.push("replacement resume started");
+      releaseClose?.();
+      const recordReplacementClose = () => {
+        replacementCloseCount += 1;
+      };
+      return new (class extends CreateAgentTestSession {
+        override readonly id = "replacement-provider-session-560";
+
+        override async close(): Promise<void> {
+          recordReplacementClose();
+        }
+      })({ provider: "codex", cwd: overrides?.cwd ?? process.cwd() });
+    }
+  }
+
+  const workdir = mkdtempSync(path.join(tmpdir(), "paseo-session-close-resume-fence-"));
+  const cwd = path.join(workdir, "repo");
+  mkdirSync(cwd, { recursive: true });
+  const logger = createTestLogger();
+  const agentStorage = new CachedListAgentStorage(path.join(workdir, "agents"), logger);
+  const client = new CloseFencedResumeClient();
+  const agentManager = new (class extends AgentManager {
+    override async waitForAgentClose(agentId: string): Promise<void> {
+      order.push("close wait joined");
+      releaseClose?.();
+      await super.waitForAgentClose(agentId);
+    }
+  })({ clients: { codex: client }, registry: agentStorage, logger });
+  const emitted: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    agentManager,
+    agentStorage,
+    onMessage: (message) => emitted.push(message),
+    paseoHome: path.join(workdir, "paseo-home"),
+  });
+  const lifecycles: string[] = [];
+  agentManager.subscribe(
+    (event) => {
+      if (event.type === "agent_state") {
+        lifecycles.push(event.agent.lifecycle);
+      }
+    },
+    { agentId: STORED_RESUME_AGENT_ID, replayState: false },
+  );
+
+  try {
+    await agentManager.createAgent({ provider: "codex", cwd }, STORED_RESUME_AGENT_ID, {
+      workspaceId: undefined,
+    });
+    const close = agentManager.closeAgent(STORED_RESUME_AGENT_ID);
+    await closeStarted;
+
+    const resume = session.handleMessage(storedResumeRequest("req-resume-after-close", cwd));
+    await Promise.all([close, resume]);
+
+    expect(client.resumeAttempts).toBe(1);
+    expect(order).toContain("close wait joined");
+    expect(order.indexOf("old close complete")).toBeLessThan(
+      order.indexOf("replacement resume started"),
+    );
+    expect(agentManager.getAgent(STORED_RESUME_AGENT_ID)?.lifecycle).toBe("idle");
+    expect(await agentStorage.get(STORED_RESUME_AGENT_ID)).toMatchObject({
+      id: STORED_RESUME_AGENT_ID,
+      lastStatus: "idle",
+      runtimeInfo: { sessionId: "replacement-provider-session-560" },
+    });
+    expect(lifecycles.slice(-3)).toEqual(["closed", "initializing", "idle"]);
+    expect(findByType(emitted, "rpc_error")).toBeUndefined();
+
+    await agentManager.closeAgent(STORED_RESUME_AGENT_ID);
+    expect(replacementCloseCount).toBe(1);
+  } finally {
+    releaseClose?.();
+    await agentManager.closeAgent(STORED_RESUME_AGENT_ID).catch(() => undefined);
+    await agentStorage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("lazy load and explicit resume share one stored identity hydration owner", async () => {
+  let markResumeStarted: (() => void) | undefined;
+  const resumeStarted = new Promise<void>((resolve) => {
+    markResumeStarted = resolve;
+  });
+  let releaseResume: (() => void) | undefined;
+  const resumeGate = new Promise<void>((resolve) => {
+    releaseResume = resolve;
+  });
+  let markHistoryStarted: (() => void) | undefined;
+  const historyStarted = new Promise<void>((resolve) => {
+    markHistoryStarted = resolve;
+  });
+  let releaseHistory: (() => void) | undefined;
+  const historyGate = new Promise<void>((resolve) => {
+    releaseHistory = resolve;
+  });
+  let releaseSecondResume: (() => void) | undefined;
+  const secondResumeGate = new Promise<void>((resolve) => {
+    releaseSecondResume = resolve;
+  });
+
+  class HydratingResumeSession extends CreateAgentTestSession {
+    private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
+
+    override subscribe(callback: (event: AgentStreamEvent) => void): () => void {
+      this.subscribers.add(callback);
+      return () => this.subscribers.delete(callback);
+    }
+
+    pushEvent(event: AgentStreamEvent): void {
+      for (const subscriber of this.subscribers) {
+        subscriber(event);
+      }
+    }
+
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      markHistoryStarted?.();
+      await historyGate;
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "provider history", messageId: "history" },
+      };
+    }
+  }
+
+  class LazyExplicitResumeClient extends CreateAgentTestClient {
+    resumeAttempts = 0;
+    readonly resumedSession: HydratingResumeSession;
+
+    constructor(cwd: string) {
+      super();
+      this.resumedSession = new HydratingResumeSession({ provider: "codex", cwd });
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      overrides?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      this.resumeAttempts += 1;
+      if (this.resumeAttempts === 1) {
+        markResumeStarted?.();
+        await resumeGate;
+        return this.resumedSession;
+      }
+      releaseResume?.();
+      await secondResumeGate;
+      return new CreateAgentTestSession({
+        provider: "codex",
+        cwd: overrides?.cwd ?? process.cwd(),
+      });
+    }
+  }
+
+  const workdir = mkdtempSync(path.join(tmpdir(), "paseo-session-lazy-explicit-resume-"));
+  const cwd = path.join(workdir, "repo");
+  mkdirSync(cwd, { recursive: true });
+  const logger = createTestLogger();
+  const agentStorage = new CachedListAgentStorage(path.join(workdir, "agents"), logger);
+  const storedAgent: StoredAgentRecord = {
+    ...makeStoredAgent({
+      id: STORED_RESUME_AGENT_ID,
+      cwd,
+      updatedAt: STORED_RESUME_ARCHIVED_AT,
+    }),
+    persistence: STORED_RESUME_HANDLE,
+    runtimeInfo: STORED_RESUME_HANDLE,
+  };
+  await agentStorage.upsert(storedAgent);
+  const client = new LazyExplicitResumeClient(cwd);
+  let initializationCalls = 0;
+  const agentManager = new (class extends AgentManager {
+    override ensureAgentInitialized(
+      agentId: string,
+      options: EnsureAgentInitializedOptions,
+    ): Promise<ManagedAgent> {
+      initializationCalls += 1;
+      if (initializationCalls === 2) {
+        releaseResume?.();
+      }
+      return super.ensureAgentInitialized(agentId, options);
+    }
+  })({ clients: { codex: client }, registry: agentStorage, logger });
+  const emitted: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    agentManager,
+    agentStorage,
+    onMessage: (message) => emitted.push(message),
+    paseoHome: path.join(workdir, "paseo-home"),
+  });
+  let lazyLoad: Promise<unknown> | null = null;
+  let explicitResume: Promise<void> | null = null;
+
+  try {
+    lazyLoad = ensureAgentLoaded(STORED_RESUME_AGENT_ID, {
+      agentManager,
+      agentStorage,
+      logger,
+    });
+    await resumeStarted;
+    explicitResume = session.handleMessage(storedResumeRequest("req-lazy-explicit-resume", cwd));
+    await historyStarted;
+    client.resumedSession.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "assistant_message", text: "buffered event", messageId: "event" },
+    });
+    const bufferedWriter = agentManager.appendTimelineItem(STORED_RESUME_AGENT_ID, {
+      type: "assistant_message",
+      text: "buffered writer",
+      messageId: "writer",
+    });
+    releaseSecondResume?.();
+    await waitForImmediate();
+    releaseHistory?.();
+
+    await Promise.all([lazyLoad, explicitResume, bufferedWriter]);
+    expect(initializationCalls).toBe(2);
+    expect(client.resumeAttempts).toBe(1);
+    expect(agentManager.listAgents().map((agent) => agent.id)).toEqual([STORED_RESUME_AGENT_ID]);
+    expect(agentManager.getTimeline(STORED_RESUME_AGENT_ID)).toEqual([
+      { type: "assistant_message", text: "provider history", messageId: "history" },
+      { type: "assistant_message", text: "buffered event", messageId: "event" },
+      { type: "assistant_message", text: "buffered writer", messageId: "writer" },
+    ]);
+    expect((await agentStorage.list()).map((record) => record.id)).toEqual([
+      STORED_RESUME_AGENT_ID,
+    ]);
+    expect(filterByType(emitted, "status")).toHaveLength(1);
+    expect(findByType(emitted, "rpc_error")).toBeUndefined();
+  } finally {
+    releaseResume?.();
+    releaseSecondResume?.();
+    releaseHistory?.();
+    await lazyLoad?.catch(() => undefined);
+    await explicitResume?.catch(() => undefined);
+    await agentManager.closeAgent(STORED_RESUME_AGENT_ID).catch(() => undefined);
+    await agentStorage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
   }
 });
 

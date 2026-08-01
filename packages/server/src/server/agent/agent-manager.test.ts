@@ -8931,12 +8931,11 @@ test("a shared agent load upgrades provider history hydration to broadcast", asy
   let broadcastingLoad: Promise<ManagedAgent> | null = null;
   let loaderManager!: AgentLoaderManager;
   loaderManager = {
-    broadcastTimeline: manager.broadcastTimeline.bind(manager),
     createAgent: manager.createAgent.bind(manager),
+    ensureAgentInitialized: manager.ensureAgentInitialized.bind(manager),
     getAgent: manager.getAgent.bind(manager),
     getRegisteredProviderIds: manager.getRegisteredProviderIds.bind(manager),
     hydrateTimelineFromProvider: manager.hydrateTimelineFromProvider.bind(manager),
-    waitForAgentClose: manager.waitForAgentClose.bind(manager),
     resumeAgentFromPersistence: async (...args) => {
       const [handle, overrides, agentId, options, resumeOptions] = args;
       const requestedBroadcast = options?.historyBroadcast;

@@ -2592,47 +2592,67 @@ export class Session {
     overrides?: Partial<AgentSessionConfig>,
   ): Promise<ManagedAgent> {
     const initialStoredAgent = await this.findStoredAgentByHandle(handle);
-    const mutationKey = initialStoredAgent
-      ? `agent\0${initialStoredAgent.id}`
-      : `handle\0${handle.provider}\0${handle.sessionId}`;
+    if (initialStoredAgent) {
+      return this.resumeStoredAgent(handle, overrides, initialStoredAgent);
+    }
 
+    const mutationKey = `handle\0${handle.provider}\0${handle.sessionId}`;
     return serializeAgentResume(this.agentManager, mutationKey, async () => {
       const storedAgent = await this.findStoredAgentByHandle(handle);
       if (storedAgent) {
-        const existing = this.agentManager.getAgent(storedAgent.id);
-        if (existing) {
-          return existing;
-        }
+        return this.resumeStoredAgent(handle, overrides, storedAgent);
       }
 
-      try {
-        if (storedAgent?.archivedAt) {
-          await unarchiveAgentState(this.agentStorage, this.agentManager, storedAgent.id);
-        }
-        const storedOptions = storedAgent ? extractTimestamps(storedAgent) : undefined;
-        if (storedOptions && overrides?.cwd && overrides.cwd !== storedAgent?.cwd) {
-          storedOptions.workspaceId = undefined;
-        }
-        const resumeOverrides = storedAgent
-          ? {
-              ...buildConfigOverrides(storedAgent),
-              ...overrides,
-              ...(storedAgent.internal !== undefined ? { internal: storedAgent.internal } : {}),
-            }
-          : overrides;
-        return await this.agentManager.resumeAgentFromPersistence(
-          handle,
-          resumeOverrides,
-          storedAgent?.id,
-          storedOptions,
-        );
-      } catch (error) {
-        if (storedAgent?.archivedAt) {
-          await this.rollbackArchivedResume(storedAgent);
-        }
-        throw error;
-      }
+      return this.resumeStoredAgentFromPersistence(handle, overrides, null);
     });
+  }
+
+  private async resumeStoredAgent(
+    handle: AgentPersistenceHandle,
+    overrides: Partial<AgentSessionConfig> | undefined,
+    storedAgent: StoredAgentRecord,
+  ): Promise<ManagedAgent> {
+    return this.agentManager.ensureAgentInitialized(storedAgent.id, {
+      initialize: (historyBroadcast) =>
+        this.resumeStoredAgentFromPersistence(handle, overrides, storedAgent, historyBroadcast),
+    });
+  }
+
+  private async resumeStoredAgentFromPersistence(
+    handle: AgentPersistenceHandle,
+    overrides: Partial<AgentSessionConfig> | undefined,
+    storedAgent: StoredAgentRecord | null,
+    historyBroadcast?: () => boolean,
+  ): Promise<ManagedAgent> {
+    try {
+      if (storedAgent?.archivedAt) {
+        await unarchiveAgentState(this.agentStorage, this.agentManager, storedAgent.id);
+      }
+      const storedOptions = storedAgent
+        ? { ...extractTimestamps(storedAgent), historyBroadcast }
+        : undefined;
+      if (storedOptions && overrides?.cwd && overrides.cwd !== storedAgent?.cwd) {
+        storedOptions.workspaceId = undefined;
+      }
+      const resumeOverrides = storedAgent
+        ? {
+            ...buildConfigOverrides(storedAgent),
+            ...overrides,
+            ...(storedAgent.internal !== undefined ? { internal: storedAgent.internal } : {}),
+          }
+        : overrides;
+      return await this.agentManager.resumeAgentFromPersistence(
+        handle,
+        resumeOverrides,
+        storedAgent?.id,
+        storedOptions,
+      );
+    } catch (error) {
+      if (storedAgent?.archivedAt) {
+        await this.rollbackArchivedResume(storedAgent);
+      }
+      throw error;
+    }
   }
 
   private async handleUpdateAgentRequest(

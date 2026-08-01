@@ -4966,7 +4966,7 @@ describe("agent config setters", () => {
     [K in keyof SessionOptions["agentManager"]]?: unknown;
   } {
     return {
-      waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+      ensureAgentInitialized: vi.fn().mockResolvedValue({ id: "agent-1" }),
       getAgent: vi.fn(() => ({ id: "agent-1" })),
       ...overrides,
     };

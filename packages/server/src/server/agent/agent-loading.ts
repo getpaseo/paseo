@@ -11,28 +11,15 @@ import {
   toAgentPersistenceHandle,
 } from "../persistence-hooks.js";
 
-interface PendingAgentInitialization {
-  promise: Promise<ManagedAgent>;
-  options: PendingAgentInitializationOptions;
-}
-
-interface PendingAgentInitializationOptions {
-  broadcastTimeline: boolean;
-  broadcastDelivered: boolean;
-}
-
-const pendingAgentInitializations = new Map<string, PendingAgentInitialization>();
-
 export type AgentLoaderManager = Pick<
   AgentManager,
-  | "broadcastTimeline"
   | "createAgent"
+  | "ensureAgentInitialized"
   | "getAgent"
   | "getRegisteredProviderIds"
   | "hydrateTimelineFromProvider"
   | "resumeAgentFromPersistence"
-> &
-  Partial<Pick<AgentManager, "waitForAgentClose">>;
+>;
 
 export interface EnsureAgentLoadedDeps {
   agentManager: AgentLoaderManager;
@@ -69,119 +56,58 @@ export async function ensureAgentLoaded(
   agentId: string,
   deps: EnsureAgentLoadedDeps,
 ): Promise<ManagedAgent> {
-  await deps.agentManager.waitForAgentClose?.(agentId);
+  return deps.agentManager.ensureAgentInitialized(agentId, {
+    broadcastTimeline: deps.broadcastTimeline,
+    initialize: async (historyBroadcast) => {
+      const record = await deps.agentStorage.get(agentId);
+      if (!record) {
+        throw new Error(`Agent not found: ${agentId}`);
+      }
 
-  const inflight = pendingAgentInitializations.get(agentId);
-  if (inflight) {
-    inflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
-    const agent = await inflight.promise;
-    deliverLateTimelineBroadcast(agentId, deps.agentManager, inflight.options);
-    return agent;
-  }
-
-  const existing = deps.agentManager.getAgent(agentId);
-  if (existing) {
-    if (deps.broadcastTimeline === true) {
-      deps.agentManager.broadcastTimeline(agentId);
-    }
-    return existing;
-  }
-
-  // A close may have started after the first barrier observed no in-flight
-  // work. Once the live lookup is empty, this second barrier closes that gap
-  // before storage-backed resume begins.
-  await deps.agentManager.waitForAgentClose?.(agentId);
-
-  const laterInflight = pendingAgentInitializations.get(agentId);
-  if (laterInflight) {
-    laterInflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
-    const agent = await laterInflight.promise;
-    deliverLateTimelineBroadcast(agentId, deps.agentManager, laterInflight.options);
-    return agent;
-  }
-
-  const pendingOptions = {
-    broadcastTimeline: deps.broadcastTimeline === true,
-    broadcastDelivered: false,
-  };
-  const initPromise = (async () => {
-    const record = await deps.agentStorage.get(agentId);
-    if (!record) {
-      throw new Error(`Agent not found: ${agentId}`);
-    }
-
-    const validProviders = deps.validProviders ?? deps.agentManager.getRegisteredProviderIds();
-    if (!isStoredAgentProviderAvailable(record, validProviders)) {
-      throw new Error(`Agent ${agentId} references unavailable provider '${record.provider}'`);
-    }
-
-    const handle = toAgentPersistenceHandle(validProviders, record.persistence);
-
-    let snapshot: ManagedAgent;
-    if (handle) {
-      snapshot = await deps.agentManager.resumeAgentFromPersistence(
-        handle,
-        buildConfigOverrides(record),
-        agentId,
-        {
-          ...extractTimestamps(record),
-          historyBroadcast: () => consumeTimelineBroadcast(pendingOptions),
-        },
-        record.archivedAt ? { purpose: "history" } : undefined,
-      );
-      deps.logger.info({ agentId, provider: record.provider }, "Agent resumed from persistence");
-    } else {
-      const config = buildSessionConfig(record, {
-        validProviders,
-      });
-      if (!config) {
+      const validProviders = deps.validProviders ?? deps.agentManager.getRegisteredProviderIds();
+      if (!isStoredAgentProviderAvailable(record, validProviders)) {
         throw new Error(`Agent ${agentId} references unavailable provider '${record.provider}'`);
       }
-      snapshot = await deps.agentManager.createAgent(config, agentId, {
-        labels: record.labels,
-        workspaceId: record.workspaceId,
-        owner: record.owner,
-      });
-      deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");
-    }
 
-    if (!handle) {
-      await deps.agentManager.hydrateTimelineFromProvider(agentId, {
-        broadcast: () => consumeTimelineBroadcast(pendingOptions),
-      });
-    }
-    return deps.agentManager.getAgent(agentId) ?? snapshot;
-  })();
+      const handle = toAgentPersistenceHandle(validProviders, record.persistence);
 
-  const pending: PendingAgentInitialization = { promise: initPromise, options: pendingOptions };
-  pendingAgentInitializations.set(agentId, pending);
+      let snapshot: ManagedAgent;
+      if (handle) {
+        snapshot = await deps.agentManager.resumeAgentFromPersistence(
+          handle,
+          buildConfigOverrides(record),
+          agentId,
+          {
+            ...extractTimestamps(record),
+            historyBroadcast,
+          },
+          record.archivedAt ? { purpose: "history" } : undefined,
+        );
+        deps.logger.info({ agentId, provider: record.provider }, "Agent resumed from persistence");
+      } else {
+        const config = buildSessionConfig(record, {
+          validProviders,
+        });
+        if (!config) {
+          throw new Error(`Agent ${agentId} references unavailable provider '${record.provider}'`);
+        }
+        snapshot = await deps.agentManager.createAgent(config, agentId, {
+          labels: record.labels,
+          workspaceId: record.workspaceId,
+          owner: record.owner,
+        });
+        deps.logger.info(
+          { agentId, provider: record.provider },
+          "Agent created from stored config",
+        );
+      }
 
-  try {
-    const agent = await initPromise;
-    deliverLateTimelineBroadcast(agentId, deps.agentManager, pendingOptions);
-    return agent;
-  } finally {
-    const current = pendingAgentInitializations.get(agentId);
-    if (current === pending) {
-      pendingAgentInitializations.delete(agentId);
-    }
-  }
-}
-
-function consumeTimelineBroadcast(options: PendingAgentInitializationOptions): boolean {
-  if (!options.broadcastTimeline || options.broadcastDelivered) {
-    return false;
-  }
-  options.broadcastDelivered = true;
-  return true;
-}
-
-function deliverLateTimelineBroadcast(
-  agentId: string,
-  agentManager: AgentLoaderManager,
-  options: PendingAgentInitializationOptions,
-): void {
-  if (consumeTimelineBroadcast(options)) {
-    agentManager.broadcastTimeline(agentId);
-  }
+      if (!handle) {
+        await deps.agentManager.hydrateTimelineFromProvider(agentId, {
+          broadcast: historyBroadcast,
+        });
+      }
+      return deps.agentManager.getAgent(agentId) ?? snapshot;
+    },
+  });
 }

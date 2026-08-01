@@ -197,8 +197,8 @@ function buildRunOutput(params: {
 
 type ScheduleAgentManager = Pick<
   AgentManager,
-  | "broadcastTimeline"
   | "createAgent"
+  | "ensureAgentInitialized"
   | "getAgent"
   | "getRegisteredProviderIds"
   | "hasInFlightRun"
@@ -206,7 +206,6 @@ type ScheduleAgentManager = Pick<
   | "resumeAgentFromPersistence"
   | "runAgent"
   | "waitForAgentEvent"
-  | "waitForAgentClose"
 >;
 
 interface ScheduleWorkspaceCreateInput {

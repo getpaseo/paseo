@@ -190,6 +190,21 @@ interface HydrateTimelineOptions {
   broadcast?: boolean | (() => boolean);
 }
 
+interface PendingAgentInitialization {
+  promise: Promise<ManagedAgent>;
+  broadcast: AgentInitializationBroadcast;
+}
+
+interface AgentInitializationBroadcast {
+  timeline: boolean;
+  delivered: boolean;
+}
+
+export interface EnsureAgentInitializedOptions {
+  broadcastTimeline?: boolean;
+  initialize: (historyBroadcast: () => boolean) => Promise<ManagedAgent>;
+}
+
 interface ActiveHistoryHydration {
   token: symbol;
   session: AgentSession;
@@ -599,6 +614,7 @@ export class AgentManager {
   private readonly durableTimelineMutationTails = new Map<string, Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
+  private readonly pendingAgentInitializations = new Map<string, PendingAgentInitialization>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
@@ -994,6 +1010,96 @@ export class AgentManager {
 
   async waitForAgentClose(agentId: string): Promise<void> {
     await this.inFlightAgentCloses?.get(agentId)?.catch(() => undefined);
+  }
+
+  async ensureAgentInitialized(
+    agentId: string,
+    options: EnsureAgentInitializedOptions,
+  ): Promise<ManagedAgent> {
+    await this.waitForAgentClose(agentId);
+
+    const inflight = this.pendingAgentInitializations.get(agentId);
+    if (inflight) {
+      inflight.broadcast.timeline ||= options.broadcastTimeline === true;
+      const agent = await inflight.promise;
+      this.deliverLateInitializationTimelineBroadcast(agentId, inflight);
+      return agent;
+    }
+
+    const existing = this.getAgent(agentId);
+    if (existing) {
+      if (options.broadcastTimeline === true) {
+        this.broadcastTimeline(agentId);
+      }
+      return existing;
+    }
+
+    // Close can start after the first barrier. Join it, then re-check both
+    // initialization and live identity before a provider session can start.
+    await this.waitForAgentClose(agentId);
+
+    const laterInflight = this.pendingAgentInitializations.get(agentId);
+    if (laterInflight) {
+      laterInflight.broadcast.timeline ||= options.broadcastTimeline === true;
+      const agent = await laterInflight.promise;
+      this.deliverLateInitializationTimelineBroadcast(agentId, laterInflight);
+      return agent;
+    }
+
+    const laterExisting = this.getAgent(agentId);
+    if (laterExisting) {
+      if (options.broadcastTimeline === true) {
+        this.broadcastTimeline(agentId);
+      }
+      return laterExisting;
+    }
+
+    const broadcast: AgentInitializationBroadcast = {
+      timeline: options.broadcastTimeline === true,
+      delivered: false,
+    };
+    let resolveInitialization!: (agent: ManagedAgent) => void;
+    let rejectInitialization!: (error: unknown) => void;
+    const initialization = new Promise<ManagedAgent>((resolvePromise, rejectPromise) => {
+      resolveInitialization = resolvePromise;
+      rejectInitialization = rejectPromise;
+    });
+    const pending: PendingAgentInitialization = { promise: initialization, broadcast };
+    this.pendingAgentInitializations.set(agentId, pending);
+    try {
+      void options
+        .initialize(() => this.consumeInitializationTimelineBroadcast(broadcast))
+        .then(resolveInitialization, rejectInitialization);
+    } catch (error) {
+      rejectInitialization(error);
+    }
+
+    try {
+      const agent = await initialization;
+      this.deliverLateInitializationTimelineBroadcast(agentId, pending);
+      return agent;
+    } finally {
+      if (this.pendingAgentInitializations.get(agentId) === pending) {
+        this.pendingAgentInitializations.delete(agentId);
+      }
+    }
+  }
+
+  private consumeInitializationTimelineBroadcast(broadcast: AgentInitializationBroadcast): boolean {
+    if (!broadcast.timeline || broadcast.delivered) {
+      return false;
+    }
+    broadcast.delivered = true;
+    return true;
+  }
+
+  private deliverLateInitializationTimelineBroadcast(
+    agentId: string,
+    pending: PendingAgentInitialization,
+  ): void {
+    if (this.consumeInitializationTimelineBroadcast(pending.broadcast)) {
+      this.broadcastTimeline(agentId);
+    }
   }
 
   getTimeline(id: string): AgentTimelineItem[] {
