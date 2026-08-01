@@ -238,6 +238,7 @@ interface CachedProviderAvailability extends ProviderAvailability {
 interface ProviderAvailabilityProbe {
   generation: number;
   controller: AbortController;
+  deferredStartState: { pending: boolean };
   response: Promise<ProviderAvailability>;
 }
 
@@ -4633,10 +4634,16 @@ export class AgentManager {
     }
 
     const existing = this.providerAvailabilityProbes.get(provider);
+    const deferStart = options?.deferStart === true;
+    let supersededProbe: ProviderAvailabilityProbe | null = null;
     if (existing?.generation === this.providerAvailabilityGeneration) {
-      return await existing.response;
+      if (existing.deferredStartState.pending && !deferStart) {
+        supersededProbe = existing;
+      } else {
+        return await existing.response;
+      }
     }
-    if (existing) {
+    if (existing && !supersededProbe) {
       existing.controller.abort(new Error("Provider availability generation invalidated"));
       if (this.providerAvailabilityProbes.get(provider) === existing) {
         this.providerAvailabilityProbes.delete(provider);
@@ -4650,12 +4657,13 @@ export class AgentManager {
 
     const generation = this.providerAvailabilityGeneration;
     const controller = new AbortController();
+    const deferredStartState = { pending: deferStart };
     const providerWork = this.executeProviderAvailabilityProbe(
       provider,
       client,
       generation,
       controller,
-      options?.deferStart === true,
+      deferredStartState,
     );
     const response = this.runProviderAvailabilityProbe(
       provider,
@@ -4667,9 +4675,13 @@ export class AgentManager {
     const probe: ProviderAvailabilityProbe = {
       generation,
       controller,
+      deferredStartState,
       response,
     };
     this.providerAvailabilityProbes.set(provider, probe);
+    supersededProbe?.controller.abort(
+      new Error("Deferred provider availability check superseded by immediate check"),
+    );
     void response.then(
       () => this.forgetProviderAvailabilityProbe(provider, probe),
       () => this.forgetProviderAvailabilityProbe(provider, probe),
@@ -4748,7 +4760,10 @@ export class AgentManager {
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (generation === this.providerAvailabilityGeneration) {
+      if (
+        generation === this.providerAvailabilityGeneration &&
+        this.providerAvailabilityProbes.get(provider)?.controller === controller
+      ) {
         this.logger.warn({ err: error, provider }, "Failed to check provider availability");
       }
       result = {
@@ -4768,7 +4783,8 @@ export class AgentManager {
     if (
       generation !== this.providerAvailabilityGeneration ||
       this.clients.get(provider) !== client ||
-      this.providerEnabled.get(provider) === false
+      this.providerEnabled.get(provider) === false ||
+      this.providerAvailabilityProbes.get(provider)?.controller !== controller
     ) {
       return this.readProviderAvailability(provider, false);
     }
@@ -4781,15 +4797,17 @@ export class AgentManager {
     client: AgentClient,
     generation: number,
     controller: AbortController,
-    deferStart: boolean,
+    deferredStartState: { pending: boolean },
   ): Promise<boolean | null> {
     // Background checks yield so status can publish its cached/checking state.
     // A selected-provider mutation starts immediately and remains time-bounded.
-    const start = deferStart
+    const start = deferredStartState.pending
       ? new Promise<void>((resolveProbeStart) => setImmediate(resolveProbeStart))
       : Promise.resolve();
     return start.then(() => {
+      deferredStartState.pending = false;
       if (
+        controller.signal.aborted ||
         generation !== this.providerAvailabilityGeneration ||
         this.clients.get(provider) !== client ||
         this.providerEnabled.get(provider) === false

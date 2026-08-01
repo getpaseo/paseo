@@ -1988,6 +1988,70 @@ test("provider status reuses trusted same-generation readiness without another l
   await vi.waitFor(() => expect(isAvailable).toHaveBeenCalledTimes(2));
 });
 
+test("a selected mutation replaces a same-tick deferred background probe", async () => {
+  const availability = deferred<boolean>();
+  const probeStarted = deferred<void>();
+  const processFailures: unknown[] = [];
+  let availabilityCalls = 0;
+  class DeferredAvailabilityClient extends TestAgentClient {
+    override async isAvailable(): Promise<boolean> {
+      availabilityCalls += 1;
+      probeStarted.resolve();
+      return await availability.promise;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new DeferredAvailabilityClient() },
+    logger,
+  });
+  const immediateBoundary = new Promise<"immediate">((resolve) => {
+    setImmediate(() => resolve("immediate"));
+  });
+  const onUnhandledRejection = (reason: unknown) => processFailures.push(reason);
+  process.on("unhandledRejection", onUnhandledRejection);
+
+  try {
+    await expect(manager.listProviderAvailability()).resolves.toEqual([
+      {
+        provider: "codex",
+        available: false,
+        error: null,
+        status: "checking",
+        checkedAt: null,
+      },
+    ]);
+    const creation = manager.createAgent(
+      { provider: "codex", cwd: "/workspace", model: "test-model" },
+      undefined,
+      { workspaceId: undefined },
+    );
+
+    await expect(
+      Promise.race([probeStarted.promise.then(() => "provider" as const), immediateBoundary]),
+    ).resolves.toBe("provider");
+    availability.resolve(false);
+    await expect(creation).rejects.toThrow("Provider 'codex' is not available");
+    await immediateBoundary;
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(availabilityCalls).toBe(1);
+    await expect(manager.listProviderAvailability()).resolves.toEqual([
+      {
+        provider: "codex",
+        available: false,
+        error: null,
+        status: "unavailable",
+        checkedAt: expect.any(String),
+      },
+    ]);
+    const probes = Reflect.get(manager, "providerAvailabilityProbes") as Map<string, unknown>;
+    expect(probes.size).toBe(0);
+    expect(processFailures).toEqual([]);
+  } finally {
+    process.off("unhandledRejection", onUnhandledRejection);
+  }
+});
+
 test("create probes only the selected provider and fails closed before provider mutation", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-health-create-"));
   class NeverAvailableClient extends TestAgentClient {
