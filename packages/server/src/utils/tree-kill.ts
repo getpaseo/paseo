@@ -134,26 +134,44 @@ function signalTreeOrChild(
   }
 
   return new Promise((resolve, reject) => {
-    const onAbort = () => reject(abortSignal?.reason);
-    abortSignal?.addEventListener("abort", onAbort, { once: true });
-    treeKiller(pid, killSignal, (error) => {
+    let settled = false;
+    let aborted = abortSignal?.aborted ?? false;
+    const onAbort = () => {
+      // tree-kill cannot be cancelled. Its callback retains signal ownership.
+      aborted = true;
+    };
+    const settle = (complete: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
       abortSignal?.removeEventListener("abort", onAbort);
-      if (abortSignal?.aborted) {
-        reject(abortSignal.reason);
-        return;
-      }
-      if (!error) {
-        resolve(true);
-        return;
-      }
-      if (preserveRootOnTreeFailure) {
-        // Retrying callers preserve the root so its descendants stay discoverable.
-        resolve(false);
-        return;
-      }
-      signalDirectChild(child, killSignal);
-      resolve(true);
-    });
+      complete();
+    };
+    abortSignal?.addEventListener("abort", onAbort, { once: true });
+    try {
+      treeKiller(pid, killSignal, (error) => {
+        settle(() => {
+          if (aborted) {
+            reject(abortSignal?.reason);
+            return;
+          }
+          if (!error) {
+            resolve(true);
+            return;
+          }
+          if (preserveRootOnTreeFailure) {
+            // Retrying callers preserve the root so its descendants stay discoverable.
+            resolve(false);
+            return;
+          }
+          signalDirectChild(child, killSignal);
+          resolve(true);
+        });
+      });
+    } catch (error) {
+      settle(() => reject(aborted ? abortSignal?.reason : error));
+    }
   });
 }
 

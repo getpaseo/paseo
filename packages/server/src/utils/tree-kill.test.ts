@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { terminateWithTreeKill } from "./tree-kill.js";
 
 const pollIntervalMs = 50;
@@ -261,6 +261,126 @@ describe("terminateWithTreeKill", () => {
 
     expect(result).toBe("terminated");
     expect(directSignals).toEqual(["SIGTERM"]);
+  });
+
+  test("waits for an uncancellable tree-kill callback after termination is aborted", async () => {
+    const abortController = new AbortController();
+    const removeListener = vi.spyOn(abortController.signal, "removeEventListener");
+    let treeKillCallback: ((error?: Error) => void) | null = null;
+    let outcome: "pending" | "resolved" | "rejected" = "pending";
+    const target = {
+      pid: 4107,
+      exitCode: null,
+      signalCode: null,
+      kill() {
+        return true;
+      },
+      once() {},
+    };
+
+    const termination = terminateWithTreeKill(target, {
+      gracefulTimeoutMs: 1,
+      forceTimeoutMs: 1,
+      signal: abortController.signal,
+      treeKiller: (_pid, _signal, callback) => {
+        treeKillCallback = callback;
+      },
+    });
+    void termination.then(
+      () => {
+        outcome = "resolved";
+        return undefined;
+      },
+      () => {
+        outcome = "rejected";
+        return undefined;
+      },
+    );
+    await Promise.resolve();
+
+    abortController.abort();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(outcome).toBe("pending");
+    expect(treeKillCallback).not.toBe(null);
+    expect(removeListener).not.toHaveBeenCalled();
+
+    treeKillCallback?.();
+    await expect(termination).rejects.toMatchObject({ name: "AbortError" });
+    expect(outcome).toBe("rejected");
+    expect(removeListener).toHaveBeenCalledOnce();
+  });
+
+  test.each([
+    ["success", undefined],
+    ["failure", new Error("tree-kill callback failed")],
+  ])("removes its abort listener after asynchronous tree-kill %s", async (_label, error) => {
+    const abortController = new AbortController();
+    const addListener = vi.spyOn(abortController.signal, "addEventListener");
+    const removeListener = vi.spyOn(abortController.signal, "removeEventListener");
+    let exitListener: () => void = () => undefined;
+    const target = {
+      pid: 4108,
+      exitCode: null,
+      signalCode: null,
+      kill() {
+        exitListener();
+        return true;
+      },
+      once(_event: "exit", listener: () => void) {
+        exitListener = listener;
+      },
+      off() {},
+    };
+
+    const result = await terminateWithTreeKill(target, {
+      gracefulTimeoutMs: 1,
+      forceTimeoutMs: 1,
+      signal: abortController.signal,
+      treeKiller: (_pid, _signal, callback) => {
+        setImmediate(() => {
+          if (!error) {
+            exitListener();
+          }
+          callback(error);
+        });
+      },
+    });
+
+    expect(result).toBe("terminated");
+    for (const call of addListener.mock.calls) {
+      expect(removeListener).toHaveBeenCalledWith("abort", call[1]);
+    }
+  });
+
+  test("removes its abort listener when tree-kill throws synchronously", async () => {
+    const abortController = new AbortController();
+    const addListener = vi.spyOn(abortController.signal, "addEventListener");
+    const removeListener = vi.spyOn(abortController.signal, "removeEventListener");
+    const failure = new Error("tree-kill failed synchronously");
+    const target = {
+      pid: 4108,
+      exitCode: null,
+      signalCode: null,
+      kill() {
+        return true;
+      },
+      once() {},
+    };
+
+    await expect(
+      terminateWithTreeKill(target, {
+        gracefulTimeoutMs: 1,
+        forceTimeoutMs: 1,
+        signal: abortController.signal,
+        treeKiller: () => {
+          throw failure;
+        },
+      }),
+    ).rejects.toBe(failure);
+
+    expect(addListener).toHaveBeenCalledOnce();
+    expect(removeListener).toHaveBeenCalledWith("abort", addListener.mock.calls[0]?.[1]);
   });
 
   test("revalidates the target before force escalation", async () => {

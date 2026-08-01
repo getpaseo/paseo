@@ -512,6 +512,31 @@ describe("OpenCodeServerManager managed process ledger", () => {
     await manager.shutdown();
   });
 
+  test("shutdown cancels an armed cleanup retry without losing its durable record", async () => {
+    vi.useFakeTimers();
+    const { manager, runtime } = createTestManager([4614], {
+      terminationResult: "kill-timeout",
+    });
+    const acquisition = await manager.acquireDedicated({ PASEO_AGENT_ID: "parent" });
+
+    await acquisition.release();
+    expect(runtime.terminatedPorts).toEqual([4614]);
+    expect(await runtime.managedProcesses.list()).toHaveLength(1);
+
+    await manager.shutdown();
+    expect(runtime.terminatedPorts).toEqual([4614, 4614]);
+
+    runtime.setTerminationResult("terminated");
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(runtime.terminatedPorts).toEqual([4614, 4614]);
+    expect(await runtime.managedProcesses.list()).toHaveLength(1);
+
+    await manager.shutdown();
+    expect(runtime.terminatedPorts).toEqual([4614, 4614, 4614]);
+    expect(await runtime.managedProcesses.list()).toEqual([]);
+  });
+
   test.runIf(process.platform !== "win32")(
     "retains an unverifiable process group for a later cleanup retry",
     async () => {
