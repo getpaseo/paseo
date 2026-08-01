@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { z } from "zod";
 import {
   getStructuredAgentResponse,
@@ -177,45 +177,58 @@ describe("generateStructuredAgentResponse", () => {
   // agent's permission prompt has no UI to answer it) left the provider CLI
   // child process alive forever. See issue #1937.
   it("closes the ephemeral agent when the run never finishes", async () => {
-    const { manager, closed, deleted } = createRunnerManager(() => new Promise<never>(() => {}));
+    vi.useFakeTimers();
+    try {
+      const { manager, closed, deleted } = createRunnerManager(() => new Promise<never>(() => {}));
 
-    await expect(
-      generateStructuredAgentResponse({
+      const generation = generateStructuredAgentResponse({
         manager,
         agentConfig: { provider: "claude", cwd: "/tmp/project" },
         prompt: "Return JSON",
         schema,
         timeoutMs: 25,
-      }),
-    ).rejects.toBeInstanceOf(StructuredAgentTimeoutError);
+      });
+      const settled = expect(generation).rejects.toBeInstanceOf(StructuredAgentTimeoutError);
+      await vi.advanceTimersByTimeAsync(25);
+      await settled;
 
-    expect(closed).toEqual(["generator"]);
-    expect(deleted).toEqual(["generator"]);
+      expect(closed).toEqual(["generator"]);
+      expect(deleted).toEqual(["generator"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("bounds the whole generation, not each retry", async () => {
-    let attempts = 0;
-    const { manager, closed } = createRunnerManager(async () => {
-      attempts += 1;
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      return { finalText: "not json" };
-    });
+    vi.useFakeTimers();
+    try {
+      let attempts = 0;
+      const { manager, closed } = createRunnerManager(async () => {
+        attempts += 1;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return { finalText: "not json" };
+      });
 
-    await expect(
-      generateStructuredAgentResponse({
+      const generation = generateStructuredAgentResponse({
         manager,
         agentConfig: { provider: "claude", cwd: "/tmp/project" },
         prompt: "Return JSON",
         schema,
         maxRetries: 100,
         timeoutMs: 60,
-      }),
-    ).rejects.toBeInstanceOf(StructuredAgentTimeoutError);
+      });
+      const settled = expect(generation).rejects.toBeInstanceOf(StructuredAgentTimeoutError);
+      await vi.advanceTimersByTimeAsync(60);
+      await settled;
 
-    // 60ms of budget at 20ms per attempt: three or four, nowhere near the 101
-    // that a per-retry bound would have allowed.
-    expect(attempts).toBeLessThanOrEqual(4);
-    expect(closed).toEqual(["generator"]);
+      // A per-retry bound would have let all 101 attempts through. One shared
+      // 60ms budget at 20ms an attempt starts four (t=0/20/40/60) before the
+      // deadline stops it.
+      expect(attempts).toBe(4);
+      expect(closed).toEqual(["generator"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -344,15 +357,16 @@ describe("generateStructuredAgentResponseWithFallback", () => {
   });
 
   it("spends one shared deadline across the waterfall", async () => {
-    const timeouts: Array<number | undefined> = [];
-    const manager = createManager([
-      { provider: "claude", available: true, error: null },
-      { provider: "codex", available: true, error: null },
-      { provider: "opencode", available: true, error: null },
-    ]);
+    vi.useFakeTimers();
+    try {
+      const timeouts: Array<number | undefined> = [];
+      const manager = createManager([
+        { provider: "claude", available: true, error: null },
+        { provider: "codex", available: true, error: null },
+        { provider: "opencode", available: true, error: null },
+      ]);
 
-    await expect(
-      generateStructuredAgentResponseWithFallback({
+      const generation = generateStructuredAgentResponseWithFallback({
         manager,
         cwd: "/tmp/project",
         prompt: "Return JSON",
@@ -368,14 +382,23 @@ describe("generateStructuredAgentResponseWithFallback", () => {
           await new Promise((resolve) => setTimeout(resolve, 30));
           throw new Error("failed");
         },
-      }),
-    ).rejects.toBeInstanceOf(StructuredAgentFallbackError);
+      });
+      const settled = generation.catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(100);
+      const error = await settled;
 
-    // Each candidate gets what is left of the budget, not a fresh copy of it,
-    // and once it is spent the rest are skipped instead of run.
-    expect(timeouts).toHaveLength(2);
-    expect(timeouts[0]).toBeLessThanOrEqual(50);
-    expect(timeouts[1]).toBeLessThan(timeouts[0] as number);
+      // Each candidate gets what is left of the budget, not a fresh copy of it,
+      // and once it is spent the rest are skipped instead of run.
+      expect(error).toBeInstanceOf(StructuredAgentFallbackError);
+      expect(timeouts).toEqual([50, 20]);
+      // A skipped candidate was never probed, so the summary must not claim it
+      // is unavailable.
+      expect((error as Error).message).toContain(
+        "opencode (opencode/gpt-5-nano): skipped (structured generation deadline exceeded)",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("throws a fallback error when all providers are unavailable or fail", async () => {

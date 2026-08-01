@@ -186,17 +186,18 @@ async function startSinkhole(): Promise<SinkholeHandle> {
   };
 }
 
-// The provider CLI runs as a child of this process, so a leak is visible in the
-// process table and nowhere else.
+// A leaked provider CLI is visible in the process table and nowhere else.
+// Restricted to this process's own children: the developer running this may well
+// have their own daemon spawning claude CLIs, and those must not count.
 function providerCliPids(): Set<string> {
-  const out = execFileSync("ps", ["-eo", "pid,args"], { encoding: "utf8" });
+  const out = execFileSync("ps", ["-eo", "pid,ppid,args"], { encoding: "utf8" });
   const pids = new Set<string>();
   for (const line of out.split("\n")) {
     if (!line.includes("--output-format stream-json")) {
       continue;
     }
-    const pid = line.trim().split(/\s+/)[0];
-    if (pid) {
+    const [pid, ppid] = line.trim().split(/\s+/);
+    if (pid && ppid === String(process.pid)) {
       pids.add(pid);
     }
   }

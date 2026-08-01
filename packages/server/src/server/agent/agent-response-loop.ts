@@ -35,6 +35,9 @@ export interface StructuredGenerationAttempt {
   model: string | null;
   available: boolean;
   error: string | null;
+  // Never run because an earlier candidate spent the shared deadline. Distinct
+  // from `available: false`, which means the provider itself is unusable.
+  skipped?: boolean;
 }
 
 // Metadata generation runs headless on an internal agent: it has no UI, so a
@@ -65,6 +68,9 @@ export class StructuredAgentFallbackError extends Error {
     const summary = attempts
       .map((attempt) => {
         const modelSuffix = attempt.model ? ` (${attempt.model})` : "";
+        if (attempt.skipped) {
+          return `${attempt.provider}${modelSuffix}: skipped${attempt.error ? ` (${attempt.error})` : ""}`;
+        }
         if (!attempt.available) {
           return `${attempt.provider}${modelSuffix}: unavailable${attempt.error ? ` (${attempt.error})` : ""}`;
         }
@@ -453,6 +459,11 @@ export async function generateStructuredAgentResponseWithFallback<T>(
   // One deadline for the whole waterfall. A per-candidate bound would stack, so
   // a total provider outage would keep the caller waiting timeoutMs once per
   // candidate instead of once.
+  //
+  // The trade-off is that a first candidate which hangs rather than fails eats
+  // the budget and the rest are skipped. Splitting the budget per candidate
+  // would fix that but re-introduce a bound too tight for a legitimately slow
+  // generation on a large patch, and no split can tell "hung" from "slow".
   const deadline = Date.now() + (timeoutMs ?? DEFAULT_STRUCTURED_GENERATION_TIMEOUT_MS);
 
   const runStructured =
@@ -461,17 +472,6 @@ export async function generateStructuredAgentResponseWithFallback<T>(
   const attempts: StructuredGenerationAttempt[] = [];
 
   for (const candidate of providers) {
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) {
-      attempts.push({
-        provider: candidate.provider,
-        model: candidate.model ?? null,
-        available: false,
-        error: "structured generation deadline exceeded",
-      });
-      continue;
-    }
-
     const availabilityEntry = await manager.getProviderAvailability(candidate.provider);
     if (!availabilityEntry.available) {
       const reason = availabilityEntry.error ?? "unavailable";
@@ -484,6 +484,24 @@ export async function generateStructuredAgentResponseWithFallback<T>(
       logger?.warn(
         { provider: candidate.provider, model: candidate.model, schemaName, reason },
         "Structured generation: skipping unavailable provider",
+      );
+      continue;
+    }
+
+    // Computed here rather than at the top of the loop so the availability
+    // check above can't eat into the budget this candidate is told it has.
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      attempts.push({
+        provider: candidate.provider,
+        model: candidate.model ?? null,
+        available: true,
+        error: "structured generation deadline exceeded",
+        skipped: true,
+      });
+      logger?.warn(
+        { provider: candidate.provider, model: candidate.model, schemaName },
+        "Structured generation: deadline spent, skipping remaining provider",
       );
       continue;
     }
