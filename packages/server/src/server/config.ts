@@ -187,6 +187,7 @@ interface ResolveRelayInput {
 
 interface ResolvedRelay {
   enabled: boolean;
+  enabledMutable: boolean;
   endpoint: string;
   publicEndpoint: string;
   useTls: boolean;
@@ -210,11 +211,11 @@ function resolveTlsFromEnv(
 }
 
 function resolveRelayConfig(input: ResolveRelayInput): ResolvedRelay {
+  const environmentEnabled = parseBooleanEnv(input.env.PASEO_RELAY_ENABLED);
+  // COMPAT(relayOptInDefault): configs created before v0.2.6 may omit this field.
+  // Preserve their relay-on behavior until 2027-01-31; new homes materialize false.
   const enabled =
-    input.cliRelayEnabled ??
-    parseBooleanEnv(input.env.PASEO_RELAY_ENABLED) ??
-    input.persisted.daemon?.relay?.enabled ??
-    true;
+    input.cliRelayEnabled ?? environmentEnabled ?? input.persisted.daemon?.relay?.enabled ?? true;
   const endpoint =
     input.env.PASEO_RELAY_ENDPOINT ??
     input.persisted.daemon?.relay?.endpoint ??
@@ -235,7 +236,14 @@ function resolveRelayConfig(input: ResolveRelayInput): ResolvedRelay {
     input.persisted.daemon?.relay?.publicUseTls,
     useTls,
   );
-  return { enabled, endpoint, publicEndpoint, useTls, publicUseTls };
+  return {
+    enabled,
+    enabledMutable: input.cliRelayEnabled === undefined && environmentEnabled === undefined,
+    endpoint,
+    publicEndpoint,
+    useTls,
+    publicUseTls,
+  };
 }
 
 interface ResolvedVoiceLlm {
@@ -515,6 +523,7 @@ export function loadConfig(
     staticDir: "public",
     agentClients: {},
     relayEnabled: relay.enabled,
+    relayEnabledMutable: relay.enabledMutable,
     relayEndpoint: relay.endpoint,
     relayPublicEndpoint: relay.publicEndpoint,
     relayUseTls: relay.useTls,

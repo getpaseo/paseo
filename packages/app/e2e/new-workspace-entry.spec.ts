@@ -2,8 +2,10 @@ import { expect, test } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
 import {
   connectNewWorkspaceDaemonClient,
+  expectNewWorkspaceControlsEnabled,
   expectNewWorkspaceProjectSelected,
   openGlobalNewWorkspaceComposer,
+  openMissingProjectNewWorkspaceComposer,
   openNewWorkspaceComposer,
   openNewWorkspaceProjectPickerWithShortcut,
 } from "./helpers/new-workspace";
@@ -11,6 +13,7 @@ import { getE2EDaemonPort } from "./helpers/daemon-port";
 import { seedWorkspace, type SeededWorkspace } from "./helpers/seed-client";
 import { seedSavedSettingsHosts } from "./helpers/settings";
 import { getServerId } from "./helpers/server-id";
+import { projectEquivalenceViewKey } from "./helpers/project-view-key";
 import { clickArchiveWorkspaceMenuItem, expectWorkspaceAbsentFromSidebar } from "./helpers/sidebar";
 import { waitForSidebarHydration } from "./helpers/workspace-ui";
 
@@ -22,7 +25,7 @@ import { waitForSidebarHydration } from "./helpers/workspace-ui";
 // screen, and non-git projects never offer the worktree Isolation control.
 
 function projectRow(page: import("@playwright/test").Page, projectKey: string) {
-  return page.getByTestId(`sidebar-project-row-${projectKey}`);
+  return page.getByTestId(`sidebar-project-row-${projectEquivalenceViewKey(projectKey)}`);
 }
 
 test.describe("New workspace entry points", () => {
@@ -105,6 +108,17 @@ test.describe("New workspace entry points", () => {
     } finally {
       await seeded.cleanup();
     }
+  });
+
+  test("a stale project route keeps the New Workspace controls enabled", async ({ page }) => {
+    await gotoAppShell(page);
+    await openMissingProjectNewWorkspaceComposer(page, {
+      serverId: getServerId(),
+      projectId: "missing-project",
+      sourceDirectory: "/tmp/missing-project",
+    });
+
+    await expectNewWorkspaceControlsEnabled(page);
   });
 
   test("Ctrl+P opens the project picker with search focused", async ({ page }) => {
@@ -195,7 +209,7 @@ test.describe("New workspace entry points", () => {
       // route-driven navigation targets a different project.
       await page.getByTestId("new-workspace-project-picker-trigger").click();
       const optionC = page.getByTestId(
-        `new-workspace-project-picker-option-${projectC.projectKey}`,
+        `new-workspace-project-picker-option-${projectEquivalenceViewKey(projectC.projectKey)}`,
       );
       await expect(optionC).toBeVisible({ timeout: 30_000 });
       await optionC.click();
@@ -238,7 +252,7 @@ test.describe("New workspace entry points", () => {
       await expect(trigger).toBeVisible({ timeout: 30_000 });
       await trigger.click();
       const nonGitOption = page.getByTestId(
-        `new-workspace-project-picker-option-${nonGitProject.projectKey}`,
+        `new-workspace-project-picker-option-${projectEquivalenceViewKey(nonGitProject.projectKey)}`,
       );
       await expect(nonGitOption).toBeVisible({ timeout: 30_000 });
       await nonGitOption.click();
@@ -251,7 +265,7 @@ test.describe("New workspace entry points", () => {
       // Switching to the git project on the same screen reveals the Isolation row.
       await trigger.click();
       const gitOption = page.getByTestId(
-        `new-workspace-project-picker-option-${gitProject.projectKey}`,
+        `new-workspace-project-picker-option-${projectEquivalenceViewKey(gitProject.projectKey)}`,
       );
       await expect(gitOption).toBeVisible({ timeout: 30_000 });
       await gitOption.click();
