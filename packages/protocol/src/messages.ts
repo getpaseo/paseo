@@ -697,7 +697,14 @@ export interface MaterialProgressPayload {
   state: "none" | "progressing" | "warning" | "stalled";
   completedCompactionsSinceMaterialProgress: number;
   lastMaterialProgressAt: string | null;
-  lastMaterialProgressKind: "edit" | "write" | "assistant_result" | null;
+  lastMaterialProgressKind:
+    | "edit"
+    | "write"
+    | "evidence"
+    | "verification"
+    | "decision"
+    | "assistant_result"
+    | null;
   reason: string;
 }
 
@@ -705,7 +712,9 @@ export const MaterialProgressPayloadSchema: z.ZodType<MaterialProgressPayload> =
   state: z.enum(["none", "progressing", "warning", "stalled"]),
   completedCompactionsSinceMaterialProgress: z.number().int().nonnegative(),
   lastMaterialProgressAt: z.string().nullable(),
-  lastMaterialProgressKind: z.enum(["edit", "write", "assistant_result"]).nullable(),
+  lastMaterialProgressKind: z
+    .enum(["edit", "write", "evidence", "verification", "decision", "assistant_result"])
+    .nullable(),
   reason: z.string(),
 });
 

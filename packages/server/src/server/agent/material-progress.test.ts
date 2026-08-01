@@ -147,7 +147,175 @@ describe("analyzeMaterialProgress", () => {
     });
   });
 
-  it("does not count read-only tools or commentary as material progress", () => {
+  it("keeps a read-only audit progressing across two compactions", () => {
+    const result = analyzeMaterialProgress({
+      entries: [
+        entry(1, { type: "user_message", text: "audit the authentication flow" }),
+        entry(2, {
+          type: "tool_call",
+          callId: "read-1",
+          name: "read",
+          status: "completed",
+          error: null,
+          detail: { type: "read", filePath: "src/auth.ts", content: "export function login() {}" },
+        }),
+        entry(3, { type: "compaction", status: "completed" }),
+        entry(4, {
+          type: "tool_call",
+          callId: "search-1",
+          name: "grep",
+          status: "completed",
+          error: null,
+          detail: { type: "search", query: "login(", numFiles: 2, numMatches: 3 },
+        }),
+        entry(5, { type: "compaction", status: "completed" }),
+        entry(6, {
+          type: "tool_call",
+          callId: "fetch-1",
+          name: "fetch",
+          status: "completed",
+          error: null,
+          detail: {
+            type: "fetch",
+            url: "https://example.com/auth-spec",
+            result: "Tokens expire after one hour.",
+            code: 200,
+          },
+        }),
+      ],
+      turnOutcome: null,
+    });
+
+    expect(result).toMatchObject({
+      state: "progressing",
+      completedCompactionsSinceMaterialProgress: 0,
+      lastMaterialProgressKind: "evidence",
+    });
+  });
+
+  it("keeps test-only verification progressing across two compactions", () => {
+    const result = analyzeMaterialProgress({
+      entries: [
+        entry(1, { type: "user_message", text: "verify the change" }),
+        entry(2, {
+          type: "tool_call",
+          callId: "test-1",
+          name: "bash",
+          status: "completed",
+          error: null,
+          detail: { type: "shell", command: "npm test", output: "12 tests passed", exitCode: 0 },
+        }),
+        entry(3, { type: "compaction", status: "completed" }),
+        entry(4, {
+          type: "tool_call",
+          callId: "build-1",
+          name: "bash",
+          status: "completed",
+          error: null,
+          detail: {
+            type: "shell",
+            command: "npm run build",
+            output: "build complete",
+            exitCode: 0,
+          },
+        }),
+        entry(5, { type: "compaction", status: "completed" }),
+        entry(6, {
+          type: "tool_call",
+          callId: "typecheck-1",
+          name: "bash",
+          status: "completed",
+          error: null,
+          detail: {
+            type: "shell",
+            command: "npm run typecheck",
+            output: "typecheck passed",
+            exitCode: 0,
+          },
+        }),
+      ],
+      turnOutcome: null,
+    });
+
+    expect(result).toMatchObject({
+      state: "progressing",
+      completedCompactionsSinceMaterialProgress: 0,
+      lastMaterialProgressKind: "verification",
+    });
+  });
+
+  it("treats a non-empty explicit plan as a decision", () => {
+    const result = analyzeMaterialProgress({
+      entries: [
+        entry(1, { type: "user_message", text: "decide how to proceed" }),
+        entry(2, { type: "compaction", status: "completed" }),
+        entry(3, {
+          type: "tool_call",
+          callId: "plan-1",
+          name: "plan",
+          status: "completed",
+          error: null,
+          detail: { type: "plan", text: "Use the persisted boundary as the source of truth." },
+        }),
+      ],
+      turnOutcome: null,
+    });
+
+    expect(result).toMatchObject({
+      state: "progressing",
+      completedCompactionsSinceMaterialProgress: 0,
+      lastMaterialProgressKind: "decision",
+    });
+  });
+
+  it("stalls on repeated irrelevant reads across two compactions", () => {
+    const repeatedRead = {
+      type: "read" as const,
+      filePath: "notes/unrelated.txt",
+      content: "unchanged unrelated notes",
+    };
+    const result = analyzeMaterialProgress({
+      entries: [
+        entry(1, { type: "user_message", text: "audit the authentication flow" }),
+        entry(2, {
+          type: "tool_call",
+          callId: "read-1",
+          name: "read",
+          status: "completed",
+          error: null,
+          detail: repeatedRead,
+        }),
+        entry(3, { type: "compaction", status: "completed" }),
+        entry(4, {
+          type: "tool_call",
+          callId: "read-2",
+          name: "read",
+          status: "completed",
+          error: null,
+          detail: repeatedRead,
+        }),
+        entry(5, { type: "compaction", status: "completed" }),
+        entry(6, {
+          type: "tool_call",
+          callId: "read-3",
+          name: "read",
+          status: "completed",
+          error: null,
+          detail: repeatedRead,
+        }),
+      ],
+      turnOutcome: null,
+    });
+
+    expect(result).toMatchObject({
+      state: "stalled",
+      completedCompactionsSinceMaterialProgress: 2,
+      lastMaterialProgressAt: "2026-07-31T00:00:02.000Z",
+      lastMaterialProgressKind: "evidence",
+    });
+  });
+
+  it("does not count empty, failed, or no-op tools and commentary as material progress", () => {
     const result = analyzeMaterialProgress({
       entries: [
         entry(1, { type: "user_message", text: "investigate" }),
@@ -157,10 +325,50 @@ describe("analyzeMaterialProgress", () => {
           name: "read",
           status: "completed",
           error: null,
-          detail: { type: "read", filePath: "src/a.ts", content: "source" },
+          detail: { type: "read", filePath: "src/a.ts" },
         }),
-        entry(3, { type: "assistant_message", text: "Still investigating." }),
-        entry(4, { type: "compaction", status: "completed" }),
+        entry(3, {
+          type: "tool_call",
+          callId: "search-1",
+          name: "grep",
+          status: "completed",
+          error: null,
+          detail: { type: "search", query: "TODO" },
+        }),
+        entry(4, {
+          type: "tool_call",
+          callId: "fetch-1",
+          name: "fetch",
+          status: "completed",
+          error: null,
+          detail: { type: "fetch", url: "https://example.com" },
+        }),
+        entry(5, {
+          type: "tool_call",
+          callId: "shell-1",
+          name: "bash",
+          status: "completed",
+          error: null,
+          detail: { type: "shell", command: "false", output: "failed", exitCode: 1 },
+        }),
+        entry(6, {
+          type: "tool_call",
+          callId: "plan-1",
+          name: "plan",
+          status: "completed",
+          error: null,
+          detail: { type: "plan", text: "   " },
+        }),
+        entry(7, { type: "assistant_message", text: "Still investigating." }),
+        entry(8, {
+          type: "tool_call",
+          callId: "edit-1",
+          name: "edit",
+          status: "failed",
+          error: "permission denied",
+          detail: { type: "edit", filePath: "src/a.ts", unifiedDiff: "+change" },
+        }),
+        entry(9, { type: "compaction", status: "completed" }),
       ],
       turnOutcome: null,
     });

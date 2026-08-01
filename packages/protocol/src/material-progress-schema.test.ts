@@ -45,4 +45,22 @@ describe("material progress wire compatibility", () => {
 
     expect(parsed.materialProgress?.state).toBe("warning");
   });
+
+  it.each(["evidence", "verification", "decision"] as const)(
+    "accepts the %s material progress kind",
+    (lastMaterialProgressKind) => {
+      const parsed = AgentSnapshotPayloadSchema.parse({
+        ...baseSnapshot,
+        materialProgress: {
+          state: "progressing",
+          completedCompactionsSinceMaterialProgress: 0,
+          lastMaterialProgressAt: "2026-07-31T00:00:01.000Z",
+          lastMaterialProgressKind,
+          reason: "Material progress followed the latest user message.",
+        },
+      });
+
+      expect(parsed.materialProgress?.lastMaterialProgressKind).toBe(lastMaterialProgressKind);
+    },
+  );
 });
