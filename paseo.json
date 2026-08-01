@@ -7,7 +7,8 @@
       "npm run build:server",
       "npm run build --workspace=@getpaseo/expo-two-way-audio",
       "cp \"$PASEO_SOURCE_CHECKOUT_PATH/packages/server/.env\" \"$PWD/packages/server/.env\""
-    ]
+    ],
+    "teardown": "sh -lc 'name=$(echo \"$PASEO_WORKTREE_PATH\" | sed \"s|^/||; s|/|-|g\"); codebase-memory-mcp cli delete_project --project \"$name\" >/dev/null 2>&1; rm -f ~/.cache/codebase-memory-mcp/\"$name\".db*' || true"
   },
   "scripts": {
     "daemon": {
