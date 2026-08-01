@@ -152,10 +152,55 @@ describe("OpenCodeServerManager generations", () => {
 
     await manager.shutdown();
 
-    await expect(acquisition).rejects.toThrow("OpenCode server exited with code null");
+    await expect(acquisition).rejects.toThrow("OpenCode server terminated during startup");
     expect(runtime.terminatedPorts).toEqual([4472]);
     expect(await runtime.managedProcesses.list()).toEqual([]);
   });
+
+  test("shutdown invalidates readiness while exec confirmation is pending", async () => {
+    const { manager, runtime } = createTestManager([4479], {
+      autoAnnounce: false,
+      managedProcessConfirmationPending: true,
+    });
+    const acquisition = manager.acquireCurrent();
+    const failure = expect(acquisition).rejects.toThrow(
+      "OpenCode server terminated during startup",
+    );
+    await runtime.settle();
+    runtime.processForPort(4479).announceListening();
+    await runtime.managedProcesses.waitForConfirmation();
+
+    await manager.shutdown();
+    await failure;
+
+    runtime.managedProcesses.releaseConfirmation();
+    await runtime.settle();
+    expect(runtime.terminatedPorts).toEqual([4479]);
+  });
+
+  test.runIf(process.platform !== "win32")(
+    "shutdown awaits process-group cleanup already started by leader exit",
+    async () => {
+      const { manager, runtime } = createTestManager([4480], {
+        processGroupInspectionPending: true,
+      });
+      await manager.acquireCurrent();
+      runtime.processForPort(4480).exitNormally();
+      await runtime.waitForProcessGroupInspection();
+      let shutdownComplete = false;
+
+      const shutdown = manager.shutdown().then(() => {
+        shutdownComplete = true;
+        return undefined;
+      });
+      await runtime.settle();
+
+      expect(shutdownComplete).toBe(false);
+      runtime.releaseProcessGroupInspection();
+      await shutdown;
+      expect(await runtime.managedProcesses.list()).toEqual([]);
+    },
+  );
 
   test("shutdown waits for a launch before its server generation is registered", async () => {
     const { manager, runtime } = createTestManager([4477], {
@@ -174,7 +219,7 @@ describe("OpenCodeServerManager generations", () => {
     const error = await acquisitionResult;
 
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain("OpenCode server exited with code null");
+    expect((error as Error).message).toContain("OpenCode server terminated during startup");
     expect(runtime.terminatedPorts).toEqual([4477]);
     expect(await runtime.managedProcesses.list()).toEqual([]);
   });
@@ -196,7 +241,7 @@ describe("OpenCodeServerManager generations", () => {
     const error = await acquisitionResult;
 
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain("OpenCode server exited with code null");
+    expect((error as Error).message).toContain("OpenCode server terminated during startup");
     expect(runtime.terminatedPorts).toEqual([4478]);
     expect(await runtime.managedProcesses.list()).toEqual([]);
   });
@@ -365,6 +410,7 @@ describe("OpenCodeServerManager managed process ledger", () => {
 
     await expect(manager.acquireCurrent()).rejects.toThrow("managed process ledger failed");
     expect(runtime.terminatedPorts).toEqual([4611]);
+    expect(await runtime.managedProcesses.list()).toHaveLength(1);
 
     await manager.shutdown();
 
@@ -388,6 +434,19 @@ describe("OpenCodeServerManager managed process ledger", () => {
       runtime.setProcessIdentityOwned(true);
       await manager.shutdown();
       expect(runtime.terminatedPorts).toEqual([4612]);
+    },
+  );
+
+  test.runIf(process.platform === "win32")(
+    "uses the original child handle for live Windows cleanup",
+    async () => {
+      const { manager, runtime } = createTestManager([4613]);
+      await manager.acquireCurrent();
+
+      await manager.shutdown();
+
+      expect(runtime.terminationTargetPids).toEqual([undefined]);
+      expect(runtime.terminatedPorts).toEqual([4613]);
     },
   );
 
@@ -563,6 +622,8 @@ function createTestManager(
     processIdentityOwned?: boolean;
     revalidateForceSignal?: boolean;
     portAllocationPending?: boolean;
+    processGroupInspectionPending?: boolean;
+    managedProcessConfirmationPending?: boolean;
   } = {},
 ): {
   manager: OpenCodeServerManager;
@@ -578,6 +639,8 @@ function createTestManager(
     processIdentityOwned: options.processIdentityOwned ?? true,
     revalidateForceSignal: options.revalidateForceSignal ?? false,
     portAllocationPending: options.portAllocationPending ?? false,
+    processGroupInspectionPending: options.processGroupInspectionPending ?? false,
+    managedProcessConfirmationPending: options.managedProcessConfirmationPending ?? false,
   });
   return {
     manager: new OpenCodeServerManager({
@@ -605,6 +668,7 @@ class FakeOpenCodeServerRuntime {
     identityToken: string;
   }> = [];
   readonly processIdentityChecks: string[] = [];
+  readonly terminationTargetPids: Array<number | undefined> = [];
   readonly spawnCalls: Array<{
     command: string;
     args: string[];
@@ -618,6 +682,10 @@ class FakeOpenCodeServerRuntime {
   private readonly revalidateForceSignal: boolean;
   private readonly portAllocationGate: Promise<void> | null;
   private releasePortAllocationGate: () => void = () => undefined;
+  private readonly processGroupInspectionGate: Promise<void> | null;
+  private releaseProcessGroupInspectionGate: () => void = () => undefined;
+  private markProcessGroupInspectionStarted: () => void = () => undefined;
+  private readonly processGroupInspectionStarted: Promise<void>;
   private readonly processesByChild = new Map<ChildProcess, FakeOpenCodeProcess>();
   private readonly processesByPort = new Map<number, FakeOpenCodeProcess>();
 
@@ -632,6 +700,8 @@ class FakeOpenCodeServerRuntime {
       processIdentityOwned: boolean;
       revalidateForceSignal: boolean;
       portAllocationPending: boolean;
+      processGroupInspectionPending: boolean;
+      managedProcessConfirmationPending: boolean;
     },
   ) {
     this.ports = [...ports];
@@ -645,9 +715,18 @@ class FakeOpenCodeServerRuntime {
           this.releasePortAllocationGate = resolve;
         })
       : null;
+    this.processGroupInspectionStarted = new Promise<void>((resolve) => {
+      this.markProcessGroupInspectionStarted = resolve;
+    });
+    this.processGroupInspectionGate = options.processGroupInspectionPending
+      ? new Promise<void>((resolve) => {
+          this.releaseProcessGroupInspectionGate = resolve;
+        })
+      : null;
     this.managedProcesses = new FakeManagedProcesses(
       options.managedProcessRecordError,
       options.managedProcessRecordPending,
+      options.managedProcessConfirmationPending,
     );
   }
 
@@ -688,6 +767,10 @@ class FakeOpenCodeServerRuntime {
     identityToken,
   ) => {
     this.processGroupIdentityChecks.push({ processGroupId, identityToken });
+    if (this.processGroupInspectionGate) {
+      this.markProcessGroupInspectionStarted();
+      await this.processGroupInspectionGate;
+    }
     const process = Array.from(this.processesByPort.values()).find(
       (candidate) => candidate.pid === processGroupId,
     );
@@ -720,7 +803,16 @@ class FakeOpenCodeServerRuntime {
     this.releasePortAllocationGate();
   }
 
+  waitForProcessGroupInspection(): Promise<void> {
+    return this.processGroupInspectionStarted;
+  }
+
+  releaseProcessGroupInspection(): void {
+    this.releaseProcessGroupInspectionGate();
+  }
+
   readonly terminateProcess: ProcessTerminator = async (target: TreeKillTarget, options) => {
+    this.terminationTargetPids.push(target.pid);
     if (options.beforeSignal && !(await options.beforeSignal("SIGTERM"))) {
       return "signal-skipped";
     }
@@ -761,6 +853,17 @@ class FakeOpenCodeServerRuntime {
     const childProcess = this.processesByChild.get(target as ChildProcess);
     if (childProcess) {
       return childProcess;
+    }
+    if (target.pid === undefined && target.once && target.off) {
+      const listener = () => undefined;
+      target.once("exit", listener);
+      const process = Array.from(this.processesByPort.values()).find((candidate) =>
+        candidate.listeners("exit").includes(listener),
+      );
+      target.off("exit", listener);
+      if (process) {
+        return process;
+      }
     }
     const pid = Math.abs(target.pid ?? 0);
     const process = Array.from(this.processesByPort.values()).find(
@@ -821,7 +924,22 @@ class FakeManagedProcesses implements ManagedProcessRegistry {
   constructor(
     private readonly recordError?: Error,
     private readonly recordPending = false,
-  ) {}
+    confirmationPending = false,
+  ) {
+    this.confirmationStarted = new Promise<void>((resolve) => {
+      this.markConfirmationStarted = resolve;
+    });
+    this.confirmationGate = confirmationPending
+      ? new Promise<void>((resolve) => {
+          this.releaseConfirmationGate = resolve;
+        })
+      : null;
+  }
+
+  private readonly confirmationGate: Promise<void> | null;
+  private releaseConfirmationGate: () => void = () => undefined;
+  private markConfirmationStarted: () => void = () => undefined;
+  private readonly confirmationStarted: Promise<void>;
 
   async record(
     input: ManagedProcessRecordInput,
@@ -855,6 +973,10 @@ class FakeManagedProcesses implements ManagedProcessRegistry {
   }
 
   async confirmExecTransition(id: string): Promise<void> {
+    if (this.confirmationGate) {
+      this.markConfirmationStarted();
+      await this.confirmationGate;
+    }
     this.records = this.records.map((record) =>
       record.id === id && record.lifecycle.execTransition === "pending"
         ? {
@@ -863,6 +985,18 @@ class FakeManagedProcesses implements ManagedProcessRegistry {
           }
         : record,
     );
+  }
+
+  async retain(record: ManagedProcessRecord): Promise<void> {
+    this.records = [...this.records.filter((candidate) => candidate.id !== record.id), record];
+  }
+
+  waitForConfirmation(): Promise<void> {
+    return this.confirmationStarted;
+  }
+
+  releaseConfirmation(): void {
+    this.releaseConfirmationGate();
   }
 
   async remove(id: string): Promise<void> {

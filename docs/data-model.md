@@ -64,7 +64,7 @@ $PASEO_HOME/
 │   └── icons/                           # Host-local custom project icon images
 ├── runtime/
 │   └── managed-processes/
-│       └── {recordId}.json              # Helper processes owned by Paseo; reconciled on daemon bootstrap
+│       └── {recordId}.json              # Recorded helper targets; reconciled and retried after bootstrap
 └── push-tokens.json                     # Expo push notification tokens
 ```
 

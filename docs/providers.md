@@ -54,11 +54,13 @@ Provider session import has its own contract. The picker calls `listImportableSe
 
 ## Provider Helper Processes
 
-Provider-owned helper processes that can outlive an individual agent session must be recorded in the daemon's managed-process registry. Store provider/kind metadata, the PID, launch command/args, and process identity captured from the platform process table. Remove the record on normal exit or shutdown.
+Provider-owned helper processes that can outlive an individual agent session must be recorded in the daemon's managed-process registry. Store provider/kind metadata, the PID, launch command/args, and process identity captured from the platform process table. Remove the record only after the recorded cleanup target exits.
 
 If a helper process has a readiness phase, the provider's lifecycle model must own the process immediately after `spawn`, before readiness succeeds. Startup timeout, startup exit, and daemon shutdown must all clean up through that owned generation. Do not keep a spawned helper only inside a readiness promise; that creates a live process outside the manager/reaper contract.
 
-Daemon bootstrap reconciles that ledger in the background, without blocking startup: dead PIDs are deleted, PID identity mismatches are deleted without killing anything, only positively matched Paseo-owned leftovers are terminated, and a record whose process cannot be inspected is left in place for the next reconcile rather than deleted. Do not add broad process-name sweepers for provider cleanup; cleanup starts from records Paseo previously wrote.
+Daemon bootstrap reconciles that ledger in the background, without blocking startup: dead PIDs are deleted, PID identity mismatches are deleted without killing anything, only positively matched Paseo-owned leftovers are terminated, and a record whose process cannot be inspected is retained and retried during the same daemon run. Do not add broad process-name sweepers for provider cleanup; cleanup starts from records Paseo previously wrote.
+
+The registry owns only the target represented by its record. On POSIX, `process-group` means the original process group; a descendant that calls `setsid` leaves that scope. On Windows, live cleanup uses the spawned root process handle, while restart recovery is conservative PID-based cleanup. Neither mode claims complete descendant ownership after a child escapes the recorded target. Exact cross-platform descendant ownership requires a separate OS abstraction such as Linux subreapers or cgroups, macOS process supervision, and Windows Job Objects.
 
 ---
 

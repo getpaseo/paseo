@@ -454,6 +454,7 @@ export interface PaseoDaemonDependencies {
   hubRelationshipClock?: HubRelationshipClock;
   hubRelationshipRetryPolicy?: HubRelationshipRetryPolicy;
   createHubDaemonId?: () => string;
+  scheduleManagedProcessReapRetry?: (callback: () => void) => () => void;
   serverFeatureOverrides?: {
     daemonStatusRpc?: boolean;
     relayConfig?: boolean;
@@ -476,14 +477,47 @@ function createBootstrapManagedProcessRegistry(
   });
 }
 
-async function reconcileManagedProcessLedger(
+function scheduleManagedProcessReapRetry(callback: () => void): () => void {
+  const timer = setTimeout(callback, 1_000);
+  timer.unref();
+  return () => clearTimeout(timer);
+}
+
+function reconcileManagedProcessLedger(
   managedProcesses: ManagedProcessRegistry,
   logger: Logger,
-): Promise<void> {
-  const reapResult = await managedProcesses.reapStale();
-  if (reapResult.checked > 0 || reapResult.errors.length > 0) {
-    logger.info(reapResult, "Managed helper process ledger reconciled");
-  }
+  scheduleRetry: (callback: () => void) => () => void,
+): () => void {
+  let disposed = false;
+  let cancelRetry: (() => void) | null = null;
+
+  const reconcile = async () => {
+    let retry = false;
+    try {
+      const reapResult = await managedProcesses.reapStale();
+      retry = reapResult.errors.length > 0;
+      if (reapResult.checked > 0 || retry) {
+        logger.info(reapResult, "Managed helper process ledger reconciled");
+      }
+    } catch (error) {
+      retry = true;
+      logger.warn({ err: error }, "Failed to reconcile managed helper process ledger");
+    }
+
+    if (!disposed && retry) {
+      cancelRetry = scheduleRetry(() => {
+        cancelRetry = null;
+        void reconcile();
+      });
+    }
+  };
+
+  void reconcile();
+  return () => {
+    disposed = true;
+    cancelRetry?.();
+    cancelRetry = null;
+  };
 }
 
 function mountWebUi(app: express.Application, config: PaseoDaemonConfig, logger: Logger): void {
@@ -556,12 +590,6 @@ export async function createPaseoDaemon(
   const serverId = getOrCreateServerId(config.paseoHome, { logger });
   const daemonKeyPair = await loadOrCreateDaemonKeyPair(config.paseoHome, logger);
   const managedProcesses = createBootstrapManagedProcessRegistry(config, logger);
-  // Reconcile the helper-process ledger in the background so it never blocks the
-  // daemon from coming up; terminating a live leftover can take a few seconds.
-  // Best-effort, so a failure is logged here rather than crashing startup.
-  void reconcileManagedProcessLedger(managedProcesses, logger).catch((error) => {
-    logger.warn({ err: error }, "Failed to reconcile managed helper process ledger");
-  });
   let relayRuntime: RelayRuntime | null = null;
 
   const staticDir = config.staticDir;
@@ -1611,7 +1639,16 @@ export async function createPaseoDaemon(
     }
   };
 
+  // Start only after construction succeeds so every retry has an owning daemon
+  // whose stop path can dispose it. Reaping remains background, best-effort work.
+  const disposeManagedProcessReconciliation = reconcileManagedProcessLedger(
+    managedProcesses,
+    logger,
+    dependencies.scheduleManagedProcessReapRetry ?? scheduleManagedProcessReapRetry,
+  );
+
   const stop = async () => {
+    disposeManagedProcessReconciliation();
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
     scriptHealthMonitor.stop();

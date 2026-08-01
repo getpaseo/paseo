@@ -55,10 +55,91 @@ describe("daemon managed process bootstrap", () => {
       await daemon.stop().catch(() => undefined);
     }
   });
+
+  test("retries retained reap failures during the same daemon run", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-managed-bootstrap-"));
+    staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+    const paseoHome = path.join(tempRoot, ".paseo");
+    const managedProcesses = new FakeManagedProcesses([
+      createReapResult([{ id: "leftover", message: "inspection failed" }]),
+      createReapResult([]),
+    ]);
+    let retry: (() => void) | null = null;
+    const daemon = await createPaseoDaemon(
+      {
+        listen: "127.0.0.1:0",
+        paseoHome,
+        corsAllowedOrigins: [],
+        hostnames: true,
+        mcpEnabled: false,
+        staticDir,
+        mcpDebug: false,
+        agentClients: createTestAgentClients(),
+        agentStoragePath: path.join(paseoHome, "agents"),
+        relayEnabled: false,
+        appBaseUrl: "https://app.paseo.sh",
+        managedProcesses,
+      } as PaseoDaemonConfig,
+      pino({ level: "silent" }),
+      {
+        scheduleManagedProcessReapRetry: (callback) => {
+          retry = callback;
+          return () => {
+            retry = null;
+          };
+        },
+      },
+    );
+
+    try {
+      expect(managedProcesses.reapCount).toBe(1);
+      expect(retry).not.toBeNull();
+
+      retry!();
+      await Promise.resolve();
+
+      expect(managedProcesses.reapCount).toBe(2);
+    } finally {
+      await daemon.stop().catch(() => undefined);
+    }
+  });
+
+  test("does not start reconciliation when daemon construction fails", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-managed-bootstrap-"));
+    staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+    const paseoHome = path.join(tempRoot, ".paseo");
+    const managedProcesses = new FakeManagedProcesses([
+      createReapResult([{ id: "leftover", message: "inspection failed" }]),
+    ]);
+
+    await expect(
+      createPaseoDaemon(
+        {
+          listen: String.raw`C:\invalid-listen-target`,
+          paseoHome,
+          corsAllowedOrigins: [],
+          hostnames: true,
+          mcpEnabled: false,
+          staticDir,
+          mcpDebug: false,
+          agentClients: createTestAgentClients(),
+          agentStoragePath: path.join(paseoHome, "agents"),
+          relayEnabled: false,
+          appBaseUrl: "https://app.paseo.sh",
+          managedProcesses,
+        } as PaseoDaemonConfig,
+        pino({ level: "silent" }),
+      ),
+    ).rejects.toThrow();
+
+    expect(managedProcesses.reapCount).toBe(0);
+  });
 });
 
 class FakeManagedProcesses implements ManagedProcessRegistry {
   reapCount = 0;
+
+  constructor(private readonly reapResults: ManagedProcessReapResult[] = []) {}
 
   async record(input: ManagedProcessRecordInput): Promise<ManagedProcessRecord> {
     const { identityToken, ...recordInput } = input;
@@ -77,6 +158,8 @@ class FakeManagedProcesses implements ManagedProcessRegistry {
 
   async confirmExecTransition(): Promise<void> {}
 
+  async retain(): Promise<void> {}
+
   async remove(): Promise<void> {}
 
   async list(): Promise<ManagedProcessRecord[]> {
@@ -85,13 +168,17 @@ class FakeManagedProcesses implements ManagedProcessRegistry {
 
   async reapStale(): Promise<ManagedProcessReapResult> {
     this.reapCount += 1;
-    return {
-      checked: 1,
-      dead: 0,
-      mismatched: 0,
-      removed: 1,
-      terminated: 1,
-      errors: [],
-    };
+    return this.reapResults.shift() ?? createReapResult([]);
   }
+}
+
+function createReapResult(errors: ManagedProcessReapResult["errors"]): ManagedProcessReapResult {
+  return {
+    checked: 1,
+    dead: 0,
+    mismatched: 0,
+    removed: errors.length === 0 ? 1 : 0,
+    terminated: errors.length === 0 ? 1 : 0,
+    errors,
+  };
 }
