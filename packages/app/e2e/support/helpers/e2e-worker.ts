@@ -109,7 +109,7 @@ process.exit(result.status ?? 1);
   return binDir;
 }
 
-async function applyMetadataFork(targetHome: string): Promise<void> {
+async function applyMetadataFork(targetHome: string, providerIds: string[]): Promise<void> {
   const sourceHome = resolveOptionalHome(process.env.E2E_FORK_PASEO_HOME_FROM);
   if (!sourceHome) return;
   const result = await forkPaseoHomeMetadata({ sourceHome, targetHome });
@@ -118,10 +118,6 @@ async function applyMetadataFork(targetHome: string): Promise<void> {
   process.env.E2E_FORK_COPIED_FILES = String(result.copiedFiles);
   process.env.E2E_FORK_COPIED_BYTES = String(result.copiedBytes);
 
-  const providerIds: string[] = (process.env.E2E_FORK_PROVIDERS ?? "")
-    .split(",")
-    .map((providerId: string) => providerId.trim())
-    .filter(Boolean);
   if (providerIds.length === 0) return;
 
   const sourceConfig = JSON.parse(
@@ -143,7 +139,10 @@ async function applyMetadataFork(targetHome: string): Promise<void> {
   );
 }
 
-export async function startE2EWorker(workerIndex: number): Promise<E2EWorker> {
+export async function startE2EWorker(
+  workerIndex: number,
+  options: { forkProviders?: string[] } = {},
+): Promise<E2EWorker> {
   const requestedRoot = resolveOptionalHome(process.env.E2E_PASEO_HOME);
   const paseoHome = requestedRoot
     ? path.join(requestedRoot, `worker-${workerIndex}`)
@@ -154,7 +153,7 @@ export async function startE2EWorker(workerIndex: number): Promise<E2EWorker> {
   const serverId = `srv_e2e_worker_${workerIndex}`;
 
   try {
-    await applyMetadataFork(paseoHome);
+    await applyMetadataFork(paseoHome, options.forkProviders ?? []);
     const daemon = await startIsolatedHostDaemon(serverId, {
       paseoHome,
       preserveHome,

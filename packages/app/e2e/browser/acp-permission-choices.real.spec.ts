@@ -39,6 +39,8 @@ async function capturePermissionChoices(page: Page, outputPath: string) {
   await expect(page.getByRole("button", { name: "Beta" })).toBeVisible();
 }
 
+test.use({ e2eForkProviders: ["kimi"] });
+
 test.describe("real ACP permission choices", () => {
   test.setTimeout(600_000);
 
