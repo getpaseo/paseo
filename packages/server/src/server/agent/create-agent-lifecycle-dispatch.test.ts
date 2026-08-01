@@ -6,6 +6,7 @@ import {
   CreateAgentLifecycleDispatch,
   registerAgentAutoArchive,
 } from "./create-agent-lifecycle-dispatch.js";
+import { requireArchiveCleanupComplete } from "../workspace-archive-service.js";
 
 class AgentLifecycleEvents {
   private readonly listeners = new Set<AgentSubscriber>();
@@ -57,6 +58,40 @@ test("auto-archive retries a later terminal event after a transient failure", as
     .fn<() => Promise<void>>()
     .mockRejectedValueOnce(new Error("transient archive failure"))
     .mockResolvedValueOnce(undefined);
+  const registration = registerAgentAutoArchive({
+    agentManager: agents,
+    agentId,
+    archive,
+  });
+
+  agents.completeTurn(agentId);
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(archive).toHaveBeenCalledTimes(1);
+  expect(agents.listenerCount()).toBe(1);
+
+  agents.completeTurn(agentId);
+  await registration.cancel();
+  expect(archive).toHaveBeenCalledTimes(2);
+  expect(agents.listenerCount()).toBe(0);
+});
+
+test("auto-archive retries when physical workspace cleanup remains pending", async () => {
+  const agentId = "agent-auto-archive-cleanup-pending";
+  const agents = new AgentLifecycleEvents();
+  const archive = vi.fn(async () => {
+    const cleanupPendingWorkspaceIds =
+      archive.mock.calls.length === 1 ? ["ws-cleanup-pending"] : [];
+    requireArchiveCleanupComplete(
+      {
+        archivedAgentIds: [],
+        archivedWorkspaceIds: ["ws-cleanup-pending"],
+        removedDirectory: cleanupPendingWorkspaceIds.length === 0,
+        cleanupPendingWorkspaceIds,
+      },
+      "Auto-created worktree archive",
+    );
+  });
   const registration = registerAgentAutoArchive({
     agentManager: agents,
     agentId,

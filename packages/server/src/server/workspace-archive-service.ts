@@ -86,6 +86,26 @@ export class WorkspaceArchiveTargetNotFoundError extends Error {
   }
 }
 
+export class WorkspaceCleanupPendingError extends Error {
+  readonly workspaceIds: readonly string[];
+
+  constructor(operation: string, workspaceIds: readonly string[]) {
+    super(`${operation} left cleanup pending for: ${workspaceIds.join(", ")}`);
+    this.name = "WorkspaceCleanupPendingError";
+    this.workspaceIds = [...workspaceIds];
+  }
+}
+
+export function requireArchiveCleanupComplete(
+  result: ArchiveResult,
+  operation: string,
+): ArchiveResult {
+  if (result.cleanupPendingWorkspaceIds.length > 0) {
+    throw new WorkspaceCleanupPendingError(operation, result.cleanupPendingWorkspaceIds);
+  }
+  return result;
+}
+
 export interface ArchiveByScopeRequest {
   scope: ArchiveScope;
   requestId: string;

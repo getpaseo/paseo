@@ -167,6 +167,7 @@ import { DownloadTokenStore } from "./file-download/token-store.js";
 import { PushTokenStore } from "./push/token-store.js";
 import {
   archivePersistedWorkspaceRecord,
+  requireArchiveCleanupComplete,
   requireActiveWorkspaceForArchive,
 } from "./workspace-archive-service.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
@@ -2750,7 +2751,7 @@ export class Session {
 
       const removedWorkspaceIds: string[] = [];
       for (const workspaceId of workspaceIdsToArchive) {
-        await archiveByScope(
+        const archiveResult = await archiveByScope(
           {
             paseoHome: this.paseoHome,
             paseoWorktreesBaseRoot: this.worktreesRoot,
@@ -2776,6 +2777,7 @@ export class Session {
             requestId,
           },
         );
+        requireArchiveCleanupComplete(archiveResult, "Project workspace archive");
         removedWorkspaceIds.push(workspaceId);
       }
 
@@ -5843,7 +5845,7 @@ export class Session {
         request.workspaceId,
       );
 
-      await archiveByScope(
+      const archiveResult = await archiveByScope(
         {
           paseoHome: this.paseoHome,
           paseoWorktreesBaseRoot: this.worktreesRoot,
@@ -5869,6 +5871,7 @@ export class Session {
           requestId: request.requestId,
         },
       );
+      requireArchiveCleanupComplete(archiveResult, "Workspace archive");
 
       const archivedWorkspace = await this.workspaceRegistry.get(request.workspaceId);
       if (!archivedWorkspace?.archivedAt) {

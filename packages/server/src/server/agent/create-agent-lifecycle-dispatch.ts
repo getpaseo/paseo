@@ -3,7 +3,11 @@ import type pino from "pino";
 
 import type { ForgeService } from "../../services/forge-service.js";
 import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
-import { archiveByScope, type ActiveWorkspaceRef } from "../workspace-archive-service.js";
+import {
+  archiveByScope,
+  requireArchiveCleanupComplete,
+  type ActiveWorkspaceRef,
+} from "../workspace-archive-service.js";
 import type {
   CreatePaseoWorktreeWorkflowFn,
   CreatePaseoWorktreeWorkflowResult,
@@ -209,7 +213,7 @@ export class CreateAgentLifecycleDispatch {
       throw new Error("Auto-created worktree is not a Paseo-owned worktree");
     }
 
-    await archiveByScope(
+    const archiveResult = await archiveByScope(
       {
         paseoHome: this.dependencies.paseoHome,
         paseoWorktreesBaseRoot: this.dependencies.worktreesRoot,
@@ -232,6 +236,7 @@ export class CreateAgentLifecycleDispatch {
         requestId: randomUUID(),
       },
     );
+    requireArchiveCleanupComplete(archiveResult, "Auto-created worktree archive");
 
     if (options.agentId) {
       this.dependencies.emitAgentRemove(options.agentId);

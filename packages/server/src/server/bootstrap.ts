@@ -152,6 +152,7 @@ import {
   archiveByScope,
   archivePersistedWorkspaceRecord,
   killTerminalsForWorkspace,
+  requireArchiveCleanupComplete,
   type ActiveWorkspaceRef,
 } from "./workspace-archive-service.js";
 import { setupAutoArchiveOnMerge } from "./auto-archive-on-merge/index.js";
@@ -1058,27 +1059,33 @@ export async function createPaseoDaemon(
   };
   const createAgent = (input: Parameters<typeof createAgentCommand>[1]) =>
     createAgentCommand(createAgentCommandDependencies, input);
-  const archiveWorkspaceByIdExternal = (workspaceId: string, requestId: string) =>
-    archiveByScope(
-      {
-        paseoHome: config.paseoHome,
-        paseoWorktreesBaseRoot: config.worktreesRoot,
-        github,
-        workspaceGitService,
-        agentManager,
-        agentStorage,
-        findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
-        listActiveWorkspaces: listActiveWorkspacesExternal,
-        archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
-        emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
-        markWorkspaceArchiving: markWorkspaceArchivingExternal,
-        clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
-        killTerminalsForWorkspace: (workspaceIdToKill) =>
-          killTerminalsForWorkspace({ terminalManager, sessionLogger: logger }, workspaceIdToKill),
-        workspaceRegistry,
-        sessionLogger: logger,
-      },
-      { scope: { kind: "workspace", workspaceId }, requestId },
+  const archiveWorkspaceByIdExternal = async (workspaceId: string, requestId: string) =>
+    requireArchiveCleanupComplete(
+      await archiveByScope(
+        {
+          paseoHome: config.paseoHome,
+          paseoWorktreesBaseRoot: config.worktreesRoot,
+          github,
+          workspaceGitService,
+          agentManager,
+          agentStorage,
+          findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
+          listActiveWorkspaces: listActiveWorkspacesExternal,
+          archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
+          emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
+          markWorkspaceArchiving: markWorkspaceArchivingExternal,
+          clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
+          killTerminalsForWorkspace: (workspaceIdToKill) =>
+            killTerminalsForWorkspace(
+              { terminalManager, sessionLogger: logger },
+              workspaceIdToKill,
+            ),
+          workspaceRegistry,
+          sessionLogger: logger,
+        },
+        { scope: { kind: "workspace", workspaceId }, requestId },
+      ),
+      "Workspace archive",
     );
   const hubAgentLifecycle = new CreateAgentLifecycleDispatch({
     paseoHome: config.paseoHome,
@@ -1169,7 +1176,7 @@ export async function createPaseoDaemon(
     return result;
   };
   const archiveScheduleWorkspaceExternal = async (workspaceId: string) => {
-    await archiveByScope(
+    const archiveResult = await archiveByScope(
       {
         paseoHome: config.paseoHome,
         paseoWorktreesBaseRoot: config.worktreesRoot,
@@ -1199,6 +1206,7 @@ export async function createPaseoDaemon(
         requestId: "schedule-run-finish",
       },
     );
+    requireArchiveCleanupComplete(archiveResult, "Schedule workspace archive");
   };
   const scheduleService = new ScheduleService({
     paseoHome: config.paseoHome,
