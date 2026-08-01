@@ -1655,8 +1655,145 @@ test("listProviderAvailability uses registered client keys, including custom pro
       provider: "zai",
       available: true,
       error: null,
+      status: "checking",
+      checkedAt: null,
     },
   ]);
+  await vi.waitFor(async () => {
+    await expect(manager.listProviderAvailability()).resolves.toEqual([
+      {
+        provider: "zai",
+        available: true,
+        error: null,
+        status: "available",
+        checkedAt: expect.any(String),
+      },
+    ]);
+  });
+});
+
+test("provider status reuses trusted same-generation readiness without another live probe", async () => {
+  let now = Date.parse("2026-08-01T00:00:00.000Z");
+  const client = new TestAgentClient();
+  const isAvailable = vi.spyOn(client, "isAvailable");
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    providerHealthNow: () => now,
+    providerHealthStaleAfterMs: 100,
+  });
+
+  const fresh = await manager.getProviderAvailability("codex", { fresh: true });
+  await expect(manager.listProviderAvailability()).resolves.toEqual([fresh]);
+  await expect(manager.listProviderAvailability()).resolves.toEqual([fresh]);
+
+  expect(fresh).toMatchObject({ status: "available", available: true });
+  expect(isAvailable).toHaveBeenCalledTimes(1);
+  expect(isAvailable).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
+
+  now += 101;
+  await expect(manager.listProviderAvailability()).resolves.toEqual([
+    { ...fresh, status: "stale" },
+  ]);
+  expect(isAvailable).toHaveBeenCalledTimes(1);
+  await vi.waitFor(() => expect(isAvailable).toHaveBeenCalledTimes(2));
+});
+
+test("create probes only the selected provider and fails closed before provider mutation", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-health-create-"));
+  class NeverAvailableClient extends TestAgentClient {
+    fetchCatalogCalls = 0;
+    createSessionCalls = 0;
+
+    override async isAvailable(options?: { signal?: AbortSignal }): Promise<boolean> {
+      return await new Promise<boolean>((_resolve, reject) => {
+        const abort = () => reject(options?.signal?.reason ?? new Error("aborted"));
+        if (options?.signal?.aborted) {
+          abort();
+        } else {
+          options?.signal?.addEventListener("abort", abort, { once: true });
+        }
+      });
+    }
+
+    override async fetchCatalog() {
+      this.fetchCatalogCalls += 1;
+      return await super.fetchCatalog();
+    }
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.createSessionCalls += 1;
+      return await super.createSession(config);
+    }
+  }
+  const selected = new NeverAvailableClient();
+  const other = new TestAgentClient("claude");
+  const selectedAvailability = vi.spyOn(selected, "isAvailable");
+  const otherAvailability = vi.spyOn(other, "isAvailable");
+  const manager = new AgentManager({
+    clients: { codex: selected, claude: other },
+    logger,
+    providerHealthProbeTimeoutMs: 5,
+  });
+
+  try {
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      }),
+    ).rejects.toThrow("Provider availability check timed out after 5ms");
+
+    expect(selectedAvailability).toHaveBeenCalledTimes(1);
+    expect(selectedAvailability).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
+    expect(otherAvailability).not.toHaveBeenCalled();
+    expect(selected.fetchCatalogCalls).toBe(0);
+    expect(selected.createSessionCalls).toBe(0);
+    expect(manager.listAgents()).toEqual([]);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("an invalidated probe drains before replacement and cannot publish late", async () => {
+  const oldAvailability = deferred<boolean>();
+  const order: string[] = [];
+  class OldClient extends TestAgentClient {
+    override async isAvailable(): Promise<boolean> {
+      order.push("old-start");
+      const available = await oldAvailability.promise;
+      order.push("old-finish");
+      return available;
+    }
+  }
+  class ReplacementClient extends TestAgentClient {
+    override async isAvailable(): Promise<boolean> {
+      order.push("replacement-start");
+      return false;
+    }
+  }
+  const oldClient = new OldClient();
+  const replacementClient = new ReplacementClient();
+  const manager = new AgentManager({ clients: { codex: oldClient }, logger });
+
+  const oldResult = manager.getProviderAvailability("codex", { fresh: true });
+  await vi.waitFor(() => expect(order).toEqual(["old-start"]));
+  manager.updateProviderRegistry({
+    clients: { codex: replacementClient },
+    providerDefinitions: { codex: { enabled: true } },
+  });
+  const replacementResult = manager.getProviderAvailability("codex", { fresh: true });
+
+  await expect(oldResult).resolves.toMatchObject({ status: "checking", checkedAt: null });
+  expect(order).toEqual(["old-start"]);
+  oldAvailability.resolve(true);
+  await expect(replacementResult).resolves.toMatchObject({
+    status: "unavailable",
+    available: false,
+  });
+  await expect(manager.listProviderAvailability()).resolves.toEqual([
+    expect.objectContaining({ status: "unavailable", available: false }),
+  ]);
+  expect(order).toEqual(["old-start", "old-finish", "replacement-start"]);
 });
 
 test("createAgent passes daemon launch env through the provider launch context", async () => {
@@ -2183,6 +2320,10 @@ test("createAgent reports available providers when selected provider is unavaila
     },
     registry: storage,
     logger,
+  });
+
+  await expect(manager.getProviderAvailability("claude", { fresh: true })).resolves.toMatchObject({
+    status: "available",
   });
 
   await expect(

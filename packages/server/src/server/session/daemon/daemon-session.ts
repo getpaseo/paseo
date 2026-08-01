@@ -154,11 +154,22 @@ export class DaemonSession {
   ): Promise<void> {
     try {
       const pidInfo = await getPidLockInfo(this.paseoHome);
-      const providers = (await this.listProviderAvailability()).map((p) => ({
-        provider: p.provider,
-        available: p.available,
-        error: p.error ?? null,
-      }));
+      const providers = (await this.listProviderAvailability()).map((p) => {
+        const provider: {
+          provider: string;
+          available: boolean;
+          error: string | null;
+          status?: ProviderAvailability["status"];
+          checkedAt?: string | null;
+        } = {
+          provider: p.provider,
+          available: p.available,
+          error: p.error ?? null,
+        };
+        if (p.status) provider.status = p.status;
+        if (p.checkedAt !== undefined) provider.checkedAt = p.checkedAt;
+        return provider;
+      });
       this.host.emit({
         type: "daemon.get_status.response",
         payload: {

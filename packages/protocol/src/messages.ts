@@ -3847,6 +3847,8 @@ export const DaemonGetStatusResponseSchema = z.object({
           provider: z.string(),
           available: z.boolean(),
           error: z.string().nullable().optional(),
+          status: z.enum(["checking", "stale", "available", "unavailable"]).optional(),
+          checkedAt: z.string().nullable().optional(),
         }),
       ),
     })
@@ -4891,6 +4893,8 @@ const ProviderAvailabilitySchema = z.object({
   provider: AgentProviderSchema,
   available: z.boolean(),
   error: z.string().nullable().optional(),
+  status: z.enum(["checking", "stale", "available", "unavailable"]).optional(),
+  checkedAt: z.string().nullable().optional(),
 });
 
 export const ListAvailableProvidersResponseSchema = z.object({

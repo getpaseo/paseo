@@ -138,6 +138,54 @@ const SourceSchema = z.object({
     );
   });
 
+  it("parses both legacy and explicit provider-health states", () => {
+    const legacyEnvelope = {
+      type: "session",
+      message: {
+        type: "daemon.get_status.response",
+        payload: {
+          requestId: "daemon-health-legacy",
+          serverId: "server-1",
+          pid: 123,
+          nodePath: "/usr/local/bin/node",
+          listen: "127.0.0.1:6767",
+          providers: [{ provider: "opencode", available: true, error: null }],
+        },
+      },
+    };
+    const currentEnvelope = {
+      type: "session",
+      message: {
+        type: "daemon.get_status.response",
+        payload: {
+          requestId: "daemon-health-current",
+          serverId: "server-1",
+          pid: 123,
+          nodePath: "/usr/local/bin/node",
+          listen: "127.0.0.1:6767",
+          providers: [
+            {
+              provider: "opencode",
+              available: true,
+              error: null,
+              status: "checking",
+              checkedAt: null,
+            },
+          ],
+        },
+      },
+    };
+
+    expect(GeneratedWSOutboundMessageSchema.safeParse(legacyEnvelope)).toEqual({
+      success: true,
+      data: legacyEnvelope,
+    });
+    expect(GeneratedWSOutboundMessageSchema.safeParse(currentEnvelope)).toEqual({
+      success: true,
+      data: currentEnvelope,
+    });
+  });
+
   it.each([
     {
       name: "dedicated attention message",

@@ -8,11 +8,52 @@ import { resolveNodePathFromPid } from "./runtime-toolchain.js";
 
 const DAEMON_STATUS_PROBE_TIMEOUT_MS = 1500;
 
-interface ProviderBinaryStatus {
+export interface ProviderBinaryStatus {
   label: string;
   path: string | null;
   version: string | null;
   source?: "daemon" | "local";
+  healthStatus?: "checking" | "stale" | "available" | "unavailable";
+}
+
+function readProviderHealthStatus(provider: {
+  available: boolean;
+}): NonNullable<ProviderBinaryStatus["healthStatus"]> {
+  const status = (provider as { status?: unknown }).status;
+  if (
+    status === "checking" ||
+    status === "stale" ||
+    status === "available" ||
+    status === "unavailable"
+  ) {
+    return status;
+  }
+  return provider.available ? "available" : "unavailable";
+}
+
+export function formatProviderBinaryStatus(provider: ProviderBinaryStatus): string {
+  if (provider.source === "daemon") {
+    if (provider.healthStatus === "checking") {
+      return "checking (daemon)";
+    }
+    if (provider.healthStatus === "stale") {
+      const state = provider.path ? "available" : "unavailable";
+      const detail = provider.version ? `: ${provider.version}` : "";
+      return `${state} (stale, daemon)${detail}`;
+    }
+    if (provider.healthStatus === "unavailable") {
+      const detail = provider.version ? `: ${provider.version}` : "";
+      return `unavailable (daemon)${detail}`;
+    }
+    return provider.path ? `${provider.path} (daemon)` : "not found (daemon)";
+  }
+  if (!provider.path) {
+    return "not found";
+  }
+  if (!provider.version) {
+    return `${provider.path} (--version failed)`;
+  }
+  return `${provider.path} (${provider.version})`;
 }
 
 interface DaemonStatus {
@@ -100,8 +141,18 @@ function createStatusSchema(status: DaemonStatus): OutputSchema<StatusRow> {
             return "red";
           }
           if (item.key.startsWith("  ")) {
-            if (item.value === "not found" || item.value === "not found (daemon)") return "red";
-            if (item.value.endsWith("(--version failed)")) return "yellow";
+            if (
+              item.value === "not found" ||
+              item.value === "not found (daemon)" ||
+              item.value.startsWith("unavailable (daemon)")
+            )
+              return "red";
+            if (
+              item.value.endsWith("(--version failed)") ||
+              item.value.includes("checking") ||
+              item.value.includes("stale")
+            )
+              return "yellow";
             return "green";
           }
           return undefined;
@@ -138,19 +189,7 @@ function toStatusRows(status: DaemonStatus): StatusRow[] {
   rows.push({ key: "", value: "" });
   rows.push({ key: "Providers", value: "" });
   for (const provider of status.providers) {
-    if (provider.source === "daemon") {
-      if (!provider.path) {
-        rows.push({ key: `  ${provider.label}`, value: "not found (daemon)" });
-      } else {
-        rows.push({ key: `  ${provider.label}`, value: `${provider.path} (daemon)` });
-      }
-    } else if (!provider.path) {
-      rows.push({ key: `  ${provider.label}`, value: "not found" });
-    } else if (!provider.version) {
-      rows.push({ key: `  ${provider.label}`, value: `${provider.path} (--version failed)` });
-    } else {
-      rows.push({ key: `  ${provider.label}`, value: `${provider.path} (${provider.version})` });
-    }
+    rows.push({ key: `  ${provider.label}`, value: formatProviderBinaryStatus(provider) });
   }
 
   return rows;
@@ -262,6 +301,7 @@ async function probeDaemonOverWebsocket(args: {
       path: p.available ? "available" : null,
       version: p.available ? null : (p.error ?? null),
       source: "daemon" as const,
+      healthStatus: readProviderHealthStatus(p),
     }));
     const relayStatus =
       statusPayload.relay == null

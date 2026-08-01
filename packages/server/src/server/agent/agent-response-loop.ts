@@ -422,8 +422,10 @@ export async function generateStructuredAgentResponseWithFallback<T>(
   const attempts: StructuredGenerationAttempt[] = [];
 
   for (const candidate of providers) {
-    const availabilityEntry = await manager.getProviderAvailability(candidate.provider);
-    if (!availabilityEntry.available) {
+    const availabilityEntry = await manager.getProviderAvailability(candidate.provider, {
+      fresh: true,
+    });
+    if (availabilityEntry.status !== "available") {
       const reason = availabilityEntry.error ?? "unavailable";
       attempts.push({
         provider: candidate.provider,

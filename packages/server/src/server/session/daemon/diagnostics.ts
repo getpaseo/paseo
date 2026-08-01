@@ -206,17 +206,30 @@ async function collectProviderEntries(
   options: DaemonDiagnosticsOptions,
 ): Promise<DiagnosticEntry[]> {
   const providers = await options.listProviderAvailability();
+  const available = providers.filter((provider) => provider.status === "available");
+  const unavailable = providers.filter((provider) => provider.status === "unavailable");
+  const checking = providers.filter((provider) => provider.status === "checking");
+  const stale = providers.filter((provider) => provider.status === "stale");
   return [
     { label: "Total", value: String(providers.length) },
-    {
-      label: "Available",
-      value: String(providers.filter((provider) => provider.available).length),
-    },
+    { label: "Available", value: String(available.length) },
     {
       label: "Unavailable",
       value:
-        providers
-          .filter((provider) => !provider.available)
+        unavailable
+          .map((provider) =>
+            provider.error ? `${provider.provider} (${provider.error})` : provider.provider,
+          )
+          .join(", ") || "none",
+    },
+    {
+      label: "Checking",
+      value: checking.map((provider) => provider.provider).join(", ") || "none",
+    },
+    {
+      label: "Stale",
+      value:
+        stale
           .map((provider) =>
             provider.error ? `${provider.provider} (${provider.error})` : provider.provider,
           )

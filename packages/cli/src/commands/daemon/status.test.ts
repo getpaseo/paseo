@@ -1,5 +1,65 @@
 import { describe, expect, test } from "vitest";
-import { selectRelayStatus } from "./status.js";
+import { formatProviderBinaryStatus, selectRelayStatus } from "./status.js";
+
+describe("daemon provider-health status formatting", () => {
+  test("keeps checking and stale distinct from unavailable", () => {
+    expect(
+      formatProviderBinaryStatus({
+        label: "OpenCode",
+        path: "available",
+        version: null,
+        source: "daemon",
+        healthStatus: "checking",
+      }),
+    ).toBe("checking (daemon)");
+    expect(
+      formatProviderBinaryStatus({
+        label: "OpenCode",
+        path: "available",
+        version: null,
+        source: "daemon",
+        healthStatus: "stale",
+      }),
+    ).toBe("available (stale, daemon)");
+    expect(
+      formatProviderBinaryStatus({
+        label: "OpenCode",
+        path: null,
+        version: "last probe failed",
+        source: "daemon",
+        healthStatus: "stale",
+      }),
+    ).toBe("unavailable (stale, daemon): last probe failed");
+    expect(
+      formatProviderBinaryStatus({
+        label: "OpenCode",
+        path: null,
+        version: "provider exploded",
+        source: "daemon",
+        healthStatus: "unavailable",
+      }),
+    ).toBe("unavailable (daemon): provider exploded");
+  });
+
+  test("classifies mixed-version daemon payloads from the legacy availability boolean", () => {
+    expect(
+      formatProviderBinaryStatus({
+        label: "OpenCode",
+        path: "available",
+        version: null,
+        source: "daemon",
+      }),
+    ).toBe("available (daemon)");
+    expect(
+      formatProviderBinaryStatus({
+        label: "OpenCode",
+        path: null,
+        version: "not installed",
+        source: "daemon",
+      }),
+    ).toBe("not found (daemon)");
+  });
+});
 
 describe("selectRelayStatus", () => {
   const persisted = {

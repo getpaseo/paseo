@@ -717,9 +717,11 @@ export interface AgentClient {
   ): Promise<ImportedProviderSession>;
   /**
    * Check if this provider is available (CLI binary is installed).
+   * Implementations that start asynchronous work should stop it when the signal
+   * is aborted so timed-out or invalidated health generations can drain.
    * Returns true if available, false otherwise.
    */
-  isAvailable(): Promise<boolean>;
+  isAvailable(options?: { signal?: AbortSignal }): Promise<boolean>;
   getDiagnostic?(): Promise<{ diagnostic: string }>;
   /**
    * Archive a durable native session (best-effort). Runtime release belongs to AgentSession.close().

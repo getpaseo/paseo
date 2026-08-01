@@ -1,7 +1,7 @@
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import pino from "pino";
 import {
   DaemonSession,
@@ -9,7 +9,8 @@ import {
   type DaemonSessionHost,
 } from "./daemon-session.js";
 import type { DaemonWebSocketRuntimeDiagnosticSnapshot } from "./diagnostics.js";
-import type { ProviderAvailability } from "../../agent/agent-manager.js";
+import { AgentManager, type ProviderAvailability } from "../../agent/agent-manager.js";
+import type { AgentClient } from "../../agent/agent-sdk-types.js";
 import type { HubRelationshipManagement } from "../../hub/relationship-controller.js";
 import type { SessionOutboundMessage } from "../../messages.js";
 
@@ -129,8 +130,20 @@ describe("DaemonSession", () => {
       daemonVersion: "1.2.3",
       daemonRuntimeConfig: { listen: "127.0.0.1:6767", getRelayConfig: () => null },
       listProviderAvailability: async () => [
-        { provider: "claude", available: true, error: null },
-        { provider: "codex", available: false, error: "boom" },
+        {
+          provider: "claude",
+          available: true,
+          error: null,
+          status: "available",
+          checkedAt: "2026-08-01T00:00:00.000Z",
+        },
+        {
+          provider: "codex",
+          available: false,
+          error: "boom",
+          status: "unavailable",
+          checkedAt: "2026-08-01T00:00:00.000Z",
+        },
       ],
     });
 
@@ -149,12 +162,81 @@ describe("DaemonSession", () => {
           listen: "127.0.0.1:6767",
           relay: null,
           providers: [
-            { provider: "claude", available: true, error: null },
-            { provider: "codex", available: false, error: "boom" },
+            {
+              provider: "claude",
+              available: true,
+              error: null,
+              status: "available",
+              checkedAt: "2026-08-01T00:00:00.000Z",
+            },
+            {
+              provider: "codex",
+              available: false,
+              error: "boom",
+              status: "unavailable",
+              checkedAt: "2026-08-01T00:00:00.000Z",
+            },
           ],
         },
       },
     ]);
+  });
+
+  test("status preserves daemon identity while a provider availability check never settles", async () => {
+    const isAvailable = vi.fn(async () => await new Promise<boolean>(() => {}));
+    const client: AgentClient = {
+      provider: "opencode",
+      capabilities: {
+        supportsStreaming: false,
+        supportsSessionPersistence: false,
+        supportsDynamicModes: false,
+        supportsMcpServers: false,
+        supportsReasoningStream: false,
+        supportsToolInvocations: false,
+      },
+      isAvailable,
+      async createSession() {
+        throw new Error("not implemented");
+      },
+      async resumeSession() {
+        throw new Error("not implemented");
+      },
+    };
+    const manager = new AgentManager({
+      clients: { opencode: client },
+      logger: pino({ level: "silent" }),
+    });
+    const { subsystem, emitted } = makeSubsystem({
+      serverId: "srv-health",
+      daemonVersion: "1.2.3",
+      listProviderAvailability: () => manager.listProviderAvailability(),
+    });
+
+    await subsystem.handleGetStatusRequest({
+      type: "daemon.get_status.request",
+      requestId: "health-latency",
+    });
+
+    expect(emitted).toEqual([
+      expect.objectContaining({
+        type: "daemon.get_status.response",
+        payload: expect.objectContaining({
+          requestId: "health-latency",
+          serverId: "srv-health",
+          version: "1.2.3",
+          providers: [
+            {
+              provider: "opencode",
+              available: true,
+              error: null,
+              status: "checking",
+              checkedAt: null,
+            },
+          ],
+        }),
+      }),
+    ]);
+    await vi.waitFor(() => expect(isAvailable).toHaveBeenCalledTimes(1));
   });
 
   test("status falls back to null fields and an empty provider list when listing rejects", async () => {
