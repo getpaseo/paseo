@@ -3469,9 +3469,9 @@ function selectPermissionOption(
 ): PermissionOption | null {
   if (response.selectedActionId) {
     const selectedOption = options.find((option) => option.optionId === response.selectedActionId);
-    if (selectedOption) {
-      return selectedOption;
-    }
+    if (!selectedOption) return null;
+    const selectedBehavior = selectedOption.kind.startsWith("allow") ? "allow" : "deny";
+    return selectedBehavior === response.behavior ? selectedOption : null;
   }
 
   const order =

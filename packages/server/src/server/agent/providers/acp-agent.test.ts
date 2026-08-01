@@ -1229,6 +1229,42 @@ describe("ACPAgentSession Zed parity", () => {
     });
   });
 
+  test("cancels ACP responses whose selected action conflicts with their behavior", async () => {
+    const session = createSessionWithConfig({ provider: "generic-acp" });
+    const events: AgentStreamEvent[] = [];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    const permission = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "tool-1",
+        title: "Edit file",
+        kind: "edit",
+        status: "pending",
+      },
+      options: [
+        { optionId: "allow-once", name: "Allow", kind: "allow_once" },
+        { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+      ],
+    } satisfies RequestPermissionRequest);
+
+    await Promise.resolve();
+
+    const requested = events.find((event) => event.type === "permission_requested");
+    if (requested?.type !== "permission_requested") {
+      throw new Error("Expected permission request");
+    }
+
+    await session.respondToPermission(requested.request.id, {
+      behavior: "deny",
+      selectedActionId: "allow-once",
+    });
+
+    await expect(permission).resolves.toEqual({ outcome: { outcome: "cancelled" } });
+  });
+
   test("auto-accepts ACP permission requests when the shared feature is enabled", async () => {
     const session = createSessionWithConfig({
       provider: "cursor-acp",
