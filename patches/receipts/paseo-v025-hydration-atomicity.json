@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "patchId": "paseo-v025-hydration-atomicity",
+  "stableCandidate": {
+    "baseCommit": "6fc491e6220fba6543bbbe4bf1b1f58cfe59228b",
+    "headCommit": "45379a2d05089ac1931ce36c22c64a30d7b37630",
+    "headTree": "01921a28222e789e0b0bca81af3a8435f58386b8"
+  },
+  "verification": {
+    "commit": "45379a2d05089ac1931ce36c22c64a30d7b37630",
+    "completedAt": "2026-08-01T01:40:16Z",
+    "commands": [
+      "vitest run packages/server/src/server/agent/agent-manager.test.ts --fileParallelism=false",
+      "npm run build --workspace packages/server",
+      "npm run typecheck --workspace packages/server",
+      "oxlint packages/server/src/server/agent/agent-manager.ts packages/server/src/server/agent/agent-manager.test.ts",
+      "oxfmt --check packages/server/src/server/agent/agent-manager.ts packages/server/src/server/agent/agent-manager.test.ts",
+      "git diff --check"
+    ],
+    "result": {
+      "agentManagerTests": "145 passed",
+      "serverBuild": "passed",
+      "serverTypecheck": "passed",
+      "changedFileLint": "0 warnings, 0 errors",
+      "formatAndDiff": "passed"
+    }
+  }
+}

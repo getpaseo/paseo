@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "patches": [
+    {
+      "id": "paseo-v025-hydration-atomicity",
+      "category": "stable-core-provider-history",
+      "base": {
+        "tag": "v0.2.5",
+        "commit": "6fc491e6220fba6543bbbe4bf1b1f58cfe59228b"
+      },
+      "candidate": {
+        "branch": "review/v025-hydration-atomicity-upstream",
+        "baseCommit": "6fc491e6220fba6543bbbe4bf1b1f58cfe59228b",
+        "headCommit": "45379a2d05089ac1931ce36c22c64a30d7b37630",
+        "headTree": "01921a28222e789e0b0bca81af3a8435f58386b8",
+        "receipt": "patches/receipts/paseo-v025-hydration-atomicity.json"
+      },
+      "sources": ["packages/server/src/server/agent/agent-manager.ts"],
+      "tests": ["packages/server/src/server/agent/agent-manager.test.ts"],
+      "testCases": [
+        "provider history is accumulated before any recovered timeline row is committed",
+        "provider history failure leaves no partial recovered timeline",
+        "live session events arriving during hydration are buffered and committed after recovered history",
+        "history hydration drains already queued live session events before opening the buffer boundary"
+      ],
+      "verification": {
+        "receipt": "patches/receipts/paseo-v025-hydration-atomicity.json",
+        "completedAt": "2026-08-01T01:40:16Z",
+        "result": {
+          "agentManagerTests": "145 passed",
+          "serverBuild": "passed",
+          "serverTypecheck": "passed",
+          "changedFileLint": "0 warnings, 0 errors",
+          "formatAndDiff": "passed"
+        }
+      },
+      "upstreamable": true,
+      "upstreamCondition": "Submit independently while provider history and live session events can interleave into a partially ordered timeline.",
+      "dropCondition": "Remove when the latest stable release commits provider history atomically and orders concurrent live events after recovered history.",
+      "deployedReceipt": null,
+      "deployedAt": null
+    }
+  ]
+}
