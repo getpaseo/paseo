@@ -23,6 +23,7 @@ function makeAgent(input: {
     id: input.id,
     provider: "codex",
     status: "idle",
+    activeTurn: null,
     createdAt,
     updatedAt: createdAt,
     lastUserMessageAt: null,

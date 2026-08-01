@@ -3,6 +3,7 @@ import {
   awaitAssistantMessage,
   expectAgentIdle,
   expectInlineWorkingIndicator,
+  expectRunningAgentChrome,
   expectTurnCopyButton,
   expectScrollFollowsNewContent,
 } from "./helpers/agent-stream";
@@ -18,11 +19,35 @@ import { delayCreatedAgentInitialTailResponse } from "./helpers/agent-timeline-g
 import { selectModel } from "./helpers/app";
 import { clickNewChat } from "./helpers/launcher";
 import { expectComposerVisible, startRunningMockAgent } from "./helpers/composer";
-import { openAgentRoute, seedMockAgentWorkspace } from "./helpers/mock-agent";
+import {
+  openAgentRoute,
+  seedMockAgentWorkspace,
+  seedRunningMockAgentWorkspace,
+} from "./helpers/mock-agent";
 
 const SCROLL_AWAY_MIN_SCROLLABLE_DISTANCE = 360;
 
 test.describe("Agent stream UI", () => {
+  test("keeps running agent chrome after page refresh", async ({ page }) => {
+    const title = "Running agent refresh";
+    const agent = await seedRunningMockAgentWorkspace({
+      repoPrefix: "stream-running-refresh-",
+      title,
+      model: "five-minute-stream",
+      initialPrompt: "Stay running while the page refreshes.",
+    });
+    try {
+      await openAgentRoute(page, agent);
+      await expectRunningAgentChrome(page, title);
+
+      await page.reload();
+
+      await expectRunningAgentChrome(page, title);
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
   test("auto-scroll sticks to bottom across token bursts", async ({ page }) => {
     test.setTimeout(120_000);
     const agent = await startRunningMockAgent(page, {

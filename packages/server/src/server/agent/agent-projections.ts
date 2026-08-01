@@ -121,6 +121,12 @@ export function toAgentPayload(
     updatedAt: agent.updatedAt.toISOString(),
     lastUserMessageAt: agent.lastUserMessageAt ? agent.lastUserMessageAt.toISOString() : null,
     status: agent.lifecycle,
+    activeTurn: agent.activeTurnId
+      ? {
+          turnId: agent.activeTurnId,
+          startedAt: agent.activeTurnStartedAt?.toISOString() ?? null,
+        }
+      : null,
     capabilities: cloneCapabilities(agent.capabilities),
     currentModeId: agent.currentModeId,
     availableModes: cloneAvailableModes(agent.availableModes),

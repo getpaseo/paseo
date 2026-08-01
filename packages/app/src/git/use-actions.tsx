@@ -1,4 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, type ReactElement } from "react";
+import { Info } from "lucide-react-native";
+import { withUnistyles } from "react-native-unistyles";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useTranslation } from "react-i18next";
 import type { Theme } from "@/styles/theme";
@@ -31,6 +33,26 @@ import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 export type { GitActionId, GitAction, GitActions } from "@/git/policy";
 
 const forgeMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const ThemedInfo = withUnistyles(Info, (theme) => ({ color: theme.colors.foreground }));
+
+export function useGitActionRunner(): (action: GitAction) => void {
+  const toast = useToast();
+
+  return useCallback(
+    (action: GitAction) => {
+      if (action.disabled) return;
+      if (action.unavailableMessage) {
+        toast.show(action.unavailableMessage, {
+          durationMs: 3200,
+          icon: <ThemedInfo size={16} />,
+        });
+        return;
+      }
+      action.handler();
+    },
+    [toast],
+  );
+}
 
 /**
  * The leading icon for every change-request action (create/view/merge) is the

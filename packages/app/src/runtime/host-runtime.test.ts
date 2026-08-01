@@ -80,7 +80,9 @@ class FakeDaemonClient {
     this.setConnectionState({ status: "disconnected", reason: "client_closed" });
   }
 
-  async sendAgentMessage(...args: Parameters<DaemonClient["sendAgentMessage"]>): Promise<void> {
+  async sendAgentMessage(
+    ...args: Parameters<DaemonClient["sendAgentMessage"]>
+  ): ReturnType<DaemonClient["sendAgentMessage"]> {
     this.sentAgentMessages.push(args);
     for (const waiter of this.sentMessageWaiters) waiter();
     const response = this.sendAgentMessageResponses.shift();
@@ -2259,6 +2261,72 @@ describe("HostRuntimeStore", () => {
     useSessionStore.getState().clearSession(host.serverId);
   });
 
+  it("submits an automatically drained message through the submission producer", async () => {
+    const host = makeHost({ serverId: "srv_drain_submission" });
+    const fakeClient = new FakeDaemonClient();
+    const send = new Deferred<void>();
+    fakeClient.sendAgentMessageResponses.push(send.promise);
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async () => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: null,
+        }),
+        getClientId: async () => "cid_drain_submission",
+      },
+    });
+    const sessionStore = useSessionStore.getState();
+    sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    sessionStore.updateSessionServerInfo(host.serverId, {
+      serverId: host.serverId,
+      hostname: null,
+      version: null,
+      features: { canonicalSubmittedPrompts: true },
+    });
+    sessionStore.setQueuedMessages(
+      host.serverId,
+      new Map([
+        [
+          "agent",
+          [
+            {
+              id: "queued-with-attachment",
+              text: "read this file",
+              attachments: [
+                {
+                  kind: "workspace_file" as const,
+                  path: "src/main.ts",
+                  selection: { kind: "whole_file" as const },
+                },
+              ],
+            },
+          ],
+        ],
+      ]),
+    );
+
+    store.drainQueuedAgentMessage(host.serverId, "agent");
+    await fakeClient.waitForSentMessages(1);
+
+    // The row and the pending submission must exist while the RPC is still in flight —
+    // the user sees their message and the working footer immediately, exactly as when
+    // they press send.
+    const session = useSessionStore.getState().sessions[host.serverId];
+    const tail = session?.agentStreamTail.get("agent") ?? [];
+    expect(tail).toHaveLength(1);
+    expect(tail[0]).toMatchObject({
+      kind: "user_message",
+      text: "read this file",
+      attachments: [{ type: "text", title: "main.ts", text: "Workspace file: src/main.ts" }],
+    });
+    expect(session?.messageSubmissions.get("agent")).toBeDefined();
+
+    send.resolve();
+    useSessionStore.getState().clearSession(host.serverId);
+  });
+
   it("restores an automatically drained message when sending fails", async () => {
     const host = makeHost({ serverId: "srv_failed_queue_drain" });
     const fakeClient = new FakeDaemonClient();
@@ -2629,6 +2697,12 @@ describe("HostRuntimeStore", () => {
       }).agent;
       const staleAgent: Agent = {
         ...stale,
+        activeTurn: stale.activeTurn
+          ? {
+              turnId: stale.activeTurn.turnId,
+              startedAt: stale.activeTurn.startedAt ? new Date(stale.activeTurn.startedAt) : null,
+            }
+          : null,
         serverId: host.serverId,
         createdAt: new Date(stale.createdAt),
         updatedAt: new Date(stale.updatedAt),
