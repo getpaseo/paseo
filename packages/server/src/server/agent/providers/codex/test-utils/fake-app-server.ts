@@ -53,6 +53,7 @@ export interface FakeCodexAppServer {
   nextResponse(): Promise<string>;
   startsTurn(params: { threadId: string; turnId?: string }): void;
   setThreadTurnStatus(params: { threadId: string; turnId: string; status: string }): void;
+  updatesPlan(params: { threadId: string; steps: string[] }): void;
   completeTurn(params?: { threadId?: string; turnId?: string; omitTurnId?: boolean }): void;
   interruptTurn(params?: { threadId?: string; turnId?: string }): void;
   startsSubAgent(params: {
@@ -363,6 +364,17 @@ export function createFakeCodexAppServer(
       const statuses = turnStatusesByThreadId.get(params.threadId) ?? new Map<string, string>();
       statuses.set(params.turnId, params.status);
       turnStatusesByThreadId.set(params.threadId, statuses);
+    },
+    updatesPlan(params) {
+      child.stdout.write(
+        `${JSON.stringify({
+          method: "turn/plan/updated",
+          params: {
+            threadId: params.threadId,
+            plan: params.steps.map((step) => ({ step, status: "pending" })),
+          },
+        })}\n`,
+      );
     },
     completeTurn(params = {}) {
       const threadId = params.threadId ?? "thread-1";
