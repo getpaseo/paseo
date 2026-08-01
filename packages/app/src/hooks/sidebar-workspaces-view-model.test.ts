@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 import type { WorkspaceStructureProject } from "@/projects/workspace-structure";
+import { buildWorkspaceAgentActivityIndex } from "@/utils/workspace-agent-activity";
 import {
   appendMissingOrderKeys,
   applyStoredOrdering,
@@ -671,16 +672,16 @@ describe("deriveSidebarLoadingState", () => {
 function workspacePlacement(input: {
   serverId?: string;
   workspaceId: string;
-  projectKey?: string;
+  projectViewKey?: string;
 }): SidebarWorkspacePlacement {
   const serverId = input.serverId ?? "srv";
-  const projectKey = input.projectKey ?? "project-a";
+  const projectViewKey = input.projectViewKey ?? "project-a";
   return {
     workspaceKey: `${serverId}:${input.workspaceId}`,
     serverId,
     workspaceId: input.workspaceId,
-    projectKey,
-    projectName: projectKey,
+    projectViewKey,
+    projectName: projectViewKey,
     projectKind: "git",
     workspaceKind: "worktree",
     name: input.workspaceId,
@@ -700,6 +701,7 @@ function agent(input: {
     id: input.id,
     provider: "claude" as Agent["provider"],
     status: input.status,
+    activeTurn: null,
     createdAt: new Date(0),
     updatedAt: input.updatedAt ?? new Date(1_000),
     lastUserMessageAt: null,
@@ -725,7 +727,9 @@ function sessionWith(input: {
 }): ProjectStatusSession {
   return {
     workspaces: new Map(input.workspaces.map((entry) => [entry.id, entry])),
-    agents: new Map((input.agents ?? []).map((entry) => [entry.id, entry])),
+    workspaceAgentActivity: buildWorkspaceAgentActivityIndex(
+      new Map((input.agents ?? []).map((entry) => [entry.id, entry])),
+    ),
   };
 }
 

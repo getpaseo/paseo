@@ -4,6 +4,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronDown, ChevronRight, CircleAlert } from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { SyncedLoader } from "@/components/synced-loader";
+import { STATUS_BUCKET_LABELS } from "@/hooks/sidebar-status-view-model";
 import type { Theme } from "@/styles/theme";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { getProjectStatusBadgeContent } from "@/utils/project-status-badge-content";
@@ -138,12 +139,17 @@ export function ProjectStatusIndicator({
 
 function ProjectStatusBadge({ statusBucket }: { statusBucket: SidebarStateBucket | null }) {
   const content = getProjectStatusBadgeContent(statusBucket);
-  if (content === null) {
+  if (content === null || statusBucket === null) {
     return null;
   }
 
   return (
-    <View style={styles.statusBadge} testID="project-status-badge">
+    <View
+      role="status"
+      accessibilityLabel={STATUS_BUCKET_LABELS[statusBucket]}
+      style={styles.statusBadge}
+      testID="project-status-badge"
+    >
       {renderProjectStatusBadgeContent(content)}
     </View>
   );
