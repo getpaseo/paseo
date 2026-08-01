@@ -6,6 +6,7 @@ import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "./agent-title-limits.js";
 import { AgentProviderSchema } from "./provider-manifest.js";
 import { TOOL_CALL_ICON_NAMES } from "./agent-types.js";
 import { WORKSPACE_LABEL_COLORS } from "./workspace-labels.js";
+import { ProviderPaseoToolsPolicySchema } from "./provider-config.js";
 import {
   ChatCreateRequestSchema,
   ChatListRequestSchema,
@@ -120,6 +121,7 @@ const MutableDaemonProviderConfigSchema = z
   .object({
     enabled: z.boolean().optional(),
     additionalModels: z.array(MutableDaemonProviderModelSchema).optional(),
+    paseoTools: ProviderPaseoToolsPolicySchema.optional(),
   })
   .passthrough();
 
@@ -3503,6 +3505,8 @@ export const ServerInfoStatusPayloadSchema = z
         commitBaseClassification: z.boolean().optional(),
         // COMPAT(providerRemoval): added in v0.1.105, drop the gate when floor >= v0.1.105.
         providerRemoval: z.boolean().optional(),
+        // COMPAT(paseoToolPolicies): added in v0.2.6, remove gate after 2027-01-31.
+        paseoToolPolicies: z.boolean().optional(),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: z.boolean().optional(),
         // COMPAT(importSessionSearch): added in v0.7.3, remove gate after 2027-03-02.

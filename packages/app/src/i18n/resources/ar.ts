@@ -2516,8 +2516,36 @@ export const ar: TranslationResources = {
       updateErrorTitle: "غير قادر على تحديث الموفر",
       actions: {
         menu: "{{name}} actions",
+        configureTools: "تكوين الأدوات",
         remove: "Remove provider",
         removing: "Removing...",
+      },
+      tools: {
+        title: "تكوين أدوات {{name}}",
+        searchPlaceholder: "البحث في الأدوات",
+        updateRequired: {
+          title: "حدّث المضيف لتهيئة أدوات Paseo",
+          description: "إعدادات أدوات Paseo لكل مزود غير متاحة على هذا المضيف.",
+        },
+        master: {
+          title: "تمكين أدوات Paseo",
+          hint: "السماح لموفر الخدمة هذا باستخدام أدوات Paseo",
+          accessibilityLabel: "تمكين أدوات Paseo لـ {{name}}",
+        },
+        enableAll: "تمكين الكل",
+        disableAll: "تعطيل الكل",
+        globalOverride: {
+          title: "أدوات Paseo معطلة",
+          description: "إعداد حقن أدوات Paseo العام يتجاوز اختيارات الموفر والأدوات المحفوظة",
+        },
+        browserUnavailable: {
+          title: "أدوات المتصفح غير متاحة",
+          description:
+            "فعّل أدوات المتصفح في إعدادات المضيف لاستخدامها. تظل الاختيارات المحفوظة دون تغيير",
+        },
+        toolAccessibilityLabel: "أداة Paseo: {{name}}",
+        noSearchMatches: "لا توجد أدوات تطابق بحثك",
+        updateErrorTitle: "تعذر تحديث إعدادات أدوات Paseo",
       },
       remove: {
         confirmTitle: "Remove {{name}}?",

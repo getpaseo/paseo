@@ -2485,8 +2485,35 @@ export const zhCN: TranslationResources = {
       updateErrorTitle: "无法更新 Provider",
       actions: {
         menu: "{{name}} actions",
+        configureTools: "配置工具",
         remove: "Remove provider",
         removing: "Removing...",
+      },
+      tools: {
+        title: "配置 {{name}} 工具",
+        searchPlaceholder: "搜索工具",
+        updateRequired: {
+          title: "更新 Host 以配置 Paseo 工具",
+          description: "此 Host 不支持按 Provider 配置工具。",
+        },
+        master: {
+          title: "启用 Paseo 工具",
+          hint: "允许此 Provider 使用 Paseo 工具",
+          accessibilityLabel: "为 {{name}} 启用 Paseo 工具",
+        },
+        enableAll: "全部启用",
+        disableAll: "全部禁用",
+        globalOverride: {
+          title: "Paseo 工具已禁用",
+          description: "全局注入 Paseo 工具设置会覆盖这些已保存的 Provider 和工具选择",
+        },
+        browserUnavailable: {
+          title: "浏览器工具不可用",
+          description: "在 Host 设置中启用浏览器工具后才能使用。已保存的选择不会改变",
+        },
+        toolAccessibilityLabel: "{{name}} Paseo 工具",
+        noSearchMatches: "没有匹配搜索的工具",
+        updateErrorTitle: "无法更新 Paseo 工具设置",
       },
       remove: {
         confirmTitle: "Remove {{name}}?",
