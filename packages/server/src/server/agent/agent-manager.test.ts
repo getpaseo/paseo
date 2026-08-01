@@ -536,6 +536,8 @@ class InvalidatedGenerationSession extends TestAgentSession {
   private readonly firstStartAllowed = deferred<void>();
   private readonly replacementStartRequested = deferred<void>();
   private readonly replacementStartAllowed = deferred<void>();
+  private readonly newerReplacementStartRequested = deferred<void>();
+  private readonly newerReplacementStartAllowed = deferred<void>();
   private turnCount = 0;
 
   override async startTurn(): Promise<{ turnId: string }> {
@@ -550,6 +552,11 @@ class InvalidatedGenerationSession extends TestAgentSession {
       await this.replacementStartAllowed.promise;
       return { turnId: "replacement-turn" };
     }
+    if (this.turnCount === 3) {
+      this.newerReplacementStartRequested.resolve();
+      await this.newerReplacementStartAllowed.promise;
+      return { turnId: "newer-replacement-turn" };
+    }
     throw new Error(`Unexpected turn ${this.turnCount}`);
   }
 
@@ -561,19 +568,31 @@ class InvalidatedGenerationSession extends TestAgentSession {
     return this.replacementStartRequested.promise;
   }
 
+  waitForNewerReplacementStart(): Promise<void> {
+    return this.newerReplacementStartRequested.promise;
+  }
+
   resolveFirstStart(): void {
     this.firstStartAllowed.resolve();
+  }
+
+  rejectFirstStart(): void {
+    this.firstStartAllowed.reject(new Error("invalidated start rejected"));
   }
 
   resolveReplacementStart(): void {
     this.replacementStartAllowed.resolve();
   }
 
-  emitTurnStarted(turnId: string): void {
+  resolveNewerReplacementStart(): void {
+    this.newerReplacementStartAllowed.resolve();
+  }
+
+  emitTurnStarted(turnId?: string): void {
     this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
   }
 
-  emitTurnCompleted(turnId: string): void {
+  emitTurnCompleted(turnId?: string): void {
     this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
   }
 
@@ -1960,24 +1979,16 @@ test("late lifecycle from an invalidated pending start cannot settle its replace
     session.emitTurnStarted("invalidated-turn");
     session.emitTurnCompleted("invalidated-turn");
     expect(runs.getPendingRun(agent.id)).toMatchObject({
-      observedTurnId: null,
       settled: false,
     });
 
     session.resolveFirstStart();
     await firstRunDrain;
     expect(runs.getPendingRun(agent.id)).toMatchObject({
-      observedTurnId: null,
       settled: false,
     });
 
     session.emitTurnStarted("replacement-turn");
-    await vi.waitFor(() => {
-      expect(runs.getPendingRun(agent.id)).toMatchObject({
-        observedTurnId: "replacement-turn",
-        settled: false,
-      });
-    });
     session.resolveReplacementStart();
     await manager.waitForAgentRunStart(agent.id);
 
@@ -2007,7 +2018,7 @@ test("late lifecycle from an invalidated pending start cannot settle its replace
   }
 });
 
-test("an active replacement terminal bypasses an older unresolved pending start", async () => {
+test("explicit replacement lifecycle before its start response bypasses an older unresolved start", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-active-replacement-terminal-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
   const session = new InvalidatedGenerationSession({ provider: "codex", cwd: workdir });
@@ -2033,20 +2044,21 @@ test("an active replacement terminal bypasses an older unresolved pending start"
     }
   })();
   let replacementDrain: Promise<void> | null = null;
+  const replacementEvents: AgentStreamEvent[] = [];
 
   try {
     await session.waitForFirstStart();
     const replacement = await manager.replaceAgentRun(agent.id, "replacement turn");
     replacementDrain = (async () => {
-      for await (const _event of replacement) {
-        // Drain through the replacement terminal.
+      for await (const event of replacement) {
+        replacementEvents.push(event);
       }
     })();
     await session.waitForReplacementStart();
-    session.resolveReplacementStart();
-    await manager.waitForAgentRunStart(agent.id);
-
+    session.emitTurnStarted("replacement-turn");
     session.emitTurnCompleted("replacement-turn");
+    session.resolveReplacementStart();
+
     await vi.waitFor(() => {
       expect(manager.getAgent(agent.id)).toMatchObject({
         lifecycle: "idle",
@@ -2054,12 +2066,317 @@ test("an active replacement terminal bypasses an older unresolved pending start"
       });
     });
     await replacementDrain;
+    expect(replacementEvents.filter((event) => event.type === "turn_completed")).toEqual([
+      { type: "turn_completed", provider: "codex", turnId: "replacement-turn" },
+    ]);
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
   } finally {
     session.resolveFirstStart();
     session.resolveReplacementStart();
     session.emitTurnCompleted("replacement-turn");
     await firstRunDrain.catch(() => undefined);
     await replacementDrain?.catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("ID-less lifecycle is quarantined while an older start remains unresolved", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idless-generation-fence-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const session = new InvalidatedGenerationSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10 },
+    idFactory: () => "00000000-0000-4000-8000-000000000319",
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const runs = castInternals<{ runs: AgentRunState }>(manager).runs;
+  const firstRun = manager.streamAgent(agent.id, "first pending turn");
+  const firstRunDrain = (async () => {
+    for await (const _event of firstRun) {
+      // The older generation remains unresolved until cleanup.
+    }
+  })();
+  let replacementDrain: Promise<void> | null = null;
+  const replacementEvents: AgentStreamEvent[] = [];
+
+  try {
+    await session.waitForFirstStart();
+    const replacement = await manager.replaceAgentRun(agent.id, "replacement turn");
+    replacementDrain = (async () => {
+      for await (const event of replacement) {
+        replacementEvents.push(event);
+      }
+    })();
+    await session.waitForReplacementStart();
+
+    session.emitTurnStarted();
+    session.emitTurnCompleted();
+    session.resolveReplacementStart();
+    await manager.waitForAgentRunStart(agent.id);
+
+    expect(runs.getPendingRun(agent.id)).toMatchObject({
+      started: true,
+      settled: false,
+      turnId: "replacement-turn",
+    });
+    expect(replacementEvents.some((event) => event.type === "turn_completed")).toBe(false);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "running",
+      activeForegroundTurnId: "replacement-turn",
+    });
+
+    session.emitTurnCompleted("replacement-turn");
+    await replacementDrain;
+    expect(replacementEvents.filter((event) => event.type === "turn_completed")).toEqual([
+      { type: "turn_completed", provider: "codex", turnId: "replacement-turn" },
+    ]);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+    });
+  } finally {
+    session.resolveFirstStart();
+    session.resolveReplacementStart();
+    session.emitTurnCompleted("replacement-turn");
+    await firstRunDrain.catch(() => undefined);
+    await replacementDrain?.catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a rejected invalidated start keeps late explicit lifecycle fenced from its replacement", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-rejected-generation-fence-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const session = new InvalidatedGenerationSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10 },
+    idFactory: () => "00000000-0000-4000-8000-000000000320",
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const runs = castInternals<{ runs: AgentRunState }>(manager).runs;
+  const firstRun = manager.streamAgent(agent.id, "first pending turn");
+  const firstRunDrain = (async () => {
+    for await (const _event of firstRun) {
+      // The rejected generation exits without surrendering its late-event fence.
+    }
+  })();
+  let replacementDrain: Promise<void> | null = null;
+  let laterRunDrain: Promise<void> | null = null;
+  const replacementEvents: AgentStreamEvent[] = [];
+  const laterRunEvents: AgentStreamEvent[] = [];
+
+  try {
+    await session.waitForFirstStart();
+    const replacement = await manager.replaceAgentRun(agent.id, "replacement turn");
+    replacementDrain = (async () => {
+      for await (const event of replacement) {
+        replacementEvents.push(event);
+      }
+    })();
+    await session.waitForReplacementStart();
+
+    session.rejectFirstStart();
+    await firstRunDrain;
+    session.emitTurnStarted("invalidated-turn");
+    session.emitTurnCompleted("invalidated-turn");
+    expect(runs.getPendingRun(agent.id)).toMatchObject({ settled: false });
+
+    session.emitTurnStarted("replacement-turn");
+    session.emitTurnCompleted("replacement-turn");
+    session.resolveReplacementStart();
+    await replacementDrain;
+
+    expect(replacementEvents.filter((event) => event.type === "turn_completed")).toEqual([
+      { type: "turn_completed", provider: "codex", turnId: "replacement-turn" },
+    ]);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+    });
+
+    const laterRun = manager.streamAgent(agent.id, "later turn");
+    laterRunDrain = (async () => {
+      for await (const event of laterRun) {
+        laterRunEvents.push(event);
+      }
+    })();
+    await session.waitForNewerReplacementStart();
+    session.emitTurnStarted();
+    session.emitTurnCompleted();
+    session.resolveNewerReplacementStart();
+    await laterRunDrain;
+
+    expect(laterRunEvents.filter((event) => event.type === "turn_completed")).toEqual([
+      { type: "turn_completed", provider: "codex", turnId: "newer-replacement-turn" },
+    ]);
+  } finally {
+    session.resolveFirstStart();
+    session.resolveReplacementStart();
+    session.resolveNewerReplacementStart();
+    session.emitTurnCompleted("replacement-turn");
+    session.emitTurnCompleted("newer-replacement-turn");
+    await firstRunDrain.catch(() => undefined);
+    await replacementDrain?.catch(() => undefined);
+    await laterRunDrain?.catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("owned invalidated lifecycle releases its fence before ID-less replacement lifecycle", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-owned-generation-cleanup-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const session = new InvalidatedGenerationSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10 },
+    idFactory: () => "00000000-0000-4000-8000-000000000321",
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const firstRun = manager.streamAgent(agent.id, "first pending turn");
+  const firstRunDrain = (async () => {
+    for await (const _event of firstRun) {
+      // The invalidated generation exits after its owned response arrives.
+    }
+  })();
+  let replacementDrain: Promise<void> | null = null;
+  const replacementEvents: AgentStreamEvent[] = [];
+
+  try {
+    await session.waitForFirstStart();
+    const replacement = await manager.replaceAgentRun(agent.id, "replacement turn");
+    replacementDrain = (async () => {
+      for await (const event of replacement) {
+        replacementEvents.push(event);
+      }
+    })();
+    await session.waitForReplacementStart();
+
+    session.emitTurnStarted("invalidated-turn");
+    session.emitTurnCompleted("invalidated-turn");
+    session.resolveFirstStart();
+    await firstRunDrain;
+
+    session.emitTurnStarted();
+    session.emitTurnCompleted();
+    session.resolveReplacementStart();
+    await replacementDrain;
+
+    expect(replacementEvents.filter((event) => event.type === "turn_completed")).toEqual([
+      { type: "turn_completed", provider: "codex", turnId: "replacement-turn" },
+    ]);
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+    });
+  } finally {
+    session.resolveFirstStart();
+    session.resolveReplacementStart();
+    session.emitTurnCompleted("replacement-turn");
+    await firstRunDrain.catch(() => undefined);
+    await replacementDrain?.catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a rejected current start clears explicit lifecycle before a later ID reuse", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-rejected-start-cleanup-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const session = new InvalidatedGenerationSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10 },
+    idFactory: () => "00000000-0000-4000-8000-000000000323",
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const firstRun = manager.streamAgent(agent.id, "rejected turn");
+  const firstRunDrain = (async () => {
+    for await (const _event of firstRun) {
+      // The current start rejects after an unmatched explicit terminal was staged.
+    }
+  })();
+  let laterRunDrain: Promise<void> | null = null;
+  const laterRunEvents: AgentStreamEvent[] = [];
+
+  try {
+    await session.waitForFirstStart();
+    session.emitTurnCompleted("replacement-turn");
+    session.rejectFirstStart();
+    await expect(firstRunDrain).rejects.toThrow("invalidated start rejected");
+
+    const laterRun = manager.streamAgent(agent.id, "later turn");
+    laterRunDrain = (async () => {
+      for await (const event of laterRun) {
+        laterRunEvents.push(event);
+      }
+    })();
+    await session.waitForReplacementStart();
+    session.resolveReplacementStart();
+    await vi.waitFor(() => {
+      expect(manager.getAgent(agent.id)).toMatchObject({
+        lifecycle: "running",
+        activeForegroundTurnId: "replacement-turn",
+      });
+    });
+    expect(laterRunEvents.some((event) => event.type === "turn_completed")).toBe(false);
+
+    session.emitTurnCompleted("replacement-turn");
+    await laterRunDrain;
+    expect(laterRunEvents.filter((event) => event.type === "turn_completed")).toEqual([
+      { type: "turn_completed", provider: "codex", turnId: "replacement-turn" },
+    ]);
+  } finally {
+    session.resolveFirstStart();
+    session.resolveReplacementStart();
+    session.emitTurnCompleted("replacement-turn");
+    await firstRunDrain.catch(() => undefined);
+    await laterRunDrain?.catch(() => undefined);
     await manager.flush().catch(() => undefined);
     await storage.flush().catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
@@ -2180,6 +2497,94 @@ test("cancelAgentRun clears a pending replacement that settled before start retu
   }
 });
 
+test("a settled pending replacement keeps its unresolved generation fenced", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-settled-generation-fence-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const session = new InvalidatedGenerationSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10 },
+    idFactory: () => "00000000-0000-4000-8000-000000000322",
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const firstRun = manager.streamAgent(agent.id, "first pending turn");
+  const firstRunDrain = (async () => {
+    for await (const _event of firstRun) {
+      // The first invalidated generation exits after its response arrives.
+    }
+  })();
+  let replacementDrain: Promise<void> | null = null;
+  let newerReplacementDrain: Promise<void> | null = null;
+  const newerReplacementEvents: AgentStreamEvent[] = [];
+
+  try {
+    await session.waitForFirstStart();
+    const replacement = await manager.replaceAgentRun(agent.id, "first replacement");
+    replacementDrain = (async () => {
+      for await (const _event of replacement) {
+        // This generation settles before its delayed start response.
+      }
+    })();
+    await session.waitForReplacementStart();
+    session.resolveFirstStart();
+    await firstRunDrain;
+    session.emitTurnStarted("replacement-turn");
+    session.emitTurnCompleted("replacement-turn");
+
+    const newerReplacement = await manager.replaceAgentRun(agent.id, "newer replacement");
+    newerReplacementDrain = (async () => {
+      for await (const event of newerReplacement) {
+        newerReplacementEvents.push(event);
+      }
+    })();
+    await session.waitForNewerReplacementStart();
+    session.emitTurnStarted();
+    session.emitTurnCompleted();
+    session.resolveNewerReplacementStart();
+    await manager.waitForAgentRunStart(agent.id);
+
+    expect(newerReplacementEvents.some((event) => event.type === "turn_completed")).toBe(false);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "running",
+      activeForegroundTurnId: "newer-replacement-turn",
+    });
+
+    session.emitTurnCompleted("newer-replacement-turn");
+    await newerReplacementDrain;
+    session.resolveReplacementStart();
+    await replacementDrain;
+
+    expect(newerReplacementEvents.filter((event) => event.type === "turn_completed")).toEqual([
+      { type: "turn_completed", provider: "codex", turnId: "newer-replacement-turn" },
+    ]);
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+    });
+  } finally {
+    session.resolveFirstStart();
+    session.resolveReplacementStart();
+    session.resolveNewerReplacementStart();
+    session.emitTurnCompleted("newer-replacement-turn");
+    await firstRunDrain.catch(() => undefined);
+    await replacementDrain?.catch(() => undefined);
+    await newerReplacementDrain?.catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("replacing an unidentified pending replacement preserves the newer replacement", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-replace-pending-replacement-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
@@ -2206,6 +2611,8 @@ test("replacing an unidentified pending replacement preserves the newer replacem
     }
   })();
   let replacementDrain: Promise<void> | null = null;
+  let newerReplacementDrain: Promise<void> | null = null;
+  const newerReplacementEvents: AgentStreamEvent[] = [];
 
   try {
     await session.waitForFirstStart();
@@ -2217,19 +2624,47 @@ test("replacing an unidentified pending replacement preserves the newer replacem
     })();
     await session.waitForReplacementStart();
 
-    await manager.replaceAgentRun(agent.id, "newer replacement");
-    expect(manager.hasInFlightRun(agent.id)).toBe(true);
+    const newerReplacement = await manager.replaceAgentRun(agent.id, "newer replacement");
+    newerReplacementDrain = (async () => {
+      for await (const event of newerReplacement) {
+        newerReplacementEvents.push(event);
+      }
+    })();
+    await session.waitForNewerReplacementStart();
+    session.emitTurnStarted("newer-replacement-turn");
+    session.emitTurnCompleted("newer-replacement-turn");
+    session.resolveNewerReplacementStart();
+
+    await vi.waitFor(() => {
+      expect(manager.getAgent(agent.id)).toMatchObject({
+        lifecycle: "idle",
+        activeForegroundTurnId: null,
+        pendingReplacement: false,
+      });
+    });
+    await newerReplacementDrain;
+    session.resolveFirstStart();
+    session.resolveReplacementStart();
+    await firstRunDrain;
+    await replacementDrain;
+    expect(newerReplacementEvents.filter((event) => event.type === "turn_completed")).toEqual([
+      { type: "turn_completed", provider: "codex", turnId: "newer-replacement-turn" },
+    ]);
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
     expect(manager.getAgent(agent.id)).toMatchObject({
-      lifecycle: "running",
+      lifecycle: "idle",
       activeForegroundTurnId: null,
-      pendingReplacement: true,
+      pendingReplacement: false,
     });
   } finally {
     await manager.cancelAgentRun(agent.id).catch(() => undefined);
     session.resolveFirstStart();
     session.resolveReplacementStart();
+    session.resolveNewerReplacementStart();
+    session.emitTurnCompleted("newer-replacement-turn");
     await firstRunDrain.catch(() => undefined);
     await replacementDrain?.catch(() => undefined);
+    await newerReplacementDrain?.catch(() => undefined);
     await manager.flush().catch(() => undefined);
     await storage.flush().catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });

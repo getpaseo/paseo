@@ -2067,7 +2067,7 @@ export class AgentManager {
         turnId = result.turnId;
       } catch (error) {
         if (!this.runs.isPendingRun(agentId, pendingRun.token)) {
-          this.releaseInvalidatedPendingRunEvents(agent, pendingRun.token);
+          this.runs.rejectInvalidatedPendingRun(agent.id, pendingRun.token);
           return;
         }
         agent.pendingReplacement = false;
@@ -2167,7 +2167,7 @@ export class AgentManager {
     token: string,
     turnId: string,
   ): AgentStreamEvent[] | null {
-    const invalidatedEvents = this.runs.takeInvalidatedPendingRunEvents(agent.id, token);
+    const invalidatedEvents = this.runs.takeInvalidatedPendingRunEvents(agent.id, token, turnId);
     if (invalidatedEvents !== null) {
       this.runs.rememberFinalizedTurn(agent, turnId);
       for (const invalidatedEvent of invalidatedEvents) {
@@ -2181,13 +2181,6 @@ export class AgentManager {
       this.runs.rememberFinalizedTurn(agent, turnId);
     }
     return stagedEvents;
-  }
-
-  private releaseInvalidatedPendingRunEvents(agent: ActiveManagedAgent, token: string): void {
-    const invalidatedEvents = this.runs.takeInvalidatedPendingRunEvents(agent.id, token);
-    for (const invalidatedEvent of invalidatedEvents ?? []) {
-      this.enqueueSessionEvent(agent.id, invalidatedEvent);
-    }
   }
 
   private finalizeForegroundTurn(agent: ActiveManagedAgent, turnId?: string): void {
@@ -2443,7 +2436,9 @@ export class AgentManager {
     if (
       run.kind === "foreground" &&
       run.settled &&
-      this.runs.settleForegroundRun(agentId, run.token)
+      (run.started
+        ? this.runs.settleForegroundRun(agentId, run.token)
+        : this.runs.invalidatePendingRun(agentId, run.token))
     ) {
       this.clearCanceledReplacement(agent, run, preservePendingReplacement);
       agent.lastError = undefined;

@@ -36,7 +36,14 @@ export interface AutonomousAgentRun {
 export type TrackedAgentRun = PendingForegroundRun | AutonomousAgentRun;
 
 interface InvalidatedPendingRun {
-  stagedLifecycleEvents: AgentStreamEvent[];
+  state: "awaiting_result" | "unowned_fence";
+}
+
+interface AgentGenerationState {
+  run: TrackedAgentRun | null;
+  invalidatedRuns: Map<string, InvalidatedPendingRun>;
+  identifiedLifecycleEvents: Map<string, AgentStreamEvent[]>;
+  quarantinedLifecycleEvents: AgentStreamEvent[];
 }
 
 export interface ForegroundRunAgentState {
@@ -45,17 +52,18 @@ export interface ForegroundRunAgentState {
 }
 
 export class AgentRunState {
-  private readonly runs = new Map<string, TrackedAgentRun>();
-  private readonly invalidatedPendingRuns = new Map<string, Map<string, InvalidatedPendingRun>>();
+  private readonly agentGenerations = new Map<string, AgentGenerationState>();
+  private readonly stagedEventOrder = new WeakMap<AgentStreamEvent, number>();
+  private nextStagedEventOrder = 0;
 
   createPendingRun(agentId: string, replacement: boolean): PendingForegroundRun {
     const pendingRun = createPendingForegroundRun(replacement);
-    this.runs.set(agentId, pendingRun);
+    this.getOrCreateGenerationState(agentId).run = pendingRun;
     return pendingRun;
   }
 
   getPendingRun(agentId: string): PendingForegroundRun | null {
-    const run = this.runs.get(agentId);
+    const run = this.agentGenerations.get(agentId)?.run;
     return run?.kind === "foreground" ? run : null;
   }
 
@@ -64,11 +72,11 @@ export class AgentRunState {
   }
 
   getRun(agentId: string): TrackedAgentRun | null {
-    return this.runs.get(agentId) ?? null;
+    return this.agentGenerations.get(agentId)?.run ?? null;
   }
 
   isPendingRun(agentId: string, token: string): boolean {
-    const run = this.runs.get(agentId);
+    const run = this.agentGenerations.get(agentId)?.run;
     return run?.kind === "foreground" && run.token === token;
   }
 
@@ -81,48 +89,51 @@ export class AgentRunState {
       return true;
     }
 
-    const run = this.runs.get(agentId);
-    const eventTurnId = getAgentStreamEventTurnId(event);
-    if (run?.kind === "foreground" && run.started && eventTurnId === run.turnId) {
-      return false;
+    const state = this.agentGenerations.get(agentId);
+    const run = state?.run;
+    if (isTurnLifecycleEvent(event)) {
+      return this.stagePendingLifecycleEvent(
+        state ?? undefined,
+        run ?? undefined,
+        event,
+        options.terminal,
+      );
     }
-
-    const invalidatedRun = this.invalidatedPendingRuns.get(agentId)?.values().next().value;
-    if (invalidatedRun && (event.type === "turn_started" || options.terminal)) {
-      invalidatedRun.stagedLifecycleEvents.push(event);
-      return true;
-    }
-
     if (run?.kind !== "foreground" || run.started) {
       return false;
     }
 
-    run.stagedEvents.push(event);
-    if (event.type === "turn_started" && eventTurnId && run.observedTurnId === null) {
-      run.observedTurnId = eventTurnId;
-    } else if (options.terminal && eventTurnId === run.observedTurnId) {
-      settleTrackedRun(run);
-    }
+    this.stageEvent(run.stagedEvents, event);
     return true;
   }
 
   bindPendingRun(agentId: string, token: string, turnId: string): AgentStreamEvent[] | null {
-    const run = this.runs.get(agentId);
-    if (run?.kind !== "foreground" || run.token !== token) {
+    const state = this.agentGenerations.get(agentId);
+    const run = state?.run;
+    if (!state || run?.kind !== "foreground" || run.token !== token) {
       return null;
     }
 
     run.started = true;
     run.turnId = turnId;
-    return run.stagedEvents.splice(0);
+    const events = this.mergeStagedEvents(
+      run.stagedEvents.splice(0),
+      this.takeIdentifiedLifecycleEvents(state, turnId),
+    );
+    if (state.invalidatedRuns.size === 0) {
+      state.quarantinedLifecycleEvents.length = 0;
+      state.identifiedLifecycleEvents.clear();
+    }
+    return events.map((event) => attachBoundTurnIdentity(event, turnId));
   }
 
   hasRun(agentId: string): boolean {
-    return this.runs.has(agentId);
+    return (this.agentGenerations.get(agentId)?.run ?? null) !== null;
   }
 
   trackAutonomousRun(agentId: string, turnId: string | null): TrackedAgentRun {
-    const current = this.runs.get(agentId);
+    const state = this.getOrCreateGenerationState(agentId);
+    const current = state.run;
     if (current) {
       return current;
     }
@@ -133,13 +144,14 @@ export class AgentRunState {
       turnId,
       started: true,
     };
-    this.runs.set(agentId, run);
+    state.run = run;
     return run;
   }
 
   settleTerminalRun(agentId: string, turnId: string | undefined): void {
-    const run = this.runs.get(agentId);
-    if (!run) {
+    const state = this.agentGenerations.get(agentId);
+    const run = state?.run;
+    if (!state || !run) {
       return;
     }
     if (run.kind === "foreground" && (run.turnId === null || run.turnId !== turnId)) {
@@ -154,52 +166,87 @@ export class AgentRunState {
       return;
     }
 
-    this.clearRun(agentId, run);
+    this.clearRun(agentId, state, run);
+    // An owned terminal is ordered after earlier provider lifecycle, so rejected generations
+    // can no longer emit events that need a fence.
+    this.releaseUnownedFences(agentId, state);
   }
 
   settleForegroundRun(agentId: string, token: string): boolean {
-    const run = this.runs.get(agentId);
-    if (run?.kind !== "foreground" || run.token !== token) {
+    const state = this.agentGenerations.get(agentId);
+    const run = state?.run;
+    if (!state || run?.kind !== "foreground" || run.token !== token) {
       return false;
     }
 
-    this.clearRun(agentId, run);
+    this.clearRun(agentId, state, run);
+    this.clearLifecycleEventsWithoutInvalidatedRuns(agentId, state);
     return true;
   }
 
   invalidatePendingRun(agentId: string, token: string): boolean {
-    const run = this.runs.get(agentId);
-    if (run?.kind !== "foreground" || run.token !== token || run.started) {
+    const state = this.agentGenerations.get(agentId);
+    const run = state?.run;
+    if (!state || run?.kind !== "foreground" || run.token !== token || run.started) {
       return false;
     }
 
-    this.clearRun(agentId, run);
-    const invalidatedRuns = this.invalidatedPendingRuns.get(agentId) ?? new Map();
-    invalidatedRuns.set(token, { stagedLifecycleEvents: [] });
-    this.invalidatedPendingRuns.set(agentId, invalidatedRuns);
+    state.invalidatedRuns.set(token, {
+      state: "awaiting_result",
+    });
+    for (const event of run.stagedEvents.splice(0)) {
+      if (isTurnLifecycleEvent(event)) {
+        this.stageEvent(state.quarantinedLifecycleEvents, event);
+      }
+    }
+    this.clearRun(agentId, state, run);
     return true;
   }
 
-  takeInvalidatedPendingRunEvents(agentId: string, token: string): AgentStreamEvent[] | null {
-    const invalidatedRuns = this.invalidatedPendingRuns.get(agentId);
-    const invalidatedRun = invalidatedRuns?.get(token);
-    if (!invalidatedRuns || !invalidatedRun) {
+  takeInvalidatedPendingRunEvents(
+    agentId: string,
+    token: string,
+    turnId: string,
+  ): AgentStreamEvent[] | null {
+    const state = this.agentGenerations.get(agentId);
+    const invalidatedRun = state?.invalidatedRuns.get(token);
+    if (!state || !invalidatedRun) {
       return null;
     }
 
-    invalidatedRuns.delete(token);
-    if (invalidatedRuns.size === 0) {
-      this.invalidatedPendingRuns.delete(agentId);
+    state.invalidatedRuns.delete(token);
+    const identifiedEvents = this.takeIdentifiedLifecycleEvents(state, turnId);
+    if (state.invalidatedRuns.size === 0) {
+      state.quarantinedLifecycleEvents.length = 0;
+      if (state.run?.kind !== "foreground" || state.run.started) {
+        state.identifiedLifecycleEvents.clear();
+      }
     }
-    return invalidatedRun.stagedLifecycleEvents;
+    this.deleteGenerationStateIfEmpty(agentId, state);
+    return identifiedEvents.map((event) => attachBoundTurnIdentity(event, turnId));
+  }
+
+  rejectInvalidatedPendingRun(agentId: string, token: string): boolean {
+    const state = this.agentGenerations.get(agentId);
+    const invalidatedRun = state?.invalidatedRuns.get(token);
+    if (!state || !invalidatedRun) {
+      return false;
+    }
+    if (invalidatedRun.state === "unowned_fence") {
+      return true;
+    }
+
+    invalidatedRun.state = "unowned_fence";
+    return true;
   }
 
   clearAgentRun(agentId: string): void {
-    const run = this.runs.get(agentId);
+    const state = this.agentGenerations.get(agentId);
+    const run = state?.run;
     if (run) {
-      this.clearRun(agentId, run);
+      settleTrackedRun(run);
     }
-    this.invalidatedPendingRuns.delete(agentId);
+    this.agentGenerations.delete(agentId);
   }
 
   createTurnStream(turnId: string): ForegroundTurnStream {
@@ -285,9 +332,159 @@ export class AgentRunState {
     return agent.finalizedForegroundTurnIds.has(turnId);
   }
 
-  private clearRun(agentId: string, run: TrackedAgentRun): void {
-    this.runs.delete(agentId);
+  private clearRun(agentId: string, state: AgentGenerationState, run: TrackedAgentRun): void {
+    if (state.run === run) {
+      state.run = null;
+    }
     settleTrackedRun(run);
+    this.deleteGenerationStateIfEmpty(agentId, state);
+  }
+
+  private stagePendingLifecycleEvent(
+    state: AgentGenerationState | undefined,
+    run: TrackedAgentRun | undefined,
+    event: AgentStreamEvent,
+    terminal: boolean,
+  ): boolean {
+    const eventTurnId = getAgentStreamEventTurnId(event);
+    if (eventTurnId !== undefined) {
+      return this.stagePendingIdentifiedLifecycleEvent(state, run, event, eventTurnId, terminal);
+    }
+
+    if (state && state.invalidatedRuns.size > 0) {
+      this.stageEvent(state.quarantinedLifecycleEvents, event);
+      return true;
+    }
+    if (run?.kind !== "foreground" || run.started) {
+      return false;
+    }
+
+    this.stageEvent(run.stagedEvents, event);
+    return true;
+  }
+
+  private stagePendingIdentifiedLifecycleEvent(
+    state: AgentGenerationState | undefined,
+    run: TrackedAgentRun | undefined,
+    event: AgentStreamEvent,
+    turnId: string,
+    terminal: boolean,
+  ): boolean {
+    if (run?.kind === "foreground" && run.started && turnId === run.turnId) {
+      return false;
+    }
+    if (!state) {
+      return false;
+    }
+
+    this.observePendingTurnLifecycle(state, run, event, turnId, terminal);
+    if (run?.kind !== "foreground" && state.invalidatedRuns.size === 0) {
+      return false;
+    }
+
+    this.stageIdentifiedLifecycleEvent(state, turnId, event);
+    return true;
+  }
+
+  private observePendingTurnLifecycle(
+    state: AgentGenerationState,
+    run: TrackedAgentRun | undefined,
+    event: AgentStreamEvent,
+    turnId: string,
+    terminal: boolean,
+  ): void {
+    if (run?.kind !== "foreground" || run.started || state.invalidatedRuns.size > 0) {
+      return;
+    }
+    if (event.type === "turn_started" && run.observedTurnId === null) {
+      run.observedTurnId = turnId;
+    } else if (terminal && run.observedTurnId === turnId) {
+      settleTrackedRun(run);
+    }
+  }
+
+  private releaseUnownedFences(agentId: string, state: AgentGenerationState): void {
+    for (const [token, invalidatedRun] of state.invalidatedRuns) {
+      if (invalidatedRun.state === "unowned_fence") {
+        state.invalidatedRuns.delete(token);
+      }
+    }
+    this.clearLifecycleEventsWithoutInvalidatedRuns(agentId, state);
+  }
+
+  private clearLifecycleEventsWithoutInvalidatedRuns(
+    agentId: string,
+    state: AgentGenerationState,
+  ): void {
+    if (state.invalidatedRuns.size > 0) {
+      return;
+    }
+
+    state.identifiedLifecycleEvents.clear();
+    state.quarantinedLifecycleEvents.length = 0;
+    this.deleteGenerationStateIfEmpty(agentId, state);
+  }
+
+  private stageIdentifiedLifecycleEvent(
+    state: AgentGenerationState,
+    turnId: string,
+    event: AgentStreamEvent,
+  ): void {
+    const events = state.identifiedLifecycleEvents.get(turnId) ?? [];
+    this.stageEvent(events, event);
+    state.identifiedLifecycleEvents.set(turnId, events);
+  }
+
+  private takeIdentifiedLifecycleEvents(
+    state: AgentGenerationState,
+    turnId: string,
+  ): AgentStreamEvent[] {
+    const events = state.identifiedLifecycleEvents.get(turnId) ?? [];
+    state.identifiedLifecycleEvents.delete(turnId);
+    return events;
+  }
+
+  private getOrCreateGenerationState(agentId: string): AgentGenerationState {
+    const existing = this.agentGenerations.get(agentId);
+    if (existing) {
+      return existing;
+    }
+
+    const state: AgentGenerationState = {
+      run: null,
+      invalidatedRuns: new Map(),
+      identifiedLifecycleEvents: new Map(),
+      quarantinedLifecycleEvents: [],
+    };
+    this.agentGenerations.set(agentId, state);
+    return state;
+  }
+
+  private deleteGenerationStateIfEmpty(agentId: string, state: AgentGenerationState): void {
+    if (
+      state.run === null &&
+      state.invalidatedRuns.size === 0 &&
+      state.identifiedLifecycleEvents.size === 0 &&
+      state.quarantinedLifecycleEvents.length === 0
+    ) {
+      this.agentGenerations.delete(agentId);
+    }
+  }
+
+  private stageEvent(events: AgentStreamEvent[], event: AgentStreamEvent): void {
+    if (!this.stagedEventOrder.has(event)) {
+      this.stagedEventOrder.set(event, this.nextStagedEventOrder++);
+    }
+    events.push(event);
+  }
+
+  private mergeStagedEvents(...eventGroups: AgentStreamEvent[][]): AgentStreamEvent[] {
+    return eventGroups
+      .flat()
+      .sort(
+        (left, right) =>
+          (this.stagedEventOrder.get(left) ?? 0) - (this.stagedEventOrder.get(right) ?? 0),
+      );
   }
 }
 
@@ -387,4 +584,36 @@ function settleTrackedRun(run: TrackedAgentRun): void {
 
   run.settled = true;
   run.resolveSettled();
+}
+
+function isTurnLifecycleEvent(event: AgentStreamEvent): boolean {
+  return event.type === "turn_started" || isTurnTerminalEvent(event);
+}
+
+function isTurnTerminalEvent(event: AgentStreamEvent): boolean {
+  return (
+    event.type === "turn_completed" ||
+    event.type === "turn_failed" ||
+    event.type === "turn_canceled"
+  );
+}
+
+function attachBoundTurnIdentity(event: AgentStreamEvent, turnId: string): AgentStreamEvent {
+  if (getAgentStreamEventTurnId(event) !== undefined) {
+    return event;
+  }
+
+  switch (event.type) {
+    case "turn_started":
+    case "turn_completed":
+    case "turn_failed":
+    case "turn_canceled":
+    case "usage_updated":
+    case "timeline":
+    case "permission_requested":
+    case "permission_resolved":
+      return { ...event, turnId };
+    default:
+      return event;
+  }
 }
