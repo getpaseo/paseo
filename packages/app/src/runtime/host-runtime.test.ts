@@ -8,12 +8,14 @@ import type {
 import type { ConnectionOffer } from "@getpaseo/protocol/connection-offer";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
+import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import type { HostConnection, HostProfile } from "@/types/host-connection";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { isAgentArchiving, setAgentArchiving } from "@/hooks/use-archive-agent";
 import { queryClient } from "@/data/query-client";
 import {
+  APP_CLIENT_CAPABILITIES,
   HostRuntimeController,
   HostRuntimeStore,
   readInitialDaemonConnectionHint,
@@ -21,6 +23,12 @@ import {
   type HostRuntimeStorage,
 } from "./host-runtime";
 import { ReplicaCache } from "./replica-cache";
+
+it("advertises canonical submitted prompt revision support", () => {
+  expect(APP_CLIENT_CAPABILITIES).toMatchObject({
+    [CLIENT_CAPS.canonicalSubmittedPromptRevisions]: true,
+  });
+});
 
 class FakeDaemonClient {
   private state: ConnectionState = { status: "idle" };

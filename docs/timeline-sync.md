@@ -178,6 +178,14 @@ provider accepts the turn. A correlated provider echo enriches that same sequenc
 `messageId`; it never appends a second source row. The row's identity and pagination position are
 therefore independent of provider notification timing. A late echo is streamed as a revision at the
 original sequence; clients apply it only to the already-covered row with the same client identity.
+
+Clients that understand these same-sequence updates advertise the
+`canonical_submitted_prompt_revisions` client capability. For older destinations, the daemon keeps
+the canonical row globally but withholds a rewind-capable foreground prompt until provider identity
+arrives, then delivers the enriched row once at its original sequence. Timeline fetches apply the
+same destination projection: a trailing identity-pending suffix is temporarily outside the visible
+window, while daemon-handled prompts and providers without the rewind identity contract remain
+immediately visible.
 An immediately interrupted turn remains
 canonical even when the provider never emits its echo.
 Content matching is limited to the dated compatibility path for daemon timelines created before

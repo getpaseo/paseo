@@ -260,13 +260,14 @@ export class InMemoryAgentTimelineStore {
   append(
     agentId: string,
     item: AgentTimelineItem,
-    options?: { timestamp?: string },
+    options?: { timestamp?: string; delivery?: AgentTimelineRow["delivery"] },
   ): AgentTimelineRow {
     const state = this.requireState(agentId);
     const row: AgentTimelineRow = {
       seq: state.nextSeq,
       timestamp: options?.timestamp ?? new Date().toISOString(),
       item,
+      ...(options?.delivery ? { delivery: options.delivery } : {}),
     };
     state.nextSeq += 1;
     state.rows.push(row);

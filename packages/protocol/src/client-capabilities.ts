@@ -20,6 +20,9 @@ export const CLIENT_CAPS = {
   providerSubagents: "provider_subagents",
   // COMPAT(projectUpdates): added in v0.1.109, remove gate after 2027-01-15.
   projectUpdates: "project_updates",
+  // COMPAT(canonicalSubmittedPromptRevisions): added in v0.2.6, remove gate after 2027-02-01.
+  // Capable clients reconcile same-sequence provider-identity revisions in canonical prompt rows.
+  canonicalSubmittedPromptRevisions: "canonical_submitted_prompt_revisions",
   browserHost: "browser_host",
 } as const;
 

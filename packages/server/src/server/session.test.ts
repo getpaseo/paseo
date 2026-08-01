@@ -22,7 +22,11 @@ import { isSessionRpcAllowed, Session } from "./session.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
-import type { AgentManagerEvent } from "./agent/agent-manager.js";
+import type {
+  AgentManagerEvent,
+  AgentTimelineFetchResult,
+  ManagedAgent,
+} from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
 import { deriveProjectKey } from "./project-key.js";
@@ -4878,6 +4882,306 @@ test("keeps selective delivery scoped per socket when a retained session also ha
       }),
     },
   ]);
+});
+
+test("projects canonical submitted prompt revisions per retained socket capability", async () => {
+  const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+  const agentEventListeners: Array<(event: AgentManagerEvent) => void> = [];
+  const rewind = vi.fn().mockResolvedValue(undefined);
+  const session = createSessionForTest({
+    targetedMessages,
+    agentManager: {
+      rewind,
+      subscribe: vi.fn((listener: (event: AgentManagerEvent) => void) => {
+        agentEventListeners.push(listener);
+        return () => {};
+      }),
+    },
+  });
+  const legacySocket = {};
+  const capableSocket = {};
+  session.updateClientCapabilities(null, legacySocket);
+  session.updateClientCapabilities(
+    { [CLIENT_CAPS.canonicalSubmittedPromptRevisions]: true },
+    capableSocket,
+  );
+
+  const listener = agentEventListeners[0];
+  if (!listener) throw new Error("Agent event listener was not installed");
+  listener({
+    type: "agent_stream",
+    agentId: "agent-revisions",
+    event: {
+      type: "timeline",
+      provider: "codex",
+      item: {
+        type: "user_message",
+        text: "submitted prompt",
+        clientMessageId: "client-message-1",
+      },
+    },
+    seq: 5,
+    epoch: "epoch-1",
+    delivery: "awaiting_provider_identity",
+  });
+  listener({
+    type: "agent_stream",
+    agentId: "agent-revisions",
+    event: {
+      type: "timeline",
+      provider: "codex",
+      item: {
+        type: "user_message",
+        text: "submitted prompt",
+        clientMessageId: "client-message-1",
+        messageId: "provider-message-1",
+      },
+    },
+    seq: 5,
+    epoch: "epoch-1",
+    delivery: "awaiting_provider_identity",
+  });
+  listener({
+    type: "agent_stream",
+    agentId: "agent-revisions",
+    event: {
+      type: "timeline",
+      provider: "codex",
+      item: {
+        type: "user_message",
+        text: "staged identity",
+        clientMessageId: "client-message-2",
+        messageId: "provider-message-2",
+      },
+    },
+    seq: 6,
+    epoch: "epoch-1",
+    delivery: "awaiting_provider_identity",
+  });
+  listener({
+    type: "agent_stream",
+    agentId: "agent-revisions",
+    event: {
+      type: "timeline",
+      provider: "codex",
+      item: {
+        type: "user_message",
+        text: "provider message without revision contract",
+      },
+    },
+    seq: 7,
+    epoch: "epoch-1",
+  });
+
+  const timelineFor = (source: object) =>
+    targetedMessages.flatMap(({ source: destination, message }) =>
+      destination === source &&
+      message.type === "agent_stream" &&
+      message.payload.event.type === "timeline"
+        ? [
+            {
+              seq: message.payload.seq,
+              clientMessageId:
+                message.payload.event.item.type === "user_message"
+                  ? message.payload.event.item.clientMessageId
+                  : undefined,
+              messageId:
+                message.payload.event.item.type === "user_message"
+                  ? message.payload.event.item.messageId
+                  : undefined,
+            },
+          ]
+        : [],
+    );
+  expect(timelineFor(capableSocket)).toEqual([
+    { seq: 5, clientMessageId: "client-message-1", messageId: undefined },
+    { seq: 5, clientMessageId: "client-message-1", messageId: "provider-message-1" },
+    { seq: 6, clientMessageId: "client-message-2", messageId: "provider-message-2" },
+    { seq: 7, clientMessageId: undefined, messageId: undefined },
+  ]);
+  expect(timelineFor(legacySocket)).toEqual([
+    { seq: 5, clientMessageId: "client-message-1", messageId: "provider-message-1" },
+    { seq: 6, clientMessageId: "client-message-2", messageId: "provider-message-2" },
+    { seq: 7, clientMessageId: undefined, messageId: undefined },
+  ]);
+
+  await session.handleMessage(
+    {
+      type: "agent.rewind.request",
+      requestId: "rewind-provider-identity",
+      agentId: "agent-revisions",
+      messageId: "provider-message-1",
+      mode: "conversation",
+    },
+    legacySocket,
+  );
+  expect(rewind).toHaveBeenCalledWith("agent-revisions", "provider-message-1", "conversation");
+});
+
+test("projects a coherent legacy fetch window around pending provider identity", async () => {
+  const source = {};
+  const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+  const timestamp = "2026-08-01T00:00:00.000Z";
+  const agent = {
+    id: "agent-fetch-revisions",
+    provider: "codex",
+    cwd: "/tmp/agent-fetch-revisions",
+    capabilities: {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: false,
+      supportsMcpServers: false,
+      supportsReasoningStream: false,
+      supportsToolInvocations: false,
+      supportsRewindConversation: true,
+    },
+    config: { provider: "codex", cwd: "/tmp/agent-fetch-revisions" },
+    runtimeInfo: { provider: "codex", sessionId: "session-fetch-revisions" },
+    createdAt: new Date(timestamp),
+    updatedAt: new Date(timestamp),
+    availableModes: [],
+    currentModeId: null,
+    pendingPermissions: new Map(),
+    persistence: null,
+    historyPrimed: true,
+    lastUserMessageAt: new Date(timestamp),
+    activeTurnId: null,
+    activeTurnStartedAt: null,
+    lastUsage: undefined,
+    attention: { requiresAttention: false },
+    labels: {},
+    lifecycle: "idle",
+    activeForegroundTurnId: null,
+  } as unknown as ManagedAgent;
+  let timeline: AgentTimelineFetchResult = {
+    epoch: "epoch-fetch-revisions",
+    direction: "tail",
+    reset: false,
+    staleCursor: false,
+    gap: false,
+    window: { minSeq: 1, maxSeq: 5, nextSeq: 6 },
+    hasOlder: true,
+    hasNewer: false,
+    rows: [
+      {
+        seq: 4,
+        timestamp,
+        item: { type: "assistant_message", text: "before submitted prompt" },
+      },
+      {
+        seq: 5,
+        timestamp,
+        delivery: "awaiting_provider_identity",
+        item: {
+          type: "user_message",
+          text: "submitted prompt",
+          clientMessageId: "client-message-fetch",
+        },
+      },
+    ],
+  };
+  const session = createSessionForTest({
+    targetedMessages,
+    agentManager: {
+      waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+      getAgent: vi.fn(() => agent),
+      fetchTimeline: vi.fn(() => timeline),
+    },
+  });
+  session.updateClientCapabilities(null, source);
+
+  await session.handleMessage(
+    {
+      type: "fetch_agent_timeline_request",
+      requestId: "fetch-before-provider-identity",
+      agentId: agent.id,
+      direction: "tail",
+      projection: "canonical",
+      limit: 20,
+    },
+    source,
+  );
+
+  const before = targetedMessages.find(
+    ({ message }) =>
+      message.type === "fetch_agent_timeline_response" &&
+      message.payload.requestId === "fetch-before-provider-identity",
+  )?.message;
+  expect(before).toMatchObject({
+    type: "fetch_agent_timeline_response",
+    payload: {
+      requestId: "fetch-before-provider-identity",
+      error: null,
+      window: { minSeq: 1, maxSeq: 4, nextSeq: 5 },
+      endCursor: { epoch: "epoch-fetch-revisions", seq: 4 },
+      hasNewer: false,
+      entries: [
+        {
+          seqStart: 4,
+          seqEnd: 4,
+          item: { type: "assistant_message", text: "before submitted prompt" },
+        },
+      ],
+    },
+  });
+
+  timeline = {
+    ...timeline,
+    rows: [
+      timeline.rows[0]!,
+      {
+        ...timeline.rows[1]!,
+        item: {
+          type: "user_message",
+          text: "submitted prompt",
+          clientMessageId: "client-message-fetch",
+          messageId: "provider-message-fetch",
+        },
+      },
+    ],
+  };
+  targetedMessages.length = 0;
+
+  await session.handleMessage(
+    {
+      type: "fetch_agent_timeline_request",
+      requestId: "fetch-after-provider-identity",
+      agentId: agent.id,
+      direction: "tail",
+      projection: "canonical",
+      limit: 20,
+    },
+    source,
+  );
+
+  const after = targetedMessages.find(
+    ({ message }) =>
+      message.type === "fetch_agent_timeline_response" &&
+      message.payload.requestId === "fetch-after-provider-identity",
+  )?.message;
+  expect(after).toMatchObject({
+    type: "fetch_agent_timeline_response",
+    payload: {
+      requestId: "fetch-after-provider-identity",
+      error: null,
+      window: { minSeq: 1, maxSeq: 5, nextSeq: 6 },
+      endCursor: { epoch: "epoch-fetch-revisions", seq: 5 },
+      hasNewer: false,
+      entries: [
+        { seqStart: 4, seqEnd: 4 },
+        {
+          seqStart: 5,
+          seqEnd: 5,
+          item: {
+            type: "user_message",
+            text: "submitted prompt",
+            clientMessageId: "client-message-fetch",
+            messageId: "provider-message-fetch",
+          },
+        },
+      ],
+    },
+  });
 });
 
 test("sends project updates only to capable sockets in a retained session", () => {
