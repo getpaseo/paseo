@@ -90,7 +90,10 @@ import {
   remapDraftCwdToWorkspace,
 } from "./new-workspace-fork-context";
 import {
+  branchPickerOptionId,
+  buildBranchPickerItems,
   resolveCheckoutRequest,
+  type BranchPickerDetail,
   type PickerCheckoutRequest,
   type PickerItem,
 } from "./new-workspace-picker-item";
@@ -171,7 +174,6 @@ interface PickerOptionData {
   itemById: Map<string, PickerItem>;
 }
 
-const BRANCH_OPTION_PREFIX = "branch:";
 const PR_OPTION_PREFIX = "github-pr:";
 const PROJECT_ICON_FALLBACK_FONT_SIZE = 10;
 // Stable reference so the keyboard-action handler doesn't re-register each render.
@@ -327,6 +329,8 @@ function PickerOptionItem({
   disabled,
   onPress,
   isBranch,
+  trailingLabel,
+  accessibilityLabel,
   iconColor,
   iconSize,
 }: {
@@ -338,6 +342,8 @@ function PickerOptionItem({
   disabled: boolean;
   onPress: () => void;
   isBranch: boolean;
+  trailingLabel?: string;
+  accessibilityLabel?: string;
   iconColor: string;
   iconSize: number;
 }) {
@@ -353,6 +359,11 @@ function PickerOptionItem({
     ),
     [isBranch, iconSize, iconColor],
   );
+  const trailingSlot = useMemo(
+    () =>
+      trailingLabel ? <Text style={styles.refDivergenceLabel}>{trailingLabel}</Text> : undefined,
+    [trailingLabel],
+  );
   return (
     <ComboboxItem
       testID={testID}
@@ -363,6 +374,8 @@ function PickerOptionItem({
       disabled={disabled}
       onPress={onPress}
       leadingSlot={leadingSlot}
+      trailingSlot={trailingSlot}
+      accessibilityLabel={accessibilityLabel}
     />
   );
 }
@@ -464,10 +477,6 @@ function ProjectOptionItem({
   );
 }
 
-function branchOptionId(name: string): string {
-  return `${BRANCH_OPTION_PREFIX}${name}`;
-}
-
 function prOptionId(number: number): string {
   return `${PR_OPTION_PREFIX}${number}`;
 }
@@ -511,6 +520,8 @@ function NewWorkspacePickerOption({
       disabled={isPending}
       onPress={onPress}
       isBranch={isBranch}
+      trailingLabel={isBranch ? item.divergenceLabel : undefined}
+      accessibilityLabel={isBranch ? item.accessibilityLabel : undefined}
       iconColor={theme.colors.foregroundMuted}
       iconSize={theme.iconSize.sm}
     />
@@ -599,7 +610,7 @@ function newWorkspaceHostOptionTestID(serverId: string): string {
 }
 
 function computePickerOptionData(
-  branchDetails: ReadonlyArray<{ name: string; committerDate: number }>,
+  branchDetails: readonly BranchPickerDetail[],
   prItems: ReadonlyArray<ForgeSearchItem>,
 ): PickerOptionData {
   const idMap = new Map<string, PickerItem>();
@@ -610,11 +621,12 @@ function computePickerOptionData(
   }
   const timedOptions: TimedOption[] = [];
 
-  for (const branch of branchDetails) {
-    const id = branchOptionId(branch.name);
+  for (const branch of buildBranchPickerItems(branchDetails)) {
+    if (branch.kind !== "branch") continue;
+    const id = branchPickerOptionId(branch.refName);
     const option = { id, label: branch.name };
-    idMap.set(id, { kind: "branch", name: branch.name });
-    timedOptions.push({ option, timestamp: branch.committerDate });
+    idMap.set(id, branch);
+    timedOptions.push({ option, timestamp: branch.committerDate ?? 0 });
   }
 
   for (const pr of prItems) {
@@ -735,10 +747,8 @@ function getContentStyle(input: { isCompact: boolean; insetBottom: number }) {
 }
 
 function normalizeBranchDetails(
-  data:
-    | { branchDetails?: Array<{ name: string; committerDate: number }>; branches?: string[] }
-    | undefined,
-): Array<{ name: string; committerDate: number }> {
+  data: { branchDetails?: BranchPickerDetail[]; branches?: string[] } | undefined,
+): BranchPickerDetail[] {
   const details = data?.branchDetails;
   if (details && details.length > 0) return details;
   const names = data?.branches ?? [];
@@ -1711,11 +1721,15 @@ export function NewWorkspaceScreen({
   }, [currentBranch, selectedItem]);
 
   const selectedOptionId = useMemo(() => {
-    if (!selectedItem) return "";
+    if (!selectedItem) {
+      if (!currentBranch) return "";
+      const exactLocalId = branchPickerOptionId(`refs/heads/${currentBranch}`);
+      return itemById.has(exactLocalId) ? exactLocalId : branchPickerOptionId(currentBranch);
+    }
     return selectedItem.kind === "branch"
-      ? branchOptionId(selectedItem.name)
+      ? branchPickerOptionId(selectedItem.refName)
       : prOptionId(selectedItem.item.number);
-  }, [selectedItem]);
+  }, [currentBranch, itemById, selectedItem]);
   const selectPickerItem = useCallback(
     (item: PickerItem) => {
       const nextAttachments = syncPickerPrAttachment({
@@ -2279,6 +2293,11 @@ const styles = StyleSheet.create((theme) => ({
   tooltipText: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.popoverForeground,
+  },
+  refDivergenceLabel: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+    fontVariant: ["tabular-nums"],
   },
   badgeIconBox: {
     width: theme.iconSize.md,
