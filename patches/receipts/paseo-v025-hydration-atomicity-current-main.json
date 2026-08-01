@@ -10,12 +10,12 @@
     "upstreamCommit": "70ed70d36e2eabd3876a22931954319ec202c902",
     "mergeCommit": "562069425d7e1d8d40329132761f71601d9dc52e",
     "mergeTree": "1034d47eeef9a5d3dd1763d580f915de60c0e20c",
-    "repairCommit": "8be95ad0012158574569e06a2295510c9a708444",
-    "repairTree": "8a6ef0d04dcf95317f6c9d11712649e66467e6b9"
+    "repairCommit": "8f9a1c90d54a85439dc2241b440a18f6a9ad4cec",
+    "repairTree": "4dba625cc64e3cde2ac6ffea3981f4f7ac2cb09a"
   },
   "verification": {
-    "commit": "8be95ad0012158574569e06a2295510c9a708444",
-    "completedAt": "2026-08-01T03:48:02Z",
+    "commit": "8f9a1c90d54a85439dc2241b440a18f6a9ad4cec",
+    "completedAt": "2026-08-01T03:52:56Z",
     "runtime": "Node.js v24.18.1",
     "commands": [
       "vitest run packages/server/src/server/agent/agent-manager.test.ts --fileParallelism=false",
