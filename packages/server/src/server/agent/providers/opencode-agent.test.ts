@@ -2631,6 +2631,45 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
+  test.each(["Stop", "close"] as const)(
+    "%s during slash command discovery prevents command submission",
+    async (control) => {
+      const commandListStarted = createTestDeferred<void>();
+      const commandListAllowed = createTestDeferred<void>();
+      const { parent: session, openCode } = await createParentSession(
+        `ses_command_discovery_${control.toLowerCase()}`,
+      );
+      openCode.commandListImplementation = async () => {
+        commandListStarted.resolve();
+        await commandListAllowed.promise;
+        return { data: [{ name: "help", description: "Show help", hints: [] }] };
+      };
+
+      try {
+        const start = session.startTurn("/help");
+        const rejectedStart = expect(start).rejects.toThrow(
+          "OpenCode turn start was canceled before prompt submission",
+        );
+        await commandListStarted.promise;
+
+        if (control === "Stop") {
+          await session.interrupt();
+        } else {
+          await session.close();
+        }
+        commandListAllowed.resolve();
+
+        await rejectedStart;
+        expect(openCode.calls.sessionCommand).toEqual([]);
+      } finally {
+        commandListAllowed.resolve();
+        if (control === "Stop") {
+          await session.close();
+        }
+      }
+    },
+  );
+
   test("keeps waiting for the stop terminal when the reconnect status probe fails", async () => {
     const firstStreamEnd = createTestDeferred<void>();
     const settleAbort = createTestDeferred<void>();

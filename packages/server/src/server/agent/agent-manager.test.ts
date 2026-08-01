@@ -1692,6 +1692,83 @@ test("OpenCode recovery isolates the replacement from a never-closing old sessio
   }
 });
 
+test("Stop during the OpenCode recovery handoff retains the replacement agent", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-opencode-atomic-handoff-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const closeStarted = deferred<void>();
+  const closeAllowed = deferred<void>();
+
+  class RejectingSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      throw new AgentTurnStartRejectedError(
+        "previous_turn_still_stopping",
+        "OpenCode previous turn to stop",
+      );
+    }
+
+    override async close(): Promise<void> {
+      closeStarted.resolve();
+      await closeAllowed.promise;
+    }
+  }
+
+  class HandoffClient extends TestAgentClient {
+    readonly oldSession = new RejectingSession({ provider: "opencode", cwd: workdir });
+    readonly replacement = new TestAgentSession({ provider: "opencode", cwd: workdir });
+
+    constructor() {
+      super("opencode");
+    }
+
+    override async createSession(): Promise<AgentSession> {
+      return this.oldSession;
+    }
+
+    override async resumeSession(): Promise<AgentSession> {
+      return this.replacement;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { opencode: new HandoffClient() },
+    registry: storage,
+    logger,
+    rescueTimeouts: { reloadSessionCloseMs: 1_000 },
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "opencode", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const events: AgentStreamEvent[] = [];
+    const drain = (async () => {
+      for await (const event of manager.streamAgent(agent.id, "cancel during handoff")) {
+        events.push(event);
+      }
+    })();
+    await closeStarted.promise;
+
+    const stop = manager.cancelAgentRun(agent.id);
+    expect(manager.getAgent(agent.id)).toMatchObject({ lifecycle: "idle" });
+    closeAllowed.resolve();
+
+    await expect(stop).resolves.toEqual({ status: "settled" });
+    await drain;
+    expect(events).toContainEqual({
+      type: "turn_canceled",
+      provider: "opencode",
+      reason: "interrupted",
+    });
+    expect(manager.getAgent(agent.id)).toMatchObject({ lifecycle: "idle" });
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
+  } finally {
+    closeAllowed.resolve();
+    await manager.flush();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("derived OpenCode providers use stop-boundary recovery", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-derived-opencode-recovery-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);

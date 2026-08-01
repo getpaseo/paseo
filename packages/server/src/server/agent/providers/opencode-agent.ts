@@ -2799,8 +2799,14 @@ function createDeferred<T>(): Deferred<T> {
 
 type OpenCodeTurnState =
   | { status: "idle" }
+  | { status: "starting"; start: OpenCodeTurnStart }
   | { status: "running"; turnId: string }
   | { status: "stopping"; stop: OpenCodeStop };
+
+interface OpenCodeTurnStart {
+  readonly generation: number;
+  canceled: boolean;
+}
 
 type OpenCodeRunnerStatus = "idle" | "busy" | "retry";
 
@@ -2983,6 +2989,7 @@ class OpenCodeAgentSession implements AgentSession {
   private availableModesCache: AgentMode[] | null = null;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private nextTurnOrdinal = 0;
+  private nextTurnStartGeneration = 0;
   private turnState: OpenCodeTurnState = { status: "idle" };
   /**
    * Settlement of every session-scoped abort issued so far. It outlives the stop
@@ -3087,6 +3094,7 @@ class OpenCodeAgentSession implements AgentSession {
 
   async interrupt(): Promise<void> {
     const turnId = this.activeForegroundTurnId;
+    this.cancelStartingTurn();
     this.abortController?.abort();
     const abort = this.issueStop(turnId);
     // COMPAT(opencodeSlowAbort): OpenCode 1.14.42+ blocks session.abort until
@@ -3259,7 +3267,7 @@ class OpenCodeAgentSession implements AgentSession {
     return statusType;
   }
 
-  private assertNoForegroundTurnBeforeSubmission(): void {
+  private assertTurnStartActive(start: OpenCodeTurnStart): void {
     if (this.turnState.status === "running") {
       throw new Error("A foreground turn became active before prompt submission");
     }
@@ -3269,6 +3277,37 @@ class OpenCodeAgentSession implements AgentSession {
         "OpenCode is still stopping the previous turn",
       );
     }
+    if (
+      this.closed ||
+      start.canceled ||
+      this.turnState.status === "idle" ||
+      (this.turnState.status === "starting" && this.turnState.start.generation !== start.generation)
+    ) {
+      throw new Error("OpenCode turn start was canceled before prompt submission");
+    }
+  }
+
+  private assertTurnCanStart(): void {
+    if (this.turnState.status === "running") {
+      throw new Error("A foreground turn is already active");
+    }
+    if (this.turnState.status === "starting") {
+      throw new Error("A foreground turn is already starting");
+    }
+  }
+
+  private cleanupFailedTurnStart(start: OpenCodeTurnStart, abortController: AbortController): void {
+    if (
+      this.turnState.status === "starting" &&
+      this.turnState.start.generation === start.generation
+    ) {
+      this.turnState = { status: "idle" };
+    }
+    if (this.abortController === abortController) {
+      this.abortController = null;
+    }
+    this.pendingUserMessageText = null;
+    this.pendingClientMessageId = null;
   }
 
   async startTurn(
@@ -3276,9 +3315,7 @@ class OpenCodeAgentSession implements AgentSession {
     options?: AgentRunOptions,
     admission?: AgentTurnAdmission,
   ): Promise<{ turnId: string }> {
-    if (this.turnState.status === "running") {
-      throw new Error("A foreground turn is already active");
-    }
+    this.assertTurnCanStart();
     await this.awaitRunnerQuiescence();
     if (this.turnState.status !== "idle") {
       throw new AgentTurnStartRejectedError(
@@ -3290,9 +3327,13 @@ class OpenCodeAgentSession implements AgentSession {
     this.runningToolCalls.clear();
     this.subAgentsByCallId.clear();
     this.subAgentCallIdByChildSessionId.clear();
+    const turnStart: OpenCodeTurnStart = {
+      generation: this.nextTurnStartGeneration++,
+      canceled: false,
+    };
+    this.turnState = { status: "starting", start: turnStart };
     const turnAbortController = new AbortController();
     this.abortController = turnAbortController;
-    await this.ensureMcpServersConfigured();
     const contextWindowMaxTokens = this.resolveSelectedModelContextWindowMaxTokens();
     this.accumulatedUsage = contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
 
@@ -3305,24 +3346,16 @@ class OpenCodeAgentSession implements AgentSession {
     const effectiveVariant = thinkingOptionId ?? undefined;
     const effectiveMode = resolveOpenCodeRuntimeAgentId(this.currentMode);
 
-    try {
-      await this.ensureEventStreamReady();
-    } catch (error) {
-      if (this.abortController === turnAbortController) {
-        this.abortController = null;
-      }
-      throw error;
-    }
-
     let slashCommand: { commandName: string; args?: string } | null;
     try {
+      await this.ensureMcpServersConfigured();
+      await this.ensureEventStreamReady();
       slashCommand = await this.resolveSlashCommandInvocation(prompt);
-      this.assertNoForegroundTurnBeforeSubmission();
+      this.assertTurnStartActive(turnStart);
       admission?.admit();
+      this.assertTurnStartActive(turnStart);
     } catch (error) {
-      if (this.abortController === turnAbortController) {
-        this.abortController = null;
-      }
+      this.cleanupFailedTurnStart(turnStart, turnAbortController);
       throw error;
     }
 
@@ -3874,7 +3907,7 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private shouldStartAutonomousTurn(event: OpenCodeEvent): boolean {
-    if (this.turnState.status !== "idle") {
+    if (this.turnState.status !== "idle" && this.turnState.status !== "starting") {
       return false;
     }
     // Message records are mutable and can be patched after the runner stops.
@@ -3884,6 +3917,9 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private startAutonomousTurn(): string {
+    if (this.turnState.status === "starting") {
+      this.turnState.start.canceled = true;
+    }
     const turnId = this.createTurnId();
     this.turnState = { status: "running", turnId };
     this.runningToolCalls.clear();
@@ -3924,6 +3960,14 @@ class OpenCodeAgentSession implements AgentSession {
 
   private isStopping(stop: OpenCodeStop): boolean {
     return this.turnState.status === "stopping" && this.turnState.stop === stop;
+  }
+
+  private cancelStartingTurn(): void {
+    if (this.turnState.status !== "starting") {
+      return;
+    }
+    this.turnState.start.canceled = true;
+    this.turnState = { status: "idle" };
   }
 
   /** Stops the session runner and returns the abort this Stop issued. */
@@ -4238,6 +4282,7 @@ class OpenCodeAgentSession implements AgentSession {
       // notifySubscribers instead of bubbling through provider-runner as an
       // unhandled rejection in whichever test the daemon hops to next.
       this.closed = true;
+      this.cancelStartingTurn();
       this.abortController?.abort();
       const eventStreamTask = this.eventStreamTask;
       this.eventStreamAbortController?.abort();

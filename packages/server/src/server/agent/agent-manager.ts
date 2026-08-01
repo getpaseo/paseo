@@ -428,6 +428,11 @@ type ActiveManagedAgent =
 type LiveManagedAgent = ActiveManagedAgent;
 type AgentLabelPatch = Record<string, string | null>;
 
+interface AgentReplacementRegistration {
+  agent: LiveManagedAgent;
+  preservePendingRun: boolean;
+}
+
 interface WriteLabelsResult {
   record: StoredAgentRecord | null;
   live: boolean;
@@ -1281,16 +1286,6 @@ export class AgentManager {
       resumeOptions?.signal?.throwIfAborted();
       this.assertAcceptingAgentRegistrations();
 
-      const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded", {
-        preservePendingRun,
-      });
-      try {
-        await this.persistSnapshot(closedExisting);
-      } finally {
-        await this.closeReloadedSession(existing.session, agentId);
-      }
-      resumeOptions?.signal?.throwIfAborted();
-
       if (rehydrateFromDisk) {
         // Wipe both durable and in-memory timeline so registerSession mints a
         // new epoch and hydrateTimelineFromProvider re-streams the freshly read
@@ -1304,21 +1299,45 @@ export class AgentManager {
 
       // Preserve existing labels and timeline during reload.
       handedToRegistration = true;
-      return this.registerSession(session, storedConfig, agentId, {
-        labels: existing.labels,
-        workspaceId: existing.workspaceId,
-        owner: existing.owner,
-        createdAt: existing.createdAt,
-        updatedAt: existing.updatedAt,
-        lastUserMessageAt: existing.lastUserMessageAt,
-        historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
-        lastUsage: preservedLastUsage,
-        lastError: preservedLastError,
-        attention: preservedAttention,
-      });
+      const replacement = await this.registerReplacementSession(agentId, existing, () =>
+        this.registerSession(session, storedConfig, agentId, {
+          labels: existing.labels,
+          workspaceId: existing.workspaceId,
+          owner: existing.owner,
+          createdAt: existing.createdAt,
+          updatedAt: existing.updatedAt,
+          lastUserMessageAt: existing.lastUserMessageAt,
+          historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
+          lastUsage: preservedLastUsage,
+          lastError: preservedLastError,
+          attention: preservedAttention,
+          replaceExisting: { agent: existing, preservePendingRun },
+          registrationSignal: resumeOptions?.signal,
+        }),
+      );
+      resumeOptions?.signal?.throwIfAborted();
+      this.assertAcceptingAgentRegistrations();
+      return replacement;
     } finally {
       if (!handedToRegistration) {
         await this.closeUnregisteredSession(session);
+      }
+    }
+  }
+
+  private async registerReplacementSession(
+    agentId: string,
+    existing: LiveManagedAgent,
+    register: () => Promise<ManagedAgent>,
+  ): Promise<ManagedAgent> {
+    let replacedExisting = false;
+    try {
+      const replacement = await register();
+      replacedExisting = true;
+      return replacement;
+    } finally {
+      if (replacedExisting || this.agents.get(agentId) !== existing) {
+        await this.closeReloadedSession(existing.session, agentId);
       }
     }
   }
@@ -2951,15 +2970,16 @@ export class AgentManager {
       publishWhenReady?: boolean;
       workspaceId?: string;
       owner?: AgentOwner;
+      replaceExisting?: AgentReplacementRegistration;
+      registrationSignal?: AbortSignal;
     },
   ): Promise<ManagedAgent> {
     let registered = false;
+    let resolvedAgentId: string | null = null;
     try {
       this.assertAcceptingAgentRegistrations();
-      const resolvedAgentId = validateAgentId(agentId, "registerSession");
-      if (this.agents.has(resolvedAgentId)) {
-        throw new Error(`Agent with id ${resolvedAgentId} already exists`);
-      }
+      resolvedAgentId = validateAgentId(agentId, "registerSession");
+      this.assertSessionRegistrationSlot(resolvedAgentId, options?.replaceExisting);
       const initialPersistedTitle = await this.resolveInitialPersistedTitle(
         resolvedAgentId,
         config,
@@ -2983,7 +3003,8 @@ export class AgentManager {
       });
 
       this.assertAcceptingAgentRegistrations();
-      this.agents.set(resolvedAgentId, managed);
+      options?.registrationSignal?.throwIfAborted();
+      this.commitSessionRegistration(resolvedAgentId, managed, options?.replaceExisting);
       registered = true;
       // Initialize previousStatus to track transitions
       this.previousStatuses.set(resolvedAgentId, managed.lifecycle);
@@ -3007,10 +3028,64 @@ export class AgentManager {
       this.subscribeToSession(managed);
       return { ...managed };
     } catch (error) {
-      if (!registered) {
-        await this.closeUnregisteredSession(session);
-      }
+      await this.cleanupFailedSessionRegistration({
+        registered,
+        resolvedAgentId,
+        session,
+        replacement: options?.replaceExisting,
+      });
       throw error;
+    }
+  }
+
+  private assertSessionRegistrationSlot(
+    agentId: string,
+    replacement?: AgentReplacementRegistration,
+  ): void {
+    const existing = this.agents.get(agentId);
+    if (existing && existing !== replacement?.agent) {
+      throw new Error(`Agent with id ${agentId} already exists`);
+    }
+    if (!existing && replacement) {
+      throw new Error(`Agent ${agentId} was removed before replacement registration`);
+    }
+  }
+
+  private commitSessionRegistration(
+    agentId: string,
+    agent: LiveManagedAgent,
+    replacement?: AgentReplacementRegistration,
+  ): void {
+    if (replacement) {
+      this.prepareAgentForClosure(replacement.agent, "agent reloaded", {
+        preservePendingRun: replacement.preservePendingRun,
+      });
+    }
+    this.agents.set(agentId, agent);
+  }
+
+  private async cleanupFailedSessionRegistration(params: {
+    registered: boolean;
+    resolvedAgentId: string | null;
+    session: AgentSession;
+    replacement?: AgentReplacementRegistration;
+  }): Promise<void> {
+    const registeredReplacement = params.resolvedAgentId
+      ? this.agents.get(params.resolvedAgentId)
+      : null;
+    if (
+      params.registered &&
+      params.replacement &&
+      registeredReplacement?.session === params.session
+    ) {
+      this.prepareAgentForClosure(registeredReplacement, "agent registration failed", {
+        preservePendingRun: params.replacement.preservePendingRun,
+      });
+      await this.closeUnregisteredSession(params.session);
+      return;
+    }
+    if (!params.registered) {
+      await this.closeUnregisteredSession(params.session);
     }
   }
 
