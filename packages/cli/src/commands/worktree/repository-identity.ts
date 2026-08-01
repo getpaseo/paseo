@@ -15,6 +15,7 @@ export interface WorktreeRepositoryIdentity {
 export function resolveWorktreeRepositoryIdentity(
   options: WorktreeRepositoryOptions,
   client: { getLastServerInfoMessage(): { hostname?: string | null } | null },
+  environment: NodeJS.ProcessEnv = process.env,
 ): WorktreeRepositoryIdentity {
   if (options.project && options.repoRoot) {
     throw commandError(
@@ -25,11 +26,11 @@ export function resolveWorktreeRepositoryIdentity(
   if (options.project) return { projectId: options.project };
   if (options.repoRoot) return { repoRoot: options.repoRoot };
 
-  // A caller-supplied endpoint does not prove that its filesystem is local.
-  if (options.host) {
+  // An explicitly selected endpoint does not prove that its filesystem is local.
+  if (options.host || environment.PASEO_HOST) {
     throw commandError(
       "REPOSITORY_IDENTITY_REQUIRED",
-      "Specify --project or --repo-root when using --host",
+      "Specify --project or --repo-root when using an explicit daemon host",
     );
   }
 
