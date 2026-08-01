@@ -517,9 +517,13 @@ describe("WorkspaceGitServiceImpl", () => {
       maxActiveFactsReads = Math.max(maxActiveFactsReads, activeFactsReads);
       await factsGate.promise;
       activeFactsReads -= 1;
-      return createCheckoutSnapshotFacts(cwd);
+      return { ...createCheckoutSnapshotFacts(cwd), remoteUrl: null };
     });
-    const service = createService({ getCheckoutSnapshotFacts });
+    const watch = vi.fn(() => {
+      throw new Error("watch unavailable in admission harness");
+    }) as unknown as typeof import("node:fs").watch;
+    const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
+    const service = createService({ getCheckoutSnapshotFacts, getCheckoutStatus, watch });
     const cwds = Array.from({ length: workspaceCount }, (_, index) => `/tmp/repo-${index}`);
     const subscriptions = cwds.map((cwd) => service.registerWorkspace({ cwd }, vi.fn()));
 
@@ -547,7 +551,7 @@ describe("WorkspaceGitServiceImpl", () => {
 
     expect(service.getMetrics()).toMatchObject({
       workspaceRefreshInFlightCount: workspaceCount,
-      workspaceRefreshQueuedCount: 0,
+      workspaceRefreshQueuedCount: workspaceCount,
       workspaceRefreshAdmissionActiveCount: WORKSPACE_GIT_REFRESH_CONCURRENCY,
       workspaceRefreshAdmissionPendingCount: workspaceCount - WORKSPACE_GIT_REFRESH_CONCURRENCY,
     });
@@ -567,7 +571,7 @@ describe("WorkspaceGitServiceImpl", () => {
       force: true,
       reason: "test-force-during-refresh-backlog",
     });
-    expect(service.getMetrics().workspaceRefreshQueuedCount).toBe(1);
+    expect(service.getMetrics().workspaceRefreshQueuedCount).toBe(workspaceCount);
 
     factsGate.resolve();
     await forcedRefresh;
@@ -576,7 +580,8 @@ describe("WorkspaceGitServiceImpl", () => {
     );
 
     await vi.waitFor(() => {
-      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(121);
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(workspaceCount + 1);
+      expect(getCheckoutStatus).toHaveBeenCalledTimes(workspaceCount * 2);
     });
     expect(maxActiveFactsReads).toBeLessThanOrEqual(
       WORKSPACE_GIT_REFRESH_CONCURRENCY + WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY,
@@ -625,6 +630,219 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(service.peekSnapshot(REPO_CWD)?.git.currentBranch).toBe("fresh-branch");
 
     service.dispose();
+  });
+
+  test("replays a queued force and forge upgrade after the current generation rejects", async () => {
+    const rejectedGitRefresh = createDeferred<CheckoutStatusGit>();
+    const getCheckoutStatus = vi
+      .fn<(cwd: string) => Promise<CheckoutStatusGit>>()
+      .mockImplementationOnce(async () => rejectedGitRefresh.promise)
+      .mockImplementationOnce(async (cwd) =>
+        createCheckoutStatus(cwd, { currentBranch: "validated-generation" }),
+      );
+    const getPullRequestStatus = vi.fn(async () =>
+      createPullRequestStatusResult({
+        status: {
+          url: "https://github.com/acme/repo/pull/123",
+          title: "Validated after rejection",
+          state: "open",
+          baseRefName: "main",
+          headRefName: "validated-generation",
+          isMerged: false,
+        },
+      }),
+    );
+    const service = createService({ getCheckoutStatus, getPullRequestStatus });
+
+    const gitOnly = service.getSnapshot(REPO_CWD, {
+      force: true,
+      includeForge: false,
+      reason: "failing-git-only-generation",
+    });
+    await flushPromises();
+    const validation = service.getSnapshot(REPO_CWD, {
+      force: true,
+      includeForge: true,
+      reason: "queued-validation-generation",
+    });
+    const gitOnlyFailure = expect(gitOnly).rejects.toThrow("first generation failed");
+
+    rejectedGitRefresh.reject(new Error("first generation failed"));
+
+    await gitOnlyFailure;
+    await expect(validation).resolves.toMatchObject({
+      git: { currentBranch: "validated-generation" },
+      forge: { pullRequest: { title: "Validated after rejection" } },
+    });
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
+    expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
+
+    service.dispose();
+  });
+
+  test("replays an ordinary watcher generation and stays stale until it completes", async () => {
+    let nowMs = 0;
+    const activeRefresh = createDeferred<CheckoutStatusGit>();
+    const watcherReplay = createDeferred<CheckoutStatusGit>();
+    const getCheckoutStatus = vi
+      .fn<(cwd: string) => Promise<CheckoutStatusGit>>()
+      .mockImplementationOnce(async (cwd) => createCheckoutStatus(cwd))
+      .mockImplementationOnce(async () => activeRefresh.promise)
+      .mockImplementationOnce(async () => watcherReplay.promise);
+    const service = createService({
+      getCheckoutStatus,
+      now: () => new Date(nowMs),
+    });
+
+    await service.getSnapshot(REPO_CWD);
+    nowMs = 3_000;
+    const refresh = service.refresh(REPO_CWD);
+    await flushPromises();
+
+    service.scheduleRefreshForCwd(REPO_CWD);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await flushPromises();
+
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
+    expect(service.isSnapshotStale(REPO_CWD)).toBe(true);
+
+    activeRefresh.resolve(createCheckoutStatus(REPO_CWD, { currentBranch: "intermediate" }));
+    await refresh;
+    await vi.waitFor(() => {
+      expect(getCheckoutStatus).toHaveBeenCalledTimes(3);
+    });
+
+    expect(service.peekSnapshot(REPO_CWD)?.git.currentBranch).toBe("intermediate");
+    expect(service.isSnapshotStale(REPO_CWD)).toBe(true);
+
+    watcherReplay.resolve(createCheckoutStatus(REPO_CWD, { currentBranch: "watcher-result" }));
+    await vi.waitFor(() => {
+      expect(service.peekSnapshot(REPO_CWD)?.git.currentBranch).toBe("watcher-result");
+      expect(service.isSnapshotStale(REPO_CWD)).toBe(false);
+    });
+
+    service.dispose();
+  });
+
+  test("reconciles a ref change that happens while workspace watchers attach", async () => {
+    let currentBranch = "main";
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
+      ...createCheckoutSnapshotFacts(cwd),
+      remoteUrl: null,
+    }));
+    const getCheckoutStatus = vi.fn(async (cwd: string) =>
+      createCheckoutStatus(cwd, {
+        currentBranch,
+        hasRemote: false,
+        remoteUrl: null,
+      }),
+    );
+    const watch = vi.fn(() => {
+      currentBranch = "changed-during-attach";
+      return createWatcher();
+    }) as unknown as typeof import("node:fs").watch;
+    const service = createService({ getCheckoutSnapshotFacts, getCheckoutStatus, watch });
+
+    await service.getSnapshot(REPO_CWD);
+    const listener = vi.fn();
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, listener);
+
+    await vi.waitFor(() => {
+      expect(service.peekSnapshot(REPO_CWD)?.git.currentBranch).toBe("changed-during-attach");
+      expect(service.isSnapshotStale(REPO_CWD)).toBe(false);
+    });
+    expect(watch).toHaveBeenCalledTimes(2);
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
+    expect(listener).toHaveBeenCalledWith(
+      expect.objectContaining({
+        git: expect.objectContaining({ currentBranch: "changed-during-attach" }),
+      }),
+    );
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
+  test("dispose rejects refresh admission and clears queued refresh and observation work", async () => {
+    const refreshGate = createDeferred<void>();
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => {
+      await refreshGate.promise;
+      return createCheckoutSnapshotFacts(cwd);
+    });
+    const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
+    const service = createService({ getCheckoutSnapshotFacts, getCheckoutStatus });
+    const refreshPromises = Array.from({ length: 6 }, (_, index) =>
+      service.getSnapshot(`/tmp/dispose-refresh-${index}`),
+    );
+    const refreshSettlements = Promise.allSettled(refreshPromises);
+
+    await flushPromises();
+    expect(service.getMetrics()).toMatchObject({
+      workspaceRefreshAdmissionActiveCount: WORKSPACE_GIT_REFRESH_CONCURRENCY,
+      workspaceRefreshAdmissionPendingCount: 2,
+    });
+
+    service.dispose();
+    const settled = await refreshSettlements;
+    expect(settled).toHaveLength(6);
+    for (const result of settled) {
+      expect(result).toMatchObject({
+        status: "rejected",
+        reason: expect.objectContaining({ name: "AbortError" }),
+      });
+    }
+    expect(service.getMetrics().workspaceRefreshAdmissionPendingCount).toBe(0);
+    await expect(service.getSnapshot("/tmp/after-dispose")).rejects.toMatchObject({
+      name: "AbortError",
+    });
+
+    refreshGate.resolve();
+    await vi.waitFor(() => {
+      expect(service.getMetrics().workspaceRefreshAdmissionActiveCount).toBe(0);
+    });
+    expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(WORKSPACE_GIT_REFRESH_CONCURRENCY);
+    expect(getCheckoutStatus).not.toHaveBeenCalled();
+
+    let nowMs = 0;
+    let blockObservationFacts = false;
+    const observationGate = createDeferred<void>();
+    const observationFacts = vi.fn(async (cwd: string) => {
+      if (blockObservationFacts) {
+        await observationGate.promise;
+      }
+      return createCheckoutSnapshotFacts(cwd);
+    });
+    const observationService = createService({
+      getCheckoutSnapshotFacts: observationFacts,
+      now: () => new Date(nowMs),
+    });
+    const observationCwds = Array.from(
+      { length: WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY + 2 },
+      (_, index) => `/tmp/dispose-observation-${index}`,
+    );
+    await Promise.all(observationCwds.map((cwd) => observationService.getSnapshot(cwd)));
+    nowMs = 2_000;
+    blockObservationFacts = true;
+    for (const cwd of observationCwds) {
+      observationService.registerWorkspace({ cwd }, vi.fn());
+    }
+    await flushPromises();
+
+    expect(observationService.getMetrics()).toMatchObject({
+      workspaceObservationSetupAdmissionActiveCount: WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY,
+      workspaceObservationSetupAdmissionPendingCount: 2,
+    });
+    observationService.dispose();
+    await flushPromises();
+    expect(observationService.getMetrics().workspaceObservationSetupAdmissionPendingCount).toBe(0);
+
+    observationGate.resolve();
+    await vi.waitFor(() => {
+      expect(observationService.getMetrics().workspaceObservationSetupAdmissionActiveCount).toBe(0);
+    });
+    expect(observationFacts).toHaveBeenCalledTimes(
+      observationCwds.length + WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY,
+    );
   });
 
   test("multiple listeners on the same workspace share one observation setup", async () => {
@@ -707,7 +925,7 @@ describe("WorkspaceGitServiceImpl", () => {
       vi.fn(),
     );
     await vi.waitFor(() => {
-      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(4);
       expect(runGitFetch).toHaveBeenCalledTimes(1);
     });
 
