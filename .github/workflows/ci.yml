@@ -184,6 +184,57 @@ jobs:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps: *server_test_steps
 
+  git-observation-ubuntu:
+    name: git-observation (ubuntu-latest)
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps: &git_observation_test_steps
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: node scripts/npm-retry.mjs ci
+
+      - name: Build server dependencies
+        run: npm run build:server-deps
+
+      - name: Run focused Git observation tests
+        run: >-
+          npx vitest run
+          packages/server/src/server/workspace-git-service.observation.integration.test.ts
+          packages/server/src/server/workspace-git-service.observation.test.ts
+          packages/server/src/server/checkout-diff-manager.test.ts
+          --maxWorkers=1
+          --bail=1
+
+  git-observation-windows:
+    name: git-observation (windows-latest)
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false') }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps: *git_observation_test_steps
+
+  git-observation-macos:
+    name: git-observation (macos-latest)
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false') }}
+    runs-on: macos-latest
+    timeout-minutes: 15
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps: *git_observation_test_steps
+
   desktop-tests-ubuntu:
     name: desktop-tests (ubuntu-latest)
     needs: changes

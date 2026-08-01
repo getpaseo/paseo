@@ -6,6 +6,12 @@ import {
   GitCommandRuntimeMetricsWindow,
   type GitCommandRuntimeMetricsSnapshot,
 } from "./git-command-runtime-metrics.js";
+import {
+  settleGitCommandTrace,
+  spawnGitCommandTrace,
+  startGitCommandTrace,
+  submitGitCommandTrace,
+} from "./git-command-trace.js";
 import { spawnProcess } from "./spawn.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -135,10 +141,18 @@ export function runGitCommand(
   args: string[],
   options: GitCommandOptions,
 ): Promise<GitCommandResult> {
+  const commandTrace = submitGitCommandTrace(args, options.cwd, {
+    active: gitLimit.activeCount,
+    pending: gitLimit.pendingCount,
+  });
   const runtimeMetric = gitRuntimeMetrics.submit(getGitOperation(args));
   const promise = gitLimit(
     () =>
       new Promise<GitCommandResult>((resolve, reject) => {
+        startGitCommandTrace(commandTrace, {
+          active: gitLimit.activeCount,
+          pending: gitLimit.pendingCount,
+        });
         gitRuntimeMetrics.start(runtimeMetric);
         const timeout = options.timeout ?? DEFAULT_TIMEOUT_MS;
         const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
@@ -173,6 +187,7 @@ export function runGitCommand(
           shell: false,
           stdio: ["ignore", "pipe", "pipe"],
         });
+        spawnGitCommandTrace(commandTrace, child.pid);
 
         let settled = false;
         let metricFinished = false;
@@ -199,6 +214,11 @@ export function runGitCommand(
         const timer = setTimeout(() => {
           const error = new Error(`Git command timed out after ${timeout}ms: ${command}`);
           child.kill("SIGKILL");
+          settleGitCommandTrace(commandTrace, {
+            outcome: "timed_out",
+            exitCode: null,
+            signal: "SIGKILL",
+          });
           finishMetricOnce(
             {
               args,
@@ -255,6 +275,11 @@ export function runGitCommand(
         });
 
         child.on("error", (error) => {
+          settleGitCommandTrace(commandTrace, {
+            outcome: "spawn_error",
+            exitCode: null,
+            signal: null,
+          });
           finishMetricOnce({
             args,
             cwd: options.cwd,
@@ -278,6 +303,12 @@ export function runGitCommand(
         });
 
         child.on("close", (exitCode, signal) => {
+          settleGitCommandTrace(commandTrace, {
+            outcome: "closed",
+            exitCode,
+            signal,
+            truncated,
+          });
           const result: GitCommandResult = {
             stdout: Buffer.concat(stdoutChunks).toString("utf8"),
             stderr: Buffer.concat(stderrChunks).toString("utf8"),

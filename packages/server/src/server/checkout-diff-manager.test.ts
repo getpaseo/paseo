@@ -12,7 +12,7 @@ vi.mock("./checkout-git-utils.js", () => ({
 
 import type pino from "pino";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
-import type { WorkspaceGitService } from "./workspace-git-service.js";
+import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -27,6 +27,36 @@ function createDeferred<T>(): Deferred<T> {
   return { promise, resolve };
 }
 
+function createWorkspaceSnapshot(
+  overrides?: Partial<WorkspaceGitRuntimeSnapshot["git"]>,
+): WorkspaceGitRuntimeSnapshot {
+  return {
+    cwd: "/tmp/repo",
+    git: {
+      isGit: true,
+      repoRoot: "/tmp/repo",
+      mainRepoRoot: null,
+      currentBranch: "feature",
+      remoteUrl: "https://github.com/acme/repo.git",
+      isPaseoOwnedWorktree: false,
+      isDirty: false,
+      baseRef: "main",
+      aheadBehind: { ahead: 1, behind: 0 },
+      aheadOfOrigin: 1,
+      behindOfOrigin: 0,
+      hasRemote: true,
+      diffStat: { additions: 1, deletions: 0 },
+      ...overrides,
+    },
+    forge: {
+      featuresEnabled: false,
+      authState: "no_remote",
+      pullRequest: null,
+      error: null,
+    },
+  };
+}
+
 function createPendingManager() {
   const watches: Array<{
     cwd: string;
@@ -36,6 +66,9 @@ function createPendingManager() {
   }> = [];
   const workspaceGitService = {
     getCheckoutDiff: async () => ({ diff: "", structured: [] }),
+    getSnapshot: async () => createWorkspaceSnapshot(),
+    peekSnapshot: () => null,
+    registerWorkspace: () => ({ unsubscribe: () => {} }),
     requestWorkingTreeWatch: (cwd: string, onChange: () => void) => {
       const pending = createDeferred<{ repoRoot: string | null; unsubscribe: () => void }>();
       const watch = {
@@ -79,7 +112,9 @@ describe("CheckoutDiffManager", () => {
     getCheckoutDiffImplementation?: ReturnType<typeof vi.fn>;
   }) {
     const unsubscribe = vi.fn();
+    const workspaceUnsubscribe = vi.fn();
     let onChange: (() => void) | null = null;
+    let onWorkspaceSnapshot: ((snapshot: WorkspaceGitRuntimeSnapshot) => void) | null = null;
     const mockRequestWorkingTreeWatch = vi.fn(async (_cwd: string, listener: () => void) => {
       onChange = listener;
       return {
@@ -91,7 +126,13 @@ describe("CheckoutDiffManager", () => {
     const workspaceGitService = {
       subscribe: vi.fn(),
       peekSnapshot: vi.fn(),
-      getSnapshot: vi.fn(),
+      registerWorkspace: vi.fn(
+        (_params: { cwd: string }, listener: (snapshot: WorkspaceGitRuntimeSnapshot) => void) => {
+          onWorkspaceSnapshot = listener;
+          return { unsubscribe: workspaceUnsubscribe };
+        },
+      ),
+      getSnapshot: vi.fn(async () => createWorkspaceSnapshot()),
       getCheckoutDiff:
         options?.getCheckoutDiffImplementation ?? vi.fn(async () => ({ diff: "", structured: [] })),
       refresh: vi.fn(),
@@ -117,6 +158,8 @@ describe("CheckoutDiffManager", () => {
       mockRequestWorkingTreeWatch,
       unsubscribe,
       getOnChange: () => onChange,
+      getOnWorkspaceSnapshot: () => onWorkspaceSnapshot,
+      workspaceUnsubscribe,
     };
   }
 
@@ -299,6 +342,104 @@ describe("CheckoutDiffManager", () => {
       force: true,
       reason: expect.stringContaining("working-tree"),
     });
+  });
+
+  test("an edit during an in-flight diff refresh produces one final follow-up", async () => {
+    const inFlightDiff = createDeferred<{
+      diff: string;
+      structured: Array<{
+        path: string;
+        additions: number;
+        deletions: number;
+        status: "modified";
+      }>;
+    }>();
+    const getCheckoutDiff = vi
+      .fn()
+      .mockResolvedValueOnce({
+        diff: "",
+        structured: [{ path: "tracked.ts", additions: 1, deletions: 0, status: "modified" }],
+      })
+      .mockImplementationOnce(() => inFlightDiff.promise)
+      .mockResolvedValue({
+        diff: "",
+        structured: [{ path: "tracked.ts", additions: 100, deletions: 25, status: "modified" }],
+      });
+    const { manager, getOnChange } = createManager({
+      getCheckoutDiffImplementation: getCheckoutDiff,
+    });
+    const listener = vi.fn();
+
+    await manager.subscribe({ cwd: "/tmp/repo", compare: { mode: "uncommitted" } }, listener);
+    getOnChange()?.();
+    await vi.advanceTimersByTimeAsync(150);
+    expect(getCheckoutDiff).toHaveBeenCalledTimes(2);
+
+    for (let event = 0; event < 100; event += 1) {
+      getOnChange()?.();
+    }
+    await vi.advanceTimersByTimeAsync(150);
+    expect(getCheckoutDiff).toHaveBeenCalledTimes(2);
+
+    inFlightDiff.resolve({
+      diff: "",
+      structured: [{ path: "tracked.ts", additions: 2, deletions: 1, status: "modified" }],
+    });
+    await vi.waitFor(() => {
+      expect(getCheckoutDiff).toHaveBeenCalledTimes(3);
+      expect(listener).toHaveBeenLastCalledWith({
+        cwd: "/tmp/repo",
+        files: [{ path: "tracked.ts", additions: 100, deletions: 25, status: "modified" }],
+        error: null,
+      });
+    });
+  });
+
+  test("base diff subscriptions ignore ordinary working tree edits", async () => {
+    const getCheckoutDiff = vi.fn(async () => ({
+      diff: "",
+      structured: [{ path: "committed.ts", additions: 1, deletions: 0, status: "modified" }],
+    }));
+    const { manager, getOnChange, mockRequestWorkingTreeWatch } = createManager({
+      getCheckoutDiffImplementation: getCheckoutDiff,
+    });
+
+    await manager.subscribe(
+      { cwd: "/tmp/repo", compare: { mode: "base", baseRef: "main" } },
+      vi.fn(),
+    );
+    getOnChange()?.();
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(getCheckoutDiff).toHaveBeenCalledTimes(1);
+    expect(mockRequestWorkingTreeWatch).not.toHaveBeenCalled();
+  });
+
+  test("base diff subscriptions refresh for structural workspace changes", async () => {
+    const getCheckoutDiff = vi.fn(async () => ({ diff: "", structured: [] }));
+    const { manager, getOnWorkspaceSnapshot, workspaceGitService } = createManager({
+      getCheckoutDiffImplementation: getCheckoutDiff,
+    });
+
+    await manager.subscribe(
+      { cwd: "/tmp/repo", compare: { mode: "base", baseRef: "main" } },
+      vi.fn(),
+    );
+
+    expect(workspaceGitService.registerWorkspace).toHaveBeenCalledTimes(1);
+    getOnWorkspaceSnapshot()?.(
+      createWorkspaceSnapshot({
+        isDirty: true,
+        diffStat: { additions: 5, deletions: 2 },
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(150);
+    expect(getCheckoutDiff).toHaveBeenCalledTimes(2);
+    expect(getCheckoutDiff.mock.calls[1]?.[2]).toBeUndefined();
+
+    getOnWorkspaceSnapshot()?.(createWorkspaceSnapshot({ aheadBehind: { ahead: 2, behind: 0 } }));
+    await vi.advanceTimersByTimeAsync(150);
+    expect(getCheckoutDiff).toHaveBeenCalledTimes(3);
   });
 
   test("falls back to cwd when the working tree watch returns no repo root", async () => {
