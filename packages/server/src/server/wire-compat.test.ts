@@ -491,20 +491,23 @@ describe("wire compatibility", () => {
 
   test("projects identity-pending prompt rows coherently for legacy fetches", async () => {
     const timestamp = "2026-08-01T00:00:00.000Z";
-    const prompt = (options?: { delivery?: AgentTimelineRow["delivery"]; messageId?: string }) => ({
-      seq: 1,
+    const prompt = (
+      seq: number,
+      options?: { delivery?: AgentTimelineRow["delivery"]; messageId?: string },
+    ) => ({
+      seq,
       timestamp,
       ...(options?.delivery ? { delivery: options.delivery } : {}),
       item: {
         type: "user_message" as const,
-        text: "hello",
-        clientMessageId: "client-message-1",
+        text: `prompt ${seq}`,
+        clientMessageId: `client-message-${seq}`,
         ...(options?.messageId ? { messageId: options.messageId } : {}),
       },
     });
 
     const pending = await emitTimelineResponse({
-      rows: [prompt({ delivery: "awaiting_provider_identity" })],
+      rows: [prompt(1, { delivery: "awaiting_provider_identity" })],
       request: { projection: "canonical" },
     });
     const pageShape = (response: typeof pending) => [
@@ -531,7 +534,7 @@ describe("wire compatibility", () => {
       { projection: "projected" as const },
     ]) {
       const finalized = await emitTimelineResponse({
-        rows: [prompt({ messageId: "provider-message-1" })],
+        rows: [prompt(1, { messageId: "provider-message-1" })],
         request,
       });
       expect(pageShape(finalized)).toEqual([[1, 1, 2], 1, 1, false, false, [1]]);
@@ -542,32 +545,60 @@ describe("wire compatibility", () => {
     }
 
     const daemonHandled = await emitTimelineResponse({
-      rows: [prompt()],
+      rows: [prompt(1)],
       request: { projection: "canonical" },
     });
     expect(daemonHandled.payload.entries).toHaveLength(1);
 
-    const pageRows: AgentTimelineRow[] = [1, 2, 3].map((seq) => ({
-      seq,
-      timestamp,
-      item: {
-        type: "user_message",
-        text: `prompt ${seq}`,
-        clientMessageId: `client-message-${seq}`,
-      },
-    }));
+    const rowsWithPendingSuffix = [
+      prompt(1),
+      prompt(2, { delivery: "awaiting_provider_identity" }),
+    ];
     for (const projection of ["canonical", "projected"] as const) {
-      const page = await emitTimelineResponse({
-        rows: pageRows,
-        request: {
-          projection,
-          direction: "before",
-          cursor: { epoch: "epoch-1", seq: 3 },
-          limit: 1,
-        },
-      });
-      expect(pageShape(page)).toEqual([[1, 3, 4], 2, 2, true, true, [2]]);
+      for (const request of [
+        { direction: "tail" as const, limit: 1 },
+        { direction: "after" as const, cursor: { epoch: "epoch-1", seq: 0 }, limit: 1 },
+        { direction: "after" as const, cursor: { epoch: "epoch-1", seq: 0 }, limit: 0 },
+        { direction: "before" as const, cursor: { epoch: "epoch-1", seq: 2 }, limit: 1 },
+        { direction: "before" as const, cursor: { epoch: "epoch-1", seq: 2 }, limit: 0 },
+      ]) {
+        const page = await emitTimelineResponse({
+          rows: rowsWithPendingSuffix,
+          request: { projection, ...request },
+        });
+        expect(pageShape(page)).toEqual([[1, 1, 2], 1, 1, false, false, [1]]);
+      }
     }
+
+    for (const { rows, cursor, flags } of [
+      {
+        rows: rowsWithPendingSuffix,
+        cursor: { epoch: "stale-epoch", seq: 0 },
+        flags: [true, true, false],
+      },
+      {
+        rows: [prompt(5), prompt(6, { delivery: "awaiting_provider_identity" })],
+        cursor: { epoch: "epoch-1", seq: 1 },
+        flags: [true, false, true],
+      },
+    ] as const) {
+      const page = await emitTimelineResponse({
+        rows,
+        request: { projection: "canonical", direction: "after", cursor, limit: 1 },
+      });
+      expect([page.payload.reset, page.payload.staleCursor, page.payload.gap]).toEqual(flags);
+      expect(page.payload.entries.map((entry) => entry.seqStart)).toEqual([rows[0].seq]);
+    }
+
+    const finalizedSuffix = await emitTimelineResponse({
+      rows: [prompt(1), prompt(2, { messageId: "provider-message-2" })],
+      request: { projection: "canonical", direction: "tail", limit: 1 },
+    });
+    expect(finalizedSuffix.payload.entries.map((entry) => entry.seqStart)).toEqual([2]);
+    expect(finalizedSuffix.payload.entries[0]?.item).toMatchObject({
+      type: "user_message",
+      messageId: "provider-message-2",
+    });
   });
 
   test("sub_agent tool-call payload still parses against the v0.1.65-beta.3 schema", () => {

@@ -78,6 +78,7 @@ import type {
 } from "./agent/agent-manager.js";
 import {
   projectSubmittedPromptTimeline,
+  selectSubmittedPromptTimelinePage,
   shouldDeliverSubmittedPromptRow,
 } from "./agent/submitted-prompt-delivery.js";
 import { createAgentCommand } from "./agent/create-agent/create.js";
@@ -6201,17 +6202,16 @@ export class Session {
             ? fetchedControlTimeline
             : this.agentManager.fetchTimeline(msg.agentId, { direction: "tail", limit: 0 });
       }
-      const controlTimeline =
-        fetchedFullTimeline === undefined
-          ? fetchedControlTimeline
-          : projectSubmittedPromptTimeline(
-              fetchedControlTimeline,
-              fetchedFullTimeline,
-              cursor?.seq,
-            );
       const fullTimeline = fetchedFullTimeline
         ? projectSubmittedPromptTimeline(fetchedFullTimeline)
         : undefined;
+      const controlTimeline = fullTimeline
+        ? selectSubmittedPromptTimelinePage(fullTimeline, fetchedControlTimeline, {
+            direction,
+            cursor,
+            limit: pageLimit,
+          })
+        : fetchedControlTimeline;
       const selectedTimeline = this.selectTimelineProjection({
         agentId: msg.agentId,
         projection,

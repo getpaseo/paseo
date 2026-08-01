@@ -2189,7 +2189,9 @@ export class AgentManager {
   private applyActiveTurnTerminal(
     agent: ActiveManagedAgent,
     turnId?: string,
+    fromHistory = false,
   ): ActiveTurnTerminalDisposition {
+    if (fromHistory) return "stale";
     if (!agent.activeTurnId) return "untracked";
     if (turnId && agent.activeTurnId !== turnId) return "stale";
     agent.activeTurnId = null;
@@ -3421,7 +3423,7 @@ export class AgentManager {
     const identified = attachManagedTurnIdentity(agent, event, options?.fromHistory === true);
     event = identified.event;
     const eventTurnId = identified.turnId;
-    const isForegroundEvent = Boolean(eventTurnId && agent.activeForegroundTurnId === eventTurnId);
+    const isForegroundEvent = agent.activeForegroundTurnId === eventTurnId;
     this.traceHandleStreamEventStart(agent, event, eventTurnId, isForegroundEvent);
     if (
       eventTurnId &&
@@ -3448,13 +3450,17 @@ export class AgentManager {
       this.agentStreamCoalescer.flushFor(agent.id);
     }
 
-    const terminalDisposition = this.applyStreamTerminalDisposition(
-      agent,
-      event,
-      eventTurnId,
-      options?.fromHistory === true,
-      isForegroundEvent,
-    );
+    let terminalDisposition: ActiveTurnTerminalDisposition = "untracked";
+    if (isTurnTerminalEvent(event)) {
+      terminalDisposition = this.applyActiveTurnTerminal(
+        agent,
+        eventTurnId,
+        options?.fromHistory === true,
+      );
+      if (isForegroundEvent && terminalDisposition !== "stale") {
+        this.finalizeSubmittedPrompt(agent, event);
+      }
+    }
 
     const flags: StreamEventFlags = { shouldDispatchEvent: true, shouldNotifyWaiters: true };
 
@@ -3471,15 +3477,17 @@ export class AgentManager {
       await dispatchPromise;
     }
 
-    if (!options?.fromHistory && isTurnTerminalEvent(event)) {
-      this.runs.settleTerminalRun(agent.id, eventTurnId);
-      if (isForegroundEvent) {
-        this.finalizeForegroundTurn(agent, eventTurnId);
+    if (!options?.fromHistory) {
+      if (isTurnTerminalEvent(event)) {
+        this.runs.settleTerminalRun(agent.id, eventTurnId);
+        if (isForegroundEvent) {
+          this.finalizeForegroundTurn(agent, eventTurnId);
+        }
       }
-    }
 
-    if (!options?.fromHistory && flags.shouldDispatchEvent) {
-      this.dispatchStream(agent.id, event, { timestamp: new Date().toISOString() });
+      if (flags.shouldDispatchEvent) {
+        this.dispatchStream(agent.id, event, { timestamp: new Date().toISOString() });
+      }
     }
 
     this.traceHandleStreamEventEnd(agent, event, eventTurnId, flags);
@@ -3506,21 +3514,6 @@ export class AgentManager {
       },
       "agent.manager.handle_stream_event.start",
     );
-  }
-
-  private applyStreamTerminalDisposition(
-    agent: ActiveManagedAgent,
-    event: AgentStreamEvent,
-    turnId: string | undefined,
-    fromHistory: boolean,
-    isForegroundEvent: boolean,
-  ): ActiveTurnTerminalDisposition {
-    if (!isTurnTerminalEvent(event)) return "untracked";
-    const disposition = fromHistory ? "stale" : this.applyActiveTurnTerminal(agent, turnId);
-    if (isForegroundEvent && disposition !== "stale") {
-      this.finalizeSubmittedPrompt(agent, event);
-    }
-    return disposition;
   }
 
   private traceCoalescerBuffered(
@@ -4012,15 +4005,18 @@ export class AgentManager {
     correlatedClientMessageId?: string,
     messageId?: string,
   ): void {
-    const pending = this.timelineStore
-      .getRows(agent.id)
-      .findLast(
-        (row) =>
-          row.delivery === AWAITING_PROVIDER_IDENTITY_DELIVERY && row.item.type === "user_message",
-      );
-    const clientMessageId =
-      correlatedClientMessageId ??
-      (pending?.item.type === "user_message" ? pending.item.clientMessageId : undefined);
+    let clientMessageId = correlatedClientMessageId;
+    if (!clientMessageId) {
+      const pending = this.timelineStore
+        .getRows(agent.id)
+        .findLast(
+          (row) =>
+            row.delivery === AWAITING_PROVIDER_IDENTITY_DELIVERY &&
+            row.item.type === "user_message",
+        );
+      clientMessageId =
+        pending?.item.type === "user_message" ? pending.item.clientMessageId : undefined;
+    }
     if (!clientMessageId) return;
     const row = this.timelineStore.finalizeSubmittedUserMessage(
       agent.id,
