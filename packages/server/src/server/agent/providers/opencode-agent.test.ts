@@ -20,6 +20,7 @@ import {
   AgentTurnStartRejectedError,
   type AgentSessionConfig,
   type AgentStreamEvent,
+  type AgentTurnAdmission,
   type ToolCallTimelineItem,
   type AssistantMessageTimelineItem,
   type AgentTimelineItem,
@@ -2555,6 +2556,39 @@ describe("OpenCode adapter startTurn error handling", () => {
       expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
     } finally {
       vi.useRealTimers();
+      await session.close();
+    }
+  });
+
+  test.each([
+    { name: "prompt", prompt: "hello" },
+    { name: "compact command", prompt: "/compact" },
+    { name: "slash command", prompt: "/help" },
+  ])("checks retry admission before submitting a $name", async ({ prompt }) => {
+    const { parent: session, openCode } = await createParentSession("ses_admission_test");
+    openCode.commandListResponse = {
+      data: [{ name: "help", description: "Show help", hints: [] }],
+    };
+    const cancellation = new Error("retry canceled before submit");
+    const admission: AgentTurnAdmission = {
+      admit: () => {
+        throw cancellation;
+      },
+    };
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    try {
+      await expect(session.startTurn(prompt, undefined, admission)).rejects.toBe(cancellation);
+      expect({
+        prompt: openCode.calls.sessionPromptAsync,
+        command: openCode.calls.sessionCommand,
+        summarize: openCode.calls.sessionSummarize,
+      }).toEqual({ prompt: [], command: [], summarize: [] });
+      expect(events).not.toContainEqual(
+        expect.objectContaining({ type: "turn_started", provider: "opencode" }),
+      );
+    } finally {
       await session.close();
     }
   });

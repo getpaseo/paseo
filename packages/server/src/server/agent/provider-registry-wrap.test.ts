@@ -6,6 +6,7 @@ import type {
   AgentSession,
   AgentStreamEvent,
   AgentRuntimeInfo,
+  AgentTurnAdmission,
 } from "./agent-sdk-types.js";
 import { wrapSessionProvider } from "./provider-registry.js";
 
@@ -60,14 +61,16 @@ class FakeSession implements AgentSession {
   readonly capabilities = CAPABILITIES;
   readonly features = [];
   readonly recordedCalls: string[] = [];
+  lastAdmission: AgentTurnAdmission | undefined;
 
   async run() {
     this.recordedCalls.push("run");
     return { timeline: [] };
   }
 
-  async startTurn() {
+  async startTurn(_prompt: AgentPromptInput, _options?: undefined, admission?: AgentTurnAdmission) {
     this.recordedCalls.push("startTurn");
+    this.lastAdmission = admission;
     return { turnId: "turn-1" };
   }
 
@@ -168,6 +171,16 @@ async function* emptyHistory(): AsyncGenerator<AgentStreamEvent> {
 }
 
 describe("wrapSessionProvider", () => {
+  test("forwards the runtime turn admission object", async () => {
+    const session = new FakeSession();
+    const wrapped = wrapSessionProvider("custom-claude", session);
+    const admission: AgentTurnAdmission = { admit: () => {} };
+
+    await wrapped.startTurn("prompt", undefined, admission);
+
+    expect(session.lastAdmission).toBe(admission);
+  });
+
   test("forwards every optional AgentSession method", async () => {
     const session = new FakeSession();
     const wrapped = wrapSessionProvider("custom-claude", session);

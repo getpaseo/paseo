@@ -34,6 +34,7 @@ import type {
   AgentSlashCommand,
   AgentStreamEvent,
   AgentTimelineItem,
+  AgentTurnAdmission,
   ImportProviderSessionInput,
   ImportProviderSessionContext,
   ResolveAgentDefaultModeInput,
@@ -473,7 +474,7 @@ interface ControlledInterruptFixture {
   manager: AgentManager;
   session: ControlledInterruptSession;
   startForegroundRun(): Promise<void>;
-  cleanup(): void;
+  cleanup(): Promise<void>;
 }
 
 async function createControlledInterruptFixture(options: {
@@ -493,9 +494,10 @@ async function createControlledInterruptFixture(options: {
       return session;
     }
   })();
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
   const manager = new AgentManager({
     clients: { codex: client },
-    registry: new AgentStorage(join(workdir, "agents"), logger),
+    registry: storage,
     logger,
     rescueTimeouts: { interruptSessionMs: 10 },
     idFactory: () => options.agentId,
@@ -517,7 +519,11 @@ async function createControlledInterruptFixture(options: {
       })();
       await manager.waitForAgentRunStart(agent.id);
     },
-    cleanup: () => rmSync(workdir, { recursive: true, force: true }),
+    async cleanup() {
+      await manager.flush();
+      await storage.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    },
   };
 }
 
@@ -1682,6 +1688,8 @@ test("streamAgent reports a second typed OpenCode stop rejection without another
       lastError: "second runtime is still stopping",
     });
   } finally {
+    await manager.flush();
+    await storage.flush();
     rmSync(workdir, { recursive: true, force: true });
   }
 });
@@ -1875,6 +1883,171 @@ test.each([
   },
 );
 
+test.each(["interrupt", "close", "shutdown"] as const)(
+  "%s after OpenCode reload but before retry admission cancels the unsent prompt",
+  async (control) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-opencode-admission-control-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const admissionReached = deferred<void>();
+    const admissionAllowed = deferred<void>();
+
+    class RejectingSession extends TestAgentSession {
+      override async startTurn(): Promise<{ turnId: string }> {
+        throw new AgentTurnStartRejectedError(
+          "previous_turn_still_stopping",
+          "OpenCode previous turn to stop",
+        );
+      }
+    }
+
+    class RecoveredSession extends TestAgentSession {
+      readonly prompts: AgentPromptInput[] = [];
+
+      override async startTurn(
+        prompt: AgentPromptInput,
+        _options?: AgentRunOptions,
+        admission?: AgentTurnAdmission,
+      ): Promise<{ turnId: string }> {
+        admissionReached.resolve();
+        await admissionAllowed.promise;
+        admission?.admit();
+        this.prompts.push(prompt);
+        return await super.startTurn();
+      }
+    }
+
+    class RecoveredClient extends TestAgentClient {
+      readonly firstSession = new RejectingSession({ provider: "opencode", cwd: workdir });
+      readonly recoveredSession = new RecoveredSession({ provider: "opencode", cwd: workdir });
+
+      constructor() {
+        super("opencode");
+      }
+
+      override async createSession(): Promise<AgentSession> {
+        return this.firstSession;
+      }
+
+      override async resumeSession(): Promise<AgentSession> {
+        return this.recoveredSession;
+      }
+    }
+
+    const client = new RecoveredClient();
+    const manager = new AgentManager({
+      clients: { opencode: client },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000308",
+    });
+
+    try {
+      const snapshot = await manager.createAgent(
+        { provider: "opencode", cwd: workdir },
+        undefined,
+        { workspaceId: undefined },
+      );
+      const events: AgentStreamEvent[] = [];
+      const drain = (async () => {
+        for await (const event of manager.streamAgent(snapshot.id, "never submit after control")) {
+          events.push(event);
+        }
+      })();
+      await admissionReached.promise;
+
+      let controlAction: Promise<unknown>;
+      if (control === "interrupt") {
+        controlAction = manager.cancelAgentRun(snapshot.id);
+      } else {
+        if (control === "shutdown") {
+          manager.prepareForShutdown();
+        }
+        controlAction = manager.closeAgent(snapshot.id);
+      }
+      admissionAllowed.resolve();
+      await controlAction;
+      await drain;
+
+      expect(client.recoveredSession.prompts).toEqual([]);
+      expect(events).toContainEqual({
+        type: "turn_canceled",
+        provider: "opencode",
+        reason: control === "interrupt" ? "interrupted" : "agent closed",
+      });
+      if (control === "interrupt") {
+        expect(manager.getAgent(snapshot.id)).toMatchObject({
+          lifecycle: "idle",
+          lastError: undefined,
+        });
+      } else {
+        expect(manager.getAgent(snapshot.id)).toBeNull();
+      }
+      expect(manager.hasInFlightRun(snapshot.id)).toBe(false);
+    } finally {
+      admissionAllowed.resolve();
+      await manager.flush();
+      await storage.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test("OpenCode stop-boundary reload failure never submits the retry", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-opencode-reload-failure-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class RejectingSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      throw new AgentTurnStartRejectedError(
+        "previous_turn_still_stopping",
+        "OpenCode previous turn to stop",
+      );
+    }
+  }
+
+  class FailingReloadClient extends TestAgentClient {
+    readonly firstSession = new RejectingSession({ provider: "opencode", cwd: workdir });
+    resumeCalls = 0;
+
+    constructor() {
+      super("opencode");
+    }
+
+    override async createSession(): Promise<AgentSession> {
+      return this.firstSession;
+    }
+
+    override async resumeSession(): Promise<AgentSession> {
+      this.resumeCalls += 1;
+      throw new Error("OpenCode runtime reload failed");
+    }
+  }
+
+  const client = new FailingReloadClient();
+  const manager = new AgentManager({
+    clients: { opencode: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000309",
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "opencode", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    await expect(manager.runAgent(snapshot.id, "never submit after failed reload")).rejects.toThrow(
+      "OpenCode runtime reload failed",
+    );
+    expect(client.resumeCalls).toBe(1);
+    expect(manager.hasInFlightRun(snapshot.id)).toBe(false);
+  } finally {
+    await manager.flush();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("cancelAgentRun preserves running state when the provider interrupt hangs", async () => {
   const fixture = await createControlledInterruptFixture({
     name: "interrupt-timeout",
@@ -1898,7 +2071,7 @@ test("cancelAgentRun preserves running state when the provider interrupt hangs",
     expect(fixture.session.interruptCalled).toBe(true);
     expect(fixture.manager.getAgent(fixture.agentId)?.lifecycle).toBe("running");
   } finally {
-    fixture.cleanup();
+    await fixture.cleanup();
   }
 });
 
@@ -1929,7 +2102,7 @@ test("cancelAgentRun preserves the active turn when the provider rejects the int
       turnId: "provider-still-active-turn",
     });
   } finally {
-    fixture.cleanup();
+    await fixture.cleanup();
   }
 });
 
@@ -1962,7 +2135,7 @@ test("cancelAgentRun succeeds when the foreground turn finishes before the provi
       activeForegroundTurnId: null,
     });
   } finally {
-    fixture.cleanup();
+    await fixture.cleanup();
   }
 });
 
@@ -1992,7 +2165,7 @@ test("cancelAgentRun succeeds when the provider queues completion before rejecti
       activeForegroundTurnId: null,
     });
   } finally {
-    fixture.cleanup();
+    await fixture.cleanup();
   }
 });
 

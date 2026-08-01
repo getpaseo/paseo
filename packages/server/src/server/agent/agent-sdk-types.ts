@@ -215,6 +215,11 @@ export interface AgentRunOptions {
   clientMessageId?: string;
 }
 
+/** Runtime-only gate claimed synchronously at the provider's final pre-submit boundary. */
+export interface AgentTurnAdmission {
+  admit(): void;
+}
+
 export interface AgentUsage {
   inputTokens?: number;
   cachedInputTokens?: number;
@@ -635,7 +640,11 @@ export interface AgentSession {
   readonly capabilities: AgentCapabilityFlags;
   readonly features?: AgentFeature[];
   run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
-  startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
+  startTurn(
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+    admission?: AgentTurnAdmission,
+  ): Promise<{ turnId: string }>;
   subscribe(callback: (event: AgentStreamEvent) => void): () => void;
   streamHistory(): AsyncGenerator<AgentStreamEvent>;
   getRuntimeInfo(): Promise<AgentRuntimeInfo>;

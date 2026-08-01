@@ -40,6 +40,7 @@ import {
   type AgentSlashCommand,
   type AgentStreamEvent,
   type AgentTimelineItem,
+  type AgentTurnAdmission,
   type AgentUsage,
   type FetchCatalogOptions,
   type ImportableProviderSession,
@@ -3223,6 +3224,7 @@ class OpenCodeAgentSession implements AgentSession {
   async startTurn(
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
+    admission?: AgentTurnAdmission,
   ): Promise<{ turnId: string }> {
     if (this.turnState.status === "running") {
       throw new Error("A foreground turn is already active");
@@ -3262,11 +3264,21 @@ class OpenCodeAgentSession implements AgentSession {
       throw error;
     }
 
+    let slashCommand: { commandName: string; args?: string } | null;
+    try {
+      slashCommand = await this.resolveSlashCommandInvocation(prompt);
+      admission?.admit();
+    } catch (error) {
+      if (this.abortController === turnAbortController) {
+        this.abortController = null;
+      }
+      throw error;
+    }
+
     const turnId = this.createTurnId();
     this.turnState = { status: "running", turnId };
     this.notifySubscribers({ type: "turn_started", provider: "opencode" }, turnId);
 
-    const slashCommand = await this.resolveSlashCommandInvocation(prompt);
     if (slashCommand) {
       if (slashCommand.commandName === "compact" || slashCommand.commandName === "summarize") {
         this.suppressAssistantMessagesUntilIdle.active = true;

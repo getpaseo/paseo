@@ -356,7 +356,7 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
       return inner.features;
     },
     run: (prompt, options) => inner.run(prompt, options),
-    startTurn: (prompt, options) => inner.startTurn(prompt, options),
+    startTurn: (prompt, options, admission) => inner.startTurn(prompt, options, admission),
     subscribe: (callback) => inner.subscribe((event) => callback(mapStreamEvent(provider, event))),
     async *streamHistory() {
       for await (const event of inner.streamHistory()) {

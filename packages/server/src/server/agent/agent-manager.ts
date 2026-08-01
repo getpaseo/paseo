@@ -38,6 +38,7 @@ import {
   type AgentSessionConfig,
   type AgentStreamEvent,
   type AgentTimelineItem,
+  type AgentTurnAdmission,
   type AgentUsage,
   type AgentRuntimeInfo,
   type ImportedTimelineEntry,
@@ -130,9 +131,17 @@ interface TimeoutOptions {
 
 interface OpenCodeStopBoundaryRecovery {
   cancellationReason: "interrupted" | "agent closed" | null;
+  admitted: boolean;
   finished: Promise<void>;
   resolveFinished: () => void;
 }
+
+type OpenCodeStopBoundaryRetryResult =
+  | { status: "started"; turnId: string }
+  | {
+      status: "canceled";
+      event: Extract<AgentStreamEvent, { type: "turn_canceled" }>;
+    };
 
 function formatProviderList(providers: readonly string[]): string {
   return providers.length > 0 ? providers.join(", ") : "none";
@@ -678,6 +687,11 @@ export class AgentManager {
 
   prepareForShutdown(): void {
     this.acceptingAgentRegistrations = false;
+    for (const recovery of this.openCodeStopBoundaryRecoveries.values()) {
+      if (!recovery.admitted) {
+        recovery.cancellationReason ??= "agent closed";
+      }
+    }
   }
 
   setPaseoToolsEnabled(enabled: boolean): void {
@@ -2020,7 +2034,7 @@ export class AgentManager {
     const pendingRun = this.runs.createPendingRun(agentId);
 
     const streamForwarder = async function* streamForwarder(this: AgentManager) {
-      let turnId: string;
+      let turnId: string | null = null;
       let turnStream: ReturnType<AgentRunState["createTurnStream"]> | null = null;
       try {
         try {
@@ -2045,7 +2059,6 @@ export class AgentManager {
           );
 
           const recovery = this.beginOpenCodeStopBoundaryRecovery(agentId);
-          let cancellationEvent: Extract<AgentStreamEvent, { type: "turn_canceled" }> | null = null;
           try {
             agent = await this.reloadAgentForOpenCodeStopBoundary({
               agentId,
@@ -2053,23 +2066,33 @@ export class AgentManager {
               recovery,
             });
             isReplacement = agent.pendingReplacement;
-            cancellationEvent = await this.applyOpenCodeStopBoundaryCancellation({
+            const cancellationEvent = await this.applyOpenCodeStopBoundaryCancellation({
               agentId,
               agent,
               pendingRunToken: pendingRun.token,
               recovery,
             });
+            if (cancellationEvent) {
+              yield cancellationEvent;
+              return;
+            }
+
+            const retry = await this.startOpenCodeStopBoundaryRetry({
+              agentId,
+              agent,
+              prompt,
+              runOptions: options,
+              pendingRunToken: pendingRun.token,
+              recovery,
+            });
+            if (retry.status === "canceled") {
+              yield retry.event;
+              return;
+            }
+            turnId = retry.turnId;
           } finally {
             this.finishOpenCodeStopBoundaryRecovery(agentId, recovery);
           }
-
-          if (cancellationEvent) {
-            yield cancellationEvent;
-            return;
-          }
-
-          const result = await agent.session.startTurn(prompt, options);
-          turnId = result.turnId;
         }
       } catch (error) {
         agent.pendingReplacement = false;
@@ -2082,6 +2105,10 @@ export class AgentManager {
         this.finalizeForegroundTurn(agent);
         this.runs.settleForegroundRun(agentId, pendingRun.token);
         throw error;
+      }
+
+      if (turnId === null) {
+        throw new Error(`Agent ${agentId} turn admission completed without a turn ID`);
       }
 
       pendingRun.started = true;
@@ -2405,6 +2432,7 @@ export class AgentManager {
     let resolveFinished!: () => void;
     const recovery: OpenCodeStopBoundaryRecovery = {
       cancellationReason: null,
+      admitted: false,
       finished: new Promise<void>((resolvePromise) => {
         resolveFinished = resolvePromise;
       }),
@@ -2412,6 +2440,51 @@ export class AgentManager {
     };
     this.openCodeStopBoundaryRecoveries.set(agentId, recovery);
     return recovery;
+  }
+
+  private admitOpenCodeStopBoundaryRecovery(
+    agentId: string,
+    recovery: OpenCodeStopBoundaryRecovery,
+  ): void {
+    if (this.openCodeStopBoundaryRecoveries.get(agentId) !== recovery) {
+      throw new Error(`OpenCode stop-boundary recovery ownership was lost for agent ${agentId}`);
+    }
+    if (recovery.cancellationReason) {
+      throw new Error(`OpenCode stop-boundary retry canceled: ${recovery.cancellationReason}`);
+    }
+    recovery.admitted = true;
+  }
+
+  private async startOpenCodeStopBoundaryRetry(options: {
+    agentId: string;
+    agent: ActiveManagedAgent;
+    prompt: AgentPromptInput;
+    runOptions: AgentRunOptions | undefined;
+    pendingRunToken: string;
+    recovery: OpenCodeStopBoundaryRecovery;
+  }): Promise<OpenCodeStopBoundaryRetryResult> {
+    const admission: AgentTurnAdmission = {
+      admit: () => this.admitOpenCodeStopBoundaryRecovery(options.agentId, options.recovery),
+    };
+    try {
+      const result = await options.agent.session.startTurn(
+        options.prompt,
+        options.runOptions,
+        admission,
+      );
+      return { status: "started", turnId: result.turnId };
+    } catch (error) {
+      const cancellationEvent = await this.applyOpenCodeStopBoundaryCancellation({
+        agentId: options.agentId,
+        agent: options.agent,
+        pendingRunToken: options.pendingRunToken,
+        recovery: options.recovery,
+      });
+      if (!cancellationEvent) {
+        throw error;
+      }
+      return { status: "canceled", event: cancellationEvent };
+    }
   }
 
   private async reloadAgentForOpenCodeStopBoundary(options: {
@@ -2460,7 +2533,7 @@ export class AgentManager {
     reason: OpenCodeStopBoundaryRecovery["cancellationReason"],
   ): OpenCodeStopBoundaryRecovery | null {
     const recovery = this.openCodeStopBoundaryRecoveries.get(agentId);
-    if (!recovery) {
+    if (!recovery || recovery.admitted) {
       return null;
     }
     recovery.cancellationReason ??= reason;
