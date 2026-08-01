@@ -3232,6 +3232,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (this.connected) return;
     const child = await this.spawnAppServer();
     this.client = new CodexAppServerClient(child, this.logger, () => this.traceContext());
+    this.client.setUnexpectedTerminationHandler((error) => {
+      this.handleUnexpectedTermination(error);
+    });
     this.client.setNotificationHandler((method, params) => this.handleNotification(method, params));
     this.registerRequestHandlers();
 
@@ -3269,6 +3272,20 @@ export class CodexAppServerAgentSession implements AgentSession {
       sessionId: this.currentThreadId ?? undefined,
       turnId: this.activeForegroundTurnId ?? undefined,
     };
+  }
+
+  private handleUnexpectedTermination(error: Error): void {
+    this.connected = false;
+    this.emitEvent({
+      type: "turn_failed",
+      provider: CODEX_PROVIDER,
+      error: error.message,
+    });
+    this.activeForegroundTurnId = null;
+    this.activeClientMessageId = null;
+    this.currentTurnId = null;
+    this.pendingForegroundTurnIdentification?.resolve(null);
+    this.pendingForegroundTurnIdentification = null;
   }
 
   private async loadCollaborationModes(): Promise<void> {
