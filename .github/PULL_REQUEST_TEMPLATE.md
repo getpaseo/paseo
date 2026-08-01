@@ -16,11 +16,19 @@ Closes #
 - [ ] Refactor
 - [ ] Docs
 
-### What does this PR do
+### Reasoning
 
-<!-- A short description of the change in your own words. What was wrong, what you changed, why it works. If you can't explain this briefly, the PR is probably too big. -->
+<!-- A short description of the reasoning of this change in your own words. What was wrong, and how do you hope this PR fixes it. If you can't explain this briefly, the PR is probably too big. This description must be grounded in real user flows and framed as value provider to Paseo users. -->
 
-### How did you verify it
+### Goals
+
+<!-- A bullet list of what this PR wants to accomplish, include requirements and acceptance criteria. This helps lock down the scope of the PR and prevent expanding scope over the intended goal. -->
+
+### Non-Goals
+
+<!-- A bullet list of what this PR does not want to accomplish. This helps lock down the scope of the PR and prevent expanding scope over the intended goal. -->
+
+### QA
 
 <!--
 This is the section I read most carefully. I need to see that *you* tested this, not that the diff looks plausible.
