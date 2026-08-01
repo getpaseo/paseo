@@ -4615,7 +4615,7 @@ export class AgentManager {
   }
 
   private startProviderAvailabilityCheck(provider: AgentProvider): void {
-    void this.probeProviderAvailability(provider).catch((error) => {
+    void this.probeProviderAvailability(provider, { deferStart: true }).catch((error) => {
       this.logger.warn(
         { err: error, provider },
         "Unexpected provider availability background check failure",
@@ -4623,7 +4623,10 @@ export class AgentManager {
     });
   }
 
-  private async probeProviderAvailability(provider: AgentProvider): Promise<ProviderAvailability> {
+  private async probeProviderAvailability(
+    provider: AgentProvider,
+    options?: { deferStart?: boolean },
+  ): Promise<ProviderAvailability> {
     const immediate = this.readProviderAvailability(provider, false);
     if (immediate.error && immediate.checkedAt === null) {
       return immediate;
@@ -4652,6 +4655,7 @@ export class AgentManager {
       client,
       generation,
       controller,
+      options?.deferStart === true,
     );
     const response = this.runProviderAvailabilityProbe(
       provider,
@@ -4777,10 +4781,14 @@ export class AgentManager {
     client: AgentClient,
     generation: number,
     controller: AbortController,
+    deferStart: boolean,
   ): Promise<boolean | null> {
-    // Let the status response publish its cached/checking state before a provider
-    // implementation gets any opportunity to perform synchronous work.
-    return new Promise<void>((resolveProbeStart) => setImmediate(resolveProbeStart)).then(() => {
+    // Background checks yield so status can publish its cached/checking state.
+    // A selected-provider mutation starts immediately and remains time-bounded.
+    const start = deferStart
+      ? new Promise<void>((resolveProbeStart) => setImmediate(resolveProbeStart))
+      : Promise.resolve();
+    return start.then(() => {
       if (
         generation !== this.providerAvailabilityGeneration ||
         this.clients.get(provider) !== client ||
