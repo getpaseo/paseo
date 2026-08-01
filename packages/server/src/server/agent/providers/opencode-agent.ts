@@ -103,6 +103,7 @@ const OPENCODE_LEGACY_FULL_ACCESS_MODE_ID = "full-access";
 const OPENCODE_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
 const OPENCODE_PERSISTED_SESSION_LIMIT = 200;
 const OPENCODE_PENDING_ABORT_START_TIMEOUT_MS = 10_000;
+const OPENCODE_FOREGROUND_MESSAGES_TIMEOUT_MS = 10_000;
 const OPENCODE_CHILD_SESSION_HYDRATION_LIMIT = 100;
 const OPENCODE_CHILD_SESSION_SERVER_REGISTRY_LIMIT = 500;
 const OPENCODE_PERMISSION_ACTION_ALLOW_ONCE = "allow_once";
@@ -553,6 +554,27 @@ function resolvePartDedupeKey(
     return `${partType}:message:${part.messageID}`;
   }
   return null;
+}
+
+function resolvePersistedTextSuffix(persistedText: string, emittedText: string): string | null {
+  if (persistedText.startsWith(emittedText)) {
+    return persistedText.slice(emittedText.length);
+  }
+  if (emittedText.includes(persistedText)) {
+    return null;
+  }
+  return null;
+}
+
+function appendEmittedPartText(
+  emittedPartTextByKey: Map<string, string> | undefined,
+  partKey: string,
+  delta: string,
+): void {
+  if (!emittedPartTextByKey) {
+    return;
+  }
+  emittedPartTextByKey.set(partKey, `${emittedPartTextByKey.get(partKey) ?? ""}${delta}`);
 }
 
 function matchesHydratedFingerprint(
@@ -1241,6 +1263,7 @@ function buildOpenCodeReplayTimelineEvents(
 }
 
 export const __openCodeInternals = {
+  OPENCODE_FOREGROUND_MESSAGES_TIMEOUT_MS,
   buildOpenCodePromptParts,
   buildOpenCodeSessionTimeline,
   buildOpenCodeModelContextWindowLookup,
@@ -1733,6 +1756,8 @@ export interface OpenCodeEventTranslationState {
   accumulatedUsage: AgentUsage;
   sessionTotalCostUsd?: number;
   streamedPartKeys: Set<string>;
+  emittedPartTextByKey?: Map<string, string>;
+  emittedToolPartFingerprints?: Map<string, string>;
   emittedStructuredMessageIds: Set<string>;
   compactionSummaryMessageIds: Set<string>;
   emittedCompactionPartIds: Set<string>;
@@ -2097,6 +2122,8 @@ export function translateOpenCodeEvent(
 
 function resetOpenCodeTurnTrackingState(state: OpenCodeEventTranslationState): void {
   state.streamedPartKeys.clear();
+  state.emittedPartTextByKey?.clear();
+  state.emittedToolPartFingerprints?.clear();
   state.partTypes.clear();
   state.compactionSummaryMessageIds.clear();
   state.emittedCompactionPartIds.clear();
@@ -2440,6 +2467,7 @@ function appendOpenCodeMessagePartUpdated(
     const parsedToolPart = OpencodeToolPartToTimelineItemSchema.safeParse(part);
     if (parsedToolPart.success && parsedToolPart.data) {
       appendOpenCodeToolCallTimelineItem(parsedToolPart.data, state, events);
+      state.emittedToolPartFingerprints?.set(part.id, JSON.stringify(parsedToolPart.data));
     }
     return;
   }
@@ -2514,6 +2542,9 @@ function appendOpenCodeTextPart(
     return;
   }
   if (part.text) {
+    if (partKey) {
+      state.emittedPartTextByKey?.set(partKey, part.text);
+    }
     events.push({
       type: "timeline",
       provider: "opencode",
@@ -2538,6 +2569,9 @@ function appendOpenCodeReasoningPart(
     return;
   }
   if (part.text) {
+    if (partKey) {
+      state.emittedPartTextByKey?.set(partKey, part.text);
+    }
     events.push({
       type: "timeline",
       provider: "opencode",
@@ -2568,7 +2602,9 @@ function appendOpenCodeMessagePartDelta(
 
   if (isReasoning) {
     if (partID) {
-      state.streamedPartKeys.add(`reasoning:${partID}`);
+      const partKey = `reasoning:${partID}`;
+      state.streamedPartKeys.add(partKey);
+      appendEmittedPartText(state.emittedPartTextByKey, partKey, delta);
     }
     events.push({
       type: "timeline",
@@ -2592,7 +2628,9 @@ function appendOpenCodeMessagePartDelta(
     return;
   }
   if (partID) {
-    state.streamedPartKeys.add(`text:${partID}`);
+    const partKey = `text:${partID}`;
+    state.streamedPartKeys.add(partKey);
+    appendEmittedPartText(state.emittedPartTextByKey, partKey, delta);
   }
   events.push({
     type: "timeline",
@@ -2965,6 +3003,8 @@ class OpenCodeAgentSession implements AgentSession {
   private emittedUserMessageIds = new Set<string>();
   /** Tracks streamed textual part IDs to suppress final full-text echoes from OpenCode. */
   private streamedPartKeys = new Set<string>();
+  private emittedPartTextByKey = new Map<string, string>();
+  private emittedToolPartFingerprints = new Map<string, string>();
   /** Tracks assistant messages already emitted from structured payloads. */
   private emittedStructuredMessageIds = new Set<string>();
   private compactionSummaryMessageIds = new Set<string>();
@@ -3706,9 +3746,11 @@ class OpenCodeAgentSession implements AgentSession {
         }
         const activeTurnId = this.activeForegroundTurnId;
         if (activeTurnId) {
+          const foregroundAbortSignal = this.abortController?.signal;
           const reconciledEvent = await this.reconcileForegroundTurnAfterStreamEnd(
             activeTurnId,
             eventStreamAbortController.signal,
+            foregroundAbortSignal,
           );
           if (
             eventStreamAbortController.signal.aborted ||
@@ -3764,6 +3806,7 @@ class OpenCodeAgentSession implements AgentSession {
   private async reconcileForegroundTurnAfterStreamEnd(
     turnId: string,
     signal: AbortSignal,
+    foregroundAbortSignal?: AbortSignal,
   ): Promise<TerminalTurnEvent | null> {
     const ownership = this.foregroundOwnership;
     if (
@@ -3773,7 +3816,7 @@ class OpenCodeAgentSession implements AgentSession {
       return null;
     }
 
-    const messages = await this.readForegroundSessionMessages(signal);
+    const messages = await this.readForegroundSessionMessages(signal, foregroundAbortSignal);
     if (signal.aborted || this.activeForegroundTurnId !== turnId || messages === null) {
       return null;
     }
@@ -3810,6 +3853,9 @@ class OpenCodeAgentSession implements AgentSession {
     }
 
     const usage = this.mergePersistedAssistantUsage(ownedAssistantMessages, ownership);
+    if (!this.replayPersistedAssistantParts(ownedAssistantMessages, turnId, signal)) {
+      return null;
+    }
     if (assistantMessage.info.error) {
       if (usage) {
         this.notifySubscribers({ type: "usage_updated", provider: "opencode", usage }, turnId);
@@ -3882,17 +3928,102 @@ class OpenCodeAgentSession implements AgentSession {
     return userMessage.info.id;
   }
 
+  private replayPersistedAssistantParts(
+    messages: readonly OpenCodeSessionMessage[],
+    turnId: string,
+    signal: AbortSignal,
+  ): boolean {
+    for (const message of messages) {
+      if (message.info.role !== "assistant") {
+        continue;
+      }
+      for (const part of message.parts) {
+        if (signal.aborted || this.activeForegroundTurnId !== turnId) {
+          return false;
+        }
+        const event = buildOpenCodeReplayPartTimelineEvent({ part, message: message.info });
+        if (!event) {
+          continue;
+        }
+        if (part.type === "text" || part.type === "reasoning") {
+          const partKey = resolvePartDedupeKey(part, part.type);
+          const emittedText = partKey ? this.emittedPartTextByKey.get(partKey) : undefined;
+          const missingText = emittedText
+            ? resolvePersistedTextSuffix(part.text, emittedText)
+            : part.text;
+          if (!missingText) {
+            continue;
+          }
+          event.item =
+            part.type === "text"
+              ? { type: "assistant_message", text: missingText, messageId: message.info.id }
+              : { type: "reasoning", text: missingText };
+          if (partKey) {
+            this.emittedPartTextByKey.set(partKey, part.text);
+          }
+        } else if (part.type === "tool") {
+          const fingerprint = JSON.stringify(event.item);
+          if (this.emittedToolPartFingerprints.get(part.id) === fingerprint) {
+            continue;
+          }
+          this.emittedToolPartFingerprints.set(part.id, fingerprint);
+        }
+        if (event.item.type === "tool_call") {
+          this.trackToolCall(event.item);
+        }
+        this.notifySubscribers(event, turnId);
+      }
+    }
+    return true;
+  }
+
   private async readForegroundSessionMessages(
-    signal?: AbortSignal,
+    signal: AbortSignal,
+    additionalSignal?: AbortSignal,
   ): Promise<OpenCodeSessionMessage[] | null> {
-    try {
-      const response = await this.client.session.messages(
+    const callerSignals = additionalSignal ? [signal, additionalSignal] : [signal];
+    if (callerSignals.some((callerSignal) => callerSignal.aborted)) {
+      return null;
+    }
+    const requestAbortController = new AbortController();
+    let rejectOnAbort: (() => void) | null = null;
+    const aborted = new Promise<never>((_, reject) => {
+      rejectOnAbort = () =>
+        reject(
+          requestAbortController.signal.reason ??
+            new DOMException("The operation was aborted", "AbortError"),
+        );
+      requestAbortController.signal.addEventListener("abort", rejectOnAbort, { once: true });
+    });
+    const abortRequests = callerSignals.map((callerSignal) => {
+      const abortRequest = () => requestAbortController.abort(callerSignal.reason);
+      callerSignal.addEventListener("abort", abortRequest, { once: true });
+      if (callerSignal.aborted) {
+        abortRequest();
+      }
+      return abortRequest;
+    });
+    const timeout = setTimeout(() => {
+      requestAbortController.abort(
+        new Error(
+          `OpenCode session.messages timed out after ${OPENCODE_FOREGROUND_MESSAGES_TIMEOUT_MS}ms`,
+        ),
+      );
+    }, OPENCODE_FOREGROUND_MESSAGES_TIMEOUT_MS);
+    const request = Promise.resolve().then(() => {
+      if (requestAbortController.signal.aborted) {
+        throw requestAbortController.signal.reason;
+      }
+      return this.client.session.messages(
         {
           sessionID: this.sessionId,
           directory: this.config.cwd,
         },
-        signal ? { signal } : undefined,
+        { signal: requestAbortController.signal },
       );
+    });
+    try {
+      const response = await Promise.race([request, aborted]);
       return response.error || !response.data ? null : response.data;
     } catch (error) {
       this.logger.debug(
@@ -3900,6 +4031,17 @@ class OpenCodeAgentSession implements AgentSession {
         "Failed to read OpenCode session messages",
       );
       return null;
+    } finally {
+      clearTimeout(timeout);
+      callerSignals.forEach((callerSignal, index) => {
+        const abortRequest = abortRequests[index];
+        if (abortRequest) {
+          callerSignal.removeEventListener("abort", abortRequest);
+        }
+      });
+      if (rejectOnAbort) {
+        requestAbortController.signal.removeEventListener("abort", rejectOnAbort);
+      }
     }
   }
 
@@ -4105,7 +4247,7 @@ class OpenCodeAgentSession implements AgentSession {
     this.subAgentCallIdByChildSessionId.clear();
     this.pendingUserMessageText = null;
     this.pendingClientMessageId = null;
-    this.abortController = null;
+    this.abortController = new AbortController();
     this.notifySubscribers({ type: "turn_started", provider: "opencode" }, turnId);
     return turnId;
   }
@@ -4629,6 +4771,8 @@ class OpenCodeAgentSession implements AgentSession {
       accumulatedUsage: this.accumulatedUsage,
       sessionTotalCostUsd: this.sessionTotalCostUsd,
       streamedPartKeys: this.streamedPartKeys,
+      emittedPartTextByKey: this.emittedPartTextByKey,
+      emittedToolPartFingerprints: this.emittedToolPartFingerprints,
       emittedStructuredMessageIds: this.emittedStructuredMessageIds,
       compactionSummaryMessageIds: this.compactionSummaryMessageIds,
       emittedCompactionPartIds: this.emittedCompactionPartIds,
@@ -4659,6 +4803,8 @@ class OpenCodeAgentSession implements AgentSession {
       emittedUserMessageIds: new Set(),
       accumulatedUsage: {},
       streamedPartKeys: new Set(),
+      emittedPartTextByKey: new Map(),
+      emittedToolPartFingerprints: new Map(),
       emittedStructuredMessageIds: new Set(),
       compactionSummaryMessageIds: new Set(),
       emittedCompactionPartIds: new Set(),
