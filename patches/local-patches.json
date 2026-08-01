@@ -29,16 +29,19 @@
         "force hydration flushes assistant, reasoning, and running tool output before success or failure completion",
         "coalesced timeline output retains order before the following non-coalescable event",
         "pre-hydration coalesced output retains order before later live events on success and failure",
+        "buffered assistant and terminal tool output retain order before a later direct writer",
         "an immediate second force hydration cannot inherit a late coalescer flush",
         "concurrent forced history hydrations serialize per agent",
+        "queued force hydrations share one gate across sequential direct writers",
+        "a force queued during awaited release persistence inherits the gate for later writers",
         "successful hydration returns only after buffered live events are committed",
         "failed hydration returns only after buffered live events are committed"
       ],
       "verification": {
         "receipt": "patches/receipts/paseo-v025-hydration-atomicity-current-main.json",
-        "completedAt": "2026-08-01T03:57:14Z",
+        "completedAt": "2026-08-01T04:12:19Z",
         "result": {
-          "agentManagerTests": "155 passed",
+          "agentManagerTests": "159 passed",
           "serverBuild": "passed",
           "serverTypecheck": "passed",
           "changedFileLint": "0 warnings, 0 errors",
@@ -49,8 +52,8 @@
         "upstreamCommit": "70ed70d36e2eabd3876a22931954319ec202c902",
         "mergeCommit": "562069425d7e1d8d40329132761f71601d9dc52e",
         "mergeTree": "1034d47eeef9a5d3dd1763d580f915de60c0e20c",
-        "repairCommit": "455ad19fd5032fbff95645c461c1d2061b1a0108",
-        "repairTree": "04222e73b8609e76e20453d07e291c2af8cd01ec",
+        "repairCommit": "43d647c33d9fd02aef806a0192706f50578843ba",
+        "repairTree": "2b8798f41087be8242dbc2bee37251a39b585f8c",
         "receipt": "patches/receipts/paseo-v025-hydration-atomicity-current-main.json"
       },
       "upstreamable": true,
