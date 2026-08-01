@@ -8,6 +8,7 @@ function createFakeDaemonClient(
     Pick<
       DaemonClient,
       | "getLastServerInfoMessage"
+      | "listProjects"
       | "getPaseoWorktreeList"
       | "archivePaseoWorktree"
       | "close"
@@ -18,6 +19,7 @@ function createFakeDaemonClient(
   return {
     getLastServerInfoMessage: () => ({ hostname: hostname() }),
     isLocalDaemonConnection: () => true,
+    listProjects: async () => ({ projects: [], requestId: "req-projects" }),
     getPaseoWorktreeList: async () => ({
       worktrees: [],
       error: null,

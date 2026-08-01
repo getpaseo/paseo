@@ -3654,7 +3654,7 @@ test("create paseo worktree response preserves an explicit non-Git project", asy
   const workspaces = new Map();
   const explicitProject = createPersistedProjectRecord({
     projectId: "prj_explicit_non_git",
-    rootPath: path.join(tempDir, "selected-project"),
+    rootPath: repoDir,
     kind: "non_git",
     displayName: "Selected project",
     createdAt,
