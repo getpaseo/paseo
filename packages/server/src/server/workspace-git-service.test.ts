@@ -724,6 +724,45 @@ describe("WorkspaceGitServiceImpl", () => {
     service.dispose();
   });
 
+  test("replays a debounced watcher event after the active refresh completes inside the min-gap", async () => {
+    let nowMs = 0;
+    const activeRefresh = createDeferred<CheckoutStatusGit>();
+    const getCheckoutStatus = vi
+      .fn<(cwd: string) => Promise<CheckoutStatusGit>>()
+      .mockImplementationOnce(async (cwd) => createCheckoutStatus(cwd))
+      .mockImplementationOnce(async () => activeRefresh.promise)
+      .mockImplementationOnce(async (cwd) =>
+        createCheckoutStatus(cwd, { currentBranch: "watcher-result" }),
+      );
+    const service = createService({
+      getCheckoutStatus,
+      now: () => new Date(nowMs),
+    });
+
+    await service.getSnapshot(REPO_CWD);
+    nowMs = 3_000;
+    const refresh = service.refresh(REPO_CWD);
+    await flushPromises();
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
+
+    service.scheduleRefreshForCwd(REPO_CWD);
+    activeRefresh.resolve(createCheckoutStatus(REPO_CWD, { currentBranch: "intermediate" }));
+    await refresh;
+
+    expect(service.peekSnapshot(REPO_CWD)?.git.currentBranch).toBe("intermediate");
+    expect(service.isSnapshotStale(REPO_CWD)).toBe(true);
+
+    nowMs = 4_000;
+    await vi.advanceTimersByTimeAsync(1_000);
+    await flushPromises();
+
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(3);
+    expect(service.peekSnapshot(REPO_CWD)?.git.currentBranch).toBe("watcher-result");
+    expect(service.isSnapshotStale(REPO_CWD)).toBe(false);
+
+    service.dispose();
+  });
+
   test("reconciles a ref change that happens while workspace watchers attach", async () => {
     let currentBranch = "main";
     const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
@@ -758,6 +797,66 @@ describe("WorkspaceGitServiceImpl", () => {
         git: expect.objectContaining({ currentBranch: "changed-during-attach" }),
       }),
     );
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
+  test("post-install reconciliation replays an already-forced forge-inclusive generation", async () => {
+    let currentBranch = "main";
+    const preInstallRefresh = createDeferred<CheckoutStatusGit>();
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
+      ...createCheckoutSnapshotFacts(cwd),
+      remoteUrl: null,
+    }));
+    const getCheckoutStatus = vi
+      .fn<(cwd: string) => Promise<CheckoutStatusGit>>()
+      .mockImplementationOnce(async (cwd) =>
+        createCheckoutStatus(cwd, { hasRemote: false, remoteUrl: null }),
+      )
+      .mockImplementationOnce(async () => preInstallRefresh.promise)
+      .mockImplementation(async (cwd) =>
+        createCheckoutStatus(cwd, {
+          currentBranch,
+          hasRemote: false,
+          remoteUrl: null,
+        }),
+      );
+    const watch = vi.fn(() => {
+      currentBranch = "changed-after-watch-install";
+      return createWatcher();
+    }) as unknown as typeof import("node:fs").watch;
+    const service = createService({ getCheckoutSnapshotFacts, getCheckoutStatus, watch });
+
+    await service.getSnapshot(REPO_CWD);
+    const forcedRefresh = service.getSnapshot(REPO_CWD, {
+      force: true,
+      includeForge: true,
+      reason: "pre-install-forced-forge-refresh",
+    });
+    await vi.waitFor(() => {
+      expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
+    });
+
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    await vi.waitFor(() => {
+      expect(watch).toHaveBeenCalledTimes(2);
+    });
+
+    preInstallRefresh.resolve(
+      createCheckoutStatus(REPO_CWD, {
+        currentBranch: "main",
+        hasRemote: false,
+        remoteUrl: null,
+      }),
+    );
+    await forcedRefresh;
+
+    await vi.waitFor(() => {
+      expect(getCheckoutStatus).toHaveBeenCalledTimes(3);
+      expect(service.peekSnapshot(REPO_CWD)?.git.currentBranch).toBe("changed-after-watch-install");
+      expect(service.isSnapshotStale(REPO_CWD)).toBe(false);
+    });
 
     subscription.unsubscribe();
     service.dispose();

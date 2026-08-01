@@ -258,6 +258,10 @@ interface WorkspaceGitRefreshRequest {
   notify: boolean;
   /** A watcher/self-heal event observed during another generation must be replayed. */
   replayIfInFlight?: boolean;
+  /** A debounced event remains actionable even when its timer expires inside the min-gap. */
+  bypassMinGap?: boolean;
+  /** The generation used for this request must start its Git read after this sequence. */
+  afterGitReadSequence?: number;
   /** Force the read without necessarily forcing an unchanged listener emission. */
   forceEmit?: boolean;
 }
@@ -273,6 +277,7 @@ interface WorkspaceGitRefreshGeneration {
   promise: Promise<WorkspaceGitRuntimeSnapshot>;
   resolve: (snapshot: WorkspaceGitRuntimeSnapshot) => void;
   reject: (error: unknown) => void;
+  gitReadSequence: number | null;
   settled: boolean;
 }
 
@@ -350,6 +355,7 @@ interface WorkspaceGitTarget {
   factsPromise: Promise<CheckoutSnapshotFacts> | null;
   latestFingerprint: string | null;
   lastShellOutAtMs: number | null;
+  gitReadSequence: number;
   repoGitRoot: string | null;
   observationSetupPromise: Promise<void> | null;
   observationSetupComplete: boolean;
@@ -966,6 +972,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       factsPromise: null,
       latestFingerprint: null,
       lastShellOutAtMs: null,
+      gitReadSequence: 0,
       repoGitRoot: null,
       observationSetupPromise: null,
       observationSetupComplete: false,
@@ -1040,6 +1047,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
     target.repoGitRoot = repoGitRoot;
     const installedWatcher = this.startWorkspaceWatchers(target, gitDir, repoGitRoot);
+    const watcherInstallGitReadSequence = target.gitReadSequence;
     await this.ensureRepoTarget(target);
     if (!this.isActiveObservedWorkspaceTarget(target)) {
       return;
@@ -1055,6 +1063,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       includeForge: false,
       reason: "observation-installed",
       notify: true,
+      afterGitReadSequence: watcherInstallGitReadSequence,
       forceEmit: false,
     });
     if (this.isActiveObservedWorkspaceTarget(target)) {
@@ -1780,13 +1789,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         return state.queued.promise;
       }
 
-      const currentRequest = state.current.request;
-      const requiresReplay =
-        request.replayIfInFlight === true ||
-        (request.force && !currentRequest.force) ||
-        (request.includeForge && !currentRequest.includeForge) ||
-        (this.shouldForceEmit(request) && !this.shouldForceEmit(currentRequest));
-      if (!requiresReplay) {
+      if (!this.refreshGenerationRequiresReplay(state.current, request)) {
         return state.current.promise;
       }
 
@@ -1797,7 +1800,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return state.queued.promise;
     }
 
-    if (!request.force && this.shouldThrottleNonForcedRefresh(target)) {
+    if (
+      !request.force &&
+      request.bypassMinGap !== true &&
+      request.afterGitReadSequence === undefined &&
+      this.shouldThrottleNonForcedRefresh(target)
+    ) {
       return Promise.resolve(target.latestSnapshot);
     }
 
@@ -1837,6 +1845,22 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     return generation.promise;
   }
 
+  private refreshGenerationRequiresReplay(
+    current: WorkspaceGitRefreshGeneration,
+    request: WorkspaceGitRefreshRequest,
+  ): boolean {
+    const currentRequest = current.request;
+    return (
+      request.replayIfInFlight === true ||
+      (request.afterGitReadSequence !== undefined &&
+        current.gitReadSequence !== null &&
+        current.gitReadSequence <= request.afterGitReadSequence) ||
+      (request.force && !currentRequest.force) ||
+      (request.includeForge && !currentRequest.includeForge) ||
+      (this.shouldForceEmit(request) && !this.shouldForceEmit(currentRequest))
+    );
+  }
+
   private createRefreshGeneration(
     request: WorkspaceGitRefreshRequest,
   ): WorkspaceGitRefreshGeneration {
@@ -1846,7 +1870,14 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       resolveGeneration = resolvePromise;
       reject = rejectPromise;
     });
-    return { request, promise, resolve: resolveGeneration, reject, settled: false };
+    return {
+      request,
+      promise,
+      resolve: resolveGeneration,
+      reject,
+      gitReadSequence: null,
+      settled: false,
+    };
   }
 
   private resolveRefreshGeneration(
@@ -1907,6 +1938,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       reason: options?.reason ?? "watch",
       notify: true,
       replayIfInFlight: true,
+      bypassMinGap: true,
     };
   }
 
@@ -1922,12 +1954,24 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const upgradesForce = request.force && !pending.force;
     const upgradesForge = request.includeForge && !pending.includeForge;
     const upgradesForceEmit = this.shouldForceEmit(request) && !this.shouldForceEmit(pending);
+    const afterGitReadSequence = Math.max(
+      pending.afterGitReadSequence ?? -1,
+      request.afterGitReadSequence ?? -1,
+    );
+    const upgradesGitReadSequence =
+      request.afterGitReadSequence !== undefined &&
+      request.afterGitReadSequence > (pending.afterGitReadSequence ?? -1);
     return {
       force,
       includeForge: pending.includeForge || request.includeForge,
-      reason: upgradesForce || upgradesForge || upgradesForceEmit ? request.reason : pending.reason,
+      reason:
+        upgradesForce || upgradesForge || upgradesForceEmit || upgradesGitReadSequence
+          ? request.reason
+          : pending.reason,
       notify: pending.notify || request.notify,
       replayIfInFlight: pending.replayIfInFlight || request.replayIfInFlight,
+      bypassMinGap: pending.bypassMinGap || request.bypassMinGap,
+      ...(afterGitReadSequence >= 0 ? { afterGitReadSequence } : {}),
       forceEmit: this.shouldForceEmit(pending) || this.shouldForceEmit(request),
     };
   }
@@ -1949,6 +1993,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       let generationFailed = false;
 
       try {
+        generation.gitReadSequence = ++target.gitReadSequence;
         snapshot = await this.refreshSnapshot(target, request);
         if (target.closed || this.workspaceTargets.get(target.cwd) !== target) {
           throw createWorkspaceGitAbortError("Workspace Git target closed during refresh");
