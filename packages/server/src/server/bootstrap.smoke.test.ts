@@ -354,7 +354,7 @@ describe("paseo daemon bootstrap", () => {
     }
   });
 
-  test("daemon stop retries retained ACP session cleanup on the exact registered client", async () => {
+  test("daemon stop retries retained ACP cleanup on a displaced registered client", async () => {
     const logger = pino({ level: "silent" });
     const child = createACPChildStub();
     const agentConnections: AgentSideConnection[] = [];
@@ -439,6 +439,16 @@ describe("paseo daemon bootstrap", () => {
         shutdownOrder.push("client-shutdown");
         await clientShutdown();
       });
+      const replacementClient = new ACPAgentClient({
+        provider: "copilot",
+        logger,
+        defaultCommand: [process.execPath],
+      });
+      const shutdownReplacement = vi
+        .spyOn(replacementClient, "shutdown")
+        .mockImplementation(async () => {
+          shutdownOrder.push("replacement-client-shutdown");
+        });
 
       await daemonHandle.daemon.agentManager.createAgent(
         { provider: "codex", cwd: agentCwd },
@@ -458,16 +468,38 @@ describe("paseo daemon bootstrap", () => {
       expect(terminationAttempts).toBe(1);
       expect(releaseCapacity).not.toHaveBeenCalledWith(child);
 
+      daemonHandle.daemon.agentManager.updateProviderRegistry({
+        providerDefinitions: {
+          claude: { enabled: true },
+          codex: { enabled: true },
+          opencode: { enabled: true },
+          copilot: { enabled: true },
+        },
+        clients: {
+          ...createTestAgentClients(),
+          copilot: replacementClient,
+        },
+      });
+      expect(shutdownClient).not.toHaveBeenCalled();
+      expect(shutdownReplacement).not.toHaveBeenCalled();
+
       await daemonHandle.daemon.stop();
       stopped = true;
 
-      expect(shutdownOrder).toEqual(["agent-closed", "agents-flushed", "client-shutdown"]);
+      expect(shutdownOrder).toEqual([
+        "agent-closed",
+        "agents-flushed",
+        "client-shutdown",
+        "replacement-client-shutdown",
+      ]);
       expect(terminationAttempts).toBe(2);
       expect(releaseCapacity).toHaveBeenCalledWith(child);
       expect(shutdownClient).toHaveBeenCalledOnce();
+      expect(shutdownReplacement).toHaveBeenCalledOnce();
 
       await daemonHandle.daemon.agentManager.shutdown();
       expect(shutdownClient).toHaveBeenCalledOnce();
+      expect(shutdownReplacement).toHaveBeenCalledOnce();
     } finally {
       if (!stopped) {
         await daemonHandle.daemon.stop().catch(() => undefined);

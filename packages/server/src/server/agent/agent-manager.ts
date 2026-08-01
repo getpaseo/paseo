@@ -661,6 +661,7 @@ function getFirstUserMessageTextFromRows(rows: readonly AgentTimelineRow[]): str
 
 export class AgentManager {
   private readonly clients = new Map<AgentProvider, AgentClient>();
+  private readonly retiredClients = new Set<AgentClient>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
   private readonly agents = new Map<string, LiveManagedAgent>();
   private readonly timelineStore = new InMemoryAgentTimelineStore();
@@ -735,7 +736,12 @@ export class AgentManager {
 
   registerClient(provider: AgentProvider, client: AgentClient): void {
     this.configureClientRuntimeCapacity(provider, client);
+    const displaced = this.clients.get(provider);
     this.clients.set(provider, client);
+    this.retiredClients.delete(client);
+    if (displaced && displaced !== client && !new Set(this.clients.values()).has(displaced)) {
+      this.retiredClients.add(displaced);
+    }
   }
 
   updateProviderRegistry(input: {
@@ -750,6 +756,16 @@ export class AgentManager {
     }
     for (const [provider, client] of clients) {
       this.configureClientRuntimeCapacity(provider, client);
+    }
+
+    const nextClients = new Set(clients.map(([, client]) => client));
+    for (const client of this.clients.values()) {
+      if (!nextClients.has(client)) {
+        this.retiredClients.add(client);
+      }
+    }
+    for (const client of nextClients) {
+      this.retiredClients.delete(client);
     }
 
     this.providerEnabled.clear();
@@ -4778,7 +4794,7 @@ export class AgentManager {
 
   async shutdown(): Promise<void> {
     if (!this.clientShutdown) {
-      const clients = Array.from(new Set(this.clients.values()));
+      const clients = Array.from(new Set([...this.retiredClients, ...this.clients.values()]));
       this.clientShutdown = Promise.all(
         clients.map(async (client) => {
           if (!client.shutdown) {
