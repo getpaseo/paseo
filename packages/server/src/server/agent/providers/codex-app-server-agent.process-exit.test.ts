@@ -488,3 +488,60 @@ test("concurrent session APIs share one reconnect after an idle provider exit", 
     rmSync(workdir, { recursive: true, force: true });
   }
 });
+
+test("session close disposes a provider that arrives from an in-flight reconnect", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-process-close-reconnect-"));
+  const initialAppServer = createFakeCodexAppServer();
+  const lateAppServer = createFakeCodexAppServer();
+  let spawnCount = 0;
+  let markReconnectSpawned: (() => void) | undefined;
+  const reconnectSpawned = new Promise<void>((resolve) => {
+    markReconnectSpawned = resolve;
+  });
+  let releaseReconnect: (() => void) | undefined;
+  const reconnectGate = new Promise<void>((resolve) => {
+    releaseReconnect = resolve;
+  });
+  const session = new CodexAppServerAgentSession(
+    { provider: "codex", cwd: workdir, modeId: "auto", model: "gpt-5.4" },
+    null,
+    logger,
+    async () => {
+      spawnCount += 1;
+      if (spawnCount === 1) {
+        return initialAppServer.child;
+      }
+      markReconnectSpawned?.();
+      await reconnectGate;
+      return lateAppServer.child;
+    },
+  );
+  const events: AgentManagerEvent[] = [];
+  session.subscribe((event) => {
+    events.push({ type: "agent_stream", agentId: "test-agent", event });
+  });
+  const lateExit = new Promise<void>((resolve) => {
+    lateAppServer.child.once("exit", () => resolve());
+  });
+
+  try {
+    await session.connect();
+    initialAppServer.child.emit("exit", 17, null);
+
+    const turnStart = session.startTurn("continue after reconnect");
+    await reconnectSpawned;
+    await session.close();
+    releaseReconnect?.();
+
+    await expect(turnStart).rejects.toThrow("Codex app-server session is closed");
+    await expect(lateExit).resolves.toBeUndefined();
+    expect(events.filter((event) => event.event.type === "turn_failed")).toHaveLength(0);
+
+    await expect(session.connect()).rejects.toThrow("Codex app-server session is closed");
+    expect(spawnCount).toBe(2);
+  } finally {
+    releaseReconnect?.();
+    await session.close();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});

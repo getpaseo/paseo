@@ -3165,6 +3165,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private unpairedCompactionItemCompletions = 0;
   private connected = false;
   private connectionPromise: Promise<void> | null = null;
+  private closed = false;
   private collaborationModes: Array<{
     name: string;
     mode?: string | null;
@@ -3230,9 +3231,15 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   async connect(): Promise<void> {
+    if (this.closed) {
+      throw this.createClosedError();
+    }
     if (this.connected) return;
     if (this.connectionPromise) {
       await this.connectionPromise;
+      if (this.closed) {
+        throw this.createClosedError();
+      }
       return;
     }
 
@@ -3245,20 +3252,28 @@ export class CodexAppServerAgentSession implements AgentSession {
         this.connectionPromise = null;
       }
     }
+    if (this.closed) {
+      throw this.createClosedError();
+    }
   }
 
   private async establishConnection(): Promise<void> {
     const child = await this.spawnAppServer();
-    this.client = new CodexAppServerClient(child, this.logger, () => this.traceContext());
-    this.client.setUnexpectedTerminationHandler((error) => {
+    const client = new CodexAppServerClient(child, this.logger, () => this.traceContext());
+    if (this.closed) {
+      await client.dispose();
+      throw this.createClosedError();
+    }
+    this.client = client;
+    client.setUnexpectedTerminationHandler((error) => {
       this.handleUnexpectedTermination(error);
     });
-    this.client.setNotificationHandler((method, params) => this.handleNotification(method, params));
+    client.setNotificationHandler((method, params) => this.handleNotification(method, params));
     this.registerRequestHandlers();
 
     try {
-      await this.client.request("initialize", buildCodexAppServerInitializeParams());
-      this.client.notify("initialized", {});
+      await client.request("initialize", buildCodexAppServerInitializeParams());
+      client.notify("initialized", {});
 
       await this.loadCollaborationModes();
       await this.loadSkills();
@@ -3270,10 +3285,17 @@ export class CodexAppServerAgentSession implements AgentSession {
         await this.loadPersistedHistory();
       }
 
+      if (this.closed) {
+        throw this.createClosedError();
+      }
       this.connected = true;
     } catch (error) {
       try {
-        await this.disposeClient();
+        if (this.client === client) {
+          await this.disposeClient();
+        } else {
+          await client.dispose();
+        }
       } catch (disposeError) {
         this.logger.warn(
           { err: disposeError, connectError: error },
@@ -3282,6 +3304,10 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
       throw error;
     }
+  }
+
+  private createClosedError(): Error {
+    return new Error("Codex app-server session is closed");
   }
 
   private traceContext(): CodexAppServerTraceContext {
@@ -4347,6 +4373,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   async close(): Promise<void> {
+    this.closed = true;
     this.clearPendingPermissions();
     this.pendingSubAgentNotificationsByThreadId.clear();
     this.subscribers.clear();
