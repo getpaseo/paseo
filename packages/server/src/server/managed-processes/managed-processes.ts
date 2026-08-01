@@ -126,6 +126,7 @@ export interface ManagedProcessRegistry {
     input: ManagedProcessRecordInput,
     options?: { onIdentityCaptured?: (record: ManagedProcessRecord) => void },
   ): Promise<ManagedProcessRecord>;
+  retain(record: ManagedProcessRecord): Promise<void>;
   confirmExecTransition(id: string): Promise<void>;
   remove(id: string): Promise<void>;
   list(): Promise<ManagedProcessRecord[]>;
@@ -137,6 +138,7 @@ interface ManagedProcessRegistryOptions {
   processTable: ManagedProcessTable;
   terminateProcess: ProcessTerminator;
   logger: Logger;
+  writeRecord?: (filePath: string, record: ManagedProcessRecord) => Promise<void>;
 }
 
 export function createManagedProcessRegistry(
@@ -331,6 +333,7 @@ class FileBackedManagedProcessRegistry implements ManagedProcessRegistry {
   private readonly processTable: ManagedProcessTable;
   private readonly terminateProcess: ProcessTerminator;
   private readonly logger: Logger;
+  private readonly writeRecord: (filePath: string, record: ManagedProcessRecord) => Promise<void>;
   private readonly recordOperations = new Map<string, Promise<void>>();
 
   constructor(options: ManagedProcessRegistryOptions) {
@@ -338,6 +341,7 @@ class FileBackedManagedProcessRegistry implements ManagedProcessRegistry {
     this.processTable = options.processTable;
     this.terminateProcess = options.terminateProcess;
     this.logger = options.logger.child({ module: "managed-processes" });
+    this.writeRecord = options.writeRecord ?? writeJsonFileAtomic;
   }
 
   async record(
@@ -374,8 +378,14 @@ class FileBackedManagedProcessRegistry implements ManagedProcessRegistry {
     };
 
     options?.onIdentityCaptured?.(record);
-    await writeJsonFileAtomic(this.recordPath(record.id), record);
+    await this.retain(record);
     return record;
+  }
+
+  async retain(record: ManagedProcessRecord): Promise<void> {
+    await this.withRecordLock(record.id, () =>
+      this.writeRecord(this.recordPath(record.id), record),
+    );
   }
 
   async remove(id: string): Promise<void> {
@@ -416,7 +426,7 @@ class FileBackedManagedProcessRegistry implements ManagedProcessRegistry {
       throw new Error("Cannot confirm managed process exec transition without a command line");
     }
 
-    await writeJsonFileAtomic(entry.path, {
+    await this.writeRecord(entry.path, {
       ...entry.record,
       lifecycle: { ...entry.record.lifecycle, execTransition: "confirmed" },
       identity: { ...entry.record.identity, commandLine: inspection.snapshot.commandLine },

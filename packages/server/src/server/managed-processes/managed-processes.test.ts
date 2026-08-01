@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
+import { writeJsonFileAtomic } from "../atomic-file.js";
 import {
   createManagedProcessRegistry,
   createPidTarget,
@@ -11,6 +12,7 @@ import {
   type ManagedProcessCommandRunner,
   type ManagedProcessGroupInspection,
   type ManagedProcessInspection,
+  type ManagedProcessRecord,
   type ManagedProcessSnapshot,
   type ManagedProcessTable,
 } from "./managed-processes.js";
@@ -310,6 +312,58 @@ describe("managed process registry", () => {
       }),
     ).rejects.toThrow("Cannot record managed process identity: inspection failed");
     expect(await registry.list()).toEqual([]);
+  });
+
+  test("can durably retain captured identity after the initial record write fails", async () => {
+    tempHome = await mkdtemp(path.join(tmpdir(), "paseo-managed-processes-"));
+    const processTable = new FakeProcessTable([
+      {
+        pid: 4117,
+        commandLine: "opencode serve --port 4117",
+        startedAt: "process-start-token",
+        token: "managed-token-4117",
+      },
+    ]);
+    let capturedRecord: ManagedProcessRecord | null = null;
+    let writeCount = 0;
+    const registry = createManagedProcessRegistry({
+      paseoHome: tempHome,
+      processTable,
+      terminateProcess: new FakeProcessTerminator().terminate,
+      logger: createTestLogger(),
+      writeRecord: async (filePath, record) => {
+        writeCount += 1;
+        if (writeCount === 1) {
+          throw new Error("initial ledger write failed");
+        }
+        await writeJsonFileAtomic(filePath, record);
+      },
+    });
+
+    await expect(
+      registry.record(
+        {
+          owner: { provider: "opencode", kind: "helper-server" },
+          pid: 4117,
+          command: "opencode",
+          args: ["serve", "--port", "4117"],
+          lifecycle: { execTransition: "pending", terminationScope: "process-group" },
+          identityToken: "managed-token-4117",
+        },
+        { onIdentityCaptured: (record) => (capturedRecord = record) },
+      ),
+    ).rejects.toThrow("initial ledger write failed");
+    expect(capturedRecord).not.toBeNull();
+
+    await registry.retain(capturedRecord!);
+    const restartedRegistry = createManagedProcessRegistry({
+      paseoHome: tempHome,
+      processTable,
+      terminateProcess: new FakeProcessTerminator().terminate,
+      logger: createTestLogger(),
+    });
+
+    expect(await restartedRegistry.list()).toEqual([capturedRecord]);
   });
 
   test("deletes a dead tokenless process-group record without signaling it", async () => {
