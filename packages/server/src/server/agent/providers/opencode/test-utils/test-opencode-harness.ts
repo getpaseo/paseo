@@ -14,8 +14,11 @@ export class TestOpenCodeHarness implements OpenCodeServerManagerLike {
     url?: string;
     releaseCount: number;
   }> = [];
+  readonly acquisitionSignals: Array<AbortSignal | undefined> = [];
   readonly clientCreations: Array<{ baseUrl: string; directory: string }> = [];
   private readonly clients: TestOpenCodeClient[] = [];
+  releaseImplementation: (() => Promise<void>) | null = null;
+  shutdownCallCount = 0;
 
   server = { port: 1234, url: "http://127.0.0.1:1234" };
 
@@ -23,16 +26,19 @@ export class TestOpenCodeHarness implements OpenCodeServerManagerLike {
     this.clients.push(client);
   }
 
-  async acquireCurrent(): Promise<OpenCodeServerAcquisition> {
-    return this.recordAcquisition({ kind: "current" });
+  async acquireCurrent(signal?: AbortSignal): Promise<OpenCodeServerAcquisition> {
+    return this.recordAcquisition({ kind: "current", signal });
   }
 
   async acquireNew(): Promise<OpenCodeServerAcquisition> {
     return this.recordAcquisition({ kind: "new" });
   }
 
-  async acquireDedicated(env: Record<string, string>): Promise<OpenCodeServerAcquisition> {
-    return this.recordAcquisition({ kind: "dedicated", env });
+  async acquireDedicated(
+    env: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<OpenCodeServerAcquisition> {
+    return this.recordAcquisition({ kind: "dedicated", env, signal });
   }
 
   acquireExisting(url: string): OpenCodeServerAcquisition | null {
@@ -43,7 +49,9 @@ export class TestOpenCodeHarness implements OpenCodeServerManagerLike {
     kind: "current" | "new" | "dedicated" | "existing";
     env?: Record<string, string>;
     url?: string;
+    signal?: AbortSignal;
   }): OpenCodeServerAcquisition {
+    this.acquisitionSignals.push(input.signal);
     const acquisition = {
       kind: input.kind,
       releaseCount: 0,
@@ -55,6 +63,7 @@ export class TestOpenCodeHarness implements OpenCodeServerManagerLike {
       server: this.server,
       release: async () => {
         acquisition.releaseCount += 1;
+        await this.releaseImplementation?.();
       },
     };
   }
@@ -65,7 +74,9 @@ export class TestOpenCodeHarness implements OpenCodeServerManagerLike {
     return client.asSdkClient();
   };
 
-  async shutdown(): Promise<void> {}
+  async shutdown(): Promise<void> {
+    this.shutdownCallCount += 1;
+  }
 }
 
 export class TestOpenCodeClient {
@@ -117,7 +128,9 @@ export class TestOpenCodeClient {
   sessionCommandEvents: unknown[] = [idleEvent()];
   sessionCommandResponse: OpenCodeResponse = {};
   sessionCreateResponse: OpenCodeResponse = { data: { id: "session-1" } };
+  sessionCreateImplementation: ((parameters: unknown) => Promise<OpenCodeResponse>) | null = null;
   sessionDeleteResponse: OpenCodeResponse = {};
+  sessionDeleteImplementation: ((parameters: unknown) => Promise<OpenCodeResponse>) | null = null;
   sessionChildrenResponses: OpenCodeResponse[] = [];
   sessionChildrenImplementation: ((parameters: unknown) => Promise<OpenCodeResponse>) | null = null;
   sessionGetResponse: OpenCodeResponse = {
@@ -238,11 +251,15 @@ export class TestOpenCodeClient {
         },
         create: async (parameters: unknown) => {
           this.calls.sessionCreate.push(parameters);
-          return this.sessionCreateResponse;
+          return this.sessionCreateImplementation
+            ? await this.sessionCreateImplementation(parameters)
+            : this.sessionCreateResponse;
         },
         delete: async (parameters: unknown) => {
           this.calls.sessionDelete.push(parameters);
-          return this.sessionDeleteResponse;
+          return this.sessionDeleteImplementation
+            ? await this.sessionDeleteImplementation(parameters)
+            : this.sessionDeleteResponse;
         },
         children: async (parameters: unknown) => {
           this.calls.sessionChildren.push(parameters);

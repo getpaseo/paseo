@@ -228,6 +228,28 @@ function createFakeClient(overrides: Partial<AgentClient> = {}): AgentClient {
 }
 
 describe("wrapClientProvider", () => {
+  test("forwards create options to the inner provider", async () => {
+    const createSession = vi.fn(async () => new FakeSession());
+    const wrapped = wrapClientProvider(
+      "custom-opencode",
+      createFakeClient({ createSession }),
+      [],
+      [],
+      false,
+    );
+    const controller = new AbortController();
+
+    await wrapped.createSession({ provider: "custom-opencode", cwd: "/workspace" }, undefined, {
+      signal: controller.signal,
+    });
+
+    expect(createSession).toHaveBeenCalledWith(
+      { provider: "opencode", cwd: "/workspace" },
+      undefined,
+      { signal: controller.signal },
+    );
+  });
+
   test("forwards lifecycle methods with the inner provider and shares reentrant shutdown", async () => {
     const archiveNativeSession = vi.fn(async () => {});
     const unarchiveNativeSession = vi.fn(async () => {});

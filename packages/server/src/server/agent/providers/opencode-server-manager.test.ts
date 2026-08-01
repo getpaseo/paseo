@@ -264,6 +264,38 @@ describe("OpenCodeServerManager generations", () => {
     expect(runtime.terminatedPorts).toEqual([4477]);
   });
 
+  test("a server generation that finishes after caller cancellation remains available", async () => {
+    const portGate = createDeferred<number>();
+    const portAllocationStarted = createDeferred<void>();
+    const runtime = new FakeOpenCodeServerRuntime([4476], { autoAnnounce: true });
+    const manager = new OpenCodeServerManager({
+      logger: createTestLogger(),
+      managedProcesses: runtime.managedProcesses,
+      portAllocator: async () => {
+        portAllocationStarted.resolve();
+        return portGate.promise;
+      },
+      resolveCommandPrefix: runtime.resolveCommandPrefix,
+      spawnServerProcess: runtime.spawnServerProcess,
+      terminateProcess: runtime.terminateProcess,
+    });
+    const controller = new AbortController();
+    const canceledAcquisition = manager.acquireCurrent(controller.signal);
+    await portAllocationStarted.promise;
+
+    controller.abort(new Error("startup canceled"));
+    await expect(canceledAcquisition).rejects.toThrow("startup canceled");
+    portGate.resolve(4476);
+    await vi.waitFor(() => expect(runtime.launchedPorts).toEqual([4476]));
+
+    const retainedAcquisition = await manager.acquireCurrent();
+
+    expect(retainedAcquisition.server.url).toBe("http://127.0.0.1:4476");
+    expect(runtime.launchedPorts).toEqual([4476]);
+    await retainedAcquisition.release();
+    expect(runtime.terminatedPorts).toEqual([4476]);
+  });
+
   test("shutdown while acquireNew rotation is pending prevents the replacement spawn", async () => {
     const runtime = new FakeOpenCodeServerRuntime([4478, 4479], { autoAnnounce: true });
     const replacementPrefixGate = createDeferred<{ command: string; args: string[] }>();

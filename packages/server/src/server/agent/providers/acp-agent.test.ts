@@ -2850,6 +2850,7 @@ interface ACPCloseInternals {
   child: ChildProcess | null;
   connection: unknown;
   sessionId: string | null;
+  agentCapabilities: { sessionCapabilities?: { close?: unknown } } | null;
 }
 
 async function startTerminal(
@@ -2947,6 +2948,28 @@ describe("ACPAgentSession close() tree-kill", () => {
     await close;
   });
 
+  test("close() starts child termination while courtesy session close is pending", async () => {
+    const terminator = new FakeTerminator("deferred");
+    const session = createSession(terminator.terminate);
+    const internals = asInternals<ACPCloseInternals>(session);
+    const child = createTerminalChildStub();
+    let finishCourtesyClose!: () => void;
+    const courtesyClose = new Promise<void>((resolve) => {
+      finishCourtesyClose = resolve;
+    });
+    internals.child = child;
+    internals.sessionId = "session-1";
+    internals.agentCapabilities = { sessionCapabilities: { close: {} } };
+    internals.connection = { unstable_closeSession: () => courtesyClose };
+
+    const close = session.close();
+    await vi.waitFor(() => expect(terminator.terminated).toContain(child));
+
+    finishCourtesyClose();
+    terminator.releaseAll();
+    await close;
+  });
+
   test("killTerminal terminates the terminal process tree without a direct SIGTERM", async () => {
     const terminator = new FakeTerminator();
     const session = createSession(terminator.terminate);
@@ -2978,6 +3001,71 @@ describe("ACPAgentSession close() tree-kill", () => {
 });
 
 describe("ACPAgentSession initialization cleanup", () => {
+  test("aborts a pending session/new request and terminates the ACP process", async () => {
+    const terminator = new FakeTerminator();
+    const child = createProbeChildStub();
+    const newSession = vi.fn(async () => await new Promise<never>(() => {}));
+
+    class PendingNewSession extends ACPAgentSession {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child,
+          connection: { newSession } as unknown as ClientSideConnection,
+          initialize: { agentCapabilities: {} },
+        };
+      }
+    }
+
+    const session = new PendingNewSession(
+      { provider: "copilot", cwd: "/tmp/paseo-acp-test" },
+      {
+        provider: "copilot",
+        logger: createTestLogger(),
+        defaultCommand: ["copilot", "--acp"],
+        defaultModes: [],
+        capabilities: { supportsStreaming: true, supportsSessionPersistence: true },
+        terminateProcess: terminator.terminate,
+      },
+    );
+    const controller = new AbortController();
+    const initialization = session.initializeNewSession(controller.signal);
+    await vi.waitFor(() => expect(newSession).toHaveBeenCalledTimes(1));
+
+    controller.abort(new Error("ACP startup canceled"));
+
+    await expect(initialization).rejects.toThrow("ACP startup canceled");
+    expect(terminator.terminated).toContain(child);
+  });
+
+  test("an already-aborted resume does not start the ACP process", async () => {
+    let spawned = false;
+    class AbortedResumeSession extends ACPAgentSession {
+      protected override async spawnProcess(signal?: AbortSignal): Promise<SpawnedACPProcess> {
+        signal?.throwIfAborted();
+        spawned = true;
+        throw new Error("unexpected spawn");
+      }
+    }
+    const session = new AbortedResumeSession(
+      { provider: "cursor", cwd: "/tmp/paseo-acp-test" },
+      {
+        provider: "cursor",
+        logger: createTestLogger(),
+        defaultCommand: ["cursor-agent", "acp"],
+        defaultModes: [],
+        capabilities: { supportsStreaming: true, supportsSessionPersistence: true },
+        handle: { provider: "cursor", sessionId: "session-1" },
+      },
+    );
+    const controller = new AbortController();
+    controller.abort(new Error("ACP resume canceled"));
+
+    await expect(session.initializeResumedSession(controller.signal)).rejects.toThrow(
+      "ACP resume canceled",
+    );
+    expect(spawned).toBe(false);
+  });
+
   test("terminates the ACP process when session/new fails", async () => {
     const terminator = new FakeTerminator();
     const child = createProbeChildStub();

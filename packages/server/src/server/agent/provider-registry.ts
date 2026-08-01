@@ -411,7 +411,7 @@ export function wrapClientProvider(
   return {
     provider,
     capabilities: inner.capabilities,
-    createSession: async (config, launchContext) =>
+    createSession: async (config, launchContext, options) =>
       wrapSessionProvider(
         provider,
         await inner.createSession(
@@ -420,6 +420,7 @@ export function wrapClientProvider(
             provider: inner.provider,
           },
           launchContext,
+          options,
         ),
       ),
     resumeSession: async (handle, overrides, launchContext, options) =>

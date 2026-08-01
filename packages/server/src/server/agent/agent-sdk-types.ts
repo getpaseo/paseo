@@ -600,12 +600,16 @@ export interface AgentCreateSessionOptions {
    * Defaults to true. Providers that cannot honor false should no-op.
    */
   persistSession?: boolean;
+  /** Cooperative daemon shutdown for provider startup. */
+  signal?: AbortSignal;
 }
 
 /** Runtime-only intent for a persisted-session resume. Never persist this option. */
 export interface AgentResumeSessionOptions {
   /** Defaults to interactive. History loading may be read-only for archived native sessions. */
   purpose?: "interactive" | "history";
+  /** Cooperative daemon shutdown for provider resume. */
+  signal?: AbortSignal;
 }
 
 /**

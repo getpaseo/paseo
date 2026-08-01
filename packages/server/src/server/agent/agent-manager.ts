@@ -587,6 +587,7 @@ export class AgentManager {
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
   private readonly defaultModelResolutionTimeoutMs: number;
+  private readonly registrationAbortController = new AbortController();
   private acceptingAgentRegistrations = true;
 
   constructor(options: AgentManagerOptions) {
@@ -668,6 +669,7 @@ export class AgentManager {
 
   prepareForShutdown(): void {
     this.acceptingAgentRegistrations = false;
+    this.registrationAbortController.abort(new AgentManagerShuttingDownError());
     for (const controller of this.defaultModelResolutionControllers) {
       controller.abort(new AgentManagerShuttingDownError());
     }
@@ -1039,7 +1041,10 @@ export class AgentManager {
       options?.env,
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
-    const createOptions = this.buildCreateSessionOptions(options);
+    const createOptions = this.buildCreateSessionOptions({
+      ...options,
+      signal: this.registrationAbortController.signal,
+    });
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       labels: options.labels,
@@ -1051,10 +1056,11 @@ export class AgentManager {
 
   private buildCreateSessionOptions(options?: {
     persistSession?: boolean;
+    signal?: AbortSignal;
   }): AgentCreateSessionOptions | undefined {
-    return options?.persistSession === undefined
+    return options?.persistSession === undefined && options?.signal === undefined
       ? undefined
-      : { persistSession: options.persistSession };
+      : { persistSession: options?.persistSession, signal: options?.signal };
   }
 
   // Reconstruct an agent from provider persistence. Callers should explicitly
@@ -1117,12 +1123,12 @@ export class AgentManager {
     }
     const launchContext = await this.buildLaunchContext(resolvedAgentId, client, storedConfig.cwd);
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
-    const session = await client.resumeSession(
-      handle,
-      providerLaunchConfig,
-      launchContext,
-      resumeOptions,
-    );
+    const session = await client.resumeSession(handle, providerLaunchConfig, launchContext, {
+      ...resumeOptions,
+      signal: resumeOptions?.signal
+        ? AbortSignal.any([this.registrationAbortController.signal, resumeOptions.signal])
+        : this.registrationAbortController.signal,
+    });
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       ...options,
       persistence: handle,
@@ -1247,8 +1253,12 @@ export class AgentManager {
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
 
     const session = handle
-      ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
-      : await client.createSession(providerLaunchConfig, launchContext);
+      ? await client.resumeSession(handle, providerLaunchConfig, launchContext, {
+          signal: this.registrationAbortController.signal,
+        })
+      : await client.createSession(providerLaunchConfig, launchContext, {
+          signal: this.registrationAbortController.signal,
+        });
 
     let handedToRegistration = false;
     try {

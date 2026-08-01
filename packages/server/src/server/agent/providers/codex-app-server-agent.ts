@@ -107,6 +107,28 @@ function assertChildWithPipes(
   }
 }
 
+async function awaitCodexStartupWithAbort<T>(
+  promise: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (!signal) return await promise;
+  signal.throwIfAborted();
+  return await new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    signal.addEventListener("abort", abort, { once: true });
+    void promise.then(
+      (value) => {
+        signal.removeEventListener("abort", abort);
+        return resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", abort);
+        return reject(error);
+      },
+    );
+  });
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value);
 }
@@ -3222,28 +3244,53 @@ export class CodexAppServerAgentSession implements AgentSession {
     });
   }
 
-  async connect(): Promise<void> {
+  async connect(signal?: AbortSignal): Promise<void> {
     if (this.connected) return;
-    const child = await this.spawnAppServer();
+    signal?.throwIfAborted();
+    const childPromise = this.spawnAppServer();
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = await awaitCodexStartupWithAbort(childPromise, signal);
+    } catch (error) {
+      if (signal?.aborted) {
+        void childPromise
+          .then(async (lateChild) => {
+            const lateClient = new CodexAppServerClient(lateChild, this.logger);
+            return await lateClient.dispose();
+          })
+          .catch((cleanupError) => {
+            this.logger.warn(
+              { err: cleanupError },
+              "Failed to dispose Codex app-server after startup cancellation",
+            );
+          });
+      }
+      throw error;
+    }
     this.client = new CodexAppServerClient(child, this.logger, () => this.traceContext());
     this.client.setNotificationHandler((method, params) => this.handleNotification(method, params));
     this.registerRequestHandlers();
 
     try {
-      await this.client.request("initialize", buildCodexAppServerInitializeParams());
-      this.client.notify("initialized", {});
+      await awaitCodexStartupWithAbort(
+        (async () => {
+          await this.client!.request("initialize", buildCodexAppServerInitializeParams());
+          this.client!.notify("initialized", {});
 
-      await this.loadCollaborationModes();
-      await this.loadSkills();
+          await this.loadCollaborationModes();
+          await this.loadSkills();
 
-      if (this.currentThreadId) {
-        await this.ensureThreadLoaded({
-          allowArchivedHistory: this.initialResumePurpose === "history",
-        });
-        await this.loadPersistedHistory();
-      }
+          if (this.currentThreadId) {
+            await this.ensureThreadLoaded({
+              allowArchivedHistory: this.initialResumePurpose === "history",
+            });
+            await this.loadPersistedHistory();
+          }
 
-      this.connected = true;
+          this.connected = true;
+        })(),
+        signal,
+      );
     } catch (error) {
       try {
         await this.close();
@@ -6341,7 +6388,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       autoReviewEnabled,
       launchContext?.agentId,
     );
-    await session.connect();
+    await session.connect(options?.signal);
     return session;
   }
 
@@ -6373,7 +6420,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       launchContext?.agentId,
       options?.purpose ?? "interactive",
     );
-    await session.connect();
+    await session.connect(options?.signal);
     return session;
   }
 

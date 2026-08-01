@@ -63,6 +63,7 @@ import {
   getAgentStreamEventTurnId,
   type AgentCapabilityFlags,
   type AgentClient,
+  type AgentCreateSessionOptions,
   type AgentFeature,
   type AgentLaunchContext,
   type AgentMetadata,
@@ -76,6 +77,7 @@ import {
   type AgentPromptInput,
   type AgentRunOptions,
   type AgentRunResult,
+  type AgentResumeSessionOptions,
   type AgentRuntimeInfo,
   type AgentSession,
   type AgentSessionConfig,
@@ -120,6 +122,25 @@ function assertChildWithPipes(
   if (!child.stdin || !child.stdout || !child.stderr) {
     throw new Error("Child process did not expose stdio pipes");
   }
+}
+
+async function awaitACPStartupWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return await promise;
+  signal.throwIfAborted();
+  return await new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    signal.addEventListener("abort", abort, { once: true });
+    void promise.then(
+      (value) => {
+        signal.removeEventListener("abort", abort);
+        return resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", abort);
+        return reject(error);
+      },
+    );
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -791,6 +812,7 @@ export class ACPAgentClient implements AgentClient {
   async createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
+    options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     this.assertProvider(config);
     const session = new ACPAgentSession(
@@ -820,7 +842,7 @@ export class ACPAgentClient implements AgentClient {
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
       },
     );
-    await session.initializeNewSession();
+    await session.initializeNewSession(options?.signal);
     return session;
   }
 
@@ -828,6 +850,7 @@ export class ACPAgentClient implements AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ): Promise<AgentSession> {
     if (handle.provider !== this.provider) {
       throw new Error(`Cannot resume ${handle.provider} handle with ${this.provider} provider`);
@@ -870,7 +893,7 @@ export class ACPAgentClient implements AgentClient {
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
     });
-    await session.initializeResumedSession();
+    await session.initializeResumedSession(options?.signal);
     return session;
   }
 
@@ -1418,23 +1441,26 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     return this.sessionId;
   }
 
-  async initializeNewSession(): Promise<void> {
+  async initializeNewSession(signal?: AbortSignal): Promise<void> {
     try {
-      const spawned = await this.spawnProcess();
+      const spawned = await this.spawnProcess(signal);
       this.child = spawned.child;
       this.connection = spawned.connection;
       this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
 
-      const response = await this.runACPRequest(() =>
-        this.connection!.newSession({
-          cwd: this.config.cwd,
-          mcpServers: this.acpMcpServers(),
-        }),
+      const response = await awaitACPStartupWithAbort(
+        this.runACPRequest(() =>
+          this.connection!.newSession({
+            cwd: this.config.cwd,
+            mcpServers: this.acpMcpServers(),
+          }),
+        ),
+        signal,
       );
       this.sessionId = response.sessionId;
       this.bootstrapThreadEventPending = true;
       this.applySessionState(response);
-      await this.applyConfiguredOverrides();
+      await awaitACPStartupWithAbort(this.applyConfiguredOverrides(), signal);
     } catch (error) {
       await this.closeAfterInitializationFailure(error);
     }
@@ -1447,14 +1473,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
    * return "Invalid params" if any are omitted. Never drop cwd or mcpServers
    * from these calls regardless of capabilities.
    */
-  async initializeResumedSession(): Promise<void> {
+  async initializeResumedSession(signal?: AbortSignal): Promise<void> {
     try {
       const handle = this.initialHandle;
       if (!handle) {
         throw new Error("Resume requested without persistence handle");
       }
 
-      const spawned = await this.spawnProcess();
+      const spawned = await this.spawnProcess(signal);
       this.child = spawned.child;
       this.connection = spawned.connection;
       this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
@@ -1464,31 +1490,37 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       const sessionCapabilities = this.agentCapabilities?.sessionCapabilities;
       if (this.agentCapabilities?.loadSession) {
         this.replayingHistory = true;
-        const response = await this.runACPRequest(() =>
-          this.connection!.loadSession({
-            sessionId: handle.sessionId,
-            cwd: this.config.cwd,
-            mcpServers: this.acpMcpServers(),
-          }),
+        const response = await awaitACPStartupWithAbort(
+          this.runACPRequest(() =>
+            this.connection!.loadSession({
+              sessionId: handle.sessionId,
+              cwd: this.config.cwd,
+              mcpServers: this.acpMcpServers(),
+            }),
+          ),
+          signal,
         );
         this.deliverTranslatedEvents(this.flushPendingUserMessage());
         this.replayingHistory = false;
         this.historyPending = this.persistedHistory.length > 0;
         this.applySessionState(response);
       } else if (sessionCapabilities?.resume) {
-        const response = await this.runACPRequest(() =>
-          this.connection!.unstable_resumeSession({
-            sessionId: handle.sessionId,
-            cwd: this.config.cwd,
-            mcpServers: this.acpMcpServers(),
-          }),
+        const response = await awaitACPStartupWithAbort(
+          this.runACPRequest(() =>
+            this.connection!.unstable_resumeSession({
+              sessionId: handle.sessionId,
+              cwd: this.config.cwd,
+              mcpServers: this.acpMcpServers(),
+            }),
+          ),
+          signal,
         );
         this.applySessionState(response);
       } else {
         throw new Error(`${this.provider} does not support ACP session resume`);
       }
 
-      await this.applyConfiguredOverrides();
+      await awaitACPStartupWithAbort(this.applyConfiguredOverrides(), signal);
     } catch (error) {
       await this.closeAfterInitializationFailure(error);
     }
@@ -2096,21 +2128,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
     this.pendingPermissions.clear();
 
-    if (this.connection && this.sessionId) {
-      try {
-        if (this.activeForegroundTurnId) {
-          await this.connection.cancel({ sessionId: this.sessionId });
-        }
-      } catch {}
-
-      try {
-        if (this.agentCapabilities?.sessionCapabilities?.close) {
-          await this.connection.unstable_closeSession({ sessionId: this.sessionId });
-        }
-      } catch (error) {
-        this.logger.debug({ err: error }, "ACP closeSession failed during shutdown");
-      }
-    }
+    const courtesyClose = withTimeout(
+      this.closeNativeSession(),
+      2_000,
+      "ACP native session close timed out",
+    ).catch((error) => {
+      this.logger.debug({ err: error }, "ACP closeSession failed during shutdown");
+    });
 
     const terminalTerminations = Array.from(this.terminalEntries.values(), (terminal) =>
       this.terminateProcess(terminal.child, {
@@ -2118,17 +2142,28 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         forceTimeoutMs: 2_000,
       }),
     );
-    await Promise.all(terminalTerminations);
+    const childTermination = this.child
+      ? this.terminateProcess(this.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 })
+      : Promise.resolve();
+    await Promise.all([courtesyClose, childTermination, ...terminalTerminations]);
     this.terminalEntries.clear();
-
-    if (this.child) {
-      await this.terminateProcess(this.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
-    }
 
     this.subscribers.clear();
     this.connection = null;
     this.child = null;
     this.activeForegroundTurnId = null;
+  }
+
+  private async closeNativeSession(): Promise<void> {
+    if (!this.connection || !this.sessionId) return;
+    try {
+      if (this.activeForegroundTurnId) {
+        await this.connection.cancel({ sessionId: this.sessionId });
+      }
+    } catch {}
+    if (this.agentCapabilities?.sessionCapabilities?.close) {
+      await this.connection.unstable_closeSession({ sessionId: this.sessionId });
+    }
   }
 
   async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
@@ -2357,12 +2392,19 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     return {};
   }
 
-  private async spawnProcess(): Promise<SpawnedACPProcess> {
-    const prefix = await resolveProviderLaunch({
-      commandConfig: this.runtimeSettings?.command,
-      defaultBinary: this.defaultCommand[0],
-    });
-    const availability = await checkProviderLaunchAvailable(prefix);
+  protected async spawnProcess(signal?: AbortSignal): Promise<SpawnedACPProcess> {
+    signal?.throwIfAborted();
+    const prefix = await awaitACPStartupWithAbort(
+      resolveProviderLaunch({
+        commandConfig: this.runtimeSettings?.command,
+        defaultBinary: this.defaultCommand[0],
+      }),
+      signal,
+    );
+    const availability = await awaitACPStartupWithAbort(
+      checkProviderLaunchAvailable(prefix),
+      signal,
+    );
     if (!availability.available) {
       throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
     }
@@ -2383,7 +2425,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     child.stderr.on("data", (chunk: Buffer | string) => {
       stderrChunks.push(chunk.toString());
     });
-    child.once("exit", (code, signal) => {
+    child.once("exit", (code, exitSignal) => {
       if (this.closed) {
         return;
       }
@@ -2392,7 +2434,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         this.finishTurn({
           type: "turn_failed",
           provider: this.provider,
-          error: `ACP agent exited unexpectedly (${code ?? "null"}${signal ? `, ${signal}` : ""})`,
+          error: `ACP agent exited unexpectedly (${code ?? "null"}${exitSignal ? `, ${exitSignal}` : ""})`,
           diagnostic: stderrChunks.join("").trim() || undefined,
           turnId: this.activeForegroundTurnId,
         });
@@ -2409,15 +2451,18 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     // close the process even when the ACP handshake itself rejects.
     this.child = child;
     this.connection = connection;
-    const initialize = await this.runACPRequest(() =>
-      connection.initialize({
-        protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: buildACPClientCapabilities(
-          this.clientCapabilityMeta,
-          this.clientCapabilities,
-        ),
-        clientInfo: { name: "Paseo", version: "dev" },
-      }),
+    const initialize = await awaitACPStartupWithAbort(
+      this.runACPRequest(() =>
+        connection.initialize({
+          protocolVersion: PROTOCOL_VERSION,
+          clientCapabilities: buildACPClientCapabilities(
+            this.clientCapabilityMeta,
+            this.clientCapabilities,
+          ),
+          clientInfo: { name: "Paseo", version: "dev" },
+        }),
+      ),
+      signal,
     );
 
     return { child, connection, initialize };

@@ -74,6 +74,14 @@ const ONE_BY_ONE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X1r0AAAAASUVORK5CYII=";
 const CODEX_PROVIDER = "codex";
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSessionConfig {
   return {
     provider: CODEX_PROVIDER,
@@ -905,6 +913,36 @@ describe("Codex app-server provider", () => {
     });
     appServer.assertNoErrors();
     await session.close();
+  });
+
+  test("disposes an app-server child that resolves after startup cancellation", async () => {
+    const appServer = createFakeCodexAppServer();
+    const childGate = deferred<ChildProcessWithoutNullStreams>();
+    const spawnStarted = deferred<void>();
+    const provider = new CodexAppServerAgentClient(createTestLogger());
+    const internals = castInternals<{
+      goalsEnabledPromise: Promise<boolean> | null;
+      autoReviewEnabledPromise: Promise<boolean> | null;
+      spawnAppServer: () => Promise<ChildProcessWithoutNullStreams>;
+    }>(provider);
+    internals.goalsEnabledPromise = Promise.resolve(false);
+    internals.autoReviewEnabledPromise = Promise.resolve(false);
+    internals.spawnAppServer = async () => {
+      spawnStarted.resolve();
+      return await childGate.promise;
+    };
+    const killSpy = vi.spyOn(appServer.child, "kill");
+    const controller = new AbortController();
+    const creation = provider.createSession(createConfig(), undefined, {
+      signal: controller.signal,
+    });
+    await spawnStarted.promise;
+
+    controller.abort(new Error("Codex startup canceled"));
+
+    await expect(creation).rejects.toThrow("Codex startup canceled");
+    childGate.resolve(appServer.child);
+    await vi.waitFor(() => expect(killSpy).toHaveBeenCalledWith("SIGTERM"));
   });
 
   test("loads archived Codex history without resuming the native thread", async () => {

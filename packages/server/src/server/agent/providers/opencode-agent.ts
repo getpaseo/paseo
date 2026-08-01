@@ -33,6 +33,7 @@ import {
   type AgentPromptInput,
   type AgentRunOptions,
   type AgentRunResult,
+  type AgentResumeSessionOptions,
   type AgentRuntimeInfo,
   type AgentSession,
   type AgentSessionConfig,
@@ -68,6 +69,7 @@ import { execCommand } from "../../../utils/spawn.js";
 import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
 import {
   OpenCodeServerManager,
+  type OpenCodeServerAcquisition,
   type OpenCodeServerManagerLease,
   type OpenCodeServerManagerLike,
 } from "./opencode/server-manager.js";
@@ -108,6 +110,29 @@ const OPENCODE_CHILD_SESSION_HYDRATION_LIMIT = 100;
 const OPENCODE_CHILD_SESSION_SERVER_REGISTRY_LIMIT = 500;
 const OPENCODE_PERMISSION_ACTION_ALLOW_ONCE = "allow_once";
 const OPENCODE_PERMISSION_ACTION_ALLOW_ALWAYS = "allow_always";
+const OPENCODE_FAILED_CREATE_DELETE_TIMEOUT_MS = 5_000;
+
+async function awaitOpenCodeStartupWithAbort<T>(
+  promise: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (!signal) return await promise;
+  signal.throwIfAborted();
+  return await new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    signal.addEventListener("abort", abort, { once: true });
+    void promise.then(
+      (value) => {
+        signal.removeEventListener("abort", abort);
+        return resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", abort);
+        return reject(error);
+      },
+    );
+  });
+}
 
 // OpenCode child sessions run on the server process that spawned them. Adoption
 // resumes must attach to that same helper server to receive live global events.
@@ -1335,6 +1360,7 @@ export class OpenCodeAgentClient implements AgentClient {
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly modelContextWindows = new Map<string, number>();
+  private readonly failedSessionStartupCleanupTasks = new Set<Promise<void>>();
 
   constructor(
     logger: Logger,
@@ -1362,20 +1388,26 @@ export class OpenCodeAgentClient implements AgentClient {
   ): Promise<AgentSession> {
     const openCodeConfig = this.assertConfig(config);
     const serverManager = this.getServerManager();
-    const acquisition = launchContext?.env
-      ? await serverManager.acquireDedicated(launchContext.env)
-      : await serverManager.acquireCurrent();
+    const acquisitionPromise = launchContext?.env
+      ? serverManager.acquireDedicated(launchContext.env, options?.signal)
+      : serverManager.acquireCurrent(options?.signal);
+    const acquisition = await acquisitionPromise;
+    if (options?.signal?.aborted) {
+      await this.releaseFailedSessionStartup(acquisition);
+      options.signal.throwIfAborted();
+    }
     const { url } = acquisition.server;
     const client = this.createOpenCodeClient({
       baseUrl: url,
       directory: openCodeConfig.cwd,
     });
 
+    const rawCreatePromise = client.session.create({ directory: openCodeConfig.cwd });
+    let createdSessionId: string | null = null;
     try {
-      const response = await withTimeout(
-        client.session.create({ directory: openCodeConfig.cwd }),
-        10_000,
-        "OpenCode session.create timed out after 10s",
+      const response = await awaitOpenCodeStartupWithAbort(
+        withTimeout(rawCreatePromise, 10_000, "OpenCode session.create timed out after 10s"),
+        options?.signal,
       );
 
       if (response.error) {
@@ -1386,8 +1418,12 @@ export class OpenCodeAgentClient implements AgentClient {
       if (!session) {
         throw new Error("OpenCode session creation returned no data");
       }
+      createdSessionId = session.id;
 
-      await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
+      await awaitOpenCodeStartupWithAbort(
+        this.populateModelContextWindowCache(client, openCodeConfig.cwd),
+        options?.signal,
+      );
 
       return new OpenCodeAgentSession(
         openCodeConfig,
@@ -1401,7 +1437,24 @@ export class OpenCodeAgentClient implements AgentClient {
         url,
       );
     } catch (error) {
-      await acquisition.release();
+      if (createdSessionId) {
+        await this.deleteFailedCreateSession(client, openCodeConfig.cwd, createdSessionId);
+        await this.releaseFailedSessionStartup(acquisition);
+      } else {
+        this.ownFailedSessionStartupCleanup(
+          (async () => {
+            try {
+              const lateResponse = await rawCreatePromise;
+              const lateSessionId = lateResponse.data?.id;
+              if (lateSessionId) {
+                await this.deleteFailedCreateSession(client, openCodeConfig.cwd, lateSessionId);
+              }
+            } finally {
+              await this.releaseFailedSessionStartup(acquisition);
+            }
+          })(),
+        );
+      }
       throw error;
     }
   }
@@ -1410,6 +1463,7 @@ export class OpenCodeAgentClient implements AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ): Promise<AgentSession> {
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
     const cwd = overrides?.cwd ?? metadata.cwd;
@@ -1429,11 +1483,19 @@ export class OpenCodeAgentClient implements AgentClient {
     const registeredAcquisition = registeredServerUrl
       ? serverManager.acquireExisting(registeredServerUrl)
       : null;
-    const acquisition =
-      registeredAcquisition ??
-      (launchContext?.env
-        ? await serverManager.acquireDedicated(launchContext.env)
-        : await serverManager.acquireCurrent());
+    let acquisitionPromise: Promise<OpenCodeServerAcquisition>;
+    if (registeredAcquisition) {
+      acquisitionPromise = Promise.resolve(registeredAcquisition);
+    } else if (launchContext?.env) {
+      acquisitionPromise = serverManager.acquireDedicated(launchContext.env, options?.signal);
+    } else {
+      acquisitionPromise = serverManager.acquireCurrent(options?.signal);
+    }
+    const acquisition = await acquisitionPromise;
+    if (options?.signal?.aborted) {
+      await this.releaseFailedSessionStartup(acquisition);
+      options.signal.throwIfAborted();
+    }
     const { url } = acquisition.server;
     const client = this.createOpenCodeClient({
       baseUrl: url,
@@ -1441,7 +1503,10 @@ export class OpenCodeAgentClient implements AgentClient {
     });
 
     try {
-      await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
+      await awaitOpenCodeStartupWithAbort(
+        this.populateModelContextWindowCache(client, openCodeConfig.cwd),
+        options?.signal,
+      );
 
       return new OpenCodeAgentSession(
         openCodeConfig,
@@ -1456,7 +1521,7 @@ export class OpenCodeAgentClient implements AgentClient {
         registeredAcquisition !== null,
       );
     } catch (error) {
-      await acquisition.release();
+      await this.releaseFailedSessionStartup(acquisition);
       throw error;
     }
   }
@@ -1636,10 +1701,57 @@ export class OpenCodeAgentClient implements AgentClient {
       return this.shutdownPromise;
     }
     this.shutDown = true;
-    this.shutdownPromise = this.injectedServerManager
-      ? this.injectedServerManager.shutdown()
-      : (this.sharedServerManagerLease?.release() ?? Promise.resolve());
+    this.shutdownPromise = (async () => {
+      while (this.failedSessionStartupCleanupTasks.size > 0) {
+        await Promise.allSettled(this.failedSessionStartupCleanupTasks);
+      }
+      if (this.injectedServerManager) {
+        await this.injectedServerManager.shutdown();
+      } else {
+        await (this.sharedServerManagerLease?.release() ?? Promise.resolve());
+      }
+    })();
     return this.shutdownPromise;
+  }
+
+  private ownFailedSessionStartupCleanup(task: Promise<void>): void {
+    const ownedTask = task.catch((error) => {
+      this.logger.warn({ err: error }, "OpenCode failed session startup cleanup failed");
+    });
+    this.failedSessionStartupCleanupTasks.add(ownedTask);
+    void ownedTask.finally(() => {
+      this.failedSessionStartupCleanupTasks.delete(ownedTask);
+    });
+  }
+
+  private async deleteFailedCreateSession(
+    client: OpencodeClient,
+    directory: string,
+    sessionId: string,
+  ): Promise<void> {
+    try {
+      const response = await withTimeout(
+        client.session.delete({ sessionID: sessionId, directory }),
+        OPENCODE_FAILED_CREATE_DELETE_TIMEOUT_MS,
+        `OpenCode failed session cleanup timed out after ${OPENCODE_FAILED_CREATE_DELETE_TIMEOUT_MS}ms`,
+      );
+      if (response.error) {
+        throw new Error(`Failed to delete OpenCode session: ${JSON.stringify(response.error)}`);
+      }
+    } catch (error) {
+      this.logger.warn(
+        { err: error, sessionId },
+        "OpenCode failed to delete a session created after startup failed",
+      );
+    }
+  }
+
+  private async releaseFailedSessionStartup(acquisition: OpenCodeServerAcquisition): Promise<void> {
+    try {
+      await acquisition.release();
+    } catch (error) {
+      this.logger.warn({ err: error }, "OpenCode failed session startup release failed");
+    }
   }
 
   private getServerManager(): OpenCodeServerManagerLike {

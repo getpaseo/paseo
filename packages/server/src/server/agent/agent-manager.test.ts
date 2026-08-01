@@ -29,6 +29,7 @@ import type {
   AgentPersistenceHandle,
   AgentRunOptions,
   AgentRunResult,
+  AgentResumeSessionOptions,
   AgentSession,
   AgentSessionConfig,
   AgentSlashCommand,
@@ -184,8 +185,14 @@ class HeldAgentCreationClient extends TestAgentClient {
   private readonly creationStarted = deferred<void>();
   private readonly creationAllowed = deferred<void>();
   createdSessionClosed = false;
+  creationSignal: AbortSignal | undefined;
 
-  override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+  override async createSession(
+    config: AgentSessionConfig,
+    _launchContext?: AgentLaunchContext,
+    options?: AgentCreateSessionOptions,
+  ): Promise<AgentSession> {
+    this.creationSignal = options?.signal;
     const recordSessionClosed = () => {
       this.createdSessionClosed = true;
     };
@@ -741,8 +748,10 @@ test("does not register a session that finishes starting after shutdown begins",
     { workspaceId: undefined },
   );
   await client.waitForCreationToStart();
+  expect(client.creationSignal?.aborted).toBe(false);
 
   manager.prepareForShutdown();
+  expect(client.creationSignal?.aborted).toBe(true);
   client.finishCreating();
 
   await expect(creation).rejects.toThrow("Agent manager is shutting down");
@@ -1508,6 +1517,7 @@ test("reloadAgentSession completes when the previous session close hangs", async
       cwd: workdir,
     });
     resumeSessionCalls = 0;
+    resumeSignal: AbortSignal | undefined;
 
     override async createSession(): Promise<AgentSession> {
       return this.firstSession;
@@ -1516,8 +1526,11 @@ test("reloadAgentSession completes when the previous session close hangs", async
     override async resumeSession(
       _handle: AgentPersistenceHandle,
       config?: Partial<AgentSessionConfig>,
+      _launchContext?: AgentLaunchContext,
+      options?: AgentResumeSessionOptions,
     ): Promise<AgentSession> {
       this.resumeSessionCalls += 1;
+      this.resumeSignal = options?.signal;
       return new TestAgentSession({
         provider: "codex",
         cwd: config?.cwd ?? workdir,
@@ -1551,6 +1564,9 @@ test("reloadAgentSession completes when the previous session close hangs", async
     expect(reloaded.id).toBe(snapshot.id);
     expect(client.firstSession.closeCalled).toBe(true);
     expect(client.resumeSessionCalls).toBe(1);
+    expect(client.resumeSignal?.aborted).toBe(false);
+    manager.prepareForShutdown();
+    expect(client.resumeSignal?.aborted).toBe(true);
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }
@@ -1798,7 +1814,10 @@ test("createAgent passes persistSession to provider create options", async () =>
     { persistSession: false, workspaceId: undefined },
   );
 
-  expect(client.lastCreateOptions).toEqual({ persistSession: false });
+  expect(client.lastCreateOptions).toEqual({
+    persistSession: false,
+    signal: expect.any(AbortSignal),
+  });
 
   rmSync(workdir, { recursive: true, force: true });
 });
