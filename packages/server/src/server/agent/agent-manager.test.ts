@@ -2975,6 +2975,164 @@ test("force provider hydration removes children absent from current history", as
   });
 });
 
+test("force provider hydration commits history before releasing interleaved live events", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-force-interleaving-"));
+  const agentId = "00000000-0000-4000-8000-000000000150";
+  let session: InterleavedForceHistorySession | null = null;
+
+  class InterleavedForceHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: "historical request" },
+      };
+      this.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: "live request during force hydration" },
+      });
+      this.pushEvent({
+        type: "provider_subagent",
+        provider: "codex",
+        event: { type: "upsert", id: "live-child", title: "Live child", status: "running" },
+      });
+      // Old force hydration processes both live events here, then erases them when it resets the
+      // timeline and provider-child store. The atomic boundary must hold them until after commit.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "historical result" },
+      };
+      yield {
+        type: "provider_subagent",
+        provider: "codex",
+        event: {
+          type: "upsert",
+          id: "historical-child",
+          title: "Historical child",
+          status: "completed",
+        },
+      };
+    }
+  }
+
+  class InterleavedForceHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new InterleavedForceHistorySession(config);
+      return session;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new InterleavedForceHistoryClient() },
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.appendTimelineItem(created.id, {
+      type: "user_message",
+      text: "stale pre-rewind request",
+    });
+    session?.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: { type: "upsert", id: "stale-child", status: "completed" },
+    });
+    await vi.waitFor(() => expect(manager.listProviderSubagents(created.id)).toHaveLength(1));
+
+    await manager.hydrateTimelineFromProvider(created.id, { force: true, broadcast: true });
+
+    expect(manager.getTimeline(created.id)).toEqual([
+      { type: "user_message", text: "historical request" },
+      { type: "assistant_message", text: "historical result" },
+      { type: "user_message", text: "live request during force hydration" },
+    ]);
+    expect(manager.listProviderSubagents(created.id)).toEqual([
+      expect.objectContaining({ id: "historical-child", status: "completed" }),
+      expect.objectContaining({ id: "live-child", status: "running" }),
+    ]);
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("concurrent forced history hydrations serialize per agent", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-force-serialization-"));
+  const agentId = "00000000-0000-4000-8000-000000000151";
+  const firstHydrationEntered = deferred<void>();
+  const releaseFirstHydration = deferred<void>();
+  let hydrationCalls = 0;
+  let activeHydrations = 0;
+  let maxActiveHydrations = 0;
+
+  class SerializedHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      hydrationCalls += 1;
+      const call = hydrationCalls;
+      activeHydrations += 1;
+      maxActiveHydrations = Math.max(maxActiveHydrations, activeHydrations);
+      try {
+        if (call === 1) {
+          firstHydrationEntered.resolve();
+          await releaseFirstHydration.promise;
+        }
+        yield {
+          type: "timeline",
+          provider: "codex",
+          item: { type: "assistant_message", text: `history ${call}` },
+        };
+      } finally {
+        activeHydrations -= 1;
+      }
+    }
+  }
+
+  class SerializedHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new SerializedHistorySession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new SerializedHistoryClient() },
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const first = manager.hydrateTimelineFromProvider(created.id, { force: true });
+    await firstHydrationEntered.promise;
+    const second = manager.hydrateTimelineFromProvider(created.id, { force: true });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(hydrationCalls).toBe(1);
+    expect(maxActiveHydrations).toBe(1);
+
+    releaseFirstHydration.resolve();
+    await Promise.all([first, second]);
+
+    expect(hydrationCalls).toBe(2);
+    expect(maxActiveHydrations).toBe(1);
+    expect(manager.getTimeline(created.id)).toEqual([
+      { type: "assistant_message", text: "history 2" },
+    ]);
+  } finally {
+    releaseFirstHydration.resolve();
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("reloadAgentSession preserves current title when config title is unset", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-title-"));
   const storagePath = join(workdir, "agents");
@@ -8521,7 +8679,6 @@ test("successful history hydration orders buffered live events after recovered h
       workspaceId: undefined,
     });
     await manager.hydrateTimelineFromProvider(created.id);
-    await manager.flush();
 
     const expectedItems: AgentTimelineItem[] = [
       { type: "user_message", text: "historical request" },
@@ -8583,7 +8740,6 @@ test("failed history hydration discards partial history before releasing buffere
       workspaceId: undefined,
     });
     await manager.hydrateTimelineFromProvider(created.id);
-    await manager.flush();
 
     expect(manager.getTimeline(created.id)).toEqual([
       { type: "user_message", text: "live request after failure" },
