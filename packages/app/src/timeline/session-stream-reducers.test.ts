@@ -3462,29 +3462,39 @@ describe("processAgentStreamEvents", () => {
     expect(getAssistantTexts(result.head)).toEqual(["Identified"]);
   });
 
-  it("promotes completed assistant markdown blocks to tail while keeping the live block in head", () => {
-    const result = processAgentStreamEvents({
+  it("keeps a promoted live image block identity when the turn completes", () => {
+    const imageMarkdown = "![Architecture](docs/architecture.png)";
+    const streaming = processAgentStreamEvents({
       events: [
-        makeStreamReducerEvent(makeTimelineEvent("First paragraph"), 1),
-        makeStreamReducerEvent(makeTimelineEvent("\n\nSecond paragraph"), 2),
+        makeStreamReducerEvent(makeTimelineEvent("Introductory paragraph"), 1),
+        makeStreamReducerEvent(makeTimelineEvent(`\n\n${imageMarkdown}`), 2),
       ],
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
     });
 
-    expect(result.changedTail).toBe(true);
-    expect(result.changedHead).toBe(true);
-    expect(result.tail).toHaveLength(1);
-    expect(result.tail[0]).toMatchObject({
-      kind: "assistant_message",
-      text: "First paragraph",
+    expect([streaming.changedTail, streaming.changedHead]).toEqual([true, true]);
+    expect(getAssistantTexts(streaming.tail)).toEqual(["Introductory paragraph"]);
+    expect(getAssistantTexts(streaming.head)).toEqual([imageMarkdown]);
+    const liveImageId = streaming.head[0]?.id;
+
+    const completed = processAgentStreamEvent({
+      ...baseStreamInput,
+      event: { type: "turn_completed", provider: "claude" } as AgentStreamEventPayload,
+      currentTail: streaming.tail,
+      currentHead: streaming.head,
+      currentCursor: streaming.cursor ?? undefined,
     });
-    expect(result.head).toHaveLength(1);
-    expect(result.head[0]).toMatchObject({
-      kind: "assistant_message",
-      text: "Second paragraph",
-    });
+    const assistantBlocks = [...completed.tail, ...completed.head].filter(
+      (item): item is Extract<StreamItem, { kind: "assistant_message" }> =>
+        item.kind === "assistant_message",
+    );
+    expect(assistantBlocks.map((item) => [item.id, item.text])).toEqual([
+      [streaming.tail[0]?.id, "Introductory paragraph"],
+      [liveImageId, imageMarkdown],
+    ]);
+    expect(assistantBlocks.filter((item) => item.id === liveImageId)).toHaveLength(1);
   });
 
   it("preserves a live block trailing newline after promoting completed markdown blocks", () => {

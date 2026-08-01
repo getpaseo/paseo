@@ -1501,15 +1501,6 @@ function finalizeHeadItems(head: StreamItem[]): StreamItem[] {
     if (item.kind === "thought" && item.status !== "ready") {
       return markThoughtReady(item);
     }
-    if (item.kind === "assistant_message" && item.blockGroupId) {
-      return {
-        ...item,
-        id: createAssistantBlockId({
-          groupId: item.blockGroupId,
-          blockIndex: item.blockIndex ?? 0,
-        }),
-      };
-    }
     return item;
   });
 }
@@ -1597,7 +1588,10 @@ function promoteCompletedAssistantBlocks(params: { tail: StreamItem[]; head: Str
   const nextTail = flushHeadToTail(params.tail, promotedItems);
   const liveItem: AssistantMessageItem = {
     ...activeItem,
-    id: `${blockGroupId}:head`,
+    id: createAssistantBlockId({
+      groupId: blockGroupId,
+      blockIndex: firstBlockIndex + completedBlocks.length,
+    }),
     blockGroupId,
     blockIndex: firstBlockIndex + completedBlocks.length,
     text: liveBlock,
