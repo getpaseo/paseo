@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "patchId": "paseo-v025-hydration-atomicity",
+  "stableCandidate": {
+    "baseCommit": "6fc491e6220fba6543bbbe4bf1b1f58cfe59228b",
+    "headCommit": "45379a2d05089ac1931ce36c22c64a30d7b37630",
+    "headTree": "01921a28222e789e0b0bca81af3a8435f58386b8"
+  },
+  "currentMainIntegration": {
+    "upstreamCommit": "70ed70d36e2eabd3876a22931954319ec202c902",
+    "mergeCommit": "562069425d7e1d8d40329132761f71601d9dc52e",
+    "mergeTree": "1034d47eeef9a5d3dd1763d580f915de60c0e20c"
+  },
+  "verification": {
+    "commit": "562069425d7e1d8d40329132761f71601d9dc52e",
+    "completedAt": "2026-08-01T01:46:20Z",
+    "runtime": "Node.js v24.18.1",
+    "commands": [
+      "vitest run packages/server/src/server/agent/agent-manager.test.ts --fileParallelism=false",
+      "npm run build:server-deps",
+      "npm run build --workspace packages/server",
+      "npm run typecheck --workspace packages/server",
+      "oxlint packages/server/src/server/agent/agent-manager.ts packages/server/src/server/agent/agent-manager.test.ts",
+      "oxfmt --check packages/server/src/server/agent/agent-manager.ts packages/server/src/server/agent/agent-manager.test.ts",
+      "git diff --check"
+    ],
+    "result": {
+      "agentManagerTests": "145 passed",
+      "serverDependenciesBuild": "passed",
+      "serverBuild": "passed",
+      "serverTypecheck": "passed",
+      "changedFileLint": "0 warnings, 0 errors",
+      "formatAndDiff": "passed"
+    }
+  }
+}

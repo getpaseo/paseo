@@ -34,6 +34,12 @@
           "formatAndDiff": "passed"
         }
       },
+      "currentMainIntegration": {
+        "upstreamCommit": "70ed70d36e2eabd3876a22931954319ec202c902",
+        "mergeCommit": "562069425d7e1d8d40329132761f71601d9dc52e",
+        "mergeTree": "1034d47eeef9a5d3dd1763d580f915de60c0e20c",
+        "receipt": "patches/receipts/paseo-v025-hydration-atomicity-current-main.json"
+      },
       "upstreamable": true,
       "upstreamCondition": "Submit independently while provider history and live session events can interleave into a partially ordered timeline.",
       "dropCondition": "Remove when the latest stable release commits provider history atomically and orders concurrent live events after recovered history.",
