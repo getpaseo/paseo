@@ -76,6 +76,7 @@ public static class PaseoWindowsJobSupervisor
     private const uint INFINITE = 0xffffffff;
     private const uint STILL_ACTIVE = 259;
     private const uint HANDLE_FLAG_INHERIT = 0x00000001;
+    private static readonly IntPtr INVALID_HANDLE_VALUE = new IntPtr(-1);
 
     public static bool LastRunProvedEmpty { get; private set; }
 
