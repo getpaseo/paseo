@@ -1156,6 +1156,74 @@ export const SendAgentMessageRequestSchema = z.object({
   attachments: AgentAttachmentsSchema,
 });
 
+export const WorkspaceLifecycleMutationLeaseSchema = z.object({
+  workspaceId: z.string(),
+  leaseId: z.string(),
+  fence: z.number().int().positive(),
+  expiresAt: z.string(),
+});
+
+const WorkspaceLifecycleMutationLeaseReferenceSchema = z.object({
+  workspaceId: z.string(),
+  leaseId: z.string(),
+  fence: z.number().int().positive(),
+});
+
+export const WorkspaceLifecycleMutationSchema = z.discriminatedUnion("operation", [
+  z.object({
+    operation: z.literal("archive_agent"),
+    agentId: z.string(),
+    agentRevision: z.string(),
+  }),
+  z.object({
+    operation: z.literal("send_agent_message"),
+    agentId: z.string(),
+    agentRevision: z.string(),
+    text: z.string(),
+    messageId: z.string().optional(),
+    images: z.array(ImageAttachmentSchema).optional(),
+    attachments: z.array(AgentAttachmentSchema).optional(),
+  }),
+  z.object({
+    operation: z.literal("refresh_agent"),
+    agentId: z.string(),
+    agentRevision: z.string(),
+  }),
+  z.object({
+    operation: z.literal("cancel_agent"),
+    agentId: z.string(),
+    agentRevision: z.string(),
+  }),
+  z.object({
+    operation: z.literal("restore_workspace"),
+  }),
+]);
+
+export const WorkspaceLifecycleMutationAuthorityAcquireRequestSchema = z.object({
+  type: z.literal("workspace.lifecycle_mutation_authority.acquire.request"),
+  workspaceId: z.string(),
+  requestId: z.string(),
+});
+
+export const WorkspaceLifecycleMutationAuthorityRenewRequestSchema =
+  WorkspaceLifecycleMutationLeaseReferenceSchema.extend({
+    type: z.literal("workspace.lifecycle_mutation_authority.renew.request"),
+    requestId: z.string(),
+  });
+
+export const WorkspaceLifecycleMutationAuthorityReleaseRequestSchema =
+  WorkspaceLifecycleMutationLeaseReferenceSchema.extend({
+    type: z.literal("workspace.lifecycle_mutation_authority.release.request"),
+    requestId: z.string(),
+  });
+
+export const WorkspaceLifecycleMutationCommitRequestSchema =
+  WorkspaceLifecycleMutationLeaseReferenceSchema.extend({
+    type: z.literal("workspace.lifecycle_mutation_authority.commit.request"),
+    mutation: WorkspaceLifecycleMutationSchema,
+    requestId: z.string(),
+  });
+
 export const WaitForFinishRequestSchema = z.object({
   type: z.literal("wait_for_finish_request"),
   requestId: z.string(),
@@ -1628,6 +1696,95 @@ export const WorkspaceRecoveryRestoreResponseSchema = z.object({
     accepted: z.boolean(),
     error: z.string().nullable(),
   }),
+});
+
+export const WorkspaceLifecycleMutationAuthorityErrorCodeSchema = z.enum([
+  "authority_held",
+  "authority_not_found",
+  "lease_mismatch",
+  "owner_mismatch",
+  "fence_mismatch",
+  "lease_expired",
+  "workspace_not_found",
+  "agent_not_found",
+  "agent_workspace_mismatch",
+  "agent_revision_mismatch",
+  "mutation_failed",
+]);
+
+export const WorkspaceLifecycleMutationAuthorityErrorSchema = z.object({
+  code: WorkspaceLifecycleMutationAuthorityErrorCodeSchema,
+  message: z.string(),
+});
+
+// zod-aot emits boolean discriminator values as string switch cases.
+const WorkspaceLifecycleMutationAuthorityResponsePayloadSchema = z.union([
+  z.object({
+    requestId: z.string(),
+    ok: z.literal(true),
+    lease: WorkspaceLifecycleMutationLeaseSchema,
+  }),
+  z.object({
+    requestId: z.string(),
+    ok: z.literal(false),
+    error: WorkspaceLifecycleMutationAuthorityErrorSchema,
+  }),
+]);
+
+export const WorkspaceLifecycleMutationAuthorityAcquireResponseSchema = z.object({
+  type: z.literal("workspace.lifecycle_mutation_authority.acquire.response"),
+  payload: WorkspaceLifecycleMutationAuthorityResponsePayloadSchema,
+});
+
+export const WorkspaceLifecycleMutationAuthorityRenewResponseSchema = z.object({
+  type: z.literal("workspace.lifecycle_mutation_authority.renew.response"),
+  payload: WorkspaceLifecycleMutationAuthorityResponsePayloadSchema,
+});
+
+export const WorkspaceLifecycleMutationAuthorityReleaseResponseSchema = z.object({
+  type: z.literal("workspace.lifecycle_mutation_authority.release.response"),
+  payload: WorkspaceLifecycleMutationAuthorityResponsePayloadSchema,
+});
+
+export const WorkspaceLifecycleMutationResultSchema = z.discriminatedUnion("operation", [
+  z.object({
+    operation: z.literal("archive_agent"),
+    agentId: z.string(),
+    archivedAt: z.string(),
+  }),
+  z.object({
+    operation: z.literal("send_agent_message"),
+    agentId: z.string(),
+  }),
+  z.object({
+    operation: z.literal("refresh_agent"),
+    agentId: z.string(),
+    timelineSize: z.number().int().nonnegative(),
+  }),
+  z.object({
+    operation: z.literal("cancel_agent"),
+    agentId: z.string(),
+  }),
+  z.object({
+    operation: z.literal("restore_workspace"),
+    workspaceId: z.string(),
+  }),
+]);
+
+export const WorkspaceLifecycleMutationCommitResponseSchema = z.object({
+  type: z.literal("workspace.lifecycle_mutation_authority.commit.response"),
+  payload: z.union([
+    z.object({
+      requestId: z.string(),
+      ok: z.literal(true),
+      result: WorkspaceLifecycleMutationResultSchema,
+    }),
+    z.object({
+      requestId: z.string(),
+      ok: z.literal(false),
+      error: WorkspaceLifecycleMutationAuthorityErrorSchema,
+    }),
+  ]),
 });
 
 export const SetVoiceModeResponseMessageSchema = z.object({
@@ -2511,6 +2668,10 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspacePinSetRequestSchema,
   WorkspaceRecoveryInspectRequestSchema,
   WorkspaceRecoveryRestoreRequestSchema,
+  WorkspaceLifecycleMutationAuthorityAcquireRequestSchema,
+  WorkspaceLifecycleMutationAuthorityRenewRequestSchema,
+  WorkspaceLifecycleMutationAuthorityReleaseRequestSchema,
+  WorkspaceLifecycleMutationCommitRequestSchema,
   SetVoiceModeMessageSchema,
   SendAgentMessageRequestSchema,
   WaitForFinishRequestSchema,
@@ -2898,6 +3059,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceScriptManagement: z.boolean().optional(),
         // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
         projectCustomIcon: z.boolean().optional(),
+        // COMPAT(workspaceLifecycleMutationAuthority): added in v0.2.6, remove after 2027-02-01.
+        workspaceLifecycleMutationAuthority: z.boolean().optional(),
       })
       .optional(),
   })
@@ -5342,6 +5505,10 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspacePinSetResponseSchema,
   WorkspaceRecoveryInspectResponseSchema,
   WorkspaceRecoveryRestoreResponseSchema,
+  WorkspaceLifecycleMutationAuthorityAcquireResponseSchema,
+  WorkspaceLifecycleMutationAuthorityRenewResponseSchema,
+  WorkspaceLifecycleMutationAuthorityReleaseResponseSchema,
+  WorkspaceLifecycleMutationCommitResponseSchema,
   WaitForFinishResponseMessageSchema,
   AgentPermissionRequestMessageSchema,
   AgentPermissionResolvedMessageSchema,
@@ -5446,6 +5613,14 @@ export type ServerCapabilityState = z.infer<typeof ServerCapabilityStateSchema>;
 export type ServerVoiceCapabilities = z.infer<typeof ServerVoiceCapabilitiesSchema>;
 export type ServerCapabilities = z.infer<typeof ServerCapabilitiesSchema>;
 export type ServerInfoStatusPayload = z.infer<typeof ServerInfoStatusPayloadSchema>;
+export type WorkspaceLifecycleMutationLease = z.infer<typeof WorkspaceLifecycleMutationLeaseSchema>;
+export type WorkspaceLifecycleMutation = z.infer<typeof WorkspaceLifecycleMutationSchema>;
+export type WorkspaceLifecycleMutationAuthorityError = z.infer<
+  typeof WorkspaceLifecycleMutationAuthorityErrorSchema
+>;
+export type WorkspaceLifecycleMutationResult = z.infer<
+  typeof WorkspaceLifecycleMutationResultSchema
+>;
 export type RpcErrorMessage = z.infer<typeof RpcErrorMessageSchema>;
 export type ArtifactMessage = z.infer<typeof ArtifactMessageSchema>;
 export type AgentUpdateMessage = z.infer<typeof AgentUpdateMessageSchema>;
@@ -5886,6 +6061,7 @@ export const WSHelloMessageSchema = z.object({
       [CLIENT_CAPS.terminalReflowableSnapshot]: z.boolean().optional(),
       [CLIENT_CAPS.providerSubagents]: z.boolean().optional(),
       [CLIENT_CAPS.projectUpdates]: z.boolean().optional(),
+      [CLIENT_CAPS.workspaceLifecycleMutationAuthority]: z.boolean().optional(),
       [CLIENT_CAPS.browserHost]: BrowserAutomationHostCapabilitySchema.optional(),
     })
     .passthrough()

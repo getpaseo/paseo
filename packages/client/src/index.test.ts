@@ -80,7 +80,9 @@ function parseSentFrame(
   return JSON.parse(data);
 }
 
-async function connectClient(): Promise<{ client: PaseoClient; ws: FakeWebSocket }> {
+async function connectClient(options?: {
+  features?: Record<string, boolean>;
+}): Promise<{ client: PaseoClient; ws: FakeWebSocket }> {
   vi.stubGlobal("WebSocket", FakeWebSocket);
   const client = createPaseoClient({
     url: "ws://daemon.test",
@@ -105,6 +107,7 @@ async function connectClient(): Promise<{ client: PaseoClient; ws: FakeWebSocket
         serverId: "srv_sdk_test",
         hostname: null,
         version: null,
+        ...(options?.features ? { features: options.features } : {}),
       },
     }),
   );
@@ -207,6 +210,75 @@ test("createPaseoClient exposes workspace list through the daemon client", async
     },
   });
   expect(client.getConnectionState()).toEqual({ status: "connected" });
+
+  await client.close();
+});
+
+test("workspace lifecycle mutation actions delegate typed lease and commit RPCs", async () => {
+  const { client, ws } = await connectClient({
+    features: { workspaceLifecycleMutationAuthority: true },
+  });
+  const lease = {
+    workspaceId: "workspace_sdk",
+    leaseId: "lease_sdk",
+    fence: 2,
+    expiresAt: "2026-08-01T00:00:30.000Z",
+  };
+
+  const acquirePromise = client.workspaceLifecycleMutations.acquire(
+    lease.workspaceId,
+    "sdk-acquire-request",
+  );
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "workspace.lifecycle_mutation_authority.acquire.request",
+    workspaceId: lease.workspaceId,
+    requestId: "sdk-acquire-request",
+  });
+  ws.message(
+    sessionMessage({
+      type: "workspace.lifecycle_mutation_authority.acquire.response",
+      payload: { requestId: "sdk-acquire-request", ok: true, lease },
+    }),
+  );
+  await expect(acquirePromise).resolves.toEqual(lease);
+
+  const mutation = {
+    operation: "archive_agent" as const,
+    agentId: "agent_sdk",
+    agentRevision: "2026-08-01T00:00:00.000Z",
+  };
+  const commitPromise = client.workspaceLifecycleMutations.commit(
+    lease,
+    mutation,
+    "sdk-commit-request",
+  );
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "workspace.lifecycle_mutation_authority.commit.request",
+    workspaceId: lease.workspaceId,
+    leaseId: lease.leaseId,
+    fence: lease.fence,
+    mutation,
+    requestId: "sdk-commit-request",
+  });
+  ws.message(
+    sessionMessage({
+      type: "workspace.lifecycle_mutation_authority.commit.response",
+      payload: {
+        requestId: "sdk-commit-request",
+        ok: true,
+        result: {
+          operation: "archive_agent",
+          agentId: "agent_sdk",
+          archivedAt: "2026-08-01T00:00:01.000Z",
+        },
+      },
+    }),
+  );
+  await expect(commitPromise).resolves.toEqual({
+    operation: "archive_agent",
+    agentId: "agent_sdk",
+    archivedAt: "2026-08-01T00:00:01.000Z",
+  });
 
   await client.close();
 });

@@ -1,6 +1,11 @@
 import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 import { z } from "zod";
-import { DaemonClient, type DaemonTransport, type Logger } from "./daemon-client";
+import {
+  DaemonClient,
+  type DaemonTransport,
+  type Logger,
+  WorkspaceLifecycleMutationRejectedError,
+} from "./daemon-client";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import {
@@ -238,6 +243,125 @@ test("Hub management requires daemon support before dispatching requests", async
     "Update the host to use Hub relationship management.",
   );
   expect(mock.sent).toEqual([]);
+});
+
+test("workspace lifecycle mutation authority requires daemon support before dispatch", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "workspace_mutation_feature_gate_test",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen();
+  await connecting;
+
+  await expect(client.acquireWorkspaceLifecycleMutationAuthority("workspace_test")).rejects.toThrow(
+    "Update the host to use workspace lifecycle mutation authority.",
+  );
+  expect(mock.sent).toEqual([]);
+});
+
+test("workspace lifecycle mutation authority methods preserve leases and typed rejections", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "workspace_mutation_rpc_test",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen({ features: { workspaceLifecycleMutationAuthority: true } });
+  await connecting;
+
+  const lease = {
+    workspaceId: "workspace_test",
+    leaseId: "lease_test",
+    fence: 3,
+    expiresAt: "2026-08-01T00:00:30.000Z",
+  };
+  const acquirePromise = client.acquireWorkspaceLifecycleMutationAuthority(
+    lease.workspaceId,
+    "acquire-request",
+  );
+  expect(parseSentFrame(mock.sent.at(-1))).toEqual({
+    type: "workspace.lifecycle_mutation_authority.acquire.request",
+    workspaceId: lease.workspaceId,
+    requestId: "acquire-request",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.lifecycle_mutation_authority.acquire.response",
+      payload: { requestId: "acquire-request", ok: true, lease },
+    }),
+  );
+  await expect(acquirePromise).resolves.toEqual(lease);
+
+  const renewPromise = client.renewWorkspaceLifecycleMutationAuthority(lease, "renew-request");
+  expect(parseSentFrame(mock.sent.at(-1))).toEqual({
+    type: "workspace.lifecycle_mutation_authority.renew.request",
+    workspaceId: lease.workspaceId,
+    leaseId: lease.leaseId,
+    fence: lease.fence,
+    requestId: "renew-request",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.lifecycle_mutation_authority.renew.response",
+      payload: { requestId: "renew-request", ok: true, lease },
+    }),
+  );
+  await expect(renewPromise).resolves.toEqual(lease);
+
+  const mutation = {
+    operation: "cancel_agent" as const,
+    agentId: "agent_test",
+    agentRevision: "2026-08-01T00:00:00.000Z",
+  };
+  const commitPromise = client.commitWorkspaceLifecycleMutation(lease, mutation, "commit-request");
+  expect(parseSentFrame(mock.sent.at(-1))).toEqual({
+    type: "workspace.lifecycle_mutation_authority.commit.request",
+    workspaceId: lease.workspaceId,
+    leaseId: lease.leaseId,
+    fence: lease.fence,
+    mutation,
+    requestId: "commit-request",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.lifecycle_mutation_authority.commit.response",
+      payload: {
+        requestId: "commit-request",
+        ok: true,
+        result: { operation: "cancel_agent", agentId: "agent_test" },
+      },
+    }),
+  );
+  await expect(commitPromise).resolves.toEqual({
+    operation: "cancel_agent",
+    agentId: "agent_test",
+  });
+
+  const releasePromise = client.releaseWorkspaceLifecycleMutationAuthority(
+    lease,
+    "release-request",
+  );
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.lifecycle_mutation_authority.release.response",
+      payload: {
+        requestId: "release-request",
+        ok: false,
+        error: { code: "lease_expired", message: "Lease expired" },
+      },
+    }),
+  );
+  const releaseError = await releasePromise.catch((error: unknown) => error);
+  expect(releaseError).toBeInstanceOf(WorkspaceLifecycleMutationRejectedError);
+  expect(releaseError).toMatchObject({ code: "lease_expired", message: "Lease expired" });
 });
 
 test("sets the complete viewed timeline subscription only when the daemon supports it", async () => {
@@ -669,6 +793,7 @@ test("advertises client capabilities in hello", async () => {
       provider_subagents: true,
       reasoning_merge_enum: true,
       terminal_reflowable_snapshot: true,
+      workspace_lifecycle_mutation_authority: true,
       browser_host: {
         supportedCommands: ["list_tabs"],
         hostKind: "desktop app",

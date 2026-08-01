@@ -16,9 +16,12 @@ import type {
   RefreshProvidersSnapshotResponseMessage,
   SendAgentMessageRequest,
   SessionOutboundMessage,
+  WorkspaceLifecycleMutation,
+  WorkspaceLifecycleMutationLease,
+  WorkspaceLifecycleMutationResult,
   WorkspaceDescriptorPayload,
 } from "@getpaseo/protocol/messages";
-import { DaemonClient } from "./daemon-client.js";
+import { DaemonClient, type WorkspaceLifecycleMutationLeaseReference } from "./daemon-client.js";
 import type {
   FetchAgentTimelineCursor,
   FetchAgentTimelineDirection,
@@ -26,7 +29,7 @@ import type {
   FetchAgentTimelineProjection,
 } from "./daemon-client.js";
 
-export { DaemonClient };
+export { DaemonClient, WorkspaceLifecycleMutationRejectedError } from "./daemon-client.js";
 export type {
   DaemonClientConfig,
   DaemonEvent,
@@ -34,6 +37,7 @@ export type {
   BrowserAutomationExecuteResponseMessage,
   WebSocketFactory,
   WebSocketLike,
+  WorkspaceLifecycleMutationLeaseReference,
 } from "./daemon-client.js";
 
 export type ConnectionState =
@@ -329,11 +333,29 @@ export interface PaseoConfigActions {
   ): Promise<{ requestId: string; config: MutableDaemonConfig }>;
 }
 
+export interface PaseoWorkspaceLifecycleMutationActions {
+  acquire(workspaceId: string, requestId?: string): Promise<WorkspaceLifecycleMutationLease>;
+  renew(
+    lease: WorkspaceLifecycleMutationLeaseReference,
+    requestId?: string,
+  ): Promise<WorkspaceLifecycleMutationLease>;
+  release(
+    lease: WorkspaceLifecycleMutationLeaseReference,
+    requestId?: string,
+  ): Promise<WorkspaceLifecycleMutationLease>;
+  commit(
+    lease: WorkspaceLifecycleMutationLeaseReference,
+    mutation: WorkspaceLifecycleMutation,
+    requestId?: string,
+  ): Promise<WorkspaceLifecycleMutationResult>;
+}
+
 export interface PaseoClient {
   readonly workspaces: PaseoWorkspaceActions;
   readonly agents: PaseoAgentActions;
   readonly providers: PaseoProviderActions;
   readonly config: PaseoConfigActions;
+  readonly workspaceLifecycleMutations: PaseoWorkspaceLifecycleMutationActions;
   connect(): Promise<void>;
   close(): Promise<void>;
   ensureConnected(): void;
@@ -397,6 +419,16 @@ export function createPaseoClient(config: PaseoClientConfig): PaseoClient {
     config: {
       get: (requestId) => daemonClient.getDaemonConfig(requestId),
       patch: (patch, requestId) => daemonClient.patchDaemonConfig(patch, requestId),
+    },
+    workspaceLifecycleMutations: {
+      acquire: (workspaceId, requestId) =>
+        daemonClient.acquireWorkspaceLifecycleMutationAuthority(workspaceId, requestId),
+      renew: (lease, requestId) =>
+        daemonClient.renewWorkspaceLifecycleMutationAuthority(lease, requestId),
+      release: (lease, requestId) =>
+        daemonClient.releaseWorkspaceLifecycleMutationAuthority(lease, requestId),
+      commit: (lease, mutation, requestId) =>
+        daemonClient.commitWorkspaceLifecycleMutation(lease, mutation, requestId),
     },
     connect: () => daemonClient.connect(),
     close: () => daemonClient.close(),

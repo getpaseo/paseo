@@ -99,6 +99,10 @@ import type {
   SendAgentMessageRequest,
   PaseoConfigRaw,
   PaseoConfigRevision,
+  WorkspaceLifecycleMutation,
+  WorkspaceLifecycleMutationAuthorityError,
+  WorkspaceLifecycleMutationLease,
+  WorkspaceLifecycleMutationResult,
   WorkspaceCreateRequest,
   WorkspaceRecoveryState,
 } from "@getpaseo/protocol/messages";
@@ -324,6 +328,21 @@ export interface SendMessageOptions {
   messageId?: string;
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: SendAgentMessageRequest["attachments"];
+}
+
+export type WorkspaceLifecycleMutationLeaseReference = Pick<
+  WorkspaceLifecycleMutationLease,
+  "workspaceId" | "leaseId" | "fence"
+>;
+
+export class WorkspaceLifecycleMutationRejectedError extends Error {
+  readonly code: WorkspaceLifecycleMutationAuthorityError["code"];
+
+  constructor(error: WorkspaceLifecycleMutationAuthorityError) {
+    super(error.message);
+    this.name = "WorkspaceLifecycleMutationRejectedError";
+    this.code = error.code;
+  }
 }
 
 export interface AgentAttentionRequiredNotification {
@@ -2626,6 +2645,93 @@ export class DaemonClient {
     if (!payload.accepted) {
       throw new Error(payload.error ?? "Workspace recovery was rejected by the host");
     }
+  }
+
+  async acquireWorkspaceLifecycleMutationAuthority(
+    workspaceId: string,
+    requestId?: string,
+  ): Promise<WorkspaceLifecycleMutationLease> {
+    this.requireWorkspaceLifecycleMutationAuthoritySupport();
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.lifecycle_mutation_authority.acquire.response">(
+        {
+          requestId,
+          message: {
+            type: "workspace.lifecycle_mutation_authority.acquire.request",
+            workspaceId,
+          },
+        },
+      );
+    if (!payload.ok) {
+      throw new WorkspaceLifecycleMutationRejectedError(payload.error);
+    }
+    return payload.lease;
+  }
+
+  async renewWorkspaceLifecycleMutationAuthority(
+    lease: WorkspaceLifecycleMutationLeaseReference,
+    requestId?: string,
+  ): Promise<WorkspaceLifecycleMutationLease> {
+    this.requireWorkspaceLifecycleMutationAuthoritySupport();
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.lifecycle_mutation_authority.renew.response">(
+        {
+          requestId,
+          message: {
+            type: "workspace.lifecycle_mutation_authority.renew.request",
+            ...lease,
+          },
+        },
+      );
+    if (!payload.ok) {
+      throw new WorkspaceLifecycleMutationRejectedError(payload.error);
+    }
+    return payload.lease;
+  }
+
+  async releaseWorkspaceLifecycleMutationAuthority(
+    lease: WorkspaceLifecycleMutationLeaseReference,
+    requestId?: string,
+  ): Promise<WorkspaceLifecycleMutationLease> {
+    this.requireWorkspaceLifecycleMutationAuthoritySupport();
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.lifecycle_mutation_authority.release.response">(
+        {
+          requestId,
+          message: {
+            type: "workspace.lifecycle_mutation_authority.release.request",
+            ...lease,
+          },
+        },
+      );
+    if (!payload.ok) {
+      throw new WorkspaceLifecycleMutationRejectedError(payload.error);
+    }
+    return payload.lease;
+  }
+
+  async commitWorkspaceLifecycleMutation(
+    lease: WorkspaceLifecycleMutationLeaseReference,
+    mutation: WorkspaceLifecycleMutation,
+    requestId?: string,
+  ): Promise<WorkspaceLifecycleMutationResult> {
+    this.requireWorkspaceLifecycleMutationAuthoritySupport();
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.lifecycle_mutation_authority.commit.response">(
+        {
+          requestId,
+          message: {
+            type: "workspace.lifecycle_mutation_authority.commit.request",
+            ...lease,
+            mutation,
+          },
+          ...(mutation.operation === "restore_workspace" ? { timeout: 150_000 } : {}),
+        },
+      );
+    if (!payload.ok) {
+      throw new WorkspaceLifecycleMutationRejectedError(payload.error);
+    }
+    return payload.result;
   }
 
   async resumeAgent(
@@ -5277,6 +5383,13 @@ export class DaemonClient {
     }
   }
 
+  private requireWorkspaceLifecycleMutationAuthoritySupport(): void {
+    // COMPAT(workspaceLifecycleMutationAuthority): added in v0.2.6, remove after 2027-02-01.
+    if (this.lastServerInfoMessage?.features?.workspaceLifecycleMutationAuthority !== true) {
+      throw new Error("Update the host to use workspace lifecycle mutation authority.");
+    }
+  }
+
   private resolveTransportUrlForAttempt(): string {
     return this.config.url;
   }
@@ -5304,6 +5417,7 @@ export class DaemonClient {
             [CLIENT_CAPS.terminalReflowableSnapshot]: true,
             [CLIENT_CAPS.providerSubagents]: true,
             [CLIENT_CAPS.projectUpdates]: true,
+            [CLIENT_CAPS.workspaceLifecycleMutationAuthority]: true,
             ...this.config.capabilities,
           },
           ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),

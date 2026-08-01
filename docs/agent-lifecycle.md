@@ -28,6 +28,20 @@ action such as archive, replacement, reload, workspace teardown, or daemon shutd
 
 Cancellation changes lifecycle state only after the provider acknowledges the interrupt or emits a terminal turn event. If the interrupt is rejected or times out, the agent remains `running` with its active foreground turn intact. Follow-up actions such as replacement, reload, rewind, and Stop must report that failure instead of accepting work they cannot perform. Synthesizing a local cancellation without provider acknowledgment creates a split-brain session: Paseo accepts a new prompt while the provider still owns the previous foreground turn.
 
+## External mutation coordination
+
+External controllers can opt into the `workspaceLifecycleMutationAuthority` server feature before
+coordinating archive, prompt, refresh, cancellation, or workspace restore operations. The daemon
+derives the owner from the authenticated client session and issues the lease ID, expiry, and
+increasing fence. It validates the exact workspace, agent, and agent revision in the same serialized
+workspace lane that performs the mutation. A guarded archive is rejected if its child cascade would
+cross the leased workspace boundary.
+
+The authority RPCs are additive. Stable clients ignore the server feature, stable daemons ignore the
+new hello capability, and new clients must not send authority requests until the server advertises
+support. Existing lifecycle RPCs remain available for clients that do not opt into coordinated
+mutation.
+
 ## Relationships
 
 Agents can launch other agents via the agent-scoped `create_agent` MCP tool. Agent-scoped creation is always asynchronous and always stamps `paseo.parent-agent-id`, pointing back at the caller. Omit `workspaceId` to use the caller's workspace, or pass an existing workspace ID returned by `create_workspace`. Placement never changes parentage.

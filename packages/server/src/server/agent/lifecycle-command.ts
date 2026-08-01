@@ -1,8 +1,10 @@
 import type { Logger } from "pino";
 
 import {
+  AgentArchiveWorkspaceMismatchError,
   AgentRunCancellationError,
   type AgentRunCancellationResult,
+  type ArchiveAgentOptions,
   type ManagedAgent,
 } from "./agent-manager.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
@@ -15,8 +17,12 @@ export interface LifecycleAgentManager {
   hasInFlightRun(agentId: string): boolean;
   cancelAgentRun(agentId: string): Promise<AgentRunCancellationResult>;
   clearAgentAttention(agentId: string): Promise<void>;
-  archiveAgent(agentId: string): Promise<{ archivedAt: string }>;
-  archiveSnapshot(agentId: string, archivedAt: string): Promise<StoredAgentRecord>;
+  archiveAgent(agentId: string, options?: ArchiveAgentOptions): Promise<{ archivedAt: string }>;
+  archiveSnapshot(
+    agentId: string,
+    archivedAt: string,
+    options?: ArchiveAgentOptions,
+  ): Promise<StoredAgentRecord>;
   closeAgent(agentId: string): Promise<void>;
   setLabels(agentId: string, labels: Record<string, string>): Promise<void>;
   detachAgent(agentId: string): Promise<{
@@ -118,16 +124,17 @@ export interface ArchiveAgentResult {
 export async function archiveAgentCommand(
   dependencies: AgentLifecycleCommandDependencies,
   agentId: string,
+  options?: ArchiveAgentOptions,
 ): Promise<ArchiveAgentResult> {
   const liveAgent = dependencies.agentManager.getAgent(agentId);
   let record: StoredAgentRecord | null;
   if (liveAgent) {
     await requestAgentRunCancellation(dependencies, agentId);
     await dependencies.agentManager.clearAgentAttention(agentId).catch(() => undefined);
-    await dependencies.agentManager.archiveAgent(agentId);
+    await dependencies.agentManager.archiveAgent(agentId, options);
     record = await dependencies.agentStorage.get(agentId);
   } else {
-    record = await archiveStoredAgent(dependencies, agentId);
+    record = await archiveStoredAgent(dependencies, agentId, options);
   }
 
   if (!record) {
@@ -217,6 +224,7 @@ export async function setAgentModeCommand(
 async function archiveStoredAgent(
   dependencies: Pick<AgentLifecycleCommandDependencies, "agentManager" | "agentStorage">,
   agentId: string,
+  options?: ArchiveAgentOptions,
 ): Promise<StoredAgentRecord> {
   const existing = await dependencies.agentStorage.get(agentId);
   if (!existing) {
@@ -226,7 +234,17 @@ async function archiveStoredAgent(
   if (existing.archivedAt) {
     return existing;
   }
+  if (
+    options?.expectedWorkspaceId !== undefined &&
+    existing.workspaceId !== options.expectedWorkspaceId
+  ) {
+    throw new AgentArchiveWorkspaceMismatchError(
+      existing.id,
+      options.expectedWorkspaceId,
+      existing.workspaceId,
+    );
+  }
 
   const archivedAt = new Date().toISOString();
-  return dependencies.agentManager.archiveSnapshot(agentId, archivedAt);
+  return dependencies.agentManager.archiveSnapshot(agentId, archivedAt, options);
 }

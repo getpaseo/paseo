@@ -21,6 +21,9 @@ import {
   type ProjectPlacementPayload,
   type WorkspaceSetupSnapshot,
   type WorkspaceDescriptorPayload,
+  type WorkspaceLifecycleMutation,
+  type WorkspaceLifecycleMutationAuthorityError,
+  type WorkspaceLifecycleMutationResult,
 } from "./messages.js";
 import type {
   TerminalManager,
@@ -59,7 +62,7 @@ import { loadPersistedConfig } from "./persisted-config.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
-import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
+import { getParentAgentIdFromLabels, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
 import {
@@ -67,7 +70,11 @@ import {
   normalizeClientRestartRpcReason,
 } from "./lifecycle-reasons.js";
 
-import { AgentManager, AgentRunCancellationError } from "./agent/agent-manager.js";
+import {
+  AgentArchiveWorkspaceMismatchError,
+  AgentManager,
+  AgentRunCancellationError,
+} from "./agent/agent-manager.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type {
   AgentManagerEvent,
@@ -240,6 +247,10 @@ import {
 import { runGitCommand } from "../utils/run-git-command.js";
 import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
 import { resolveWorktreeSourceCwd } from "./workspace-source.js";
+import {
+  WorkspaceMutationAuthority,
+  type WorkspaceMutationAuthorityRejectionCode,
+} from "./workspace-mutation-authority.js";
 
 // TODO: Remove once all app store clients are on >=0.1.45 and understand arbitrary provider strings.
 // Clients before 0.1.45 validate providers with z.enum(["claude", "codex", "opencode"]) and reject
@@ -384,6 +395,40 @@ class SessionRequestError extends Error {
   }
 }
 
+class WorkspaceLifecycleMutationError extends Error {
+  constructor(
+    readonly code: WorkspaceLifecycleMutationAuthorityError["code"],
+    message: string,
+  ) {
+    super(message);
+    this.name = "WorkspaceLifecycleMutationError";
+  }
+}
+
+function authorityRejectionError(
+  code: WorkspaceMutationAuthorityRejectionCode,
+): WorkspaceLifecycleMutationAuthorityError {
+  const messages: Record<WorkspaceMutationAuthorityRejectionCode, string> = {
+    authority_held: "Workspace lifecycle mutation authority is held by another client",
+    authority_not_found: "Workspace lifecycle mutation authority was not found",
+    lease_mismatch: "Workspace lifecycle mutation authority lease does not match",
+    owner_mismatch: "Workspace lifecycle mutation authority belongs to another client",
+    fence_mismatch: "Workspace lifecycle mutation authority fence does not match",
+    lease_expired: "Workspace lifecycle mutation authority lease has expired",
+  };
+  return { code, message: messages[code] };
+}
+
+function workspaceLifecycleMutationError(error: unknown): WorkspaceLifecycleMutationAuthorityError {
+  if (error instanceof WorkspaceLifecycleMutationError) {
+    return { code: error.code, message: error.message };
+  }
+  if (error instanceof AgentArchiveWorkspaceMismatchError) {
+    return { code: "agent_workspace_mismatch", message: error.message };
+  }
+  return { code: "mutation_failed", message: getErrorMessageOr(error, "Mutation failed") };
+}
+
 export interface SessionFileSystem {
   isDirectory(path: string): Promise<boolean>;
 }
@@ -419,6 +464,7 @@ export interface SessionOptions {
   agentStorage: AgentStorage;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
+  workspaceMutationAuthority?: WorkspaceMutationAuthority;
   filesystem?: SessionFileSystem;
   chatService: FileBackedChatService;
   scheduleService: ScheduleService;
@@ -504,6 +550,12 @@ function parseClientCapabilities(
   return new Set(result);
 }
 
+function resolveWorkspaceMutationAuthority(
+  authority: WorkspaceMutationAuthority | undefined,
+): WorkspaceMutationAuthority {
+  return authority ?? new WorkspaceMutationAuthority();
+}
+
 export function isSessionRpcAllowed(scopes: readonly string[], rpcName: string): boolean {
   return scopes.some((scope) => {
     if (scope === "*" || scope === rpcName) {
@@ -586,6 +638,7 @@ export class Session {
   private readonly agentStorage: AgentStorage;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
+  private readonly workspaceMutationAuthority: WorkspaceMutationAuthority;
   private readonly filesystem: SessionFileSystem;
   private readonly github: ForgeService;
   private readonly renameCurrentBranch: typeof renameCurrentBranchDefault;
@@ -664,6 +717,7 @@ export class Session {
       agentStorage,
       projectRegistry,
       workspaceRegistry,
+      workspaceMutationAuthority,
       filesystem,
       chatService,
       scheduleService,
@@ -730,6 +784,7 @@ export class Session {
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry;
     this.workspaceRegistry = workspaceRegistry;
+    this.workspaceMutationAuthority = resolveWorkspaceMutationAuthority(workspaceMutationAuthority);
     this.filesystem = filesystem ?? nodeSessionFileSystem;
     this.github = github ?? createGitHubService();
     this.renameCurrentBranch = renameCurrentBranch ?? renameCurrentBranchDefault;
@@ -1787,6 +1842,7 @@ export class Session {
       this.dispatchAgentLifecycleMessage(msg) ??
       this.dispatchAgentConfigMessage(msg) ??
       this.dispatchCheckoutMessage(msg) ??
+      this.dispatchWorkspaceLifecycleMutationAuthorityMessage(msg) ??
       this.dispatchWorkspaceRecoveryMessage(msg) ??
       this.dispatchWorkspaceAndProjectMessage(msg) ??
       this.dispatchWorkspaceFileMessage(msg, source) ??
@@ -2152,6 +2208,23 @@ export class Session {
     }
   }
 
+  private dispatchWorkspaceLifecycleMutationAuthorityMessage(
+    msg: SessionInboundMessage,
+  ): Promise<void> | undefined {
+    switch (msg.type) {
+      case "workspace.lifecycle_mutation_authority.acquire.request":
+        return this.handleWorkspaceLifecycleMutationAuthorityAcquire(msg);
+      case "workspace.lifecycle_mutation_authority.renew.request":
+        return this.handleWorkspaceLifecycleMutationAuthorityRenew(msg);
+      case "workspace.lifecycle_mutation_authority.release.request":
+        return this.handleWorkspaceLifecycleMutationAuthorityRelease(msg);
+      case "workspace.lifecycle_mutation_authority.commit.request":
+        return this.handleWorkspaceLifecycleMutationCommit(msg);
+      default:
+        return undefined;
+    }
+  }
+
   private dispatchProviderMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "list_provider_models_request":
@@ -2386,6 +2459,7 @@ export class Session {
 
   private async archiveAgentForClose(
     agentId: string,
+    expectedWorkspaceId?: string,
   ): Promise<{ agentId: string; archivedAt: string }> {
     const { archivedAt, record: archivedRecord } = await archiveAgentCommand(
       {
@@ -2394,6 +2468,7 @@ export class Session {
         logger: this.sessionLogger,
       },
       agentId,
+      expectedWorkspaceId !== undefined ? { expectedWorkspaceId } : undefined,
     );
 
     if (this.agentUpdates.hasSubscription()) {
@@ -2950,6 +3025,255 @@ export class Session {
     });
   }
 
+  private async handleWorkspaceLifecycleMutationAuthorityAcquire(
+    request: Extract<
+      SessionInboundMessage,
+      { type: "workspace.lifecycle_mutation_authority.acquire.request" }
+    >,
+  ): Promise<void> {
+    const workspace = await this.workspaceRegistry.get(request.workspaceId);
+    if (!workspace) {
+      this.emit({
+        type: "workspace.lifecycle_mutation_authority.acquire.response",
+        payload: {
+          requestId: request.requestId,
+          ok: false,
+          error: {
+            code: "workspace_not_found",
+            message: `Workspace not found: ${request.workspaceId}`,
+          },
+        },
+      });
+      return;
+    }
+
+    const result = await this.workspaceMutationAuthority.acquire({
+      workspaceId: request.workspaceId,
+      ownerId: this.clientId,
+    });
+    this.emit({
+      type: "workspace.lifecycle_mutation_authority.acquire.response",
+      payload: result.ok
+        ? { requestId: request.requestId, ok: true, lease: result.value }
+        : {
+            requestId: request.requestId,
+            ok: false,
+            error: authorityRejectionError(result.code),
+          },
+    });
+  }
+
+  private async handleWorkspaceLifecycleMutationAuthorityRenew(
+    request: Extract<
+      SessionInboundMessage,
+      { type: "workspace.lifecycle_mutation_authority.renew.request" }
+    >,
+  ): Promise<void> {
+    const result = await this.workspaceMutationAuthority.renew({
+      workspaceId: request.workspaceId,
+      ownerId: this.clientId,
+      leaseId: request.leaseId,
+      fence: request.fence,
+    });
+    this.emit({
+      type: "workspace.lifecycle_mutation_authority.renew.response",
+      payload: result.ok
+        ? { requestId: request.requestId, ok: true, lease: result.value }
+        : {
+            requestId: request.requestId,
+            ok: false,
+            error: authorityRejectionError(result.code),
+          },
+    });
+  }
+
+  private async handleWorkspaceLifecycleMutationAuthorityRelease(
+    request: Extract<
+      SessionInboundMessage,
+      { type: "workspace.lifecycle_mutation_authority.release.request" }
+    >,
+  ): Promise<void> {
+    const result = await this.workspaceMutationAuthority.release({
+      workspaceId: request.workspaceId,
+      ownerId: this.clientId,
+      leaseId: request.leaseId,
+      fence: request.fence,
+    });
+    this.emit({
+      type: "workspace.lifecycle_mutation_authority.release.response",
+      payload: result.ok
+        ? { requestId: request.requestId, ok: true, lease: result.value }
+        : {
+            requestId: request.requestId,
+            ok: false,
+            error: authorityRejectionError(result.code),
+          },
+    });
+  }
+
+  private async handleWorkspaceLifecycleMutationCommit(
+    request: Extract<
+      SessionInboundMessage,
+      { type: "workspace.lifecycle_mutation_authority.commit.request" }
+    >,
+  ): Promise<void> {
+    try {
+      const result = await this.workspaceMutationAuthority.commit(
+        {
+          workspaceId: request.workspaceId,
+          ownerId: this.clientId,
+          leaseId: request.leaseId,
+          fence: request.fence,
+        },
+        async () => {
+          await this.validateWorkspaceLifecycleMutationTarget(
+            request.workspaceId,
+            request.mutation,
+          );
+          return this.executeWorkspaceLifecycleMutation(request.workspaceId, request.mutation);
+        },
+      );
+      this.emit({
+        type: "workspace.lifecycle_mutation_authority.commit.response",
+        payload: result.ok
+          ? { requestId: request.requestId, ok: true, result: result.value }
+          : {
+              requestId: request.requestId,
+              ok: false,
+              error: authorityRejectionError(result.code),
+            },
+      });
+    } catch (error) {
+      const authorityError = workspaceLifecycleMutationError(error);
+      this.sessionLogger.warn(
+        {
+          err: error,
+          workspaceId: request.workspaceId,
+          operation: request.mutation.operation,
+          requestId: request.requestId,
+        },
+        "Guarded workspace lifecycle mutation rejected",
+      );
+      this.emit({
+        type: "workspace.lifecycle_mutation_authority.commit.response",
+        payload: {
+          requestId: request.requestId,
+          ok: false,
+          error: authorityError,
+        },
+      });
+    }
+  }
+
+  private async validateWorkspaceLifecycleMutationTarget(
+    workspaceId: string,
+    mutation: WorkspaceLifecycleMutation,
+  ): Promise<void> {
+    const workspace = await this.workspaceRegistry.get(workspaceId);
+    if (!workspace) {
+      throw new WorkspaceLifecycleMutationError(
+        "workspace_not_found",
+        `Workspace not found: ${workspaceId}`,
+      );
+    }
+    if (mutation.operation === "restore_workspace") {
+      return;
+    }
+
+    const liveAgent = this.agentManager.getAgent(mutation.agentId);
+    const storedAgent = liveAgent ? null : await this.agentStorage.get(mutation.agentId);
+    const agent = liveAgent ?? storedAgent;
+    if (!agent) {
+      throw new WorkspaceLifecycleMutationError(
+        "agent_not_found",
+        `Agent not found: ${mutation.agentId}`,
+      );
+    }
+    if (agent.workspaceId !== workspaceId) {
+      throw new WorkspaceLifecycleMutationError(
+        "agent_workspace_mismatch",
+        `Agent ${mutation.agentId} does not belong to workspace ${workspaceId}`,
+      );
+    }
+    const revision =
+      agent.updatedAt instanceof Date ? agent.updatedAt.toISOString() : agent.updatedAt;
+    if (revision !== mutation.agentRevision) {
+      throw new WorkspaceLifecycleMutationError(
+        "agent_revision_mismatch",
+        `Agent ${mutation.agentId} revision changed before commit`,
+      );
+    }
+
+    if (mutation.operation === "archive_agent") {
+      const records = await this.agentStorage.list();
+      const pendingParentIds = [mutation.agentId];
+      const visitedParentIds = new Set<string>();
+      while (pendingParentIds.length > 0) {
+        const parentId = pendingParentIds.pop();
+        if (!parentId || visitedParentIds.has(parentId)) {
+          continue;
+        }
+        visitedParentIds.add(parentId);
+        for (const record of records) {
+          if (
+            record.archivedAt ||
+            record.labels[PARENT_AGENT_ID_LABEL] !== parentId ||
+            visitedParentIds.has(record.id)
+          ) {
+            continue;
+          }
+          if (record.workspaceId !== workspaceId) {
+            throw new WorkspaceLifecycleMutationError(
+              "agent_workspace_mismatch",
+              `Archiving agent ${mutation.agentId} would also archive agent ${record.id} outside workspace ${workspaceId}`,
+            );
+          }
+          pendingParentIds.push(record.id);
+        }
+      }
+    }
+  }
+
+  private async executeWorkspaceLifecycleMutation(
+    workspaceId: string,
+    mutation: WorkspaceLifecycleMutation,
+  ): Promise<WorkspaceLifecycleMutationResult> {
+    switch (mutation.operation) {
+      case "archive_agent": {
+        const result = await this.archiveAgentForClose(mutation.agentId, workspaceId);
+        return { operation: mutation.operation, ...result };
+      }
+      case "send_agent_message": {
+        const prompt = buildAgentPrompt(mutation.text, mutation.images, mutation.attachments);
+        const dispatchResult = await sendPromptToAgent({
+          agentManager: this.agentManager,
+          agentStorage: this.agentStorage,
+          agentId: mutation.agentId,
+          prompt,
+          messageId: mutation.messageId,
+          logger: this.sessionLogger,
+        });
+        if (!dispatchResult.outOfBand) {
+          await waitForAgentRunStartWithTimeout(this.agentManager, mutation.agentId);
+        }
+        return { operation: mutation.operation, agentId: mutation.agentId };
+      }
+      case "refresh_agent": {
+        const timelineSize = await this.refreshAgentFromPersistence(mutation.agentId, false);
+        return { operation: mutation.operation, agentId: mutation.agentId, timelineSize };
+      }
+      case "cancel_agent":
+        await cancelAgentRunCommand(
+          { agentManager: this.agentManager, logger: this.sessionLogger },
+          mutation.agentId,
+        );
+        return { operation: mutation.operation, agentId: mutation.agentId };
+      case "restore_workspace":
+        await this.restoreWorkspaceAndEmit(workspaceId);
+        return { operation: mutation.operation, workspaceId };
+    }
+  }
+
   private async handleWorkspaceRecoveryRestoreRequest(
     request: Extract<SessionInboundMessage, { type: "workspace.recovery.restore.request" }>,
   ): Promise<void> {
@@ -3390,40 +3714,7 @@ export class Session {
     this.sessionLogger.info({ agentId }, `Refreshing agent ${agentId} from persistence`);
 
     try {
-      await this.restoreOwningWorkspaceForLegacyAgentRefresh(agentId);
-      await unarchiveAgentState(this.agentStorage, this.agentManager, agentId);
-      let snapshot: ManagedAgent;
-      const existing = this.agentManager.getAgent(agentId);
-      if (existing) {
-        await this.interruptAgentIfRunning(agentId);
-        snapshot = await this.agentManager.reloadAgentSession(agentId, undefined, {
-          rehydrateFromDisk: true,
-        });
-      } else {
-        const record = await this.agentStorage.get(agentId);
-        if (!record) {
-          throw new Error(`Agent not found: ${agentId}`);
-        }
-        const registeredProviderIds = this.providerSnapshotManager.listRegisteredProviderIds();
-        if (!isStoredAgentProviderAvailable(record, registeredProviderIds)) {
-          throw new Error(`Agent ${agentId} references unavailable provider '${record.provider}'`);
-        }
-        if (!toAgentPersistenceHandle(registeredProviderIds, record.persistence)) {
-          throw new Error(`Agent ${agentId} cannot be refreshed because it lacks persistence`);
-        }
-        // Share the loader's per-agent in-flight operation with timeline fetches.
-        // Unarchiving publishes the record before provider resume finishes, so
-        // the agent pane can otherwise race this request and resume it twice.
-        snapshot = await ensureAgentLoaded(agentId, {
-          agentManager: this.agentManager,
-          agentStorage: this.agentStorage,
-          broadcastTimeline: true,
-          logger: this.sessionLogger,
-        });
-      }
-      await this.agentManager.hydrateTimelineFromProvider(agentId, { broadcast: true });
-      await this.agentUpdates.forwardLiveAgent(snapshot);
-      const timelineSize = this.agentManager.getTimeline(agentId).length;
+      const timelineSize = await this.refreshAgentFromPersistence(agentId, true);
       if (requestId) {
         this.emit({
           type: "status",
@@ -3459,6 +3750,48 @@ export class Session {
         },
       });
     }
+  }
+
+  private async refreshAgentFromPersistence(
+    agentId: string,
+    restoreLegacyWorkspace: boolean,
+  ): Promise<number> {
+    if (restoreLegacyWorkspace) {
+      await this.restoreOwningWorkspaceForLegacyAgentRefresh(agentId);
+    }
+    await unarchiveAgentState(this.agentStorage, this.agentManager, agentId);
+    let snapshot: ManagedAgent;
+    const existing = this.agentManager.getAgent(agentId);
+    if (existing) {
+      await this.interruptAgentIfRunning(agentId);
+      snapshot = await this.agentManager.reloadAgentSession(agentId, undefined, {
+        rehydrateFromDisk: true,
+      });
+    } else {
+      const record = await this.agentStorage.get(agentId);
+      if (!record) {
+        throw new Error(`Agent not found: ${agentId}`);
+      }
+      const registeredProviderIds = this.providerSnapshotManager.listRegisteredProviderIds();
+      if (!isStoredAgentProviderAvailable(record, registeredProviderIds)) {
+        throw new Error(`Agent ${agentId} references unavailable provider '${record.provider}'`);
+      }
+      if (!toAgentPersistenceHandle(registeredProviderIds, record.persistence)) {
+        throw new Error(`Agent ${agentId} cannot be refreshed because it lacks persistence`);
+      }
+      // Share the loader's per-agent in-flight operation with timeline fetches.
+      // Unarchiving publishes the record before provider resume finishes, so
+      // the agent pane can otherwise race this request and resume it twice.
+      snapshot = await ensureAgentLoaded(agentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        broadcastTimeline: true,
+        logger: this.sessionLogger,
+      });
+    }
+    await this.agentManager.hydrateTimelineFromProvider(agentId, { broadcast: true });
+    await this.agentUpdates.forwardLiveAgent(snapshot);
+    return this.agentManager.getTimeline(agentId).length;
   }
 
   private async handleCancelAgentRequest(agentId: string, requestId?: string): Promise<void> {

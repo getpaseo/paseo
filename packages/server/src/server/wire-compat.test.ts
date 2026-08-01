@@ -79,6 +79,34 @@ const LegacyAgentSnapshotPayloadSchema = AgentSnapshotPayloadSchema.extend({
   capabilities: LegacyAgentCapabilityFlagsSchema,
 });
 
+// Copied from v0.2.5 (6fc491e6): hello capabilities were passthrough, while
+// server-info features stripped keys that version did not know.
+const StableV025HelloSchema = z.object({
+  type: z.literal("hello"),
+  clientId: z.string().min(1),
+  clientType: z.enum(["mobile", "browser", "cli", "mcp"]),
+  protocolVersion: z.number().int(),
+  appVersion: z.string().optional(),
+  capabilities: z
+    .object({
+      [CLIENT_CAPS.projectUpdates]: z.boolean().optional(),
+    })
+    .passthrough()
+    .optional(),
+});
+
+const StableV025ServerInfoStatusPayloadSchema = z.object({
+  status: z.literal("server_info"),
+  serverId: z.string().trim().min(1),
+  hostname: z.string().nullable().optional(),
+  version: z.string().nullable().optional(),
+  features: z
+    .object({
+      providersSnapshot: z.boolean().optional(),
+    })
+    .optional(),
+});
+
 interface SessionInternals {
   handleFetchAgentTimelineRequest: (
     message: Extract<
@@ -424,6 +452,34 @@ describe("wire compatibility", () => {
         },
       },
     ]);
+  });
+
+  test("keeps the workspace mutation capability compatible with stable v0.2.5", () => {
+    const newClientHello = {
+      type: "hello" as const,
+      clientId: "new-client",
+      clientType: "cli" as const,
+      protocolVersion: 1,
+      capabilities: {
+        [CLIENT_CAPS.workspaceLifecycleMutationAuthority]: true,
+      },
+    };
+    const newDaemonInfo = ServerInfoStatusPayloadSchema.parse({
+      status: "server_info",
+      serverId: "new-daemon",
+      features: { workspaceLifecycleMutationAuthority: true },
+    });
+
+    expect(StableV025HelloSchema.parse(newClientHello).capabilities).toEqual({
+      [CLIENT_CAPS.workspaceLifecycleMutationAuthority]: true,
+    });
+    expect(StableV025ServerInfoStatusPayloadSchema.parse(newDaemonInfo).features).toEqual({});
+    expect(
+      ServerInfoStatusPayloadSchema.parse({
+        status: "server_info",
+        serverId: "stable-v0.2.5-daemon",
+      }).features?.workspaceLifecycleMutationAuthority,
+    ).toBeUndefined();
   });
 
   test("server info strips unknown legacy features while accepting former turn identity", () => {

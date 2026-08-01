@@ -267,6 +267,21 @@ export interface AgentManagerOptions {
   logger: Logger;
 }
 
+export interface ArchiveAgentOptions {
+  expectedWorkspaceId?: string;
+}
+
+export class AgentArchiveWorkspaceMismatchError extends Error {
+  constructor(
+    public readonly agentId: string,
+    public readonly expectedWorkspaceId: string,
+    public readonly actualWorkspaceId: string | undefined,
+  ) {
+    super(`Agent ${agentId} does not belong to workspace ${expectedWorkspaceId}`);
+    this.name = "AgentArchiveWorkspaceMismatchError";
+  }
+}
+
 export interface WaitForAgentOptions {
   signal?: AbortSignal;
   waitForActive?: boolean;
@@ -1463,7 +1478,10 @@ export class AgentManager {
     }
   }
 
-  async archiveAgent(agentId: string): Promise<{ archivedAt: string }> {
+  async archiveAgent(
+    agentId: string,
+    options?: ArchiveAgentOptions,
+  ): Promise<{ archivedAt: string }> {
     const agent = this.requireAgent(agentId);
     if (!this.registry) {
       throw new Error("Agent storage is not configured");
@@ -1476,13 +1494,15 @@ export class AgentManager {
     if (!stored) {
       throw new Error(`Agent ${agentId} not found in storage after snapshot`);
     }
+    this.assertArchiveWorkspace(stored, options?.expectedWorkspaceId);
+    await this.assertArchiveChildrenWorkspace(agentId, options?.expectedWorkspaceId);
 
     const { archivedAt } = await this.markRecordArchived(stored);
     agent.updatedAt = new Date(archivedAt);
     await this.closeAgent(agentId);
     this.discardRetainedAgentState(agentId);
 
-    await this.cascadeArchiveChildren(agentId);
+    await this.cascadeArchiveChildren(agentId, options);
 
     return { archivedAt };
   }
@@ -1491,24 +1511,56 @@ export class AgentManager {
   // label pointing back at the caller. Archiving the parent cascades to those
   // children so subagent fleets don't outlive their orchestrator. Detached
   // handoff agents omit this label, so they stand outside the cascade.
-  private async cascadeArchiveChildren(parentAgentId: string): Promise<void> {
+  private async cascadeArchiveChildren(
+    parentAgentId: string,
+    options?: ArchiveAgentOptions,
+  ): Promise<void> {
     const registry = this.registry;
     if (!registry) {
       return;
     }
     const records = await registry.list();
-    for (const record of records) {
-      if (record.archivedAt) {
-        continue;
-      }
-      if (record.labels?.[PARENT_AGENT_ID_LABEL] !== parentAgentId) {
-        continue;
-      }
+    const children = records.filter(
+      (record) => !record.archivedAt && record.labels?.[PARENT_AGENT_ID_LABEL] === parentAgentId,
+    );
+    // Recheck after archiving the parent so a newly attached child cannot cross the boundary.
+    for (const record of children) {
+      this.assertArchiveWorkspace(record, options?.expectedWorkspaceId);
+    }
+    for (const record of children) {
       if (this.agents.has(record.id)) {
-        await this.archiveAgent(record.id);
+        await this.archiveAgent(record.id, options);
       } else {
-        await this.archiveSnapshot(record.id, new Date().toISOString());
+        await this.archiveSnapshot(record.id, new Date().toISOString(), options);
       }
+    }
+  }
+
+  private async assertArchiveChildrenWorkspace(
+    parentAgentId: string,
+    expectedWorkspaceId: string | undefined,
+  ): Promise<void> {
+    if (expectedWorkspaceId === undefined || !this.registry) {
+      return;
+    }
+    const records = await this.registry.list();
+    for (const record of records) {
+      if (!record.archivedAt && record.labels?.[PARENT_AGENT_ID_LABEL] === parentAgentId) {
+        this.assertArchiveWorkspace(record, expectedWorkspaceId);
+      }
+    }
+  }
+
+  private assertArchiveWorkspace(
+    record: StoredAgentRecord,
+    expectedWorkspaceId: string | undefined,
+  ): void {
+    if (expectedWorkspaceId !== undefined && record.workspaceId !== expectedWorkspaceId) {
+      throw new AgentArchiveWorkspaceMismatchError(
+        record.id,
+        expectedWorkspaceId,
+        record.workspaceId,
+      );
     }
   }
 
@@ -1779,7 +1831,11 @@ export class AgentManager {
     }
   }
 
-  async archiveSnapshot(agentId: string, archivedAt: string): Promise<StoredAgentRecord> {
+  async archiveSnapshot(
+    agentId: string,
+    archivedAt: string,
+    options?: ArchiveAgentOptions,
+  ): Promise<StoredAgentRecord> {
     const registry = this.requireRegistry();
     const liveAgent = this.getAgent(agentId);
     if (liveAgent) {
@@ -1792,6 +1848,8 @@ export class AgentManager {
     if (!record) {
       throw new Error(`Agent not found: ${agentId}`);
     }
+    this.assertArchiveWorkspace(record, options?.expectedWorkspaceId);
+    await this.assertArchiveChildrenWorkspace(agentId, options?.expectedWorkspaceId);
 
     const nextRecord = buildArchivedAgentRecord(record, { archivedAt });
     await registry.upsert(nextRecord);
@@ -1808,7 +1866,7 @@ export class AgentManager {
     }
 
     await this.fireAgentArchived(agentId);
-    await this.cascadeArchiveChildren(agentId);
+    await this.cascadeArchiveChildren(agentId, options);
 
     return nextRecord;
   }

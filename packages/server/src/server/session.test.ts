@@ -22,7 +22,10 @@ import { isSessionRpcAllowed, Session } from "./session.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
-import type { AgentManagerEvent } from "./agent/agent-manager.js";
+import {
+  AgentArchiveWorkspaceMismatchError,
+  type AgentManagerEvent,
+} from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
 import { deriveProjectKey } from "./project-key.js";
@@ -52,6 +55,7 @@ import {
 } from "../services/github-service.js";
 import type { CheckDetails, ForgeService } from "../services/forge-service.js";
 import type { GitHubPullRequestStatusFacts } from "../services/github-facts.js";
+import { WorkspaceMutationAuthority } from "./workspace-mutation-authority.js";
 
 interface SessionHandlerInternals {
   interruptAgentIfRunning(agentId: string): Promise<void>;
@@ -279,6 +283,7 @@ vi.mock("./worktree-bootstrap.js", async (importOriginal) => {
 });
 
 interface SessionForTestOptions {
+  clientId?: string;
   scopes?: readonly string[];
   agentManager?: { [K in keyof SessionOptions["agentManager"]]?: unknown };
   agentStorage?: { [K in keyof SessionOptions["agentStorage"]]?: unknown };
@@ -317,6 +322,7 @@ interface SessionForTestOptions {
   messages?: unknown[];
   targetedMessages?: Array<{ source: object; message: SessionOutboundMessage }>;
   binaryMessages?: Uint8Array[];
+  workspaceMutationAuthority?: WorkspaceMutationAuthority;
 }
 
 function createSessionForTest(options: SessionForTestOptions = {}): Session {
@@ -352,7 +358,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
   const messages = options.messages ?? [];
 
   const sessionOptions: SessionOptions = {
-    clientId: "test-client",
+    clientId: options.clientId ?? "test-client",
     onMessage: (message) => messages.push(message),
     ...(options.targetedMessages
       ? {
@@ -390,6 +396,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
       get: vi.fn(),
       list: vi.fn().mockResolvedValue([]),
     },
+    workspaceMutationAuthority: options.workspaceMutationAuthority,
     chatService: asChatService(),
     scheduleService: asScheduleService(),
     loopService: asLoopService(),
@@ -420,6 +427,304 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
   };
   return new Session(sessionOptions);
 }
+
+describe("workspace lifecycle mutation authority", () => {
+  test("shares owner-bound authority across sessions and commits only the exact revision", async () => {
+    const authority = new WorkspaceMutationAuthority({
+      generateLeaseId: () => "lease-1",
+    });
+    const workspace = { workspaceId: "workspace-1" };
+    const revision = "2026-08-01T12:00:00.000Z";
+    const getAgent = vi.fn(() => ({
+      id: "agent-1",
+      cwd: "/tmp/project",
+      workspaceId: "workspace-1",
+      updatedAt: new Date(revision),
+      lifecycle: "idle" as const,
+    }));
+    const hasInFlightRun = vi.fn(() => false);
+    const ownerMessages: SessionOutboundMessage[] = [];
+    const contenderMessages: SessionOutboundMessage[] = [];
+    const sharedOptions = {
+      workspaceMutationAuthority: authority,
+      workspaceRegistry: { get: vi.fn().mockResolvedValue(workspace) },
+      agentManager: { getAgent, hasInFlightRun },
+    };
+    const owner = createSessionForTest({
+      ...sharedOptions,
+      clientId: "owner-client",
+      messages: ownerMessages,
+    });
+    const contender = createSessionForTest({
+      ...sharedOptions,
+      clientId: "contender-client",
+      messages: contenderMessages,
+    });
+
+    await owner.handleMessage({
+      type: "workspace.lifecycle_mutation_authority.acquire.request",
+      workspaceId: "workspace-1",
+      requestId: "acquire-owner",
+    });
+    await contender.handleMessage({
+      type: "workspace.lifecycle_mutation_authority.acquire.request",
+      workspaceId: "workspace-1",
+      requestId: "acquire-contender",
+    });
+    await contender.handleMessage({
+      type: "workspace.lifecycle_mutation_authority.commit.request",
+      workspaceId: "workspace-1",
+      leaseId: "lease-1",
+      fence: 1,
+      requestId: "commit-contender",
+      mutation: {
+        operation: "cancel_agent",
+        agentId: "agent-1",
+        agentRevision: revision,
+      },
+    });
+    await owner.handleMessage({
+      type: "workspace.lifecycle_mutation_authority.commit.request",
+      workspaceId: "workspace-1",
+      leaseId: "lease-1",
+      fence: 1,
+      requestId: "commit-stale",
+      mutation: {
+        operation: "cancel_agent",
+        agentId: "agent-1",
+        agentRevision: "2026-07-31T12:00:00.000Z",
+      },
+    });
+    await owner.handleMessage({
+      type: "workspace.lifecycle_mutation_authority.commit.request",
+      workspaceId: "workspace-1",
+      leaseId: "lease-1",
+      fence: 1,
+      requestId: "commit-owner",
+      mutation: {
+        operation: "cancel_agent",
+        agentId: "agent-1",
+        agentRevision: revision,
+      },
+    });
+
+    expect(contenderMessages).toMatchObject([
+      {
+        type: "workspace.lifecycle_mutation_authority.acquire.response",
+        payload: { requestId: "acquire-contender", ok: false, error: { code: "authority_held" } },
+      },
+      {
+        type: "workspace.lifecycle_mutation_authority.commit.response",
+        payload: { requestId: "commit-contender", ok: false, error: { code: "owner_mismatch" } },
+      },
+    ]);
+    expect(ownerMessages).toMatchObject([
+      {
+        type: "workspace.lifecycle_mutation_authority.acquire.response",
+        payload: { requestId: "acquire-owner", ok: true, lease: { leaseId: "lease-1", fence: 1 } },
+      },
+      {
+        type: "workspace.lifecycle_mutation_authority.commit.response",
+        payload: {
+          requestId: "commit-stale",
+          ok: false,
+          error: { code: "agent_revision_mismatch" },
+        },
+      },
+      {
+        type: "workspace.lifecycle_mutation_authority.commit.response",
+        payload: {
+          requestId: "commit-owner",
+          ok: true,
+          result: { operation: "cancel_agent", agentId: "agent-1" },
+        },
+      },
+    ]);
+    expect(hasInFlightRun).toHaveBeenCalledTimes(1);
+  });
+
+  test("rejects nonexistent workspaces and cross-workspace agents", async () => {
+    const authority = new WorkspaceMutationAuthority({ generateLeaseId: () => "lease-1" });
+    const messages: SessionOutboundMessage[] = [];
+    const getWorkspace = vi.fn(async (workspaceId: string) =>
+      workspaceId === "workspace-1" ? { workspaceId } : null,
+    );
+    const hasInFlightRun = vi.fn(() => false);
+    const session = createSessionForTest({
+      messages,
+      workspaceMutationAuthority: authority,
+      workspaceRegistry: { get: getWorkspace },
+      agentManager: {
+        getAgent: vi.fn(() => ({
+          id: "agent-1",
+          cwd: "/tmp/project",
+          workspaceId: "workspace-2",
+          updatedAt: new Date("2026-08-01T12:00:00.000Z"),
+          lifecycle: "idle" as const,
+        })),
+        hasInFlightRun,
+      },
+    });
+
+    await session.handleMessage({
+      type: "workspace.lifecycle_mutation_authority.acquire.request",
+      workspaceId: "missing-workspace",
+      requestId: "acquire-missing",
+    });
+    await session.handleMessage({
+      type: "workspace.lifecycle_mutation_authority.acquire.request",
+      workspaceId: "workspace-1",
+      requestId: "acquire-owner",
+    });
+    await session.handleMessage({
+      type: "workspace.lifecycle_mutation_authority.commit.request",
+      workspaceId: "workspace-1",
+      leaseId: "lease-1",
+      fence: 1,
+      requestId: "commit-cross-workspace",
+      mutation: {
+        operation: "cancel_agent",
+        agentId: "agent-1",
+        agentRevision: "2026-08-01T12:00:00.000Z",
+      },
+    });
+
+    expect(messages[0]).toMatchObject({
+      payload: { requestId: "acquire-missing", ok: false, error: { code: "workspace_not_found" } },
+    });
+    expect(messages[2]).toMatchObject({
+      payload: {
+        requestId: "commit-cross-workspace",
+        ok: false,
+        error: { code: "agent_workspace_mismatch" },
+      },
+    });
+    expect(hasInFlightRun).not.toHaveBeenCalled();
+  });
+
+  test("rejects an archive that would cascade into another workspace", async () => {
+    const authority = new WorkspaceMutationAuthority({ generateLeaseId: () => "lease-1" });
+    const messages: SessionOutboundMessage[] = [];
+    const revision = "2026-08-01T12:00:00.000Z";
+    const archiveAgent = vi.fn();
+    const session = createSessionForTest({
+      messages,
+      workspaceMutationAuthority: authority,
+      workspaceRegistry: { get: vi.fn().mockResolvedValue({ workspaceId: "workspace-1" }) },
+      agentManager: {
+        getAgent: vi.fn(() => ({
+          id: "parent-agent",
+          cwd: "/tmp/project",
+          workspaceId: "workspace-1",
+          updatedAt: new Date(revision),
+          lifecycle: "idle" as const,
+        })),
+        archiveAgent,
+      },
+      agentStorage: {
+        list: vi.fn().mockResolvedValue([
+          {
+            id: "child-agent",
+            provider: "codex",
+            cwd: "/tmp/other-project",
+            workspaceId: "workspace-2",
+            createdAt: revision,
+            updatedAt: revision,
+            labels: { [PARENT_AGENT_ID_LABEL]: "parent-agent" },
+            lastStatus: "closed",
+          },
+        ]),
+      },
+    });
+
+    await session.handleMessage({
+      type: "workspace.lifecycle_mutation_authority.acquire.request",
+      workspaceId: "workspace-1",
+      requestId: "acquire-owner",
+    });
+    await session.handleMessage({
+      type: "workspace.lifecycle_mutation_authority.commit.request",
+      workspaceId: "workspace-1",
+      leaseId: "lease-1",
+      fence: 1,
+      requestId: "commit-cross-workspace-cascade",
+      mutation: {
+        operation: "archive_agent",
+        agentId: "parent-agent",
+        agentRevision: revision,
+      },
+    });
+
+    expect(messages[1]).toMatchObject({
+      payload: {
+        requestId: "commit-cross-workspace-cascade",
+        ok: false,
+        error: { code: "agent_workspace_mismatch" },
+      },
+    });
+    expect(archiveAgent).not.toHaveBeenCalled();
+  });
+
+  test("rejects a cross-workspace child attached after archive preflight", async () => {
+    const authority = new WorkspaceMutationAuthority({ generateLeaseId: () => "lease-1" });
+    const messages: SessionOutboundMessage[] = [];
+    const revision = "2026-08-01T12:00:00.000Z";
+    const archiveAgent = vi
+      .fn()
+      .mockRejectedValue(
+        new AgentArchiveWorkspaceMismatchError("late-child", "workspace-1", "workspace-2"),
+      );
+    const session = createSessionForTest({
+      messages,
+      workspaceMutationAuthority: authority,
+      workspaceRegistry: { get: vi.fn().mockResolvedValue({ workspaceId: "workspace-1" }) },
+      agentManager: {
+        getAgent: vi.fn(() => ({
+          id: "parent-agent",
+          cwd: "/tmp/project",
+          workspaceId: "workspace-1",
+          updatedAt: new Date(revision),
+          lifecycle: "idle" as const,
+        })),
+        hasInFlightRun: vi.fn(() => false),
+        clearAgentAttention: vi.fn().mockResolvedValue(undefined),
+        archiveAgent,
+      },
+      agentStorage: {
+        list: vi.fn().mockResolvedValue([]),
+      },
+    });
+
+    await session.handleMessage({
+      type: "workspace.lifecycle_mutation_authority.acquire.request",
+      workspaceId: "workspace-1",
+      requestId: "acquire-owner",
+    });
+    await session.handleMessage({
+      type: "workspace.lifecycle_mutation_authority.commit.request",
+      workspaceId: "workspace-1",
+      leaseId: "lease-1",
+      fence: 1,
+      requestId: "commit-late-cross-workspace-child",
+      mutation: {
+        operation: "archive_agent",
+        agentId: "parent-agent",
+        agentRevision: revision,
+      },
+    });
+
+    expect(messages[1]).toMatchObject({
+      payload: {
+        requestId: "commit-late-cross-workspace-child",
+        ok: false,
+        error: { code: "agent_workspace_mismatch" },
+      },
+    });
+    expect(archiveAgent).toHaveBeenCalledWith("parent-agent", {
+      expectedWorkspaceId: "workspace-1",
+    });
+  });
+});
 
 describe("session authorization scopes", () => {
   test("rejects an RPC outside an exact grant with the generic RPC error", async () => {

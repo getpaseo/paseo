@@ -89,6 +89,7 @@ import {
 } from "@getpaseo/protocol/browser-automation/capabilities";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import type { DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
+import { WorkspaceMutationAuthority } from "./workspace-mutation-authority.js";
 import {
   APPLICATION_SOCKET_LEASE_CHECK_INTERVAL_MS,
   ApplicationSocketLease,
@@ -508,6 +509,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly agentStorage: AgentStorage;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
+  private readonly workspaceMutationAuthority = new WorkspaceMutationAuthority();
   private readonly chatService: FileBackedChatService;
   private readonly loopService: LoopService;
   private readonly scheduleService: ScheduleService;
@@ -1327,6 +1329,7 @@ export class VoiceAssistantWebSocketServer {
       agentStorage: this.agentStorage,
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
+      workspaceMutationAuthority: this.workspaceMutationAuthority,
       chatService: this.chatService,
       loopService: this.loopService,
       scheduleService: this.scheduleService,
@@ -1595,6 +1598,8 @@ export class VoiceAssistantWebSocketServer {
         workspaceScriptManagement: true,
         // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
         projectCustomIcon: true,
+        // COMPAT(workspaceLifecycleMutationAuthority): added in v0.2.6, remove after 2027-02-01.
+        workspaceLifecycleMutationAuthority: true,
       },
     };
   }

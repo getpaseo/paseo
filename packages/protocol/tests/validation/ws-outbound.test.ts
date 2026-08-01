@@ -140,6 +140,34 @@ const SourceSchema = z.object({
 
   it.each([
     {
+      type: "workspace.lifecycle_mutation_authority.acquire.response",
+      payload: {
+        requestId: "acquire-request",
+        ok: true,
+        lease: {
+          workspaceId: "workspace-1",
+          leaseId: "lease-1",
+          fence: 1,
+          expiresAt: "2026-08-01T00:00:30.000Z",
+        },
+      },
+    },
+    {
+      type: "workspace.lifecycle_mutation_authority.commit.response",
+      payload: {
+        requestId: "commit-request",
+        ok: false,
+        error: { code: "lease_expired", message: "Lease expired" },
+      },
+    },
+  ])("accepts boolean-tagged workspace lifecycle authority response $type", (message) => {
+    expect(GeneratedWSOutboundMessageSchema.safeParse({ type: "session", message })).toMatchObject({
+      success: true,
+    });
+  });
+
+  it.each([
+    {
       name: "dedicated attention message",
       message: {
         type: "agent_attention_required",

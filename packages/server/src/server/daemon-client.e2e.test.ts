@@ -680,6 +680,46 @@ test("archives agents and excludes them from default listings", async () => {
   }
 }, 30000);
 
+test("guards workspace lifecycle mutations across the real WebSocket boundary", async () => {
+  const cwd = tmpCwd();
+  try {
+    const opened = await ctx.client.openProject(cwd);
+    if (!opened.workspace) {
+      throw new Error(opened.error ?? "Expected workspace");
+    }
+    const workspaceId = opened.workspace.id;
+    const created = await ctx.client.createAgent({
+      config: {
+        ...getFullAccessConfig("codex"),
+        cwd,
+      },
+      workspaceId,
+    });
+
+    const acquired = await ctx.client.acquireWorkspaceLifecycleMutationAuthority(workspaceId);
+    const lease = await ctx.client.renewWorkspaceLifecycleMutationAuthority(acquired);
+    await expect(
+      ctx.client.commitWorkspaceLifecycleMutation(lease, {
+        operation: "archive_agent",
+        agentId: created.id,
+        agentRevision: created.updatedAt,
+      }),
+    ).resolves.toMatchObject({
+      operation: "archive_agent",
+      agentId: created.id,
+      archivedAt: expect.any(String),
+    });
+    await expect(ctx.client.releaseWorkspaceLifecycleMutationAuthority(lease)).resolves.toEqual(
+      lease,
+    );
+
+    const archived = await ctx.client.fetchAgent({ agentId: created.id });
+    expect(archived?.agent.archivedAt).toEqual(expect.any(String));
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 30000);
+
 test("returns rpc error when archiving an unknown agent id", async () => {
   await expect(ctx.client.archiveAgent(randomUUID())).rejects.toThrow();
 }, 10000);
@@ -1013,6 +1053,7 @@ test("receives server_info on websocket connect", async () => {
   expect(serverInfo?.features?.daemonSelfUpdate).toBe(true);
   expect(serverInfo?.features?.worktreeRestore).toBe(true);
   expect(serverInfo?.features?.workspaceRecovery).toBe(true);
+  expect(serverInfo?.features?.workspaceLifecycleMutationAuthority).toBe(true);
 
   await client.close();
 }, 15000);

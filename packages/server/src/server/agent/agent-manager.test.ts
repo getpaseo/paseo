@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import {
+  AgentArchiveWorkspaceMismatchError,
   AgentManager,
   AgentManagerShuttingDownError,
   commandMayHaveChangedExternalState,
@@ -6597,6 +6598,75 @@ test("archiveAgent cascade archives off-memory children with the full archive co
 
   expectArchivedAgentRecord(await storage.get(child.id), "idle");
 });
+
+test.each(["live", "stored"] as const)(
+  "guarded archive rejects a cross-workspace child added after the %s root boundary check",
+  async (rootState) => {
+    const workdir = mkdtempSync(
+      join(tmpdir(), `agent-manager-cascade-workspace-race-${rootState}-`),
+    );
+    const storagePath = join(workdir, "agents");
+    let crossWorkspaceChildId = "";
+
+    class RacingArchiveStorage extends AgentStorage {
+      private listCount = 0;
+
+      override async list(): Promise<StoredAgentRecord[]> {
+        const records = await super.list();
+        this.listCount += 1;
+        if (this.listCount === 1) {
+          return records.filter((record) => record.id !== crossWorkspaceChildId);
+        }
+        return records;
+      }
+    }
+
+    const storage = new RacingArchiveStorage(storagePath, logger);
+    const manager = new AgentManager({
+      clients: {
+        codex: new TestAgentClient(),
+      },
+      registry: storage,
+      logger,
+    });
+    const parent = await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+        title: "Parent",
+      },
+      undefined,
+      { workspaceId: "workspace-1" },
+    );
+    const child = await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+        title: "Cross-workspace Child",
+      },
+      undefined,
+      {
+        labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+        workspaceId: "workspace-2",
+      },
+    );
+    crossWorkspaceChildId = child.id;
+
+    if (rootState === "stored") {
+      const managerInternals = manager as unknown as { agents: Map<string, unknown> };
+      managerInternals.agents.delete(parent.id);
+    }
+    const archive =
+      rootState === "live"
+        ? manager.archiveAgent(parent.id, { expectedWorkspaceId: "workspace-1" })
+        : manager.archiveSnapshot(parent.id, new Date().toISOString(), {
+            expectedWorkspaceId: "workspace-1",
+          });
+
+    await expect(archive).rejects.toBeInstanceOf(AgentArchiveWorkspaceMismatchError);
+    expect((await storage.get(child.id))?.archivedAt).toBeUndefined();
+  },
+);
 
 test("archiveAgent cascade notifies subscribers for in-memory and off-memory children", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cascade-notifications-"));
