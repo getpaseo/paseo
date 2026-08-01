@@ -86,6 +86,31 @@ describe("workspace agent visibility", () => {
     expect(result.knownAgentIds).toEqual(new Set(["parent-agent", "child-agent"]));
   });
 
+  it("inherits a parent workspace when a subagent has no workspaceId", () => {
+    const parent = makeAgent({
+      id: "parent-agent",
+      cwd: "/repo/worktree",
+      workspaceId: WORKSPACE_ID,
+    });
+    const child = makeAgent({
+      id: "child-agent",
+      cwd: "/repo/worktree/nested",
+      parentAgentId: parent.id,
+    });
+
+    const result = deriveWorkspaceAgentVisibility({
+      sessionAgents: new Map<string, Agent>([
+        [parent.id, parent],
+        [child.id, child],
+      ]),
+      workspaceId: WORKSPACE_ID,
+    });
+
+    expect(result.activeAgentIds).toEqual(new Set(["parent-agent", "child-agent"]));
+    expect(result.autoOpenAgentIds).toEqual(new Set(["parent-agent"]));
+    expect(result.knownAgentIds).toEqual(new Set(["parent-agent", "child-agent"]));
+  });
+
   it("keeps archived subagents known but excludes them from active and auto-open", () => {
     const archivedChild = makeAgent({
       id: "archived-child",

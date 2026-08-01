@@ -91,6 +91,7 @@ import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { buildDraftAgentSetup, type ClientSlashCommand } from "@/client-slash-commands";
+import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 
 interface ChatAgentStateShape {
   serverId: string | null;
@@ -1429,9 +1430,16 @@ function ActiveAgentComposer({
   );
   const handleOpenSubagent = useCallback(
     (subagentId: string) => {
-      navigateToAgent({ serverId, agentId: subagentId });
+      const session = useSessionStore.getState().sessions[serverId];
+      const subagent = session?.agents.get(subagentId) ?? session?.agentDetails.get(subagentId);
+      const subagentWorkspaceId = normalizeWorkspaceOpaqueId(subagent?.workspaceId);
+      if (!subagentWorkspaceId || subagentWorkspaceId === workspaceId) {
+        openTab({ kind: "agent", agentId: subagentId });
+        return;
+      }
+      navigateToAgent({ serverId, agentId: subagentId, workspaceId: subagentWorkspaceId });
     },
-    [serverId],
+    [openTab, serverId, workspaceId],
   );
   const handleOpenProviderSubagent = useCallback(
     (parentAgentId: string, subagentId: string) => {

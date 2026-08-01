@@ -27,7 +27,7 @@ export interface SeededCrossWorkspaceSubagentPair {
 
 export async function seedParentWithSubagent(
   workspace: Pick<SeededWorkspace, "client" | "repoPath" | "workspaceId">,
-  input: { parentTitle: string; childTitle: string },
+  input: { parentTitle: string; childTitle: string; childCwd?: string },
 ): Promise<SeededSubagentPair> {
   const parent = await workspace.client.createAgent({
     provider: "mock",
@@ -39,7 +39,7 @@ export async function seedParentWithSubagent(
   });
   const child = await workspace.client.createAgent({
     provider: "mock",
-    cwd: workspace.repoPath,
+    cwd: input.childCwd ?? workspace.repoPath,
     workspaceId: workspace.workspaceId,
     title: input.childTitle,
     modeId: "load-test",
