@@ -113,10 +113,12 @@ import { AttachmentLightbox } from "@/components/attachment-lightbox";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { isWeb, isNative } from "@/constants/platform";
 import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
+import type { AttachmentMetadata } from "@/attachments/types";
 import { RewindMenu, type RewindMode } from "@/components/rewind/rewind-menu";
 import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mutation";
 import { AssistantForkMenu, type AssistantForkTarget } from "@/components/assistant-fork-menu";
 import { useRetainedPanelActive } from "@/components/retained-panel";
+import { useSaveImage } from "@/images/use-save-image";
 export type { InlinePathTarget } from "@/assistant-file-links";
 export type { AssistantForkTarget };
 
@@ -777,8 +779,16 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
 
 const ASSISTANT_IMAGE_MIN_HEIGHT = 160;
 
+function resolveAssistantImageMimeType(
+  dataImage: AttachmentMetadata | null | undefined,
+  fileImage: AttachmentMetadata | null | undefined,
+): string | undefined {
+  return dataImage?.mimeType ?? fileImage?.mimeType;
+}
+
 const AssistantMarkdownResolvedImage = memo(function AssistantMarkdownResolvedImage({
   uri,
+  mimeType,
   alt,
   containerStyle,
   source,
@@ -786,12 +796,14 @@ const AssistantMarkdownResolvedImage = memo(function AssistantMarkdownResolvedIm
   serverId,
 }: {
   uri: string;
+  mimeType?: string;
   alt?: string;
   containerStyle?: StyleProp<ViewStyle>;
   source: string;
   workspaceRoot?: string;
   serverId?: string;
 }) {
+  const { t } = useTranslation();
   const cachedMetadata = useMemo(
     () => getAssistantImageMetadata({ source, workspaceRoot, serverId }),
     [serverId, source, workspaceRoot],
@@ -799,6 +811,10 @@ const AssistantMarkdownResolvedImage = memo(function AssistantMarkdownResolvedIm
   const [loadState, setLoadState] = useState<AssistantImageLoadState>(() =>
     getAssistantImageLoadStateFromMetadata(cachedMetadata),
   );
+  const [isLightboxVisible, setIsLightboxVisible] = useState(false);
+  const { save: saveImage } = useSaveImage({ uri, mimeType });
+  const openLightbox = useCallback(() => setIsLightboxVisible(true), []);
+  const closeLightbox = useCallback(() => setIsLightboxVisible(false), []);
 
   useEffect(() => {
     if (cachedMetadata) {
@@ -842,7 +858,6 @@ const AssistantMarkdownResolvedImage = memo(function AssistantMarkdownResolvedIm
   const handleImageError = useCallback(() => {
     setLoadState({ status: "error" });
   }, []);
-  const { t } = useTranslation();
   const surfaceStyle = useMemo<StyleProp<ViewStyle>>(
     () => [
       assistantMessageStylesheet.imageSurface,
@@ -880,17 +895,31 @@ const AssistantMarkdownResolvedImage = memo(function AssistantMarkdownResolvedIm
   }
 
   return (
-    <View style={frameStyle}>
-      <View style={surfaceStyle}>
-        <Image
-          source={imageSource}
-          style={assistantMessageStylesheet.image}
-          resizeMode="contain"
-          accessibilityLabel={alt}
-          onError={handleImageError}
-        />
+    <>
+      <View style={frameStyle}>
+        <Pressable
+          testID="assistant-markdown-image"
+          accessibilityRole="button"
+          accessibilityLabel={alt ?? t("message.attachments.imagePreview")}
+          accessibilityHint={isNative ? t("message.attachments.imagePreviewHint") : undefined}
+          onPress={openLightbox}
+          onLongPress={isNative ? saveImage : undefined}
+          style={surfaceStyle}
+        >
+          <Image
+            source={imageSource}
+            style={assistantMessageStylesheet.image}
+            resizeMode="contain"
+            onError={handleImageError}
+          />
+        </Pressable>
       </View>
-    </View>
+      <AttachmentLightbox
+        uri={isLightboxVisible ? uri : null}
+        mimeType={mimeType}
+        onClose={closeLightbox}
+      />
+    </>
   );
 });
 
@@ -980,6 +1009,7 @@ function AssistantMarkdownImage({
   const dataImageAssetUri = useAttachmentPreviewUrl(dataImageQuery.data);
   const directUri = resolution?.kind === "direct" && !dataImage ? resolution.uri : null;
   const resolvedUri = directUri ?? dataImageAssetUri ?? fileAssetUri ?? null;
+  const resolvedMimeType = resolveAssistantImageMimeType(dataImageQuery.data, query.data);
 
   const stateFrameStyle = useMemo<StyleProp<ViewStyle>>(
     () => [
@@ -995,6 +1025,7 @@ function AssistantMarkdownImage({
     return (
       <AssistantMarkdownResolvedImage
         uri={resolvedUri}
+        mimeType={resolvedMimeType}
         alt={alt}
         containerStyle={containerStyle}
         source={source}

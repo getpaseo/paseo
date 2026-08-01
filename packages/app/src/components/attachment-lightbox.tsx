@@ -2,32 +2,67 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Modal, Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Image as ExpoImage } from "expo-image";
 import { X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
-import { isWeb } from "@/constants/platform";
+import { isNative, isWeb } from "@/constants/platform";
 import { WindowChromeRootRegion, WindowChromeSafeArea } from "@/utils/desktop-window";
+import { useSaveImage } from "@/images/use-save-image";
+import { ZoomableImage } from "@/components/zoomable-image";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import type {
+  ImageSaveStatus,
+  UseSaveImageInput,
+  UseSaveImageResult,
+} from "@/images/use-save-image";
 
-interface AttachmentLightboxProps {
-  metadata: AttachmentMetadata | null;
-  onClose: () => void;
+function getSaveFeedbackText(status: ImageSaveStatus, t: TFunction): string | null {
+  switch (status) {
+    case "saving":
+      return t("message.attachments.imageSaving");
+    case "saved":
+      return t("message.attachments.imageSaved");
+    case "permissionDenied":
+      return t("message.attachments.imageSavePermissionDenied");
+    case "failed":
+      return t("message.attachments.imageSaveFailed");
+    case "idle":
+      return null;
+  }
 }
 
-export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProps) {
+interface AttachmentLightboxProps {
+  metadata?: AttachmentMetadata | null;
+  uri?: string | null;
+  mimeType?: string;
+  onClose: () => void;
+  useImageSave?: (input: UseSaveImageInput) => UseSaveImageResult;
+}
+
+export function AttachmentLightbox({
+  metadata = null,
+  uri = null,
+  mimeType,
+  onClose,
+  useImageSave = useSaveImage,
+}: AttachmentLightboxProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
-  const url = useAttachmentPreviewUrl(metadata);
+  const previewUrl = useAttachmentPreviewUrl(metadata);
+  const url = uri ?? previewUrl;
   const [errored, setErrored] = useState(false);
+  const imageSave = useImageSave({ uri: url, mimeType: mimeType ?? metadata?.mimeType });
+  const saveFeedbackText = getSaveFeedbackText(imageSave.status, t);
 
   useEffect(() => {
     setErrored(false);
-  }, [metadata?.id]);
+  }, [metadata?.id, uri]);
 
   useEffect(() => {
-    if (!isWeb || !metadata) return;
+    if (!isWeb || (!metadata && !uri)) return;
     function handleKeydown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         onClose();
@@ -37,7 +72,7 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
     return () => {
       window.removeEventListener("keydown", handleKeydown);
     };
-  }, [metadata, onClose]);
+  }, [metadata, onClose, uri]);
 
   const closeButtonRowStyle = useMemo(
     () => [
@@ -52,12 +87,13 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
     () => [styles.closeButton, { marginRight: insets.right + theme.spacing[3] }],
     [insets.right, theme.spacing],
   );
+  const saveFeedbackStyle = useMemo(
+    () => [styles.saveFeedback, { bottom: insets.bottom + theme.spacing[3] }],
+    [insets.bottom, theme.spacing],
+  );
 
   const handleImageError = useCallback(() => setErrored(true), []);
-  const noopPress = useCallback(() => {}, []);
-  const imageSource = useMemo(() => ({ uri: url ?? "" }), [url]);
-
-  if (!metadata) {
+  if (!metadata && !uri) {
     return null;
   }
 
@@ -79,15 +115,15 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
               {hasError ? (
                 <Text style={styles.errorText}>{t("message.attachments.imageLoadFailed")}</Text>
               ) : (
-                <Pressable onPress={noopPress} style={styles.imagePressable}>
-                  <ExpoImage
+                <View style={styles.imageViewport}>
+                  <ZoomableImage
                     testID="attachment-lightbox-image"
-                    source={imageSource}
-                    contentFit="contain"
+                    uri={url}
+                    accessibilityLabel={t("message.attachments.imagePreview")}
                     onError={handleImageError}
-                    style={imageFillStyle}
+                    onLongPress={isNative ? imageSave.save : undefined}
                   />
-                </Pressable>
+                </View>
               )}
             </View>
             <WindowChromeSafeArea placement="inline" style={closeButtonRowStyle}>
@@ -102,20 +138,24 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
                 <X size={16} color={theme.colors.foregroundMuted} />
               </Pressable>
             </WindowChromeSafeArea>
+            {saveFeedbackText ? (
+              <View
+                accessibilityLiveRegion="polite"
+                accessibilityRole="text"
+                style={saveFeedbackStyle}
+              >
+                {imageSave.status === "saving" ? (
+                  <LoadingSpinner color={theme.colors.foregroundMuted} />
+                ) : null}
+                <Text style={styles.saveFeedbackText}>{saveFeedbackText}</Text>
+              </View>
+            ) : null}
           </View>
         </View>
       </WindowChromeRootRegion>
     </Modal>
   );
 }
-
-const imageFillStyle = {
-  position: "absolute",
-  top: 0,
-  left: 0,
-  right: 0,
-  bottom: 0,
-} as const;
 
 const styles = StyleSheet.create((theme) => ({
   root: {
@@ -151,12 +191,11 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.spacing[4],
     pointerEvents: "box-none",
   },
-  imagePressable: {
+  imageViewport: {
     flex: 1,
     width: "100%",
     alignSelf: "center",
     maxWidth: 960,
-    maxHeight: 640,
   },
   errorText: {
     color: theme.colors.foregroundMuted,
@@ -172,5 +211,22 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     zIndex: 1,
+  },
+  saveFeedback: {
+    position: "absolute",
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface2,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+  },
+  saveFeedbackText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
   },
 }));

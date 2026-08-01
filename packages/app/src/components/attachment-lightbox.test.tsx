@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AttachmentMetadata } from "@/attachments/types";
+import type { UseSaveImageInput, UseSaveImageResult } from "@/images/use-save-image";
 import { AttachmentLightbox } from "./attachment-lightbox";
 
 const { theme, imageMetadata, useAttachmentPreviewUrlMock } = vi.hoisted(() => {
@@ -11,16 +12,23 @@ const { theme, imageMetadata, useAttachmentPreviewUrlMock } = vi.hoisted(() => {
     spacing: { 1: 4, 2: 8, 3: 12, 4: 16 },
     iconSize: { sm: 14, md: 18, lg: 22 },
     borderWidth: { 1: 1 },
-    borderRadius: { full: 999, md: 6, lg: 8 },
+    borderRadius: { full: 999, md: 6, lg: 8, "2xl": 16 },
     fontSize: { xs: 11, sm: 13, base: 15 },
     fontWeight: { normal: "400" },
+    shadow: { md: {} },
     colors: {
+      surface0: "#000",
       surface1: "#111",
       surface2: "#222",
       foreground: "#fff",
       foregroundMuted: "#aaa",
       border: "#555",
       borderAccent: "#444",
+      destructive: "#f00",
+      palette: {
+        amber: { 500: "#f90" },
+        blue: { 300: "#09f" },
+      },
     },
   };
 
@@ -62,6 +70,7 @@ vi.mock("react-i18next", () => ({
         "message.attachments.closeImage": "Close image",
         "message.attachments.dismissImage": "Dismiss image",
         "message.attachments.imageLoadFailed": "Couldn't load image",
+        "message.attachments.imagePreview": "Image preview",
       })[key] ?? key,
   }),
 }));
@@ -139,6 +148,14 @@ function render(element: React.ReactElement) {
   });
 }
 
+function useTestImageSave(_input: UseSaveImageInput): UseSaveImageResult {
+  return { save: () => {}, status: "idle" };
+}
+
+function TestAttachmentLightbox(props: React.ComponentProps<typeof AttachmentLightbox>) {
+  return <AttachmentLightbox {...props} useImageSave={useTestImageSave} />;
+}
+
 function click(element: Element) {
   act(() => {
     element.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
@@ -151,14 +168,14 @@ function queryByTestId(testID: string): HTMLElement | null {
 
 describe("AttachmentLightbox", () => {
   it("renders nothing when metadata is null", () => {
-    render(<AttachmentLightbox metadata={null} onClose={vi.fn()} />);
+    render(<TestAttachmentLightbox metadata={null} onClose={vi.fn()} />);
 
     expect(queryByTestId("attachment-lightbox-backdrop")).toBeNull();
     expect(queryByTestId("attachment-lightbox-image")).toBeNull();
   });
 
   it("renders the image when metadata is provided", () => {
-    render(<AttachmentLightbox metadata={imageMetadata} onClose={vi.fn()} />);
+    render(<TestAttachmentLightbox metadata={imageMetadata} onClose={vi.fn()} />);
 
     const image = queryByTestId("attachment-lightbox-image");
     expect(image).not.toBeNull();
@@ -166,7 +183,7 @@ describe("AttachmentLightbox", () => {
   });
 
   it("fills its parent via absolute positioning so expo-image does not collapse to 0px", () => {
-    render(<AttachmentLightbox metadata={imageMetadata} onClose={vi.fn()} />);
+    render(<TestAttachmentLightbox metadata={imageMetadata} onClose={vi.fn()} />);
 
     const image = queryByTestId("attachment-lightbox-image");
     const style = JSON.parse(image?.getAttribute("data-style") ?? "null") as {
@@ -185,7 +202,7 @@ describe("AttachmentLightbox", () => {
 
   it("calls onClose when the backdrop is pressed", () => {
     const onClose = vi.fn();
-    render(<AttachmentLightbox metadata={imageMetadata} onClose={onClose} />);
+    render(<TestAttachmentLightbox metadata={imageMetadata} onClose={onClose} />);
 
     const backdrop = queryByTestId("attachment-lightbox-backdrop");
     expect(backdrop).not.toBeNull();
@@ -196,7 +213,7 @@ describe("AttachmentLightbox", () => {
 
   it("calls onClose when the close button is pressed", () => {
     const onClose = vi.fn();
-    render(<AttachmentLightbox metadata={imageMetadata} onClose={onClose} />);
+    render(<TestAttachmentLightbox metadata={imageMetadata} onClose={onClose} />);
 
     const closeButton = document.querySelector(
       '[aria-label="Close image"][data-testid="attachment-lightbox-close"]',
@@ -209,7 +226,7 @@ describe("AttachmentLightbox", () => {
 
   it("shows error text when the preview URL resolves to null", () => {
     useAttachmentPreviewUrlMock.mockReturnValue(null);
-    render(<AttachmentLightbox metadata={imageMetadata} onClose={vi.fn()} />);
+    render(<TestAttachmentLightbox metadata={imageMetadata} onClose={vi.fn()} />);
 
     expect(queryByTestId("attachment-lightbox-image")).toBeNull();
     expect(document.body.textContent ?? "").toContain("Couldn't load image");
@@ -217,7 +234,7 @@ describe("AttachmentLightbox", () => {
 
   it("closes on Escape key on web", () => {
     const onClose = vi.fn();
-    render(<AttachmentLightbox metadata={imageMetadata} onClose={onClose} />);
+    render(<TestAttachmentLightbox metadata={imageMetadata} onClose={onClose} />);
 
     act(() => {
       window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape" }));
