@@ -633,7 +633,12 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
           head: result.head,
           range: result.cursorChanged ? (result.cursor ?? null) : (currentCursor ?? null),
           older: result.older,
-          newer: payload.hasNewer,
+          // A window is detached only when the client explicitly replaced it
+          // (message-trail rail jump / return-to-latest). Backward pagination
+          // merely prepends rows into a window that still contains the tail, so
+          // its hasNewer must not mark the timeline detached or live stream
+          // events would be dropped while the user is simply scrolled up.
+          newer: payload.hasNewer === true && payload.replaceWindow === true,
           synchronized: shouldMarkAuthoritativeHistoryApplied,
           acknowledgedClientMessageIds: result.acknowledgedClientMessageIds,
         });
