@@ -1507,6 +1507,19 @@ export const en = {
     archiveFinishedAction: "Archive finished subagents",
     archiveFinishedTooltip: "Archive finished",
   },
+  backgroundTasks: {
+    header: "Background Tasks",
+    headerCount: "Background Tasks ({{count}})",
+    stopAction: "Stop {{label}}",
+    stopTooltip: "Stop",
+    stopFailed: "Failed to stop background task",
+    noLiveLog: "No live log available",
+    statusRunning: "Running",
+    statusStopped: "Stopped",
+    statusFailed: "Failed",
+    statusCompleted: "Completed",
+    statusUnknown: "Unknown",
+  },
   panels: {
     draft: {
       newAgent: "New Agent",
