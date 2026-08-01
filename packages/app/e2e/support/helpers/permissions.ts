@@ -15,3 +15,16 @@ export async function denyPermission(page: Page): Promise<void> {
   await expect(denyButton).toBeVisible({ timeout: 5_000 });
   await denyButton.click();
 }
+
+export async function expectPermissionActions(page: Page, labels: string[]): Promise<void> {
+  await waitForPermissionPrompt(page, 120_000);
+  const card = page.getByTestId("permission-request-question").first().locator("..");
+  for (const label of labels) {
+    await expect(card.getByRole("button", { name: label })).toBeVisible();
+  }
+}
+
+export async function choosePermissionAction(page: Page, label: string): Promise<void> {
+  const card = page.getByTestId("permission-request-question").first().locator("..");
+  await card.getByRole("button", { name: label }).click();
+}
