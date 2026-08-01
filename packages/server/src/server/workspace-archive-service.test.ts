@@ -8,6 +8,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import type { ForgeService } from "../services/forge-service.js";
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
 import { createWorktree, type WorktreeConfig } from "../utils/worktree.js";
+import { readPaseoWorktreeIncarnationId } from "../utils/worktree-metadata.js";
 import type { ManagedAgent } from "./agent/agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
@@ -17,8 +18,10 @@ import {
   type ArchiveDependencies,
   type ArchiveResult,
   requireActiveWorkspaceForArchive,
+  requireArchiveCleanupComplete,
   resolveWorkspaceIdAtPath,
 } from "./workspace-archive-service.js";
+import { WorkspaceCleanupRetryService } from "./workspace-cleanup-retry-service.js";
 import { WorkspaceLifecycleCoordinator } from "./workspace-lifecycle-coordinator.js";
 import {
   createPersistedWorkspaceRecord,
@@ -1150,6 +1153,103 @@ describe("archiveByScope", () => {
     expect((await registry.get(workspaceA))?.cleanupPending).toBeNull();
     expect((await registry.get(workspaceB))?.cleanupPending).toBeNull();
     expect(existsSync(worktree.worktreePath)).toBe(false);
+  });
+
+  test("startup retry completes archived schedule cleanup without losing sibling teardown obligations", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const nestedRelative = path.join("packages", "app");
+    const sourceNested = path.join(repoDir, nestedRelative);
+    mkdirSync(sourceNested, { recursive: true });
+    writeFileSync(
+      path.join(repoDir, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          teardown: [
+            "node -e \"require('fs').writeFileSync(process.env.PASEO_SOURCE_CHECKOUT_PATH+'/retry-root.log','root')\"",
+          ],
+        },
+      }),
+    );
+    writeFileSync(
+      path.join(sourceNested, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          teardown: [
+            "node -e \"require('fs').writeFileSync(process.env.PASEO_SOURCE_CHECKOUT_PATH+'/retry-nested.log','nested')\"",
+          ],
+        },
+      }),
+    );
+    execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "retry teardown"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "schedule-cleanup-retry");
+    const nestedCwd = path.join(worktree.worktreePath, nestedRelative);
+    const incarnationId = readPaseoWorktreeIncarnationId(worktree.worktreePath);
+    expect(incarnationId).toBeTruthy();
+    const registry = new FileBackedWorkspaceRegistry(
+      path.join(tempDir, "workspaces.json"),
+      createLogger(),
+    );
+    await registry.initialize();
+    const timestamp = new Date().toISOString();
+    for (const [workspaceId, teardownCwd] of [
+      ["ws-completed-schedule-root", worktree.worktreePath],
+      ["ws-completed-schedule-nested", nestedCwd],
+    ] as const) {
+      await registry.upsert(
+        createPersistedWorkspaceRecord({
+          workspaceId,
+          projectId: "project-completed-schedule-cleanup",
+          cwd: teardownCwd,
+          kind: "worktree",
+          displayName: workspaceId,
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          archivedAt: timestamp,
+          cleanupPending: {
+            directoryPath: worktree.worktreePath,
+            teardownCwd,
+            mainRepoRoot: repoDir,
+            paseoWorktreesRoot: null,
+            worktreeIncarnationId: incarnationId,
+          },
+        }),
+      );
+    }
+
+    const deps = createArchiveDeps({ paseoHome, activeWorkspaces: [] });
+    deps.workspaceRegistry = registry;
+    const service = new WorkspaceCleanupRetryService({
+      workspaceRegistry: registry,
+      retryWorktreeCleanup: async (targetPath) => {
+        requireArchiveCleanupComplete(
+          await archiveByScope(deps, {
+            scope: { kind: "worktree", targetPath },
+            requestId: "startup-schedule-cleanup-retry",
+          }),
+          "Startup schedule cleanup retry",
+        );
+      },
+      logger: createLogger(),
+      idlePollMs: 60_000,
+    });
+
+    await service.start();
+    await service.stop();
+
+    expect(readFileSync(path.join(repoDir, "retry-root.log"), "utf8")).toBe("root");
+    expect(readFileSync(path.join(repoDir, "retry-nested.log"), "utf8")).toBe("nested");
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+    expect((await registry.get("ws-completed-schedule-root"))?.cleanupPending).toBeNull();
+    expect((await registry.get("ws-completed-schedule-nested"))?.cleanupPending).toBeNull();
   });
 
   test("workspace teardown failure keeps the record active and prevents recursive deletion", async () => {

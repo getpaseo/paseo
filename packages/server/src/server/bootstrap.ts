@@ -155,6 +155,7 @@ import {
   requireArchiveCleanupComplete,
   type ActiveWorkspaceRef,
 } from "./workspace-archive-service.js";
+import { WorkspaceCleanupRetryService } from "./workspace-cleanup-retry-service.js";
 import { setupAutoArchiveOnMerge } from "./auto-archive-on-merge/index.js";
 import { wrapSessionMessage, type SessionOutboundMessage } from "./messages.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
@@ -1087,6 +1088,44 @@ export async function createPaseoDaemon(
       ),
       "Workspace archive",
     );
+  const retryPendingWorktreeCleanupExternal = async (targetPath: string): Promise<void> => {
+    requireArchiveCleanupComplete(
+      await archiveByScope(
+        {
+          paseoHome: config.paseoHome,
+          paseoWorktreesBaseRoot: config.worktreesRoot,
+          github,
+          workspaceGitService,
+          agentManager,
+          agentStorage,
+          findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
+          listActiveWorkspaces: listActiveWorkspacesExternal,
+          archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
+          emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
+          markWorkspaceArchiving: markWorkspaceArchivingExternal,
+          clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
+          killTerminalsForWorkspace: (workspaceIdToKill) =>
+            killTerminalsForWorkspace(
+              { terminalManager, sessionLogger: logger },
+              workspaceIdToKill,
+            ),
+          workspaceRegistry,
+          sessionLogger: logger,
+        },
+        {
+          scope: { kind: "worktree", targetPath },
+          requestId: `cleanup-retry:${randomUUID()}`,
+        },
+      ),
+      "Workspace cleanup retry",
+    );
+  };
+  const workspaceCleanupRetryService = new WorkspaceCleanupRetryService({
+    workspaceRegistry,
+    retryWorktreeCleanup: retryPendingWorktreeCleanupExternal,
+    logger,
+  });
+  await workspaceCleanupRetryService.start();
   const hubAgentLifecycle = new CreateAgentLifecycleDispatch({
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
@@ -1619,6 +1658,7 @@ export async function createPaseoDaemon(
 
   const stop = async () => {
     await hubRelationships.stop();
+    await workspaceCleanupRetryService.stop();
     workspaceReconciliation.dispose();
     scriptHealthMonitor.stop();
     // Freeze both ingress and registration before taking the agent closure snapshot.

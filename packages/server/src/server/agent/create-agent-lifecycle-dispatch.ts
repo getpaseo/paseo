@@ -248,18 +248,66 @@ export function registerAgentAutoArchive(input: {
   agentManager: AgentLifecycleEvents;
   agentId: string;
   archive: () => Promise<unknown>;
+  retryBaseMs?: number;
+  retryMaxMs?: number;
 }): LifecycleRegistration {
   let unsubscribe: (() => void) | null = null;
   let archiveTask: Promise<unknown> | null = null;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let lastArchiveFailure: unknown | null = null;
+  let consecutiveFailures = 0;
+  let canceled = false;
+  const retryBaseMs = input.retryBaseMs ?? 1_000;
+  const retryMaxMs = input.retryMaxMs ?? 60_000;
   const release = () => {
     if (!unsubscribe) return;
     const subscribed = unsubscribe;
     unsubscribe = null;
     subscribed();
   };
+  const scheduleRetry = () => {
+    if (canceled || retryTimer) return;
+    const delay = Math.min(retryMaxMs, retryBaseMs * 2 ** Math.max(0, consecutiveFailures - 1));
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      attemptArchive();
+    }, delay);
+    (retryTimer as unknown as { unref?: () => void }).unref?.();
+  };
+  const attemptArchive = () => {
+    if (canceled || archiveTask) return;
+    const task = input.archive();
+    archiveTask = task;
+    void task.then(
+      () => {
+        if (archiveTask !== task) return;
+        archiveTask = null;
+        lastArchiveFailure = null;
+        consecutiveFailures = 0;
+        if (retryTimer) {
+          clearTimeout(retryTimer);
+          retryTimer = null;
+        }
+        release();
+        return undefined;
+      },
+      (error: unknown) => {
+        if (archiveTask !== task) return;
+        archiveTask = null;
+        lastArchiveFailure = error;
+        consecutiveFailures += 1;
+        scheduleRetry();
+        return undefined;
+      },
+    );
+  };
   const registration: LifecycleRegistration = {
     async cancel() {
+      canceled = true;
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
+      }
       release();
       const pendingArchive = archiveTask;
       if (pendingArchive) {
@@ -280,24 +328,7 @@ export function registerAgentAutoArchive(input: {
       ) {
         return;
       }
-      if (archiveTask) return;
-      const task = input.archive();
-      archiveTask = task;
-      void task.then(
-        () => {
-          if (archiveTask !== task) return;
-          archiveTask = null;
-          lastArchiveFailure = null;
-          release();
-          return undefined;
-        },
-        (error: unknown) => {
-          if (archiveTask !== task) return;
-          archiveTask = null;
-          lastArchiveFailure = error;
-          return undefined;
-        },
-      );
+      attemptArchive();
     },
     { agentId: input.agentId, replayState: false },
   );

@@ -51,7 +51,7 @@ test("auto-archive self-releases once and later cancellation waits harmlessly", 
   expect(agents.listenerCount()).toBe(0);
 });
 
-test("auto-archive retries a later terminal event after a transient failure", async () => {
+test("auto-archive retries autonomously after a transient failure", async () => {
   const agentId = "agent-auto-archive-retry";
   const agents = new AgentLifecycleEvents();
   const archive = vi
@@ -62,15 +62,12 @@ test("auto-archive retries a later terminal event after a transient failure", as
     agentManager: agents,
     agentId,
     archive,
+    retryBaseMs: 0,
+    retryMaxMs: 0,
   });
 
   agents.completeTurn(agentId);
-  await Promise.resolve();
-  await Promise.resolve();
-  expect(archive).toHaveBeenCalledTimes(1);
-  expect(agents.listenerCount()).toBe(1);
-
-  agents.completeTurn(agentId);
+  await vi.waitFor(() => expect(archive).toHaveBeenCalledTimes(2));
   await registration.cancel();
   expect(archive).toHaveBeenCalledTimes(2);
   expect(agents.listenerCount()).toBe(0);
@@ -96,15 +93,12 @@ test("auto-archive retries when physical workspace cleanup remains pending", asy
     agentManager: agents,
     agentId,
     archive,
+    retryBaseMs: 0,
+    retryMaxMs: 0,
   });
 
   agents.completeTurn(agentId);
-  await Promise.resolve();
-  await Promise.resolve();
-  expect(archive).toHaveBeenCalledTimes(1);
-  expect(agents.listenerCount()).toBe(1);
-
-  agents.completeTurn(agentId);
+  await vi.waitFor(() => expect(archive).toHaveBeenCalledTimes(2));
   await registration.cancel();
   expect(archive).toHaveBeenCalledTimes(2);
   expect(agents.listenerCount()).toBe(0);
