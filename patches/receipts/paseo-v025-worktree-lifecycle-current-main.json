@@ -11,14 +11,14 @@
     "upstreamMainCommit": "70ed70d36e2eabd3876a22931954319ec202c902",
     "mergeCommit": "e5e5d607ea8e14dd874c3db4ce095634a9da7092",
     "mergeTree": "529add05cfc1424c287d576f27d8194f37503c35",
-    "headCommit": "5c70d522437ea0c02c1e769ee5f9975b8077811e",
-    "headTree": "1b4b0a140a483504225e043bfdd5cf1f26e7f875",
+    "headCommit": "759ed14f0b24499f0a3f161cf64c920ac3393c4b",
+    "headTree": "602929fb3aa5106fecf438ab0b4d3570d7daa62b",
     "firstParent": "bfdb6ed4a8668e05826effd3f8b1a18dbf74c9b2",
     "secondParent": "70ed70d36e2eabd3876a22931954319ec202c902"
   },
   "verification": {
-    "commit": "5c70d522437ea0c02c1e769ee5f9975b8077811e",
-    "completedAt": "2026-08-01T02:31:40Z",
+    "commit": "759ed14f0b24499f0a3f161cf64c920ac3393c4b",
+    "completedAt": "2026-08-01T02:39:35Z",
     "commands": [
       "npm run build --workspace packages/protocol",
       "cd packages/server && npx vitest run src/server/agent/create-agent-lifecycle-dispatch.test.ts src/server/agent/create-agent/create.test.ts src/server/agent/mcp-server.test.ts src/server/session.workspace-git-watch.test.ts src/server/session.workspaces.test.ts",
@@ -51,6 +51,12 @@
       "npm run typecheck --workspace packages/server",
       "oxlint <4 cleanup/create exclusion source and test files>",
       "oxfmt --check <4 cleanup/create exclusion source and test files>",
+      "git diff --check",
+      "vitest run <14 lifecycle, provisioning, and affected call-site test files> --fileParallelism=false",
+      "npm run build --workspace packages/server",
+      "npm run typecheck --workspace packages/server",
+      "oxlint packages/server/src/server/workspace-lifecycle-coordinator.ts packages/server/src/server/workspace-archive-service.test.ts",
+      "oxfmt --check packages/server/src/server/workspace-lifecycle-coordinator.ts packages/server/src/server/workspace-archive-service.test.ts",
       "git diff --check"
     ],
     "result": {
@@ -76,6 +82,10 @@
       "cleanupCreateExclusionBoundary": "directory workspace creation and unarchive share cleanup directory exclusion and revalidate directory existence after waiting; deterministic final-owner-read race leaves no replacement record for a deleted worktree",
       "cleanupCreateExclusionBuildAndTypecheck": "passed; repository pre-commit all-workspace typecheck also passed",
       "cleanupCreateExclusionLintAndFormat": "0 warnings, 0 errors; formatting and diff checks passed",
+      "filesystemIdentityLockTests": "509 passed, 5 skipped across 14 lifecycle, provisioning, and affected call-site files",
+      "filesystemIdentityLockBoundary": "directory setup tracking and exclusion keys use realpath-aware filesystem identity; the final-owner-read race uses a symlink spelling and proves equivalent-path creation remains blocked before rejecting after cleanup deletion",
+      "filesystemIdentityBuildAndTypecheck": "passed; repository pre-commit all-workspace typecheck also passed",
+      "filesystemIdentityLintAndFormat": "0 warnings, 0 errors; formatting and diff checks passed",
       "allWorkspaceTypecheck": "passed in repository pre-commit hook"
     }
   }

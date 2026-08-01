@@ -71,6 +71,7 @@
         "cleanup retry cycles use bounded work with capped backoff and cancellable timers",
         "cleanup retries use an exact cleanup-only path and incarnation boundary and cannot archive a live replacement at a reused path",
         "directory workspace creation and unarchive share cleanup exclusion and revalidate the directory after waiting, preventing a replacement workspace from being minted during deletion",
+        "directory setup tracking and cleanup exclusion use realpath-aware filesystem identity so symlink and macOS path aliases cannot bypass the lifecycle lock",
         "shutdown aborts and awaits the active cleanup cycle and terminates a hanging teardown subprocess tree before returning",
         "replacement worktree incarnations archive independently of stale cleanup intents",
         "auto-archive retries after transient failure and cancellation observes rejection",
@@ -103,8 +104,8 @@
       },
       "currentMainIntegration": {
         "upstreamMainCommit": "70ed70d36e2eabd3876a22931954319ec202c902",
-        "verifiedHeadCommit": "5c70d522437ea0c02c1e769ee5f9975b8077811e",
-        "verifiedHeadTree": "1b4b0a140a483504225e043bfdd5cf1f26e7f875",
+        "verifiedHeadCommit": "759ed14f0b24499f0a3f161cf64c920ac3393c4b",
+        "verifiedHeadTree": "602929fb3aa5106fecf438ab0b4d3570d7daa62b",
         "receipt": "patches/receipts/paseo-v025-worktree-lifecycle-current-main.json"
       },
       "upstreamable": true,
