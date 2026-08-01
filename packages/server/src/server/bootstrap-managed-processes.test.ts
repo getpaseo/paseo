@@ -7,6 +7,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import type {
   ManagedProcessRecord,
   ManagedProcessRecordInput,
+  ManagedProcessListOptions,
   ManagedProcessRegistry,
   ManagedProcessReapOptions,
   ManagedProcessReapResult,
@@ -165,7 +166,95 @@ describe("daemon managed process bootstrap", () => {
 
     expect(managedProcesses.reapCount).toBe(0);
   });
+
+  test("stop cancels a delayed initial ledger read before it can reconcile", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-managed-bootstrap-"));
+    staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+    const paseoHome = path.join(tempRoot, ".paseo");
+    const managedProcesses = new LifecycleManagedProcesses(
+      [createManagedProcessRecord("leftover")],
+      { delayFirstList: true },
+    );
+    const daemon = await createBootstrapTestDaemon(paseoHome, managedProcesses);
+    await managedProcesses.waitForListStart();
+
+    await daemon.stop();
+    managedProcesses.releaseList();
+    await Promise.resolve();
+
+    expect(managedProcesses.reapStarts).toBe(0);
+    expect(managedProcesses.recordIds).toEqual(["leftover"]);
+
+    const replacement = await createBootstrapTestDaemon(paseoHome, managedProcesses);
+    try {
+      expect(managedProcesses.reapStarts).toBe(1);
+      expect(managedProcesses.recordIds).toEqual([]);
+    } finally {
+      await replacement.stop().catch(() => undefined);
+    }
+  });
+
+  test("stop joins an aborted late reap before a replacement daemon can reconcile", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-managed-bootstrap-"));
+    staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+    const paseoHome = path.join(tempRoot, ".paseo");
+    const managedProcesses = new LifecycleManagedProcesses(
+      [createManagedProcessRecord("leftover")],
+      { delayFirstReap: true },
+    );
+    const daemon = await createBootstrapTestDaemon(paseoHome, managedProcesses);
+    await managedProcesses.waitForReapStart();
+    let stopComplete = false;
+
+    const stop = daemon.stop().then(() => {
+      stopComplete = true;
+      return undefined;
+    });
+    await managedProcesses.waitForReapAbort();
+
+    expect(stopComplete).toBe(false);
+    expect(managedProcesses.recordIds).toEqual(["leftover"]);
+
+    managedProcesses.releaseReap();
+    await stop;
+
+    expect(managedProcesses.recordIds).toEqual(["leftover"]);
+
+    const replacement = await createBootstrapTestDaemon(paseoHome, managedProcesses);
+    try {
+      expect(managedProcesses.reapStarts).toBe(2);
+      expect(managedProcesses.recordIds).toEqual([]);
+    } finally {
+      await replacement.stop().catch(() => undefined);
+    }
+  });
 });
+
+async function createBootstrapTestDaemon(
+  paseoHome: string,
+  managedProcesses: ManagedProcessRegistry,
+) {
+  if (!staticDir) {
+    throw new Error("Static directory is not initialized");
+  }
+  return createPaseoDaemon(
+    {
+      listen: "127.0.0.1:0",
+      paseoHome,
+      corsAllowedOrigins: [],
+      hostnames: true,
+      mcpEnabled: false,
+      staticDir,
+      mcpDebug: false,
+      agentClients: createTestAgentClients(),
+      agentStoragePath: path.join(paseoHome, "agents"),
+      relayEnabled: false,
+      appBaseUrl: "https://app.paseo.sh",
+      managedProcesses,
+    } as PaseoDaemonConfig,
+    pino({ level: "silent" }),
+  );
+}
 
 class FakeManagedProcesses implements ManagedProcessRegistry {
   reapCount = 0;
@@ -178,6 +267,10 @@ class FakeManagedProcesses implements ManagedProcessRegistry {
 
   add(record: ManagedProcessRecord): void {
     this.records.push(record);
+  }
+
+  protected recordsSnapshot(): ManagedProcessRecord[] {
+    return [...this.records];
   }
 
   async record(input: ManagedProcessRecordInput): Promise<ManagedProcessRecord> {
@@ -221,6 +314,112 @@ class FakeManagedProcesses implements ManagedProcessRegistry {
     }
     return result;
   }
+}
+
+class LifecycleManagedProcesses extends FakeManagedProcesses {
+  private readonly delayFirstList: boolean;
+  private readonly delayFirstReap: boolean;
+  private listCalls = 0;
+  private listStartedResolve: () => void = () => undefined;
+  private readonly listStarted = new Promise<void>((resolve) => {
+    this.listStartedResolve = resolve;
+  });
+  private listRelease: () => void = () => undefined;
+  private readonly listGate = new Promise<void>((resolve) => {
+    this.listRelease = resolve;
+  });
+  private reapStartedResolve: () => void = () => undefined;
+  private readonly reapStarted = new Promise<void>((resolve) => {
+    this.reapStartedResolve = resolve;
+  });
+  private reapAbortedResolve: () => void = () => undefined;
+  private readonly reapAborted = new Promise<void>((resolve) => {
+    this.reapAbortedResolve = resolve;
+  });
+  private reapRelease: () => void = () => undefined;
+  private readonly reapGate = new Promise<void>((resolve) => {
+    this.reapRelease = resolve;
+  });
+  reapStarts = 0;
+
+  constructor(
+    records: ManagedProcessRecord[],
+    options: { delayFirstList?: boolean; delayFirstReap?: boolean },
+  ) {
+    super(records);
+    this.delayFirstList = options.delayFirstList ?? false;
+    this.delayFirstReap = options.delayFirstReap ?? false;
+  }
+
+  get recordIds(): string[] {
+    return this.recordsSnapshot().map((record) => record.id);
+  }
+
+  override async list(options: ManagedProcessListOptions = {}): Promise<ManagedProcessRecord[]> {
+    this.listCalls += 1;
+    if (this.delayFirstList && this.listCalls === 1) {
+      this.listStartedResolve();
+      await waitForGateOrAbort(this.listGate, options.signal);
+    }
+    options.signal?.throwIfAborted();
+    return super.list();
+  }
+
+  override async reapStale(
+    options: ManagedProcessReapOptions = {},
+  ): Promise<ManagedProcessReapResult> {
+    this.reapStarts += 1;
+    if (this.delayFirstReap && this.reapStarts === 1) {
+      this.reapStartedResolve();
+      const onAbort = () => this.reapAbortedResolve();
+      options.signal?.addEventListener("abort", onAbort, { once: true });
+      try {
+        await this.reapGate;
+      } finally {
+        options.signal?.removeEventListener("abort", onAbort);
+      }
+    }
+    options.signal?.throwIfAborted();
+    return super.reapStale(options);
+  }
+
+  waitForListStart(): Promise<void> {
+    return this.listStarted;
+  }
+
+  releaseList(): void {
+    this.listRelease();
+  }
+
+  waitForReapStart(): Promise<void> {
+    return this.reapStarted;
+  }
+
+  waitForReapAbort(): Promise<void> {
+    return this.reapAborted;
+  }
+
+  releaseReap(): void {
+    this.reapRelease();
+  }
+}
+
+function waitForGateOrAbort(gate: Promise<void>, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(signal?.reason);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    void gate.then(
+      () => {
+        signal?.removeEventListener("abort", onAbort);
+        return resolve();
+      },
+      (error: unknown) => {
+        signal?.removeEventListener("abort", onAbort);
+        return reject(error);
+      },
+    );
+  });
 }
 
 function createManagedProcessRecord(id: string): ManagedProcessRecord {
