@@ -1,6 +1,7 @@
 import type { Locator } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
+import { projectEquivalenceViewKey } from "./helpers/project-view-key";
 import { getServerId } from "./helpers/server-id";
 import { seedWorkspace } from "./helpers/seed-client";
 import { waitForSidebarHydration } from "./helpers/workspace-ui";
@@ -56,7 +57,11 @@ test("projects and workspaces reorder with an immediate mouse drag", async ({ pa
     await gotoAppShell(page);
     await waitForSidebarHydration(page);
 
-    await quickDragFirstRowAfterSecond(page.locator('[data-testid^="sidebar-project-row-"]'));
+    const firstProjectTestId = `sidebar-project-row-${projectEquivalenceViewKey(firstProject.projectKey)}`;
+    const secondProjectTestId = `sidebar-project-row-${projectEquivalenceViewKey(secondProject.projectKey)}`;
+    await quickDragFirstRowAfterSecond(
+      page.locator(`[data-testid="${firstProjectTestId}"], [data-testid="${secondProjectTestId}"]`),
+    );
     const firstWorkspaceTestId = `sidebar-workspace-row-${getServerId()}:${firstProject.workspaceId}`;
     const secondWorkspaceTestId = `sidebar-workspace-row-${getServerId()}:${secondWorkspace.workspace.id}`;
     await quickDragFirstRowAfterSecond(

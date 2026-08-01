@@ -323,7 +323,10 @@ export function createFakeCodexAppServer(
       child.stdout.write(
         `${JSON.stringify({
           method: "turn/completed",
-          params: { threadId: params.threadId ?? "thread-1", turn: { status: "completed" } },
+          params: {
+            threadId: params.threadId ?? "thread-1",
+            turn: { status: "completed" },
+          },
         })}\n`,
       );
     },

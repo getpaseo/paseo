@@ -1684,6 +1684,19 @@ describe("OpenCode adapter startTurn error handling", () => {
           type: "message.updated",
           properties: {
             info: {
+              id: "msg_user",
+              sessionID: "ses_unit_test",
+              role: "user",
+            },
+          },
+        },
+      },
+      {
+        directory: "/tmp/test",
+        payload: {
+          type: "message.updated",
+          properties: {
+            info: {
               id: "msg_assistant",
               sessionID: "ses_unit_test",
               role: "assistant",
@@ -1739,14 +1752,22 @@ describe("OpenCode adapter startTurn error handling", () => {
       createTestLogger(),
     );
 
-    const turn = await collectTurnEvents(streamSession(session, "hello"));
+    const turn = await collectTurnEvents(
+      streamSession(session, "hello", { clientMessageId: "client-message-1" }),
+    );
 
     expect(turn.events.map((event) => event.type)).toEqual([
       "turn_started",
       "timeline",
+      "timeline",
       "turn_completed",
     ]);
+    expect(turn.events[1]).toMatchObject({
+      type: "timeline",
+      item: { type: "user_message", clientMessageId: "client-message-1" },
+    });
     expect(turn.events.map((event) => ("turnId" in event ? event.turnId : undefined))).toEqual([
+      "opencode-turn-0",
       "opencode-turn-0",
       "opencode-turn-0",
       "opencode-turn-0",

@@ -303,6 +303,10 @@ class SessionEvents {
     });
   }
 
+  eventTypes(): AgentStreamEvent["type"][] {
+    return this.events.map((event) => event.type);
+  }
+
   turnCompletedEvents() {
     return this.events.filter(
       (event): event is Extract<AgentStreamEvent, { type: "turn_completed" }> =>
@@ -730,6 +734,7 @@ describe("PiRpcAgentSession", () => {
     const fakeSession = pi.latestSession();
 
     await session.startTurn("hello");
+    fakeSession.emit({ type: "turn_start" });
     fakeSession.finishSubmittedUserMessage({
       id: "entry-user-1",
       parentId: null,
@@ -741,6 +746,7 @@ describe("PiRpcAgentSession", () => {
     expect(events.timelineItems()).toEqual([
       { type: "user_message", text: "hello", messageId: "entry-user-1" },
     ]);
+    expect(events.eventTypes().slice(0, 2)).toEqual(["turn_started", "timeline"]);
   });
 
   test("uses the Pi entry attached to a submitted prompt after resuming old history", async () => {
