@@ -50,6 +50,7 @@ export interface ComposerSendClient {
       messageId: string;
       images: Array<{ data: string; mimeType: string }>;
       attachments: ReturnType<typeof splitComposerAttachmentsForSubmit>["attachments"];
+      steer?: boolean;
     },
   ) => Promise<void>;
   uploadFile: (input: { fileName: string; mimeType: string; bytes: Uint8Array }) => Promise<{
@@ -170,6 +171,8 @@ export interface DispatchComposerAgentMessageInput {
     images: AttachmentMetadata[],
   ) => Promise<Array<{ data: string; mimeType: string }> | undefined>;
   stream: AgentStreamWriter;
+  /** Explicit mid-turn redirect (interrupt + send). */
+  steer?: boolean;
 }
 
 export async function dispatchComposerAgentMessage(
@@ -197,6 +200,7 @@ export async function dispatchComposerAgentMessage(
       messageId,
       images: imagesData ?? [],
       attachments: wirePayload.attachments,
+      ...(input.steer ? { steer: true } : {}),
     });
   } catch (error) {
     rollbackOptimisticMessage();

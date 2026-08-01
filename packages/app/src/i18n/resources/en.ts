@@ -76,6 +76,8 @@ export const en = {
       addAttachment: "Add attachment",
       interruptAgent: "Interrupt agent",
       queueMessage: "Queue message",
+      steer: "Steer",
+      steerHint: "Interrupt the current turn with this message",
       sendAndInterrupt: "Send and interrupt",
       sendMessage: "Send message",
       queue: "Queue",

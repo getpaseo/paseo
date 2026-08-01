@@ -6506,10 +6506,50 @@ export class Session {
         {
           agentId,
           messageId: msg.messageId,
+          steer: msg.steer === true,
           textPrefix: msg.text.slice(0, 80),
         },
         "agent.session.send_agent_message",
       );
+      if (msg.steer === true) {
+        const snapshot = this.agentManager.getAgent(agentId);
+        if (!snapshot) {
+          this.emit({
+            type: "send_agent_message_response",
+            payload: {
+              requestId: msg.requestId,
+              agentId,
+              accepted: false,
+              error: "Agent not found",
+            },
+          });
+          return;
+        }
+        if (snapshot.capabilities.supportsSteer !== true) {
+          this.emit({
+            type: "send_agent_message_response",
+            payload: {
+              requestId: msg.requestId,
+              agentId,
+              accepted: false,
+              error: "Provider does not support steer",
+            },
+          });
+          return;
+        }
+        if (!this.agentManager.hasInFlightRun(agentId) && snapshot.lifecycle !== "running") {
+          this.emit({
+            type: "send_agent_message_response",
+            payload: {
+              requestId: msg.requestId,
+              agentId,
+              accepted: false,
+              error: "Steer is only available while the agent is running",
+            },
+          });
+          return;
+        }
+      }
       let dispatchResult: { outOfBand: boolean };
       try {
         dispatchResult = await sendPromptToAgent({

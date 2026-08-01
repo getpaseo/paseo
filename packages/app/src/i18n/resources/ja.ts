@@ -78,6 +78,8 @@ export const ja: TranslationResources = {
       addAttachment: "添付ファイルを追加",
       interruptAgent: "エージェントを中断",
       queueMessage: "メッセージをキューに追加",
+      steer: "ステア",
+      steerHint: "このメッセージで現在のターンを中断します",
       sendAndInterrupt: "送信して中断",
       sendMessage: "メッセージを送信",
       queue: "キュー",

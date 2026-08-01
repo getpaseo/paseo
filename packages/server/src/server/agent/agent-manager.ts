@@ -89,6 +89,7 @@ const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindFiles: false,
   supportsRewindBoth: false,
   supportsNativeFork: false,
+  supportsSteer: false,
 };
 
 type TimeoutResult = "completed" | "timed_out";

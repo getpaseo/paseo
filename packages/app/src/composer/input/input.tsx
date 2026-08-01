@@ -131,6 +131,10 @@ export interface MessageInputProps {
   defaultSendBehavior?: "interrupt" | "queue";
   /** Callback for queue button when agent is running */
   onQueue?: (payload: MessagePayload) => void;
+  /** Explicit mid-turn redirect (interrupt + send). */
+  onSteer?: (payload: MessagePayload) => void;
+  /** When true, show the Steer control while agent is running. */
+  canSteer?: boolean;
   /** Optional handler used when submit button is in loading state. */
   onSubmitLoadingPress?: () => void;
   /** Intercept key press events before default handling. Return true to prevent default. */
@@ -1087,6 +1091,8 @@ interface ResolvedMessageInputProps {
   isAgentRunning: boolean;
   defaultSendBehavior: "interrupt" | "queue";
   onQueue: ((payload: MessagePayload) => void) | undefined;
+  onSteer: ((payload: MessagePayload) => void) | undefined;
+  canSteer: boolean;
   onSubmitLoadingPress: (() => void) | undefined;
   onKeyPressCallback: ((event: { key: string; preventDefault: () => void }) => boolean) | undefined;
   onSelectionChangeCallback: ((selection: { start: number; end: number }) => void) | undefined;
@@ -1129,6 +1135,8 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     isAgentRunning: props.isAgentRunning ?? false,
     defaultSendBehavior: props.defaultSendBehavior ?? "interrupt",
     onQueue: props.onQueue,
+    onSteer: props.onSteer,
+    canSteer: props.canSteer ?? false,
     onSubmitLoadingPress: props.onSubmitLoadingPress,
     onKeyPressCallback: props.onKeyPress,
     onSelectionChangeCallback: props.onSelectionChange,
@@ -1146,6 +1154,7 @@ function extractErrorMessage(error: unknown): string | null {
 }
 
 export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
+  // oxlint-disable-next-line complexity -- composer input orchestration surface
   function MessageInput(props, ref) {
     const {
       value,
@@ -1179,6 +1188,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       isAgentRunning,
       defaultSendBehavior,
       onQueue,
+      onSteer,
+      canSteer,
       onSubmitLoadingPress,
       onKeyPressCallback,
       onSelectionChangeCallback,
@@ -1488,6 +1499,15 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       [attachments, cwd, onQueue, onChangeText, minimizeInputHeight],
     );
 
+    const handleSteerMessage = useCallback(() => {
+      if (!onSteer || !canSteer) return;
+      const trimmed = valueRef.current.trim();
+      if (!trimmed && attachments.length === 0) return;
+      onSteer({ text: valueRef.current, attachments, cwd });
+      onChangeText("");
+      minimizeInputHeight();
+    }, [attachments, canSteer, cwd, minimizeInputHeight, onChangeText, onSteer]);
+
     const handleDefaultSendAction = useCallback(() => {
       runDefaultSendAction({
         defaultSendBehavior,
@@ -1791,6 +1811,26 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
                 dictationToggleKeys={dictationToggleKeys}
               />
               {rightContent}
+              {canSteer ? (
+                <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+                  <TooltipTrigger
+                    onPress={handleSteerMessage}
+                    disabled={disabled || isSubmitLoading}
+                    accessibilityLabel={t("composer.input.steer")}
+                    accessibilityRole="button"
+                    testID="composer-steer-button"
+                    style={[
+                      styles.attachButton,
+                      (disabled || isSubmitLoading) && styles.buttonDisabled,
+                    ]}
+                  >
+                    <Text style={styles.tooltipText}>{t("composer.input.steer")}</Text>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" align="center" offset={8}>
+                    <Text style={styles.tooltipText}>{t("composer.input.steerHint")}</Text>
+                  </TooltipContent>
+                </Tooltip>
+              ) : null}
               <SendButtonTooltip
                 shouldShow={shouldShowSendButton}
                 canPressLoadingButton={canPressLoadingButton}

@@ -78,6 +78,8 @@ export const es: TranslationResources = {
       addAttachment: "Agregar archivo adjunto",
       interruptAgent: "agente de interrupción",
       queueMessage: "mensaje de cola",
+      steer: "Dirigir",
+      steerHint: "Interrumpe el turno actual con este mensaje",
       sendAndInterrupt: "Enviar e interrumpir",
       sendMessage: "enviar mensaje",
       queue: "Cola",

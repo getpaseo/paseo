@@ -78,6 +78,8 @@ export const ar: TranslationResources = {
       addAttachment: "إضافة مرفق",
       interruptAgent: "عامل المقاطعة",
       queueMessage: "رسالة قائمة الانتظار",
+      steer: "توجيه",
+      steerHint: "يقاطع الدور الحالي بهذه الرسالة",
       sendAndInterrupt: "إرسال ومقاطعة",
       sendMessage: "أرسل رسالة",
       queue: "طابور",

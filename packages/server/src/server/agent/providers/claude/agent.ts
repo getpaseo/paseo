@@ -285,6 +285,8 @@ const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindBoth: true,
   // COMPAT(supportsNativeFork): added in v0.2.916
   supportsNativeFork: true,
+  // COMPAT(supportsSteer): added in v0.2.916 — interrupt active turn + submit next message.
+  supportsSteer: true,
 };
 
 const DEFAULT_MODES: AgentMode[] = [
