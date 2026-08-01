@@ -98,6 +98,7 @@ export class TestOpenCodeClient {
     sessionAbortOptions: [] as unknown[],
     sessionCommand: [] as unknown[],
     sessionCreate: [] as unknown[],
+    sessionCreateOptions: [] as unknown[],
     sessionDelete: [] as unknown[],
     sessionChildren: [] as unknown[],
     sessionGet: [] as unknown[],
@@ -133,7 +134,9 @@ export class TestOpenCodeClient {
   sessionCommandEvents: unknown[] = [idleEvent()];
   sessionCommandResponse: OpenCodeResponse = {};
   sessionCreateResponse: OpenCodeResponse = { data: { id: "session-1" } };
-  sessionCreateImplementation: ((parameters: unknown) => Promise<OpenCodeResponse>) | null = null;
+  sessionCreateImplementation:
+    | ((parameters: unknown, options?: unknown) => Promise<OpenCodeResponse>)
+    | null = null;
   sessionDeleteResponse: OpenCodeResponse = {};
   sessionDeleteImplementation: ((parameters: unknown) => Promise<OpenCodeResponse>) | null = null;
   sessionChildrenResponses: OpenCodeResponse[] = [];
@@ -261,10 +264,11 @@ export class TestOpenCodeClient {
           }
           return this.sessionCommandResponse;
         },
-        create: async (parameters: unknown) => {
+        create: async (parameters: unknown, options?: unknown) => {
           this.calls.sessionCreate.push(parameters);
+          this.calls.sessionCreateOptions.push(options);
           return this.sessionCreateImplementation
-            ? await this.sessionCreateImplementation(parameters)
+            ? await this.sessionCreateImplementation(parameters, options)
             : this.sessionCreateResponse;
         },
         delete: async (parameters: unknown) => {

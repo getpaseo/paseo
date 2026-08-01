@@ -107,11 +107,13 @@ const OPENCODE_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
 const OPENCODE_PERSISTED_SESSION_LIMIT = 200;
 const OPENCODE_PENDING_ABORT_START_TIMEOUT_MS = 10_000;
 const OPENCODE_SESSION_CLOSE_ABORT_TIMEOUT_MS = 5_000;
+const OPENCODE_SESSION_CLOSE_STREAM_TIMEOUT_MS = 5_000;
 const OPENCODE_CHILD_SESSION_HYDRATION_LIMIT = 100;
 const OPENCODE_CHILD_SESSION_SERVER_REGISTRY_LIMIT = 500;
 const OPENCODE_PERMISSION_ACTION_ALLOW_ONCE = "allow_once";
 const OPENCODE_PERMISSION_ACTION_ALLOW_ALWAYS = "allow_always";
 const OPENCODE_FAILED_CREATE_DELETE_TIMEOUT_MS = 5_000;
+const OPENCODE_FAILED_CREATE_JOIN_TIMEOUT_MS = 5_000;
 
 async function awaitOpenCodeStartupWithAbort<T>(
   promise: Promise<T>,
@@ -536,12 +538,16 @@ async function abortOpenCodeSession(params: {
   }, OPENCODE_SESSION_CLOSE_ABORT_TIMEOUT_MS);
 
   try {
-    const response = await client.session.abort(
-      {
-        sessionID: sessionId,
-        directory,
-      },
-      { signal: timeoutController.signal },
+    const response = await withTimeout(
+      client.session.abort(
+        {
+          sessionID: sessionId,
+          directory,
+        },
+        { signal: timeoutController.signal },
+      ),
+      OPENCODE_SESSION_CLOSE_ABORT_TIMEOUT_MS,
+      `OpenCode session.abort timed out after ${OPENCODE_SESSION_CLOSE_ABORT_TIMEOUT_MS}ms`,
     );
     if (response.error && !isOpenCodeNotFoundError(response.error)) {
       logger.warn(
@@ -1354,6 +1360,16 @@ interface OpenCodeAgentClientDeps {
 
 type OpenCodeClientFactory = (options: { baseUrl: string; directory: string }) => OpencodeClient;
 
+interface OpenCodeSessionGeneration {
+  isCurrent(): boolean;
+  release(): void;
+}
+
+const standaloneOpenCodeSessionGeneration: OpenCodeSessionGeneration = {
+  isCurrent: () => true,
+  release: () => undefined,
+};
+
 function createSdkOpenCodeClient(options: { baseUrl: string; directory: string }): OpencodeClient {
   return createOpencodeClient(options satisfies OpencodeClientConfig & { directory: string });
 }
@@ -1375,6 +1391,7 @@ export class OpenCodeAgentClient implements AgentClient {
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly modelContextWindows = new Map<string, number>();
   private readonly failedSessionStartupCleanupTasks = new Set<Promise<void>>();
+  private readonly sessionGenerations = new Map<string, symbol>();
 
   constructor(
     logger: Logger,
@@ -1393,6 +1410,20 @@ export class OpenCodeAgentClient implements AgentClient {
           });
     this.createOpenCodeClient = deps.createClient ?? createSdkOpenCodeClient;
     this.resolveHomeDir = deps.resolveHomeDir ?? resolveOpenCodeHomeDir;
+  }
+
+  private claimSessionGeneration(serverUrl: string, sessionId: string): OpenCodeSessionGeneration {
+    const key = `${serverUrl}\0${sessionId}`;
+    const generation = Symbol(sessionId);
+    this.sessionGenerations.set(key, generation);
+    return {
+      isCurrent: () => this.sessionGenerations.get(key) === generation,
+      release: () => {
+        if (this.sessionGenerations.get(key) === generation) {
+          this.sessionGenerations.delete(key);
+        }
+      },
+    };
   }
 
   async createSession(
@@ -1416,7 +1447,14 @@ export class OpenCodeAgentClient implements AgentClient {
       directory: openCodeConfig.cwd,
     });
 
-    const rawCreatePromise = client.session.create({ directory: openCodeConfig.cwd });
+    const createRequestController = new AbortController();
+    const createRequestSignal = options?.signal
+      ? AbortSignal.any([options.signal, createRequestController.signal])
+      : createRequestController.signal;
+    const rawCreatePromise = client.session.create(
+      { directory: openCodeConfig.cwd },
+      { signal: createRequestSignal },
+    );
     let createdSessionId: string | null = null;
     try {
       const response = await awaitOpenCodeStartupWithAbort(
@@ -1449,24 +1487,22 @@ export class OpenCodeAgentClient implements AgentClient {
         options?.persistSession,
         launchContext?.agentId,
         url,
+        false,
+        this.claimSessionGeneration(url, session.id),
       );
     } catch (error) {
+      createRequestController.abort(error);
       if (createdSessionId) {
         await this.deleteFailedCreateSession(client, openCodeConfig.cwd, createdSessionId);
         await this.releaseFailedSessionStartup(acquisition);
       } else {
         this.ownFailedSessionStartupCleanup(
-          (async () => {
-            try {
-              const lateResponse = await rawCreatePromise;
-              const lateSessionId = lateResponse.data?.id;
-              if (lateSessionId) {
-                await this.deleteFailedCreateSession(client, openCodeConfig.cwd, lateSessionId);
-              }
-            } finally {
-              await this.releaseFailedSessionStartup(acquisition);
-            }
-          })(),
+          this.finishFailedCreateSessionStartup(
+            client,
+            openCodeConfig.cwd,
+            rawCreatePromise,
+            acquisition,
+          ),
         );
       }
       throw error;
@@ -1533,6 +1569,7 @@ export class OpenCodeAgentClient implements AgentClient {
         launchContext?.agentId,
         url,
         registeredAcquisition !== null,
+        this.claimSessionGeneration(url, handle.sessionId),
       );
     } catch (error) {
       await this.releaseFailedSessionStartup(acquisition);
@@ -1766,6 +1803,29 @@ export class OpenCodeAgentClient implements AgentClient {
         { err: error, sessionId },
         "OpenCode failed to delete a session created after startup failed",
       );
+    }
+  }
+
+  private async finishFailedCreateSessionStartup(
+    client: OpencodeClient,
+    directory: string,
+    rawCreatePromise: Promise<{ data?: { id?: string } }>,
+    acquisition: OpenCodeServerAcquisition,
+  ): Promise<void> {
+    try {
+      const lateResponse = await withTimeout(
+        rawCreatePromise,
+        OPENCODE_FAILED_CREATE_JOIN_TIMEOUT_MS,
+        `OpenCode failed session create cleanup timed out after ${OPENCODE_FAILED_CREATE_JOIN_TIMEOUT_MS}ms`,
+      );
+      const lateSessionId = lateResponse.data?.id;
+      if (lateSessionId) {
+        await this.deleteFailedCreateSession(client, directory, lateSessionId);
+      }
+    } catch (error) {
+      this.logger.debug({ err: error }, "OpenCode failed session create request did not settle");
+    } finally {
+      await this.releaseFailedSessionStartup(acquisition);
     }
   }
 
@@ -3226,6 +3286,7 @@ class OpenCodeAgentSession implements AgentSession {
     private readonly agentId?: string,
     private readonly serverUrl?: string,
     private readonly externallyDriven = false,
+    private readonly sessionGeneration: OpenCodeSessionGeneration = standaloneOpenCodeSessionGeneration,
   ) {
     this.config = config;
     this.client = client;
@@ -4414,29 +4475,43 @@ class OpenCodeAgentSession implements AgentSession {
       this.abortController?.abort();
       const eventStreamTask = this.eventStreamTask;
       this.eventStreamAbortController?.abort();
-      if (eventStreamTask) {
-        await eventStreamTask.catch((error) => {
-          this.logger.debug(
-            { err: error, sessionId: this.sessionId },
-            "OpenCode event stream failed during close",
-          );
-        });
-      }
+      const abortTask = this.sessionGeneration.isCurrent()
+        ? abortOpenCodeSession({
+            client: this.client,
+            sessionId: this.sessionId,
+            directory: this.config.cwd,
+            logger: this.logger,
+          })
+        : Promise.resolve();
       this.eventStreamAbortController = null;
       this.eventStreamReady = null;
       this.eventStreamTask = null;
       this.subscribers.clear();
-      await abortOpenCodeSession({
-        client: this.client,
-        sessionId: this.sessionId,
-        directory: this.config.cwd,
-        logger: this.logger,
-      });
-      await this.deleteProviderSessionIfEphemeral();
+      const streamCloseTask = eventStreamTask
+        ? withTimeout(
+            eventStreamTask,
+            OPENCODE_SESSION_CLOSE_STREAM_TIMEOUT_MS,
+            `OpenCode event stream close timed out after ${OPENCODE_SESSION_CLOSE_STREAM_TIMEOUT_MS}ms`,
+          ).catch((error) => {
+            this.logger.warn(
+              { err: error, sessionId: this.sessionId },
+              "OpenCode event stream did not settle during close",
+            );
+          })
+        : Promise.resolve();
+      await Promise.all([streamCloseTask, abortTask]);
+      if (this.sessionGeneration.isCurrent()) {
+        await this.deleteProviderSessionIfEphemeral();
+      }
       this.turnState = { status: "idle" };
     } finally {
-      await this.releaseServer?.();
+      const releaseServer = this.releaseServer;
       this.releaseServer = null;
+      try {
+        await releaseServer?.();
+      } finally {
+        this.sessionGeneration.release();
+      }
     }
   }
 
