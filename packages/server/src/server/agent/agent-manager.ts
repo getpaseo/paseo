@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { stat } from "node:fs/promises";
+import { isDeepStrictEqual } from "node:util";
 import {
   AGENT_LIFECYCLE_STATUSES,
   type AgentLifecycleStatus,
@@ -71,6 +72,7 @@ import type { PaseoToolCatalogFactory } from "./tools/types.js";
 import {
   ProviderSubagentStore,
   type ProviderSubagentDescriptor,
+  type ProviderSubagentInputEvent,
   type ProviderSubagentStoreEvent,
 } from "./provider-subagents/store.js";
 import {
@@ -347,11 +349,23 @@ interface ActiveHistoryHydration {
   preGateSessionEventTokens: Set<symbol>;
   preGateBufferedOperations: BufferedHistoryHydrationOperation[];
   bufferedOperations: BufferedHistoryHydrationOperation[];
+  nextUncapturedTimelineSeq: number;
+  carriedLiveTimelineRows: AgentTimelineRow[];
+  lastProviderHistoryItems: AgentTimelineItem[];
+  carriedProviderSubagentEvents: Array<{
+    provider: AgentProvider;
+    event: ProviderSubagentInputEvent;
+  }>;
+  lastProviderSubagentHistory: Array<{
+    provider: AgentProvider;
+    event: ProviderSubagentInputEvent;
+  }>;
 }
 
 interface BufferedHistoryHydrationOperation {
-  kind: "session_event" | "timeline_writer";
+  kind: "session_event" | "timeline_writer" | "provider_subagent";
   run: () => Promise<void>;
+  providerSubagentEvent?: { provider: AgentProvider; event: ProviderSubagentInputEvent };
   resolve?: () => void;
   reject?: (error: unknown) => void;
 }
@@ -1316,10 +1330,9 @@ export class AgentManager {
 
   // Hot-reload an active agent session with config overrides. By default the
   // in-memory timeline is preserved (used for voice-mode toggles and similar
-  // config swaps). When `rehydrateFromDisk` is set, the timeline is wiped so a
-  // new epoch is minted and provider history is re-streamed — this is what the
-  // user-facing "Reload agent" action wants when the on-disk session was
-  // mutated outside Paseo.
+  // config swaps). When `rehydrateFromDisk` is set, provider history is marked
+  // unprimed so the caller can stage and atomically replace the timeline. The
+  // last complete timeline remains readable until that replacement commits.
   reloadAgentSession(
     agentId: string,
     overrides?: Partial<AgentSessionConfig>,
@@ -1374,18 +1387,9 @@ export class AgentManager {
         await this.closeReloadedSession(existing.session, agentId);
       }
 
-      if (rehydrateFromDisk) {
-        // Wipe both durable and in-memory timeline so registerSession mints a
-        // new epoch and hydrateTimelineFromProvider re-streams the freshly read
-        // provider history into an empty timeline.
-        await this.deleteCommittedTimeline(agentId);
-        this.timelineStore.delete(agentId);
-        for (const event of this.providerSubagents.deleteParent(agentId)) {
-          this.dispatch({ type: "provider_subagent", event });
-        }
-      }
-
       // Preserve existing labels and timeline during reload.
+      // A disk refresh keeps the last complete timeline, material checkpoint,
+      // and child projection until its caller atomically installs provider history.
       handedToRegistration = true;
       return this.registerSession(session, storedConfig, agentId, {
         labels: existing.labels,
@@ -1397,7 +1401,7 @@ export class AgentManager {
         historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
         lastUsage: preservedLastUsage,
         lastError: preservedLastError,
-        materialProgress: rehydrateFromDisk ? undefined : preservedMaterialProgress,
+        materialProgress: preservedMaterialProgress,
         attention: preservedAttention,
       });
     } finally {
@@ -2662,7 +2666,11 @@ export class AgentManager {
       await this.drainSessionEvents(agentId);
       this.flushPreGateCoalescedTimelineItems(agentId, hydrationToken);
       const agent = this.requireSessionAgent(agentId);
-      await this.hydrateTimelineFromLegacyProviderHistory(agent, options);
+      const activeHydration = this.activeHistoryHydrations.get(agentId);
+      if (!activeHydration || activeHydration.token !== hydrationToken) {
+        throw new Error(`Agent ${agentId} history hydration ownership was lost`);
+      }
+      await this.hydrateTimelineFromLegacyProviderHistory(agent, options, activeHydration);
     } finally {
       if (ownsLatestTail()) {
         await this.releaseHistoryHydration(agentId, hydrationToken, ownsLatestTail);
@@ -2779,26 +2787,12 @@ export class AgentManager {
 
   private async getLastAssistantMessageFromStores(agentId: string): Promise<string | null> {
     const liveTimeline = this.timelineStore.getItems(agentId);
-    const liveSegment = this.getLastAssistantMessageSegmentFromTimeline(liveTimeline);
-    if (!this.durableTimelineStore) {
-      return liveSegment?.text ?? null;
+    const liveMessage = this.getLastAssistantMessageFromTimeline(liveTimeline);
+    if (liveMessage !== null || !this.durableTimelineStore) {
+      return liveMessage;
     }
 
-    if (!liveSegment) {
-      return await this.durableTimelineStore.getLastAssistantMessage(agentId);
-    }
-
-    if (!liveSegment.startsAtBeginning) {
-      return liveSegment.text;
-    }
-
-    const lastDurableItem = await this.durableTimelineStore.getLastItem(agentId);
-    if (lastDurableItem?.type !== "assistant_message") {
-      return liveSegment.text;
-    }
-
-    const durableMessage = await this.durableTimelineStore.getLastAssistantMessage(agentId);
-    return durableMessage ? `${durableMessage}${liveSegment.text}` : liveSegment.text;
+    return await this.durableTimelineStore.getLastAssistantMessage(agentId);
   }
 
   private async getLastItemFromStores(agentId: string): Promise<AgentTimelineItem | null> {
@@ -3374,8 +3368,18 @@ export class AgentManager {
     historyHydrationToken?: symbol,
   ): Promise<void> {
     if (event.type === "provider_subagent") {
-      const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
-      this.dispatch({ type: "provider_subagent", event: update });
+      await this.runOrBufferHistoryHydrationOperation(
+        agent.id,
+        {
+          kind: "provider_subagent",
+          providerSubagentEvent: { provider: event.provider, event: event.event },
+          run: async () => {
+            const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+            this.dispatch({ type: "provider_subagent", event: update });
+          },
+        },
+        historyHydrationToken,
+      );
       return;
     }
     const turnId = getAgentStreamEventTurnId(event);
@@ -3513,7 +3517,8 @@ export class AgentManager {
 
   private async hydrateTimelineFromLegacyProviderHistory(
     agent: ActiveManagedAgent,
-    options?: HydrateTimelineOptions,
+    options: HydrateTimelineOptions | undefined,
+    activeHydration: ActiveHistoryHydration,
   ): Promise<void> {
     if (agent.historyPrimed && !options?.force) {
       return;
@@ -3521,20 +3526,25 @@ export class AgentManager {
 
     const broadcast = options?.broadcast ?? false;
 
-    if (options?.force) {
+    // An unprimed agent with existing rows is a staged refresh or retry. It
+    // must replace provider history atomically rather than append it to the
+    // last complete incarnation.
+    if (options?.force || this.timelineStore.getRows(agent.id).length > 0) {
       await this.forceHydrateTimelineFromLegacyProviderHistory(
         agent,
         typeof broadcast === "function" ? broadcast() : broadcast,
+        activeHydration,
       );
       return;
     }
 
-    await this.primeTimelineFromLegacyProviderHistory(agent, broadcast);
+    await this.primeTimelineFromLegacyProviderHistory(agent, broadcast, activeHydration);
   }
 
   private async forceHydrateTimelineFromLegacyProviderHistory(
     agent: ActiveManagedAgent,
     broadcast: boolean,
+    activeHydration: ActiveHistoryHydration,
   ): Promise<void> {
     const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
     const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
@@ -3554,53 +3564,131 @@ export class AgentManager {
       throw error;
     }
 
-    const historyRows = this.buildProviderHistoryRows(historyEvents, 1);
+    let historyRows = this.buildProviderHistoryRows(historyEvents, 1);
+    const merged = this.mergeCarriedLiveTimelineRows(agent.id, activeHydration, historyRows);
+    historyRows = merged.historyRows;
+    const carriedRows = merged.carriedRows;
+    const replacementRows = [...historyRows, ...carriedRows];
+    const incomingProviderSubagentHistory = providerSubagentEvents.map((event) => ({
+      provider: event.provider,
+      event: event.event,
+    }));
+    const carriedProviderSubagentEvents = this.mergeCarriedProviderSubagentEvents(
+      activeHydration,
+      incomingProviderSubagentHistory,
+    );
     let epoch: string;
     try {
-      epoch = await this.replaceCommittedTimeline(agent.id, historyRows);
+      epoch = await this.replaceCommittedTimeline(agent.id, replacementRows);
     } catch (error) {
       await this.markHistoryHydrationUnprimed(agent);
       throw error;
     }
     this.timelineStore.initialize(agent.id, {
       epoch,
-      rows: historyRows,
-      nextSeq: (historyRows.at(-1)?.seq ?? 0) + 1,
+      rows: replacementRows,
+      nextSeq: (replacementRows.at(-1)?.seq ?? 0) + 1,
       timestamp: new Date().toISOString(),
     });
+    activeHydration.carriedLiveTimelineRows = carriedRows;
+    activeHydration.nextUncapturedTimelineSeq = (replacementRows.at(-1)?.seq ?? 0) + 1;
+    activeHydration.lastProviderHistoryItems = historyRows.map((row) => structuredClone(row.item));
     this.resetMaterialProgress(agent);
     agent.historyPrimed = true;
 
-    for (const event of this.providerSubagents.deleteParent(agent.id)) {
-      if (broadcast) {
-        this.dispatch({ type: "provider_subagent", event });
-      }
-    }
-    for (const event of providerSubagentEvents) {
-      const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
-      if (broadcast) {
-        this.dispatch({ type: "provider_subagent", event: update });
-      }
-    }
-    for (let index = 0; index < historyEvents.length; index += 1) {
-      const event = historyEvents[index];
-      const row = historyRows[index];
-      if (broadcast) {
-        this.dispatchStream(agent.id, event, {
-          seq: row.seq,
-          epoch,
-          timestamp: row.timestamp,
-        });
-      }
-    }
+    this.replaceProviderSubagentHistory(
+      agent.id,
+      providerSubagentEvents,
+      carriedProviderSubagentEvents,
+      broadcast,
+    );
+    activeHydration.carriedProviderSubagentEvents = carriedProviderSubagentEvents;
+    activeHydration.lastProviderSubagentHistory = incomingProviderSubagentHistory.map((event) =>
+      structuredClone(event),
+    );
+    this.broadcastHydratedTimeline(
+      agent,
+      historyEvents,
+      historyRows,
+      carriedRows,
+      epoch,
+      broadcast,
+    );
     this.touchUpdatedAt(agent);
     await this.persistSnapshot(agent);
     this.emitState(agent, { persist: false });
   }
 
+  private replaceProviderSubagentHistory(
+    agentId: string,
+    providerSubagentEvents: readonly Extract<AgentStreamEvent, { type: "provider_subagent" }>[],
+    carriedProviderSubagentEvents: readonly {
+      provider: AgentProvider;
+      event: ProviderSubagentInputEvent;
+    }[],
+    broadcast: boolean,
+  ): void {
+    for (const event of this.providerSubagents.deleteParent(agentId)) {
+      if (broadcast) {
+        this.dispatch({ type: "provider_subagent", event });
+      }
+    }
+    for (const event of providerSubagentEvents) {
+      const update = this.providerSubagents.apply(agentId, event.provider, event.event);
+      if (broadcast) {
+        this.dispatch({ type: "provider_subagent", event: update });
+      }
+    }
+    for (const carried of carriedProviderSubagentEvents) {
+      const update = this.providerSubagents.apply(agentId, carried.provider, carried.event);
+      if (broadcast) {
+        this.dispatch({ type: "provider_subagent", event: update });
+      }
+    }
+  }
+
+  private broadcastHydratedTimeline(
+    agent: ActiveManagedAgent,
+    historyEvents: readonly Extract<AgentStreamEvent, { type: "timeline" }>[],
+    historyRows: readonly AgentTimelineRow[],
+    carriedRows: readonly AgentTimelineRow[],
+    epoch: string,
+    broadcast: boolean,
+  ): void {
+    if (!broadcast) {
+      return;
+    }
+    for (let index = 0; index < historyEvents.length; index += 1) {
+      const event = historyEvents[index];
+      const row = historyRows[index];
+      this.dispatchStream(agent.id, event, {
+        seq: row.seq,
+        epoch,
+        timestamp: row.timestamp,
+      });
+    }
+    for (const row of carriedRows) {
+      this.dispatchStream(
+        agent.id,
+        {
+          type: "timeline",
+          provider: agent.provider,
+          item: row.item,
+          ...(row.turnId ? { turnId: row.turnId } : {}),
+        },
+        {
+          seq: row.seq,
+          epoch,
+          timestamp: row.timestamp,
+        },
+      );
+    }
+  }
+
   private async primeTimelineFromLegacyProviderHistory(
     agent: ActiveManagedAgent,
     broadcast: boolean | (() => boolean),
+    activeHydration: ActiveHistoryHydration,
   ): Promise<void> {
     const timelineEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
     const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
@@ -3623,10 +3711,15 @@ export class AgentManager {
       return;
     }
 
-    const historyRows = this.buildProviderHistoryRows(timelineEvents, 1);
+    const existingRows = this.timelineStore.getRows(agent.id);
+    const historyRows = this.buildProviderHistoryRows(
+      timelineEvents,
+      (existingRows.at(-1)?.seq ?? 0) + 1,
+    );
+    const replacementRows = [...existingRows, ...historyRows];
     let epoch: string;
     try {
-      epoch = await this.replaceCommittedTimeline(agent.id, historyRows);
+      epoch = await this.replaceCommittedTimeline(agent.id, replacementRows);
     } catch (error) {
       await this.markHistoryHydrationUnprimed(agent);
       throw error;
@@ -3634,10 +3727,11 @@ export class AgentManager {
 
     this.timelineStore.initialize(agent.id, {
       epoch,
-      rows: historyRows,
-      nextSeq: (historyRows.at(-1)?.seq ?? 0) + 1,
+      rows: replacementRows,
+      nextSeq: (replacementRows.at(-1)?.seq ?? 0) + 1,
       timestamp: new Date().toISOString(),
     });
+    activeHydration.nextUncapturedTimelineSeq = (replacementRows.at(-1)?.seq ?? 0) + 1;
     this.resetMaterialProgress(agent);
     agent.historyPrimed = true;
     await this.persistSnapshot(agent);
@@ -3684,11 +3778,117 @@ export class AgentManager {
     });
   }
 
+  private mergeCarriedLiveTimelineRows(
+    agentId: string,
+    activeHydration: ActiveHistoryHydration,
+    incomingHistoryRows: AgentTimelineRow[],
+  ): { historyRows: AgentTimelineRow[]; carriedRows: AgentTimelineRow[] } {
+    const currentRows = this.timelineStore.getRows(agentId);
+    const newlyAppliedRows = currentRows.filter(
+      (row) => row.seq >= activeHydration.nextUncapturedTimelineSeq,
+    );
+    const candidateCarriedRows = [
+      ...activeHydration.carriedLiveTimelineRows,
+      ...newlyAppliedRows.map((row) => structuredClone(row)),
+    ];
+
+    const acknowledgedProviderMessages = new Map<
+      string,
+      { providerMessageId: string; turnId?: string }
+    >();
+    for (const row of currentRows) {
+      if (row.item.type === "user_message" && row.item.clientMessageId && row.providerMessageId) {
+        acknowledgedProviderMessages.set(row.item.clientMessageId, {
+          providerMessageId: row.providerMessageId,
+          ...(row.turnId ? { turnId: row.turnId } : {}),
+        });
+      }
+    }
+    const historyRows = incomingHistoryRows.map((row) => {
+      if (row.item.type !== "user_message" || !row.item.clientMessageId) {
+        return row;
+      }
+      const acknowledged = acknowledgedProviderMessages.get(row.item.clientMessageId);
+      if (!acknowledged) {
+        return row;
+      }
+      return {
+        ...row,
+        providerMessageId: acknowledged.providerMessageId,
+        ...(!row.turnId && acknowledged.turnId ? { turnId: acknowledged.turnId } : {}),
+      };
+    });
+
+    const priorHistoryItems = activeHydration.lastProviderHistoryItems;
+    const hasPriorHistoryPrefix =
+      priorHistoryItems.length <= historyRows.length &&
+      priorHistoryItems.every((item, index) => isDeepStrictEqual(item, historyRows[index]?.item));
+    let historySearchIndex = hasPriorHistoryPrefix ? priorHistoryItems.length : 0;
+    const unmatchedCarriedRows: AgentTimelineRow[] = [];
+    for (const carriedRow of candidateCarriedRows) {
+      const matchingHistoryIndex = historyRows.findIndex(
+        (row, index) => index >= historySearchIndex && isDeepStrictEqual(row.item, carriedRow.item),
+      );
+      if (matchingHistoryIndex < 0) {
+        unmatchedCarriedRows.push(carriedRow);
+        continue;
+      }
+      historySearchIndex = matchingHistoryIndex + 1;
+      if (carriedRow.providerMessageId || carriedRow.turnId) {
+        historyRows[matchingHistoryIndex] = {
+          ...historyRows[matchingHistoryIndex],
+          ...(carriedRow.providerMessageId
+            ? { providerMessageId: carriedRow.providerMessageId }
+            : {}),
+          ...(carriedRow.turnId ? { turnId: carriedRow.turnId } : {}),
+        };
+      }
+    }
+    let nextSeq = historyRows.length + 1;
+    const carriedRows: AgentTimelineRow[] = [];
+    for (const row of unmatchedCarriedRows) {
+      const carriedRow = structuredClone(row);
+      carriedRow.seq = nextSeq++;
+      carriedRows.push(carriedRow);
+    }
+    return { historyRows, carriedRows };
+  }
+
+  private mergeCarriedProviderSubagentEvents(
+    activeHydration: ActiveHistoryHydration,
+    incomingHistory: Array<{
+      provider: AgentProvider;
+      event: ProviderSubagentInputEvent;
+    }>,
+  ): Array<{ provider: AgentProvider; event: ProviderSubagentInputEvent }> {
+    const priorHistory = activeHydration.lastProviderSubagentHistory;
+    const hasPriorHistoryPrefix =
+      priorHistory.length <= incomingHistory.length &&
+      priorHistory.every((event, index) => isDeepStrictEqual(event, incomingHistory[index]));
+    let historySearchIndex = hasPriorHistoryPrefix ? priorHistory.length : 0;
+    const unmatchedCarriedEvents: Array<{
+      provider: AgentProvider;
+      event: ProviderSubagentInputEvent;
+    }> = [];
+    for (const carriedEvent of activeHydration.carriedProviderSubagentEvents) {
+      const matchingHistoryIndex = incomingHistory.findIndex(
+        (event, index) => index >= historySearchIndex && isDeepStrictEqual(event, carriedEvent),
+      );
+      if (matchingHistoryIndex < 0) {
+        unmatchedCarriedEvents.push(structuredClone(carriedEvent));
+        continue;
+      }
+      historySearchIndex = matchingHistoryIndex + 1;
+    }
+    return unmatchedCarriedEvents;
+  }
+
   private beginOrContinueHistoryHydration(agentId: string): symbol {
     const activeHydration = this.activeHistoryHydrations.get(agentId);
     if (activeHydration) {
       return activeHydration.token;
     }
+    const currentRows = this.timelineStore.getRows(agentId);
     const token = Symbol(agentId);
     this.activeHistoryHydrations.set(agentId, {
       token,
@@ -3697,6 +3897,11 @@ export class AgentManager {
       preGateSessionEventTokens: new Set(this.sessionEventAdmissionTokens.get(agentId) ?? []),
       preGateBufferedOperations: [],
       bufferedOperations: [],
+      nextUncapturedTimelineSeq: (currentRows.at(-1)?.seq ?? 0) + 1,
+      carriedLiveTimelineRows: [],
+      lastProviderHistoryItems: [],
+      carriedProviderSubagentEvents: [],
+      lastProviderSubagentHistory: [],
     });
     return token;
   }
@@ -3706,6 +3911,9 @@ export class AgentManager {
     token: symbol,
     stillOwnsTail: () => boolean,
   ): Promise<void> {
+    if (!stillOwnsTail()) {
+      return;
+    }
     const activeHydration = this.activeHistoryHydrations.get(agentId);
     if (!activeHydration || activeHydration.token !== token) {
       throw new Error(`Agent ${agentId} history hydration ownership was lost`);
@@ -3713,6 +3921,11 @@ export class AgentManager {
 
     await this.drainSessionEvents(agentId);
     while (true) {
+      // A successor owns every operation that remains queued. The operation
+      // already in flight is captured from the installed timeline on its pass.
+      if (!stillOwnsTail()) {
+        return;
+      }
       const operation =
         activeHydration.preGateBufferedOperations.shift() ??
         activeHydration.bufferedOperations.shift();
@@ -3722,6 +3935,11 @@ export class AgentManager {
             this.flushCoalescedTimelineItems(agentId, token);
           }
           await operation.run();
+          if (operation.providerSubagentEvent) {
+            activeHydration.carriedProviderSubagentEvents.push(
+              structuredClone(operation.providerSubagentEvent),
+            );
+          }
           operation.resolve?.();
         } catch (err) {
           operation.reject?.(err);
@@ -3740,9 +3958,6 @@ export class AgentManager {
       ) {
         continue;
       }
-      if (!stillOwnsTail()) {
-        return;
-      }
       if (this.activeHistoryHydrations.get(agentId) !== activeHydration) {
         throw new Error(`Agent ${agentId} history hydration ownership was lost`);
       }
@@ -3756,13 +3971,36 @@ export class AgentManager {
     run: () => Promise<void> | void,
     historyHydrationToken?: symbol,
   ): Promise<void> {
+    return this.runOrBufferHistoryHydrationOperation(
+      agentId,
+      { kind: "timeline_writer", run: async () => run() },
+      historyHydrationToken,
+    );
+  }
+
+  private runOrBufferHistoryHydrationOperation(
+    agentId: string,
+    operation: BufferedHistoryHydrationOperation,
+    historyHydrationToken?: symbol,
+  ): Promise<void> {
     const activeHydration = this.activeHistoryHydrations.get(agentId);
     if (!activeHydration || activeHydration.token === historyHydrationToken) {
+      let result: Promise<void>;
       try {
-        return Promise.resolve(run());
+        result = Promise.resolve(operation.run());
       } catch (error) {
         return Promise.reject(error);
       }
+      const providerSubagentEvent = operation.providerSubagentEvent;
+      if (activeHydration && providerSubagentEvent) {
+        return result.then(() => {
+          activeHydration.carriedProviderSubagentEvents.push(
+            structuredClone(providerSubagentEvent),
+          );
+          return undefined;
+        });
+      }
+      return result;
     }
 
     if (
@@ -3770,17 +4008,13 @@ export class AgentManager {
       (historyHydrationToken !== undefined &&
         activeHydration.preGateSessionEventTokens.has(historyHydrationToken))
     ) {
-      activeHydration.preGateBufferedOperations.push({
-        kind: "timeline_writer",
-        run: async () => run(),
-      });
+      activeHydration.preGateBufferedOperations.push(operation);
       return Promise.resolve();
     }
 
     return new Promise<void>((promiseResolve, promiseReject) => {
       activeHydration.bufferedOperations.push({
-        kind: "timeline_writer",
-        run: async () => run(),
+        ...operation,
         resolve: promiseResolve,
         reject: promiseReject,
       });
@@ -4107,11 +4341,19 @@ export class AgentManager {
       return;
     }
 
-    if (
+    const isSubmittedPromptEcho =
       event.item.type === "user_message" &&
       event.item.clientMessageId &&
-      this.reconcileSubmittedPromptEcho(agent, event.item)
-    ) {
+      this.timelineStore.getSubmittedUserMessage(agent.id, event.item.clientMessageId) !== null;
+    if (isSubmittedPromptEcho && event.item.type === "user_message") {
+      const submittedPromptEcho = event.item;
+      await this.runOrBufferTimelineWriter(
+        agent.id,
+        async () => {
+          this.reconcileSubmittedPromptEcho(agent, submittedPromptEcho);
+        },
+        options?.historyHydrationToken,
+      );
       flags.shouldDispatchEvent = false;
       flags.shouldNotifyWaiters = false;
       return;

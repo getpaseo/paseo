@@ -146,10 +146,11 @@ agent continues. An accepted provider turn opens a new continuation boundary. Re
 never return a turn id leave the preceding accepted outcome intact. A checkpoint is restored only
 when its timeline epoch is unchanged; sequence bounds alone cannot prove continuity. The epoch is
 persisted with the canonical timeline so a daemon restart of that exact durable incarnation preserves
-the checkpoint. Timeline replacement, rewind, or explicit rehydration retires the epoch and starts an
-empty checkpoint, even when the replacement is equally long or longer. After a successful provider
-rewind, the empty checkpoint is persisted before any fallible history refresh; a rejected provider
-rewind preserves the checkpoint.
+the checkpoint. Successful timeline replacement, rewind, or explicit rehydration retires the epoch
+and starts an empty checkpoint, even when the replacement is equally long or longer. Explicit
+rehydration stages provider history before committing, so a failed history read preserves the prior
+epoch and checkpoint. After a successful provider rewind, the empty checkpoint is persisted before
+any fallible history refresh; a rejected provider rewind preserves the checkpoint.
 
 | Field                                       | Type                                                                                     | Description                                                                                        |
 | ------------------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
