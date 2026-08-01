@@ -530,6 +530,29 @@ class CreateAgentTestClient implements AgentClient {
   }
 }
 
+class ResumeAgentTestClient extends CreateAgentTestClient {
+  resumeAttempts = 0;
+
+  constructor(
+    private readonly failuresBeforeSuccess: number,
+    private readonly beforeResume?: (attempt: number) => Promise<void>,
+  ) {
+    super();
+  }
+
+  override async resumeSession(
+    handle: AgentPersistenceHandle,
+    overrides?: Partial<AgentSessionConfig>,
+  ): Promise<AgentSession> {
+    this.resumeAttempts += 1;
+    await this.beforeResume?.(this.resumeAttempts);
+    if (this.resumeAttempts <= this.failuresBeforeSuccess) {
+      throw new Error("provider resume failed");
+    }
+    return super.resumeSession(handle, overrides);
+  }
+}
+
 function createSessionForWorkspaceTests(
   options: {
     appVersion?: string | null;
@@ -540,6 +563,8 @@ function createSessionForWorkspaceTests(
     projectRegistry?: SessionOptions["projectRegistry"];
     workspaceRegistry?: SessionOptions["workspaceRegistry"];
     github?: ForgeService;
+    agentManager?: SessionOptions["agentManager"];
+    agentStorage?: SessionOptions["agentStorage"];
     paseoHome?: string;
     worktreesRoot?: string;
     renameCurrentBranch?: (
@@ -557,16 +582,18 @@ function createSessionForWorkspaceTests(
     warn: vi.fn(),
     error: vi.fn(),
   };
-  const agentManager = asAgentManager({
-    subscribe: () => () => {},
-    listAgents: () => [],
-    getAgent: () => null,
-    archiveAgent: async () => ({ archivedAt: new Date().toISOString() }),
-    archiveSnapshot: async () => ({}),
-    unarchiveSnapshot: async () => true,
-    clearAgentAttention: async () => {},
-    notifyAgentState: () => {},
-  });
+  const agentManager =
+    options.agentManager ??
+    asAgentManager({
+      subscribe: () => () => {},
+      listAgents: () => [],
+      getAgent: () => null,
+      archiveAgent: async () => ({ archivedAt: new Date().toISOString() }),
+      archiveSnapshot: async () => ({}),
+      unarchiveSnapshot: async () => true,
+      clearAgentAttention: async () => {},
+      notifyAgentState: () => {},
+    });
   const workspaceRegistry: SessionOptions["workspaceRegistry"] = options.workspaceRegistry ?? {
     initialize: async () => {},
     existsOnDisk: async () => true,
@@ -629,32 +656,34 @@ function createSessionForWorkspaceTests(
       paseoHome: options.paseoHome ?? "/tmp/paseo-test",
       worktreesRoot: options.worktreesRoot,
       agentManager,
-      agentStorage: asAgentStorage({
-        list: async () => [
-          createPersistedWorkspaceRecord({
-            workspaceId: "ws-repo-running",
-            projectId: "proj-repo-running",
-            cwd: REPO_CWD,
-            kind: "directory",
-            displayName: "repo",
-            createdAt: "2026-03-01T12:00:00.000Z",
-            updatedAt: "2026-03-01T12:00:00.000Z",
-          }),
-        ],
-        get: async (workspaceId: string) =>
-          workspaceId === "ws-repo-running"
-            ? createPersistedWorkspaceRecord({
-                workspaceId: "ws-repo-running",
-                projectId: "proj-repo-running",
-                cwd: REPO_CWD,
-                kind: "directory",
-                displayName: "repo",
-                createdAt: "2026-03-01T12:00:00.000Z",
-                updatedAt: "2026-03-01T12:00:00.000Z",
-              })
-            : null,
-        upsert: async () => {},
-      }),
+      agentStorage:
+        options.agentStorage ??
+        asAgentStorage({
+          list: async () => [
+            createPersistedWorkspaceRecord({
+              workspaceId: "ws-repo-running",
+              projectId: "proj-repo-running",
+              cwd: REPO_CWD,
+              kind: "directory",
+              displayName: "repo",
+              createdAt: "2026-03-01T12:00:00.000Z",
+              updatedAt: "2026-03-01T12:00:00.000Z",
+            }),
+          ],
+          get: async (workspaceId: string) =>
+            workspaceId === "ws-repo-running"
+              ? createPersistedWorkspaceRecord({
+                  workspaceId: "ws-repo-running",
+                  projectId: "proj-repo-running",
+                  cwd: REPO_CWD,
+                  kind: "directory",
+                  displayName: "repo",
+                  createdAt: "2026-03-01T12:00:00.000Z",
+                  updatedAt: "2026-03-01T12:00:00.000Z",
+                })
+              : null,
+          upsert: async () => {},
+        }),
       projectRegistry: options.projectRegistry ?? {
         initialize: async () => {},
         existsOnDisk: async () => true,
@@ -4970,75 +4999,182 @@ test("refresh_agent_request leaves workspace archival independent when its direc
   expect(findByType(emitted, "rpc_error")).toBeUndefined();
 });
 
-test("resume_agent_request emits agent_resumed through the session route", async () => {
+const STORED_RESUME_AGENT_ID = "00000000-0000-4000-8000-000000000560";
+const GENERATED_RESUME_AGENT_ID = "00000000-0000-4000-8000-000000000561";
+const STORED_RESUME_ARCHIVED_AT = "2026-08-01T00:00:00.000Z";
+const STORED_RESUME_HANDLE = {
+  provider: "codex",
+  sessionId: "provider-session-560",
+} as const;
+
+async function createStoredResumeHarness(
+  failuresBeforeSuccess: number,
+  beforeResume?: (attempt: number) => Promise<void>,
+) {
+  const workdir = mkdtempSync(path.join(tmpdir(), "paseo-session-resume-"));
+  const cwd = path.join(workdir, "repo");
+  mkdirSync(cwd, { recursive: true });
+  const logger = createTestLogger();
+  const agentStorage = new AgentStorage(path.join(workdir, "agents"), logger);
+  const storedAgent: StoredAgentRecord = {
+    ...makeStoredAgent({
+      id: STORED_RESUME_AGENT_ID,
+      cwd,
+      updatedAt: STORED_RESUME_ARCHIVED_AT,
+    }),
+    archivedAt: STORED_RESUME_ARCHIVED_AT,
+    persistence: STORED_RESUME_HANDLE,
+    runtimeInfo: STORED_RESUME_HANDLE,
+  };
+  await agentStorage.upsert(storedAgent);
+
+  const client = new ResumeAgentTestClient(failuresBeforeSuccess, beforeResume);
+  const agentManager = new AgentManager({
+    clients: { codex: client },
+    registry: agentStorage,
+    logger,
+    idFactory: () => GENERATED_RESUME_AGENT_ID,
+  });
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests({
+    agentManager,
+    agentStorage,
     onMessage: (message) => emitted.push(message),
-  });
-  const agentId = "00000000-0000-4000-8000-000000000560";
-  const managed = makeManagedAgent({
-    id: agentId,
-    cwd: REPO_CWD,
-    workspaceId: "ws-repo-running",
-    lifecycle: "idle",
-    updatedAt: "2026-08-01T00:00:00.000Z",
-  });
-  const resumeAgentFromPersistence = vi.fn().mockResolvedValue(managed);
-  session.agentManager.resumeAgentFromPersistence = resumeAgentFromPersistence;
-  session.agentManager.getTimeline = () => [
-    { type: "assistant_message", text: "restored timeline" },
-  ];
-  session.agentUpdates.forwardLiveAgent = vi.fn().mockResolvedValue(undefined);
-
-  await session.handleMessage({
-    type: "resume_agent_request",
-    handle: { provider: "codex", sessionId: "provider-session-560" },
-    requestId: "req-resume-success",
+    paseoHome: path.join(workdir, "paseo-home"),
   });
 
-  expect(resumeAgentFromPersistence).toHaveBeenCalledWith(
-    { provider: "codex", sessionId: "provider-session-560" },
-    undefined,
-  );
-  expect(findByType(emitted, "status")?.payload).toMatchObject({
-    status: "agent_resumed",
-    requestId: "req-resume-success",
-    agentId,
-    timelineSize: 1,
-    agent: { id: agentId, status: "idle" },
-  });
-  expect(findByType(emitted, "rpc_error")).toBeUndefined();
+  return { agentManager, agentStorage, client, cwd, emitted, session, storedAgent, workdir };
+}
+
+function storedResumeRequest(requestId: string, cwd: string) {
+  return {
+    type: "resume_agent_request" as const,
+    handle: STORED_RESUME_HANDLE,
+    overrides: { cwd },
+    requestId,
+  };
+}
+
+test("resume_agent_request preserves the archived record when provider resume fails", async () => {
+  const harness = await createStoredResumeHarness(1);
+  try {
+    await harness.session.handleMessage(storedResumeRequest("req-resume-failure", harness.cwd));
+
+    expect(await harness.agentStorage.get(STORED_RESUME_AGENT_ID)).toEqual(harness.storedAgent);
+    expect(harness.agentManager.listAgents()).toEqual([]);
+    expect(findByType(harness.emitted, "rpc_error")).toEqual({
+      type: "rpc_error",
+      payload: {
+        requestId: "req-resume-failure",
+        requestType: "resume_agent_request",
+        error: "provider resume failed",
+        code: "agent_resume_failed",
+      },
+    });
+    expect(findByType(harness.emitted, "status")).toBeUndefined();
+  } finally {
+    rmSync(harness.workdir, { recursive: true, force: true });
+  }
 });
 
-test("resume_agent_request emits agent_resume_failed through the session route", async () => {
-  const emitted: SessionOutboundMessage[] = [];
-  const session = createSessionForWorkspaceTests({
-    onMessage: (message) => emitted.push(message),
-  });
-  session.agentManager.resumeAgentFromPersistence = vi
-    .fn()
-    .mockRejectedValue(new Error("provider resume failed"));
+test("resume_agent_request retains the exact stored agent id", async () => {
+  const harness = await createStoredResumeHarness(0);
+  try {
+    await harness.session.handleMessage(storedResumeRequest("req-resume-success", harness.cwd));
 
-  await session.handleMessage({
-    type: "resume_agent_request",
-    handle: { provider: "codex", sessionId: "provider-session-failed" },
-    requestId: "req-resume-failure",
-  });
+    expect(harness.agentManager.listAgents().map((agent) => agent.id)).toEqual([
+      STORED_RESUME_AGENT_ID,
+    ]);
+    expect((await harness.agentStorage.list()).map((record) => record.id)).toEqual([
+      STORED_RESUME_AGENT_ID,
+    ]);
+    expect(await harness.agentStorage.get(STORED_RESUME_AGENT_ID)).toMatchObject({
+      id: STORED_RESUME_AGENT_ID,
+      archivedAt: null,
+    });
+    expect(await harness.agentStorage.get(GENERATED_RESUME_AGENT_ID)).toBeNull();
+    expect(findByType(harness.emitted, "status")?.payload).toMatchObject({
+      status: "agent_resumed",
+      requestId: "req-resume-success",
+      agentId: STORED_RESUME_AGENT_ID,
+      agent: { id: STORED_RESUME_AGENT_ID, status: "idle" },
+    });
+    expect(findByType(harness.emitted, "rpc_error")).toBeUndefined();
+  } finally {
+    rmSync(harness.workdir, { recursive: true, force: true });
+  }
+});
 
-  expect(findByType(emitted, "rpc_error")).toEqual({
-    type: "rpc_error",
-    payload: {
-      requestId: "req-resume-failure",
-      requestType: "resume_agent_request",
-      error: "provider resume failed",
-      code: "agent_resume_failed",
-    },
+test("resume_agent_request retries after failure without duplicate visible identities", async () => {
+  const harness = await createStoredResumeHarness(1);
+  try {
+    await harness.session.handleMessage(storedResumeRequest("req-resume-first", harness.cwd));
+
+    expect(harness.agentManager.listAgents()).toEqual([]);
+    expect(await harness.agentStorage.get(STORED_RESUME_AGENT_ID)).toEqual(harness.storedAgent);
+
+    await harness.session.handleMessage(storedResumeRequest("req-resume-retry", harness.cwd));
+
+    expect(harness.client.resumeAttempts).toBe(2);
+    expect(harness.agentManager.listAgents().map((agent) => agent.id)).toEqual([
+      STORED_RESUME_AGENT_ID,
+    ]);
+    expect((await harness.agentStorage.list()).map((record) => record.id)).toEqual([
+      STORED_RESUME_AGENT_ID,
+    ]);
+    expect(filterByType(harness.emitted, "rpc_error")).toHaveLength(1);
+    expect(filterByType(harness.emitted, "status")).toHaveLength(1);
+    expect(findByType(harness.emitted, "status")?.payload).toMatchObject({
+      status: "agent_resumed",
+      requestId: "req-resume-retry",
+      agentId: STORED_RESUME_AGENT_ID,
+    });
+  } finally {
+    rmSync(harness.workdir, { recursive: true, force: true });
+  }
+});
+
+test("overlapping resume_agent_requests share one stored identity owner", async () => {
+  let markFirstResumeStarted: (() => void) | undefined;
+  const firstResumeStarted = new Promise<void>((resolve) => {
+    markFirstResumeStarted = resolve;
   });
-  expect(findByType(emitted, "activity_log")?.payload).toMatchObject({
-    type: "error",
-    content: "Failed to resume agent: provider resume failed",
+  let releaseFirstResume: (() => void) | undefined;
+  const firstResumeGate = new Promise<void>((resolve) => {
+    releaseFirstResume = resolve;
   });
-  expect(findByType(emitted, "status")).toBeUndefined();
+  const harness = await createStoredResumeHarness(0, async (attempt) => {
+    if (attempt === 1) {
+      markFirstResumeStarted?.();
+      await firstResumeGate;
+    }
+  });
+  try {
+    const first = harness.session.handleMessage(
+      storedResumeRequest("req-resume-overlap-first", harness.cwd),
+    );
+    await firstResumeStarted;
+    const second = harness.session.handleMessage(
+      storedResumeRequest("req-resume-overlap-second", harness.cwd),
+    );
+
+    expect(harness.client.resumeAttempts).toBe(1);
+    releaseFirstResume?.();
+    await Promise.all([first, second]);
+
+    expect(harness.client.resumeAttempts).toBe(1);
+    expect(harness.agentManager.listAgents().map((agent) => agent.id)).toEqual([
+      STORED_RESUME_AGENT_ID,
+    ]);
+    expect((await harness.agentStorage.list()).map((record) => record.id)).toEqual([
+      STORED_RESUME_AGENT_ID,
+    ]);
+    expect(filterByType(harness.emitted, "status")).toHaveLength(2);
+    expect(filterByType(harness.emitted, "rpc_error")).toEqual([]);
+  } finally {
+    releaseFirstResume?.();
+    rmSync(harness.workdir, { recursive: true, force: true });
+  }
 });
 
 test("refresh_agent_request leaves workspace archival independent when its directory is missing", async () => {

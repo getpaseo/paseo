@@ -33,7 +33,12 @@ import { CursorError } from "./pagination/cursor.js";
 import { SortablePager, type SortSpec } from "./pagination/sortable-pager.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
 import type { TurnDetectionProvider } from "./speech/turn-detection-provider.js";
-import { isStoredAgentProviderAvailable, toAgentPersistenceHandle } from "./persistence-hooks.js";
+import {
+  buildConfigOverrides,
+  extractTimestamps,
+  isStoredAgentProviderAvailable,
+  toAgentPersistenceHandle,
+} from "./persistence-hooks.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent/agent-loading.js";
 import {
   formatSystemNotificationPrompt,
@@ -556,6 +561,31 @@ function describeRegistryTransition(record: ArchivedRecordSnapshot | null): Regi
     return "created";
   }
   return record.archivedAt ? "unarchived" : "existing";
+}
+
+const agentResumeMutations = new WeakMap<AgentManager, Map<string, Promise<unknown>>>();
+
+async function serializeAgentResume<T>(
+  agentManager: AgentManager,
+  key: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  let mutations = agentResumeMutations.get(agentManager);
+  if (!mutations) {
+    mutations = new Map();
+    agentResumeMutations.set(agentManager, mutations);
+  }
+
+  const previous = mutations.get(key) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(operation);
+  mutations.set(key, next);
+  try {
+    return await next;
+  } finally {
+    if (mutations.get(key) === next) {
+      mutations.delete(key);
+    }
+  }
 }
 
 /**
@@ -2509,17 +2539,100 @@ export class Session {
     });
   }
 
-  private async unarchiveAgentByHandle(handle: AgentPersistenceHandle): Promise<void> {
+  private async findStoredAgentByHandle(
+    handle: AgentPersistenceHandle,
+  ): Promise<StoredAgentRecord | null> {
     const records = await this.agentStorage.list();
-    const matched = records.find(
-      (record) =>
-        record.persistence?.provider === handle.provider &&
-        record.persistence?.sessionId === handle.sessionId,
+    return (
+      records.find(
+        (record) =>
+          record.persistence?.provider === handle.provider &&
+          record.persistence?.sessionId === handle.sessionId,
+      ) ?? null
     );
-    if (!matched) {
+  }
+
+  private async rollbackArchivedResume(record: StoredAgentRecord): Promise<void> {
+    if (!record.archivedAt) {
       return;
     }
-    await unarchiveAgentState(this.agentStorage, this.agentManager, matched.id);
+
+    try {
+      if (this.agentManager.getAgent(record.id)) {
+        await this.agentManager.closeAgent(record.id);
+      }
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, agentId: record.id },
+        "Failed to close agent after resume failure",
+      );
+    }
+
+    try {
+      await this.agentManager.archiveSnapshot(record.id, record.archivedAt);
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, agentId: record.id },
+        "Failed to re-archive agent after resume failure",
+      );
+    }
+
+    try {
+      await this.agentStorage.upsert(record);
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, agentId: record.id },
+        "Failed to restore archived agent record after resume failure",
+      );
+    }
+  }
+
+  private async resumeAgentWithStoredIdentity(
+    handle: AgentPersistenceHandle,
+    overrides?: Partial<AgentSessionConfig>,
+  ): Promise<ManagedAgent> {
+    const initialStoredAgent = await this.findStoredAgentByHandle(handle);
+    const mutationKey = initialStoredAgent
+      ? `agent\0${initialStoredAgent.id}`
+      : `handle\0${handle.provider}\0${handle.sessionId}`;
+
+    return serializeAgentResume(this.agentManager, mutationKey, async () => {
+      const storedAgent = await this.findStoredAgentByHandle(handle);
+      if (storedAgent) {
+        const existing = this.agentManager.getAgent(storedAgent.id);
+        if (existing) {
+          return existing;
+        }
+      }
+
+      try {
+        if (storedAgent?.archivedAt) {
+          await unarchiveAgentState(this.agentStorage, this.agentManager, storedAgent.id);
+        }
+        const storedOptions = storedAgent ? extractTimestamps(storedAgent) : undefined;
+        if (storedOptions && overrides?.cwd && overrides.cwd !== storedAgent?.cwd) {
+          storedOptions.workspaceId = undefined;
+        }
+        const resumeOverrides = storedAgent
+          ? {
+              ...buildConfigOverrides(storedAgent),
+              ...overrides,
+              ...(storedAgent.internal !== undefined ? { internal: storedAgent.internal } : {}),
+            }
+          : overrides;
+        return await this.agentManager.resumeAgentFromPersistence(
+          handle,
+          resumeOverrides,
+          storedAgent?.id,
+          storedOptions,
+        );
+      } catch (error) {
+        if (storedAgent?.archivedAt) {
+          await this.rollbackArchivedResume(storedAgent);
+        }
+        throw error;
+      }
+    });
   }
 
   private async handleUpdateAgentRequest(
@@ -3278,8 +3391,7 @@ export class Session {
       `Resuming agent ${handle.sessionId} (${handle.provider})`,
     );
     try {
-      await this.unarchiveAgentByHandle(handle);
-      const snapshot = await this.agentManager.resumeAgentFromPersistence(handle, overrides);
+      const snapshot = await this.resumeAgentWithStoredIdentity(handle, overrides);
       await unarchiveAgentState(this.agentStorage, this.agentManager, snapshot.id);
       await this.agentUpdates.forwardLiveAgent(snapshot);
       const timelineSize = this.agentManager.getTimeline(snapshot.id).length;
