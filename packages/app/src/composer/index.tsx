@@ -93,6 +93,7 @@ import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import { submitAgentInput } from "@/composer/submit";
 import { ComposerKeyboardScopeProvider } from "@/composer/keyboard-scope";
 import { useAppSettings } from "@/hooks/use-settings";
+import { useInteractionLocked } from "@/stores/interaction-lock-store";
 import { isWeb, isNative } from "@/constants/platform";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
 import type {
@@ -148,8 +149,9 @@ function resolveComposerButtonIconSize(): number {
 function resolveIsComposerLocked(
   submitBehavior: "clear" | "preserve-and-lock",
   isSubmitLoading: boolean,
+  interactionLocked = false,
 ): boolean {
-  return submitBehavior === "preserve-and-lock" && isSubmitLoading;
+  return interactionLocked || (submitBehavior === "preserve-and-lock" && isSubmitLoading);
 }
 
 function resolveIsVoiceModeForAgent(
@@ -268,10 +270,26 @@ interface RenderLeftContentArgs {
   isPaneFocused: boolean;
 }
 
-function renderLeftContent(args: RenderLeftContentArgs): ReactElement {
-  const { agentControls, agentId, serverId, focusInput, isCompactLayout, isPaneFocused } = args;
+function renderLeftContent(
+  args: RenderLeftContentArgs & { controlsDisabled?: boolean },
+): ReactElement {
+  const {
+    agentControls,
+    agentId,
+    serverId,
+    focusInput,
+    isCompactLayout,
+    isPaneFocused,
+    controlsDisabled = false,
+  } = args;
   if (resolveAgentControlsMode(agentControls) === "draft" && agentControls) {
-    return <DraftAgentControls {...agentControls} isCompactLayout={isCompactLayout} />;
+    return (
+      <DraftAgentControls
+        {...agentControls}
+        disabled={controlsDisabled || agentControls.disabled}
+        isCompactLayout={isCompactLayout}
+      />
+    );
   }
   return (
     <AgentControls
@@ -280,6 +298,7 @@ function renderLeftContent(args: RenderLeftContentArgs): ReactElement {
       isPaneFocused={isPaneFocused}
       onDropdownClose={focusInput}
       isCompactLayout={isCompactLayout}
+      disabled={controlsDisabled}
     />
   );
 }
@@ -1133,7 +1152,12 @@ export function Composer({
   const [lightboxMetadata, setLightboxMetadata] = useState<AttachmentMetadata | null>(null);
   const attachButtonRef = useRef<View | null>(null);
   const messageInputRef = useRef<MessageInputRef>(null);
-  const isComposerLocked = resolveIsComposerLocked(submitBehavior, isSubmitLoading);
+  const interactionLocked = useInteractionLocked();
+  const isComposerLocked = resolveIsComposerLocked(
+    submitBehavior,
+    isSubmitLoading,
+    interactionLocked,
+  );
   const keyboardHandlerIdRef = useRef(
     `message-input:${serverId}:${agentId}:${Math.random().toString(36).slice(2)}`,
   );
@@ -1413,6 +1437,9 @@ export function Composer({
 
   const handleSubmit = useCallback(
     (payload: MessagePayload) => {
+      if (interactionLocked) {
+        return;
+      }
       const outgoingAttachments = buildOutgoingAttachments(attachments);
       const clientSlashCommand = resolveClientSlashCommand({
         text: payload.text,
@@ -1431,6 +1458,7 @@ export function Composer({
       attachments,
       blurOnSubmit,
       buildOutgoingAttachments,
+      interactionLocked,
       runClientSlashCommand,
       sendMessageWithContent,
     ],
@@ -1557,6 +1585,9 @@ export function Composer({
   }, [isAgentRunning, isConnected]);
 
   const handleCancelAgent = useCallback(() => {
+    if (interactionLocked) {
+      return;
+    }
     const didCancel = cancelComposerAgent({
       client,
       agentId: agentIdRef.current,
@@ -1574,7 +1605,7 @@ export function Composer({
     if (!didCancel) return;
     setIsCancellingAgent(true);
     messageInputRef.current?.focus();
-  }, [client, isAgentRunning, isCancellingAgent, isConnected]);
+  }, [client, interactionLocked, isAgentRunning, isCancellingAgent, isConnected]);
 
   const focusMessageInputForKeyboardAction = useCallback(() => {
     focusMessageInputWithPlatformStrategy(messageInputRef);
@@ -1673,6 +1704,9 @@ export function Composer({
 
   const handleQueue = useCallback(
     (payload: MessagePayload) => {
+      if (interactionLocked) {
+        return;
+      }
       const outgoingAttachments = buildOutgoingAttachments(attachments);
       const clientSlashCommand = resolveClientSlashCommand({
         text: payload.text,
@@ -1683,7 +1717,7 @@ export function Composer({
       }
       queueMessage(payload.text, outgoingAttachments);
     },
-    [attachments, buildOutgoingAttachments, queueMessage, runClientSlashCommand],
+    [attachments, buildOutgoingAttachments, interactionLocked, queueMessage, runClientSlashCommand],
   );
 
   const hasSendableContent = userInput.trim().length > 0 || selectedAttachments.length > 0;
@@ -1920,8 +1954,17 @@ export function Composer({
         focusInput,
         isCompactLayout,
         isPaneFocused,
+        controlsDisabled: interactionLocked,
       }),
-    [agentControls, agentId, focusInput, isCompactLayout, isPaneFocused, serverId],
+    [
+      agentControls,
+      agentId,
+      focusInput,
+      interactionLocked,
+      isCompactLayout,
+      isPaneFocused,
+      serverId,
+    ],
   );
 
   const handleAttachButtonRef = useCallback((node: View | null) => {
@@ -2097,8 +2140,8 @@ export function Composer({
                 placeholder={messagePlaceholder}
                 autoFocus={messageInputAutoFocus}
                 autoFocusKey={`${serverId}:${agentId}:${autoFocusKey ?? ""}`}
-                disabled={isSubmitLoading}
-                isPaneFocused={isPaneFocused}
+                disabled={isSubmitLoading || interactionLocked}
+                isPaneFocused={isPaneFocused && !interactionLocked}
                 leftContent={leftContent}
                 beforeVoiceContent={beforeVoiceContent}
                 rightContent={rightContent}

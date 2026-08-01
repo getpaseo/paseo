@@ -2349,4 +2349,12 @@ export const ptBR: TranslationResources = {
       },
     },
   },
+  interactionLock: {
+    banner: "Somente leitura · monitoramento",
+    unlock: "Desbloquear",
+    lock: "Bloquear tela",
+    unlockMenu: "Desbloquear tela",
+    lockedA11y: "Bloqueio de interação ativo. Desbloqueie para interagir.",
+    lockedToast: "Desbloqueie para controlar este agente",
+  },
 };

@@ -2371,4 +2371,12 @@ export const fr: TranslationResources = {
       },
     },
   },
+  interactionLock: {
+    banner: "Lecture seule · surveillance",
+    unlock: "Déverrouiller",
+    lock: "Verrouiller l'écran",
+    unlockMenu: "Déverrouiller l'écran",
+    lockedA11y: "Verrouillage d'interaction activé. Déverrouillez pour interagir.",
+    lockedToast: "Déverrouillez pour contrôler cet agent",
+  },
 };

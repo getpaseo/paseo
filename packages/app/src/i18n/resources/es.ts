@@ -2365,4 +2365,12 @@ export const es: TranslationResources = {
       },
     },
   },
+  interactionLock: {
+    banner: "Solo lectura · supervisión",
+    unlock: "Desbloquear",
+    lock: "Bloquear pantalla",
+    unlockMenu: "Desbloquear pantalla",
+    lockedA11y: "Bloqueo de interacción activado. Desbloquea para interactuar.",
+    lockedToast: "Desbloquea para controlar este agente",
+  },
 };

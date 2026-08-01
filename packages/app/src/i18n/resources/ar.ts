@@ -2312,4 +2312,12 @@ export const ar: TranslationResources = {
       },
     },
   },
+  interactionLock: {
+    banner: "للقراءة فقط · مراقبة",
+    unlock: "إلغاء القفل",
+    lock: "قفل الشاشة",
+    unlockMenu: "إلغاء قفل الشاشة",
+    lockedA11y: "قفل التفاعل مفعّل. ألغِ القفل للتفاعل.",
+    lockedToast: "ألغِ القفل للتحكم في هذا الوكيل",
+  },
 };
