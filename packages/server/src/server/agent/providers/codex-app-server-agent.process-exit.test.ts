@@ -25,6 +25,10 @@ class ProcessExitCodexClient extends CodexAppServerAgentClient implements AgentC
     super(logger);
   }
 
+  override async isAvailable(): Promise<boolean> {
+    return true;
+  }
+
   override async createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
