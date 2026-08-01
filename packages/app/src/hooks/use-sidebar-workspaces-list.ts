@@ -41,7 +41,7 @@ const EMPTY_PROJECT_NAMES = new Map<string, string>();
 export interface SidebarWorkspacesListResult {
   workspacePlacements: SidebarWorkspacePlacement[];
   projects: SidebarProjectEntry[];
-  projectNamesByKey: Map<string, string>;
+  projectNamesByViewKey: Map<string, string>;
   isLoading: boolean;
   isInitialLoad: boolean;
   isRevalidating: boolean;
@@ -100,23 +100,25 @@ export function useSidebarWorkspacesList(options?: {
   const projects = sidebarModel.projects.length > 0 ? sidebarModel.projects : EMPTY_PROJECTS;
   const workspacePlacements =
     sidebarModel.workspaces.length > 0 ? sidebarModel.workspaces : EMPTY_WORKSPACES;
-  const projectNamesByKey =
-    sidebarModel.projectNamesByKey.size > 0 ? sidebarModel.projectNamesByKey : EMPTY_PROJECT_NAMES;
+  const projectNamesByViewKey =
+    sidebarModel.projectNamesByViewKey.size > 0
+      ? sidebarModel.projectNamesByViewKey
+      : EMPTY_PROJECT_NAMES;
 
   useEffect(() => {
     const orderStore = useSidebarOrderStore.getState();
     const updates = computeSidebarOrderUpdates({
       projects,
       persistedProjectOrder,
-      getWorkspaceOrder: (projectKey) =>
-        orderStore.workspaceOrderByProject[projectKey] ?? EMPTY_ORDER,
+      getWorkspaceOrder: (projectViewKey) =>
+        orderStore.workspaceOrderByProject[projectViewKey] ?? EMPTY_ORDER,
     });
 
     if (updates.projectOrder) {
       orderStore.setProjectOrder(updates.projectOrder);
     }
-    for (const { projectKey, order } of updates.workspaceOrders) {
-      orderStore.setWorkspaceOrder(projectKey, order);
+    for (const { projectViewKey, order } of updates.workspaceOrders) {
+      orderStore.setWorkspaceOrder(projectViewKey, order);
     }
   }, [persistedProjectOrder, projects]);
 
@@ -144,7 +146,7 @@ export function useSidebarWorkspacesList(options?: {
   return {
     workspacePlacements,
     projects,
-    projectNamesByKey,
+    projectNamesByViewKey,
     ...loadingState,
     refreshAll,
   };

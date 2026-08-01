@@ -14,7 +14,7 @@ import {
   expectHostInjectMcpCard,
   expectHostActionCards,
   expectHostProvidersCard,
-  expectHostNoLocalOnlyRows,
+  expectHostNoDaemonLifecycleRow,
   expectRetiredSidebarSectionsAbsent,
   expectHostPageVisible,
   expectLocalHostEntryFirst,
@@ -126,7 +126,7 @@ test.describe("Settings host page", () => {
     await expectHostLabelEditMode(page, TEST_HOST_LABEL);
   });
 
-  test("host section does not render pair-device or daemon-lifecycle rows for a remote daemon", async ({
+  test("host section does not render daemon lifecycle controls for a remote daemon", async ({
     page,
   }) => {
     const serverId = getServerId();
@@ -136,8 +136,8 @@ test.describe("Settings host page", () => {
     await openSettingsHost(page, serverId);
     await openHostSection(page, serverId, "host");
 
-    // TODO: add local-daemon fixture for positive Pair/Daemon coverage.
-    await expectHostNoLocalOnlyRows(page);
+    // TODO: add a local-daemon fixture for positive daemon lifecycle coverage.
+    await expectHostNoDaemonLifecycleRow(page);
   });
 
   test("settings sidebar exposes the flat App and Host section rows", async ({ page }) => {

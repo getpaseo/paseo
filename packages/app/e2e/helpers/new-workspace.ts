@@ -3,6 +3,7 @@ import type { DaemonClient as InternalDaemonClient } from "@getpaseo/client/inte
 import { decodeWorkspaceIdFromPathSegment } from "@/utils/host-routes";
 import { connectDaemonClient } from "./daemon-client-loader";
 import { daemonWsRoutePattern } from "./daemon-port";
+import { projectEquivalenceViewKey } from "./project-view-key";
 import { expectWorkspaceHeader } from "./workspace-ui";
 
 type NewWorkspaceDaemonClient = Pick<
@@ -174,11 +175,12 @@ export async function openNewWorkspaceComposer(
   page: Page,
   input: { projectKey: string; projectDisplayName: string },
 ): Promise<void> {
-  const projectRow = page.getByTestId(`sidebar-project-row-${input.projectKey}`).first();
+  const projectViewKey = projectEquivalenceViewKey(input.projectKey);
+  const projectRow = page.getByTestId(`sidebar-project-row-${projectViewKey}`).first();
   await expect(projectRow).toBeVisible({ timeout: 30_000 });
   await projectRow.hover();
 
-  const button = page.getByTestId(`sidebar-project-new-worktree-${input.projectKey}`).first();
+  const button = page.getByTestId(`sidebar-project-new-worktree-${projectViewKey}`).first();
   await expect(button).toBeVisible({ timeout: 30_000 });
   await button.click();
 
@@ -191,6 +193,29 @@ export async function openGlobalNewWorkspaceComposer(page: Page): Promise<void> 
   await page.getByTestId("sidebar-global-new-workspace").click();
 
   await expect(page).toHaveURL(/\/new(?:\?.*)?$/, {
+    timeout: 30_000,
+  });
+}
+
+export async function openMissingProjectNewWorkspaceComposer(
+  page: Page,
+  input: { serverId: string; projectId: string; sourceDirectory: string },
+): Promise<void> {
+  const query = new URLSearchParams({
+    serverId: input.serverId,
+    projectId: input.projectId,
+    dir: input.sourceDirectory,
+    name: "Missing project",
+  });
+  await page.goto(`/new?${query.toString()}`);
+  await expect(page).toHaveURL(/\/new\?.*projectId=/u, { timeout: 30_000 });
+}
+
+export async function expectNewWorkspaceControlsEnabled(page: Page): Promise<void> {
+  await expect(page.getByRole("button", { name: "Workspace project" })).toBeEnabled({
+    timeout: 30_000,
+  });
+  await expect(page.getByRole("textbox", { name: "Message agent..." })).toBeEditable({
     timeout: 30_000,
   });
 }
@@ -223,8 +248,10 @@ export async function expectNewWorkspaceDraft(page: Page, draft: string): Promis
 }
 
 export async function selectNewWorkspaceHost(page: Page, hostLabel: string): Promise<void> {
-  await page.getByTestId("host-picker-trigger").click();
-  await page.getByText(hostLabel, { exact: true }).click();
+  const trigger = page.getByTestId("host-picker-trigger");
+  await trigger.click();
+  await page.getByRole("button", { name: hostLabel, exact: true }).click();
+  await expect(trigger).toContainText(hostLabel);
 }
 
 export async function submitNewWorkspacePrompt(
@@ -251,13 +278,14 @@ export async function clickNewWorkspaceButton(
 
 export async function selectNewWorkspaceProject(
   page: Page,
-  input: { projectKey: string; projectDisplayName: string },
+  input: { projectKey: string; projectDisplayName: string; projectViewKey?: string },
 ): Promise<void> {
   const trigger = page.getByTestId("new-workspace-project-picker-trigger");
   await expect(trigger).toBeVisible({ timeout: 30_000 });
   await trigger.click();
 
-  const option = page.getByTestId(`new-workspace-project-picker-option-${input.projectKey}`);
+  const projectViewKey = input.projectViewKey ?? projectEquivalenceViewKey(input.projectKey);
+  const option = page.getByTestId(`new-workspace-project-picker-option-${projectViewKey}`);
   await expect(option).toBeVisible({ timeout: 30_000 });
   await option.click();
 
@@ -288,9 +316,8 @@ export async function selectWorkspaceIsolation(
   await expect(trigger).toBeVisible({ timeout: 30_000 });
   await trigger.click();
 
-  // "New worktree" is only listed once the checkout status query confirms the
-  // selected project is a git repo, so wait for the option to appear before
-  // clicking it.
+  // Isolation options are derived from project capability. Wait for the option
+  // so this helper also covers route-to-project reconciliation.
   const option = page.getByTestId(`workspace-create-isolation-${isolation}`);
   await expect(option).toBeVisible({ timeout: 30_000 });
   await option.click();

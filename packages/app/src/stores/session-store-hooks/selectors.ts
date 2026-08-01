@@ -214,8 +214,7 @@ export function composeWorkspaceStructure(input: {
 
   const orderedProjects = applyStoredOrdering({
     items: input.projects.map((project) => {
-      const workspaceOrder =
-        input.workspaceOrderByScope[project.projectKey] ?? EMPTY_WORKSPACE_KEYS;
+      const workspaceOrder = input.workspaceOrderByScope[project.viewKey] ?? EMPTY_WORKSPACE_KEYS;
       return {
         ...project,
         workspaceKeys: applyStoredOrdering({
@@ -226,7 +225,7 @@ export function composeWorkspaceStructure(input: {
       };
     }),
     storedOrder: input.projectOrder,
-    getKey: (project) => project.projectKey,
+    getKey: (project) => project.viewKey,
   });
 
   return { projects: orderedProjects };

@@ -62,7 +62,9 @@ import type {
   DirectorySuggestionsResponse,
   PaseoWorktreeListResponse,
   PaseoWorktreeArchiveResponse,
+  ProjectIconSource,
   ProjectIconResponse,
+  ProjectIconGetResponse,
   ProjectAddResponse,
   ProjectCreateDirectoryResponse,
   OpenProjectResponseMessage,
@@ -2527,6 +2529,18 @@ export class DaemonClient {
     return { customName: payload.customName };
   }
 
+  async setProjectIcon(
+    projectId: string,
+    source: ProjectIconSource,
+    requestId?: string,
+  ): Promise<void> {
+    const payload = await this.sendNamespacedCorrelatedSessionRequest<"project.icon.set.response">({
+      requestId,
+      message: { type: "project.icon.set.request", projectId, source },
+    });
+    if (!payload.accepted) throw new Error(payload.error ?? "setProjectIcon rejected");
+  }
+
   async removeProject(
     projectId: string,
     requestId?: string,
@@ -4299,6 +4313,16 @@ export class DaemonClient {
         cwd,
       },
       responseType: "project_icon_response",
+    });
+  }
+
+  async getProjectIcon(
+    projectId: string,
+    requestId?: string,
+  ): Promise<ProjectIconGetResponse["payload"]> {
+    return this.sendNamespacedCorrelatedSessionRequest<"project.icon.get.response">({
+      requestId,
+      message: { type: "project.icon.get.request", projectId },
     });
   }
 

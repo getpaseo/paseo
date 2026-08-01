@@ -60,7 +60,7 @@ export interface ProjectIcon {
 
 const MAX_ICON_SIZE = 32 * 1024; // 32KB max
 
-interface ImageDimensions {
+export interface ImageDimensions {
   width: number;
   height: number;
 }
@@ -136,7 +136,7 @@ function getWebpDimensions(buffer: Buffer): ImageDimensions | null {
   return null;
 }
 
-function getImageDimensions(buffer: Buffer, mimeType: string): ImageDimensions | null {
+export function getImageDimensions(buffer: Buffer, mimeType: string): ImageDimensions | null {
   switch (mimeType) {
     case "image/png":
       return getPngDimensions(buffer);

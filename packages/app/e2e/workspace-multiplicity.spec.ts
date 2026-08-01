@@ -12,6 +12,7 @@ import {
 import { seedWorkspace, type SeededWorkspace } from "./helpers/seed-client";
 import { expectExplorerEntryVisible } from "./helpers/file-explorer";
 import { getServerId } from "./helpers/server-id";
+import { projectEquivalenceViewKey } from "./helpers/project-view-key";
 import { waitForSidebarHydration } from "./helpers/workspace-ui";
 
 // Model B reshape: a workspace is the unit, its isolation (local checkout or
@@ -196,9 +197,9 @@ test.describe("Workspace multiplicity creation flow", () => {
       await waitForSidebarHydration(page);
       // Model B: a non-git project is an expandable parent like any other, with
       // its single workspace already rendered as its own row underneath.
-      await expect(page.getByTestId(`sidebar-project-row-${seeded.projectKey}`)).toBeVisible({
-        timeout: 30_000,
-      });
+      await expect(
+        page.getByTestId(`sidebar-project-row-${projectEquivalenceViewKey(seeded.projectKey)}`),
+      ).toBeVisible({ timeout: 30_000 });
       await expect(page.getByTestId(workspaceRowTestId(seeded.workspaceId))).toBeVisible({
         timeout: 30_000,
       });
@@ -216,9 +217,9 @@ test.describe("Workspace multiplicity creation flow", () => {
 
       // Both the original and the new workspace render as distinct rows under
       // the same expandable parent.
-      await expect(page.getByTestId(`sidebar-project-row-${seeded.projectKey}`)).toBeVisible({
-        timeout: 30_000,
-      });
+      await expect(
+        page.getByTestId(`sidebar-project-row-${projectEquivalenceViewKey(seeded.projectKey)}`),
+      ).toBeVisible({ timeout: 30_000 });
       await expect(page.getByTestId(workspaceRowTestId(seeded.workspaceId))).toBeVisible({
         timeout: 30_000,
       });
