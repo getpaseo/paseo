@@ -115,7 +115,7 @@ export type ArchiveCommandResult =
     }
   | {
       ok: false;
-      code: "NOT_ALLOWED";
+      code: "NOT_ALLOWED" | "UNKNOWN";
       message: string;
       removedAgents: [];
     };
@@ -171,15 +171,12 @@ export async function archiveCommand(
     input.workspaceId ?? (await resolveWorkspaceIdAtPath(dependencies, targetPath));
 
   if (!workspaceId) {
-    dependencies.sessionLogger?.warn(
-      { targetPath },
-      "Could not resolve workspace for archive; skipping",
-    );
+    dependencies.sessionLogger?.warn({ targetPath }, "Could not resolve workspace for archive");
     return {
-      ok: true,
+      ok: false,
+      code: "UNKNOWN",
+      message: `Workspace not found for archive target: ${targetPath}`,
       removedAgents: [],
-      removedDirectory: false,
-      cleanupPending: false,
     };
   }
 
