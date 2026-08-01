@@ -185,8 +185,8 @@ function deriveBootstrapTailTimelinePolicy({
 
 type ResumeTailPolicy =
   | { kind: "not_resume" }
-  | { kind: "discard" }
-  | { kind: "append" }
+  | { kind: "discard"; coveredEndSeq: number }
+  | { kind: "append"; coveredEndSeq: number }
   | { kind: "replace"; preserveContinuity: boolean };
 
 function deriveResumeTailPolicy(input: {
@@ -205,13 +205,13 @@ function deriveResumeTailPolicy(input: {
     return { kind: "replace", preserveContinuity: false };
   }
   if (input.windowMaxSeq === input.currentCursor.endSeq) {
-    return { kind: "discard" };
+    return { kind: "discard", coveredEndSeq: input.currentCursor.endSeq };
   }
   if (input.windowMaxSeq < input.currentCursor.endSeq) {
     return { kind: "replace", preserveContinuity: false };
   }
   if (input.pageStartSeq !== null && input.pageStartSeq <= input.currentCursor.endSeq + 1) {
-    return { kind: "append" };
+    return { kind: "append", coveredEndSeq: input.currentCursor.endSeq };
   }
   return { kind: "replace", preserveContinuity: true };
 }
@@ -976,19 +976,28 @@ export function processTimelineResponse(
     bootstrapReplace: replace,
   });
   const discard = resumeTailPolicy.kind === "discard";
+  const coveredUnits = timelineUnits.filter(
+    (unit) => "coveredEndSeq" in resumeTailPolicy && unit.seqEnd <= resumeTailPolicy.coveredEndSeq,
+  );
+  const revision = processAgentStreamEvents({
+    events: coveredUnits.map((unit) => ({
+      event: unit.event,
+      seq: unit.seqEnd,
+      epoch: payload.epoch,
+      timestamp: unit.timestamp,
+    })),
+    currentTail,
+    currentHead,
+    currentCursor,
+  });
+  const coveredRevisionAcknowledgements = deriveCanonicalAcknowledgements({
+    units: coveredUnits,
+    epoch: payload.epoch,
+    currentTail,
+    currentHead,
+  });
   let timelineResult: TimelinePathResult;
   if (discard) {
-    const revision = processAgentStreamEvents({
-      events: timelineUnits.map((unit) => ({
-        event: unit.event,
-        seq: unit.seqEnd,
-        epoch: payload.epoch,
-        timestamp: unit.timestamp,
-      })),
-      currentTail,
-      currentHead,
-      currentCursor,
-    });
     timelineResult = {
       tail: revision.tail,
       head: revision.head,
@@ -996,12 +1005,7 @@ export function processTimelineResponse(
       cursorChanged: false,
       older: "unchanged",
       sideEffects: [],
-      acknowledgedClientMessageIds: deriveCanonicalAcknowledgements({
-        units: timelineUnits,
-        epoch: payload.epoch,
-        currentTail,
-        currentHead,
-      }),
+      acknowledgedClientMessageIds: [],
     };
   } else if (replace || resumeTailPolicy.kind === "replace") {
     const isResumeReplacement = resumeTailPolicy.kind === "replace";
@@ -1027,11 +1031,20 @@ export function processTimelineResponse(
     timelineResult = applyTimelineIncrementalPath({
       timelineUnits: incrementalUnits,
       payload,
-      currentTail,
-      currentHead,
+      currentTail: revision.tail,
+      currentHead: revision.head,
       currentCursor,
     });
   }
+  timelineResult = {
+    ...timelineResult,
+    acknowledgedClientMessageIds: [
+      ...new Set([
+        ...coveredRevisionAcknowledgements,
+        ...timelineResult.acknowledgedClientMessageIds,
+      ]),
+    ],
+  };
 
   const nextTail = timelineResult.tail;
   const nextHead = timelineResult.head;
