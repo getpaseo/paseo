@@ -47,7 +47,14 @@ const PersistedWorkspaceCleanupReceiptSchema = z.object({
   teardownCwds: z.array(z.string()),
   mainRepoRoot: z.string().nullable(),
   paseoWorktreesRoot: z.string().nullable(),
-  directoryIdentity: z.string().nullable(),
+  // COMPAT(cleanupIncarnation): cleanup receipts written before v0.2.6 used
+  // directoryIdentity as durable authority. Keep parsing them, but never delete from it.
+  directoryIdentity: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
+  worktreeIncarnationId: z.string().uuid().nullable().optional(),
   createdAt: z.string(),
   lastAttemptAt: z.string().nullable(),
   attemptCount: z.number().int().nonnegative(),
@@ -117,7 +124,7 @@ export type PersistedWorkspaceCleanupReceipt = z.infer<
 export type PersistedWorkspaceRecord = z.infer<typeof PersistedWorkspaceRecordSchema>;
 
 export function workspaceCleanupReceiptToken(receipt: PersistedWorkspaceCleanupReceipt): string {
-  return `${resolve(receipt.backingPath)}\0${receipt.directoryIdentity ?? "missing"}\0${receipt.workspaceId}\0${receipt.createdAt}`;
+  return `${resolve(receipt.backingPath)}\0${receipt.worktreeIncarnationId ?? "legacy"}\0${receipt.workspaceId}\0${receipt.createdAt}`;
 }
 
 export interface WorkspaceMutation {

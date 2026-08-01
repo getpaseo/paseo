@@ -18,6 +18,7 @@ function cleanupWorkspace(input: {
   workspaceId: string;
   backingPath?: string;
   directoryIdentity?: string | null;
+  worktreeIncarnationId?: string;
   createdAt?: string;
   lastAttemptAt?: string | null;
   attemptCount?: number;
@@ -41,6 +42,7 @@ function cleanupWorkspace(input: {
       mainRepoRoot: "/tmp/repo",
       paseoWorktreesRoot: "/tmp/paseo/worktrees/repo",
       directoryIdentity: input.directoryIdentity ?? "1:42",
+      worktreeIncarnationId: input.worktreeIncarnationId,
       createdAt,
       lastAttemptAt: input.lastAttemptAt ?? null,
       attemptCount: input.attemptCount ?? 0,
@@ -63,12 +65,14 @@ describe("WorkspaceCleanupRetryService", () => {
         list: async () => [
           cleanupWorkspace({
             workspaceId: "shared-newer",
-            backingPath: "/tmp/shared",
+            backingPath: "/tmp/.paseo-cleanup-shared",
+            worktreeIncarnationId: "00000000-0000-4000-8000-000000000042",
             createdAt: "2026-08-01T00:00:01.000Z",
           }),
           cleanupWorkspace({
             workspaceId: "shared-owner",
             backingPath: "/tmp/shared",
+            worktreeIncarnationId: "00000000-0000-4000-8000-000000000042",
             createdAt: "2026-08-01T00:00:00.000Z",
           }),
           cleanupWorkspace({

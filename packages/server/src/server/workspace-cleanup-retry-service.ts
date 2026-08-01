@@ -104,7 +104,9 @@ function selectCleanupRetryTargets(
     if (!workspace.archivedAt || !receipt) {
       continue;
     }
-    const key = `${receipt.backingPath}\0${receipt.directoryIdentity ?? "missing"}`;
+    const key = receipt.worktreeIncarnationId
+      ? `incarnation\0${receipt.worktreeIncarnationId}`
+      : `legacy\0${receipt.backingPath}\0${receipt.directoryIdentity ?? "missing"}`;
     const existing = byDirectory.get(key);
     if (
       !existing ||

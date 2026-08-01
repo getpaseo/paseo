@@ -193,7 +193,7 @@ describe("paseo worktree manager", () => {
     });
   });
 
-  it("deletes a worktree whose .git admin dir has already been removed", async () => {
+  it("refuses to delete a worktree whose durable marker is no longer readable", async () => {
     const created = await createLegacyWorktreeForTest({
       branchName: "orphan-delete-branch",
       cwd: repoDir,
@@ -201,20 +201,21 @@ describe("paseo worktree manager", () => {
       worktreeSlug: "orphan-delete",
       paseoHome,
     });
-
     rmSync(join(repoDir, ".git", "worktrees", "orphan-delete"), {
       recursive: true,
       force: true,
     });
     expect(existsSync(created.worktreePath)).toBe(true);
 
-    await deletePaseoWorktree({
-      cwd: repoDir,
-      worktreePath: created.worktreePath,
-      paseoHome,
-    });
+    await expect(
+      deletePaseoWorktree({
+        cwd: repoDir,
+        worktreePath: created.worktreePath,
+        paseoHome,
+      }),
+    ).rejects.toThrow("Missing Paseo worktree metadata");
 
-    expect(existsSync(created.worktreePath)).toBe(false);
+    expect(existsSync(created.worktreePath)).toBe(true);
   });
 
   it("is idempotent: deleting an already-absent worktree succeeds", async () => {

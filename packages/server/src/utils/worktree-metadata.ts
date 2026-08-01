@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
+import { randomUUID } from "node:crypto";
 import { isAbsolute, join, resolve } from "path";
 import { z } from "zod";
 
@@ -9,14 +10,18 @@ const ChangeRequestLookupTargetSchema = z.object({
   localBranchName: z.string().min(1).optional(),
 });
 
+// COMPAT(worktreeIncarnation): metadata written before v0.2.6 has no incarnationId;
+// remove optional parsing after 2027-02-01.
 const PaseoWorktreeMetadataV1Schema = z.object({
   version: z.literal(1),
+  incarnationId: z.string().uuid().optional(),
   baseRefName: z.string().min(1),
   changeRequestLookupTarget: ChangeRequestLookupTargetSchema.optional(),
 });
 
 const PaseoWorktreeMetadataV2Schema = z.object({
   version: z.literal(2),
+  incarnationId: z.string().uuid().optional(),
   baseRefName: z.string().min(1),
   changeRequestLookupTarget: ChangeRequestLookupTargetSchema.optional(),
   firstAgentBranchAutoName: z
@@ -170,6 +175,7 @@ export function writePaseoWorktreeMetadata(
 
   const metadata: PaseoWorktreeMetadata = {
     version: 1,
+    incarnationId: randomUUID(),
     baseRefName,
     ...(options.changeRequestLookupTarget
       ? { changeRequestLookupTarget: options.changeRequestLookupTarget }
@@ -193,6 +199,7 @@ export function writePaseoWorktreeRuntimeMetadata(
 
   const next: PaseoWorktreeMetadata = {
     version: 2,
+    incarnationId: current.incarnationId ?? randomUUID(),
     baseRefName: current.baseRefName,
     ...(current.changeRequestLookupTarget
       ? { changeRequestLookupTarget: current.changeRequestLookupTarget }
@@ -223,6 +230,7 @@ export function writePaseoWorktreeFirstAgentBranchAutoNameMetadata(
 
   writePaseoWorktreeMetadataFile(worktreeRoot, {
     version: 2,
+    incarnationId: current.incarnationId ?? randomUUID(),
     baseRefName: current.baseRefName,
     ...(current.changeRequestLookupTarget
       ? { changeRequestLookupTarget: current.changeRequestLookupTarget }
@@ -246,6 +254,7 @@ export function markPaseoWorktreeFirstAgentBranchAutoNameAttempted(
 
   const next: PaseoWorktreeMetadata = {
     version: 2,
+    incarnationId: current.incarnationId ?? randomUUID(),
     baseRefName: current.baseRefName,
     ...(current.changeRequestLookupTarget
       ? { changeRequestLookupTarget: current.changeRequestLookupTarget }
@@ -268,6 +277,27 @@ export function readPaseoWorktreeMetadata(worktreeRoot: string): PaseoWorktreeMe
   }
   const parsed = JSON.parse(readFileSync(metadataPath, "utf8"));
   return PaseoWorktreeMetadataSchema.parse(parsed);
+}
+
+export function readPaseoWorktreeIncarnationId(worktreeRoot: string): string | null {
+  try {
+    return readPaseoWorktreeMetadata(worktreeRoot)?.incarnationId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function ensurePaseoWorktreeIncarnationId(worktreeRoot: string): string {
+  const current = readPaseoWorktreeMetadata(worktreeRoot);
+  if (!current) {
+    throw new Error(
+      `Missing Paseo worktree metadata: ${getPaseoWorktreeMetadataPath(worktreeRoot)}`,
+    );
+  }
+  if (current.incarnationId) return current.incarnationId;
+  const incarnationId = randomUUID();
+  writePaseoWorktreeMetadataFile(worktreeRoot, { ...current, incarnationId });
+  return incarnationId;
 }
 
 export function requirePaseoWorktreeBaseRefName(worktreeRoot: string): string {

@@ -9,11 +9,17 @@ import type { WorkspaceGitService } from "./workspace-git-service.js";
 import type { ForgeService } from "../services/forge-service.js";
 import {
   deletePaseoWorktree,
+  getPaseoWorktreeCleanupQuarantinePath,
   hasPaseoWorktreeCleanupQuarantine,
+  isPaseoWorktreeCleanupQuarantinePath,
   isPaseoOwnedWorktreeCwd,
   runWorktreeTeardownCommands,
   WorktreeCleanupRelocatedError,
 } from "../utils/worktree.js";
+import {
+  ensurePaseoWorktreeIncarnationId,
+  readPaseoWorktreeIncarnationId,
+} from "../utils/worktree-metadata.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type {
   PersistedWorkspaceRecord,
@@ -337,7 +343,7 @@ async function resolveWorkspaceBackingDirectory(
       path: resolve(workspace.worktreeRoot),
       isPaseoOwnedWorktree: true,
       mainRepoRoot: workspace.mainRepoRoot,
-      paseoWorktreesRoot: null,
+      paseoWorktreesRoot: dirname(resolve(workspace.worktreeRoot)),
     };
   }
   if (workspace.kind !== "worktree") {
@@ -441,24 +447,26 @@ async function maybeRemoveDirectory(
     lastError: null,
   }));
 
-  const receiptIdentity =
+  const receiptIncarnationId =
     cleanupWorkspaceIds.length === 0
       ? undefined
-      : await expectedDirectoryIdentity(dependencies, cleanupWorkspaceIds);
-  const initialIdentity = await validateCleanupDirectoryIdentity(
+      : await readExpectedWorktreeIncarnationId(dependencies, cleanupWorkspaceIds);
+  const initialIdentity = await validateCleanupWorktreeIncarnation(
     dependencies,
     request,
     cleanupWorkspaceIds,
     backing.path,
-    receiptIdentity,
+    receiptIncarnationId,
   );
   if (initialIdentity.status === "changed" || initialIdentity.status === "released") {
     return false;
   }
-  const expectedIdentity =
+  const expectedIncarnationId =
     initialIdentity.status === "matched" || initialIdentity.status === "quarantined"
-      ? initialIdentity.identity
-      : receiptIdentity;
+      ? initialIdentity.worktreeIncarnationId
+      : receiptIncarnationId;
+  const removalBacking =
+    initialIdentity.status === "quarantined" ? { ...backing, path: initialIdentity.path } : backing;
 
   const archivedWorkspaceIdSet = new Set(archivedWorkspaceIds);
   const teardownCwds =
@@ -498,10 +506,10 @@ async function maybeRemoveDirectory(
   return removeDirectoryUnderLock(
     dependencies,
     request,
-    backing,
+    removalBacking,
     archivedWorkspaceIds,
     cleanupWorkspaceIds,
-    expectedIdentity,
+    expectedIncarnationId,
   );
 }
 
@@ -511,7 +519,7 @@ async function removeDirectoryUnderLock(
   backing: BackingDirectory,
   archivedWorkspaceIds: string[],
   cleanupWorkspaceIds: string[],
-  expectedIdentity: string | null | undefined,
+  expectedWorktreeIncarnationId: string | null | undefined,
 ): Promise<boolean> {
   const remainingActive = await dependencies.listActiveWorkspaces();
   if (
@@ -526,12 +534,12 @@ async function removeDirectoryUnderLock(
     return false;
   }
 
-  const identityAtRemoval = await validateCleanupDirectoryIdentity(
+  const identityAtRemoval = await validateCleanupWorktreeIncarnation(
     dependencies,
     request,
     cleanupWorkspaceIds,
     backing.path,
-    expectedIdentity,
+    expectedWorktreeIncarnationId,
   );
   if (identityAtRemoval.status === "changed" || identityAtRemoval.status === "released") {
     return false;
@@ -545,18 +553,18 @@ async function removeDirectoryUnderLock(
       worktreesRoot: backing.paseoWorktreesRoot ?? undefined,
       paseoHome: dependencies.paseoHome,
       worktreesBaseRoot: dependencies.paseoWorktreesBaseRoot,
-      expectedDirectoryIdentity: expectedIdentity,
+      expectedWorktreeIncarnationId,
       signal: request.signal,
     });
     dependencies.github.invalidate({ cwd: backing.path });
     await clearCleanupReceipts(dependencies, cleanupWorkspaceIds);
-    return true;
+    return identityAtRemoval.status !== "missing";
   } catch (error) {
     if (error instanceof WorktreeCleanupRelocatedError) {
       await updateCleanupReceipts(dependencies, cleanupWorkspaceIds, (receipt) => ({
         ...receipt,
         backingPath: error.remainingPath,
-        directoryIdentity: error.directoryIdentity,
+        worktreeIncarnationId: error.worktreeIncarnationId,
       }));
     }
     await recordCleanupFailure(dependencies, cleanupWorkspaceIds, errorMessage(error));
@@ -579,6 +587,7 @@ async function createCleanupReceipts(
   }
 
   const directoryIdentity = await readDirectoryIdentity(backing.path);
+  const worktreeIncarnationId = ensurePaseoWorktreeIncarnationId(backing.path);
   const createdAt = nowIso(dependencies);
   for (const workspaceId of target.workspaceIds) {
     const teardownCwds = uniqueFilesystemPaths(
@@ -591,8 +600,9 @@ async function createCleanupReceipts(
       backingPath: backing.path,
       teardownCwds,
       mainRepoRoot: backing.mainRepoRoot,
-      paseoWorktreesRoot: backing.paseoWorktreesRoot,
+      paseoWorktreesRoot: backing.paseoWorktreesRoot ?? dirname(resolve(backing.path)),
       directoryIdentity,
+      worktreeIncarnationId,
       createdAt,
       lastAttemptAt: null,
       attemptCount: 0,
@@ -614,41 +624,72 @@ async function readDirectoryIdentity(directoryPath: string): Promise<string | nu
   }
 }
 
-type CleanupDirectoryIdentityValidation =
-  | { status: "matched"; identity: string }
-  | { status: "quarantined"; identity: string }
+type CleanupWorktreeIncarnationValidation =
+  | { status: "matched"; worktreeIncarnationId: string | undefined }
+  | { status: "quarantined"; path: string; worktreeIncarnationId: string }
   | { status: "missing" }
   | { status: "changed" }
   | { status: "released" };
 
-async function validateCleanupDirectoryIdentity(
+async function validateCleanupWorktreeIncarnation(
   dependencies: ArchiveDependencies,
   request: Pick<ArchiveByScopeRequest, "requestId">,
   cleanupWorkspaceIds: string[],
   directoryPath: string,
-  expectedIdentity: string | null | undefined,
-): Promise<CleanupDirectoryIdentityValidation> {
+  expectedWorktreeIncarnationId: string | null | undefined,
+): Promise<CleanupWorktreeIncarnationValidation> {
   if (
     cleanupWorkspaceIds.length > 0 &&
     !(await cleanupOwnershipRemainsArchived(dependencies, cleanupWorkspaceIds))
   ) {
     return { status: "released" };
   }
-  const currentIdentity = await readDirectoryIdentity(directoryPath);
-  if (currentIdentity === null) {
-    return { status: "missing" };
-  }
-  if (expectedIdentity !== undefined && currentIdentity !== expectedIdentity) {
-    if (
-      expectedIdentity !== null &&
-      (await hasPaseoWorktreeCleanupQuarantine(directoryPath, expectedIdentity))
-    ) {
-      return { status: "quarantined", identity: expectedIdentity };
+  if (expectedWorktreeIncarnationId) {
+    if (isPaseoWorktreeCleanupQuarantinePath(directoryPath, expectedWorktreeIncarnationId)) {
+      return {
+        status: "quarantined",
+        path: directoryPath,
+        worktreeIncarnationId: expectedWorktreeIncarnationId,
+      };
     }
+  }
+  if (expectedWorktreeIncarnationId === null) {
     await recordCleanupFailure(
       dependencies,
       cleanupWorkspaceIds,
-      `Cleanup path identity changed for ${directoryPath}`,
+      `Cleanup worktree incarnation is missing for ${directoryPath}`,
+    );
+    dependencies.sessionLogger?.warn(
+      { targetPath: directoryPath, requestId: request.requestId },
+      "Refusing to remove a worktree without durable cleanup authority",
+    );
+    return { status: "changed" };
+  }
+  const currentIdentity = await readDirectoryIdentity(directoryPath);
+  const currentIncarnationId =
+    currentIdentity === null ? null : readPaseoWorktreeIncarnationId(directoryPath);
+  if (
+    expectedWorktreeIncarnationId &&
+    currentIncarnationId !== expectedWorktreeIncarnationId &&
+    (await hasPaseoWorktreeCleanupQuarantine(directoryPath, expectedWorktreeIncarnationId))
+  ) {
+    return {
+      status: "quarantined",
+      path: getPaseoWorktreeCleanupQuarantinePath(directoryPath, expectedWorktreeIncarnationId),
+      worktreeIncarnationId: expectedWorktreeIncarnationId,
+    };
+  }
+  if (currentIdentity === null) {
+    return { status: "missing" };
+  }
+  if (
+    expectedWorktreeIncarnationId !== undefined &&
+    currentIncarnationId !== expectedWorktreeIncarnationId
+  ) {
+    await recordCleanupFailure(
+      dependencies,
+      cleanupWorkspaceIds,
+      `Cleanup worktree incarnation changed for ${directoryPath}`,
     );
     dependencies.sessionLogger?.warn(
       { targetPath: directoryPath, requestId: request.requestId },
@@ -656,7 +697,7 @@ async function validateCleanupDirectoryIdentity(
     );
     return { status: "changed" };
   }
-  return { status: "matched", identity: currentIdentity };
+  return { status: "matched", worktreeIncarnationId: expectedWorktreeIncarnationId };
 }
 
 async function cleanupOwnershipRemainsArchived(
@@ -697,7 +738,9 @@ async function matchingCleanupWorkspaceIds(
 }
 
 function cleanupReceiptKey(receipt: PersistedWorkspaceCleanupReceipt): string {
-  return `${resolve(receipt.backingPath)}\0${receipt.directoryIdentity ?? "missing"}`;
+  return receipt.worktreeIncarnationId
+    ? `incarnation\0${receipt.worktreeIncarnationId}`
+    : `legacy\0${resolve(receipt.backingPath)}\0${receipt.directoryIdentity ?? "missing"}`;
 }
 
 async function selectedCleanupReceiptIsCurrent(
@@ -713,14 +756,14 @@ async function selectedCleanupReceiptIsCurrent(
   );
 }
 
-async function expectedDirectoryIdentity(
+async function readExpectedWorktreeIncarnationId(
   dependencies: ArchiveDependencies,
   workspaceIds: string[],
 ): Promise<string | null> {
   for (const workspaceId of workspaceIds) {
     const workspace = await dependencies.workspaceRegistry.get(workspaceId);
     if (workspace?.cleanupPending) {
-      return workspace.cleanupPending.directoryIdentity;
+      return workspace.cleanupPending.worktreeIncarnationId ?? null;
     }
   }
   return null;

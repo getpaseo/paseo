@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -608,7 +609,7 @@ describe("archiveByScope", () => {
     );
   });
 
-  test("retains cleanup ownership after Git forgets the worktree and retries without re-archiving", async () => {
+  test("retains cleanup ownership after a failed removal and retries without re-archiving", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
     const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "cleanup-retry");
@@ -621,10 +622,6 @@ describe("archiveByScope", () => {
     const archiveWorkspaceRecord = vi.fn(deps.archiveWorkspaceRecord);
     deps.archiveWorkspaceRecord = archiveWorkspaceRecord;
     deps.deleteWorktree = vi.fn(async () => {
-      const gitFile = readFileSync(path.join(worktree.worktreePath, ".git"), "utf8").trim();
-      const adminDirectory = gitFile.slice("gitdir: ".length);
-      rmSync(adminDirectory, { recursive: true, force: true });
-      execFileSync("git", ["worktree", "prune"], { cwd: repoDir, stdio: "pipe" });
       throw new Error("simulated recursive deletion failure");
     });
 
@@ -639,9 +636,6 @@ describe("archiveByScope", () => {
       cleanupPending: true,
     });
     expect(existsSync(worktree.worktreePath)).toBe(true);
-    expect(
-      execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: repoDir }).toString(),
-    ).not.toContain(worktree.worktreePath);
     const pendingCleanup = (await deps.workspaceRegistry.get(workspaceId))?.cleanupPending;
     expect(pendingCleanup).toMatchObject({
       workspaceId,
@@ -697,6 +691,49 @@ describe("archiveByScope", () => {
     await heldLock;
     await archive;
     expect((await deps.workspaceRegistry.get(workspaceId))?.archivedAt).not.toBeNull();
+  });
+
+  test("uses the persisted worktrees root after configuration changes", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const originalRoot = path.join(tempDir, "original-worktrees");
+    const worktree = await createWorktree({
+      cwd: repoDir,
+      worktreeSlug: "persisted-root",
+      source: {
+        kind: "branch-off",
+        baseBranch: "main",
+        branchName: "persisted-root",
+      },
+      runSetup: false,
+      paseoHome,
+      worktreesRoot: originalRoot,
+    });
+    const workspaceId = "ws-persisted-root";
+    const deps = createArchiveDeps({
+      paseoHome,
+      paseoWorktreesBaseRoot: path.join(tempDir, "new-worktrees"),
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+      ],
+    });
+    deps.deleteWorktree = vi.fn(async () => undefined);
+
+    await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-persisted-root",
+    });
+
+    expect(deps.deleteWorktree).toHaveBeenCalledWith(
+      expect.objectContaining({ worktreesRoot: path.dirname(worktree.worktreePath) }),
+    );
   });
 
   test("checkpoints each successful teardown before a later teardown fails", async () => {
@@ -780,7 +817,7 @@ describe("archiveByScope", () => {
     );
   });
 
-  test("moves durable cleanup ownership when a quarantined directory cannot be restored", async () => {
+  test("moves durable cleanup ownership when a quarantined directory remains", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
     const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "cleanup-relocated");
@@ -794,7 +831,11 @@ describe("archiveByScope", () => {
       activeWorkspaces: [{ workspaceId, cwd: worktree.worktreePath, kind: "worktree" }],
     });
     deps.deleteWorktree = vi.fn(async () => {
-      throw new WorktreeCleanupRelocatedError(relocatedPath, "1:99", new Error("remove failed"));
+      throw new WorktreeCleanupRelocatedError(
+        relocatedPath,
+        "00000000-0000-4000-8000-000000000099",
+        new Error("remove failed"),
+      );
     });
 
     const result = await archiveByScope(deps, {
@@ -805,7 +846,7 @@ describe("archiveByScope", () => {
     expect(result.cleanupPending).toBe(true);
     expect((await deps.workspaceRegistry.get(workspaceId))?.cleanupPending).toMatchObject({
       backingPath: relocatedPath,
-      directoryIdentity: "1:99",
+      worktreeIncarnationId: "00000000-0000-4000-8000-000000000099",
       lastError: `Worktree cleanup remains at ${relocatedPath}`,
     });
   });
@@ -830,6 +871,16 @@ describe("archiveByScope", () => {
     rmSync(worktree.worktreePath, { recursive: true, force: true });
     mkdirSync(worktree.worktreePath, { recursive: true });
     writeFileSync(path.join(worktree.worktreePath, "replacement.txt"), "keep");
+    const replacementStats = statSync(worktree.worktreePath);
+    await deps.workspaceRegistry.update(workspaceId, (workspace) => ({
+      ...workspace,
+      cleanupPending: workspace.cleanupPending
+        ? {
+            ...workspace.cleanupPending,
+            directoryIdentity: `${replacementStats.dev}:${replacementStats.ino}`,
+          }
+        : null,
+    }));
     deps.deleteWorktree = vi.fn(async () => {
       throw new Error("replacement path must not be deleted");
     });
@@ -843,11 +894,124 @@ describe("archiveByScope", () => {
     expect(deps.deleteWorktree).not.toHaveBeenCalled();
     expect(readFileSync(path.join(worktree.worktreePath, "replacement.txt"), "utf8")).toBe("keep");
     expect((await deps.workspaceRegistry.get(workspaceId))?.cleanupPending?.lastError).toContain(
-      "identity changed",
+      "incarnation changed",
     );
   });
 
-  test("retries crash-left quarantine without removing a replacement path", async () => {
+  test("does not use a legacy directory identity as deletion authority", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "legacy-receipt");
+    const workspaceId = "ws-legacy-receipt";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [{ workspaceId, cwd: worktree.worktreePath, kind: "worktree" }],
+    });
+    deps.deleteWorktree = vi.fn(async () => {
+      throw new Error("leave cleanup pending");
+    });
+    await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-legacy-receipt-first",
+    });
+    await deps.workspaceRegistry.update(workspaceId, (workspace) => ({
+      ...workspace,
+      cleanupPending: workspace.cleanupPending
+        ? { ...workspace.cleanupPending, worktreeIncarnationId: undefined }
+        : null,
+    }));
+    deps.deleteWorktree = vi.fn(async () => undefined);
+
+    const retried = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-legacy-receipt-retry",
+    });
+
+    expect(retried.cleanupPending).toBe(true);
+    expect(deps.deleteWorktree).not.toHaveBeenCalled();
+    expect(existsSync(worktree.worktreePath)).toBe(true);
+  });
+
+  test("keeps a legacy receipt pending when only its old quarantine may remain", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "legacy-quarantine");
+    const workspaceId = "ws-legacy-quarantine";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [{ workspaceId, cwd: worktree.worktreePath, kind: "worktree" }],
+    });
+    deps.deleteWorktree = vi.fn(async () => {
+      throw new Error("leave cleanup pending");
+    });
+    await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-legacy-quarantine-first",
+    });
+    const receipt = (await deps.workspaceRegistry.get(workspaceId))?.cleanupPending;
+    expect(receipt?.directoryIdentity).toEqual(expect.any(String));
+    const identityHash = createHash("sha256")
+      .update(receipt!.directoryIdentity!)
+      .digest("hex")
+      .slice(0, 16);
+    const legacyQuarantinePath = path.join(
+      path.dirname(worktree.worktreePath),
+      `.paseo-cleanup-${path.basename(worktree.worktreePath)}-${identityHash}`,
+    );
+    renameSync(worktree.worktreePath, legacyQuarantinePath);
+    await deps.workspaceRegistry.update(workspaceId, (workspace) => ({
+      ...workspace,
+      cleanupPending: workspace.cleanupPending
+        ? { ...workspace.cleanupPending, worktreeIncarnationId: undefined }
+        : null,
+    }));
+    deps.deleteWorktree = vi.fn(async () => undefined);
+
+    const retried = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-legacy-quarantine-retry",
+    });
+
+    expect(retried).toMatchObject({ removedDirectory: false, cleanupPending: true });
+    expect(deps.deleteWorktree).not.toHaveBeenCalled();
+    expect(existsSync(legacyQuarantinePath)).toBe(true);
+    expect((await deps.workspaceRegistry.get(workspaceId))?.cleanupPending?.lastError).toContain(
+      "incarnation is missing",
+    );
+  });
+
+  test("does not report an already-absent modern cleanup path as removed", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "cleanup-already-absent");
+    const workspaceId = "ws-cleanup-already-absent";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [{ workspaceId, cwd: worktree.worktreePath, kind: "worktree" }],
+    });
+    deps.deleteWorktree = vi.fn(async () => {
+      throw new Error("leave cleanup pending");
+    });
+    await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-cleanup-already-absent-first",
+    });
+    const receipt = (await deps.workspaceRegistry.get(workspaceId))?.cleanupPending;
+    expect(receipt?.worktreeIncarnationId).toEqual(expect.any(String));
+    rmSync(worktree.worktreePath, { recursive: true, force: true });
+    deps.deleteWorktree = vi.fn(async () => undefined);
+
+    const retried = await archiveByScope(deps, {
+      scope: { kind: "cleanup", workspaceId, receipt: receipt! },
+      requestId: "req-cleanup-already-absent-retry",
+    });
+
+    expect(retried).toMatchObject({ removedDirectory: false, cleanupPending: false });
+    expect(deps.deleteWorktree).toHaveBeenCalledTimes(1);
+    expect((await deps.workspaceRegistry.get(workspaceId))?.cleanupPending).toBeNull();
+  });
+
+  test("retries crash-left quarantine after restart without removing an active replacement", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
     const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "cleanup-crash-quarantine");
@@ -864,20 +1028,26 @@ describe("archiveByScope", () => {
       requestId: "req-cleanup-crash-quarantine-first",
     });
     const receipt = (await deps.workspaceRegistry.get(workspaceId))?.cleanupPending;
-    expect(receipt?.directoryIdentity).toEqual(expect.any(String));
+    expect(receipt?.worktreeIncarnationId).toEqual(expect.any(String));
 
     const quarantinePath = getPaseoWorktreeCleanupQuarantinePath(
       worktree.worktreePath,
-      receipt!.directoryIdentity!,
+      receipt!.worktreeIncarnationId!,
     );
     renameSync(worktree.worktreePath, quarantinePath);
-    const quarantineStats = statSync(quarantinePath);
-    expect(`${quarantineStats.dev}:${quarantineStats.ino}`).toBe(receipt!.directoryIdentity);
     await expect(
-      hasPaseoWorktreeCleanupQuarantine(worktree.worktreePath, receipt!.directoryIdentity!),
+      hasPaseoWorktreeCleanupQuarantine(worktree.worktreePath, receipt!.worktreeIncarnationId!),
     ).resolves.toBe(true);
     mkdirSync(worktree.worktreePath, { recursive: true });
     writeFileSync(path.join(worktree.worktreePath, "replacement.txt"), "keep");
+    deps.activeWorkspaces.push({
+      workspaceId: "ws-replacement",
+      cwd: worktree.worktreePath,
+      kind: "worktree",
+      worktreeRoot: worktree.worktreePath,
+      isPaseoOwnedWorktree: true,
+      mainRepoRoot: repoDir,
+    });
     deps.deleteWorktree = vi.fn(deletePaseoWorktree);
 
     const retried = await archiveByScope(deps, {
@@ -974,7 +1144,7 @@ describe("archiveByScope", () => {
     expect(deps.deleteWorktree).not.toHaveBeenCalled();
     expect(readFileSync(path.join(worktree.worktreePath, "replacement.txt"), "utf8")).toBe("keep");
     expect((await deps.workspaceRegistry.get(workspaceId))?.cleanupPending?.lastError).toContain(
-      "identity changed",
+      "incarnation changed",
     );
   });
 

@@ -18,6 +18,7 @@ import type { WorkspaceGitService } from "../../workspace-git-service.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
 import { deriveProjectKey } from "../../project-key.js";
 import { areEquivalentPaths, createRealpathAwarePathMatcher } from "../../../utils/path.js";
+import { readPaseoWorktreeIncarnationId } from "../../../utils/worktree-metadata.js";
 import { withWorkspaceCleanupLock } from "../../workspace-cleanup-lock.js";
 
 export interface ResolveOrCreateWorkspaceIdInput {
@@ -406,10 +407,11 @@ export function createWorkspaceProvisioningService(deps: {
     if (!receipt) return;
     try {
       const stats = await fs.stat(receipt.backingPath);
-      if (
-        receipt.directoryIdentity === null ||
-        `${stats.dev}:${stats.ino}` !== receipt.directoryIdentity
-      ) {
+      const worktreeWasReplaced = receipt.worktreeIncarnationId
+        ? readPaseoWorktreeIncarnationId(receipt.backingPath) !== receipt.worktreeIncarnationId
+        : receipt.directoryIdentity === null ||
+          `${stats.dev}:${stats.ino}` !== receipt.directoryIdentity;
+      if (worktreeWasReplaced) {
         throw new Error(`Workspace cleanup path was replaced: ${receipt.backingPath}`);
       }
     } catch (error) {
