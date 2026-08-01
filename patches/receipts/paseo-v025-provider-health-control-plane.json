@@ -7,25 +7,31 @@
   },
   "candidate": {
     "branch": "review/v025-provider-health-status",
-    "commit": "46bfd29050140d34a35a222f88b1f632cbd60d7d",
-    "tree": "01d720465f6c72725eb3125d659195cb53a6b341"
+    "commit": "a189f20b98383f3352e44ec46d5aeeda579ed4f7",
+    "tree": "949e77a05f51cf6d3000bec794a848b51e988ee7"
   },
   "verification": {
-    "commit": "46bfd29050140d34a35a222f88b1f632cbd60d7d",
-    "completedAt": "2026-08-01T00:04:38Z",
+    "commit": "a189f20b98383f3352e44ec46d5aeeda579ed4f7",
+    "completedAt": "2026-08-01T00:30:17Z",
+    "runtime": {
+      "node": "v24.18.1"
+    },
     "commands": [
+      "cd packages/server && ../../node_modules/.bin/vitest run src/server/agent/providers/provider-availability.test.ts src/server/agent/providers/provider-availability.posix.test.ts src/executable-resolution/executable-resolution.probe.test.ts src/executable-resolution/executable-resolution.test.ts",
+      "cd packages/server && ../../node_modules/.bin/vitest run src/utils/spawn.test.ts src/utils/spawn.percent-escape.test.ts src/server/agent/provider-launch-config.test.ts src/server/agent/providers/provider-windows-launch.test.ts src/server/agent/providers/codex-app-server-agent.spawn-error.test.ts src/server/agent/providers/claude/agent.spawn.test.ts",
       "cd packages/server && ../../node_modules/.bin/vitest run src/server/agent/agent-manager.test.ts src/server/agent/agent-response-loop.test.ts src/server/agent/providers/provider-availability.test.ts src/server/session/daemon/daemon-session.test.ts src/server/session/provider/provider-catalog-session.test.ts",
       "cd packages/cli && ../../node_modules/.bin/vitest run src/commands/daemon/status.test.ts",
       "npm run test --workspace=@getpaseo/protocol",
       "npm run build:server",
       "npm run typecheck:server",
-      "npx oxlint packages/cli/src/commands/daemon/status.test.ts packages/cli/src/commands/daemon/status.ts packages/protocol/src/messages.ts packages/protocol/tests/validation/ws-outbound.test.ts packages/server/src/server/agent/agent-manager.test.ts packages/server/src/server/agent/agent-manager.ts packages/server/src/server/agent/agent-response-loop.test.ts packages/server/src/server/agent/agent-response-loop.ts packages/server/src/server/agent/agent-sdk-types.ts packages/server/src/server/agent/provider-registry.ts packages/server/src/server/agent/providers/provider-availability.test.ts packages/server/src/server/session/daemon/daemon-session.test.ts packages/server/src/server/session/daemon/daemon-session.ts packages/server/src/server/session/daemon/diagnostics.ts",
-      "npx oxfmt --check packages/cli/src/commands/daemon/status.test.ts packages/cli/src/commands/daemon/status.ts packages/protocol/src/messages.ts packages/protocol/tests/validation/ws-outbound.test.ts packages/server/src/server/agent/agent-manager.test.ts packages/server/src/server/agent/agent-manager.ts packages/server/src/server/agent/agent-response-loop.test.ts packages/server/src/server/agent/agent-response-loop.ts packages/server/src/server/agent/agent-sdk-types.ts packages/server/src/server/agent/provider-registry.ts packages/server/src/server/agent/providers/provider-availability.test.ts packages/server/src/server/session/daemon/daemon-session.test.ts packages/server/src/server/session/daemon/daemon-session.ts packages/server/src/server/session/daemon/diagnostics.ts patches/local-patches.json",
+      "npm run lint",
+      "npm run format:check",
       "git diff --check",
       "jq -e '.schemaVersion == 1 and (.patches | length == 1)' patches/local-patches.json"
     ],
     "result": {
-      "focusedProviderHealthTests": "57 passed",
+      "focusedProviderHealthTests": "39 passed, 6 skipped",
+      "supportingLaunchTests": "34 passed, 6 skipped",
       "broaderServerTests": "189 passed",
       "cliTests": "1 passed",
       "protocolTests": "469 passed",
