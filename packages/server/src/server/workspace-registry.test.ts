@@ -13,6 +13,7 @@ import {
   resolveWorkspaceDisplayName,
   resolveWorkspaceName,
 } from "./workspace-registry.js";
+import { LifecycleMutationCoordinator } from "./lifecycle-mutation-coordinator.js";
 
 describe("resolveWorkspaceName", () => {
   test("prefers the user-set title over the derived display name", () => {
@@ -97,6 +98,43 @@ describe("workspace registries", () => {
     await projectRegistry.remove("remote:github.com/acme/repo");
     expect(await projectRegistry.get("remote:github.com/acme/repo")).toBeNull();
     expect(await projectRegistry.list()).toEqual([]);
+  });
+
+  test("serializes workspace registry writes through the lifecycle coordinator", async () => {
+    const coordinator = new LifecycleMutationCoordinator();
+    const coordinatedRegistry = new FileBackedWorkspaceRegistry(
+      path.join(tmpDir, "projects", "coordinated-workspaces.json"),
+      logger,
+      { lifecycleMutationCoordinator: coordinator },
+    );
+    const releaseLane = Promise.withResolvers<void>();
+    const laneStarted = Promise.withResolvers<void>();
+    await coordinatedRegistry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId: "ws-coordinated",
+        projectId: "proj-coordinated",
+        cwd: "/tmp/coordinated",
+        kind: "local_checkout",
+        displayName: "coordinated",
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:00:00.000Z",
+      }),
+    );
+    const blocker = coordinator.run({ workspaceIds: ["ws-coordinated"] }, async () => {
+      laneStarted.resolve();
+      await releaseLane.promise;
+    });
+    await laneStarted.promise;
+
+    const archive = coordinatedRegistry.archive("ws-coordinated", "2026-03-02T00:00:00.000Z");
+    expect((await coordinatedRegistry.get("ws-coordinated"))?.archivedAt).toBeNull();
+
+    releaseLane.resolve();
+    await blocker;
+    await archive;
+    expect((await coordinatedRegistry.get("ws-coordinated"))?.archivedAt).toBe(
+      "2026-03-02T00:00:00.000Z",
+    );
   });
 
   test("publishes only project mutations that change the persisted lifecycle", async () => {

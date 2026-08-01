@@ -1,9 +1,15 @@
 import { resolve } from "node:path";
 
 import type { Logger } from "pino";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 
 import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
+import {
+  LifecycleMutationReentrancyError,
+  LifecycleMutationStaleError,
+  type LifecycleMutationCoordinator,
+} from "./lifecycle-mutation-coordinator.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import type { ForgeService } from "../services/forge-service.js";
 import {
@@ -33,6 +39,7 @@ export interface ArchiveDependencies {
   workspaceGitService: Pick<WorkspaceGitService, "getSnapshot">;
   agentManager: Pick<AgentManager, "listAgents" | "archiveAgent" | "archiveSnapshot">;
   agentStorage: Pick<AgentStorage, "list">;
+  lifecycleMutationCoordinator: LifecycleMutationCoordinator;
   // Resolves the worktree at a path to its workspaceId for archive-by-path. The
   // path uniquely identifies a worktree workspace; this is a directory lookup for
   // the archive target, not status/ownership.
@@ -97,6 +104,13 @@ interface ArchiveTarget {
   workspaceIds: string[];
 }
 
+export class WorkspaceArchiveScopeChangedError extends Error {
+  constructor() {
+    super("Workspace archive scope changed before mutation");
+    this.name = "WorkspaceArchiveScopeChangedError";
+  }
+}
+
 export async function resolveWorkspaceIdAtPath(
   dependencies: Pick<ArchiveDependencies, "findWorkspaceIdForCwd" | "listActiveWorkspaces">,
   targetPath: string,
@@ -118,7 +132,31 @@ export async function archiveByScope(
   dependencies: ArchiveDependencies,
   request: ArchiveByScopeRequest,
 ): Promise<ArchiveResult> {
-  const target = await resolveArchiveTarget(dependencies, request.scope);
+  const initialTarget = await resolveArchiveTarget(dependencies, request.scope);
+  if (initialTarget.workspaceIds.length === 0) {
+    return await archiveResolvedTarget(dependencies, request, initialTarget);
+  }
+
+  const workspaceIds = await collectArchiveWorkspaceIds(dependencies, initialTarget.workspaceIds);
+  return await dependencies.lifecycleMutationCoordinator.run({ workspaceIds }, async () => {
+    const target = await resolveArchiveTarget(dependencies, request.scope);
+    assertSameWorkspaceTargets(initialTarget.workspaceIds, target.workspaceIds);
+
+    const currentWorkspaceIds = await collectArchiveWorkspaceIds(dependencies, target.workspaceIds);
+    const acquiredWorkspaceIds = new Set(workspaceIds);
+    if (currentWorkspaceIds.some((workspaceId) => !acquiredWorkspaceIds.has(workspaceId))) {
+      throw new WorkspaceArchiveScopeChangedError();
+    }
+
+    return await archiveResolvedTarget(dependencies, request, target);
+  });
+}
+
+async function archiveResolvedTarget(
+  dependencies: ArchiveDependencies,
+  request: ArchiveByScopeRequest,
+  target: ArchiveTarget,
+): Promise<ArchiveResult> {
   const targetWorkspaceIds = target.workspaceIds;
 
   if (targetWorkspaceIds.length > 0) {
@@ -171,6 +209,76 @@ export async function archiveByScope(
       dependencies.clearWorkspaceArchiving(targetWorkspaceIds);
       await dependencies.emitWorkspaceUpdatesForWorkspaceIds(targetWorkspaceIds);
     }
+  }
+}
+
+async function collectArchiveWorkspaceIds(
+  dependencies: Pick<ArchiveDependencies, "agentManager" | "agentStorage">,
+  targetWorkspaceIds: readonly string[],
+): Promise<string[]> {
+  const storedRecords = await dependencies.agentStorage.list();
+  const liveAgents = dependencies.agentManager.listAgents();
+  const liveAgentIds = new Set(liveAgents.map((agent) => agent.id));
+  const agentsById = new Map<
+    string,
+    Pick<StoredAgentRecord, "id" | "cwd" | "workspaceId" | "labels" | "archivedAt">
+  >();
+  for (const record of storedRecords) {
+    agentsById.set(record.id, record);
+  }
+  for (const agent of liveAgents) {
+    agentsById.set(agent.id, {
+      id: agent.id,
+      cwd: agent.cwd,
+      workspaceId: agent.workspaceId,
+      labels: agent.labels,
+      archivedAt: null,
+    });
+  }
+
+  const workspaceIds = new Set(targetWorkspaceIds);
+  const pendingAgentIds: string[] = [];
+  for (const agent of agentsById.values()) {
+    if (
+      (liveAgentIds.has(agent.id) || !agent.archivedAt) &&
+      workspaceIds.has(agent.workspaceId ?? agent.cwd)
+    ) {
+      pendingAgentIds.push(agent.id);
+    }
+  }
+
+  const visitedAgentIds = new Set<string>();
+  while (pendingAgentIds.length > 0) {
+    const parentAgentId = pendingAgentIds.pop();
+    if (!parentAgentId || visitedAgentIds.has(parentAgentId)) {
+      continue;
+    }
+    visitedAgentIds.add(parentAgentId);
+    for (const agent of agentsById.values()) {
+      if (
+        agent.labels?.[PARENT_AGENT_ID_LABEL] !== parentAgentId ||
+        (!liveAgentIds.has(agent.id) && agent.archivedAt)
+      ) {
+        continue;
+      }
+      workspaceIds.add(agent.workspaceId ?? agent.cwd);
+      pendingAgentIds.push(agent.id);
+    }
+  }
+
+  return Array.from(workspaceIds);
+}
+
+function assertSameWorkspaceTargets(
+  expectedWorkspaceIds: readonly string[],
+  actualWorkspaceIds: readonly string[],
+): void {
+  const expected = new Set(expectedWorkspaceIds);
+  if (
+    expected.size !== actualWorkspaceIds.length ||
+    actualWorkspaceIds.some((workspaceId) => !expected.has(workspaceId))
+  ) {
+    throw new WorkspaceArchiveScopeChangedError();
   }
 }
 
@@ -442,6 +550,12 @@ export async function archiveWorkspaceContents(
 
   for (const result of archiveResults) {
     if (result.status === "rejected") {
+      if (
+        result.reason instanceof LifecycleMutationReentrancyError ||
+        result.reason instanceof LifecycleMutationStaleError
+      ) {
+        throw result.reason;
+      }
       dependencies.sessionLogger?.warn(
         { err: result.reason, workspaceId },
         "Workspace archive teardown step failed; continuing",

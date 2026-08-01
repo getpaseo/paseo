@@ -11,6 +11,7 @@ import { createWorktree, type WorktreeConfig } from "../utils/worktree.js";
 import type { ManagedAgent } from "./agent/agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
+import { LifecycleMutationCoordinator } from "./lifecycle-mutation-coordinator.js";
 import {
   archiveByScope,
   type ActiveWorkspaceRef,
@@ -154,6 +155,7 @@ function createArchiveDeps(input: ArchiveDepsInput): ArchiveTestDependencies {
     agentStorage: {
       list: async (): Promise<StoredAgentRecord[]> => [],
     } as Pick<AgentStorage, "list">,
+    lifecycleMutationCoordinator: new LifecycleMutationCoordinator(),
     findWorkspaceIdForCwd: input.findWorkspaceIdForCwd ?? vi.fn(async () => null),
     listActiveWorkspaces: async () =>
       active.filter((workspace) => !archivedWorkspaceIds.has(workspace.workspaceId)),
@@ -721,6 +723,120 @@ describe("archiveByScope", () => {
     expect(result.archivedAgentIds).not.toContain(otherStoredAgentId);
     expect(deps.archivedSnapshotIds).toEqual([targetStoredAgentId]);
     expect(existsSync(worktree.worktreePath)).toBe(false);
+  });
+
+  test("does not archive the root when a late descendant adds an uncovered workspace", async () => {
+    const { tempDir } = createGitRepo();
+    const targetWorkspaceId = "ws-late-root";
+    const descendantWorkspaceId = "ws-late-descendant";
+    const rootAgentId = "agent-late-root";
+    const storedRecords = [
+      {
+        id: rootAgentId,
+        cwd: tempDir,
+        workspaceId: targetWorkspaceId,
+        archivedAt: null,
+      },
+    ] as StoredAgentRecord[];
+    const deps = createArchiveDeps({
+      paseoHome: path.join(tempDir, ".paseo"),
+      activeWorkspaces: [{ workspaceId: targetWorkspaceId, cwd: tempDir, kind: "local_checkout" }],
+    });
+    deps.agentStorage = {
+      list: async () => storedRecords,
+    } as Pick<AgentStorage, "list">;
+    const listActiveWorkspaces = deps.listActiveWorkspaces;
+    let activeWorkspaceReadCount = 0;
+    deps.listActiveWorkspaces = async () => {
+      activeWorkspaceReadCount += 1;
+      if (activeWorkspaceReadCount === 2) {
+        storedRecords.push({
+          id: "agent-late-descendant",
+          cwd: tempDir,
+          workspaceId: descendantWorkspaceId,
+          archivedAt: null,
+          labels: { "paseo.parent-agent-id": rootAgentId },
+        } as StoredAgentRecord);
+      }
+      return await listActiveWorkspaces();
+    };
+    deps.archiveWorkspaceRecord = vi.fn(deps.archiveWorkspaceRecord);
+
+    await expect(
+      archiveByScope(deps, {
+        scope: { kind: "workspace", workspaceId: targetWorkspaceId },
+        requestId: "req-late-descendant",
+      }),
+    ).rejects.toThrow("Workspace archive scope changed before mutation");
+
+    expect(deps.archiveWorkspaceRecord).not.toHaveBeenCalled();
+    expect(deps.activeWorkspaces.map((workspace) => workspace.workspaceId)).toEqual([
+      targetWorkspaceId,
+    ]);
+  });
+
+  test("preflights an archived descendant workspace when that descendant is live again", async () => {
+    const { tempDir } = createGitRepo();
+    const targetWorkspaceId = "ws-reactivated-root";
+    const descendantWorkspaceId = "ws-reactivated-descendant";
+    const rootAgentId = "agent-reactivated-root";
+    const descendantAgentId = "agent-reactivated-descendant";
+    const deps = createArchiveDeps({
+      paseoHome: path.join(tempDir, ".paseo"),
+      activeWorkspaces: [{ workspaceId: targetWorkspaceId, cwd: tempDir, kind: "local_checkout" }],
+    });
+    deps.agentStorage = {
+      list: async () =>
+        [
+          {
+            id: rootAgentId,
+            cwd: tempDir,
+            workspaceId: targetWorkspaceId,
+            archivedAt: null,
+          },
+          {
+            id: descendantAgentId,
+            cwd: tempDir,
+            workspaceId: descendantWorkspaceId,
+            archivedAt: "2026-01-01T00:00:00.000Z",
+            labels: { "paseo.parent-agent-id": rootAgentId },
+          },
+        ] as StoredAgentRecord[],
+    } as Pick<AgentStorage, "list">;
+    const archiveReactivatedDescendant = async () => {
+      deps.archivedAgentIds.push(descendantAgentId);
+    };
+    deps.agentManager = {
+      listAgents: () =>
+        [
+          { id: rootAgentId, cwd: tempDir, workspaceId: targetWorkspaceId },
+          {
+            id: descendantAgentId,
+            cwd: tempDir,
+            workspaceId: descendantWorkspaceId,
+            labels: { "paseo.parent-agent-id": rootAgentId },
+          },
+        ] as ManagedAgent[],
+      archiveAgent: vi.fn(async (agentId: string) => {
+        deps.archivedAgentIds.push(agentId);
+        if (agentId === rootAgentId) {
+          await deps.lifecycleMutationCoordinator.run(
+            { workspaceIds: [descendantWorkspaceId] },
+            archiveReactivatedDescendant,
+          );
+        }
+        return { archivedAt: new Date().toISOString() };
+      }),
+      archiveSnapshot: vi.fn(async () => ({})),
+    };
+
+    const result = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId: targetWorkspaceId },
+      requestId: "req-reactivated-descendant",
+    });
+
+    expect(result.archivedWorkspaceIds).toEqual([targetWorkspaceId]);
+    expect(deps.archivedAgentIds).toEqual([rootAgentId, descendantAgentId]);
   });
 
   test("worktree scope archives three workspaces on the directory and removes it", async () => {

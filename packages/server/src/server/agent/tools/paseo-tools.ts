@@ -3164,6 +3164,7 @@ function archiveWorktreeDependencies(
     workspaceGitService: options.workspaceGitService,
     agentManager: context.agentManager,
     agentStorage: context.agentStorage,
+    lifecycleMutationCoordinator: context.agentManager.getLifecycleMutationCoordinator(),
     findWorkspaceIdForCwd: options.findWorkspaceIdForCwd,
     listActiveWorkspaces: options.listActiveWorkspaces,
     archiveWorkspaceRecord: options.archiveWorkspaceRecord,

@@ -26,6 +26,8 @@ interface ProjectionOptions {
   title?: string | null;
   createdAt?: string;
   internal?: boolean;
+  lifecycleIncarnation?: string;
+  lifecycleRevision?: number;
 }
 
 interface RecentProviderSessionProjectionOptions {
@@ -71,6 +73,8 @@ export function toStoredAgentRecord(
 
   return {
     id: agent.id,
+    lifecycleIncarnation: options?.lifecycleIncarnation ?? "legacy",
+    lifecycleRevision: options?.lifecycleRevision ?? 0,
     provider: agent.provider,
     cwd: agent.cwd,
     workspaceId: agent.workspaceId,

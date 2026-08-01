@@ -127,6 +127,7 @@ export async function archiveIfSafe(input: {
           workspaceGitService: options.workspaceGitService,
           agentManager: options.agentManager,
           agentStorage: options.agentStorage,
+          lifecycleMutationCoordinator: options.agentManager.getLifecycleMutationCoordinator(),
           findWorkspaceIdForCwd: options.findWorkspaceIdForCwd,
           listActiveWorkspaces: options.listActiveWorkspaces,
           archiveWorkspaceRecord: (workspaceIdToArchive) =>

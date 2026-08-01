@@ -167,6 +167,7 @@ import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
 import { createRelayRuntime, type RelayRuntime } from "./relay-runtime.js";
 import type { PushNotificationSender } from "./push/notifications.js";
 import { getOrCreateServerId } from "./server-id.js";
+import { LifecycleMutationCoordinator } from "./lifecycle-mutation-coordinator.js";
 import { resolveDaemonVersion } from "./daemon-version.js";
 import type { AgentClient, AgentProvider } from "./agent/agent-sdk-types.js";
 import type { FirstAgentContext, TerminalProfile } from "@getpaseo/protocol/messages";
@@ -781,6 +782,7 @@ export async function createPaseoDaemon(
   }
 
   const agentStorage = new AgentStorage(config.agentStoragePath, logger);
+  const lifecycleMutationCoordinator = new LifecycleMutationCoordinator();
   const projectRegistry = new FileBackedProjectRegistry(
     path.join(config.paseoHome, "projects", "projects.json"),
     logger,
@@ -788,6 +790,7 @@ export async function createPaseoDaemon(
   workspaceRegistry = new FileBackedWorkspaceRegistry(
     path.join(config.paseoHome, "projects", "workspaces.json"),
     logger,
+    { lifecycleMutationCoordinator },
   );
   const chatService = new FileBackedChatService({
     paseoHome: config.paseoHome,
@@ -824,6 +827,7 @@ export async function createPaseoDaemon(
     clients: initialAgentManagerState.clients,
     providerDefinitions: initialAgentManagerState.providerDefinitions,
     registry: agentStorage,
+    lifecycleMutationCoordinator,
     appendSystemPrompt: config.appendSystemPrompt,
     onWorkspaceStateMayHaveChanged: ({ cwd }) => {
       workspaceGitService.onWorkspaceStateMayHaveChanged(cwd);
@@ -1070,6 +1074,7 @@ export async function createPaseoDaemon(
         workspaceGitService,
         agentManager,
         agentStorage,
+        lifecycleMutationCoordinator,
         findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
         listActiveWorkspaces: listActiveWorkspacesExternal,
         archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
@@ -1178,6 +1183,7 @@ export async function createPaseoDaemon(
         workspaceGitService,
         agentManager,
         agentStorage,
+        lifecycleMutationCoordinator,
         findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
         listActiveWorkspaces: listActiveWorkspacesExternal,
         archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
@@ -1613,17 +1619,19 @@ export async function createPaseoDaemon(
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
     scriptHealthMonitor.stop();
-    // Freeze both ingress and registration before taking the agent closure snapshot.
-    wsServer?.prepareForShutdown();
+    // Freeze mutation producers before closing admission to the shared lifecycle lanes.
+    await wsServer?.prepareForShutdown();
+    await scheduleService.stop().catch(() => undefined);
     agentManager.prepareForShutdown();
-    await closeAllAgents(logger, agentManager);
+    const closeAgents = closeAllAgents(logger, agentManager);
+    lifecycleMutationCoordinator.closeAdmission();
+    await Promise.all([closeAgents, lifecycleMutationCoordinator.drain()]);
     await agentManager.flushForShutdown().catch(() => undefined);
     detachAgentStoragePersistence();
     await agentStorage.flush().catch(() => undefined);
     await providerSnapshotManager.shutdown();
     terminalManager.killAll();
     speechService.stop();
-    await scheduleService.stop().catch(() => undefined);
     await relayRuntime?.stop().catch(() => undefined);
     if (wsServer) {
       await wsServer.close();

@@ -206,6 +206,8 @@ export class CreateAgentLifecycleDispatch {
         workspaceGitService: this.dependencies.workspaceGitService,
         agentManager: this.dependencies.agentManager,
         agentStorage: this.dependencies.agentStorage,
+        lifecycleMutationCoordinator:
+          this.dependencies.agentManager.getLifecycleMutationCoordinator(),
         findWorkspaceIdForCwd: this.dependencies.findWorkspaceIdForCwd,
         listActiveWorkspaces: this.dependencies.listActiveWorkspaces,
         archiveWorkspaceRecord: this.dependencies.archiveWorkspaceRecord,

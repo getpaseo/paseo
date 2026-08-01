@@ -5,7 +5,7 @@ import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { promises as fs } from "node:fs";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
-import { AgentStorage } from "./agent-storage.js";
+import { AgentStorage, parseStoredAgentRecord } from "./agent-storage.js";
 import { buildConfigOverrides, buildSessionConfig } from "../persistence-hooks.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type {
@@ -294,6 +294,84 @@ describe("AgentStorage", () => {
 
     const recordAfterSnapshot = await storage.get(agentId);
     expect(recordAfterSnapshot?.archivedAt).toBe(archivedAt);
+  });
+
+  test("legacy records receive stable lifecycle identity defaults", () => {
+    const record = parseStoredAgentRecord({
+      id: "legacy-agent",
+      provider: "claude",
+      cwd: "/tmp/project",
+      createdAt: "2025-01-01T00:00:00.000Z",
+      updatedAt: "2025-01-01T00:00:00.000Z",
+    });
+
+    expect(record.lifecycleIncarnation).toBe("legacy");
+    expect(record.lifecycleRevision).toBe(0);
+  });
+
+  test("applySnapshot preserves lifecycle identity committed ahead of it", async () => {
+    const agentId = "agent-lifecycle-identity";
+    const agent = createManagedAgent({ id: agentId });
+    await storage.applySnapshot(agent);
+
+    await storage.update(agentId, (record) => ({
+      ...record,
+      archivedAt: "2025-01-03T00:00:00.000Z",
+      lifecycleIncarnation: "incarnation-2",
+      lifecycleRevision: record.lifecycleRevision + 1,
+    }));
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: agentId,
+        lifecycle: "running",
+        updatedAt: new Date("2025-01-04T00:00:00.000Z"),
+      }),
+    );
+
+    const record = await storage.get(agentId);
+    expect(record).toMatchObject({
+      archivedAt: "2025-01-03T00:00:00.000Z",
+      lifecycleIncarnation: "incarnation-2",
+      lifecycleRevision: 1,
+    });
+  });
+
+  test("applySnapshot cannot lower a lifecycle revision for the same incarnation", async () => {
+    const agentId = "agent-stale-lifecycle-revision";
+    const agent = createManagedAgent({ id: agentId });
+    await storage.applySnapshot(agent, {
+      lifecycleIncarnation: "incarnation-current",
+      lifecycleRevision: 5,
+    });
+
+    await storage.applySnapshot(agent, {
+      lifecycleIncarnation: "incarnation-current",
+      lifecycleRevision: 4,
+    });
+
+    expect(await storage.get(agentId)).toMatchObject({
+      lifecycleIncarnation: "incarnation-current",
+      lifecycleRevision: 5,
+    });
+  });
+
+  test("update composes concurrent mutations from the latest record", async () => {
+    const agentId = "agent-atomic-update";
+    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+
+    const archive = storage.update(agentId, (record) => ({
+      ...record,
+      archivedAt: "2025-01-03T00:00:00.000Z",
+      lifecycleRevision: record.lifecycleRevision + 1,
+    }));
+    const rename = storage.update(agentId, (record) => ({ ...record, title: "Current title" }));
+    await Promise.all([archive, rename]);
+
+    expect(await storage.get(agentId)).toMatchObject({
+      archivedAt: "2025-01-03T00:00:00.000Z",
+      lifecycleRevision: 1,
+      title: "Current title",
+    });
   });
 
   test("stores titles independently of snapshots", async () => {

@@ -18,7 +18,11 @@ import { toAgentPayload } from "./agent-projections.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { formatSystemNotificationPrompt, startAgentRun } from "./agent-prompt.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent-loading.js";
-import type { StoredAgentRecord } from "./agent-storage.js";
+import type { AgentRecordUpdater, StoredAgentRecord } from "./agent-storage.js";
+import {
+  LifecycleMutationCoordinator,
+  LifecycleMutationStaleError,
+} from "../lifecycle-mutation-coordinator.js";
 import type {
   AgentClient,
   AgentCreateSessionOptions,
@@ -3123,14 +3127,14 @@ test("updateAgentMetadata bumps updatedAt for stored agents", async () => {
   await storage.upsert(before);
   expect(manager.getAgent(snapshot.id)).toBeNull();
 
-  const upsertSpy = vi.spyOn(storage, "upsert");
+  const updateSpy = vi.spyOn(storage, "update");
 
   await manager.updateAgentMetadata(snapshot.id, {
     title: "Stored title",
     labels: { role: "worker" },
   });
 
-  expect(upsertSpy).toHaveBeenCalledTimes(1);
+  expect(updateSpy).toHaveBeenCalledTimes(1);
   const after = await storage.get(snapshot.id);
   expect(after?.title).toBe("Stored title");
   expect(after?.labels).toEqual({ surface: "mobile", role: "worker" });
@@ -6470,6 +6474,39 @@ test("archiveAgent cascade archives in-memory children with the full archive con
   expect(storedUnrelated?.archivedAt).toBeUndefined();
 });
 
+test("archiveAgent cascade rearchives a stored-archived child that is live again", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cascade-reactivated-child-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const parent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Parent" },
+    undefined,
+    { workspaceId: "workspace-parent" },
+  );
+  const child = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Reactivated Child" },
+    undefined,
+    {
+      labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+      workspaceId: "workspace-child",
+    },
+  );
+  const firstArchivedAt = "2026-01-01T00:00:00.000Z";
+  await storage.update(child.id, (record) => ({ ...record, archivedAt: firstArchivedAt }));
+
+  await manager.archiveAgent(parent.id);
+
+  const storedChild = await storage.get(child.id);
+  expect(manager.getAgent(child.id)).toBeNull();
+  expect(storedChild?.archivedAt).toEqual(expect.any(String));
+  expect(storedChild?.archivedAt).not.toBe(firstArchivedAt);
+  expect(storedChild?.lastStatus).toBe("closed");
+});
+
 test("archiveAgent cascade closes a running child runtime", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cascade-running-child-"));
   const storagePath = join(workdir, "agents");
@@ -6671,11 +6708,13 @@ test("archiveAgent cascade surfaces partial child archive failures", async () =>
   let failingChildId: string | null = null;
 
   class FailingChildArchiveStorage extends AgentStorage {
-    override async upsert(record: StoredAgentRecord): Promise<void> {
-      if (record.id === failingChildId && record.archivedAt) {
-        throw new Error(`Injected cascade archive failure for ${record.id}`);
+    override async update(agentId: string, updater: AgentRecordUpdater) {
+      const current = await this.get(agentId);
+      const next = current ? updater(current) : undefined;
+      if (agentId === failingChildId && next?.archivedAt) {
+        throw new Error(`Injected cascade archive failure for ${agentId}`);
       }
-      await super.upsert(record);
+      return await super.update(agentId, updater);
     }
   }
 
@@ -7638,7 +7677,7 @@ test("ensureUnarchivedAgentLoaded does not resume an archived agent", async () =
   }
 });
 
-test("ensureUnarchivedAgentLoaded closes a runtime archived while it resumes", async () => {
+test("archiveSnapshot rejects a stale stored identity after a runtime resumes", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archived-resume-race-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
   const resumeStarted = deferred<void>();
@@ -7668,10 +7707,14 @@ test("ensureUnarchivedAgentLoaded closes a runtime archived while it resumes", a
       logger,
     });
     await resumeStarted.promise;
-    await manager.archiveSnapshot(agent.id, new Date().toISOString());
+    const archive = manager.archiveSnapshot(agent.id, new Date().toISOString());
+    const archiveRejected = expect(archive).rejects.toBeInstanceOf(LifecycleMutationStaleError);
     resumeAllowed.resolve();
+    await archiveRejected;
 
-    await expect(load).rejects.toThrow(`Agent is archived: ${agent.id}`);
+    await expect(load).resolves.toMatchObject({ id: agent.id });
+    expect(manager.getAgent(agent.id)).not.toBeNull();
+    await manager.archiveAgent(agent.id);
     expect(manager.getAgent(agent.id)).toBeNull();
     expect((await storage.get(agent.id))?.archivedAt).toEqual(expect.any(String));
   } finally {
@@ -7681,7 +7724,236 @@ test("ensureUnarchivedAgentLoaded closes a runtime archived while it resumes", a
   }
 });
 
-test("ensureUnarchivedAgentLoaded fences an archived agent after joining a shared resume", async () => {
+test("queued turn acceptance revalidates identity before starting the provider", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-turn-acceptance-race-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const coordinator = new LifecycleMutationCoordinator();
+  let startTurnCalls = 0;
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override async startTurn(): Promise<{ turnId: string }> {
+          startTurnCalls += 1;
+          return await super.startTurn();
+        }
+      })(config);
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    lifecycleMutationCoordinator: coordinator,
+    logger,
+  });
+  const laneStarted = deferred<void>();
+  const releaseLane = deferred<void>();
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "workspace-turn-race",
+    });
+    const blocker = coordinator.run({ workspaceIds: ["workspace-turn-race"] }, async () => {
+      laneStarted.resolve();
+      await releaseLane.promise;
+    });
+    await laneStarted.promise;
+
+    const stream = manager.streamAgent(agent.id, "must not start");
+    const close = manager.closeAgent(agent.id);
+    await Promise.resolve();
+    const firstEvent = stream.next();
+    releaseLane.resolve();
+
+    await blocker;
+    await close;
+    await expect(firstEvent).rejects.toBeInstanceOf(LifecycleMutationStaleError);
+    expect(startTurnCalls).toBe(0);
+  } finally {
+    releaseLane.resolve();
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("turn acceptance releases the workspace lane before provider completion", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-turn-lane-release-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const coordinator = new LifecycleMutationCoordinator();
+  const finishRun = deferred<void>();
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override async startTurn(): Promise<{ turnId: string }> {
+          const turnId = "held-turn";
+          void finishRun.promise.then(() => {
+            this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+            return undefined;
+          });
+          return { turnId };
+        }
+      })(config);
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    lifecycleMutationCoordinator: coordinator,
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "workspace-turn-lane-release",
+    });
+    const stream = manager.streamAgent(agent.id, "release after acceptance");
+
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { type: "turn_started" },
+      done: false,
+    });
+    await coordinator.run({ workspaceIds: ["workspace-turn-lane-release"] }, async () => {});
+
+    finishRun.resolve();
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { type: "turn_completed" },
+      done: false,
+    });
+  } finally {
+    finishRun.resolve();
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("accepted and terminal run transitions advance lifecycle revision", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-turn-revision-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const finishRun = deferred<void>();
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override async startTurn(): Promise<{ turnId: string }> {
+          const turnId = "revision-turn";
+          void finishRun.promise.then(() => {
+            this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+            return undefined;
+          });
+          return { turnId };
+        }
+      })(config);
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
+    const initialRevision = (await storage.get(agent.id))?.lifecycleRevision;
+    const stream = manager.streamAgent(agent.id, "advance revisions");
+
+    await stream.next();
+    await manager.flush();
+    expect((await storage.get(agent.id))?.lifecycleRevision).toBe((initialRevision ?? 0) + 1);
+
+    finishRun.resolve();
+    await stream.next();
+    await manager.flush();
+    expect((await storage.get(agent.id))?.lifecycleRevision).toBe((initialRevision ?? 0) + 2);
+  } finally {
+    finishRun.resolve();
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("archive does not wait on a terminal event queued from session close", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archive-close-event-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override async close(): Promise<void> {
+          this.pushEvent({
+            type: "turn_completed",
+            provider: this.provider,
+            turnId: "close-event",
+          });
+        }
+      })(config);
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
+
+    await expect(manager.archiveAgent(agent.id)).resolves.toEqual({
+      archivedAt: expect.any(String),
+    });
+    expect((await storage.get(agent.id))?.archivedAt).not.toBeNull();
+  } finally {
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("shutdown close survives a lifecycle event admitted before it", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-shutdown-close-race-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const coordinator = new LifecycleMutationCoordinator();
+  const client = new SessionRecordingAgentClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    lifecycleMutationCoordinator: coordinator,
+    logger,
+  });
+  const laneStarted = deferred<void>();
+  const releaseLane = deferred<void>();
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "workspace-shutdown-close-race",
+    });
+    const blocker = coordinator.run(
+      { workspaceIds: ["workspace-shutdown-close-race"] },
+      async () => {
+        laneStarted.resolve();
+        await releaseLane.promise;
+      },
+    );
+    await laneStarted.promise;
+    client.sessions[0]?.pushEvent({
+      type: "turn_started",
+      provider: "codex",
+      turnId: "autonomous-before-shutdown",
+    });
+    await Promise.resolve();
+
+    manager.prepareForShutdown();
+    const close = manager.closeAgent(agent.id);
+    coordinator.closeAdmission();
+    releaseLane.resolve();
+
+    await blocker;
+    await expect(close).resolves.toBeUndefined();
+    expect((await storage.get(agent.id))?.lastStatus).toBe("closed");
+  } finally {
+    releaseLane.resolve();
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("shared resume also invalidates a queued stored archive identity", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archived-shared-resume-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
   const resumeStarted = deferred<void>();
@@ -7716,11 +7988,14 @@ test("ensureUnarchivedAgentLoaded fences an archived agent after joining a share
       agentStorage: storage,
       logger,
     });
-    await manager.archiveSnapshot(agent.id, new Date().toISOString());
+    const archive = manager.archiveSnapshot(agent.id, new Date().toISOString());
+    const archiveRejected = expect(archive).rejects.toBeInstanceOf(LifecycleMutationStaleError);
     resumeAllowed.resolve();
+    await archiveRejected;
 
     await sharedLoad;
-    await expect(protectedLoad).rejects.toThrow(`Agent is archived: ${agent.id}`);
+    await expect(protectedLoad).resolves.toMatchObject({ id: agent.id });
+    await manager.archiveAgent(agent.id);
     expect(manager.getAgent(agent.id)).toBeNull();
     expect((await storage.get(agent.id))?.archivedAt).toEqual(expect.any(String));
   } finally {

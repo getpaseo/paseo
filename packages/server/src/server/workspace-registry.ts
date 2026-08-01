@@ -10,6 +10,7 @@ import {
   type PersistedProjectKind,
   type PersistedWorkspaceKind,
 } from "./workspace-registry-model.js";
+import type { LifecycleMutationCoordinator } from "./lifecycle-mutation-coordinator.js";
 
 const PersistedProjectRecordSchema = z.object({
   projectId: z.string(),
@@ -441,11 +442,16 @@ export class FileBackedWorkspaceRegistry
   extends FileBackedRegistry<PersistedWorkspaceRecord>
   implements WorkspaceRegistry
 {
+  private readonly lifecycleMutationCoordinator: LifecycleMutationCoordinator | null;
   private readonly mutationListeners = new Set<
     (mutation: WorkspaceMutation) => void | Promise<void>
   >();
 
-  constructor(filePath: string, logger: Logger) {
+  constructor(
+    filePath: string,
+    logger: Logger,
+    options?: { lifecycleMutationCoordinator?: LifecycleMutationCoordinator },
+  ) {
     super({
       filePath,
       logger,
@@ -453,6 +459,7 @@ export class FileBackedWorkspaceRegistry
       getId: (record) => record.workspaceId,
       component: "workspaces",
     });
+    this.lifecycleMutationCoordinator = options?.lifecycleMutationCoordinator ?? null;
   }
 
   subscribeToMutations(
@@ -466,7 +473,9 @@ export class FileBackedWorkspaceRegistry
     workspaceId: string,
     updater: (record: PersistedWorkspaceRecord) => PersistedWorkspaceRecord,
   ): Promise<PersistedWorkspaceRecord | null> {
-    const workspace = await super.update(workspaceId, updater);
+    const workspace = await this.runLifecycleMutation(workspaceId, () =>
+      super.update(workspaceId, updater),
+    );
     if (workspace) {
       await this.notifyMutation({ kind: "upsert", workspaceId, workspace });
     }
@@ -477,7 +486,7 @@ export class FileBackedWorkspaceRegistry
     record: PersistedWorkspaceRecord,
     context?: WorkspaceMutationContext,
   ): Promise<void> {
-    await super.upsert(record);
+    await this.runLifecycleMutation(record.workspaceId, () => super.upsert(record));
     await this.notifyMutation({
       kind: "upsert",
       workspaceId: record.workspaceId,
@@ -491,26 +500,40 @@ export class FileBackedWorkspaceRegistry
     archivedAt: string,
     context?: WorkspaceArchiveContext,
   ): Promise<void> {
-    const workspace = await super.update(workspaceId, (existing) => ({
-      ...existing,
-      updatedAt: archivedAt,
-      archivedAt,
-      ...(context?.autoArchivedChangeRequestUrl
-        ? { autoArchivedChangeRequestUrl: context.autoArchivedChangeRequestUrl }
-        : {}),
-    }));
+    const workspace = await this.runLifecycleMutation(workspaceId, () =>
+      super.update(workspaceId, (existing) => ({
+        ...existing,
+        updatedAt: archivedAt,
+        archivedAt,
+        ...(context?.autoArchivedChangeRequestUrl
+          ? { autoArchivedChangeRequestUrl: context.autoArchivedChangeRequestUrl }
+          : {}),
+      })),
+    );
     if (!workspace) return;
     await this.notifyMutation({ kind: "archive", workspaceId, workspace });
   }
 
   override async remove(workspaceId: string): Promise<void> {
-    const workspace = await this.removeIfPresent(workspaceId);
+    const workspace = await this.runLifecycleMutation(workspaceId, () =>
+      this.removeIfPresent(workspaceId),
+    );
     if (!workspace) return;
     await this.notifyMutation({ kind: "remove", workspaceId, workspace: null });
   }
 
   private async notifyMutation(mutation: WorkspaceMutation): Promise<void> {
     await Promise.all([...this.mutationListeners].map((listener) => listener(mutation)));
+  }
+
+  private async runLifecycleMutation<T>(
+    workspaceId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    if (!this.lifecycleMutationCoordinator) {
+      return await operation();
+    }
+    return await this.lifecycleMutationCoordinator.run({ workspaceIds: [workspaceId] }, operation);
   }
 }
 

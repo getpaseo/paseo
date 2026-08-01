@@ -35,6 +35,8 @@ const PERSISTENCE_HANDLE_SCHEMA = z
 
 const STORED_AGENT_SCHEMA = z.object({
   id: z.string(),
+  lifecycleIncarnation: z.string().default("legacy"),
+  lifecycleRevision: z.number().int().nonnegative().default(0),
   provider: z.string(),
   cwd: z.string(),
   workspaceId: z.string().optional(),
@@ -84,6 +86,59 @@ export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
   return STORED_AGENT_SCHEMA.parse(value);
 }
 
+export type AgentRecordUpdater = (
+  record: Readonly<StoredAgentRecord>,
+) => StoredAgentRecord | undefined;
+
+interface AgentSnapshotOptions {
+  title?: string | null;
+  internal?: boolean;
+  lifecycleIncarnation?: string;
+  lifecycleRevision?: number;
+}
+
+function hasSnapshotOverride(
+  options: AgentSnapshotOptions | undefined,
+  property: keyof AgentSnapshotOptions,
+): boolean {
+  return options !== undefined && Object.prototype.hasOwnProperty.call(options, property);
+}
+
+function resolveSnapshotTitle(
+  existing: StoredAgentRecord | null | undefined,
+  options: AgentSnapshotOptions | undefined,
+): string | null {
+  if (hasSnapshotOverride(options, "title")) {
+    return options?.title ?? null;
+  }
+  return existing?.title ?? null;
+}
+
+function resolveSnapshotInternal(
+  agent: ManagedAgent,
+  existing: StoredAgentRecord | null | undefined,
+  options: AgentSnapshotOptions | undefined,
+): boolean | undefined {
+  if (hasSnapshotOverride(options, "internal")) {
+    return options?.internal;
+  }
+  return agent.internal ?? existing?.internal;
+}
+
+function resolveSnapshotLifecycleIdentity(
+  existing: StoredAgentRecord | null | undefined,
+  options: AgentSnapshotOptions | undefined,
+): Pick<StoredAgentRecord, "lifecycleIncarnation" | "lifecycleRevision"> {
+  const lifecycleIncarnation =
+    options?.lifecycleIncarnation ?? existing?.lifecycleIncarnation ?? "legacy";
+  const requestedRevision = options?.lifecycleRevision ?? existing?.lifecycleRevision ?? 0;
+  const lifecycleRevision =
+    existing?.lifecycleIncarnation === lifecycleIncarnation
+      ? Math.max(existing.lifecycleRevision, requestedRevision)
+      : requestedRevision;
+  return { lifecycleIncarnation, lifecycleRevision };
+}
+
 export class AgentStorage {
   private cache: Map<string, StoredAgentRecord> = new Map();
   private pathById: Map<string, string> = new Map();
@@ -124,29 +179,52 @@ export class AgentStorage {
 
   async upsert(record: StoredAgentRecord): Promise<void> {
     await this.load();
-    await this.queueRecordWrite(record);
+    await this.queueRecordMutation(record.id, () => record);
   }
 
-  private queueRecordWrite(record: StoredAgentRecord): Promise<void> {
-    const agentId = record.id;
+  async update(agentId: string, updater: AgentRecordUpdater): Promise<StoredAgentRecord | null> {
+    await this.load();
+    return await this.queueRecordMutation(agentId, (record) =>
+      record === null ? undefined : updater(record),
+    );
+  }
+
+  private queueRecordMutation(
+    agentId: string,
+    updater: (record: StoredAgentRecord | null) => StoredAgentRecord | undefined,
+  ): Promise<StoredAgentRecord | null> {
     const prev = this.pendingWrites.get(agentId) ?? Promise.resolve();
-    const next = prev.then(async () => {
-      if (this.deleting.has(agentId)) {
-        return undefined;
-      }
+    const next = prev
+      .catch(() => undefined)
+      .then(async () => {
+        if (this.deleting.has(agentId)) {
+          return null;
+        }
 
-      await this.writeRecord(record);
-      return undefined;
-    });
+        const current = this.cache.get(agentId) ?? null;
+        const record = updater(current);
+        if (record === undefined) {
+          return current;
+        }
+        if (record.id !== agentId) {
+          throw new Error(`Agent record update changed id from ${agentId} to ${record.id}`);
+        }
 
-    const tracked = next.finally(() => {
-      if (this.pendingWrites.get(agentId) === tracked) {
+        await this.writeRecord(record);
+        return record;
+      });
+    const tracked = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    const queueTail = tracked.finally(() => {
+      if (this.pendingWrites.get(agentId) === queueTail) {
         this.pendingWrites.delete(agentId);
       }
     });
 
-    this.pendingWrites.set(agentId, tracked);
-    return tracked;
+    this.pendingWrites.set(agentId, queueTail);
+    return next;
   }
 
   private async writeRecord(record: StoredAgentRecord): Promise<void> {
@@ -202,40 +280,30 @@ export class AgentStorage {
     this.pathsById.delete(agentId);
   }
 
-  async applySnapshot(
-    agent: ManagedAgent,
-    options?: { title?: string | null; internal?: boolean },
-  ): Promise<void> {
+  async applySnapshot(agent: ManagedAgent, options?: AgentSnapshotOptions): Promise<void> {
     await this.load();
-    await this.waitForPendingWrite(agent.id);
-    const existing = (await this.get(agent.id)) ?? null;
-    const hasTitleOverride =
-      options !== undefined && Object.prototype.hasOwnProperty.call(options, "title");
-    const hasInternalOverride =
-      options !== undefined && Object.prototype.hasOwnProperty.call(options, "internal");
-    const record = toStoredAgentRecord(agent, {
-      title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
-      createdAt: existing?.createdAt,
-      internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
-    });
+    await this.queueRecordMutation(agent.id, (existing) => {
+      const lifecycleIdentity = resolveSnapshotLifecycleIdentity(existing, options);
+      const record = toStoredAgentRecord(agent, {
+        title: resolveSnapshotTitle(existing, options),
+        createdAt: existing?.createdAt,
+        internal: resolveSnapshotInternal(agent, existing, options),
+        ...lifecycleIdentity,
+      });
 
-    // Preserve soft-delete/archive status across snapshot flushes.
-    // `archivedAt` is not part of the ManagedAgent snapshot, so a naive projection
-    // would wipe it during normal persistence (including on daemon restart).
-    if (existing && existing.archivedAt !== undefined) {
-      record.archivedAt = existing.archivedAt;
-    }
-    await this.upsert(record);
+      // Snapshot metadata must not reverse an archive committed while the snapshot waited.
+      if (existing?.archivedAt !== undefined) {
+        record.archivedAt = existing.archivedAt;
+      }
+      return record;
+    });
   }
 
   async setTitle(agentId: string, title: string): Promise<void> {
-    await this.load();
-    await this.waitForPendingWrite(agentId);
-    const record = await this.get(agentId);
-    if (!record) {
+    const record = await this.update(agentId, (current) => ({ ...current, title }));
+    if (record === null) {
       throw new Error(`Agent ${agentId} not found`);
     }
-    await this.upsert({ ...record, title });
   }
 
   async flush(): Promise<void> {
@@ -385,10 +453,6 @@ export class AgentStorage {
       this.daemonAgentIdsByExecution.delete(key);
     }
     this.daemonExecutionKeysByAgentId.delete(agentId);
-  }
-
-  private async waitForPendingWrite(agentId: string): Promise<void> {
-    await (this.pendingWrites.get(agentId) ?? Promise.resolve()).catch(() => undefined);
   }
 }
 

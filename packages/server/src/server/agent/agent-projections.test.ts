@@ -154,6 +154,8 @@ describe("toStoredAgentRecord", () => {
 
     expect(record).toMatchObject({
       id: agent.id,
+      lifecycleIncarnation: "legacy",
+      lifecycleRevision: 0,
       provider: agent.provider,
       cwd: agent.cwd,
       title: "Refactor Agent",
@@ -268,6 +270,8 @@ describe("toAgentPayload", () => {
     expect(payload.lastUsage).not.toBe(agent.lastUsage);
     expect(payload.lastError).toBe("boom");
     expect((payload as unknown as { session?: unknown }).session).toBeUndefined();
+    expect(payload).not.toHaveProperty("lifecycleIncarnation");
+    expect(payload).not.toHaveProperty("lifecycleRevision");
 
     payload.availableModes[0].label = "Changed";
     expect(agent.availableModes[0].label).toBe("Planning");
