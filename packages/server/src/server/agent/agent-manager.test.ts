@@ -4345,6 +4345,92 @@ test("persists terminal outcomes and clears the previous outcome when a new turn
   }
 });
 
+test("an old autonomous terminal cannot end a newer foreground continuation", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stale-autonomous-terminal-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const session = new (class extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      return { turnId: "new-foreground-turn" };
+    }
+  })({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000170",
+  });
+
+  let foregroundDrain: Promise<void> | null = null;
+  let unsubscribe: (() => void) | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    session.pushEvent({
+      type: "turn_started",
+      provider: "codex",
+      turnId: "old-autonomous-turn",
+    });
+    session.pushEvent({
+      type: "turn_completed",
+      provider: "codex",
+      turnId: "old-autonomous-turn",
+    });
+    await manager.flush();
+
+    const streamedEvents: AgentStreamEvent[] = [];
+    unsubscribe = manager.subscribe(
+      (event) => {
+        if (event.type === "agent_stream") streamedEvents.push(event.event);
+      },
+      { agentId: agent.id, replayState: false },
+    );
+
+    const foreground = manager.streamAgent(agent.id, "new work");
+    foregroundDrain = (async () => {
+      for await (const _event of foreground) {
+        // Drain through the current turn's terminal event.
+      }
+    })();
+    await manager.waitForAgentRunStart(agent.id);
+
+    session.pushEvent({
+      type: "turn_completed",
+      provider: "codex",
+      turnId: "old-autonomous-turn",
+    });
+    await manager.flush();
+
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "running",
+      activeForegroundTurnId: "new-foreground-turn",
+      materialProgressContinuationActive: true,
+      materialProgressContinuationTurnId: "new-foreground-turn",
+      lastTurnOutcome: null,
+    });
+    expect(streamedEvents).not.toContainEqual(
+      expect.objectContaining({ type: "turn_completed", turnId: "old-autonomous-turn" }),
+    );
+
+    session.pushEvent({
+      type: "turn_canceled",
+      provider: "codex",
+      turnId: "new-foreground-turn",
+      reason: "test cleanup",
+    });
+    await foregroundDrain;
+  } finally {
+    unsubscribe?.();
+    await manager.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("getAgent does not expose committed history internals once manager owns the seam", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-boundary-"));
   const storagePath = join(workdir, "agents");

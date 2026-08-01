@@ -3518,11 +3518,7 @@ export class AgentManager {
     const eventTurnId = getAgentStreamEventTurnId(event);
     const isForegroundEvent = Boolean(eventTurnId && agent.activeForegroundTurnId === eventTurnId);
     this.traceHandleStreamEventStart(agent, event, eventTurnId, isForegroundEvent);
-    if (
-      eventTurnId &&
-      isTurnTerminalEvent(event) &&
-      this.runs.hasFinalizedTurn(agent, eventTurnId)
-    ) {
+    if (this.shouldIgnoreTerminalEvent(agent, event, eventTurnId)) {
       return false;
     }
 
@@ -3564,6 +3560,18 @@ export class AgentManager {
     this.traceHandleStreamEventEnd(agent, event, eventTurnId, flags);
 
     return flags.shouldNotifyWaiters;
+  }
+
+  private shouldIgnoreTerminalEvent(
+    agent: ActiveManagedAgent,
+    event: AgentStreamEvent,
+    eventTurnId: string | undefined,
+  ): boolean {
+    if (!eventTurnId || !isTurnTerminalEvent(event)) return false;
+    return (
+      this.runs.hasFinalizedTurn(agent, eventTurnId) ||
+      !this.terminalEventOwnsCurrentTurn(agent, eventTurnId)
+    );
   }
 
   private traceHandleStreamEventStart(
@@ -3702,6 +3710,18 @@ export class AgentManager {
       default:
         return undefined;
     }
+  }
+
+  private terminalEventOwnsCurrentTurn(
+    agent: ActiveManagedAgent,
+    eventTurnId: string | undefined,
+  ): boolean {
+    if (!eventTurnId) return true;
+    return (
+      (!agent.activeForegroundTurnId || agent.activeForegroundTurnId === eventTurnId) &&
+      (!agent.materialProgressContinuationTurnId ||
+        agent.materialProgressContinuationTurnId === eventTurnId)
+    );
   }
 
   private onStreamThreadStarted(agent: ActiveManagedAgent): void {

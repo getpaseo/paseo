@@ -380,6 +380,63 @@ describe("analyzeMaterialProgress", () => {
     });
   });
 
+  it("does not count a completed edit that leaves content unchanged", () => {
+    const result = analyzeMaterialProgress({
+      entries: [
+        entry(1, { type: "user_message", text: "update the file" }),
+        entry(2, {
+          type: "tool_call",
+          callId: "edit-no-op",
+          name: "edit",
+          status: "completed",
+          error: null,
+          detail: {
+            type: "edit",
+            filePath: "src/a.ts",
+            oldString: "unchanged",
+            newString: "unchanged",
+          },
+        }),
+        entry(3, { type: "compaction", status: "completed" }),
+      ],
+      turnOutcome: null,
+    });
+
+    expect(result).toMatchObject({
+      state: "warning",
+      completedCompactionsSinceMaterialProgress: 1,
+      lastMaterialProgressKind: null,
+    });
+  });
+
+  it("counts a concrete multi-edit diff when its first replacement is unchanged", () => {
+    const result = analyzeMaterialProgress({
+      entries: [
+        entry(1, { type: "user_message", text: "update the file" }),
+        entry(2, {
+          type: "tool_call",
+          callId: "multi-edit",
+          name: "edit",
+          status: "completed",
+          error: null,
+          detail: {
+            type: "edit",
+            filePath: "src/a.ts",
+            oldString: "unchanged first replacement",
+            newString: "unchanged first replacement",
+            unifiedDiff: "+changed by a later replacement",
+          },
+        }),
+      ],
+      turnOutcome: null,
+    });
+
+    expect(result).toMatchObject({
+      state: "progressing",
+      lastMaterialProgressKind: "edit",
+    });
+  });
+
   it("counts a completed turn's final message as a deliverable, not semantic success", () => {
     const entries = [
       entry(1, { type: "user_message", text: "answer" }),
@@ -400,6 +457,53 @@ describe("analyzeMaterialProgress", () => {
     const emptyFinalMessage = [...entries, entry(5, { type: "assistant_message", text: "   " })];
     expect(
       analyzeMaterialProgress({ entries: emptyFinalMessage, turnOutcome: "completed" }),
+    ).toMatchObject({
+      state: "warning",
+      lastMaterialProgressKind: null,
+    });
+
+    const failedActivityAfterCommentary = [
+      ...entries.slice(0, -1),
+      entry(4, {
+        type: "tool_call",
+        callId: "failed-edit",
+        name: "edit",
+        status: "failed",
+        error: "permission denied",
+        detail: { type: "edit", filePath: "src/a.ts", unifiedDiff: "+change" },
+      }),
+    ];
+    expect(
+      analyzeMaterialProgress({
+        entries: failedActivityAfterCommentary,
+        turnOutcome: "completed",
+      }),
+    ).toMatchObject({
+      state: "warning",
+      lastMaterialProgressKind: null,
+    });
+
+    const noOpActivityAfterCommentary = [
+      ...entries.slice(0, -1),
+      entry(4, {
+        type: "tool_call",
+        callId: "no-op-edit",
+        name: "edit",
+        status: "completed",
+        error: null,
+        detail: {
+          type: "edit",
+          filePath: "src/a.ts",
+          oldString: "unchanged",
+          newString: "unchanged",
+        },
+      }),
+    ];
+    expect(
+      analyzeMaterialProgress({
+        entries: noOpActivityAfterCommentary,
+        turnOutcome: "completed",
+      }),
     ).toMatchObject({
       state: "warning",
       lastMaterialProgressKind: null,

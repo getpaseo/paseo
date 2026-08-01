@@ -42,6 +42,9 @@ type PlanDetail = Extract<ToolCallDetail, { type: "plan" }>;
 
 function editEvent(detail: EditDetail): MaterialProgressEvent | null {
   const { filePath, oldString, newString, unifiedDiff } = detail;
+  if (!hasConcreteText(unifiedDiff) && oldString !== undefined && oldString === newString) {
+    return null;
+  }
   if (!hasConcreteText(unifiedDiff) && oldString === undefined && newString === undefined) {
     return null;
   }
@@ -193,12 +196,10 @@ export function analyzeMaterialProgress({
   const ordered = orderedEntries(entries);
   const continuation = currentContinuation(ordered, continuationBoundarySeq);
   if (continuation === null) return noProgress("No current continuation is available.");
-  let finalAssistantIndex = -1;
-  if (turnOutcome === "completed") {
-    for (let index = 0; index < continuation.length; index += 1) {
-      if (continuation[index]?.item.type === "assistant_message") finalAssistantIndex = index;
-    }
-  }
+  const terminalAssistantIndex =
+    turnOutcome === "completed" && continuation.at(-1)?.item.type === "assistant_message"
+      ? continuation.length - 1
+      : -1;
 
   let completedCompactions = 0;
   let lastMaterialProgressAt: string | null = null;
@@ -210,7 +211,7 @@ export function analyzeMaterialProgress({
     if (!entry) continue;
     const event = materialEvent(
       entry.item,
-      turnOutcome === "completed" && index === finalAssistantIndex,
+      turnOutcome === "completed" && index === terminalAssistantIndex,
     );
     if (event && !seenProgress.has(event.fingerprint)) {
       seenProgress.add(event.fingerprint);
