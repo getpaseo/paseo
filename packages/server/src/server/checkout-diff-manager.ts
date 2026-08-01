@@ -35,6 +35,7 @@ interface CheckoutDiffWatchTarget {
   debounceTimer: NodeJS.Timeout | null;
   refreshPromise: Promise<void> | null;
   refreshQueued: boolean;
+  refreshGeneration: number;
   latestPayload: CheckoutDiffSnapshotPayload | null;
   latestFingerprint: string | null;
   openPromise: Promise<void> | null;
@@ -89,14 +90,20 @@ export class CheckoutDiffManager {
 
     try {
       await target.openPromise;
-      const initial =
-        target.latestPayload ??
-        (await this.computeCheckoutDiffSnapshot(target.cwd, target.compare, {
-          diffCwd: target.diffCwd,
-        }));
-      target.latestPayload = initial;
-      target.latestFingerprint = JSON.stringify(initial);
-      return { initial, unsubscribe };
+      while (true) {
+        const refreshGeneration = target.refreshGeneration;
+        const initial =
+          target.latestPayload ??
+          (await this.computeCheckoutDiffSnapshot(target.cwd, target.compare, {
+            diffCwd: target.diffCwd,
+          }));
+        if (refreshGeneration !== target.refreshGeneration) {
+          continue;
+        }
+        target.latestPayload = initial;
+        target.latestFingerprint = JSON.stringify(initial);
+        return { initial, unsubscribe };
+      }
     } catch (error) {
       unsubscribe();
       throw error;
@@ -109,6 +116,8 @@ export class CheckoutDiffManager {
       if (target.cwd !== resolvedCwd && target.diffCwd !== resolvedCwd) {
         continue;
       }
+      target.refreshGeneration += 1;
+      target.latestPayload = null;
       this.scheduleTargetRefresh(target);
     }
   }
@@ -244,11 +253,16 @@ export class CheckoutDiffManager {
     target.refreshPromise = (async () => {
       do {
         target.refreshQueued = false;
+        const refreshGeneration = target.refreshGeneration;
         const snapshot = await this.computeCheckoutDiffSnapshot(target.cwd, target.compare, {
           diffCwd: target.diffCwd,
           force: true,
           reason: "working-tree-watch",
         });
+        if (refreshGeneration !== target.refreshGeneration) {
+          target.refreshQueued = true;
+          continue;
+        }
         target.latestPayload = snapshot;
         const fingerprint = JSON.stringify(snapshot);
         if (fingerprint !== target.latestFingerprint) {
@@ -284,6 +298,7 @@ export class CheckoutDiffManager {
       debounceTimer: null,
       refreshPromise: null,
       refreshQueued: false,
+      refreshGeneration: 0,
       latestPayload: null,
       latestFingerprint: null,
       openPromise: null,

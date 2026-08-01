@@ -72,8 +72,14 @@ async function createMergedPullRequestScenario(): Promise<MergedPullRequestScena
     if (!pullRequest) {
       throw new Error("Expected the merged pull request fixture");
     }
+    const addedProject = await agentClient.addProject(checkout.path);
+    if (!addedProject.project || addedProject.error) {
+      throw new Error(addedProject.error ?? "Failed to register merged pull request project");
+    }
+    const projectId = addedProject.project.projectId;
+    cleanups.push(() => agentClient.removeProject(projectId));
     const created = await workspaceClient.createPaseoWorktree({
-      cwd: checkout.path,
+      projectId,
       action: "checkout",
       checkoutSource: {
         kind: "change_request",
@@ -87,8 +93,8 @@ async function createMergedPullRequestScenario(): Promise<MergedPullRequestScena
     }
 
     const workspace = created.workspace;
-    cleanups.push(() => workspaceClient.removeProject(workspace.projectId));
     cleanups.push(() => archiveWorkspaceFromDaemon(workspaceClient, workspace.workspaceDirectory));
+    expect(workspace.projectId).toBe(projectId);
     const agentTitle = `Auto-archive latch ${Date.now()}`;
     const agent = await agentClient.createAgent({
       provider: "mock",

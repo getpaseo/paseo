@@ -141,6 +141,10 @@ describe("daemon checkout ship loop", () => {
         );
         execSync("git push -u origin main", { cwd: repoDir, stdio: "pipe" });
 
+        const addedProject = await ctx.client.addProject(repoDir);
+        expect(addedProject.error).toBeNull();
+        expect(addedProject.project?.projectRootPath).toBe(repoDir);
+
         const worktree = await createLegacyWorktreeForTest({
           branchName: "ship-loop",
           cwd: repoDir,
@@ -230,14 +234,15 @@ describe("daemon checkout ship loop", () => {
         expect(statusAfterMerge.isGit).toBe(true);
         if (statusAfterMerge.isGit) {
           expect(statusAfterMerge.baseRef).toBe("main");
-          expect(statusAfterMerge.aheadBehind?.ahead ?? 0).toBe(0);
+          // Status and base diffs compare with origin/main, which merge-to-base does not push.
+          expect(statusAfterMerge.aheadBehind?.ahead ?? 0).toBe(1);
         }
 
         const baseDiffAfterMerge = await ctx.client.getCheckoutDiff(worktree.worktreePath, {
           mode: "base",
           baseRef: "main",
         });
-        expect(baseDiffAfterMerge.files.length).toBe(0);
+        expect(baseDiffAfterMerge.files.length).toBe(1);
 
         const worktreeList = await ctx.client.getPaseoWorktreeList({
           repoRoot: repoDir,

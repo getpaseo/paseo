@@ -301,6 +301,69 @@ describe("CheckoutDiffManager", () => {
     });
   });
 
+  test("explicit refresh does not reuse the previous payload for a new subscriber", async () => {
+    const getCheckoutDiff = vi
+      .fn()
+      .mockResolvedValueOnce({
+        diff: "",
+        structured: [{ path: "a.ts", additions: 1, deletions: 0, status: "modified" }],
+      })
+      .mockResolvedValueOnce({ diff: "", structured: [] });
+    const { manager } = createManager({ getCheckoutDiffImplementation: getCheckoutDiff });
+    const first = await manager.subscribe(
+      { cwd: "/tmp/repo/packages/server", compare: { mode: "uncommitted" } },
+      vi.fn(),
+    );
+
+    manager.scheduleRefreshForCwd("/tmp/repo/packages/server");
+    const second = await manager.subscribe(
+      { cwd: "/tmp/repo/packages/server", compare: { mode: "uncommitted" } },
+      vi.fn(),
+    );
+
+    expect(second.initial.files).toEqual([]);
+    expect(getCheckoutDiff).toHaveBeenCalledTimes(2);
+    first.unsubscribe();
+    second.unsubscribe();
+  });
+
+  test("explicit refresh retries an initial payload invalidated while loading", async () => {
+    const staleDiff = createDeferred<{
+      diff: string;
+      structured: Array<{
+        path: string;
+        additions: number;
+        deletions: number;
+        status: "modified";
+      }>;
+    }>();
+    const loadStarted = createDeferred<void>();
+    const getCheckoutDiff = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        loadStarted.resolve();
+        return staleDiff.promise;
+      })
+      .mockResolvedValueOnce({ diff: "", structured: [] });
+    const { manager } = createManager({ getCheckoutDiffImplementation: getCheckoutDiff });
+    const pendingSubscription = manager.subscribe(
+      { cwd: "/tmp/repo/packages/server", compare: { mode: "uncommitted" } },
+      vi.fn(),
+    );
+    await loadStarted.promise;
+
+    manager.scheduleRefreshForCwd("/tmp/repo/packages/server");
+    staleDiff.resolve({
+      diff: "",
+      structured: [{ path: "stale.ts", additions: 1, deletions: 0, status: "modified" }],
+    });
+    const subscription = await pendingSubscription;
+
+    expect(subscription.initial.files).toEqual([]);
+    expect(getCheckoutDiff).toHaveBeenCalledTimes(2);
+    subscription.unsubscribe();
+  });
+
   test("falls back to cwd when the working tree watch returns no repo root", async () => {
     const { manager, workspaceGitService } = createManager({ repoRoot: null });
 
