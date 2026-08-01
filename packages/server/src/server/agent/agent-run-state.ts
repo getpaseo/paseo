@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import { getAgentStreamEventTurnId, type AgentStreamEvent } from "./agent-sdk-types.js";
 
+const MAX_PENDING_LIFECYCLE_EVIDENCE = 64;
+
 export interface ForegroundTurnWaiter {
   turnId: string;
   callback: (event: AgentStreamEvent) => void;
@@ -44,6 +46,7 @@ interface AgentGenerationState {
   invalidatedRuns: Map<string, InvalidatedPendingRun>;
   identifiedLifecycleEvents: Map<string, AgentStreamEvent[]>;
   quarantinedLifecycleEvents: AgentStreamEvent[];
+  lifecycleEvidenceOverflowed: boolean;
 }
 
 export interface ForegroundRunAgentState {
@@ -123,6 +126,7 @@ export class AgentRunState {
     if (state.invalidatedRuns.size === 0) {
       state.quarantinedLifecycleEvents.length = 0;
       state.identifiedLifecycleEvents.clear();
+      state.lifecycleEvidenceOverflowed = false;
     }
     return events.map((event) => attachBoundTurnIdentity(event, turnId));
   }
@@ -196,7 +200,7 @@ export class AgentRunState {
     });
     for (const event of run.stagedEvents.splice(0)) {
       if (isTurnLifecycleEvent(event)) {
-        this.stageEvent(state.quarantinedLifecycleEvents, event);
+        this.stageLifecycleEvidence(state, state.quarantinedLifecycleEvents, event);
       }
     }
     this.clearRun(agentId, state, run);
@@ -220,6 +224,7 @@ export class AgentRunState {
       state.quarantinedLifecycleEvents.length = 0;
       if (state.run?.kind !== "foreground" || state.run.started) {
         state.identifiedLifecycleEvents.clear();
+        state.lifecycleEvidenceOverflowed = false;
       }
     }
     this.deleteGenerationStateIfEmpty(agentId, state);
@@ -351,8 +356,11 @@ export class AgentRunState {
       return this.stagePendingIdentifiedLifecycleEvent(state, run, event, eventTurnId, terminal);
     }
 
+    if (state?.lifecycleEvidenceOverflowed) {
+      return true;
+    }
     if (state && state.invalidatedRuns.size > 0) {
-      this.stageEvent(state.quarantinedLifecycleEvents, event);
+      this.stageLifecycleEvidence(state, state.quarantinedLifecycleEvents, event);
       return true;
     }
     if (run?.kind !== "foreground" || run.started) {
@@ -375,6 +383,9 @@ export class AgentRunState {
     }
     if (!state) {
       return false;
+    }
+    if (state.lifecycleEvidenceOverflowed) {
+      return true;
     }
 
     this.observePendingTurnLifecycle(state, run, event, turnId, terminal);
@@ -422,6 +433,7 @@ export class AgentRunState {
 
     state.identifiedLifecycleEvents.clear();
     state.quarantinedLifecycleEvents.length = 0;
+    state.lifecycleEvidenceOverflowed = false;
     this.deleteGenerationStateIfEmpty(agentId, state);
   }
 
@@ -431,8 +443,9 @@ export class AgentRunState {
     event: AgentStreamEvent,
   ): void {
     const events = state.identifiedLifecycleEvents.get(turnId) ?? [];
-    this.stageEvent(events, event);
-    state.identifiedLifecycleEvents.set(turnId, events);
+    if (this.stageLifecycleEvidence(state, events, event)) {
+      state.identifiedLifecycleEvents.set(turnId, events);
+    }
   }
 
   private takeIdentifiedLifecycleEvents(
@@ -455,6 +468,7 @@ export class AgentRunState {
       invalidatedRuns: new Map(),
       identifiedLifecycleEvents: new Map(),
       quarantinedLifecycleEvents: [],
+      lifecycleEvidenceOverflowed: false,
     };
     this.agentGenerations.set(agentId, state);
     return state;
@@ -465,10 +479,38 @@ export class AgentRunState {
       state.run === null &&
       state.invalidatedRuns.size === 0 &&
       state.identifiedLifecycleEvents.size === 0 &&
-      state.quarantinedLifecycleEvents.length === 0
+      state.quarantinedLifecycleEvents.length === 0 &&
+      !state.lifecycleEvidenceOverflowed
     ) {
       this.agentGenerations.delete(agentId);
     }
+  }
+
+  private stageLifecycleEvidence(
+    state: AgentGenerationState,
+    events: AgentStreamEvent[],
+    event: AgentStreamEvent,
+  ): boolean {
+    if (state.lifecycleEvidenceOverflowed) {
+      return false;
+    }
+    if (this.countLifecycleEvidence(state) >= MAX_PENDING_LIFECYCLE_EVIDENCE) {
+      state.identifiedLifecycleEvents.clear();
+      state.quarantinedLifecycleEvents.length = 0;
+      state.lifecycleEvidenceOverflowed = true;
+      return false;
+    }
+
+    this.stageEvent(events, event);
+    return true;
+  }
+
+  private countLifecycleEvidence(state: AgentGenerationState): number {
+    let count = state.quarantinedLifecycleEvents.length;
+    for (const events of state.identifiedLifecycleEvents.values()) {
+      count += events.length;
+    }
+    return count;
   }
 
   private stageEvent(events: AgentStreamEvent[], event: AgentStreamEvent): void {

@@ -2158,6 +2158,110 @@ test("ID-less lifecycle is quarantined while an older start remains unresolved",
   }
 });
 
+test("unresolved invalidated lifecycle evidence stays bounded and fenced until teardown", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-generation-evidence-overflow-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const session = new InvalidatedGenerationSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10 },
+    idFactory: () => "00000000-0000-4000-8000-000000000324",
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const runs = castInternals<{ runs: AgentRunState }>(manager).runs;
+  const generationStates = castInternals<{
+    agentGenerations: Map<
+      string,
+      {
+        invalidatedRuns: Map<string, { state: string }>;
+        identifiedLifecycleEvents: Map<string, AgentStreamEvent[]>;
+        quarantinedLifecycleEvents: AgentStreamEvent[];
+        lifecycleEvidenceOverflowed: boolean;
+      }
+    >;
+  }>(runs).agentGenerations;
+  const firstRun = manager.streamAgent(agent.id, "start that never returns");
+  const firstRunDrain = (async () => {
+    for await (const _event of firstRun) {
+      // Teardown retires this unresolved generation.
+    }
+  })();
+  let replacementDrain: Promise<void> | null = null;
+  const replacementEvents: AgentStreamEvent[] = [];
+
+  try {
+    await session.waitForFirstStart();
+    const replacement = await manager.replaceAgentRun(agent.id, "replacement turn");
+    replacementDrain = (async () => {
+      for await (const event of replacement) {
+        replacementEvents.push(event);
+      }
+    })();
+    await session.waitForReplacementStart();
+
+    for (let index = 0; index < 200; index += 1) {
+      session.emitTurnCompleted(`unowned-turn-${index}`);
+      session.emitTurnCompleted();
+    }
+    await manager.flush();
+
+    expect(generationStates.get(agent.id)).toMatchObject({
+      invalidatedRuns: new Map([[expect.any(String), { state: "awaiting_result" }]]),
+      identifiedLifecycleEvents: new Map(),
+      quarantinedLifecycleEvents: [],
+      lifecycleEvidenceOverflowed: true,
+    });
+
+    session.resolveReplacementStart();
+    await manager.waitForAgentRunStart(agent.id);
+    expect(replacementEvents.some((event) => event.type === "turn_completed")).toBe(false);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "running",
+      activeForegroundTurnId: "replacement-turn",
+    });
+
+    session.emitTurnCompleted();
+    await manager.flush();
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "running",
+      activeForegroundTurnId: "replacement-turn",
+    });
+
+    session.emitTurnCompleted("replacement-turn");
+    await replacementDrain;
+    expect(replacementEvents.filter((event) => event.type === "turn_completed")).toEqual([
+      { type: "turn_completed", provider: "codex", turnId: "replacement-turn" },
+    ]);
+    expect(generationStates.get(agent.id)).toMatchObject({
+      invalidatedRuns: new Map([[expect.any(String), { state: "awaiting_result" }]]),
+      identifiedLifecycleEvents: new Map(),
+      quarantinedLifecycleEvents: [],
+      lifecycleEvidenceOverflowed: true,
+    });
+
+    await manager.closeAgent(agent.id);
+    expect(generationStates.has(agent.id)).toBe(false);
+  } finally {
+    session.resolveFirstStart();
+    session.resolveReplacementStart();
+    session.emitTurnCompleted("replacement-turn");
+    await firstRunDrain.catch(() => undefined);
+    await replacementDrain?.catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("a rejected invalidated start keeps late explicit lifecycle fenced from its replacement", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-rejected-generation-fence-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
