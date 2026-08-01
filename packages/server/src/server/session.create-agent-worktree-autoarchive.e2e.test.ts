@@ -90,8 +90,15 @@ async function expectWorktreePresentInList(repoDir: string, worktreePath: string
 }
 
 async function expectWorktreeListEmpty(repoDir: string): Promise<void> {
-  const listed = await ctx.client.getPaseoWorktreeList({ repoRoot: repoDir });
-  expect(listed.worktrees).toEqual([]);
+  await expect
+    .poll(
+      async () => {
+        const listed = await ctx.client.getPaseoWorktreeList({ repoRoot: repoDir });
+        return listed.worktrees;
+      },
+      { timeout: 10000, interval: 100 },
+    )
+    .toEqual([]);
 }
 
 async function createAgentInBranchOffWorktree(options?: {
