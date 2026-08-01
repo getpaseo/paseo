@@ -213,8 +213,11 @@ function buildRealtimeVoiceButtonStyle(
 }
 
 function buildAgentStateSelector(serverId: string, agentId: string) {
+  // Keep this selector shallow/simple for memoization; capability flags stay optional.
+  // oxlint-disable-next-line complexity -- maps multiple agent fields into one snapshot
   return (state: ReturnType<typeof useSessionStore.getState>) => {
     const agent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
+    const supportsSteer = Boolean(agent?.capabilities?.supportsSteer);
     return {
       status: agent?.status ?? null,
       contextWindowMaxTokens: agent?.lastUsage?.contextWindowMaxTokens ?? null,
@@ -222,6 +225,7 @@ function buildAgentStateSelector(serverId: string, agentId: string) {
       totalCostUsd: agent?.lastUsage?.totalCostUsd ?? null,
       model: agent?.model ?? null,
       provider: agent?.provider ?? null,
+      supportsSteer,
     };
   };
 }
@@ -1228,7 +1232,13 @@ export function Composer({
   const { pickFiles } = useFilePicker();
   const agentIdRef = useRef(agentId);
   const sendAgentMessageRef = useRef<
-    ((agentId: string, text: string, attachments: ComposerAttachment[]) => Promise<void>) | null
+    | ((
+        agentId: string,
+        text: string,
+        attachments: ComposerAttachment[],
+        options?: { steer?: boolean },
+      ) => Promise<void>)
+    | null
   >(null);
   const onSubmitMessageRef = useRef(onSubmitMessage);
 
@@ -1280,16 +1290,25 @@ export function Composer({
   }, [focusInput, onFocusInput]);
 
   const submitMessage = useCallback(
-    async (text: string, submitAttachments: ComposerAttachment[]) => {
+    async (
+      text: string,
+      submitAttachments: ComposerAttachment[],
+      options?: { steer?: boolean },
+    ) => {
       onMessageSent?.();
       if (onSubmitMessageRef.current) {
-        await onSubmitMessageRef.current({ text, attachments: submitAttachments, cwd });
+        await onSubmitMessageRef.current({
+          text,
+          attachments: submitAttachments,
+          cwd,
+          ...(options?.steer ? { forceSend: true, steer: true } : {}),
+        });
         return;
       }
       if (!sendAgentMessageRef.current) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      await sendAgentMessageRef.current(agentIdRef.current, text, submitAttachments);
+      await sendAgentMessageRef.current(agentIdRef.current, text, submitAttachments, options);
     },
     [cwd, onMessageSent, t],
   );
@@ -1303,6 +1322,7 @@ export function Composer({
       targetAgentId: string,
       text: string,
       sendAttachments: ComposerAttachment[],
+      options?: { steer?: boolean },
     ) => {
       if (!client) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
@@ -1323,6 +1343,7 @@ export function Composer({
         }),
         encodeImages,
         stream,
+        steer: options?.steer,
       });
       onAttentionPromptSend?.();
     };
@@ -1381,13 +1402,14 @@ export function Composer({
       outgoingMessage: string,
       outgoingAttachments: ComposerAttachment[],
       forceSend?: boolean,
+      steer?: boolean,
     ) => {
       const result = await submitAgentInput({
         message: outgoingMessage,
         attachments: outgoingAttachments,
         hasExternalContent,
         allowEmptySubmit,
-        forceSend,
+        forceSend: forceSend || steer,
         submitBehavior,
         isAgentRunning,
         // Parent-managed submits are still valid submit paths even when the
@@ -1400,7 +1422,7 @@ export function Composer({
           if (submitBehavior !== "preserve-and-lock") {
             beginSubmit(submitAttachments);
           }
-          await submitMessage(submitText, submitAttachments);
+          await submitMessage(submitText, submitAttachments, steer ? { steer: true } : undefined);
         },
         clearDraft,
         setUserInput,
@@ -1718,6 +1740,26 @@ export function Composer({
       queueMessage(payload.text, outgoingAttachments);
     },
     [attachments, buildOutgoingAttachments, interactionLocked, queueMessage, runClientSlashCommand],
+  );
+
+  const handleSteer = useCallback(
+    (payload: MessagePayload) => {
+      if (interactionLocked) {
+        return;
+      }
+      const outgoingAttachments = buildOutgoingAttachments(attachments);
+      if (blurOnSubmit) {
+        messageInputRef.current?.blur();
+      }
+      void sendMessageWithContent(payload.text, outgoingAttachments, true, true);
+    },
+    [
+      attachments,
+      blurOnSubmit,
+      buildOutgoingAttachments,
+      interactionLocked,
+      sendMessageWithContent,
+    ],
   );
 
   const hasSendableContent = userInput.trim().length > 0 || selectedAttachments.length > 0;
@@ -2150,6 +2192,8 @@ export function Composer({
                 isAgentRunning={isAgentRunning}
                 defaultSendBehavior={appSettings.sendBehavior}
                 onQueue={handleQueue}
+                onSteer={handleSteer}
+                canSteer={isAgentRunning && !interactionLocked && agentState.supportsSteer}
                 onSubmitLoadingPress={submitLoadingPressHandler}
                 onKeyPress={handleCommandKeyPress}
                 onSelectionChange={handleSelectionChange}

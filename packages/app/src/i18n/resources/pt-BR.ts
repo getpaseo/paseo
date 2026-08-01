@@ -78,6 +78,8 @@ export const ptBR: TranslationResources = {
       addAttachment: "Adicionar anexo",
       interruptAgent: "Interromper agente",
       queueMessage: "Enfileirar mensagem",
+      steer: "Direcionar",
+      steerHint: "Interrompe o turno atual com esta mensagem",
       sendAndInterrupt: "Enviar e interromper",
       sendMessage: "Enviar mensagem",
       queue: "Fila",

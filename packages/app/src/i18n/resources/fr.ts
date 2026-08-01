@@ -80,6 +80,8 @@ export const fr: TranslationResources = {
       addAttachment: "Ajouter une pièce jointe",
       interruptAgent: "Agent d'interruption",
       queueMessage: "Message de file d'attente",
+      steer: "Orienter",
+      steerHint: "Interrompt le tour en cours avec ce message",
       sendAndInterrupt: "Envoyer et interrompre",
       sendMessage: "Envoyer un message",
       queue: "File d'attente",

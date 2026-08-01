@@ -127,6 +127,8 @@ const OMP_CORE_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  // COMPAT(supportsSteer): added in v0.2.916 — OMP has native /steer.
+  supportsSteer: true,
 };
 
 export interface OmpAgentClientOptions {

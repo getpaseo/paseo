@@ -358,6 +358,8 @@ const AgentCapabilityFlagsSchema: z.ZodType<AgentCapabilityFlags> = z
     supportsRewindBoth: z.boolean().optional().default(false),
     // COMPAT(supportsNativeFork): added in v0.2.916, drop when floor >= v0.2.916.
     supportsNativeFork: z.boolean().optional().default(false),
+    // COMPAT(supportsSteer): added in v0.2.916, drop when floor >= v0.2.916.
+    supportsSteer: z.boolean().optional().default(false),
   })
   .catchall(z.boolean());
 
@@ -1184,6 +1186,10 @@ export const SendAgentMessageRequestSchema = z.object({
   messageId: z.string().optional(), // Client-provided ID for deduplication
   images: z.array(ImageAttachmentSchema).optional(),
   attachments: AgentAttachmentsSchema,
+  // COMPAT(promptSteer): added in v0.2.916 — explicit mid-turn redirect (interrupt + send).
+  // When true, the agent must already be running; when false/omitted, existing replaceRunning
+  // send semantics are unchanged.
+  steer: z.boolean().optional().default(false),
 });
 
 export const WaitForFinishRequestSchema = z.object({

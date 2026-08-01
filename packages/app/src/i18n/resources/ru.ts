@@ -78,6 +78,8 @@ export const ru: TranslationResources = {
       addAttachment: "Добавить вложение",
       interruptAgent: "Агент прерываний",
       queueMessage: "Сообщение в очереди",
+      steer: "Направить",
+      steerHint: "Прерывает текущий ход этим сообщением",
       sendAndInterrupt: "Отправить и прервать",
       sendMessage: "Отправить сообщение",
       queue: "Очередь",
