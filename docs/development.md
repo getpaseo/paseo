@@ -19,6 +19,10 @@ Root checkout dev is intentionally split across terminals:
 - `npm run dev:app` runs Expo on `http://localhost:8081` and connects to the dev daemon.
 - `npm run dev:desktop` runs its own Electron-flavored Expo server on the first free port from `8082` through `8089`. It never claims port `8081`.
 
+Desktop dev launches its desktop-managed daemon with `PASEO_NODE_ENV=development`,
+so development-only providers such as Mock Load Test are available. Packaged
+desktop launches always force the daemon to production mode.
+
 `npm run dev` is only a shorthand for `npm run dev:server`. Keep `127.0.0.1:6767` for the packaged app and production-style `~/.paseo` state.
 
 ## Nix desktop package
@@ -111,10 +115,21 @@ The iOS simulator shares the Mac's loopback, so `localhost:<port>` reaches the h
 
 ### Desktop renderer profiling
 
-`npm run dev:desktop` starts Electron with Chromium remote debugging enabled on
-`http://127.0.0.1:9223` so renderer CPU profiles can be captured through CDP.
-It launches its own Electron-flavored Expo server and passes that URL to Electron.
-Override the CDP port with `PASEO_ELECTRON_REMOTE_DEBUGGING_PORT` when `9223` is busy.
+`npm run dev:desktop` starts Electron with Chromium remote debugging enabled so
+renderer CPU profiles can be captured through CDP. By default it passes
+`--remote-debugging-port=0`, so Chromium atomically asks the OS for an available
+port and prints the selected DevTools endpoint. Set
+`PASEO_ELECTRON_REMOTE_DEBUGGING_PORT` when a QA workflow requires a validated,
+fixed port.
+
+Desktop dev also scopes Electron `userData` to the current dev root. This prevents
+desktop-only environment inherited by terminals opened inside Paseo from coupling
+a new worktree instance to the parent desktop instance's profile or single-instance
+lock.
+
+Electron remains in the desktop dev runner's process group. Closing or stopping the
+workspace-script terminal must terminate Electron with Metro; detaching Electron
+leaves an orphan holding the worktree's single-instance lock and broken output pipes.
 
 With desktop dev running, verify the real BrowserWindow, titlebar clearance, fullscreen
 transition, and 751-pixel settings split with:
@@ -124,8 +139,9 @@ npm run verify:electron-cdp --workspace=@getpaseo/desktop
 ```
 
 The verifier reads the same `EXPO_PORT` and
-`PASEO_ELECTRON_REMOTE_DEBUGGING_PORT` environment names as desktop dev. Set both when
-testing an isolated instance on non-default ports.
+`PASEO_ELECTRON_REMOTE_DEBUGGING_PORT` environment names as desktop dev. Set an
+explicit remote-debugging port for verifier runs, and set both when testing an
+isolated instance on non-default ports.
 
 When running a dedicated Electron QA instance against a non-default Expo port, set
 `EXPO_DEV_URL` explicitly. Desktop main defaults to `http://localhost:8081`, so

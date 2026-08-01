@@ -53,6 +53,23 @@ export async function seedMockAgentWorkspace(
   }
 }
 
+export async function seedRunningMockAgentWorkspace(
+  options: MockAgentOptions,
+): Promise<MockAgentWorkspace> {
+  const agent = await seedMockAgentWorkspace(options);
+  try {
+    await agent.client.waitForAgentUpsert(
+      agent.agentId,
+      (snapshot) => snapshot.status === "running",
+      15_000,
+    );
+    return agent;
+  } catch (error) {
+    await agent.cleanup();
+    throw error;
+  }
+}
+
 export function buildAgentRoute(workspaceId: string, agentId: string): string {
   return buildHostAgentDetailRoute(getServerId(), agentId, workspaceId);
 }
