@@ -257,6 +257,7 @@ export type WorkspaceGitSnapshotOptions =
 interface WorkspaceGitRefreshRequest {
   force: boolean;
   forceEmit?: boolean;
+  forceForge: boolean;
   includeForge: boolean;
   reason: string;
   notify: boolean;
@@ -277,6 +278,7 @@ type WorkspaceGitRefreshState =
       promise: Promise<WorkspaceGitRuntimeSnapshot>;
       force: boolean;
       forceEmit: boolean;
+      forceForge: boolean;
       includeForge: boolean;
       repositoryFactsGeneration: number;
       queued: WorkspaceGitRefreshRequest | null;
@@ -812,6 +814,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const target = this.ensureWorkspaceTarget(cwd);
     await this.refreshWorkspaceTarget(target, {
       force: false,
+      forceForge: false,
       includeForge: false,
       reason: "refresh",
       notify: true,
@@ -1163,6 +1166,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       }
       void this.refreshWorkspaceTarget(target, {
         force: false,
+        forceForge: false,
         includeForge: true,
         reason: "initial",
         notify: true,
@@ -1541,6 +1545,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         this.refreshWorkspaceTarget(target, {
           force: true,
           forceEmit: false,
+          forceForge: false,
           includeForge: false,
           reason: "self-heal-git",
           notify: true,
@@ -1733,7 +1738,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
 
     const lookupTarget =
-      target.latestFacts?.isGit && target.latestFacts.currentBranch === git.currentBranch
+      target.latestFactsRepositoryGeneration === target.repositoryFactsGeneration &&
+      target.latestFacts?.isGit &&
+      target.latestFacts.currentBranch === git.currentBranch
         ? target.latestFacts.pullRequestLookupTarget
         : null;
     if (lookupTarget) {
@@ -1979,15 +1986,14 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       const needsForcedRefresh = request.force && !target.refreshState.force;
       const needsForcedEmission =
         (request.forceEmit ?? request.force) && !target.refreshState.forceEmit;
-      const needsGitHubRefresh =
-        request.force && request.includeForge && !target.refreshState.includeForge;
+      const needsForgeRefresh = request.forceForge && !target.refreshState.forceForge;
       const needsPostInvalidationRefresh =
         request.force &&
         target.refreshState.repositoryFactsGeneration !== target.repositoryFactsGeneration;
       if (
         needsForcedRefresh ||
         needsForcedEmission ||
-        needsGitHubRefresh ||
+        needsForgeRefresh ||
         needsPostInvalidationRefresh
       ) {
         target.refreshState.queued = this.mergeRefreshRequests(target.refreshState.queued, request);
@@ -1999,7 +2005,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return Promise.resolve(target.latestSnapshot);
     }
 
-    const promise = this.runWorkspaceRefreshLoop(target, request).finally(() => {
+    const repositoryFactsGeneration = target.repositoryFactsGeneration;
+    const promise = this.runWorkspaceRefreshLoop(
+      target,
+      request,
+      repositoryFactsGeneration,
+    ).finally(() => {
       const state = target.refreshState;
       if (state.status === "in-flight" && state.promise === promise) {
         target.refreshState = { status: "idle" };
@@ -2010,8 +2021,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       promise,
       force: request.force,
       forceEmit: request.forceEmit ?? request.force,
+      forceForge: request.forceForge,
       includeForge: request.includeForge,
-      repositoryFactsGeneration: target.repositoryFactsGeneration,
+      repositoryFactsGeneration,
       queued: null,
     };
 
@@ -2031,6 +2043,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     return {
       force,
       forceEmit: force,
+      forceForge: force && (options?.includeForge ?? true),
       includeForge: options?.includeForge ?? true,
       reason: options?.reason ?? defaultReason,
       notify,
@@ -2055,6 +2068,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     return {
       force: options?.force === true,
       forceEmit: false,
+      forceForge: false,
       includeForge: options?.includeForge ?? false,
       reason: options?.reason ?? "watch",
       notify: true,
@@ -2071,11 +2085,13 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
     const force = pending.force || request.force;
     const forceEmit = (pending.forceEmit ?? pending.force) || (request.forceEmit ?? request.force);
+    const forceForge = pending.forceForge || request.forceForge;
     const upgradesForce = request.force && !pending.force;
     const upgradesForge = request.includeForge && !pending.includeForge;
     return {
       force,
       forceEmit,
+      forceForge,
       includeForge: pending.includeForge || request.includeForge,
       reason: upgradesForce || upgradesForge ? request.reason : pending.reason,
       notify: pending.notify || request.notify,
@@ -2085,28 +2101,38 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private async runWorkspaceRefreshLoop(
     target: WorkspaceGitTarget,
     initialRequest: WorkspaceGitRefreshRequest,
+    initialRepositoryFactsGeneration: number,
   ): Promise<WorkspaceGitRuntimeSnapshot> {
     let request = initialRequest;
+    let repositoryFactsGeneration = initialRepositoryFactsGeneration;
     let snapshot!: WorkspaceGitRuntimeSnapshot;
 
     while (true) {
-      snapshot = await this.refreshSnapshot(target, request);
-      this.rememberSnapshot(target, snapshot, {
-        notify: request.notify,
-        forceEmit: request.forceEmit ?? request.force,
-      });
+      snapshot = await this.refreshSnapshot(target, request, repositoryFactsGeneration);
+      const wasInvalidated = target.repositoryFactsGeneration !== repositoryFactsGeneration;
+      if (!wasInvalidated) {
+        this.rememberSnapshot(target, snapshot, {
+          notify: request.notify,
+          forceEmit: request.forceEmit ?? request.force,
+        });
+      }
 
       const state = target.refreshState;
       if (state.status !== "in-flight" || !state.queued) {
         break;
+      }
+      if (wasInvalidated) {
+        state.queued = this.mergeRefreshRequests(state.queued, request);
       }
 
       request = state.queued;
       state.queued = null;
       state.force = request.force;
       state.forceEmit = request.forceEmit ?? request.force;
+      state.forceForge = request.forceForge;
       state.includeForge = request.includeForge;
-      state.repositoryFactsGeneration = target.repositoryFactsGeneration;
+      repositoryFactsGeneration = target.repositoryFactsGeneration;
+      state.repositoryFactsGeneration = repositoryFactsGeneration;
     }
 
     return snapshot;
@@ -2115,11 +2141,18 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private async refreshSnapshot(
     target: WorkspaceGitTarget,
     request: WorkspaceGitRefreshRequest,
+    repositoryFactsGeneration: number,
   ): Promise<WorkspaceGitRuntimeSnapshot> {
     incrementCount(this.workspaceRefreshCountByReason, request.reason);
-    const facts = await this.refreshGitSnapshot(target, request);
+    const facts = await this.refreshGitSnapshot(target, request, repositoryFactsGeneration);
+    if (target.repositoryFactsGeneration !== repositoryFactsGeneration) {
+      return this.combineSnapshot(target);
+    }
     if (request.includeForge) {
-      await this.refreshForgeSnapshot(target, request, facts);
+      await this.refreshForgeSnapshot(target, request, facts, repositoryFactsGeneration);
+      if (target.repositoryFactsGeneration !== repositoryFactsGeneration) {
+        return this.combineSnapshot(target);
+      }
     }
 
     const snapshot = this.combineSnapshot(target);
@@ -2130,6 +2163,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private async refreshGitSnapshot(
     target: WorkspaceGitTarget,
     request: WorkspaceGitRefreshRequest,
+    repositoryFactsGeneration: number,
   ): Promise<CheckoutSnapshotFacts> {
     const now = this.deps.now();
     target.lastShellOutAtMs = now.getTime();
@@ -2153,6 +2187,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     };
     const checkoutStatus = await this.deps.getCheckoutStatus(cwd, context);
     if (!checkoutStatus.isGit) {
+      if (target.repositoryFactsGeneration !== repositoryFactsGeneration) {
+        return facts;
+      }
       target.latestGit = buildNotGitSnapshot(cwd).git;
       target.latestGitLoadedAtMs = this.deps.now().getTime();
       target.latestForge = buildForgeUnavailableSnapshot();
@@ -2163,6 +2200,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const diffStat = await this.deps
       .getCheckoutShortstat(cwd, context, { force: request.force })
       .catch(() => null);
+    if (target.repositoryFactsGeneration !== repositoryFactsGeneration) {
+      return facts;
+    }
 
     target.latestGit = {
       isGit: true,
@@ -2192,9 +2232,13 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     target: WorkspaceGitTarget,
     request: WorkspaceGitRefreshRequest,
     facts: CheckoutSnapshotFacts,
+    repositoryFactsGeneration: number,
   ): Promise<void> {
     const remoteUrl = target.latestGit?.remoteUrl ?? null;
     const resolution = await this.forgeResolver.resolveFromRemoteUrlAsync(remoteUrl);
+    if (target.repositoryFactsGeneration !== repositoryFactsGeneration) {
+      return;
+    }
     // Every forge gates on the resolver alone: a cloud host matches synchronously
     // and a self-hosted/Enterprise host is recognized by the adapter probe (which
     // this async resolution populates), so GitHub Enterprise is no longer gated
@@ -2205,7 +2249,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return;
     }
     const forgeService: ForgeService = resolution.service;
-    const forceForge = request.force && request.includeForge;
+    const forceForge = request.forceForge;
     if (forceForge) {
       forgeService.invalidate({ cwd: target.cwd });
     }
@@ -2219,6 +2263,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       reason: request.reason,
       facts,
     });
+    if (target.repositoryFactsGeneration !== repositoryFactsGeneration) {
+      return;
+    }
     // Carry the resolved forge (probe-aware) so the wire projection labels
     // self-managed GitLab hosts correctly instead of falling back to "github".
     target.latestForge = { ...forgeSnapshot, forge: resolution.forge };
@@ -2340,6 +2387,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           await this.refreshWorkspaceTarget(workspaceTarget, {
             force: true,
             forceEmit: false,
+            forceForge: false,
             includeForge: false,
             reason: "repo-fetch",
             notify: true,

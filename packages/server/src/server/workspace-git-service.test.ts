@@ -687,6 +687,91 @@ describe("WorkspaceGitServiceImpl", () => {
     service.dispose();
   });
 
+  test("a sibling refresh started before invalidation cannot publish after a newer refresh", async () => {
+    const commonDir = join(REPO_CWD, ".git");
+    const siblingCwd = join("/tmp/worktrees", "stale-sibling");
+    const staleSiblingFactLoad = createDeferred<string>();
+    let sourceFactsLoadCount = 0;
+    let siblingFactsLoadCount = 0;
+    const loadDefaultBranch = vi.fn(async (cwd: string) => {
+      if (cwd === siblingCwd && siblingFactsLoadCount === 0) {
+        return staleSiblingFactLoad.promise;
+      }
+      return "main";
+    });
+    const getCheckoutSnapshotFacts = vi.fn(
+      async (cwd: string, context?: import("../utils/checkout-git.js").CheckoutContext) => {
+        const loadDefaultBranchForCwd = loadDefaultBranch.bind(undefined, cwd);
+        await context?.repositoryFacts?.read(commonDir, "default-branch", loadDefaultBranchForCwd);
+        const loadCount = cwd === siblingCwd ? ++siblingFactsLoadCount : ++sourceFactsLoadCount;
+        let currentBranch: string;
+        if (cwd === siblingCwd) {
+          currentBranch = loadCount === 1 ? "stale-sibling" : "fresh-sibling";
+        } else {
+          currentBranch = loadCount === 1 ? "source-before-mutation" : "source-after-mutation";
+        }
+        return {
+          ...createCheckoutSnapshotFacts(cwd),
+          currentBranch,
+          gitCommonDir: commonDir,
+          remoteUrl: null,
+        };
+      },
+    );
+    const getCheckoutStatus = vi.fn(
+      async (cwd: string, context?: import("../utils/checkout-git.js").CheckoutContext) =>
+        createCheckoutStatus(cwd, {
+          currentBranch: context?.facts?.isGit ? context.facts.currentBranch : null,
+          remoteUrl: null,
+        }),
+    );
+    const service = createService({
+      getCheckoutSnapshotFacts,
+      getCheckoutStatus,
+      resolveAbsoluteGitDir: vi.fn(async () => commonDir),
+    });
+    const mutation = createGitMutationService({
+      workspaceGitService: service,
+      logger: createLogger() as never,
+    });
+
+    await service.getSnapshot(REPO_CWD, { includeForge: false });
+    service.invalidateRepositoryFacts(REPO_CWD);
+    const siblingListener = vi.fn();
+    const subscription = service.registerWorkspace({ cwd: siblingCwd }, siblingListener);
+    await vi.waitFor(() => expect(loadDefaultBranch).toHaveBeenCalledTimes(2));
+    const staleSiblingRefresh = service.getSnapshot(siblingCwd, { includeForge: false });
+
+    await mutation.notifyGitMutation(REPO_CWD, "commit-changes");
+    expect(service.peekSnapshot(REPO_CWD)?.git.currentBranch).toBe("source-after-mutation");
+
+    staleSiblingFactLoad.resolve("main");
+    await staleSiblingRefresh;
+    await flushPromises();
+
+    expect(service.peekSnapshot(siblingCwd)).toBeNull();
+    expect(siblingListener).not.toHaveBeenCalled();
+
+    await service.getSnapshot(siblingCwd, {
+      force: true,
+      includeForge: false,
+      reason: "valid-sibling-refresh",
+    });
+
+    expect(service.peekSnapshot(siblingCwd)?.git.currentBranch).toBe("fresh-sibling");
+    expect(service.peekSnapshot(REPO_CWD)?.git.currentBranch).toBe("source-after-mutation");
+    expect(siblingListener).toHaveBeenCalledTimes(1);
+    expect(siblingListener.mock.calls[0]?.[0].git.currentBranch).toBe("fresh-sibling");
+    expect(loadDefaultBranch).toHaveBeenCalledTimes(3);
+    expect(getCheckoutSnapshotFacts.mock.calls.filter(([cwd]) => cwd === REPO_CWD)).toHaveLength(2);
+    expect(getCheckoutSnapshotFacts.mock.calls.filter(([cwd]) => cwd === siblingCwd)).toHaveLength(
+      2,
+    );
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
   test("invalidation queues a fresh pass behind an already-forced refresh", async () => {
     const commonDir = join(REPO_CWD, ".git");
     const staleLoad = createDeferred<string>();
