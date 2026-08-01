@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.Person
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -97,13 +98,26 @@ internal class BackgroundCallService : Service() {
             return
         }
 
+        val notificationManager = getSystemService(NotificationManager::class.java)
+
+        // Once a channel exists the user owns its importance, and
+        // `createNotificationChannel` silently declines to raise it. Moving from
+        // IMPORTANCE_LOW to DEFAULT therefore needs a new channel id, and the old
+        // one has to go or it lingers in settings as a dead entry.
+        notificationManager.deleteNotificationChannel(LEGACY_NOTIFICATION_CHANNEL_ID)
+
         val channel = NotificationChannel(
             NOTIFICATION_CHANNEL_ID,
             "Live Voice calls",
-            NotificationManager.IMPORTANCE_LOW,
+            NotificationManager.IMPORTANCE_DEFAULT,
         )
         channel.description = "Keeps an active Live Voice call connected"
-        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        // DEFAULT is what earns CallStyle its full treatment, but it also makes a
+        // channel alert by default. The app already plays its own connect cue, so
+        // the notification stays silent rather than beeping over it.
+        channel.setSound(null, null)
+        channel.enableVibration(false)
+        notificationManager.createNotificationChannel(channel)
     }
 
     private fun createNotification(): Notification {
@@ -126,26 +140,40 @@ internal class BackgroundCallService : Service() {
             builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
         }
 
-        builder.addAction(
-            buildAction(
-                icon = if (isMuted) {
-                    android.R.drawable.ic_lock_silent_mode_off
-                } else {
-                    android.R.drawable.ic_lock_silent_mode
-                },
-                title = if (isMuted) "Unmute" else "Mute",
-                action = ACTION_TOGGLE_MUTE,
-                requestCode = REQUEST_TOGGLE_MUTE,
-            ),
+        val muteAction = buildAction(
+            icon = if (isMuted) {
+                android.R.drawable.ic_lock_silent_mode_off
+            } else {
+                android.R.drawable.ic_lock_silent_mode
+            },
+            title = if (isMuted) "Unmute" else "Mute",
+            action = ACTION_TOGGLE_MUTE,
+            requestCode = REQUEST_TOGGLE_MUTE,
         )
-        builder.addAction(
-            buildAction(
-                icon = android.R.drawable.ic_menu_close_clear_cancel,
-                title = "End call",
-                action = ACTION_END,
-                requestCode = REQUEST_END,
-            ),
-        )
+        val hangUpIntent = servicePendingIntent(ACTION_END, REQUEST_END)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // CallStyle is what a watch and the lock screen recognize as a call. It
+            // supplies its own hang-up button, so only mute is added; CallStyle
+            // renders custom actions alongside the one it owns.
+            builder.setStyle(
+                Notification.CallStyle.forOngoingCall(
+                    Person.Builder().setName(CALLER_NAME).setImportant(true).build(),
+                    hangUpIntent,
+                ),
+            )
+            builder.addAction(muteAction)
+        } else {
+            builder.addAction(muteAction)
+            builder.addAction(
+                buildAction(
+                    icon = android.R.drawable.ic_menu_close_clear_cancel,
+                    title = "End call",
+                    action = ACTION_END,
+                    requestCode = REQUEST_END,
+                ),
+            )
+        }
 
         return builder
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
@@ -178,15 +206,18 @@ internal class BackgroundCallService : Service() {
         return SystemClock.elapsedRealtime() - callStartedAtRealtimeMs
     }
 
+    private fun servicePendingIntent(action: String, requestCode: Int): PendingIntent {
+        val intent = Intent(this, BackgroundCallService::class.java).setAction(action)
+        return PendingIntent.getService(this, requestCode, intent, pendingIntentFlags())
+    }
+
     private fun buildAction(
         icon: Int,
         title: String,
         action: String,
         requestCode: Int,
     ): Notification.Action {
-        val intent = Intent(this, BackgroundCallService::class.java).setAction(action)
-        val pendingIntent =
-            PendingIntent.getService(this, requestCode, intent, pendingIntentFlags())
+        val pendingIntent = servicePendingIntent(action, requestCode)
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             Notification.Action.Builder(
                 Icon.createWithResource(this, icon),
@@ -208,8 +239,13 @@ internal class BackgroundCallService : Service() {
     }
 
     internal companion object {
-        const val NOTIFICATION_CHANNEL_ID = "paseo_live_voice_call"
+        /** Superseded by the v2 channel when the importance had to be raised. */
+        const val LEGACY_NOTIFICATION_CHANNEL_ID = "paseo_live_voice_call"
+        const val NOTIFICATION_CHANNEL_ID = "paseo_live_voice_call_v2"
         const val NOTIFICATION_ID = 7102
+
+        /** CallStyle renders this as who the call is with. */
+        const val CALLER_NAME = "Live Voice"
         const val EXTRA_IS_MUTED = "sh.paseo.backgroundcall.IS_MUTED"
         const val ACTION_TOGGLE_MUTE = "sh.paseo.backgroundcall.TOGGLE_MUTE"
         const val ACTION_END = "sh.paseo.backgroundcall.END"
