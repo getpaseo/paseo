@@ -2,7 +2,7 @@ import { beforeEach, afterEach, describe, expect, test } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync, existsSync, realpathSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
-import { execSync } from "child_process";
+import { execFileSync, execSync, spawnSync } from "child_process";
 
 import {
   createDaemonTestContext,
@@ -46,21 +46,68 @@ function createLegacyWorktreeForTest(
 
 const CODEX_TEST_MODEL = "gpt-5.4-mini";
 const CODEX_TEST_THINKING_OPTION_ID = "low";
+// Keep this checkout-ship-specific: broad real/e2e flags must never enable repository mutation.
+const CHECKOUT_SHIP_LIVE_GITHUB_E2E = "PASEO_CHECKOUT_SHIP_LIVE_GITHUB_E2E";
+
+interface GitHubCliAuthStatus {
+  authenticated: boolean;
+  canDeleteRepositories: boolean;
+}
+
+interface GitHubCliCommandResult {
+  succeeded: boolean;
+  output: string;
+}
+
+type GitHubCliCommandRunner = (args: string[]) => GitHubCliCommandResult;
 
 function tmpCwd(prefix: string): string {
   return realpathSync(mkdtempSync(path.join(tmpdir(), prefix)));
 }
 
-function hasGitHubCliAuth(): boolean {
-  try {
-    execSync("gh auth status -h github.com", { stdio: "pipe" });
-    return true;
-  } catch {
-    return false;
-  }
+function getGitHubCliAuthStatus(): GitHubCliAuthStatus {
+  const result = spawnSync("gh", ["auth", "status", "-h", "github.com"], {
+    encoding: "utf8",
+    stdio: "pipe",
+  });
+  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+
+  return {
+    authenticated: result.status === 0,
+    canDeleteRepositories: /token[- ]scopes?:[^\n]*\bdelete_repo\b/i.test(output),
+  };
 }
 
-const testWithGitHubCliAuth = hasGitHubCliAuth() ? test : test.skip;
+function shouldRunCheckoutShipLiveGitHubMutation(
+  explicitOptIn: string | undefined,
+  authStatus: GitHubCliAuthStatus,
+): boolean {
+  return explicitOptIn === "1" && authStatus.authenticated && authStatus.canDeleteRepositories;
+}
+
+function assertCheckoutShipLiveGitHubMutationEnabled(): void {
+  const explicitOptIn = process.env[CHECKOUT_SHIP_LIVE_GITHUB_E2E];
+  const authStatus = getGitHubCliAuthStatus();
+
+  if (shouldRunCheckoutShipLiveGitHubMutation(explicitOptIn, authStatus)) {
+    return;
+  }
+
+  const missingRequirements = [
+    explicitOptIn === "1" ? null : `${CHECKOUT_SHIP_LIVE_GITHUB_E2E}=1`,
+    authStatus.authenticated ? null : "authenticated gh CLI access to github.com",
+    authStatus.canDeleteRepositories ? null : "the delete_repo scope required for cleanup",
+  ].filter((requirement): requirement is string => requirement !== null);
+
+  throw new Error(
+    `Checkout ship live GitHub mutation is disabled; missing ${missingRequirements.join(
+      ", ",
+    )}. No remote repository was created.`,
+  );
+}
+
+const testWithExplicitLiveGitHubOptIn =
+  process.env[CHECKOUT_SHIP_LIVE_GITHUB_E2E] === "1" ? test : test.skip;
 
 function initGitRepo(repoDir: string): void {
   execSync("git init -b main", { cwd: repoDir, stdio: "pipe" });
@@ -94,16 +141,107 @@ function getGhToken(): string {
   return execSync("gh auth token", { stdio: "pipe" }).toString().trim();
 }
 
-function deleteRepoBestEffort(fullName: string | null): void {
+function formatCommandError(error: unknown): string {
+  if (error && typeof error === "object") {
+    const commandError = error as {
+      stderr?: Buffer | string;
+      stdout?: Buffer | string;
+      message?: string;
+    };
+    const output = [commandError.stderr, commandError.stdout]
+      .map((value) => value?.toString().trim())
+      .filter(Boolean)
+      .join("\n");
+
+    return output || commandError.message || String(error);
+  }
+
+  return String(error);
+}
+
+function runGitHubCli(args: string[]): GitHubCliCommandResult {
+  try {
+    const output = execFileSync("gh", args, { stdio: "pipe" }).toString().trim();
+    return { succeeded: true, output };
+  } catch (error) {
+    return { succeeded: false, output: formatCommandError(error) };
+  }
+}
+
+function deleteRepoAndVerifyAbsent(
+  fullName: string | null,
+  runGitHubCommand: GitHubCliCommandRunner = runGitHubCli,
+): void {
   if (!fullName) {
     return;
   }
-  try {
-    execSync(`gh repo delete ${fullName} --yes`, { stdio: "pipe" });
-  } catch {
-    // best-effort cleanup
+
+  const deleteResult = runGitHubCommand(["repo", "delete", fullName, "--yes"]);
+  const readbackResult = runGitHubCommand(["api", `repos/${fullName}`]);
+  const exactRepoIsAbsent =
+    !readbackResult.succeeded && /\bHTTP 404\b/i.test(readbackResult.output);
+
+  if (exactRepoIsAbsent) {
+    return;
   }
+
+  const deleteSummary = deleteResult.succeeded
+    ? "gh repo delete reported success"
+    : `gh repo delete failed: ${deleteResult.output}`;
+
+  if (readbackResult.succeeded) {
+    throw new Error(
+      `Failed to clean up temporary GitHub repo ${fullName}: the exact repo remains readable after cleanup; ${deleteSummary}.`,
+    );
+  }
+
+  throw new Error(
+    `Failed to verify cleanup of temporary GitHub repo ${fullName}: the exact repo could not be read back to confirm HTTP 404; ${deleteSummary}; readback failed: ${readbackResult.output}.`,
+  );
 }
+
+describe("checkout ship live GitHub mutation safety", () => {
+  test("logged-in gh alone cannot enable live GitHub mutation", () => {
+    const fullyAuthorizedGh: GitHubCliAuthStatus = {
+      authenticated: true,
+      canDeleteRepositories: true,
+    };
+
+    expect(shouldRunCheckoutShipLiveGitHubMutation(undefined, fullyAuthorizedGh)).toBe(false);
+    expect(shouldRunCheckoutShipLiveGitHubMutation("0", fullyAuthorizedGh)).toBe(false);
+    expect(shouldRunCheckoutShipLiveGitHubMutation("true", fullyAuthorizedGh)).toBe(false);
+    expect(shouldRunCheckoutShipLiveGitHubMutation("1", fullyAuthorizedGh)).toBe(true);
+  });
+
+  test("cleanup failure is surfaced when the exact test repo remains readable", () => {
+    const calls: string[][] = [];
+    const runGitHubCommand: GitHubCliCommandRunner = (args) => {
+      calls.push(args);
+      return args[0] === "repo"
+        ? { succeeded: false, output: "HTTP 403: delete_repo scope required" }
+        : { succeeded: true, output: '{"full_name":"octocat/checkout-ship-test"}' };
+    };
+
+    expect(() => deleteRepoAndVerifyAbsent("octocat/checkout-ship-test", runGitHubCommand)).toThrow(
+      "Failed to clean up temporary GitHub repo octocat/checkout-ship-test: the exact repo remains readable",
+    );
+    expect(calls).toEqual([
+      ["repo", "delete", "octocat/checkout-ship-test", "--yes"],
+      ["api", "repos/octocat/checkout-ship-test"],
+    ]);
+  });
+
+  test("cleanup readback failure is surfaced instead of being treated as deletion proof", () => {
+    const runGitHubCommand: GitHubCliCommandRunner = (args) =>
+      args[0] === "repo"
+        ? { succeeded: true, output: "" }
+        : { succeeded: false, output: "network unavailable" };
+
+    expect(() => deleteRepoAndVerifyAbsent("octocat/checkout-ship-test", runGitHubCommand)).toThrow(
+      "Failed to verify cleanup of temporary GitHub repo octocat/checkout-ship-test: the exact repo could not be read back to confirm HTTP 404",
+    );
+  });
+});
 
 describe("daemon checkout ship loop", () => {
   let ctx: DaemonTestContext;
@@ -116,12 +254,16 @@ describe("daemon checkout ship loop", () => {
     await ctx.cleanup();
   }, 60000);
 
-  testWithGitHubCliAuth(
+  testWithExplicitLiveGitHubOptIn(
     "runs the full checkout ship loop via checkout RPCs",
     async () => {
+      assertCheckoutShipLiveGitHubMutationEnabled();
+
       const repoDir = tmpCwd("checkout-ship-");
       let repoFullName: string | null = null;
       let agentId: string | null = null;
+      let testError: unknown;
+      let repoCleanupError: unknown;
 
       try {
         initGitRepo(repoDir);
@@ -267,12 +409,31 @@ describe("daemon checkout ship loop", () => {
 
         const remainingAgents = await ctx.client.fetchAgents();
         expect(remainingAgents.entries.some((entry) => entry.agent.id === agent.id)).toBe(false);
+      } catch (error) {
+        testError = error;
       } finally {
         if (agentId) {
           await ctx.client.deleteAgent(agentId).catch(() => undefined);
         }
-        deleteRepoBestEffort(repoFullName);
+        try {
+          deleteRepoAndVerifyAbsent(repoFullName);
+        } catch (error) {
+          repoCleanupError = error;
+        }
         rmSync(repoDir, { recursive: true, force: true });
+      }
+
+      if (testError && repoCleanupError) {
+        throw new AggregateError(
+          [testError, repoCleanupError],
+          "Checkout ship live GitHub test failed and its temporary repository cleanup also failed",
+        );
+      }
+      if (repoCleanupError) {
+        throw repoCleanupError;
+      }
+      if (testError) {
+        throw testError;
       }
     },
     180000,
