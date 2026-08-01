@@ -14,6 +14,7 @@ export interface PendingForegroundRun {
   token: string;
   kind: "foreground";
   turnId: string | null;
+  pendingTerminalEvents: AgentStreamEvent[];
   started: boolean;
   settled: boolean;
   settledPromise: Promise<void>;
@@ -59,6 +60,32 @@ export class AgentRunState {
     return this.runs.get(agentId) ?? null;
   }
 
+  isPendingRun(agentId: string, token: string): boolean {
+    const run = this.runs.get(agentId);
+    return run?.kind === "foreground" && run.token === token;
+  }
+
+  bindPendingRun(agentId: string, token: string, turnId: string): AgentStreamEvent[] | null {
+    const run = this.runs.get(agentId);
+    if (run?.kind !== "foreground" || run.token !== token) {
+      return null;
+    }
+
+    run.started = true;
+    run.turnId = turnId;
+    return run.pendingTerminalEvents.splice(0);
+  }
+
+  bufferPendingTerminalEvent(agentId: string, event: AgentStreamEvent): boolean {
+    const run = this.runs.get(agentId);
+    if (run?.kind !== "foreground" || run.turnId !== null) {
+      return false;
+    }
+
+    run.pendingTerminalEvents.push(event);
+    return true;
+  }
+
   hasRun(agentId: string): boolean {
     return this.runs.has(agentId);
   }
@@ -94,13 +121,14 @@ export class AgentRunState {
     this.clearRun(agentId, run);
   }
 
-  settleForegroundRun(agentId: string, token: string): void {
+  settleForegroundRun(agentId: string, token: string): boolean {
     const run = this.runs.get(agentId);
     if (run?.kind !== "foreground" || run.token !== token) {
-      return;
+      return false;
     }
 
     this.clearRun(agentId, run);
+    return true;
   }
 
   clearAgentRun(agentId: string): void {
@@ -259,12 +287,18 @@ export class ForegroundTurnStream {
 }
 
 function createPendingForegroundRun(): PendingForegroundRun {
-  return createTrackedRun({ kind: "foreground", turnId: null, started: false });
+  return createTrackedRun({
+    kind: "foreground",
+    turnId: null,
+    pendingTerminalEvents: [],
+    started: false,
+  });
 }
 
 function createTrackedRun(input: {
   kind: "foreground";
   turnId: null;
+  pendingTerminalEvents: AgentStreamEvent[];
   started: false;
 }): PendingForegroundRun;
 function createTrackedRun(input: {
@@ -274,7 +308,12 @@ function createTrackedRun(input: {
 }): AutonomousAgentRun;
 function createTrackedRun(
   input:
-    | { kind: "foreground"; turnId: null; started: false }
+    | {
+        kind: "foreground";
+        turnId: null;
+        pendingTerminalEvents: AgentStreamEvent[];
+        started: false;
+      }
     | { kind: "autonomous"; turnId: string | null; started: true },
 ): TrackedAgentRun {
   let resolveSettled!: () => void;

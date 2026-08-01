@@ -2116,10 +2116,16 @@ export class AgentManager {
     const streamForwarder = async function* streamForwarder(this: AgentManager) {
       let turnId: string;
       let turnStream: ReturnType<AgentRunState["createTurnStream"]> | null = null;
+      if (!this.runs.isPendingRun(agentId, pendingRun.token)) {
+        return;
+      }
       try {
         const result = await agent.session.startTurn(prompt, options);
         turnId = result.turnId;
       } catch (error) {
+        if (!this.runs.isPendingRun(agentId, pendingRun.token)) {
+          return;
+        }
         agent.pendingReplacement = false;
         const errorMsg = error instanceof Error ? error.message : "Failed to start turn";
         await this.handleStreamEvent(agent, {
@@ -2132,8 +2138,11 @@ export class AgentManager {
         throw error;
       }
 
-      pendingRun.started = true;
-      pendingRun.turnId = turnId;
+      const pendingTerminalEvents = this.runs.bindPendingRun(agentId, pendingRun.token, turnId);
+      if (pendingTerminalEvents === null) {
+        this.runs.rememberFinalizedTurn(agent, turnId);
+        return;
+      }
       if (isReplacement) {
         agent.pendingReplacement = false;
       }
@@ -2156,6 +2165,10 @@ export class AgentManager {
         },
         "agent.manager.stream.start",
       );
+
+      for (const terminalEvent of pendingTerminalEvents) {
+        await this.dispatchSessionEvent(agent, terminalEvent);
+      }
 
       try {
         for await (const event of turnStream.events(isTurnTerminalEvent)) {
@@ -2401,6 +2414,17 @@ export class AgentManager {
     }
 
     const interruptAcknowledged = await this.interruptSession(agent.session, agentId);
+    if (
+      interruptAcknowledged &&
+      run.kind === "foreground" &&
+      run.turnId === null &&
+      this.runs.settleForegroundRun(agentId, run.token)
+    ) {
+      agent.lastError = undefined;
+      agent.lastTurnOutcome = "canceled";
+      this.endMaterialProgressContinuation(agent);
+      this.finalizeForegroundTurn(agent);
+    }
     const settlement = await this.waitWithTimeout({
       operation: run.settledPromise,
       timeoutMs: interruptAcknowledged
@@ -3145,6 +3169,9 @@ export class AgentManager {
       this.dispatch({ type: "provider_subagent", event: update });
       return;
     }
+    if (isTurnTerminalEvent(event) && this.runs.bufferPendingTerminalEvent(agent.id, event)) {
+      return;
+    }
     const turnId = getAgentStreamEventTurnId(event);
     const matchingWaiters = this.runs.getMatchingWaiters(agent, turnId);
     this.logger.trace(
@@ -3286,7 +3313,7 @@ export class AgentManager {
           return null;
         }
         const combinedRows = [...olderDurableRows, ...livePage.rows];
-        return currentContinuationRows(combinedRows);
+        return selectMaterialProgressRows(combinedRows, continuationBoundarySeq, true);
       }
 
       const durableRows = await this.resolveDurableMaterialProgressRows(
