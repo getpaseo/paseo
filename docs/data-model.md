@@ -70,6 +70,11 @@ $PASEO_HOME/
 │   └── managed-processes/
 │       └── {recordId}.json              # Helper processes owned by Paseo; reconciled on daemon bootstrap
 └── push-tokens.json                     # Expo push notification tokens
+    └── ui-state/                            # Cross-device ephemeral UI state (composer/review drafts)
+        ├── composer/
+        │   └── {sanitized-key}.json
+        └── review/
+            └── {sanitized-key}.json
 ```
 
 The `agents/{sanitized-cwd}/` directory name is derived from the agent's `cwd` by stripping the filesystem root and replacing path separators with `-` (Windows drive letters become a `C-` style prefix). Persistent server stores write atomically by writing a temp file in the target directory and then renaming it into place.
