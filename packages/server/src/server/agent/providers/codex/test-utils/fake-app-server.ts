@@ -51,7 +51,7 @@ export interface FakeCodexAppServer {
   waitForTurnStart(): Promise<JsonObject>;
   nextResponse(): Promise<string>;
   startsTurn(params: { threadId: string; turnId?: string }): void;
-  completeTurn(params?: { threadId?: string }): void;
+  completeTurn(params?: { threadId?: string; turnId?: string }): void;
   startsSubAgent(params: {
     callId: string;
     threadId: string;
@@ -114,6 +114,7 @@ export function createFakeCodexAppServer(
 ): FakeCodexAppServer {
   const child = createCodexAppServerChildProcess();
   const recordedRollbacks: JsonObject[] = [];
+  const activeTurnIdByThreadId = new Map<string, string>();
   const responseHandlers: Record<string, FakeCodexAppServerHandler> = {
     initialize: () => ({}),
     "collaborationMode/list": () => ({ data: [] }),
@@ -309,21 +310,31 @@ export function createFakeCodexAppServer(
       });
     },
     startsTurn(params) {
+      const turnId = params.turnId ?? `turn-${params.threadId}`;
+      activeTurnIdByThreadId.set(params.threadId, turnId);
       child.stdout.write(
         `${JSON.stringify({
           method: "turn/started",
           params: {
             threadId: params.threadId,
-            turn: { id: params.turnId ?? `turn-${params.threadId}` },
+            turn: { id: turnId },
           },
         })}\n`,
       );
     },
     completeTurn(params = {}) {
+      const threadId = params.threadId ?? "thread-1";
+      const turnId = params.turnId ?? activeTurnIdByThreadId.get(threadId);
       child.stdout.write(
         `${JSON.stringify({
           method: "turn/completed",
-          params: { threadId: params.threadId ?? "thread-1", turn: { status: "completed" } },
+          params: {
+            threadId,
+            turn: {
+              ...(turnId ? { id: turnId } : {}),
+              status: "completed",
+            },
+          },
         })}\n`,
       );
     },

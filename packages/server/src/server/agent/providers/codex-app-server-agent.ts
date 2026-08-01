@@ -1988,6 +1988,7 @@ const TurnCompletedNotificationSchema = z
     threadId: z.string().optional(),
     turn: z
       .object({
+        id: z.string().optional(),
         status: z.string(),
         error: z
           .object({
@@ -2263,6 +2264,7 @@ type ParsedCodexNotification =
   | { kind: "turn_started"; turnId: string; threadId: string | null }
   | {
       kind: "turn_completed";
+      turnId: string | null;
       status: string;
       errorMessage: string | null;
       threadId: string | null;
@@ -2413,6 +2415,7 @@ const CodexNotificationSchema = z.union([
     .transform(
       ({ params }): ParsedCodexNotification => ({
         kind: "turn_completed",
+        turnId: params.turn.id ?? null,
         status: params.turn.status,
         errorMessage: params.turn.error?.message ?? null,
         threadId: params.threadId ?? null,
@@ -2833,6 +2836,7 @@ const CodexNotificationSchema = z.union([
     .transform(
       ({ params }): ParsedCodexNotification => ({
         kind: "turn_completed",
+        turnId: null,
         status: "interrupted",
         errorMessage: null,
         threadId: getCodexEventThreadId(params),
@@ -2853,6 +2857,7 @@ const CodexNotificationSchema = z.union([
     .transform(
       ({ params }): ParsedCodexNotification => ({
         kind: "turn_completed",
+        turnId: null,
         status: "completed",
         errorMessage: null,
         threadId: getCodexEventThreadId(params),
@@ -3112,6 +3117,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
+  private readonly managerTurnIdByNativeTurnId = new Map<string, string>();
   private activeClientMessageId: string | null = null;
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
   private serviceTier: "fast" | null = null;
@@ -4285,6 +4291,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.pendingPermissions.clear();
     this.resolvedPermissionRequests.clear();
     this.pendingSubAgentNotificationsByThreadId.clear();
+    this.managerTurnIdByNativeTurnId.clear();
     this.subscribers.clear();
     this.activeForegroundTurnId = null;
     this.activeClientMessageId = null;
@@ -4587,7 +4594,12 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private notifySubscribers(event: AgentStreamEvent): void {
-    const turnId = this.activeForegroundTurnId;
+    const eventTurnId = getAgentStreamEventTurnId(event);
+    const terminal =
+      event.type === "turn_completed" ||
+      event.type === "turn_failed" ||
+      event.type === "turn_canceled";
+    const turnId = eventTurnId ?? (terminal ? null : this.activeForegroundTurnId);
     const tagged = turnId ? { ...event, turnId } : event;
     this.logger.trace(
       {
@@ -5300,8 +5312,10 @@ export class CodexAppServerAgentSession implements AgentSession {
       return;
     }
     this.currentTurnId = parsed.turnId;
+    const managerTurnId = this.activeForegroundTurnId ?? parsed.turnId;
+    this.managerTurnIdByNativeTurnId.set(parsed.turnId, managerTurnId);
     this.resetTurnTrackingState();
-    this.emitEvent({ type: "turn_started", provider: CODEX_PROVIDER });
+    this.emitEvent({ type: "turn_started", provider: CODEX_PROVIDER, turnId: managerTurnId });
   }
 
   private handleTurnCompletedNotification(
@@ -5318,24 +5332,37 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.emitSubAgentActivityUpdate(subAgentCallId, status);
       return;
     }
+    const managerTurnId = parsed.turnId
+      ? (this.managerTurnIdByNativeTurnId.get(parsed.turnId) ?? parsed.turnId)
+      : null;
+    const turnIdentity = managerTurnId ? { turnId: managerTurnId } : {};
+    const completesCurrentTurn = parsed.turnId === null || parsed.turnId === this.currentTurnId;
     if (parsed.status === "failed") {
       this.emitEvent({
         type: "turn_failed",
         provider: CODEX_PROVIDER,
         error: parsed.errorMessage ?? "Codex turn failed",
+        ...turnIdentity,
       });
     } else if (parsed.status === "interrupted") {
-      this.emitEvent({ type: "turn_canceled", provider: CODEX_PROVIDER, reason: "interrupted" });
+      this.emitEvent({
+        type: "turn_canceled",
+        provider: CODEX_PROVIDER,
+        reason: "interrupted",
+        ...turnIdentity,
+      });
     } else {
-      if (this.planModeEnabled && this.latestPlanResult?.text) {
+      if (completesCurrentTurn && this.planModeEnabled && this.latestPlanResult?.text) {
         this.emitSyntheticPlanApprovalRequest(this.latestPlanResult.text);
       }
       this.emitEvent({
         type: "turn_completed",
         provider: CODEX_PROVIDER,
         usage: this.latestUsage,
+        ...turnIdentity,
       });
     }
+    if (!completesCurrentTurn) return;
     this.activeForegroundTurnId = null;
     this.activeClientMessageId = null;
     this.pendingSubAgentNotificationsByThreadId.clear();

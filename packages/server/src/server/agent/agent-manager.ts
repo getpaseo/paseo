@@ -153,15 +153,45 @@ function currentContinuationRows(rows: readonly AgentTimelineRow[]): AgentTimeli
   return [...rows];
 }
 
+function materialProgressScanReachedStart(
+  rows: readonly AgentTimelineRow[],
+  continuationBoundarySeq: number | null,
+): boolean {
+  if (continuationBoundarySeq === null) {
+    return rows.some((row) => row.item.type === "user_message");
+  }
+  return (rows[0]?.seq ?? Number.POSITIVE_INFINITY) <= continuationBoundarySeq;
+}
+
+function selectMaterialProgressRows(
+  rows: readonly AgentTimelineRow[],
+  continuationBoundarySeq: number | null,
+  reachedStart: boolean,
+): AgentTimelineRow[] | null {
+  if (continuationBoundarySeq !== null) {
+    if (!reachedStart) return null;
+    return currentContinuationRows(rows);
+  }
+  if (!reachedStart && rows[0]?.seq !== 1) return null;
+  return currentContinuationRows(rows);
+}
+
 async function pageMaterialProgressRows(
   initialPage: AgentTimelineFetchResult,
   fetchOlder: FetchOlderMaterialProgressRows,
+  continuationBoundarySeq: number | null,
 ): Promise<AgentTimelineRow[] | null> {
   let page = initialPage;
   const pageRows = [page.rows];
   let rowCount = page.rows.length;
-  let hasUserMessage = page.rows.some((row) => row.item.type === "user_message");
-  while (page.hasOlder && !hasUserMessage) {
+  if (continuationBoundarySeq !== null) {
+    if (continuationBoundarySeq > page.window.nextSeq) return null;
+    if (continuationBoundarySeq === page.window.nextSeq) {
+      return currentContinuationRows(page.rows);
+    }
+  }
+  let reachedStart = materialProgressScanReachedStart(page.rows, continuationBoundarySeq);
+  while (page.hasOlder && !reachedStart) {
     const firstRow = pageRows[0]?.[0];
     const remainingCapacity = MATERIAL_PROGRESS_MAX_SCAN_ROWS - rowCount;
     if (!firstRow || remainingCapacity <= 0) return null;
@@ -182,14 +212,10 @@ async function pageMaterialProgressRows(
     }
     pageRows.unshift(olderPage.rows);
     rowCount += olderPage.rows.length;
-    hasUserMessage = olderPage.rows.some((row) => row.item.type === "user_message");
+    reachedStart = materialProgressScanReachedStart(olderPage.rows, continuationBoundarySeq);
     page = olderPage;
   }
-  const rows = pageRows.flat();
-  if (!rows.some((row) => row.item.type === "user_message") && rows[0]?.seq !== 1) {
-    return null;
-  }
-  return currentContinuationRows(rows);
+  return selectMaterialProgressRows(pageRows.flat(), continuationBoundarySeq, reachedStart);
 }
 
 function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
@@ -1048,19 +1074,19 @@ export class AgentManager {
 
   async getMaterialProgressSnapshot(id: string, limit = 1_000): Promise<MaterialProgressSnapshot> {
     const live = this.agents.get(id);
-    const [rows, record] = await Promise.all([
-      this.resolveMaterialProgressRows(id, {
-        limit,
-        historyPrimed: live?.historyPrimed,
-      }),
-      this.registry?.get(id),
-    ]);
+    const record = await this.registry?.get(id);
+    const continuationBoundarySeq = live
+      ? (live.materialProgressContinuationBoundarySeq ?? null)
+      : (record?.materialProgressContinuationBoundarySeq ?? null);
+    const rows = await this.resolveMaterialProgressRows(id, {
+      limit,
+      historyPrimed: live?.historyPrimed,
+      continuationBoundarySeq,
+    });
     return {
       rows,
       turnOutcome: live ? (live.lastTurnOutcome ?? null) : (record?.lastTurnOutcome ?? null),
-      continuationBoundarySeq: live
-        ? (live.materialProgressContinuationBoundarySeq ?? null)
-        : (record?.materialProgressContinuationBoundarySeq ?? null),
+      continuationBoundarySeq,
       persisted: record?.materialProgress ?? null,
     };
   }
@@ -3214,6 +3240,7 @@ export class AgentManager {
     const rows = await this.resolveMaterialProgressRows(agent.id, {
       limit: MATERIAL_PROGRESS_PAGE_SIZE,
       historyPrimed: agent.historyPrimed,
+      continuationBoundarySeq: agent.materialProgressContinuationBoundarySeq ?? null,
     });
     // Omitting the override makes AgentStorage preserve the last trustworthy classification.
     if (rows === null) return undefined;
@@ -3226,18 +3253,29 @@ export class AgentManager {
 
   private async resolveMaterialProgressRows(
     agentId: string,
-    options: { limit: number; historyPrimed?: boolean },
+    options: {
+      limit: number;
+      historyPrimed?: boolean;
+      continuationBoundarySeq: number | null;
+    },
   ): Promise<AgentTimelineRow[] | null> {
     const limit = Math.max(1, Math.min(Math.floor(options.limit), MATERIAL_PROGRESS_PAGE_SIZE));
+    const { continuationBoundarySeq } = options;
     if (this.timelineStore.has(agentId)) {
       const livePage = this.timelineStore.fetch(agentId, { direction: "tail", limit });
       if (livePage.rows.length > 0) {
-        const liveRows = await pageMaterialProgressRows(livePage, async (fetchOptions) =>
-          this.timelineStore.fetch(agentId, fetchOptions),
+        const liveRows = await pageMaterialProgressRows(
+          livePage,
+          async (fetchOptions) => this.timelineStore.fetch(agentId, fetchOptions),
+          continuationBoundarySeq,
         );
         if (liveRows !== null) return liveRows;
 
-        const durableRows = await this.resolveDurableMaterialProgressRows(agentId, limit);
+        const durableRows = await this.resolveDurableMaterialProgressRows(
+          agentId,
+          limit,
+          continuationBoundarySeq,
+        );
         if (durableRows === null) return null;
         const firstLiveSeq = livePage.rows[0]?.seq;
         const olderDurableRows = durableRows.filter((row) => row.seq < (firstLiveSeq ?? 0));
@@ -3247,21 +3285,27 @@ export class AgentManager {
         ) {
           return null;
         }
-        return currentContinuationRows([...olderDurableRows, ...livePage.rows]);
+        const combinedRows = [...olderDurableRows, ...livePage.rows];
+        return currentContinuationRows(combinedRows);
       }
 
-      const durableRows = await this.resolveDurableMaterialProgressRows(agentId, limit);
+      const durableRows = await this.resolveDurableMaterialProgressRows(
+        agentId,
+        limit,
+        continuationBoundarySeq,
+      );
       if (durableRows && durableRows.length > 0) return durableRows;
       if (livePage.window.nextSeq > 1 || options.historyPrimed === false) return null;
       return [];
     }
 
-    return await this.resolveDurableMaterialProgressRows(agentId, limit);
+    return await this.resolveDurableMaterialProgressRows(agentId, limit, continuationBoundarySeq);
   }
 
   private async resolveDurableMaterialProgressRows(
     agentId: string,
     limit: number,
+    continuationBoundarySeq: number | null,
   ): Promise<AgentTimelineRow[] | null> {
     const durableTimelineStore = this.durableTimelineStore;
     if (!durableTimelineStore) return null;
@@ -3270,8 +3314,10 @@ export class AgentManager {
         direction: "tail",
         limit,
       });
-      return await pageMaterialProgressRows(durablePage, (fetchOptions) =>
-        durableTimelineStore.fetchCommitted(agentId, fetchOptions),
+      return await pageMaterialProgressRows(
+        durablePage,
+        (fetchOptions) => durableTimelineStore.fetchCommitted(agentId, fetchOptions),
+        continuationBoundarySeq,
       );
     } catch (error) {
       this.logger.debug(

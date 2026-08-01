@@ -47,6 +47,8 @@ import type {
   AgentTimelineRow,
   AgentTimelineStore,
 } from "./agent-timeline-store-types.js";
+import { CodexAppServerAgentSession } from "./providers/codex-app-server-agent.js";
+import { createFakeCodexAppServer } from "./providers/codex/test-utils/fake-app-server.js";
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -4166,6 +4168,92 @@ test("material progress pages beyond the durable 1000-row tail to the current co
   }
 });
 
+test("material progress stops at a known continuation boundary in a tail without a new user row", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-material-progress-known-boundary-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const durableTimelineStore = new TestDurableTimelineStore();
+  const agentId = "00000000-0000-4000-8000-000000000171";
+  const firstManager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const created = await firstManager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await firstManager.closeAgent(created.id);
+
+    const durableRows: AgentTimelineRow[] = [
+      timelineRow(1, { type: "user_message", text: "previous continuation" }),
+    ];
+    for (let seq = 2; seq < 10_004; seq += 1) {
+      durableRows.push(timelineRow(seq, { type: "reasoning", text: `old reasoning ${seq}` }));
+    }
+    durableRows.push(
+      timelineRow(10_004, {
+        type: "tool_call",
+        callId: "write-known-boundary",
+        name: "write",
+        status: "completed",
+        error: null,
+        detail: { type: "write", filePath: "boundary.txt", content: "done" },
+      }),
+      timelineRow(10_005, { type: "reasoning", text: "verify the boundary result" }),
+    );
+    await durableTimelineStore.bulkInsert(created.id, durableRows);
+
+    const stored = await storage.get(created.id);
+    expect(stored?.persistence).toBeTruthy();
+    await storage.upsert({
+      ...stored!,
+      materialProgressContinuationBoundarySeq: 10_004,
+      materialProgress: {
+        state: "warning",
+        completedCompactionsSinceMaterialProgress: 1,
+        lastMaterialProgressAt: null,
+        lastMaterialProgressKind: null,
+        reason: "Classification to replace from the known continuation boundary.",
+      },
+    });
+
+    const resumedManager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      registry: storage,
+      durableTimelineStore,
+      logger,
+    });
+    await resumedManager.resumeAgentFromPersistence(
+      stored!.persistence!,
+      { cwd: workdir },
+      created.id,
+      { materialProgressContinuationBoundarySeq: 10_004 },
+    );
+
+    const snapshot = await resumedManager.getMaterialProgressSnapshot(created.id);
+    expect(snapshot.rows?.slice(-2)).toMatchObject([
+      { seq: 10_004, item: { type: "tool_call", detail: { type: "write" } } },
+      { seq: 10_005, item: { type: "reasoning" } },
+    ]);
+    expect(snapshot).toMatchObject({
+      persisted: {
+        state: "progressing",
+        lastMaterialProgressKind: "write",
+      },
+    });
+    expect((await storage.get(created.id))?.materialProgress).toMatchObject({
+      state: "progressing",
+      lastMaterialProgressKind: "write",
+    });
+
+    await resumedManager.closeAgent(created.id);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("a delayed material progress write cannot overwrite a newer continuation", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-material-progress-write-order-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
@@ -4427,6 +4515,102 @@ test("an old autonomous terminal cannot end a newer foreground continuation", as
   } finally {
     unsubscribe?.();
     await manager.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a stale native Codex completion cannot cross the provider boundary into a newer turn", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-codex-native-stale-terminal-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const appServer = createFakeCodexAppServer();
+  const session = new CodexAppServerAgentSession(
+    { provider: "codex", cwd: workdir, modeId: "auto", model: "gpt-5.4" },
+    null,
+    logger,
+    async () => appServer.child,
+  );
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000172",
+  });
+
+  let unsubscribe: (() => void) | null = null;
+  let unsubscribeProvider: (() => void) | null = null;
+  let foregroundDrain: Promise<void> | null = null;
+  let waitForAgent: Promise<unknown> | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    appServer.startsTurn({ threadId: "thread-1", turnId: "native-old-turn" });
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.lifecycle).toBe("running"));
+    appServer.completeTurn({ turnId: "native-old-turn" });
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle"));
+
+    const providerEvents: AgentStreamEvent[] = [];
+    unsubscribeProvider = session.subscribe((event) => providerEvents.push(event));
+    const streamedEvents: AgentStreamEvent[] = [];
+    unsubscribe = manager.subscribe(
+      (event) => {
+        if (event.type === "agent_stream") streamedEvents.push(event.event);
+      },
+      { agentId: agent.id, replayState: false },
+    );
+
+    let foregroundSettled = false;
+    foregroundDrain = (async () => {
+      for await (const _event of manager.streamAgent(agent.id, "new work")) {
+        // Drain through the current turn's terminal event.
+      }
+      foregroundSettled = true;
+    })();
+    await appServer.waitForTurnStart();
+    appServer.startsTurn({ threadId: "thread-1", turnId: "native-new-turn" });
+    await manager.waitForAgentRunStart(agent.id);
+    providerEvents.length = 0;
+
+    let waiterSettled = false;
+    waitForAgent = manager.waitForAgentEvent(agent.id).then((result) => {
+      waiterSettled = true;
+      return result;
+    });
+
+    appServer.completeTurn({ turnId: "native-old-turn" });
+    await vi.waitFor(() =>
+      expect(providerEvents).toContainEqual(
+        expect.objectContaining({ type: "turn_completed", turnId: "native-old-turn" }),
+      ),
+    );
+    await manager.flush();
+
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "running",
+      activeForegroundTurnId: expect.any(String),
+      materialProgressContinuationActive: true,
+      lastTurnOutcome: null,
+    });
+    expect(streamedEvents).not.toContainEqual(
+      expect.objectContaining({ type: "turn_completed", turnId: "native-old-turn" }),
+    );
+    expect(foregroundSettled).toBe(false);
+    expect(waiterSettled).toBe(false);
+
+    appServer.completeTurn({ turnId: "native-new-turn" });
+    await foregroundDrain;
+    await waitForAgent;
+    appServer.assertNoErrors();
+  } finally {
+    unsubscribe?.();
+    unsubscribeProvider?.();
+    await manager.closeAgent("00000000-0000-4000-8000-000000000172").catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
   }
 });

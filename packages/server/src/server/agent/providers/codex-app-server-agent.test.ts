@@ -3889,7 +3889,7 @@ describe("Codex app-server provider", () => {
       ],
     });
     asInternals(session).handleNotification("turn/completed", {
-      turn: { status: "completed", error: null },
+      turn: { id: "turn-plan-1", status: "completed", error: null },
     });
 
     expect(
@@ -4416,7 +4416,7 @@ describe("Codex app-server provider", () => {
       }),
     ).not.toThrow();
     asInternals(session).handleNotification("turn/completed", {
-      turn: { status: "completed", error: null },
+      turn: { id: "test-turn", status: "completed", error: null },
     });
 
     expect(events).toEqual([
@@ -4446,7 +4446,7 @@ describe("Codex app-server provider", () => {
       },
     });
     asInternals(session).handleNotification("turn/completed", {
-      turn: { status: "completed", error: null },
+      turn: { id: "test-turn", status: "completed", error: null },
     });
 
     expect(events).toContainEqual({
@@ -4473,6 +4473,24 @@ describe("Codex app-server provider", () => {
         contextWindowUsedTokens: 50000,
       },
     });
+  });
+
+  test("does not tag an uncorrelated terminal with the active foreground turn", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("turn/completed", {
+      turn: { status: "completed", error: null },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "turn_completed",
+        provider: "codex",
+        usage: undefined,
+      },
+    ]);
   });
 
   test("streams Codex assistant message deltas and does not replay completed text", () => {
