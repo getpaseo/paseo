@@ -72,8 +72,42 @@ export function providerSubagentLifecycleStatus(
 }
 
 type ProviderSubagentListClient = Pick<DaemonClient, "listProviderSubagents">;
+type ProviderSubagentTimelineClient = Pick<DaemonClient, "fetchProviderSubagentTimeline">;
+type ProviderSubagentTimelineRequest = Parameters<DaemonClient["fetchProviderSubagentTimeline"]>[2];
+
+interface ProviderSubagentConnectionSource {
+  client: object;
+  connectionEpoch: number;
+  pendingRequests: number;
+}
 
 const pendingListRequests = new WeakMap<ProviderSubagentListClient, Map<string, Promise<void>>>();
+const currentConnectionSources = new Map<string, ProviderSubagentConnectionSource>();
+
+function captureConnectionSource(
+  client: object,
+  serverId: string,
+  connectionEpoch: number,
+): ProviderSubagentConnectionSource {
+  const current = currentConnectionSources.get(serverId);
+  if (current?.client === client && current.connectionEpoch === connectionEpoch) {
+    current.pendingRequests += 1;
+    return current;
+  }
+  const source = { client, connectionEpoch, pendingRequests: 1 };
+  if (current && current.connectionEpoch > connectionEpoch) {
+    return source;
+  }
+  currentConnectionSources.set(serverId, source);
+  return source;
+}
+
+function releaseConnectionSource(serverId: string, source: ProviderSubagentConnectionSource): void {
+  source.pendingRequests -= 1;
+  if (source.pendingRequests === 0 && currentConnectionSources.get(serverId) === source) {
+    currentConnectionSources.delete(serverId);
+  }
+}
 
 export function refreshProviderSubagents(
   client: ProviderSubagentListClient,
@@ -90,17 +124,39 @@ export function refreshProviderSubagents(
   const pending = clientRequests.get(requestKey);
   if (pending) return pending;
 
+  const source = captureConnectionSource(client, serverId, connectionEpoch);
   const request = client
     .listProviderSubagents(parentAgentId)
     .then((payload) => {
+      if (currentConnectionSources.get(serverId) !== source) return undefined;
       useProviderSubagentStore.getState().replaceList(serverId, parentAgentId, payload.subagents);
       return undefined;
     })
     .finally(() => {
       clientRequests?.delete(requestKey);
+      releaseConnectionSource(serverId, source);
     });
   clientRequests.set(requestKey, request);
   return request;
+}
+
+export function refreshProviderSubagentTimeline(
+  client: ProviderSubagentTimelineClient,
+  serverId: string,
+  parentAgentId: string,
+  subagentId: string,
+  connectionEpoch: number,
+  request: ProviderSubagentTimelineRequest,
+): Promise<void> {
+  const source = captureConnectionSource(client, serverId, connectionEpoch);
+  return client
+    .fetchProviderSubagentTimeline(parentAgentId, subagentId, request)
+    .then((payload) => {
+      if (currentConnectionSources.get(serverId) !== source) return undefined;
+      useProviderSubagentStore.getState().replaceTimeline(serverId, payload);
+      return undefined;
+    })
+    .finally(() => releaseConnectionSource(serverId, source));
 }
 
 function parentPrefix(serverId: string, parentAgentId: string): string {

@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, test } from "vitest";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import {
   providerSubagentKey,
   refreshProviderSubagents,
+  refreshProviderSubagentTimeline,
   useProviderSubagentStore,
 } from "./provider-store";
 
@@ -39,6 +41,111 @@ describe("provider subagent client store", () => {
 
     await refreshProviderSubagents(client, SERVER_ID, PARENT_ID, 2);
     expect(requestCount).toBe(2);
+  });
+
+  test("ignores a list response from a superseded connection epoch", async () => {
+    type ListResponse = Awaited<ReturnType<DaemonClient["listProviderSubagents"]>>;
+    const resolvers: Array<(response: ListResponse) => void> = [];
+    const client = {
+      listProviderSubagents() {
+        return new Promise<ListResponse>((resolve) => resolvers.push(resolve));
+      },
+    };
+    const currentSubagent = {
+      id: SUBAGENT_ID,
+      parentAgentId: PARENT_ID,
+      provider: "codex" as const,
+      title: "Current child",
+      description: null,
+      status: "running" as const,
+      createdAt: "2026-07-12T10:00:00.000Z",
+      updatedAt: "2026-07-12T10:00:00.000Z",
+      toolCallId: "call-1",
+    };
+
+    const staleRequest = refreshProviderSubagents(client, SERVER_ID, PARENT_ID, 1);
+    const currentRequest = refreshProviderSubagents(client, SERVER_ID, PARENT_ID, 2);
+    resolvers[1]?.({
+      requestId: "current",
+      parentAgentId: PARENT_ID,
+      subagents: [currentSubagent],
+      error: null,
+    });
+    await currentRequest;
+    resolvers[0]?.({
+      requestId: "stale",
+      parentAgentId: PARENT_ID,
+      subagents: [],
+      error: null,
+    });
+    await staleRequest;
+
+    expect(
+      useProviderSubagentStore
+        .getState()
+        .descriptors.get(providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID))?.title,
+    ).toBe("Current child");
+  });
+
+  test("ignores a timeline response from a superseded connection epoch", async () => {
+    type TimelineResponse = Awaited<ReturnType<DaemonClient["fetchProviderSubagentTimeline"]>>;
+    const resolvers: Array<(response: TimelineResponse) => void> = [];
+    const client = {
+      fetchProviderSubagentTimeline() {
+        return new Promise<TimelineResponse>((resolve) => resolvers.push(resolve));
+      },
+    };
+    const response = (requestId: string, epoch: string, text: string): TimelineResponse => ({
+      requestId,
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      direction: "tail",
+      epoch,
+      reset: true,
+      staleCursor: false,
+      gap: false,
+      window: { minSeq: 1, maxSeq: 1, nextSeq: 2 },
+      hasOlder: false,
+      hasNewer: false,
+      rows: [
+        {
+          seq: 1,
+          timestamp: "2026-07-12T10:00:01.000Z",
+          item: { type: "assistant_message", text },
+        },
+      ],
+      error: null,
+    });
+
+    const staleRequest = refreshProviderSubagentTimeline(
+      client,
+      SERVER_ID,
+      PARENT_ID,
+      SUBAGENT_ID,
+      1,
+      { direction: "tail", limit: 100 },
+    );
+    const currentRequest = refreshProviderSubagentTimeline(
+      client,
+      SERVER_ID,
+      PARENT_ID,
+      SUBAGENT_ID,
+      2,
+      { direction: "tail", limit: 100 },
+    );
+    resolvers[1]?.(response("current", "timeline-current", "Current output."));
+    await currentRequest;
+    resolvers[0]?.(response("stale", "timeline-stale", "Stale output."));
+    await staleRequest;
+
+    const timeline = useProviderSubagentStore
+      .getState()
+      .timelines.get(providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID));
+    expect(timeline?.epoch).toBe("timeline-current");
+    expect(timeline?.head).toEqual([
+      expect.objectContaining({ kind: "assistant_message", text: "Current output." }),
+    ]);
   });
 
   test("builds a shared stream model from ordered provider updates", () => {

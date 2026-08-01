@@ -14,6 +14,7 @@ import {
   providerSubagentKey,
   providerSubagentLifecycleStatus,
   refreshProviderSubagents,
+  refreshProviderSubagentTimeline,
   useProviderSubagentStore,
 } from "@/subagents/provider-store";
 import { useTranslation } from "react-i18next";
@@ -96,16 +97,17 @@ function ProviderSubagentPanel() {
 
   useEffect(() => {
     if (!client || !supported) return;
-    void client
-      .fetchProviderSubagentTimeline(target.parentAgentId, target.subagentId, {
+    void refreshProviderSubagentTimeline(
+      client,
+      serverId,
+      target.parentAgentId,
+      target.subagentId,
+      connectionEpoch,
+      {
         direction: "tail",
         limit: TIMELINE_FETCH_PAGE_SIZE,
-      })
-      .then((payload) => {
-        useProviderSubagentStore.getState().replaceTimeline(serverId, payload);
-        return undefined;
-      })
-      .catch(() => undefined);
+      },
+    ).catch(() => undefined);
   }, [client, connectionEpoch, serverId, supported, target.parentAgentId, target.subagentId]);
 
   const loadOlder = useCallback(() => {
@@ -113,20 +115,23 @@ function ProviderSubagentPanel() {
     const firstSeq = timeline.rows.size ? Math.min(...timeline.rows.keys()) : null;
     if (firstSeq === null) return;
     setIsLoadingOlder(true);
-    void client
-      .fetchProviderSubagentTimeline(target.parentAgentId, target.subagentId, {
+    void refreshProviderSubagentTimeline(
+      client,
+      serverId,
+      target.parentAgentId,
+      target.subagentId,
+      connectionEpoch,
+      {
         direction: "before",
         cursor: { epoch: timeline.epoch, seq: firstSeq },
         limit: TIMELINE_FETCH_PAGE_SIZE,
-      })
-      .then((payload) => {
-        useProviderSubagentStore.getState().replaceTimeline(serverId, payload);
-        return undefined;
-      })
+      },
+    )
       .catch(() => undefined)
       .finally(() => setIsLoadingOlder(false));
   }, [
     client,
+    connectionEpoch,
     isLoadingOlder,
     serverId,
     supported,
