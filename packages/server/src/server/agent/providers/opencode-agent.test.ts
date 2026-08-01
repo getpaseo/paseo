@@ -268,6 +268,22 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     }
   }
 
+  test("rejects an injected server manager without capacity controller injection", () => {
+    const runtime = new TestOpenCodeHarness();
+    Reflect.defineProperty(runtime, "configureRuntimeCapacityController", {
+      configurable: true,
+      value: undefined,
+    });
+
+    expect(
+      () =>
+        new OpenCodeAgentClient(logger, undefined, {
+          serverManager: runtime,
+          createClient: runtime.createClient,
+        }),
+    ).toThrow("OpenCode server manager must support runtime capacity controller injection");
+  });
+
   test("charges the shared OpenCode runtime once across concurrent draft commands", async () => {
     const runtime = new TestOpenCodeHarness();
     const firstOpenCode = new TestOpenCodeClient();

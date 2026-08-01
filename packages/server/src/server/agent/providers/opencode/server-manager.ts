@@ -29,7 +29,7 @@ export interface OpenCodeServerAcquisition {
 }
 
 export interface OpenCodeServerManagerLike {
-  configureRuntimeCapacityController?(controller: AgentRuntimeCapacityController): void;
+  configureRuntimeCapacityController(controller: AgentRuntimeCapacityController): void;
   acquireCurrent(): Promise<OpenCodeServerAcquisition>;
   acquireNew(): Promise<OpenCodeServerAcquisition>;
   acquireDedicated(env: Record<string, string>): Promise<OpenCodeServerAcquisition>;
@@ -75,6 +75,8 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private retiredServers = new Set<OpenCodeServerGeneration>();
   private startPromise: Promise<OpenCodeServerGeneration> | null = null;
   private newServerPromise: Promise<OpenCodeServerGeneration> | null = null;
+  private readonly serverCleanupPromises = new Map<OpenCodeServerGeneration, Promise<boolean>>();
+  private retiredServerCleanupPromise: Promise<void> | null = null;
   private readonly logger: Logger;
   private readonly baseEnv?: SpawnProcessOptions["baseEnv"];
   private readonly runtimeSettings?: ProviderRuntimeSettings;
@@ -206,7 +208,14 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       ...(this.currentServer ? [this.currentServer] : []),
       ...Array.from(this.retiredServers),
     ];
-    return servers.find((server) => server.url === url && this.isServerLive(server)) ?? null;
+    return (
+      servers.find(
+        (server) =>
+          server.url === url &&
+          !this.serverCleanupPromises.has(server) &&
+          this.isServerLive(server),
+      ) ?? null
+    );
   }
 
   private isServerLive(server: OpenCodeServerGeneration): boolean {
@@ -246,7 +255,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       return;
     }
 
-    const closed = await this.killServer(server);
+    const closed = await this.cleanupServer(server);
     if (closed) {
       this.retiredServers.delete(server);
     } else {
@@ -326,6 +335,12 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   }
 
   private async startServer(launchEnv?: Record<string, string>): Promise<OpenCodeServerGeneration> {
+    if (
+      this.retiredServerCleanupPromise ||
+      Array.from(this.retiredServers).some((server) => server.refCount === 0)
+    ) {
+      await this.cleanupRetiredServers();
+    }
     const port = await this.portAllocator();
     const url = `http://127.0.0.1:${port}`;
     const launchPrefix = await this.resolveCommandPrefix();
@@ -451,7 +466,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     });
 
     server.ready = ready.catch(async (error) => {
-      const closed = await this.killServer(server);
+      const closed = await this.cleanupServer(server);
       if (this.currentServer === server) {
         this.currentServer = null;
       }
@@ -473,7 +488,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       ...Array.from(this.retiredServers),
     ];
     const closeResults = await Promise.all(
-      servers.map(async (server) => ({ server, closed: await this.killServer(server) })),
+      servers.map(async (server) => ({ server, closed: await this.cleanupServer(server) })),
     );
     this.currentServer = null;
     this.retiredServers = new Set(
@@ -481,21 +496,45 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     );
   }
 
-  private async cleanupRetiredServers(): Promise<void> {
-    const cleanup: Promise<void>[] = [];
-    for (const server of Array.from(this.retiredServers)) {
-      if (server.refCount === 0) {
-        cleanup.push(
-          this.killServer(server).then((closed) => {
-            if (closed) {
-              this.retiredServers.delete(server);
-            }
-            return undefined;
-          }),
-        );
-      }
+  private cleanupRetiredServers(): Promise<void> {
+    if (this.retiredServerCleanupPromise) {
+      return this.retiredServerCleanupPromise;
     }
-    await Promise.all(cleanup);
+
+    const cleanup = Promise.all(
+      Array.from(this.retiredServers, async (server) => {
+        if (server.refCount > 0) {
+          return;
+        }
+        const closed = await this.cleanupServer(server);
+        if (closed) {
+          this.retiredServers.delete(server);
+        }
+      }),
+    ).then(() => undefined);
+    const trackedCleanup = cleanup.finally(() => {
+      if (this.retiredServerCleanupPromise === trackedCleanup) {
+        this.retiredServerCleanupPromise = null;
+      }
+    });
+    this.retiredServerCleanupPromise = trackedCleanup;
+    return trackedCleanup;
+  }
+
+  private cleanupServer(server: OpenCodeServerGeneration): Promise<boolean> {
+    const existing = this.serverCleanupPromises.get(server);
+    if (existing) {
+      return existing;
+    }
+
+    const cleanup = this.killServer(server);
+    const trackedCleanup = cleanup.finally(() => {
+      if (this.serverCleanupPromises.get(server) === trackedCleanup) {
+        this.serverCleanupPromises.delete(server);
+      }
+    });
+    this.serverCleanupPromises.set(server, trackedCleanup);
+    return trackedCleanup;
   }
 
   private async killServer(server: OpenCodeServerGeneration): Promise<boolean> {

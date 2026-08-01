@@ -1281,12 +1281,15 @@ export class OpenCodeAgentClient implements AgentClient {
         managedProcesses: deps.managedProcesses,
         resolveHomeDir: deps.resolveHomeDir,
       });
+    if (typeof this.serverManager.configureRuntimeCapacityController !== "function") {
+      throw new Error("OpenCode server manager must support runtime capacity controller injection");
+    }
     this.createOpenCodeClient = deps.createClient ?? createSdkOpenCodeClient;
     this.resolveHomeDir = deps.resolveHomeDir ?? resolveOpenCodeHomeDir;
   }
 
   configureRuntimeCapacityController(controller: AgentRuntimeCapacityController): void {
-    this.serverManager.configureRuntimeCapacityController?.(controller);
+    this.serverManager.configureRuntimeCapacityController(controller);
   }
 
   async createSession(
