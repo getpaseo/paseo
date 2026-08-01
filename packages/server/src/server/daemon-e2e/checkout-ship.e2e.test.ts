@@ -203,6 +203,19 @@ type GitCredentialCacheDaemonStarter = (
   socketPath: string,
   owner: GitHubCredentialOwner,
 ) => Promise<ChildProcessWithoutNullStreams>;
+type GitCredentialCacheDaemonStopper = (
+  child: ChildProcessWithoutNullStreams | null,
+  socketPath: string,
+  send: GitCredentialCacheRequestSender,
+) => Promise<void>;
+
+interface GitCredentialLeaseCleanupAdapter {
+  stopDaemon: GitCredentialCacheDaemonStopper;
+  writeGitConfig(path: string, contents: Buffer): void;
+  readGitConfig(path: string): Buffer;
+  removeCredentialDir(path: string): void;
+  credentialDirExists(path: string): boolean;
+}
 
 function tmpCwd(prefix: string): string {
   return realpathSync(mkdtempSync(path.join(tmpdir(), prefix)));
@@ -1044,19 +1057,35 @@ async function stopGitCredentialCacheDaemon(
   if (!child) {
     return;
   }
-  if (child.exitCode === null && child.signalCode === null) {
-    await send(
-      socketPath,
-      `action=erase\ntimeout=${CREDENTIAL_CACHE_TTL_SECONDS}\nprotocol=https\nhost=${GITHUB_HOST}\nusername=x-access-token\n\n`,
-      CREDENTIAL_CACHE_OPERATION_TIMEOUT_MS,
-    );
-    await send(
-      socketPath,
-      `action=exit\ntimeout=${CREDENTIAL_CACHE_TTL_SECONDS}\n\n`,
-      CREDENTIAL_CACHE_OPERATION_TIMEOUT_MS,
-    );
+  try {
+    if (child.exitCode === null && child.signalCode === null) {
+      await send(
+        socketPath,
+        `action=erase\ntimeout=${CREDENTIAL_CACHE_TTL_SECONDS}\nprotocol=https\nhost=${GITHUB_HOST}\nusername=x-access-token\n\n`,
+        CREDENTIAL_CACHE_OPERATION_TIMEOUT_MS,
+      );
+      await send(
+        socketPath,
+        `action=exit\ntimeout=${CREDENTIAL_CACHE_TTL_SECONDS}\n\n`,
+        CREDENTIAL_CACHE_OPERATION_TIMEOUT_MS,
+      );
+    }
+    await waitForChildExit(child, CREDENTIAL_CACHE_OPERATION_TIMEOUT_MS);
+  } catch (error) {
+    child.kill();
+    try {
+      await waitForChildExit(child, CREDENTIAL_CACHE_OPERATION_TIMEOUT_MS);
+    } catch (exitError) {
+      if (child.exitCode === null && child.signalCode === null) {
+        // eslint-disable-next-line preserve-caught-error -- both shutdown errors are retained as AggregateError entries
+        throw new AggregateError(
+          [error, exitError],
+          "Failed to stop the run-owned Git credential cache daemon",
+          { cause: error },
+        );
+      }
+    }
   }
-  await waitForChildExit(child, CREDENTIAL_CACHE_OPERATION_TIMEOUT_MS);
 }
 
 async function createGitCredentialLease(
@@ -1064,8 +1093,10 @@ async function createGitCredentialLease(
   owner: GitHubCredentialOwner,
   options: {
     audit?: string[][];
+    cleanup?: Partial<GitCredentialLeaseCleanupAdapter>;
     credentialDir?: string;
     execute?: GitExecutor;
+    retainLease?: (lease: GitCredentialLease | null) => void;
     send?: GitCredentialCacheRequestSender;
     startDaemon?: GitCredentialCacheDaemonStarter;
   } = {},
@@ -1073,6 +1104,15 @@ async function createGitCredentialLease(
   const execute = options.execute ?? executeGit;
   const send = options.send ?? sendGitCredentialCacheRequest;
   const startDaemon = options.startDaemon ?? startGitCredentialCacheDaemon;
+  const cleanup: GitCredentialLeaseCleanupAdapter = {
+    stopDaemon: options.cleanup?.stopDaemon ?? stopGitCredentialCacheDaemon,
+    writeGitConfig: options.cleanup?.writeGitConfig ?? writeFileSync,
+    readGitConfig: options.cleanup?.readGitConfig ?? readFileSync,
+    removeCredentialDir:
+      options.cleanup?.removeCredentialDir ??
+      ((directory) => rmSync(directory, { recursive: true, force: true })),
+    credentialDirExists: options.cleanup?.credentialDirExists ?? existsSync,
+  };
   const credentialDir = options.credentialDir ?? realpathSync(mkdtempSync("/tmp/pgh-"));
   const socketPath = path.join(credentialDir, "cache.sock");
   const hooksPath = path.join(credentialDir, "empty-hooks");
@@ -1084,40 +1124,57 @@ async function createGitCredentialLease(
     return execute(args, { cwd: repoDir, input, owner });
   };
   let daemon: ChildProcessWithoutNullStreams | null = null;
+  let daemonStopped = false;
+  let gitConfigRestored = false;
+  let credentialDirRemoved = false;
   let closed = false;
   async function close(): Promise<void> {
     if (closed) {
       return;
     }
-    closed = true;
     const errors: unknown[] = [];
-    try {
-      await stopGitCredentialCacheDaemon(daemon, socketPath, send);
-    } catch (error) {
-      errors.push(error);
-      daemon?.kill();
+    if (!daemonStopped) {
       try {
-        if (daemon) {
-          await waitForChildExit(daemon, CREDENTIAL_CACHE_OPERATION_TIMEOUT_MS);
-        }
-      } catch (exitError) {
-        errors.push(exitError);
+        await cleanup.stopDaemon(daemon, socketPath, send);
+        daemonStopped = true;
+      } catch (error) {
+        errors.push(error);
       }
     }
-    try {
-      writeFileSync(gitConfigPath, originalGitConfig);
-    } catch (error) {
-      errors.push(error);
+    if (daemonStopped && !gitConfigRestored) {
+      try {
+        cleanup.writeGitConfig(gitConfigPath, originalGitConfig);
+        if (!cleanup.readGitConfig(gitConfigPath).equals(originalGitConfig)) {
+          throw new Error("Git credential lease cleanup did not restore the exact Git config");
+        }
+        gitConfigRestored = true;
+      } catch (error) {
+        errors.push(error);
+      }
     }
-    try {
-      rmSync(credentialDir, { recursive: true, force: true });
-    } catch (error) {
-      errors.push(error);
+    if (daemonStopped && gitConfigRestored && !credentialDirRemoved) {
+      try {
+        cleanup.removeCredentialDir(credentialDir);
+        if (cleanup.credentialDirExists(credentialDir)) {
+          throw new Error("Git credential lease cleanup did not remove its credential directory");
+        }
+        credentialDirRemoved = true;
+      } catch (error) {
+        errors.push(error);
+      }
     }
+    closed = daemonStopped && gitConfigRestored && credentialDirRemoved && errors.length === 0;
     if (errors.length > 0) {
       throw new AggregateError(errors, "Failed to close the run-owned Git credential cache");
     }
+    options.retainLease?.(null);
   }
+
+  const lease: GitCredentialLease = {
+    socketPath,
+    close,
+  };
+  options.retainLease?.(lease);
 
   try {
     mkdirSync(hooksPath, { recursive: true });
@@ -1138,7 +1195,7 @@ async function createGitCredentialLease(
     run(["config", "--local", `http.https://${GITHUB_HOST}/.extraHeader`, ""]);
   } catch (error) {
     try {
-      await close();
+      await lease.close();
     } catch (rollbackError) {
       // eslint-disable-next-line preserve-caught-error -- both errors are retained as AggregateError entries
       throw new AggregateError(
@@ -1149,15 +1206,7 @@ async function createGitCredentialLease(
     throw error;
   }
 
-  return {
-    socketPath,
-    async close(): Promise<void> {
-      if (closed) {
-        return;
-      }
-      await close();
-    },
-  };
+  return lease;
 }
 
 async function runGitHubOperator(
@@ -1188,11 +1237,39 @@ function assertSameGitHubCredential(
   }
 }
 
+function readGitHubDeletionConfirmation(
+  result: GitHubCliCommandResult,
+  marker: string,
+): { confirmed: boolean; summary: string } {
+  if (!result.succeeded) {
+    return {
+      confirmed: false,
+      summary: `the immutable-ID GitHub delete failed: ${result.output}`,
+    };
+  }
+  try {
+    const parsed = GitHubDeleteRepositorySchema.parse(JSON.parse(result.output));
+    const confirmed = parsed.data.deleteRepository.clientMutationId === marker;
+    return {
+      confirmed,
+      summary: confirmed
+        ? "the immutable-ID GitHub delete returned the run marker"
+        : "the immutable-ID GitHub delete returned a different run marker",
+    };
+  } catch {
+    return {
+      confirmed: false,
+      summary: "the immutable-ID GitHub delete returned invalid confirmation",
+    };
+  }
+}
+
 async function deleteRepoAndVerifyAbsent(
   createdRepo: CreatedGitHubRepository | null,
   expectedOwner: GitHubCredentialOwner,
   runGitHubCommand: GitHubCliCommandRunner = runGitHubOperator,
   readActiveOwner: ActiveGitHubCredentialOwnerReader = readGitHubCredentialOwner,
+  markDeletionConfirmed: () => void = () => undefined,
 ): Promise<void> {
   if (!createdRepo) {
     return;
@@ -1257,11 +1334,18 @@ async function deleteRepoAndVerifyAbsent(
     ],
     expectedOwner,
   );
+  const { confirmed: deletionConfirmed, summary: deleteSummary } = readGitHubDeletionConfirmation(
+    deleteResult,
+    createdRepo.marker,
+  );
+  if (deletionConfirmed) {
+    markDeletionConfirmed();
+  }
+
   const readbackResult = await runGitHubCommand(
     ["api", "--hostname", GITHUB_HOST, exactRepoEndpoint],
     expectedOwner,
   );
-
   let ownerAfter: GitHubCredentialOwner;
   try {
     ownerAfter = await readActiveOwner();
@@ -1273,21 +1357,6 @@ async function deleteRepoAndVerifyAbsent(
   }
   assertSameGitHubCredential(expectedOwner, ownerAfter, "after");
 
-  let deletionConfirmed = false;
-  let deleteSummary: string;
-  if (deleteResult.succeeded) {
-    try {
-      const parsed = GitHubDeleteRepositorySchema.parse(JSON.parse(deleteResult.output));
-      deletionConfirmed = parsed.data.deleteRepository.clientMutationId === createdRepo.marker;
-      deleteSummary = deletionConfirmed
-        ? "the immutable-ID GitHub delete returned the run marker"
-        : "the immutable-ID GitHub delete returned a different run marker";
-    } catch {
-      deleteSummary = "the immutable-ID GitHub delete returned invalid confirmation";
-    }
-  } else {
-    deleteSummary = `the immutable-ID GitHub delete failed: ${deleteResult.output}`;
-  }
   const exactRepoIsAbsent =
     !readbackResult.succeeded && /\bHTTP 404\b/i.test(readbackResult.output);
 
@@ -1310,6 +1379,30 @@ async function deleteRepoAndVerifyAbsent(
   throw new Error(
     `Failed to verify cleanup of temporary GitHub repo ${createdRepo.fullName}: the exact repo could not be read back to confirm HTTP 404; ${deleteSummary}; readback failed: ${readbackResult.output}.`,
   );
+}
+
+async function verifyRepoRemainsAbsent(
+  createdRepo: CreatedGitHubRepository | null,
+  expectedOwner: GitHubCredentialOwner,
+  runGitHubCommand: GitHubCliCommandRunner = runGitHubOperator,
+  readActiveOwner: ActiveGitHubCredentialOwnerReader = readGitHubCredentialOwner,
+): Promise<void> {
+  if (!createdRepo) {
+    return;
+  }
+  const ownerBefore = await readActiveOwner();
+  assertSameGitHubCredential(expectedOwner, ownerBefore, "before");
+  const readback = await runGitHubCommand(
+    ["api", "--hostname", GITHUB_HOST, `repos/${createdRepo.fullName}`],
+    expectedOwner,
+  );
+  const ownerAfter = await readActiveOwner();
+  assertSameGitHubCredential(expectedOwner, ownerAfter, "after");
+  if (readback.succeeded || !/\bHTTP 404\b/i.test(readback.output)) {
+    throw new Error(
+      `Final cleanup readback could not prove that temporary GitHub repo ${createdRepo.fullName} remains absent: ${readback.output}`,
+    );
+  }
 }
 
 function throwCheckoutShipErrors(testError: unknown, repoCleanupError: unknown): void {
@@ -1338,6 +1431,8 @@ function aggregateCleanupErrors(errors: unknown[]): unknown {
 }
 
 interface DaemonContextCloseResult {
+  complete: boolean;
+  resourcesClosed: boolean;
   stopped: boolean;
   flushed: boolean;
   error: unknown;
@@ -1347,47 +1442,33 @@ interface CredentialBoundaryClient {
   close(): Promise<void>;
 }
 
-async function closeDaemonForCredentialBoundary(
+function createRetryableDaemonCleanup(
   daemon: TestPaseoDaemon,
   client: CredentialBoundaryClient | null,
-): Promise<DaemonContextCloseResult> {
-  const errors: unknown[] = [];
+): () => Promise<DaemonContextCloseResult> {
+  let clientClosed = client === null;
   let stopped = false;
   let flushed = false;
-  if (client) {
-    try {
-      await client.close();
-    } catch (error) {
-      errors.push(error);
+  let handleClosed = false;
+  return async () => {
+    const errors: unknown[] = [];
+    if (!clientClosed && client) {
+      try {
+        await client.close();
+        clientClosed = true;
+      } catch (error) {
+        errors.push(error);
+      }
     }
-  }
-  try {
-    await daemon.daemon.stop();
-    stopped = true;
-  } catch (error) {
-    errors.push(error);
-  }
-  if (stopped) {
-    try {
-      await daemon.daemon.agentManager.flush();
-      flushed = true;
-    } catch (error) {
-      errors.push(error);
+    if (!stopped) {
+      try {
+        await daemon.daemon.stop();
+        stopped = true;
+      } catch (error) {
+        errors.push(error);
+      }
     }
-  }
-  try {
-    await daemon.close();
-  } catch (error) {
-    errors.push(error);
-  }
-  if (!stopped) {
-    try {
-      await daemon.daemon.stop();
-      stopped = true;
-    } catch (error) {
-      errors.push(error);
-    }
-    if (stopped) {
+    if (stopped && !flushed) {
       try {
         await daemon.daemon.agentManager.flush();
         flushed = true;
@@ -1395,16 +1476,41 @@ async function closeDaemonForCredentialBoundary(
         errors.push(error);
       }
     }
-  }
-  if (stopped && !flushed) {
-    try {
-      await daemon.daemon.agentManager.flush();
-      flushed = true;
-    } catch (error) {
-      errors.push(error);
+    if (!handleClosed) {
+      try {
+        await daemon.close();
+        handleClosed = true;
+      } catch (error) {
+        errors.push(error);
+      }
     }
-  }
-  return { stopped, flushed, error: aggregateCleanupErrors(errors) };
+    if (!stopped) {
+      try {
+        await daemon.daemon.stop();
+        stopped = true;
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (stopped && !flushed) {
+      try {
+        await daemon.daemon.agentManager.flush();
+        flushed = true;
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    const resourcesClosed = clientClosed && stopped && flushed && handleClosed;
+    const complete = resourcesClosed && errors.length === 0;
+    return { complete, resourcesClosed, stopped, flushed, error: aggregateCleanupErrors(errors) };
+  };
+}
+
+async function closeDaemonForCredentialBoundary(
+  daemon: TestPaseoDaemon,
+  client: CredentialBoundaryClient | null,
+): Promise<DaemonContextCloseResult> {
+  return createRetryableDaemonCleanup(daemon, client)();
 }
 
 async function closeDaemonContextForCredentialBoundary(
@@ -1448,12 +1554,18 @@ async function constructDaemonContextForCredentialBoundary(
   } catch (error) {
     const closeResult = daemon
       ? await closeDaemonForCredentialBoundary(daemon, client)
-      : { stopped: true, flushed: true, error: undefined };
+      : {
+          complete: true,
+          resourcesClosed: true,
+          stopped: true,
+          flushed: true,
+          error: undefined,
+        };
     const credentialLeak = options.containsCredential({
       constructionError: error,
       finalConstructionCleanupError: closeResult.error,
     });
-    if (closeResult.stopped && closeResult.flushed) {
+    if (closeResult.resourcesClosed) {
       options.retainPartialContext(null, null);
       options.restoreEnvironment();
     }
@@ -1466,18 +1578,135 @@ async function constructDaemonContextForCredentialBoundary(
   }
 }
 
-interface TeardownAttemptResult {
-  complete: boolean;
-  error: unknown;
-}
+type TeardownAttemptResult =
+  | { complete: true; error: undefined }
+  | { complete: false; error: unknown };
 
 interface CheckoutShipLiveCleanupState {
   agentId: string | null;
   createdRepo: CreatedGitHubRepository | null;
   credentialLease: GitCredentialLease | null;
+  daemonClosed: boolean;
+  environmentRestored: boolean;
+  finalReadbackComplete: boolean;
   operationError: unknown;
   repoCreateAttempted: boolean;
   repoDirRemoved: boolean;
+  remoteDeletionConfirmed: boolean;
+}
+
+interface CheckoutShipLiveCleanupActions {
+  deleteAgent(agentId: string): Promise<void>;
+  deleteRemoteRepo(): Promise<void>;
+  closeCredentialLease(lease: GitCredentialLease): Promise<void>;
+  removeRepoDir(): void;
+  closeDaemon(): Promise<void>;
+  finalReadback(): Promise<void>;
+  containsCredential(attemptErrors: unknown[]): boolean;
+  restoreEnvironment(): void;
+}
+
+async function runCheckoutShipPrimaryCleanupActions(
+  state: CheckoutShipLiveCleanupState,
+  actions: CheckoutShipLiveCleanupActions,
+  errors: unknown[],
+): Promise<void> {
+  if (state.agentId) {
+    try {
+      await actions.deleteAgent(state.agentId);
+      state.agentId = null;
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (state.repoCreateAttempted) {
+    try {
+      await actions.deleteRemoteRepo();
+      state.repoCreateAttempted = false;
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (state.credentialLease) {
+    try {
+      await actions.closeCredentialLease(state.credentialLease);
+      state.credentialLease = null;
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (!state.repoDirRemoved) {
+    try {
+      actions.removeRepoDir();
+      state.repoDirRemoved = true;
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (!state.daemonClosed) {
+    try {
+      await actions.closeDaemon();
+      state.daemonClosed = true;
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+}
+
+function checkoutShipPrimaryCleanupComplete(state: CheckoutShipLiveCleanupState): boolean {
+  return (
+    state.agentId === null &&
+    !state.repoCreateAttempted &&
+    state.credentialLease === null &&
+    state.repoDirRemoved &&
+    state.daemonClosed
+  );
+}
+
+async function runCheckoutShipLiveCleanupAttempt(
+  state: CheckoutShipLiveCleanupState,
+  actions: CheckoutShipLiveCleanupActions,
+): Promise<TeardownAttemptResult> {
+  const errors: unknown[] = [];
+  await runCheckoutShipPrimaryCleanupActions(state, actions, errors);
+
+  if (checkoutShipPrimaryCleanupComplete(state) && !state.finalReadbackComplete) {
+    try {
+      await actions.finalReadback();
+      state.finalReadbackComplete = true;
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+
+  const scannedErrorCount = errors.length;
+  let credentialLeak = actions.containsCredential(errors);
+
+  if (state.finalReadbackComplete && errors.length === 0 && !state.environmentRestored) {
+    try {
+      actions.restoreEnvironment();
+      state.environmentRestored = true;
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+
+  credentialLeak =
+    credentialLeak ||
+    (errors.length > scannedErrorCount &&
+      actions.containsCredential(errors.slice(scannedErrorCount)));
+  if (credentialLeak) {
+    return {
+      complete: false,
+      error: new Error("The checkout ship operation credential reached an observable surface"),
+    };
+  }
+
+  const complete = state.finalReadbackComplete && state.environmentRestored && errors.length === 0;
+  if (complete) {
+    return { complete: true, error: undefined };
+  }
+  return { complete: false, error: aggregateCleanupErrors(errors) };
 }
 
 function createJoinedTeardown(
@@ -2201,6 +2430,371 @@ describe("checkout ship live GitHub mutation safety", () => {
     }
   });
 
+  test("credential lease cleanup retries every unverified phase and then becomes idempotent", async () => {
+    const repoDir = tmpCwd("credential-lease-retry-repo-");
+    const credentialDir = realpathSync(mkdtempSync("/tmp/pgh-retry-"));
+    const gitConfigPath = path.join(repoDir, ".git", "config");
+    let stopCalls = 0;
+    let writeCalls = 0;
+    let readCalls = 0;
+    let removeCalls = 0;
+    let absenceReads = 0;
+    initGitRepo(repoDir);
+    const originalGitConfig = readFileSync(gitConfigPath);
+
+    try {
+      const lease = await createGitCredentialLease(repoDir, fixtureOwner, {
+        credentialDir,
+        async send() {
+          return "";
+        },
+        async startDaemon() {
+          return {} as ChildProcessWithoutNullStreams;
+        },
+        cleanup: {
+          async stopDaemon() {
+            stopCalls += 1;
+            if (stopCalls === 1) {
+              throw new Error("simulated credential daemon stop failure");
+            }
+          },
+          writeGitConfig(configPath, contents) {
+            writeCalls += 1;
+            if (writeCalls === 1) {
+              throw new Error("simulated Git config restore failure");
+            }
+            writeFileSync(configPath, contents);
+          },
+          readGitConfig(configPath) {
+            readCalls += 1;
+            return readCalls === 1 ? Buffer.from("wrong config") : readFileSync(configPath);
+          },
+          removeCredentialDir(directory) {
+            removeCalls += 1;
+            if (removeCalls === 1) {
+              throw new Error("simulated credential directory removal failure");
+            }
+            if (removeCalls > 2) {
+              rmSync(directory, { recursive: true, force: true });
+            }
+          },
+          credentialDirExists(directory) {
+            absenceReads += 1;
+            return existsSync(directory);
+          },
+        },
+      });
+      expect(readFileSync(gitConfigPath)).not.toEqual(originalGitConfig);
+
+      await expect(lease.close()).rejects.toThrow("Failed to close");
+      expect({ stopCalls, writeCalls, readCalls, removeCalls, absenceReads }).toEqual({
+        stopCalls: 1,
+        writeCalls: 0,
+        readCalls: 0,
+        removeCalls: 0,
+        absenceReads: 0,
+      });
+
+      await expect(lease.close()).rejects.toThrow("Failed to close");
+      await expect(lease.close()).rejects.toThrow("Failed to close");
+      await expect(lease.close()).rejects.toThrow("Failed to close");
+      await expect(lease.close()).rejects.toThrow("Failed to close");
+      await expect(lease.close()).resolves.toBeUndefined();
+      await expect(lease.close()).resolves.toBeUndefined();
+
+      expect(readFileSync(gitConfigPath)).toEqual(originalGitConfig);
+      expect(existsSync(credentialDir)).toBe(false);
+      expect({ stopCalls, writeCalls, readCalls, removeCalls, absenceReads }).toEqual({
+        stopCalls: 2,
+        writeCalls: 3,
+        readCalls: 2,
+        removeCalls: 3,
+        absenceReads: 2,
+      });
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+      rmSync(credentialDir, { recursive: true, force: true });
+    }
+  });
+
+  test("credential lease setup retains a cleanup handle when its first rollback attempt fails", async () => {
+    const repoDir = tmpCwd("credential-lease-setup-retry-repo-");
+    const credentialDir = realpathSync(mkdtempSync("/tmp/pgh-setup-retry-"));
+    let retainedLease: GitCredentialLease | null = null;
+    let retryLease: GitCredentialLease | null = null;
+    let stopCalls = 0;
+    initGitRepo(repoDir);
+
+    try {
+      await expect(
+        createGitCredentialLease(repoDir, fixtureOwner, {
+          credentialDir,
+          async send() {
+            return "";
+          },
+          async startDaemon() {
+            return {} as ChildProcessWithoutNullStreams;
+          },
+          execute() {
+            throw new Error("simulated credential lease setup failure");
+          },
+          cleanup: {
+            async stopDaemon() {
+              stopCalls += 1;
+              if (stopCalls === 1) {
+                throw new Error("simulated first rollback failure");
+              }
+            },
+          },
+          retainLease(lease) {
+            retainedLease = lease;
+            retryLease ??= lease;
+          },
+        }),
+      ).rejects.toThrow("setup failed and rollback also failed");
+
+      expect(retainedLease).toBe(retryLease);
+      expect(retryLease).not.toBeNull();
+      await (retryLease as GitCredentialLease).close();
+      expect(retainedLease).toBeNull();
+      expect(stopCalls).toBe(2);
+      expect(existsSync(credentialDir)).toBe(false);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+      rmSync(credentialDir, { recursive: true, force: true });
+    }
+  });
+
+  test("credential lease setup force-stops its daemon when socket cleanup fails", async () => {
+    const repoDir = tmpCwd("credential-lease-force-stop-repo-");
+    const credentialDir = realpathSync(mkdtempSync("/tmp/pgh-force-stop-"));
+    let daemonPid: number | undefined;
+    initGitRepo(repoDir);
+
+    try {
+      await expect(
+        createGitCredentialLease(repoDir, fixtureOwner, {
+          credentialDir,
+          async send() {
+            throw new Error("simulated credential socket failure");
+          },
+          async startDaemon(socketPath, owner) {
+            const child = await startGitCredentialCacheDaemon(socketPath, owner);
+            daemonPid = child.pid;
+            return child;
+          },
+        }),
+      ).rejects.toThrow("simulated credential socket failure");
+      expect(daemonPid).toBeTypeOf("number");
+      expect(() => process.kill(daemonPid as number, 0)).toThrow();
+      expect(existsSync(credentialDir)).toBe(false);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+      rmSync(credentialDir, { recursive: true, force: true });
+    }
+  });
+
+  test("joined live cleanup retries failed work without repeating completed cleanup", async () => {
+    const events: string[] = [];
+    let remoteAttempts = 0;
+    let announceFirstRemote: (() => void) | null = null;
+    let releaseFirstRemote: (() => void) | null = null;
+    const firstRemoteStarted = new Promise<void>((resolve) => {
+      announceFirstRemote = resolve;
+    });
+    const firstRemoteCanFinish = new Promise<void>((resolve) => {
+      releaseFirstRemote = resolve;
+    });
+    const lease: GitCredentialLease = { socketPath: "/tmp/fixture", async close() {} };
+    const state: CheckoutShipLiveCleanupState = {
+      agentId: "fixture-agent",
+      createdRepo: fixtureRepo,
+      credentialLease: lease,
+      daemonClosed: false,
+      environmentRestored: false,
+      finalReadbackComplete: false,
+      operationError: undefined,
+      repoCreateAttempted: true,
+      repoDirRemoved: false,
+      remoteDeletionConfirmed: false,
+    };
+    const teardown = createJoinedTeardown(() =>
+      runCheckoutShipLiveCleanupAttempt(state, {
+        async deleteAgent() {
+          events.push("agent");
+        },
+        async deleteRemoteRepo() {
+          remoteAttempts += 1;
+          events.push(`remote-${remoteAttempts}`);
+          if (remoteAttempts === 1) {
+            announceFirstRemote?.();
+            await firstRemoteCanFinish;
+            throw new Error("simulated remote cleanup failure");
+          }
+        },
+        async closeCredentialLease() {
+          events.push("credential");
+        },
+        removeRepoDir() {
+          events.push("local");
+        },
+        async closeDaemon() {
+          events.push("daemon");
+        },
+        async finalReadback() {
+          events.push("readback");
+        },
+        containsCredential() {
+          events.push("scan");
+          return false;
+        },
+        restoreEnvironment() {
+          events.push("restore");
+        },
+      }),
+    );
+
+    const firstAttempt = teardown();
+    await firstRemoteStarted;
+    const joinedAttempt = teardown();
+    releaseFirstRemote?.();
+    const [first, joined] = await Promise.all([firstAttempt, joinedAttempt]);
+    expect(first.complete).toBe(false);
+    expect(joined).toBe(first);
+    expect(events).toEqual(["agent", "remote-1", "credential", "local", "daemon", "scan"]);
+
+    const second = await teardown();
+    expect(second).toEqual({ complete: true, error: undefined });
+    expect(events).toEqual([
+      "agent",
+      "remote-1",
+      "credential",
+      "local",
+      "daemon",
+      "scan",
+      "remote-2",
+      "readback",
+      "scan",
+      "restore",
+    ]);
+
+    const completed = await teardown();
+    expect(completed).toBe(second);
+    expect(events).toHaveLength(10);
+  });
+
+  test("live cleanup retries final readback and restoration before reporting completion", async () => {
+    const events: string[] = [];
+    let readbackAttempts = 0;
+    let restoreAttempts = 0;
+    const state: CheckoutShipLiveCleanupState = {
+      agentId: null,
+      createdRepo: fixtureRepo,
+      credentialLease: null,
+      daemonClosed: true,
+      environmentRestored: false,
+      finalReadbackComplete: false,
+      operationError: undefined,
+      repoCreateAttempted: false,
+      repoDirRemoved: true,
+      remoteDeletionConfirmed: true,
+    };
+    const actions: CheckoutShipLiveCleanupActions = {
+      async deleteAgent() {
+        throw new Error("agent cleanup must not repeat");
+      },
+      async deleteRemoteRepo() {
+        throw new Error("remote cleanup must not repeat");
+      },
+      async closeCredentialLease() {
+        throw new Error("credential cleanup must not repeat");
+      },
+      removeRepoDir() {
+        throw new Error("local cleanup must not repeat");
+      },
+      async closeDaemon() {
+        throw new Error("daemon cleanup must not repeat");
+      },
+      async finalReadback() {
+        readbackAttempts += 1;
+        events.push(`readback-${readbackAttempts}`);
+        if (readbackAttempts === 1) {
+          throw new Error("simulated final readback failure");
+        }
+      },
+      containsCredential() {
+        events.push("scan");
+        return false;
+      },
+      restoreEnvironment() {
+        restoreAttempts += 1;
+        events.push(`restore-${restoreAttempts}`);
+        if (restoreAttempts === 1) {
+          throw new Error("simulated environment restoration failure");
+        }
+      },
+    };
+
+    expect((await runCheckoutShipLiveCleanupAttempt(state, actions)).complete).toBe(false);
+    expect((await runCheckoutShipLiveCleanupAttempt(state, actions)).complete).toBe(false);
+    expect(await runCheckoutShipLiveCleanupAttempt(state, actions)).toEqual({
+      complete: true,
+      error: undefined,
+    });
+    expect(events).toEqual([
+      "readback-1",
+      "scan",
+      "readback-2",
+      "scan",
+      "restore-1",
+      "scan",
+      "scan",
+      "restore-2",
+    ]);
+  });
+
+  test("credential leak reporting restores the process environment after cleanup completes", async () => {
+    let restoreCalls = 0;
+    const state: CheckoutShipLiveCleanupState = {
+      agentId: null,
+      createdRepo: fixtureRepo,
+      credentialLease: null,
+      daemonClosed: true,
+      environmentRestored: false,
+      finalReadbackComplete: true,
+      operationError: undefined,
+      repoCreateAttempted: false,
+      repoDirRemoved: true,
+      remoteDeletionConfirmed: true,
+    };
+    const actions: CheckoutShipLiveCleanupActions = {
+      async deleteAgent() {},
+      async deleteRemoteRepo() {},
+      async closeCredentialLease() {},
+      removeRepoDir() {},
+      async closeDaemon() {},
+      async finalReadback() {},
+      containsCredential() {
+        return true;
+      },
+      restoreEnvironment() {
+        restoreCalls += 1;
+      },
+    };
+
+    const first = await runCheckoutShipLiveCleanupAttempt(state, actions);
+    const second = await runCheckoutShipLiveCleanupAttempt(state, actions);
+    expect(first).toEqual({
+      complete: false,
+      error: expect.objectContaining({
+        message: "The checkout ship operation credential reached an observable surface",
+      }),
+    });
+    expect(second.complete).toBe(false);
+    expect(state.environmentRestored).toBe(true);
+    expect(restoreCalls).toBe(1);
+  });
+
   test("inconclusive repository creation recovers only the matching run for cleanup", async () => {
     const intendedRepo: IntendedGitHubRepository = {
       fullName: fixtureRepo.fullName,
@@ -2275,6 +2869,8 @@ describe("checkout ship live GitHub mutation safety", () => {
 
     const result = await closeDaemonContextForCredentialBoundary(closeContext);
 
+    expect(result.complete).toBe(false);
+    expect(result.resourcesClosed).toBe(true);
     expect(result.stopped).toBe(true);
     expect(result.flushed).toBe(true);
     expect(result.error).toBeInstanceOf(Error);
@@ -2340,6 +2936,52 @@ describe("checkout ship live GitHub mutation safety", () => {
         `clientMutationId=${fixtureRepo.marker}`,
       ],
       ["api", "--hostname", GITHUB_HOST, "repos/octocat/checkout-ship-test"],
+    ]);
+  });
+
+  test("confirmed deletion retries only the exact-repository absence proof", async () => {
+    const calls: string[][] = [];
+    let deletionConfirmed = false;
+    const runGitHubCommand: GitHubCliCommandRunner = async (args) => {
+      calls.push(args);
+      if (args.includes("graphql")) {
+        return { succeeded: true, output: fixtureDeleteOutput };
+      }
+      return calls.length === 1
+        ? { succeeded: true, output: fixtureOwnershipOutput }
+        : { succeeded: false, output: "HTTP 404: Not Found" };
+    };
+    let ownerReads = 0;
+    const readOwnerThenFail = async (): Promise<GitHubCredentialOwner> => {
+      ownerReads += 1;
+      if (ownerReads === 1) {
+        return readFixtureOwner();
+      }
+      throw new Error("simulated post-delete identity read failure");
+    };
+
+    await expect(
+      deleteRepoAndVerifyAbsent(
+        fixtureRepo,
+        fixtureOwner,
+        runGitHubCommand,
+        readOwnerThenFail,
+        () => {
+          deletionConfirmed = true;
+        },
+      ),
+    ).rejects.toThrow("identity was unavailable after the exact-repository readback");
+    expect(deletionConfirmed).toBe(true);
+
+    await expect(
+      verifyRepoRemainsAbsent(fixtureRepo, fixtureOwner, runGitHubCommand, readFixtureOwner),
+    ).resolves.toBeUndefined();
+    expect(calls.filter((args) => args.includes("graphql"))).toHaveLength(1);
+    expect(calls.at(-1)).toEqual([
+      "api",
+      "--hostname",
+      GITHUB_HOST,
+      "repos/octocat/checkout-ship-test",
     ]);
   });
 
@@ -2483,7 +3125,6 @@ describe("daemon checkout ship loop", () => {
   let partialDaemon: TestPaseoDaemon | null;
   let partialClient: DaemonClient | null;
   let liveTeardown: (() => Promise<TeardownAttemptResult>) | null;
-  let liveTeardownReported: boolean;
 
   beforeEach(async () => {
     operationOwner = null;
@@ -2496,7 +3137,6 @@ describe("daemon checkout ship loop", () => {
     partialDaemon = null;
     partialClient = null;
     liveTeardown = null;
-    liveTeardownReported = false;
     if (process.env[CHECKOUT_SHIP_LIVE_GITHUB_E2E] === "1") {
       boundLiveOwner = await assertCheckoutShipLiveGitHubMutationEnabled();
       restoreProcessEnvironment = sanitizeProcessEnvironmentForCredential(boundLiveOwner);
@@ -2557,7 +3197,7 @@ describe("daemon checkout ship loop", () => {
     if (!contextInitialized) {
       if (partialDaemon) {
         const result = await closeDaemonForCredentialBoundary(partialDaemon, partialClient);
-        contextClosed = result.stopped && result.flushed;
+        contextClosed = result.resourcesClosed;
         const credentialLeak =
           boundLiveOwner &&
           valueContainsCredential(
@@ -2581,7 +3221,7 @@ describe("daemon checkout ship loop", () => {
     }
     if (liveTeardown) {
       const result = await liveTeardown();
-      if (result.error && (!liveTeardownReported || !result.complete)) {
+      if (result.error) {
         throw result.error;
       }
       return;
@@ -2592,7 +3232,7 @@ describe("daemon checkout ship loop", () => {
       if (!contextClosed) {
         if (restoreProcessEnvironment) {
           const result = await closeDaemonContextForCredentialBoundary(ctx);
-          contextClosed = result.stopped && result.flushed;
+          contextClosed = result.resourcesClosed;
           teardownError = result.error;
         } else {
           await ctx.cleanup();
@@ -2625,91 +3265,88 @@ describe("daemon checkout ship loop", () => {
       operationOwner = githubOwner;
       const gitAudit: string[][] = [];
       const observedProtocolValues: unknown[] = [];
-      const cleanupErrors: unknown[] = [];
       const cleanupState: CheckoutShipLiveCleanupState = {
         agentId: null,
         createdRepo: null,
         credentialLease: null,
+        daemonClosed: false,
+        environmentRestored: false,
+        finalReadbackComplete: false,
         operationError: undefined,
         repoCreateAttempted: false,
         repoDirRemoved: false,
+        remoteDeletionConfirmed: false,
       };
+      const cleanupDaemon = createRetryableDaemonCleanup(ctx.daemon, ctx.client);
+      function markRemoteDeletionConfirmed(): void {
+        cleanupState.remoteDeletionConfirmed = true;
+      }
 
-      liveTeardown = createJoinedTeardown(async () => {
-        const attemptErrors: unknown[] = [];
-        if (cleanupState.agentId) {
-          try {
-            await ctx.client.deleteAgent(cleanupState.agentId);
-            cleanupState.agentId = null;
-          } catch (error) {
-            attemptErrors.push(error);
-          }
-        }
-        if (cleanupState.repoCreateAttempted) {
-          try {
-            cleanupState.createdRepo = await recoverCreatedRepoForCleanup(
-              cleanupState.createdRepo,
-              intendedRepo,
+      liveTeardown = createJoinedTeardown(() =>
+        runCheckoutShipLiveCleanupAttempt(cleanupState, {
+          deleteAgent: (agentId) => ctx.client.deleteAgent(agentId),
+          async deleteRemoteRepo() {
+            if (!cleanupState.remoteDeletionConfirmed) {
+              cleanupState.createdRepo = await recoverCreatedRepoForCleanup(
+                cleanupState.createdRepo,
+                intendedRepo,
+                githubOwner,
+              );
+              await deleteRepoAndVerifyAbsent(
+                cleanupState.createdRepo,
+                githubOwner,
+                runGitHubOperator,
+                readGitHubCredentialOwner,
+                markRemoteDeletionConfirmed,
+              );
+              return;
+            }
+            await verifyRepoRemainsAbsent(cleanupState.createdRepo, githubOwner);
+          },
+          closeCredentialLease: (lease) => lease.close(),
+          removeRepoDir() {
+            rmSync(repoDir, { recursive: true, force: true });
+            if (existsSync(repoDir)) {
+              throw new Error(
+                "Checkout ship cleanup did not remove its local repository directory",
+              );
+            }
+          },
+          async closeDaemon() {
+            const result = await cleanupDaemon();
+            contextClosed = result.resourcesClosed;
+            if (!result.complete) {
+              throw result.error ?? new Error("Checkout ship daemon cleanup remains incomplete");
+            }
+            operationOwner = null;
+          },
+          async finalReadback() {
+            await verifyRepoRemainsAbsent(cleanupState.createdRepo, githubOwner);
+            if (existsSync(repoDir)) {
+              throw new Error(
+                "Final cleanup readback found the local checkout ship repository directory",
+              );
+            }
+          },
+          containsCredential(attemptErrors) {
+            return valueContainsCredential(
+              {
+                daemonLogs,
+                githubAudit,
+                gitAudit,
+                observedProtocolValues,
+                operationError: cleanupState.operationError,
+                finalCleanupErrors: attemptErrors,
+              },
               githubOwner,
             );
-            await deleteRepoAndVerifyAbsent(cleanupState.createdRepo, githubOwner);
-            cleanupState.repoCreateAttempted = false;
-            cleanupState.createdRepo = null;
-          } catch (error) {
-            attemptErrors.push(error);
-          }
-        }
-        if (cleanupState.credentialLease) {
-          try {
-            await cleanupState.credentialLease.close();
-            cleanupState.credentialLease = null;
-          } catch (error) {
-            attemptErrors.push(error);
-          }
-        }
-        if (!cleanupState.repoDirRemoved) {
-          try {
-            rmSync(repoDir, { recursive: true, force: true });
-            cleanupState.repoDirRemoved = true;
-          } catch (error) {
-            attemptErrors.push(error);
-          }
-        }
-        const contextCloseResult = await closeDaemonContextForCredentialBoundary(ctx);
-        contextClosed = contextCloseResult.stopped && contextCloseResult.flushed;
-        if (contextCloseResult.error) {
-          attemptErrors.push(contextCloseResult.error);
-        }
-        cleanupErrors.push(...attemptErrors);
-        operationOwner = null;
-
-        if (
-          valueContainsCredential(
-            {
-              daemonLogs,
-              githubAudit,
-              gitAudit,
-              observedProtocolValues,
-              operationError: cleanupState.operationError,
-              finalCleanupErrors: cleanupErrors,
-            },
-            githubOwner,
-          )
-        ) {
-          cleanupErrors.push(
-            new Error("The checkout ship operation credential reached an observable surface"),
-          );
-        }
-
-        if (contextClosed) {
-          restoreProcessEnvironment?.();
-          restoreProcessEnvironment = null;
-        }
-        return {
-          complete: contextClosed,
-          error: aggregateCleanupErrors(cleanupErrors),
-        };
-      });
+          },
+          restoreEnvironment() {
+            restoreProcessEnvironment?.();
+            restoreProcessEnvironment = null;
+          },
+        }),
+      );
 
       const reservedOperation = await runOperationWithCleanupReserve({
         operation: async (signal) => {
@@ -2718,6 +3355,9 @@ describe("daemon checkout ship loop", () => {
 
           cleanupState.credentialLease = await createGitCredentialLease(repoDir, githubOwner, {
             audit: gitAudit,
+            retainLease(lease) {
+              cleanupState.credentialLease = lease;
+            },
           });
           signal.throwIfAborted();
           cleanupState.repoCreateAttempted = true;
@@ -2943,7 +3583,6 @@ describe("daemon checkout ship loop", () => {
         operationTimeoutMs: LIVE_OPERATION_TIMEOUT_MS,
         settlementTimeoutMs: LIVE_OPERATION_SETTLEMENT_TIMEOUT_MS,
       });
-      liveTeardownReported = reservedOperation.teardown.complete;
       throwCheckoutShipErrors(reservedOperation.operationError, reservedOperation.teardown.error);
     },
     LIVE_TEST_TIMEOUT_MS,
