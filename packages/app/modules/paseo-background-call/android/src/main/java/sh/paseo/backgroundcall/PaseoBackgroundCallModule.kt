@@ -9,9 +9,19 @@ import expo.modules.kotlin.functions.Queues
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
+private const val CALL_ACTION_EVENT_NAME = "onBackgroundCallAction"
+
 class PaseoBackgroundCallModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("PaseoBackgroundCall")
+
+        Events(CALL_ACTION_EVENT_NAME)
+
+        OnCreate {
+            BackgroundCallLifetime.actionListener = { action ->
+                sendEvent(CALL_ACTION_EVENT_NAME, mapOf("action" to action))
+            }
+        }
 
         AsyncFunction("begin") {
             val activity = requireNotNull(appContext.currentActivity) {
@@ -35,11 +45,18 @@ class PaseoBackgroundCallModule : Module() {
             BackgroundCallLifetime.begin(context)
         }.runOnQueue(Queues.MAIN)
 
+        AsyncFunction("update") { isMuted: Boolean ->
+            appContext.reactContext?.applicationContext?.let { context ->
+                BackgroundCallLifetime.update(context, isMuted)
+            }
+        }.runOnQueue(Queues.MAIN)
+
         AsyncFunction("end") {
             appContext.reactContext?.applicationContext?.let(BackgroundCallLifetime::end)
         }.runOnQueue(Queues.MAIN)
 
         OnDestroy {
+            BackgroundCallLifetime.actionListener = null
             appContext.reactContext?.applicationContext?.let(BackgroundCallLifetime::end)
         }
     }

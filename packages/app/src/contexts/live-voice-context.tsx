@@ -20,6 +20,7 @@ import {
 import type { LiveVoiceSessionMode } from "@/live-voice/live-voice-session";
 import { registerLiveVoiceRouteAuthority } from "@/live-voice/live-voice-route-authority";
 import { attachLiveVoiceCues } from "@/live-voice/live-voice-cues";
+import { attachLiveVoiceCallNotification } from "@/live-voice/live-voice-call-notification";
 
 interface LiveVoiceContextValue extends LiveVoiceSnapshot {
   start: (serverId: string, sessionMode?: LiveVoiceSessionMode) => Promise<void>;
@@ -120,6 +121,10 @@ export function LiveVoiceProvider({ children }: LiveVoiceProviderProps) {
   // tearing the provider down ends the call, and that end is not a transition
   // the user should hear.
   useEffect(() => attachLiveVoiceCues(runtime), [runtime]);
+
+  // Same ordering argument: detaching before the destroy effect stops the
+  // notification's buttons from reaching a runtime that is being torn down.
+  useEffect(() => attachLiveVoiceCallNotification(runtime), [runtime]);
 
   // A background call's native WebRTC path can remain healthy while Android
   // suspends the daemon control socket. Keep the exact pinned client through its

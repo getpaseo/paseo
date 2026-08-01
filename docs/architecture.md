@@ -150,6 +150,13 @@ still tears the call down immediately. Native background audio keeps the peer an
 socket alive across Home/screen lock; the physical-device checks and platform
 constraints are in [mobile-testing.md](mobile-testing.md).
 
+On Android the foreground service's ongoing notification is the call's only
+control surface once Paseo is backgrounded, so it carries Mute and End call. The
+service never changes call state itself: a button press travels back through the
+Expo module to the app runtime, which stays the only writer. iOS has no
+equivalent — its module manages the audio session and nothing else, and a pinned
+call presence there would mean a Live Activity.
+
 For clients advertising `live_voice_cross_host_router`, the hidden session gets
 only routing tools: list compatible hosts, discover the ordinary tools and
 schemas on one host, and execute one selected tool. The route is:
