@@ -2053,8 +2053,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       throw new Error(`No pending permission request with id '${requestId}'`);
     }
 
-    this.pendingPermissions.delete(requestId);
     const selectedOption = selectPermissionOption(pending.options, response);
+    if (response.selectedActionId !== undefined && !selectedOption) {
+      throw new Error(
+        `ACP permission action '${response.selectedActionId}' does not exist or does not match '${response.behavior}' behavior`,
+      );
+    }
+
+    this.pendingPermissions.delete(requestId);
     pending.resolve(
       selectedOption
         ? {
@@ -2159,7 +2165,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
-    if (isACPAutoAcceptEnabled(this.config)) {
+    const canAutoAccept =
+      isACPAutoAcceptEnabled(this.config) && !isACPChooserRequest(params.options);
+    if (canAutoAccept) {
       const allowOption = selectPermissionOption(params.options, { behavior: "allow" });
       if (allowOption) {
         this.logger.info(
@@ -3441,13 +3449,28 @@ function mapPermissionRequest(
   snapshot: ACPToolSnapshot,
 ): AgentPermissionRequest {
   const kind: AgentPermissionRequestKind = snapshot.kind === "switch_mode" ? "mode" : "tool";
+  const chooserText = isACPChooserRequest(params.options)
+    ? extractToolText(params.toolCall.content)
+    : undefined;
   return {
     id: requestId,
     provider,
     name: snapshot.kind ?? snapshot.title,
     kind,
     title: params.toolCall.title ?? snapshot.title,
-    detail: mapToolDetail(snapshot, new Map()),
+    detail: chooserText
+      ? {
+          type: "plain_text",
+          label: params.toolCall.title ?? snapshot.title,
+          text: chooserText,
+          icon: "wrench",
+        }
+      : mapToolDetail(snapshot, new Map()),
+    actions: params.options.map((option) => ({
+      id: option.optionId,
+      label: option.name,
+      behavior: option.kind.startsWith("allow") ? "allow" : "deny",
+    })),
     metadata: {
       toolCallId: params.toolCall.toolCallId,
       rawRequest: params,
@@ -3460,6 +3483,13 @@ function selectPermissionOption(
   options: PermissionOption[],
   response: AgentPermissionResponse,
 ): PermissionOption | null {
+  if (response.selectedActionId !== undefined) {
+    const selectedOption = options.find((option) => option.optionId === response.selectedActionId);
+    if (!selectedOption) return null;
+    const selectedBehavior = selectedOption.kind.startsWith("allow") ? "allow" : "deny";
+    return selectedBehavior === response.behavior ? selectedOption : null;
+  }
+
   const order =
     response.behavior === "allow"
       ? ["allow_once", "allow_always"]
@@ -3471,6 +3501,20 @@ function selectPermissionOption(
     }
   }
   return null;
+}
+
+function isACPChooserRequest(options: PermissionOption[]): boolean {
+  const allowKinds = new Set<PermissionOption["kind"]>();
+  for (const option of options) {
+    if (!option.kind.startsWith("allow")) {
+      continue;
+    }
+    if (allowKinds.has(option.kind)) {
+      return true;
+    }
+    allowKinds.add(option.kind);
+  }
+  return false;
 }
 
 function appendTerminalOutput(entry: TerminalEntry, chunk: string): void {
