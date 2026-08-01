@@ -49,7 +49,7 @@ afterEach(() => {
 });
 
 describe("ensureAgentIsInitialized", () => {
-  it("requests bounded projected catch-up after the current cursor when authoritative history is loaded", () => {
+  it("requests a bounded projected tail when authoritative history is loaded", () => {
     const client = new FakeDaemonClient();
     const runtime = new FakeTimelineRuntime();
     useSessionStore.getState().initializeSession(serverId, client as never);
@@ -74,14 +74,13 @@ describe("ensureAgentIsInitialized", () => {
         serverId,
         agentId,
         request: {
-          direction: "after",
-          cursor: { epoch: "epoch-1", seq: 42 },
+          direction: "tail",
           limit: TIMELINE_FETCH_PAGE_SIZE,
           projection: "projected",
         },
       },
     ]);
-    expect(getInitDeferred(getInitKey(serverId, agentId))?.requestDirection).toBe("after");
+    expect(getInitDeferred(getInitKey(serverId, agentId))?.requestDirection).toBe("tail");
   });
 
   it("requests a bounded projected tail when no authoritative cursor is available", () => {
@@ -109,6 +108,47 @@ describe("ensureAgentIsInitialized", () => {
       },
     ]);
     expect(getInitDeferred(getInitKey(serverId, agentId))?.requestDirection).toBe("tail");
+  });
+
+  it("requests a bounded projected tail after restoring painted replica items", () => {
+    const client = new FakeDaemonClient();
+    const runtime = new FakeTimelineRuntime();
+    useSessionStore.getState().restoreSessionReplica(serverId, {
+      agents: new Map(),
+      workspaces: new Map(),
+      projects: new Map(),
+      timeline: {
+        agentId,
+        items: [
+          {
+            kind: "assistant_message",
+            id: "painted-item",
+            text: "Painted before hydration",
+            timestamp: new Date("2026-07-27T10:00:00.000Z"),
+          },
+        ],
+      },
+    });
+
+    void ensureAgentIsInitialized({
+      serverId,
+      agentId,
+      client: client as never,
+      runtime,
+      setAgentInitializing: bindSetAgentInitializing(),
+    });
+
+    expect(runtime.requests).toEqual([
+      {
+        serverId,
+        agentId,
+        request: {
+          direction: "tail",
+          limit: TIMELINE_FETCH_PAGE_SIZE,
+          projection: "projected",
+        },
+      },
+    ]);
   });
 
   it("times out initialization after 65 seconds", async () => {

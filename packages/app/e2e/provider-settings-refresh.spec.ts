@@ -156,6 +156,7 @@ test.describe("provider settings overlay stack", () => {
 
       await page.keyboard.press("ControlOrMeta+K");
       await expect(commandCenter).toBeVisible({ timeout: 10_000 });
+      await commandCenter.getByTestId("command-center-input").fill("add project");
       await commandCenter.getByText("Add project", { exact: true }).click();
       const addProject = page.getByTestId("add-project-flow");
       await expect(addProject).toBeVisible({ timeout: 10_000 });

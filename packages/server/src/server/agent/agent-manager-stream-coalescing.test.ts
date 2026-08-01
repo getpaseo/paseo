@@ -1249,6 +1249,10 @@ describe("target coalesced behavior", () => {
 
       await expect(firstEvent).resolves.toEqual({
         done: false,
+        value: { type: "turn_started", provider: "codex", turnId: "turn-1" },
+      });
+      await expect(stream.next()).resolves.toEqual({
+        done: false,
         value: {
           type: "timeline",
           provider: "codex",
@@ -1267,14 +1271,20 @@ describe("target coalesced behavior", () => {
       expect(getTimelineItems(rows)).toEqual([{ type: "assistant_message", text: "hello world" }]);
       expect(streamEvents[0]).toMatchObject({
         type: "agent_stream",
-        event: {
-          type: "timeline",
-          item: { type: "assistant_message", text: "hello world" },
-        },
+        event: { type: "turn_started", provider: "codex", turnId: "turn-1" },
       });
       expect(streamEvents[1]).toMatchObject({
         type: "agent_stream",
-        event: { type: "turn_completed" },
+        event: {
+          type: "timeline",
+          provider: "codex",
+          turnId: "turn-1",
+          item: { type: "assistant_message", text: "hello world" },
+        },
+      });
+      expect(streamEvents[2]).toMatchObject({
+        type: "agent_stream",
+        event: { type: "turn_completed", provider: "codex", turnId: "turn-1" },
       });
     } finally {
       harness.cleanup();

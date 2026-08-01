@@ -40,12 +40,6 @@ export interface DesktopAppLogs {
   contents: string;
 }
 
-export interface DesktopPairingOffer {
-  relayEnabled: boolean;
-  url: string | null;
-  qr: string | null;
-}
-
 export interface LocalTransportTarget {
   [key: string]: unknown;
   transportType: "socket" | "pipe";
@@ -119,17 +113,6 @@ function parseDesktopDaemonLogs(raw: unknown): DesktopDaemonLogs {
   };
 }
 
-function parseDesktopPairingOffer(raw: unknown): DesktopPairingOffer {
-  if (!isRecord(raw)) {
-    throw new Error("Unexpected desktop daemon pairing response.");
-  }
-  return {
-    relayEnabled: raw.relayEnabled === true,
-    url: toStringOrNull(raw.url),
-    qr: toStringOrNull(raw.qr),
-  };
-}
-
 export function shouldUseDesktopDaemon(): boolean {
   return isElectronRuntime();
 }
@@ -165,10 +148,6 @@ export async function getDesktopAppLogs(): Promise<DesktopAppLogs> {
     logPath: toStringOrNull(raw.logPath) ?? "",
     contents: typeof raw.contents === "string" ? raw.contents : "",
   };
-}
-
-export async function getDesktopDaemonPairing(): Promise<DesktopPairingOffer> {
-  return parseDesktopPairingOffer(await invokeDesktopCommand("desktop_daemon_pairing"));
 }
 
 export async function getCliDaemonStatus(): Promise<string> {

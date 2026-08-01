@@ -2815,15 +2815,28 @@ function getOpenCodeEventSessionId(event: OpenCodeEvent): string | null {
   );
 }
 
-function isOpenCodeTerminalEvent(event: OpenCodeEvent, sessionId: string): boolean {
-  if (event.type === "session.idle" || event.type === "session.error") {
-    return event.properties.sessionID === sessionId;
+function getOpenCodeRunnerStatusFromEvent(
+  event: OpenCodeEvent,
+  sessionId: string,
+): OpenCodeRunnerStatus | null {
+  if (getOpenCodeEventSessionId(event) !== sessionId) {
+    return null;
   }
-  return (
-    event.type === "session.status" &&
-    event.properties.sessionID === sessionId &&
-    event.properties.status.type === "idle"
-  );
+  if (event.type === "session.status") {
+    return event.properties.status.type;
+  }
+  if (event.type === "session.idle" || event.type === "session.error") {
+    return "idle";
+  }
+  return null;
+}
+
+function isOpenCodeRunnerActive(status: OpenCodeRunnerStatus): boolean {
+  return status === "busy" || status === "retry";
+}
+
+function isOpenCodeTerminalEvent(event: OpenCodeEvent, sessionId: string): boolean {
+  return getOpenCodeRunnerStatusFromEvent(event, sessionId) === "idle";
 }
 
 function isOpenCodeProviderInternalEvent(event: AgentStreamEvent): boolean {
@@ -2937,6 +2950,8 @@ class OpenCodeAgentSession implements AgentSession {
    * run, and a rejection means we never proved the runner stopped.
    */
   private abortSettlement: Promise<void> = Promise.resolve();
+  private externalStatusReconciliationStarted = false;
+  private runnerStatusRevision = 0;
   private readonly runningToolCalls = new Map<string, ToolCallTimelineItem>();
   private subAgentsByCallId = new Map<string, OpenCodeSubAgentActivityState>();
   private subAgentCallIdByChildSessionId = new Map<string, string>();
@@ -3393,10 +3408,38 @@ class OpenCodeAgentSession implements AgentSession {
   }
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
     this.subscribers.add(callback);
+    this.startExternalStatusReconciliation();
     this.startChildSessionHydration();
     return () => {
       this.subscribers.delete(callback);
     };
+  }
+
+  private startExternalStatusReconciliation(): void {
+    if (!this.externallyDriven || this.externalStatusReconciliationStarted || this.closed) {
+      return;
+    }
+    this.externalStatusReconciliationStarted = true;
+    void this.reconcileExternalRunnerStatus().catch((error) => {
+      this.logger.warn(
+        { err: error, sessionId: this.sessionId },
+        "Failed to reconcile externally driven OpenCode session status",
+      );
+    });
+  }
+
+  private async reconcileExternalRunnerStatus(): Promise<void> {
+    await this.ensureEventStreamReady();
+    const observedRevision = this.runnerStatusRevision;
+    const runnerStatus = await this.readProviderRunnerStatus();
+    if (
+      this.runnerStatusRevision !== observedRevision ||
+      this.turnState.status !== "idle" ||
+      !isOpenCodeRunnerActive(runnerStatus)
+    ) {
+      return;
+    }
+    this.startAutonomousTurn();
   }
 
   private startChildSessionHydration(): void {
@@ -3657,21 +3700,8 @@ class OpenCodeAgentSession implements AgentSession {
     if (!event) {
       return;
     }
-    if (
-      this.turnState.status === "stopping" &&
-      getOpenCodeEventSessionId(event) === this.sessionId
-    ) {
-      // Residue of the canceled run must not surface as a new turn. Its terminal
-      // is the authoritative end of the stop, so anything OpenCode publishes
-      // afterwards belongs to a new run by construction and takes the live path.
-      if (isOpenCodeTerminalEvent(event, this.sessionId)) {
-        this.finishStoppingTurn(this.turnState.stop);
-      }
-      this.traceOpenCode("provider.opencode.event.skip", {
-        n: eventCount,
-        reason: "turn_stopping",
-        type: event.type,
-      });
+    this.observeRunnerStatusEvent(event);
+    if (this.discardEventWhileStopping(event, eventCount)) {
       return;
     }
     const translated = await this.translateEvent(event);
@@ -3683,7 +3713,7 @@ class OpenCodeAgentSession implements AgentSession {
         foregroundEvents.push(translatedEvent);
       }
     }
-    if (!turnId && this.shouldStartAutonomousTurn(event, foregroundEvents)) {
+    if (!turnId && this.shouldStartAutonomousTurn(event)) {
       turnId = this.startAutonomousTurn();
     }
     if (!turnId) {
@@ -3724,6 +3754,27 @@ class OpenCodeAgentSession implements AgentSession {
     }
   }
 
+  private discardEventWhileStopping(event: OpenCodeEvent, eventCount: number): boolean {
+    if (
+      this.turnState.status !== "stopping" ||
+      getOpenCodeEventSessionId(event) !== this.sessionId
+    ) {
+      return false;
+    }
+    // Residue of the canceled run must not surface as a new turn. Its terminal
+    // is the authoritative end of the stop, so anything OpenCode publishes
+    // afterwards belongs to a new run by construction and takes the live path.
+    if (isOpenCodeTerminalEvent(event, this.sessionId)) {
+      this.finishStoppingTurn(this.turnState.stop);
+    }
+    this.traceOpenCode("provider.opencode.event.skip", {
+      n: eventCount,
+      reason: "turn_stopping",
+      type: event.type,
+    });
+    return true;
+  }
+
   private emitBackgroundPermissionRequests(events: readonly AgentStreamEvent[]): void {
     for (const event of events) {
       if (event.type === "permission_requested") {
@@ -3732,37 +3783,20 @@ class OpenCodeAgentSession implements AgentSession {
     }
   }
 
-  private shouldStartAutonomousTurn(
-    event: OpenCodeEvent,
-    foregroundEvents: readonly AgentStreamEvent[],
-  ): boolean {
+  private observeRunnerStatusEvent(event: OpenCodeEvent): void {
+    if (getOpenCodeRunnerStatusFromEvent(event, this.sessionId) !== null) {
+      this.runnerStatusRevision += 1;
+    }
+  }
+
+  private shouldStartAutonomousTurn(event: OpenCodeEvent): boolean {
     if (this.turnState.status !== "idle") {
       return false;
     }
-    if (getOpenCodeEventSessionId(event) !== this.sessionId) {
-      return false;
-    }
-    // OpenCode publishes the persisted user message before it marks the runner
-    // busy. That message is the earliest unambiguous boundary for a plugin-
-    // initiated parent turn; session metadata and assistant echoes are not.
-    if (event.type === "message.updated" && event.properties.info.role === "user") {
-      if (this.emittedUserMessageIds.has(event.properties.info.id)) {
-        return false;
-      }
-      return true;
-    }
-    if (!this.externallyDriven) {
-      return false;
-    }
-    if (
-      foregroundEvents.some(
-        (foregroundEvent) =>
-          foregroundEvent.type !== "thread_started" && !toTerminalTurnEvent(foregroundEvent),
-      )
-    ) {
-      return true;
-    }
-    return event.type === "session.status" && event.properties.status.type === "busy";
+    // Message records are mutable and can be patched after the runner stops.
+    // Only OpenCode's execution status is authoritative for autonomous activity.
+    const runnerStatus = getOpenCodeRunnerStatusFromEvent(event, this.sessionId);
+    return runnerStatus !== null && isOpenCodeRunnerActive(runnerStatus);
   }
 
   private startAutonomousTurn(): string {

@@ -99,6 +99,7 @@ test("OpenCode remains idle while an OMO child works and completes the autonomou
     expect(childRunningIndex).toBeGreaterThan(rootRunningIndex);
     expect(rootIdleIndex).toBeGreaterThan(childRunningIndex);
     expect(childCompletedIndex).toBeGreaterThan(rootIdleIndex);
+    expect(wakeStartIndex).toBeGreaterThan(childCompletedIndex);
     expect(wakeStartIndex).toBeGreaterThan(-1);
     expect(autonomousTerminalIndex).toBeGreaterThan(wakeStartIndex);
     expect(cancellationAfterWake).toBe(false);

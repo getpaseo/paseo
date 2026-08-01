@@ -15,7 +15,6 @@ const buildProfile = isFdroidBuild
       cameraPlugins: [],
       fdroidPlugins: [withFdroidAutolinking],
       notificationPlugins: [],
-      updates: { enabled: false },
     }
   : {
       androidPermissions: [
@@ -44,7 +43,6 @@ const buildProfile = isFdroidBuild
           },
         ],
       ],
-      updates: {},
     };
 
 function getNativeBuildVersionCode(version) {
@@ -125,13 +123,6 @@ export default {
     scheme: "paseo",
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
-    runtimeVersion: {
-      policy: "appVersion",
-    },
-    updates: {
-      url: "https://u.expo.dev/0e7f65ce-0367-46c8-a238-2b65963d235a",
-      ...buildProfile.updates,
-    },
     ios: {
       supportsTablet: true,
       infoPlist: {

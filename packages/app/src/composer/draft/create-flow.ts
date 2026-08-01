@@ -6,14 +6,16 @@ import {
   splitComposerAttachmentsForSubmit,
 } from "@/composer/attachments/submit";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
+import { handoffCreatedAgentMessageSubmission } from "@/composer/submission/writer";
 import { useSessionStore } from "@/stores/session-store";
 import {
-  buildOptimisticUserMessage,
+  createUserMessage,
   generateMessageId,
   type StreamItem,
   type UserMessageImageAttachment,
 } from "@/types/stream";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
+import type { PendingMessageSubmission } from "@/composer/submission/model";
 
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
 
@@ -126,14 +128,10 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
   const updatePendingAgentId = useCreateFlowStore((state) => state.updateAgentId);
   const markPendingCreateLifecycle = useCreateFlowStore((state) => state.markLifecycle);
   const clearPendingCreateAttempt = useCreateFlowStore((state) => state.clear);
-  const handoffCreatedAgentUserMessage = useSessionStore(
-    (state) => state.handoffCreatedAgentUserMessage,
-  );
-
   const formErrorMessage = machine.tag === "draft" ? machine.errorMessage : "";
   const isSubmitting = machine.tag === "creating";
 
-  const optimisticStreamItems = useMemo<StreamItem[]>(() => {
+  const submittedStreamItems = useMemo<StreamItem[]>(() => {
     if (machine.tag !== "creating") {
       return EMPTY_STREAM_ITEMS;
     }
@@ -147,13 +145,21 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
     }
 
     return [
-      buildOptimisticUserMessage({
-        id: machine.attempt.clientMessageId,
+      createUserMessage({
+        clientMessageId: machine.attempt.clientMessageId,
         text: machine.attempt.text,
         timestamp: machine.attempt.timestamp,
         images: machine.attempt.images,
         attachments: machine.attempt.attachments,
       }),
+    ];
+  }, [machine]);
+  const pendingMessageSubmissions = useMemo<readonly PendingMessageSubmission[]>(() => {
+    if (machine.tag !== "creating") return [];
+    return [
+      {
+        clientMessageId: machine.attempt.clientMessageId,
+      },
     ];
   }, [machine]);
 
@@ -192,11 +198,11 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
 
         if (createResult.agentId) {
           updatePendingAgentId({ draftId, agentId: createResult.agentId });
-          handoffCreatedAgentUserMessage(
+          handoffCreatedAgentMessageSubmission(
             pendingServerId,
             createResult.agentId,
-            buildOptimisticUserMessage({
-              id: attempt.clientMessageId,
+            createUserMessage({
+              clientMessageId: attempt.clientMessageId,
               text: attempt.text,
               timestamp: attempt.timestamp,
               images: attempt.images,
@@ -218,7 +224,6 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
       }
     },
     [
-      handoffCreatedAgentUserMessage,
       clearPendingCreateAttempt,
       createRequest,
       draftId,
@@ -326,7 +331,8 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
     machine,
     formErrorMessage,
     isSubmitting,
-    optimisticStreamItems,
+    submittedStreamItems,
+    pendingMessageSubmissions,
     draftAgent,
     handleCreateFromInput,
     continueCreateFromAttempt,

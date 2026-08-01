@@ -3,7 +3,6 @@ import { buildCreateAgentPreferences, buildSeededHost, TEST_HOST_LABEL } from ".
 import { getServerId } from "./server-id";
 import { expectAppRoute } from "./route-assertions";
 import {
-  buildProjectsSettingsRoute,
   buildSettingsHostSectionRoute,
   buildSettingsRoute,
   buildSettingsSectionRoute,
@@ -30,19 +29,21 @@ const SECTION_LABELS = {
   about: "About",
 } as const;
 
-export type SettingsSection = keyof typeof SECTION_LABELS | "projects";
+export type SettingsSection = keyof typeof SECTION_LABELS;
 
-type HostSection = "connections" | "agents" | "workspaces" | "providers" | "usage" | "host";
+type HostSection =
+  | "projects"
+  | "connections"
+  | "pair-device"
+  | "agents"
+  | "workspaces"
+  | "providers"
+  | "usage"
+  | "host";
 
 export async function openSettingsSection(page: Page, section: SettingsSection): Promise<void> {
   const sidebar = page.getByTestId("settings-sidebar");
   await expect(sidebar).toBeVisible();
-
-  if (section === "projects") {
-    await page.getByTestId("settings-projects").click();
-    await expectAppRoute(page, buildProjectsSettingsRoute());
-    return;
-  }
 
   await sidebar.getByRole("button", { name: SECTION_LABELS[section], exact: true }).click();
   await expectAppRoute(page, buildSettingsSectionRoute(section));
@@ -143,8 +144,8 @@ export async function seedSavedSettingsHosts(
 }
 
 export async function selectSettingsHost(page: Page, serverId: string): Promise<void> {
-  await page.getByTestId("settings-host-picker").click();
-  await page.getByTestId(`settings-host-picker-item-${serverId}`).click();
+  await page.locator('[data-testid="settings-host-picker"]:visible').click();
+  await page.locator(`[data-testid="settings-host-picker-item-${serverId}"]:visible`).click();
 }
 
 export async function expectSettingsHostPickerLabel(page: Page, label: string): Promise<void> {
@@ -171,7 +172,7 @@ export async function expectSettingsSidebarHidden(page: Page): Promise<void> {
 
 export async function expectSettingsSidebarSections(
   page: Page,
-  sections: Array<Exclude<SettingsSection, "projects">>,
+  sections: SettingsSection[],
 ): Promise<void> {
   const sidebar = page.getByTestId("settings-sidebar");
   for (const section of sections) {
@@ -359,8 +360,7 @@ export async function expectProviderInstalledInSettings(
   ).toBeVisible();
 }
 
-export async function expectHostNoLocalOnlyRows(page: Page): Promise<void> {
-  await expect(page.getByTestId("host-page-pair-device-row")).toHaveCount(0);
+export async function expectHostNoDaemonLifecycleRow(page: Page): Promise<void> {
   await expect(page.getByTestId("host-page-daemon-lifecycle-card")).toHaveCount(0);
 }
 
@@ -376,6 +376,7 @@ export async function expectRetiredSidebarSectionsAbsent(page: Page): Promise<vo
 
   // Host group rows are now flat top-level sections (no drill-in).
   await expect(sidebar.getByTestId("settings-host-section-connections")).toBeVisible();
+  await expect(sidebar.getByTestId("settings-host-section-projects")).toBeVisible();
   await expect(sidebar.getByTestId("settings-host-section-agents")).toBeVisible();
   await expect(sidebar.getByTestId("settings-host-section-workspaces")).toBeVisible();
   await expect(sidebar.getByTestId("settings-host-section-providers")).toBeVisible();

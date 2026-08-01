@@ -22,7 +22,7 @@ import type { AgentUpdatesService } from "./session/agent-updates/agent-updates-
 import type { AgentSnapshotPayload, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { createTerminalManager } from "../terminal/terminal-manager.js";
-import { AgentManager } from "./agent/agent-manager.js";
+import { AgentManager, type AgentManagerEvent, type ManagedAgent } from "./agent/agent-manager.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
 import type {
   AgentClient,
@@ -79,6 +79,14 @@ const REPO_CWD = path.resolve("/tmp/repo");
 const UNREGISTERED_CWD = path.resolve("/tmp/unregistered");
 
 const terminalManagers: TerminalManager[] = [];
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
 
 async function flushWorkspaceUpdateBackgroundWork(): Promise<void> {
   await waitForImmediate();
@@ -303,6 +311,7 @@ function makeManagedAgent(input: {
   workspaceId?: string;
   lifecycle: AgentSnapshotPayload["status"];
   updatedAt: string;
+  activeTurn?: { turnId: string; startedAt: string };
 }) {
   const now = new Date(input.updatedAt);
   const snapshot = makeAgent({
@@ -338,6 +347,8 @@ function makeManagedAgent(input: {
     unsubscribeSession: null,
     session: null,
     activeForegroundTurnId: input.lifecycle === "running" ? "turn-1" : null,
+    activeTurnId: input.activeTurn?.turnId ?? null,
+    activeTurnStartedAt: input.activeTurn ? new Date(input.activeTurn.startedAt) : null,
   };
 }
 
@@ -537,6 +548,8 @@ function createSessionForWorkspaceTests(
     onWorkspaceRecovered?: SessionOptions["onWorkspaceRecovered"];
     workspaceGitService?: ReturnType<typeof createNoopWorkspaceGitService>;
     terminalManager?: TerminalManager | null;
+    agentManager?: { [K in keyof SessionOptions["agentManager"]]?: unknown };
+    agentStorage?: { [K in keyof SessionOptions["agentStorage"]]?: unknown };
     projectRegistry?: SessionOptions["projectRegistry"];
     workspaceRegistry?: SessionOptions["workspaceRegistry"];
     github?: ForgeService;
@@ -566,6 +579,7 @@ function createSessionForWorkspaceTests(
     unarchiveSnapshot: async () => true,
     clearAgentAttention: async () => {},
     notifyAgentState: () => {},
+    ...options.agentManager,
   });
   const workspaceRegistry: SessionOptions["workspaceRegistry"] = options.workspaceRegistry ?? {
     initialize: async () => {},
@@ -654,6 +668,7 @@ function createSessionForWorkspaceTests(
               })
             : null,
         upsert: async () => {},
+        ...options.agentStorage,
       }),
       projectRegistry: options.projectRegistry ?? {
         initialize: async () => {},
@@ -722,6 +737,113 @@ function createSessionForWorkspaceTests(
   );
   return session;
 }
+
+test("agent updates preserve queued live transitions across stored metadata reads", async () => {
+  const running = makeManagedAgent({
+    id: "agent-coherent",
+    cwd: REPO_CWD,
+    workspaceId: "ws-repo-running",
+    lifecycle: "running",
+    updatedAt: "2026-07-31T10:00:01.000Z",
+    activeTurn: {
+      turnId: "turn-running",
+      startedAt: "2026-07-31T10:00:00.500Z",
+    },
+  }) as unknown as ManagedAgent;
+  const idle = makeManagedAgent({
+    id: "agent-coherent",
+    cwd: REPO_CWD,
+    workspaceId: "ws-repo-running",
+    lifecycle: "idle",
+    updatedAt: "2026-07-31T10:00:02.000Z",
+  }) as unknown as ManagedAgent;
+  running.config.model = "running-model";
+  idle.config = running.config;
+  const stored = makeStoredAgent({
+    id: "agent-coherent",
+    cwd: REPO_CWD,
+    updatedAt: "2026-07-31T10:00:03.000Z",
+  });
+  stored.title = "Stored title";
+  const storageReadStarted = deferred<void>();
+  const firstStorageRead = deferred<StoredAgentRecord | null>();
+  const emittedAgentUpdates: Extract<
+    SessionOutboundMessage,
+    { type: "agent_update" }
+  >["payload"][] = [];
+  const twoUpdatesEmitted = deferred<void>();
+  let storageReadCount = 0;
+  let forwardAgentEvent: ((event: AgentManagerEvent) => void) | null = null;
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => {
+      if (message.type !== "agent_update") return;
+      emittedAgentUpdates.push(message.payload);
+      if (emittedAgentUpdates.length === 2) twoUpdatesEmitted.resolve();
+    },
+    agentManager: {
+      subscribe: (listener: (event: AgentManagerEvent) => void) => {
+        forwardAgentEvent = listener;
+        return () => {};
+      },
+      getAgent: () => idle,
+    },
+    agentStorage: {
+      get: async () => {
+        storageReadCount += 1;
+        if (storageReadCount === 1) {
+          storageReadStarted.resolve();
+          return firstStorageRead.promise;
+        }
+        return stored;
+      },
+    },
+  });
+  session.projectRegistry.get = async () =>
+    createPersistedProjectRecord({
+      projectId: "proj-repo-running",
+      rootPath: REPO_CWD,
+      kind: "non_git",
+      displayName: "repo",
+      createdAt: "2026-07-31T10:00:00.000Z",
+      updatedAt: "2026-07-31T10:00:00.000Z",
+    });
+  activateAgentUpdatesSubscription(session, "sub-coherent");
+  if (!forwardAgentEvent) throw new Error("Agent event listener was not installed");
+
+  forwardAgentEvent({ type: "agent_state", agent: running });
+  await storageReadStarted.promise;
+  idle.config.model = "idle-model";
+  forwardAgentEvent({ type: "agent_state", agent: idle });
+  idle.config.model = "mutated-after-queue";
+  firstStorageRead.resolve(stored);
+  await twoUpdatesEmitted.promise;
+
+  expect(emittedAgentUpdates).toEqual([
+    expect.objectContaining({
+      kind: "upsert",
+      agent: expect.objectContaining({
+        status: "running",
+        activeTurn: {
+          turnId: "turn-running",
+          startedAt: "2026-07-31T10:00:00.500Z",
+        },
+        updatedAt: "2026-07-31T10:00:01.000Z",
+        model: "running-model",
+        title: "Stored title",
+      }),
+    }),
+    expect.objectContaining({
+      kind: "upsert",
+      agent: expect.objectContaining({
+        status: "idle",
+        activeTurn: null,
+        updatedAt: "2026-07-31T10:00:02.000Z",
+        model: "idle-model",
+        title: "Stored title",
+      }),
+    }),
+  ]);
+});
 
 test("client heartbeat clears attention for the focused terminal", async () => {
   const clearedTerminalIds: string[] = [];
@@ -3405,6 +3527,7 @@ test("archiving the last workspace emits a remove carrying the now-empty project
       projectId: project.projectId,
       projectDisplayName: "repo",
       projectCustomName: null,
+      projectCustomIconRevision: null,
       projectRootPath: REPO_CWD,
       projectKind: "git",
     },
@@ -7400,6 +7523,98 @@ test("a workspace leaving a filtered subscription after bootstrap emits a remova
       payload: { kind: "remove", id: descriptor.id },
     },
   ]);
+});
+
+const ICON_PNG_1X1 = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+  0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00,
+]);
+
+test("project.icon.set.request publishes a custom icon that project.icon.get serves back", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  session.updateClientCapabilities({ [CLIENT_CAPS.projectUpdates]: true });
+
+  const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "session-project-icon-test-")));
+  const projectRoot = path.join(tempDir, "project-without-icons");
+  mkdirSync(projectRoot, { recursive: true });
+  session.paseoHome = path.join(tempDir, "paseo-home");
+
+  const project = createPersistedProjectRecord({
+    projectId: "prj_icon",
+    rootPath: projectRoot,
+    kind: "git",
+    displayName: "repo",
+    createdAt: "2026-07-22T12:00:00.000Z",
+    updatedAt: "2026-07-22T12:00:00.000Z",
+  });
+  const projects = new Map([[project.projectId, project]]);
+  session.projectRegistry.get = async (id: string) => projects.get(id) ?? null;
+  session.projectRegistry.update = async (id, updater) => {
+    const current = projects.get(id);
+    if (!current) return null;
+    const updated = updater(current);
+    projects.set(id, updated);
+    return updated;
+  };
+  session.workspaceRegistry.list = async () => [];
+
+  await session.handleMessage({
+    type: "project.icon.set.request",
+    projectId: project.projectId,
+    source: { type: "upload", data: ICON_PNG_1X1.toString("base64") },
+    requestId: "req-icon-set",
+  });
+
+  expect(findByType(emitted, "project.icon.set.response")?.payload).toEqual({
+    requestId: "req-icon-set",
+    projectId: project.projectId,
+    accepted: true,
+    error: null,
+  });
+  const revision = projects.get(project.projectId)?.customIconRevision;
+  expect(revision).toEqual(expect.any(String));
+  expect(findByType(emitted, "project.update")?.payload).toMatchObject({
+    kind: "upsert",
+    project: { projectCustomIconRevision: revision },
+  });
+
+  emitted.length = 0;
+  await session.handleMessage({
+    type: "project.icon.get.request",
+    projectId: project.projectId,
+    requestId: "req-icon-custom",
+  });
+  expect(findByType(emitted, "project.icon.get.response")?.payload).toEqual({
+    projectId: project.projectId,
+    icon: { data: ICON_PNG_1X1.toString("base64"), mimeType: "image/png" },
+    error: null,
+    requestId: "req-icon-custom",
+  });
+
+  emitted.length = 0;
+  await session.handleMessage({
+    type: "project.icon.set.request",
+    projectId: project.projectId,
+    source: { type: "automatic" },
+    requestId: "req-icon-automatic",
+  });
+  expect(projects.get(project.projectId)?.customIconRevision).toBeNull();
+  expect(findByType(emitted, "project.icon.get.response")).toBeUndefined();
+
+  await session.handleMessage({
+    type: "project.icon.get.request",
+    projectId: project.projectId,
+    requestId: "req-icon-scan",
+  });
+  expect(findByType(emitted, "project.icon.get.response")?.payload).toMatchObject({
+    icon: null,
+    error: null,
+  });
+
+  rmSync(tempDir, { recursive: true, force: true });
 });
 
 test("project.rename.request stores customName and emits an updated workspace descriptor", async () => {
