@@ -21,6 +21,24 @@ import type { LiveVoiceSessionMode } from "@/live-voice/live-voice-session";
 import { registerLiveVoiceRouteAuthority } from "@/live-voice/live-voice-route-authority";
 import { attachLiveVoiceCues } from "@/live-voice/live-voice-cues";
 import { attachLiveVoiceCallNotification } from "@/live-voice/live-voice-call-notification";
+import {
+  disableAmbientLiveVoiceWatches,
+  enableAmbientLiveVoiceWatches,
+  type LiveVoiceAmbientWatchDeps,
+} from "@/live-voice/live-voice-ambient-watch";
+import { getLiveVoiceAmbientSettings } from "@/stores/live-voice-settings-store";
+
+/**
+ * Every host the app holds a connection to, read on demand. A call can outlive
+ * any individual host connection, so nothing here is captured at start.
+ */
+const ambientWatchDeps: LiveVoiceAmbientWatchDeps = {
+  getSavedHosts: () => getHostRuntimeStore().getHosts(),
+  supportsAmbientReports: (serverId) =>
+    useSessionStore.getState().sessions[serverId]?.serverInfo?.features
+      ?.liveVoiceAmbientAgentReports === true,
+  pinActiveConnection: (serverId) => getHostRuntimeStore().pinActiveConnection(serverId),
+};
 
 interface LiveVoiceContextValue extends LiveVoiceSnapshot {
   start: (serverId: string, sessionMode?: LiveVoiceSessionMode) => Promise<void>;
@@ -108,6 +126,24 @@ export function LiveVoiceProvider({ children }: LiveVoiceProviderProps) {
             client: asLiveVoiceDaemonClient(pin.client),
             release: pin.release,
           };
+        },
+        {
+          read: getLiveVoiceAmbientSettings,
+          enable: async ({ sourceServerId, liveSessionId }) => {
+            await enableAmbientLiveVoiceWatches({
+              sourceServerId,
+              liveSessionId,
+              deps: ambientWatchDeps,
+              onError: (serverId, error) => {
+                console.warn("[LiveVoice] Could not watch agents on host", {
+                  serverId,
+                  error: error instanceof Error ? error.message : String(error),
+                });
+              },
+            });
+          },
+          disable: ({ liveSessionId }) =>
+            disableAmbientLiveVoiceWatches({ liveSessionId, deps: ambientWatchDeps }),
         },
       ),
     );

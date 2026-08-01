@@ -997,6 +997,70 @@ describe("Live Voice routing session boundary", () => {
       },
     ]);
   });
+
+  test("scopes the ambient agent watch to the exact socket that asked for it", async () => {
+    const source = {};
+    const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+    const watching = new Set<object>();
+    const notifier = {
+      watchAll: vi.fn(({ sourceKey }: { sourceKey: object }) => {
+        watching.add(sourceKey);
+      }),
+      stopWatchingAll: vi.fn((sourceKey: object) => {
+        watching.delete(sourceKey);
+      }),
+      isWatchingAll: (sourceKey: object) => watching.has(sourceKey),
+    };
+    const session = createSessionForTest({
+      targetedMessages,
+      liveVoiceAgentNotifier: notifier as unknown as LiveVoiceAgentNotifier,
+    });
+
+    await session.handleMessage(
+      { type: "voice.live.agent.watch.request", requestId: "watch-1", enabled: true },
+      source,
+    );
+
+    expect(notifier.watchAll).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ sourceKey: source }),
+    );
+    expect(targetedMessages).toEqual([
+      {
+        source,
+        message: {
+          type: "voice.live.agent.watch.response",
+          payload: { requestId: "watch-1", enabled: true },
+        },
+      },
+    ]);
+
+    await session.handleMessage(
+      { type: "voice.live.agent.watch.request", requestId: "watch-2", enabled: false },
+      source,
+    );
+
+    expect(notifier.stopWatchingAll).toHaveBeenCalledExactlyOnceWith(source);
+    expect(targetedMessages[1]?.message).toEqual({
+      type: "voice.live.agent.watch.response",
+      payload: { requestId: "watch-2", enabled: false },
+    });
+  });
+
+  test("tells a client asking for ambient reports when the daemon cannot give them", async () => {
+    const source = {};
+    const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+    const session = createSessionForTest({ targetedMessages });
+
+    await session.handleMessage(
+      { type: "voice.live.agent.watch.request", requestId: "watch-1", enabled: true },
+      source,
+    );
+
+    expect(targetedMessages[0]?.message).toMatchObject({
+      type: "voice.live.agent.watch.response",
+      payload: { requestId: "watch-1", enabled: false, error: { code: "unsupported" } },
+    });
+  });
 });
 
 describe("session authorization permissions", () => {

@@ -13,6 +13,7 @@ import type {
 import {
   forgetRoutedLiveVoiceWork,
   forgetRoutedLiveVoiceWorkForSource,
+  getAmbientLiveVoiceWatch,
   getRoutedLiveVoiceWork,
   trackRoutedLiveVoiceWork,
 } from "@/live-voice/live-voice-work-registry";
@@ -127,11 +128,8 @@ export async function handleLiveVoiceAgentUpdate(input: {
   message: VoiceLiveAgentUpdate;
 }): Promise<void> {
   const { targetServerId, deps, message } = input;
-  const tracked = getRoutedLiveVoiceWork(message.payload.requestId);
+  const tracked = resolveReportedWork({ targetServerId, message });
   if (!tracked) {
-    return;
-  }
-  if (tracked.targetServerId !== targetServerId) {
     return;
   }
   if (!deps.isAuthorizedSourceCall(tracked.sourceServerId, tracked.liveSessionId)) {
@@ -155,12 +153,58 @@ export async function handleLiveVoiceAgentUpdate(input: {
         ...(hostLabel ? { hostLabel } : {}),
       },
     });
-    if (!delivery.delivered || message.payload.notification.reason !== "needs_permission") {
+    // Ambient reports have no registry entry to retire — the host's watch stays
+    // registered until the call ends, because more will follow.
+    if (
+      !tracked.ambient &&
+      (!delivery.delivered || message.payload.notification.reason !== "needs_permission")
+    ) {
       forgetRoutedLiveVoiceWork(message.payload.requestId);
     }
   } finally {
     pin.release();
   }
+}
+
+interface ResolvedReportedWork {
+  sourceServerId: string;
+  liveSessionId: string;
+  ambient: boolean;
+}
+
+/**
+ * Two ways a report can belong to a call, and they must not be confused.
+ *
+ * A routed report is matched by the requestId the app itself minted, and only
+ * counts from the host it was routed to. An ambient report was never requested,
+ * so it is matched by the host that sent it — which is sound only because the
+ * app is what enabled that host's watch in the first place. A host that reports
+ * unsolicited work the app never asked it to watch resolves to nothing.
+ */
+function resolveReportedWork(input: {
+  targetServerId: string;
+  message: VoiceLiveAgentUpdate;
+}): ResolvedReportedWork | null {
+  const { targetServerId, message } = input;
+  if (message.payload.notification.unsolicited) {
+    const ambient = getAmbientLiveVoiceWatch(targetServerId);
+    return ambient
+      ? {
+          sourceServerId: ambient.sourceServerId,
+          liveSessionId: ambient.liveSessionId,
+          ambient: true,
+        }
+      : null;
+  }
+  const tracked = getRoutedLiveVoiceWork(message.payload.requestId);
+  if (!tracked || tracked.targetServerId !== targetServerId) {
+    return null;
+  }
+  return {
+    sourceServerId: tracked.sourceServerId,
+    liveSessionId: tracked.liveSessionId,
+    ambient: false,
+  };
 }
 
 export async function handleLiveVoiceCrossHostRouteRequest(input: {

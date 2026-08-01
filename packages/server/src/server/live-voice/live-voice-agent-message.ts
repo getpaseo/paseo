@@ -11,22 +11,37 @@ import type { VoiceLiveAgentNotification } from "@getpaseo/protocol/live-voice-r
 export function formatLiveVoiceAgentNotification(notification: VoiceLiveAgentNotification): string {
   const where = notification.hostLabel ? ` on ${notification.hostLabel}` : "";
   const outcome = describeReason(notification.reason);
-  const lines = [
-    `The agent session "${notification.title}"${where}, which you started, ${outcome}.`,
-  ];
+  const provenance = notification.unsolicited ? "which you did not start" : "which you started";
+  const lines = [`The agent session "${notification.title}"${where}, ${provenance}, ${outcome}.`];
   if (notification.summary) {
     lines.push("", "What it reported:", notification.summary);
   }
+  lines.push("", speakingInstruction(notification));
   lines.push(
-    "",
-    "Tell the user now, out loud, in one or two spoken sentences. Do not read this note back, do not spell out the session id, and do not repeat the report verbatim.",
+    "Do not read this note back, do not spell out the session id, and do not repeat the report verbatim.",
   );
   if (notification.reason === "needs_permission") {
     lines.push(
-      "It is blocked until someone answers, so say what it is asking for and offer to answer it.",
+      notification.unsolicited
+        ? "It stays blocked until someone answers, which makes it more worth raising than a session that merely finished."
+        : "It is blocked until someone answers, so say what it is asking for and offer to answer it.",
     );
   }
   return lines.join("\n");
+}
+
+/**
+ * Work the call started was asked for, so the user is owed the answer. Ambient
+ * reports were not asked for and arrive whenever the machine happens to finish
+ * something, so interrupting is a judgement call — and saying nothing has to be
+ * one of the outcomes, or a busy machine turns the call into a stream of
+ * announcements nobody can talk over.
+ */
+function speakingInstruction(notification: VoiceLiveAgentNotification): string {
+  if (!notification.unsolicited) {
+    return "Tell the user now, out loud, in one or two spoken sentences.";
+  }
+  return "Decide whether this is worth interrupting for. If it is, say it in one or two spoken sentences, and wait for a natural gap rather than talking over the user. If it is not, say nothing at all and do not acknowledge this note — silence is a valid response, and several of these arriving together is a reason to say less, not more.";
 }
 
 function describeReason(reason: string): string {

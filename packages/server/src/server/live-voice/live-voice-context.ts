@@ -75,6 +75,21 @@ const PASEO_VISIBLE_CREATION_RULES = [
   "- Never silently fall back to runtime-internal creation. If Paseo creation is unavailable, fails, or does not return the required ids, tell the user that creation did not succeed.",
 ];
 
+/**
+ * Read tools, spelled out.
+ *
+ * The model's cheapest way to answer "what did it say?" is a read, but nothing
+ * else in this prompt names one, and prompting a session to ask it what it did
+ * costs a whole turn and writes the question into the session's own history.
+ * These lines exist so the model does not have to discover that shape by
+ * accident through tool discovery.
+ */
+const READ_BEFORE_PROMPTING = [
+  "- To find out what a session said, did, or is doing now, read it instead of prompting it. get_agent_activity returns its recent messages, get_agent_status its current state, list_agents what exists, and list_pending_permissions what is blocked and waiting on an answer.",
+  "- Prompting a session to ask what it did costs it a full turn and adds your question to its history. Prompt only to give a session new work; read for everything else.",
+  "- The state below is a snapshot from when this call started, so it goes stale. Re-read before answering a question about what is running now.",
+];
+
 const DELEGATION_WITH_PASEO_TOOLS = [
   "- To get anything done, route it to a host with compatibility=ready. Call list_hosts, choose by label and hostname, call list_paseo_tools_on_host to discover the exact tool and schema, then call run_paseo_tool_on_host with that opaque serverId. Explain when a host requires an upgrade instead of attempting it.",
   "- For a user-requested new workspace and agent, call list_hosts, then use run_paseo_tool_on_host to call create_workspace and create_agent on the chosen host. Pass the returned workspaceId to create_agent; do not let create_agent implicitly choose or create another workspace.",
@@ -84,7 +99,8 @@ const DELEGATION_WITH_PASEO_TOOLS = [
   "- Host credentials and connection endpoints are intentionally unavailable. Never ask the user for them.",
   "- Route anything that touches code, files, or commands. Answer directly only when the answer is already in this conversation or in the state below, or when you need a clarifying question first.",
   "- Replies from a session you prompted come back to you as text. Narrate them: summarize what happened in a sentence or two instead of reading them out verbatim.",
-  "- Anything that takes real work should be started with background set to true. Routed background work is tracked automatically: the call returns as soon as it starts, and a note arrives here when it finishes, errors, or needs permission — so say what you started, then keep talking. Never leave the user in silence waiting for a session to finish, and never poll for status.",
+  ...READ_BEFORE_PROMPTING,
+  "- Routed work runs in the background by default and is tracked automatically: the call returns as soon as the work starts, and a note arrives here when it finishes, errors, or needs permission. Say what you started, then keep talking. Never set background to false — it would block this call and leave the user in silence — and never poll in a loop waiting for work to end.",
 ];
 
 const DELEGATION_WITH_LOCAL_PASEO_TOOLS = [
@@ -94,6 +110,7 @@ const DELEGATION_WITH_LOCAL_PASEO_TOOLS = [
   "- This client cannot route work to another Paseo host. Do not claim that you can see or control other machines.",
   "- Route anything that touches code, files, or commands. Answer directly only when the answer is already in this conversation or in the state below, or when you need a clarifying question first.",
   "- Replies from a session you prompted come back to you as text. Narrate them: summarize what happened in a sentence or two instead of reading them out verbatim.",
+  ...READ_BEFORE_PROMPTING,
 ];
 
 const DELEGATION_WITHOUT_PASEO_TOOLS = [
@@ -113,10 +130,45 @@ function resolveDelegationInstructions(
     : DELEGATION_WITH_LOCAL_PASEO_TOOLS;
 }
 
-export function buildLiveVoicePrompt(
-  paseoToolsAvailable: boolean,
-  crossHostRoutingAvailable = true,
-): string {
+export interface LiveVoicePromptOptions {
+  paseoToolsAvailable: boolean;
+  crossHostRoutingAvailable?: boolean;
+  /** The call will hear about agents the user started outside it. */
+  ambientAgentReports?: boolean;
+  /** The user's own standing instruction for those reports, verbatim. */
+  ambientAgentGuidance?: string | undefined;
+}
+
+/**
+ * The guidance is the user talking to their own voice assistant about their own
+ * machines, so it is quoted rather than interpreted. It is bounded only because
+ * it competes with the rest of the prompt for the call's context budget.
+ */
+const MAX_AMBIENT_GUIDANCE_LENGTH = 600;
+
+function buildAmbientAgentReportInstructions(guidance: string | undefined): string[] {
+  const lines = [
+    "",
+    "Reports about work you did not start:",
+    "- You will also hear when the user's own agent sessions finish a turn, stop with an error, or need permission — on any machine of theirs you can see, not just this one. Nobody asked you for these, and they arrive whenever the work happens to end.",
+    "- Each one is your judgement call: say it, hold it until a natural gap, or say nothing at all. Silence is a valid response and never needs to be acknowledged.",
+    "- These reports tell you an outcome, not the details. If the user wants more, read the session rather than prompting it.",
+  ];
+  const trimmed = guidance?.trim();
+  if (trimmed) {
+    const bounded =
+      trimmed.length <= MAX_AMBIENT_GUIDANCE_LENGTH
+        ? trimmed
+        : `${trimmed.slice(0, MAX_AMBIENT_GUIDANCE_LENGTH)}…`;
+    lines.push(
+      `- The user has told you how they want these handled: "${bounded}". Follow that over your own judgement.`,
+    );
+  }
+  return lines;
+}
+
+export function buildLiveVoicePrompt(options: LiveVoicePromptOptions): string {
+  const crossHostRoutingAvailable = options.crossHostRoutingAvailable ?? true;
   return [
     "You are the voice of Paseo on this machine.",
     "",
@@ -125,7 +177,10 @@ export function buildLiveVoicePrompt(
     "How you work:",
     "- You are not one of the user's agent sessions. You have a working session of your own, in a plain directory with none of their projects in it, so never do coding work yourself — the sessions you route to are the ones that run with their code.",
     ...PASEO_VISIBLE_CREATION_RULES,
-    ...resolveDelegationInstructions(paseoToolsAvailable, crossHostRoutingAvailable),
+    ...resolveDelegationInstructions(options.paseoToolsAvailable, crossHostRoutingAvailable),
+    ...(options.ambientAgentReports
+      ? buildAmbientAgentReportInstructions(options.ambientAgentGuidance)
+      : []),
     "",
     "How to speak:",
     "- Short, plain, spoken sentences. No markdown, no bullet lists, no code blocks, and never spell out long file paths.",
@@ -207,13 +262,21 @@ export function buildLiveVoiceInitialItems(
 
 export function buildLiveVoiceStartContext(
   snapshot: LiveVoiceContextSnapshot,
-  options: { crossHostRoutingAvailable?: boolean } = {},
+  options: {
+    crossHostRoutingAvailable?: boolean;
+    ambientAgentReports?: boolean;
+    ambientAgentGuidance?: string | undefined;
+  } = {},
 ): LiveVoiceStartContext {
   return {
-    prompt: buildLiveVoicePrompt(
-      snapshot.paseoToolsAvailable,
-      options.crossHostRoutingAvailable ?? true,
-    ),
+    prompt: buildLiveVoicePrompt({
+      paseoToolsAvailable: snapshot.paseoToolsAvailable,
+      crossHostRoutingAvailable: options.crossHostRoutingAvailable ?? true,
+      ...(options.ambientAgentReports ? { ambientAgentReports: true } : {}),
+      ...(options.ambientAgentGuidance
+        ? { ambientAgentGuidance: options.ambientAgentGuidance }
+        : {}),
+    }),
     initialItems: buildLiveVoiceInitialItems(snapshot),
   };
 }

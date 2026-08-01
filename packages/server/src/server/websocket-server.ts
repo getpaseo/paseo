@@ -1813,6 +1813,9 @@ export class VoiceAssistantWebSocketServer {
         liveVoiceToolExecution: this.liveVoiceToolExecutionAvailable,
         // COMPAT(liveVoiceAgentNotifications): added in v0.2.6, remove after 2027-02-28.
         liveVoiceAgentNotifications: this.liveVoiceToolExecutionAvailable,
+        // COMPAT(liveVoiceAmbientAgentReports): added in v0.2.6, remove after 2027-02-28.
+        // Same notifier, so it rides on the same availability.
+        liveVoiceAmbientAgentReports: this.liveVoiceToolExecutionAvailable,
         // COMPAT(workspaceScriptManagement): added in v0.1.105, remove gate after 2027-01-10.
         workspaceScriptManagement: true,
         // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.

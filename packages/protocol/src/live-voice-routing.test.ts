@@ -236,4 +236,80 @@ describe("Live Voice cross-host routing protocol", () => {
       }),
     ).toMatchObject({ payload: { delivered: false } });
   });
+
+  describe("ambient agent reports", () => {
+    test("carries the watch request, its response, and the feature that gates it", () => {
+      expect(
+        SessionInboundMessageSchema.parse({
+          type: "voice.live.agent.watch.request",
+          requestId: "watch-1",
+          enabled: true,
+        }),
+      ).toMatchObject({ enabled: true });
+
+      expect(
+        SessionOutboundMessageSchema.parse({
+          type: "voice.live.agent.watch.response",
+          payload: {
+            requestId: "watch-1",
+            enabled: false,
+            error: { code: "unsupported", message: "no" },
+          },
+        }),
+      ).toMatchObject({ payload: { enabled: false } });
+
+      expect(
+        ServerInfoStatusPayloadSchema.parse({
+          status: "server_info",
+          serverId: "server-1",
+          features: {},
+        }).features?.liveVoiceAmbientAgentReports,
+      ).toBeUndefined();
+    });
+
+    test("a start request without the new fields still parses", () => {
+      // An older app never sends them; the daemon must not require them.
+      expect(
+        SessionInboundMessageSchema.parse({
+          type: "voice.live.start.request",
+          requestId: "start-1",
+          offerSdp: "v=0",
+        }),
+      ).toMatchObject({ requestId: "start-1" });
+
+      expect(
+        SessionInboundMessageSchema.parse({
+          type: "voice.live.start.request",
+          requestId: "start-1",
+          offerSdp: "v=0",
+          ambientAgentReports: true,
+          ambientAgentGuidance: "Only interrupt for permissions.",
+        }),
+      ).toMatchObject({ ambientAgentReports: true });
+    });
+
+    test("an older client's notification still parses, and a newer one's survives the round trip", () => {
+      const base = {
+        agentId: "agent-1",
+        title: "Nightly bump",
+        reason: "turn_completed",
+        summary: null,
+      };
+
+      // `unsolicited` is a new optional field, so its absence is normal traffic.
+      expect(
+        SessionOutboundMessageSchema.parse({
+          type: "voice.live.agent.update",
+          payload: { requestId: "execute-1", notification: base },
+        }),
+      ).toMatchObject({ payload: { notification: { agentId: "agent-1" } } });
+
+      expect(
+        SessionOutboundMessageSchema.parse({
+          type: "voice.live.agent.update",
+          payload: { requestId: "ambient-1", notification: { ...base, unsolicited: true } },
+        }),
+      ).toMatchObject({ payload: { notification: { unsolicited: true } } });
+    });
+  });
 });

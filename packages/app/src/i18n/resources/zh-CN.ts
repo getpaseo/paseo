@@ -1723,6 +1723,19 @@ export const zhCN: TranslationResources = {
       offline: "没有在线主机。请连接主机以使用实时语音。",
       upgrade: "已连接的主机未声明支持实时语音。请更新其守护进程。",
     },
+    settings: {
+      title: "实时语音",
+      agentReports: {
+        label: "播报智能体动态",
+        description:
+          "通话期间，任何已连接主机上的智能体会话完成、出错或需要授权时都会告知你，包括在通话之外启动的会话。",
+      },
+      agentReportGuidance: {
+        label: "何时打断",
+        description: "原样转达给语音智能体。留空则由它自行判断。",
+        placeholder: "只有需要授权和出错时才打断我。",
+      },
+    },
     diagnostics: {
       title: "实时语音",
       statusTitle: "状态",

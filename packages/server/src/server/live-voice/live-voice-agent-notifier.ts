@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Logger } from "pino";
 import type { VoiceLiveAgentUpdate } from "@getpaseo/protocol/live-voice-routing";
 
@@ -31,6 +32,12 @@ export interface LiveVoiceAgentNotifierOptions {
   logger: Logger;
 }
 
+export interface WatchAllLiveVoiceAgentsParams {
+  /** The socket that asked to be told about everything. Watches die with it. */
+  sourceKey: object;
+  emit: (update: VoiceLiveAgentUpdate) => void;
+}
+
 export interface WatchLiveVoiceAgentParams {
   agentId: string;
   /** The routed tool call that started this work; echoed back for correlation. */
@@ -55,6 +62,7 @@ export class LiveVoiceAgentNotifier {
   private readonly agentStorage: LiveVoiceAgentNotifierOptions["agentStorage"];
   private readonly logger: Logger;
   private readonly cancelsBySource = new Map<object, Set<() => void>>();
+  private readonly ambientBySource = new Map<object, () => void>();
 
   constructor(options: LiveVoiceAgentNotifierOptions) {
     this.agentManager = options.agentManager;
@@ -94,8 +102,86 @@ export class LiveVoiceAgentNotifier {
     });
   }
 
+  /**
+   * Watches every agent on this daemon for one socket, not just work that socket
+   * started.
+   *
+   * This cannot reuse {@link watchAgentFinish}: that watches one known agent and
+   * fires once, whereas here the set of agents is open and each one keeps having
+   * turns for as long as the call lasts. Agents that appear mid-call are picked
+   * up because the subscription is global rather than a set of per-agent ones.
+   *
+   * Global subscribers never see internal agents, so the hidden host running the
+   * call cannot report on itself.
+   */
+  watchAll(params: WatchAllLiveVoiceAgentsParams): void {
+    if (this.ambientBySource.has(params.sourceKey)) {
+      return;
+    }
+    // An agent going idle only means a turn ended if we saw it run. Without this
+    // every agent already sitting idle would report the moment anything else on
+    // the daemon changed.
+    const running = new Set<string>();
+    const reportedPermissionIds = new Set<string>();
+
+    const unsubscribe = this.agentManager.subscribe(
+      (event) => {
+        if (event.type === "agent_state") {
+          const { id, lifecycle } = event.agent;
+          if (lifecycle === "running") {
+            running.add(id);
+            return;
+          }
+          if (lifecycle === "closed") {
+            running.delete(id);
+            return;
+          }
+          if (lifecycle === "error") {
+            running.delete(id);
+            this.emitReport({ agentId: id, emit: params.emit }, "errored");
+            return;
+          }
+          if (lifecycle === "idle" && running.delete(id)) {
+            this.emitReport({ agentId: id, emit: params.emit }, "finished");
+          }
+          return;
+        }
+
+        if (event.type === "agent_stream" && event.event.type === "permission_requested") {
+          const permissionId = event.event.request.id;
+          if (reportedPermissionIds.has(permissionId)) {
+            return;
+          }
+          reportedPermissionIds.add(permissionId);
+          this.emitReport(
+            { agentId: event.agentId, emit: params.emit },
+            "needs permission",
+            event.event.turnId,
+          );
+        }
+      },
+      { replayState: false },
+    );
+
+    this.ambientBySource.set(params.sourceKey, unsubscribe);
+  }
+
+  stopWatchingAll(sourceKey: object): void {
+    const unsubscribe = this.ambientBySource.get(sourceKey);
+    if (!unsubscribe) {
+      return;
+    }
+    this.ambientBySource.delete(sourceKey);
+    unsubscribe();
+  }
+
+  isWatchingAll(sourceKey: object): boolean {
+    return this.ambientBySource.has(sourceKey);
+  }
+
   /** The socket went away; nothing it started has anywhere left to report to. */
   releaseForSource(sourceKey: object): void {
+    this.stopWatchingAll(sourceKey);
     const cancels = this.cancelsBySource.get(sourceKey);
     if (!cancels) {
       return;
@@ -107,7 +193,8 @@ export class LiveVoiceAgentNotifier {
   }
 
   dispose(): void {
-    for (const sourceKey of Array.from(this.cancelsBySource.keys())) {
+    const sourceKeys = new Set([...this.cancelsBySource.keys(), ...this.ambientBySource.keys()]);
+    for (const sourceKey of sourceKeys) {
       this.releaseForSource(sourceKey);
     }
   }
@@ -120,10 +207,34 @@ export class LiveVoiceAgentNotifier {
     return count;
   }
 
+  /**
+   * Ambient reports have no routed tool call to be correlated against, so they
+   * carry a fresh id and say so. The client matches them to a call by which host
+   * it enabled the ambient watch on.
+   */
+  private emitReport(
+    params: { agentId: string; emit: (update: VoiceLiveAgentUpdate) => void },
+    reason: AgentFinishReason,
+    turnId?: string,
+  ): void {
+    void this.report(
+      { ...params, requestId: `ambient-${randomUUID()}`, sourceKey: params.emit },
+      reason,
+      turnId,
+      { unsolicited: true },
+    ).catch((error) => {
+      this.logger.warn(
+        { err: error, agentId: params.agentId, reason },
+        "live_voice.agent_notify.ambient_report_failed",
+      );
+    });
+  }
+
   private async report(
     params: WatchLiveVoiceAgentParams,
     reason: AgentFinishReason,
     turnId?: string,
+    options: { unsolicited?: boolean } = {},
   ): Promise<void> {
     const record = await this.agentStorage.get(params.agentId);
     const title = record?.title?.trim() || params.agentId;
@@ -143,6 +254,7 @@ export class LiveVoiceAgentNotifier {
           reason: wireReason,
           scope: "agent_turn",
           ...(turnId ? { turnId } : {}),
+          ...(options.unsolicited ? { unsolicited: true } : {}),
           summary: redactAndTruncateSummary(lastAssistantMessage),
         },
       },

@@ -83,6 +83,10 @@ export interface LiveVoiceStartRequest {
   owner: LiveVoiceOwner;
   emit: (update: LiveVoiceUpdate) => void;
   sendRouteRequest?: LiveVoiceRouteRegistration["send"];
+  /** The client will report agents this call did not start; tell the model so. */
+  ambientAgentReports?: boolean;
+  /** The user's standing instruction for those reports. */
+  ambientAgentGuidance?: string | undefined;
 }
 
 export type LiveVoiceStartResult =
@@ -140,7 +144,11 @@ interface LiveVoiceCall {
  * context, which yields a working but Paseo-unaware call.
  */
 export interface LiveVoiceContextProvider {
-  build(options?: { crossHostRoutingAvailable: boolean }): Promise<LiveVoiceStartContext | null>;
+  build(options?: {
+    crossHostRoutingAvailable: boolean;
+    ambientAgentReports?: boolean;
+    ambientAgentGuidance?: string | undefined;
+  }): Promise<LiveVoiceStartContext | null>;
 }
 
 export interface LiveVoiceCoordinatorOptions {
@@ -436,7 +444,13 @@ export class LiveVoiceCoordinator {
   ): Promise<string> {
     // Built before the waiter is armed: it only awaits daemon state, and no SDP
     // can arrive until `realtimeStart` below is issued.
-    const context = await this.buildContext(request.sendRouteRequest !== undefined);
+    const context = await this.buildContext({
+      crossHostRoutingAvailable: request.sendRouteRequest !== undefined,
+      ...(request.ambientAgentReports ? { ambientAgentReports: true } : {}),
+      ...(request.ambientAgentGuidance
+        ? { ambientAgentGuidance: request.ambientAgentGuidance }
+        : {}),
+    });
     if (call.state !== "starting") {
       throw new Error("Live voice call closed while building context");
     }
@@ -467,14 +481,16 @@ export class LiveVoiceCoordinator {
    * A context failure must not cost the user their call: fall back to the
    * provider's default context rather than aborting the start.
    */
-  private async buildContext(
-    crossHostRoutingAvailable: boolean,
-  ): Promise<LiveVoiceStartContext | null> {
+  private async buildContext(options: {
+    crossHostRoutingAvailable: boolean;
+    ambientAgentReports?: boolean;
+    ambientAgentGuidance?: string | undefined;
+  }): Promise<LiveVoiceStartContext | null> {
     if (!this.context) {
       return null;
     }
     try {
-      return await this.context.build({ crossHostRoutingAvailable });
+      return await this.context.build(options);
     } catch (error) {
       this.logger.warn({ err: error }, "live_voice.context.build_failed");
       return null;

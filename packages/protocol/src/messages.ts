@@ -64,6 +64,8 @@ import {
   VoiceLiveAgentNotifyRequestSchema,
   VoiceLiveAgentNotifyResponseSchema,
   VoiceLiveAgentUpdateSchema,
+  VoiceLiveAgentWatchRequestSchema,
+  VoiceLiveAgentWatchResponseSchema,
   VoiceLiveRouteRequestSchema,
   VoiceLiveRouteResponseSchema,
   VoiceLiveToolExecuteRequestSchema,
@@ -1117,6 +1119,23 @@ export const VoiceLiveStartRequestSchema = z.object({
   requestId: z.string(),
   offerSdp: z.string(),
   voice: z.string().optional(),
+  /**
+   * The client will report agents this call did not start, so the model should
+   * be told to expect them. The client decides this, not the daemon: it is the
+   * party that watches every host and holds the user's setting.
+   *
+   * COMPAT(liveVoiceAmbientAgentReports): added in v0.2.6, remove after
+   * 2027-02-28. An older daemon drops both fields and the call keeps its
+   * built-in behavior.
+   */
+  ambientAgentReports: z.boolean().optional(),
+  /**
+   * The user's own standing instruction for those reports — when to interrupt,
+   * what to skip, how to handle several at once. Passed to the model verbatim
+   * rather than compiled into filtering rules here, because the judgement is
+   * the user's and the cases they care about are not enumerable.
+   */
+  ambientAgentGuidance: z.string().optional(),
 });
 
 // Stopping is idempotent: a stop for an already-closed or superseded
@@ -3174,6 +3193,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   VoiceLiveRouteResponseSchema,
   VoiceLiveToolExecuteRequestSchema,
   VoiceLiveAgentNotifyRequestSchema,
+  VoiceLiveAgentWatchRequestSchema,
   SendAgentMessageRequestSchema,
   WaitForFinishRequestSchema,
   DaemonGetStatusRequestSchema,
@@ -3670,6 +3690,10 @@ export const ServerInfoStatusPayloadSchema = z
         // 2027-02-28. Covers both legs: this daemon watches routed background
         // work and reports it, and it speaks notifications into a call it hosts.
         liveVoiceAgentNotifications: z.boolean().optional(),
+        // COMPAT(liveVoiceAmbientAgentReports): added in v0.2.6, remove after
+        // 2027-02-28. This daemon can watch every agent on it for a Live Voice
+        // client, not only work a routed tool call started.
+        liveVoiceAmbientAgentReports: z.boolean().optional(),
       })
       .optional(),
   })
@@ -6624,6 +6648,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   VoiceLiveToolExecuteResponseSchema,
   VoiceLiveAgentUpdateSchema,
   VoiceLiveAgentNotifyResponseSchema,
+  VoiceLiveAgentWatchResponseSchema,
   DaemonGetStatusResponseSchema,
   DaemonGetPairingOfferResponseSchema,
   DaemonConfigReloadResponseSchema,

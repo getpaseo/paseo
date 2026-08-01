@@ -1794,6 +1794,19 @@ export const fr: TranslationResources = {
       offline: "Aucun hôte n’est en ligne. Connectez-en un pour utiliser la voix en direct.",
       upgrade: "Les hôtes connectés n’annoncent pas la voix en direct. Mettez à jour leurs démons.",
     },
+    settings: {
+      title: "Voix en direct",
+      agentReports: {
+        label: "Signaler l’activité des agents",
+        description:
+          "Pendant un appel, soyez averti quand une session d’agent se termine, échoue ou demande une permission — y compris celles lancées en dehors de l’appel, sur n’importe quel hôte connecté.",
+      },
+      agentReportGuidance: {
+        label: "Quand interrompre",
+        description: "Transmis tel quel à l’agent vocal. Laissez vide pour qu’il décide.",
+        placeholder: "Ne m’interrompez que pour les demandes de permission et les échecs.",
+      },
+    },
     diagnostics: {
       title: "Voix en direct",
       statusTitle: "État",

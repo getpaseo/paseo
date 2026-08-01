@@ -2349,9 +2349,54 @@ export class Session {
         return this.handleLiveVoiceToolExecuteRequest(msg, source);
       case "voice.live.agent.notify.request":
         return this.handleLiveVoiceAgentNotifyRequest(msg, source);
+      case "voice.live.agent.watch.request":
+        this.handleLiveVoiceAgentWatchRequest(msg, source);
+        return undefined;
       default:
         return undefined;
     }
+  }
+
+  /**
+   * Turns the ambient watch over every agent on this daemon on or off for one
+   * socket. Scoped to the socket rather than the session so it dies with the
+   * connection, exactly like the per-work watches beside it.
+   */
+  private handleLiveVoiceAgentWatchRequest(
+    msg: Extract<SessionInboundMessage, { type: "voice.live.agent.watch.request" }>,
+    source?: object,
+  ): void {
+    const notifier = this.liveVoiceAgentNotifier;
+    const sourceKey = source ?? this;
+    if (!notifier) {
+      this.emitForSource(
+        {
+          type: "voice.live.agent.watch.response",
+          payload: {
+            requestId: msg.requestId,
+            enabled: false,
+            error: {
+              code: "unsupported",
+              message: "This daemon does not report agent activity to Live Voice.",
+            },
+          },
+        },
+        source,
+      );
+      return;
+    }
+    if (msg.enabled) {
+      notifier.watchAll({ sourceKey, emit: (update) => this.emitForSource(update, source) });
+    } else {
+      notifier.stopWatchingAll(sourceKey);
+    }
+    this.emitForSource(
+      {
+        type: "voice.live.agent.watch.response",
+        payload: { requestId: msg.requestId, enabled: notifier.isWatchingAll(sourceKey) },
+      },
+      source,
+    );
   }
 
   private async handleLiveVoiceStartRequest(
@@ -2394,6 +2439,10 @@ export class Session {
             },
           }
         : {}),
+      // The client, not this daemon, decides whether ambient reports happen —
+      // it is the party that watches every host and holds the user's setting.
+      ...(msg.ambientAgentReports ? { ambientAgentReports: true } : {}),
+      ...(msg.ambientAgentGuidance ? { ambientAgentGuidance: msg.ambientAgentGuidance } : {}),
     });
     if (result.accepted) {
       respond({

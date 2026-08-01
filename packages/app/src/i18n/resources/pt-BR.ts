@@ -1776,6 +1776,19 @@ export const ptBR: TranslationResources = {
       offline: "Nenhum host está online. Conecte-se a um host para usar a voz ao vivo.",
       upgrade: "Os hosts conectados não anunciam voz ao vivo. Atualize seus daemons.",
     },
+    settings: {
+      title: "Voz ao vivo",
+      agentReports: {
+        label: "Avisar sobre atividade de agentes",
+        description:
+          "Durante uma chamada, saiba quando qualquer sessão de agente termina, falha ou precisa de permissão — inclusive as que você iniciou fora da chamada, em qualquer host conectado.",
+      },
+      agentReportGuidance: {
+        label: "Quando interromper",
+        description: "Repassado ao agente de voz como está. Deixe vazio para ele decidir.",
+        placeholder: "Só me interrompa para pedidos de permissão e falhas.",
+      },
+    },
     diagnostics: {
       title: "Voz ao vivo",
       statusTitle: "Status",

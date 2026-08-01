@@ -14,7 +14,11 @@ import {
   mountLiveVoiceCrossHostRouter,
   type LiveVoiceCrossHostRouterDeps,
 } from "./live-voice-cross-host-router";
-import { resetRoutedLiveVoiceWork } from "./live-voice-work-registry";
+import {
+  forgetAmbientLiveVoiceWatchesForCall,
+  resetRoutedLiveVoiceWork,
+  trackAmbientLiveVoiceWatch,
+} from "./live-voice-work-registry";
 
 function createSourceClient() {
   const handlers = new Map<string, (message: never) => void>();
@@ -621,5 +625,101 @@ describe("Live Voice cross-host router", () => {
     target.agentUpdate(AGENT_UPDATE);
     await Promise.resolve();
     expect(notifyLiveVoiceAgentUpdate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Live Voice unsolicited reports", () => {
+  beforeEach(() => {
+    resetRoutedLiveVoiceWork();
+  });
+
+  const UNSOLICITED_UPDATE: VoiceLiveAgentUpdate = {
+    type: "voice.live.agent.update",
+    payload: {
+      // Minted by the reporting daemon; it matches no routed call by design.
+      requestId: "ambient-9f2c",
+      notification: {
+        agentId: "agent-7",
+        title: "Nightly dependency bump",
+        reason: "turn_completed",
+        scope: "agent_turn",
+        summary: "Bumped 14 packages.",
+        unsolicited: true,
+      },
+    },
+  };
+
+  function mountTargetWithAmbientWatch() {
+    const target = createSourceClient();
+    const harness = createDeps();
+    mountLiveVoiceCrossHostRouter({
+      sourceServerId: "target",
+      sourceClient: target.client,
+      deps: harness.deps,
+    });
+    return { target, ...harness };
+  }
+
+  test("speaks a report for an agent the call never started", async () => {
+    const { target, notifyLiveVoiceAgentUpdate } = mountTargetWithAmbientWatch();
+    trackAmbientLiveVoiceWatch({
+      targetServerId: "target",
+      sourceServerId: "source",
+      liveSessionId: "live-1",
+    });
+
+    target.agentUpdate(UNSOLICITED_UPDATE);
+
+    await vi.waitFor(() => {
+      expect(notifyLiveVoiceAgentUpdate).toHaveBeenCalledTimes(1);
+    });
+    expect(notifyLiveVoiceAgentUpdate).toHaveBeenCalledWith({
+      liveSessionId: "live-1",
+      notification: expect.objectContaining({ agentId: "agent-7", unsolicited: true }),
+    });
+  });
+
+  test("keeps speaking reports from the same host instead of retiring after one", async () => {
+    const { target, notifyLiveVoiceAgentUpdate } = mountTargetWithAmbientWatch();
+    trackAmbientLiveVoiceWatch({
+      targetServerId: "target",
+      sourceServerId: "source",
+      liveSessionId: "live-1",
+    });
+
+    target.agentUpdate(UNSOLICITED_UPDATE);
+    await vi.waitFor(() => expect(notifyLiveVoiceAgentUpdate).toHaveBeenCalledTimes(1));
+    target.agentUpdate(UNSOLICITED_UPDATE);
+
+    // A routed report is one-shot because its work ended. An ambient watch
+    // covers a whole machine for a whole call, so retiring it after the first
+    // report would silence every agent that finished second.
+    await vi.waitFor(() => {
+      expect(notifyLiveVoiceAgentUpdate).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  test("ignores a host reporting work this client never asked it to watch", async () => {
+    const { target, notifyLiveVoiceAgentUpdate } = mountTargetWithAmbientWatch();
+
+    target.agentUpdate(UNSOLICITED_UPDATE);
+
+    await Promise.resolve();
+    expect(notifyLiveVoiceAgentUpdate).not.toHaveBeenCalled();
+  });
+
+  test("drops reports once the call they were registered for has ended", async () => {
+    const { target, notifyLiveVoiceAgentUpdate } = mountTargetWithAmbientWatch();
+    trackAmbientLiveVoiceWatch({
+      targetServerId: "target",
+      sourceServerId: "source",
+      liveSessionId: "live-1",
+    });
+    forgetAmbientLiveVoiceWatchesForCall("live-1");
+
+    target.agentUpdate(UNSOLICITED_UPDATE);
+
+    await Promise.resolve();
+    expect(notifyLiveVoiceAgentUpdate).not.toHaveBeenCalled();
   });
 });

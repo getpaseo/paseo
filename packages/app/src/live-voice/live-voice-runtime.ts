@@ -78,6 +78,8 @@ export interface LiveVoiceSnapshot {
 export interface LiveVoiceDaemonClient {
   startLiveVoice(input: {
     offerSdp: string;
+    ambientAgentReports?: boolean;
+    ambientAgentGuidance?: string;
   }): Promise<{ liveSessionId: string; answerSdp: string }>;
   stopLiveVoice(input: { liveSessionId: string }): Promise<void>;
   subscribeUpdates(handler: (message: VoiceLiveUpdateMessage) => void): () => void;
@@ -98,6 +100,16 @@ export interface LiveVoiceRuntimeDeps {
   startSession(options: StartLiveVoiceSessionOptions): Promise<LiveVoiceSession>;
   isSessionSupported: boolean;
   lease: AudioSessionLease;
+  /**
+   * Reporting agents this call did not start. Absent on hosts that have no
+   * multi-host registry to watch (tests, and any client without one).
+   */
+  ambientAgentReports?: {
+    /** The user's setting, read at start so a mid-call change cannot confuse the model. */
+    read(): { enabled: boolean; guidance: string | undefined };
+    enable(input: { sourceServerId: string; liveSessionId: string }): Promise<void>;
+    disable(input: { liveSessionId: string }): Promise<void>;
+  };
 }
 
 export interface LiveVoiceRuntime {
@@ -142,6 +154,42 @@ export class LiveVoiceStartError extends Error {
  */
 const MAX_RETAINED_TRANSCRIPTS = 200;
 
+/**
+ * Guidance only travels when reports are on: it exists to shape reports, and
+ * sending it without them would describe a behavior the call does not have.
+ */
+function toAmbientStartFields(
+  ambient: { enabled: boolean; guidance: string | undefined } | undefined,
+): {
+  ambientAgentReports?: true;
+  ambientAgentGuidance?: string;
+} {
+  if (!ambient?.enabled) {
+    return {};
+  }
+  return {
+    ambientAgentReports: true,
+    ...(ambient.guidance ? { ambientAgentGuidance: ambient.guidance } : {}),
+  };
+}
+
+/**
+ * Arms the ambient watches once the call is live. Deliberately not awaited: a
+ * host that is slow to arm must not delay the conversation the user is already
+ * having, and a host that never arms just does not report.
+ */
+function beginAmbientAgentReports(
+  deps: LiveVoiceRuntimeDeps,
+  startFields: { ambientAgentReports?: true },
+  sourceServerId: string,
+  liveSessionId: string,
+): void {
+  if (!startFields.ambientAgentReports) {
+    return;
+  }
+  void deps.ambientAgentReports?.enable({ sourceServerId, liveSessionId }).catch(() => undefined);
+}
+
 const IDLE_SNAPSHOT: LiveVoiceSnapshot = {
   phase: "idle",
   serverId: null,
@@ -157,10 +205,12 @@ const IDLE_SNAPSHOT: LiveVoiceSnapshot = {
 export function createDefaultLiveVoiceRuntimeDeps(
   getClient: (serverId: string) => LiveVoiceDaemonClient | null,
   pinConnection?: (serverId: string) => LiveVoiceConnectionPin | null,
+  ambientAgentReports?: LiveVoiceRuntimeDeps["ambientAgentReports"],
 ): LiveVoiceRuntimeDeps {
   return {
     getClient,
     ...(pinConnection ? { pinConnection } : {}),
+    ...(ambientAgentReports ? { ambientAgentReports } : {}),
     startSession: startLiveVoiceSession,
     isSessionSupported: isLiveVoiceSessionSupported,
     lease: audioSessionLease,
@@ -211,6 +261,16 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
    * not touch the daemon: callers decide whether a stop RPC is warranted.
    */
   function cleanupLocal(): void {
+    // Every way a call can end converges here, so this is the one place the
+    // ambient watches have to be dropped — client stop, provider error, lost
+    // connection, and runtime teardown alike. Reads the id before the snapshot
+    // is cleared; callers publish the idle snapshot after this returns.
+    if (snapshot.liveSessionId) {
+      const endedLiveSessionId = snapshot.liveSessionId;
+      void deps.ambientAgentReports
+        ?.disable({ liveSessionId: endedLiveSessionId })
+        .catch(() => undefined);
+    }
     pendingUpdates = [];
     if (unsubscribeUpdates) {
       const unsubscribe = unsubscribeUpdates;
@@ -396,9 +456,13 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
         handleUpdate(message);
       });
 
+      // Read once, before negotiating: the prompt the model gets is fixed at
+      // start, so a switch flipped mid-call must not leave the two disagreeing.
+      const ambientStartFields = toAmbientStartFields(deps.ambientAgentReports?.read());
+
       const sessionOptions: StartLiveVoiceSessionOptions = {
         mode: sessionMode,
-        negotiate: (offerSdp) => client.startLiveVoice({ offerSdp }),
+        negotiate: (offerSdp) => client.startLiveVoice({ offerSdp, ...ambientStartFields }),
         onAudioBlocked: () => {
           if (generation !== startGeneration) return;
           patch({ isAudioBlocked: true });
@@ -474,6 +538,8 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
         isMuted: false,
       });
       flushPendingUpdates(started.liveSessionId);
+
+      beginAmbientAgentReports(deps, ambientStartFields, serverId, started.liveSessionId);
     },
 
     async stop() {

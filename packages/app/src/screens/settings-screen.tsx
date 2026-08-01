@@ -4,6 +4,7 @@ import {
   Alert,
   Pressable,
   ScrollView,
+  Switch,
   Text,
   View,
   type PressableStateCallbackType,
@@ -98,6 +99,10 @@ import {
 } from "@/live-voice/live-voice-availability";
 import type { LiveVoiceHostAvailability } from "@/live-voice/live-voice-availability-policy";
 import { resolveLiveVoiceUnavailableMessage } from "@/live-voice/live-voice-unavailable-message";
+import {
+  MAX_AMBIENT_AGENT_GUIDANCE_LENGTH,
+  useLiveVoiceSettingsStore,
+} from "@/stores/live-voice-settings-store";
 import { settingsStyles } from "@/styles/settings";
 import { THINKING_TONE_NATIVE_PCM_BASE64 } from "@/utils/thinking-tone.native-pcm";
 import { useVoiceAudioEngineOptional } from "@/contexts/voice-context";
@@ -513,7 +518,68 @@ function GeneralSection({
           />
         </View>
       </View>
+      <Text style={styles.diagnosticsGroupTitle}>{t("liveVoice.settings.title")}</Text>
+      <LiveVoiceSettingsCard />
     </SettingsSection>
+  );
+}
+
+/**
+ * What a Live Voice call is allowed to interrupt with.
+ *
+ * The guidance field is free text on purpose: what is worth being told about
+ * mid-conversation depends on what the user is doing, and no set of checkboxes
+ * gets there. It goes to the model as written and only appears when reports are
+ * on, since it has nothing to shape otherwise.
+ */
+function LiveVoiceSettingsCard() {
+  const { t } = useTranslation();
+  const ambientAgentReports = useLiveVoiceSettingsStore((state) => state.ambientAgentReports);
+  const ambientAgentGuidance = useLiveVoiceSettingsStore((state) => state.ambientAgentGuidance);
+  const setAmbientAgentReports = useLiveVoiceSettingsStore((state) => state.setAmbientAgentReports);
+  const setAmbientAgentGuidance = useLiveVoiceSettingsStore(
+    (state) => state.setAmbientAgentGuidance,
+  );
+
+  return (
+    <View style={settingsStyles.card}>
+      <View style={settingsStyles.row}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>{t("liveVoice.settings.agentReports.label")}</Text>
+          <Text style={settingsStyles.rowHint}>
+            {t("liveVoice.settings.agentReports.description")}
+          </Text>
+        </View>
+        <Switch
+          value={ambientAgentReports}
+          onValueChange={setAmbientAgentReports}
+          accessibilityLabel={t("liveVoice.settings.agentReports.label")}
+          testID="live-voice-agent-reports-toggle"
+        />
+      </View>
+      {ambientAgentReports ? (
+        <View style={[settingsStyles.row, settingsStyles.rowBorder, styles.liveVoiceGuidanceRow]}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>
+              {t("liveVoice.settings.agentReportGuidance.label")}
+            </Text>
+            <Text style={settingsStyles.rowHint}>
+              {t("liveVoice.settings.agentReportGuidance.description")}
+            </Text>
+            <TextInput
+              value={ambientAgentGuidance}
+              onChangeText={setAmbientAgentGuidance}
+              placeholder={t("liveVoice.settings.agentReportGuidance.placeholder")}
+              multiline
+              maxLength={MAX_AMBIENT_AGENT_GUIDANCE_LENGTH}
+              style={styles.liveVoiceGuidanceInput}
+              accessibilityLabel={t("liveVoice.settings.agentReportGuidance.label")}
+              testID="live-voice-agent-report-guidance"
+            />
+          </View>
+        </View>
+      ) : null}
+    </View>
   );
 }
 
@@ -1829,6 +1895,24 @@ const styles = StyleSheet.create((theme) => ({
   themeTriggerText: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
+  },
+  liveVoiceGuidanceRow: {
+    // The input sits under its own label rather than beside it: this is a
+    // sentence the user writes, not a value they pick.
+    alignItems: "stretch",
+  },
+  liveVoiceGuidanceInput: {
+    marginTop: theme.spacing[2],
+    minHeight: 72,
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface2,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    textAlignVertical: "top",
   },
   terminalScrollbackInput: {
     width: 112,

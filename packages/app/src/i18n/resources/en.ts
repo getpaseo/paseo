@@ -1754,6 +1754,19 @@ export const en = {
       offline: "No hosts are online. Connect to a host to use live voice.",
       upgrade: "Connected hosts do not advertise live voice. Update their daemons.",
     },
+    settings: {
+      title: "Live voice",
+      agentReports: {
+        label: "Report agent activity",
+        description:
+          "During a call, hear when any agent session finishes, fails, or needs permission — including ones you started outside the call, on any connected host.",
+      },
+      agentReportGuidance: {
+        label: "When to interrupt",
+        description: "Passed to the voice agent as written. Leave empty to let it decide.",
+        placeholder: "Only interrupt me for permission requests and failures.",
+      },
+    },
     diagnostics: {
       title: "Live voice",
       statusTitle: "Status",

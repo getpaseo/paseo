@@ -64,6 +64,8 @@ export class LiveVoiceDaemonContextProvider implements LiveVoiceContextProvider 
 
   async build(options?: {
     crossHostRoutingAvailable: boolean;
+    ambientAgentReports?: boolean;
+    ambientAgentGuidance?: string | undefined;
   }): Promise<LiveVoiceStartContext | null> {
     // `listAgents` already omits internal sessions, so the call's own hidden host
     // session never shows up in the snapshot it is given.
@@ -96,6 +98,10 @@ export class LiveVoiceDaemonContextProvider implements LiveVoiceContextProvider 
     };
     const context = buildLiveVoiceStartContext(snapshot, {
       crossHostRoutingAvailable: options?.crossHostRoutingAvailable ?? true,
+      ...(options?.ambientAgentReports ? { ambientAgentReports: true } : {}),
+      ...(options?.ambientAgentGuidance
+        ? { ambientAgentGuidance: options.ambientAgentGuidance }
+        : {}),
     });
     this.logger.debug(
       {
@@ -104,6 +110,7 @@ export class LiveVoiceDaemonContextProvider implements LiveVoiceContextProvider 
         itemCount: context.initialItems.length,
         paseoToolsAvailable,
         crossHostRoutingAvailable: options?.crossHostRoutingAvailable ?? true,
+        ambientAgentReports: options?.ambientAgentReports === true,
       },
       "live_voice.context.built",
     );

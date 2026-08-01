@@ -1790,6 +1790,19 @@ export const es: TranslationResources = {
       offline: "No hay hosts conectados. Conecta uno para usar la voz en directo.",
       upgrade: "Los hosts conectados no anuncian voz en directo. Actualiza sus daemons.",
     },
+    settings: {
+      title: "Voz en vivo",
+      agentReports: {
+        label: "Informar actividad de agentes",
+        description:
+          "Durante una llamada, entérate cuando cualquier sesión de agente termina, falla o necesita permiso, incluidas las que iniciaste fuera de la llamada, en cualquier host conectado.",
+      },
+      agentReportGuidance: {
+        label: "Cuándo interrumpir",
+        description: "Se transmite al agente de voz tal cual. Déjalo vacío para que decida.",
+        placeholder: "Interrúmpeme solo por solicitudes de permiso y fallos.",
+      },
+    },
     diagnostics: {
       title: "Voz en directo",
       statusTitle: "Estado",

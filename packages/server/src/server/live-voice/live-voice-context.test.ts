@@ -41,7 +41,7 @@ const logger = pino({ level: "silent" });
 
 describe("live voice prompt", () => {
   it("tells the model it routes work to sessions and can reach Paseo's own controls", () => {
-    const prompt = buildLiveVoicePrompt(true);
+    const prompt = buildLiveVoicePrompt({ paseoToolsAvailable: true });
 
     expect(prompt).toContain("You are the voice of Paseo");
     expect(prompt).toContain("prompt an existing agent session");
@@ -59,7 +59,7 @@ describe("live voice prompt", () => {
   });
 
   it("requires user-requested agent creation to stay visible in Paseo", () => {
-    const prompt = buildLiveVoicePrompt(true);
+    const prompt = buildLiveVoicePrompt({ paseoToolsAvailable: true });
 
     expect(prompt).toMatch(/spawn, start, create, or delegate to an agent/i);
     expect(prompt).toContain("list_hosts");
@@ -84,7 +84,7 @@ describe("live voice prompt", () => {
   });
 
   it("admits it cannot act on Paseo when it has no Paseo tools", () => {
-    const prompt = buildLiveVoicePrompt(false);
+    const prompt = buildLiveVoicePrompt({ paseoToolsAvailable: false });
 
     expect(prompt).toContain("you cannot act on Paseo");
     expect(prompt).not.toMatch(/archive workspaces/i);
@@ -94,11 +94,71 @@ describe("live voice prompt", () => {
   });
 
   it("keeps the local-only instructions for a legacy client without routing capability", () => {
-    const prompt = buildLiveVoicePrompt(true, false);
+    const prompt = buildLiveVoicePrompt({
+      paseoToolsAvailable: true,
+      crossHostRoutingAvailable: false,
+    });
 
     expect(prompt).toContain("Your session has Paseo's tools for this machine");
     expect(prompt).toContain("cannot route work to another Paseo host");
     expect(prompt).not.toContain("run_paseo_tool_on_host");
+  });
+
+  it("names the read tools so answering a question does not cost a session a turn", () => {
+    const prompt = buildLiveVoicePrompt({ paseoToolsAvailable: true });
+
+    expect(prompt).toContain("get_agent_activity");
+    expect(prompt).toContain("list_pending_permissions");
+    expect(prompt).toMatch(/read it instead of prompting it/i);
+  });
+
+  it("says nothing about unrequested reports when the client is not sending them", () => {
+    const prompt = buildLiveVoicePrompt({ paseoToolsAvailable: true });
+
+    expect(prompt).not.toContain("Reports about work you did not start");
+  });
+
+  it("tells the model it may stay silent about work it did not start", () => {
+    const prompt = buildLiveVoicePrompt({
+      paseoToolsAvailable: true,
+      ambientAgentReports: true,
+    });
+
+    expect(prompt).toContain("Reports about work you did not start");
+    expect(prompt).toMatch(/silence is a valid response/i);
+  });
+
+  it("quotes the user's own instruction and puts it above the model's judgement", () => {
+    const prompt = buildLiveVoicePrompt({
+      paseoToolsAvailable: true,
+      ambientAgentReports: true,
+      ambientAgentGuidance: "Only interrupt me for permission requests.",
+    });
+
+    expect(prompt).toContain('"Only interrupt me for permission requests."');
+    expect(prompt).toContain("Follow that over your own judgement");
+  });
+
+  it("drops guidance that has nothing to shape", () => {
+    const prompt = buildLiveVoicePrompt({
+      paseoToolsAvailable: true,
+      ambientAgentReports: true,
+      ambientAgentGuidance: "   ",
+    });
+
+    expect(prompt).toContain("Reports about work you did not start");
+    expect(prompt).not.toContain("The user has told you how they want these handled");
+  });
+
+  it("bounds guidance so it cannot crowd out the state snapshot", () => {
+    const prompt = buildLiveVoicePrompt({
+      paseoToolsAvailable: true,
+      ambientAgentReports: true,
+      ambientAgentGuidance: "x".repeat(5_000),
+    });
+
+    expect(prompt).toContain("…");
+    expect(prompt.length).toBeLessThan(10_000);
   });
 });
 
@@ -285,7 +345,7 @@ describe("start context", () => {
   it("pairs the prompt with the snapshot items", () => {
     const context = buildLiveVoiceStartContext(snapshot());
 
-    expect(context.prompt).toBe(buildLiveVoicePrompt(true));
+    expect(context.prompt).toBe(buildLiveVoicePrompt({ paseoToolsAvailable: true }));
     expect(context.initialItems.length).toBeGreaterThan(0);
   });
 });

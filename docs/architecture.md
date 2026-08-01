@@ -183,6 +183,23 @@ correlation, and the source daemon still checks that the socket asking it to
 speak owns the call it names. A report for a call that has ended is dropped
 rather than spoken into whatever call came after it.
 
+A call can also report agents it did not start, gated on a user setting that is
+off by default. When it is on, the app turns on an ambient watch (`voice.live
+.agent.watch`) on every connected host that advertises
+`liveVoiceAmbientAgentReports`, and those hosts report every agent that finishes
+a turn, errors, or asks for permission. Two things differ from a routed report
+and both follow from nobody having asked for it:
+
+- **Correlation is by host, not requestId.** There is no routed call to match, so
+  the app resolves an unsolicited report through the host it armed the watch on.
+  A host reporting work the app never asked it to watch resolves to nothing. The
+  registration survives the whole call rather than retiring after one report.
+- **The model may stay silent.** A routed report is an answer the user is owed,
+  so its note says to speak. An unsolicited one says to use judgement and that
+  saying nothing is a valid outcome. There is no burst coalescing or filtering in
+  code; the user's own free-text guidance goes into the prompt verbatim and the
+  model decides.
+
 A turn-completed report does not claim that external work such as CI has
 finished. The spoken summary preserves any pending-work qualification from the
 agent. End-to-end monitoring remains an explicit heartbeat, schedule, monitoring
@@ -194,7 +211,12 @@ labels/status, tool names/arguments, and results. Passwords, relay keys, endpoin
 configuration, and OpenAI credentials never cross from one daemon to another.
 The target catalog is created without a caller agent id, so a routed request
 cannot claim an agent's workspace authority or recursively acquire the hidden
-Live Voice routing tools. A paired source daemon also cannot use the app as a
+Live Voice routing tools. Dropping the caller agent id also drops the
+agent-to-agent defaults that come with it, including background execution, so a
+routed call that asks for a report sets `defaultAgentWorkToBackground`. Without
+it the tool would block, the background-start hook would never fire, and the
+report the caller was promised would never be sent — a silence the model cannot
+detect or recover from. A paired source daemon also cannot use the app as a
 general cross-host bridge: the app accepts a route only while it owns the exact
 active Live Voice session id on that source host.
 

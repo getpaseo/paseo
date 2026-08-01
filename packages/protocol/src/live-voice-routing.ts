@@ -98,7 +98,7 @@ export const VoiceLiveToolExecuteRequestSchema = z.object({
 });
 
 /**
- * One completed piece of work started by a routed Live Voice tool call.
+ * One completed piece of agent work reported into a Live Voice call.
  * `reason` stays `z.string()` so a newer daemon can report outcomes an older
  * client has never heard of.
  */
@@ -112,6 +112,16 @@ export const VoiceLiveAgentNotificationSchema = z.object({
   summary: z.string().nullable(),
   /** Filled in by the client, which is the only party that knows host labels. */
   hostLabel: z.string().min(1).optional(),
+  /**
+   * The call did not start this work — it came from the ambient watch over
+   * everything on the host. The user did not ask for it mid-conversation, so the
+   * model is told it may stay silent rather than told to speak.
+   *
+   * A source daemon too old to know this field strips it and speaks the
+   * notification as if the call had started the work. That is a louder call, not
+   * a broken one, so it does not need its own capability gate.
+   */
+  unsolicited: z.boolean().optional(),
 });
 
 /** Target daemon -> the client socket that issued the routed tool call. */
@@ -120,6 +130,29 @@ export const VoiceLiveAgentUpdateSchema = z.object({
   payload: z.object({
     requestId: z.string().min(1),
     notification: VoiceLiveAgentNotificationSchema,
+  }),
+});
+
+/**
+ * Client -> a target daemon, to watch every agent on it rather than only work a
+ * routed tool call started.
+ *
+ * Enabling is per socket and dies with it, exactly like a routed watch. The
+ * daemon is still told nothing about the call: it reports to the requesting
+ * socket and the client decides which call, if any, the report belongs to.
+ */
+export const VoiceLiveAgentWatchRequestSchema = z.object({
+  type: z.literal("voice.live.agent.watch.request"),
+  requestId: z.string().min(1),
+  enabled: z.boolean(),
+});
+
+export const VoiceLiveAgentWatchResponseSchema = z.object({
+  type: z.literal("voice.live.agent.watch.response"),
+  payload: z.object({
+    requestId: z.string().min(1),
+    enabled: z.boolean(),
+    error: VoiceLiveRouteErrorSchema.optional(),
   }),
 });
 
@@ -172,3 +205,5 @@ export type VoiceLiveAgentNotification = z.infer<typeof VoiceLiveAgentNotificati
 export type VoiceLiveAgentUpdate = z.infer<typeof VoiceLiveAgentUpdateSchema>;
 export type VoiceLiveAgentNotifyRequest = z.infer<typeof VoiceLiveAgentNotifyRequestSchema>;
 export type VoiceLiveAgentNotifyResponse = z.infer<typeof VoiceLiveAgentNotifyResponseSchema>;
+export type VoiceLiveAgentWatchRequest = z.infer<typeof VoiceLiveAgentWatchRequestSchema>;
+export type VoiceLiveAgentWatchResponse = z.infer<typeof VoiceLiveAgentWatchResponseSchema>;

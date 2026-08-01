@@ -1761,6 +1761,19 @@ export const ja: TranslationResources = {
       offline: "オンラインのホストがありません。ライブ音声を使うにはホストに接続してください。",
       upgrade: "接続中のホストはライブ音声に対応していません。デーモンを更新してください。",
     },
+    settings: {
+      title: "ライブ音声",
+      agentReports: {
+        label: "エージェントの動きを知らせる",
+        description:
+          "通話中、接続中のどのホストでも、エージェントセッションが完了・失敗・許可待ちになったときに知らせます。通話の外で開始したセッションも含みます。",
+      },
+      agentReportGuidance: {
+        label: "割り込みの基準",
+        description: "音声エージェントにそのまま伝えます。空欄にすると判断を任せます。",
+        placeholder: "許可の確認と失敗のときだけ知らせて。",
+      },
+    },
     diagnostics: {
       title: "ライブ音声",
       statusTitle: "ステータス",

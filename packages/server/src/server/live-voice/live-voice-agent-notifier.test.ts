@@ -65,6 +65,24 @@ function createFakeAgents(initialLifecycle: Lifecycle = "running") {
         } as never);
       }
     },
+    /**
+     * The envelope the agent manager really dispatches. The routed watch above
+     * only ever reads `event.event`, so it does not notice the difference; the
+     * ambient watch has to read `agentId` off the envelope and does.
+     */
+    requestAmbientPermission() {
+      for (const subscriber of Array.from(subscribers)) {
+        subscriber({
+          type: "agent_stream",
+          agentId: "agent-1",
+          event: {
+            type: "permission_requested",
+            request: { id: "permission-1" },
+            turnId: "turn-1",
+          },
+        } as never);
+      }
+    },
     subscriberCount: () => subscribers.size,
   };
 }
@@ -257,5 +275,103 @@ describe("LiveVoiceAgentNotifier", () => {
       title: "agent-1",
       summary: null,
     });
+  });
+});
+
+describe("LiveVoiceAgentNotifier ambient watch", () => {
+  it("reports an agent nobody asked it to watch, marked unsolicited", async () => {
+    const agents = createFakeAgents();
+    const notifier = createNotifier(agents);
+    const updates: VoiceLiveAgentUpdate[] = [];
+    notifier.watchAll({ sourceKey: {}, emit: (update) => updates.push(update) });
+
+    agents.transition("running");
+    agents.transition("idle");
+
+    await vi.waitFor(() => {
+      expect(updates).toHaveLength(1);
+    });
+    expect(updates[0]?.payload.notification).toMatchObject({
+      agentId: "agent-1",
+      reason: "turn_completed",
+      unsolicited: true,
+    });
+  });
+
+  it("keeps reporting across turns instead of firing once", async () => {
+    const agents = createFakeAgents();
+    const notifier = createNotifier(agents);
+    const updates: VoiceLiveAgentUpdate[] = [];
+    notifier.watchAll({ sourceKey: {}, emit: (update) => updates.push(update) });
+
+    agents.transition("running");
+    agents.transition("idle");
+    await vi.waitFor(() => expect(updates).toHaveLength(1));
+    agents.transition("running");
+    agents.transition("idle");
+
+    await vi.waitFor(() => {
+      expect(updates).toHaveLength(2);
+    });
+  });
+
+  it("stays silent for an agent that was already idle", async () => {
+    const agents = createFakeAgents("idle");
+    const notifier = createNotifier(agents);
+    const updates: VoiceLiveAgentUpdate[] = [];
+    notifier.watchAll({ sourceKey: {}, emit: (update) => updates.push(update) });
+
+    // An unrelated agent finishing re-broadcasts state for everything. Without
+    // the seen-running gate every idle session would announce itself here.
+    agents.transition("idle");
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(updates).toHaveLength(0);
+  });
+
+  it("reports a permission request so a blocked agent is not silent", async () => {
+    const agents = createFakeAgents();
+    const notifier = createNotifier(agents);
+    const updates: VoiceLiveAgentUpdate[] = [];
+    notifier.watchAll({ sourceKey: {}, emit: (update) => updates.push(update) });
+
+    agents.requestAmbientPermission();
+    agents.requestAmbientPermission();
+
+    await vi.waitFor(() => {
+      expect(updates).toHaveLength(1);
+    });
+    expect(updates[0]?.payload.notification).toMatchObject({
+      reason: "needs_permission",
+      unsolicited: true,
+    });
+  });
+
+  it("stops when the socket that asked for it goes away", async () => {
+    const agents = createFakeAgents();
+    const notifier = createNotifier(agents);
+    const updates: VoiceLiveAgentUpdate[] = [];
+    const socket = {};
+    notifier.watchAll({ sourceKey: socket, emit: (update) => updates.push(update) });
+    expect(agents.subscriberCount()).toBe(1);
+
+    notifier.releaseForSource(socket);
+    expect(notifier.isWatchingAll(socket)).toBe(false);
+    expect(agents.subscriberCount()).toBe(0);
+
+    agents.transition("running");
+    agents.transition("idle");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(updates).toHaveLength(0);
+  });
+
+  it("does not stack subscriptions when asked twice", () => {
+    const agents = createFakeAgents();
+    const notifier = createNotifier(agents);
+    const socket = {};
+    notifier.watchAll({ sourceKey: socket, emit: () => undefined });
+    notifier.watchAll({ sourceKey: socket, emit: () => undefined });
+
+    expect(agents.subscriberCount()).toBe(1);
   });
 });

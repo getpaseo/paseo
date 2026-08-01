@@ -69,9 +69,63 @@ export function forgetRoutedLiveVoiceWorkForSource(sourceServerId: string): void
   }
 }
 
+/**
+ * Ambient reports have no routed tool call behind them, so there is no
+ * requestId to match. What the app knows instead is which host it turned the
+ * ambient watch on for, and which call it did that for — so the host is the key.
+ *
+ * One entry per target host: a host can only be watched for the one call the app
+ * currently owns, and starting a new call replaces the registration.
+ */
+const ambientByTargetServerId = new Map<string, AmbientWatchEntry>();
+
+interface AmbientWatchEntry {
+  sourceServerId: string;
+  liveSessionId: string;
+}
+
+export function trackAmbientLiveVoiceWatch(params: {
+  targetServerId: string;
+  sourceServerId: string;
+  liveSessionId: string;
+}): void {
+  ambientByTargetServerId.set(params.targetServerId, {
+    sourceServerId: params.sourceServerId,
+    liveSessionId: params.liveSessionId,
+  });
+}
+
+export function getAmbientLiveVoiceWatch(targetServerId: string): AmbientWatchEntry | null {
+  return ambientByTargetServerId.get(targetServerId) ?? null;
+}
+
+export function forgetAmbientLiveVoiceWatch(targetServerId: string): void {
+  ambientByTargetServerId.delete(targetServerId);
+}
+
+export function getAmbientLiveVoiceWatchHostsForCall(liveSessionId: string): string[] {
+  const hosts: string[] = [];
+  for (const [targetServerId, entry] of ambientByTargetServerId) {
+    if (entry.liveSessionId === liveSessionId) {
+      hosts.push(targetServerId);
+    }
+  }
+  return hosts;
+}
+
+/** The call ended, so every host watching for it is watching for nothing. */
+export function forgetAmbientLiveVoiceWatchesForCall(liveSessionId: string): void {
+  for (const [targetServerId, entry] of ambientByTargetServerId) {
+    if (entry.liveSessionId === liveSessionId) {
+      ambientByTargetServerId.delete(targetServerId);
+    }
+  }
+}
+
 /** Test seam. */
 export function resetRoutedLiveVoiceWork(): void {
   entriesByRequestId.clear();
+  ambientByTargetServerId.clear();
 }
 
 const MAX_ENTRY_AGE_MS = 24 * 60 * 60 * 1_000;
