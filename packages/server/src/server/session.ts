@@ -8,6 +8,7 @@ import {
   serializeAgentStreamEvent,
   type AgentSnapshotPayload,
   type AgentAttachment,
+  type CreateAgentWorktreeTarget,
   type FirstAgentContext,
   type SessionInboundMessage,
   type SessionOutboundMessage,
@@ -244,7 +245,7 @@ import {
   ProjectDirectoryRequestError,
 } from "./project-directory-service.js";
 import { runGitCommand } from "../utils/run-git-command.js";
-import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
+import type { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
 import { resolveWorktreeSourceCwd } from "./workspace-source.js";
 
 // TODO: Remove once all app store clients are on >=0.1.45 and understand arbitrary provider strings.
@@ -423,6 +424,7 @@ export interface SessionOptions {
   worktreesRoot?: string;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
+  createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
   filesystem?: SessionFileSystem;
@@ -668,6 +670,7 @@ export class Session {
       worktreesRoot,
       agentManager,
       agentStorage,
+      createAgentLifecycleDispatch,
       projectRegistry,
       workspaceRegistry,
       filesystem,
@@ -913,31 +916,7 @@ export class Session {
         this.emitWorkspaceUpdateForWorkspaceId(workspaceId),
       logger: this.sessionLogger,
     });
-    this.createAgentLifecycleDispatch = new CreateAgentLifecycleDispatch({
-      paseoHome: this.paseoHome,
-      worktreesRoot: this.worktreesRoot,
-      agentManager: this.agentManager,
-      agentStorage: this.agentStorage,
-      github: this.github,
-      workspaceGitService: this.workspaceGitService,
-      createPaseoWorktreeWorkflow: (input, workflowOptions) =>
-        this.createPaseoWorktreeWorkflow(input, workflowOptions),
-      archiveAgentForClose: (agentId) => this.archiveAgentForClose(agentId),
-      findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
-      listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
-      archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
-      workspaceRegistry: this.workspaceRegistry,
-      emit: (message) => this.emit(message),
-      emitAgentRemove: (agentId) => this.agentUpdates.removeAgent(agentId),
-      emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
-        this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
-      markWorkspaceArchiving: (workspaceIds, archivingAt) =>
-        this.markWorkspaceArchiving(workspaceIds, archivingAt),
-      clearWorkspaceArchiving: (workspaceIds) => this.clearWorkspaceArchiving(workspaceIds),
-      killTerminalsForWorkspace: (workspaceId) =>
-        this.terminalController.killTerminalsForWorkspace(workspaceId),
-      logger: this.sessionLogger,
-    });
+    this.createAgentLifecycleDispatch = createAgentLifecycleDispatch;
     this.providerSnapshotManager = providerSnapshotManager;
     this.serviceProxy = serviceProxy ?? null;
     this.scriptRuntimeStore = scriptRuntimeStore ?? null;
@@ -3100,7 +3079,7 @@ export class Session {
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
       };
       const workspacePromptTitle = resolveFirstAgentPromptTitle(firstAgentContext);
-      const createdWorktree = await this.createAgentLifecycleDispatch.createWorktreeForRequest({
+      const createdWorktree = await this.createWorktreeForCreateAgentRequest({
         cwd: config.cwd,
         target: worktree,
         firstAgentContext,
@@ -5820,6 +5799,56 @@ export class Session {
       input,
       options,
     );
+  }
+
+  private async createWorktreeForCreateAgentRequest(input: {
+    cwd: string;
+    target: CreateAgentWorktreeTarget | undefined;
+    firstAgentContext: FirstAgentContext;
+    hasLegacyGitOptions: boolean;
+  }): Promise<CreatePaseoWorktreeWorkflowResult | null> {
+    if (input.target && input.hasLegacyGitOptions) {
+      throw new Error("create_agent_request worktree cannot be combined with git options");
+    }
+    if (!input.target) {
+      return null;
+    }
+
+    const baseInput = {
+      cwd: input.cwd,
+      firstAgentContext: input.firstAgentContext,
+      runSetup: false,
+      paseoHome: this.paseoHome,
+      worktreesRoot: this.worktreesRoot,
+    } as const;
+    switch (input.target.mode) {
+      case "branch-off": {
+        const base = input.target.base;
+        return this.createPaseoWorktreeWorkflow(
+          {
+            ...baseInput,
+            worktreeSlug: input.target.newBranch,
+            action: "branch-off",
+            ...(base ? { refName: base } : {}),
+          },
+          base ? { resolveDefaultBranch: async () => base } : undefined,
+        );
+      }
+      case "checkout-branch":
+        return this.createPaseoWorktreeWorkflow({
+          ...baseInput,
+          action: "checkout",
+          refName: input.target.branch,
+        });
+      case "checkout-pr":
+        return this.createPaseoWorktreeWorkflow({
+          ...baseInput,
+          action: "checkout",
+          githubPrNumber: input.target.prNumber,
+        });
+      default:
+        throw new Error("Unsupported create_agent_request worktree target");
+    }
   }
 
   private async handleWorkspaceSetupStatusRequest(

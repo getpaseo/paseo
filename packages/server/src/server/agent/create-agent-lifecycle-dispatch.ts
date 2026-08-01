@@ -10,17 +10,10 @@ import {
   type ActiveWorkspaceRef,
   WorkspaceCleanupPendingError,
 } from "../workspace-archive-service.js";
-import type {
-  CreatePaseoWorktreeWorkflowFn,
-  CreatePaseoWorktreeWorkflowResult,
-} from "../worktree-session.js";
+import type { CreatePaseoWorktreeWorkflowResult } from "../worktree-session.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type { WorkspaceRegistry } from "../workspace-registry.js";
-import type {
-  CreateAgentWorktreeTarget,
-  FirstAgentContext,
-  SessionOutboundMessage,
-} from "../messages.js";
+import type { SessionOutboundMessage } from "../messages.js";
 import type { AgentManager, AgentSubscriber, SubscribeOptions } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
 
@@ -31,7 +24,6 @@ interface CreateAgentLifecycleDispatchDependencies {
   agentStorage: AgentStorage;
   github: ForgeService;
   workspaceGitService: WorkspaceGitService;
-  createPaseoWorktreeWorkflow: CreatePaseoWorktreeWorkflowFn;
   archiveAgentForClose: (agentId: string) => Promise<unknown>;
   findWorkspaceIdForCwd: (cwd: string) => Promise<string | null>;
   listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
@@ -47,7 +39,7 @@ interface CreateAgentLifecycleDispatchDependencies {
 }
 
 export interface LifecycleRegistration {
-  readonly settled: Promise<"completed" | "cancelled">;
+  readonly settled: Promise<"completed" | "cancelled" | "unresolved">;
   cancel(): Promise<void>;
 }
 
@@ -75,22 +67,6 @@ export class CreateAgentLifecycleDispatch {
   private shuttingDown = false;
 
   constructor(private readonly dependencies: CreateAgentLifecycleDispatchDependencies) {}
-
-  async createWorktreeForRequest(input: {
-    cwd: string;
-    target: CreateAgentWorktreeTarget | undefined;
-    firstAgentContext: FirstAgentContext;
-    hasLegacyGitOptions: boolean;
-  }): Promise<CreatePaseoWorktreeWorkflowResult | null> {
-    if (input.target && input.hasLegacyGitOptions) {
-      throw new Error("create_agent_request worktree cannot be combined with git options");
-    }
-    if (!input.target) {
-      return null;
-    }
-
-    return this.createWorktreeForTarget(input.cwd, input.target, input.firstAgentContext);
-  }
 
   registerAutoArchiveIfRequested(input: {
     autoArchive: boolean | undefined;
@@ -130,47 +106,6 @@ export class CreateAgentLifecycleDispatch {
     });
   }
 
-  private async createWorktreeForTarget(
-    cwd: string,
-    target: CreateAgentWorktreeTarget,
-    firstAgentContext: FirstAgentContext,
-  ): Promise<CreatePaseoWorktreeWorkflowResult> {
-    const baseInput = {
-      cwd,
-      firstAgentContext,
-      runSetup: false,
-      paseoHome: this.dependencies.paseoHome,
-      worktreesRoot: this.dependencies.worktreesRoot,
-    } as const;
-
-    switch (target.mode) {
-      case "branch-off":
-        return this.dependencies.createPaseoWorktreeWorkflow(
-          {
-            ...baseInput,
-            worktreeSlug: target.newBranch,
-            action: "branch-off",
-            ...(target.base ? { refName: target.base } : {}),
-          },
-          target.base ? { resolveDefaultBranch: async () => target.base! } : undefined,
-        );
-      case "checkout-branch":
-        return this.dependencies.createPaseoWorktreeWorkflow({
-          ...baseInput,
-          action: "checkout",
-          refName: target.branch,
-        });
-      case "checkout-pr":
-        return this.dependencies.createPaseoWorktreeWorkflow({
-          ...baseInput,
-          action: "checkout",
-          githubPrNumber: target.prNumber,
-        });
-      default:
-        throw new Error("Unsupported create_agent_request worktree target");
-    }
-  }
-
   private registerAutoArchiveOnTerminalState(
     agentId: string,
     target: AutoArchiveTarget,
@@ -188,8 +123,10 @@ export class CreateAgentLifecycleDispatch {
       archive: () => this.autoArchiveAgentOnce(agentId, target),
       shouldRetry: (error) => !(error instanceof WorkspaceCleanupPendingError),
       subscribeToRearm: subscribeToMutations
-        ? (rearm) => subscribeToMutations(() => rearm())
+        ? (rearm) => subscribeToMutations((mutation) => rearm(mutation.workspaceId))
         : undefined,
+      rearmKeysForError: (error) =>
+        error instanceof WorkspaceCleanupPendingError ? error.workspaceIds : [],
     });
     this.autoArchiveRegistrations.set(agentId, registration);
     void registration.settled.then(() => {
@@ -206,12 +143,13 @@ export class CreateAgentLifecycleDispatch {
     const registrations = Array.from(this.autoArchiveRegistrations.entries());
     const cancellation = Promise.allSettled(
       registrations.map(([, registration]) => registration.cancel()),
-    ).then(async () => {
+    ).then(async (results) => {
       await Promise.allSettled(Array.from(this.autoArchiveTasks.values()));
-      return undefined;
+      return results;
     });
+    let cancellationResults: PromiseSettledResult<void>[] | null = null;
     try {
-      await withTimeout(
+      cancellationResults = await withTimeout(
         cancellation,
         options?.timeoutMs ?? 10_000,
         "Timed out shutting down create-agent lifecycle registrations",
@@ -222,8 +160,17 @@ export class CreateAgentLifecycleDispatch {
         "Create-agent lifecycle shutdown remains incomplete",
       );
     }
+    const unresolvedAgentIds = cancellationResults
+      ? registrations.flatMap(([agentId], index) =>
+          cancellationResults[index]?.status === "rejected" ? [agentId] : [],
+        )
+      : registrations.map(([agentId]) => agentId);
     const pendingAgentIds = Array.from(
-      new Set([...this.autoArchiveRegistrations.keys(), ...this.autoArchiveTasks.keys()]),
+      new Set([
+        ...unresolvedAgentIds,
+        ...this.autoArchiveRegistrations.keys(),
+        ...this.autoArchiveTasks.keys(),
+      ]),
     );
     return { completed: pendingAgentIds.length === 0, pendingAgentIds };
   }
@@ -310,7 +257,8 @@ export function registerAgentAutoArchive(input: {
   retryBaseMs?: number;
   retryMaxMs?: number;
   shouldRetry?: (error: unknown) => boolean;
-  subscribeToRearm?: (rearm: () => void) => () => void;
+  subscribeToRearm?: (rearm: (key: string) => void) => () => void;
+  rearmKeysForError?: (error: unknown) => readonly string[];
 }): LifecycleRegistration {
   let unsubscribe: (() => void) | null = null;
   let unsubscribeRearm: (() => void) | null = null;
@@ -319,17 +267,18 @@ export function registerAgentAutoArchive(input: {
   let lastArchiveFailure: unknown | null = null;
   let consecutiveFailures = 0;
   let mutationVersion = 0;
+  const mutationVersionByKey = new Map<string, number>();
   let awaitingRearm = false;
   let terminalObserved = false;
   let canceled = false;
-  let settleRegistration!: (result: "completed" | "cancelled") => void;
+  let settleRegistration!: (result: "completed" | "cancelled" | "unresolved") => void;
   let registrationSettled = false;
-  const settled = new Promise<"completed" | "cancelled">((resolve) => {
+  const settled = new Promise<"completed" | "cancelled" | "unresolved">((resolve) => {
     settleRegistration = resolve;
   });
   const retryBaseMs = input.retryBaseMs ?? 1_000;
   const retryMaxMs = input.retryMaxMs ?? 60_000;
-  const settle = (result: "completed" | "cancelled") => {
+  const settle = (result: "completed" | "cancelled" | "unresolved") => {
     if (registrationSettled) return;
     registrationSettled = true;
     settleRegistration(result);
@@ -352,9 +301,19 @@ export function registerAgentAutoArchive(input: {
     (retryTimer as unknown as { unref?: () => void }).unref?.();
   };
   if (input.subscribeToRearm) {
-    unsubscribeRearm = input.subscribeToRearm(() => {
+    unsubscribeRearm = input.subscribeToRearm((key) => {
       mutationVersion += 1;
-      if (!canceled && terminalObserved && awaitingRearm && !archiveTask) {
+      mutationVersionByKey.set(key, mutationVersion);
+      const rearmKeys = lastArchiveFailure
+        ? (input.rearmKeysForError?.(lastArchiveFailure) ?? null)
+        : null;
+      if (
+        !canceled &&
+        terminalObserved &&
+        awaitingRearm &&
+        !archiveTask &&
+        (rearmKeys === null || rearmKeys.includes(key))
+      ) {
         awaitingRearm = false;
         consecutiveFailures = 0;
         attemptArchive();
@@ -388,7 +347,11 @@ export function registerAgentAutoArchive(input: {
         const retryAllowed = input.shouldRetry?.(error) ?? true;
         if (!retryAllowed) {
           awaitingRearm = true;
-          if (!canceled && terminalObserved && mutationVersion !== attemptMutationVersion) {
+          const rearmKeys = input.rearmKeysForError?.(error) ?? null;
+          const relevantMutationObserved = rearmKeys
+            ? rearmKeys.some((key) => (mutationVersionByKey.get(key) ?? 0) > attemptMutationVersion)
+            : mutationVersion !== attemptMutationVersion;
+          if (!canceled && terminalObserved && relevantMutationObserved) {
             awaitingRearm = false;
             consecutiveFailures = 0;
             attemptArchive();
@@ -413,13 +376,15 @@ export function registerAgentAutoArchive(input: {
       try {
         const pendingArchive = archiveTask;
         if (pendingArchive) {
-          await pendingArchive;
+          await pendingArchive.catch(() => undefined);
         }
         if (lastArchiveFailure) {
           throw lastArchiveFailure;
         }
-      } finally {
         settle("cancelled");
+      } catch (error) {
+        settle("unresolved");
+        throw error;
       }
     },
   };

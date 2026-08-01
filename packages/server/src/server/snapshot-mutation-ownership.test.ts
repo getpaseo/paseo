@@ -7,7 +7,10 @@ import { Session } from "./session.js";
 import type { SessionOptions } from "./session.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 import { asInternals, createStub } from "./test-utils/class-mocks.js";
-import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
+import {
+  createAgentLifecycleDispatchStub,
+  createProviderSnapshotManagerStub,
+} from "./test-utils/session-stubs.js";
 
 interface SessionInternals {
   archiveAgentForClose(agentId: string): Promise<{ archivedAt: string }>;
@@ -118,6 +121,7 @@ describe("snapshot mutation ownership boundary", () => {
           applySnapshot: directStorageWrite,
           upsert: directStorageWrite,
         }),
+        createAgentLifecycleDispatch: createAgentLifecycleDispatchStub(),
         projectRegistry: createStub<SessionOptions["projectRegistry"]>({
           subscribeToMutations: () => () => {},
           initialize: async () => {},

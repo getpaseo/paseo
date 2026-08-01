@@ -443,8 +443,12 @@ export interface PaseoDaemon {
   scriptRuntimeStore: WorkspaceScriptRuntimeStore;
   browserToolsBroker: BrowserToolsBroker;
   start(): Promise<void>;
-  stop(): Promise<void>;
+  stop(options?: PaseoDaemonStopOptions): Promise<void>;
   getListenTarget(): ListenTarget | null;
+}
+
+export interface PaseoDaemonStopOptions {
+  deadlineAt?: number;
 }
 
 export interface PaseoDaemonDependencies {
@@ -1138,7 +1142,6 @@ export async function createPaseoDaemon(
     agentStorage,
     github,
     workspaceGitService,
-    createPaseoWorktreeWorkflow: createPaseoWorktreeForTools,
     archiveAgentForClose: (agentId) =>
       archiveAgentCommand({ agentManager, agentStorage, logger }, agentId),
     findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
@@ -1562,6 +1565,7 @@ export async function createPaseoDaemon(
                 relayConfig: dependencies.serverFeatureOverrides?.relayConfig,
               },
               workspaceAutoName,
+              hubAgentLifecycle,
               config.auth,
               speechService,
               terminalManager,
@@ -1661,33 +1665,47 @@ export async function createPaseoDaemon(
     }
   };
 
-  const stop = async () => {
-    await hubRelationships.stop();
-    await workspaceCleanupRetryService.stop();
-    workspaceReconciliation.dispose();
-    scriptHealthMonitor.stop();
+  const stop = async (options?: PaseoDaemonStopOptions) => {
+    const errors: unknown[] = [];
+    const attempt = async (label: string, action: () => void | Promise<void>): Promise<void> => {
+      try {
+        await action();
+      } catch (error) {
+        errors.push(error);
+        logger.error({ err: error }, `Daemon shutdown step failed: ${label}`);
+      }
+    };
+
+    await attempt("hub relationships", () => hubRelationships.stop());
+    await attempt("workspace cleanup retry service", () => workspaceCleanupRetryService.stop());
+    await attempt("workspace reconciliation", () => workspaceReconciliation.dispose());
+    await attempt("script health monitor", () => scriptHealthMonitor.stop());
     // Freeze both ingress and registration before taking the agent closure snapshot.
-    wsServer?.prepareForShutdown();
-    agentManager.prepareForShutdown();
-    const lifecycleShutdown = await hubAgentLifecycle.shutdown({ timeoutMs: 10_000 });
-    if (!lifecycleShutdown.completed) {
-      throw new Error(
-        `Create-agent lifecycle shutdown remains incomplete for agents: ${lifecycleShutdown.pendingAgentIds.join(", ")}`,
-      );
-    }
-    await closeAllAgents(logger, agentManager);
-    await agentManager.flushForShutdown().catch(() => undefined);
-    detachAgentStoragePersistence();
-    await agentStorage.flush().catch(() => undefined);
-    await providerSnapshotManager.shutdown();
-    terminalManager.killAll();
-    speechService.stop();
-    await scheduleService.stop().catch(() => undefined);
-    await relayRuntime?.stop().catch(() => undefined);
-    if (wsServer) {
-      await wsServer.close();
-    }
-    await serviceProxy.stopStandalone();
+    await attempt("WebSocket ingress", () => wsServer?.prepareForShutdown());
+    await attempt("agent registration", () => agentManager.prepareForShutdown());
+    await attempt("create-agent lifecycle", async () => {
+      const remainingMs =
+        options?.deadlineAt === undefined
+          ? 10_000
+          : Math.max(0, options.deadlineAt - Date.now() - 2_000);
+      const lifecycleShutdown = await hubAgentLifecycle.shutdown({ timeoutMs: remainingMs });
+      if (!lifecycleShutdown.completed) {
+        throw new Error(
+          `Create-agent lifecycle shutdown remains incomplete for agents: ${lifecycleShutdown.pendingAgentIds.join(", ")}`,
+        );
+      }
+    });
+    await attempt("agents", () => closeAllAgents(logger, agentManager));
+    await attempt("agent persistence", () => agentManager.flushForShutdown());
+    await attempt("agent storage detachment", () => detachAgentStoragePersistence());
+    await attempt("agent storage", () => agentStorage.flush());
+    await attempt("provider snapshots", () => providerSnapshotManager.shutdown());
+    await attempt("terminals", () => terminalManager.killAll());
+    await attempt("speech", () => speechService.stop());
+    await attempt("schedules", () => scheduleService.stop());
+    await attempt("relay", () => relayRuntime?.stop());
+    await attempt("WebSocket server", () => wsServer?.close());
+    await attempt("service proxy", () => serviceProxy.stopStandalone());
     // Force-drop remaining sockets so httpServer.close() resolves promptly.
     // We've already closed wsServer (which sent ws-layer close frames) and
     // stopped every other service, so anything still attached is a TCP
@@ -1695,13 +1713,22 @@ export async function createPaseoDaemon(
     // upgraded WS sockets in the closing handshake, or HTTP keep-alive
     // sockets in CLOSE_WAIT). closeIdleConnections() does not catch
     // upgraded sockets, so we use closeAllConnections() here.
-    httpServer.closeAllConnections();
-    await new Promise<void>((resolve) => {
-      httpServer.close(() => resolve());
-    });
+    await attempt("HTTP connections", () => httpServer.closeAllConnections());
+    await attempt(
+      "HTTP server",
+      () =>
+        new Promise<void>((resolve) => {
+          httpServer.close(() => resolve());
+        }),
+    );
     // Clean up socket files
-    if (listenTarget.type === "socket" && existsSync(listenTarget.path)) {
-      unlinkSync(listenTarget.path);
+    await attempt("socket file", () => {
+      if (listenTarget.type === "socket" && existsSync(listenTarget.path)) {
+        unlinkSync(listenTarget.path);
+      }
+    });
+    if (errors.length > 0) {
+      throw new AggregateError(errors, "One or more daemon shutdown steps failed");
     }
   };
 
@@ -1721,13 +1748,20 @@ export async function createPaseoDaemon(
 
 async function closeAllAgents(logger: Logger, agentManager: AgentManager): Promise<void> {
   const agents = agentManager.listAgents();
-  await Promise.all(
+  const results = await Promise.allSettled(
     agents.map(async (agent) => {
       try {
         await agentManager.closeAgent(agent.id);
       } catch (err) {
         logger.error({ err, agentId: agent.id }, "Failed to close agent");
+        throw err;
       }
     }),
   );
+  const failures = results.flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : [],
+  );
+  if (failures.length > 0) {
+    throw new AggregateError(failures, "Failed to close one or more agents");
+  }
 }

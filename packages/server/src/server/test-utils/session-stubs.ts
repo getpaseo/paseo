@@ -42,6 +42,16 @@ export function asAgentStorage(stub: {
   return createStub<SessionOptions["agentStorage"]>(stub);
 }
 
+export function createAgentLifecycleDispatchStub(): SessionOptions["createAgentLifecycleDispatch"] {
+  return createStub<SessionOptions["createAgentLifecycleDispatch"]>({
+    registerAutoArchiveIfRequested: () => ({
+      settled: Promise.resolve("cancelled"),
+      cancel: async () => {},
+    }),
+    cleanupCreatedWorktreeAfterFailedAgentCreate: async () => {},
+  });
+}
+
 export function asDownloadTokenStore(): SessionOptions["downloadTokenStore"] {
   return createStub<SessionOptions["downloadTokenStore"]>({});
 }

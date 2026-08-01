@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import type { AgentManager, AgentMetricsSnapshot } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
+import type { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type pino from "pino";
@@ -506,6 +507,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly daemonRuntimeConfig: DaemonRuntimeConfig | undefined;
   private readonly agentManager: AgentManager;
   private readonly agentStorage: AgentStorage;
+  private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
   private readonly chatService: FileBackedChatService;
@@ -571,6 +573,7 @@ export class VoiceAssistantWebSocketServer {
     mcpBaseUrl: string | null,
     wsConfig: WebSocketServerConfig,
     workspaceAutoName: WorkspaceAutoName,
+    createAgentLifecycleDispatch: CreateAgentLifecycleDispatch,
     auth?: DaemonAuthConfig,
     speech?: SpeechService | null,
     terminalManager?: TerminalManager | null,
@@ -617,6 +620,7 @@ export class VoiceAssistantWebSocketServer {
     this.hubRelationships = hubRelationships ?? null;
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
+    this.createAgentLifecycleDispatch = createAgentLifecycleDispatch;
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
     this.workspaceRegistry = workspaceRegistry ?? createNoopWorkspaceRegistry();
     const requiredServices = requireWebSocketServices({
@@ -1325,6 +1329,7 @@ export class VoiceAssistantWebSocketServer {
       worktreesRoot: this.worktreesRoot,
       agentManager: this.agentManager,
       agentStorage: this.agentStorage,
+      createAgentLifecycleDispatch: this.createAgentLifecycleDispatch,
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
       chatService: this.chatService,

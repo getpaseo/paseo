@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
+import type { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
 import { BrowserToolsBroker } from "./browser-tools/broker.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import type { FileBackedChatService } from "./chat/chat-service.js";
@@ -299,6 +300,7 @@ function createVoiceAssistantWebSocketServer(params: {
     null,
     { allowedOrigins: new Set(["*"]) },
     createWorkspaceAutoNameStub(),
+    createStub<CreateAgentLifecycleDispatch>({}),
     undefined,
     undefined,
     undefined,

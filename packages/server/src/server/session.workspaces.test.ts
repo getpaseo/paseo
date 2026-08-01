@@ -60,6 +60,7 @@ import {
   asDaemonConfigStore,
   asTerminalManager,
   asSessionInternals,
+  createAgentLifecycleDispatchStub,
   createProviderSnapshotManagerStub,
   isSessionOutboundMessage,
   filterByType,
@@ -656,6 +657,7 @@ function createSessionForWorkspaceTests(
             : null,
         upsert: async () => {},
       }),
+      createAgentLifecycleDispatch: createAgentLifecycleDispatchStub(),
       projectRegistry: options.projectRegistry ?? {
         initialize: async () => {},
         existsOnDisk: async () => true,
@@ -831,6 +833,7 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
         paseoHome: path.join(workdir, "paseo-home"),
         agentManager,
         agentStorage,
+        createAgentLifecycleDispatch: createAgentLifecycleDispatchStub(),
         projectRegistry,
         workspaceRegistry,
         chatService: asChatService(),
@@ -985,6 +988,7 @@ test("create_agent_request launches from an exact subdirectory in a created work
       paseoHome: path.join(workdir, "paseo-home"),
       agentManager,
       agentStorage,
+      createAgentLifecycleDispatch: createAgentLifecycleDispatchStub(),
       projectRegistry,
       workspaceRegistry,
       chatService: asChatService(),
@@ -1124,6 +1128,7 @@ test("create_agent_request does not title an existing workspace from the agent p
         paseoHome: path.join(workdir, "paseo-home"),
         agentManager,
         agentStorage,
+        createAgentLifecycleDispatch: createAgentLifecycleDispatchStub(),
         projectRegistry,
         workspaceRegistry,
         chatService: asChatService(),
@@ -1418,6 +1423,7 @@ test("archive emits an authoritative agent_update upsert for subscribed clients"
           Object.assign(archivedRecord, record);
         },
       }),
+      createAgentLifecycleDispatch: createAgentLifecycleDispatchStub(),
       projectRegistry: (() => {
         const proj = createPersistedProjectRecord({
           projectId: "proj-1",
@@ -1780,6 +1786,7 @@ test("close_items_request archives agents and kills terminals in one batch", asy
           return archivedRecord;
         },
       }),
+      createAgentLifecycleDispatch: createAgentLifecycleDispatchStub(),
       projectRegistry: (() => {
         const proj = createPersistedProjectRecord({
           projectId: "proj-close",
@@ -1967,6 +1974,7 @@ test("close_items_request archives stored agents that are not currently loaded",
         },
         upsert: upsertStoredRecord,
       }),
+      createAgentLifecycleDispatch: createAgentLifecycleDispatchStub(),
       projectRegistry: (() => {
         const proj = createPersistedProjectRecord({
           projectId: "proj-stored",
@@ -2116,6 +2124,7 @@ test("close_items_request continues after an archive failure", async () => {
           return goodRecord;
         },
       }),
+      createAgentLifecycleDispatch: createAgentLifecycleDispatchStub(),
       projectRegistry: (() => {
         const proj = createPersistedProjectRecord({
           projectId: "proj-err",
@@ -3199,6 +3208,7 @@ test("workspace update stream keeps persisted workspace visible after agents sto
         list: async () => [],
         get: async () => null,
       }),
+      createAgentLifecycleDispatch: createAgentLifecycleDispatchStub(),
       projectRegistry: {
         initialize: async () => {},
         existsOnDisk: async () => true,

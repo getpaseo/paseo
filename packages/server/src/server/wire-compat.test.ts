@@ -14,7 +14,10 @@ import {
   WSHelloMessageSchema,
 } from "@getpaseo/protocol/messages";
 import { Session, type SessionOptions } from "./session.js";
-import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
+import {
+  createAgentLifecycleDispatchStub,
+  createProviderSnapshotManagerStub,
+} from "./test-utils/session-stubs.js";
 import type { AgentTimelineRow } from "./agent/agent-manager.js";
 import { handleCreatePaseoWorktreeRequest } from "./worktree-session.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
@@ -249,6 +252,7 @@ function createSessionForWireCompatTest(options?: {
     paseoHome: "/tmp/paseo-home",
     agentManager: new InMemoryAgentManager(rows) as unknown as SessionOptions["agentManager"],
     agentStorage: new EmptyAgentStorage() as unknown as SessionOptions["agentStorage"],
+    createAgentLifecycleDispatch: createAgentLifecycleDispatchStub(),
     projectRegistry: new EmptyProjectRegistry() as unknown as SessionOptions["projectRegistry"],
     workspaceRegistry:
       new EmptyWorkspaceRegistry() as unknown as SessionOptions["workspaceRegistry"],

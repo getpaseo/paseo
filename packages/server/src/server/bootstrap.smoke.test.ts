@@ -342,6 +342,21 @@ describe("paseo daemon bootstrap", () => {
     }
   });
 
+  test("continues teardown after a shutdown step fails", async () => {
+    const daemonHandle = await createTestPaseoDaemon();
+    const failure = new Error("service proxy stop failed");
+    vi.spyOn(daemonHandle.daemon.serviceProxy, "stopStandalone").mockRejectedValueOnce(failure);
+
+    try {
+      await expect(daemonHandle.daemon.stop()).rejects.toThrow(
+        "One or more daemon shutdown steps failed",
+      );
+      await expect(fetch(`http://127.0.0.1:${daemonHandle.port}/api/health`)).rejects.toThrow();
+    } finally {
+      await daemonHandle.close();
+    }
+  });
+
   test("standalone listener exposes services only", async () => {
     const standalonePort = await findFreePort();
     const upstream = http.createServer((_req, res) => {

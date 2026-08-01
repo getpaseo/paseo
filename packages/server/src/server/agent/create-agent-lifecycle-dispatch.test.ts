@@ -34,15 +34,15 @@ class AgentLifecycleEvents {
 }
 
 class LifecycleRearmEvents {
-  private readonly listeners = new Set<() => void>();
+  private readonly listeners = new Set<(workspaceId: string) => void>();
 
-  subscribe(listener: () => void): () => void {
+  subscribe(listener: (workspaceId: string) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
-  publish(): void {
-    for (const listener of this.listeners) listener();
+  publish(workspaceId = "ws-cleanup-pending"): void {
+    for (const listener of this.listeners) listener(workspaceId);
   }
 
   listenerCount(): number {
@@ -60,7 +60,6 @@ function createLifecycleDispatch(
     agentStorage: {},
     github: {},
     workspaceGitService: {},
-    createPaseoWorktreeWorkflow: vi.fn(),
     archiveAgentForClose,
     findWorkspaceIdForCwd: async () => null,
     listActiveWorkspaces: async () => [],
@@ -144,6 +143,8 @@ test("cleanup pending waits for a lifecycle rearm without a retry loop", async (
     archive,
     shouldRetry: (error) => !(error instanceof WorkspaceCleanupPendingError),
     subscribeToRearm: (rearm) => rearmEvents.subscribe(rearm),
+    rearmKeysForError: (error) =>
+      error instanceof WorkspaceCleanupPendingError ? error.workspaceIds : [],
   });
 
   try {
@@ -184,6 +185,8 @@ test("a registry mutation during cleanup failure cannot be lost before rearm wai
     },
     shouldRetry: (error) => !(error instanceof WorkspaceCleanupPendingError),
     subscribeToRearm: (rearm) => rearmEvents.subscribe(rearm),
+    rearmKeysForError: (error) =>
+      error instanceof WorkspaceCleanupPendingError ? error.workspaceIds : [],
   });
 
   agents.completeTurn(agentId);
@@ -192,6 +195,38 @@ test("a registry mutation during cleanup failure cannot be lost before rearm wai
   expect(archiveCount).toBe(2);
   expect(agents.listenerCount()).toBe(0);
   expect(rearmEvents.listenerCount()).toBe(0);
+});
+
+test("cleanup pending ignores unrelated workspace mutations", async () => {
+  const agentId = "agent-auto-archive-filtered-rearm";
+  const agents = new AgentLifecycleEvents();
+  const rearmEvents = new LifecycleRearmEvents();
+  const archive = vi
+    .fn<() => Promise<void>>()
+    .mockRejectedValueOnce(
+      new WorkspaceCleanupPendingError("Auto-created worktree archive", ["ws-relevant"]),
+    )
+    .mockResolvedValueOnce(undefined);
+  const registration = registerAgentAutoArchive({
+    agentManager: agents,
+    agentId,
+    archive,
+    shouldRetry: (error) => !(error instanceof WorkspaceCleanupPendingError),
+    subscribeToRearm: (rearm) => rearmEvents.subscribe(rearm),
+    rearmKeysForError: (error) =>
+      error instanceof WorkspaceCleanupPendingError ? error.workspaceIds : [],
+  });
+
+  agents.completeTurn(agentId);
+  await vi.waitFor(() => expect(archive).toHaveBeenCalledTimes(1));
+
+  rearmEvents.publish("ws-unrelated");
+  await Promise.resolve();
+  expect(archive).toHaveBeenCalledTimes(1);
+
+  rearmEvents.publish("ws-relevant");
+  await expect(registration.settled).resolves.toBe("completed");
+  expect(archive).toHaveBeenCalledTimes(2);
 });
 
 test("lifecycle shutdown cancels listeners and truthfully awaits an active archive", async () => {
@@ -230,6 +265,29 @@ test("lifecycle shutdown cancels listeners and truthfully awaits an active archi
   releaseArchive();
   await expect(shutdown).resolves.toEqual({ completed: true, pendingAgentIds: [] });
   await expect(registration.settled).resolves.toBe("completed");
+});
+
+test("one dispatcher keeps one lifecycle registration across repeated callers", async () => {
+  const agentId = "agent-shared-lifecycle-registration";
+  const agents = new AgentLifecycleEvents();
+  const dispatch = createLifecycleDispatch(agents, async () => undefined);
+
+  const first = dispatch.registerAutoArchiveIfRequested({
+    autoArchive: true,
+    agentId,
+    createdWorktree: null,
+  });
+  const second = dispatch.registerAutoArchiveIfRequested({
+    autoArchive: true,
+    agentId,
+    createdWorktree: null,
+  });
+
+  expect(second).toBe(first);
+  expect(agents.listenerCount()).toBe(1);
+
+  await first.cancel();
+  expect(agents.listenerCount()).toBe(0);
 });
 
 test("lifecycle shutdown reports its active archive at the deadline", async () => {
@@ -290,6 +348,33 @@ test("auto-archive cancellation observes an in-flight archive rejection", async 
 
   agents.completeTurn(agentId);
   await expect(registration.cancel()).rejects.toBe(failure);
+  await expect(registration.settled).resolves.toBe("unresolved");
+  expect(agents.listenerCount()).toBe(0);
+});
+
+test("lifecycle shutdown reports cleanup-pending cancellation as unresolved", async () => {
+  const agentId = "agent-auto-archive-shutdown-unresolved";
+  const agents = new AgentLifecycleEvents();
+  const failure = new WorkspaceCleanupPendingError("Auto-created worktree archive", [
+    "ws-cleanup-pending",
+  ]);
+  const dispatch = createLifecycleDispatch(agents, async () => {
+    throw failure;
+  });
+  const registration = dispatch.registerAutoArchiveIfRequested({
+    autoArchive: true,
+    agentId,
+    createdWorktree: null,
+  });
+
+  agents.completeTurn(agentId);
+  await vi.waitFor(() => expect(agents.listenerCount()).toBe(1));
+
+  await expect(dispatch.shutdown()).resolves.toEqual({
+    completed: false,
+    pendingAgentIds: [agentId],
+  });
+  await expect(registration.settled).resolves.toBe("unresolved");
   expect(agents.listenerCount()).toBe(0);
 });
 

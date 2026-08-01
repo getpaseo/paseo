@@ -41,6 +41,7 @@ import {
   asGitHubService,
   asWorkspaceGitService,
   asDaemonConfigStore,
+  createAgentLifecycleDispatchStub,
   createProviderSnapshotManagerStub,
 } from "./test-utils/session-stubs.js";
 import { isPlatform } from "../test-utils/platform.js";
@@ -375,6 +376,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
       list: vi.fn().mockResolvedValue([]),
       ...options.agentStorage,
     }),
+    createAgentLifecycleDispatch: createAgentLifecycleDispatchStub(),
     projectRegistry: {
       list: vi.fn().mockResolvedValue([]),
       get: vi.fn(),
