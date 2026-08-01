@@ -2346,6 +2346,15 @@ describe("ACPAgentSession", () => {
       prompt: [{ type: "text", text: "hello" }],
     });
     expect(
+      events
+        .filter(
+          (event) =>
+            event.type === "turn_started" ||
+            (event.type === "timeline" && event.item.type === "user_message"),
+        )
+        .map((event) => event.type),
+    ).toEqual(["turn_started", "timeline"]);
+    expect(
       events.filter((event) => event.type === "timeline" && event.item.type === "user_message"),
     ).toEqual([
       {
