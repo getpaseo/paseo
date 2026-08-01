@@ -8073,7 +8073,7 @@ async function waitForWorkspaceUpdate(
   throw new Error(`Timed out waiting for workspace_update: ${description}`);
 }
 
-test("provider subagent lifecycle updates the owning workspace status", async () => {
+test("overlapping workspace rebuilds publish the newest provider subagent status", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const parent = makeManagedAgent({
     id: "provider-parent",
@@ -8103,6 +8103,24 @@ test("provider subagent lifecycle updates the owning workspace status", async ()
     requestId: "provider-subagent-workspace-status",
     subscribe: { subscriptionId: "provider-subagent-workspace-status" },
   });
+  const initialWorkspace = findByType(emitted, "fetch_workspaces_response")?.payload.entries[0];
+  if (!initialWorkspace) {
+    throw new Error("Expected initial workspace descriptor");
+  }
+  const firstBuildStarted = deferred<void>();
+  const releaseFirstBuild = deferred<void>();
+  let buildCount = 0;
+  session.buildWorkspaceDescriptorMap = async () => {
+    buildCount += 1;
+    const status = providerSubagents.some((subagent) => subagent.status === "running")
+      ? "running"
+      : "done";
+    if (buildCount === 1) {
+      firstBuildStarted.resolve();
+      await releaseFirstBuild.promise;
+    }
+    return new Map([[initialWorkspace.id, { ...initialWorkspace, status }]]);
+  };
   emitted.length = 0;
 
   const runningSubagent: ProviderSubagentDescriptor = {
@@ -8120,19 +8138,8 @@ test("provider subagent lifecycle updates the owning workspace status", async ()
   };
   providerSubagents.push(runningSubagent);
   listener?.({ type: "provider_subagent", event: { type: "upsert", subagent: runningSubagent } });
+  await firstBuildStarted.promise;
 
-  const runningUpdate = await waitForWorkspaceUpdate(
-    emitted,
-    (message) =>
-      message.payload.kind === "upsert" && message.payload.workspace.status === "running",
-    "provider child starts running",
-  );
-  expect(runningUpdate.payload).toMatchObject({
-    kind: "upsert",
-    workspace: { id: "ws-repo-running", status: "running" },
-  });
-
-  emitted.length = 0;
   const completedSubagent = {
     ...runningSubagent,
     status: "completed" as const,
@@ -8140,16 +8147,15 @@ test("provider subagent lifecycle updates the owning workspace status", async ()
   };
   providerSubagents[0] = completedSubagent;
   listener?.({ type: "provider_subagent", event: { type: "upsert", subagent: completedSubagent } });
+  await waitForImmediate();
+  releaseFirstBuild.resolve();
+  await vi.waitFor(() => expect(buildCount).toBe(2));
+  await waitForImmediate();
 
-  const completedUpdate = await waitForWorkspaceUpdate(
-    emitted,
-    (message) => message.payload.kind === "upsert" && message.payload.workspace.status === "done",
-    "provider child completes",
+  const statuses = filterByType(emitted, "workspace_update").flatMap((message) =>
+    message.payload.kind === "upsert" ? [message.payload.workspace.status] : [],
   );
-  expect(completedUpdate.payload).toMatchObject({
-    kind: "upsert",
-    workspace: { id: "ws-repo-running", status: "done" },
-  });
+  expect(statuses).toEqual(["running", "done"]);
 });
 
 test("title-only terminal change does not build workspace descriptors or emit workspace_update", async () => {
