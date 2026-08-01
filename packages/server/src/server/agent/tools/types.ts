@@ -47,6 +47,14 @@ export interface PaseoToolRuntimeContext {
    * work; nothing outside has to guess from tool names or results.
    */
   onBackgroundAgentStarted?: (params: { agentId: string }) => void;
+  /**
+   * Flips the top-level default for tools that start agent work from blocking to
+   * background. A caller that only learns an outcome through
+   * {@link onBackgroundAgentStarted} has no way to survive a blocking call: the
+   * tool waits, the callback never fires, and the outcome is lost. Callers that
+   * can wait for a result leave this alone.
+   */
+  defaultAgentWorkToBackground?: boolean;
 }
 
 export type PaseoToolCatalogFactory = (

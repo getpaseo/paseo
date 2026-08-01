@@ -46,6 +46,11 @@ export class LiveVoiceToolExecutor {
                 backgroundAgentId = agentId;
                 context.onBackgroundAgentStarted?.({ agentId });
               },
+              // A blocking call would strand this request: the voice model waits
+              // in silence, the callback above never fires, and the outcome is
+              // never reported. Reporting is the only channel this caller has,
+              // so it cannot depend on the model passing `background` itself.
+              defaultAgentWorkToBackground: true,
             }
           : {},
       );

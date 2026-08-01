@@ -152,6 +152,8 @@ export interface PaseoToolHostDependencies {
   voiceOnly?: boolean;
   /** See {@link PaseoToolRuntimeContext.onBackgroundAgentStarted}. */
   onBackgroundAgentStarted?: (params: { agentId: string }) => void;
+  /** See {@link PaseoToolRuntimeContext.defaultAgentWorkToBackground}. */
+  defaultAgentWorkToBackground?: boolean;
   logger: Logger;
 }
 
@@ -562,6 +564,12 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     onBackgroundAgentStarted,
     logger,
   } = options;
+  // Schemas are built per runtime context, so the advertised default and the
+  // description stay the same fact rather than drifting apart.
+  const backgroundDefault = options.defaultAgentWorkToBackground === true;
+  const backgroundDescription = backgroundDefault
+    ? "Run agent in background. Defaults to true for this caller, which returns immediately and reports the outcome separately. Set false only when you need a blocking response."
+    : "Run agent in background. If false (default), waits for completion or permission request. If true, returns immediately.";
   const childLogger = logger.child({ module: "agent", component: "paseo-tool-catalog" });
   const callerContext = callerAgentId ? (resolveCallerContext?.(callerAgentId) ?? null) : null;
 
@@ -1042,13 +1050,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       .describe(
         "Existing workspace id. Call list_workspaces or create_workspace first; top-level placement is never inferred.",
       ),
-    background: z
-      .boolean()
-      .optional()
-      .default(false)
-      .describe(
-        "Run agent in background. If false (default), waits for completion or permission request. If true, returns immediately.",
-      ),
+    background: z.boolean().optional().default(backgroundDefault).describe(backgroundDescription),
     notifyOnFinish: z
       .boolean()
       .optional()
@@ -1141,13 +1143,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   };
   const topLevelSendAgentPromptInputSchema = {
     ...commonSendAgentPromptInputSchema,
-    background: z
-      .boolean()
-      .optional()
-      .default(false)
-      .describe(
-        "Run agent in background. If false (default), waits for completion or permission request. If true, returns immediately.",
-      ),
+    background: z.boolean().optional().default(backgroundDefault).describe(backgroundDescription),
     notifyOnFinish: z
       .boolean()
       .optional()
@@ -1920,7 +1916,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       agentId,
       prompt,
       sessionMode,
-      background = Boolean(callerAgentId),
+      background = backgroundDefault || Boolean(callerAgentId),
       notifyOnFinish = Boolean(callerAgentId),
     }) => {
       const shouldNotifyOnFinish = Boolean(callerAgentId && notifyOnFinish && background);

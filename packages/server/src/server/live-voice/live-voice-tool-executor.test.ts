@@ -171,4 +171,25 @@ describe("LiveVoiceToolExecutor", () => {
     expect(watched.payload).toMatchObject({ ok: true, backgroundAgentId: "agent-1" });
     expect(runtimeContexts[1]).toEqual({});
   });
+
+  it("defaults agent work to the background whenever it will report the outcome", async () => {
+    const runtimeContexts: PaseoToolRuntimeContext[] = [];
+    const executor = new LiveVoiceToolExecutor({
+      createCatalog: (runtime) => {
+        runtimeContexts.push(runtime);
+        return {
+          executeTool: async () => ({ content: [], structuredContent: {} }),
+        } as unknown as PaseoToolCatalog;
+      },
+    });
+
+    await executor.execute(
+      { ...request(), toolName: "send_agent_prompt", notifyOnAgentFinish: true },
+      { onBackgroundAgentStarted: vi.fn() },
+    );
+
+    // Without this the tool blocks, the hook never fires, and the outcome the
+    // caller was promised is silently never reported.
+    expect(runtimeContexts[0]?.defaultAgentWorkToBackground).toBe(true);
+  });
 });
