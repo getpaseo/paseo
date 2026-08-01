@@ -415,6 +415,28 @@ describe("CheckoutDiffManager", () => {
     expect(mockRequestWorkingTreeWatch).not.toHaveBeenCalled();
   });
 
+  test("base diff subscriptions ignore worktree-only workspace snapshot updates", async () => {
+    const getCheckoutDiff = vi.fn(async () => ({ diff: "", structured: [] }));
+    const { manager, getOnWorkspaceSnapshot } = createManager({
+      getCheckoutDiffImplementation: getCheckoutDiff,
+    });
+
+    await manager.subscribe(
+      { cwd: "/tmp/repo", compare: { mode: "base", baseRef: "main" } },
+      vi.fn(),
+    );
+
+    getOnWorkspaceSnapshot()?.(
+      createWorkspaceSnapshot({
+        isDirty: true,
+        diffStat: { additions: 5, deletions: 2 },
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(getCheckoutDiff).toHaveBeenCalledTimes(1);
+  });
+
   test("base diff subscriptions refresh for structural workspace changes", async () => {
     const getCheckoutDiff = vi.fn(async () => ({ diff: "", structured: [] }));
     const { manager, getOnWorkspaceSnapshot, workspaceGitService } = createManager({
@@ -429,6 +451,7 @@ describe("CheckoutDiffManager", () => {
     expect(workspaceGitService.registerWorkspace).toHaveBeenCalledTimes(1);
     getOnWorkspaceSnapshot()?.(
       createWorkspaceSnapshot({
+        currentBranch: "feature-2",
         isDirty: true,
         diffStat: { additions: 5, deletions: 2 },
       }),

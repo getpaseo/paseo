@@ -37,7 +37,8 @@ interface CheckoutDiffWatchTarget {
   listeners: Set<(snapshot: CheckoutDiffSnapshotPayload) => void>;
   workingTreeWatchUnsubscribe: (() => void) | null;
   workspaceGitUnsubscribe: (() => void) | null;
-  latestWorkspaceGitFingerprint: string | null;
+  latestWorkspaceStructureFingerprint: string | null;
+  latestWorkspaceWorktreeFingerprint: string | null;
   latestWorkspaceForgeFingerprint: string | null;
   debounceTimer: NodeJS.Timeout | null;
   pendingDebounceForce: boolean;
@@ -180,19 +181,38 @@ export class CheckoutDiffManager {
     target: CheckoutDiffWatchTarget,
     snapshot: WorkspaceGitRuntimeSnapshot,
   ): void {
-    const gitFingerprint = JSON.stringify(snapshot.git);
+    const structureFingerprint = JSON.stringify({
+      isGit: snapshot.git.isGit,
+      repoRoot: snapshot.git.repoRoot,
+      mainRepoRoot: snapshot.git.mainRepoRoot,
+      currentBranch: snapshot.git.currentBranch,
+      remoteUrl: snapshot.git.remoteUrl,
+      isPaseoOwnedWorktree: snapshot.git.isPaseoOwnedWorktree,
+      baseRef: snapshot.git.baseRef,
+      aheadBehind: snapshot.git.aheadBehind,
+      aheadOfOrigin: snapshot.git.aheadOfOrigin,
+      behindOfOrigin: snapshot.git.behindOfOrigin,
+      hasRemote: snapshot.git.hasRemote,
+    });
+    const worktreeFingerprint = JSON.stringify({
+      isDirty: snapshot.git.isDirty,
+      diffStat: snapshot.git.diffStat,
+    });
     const forgeFingerprint = JSON.stringify(snapshot.forge);
-    const previousGitFingerprint = target.latestWorkspaceGitFingerprint;
+    const previousStructureFingerprint = target.latestWorkspaceStructureFingerprint;
+    const previousWorktreeFingerprint = target.latestWorkspaceWorktreeFingerprint;
     const previousForgeFingerprint = target.latestWorkspaceForgeFingerprint;
-    target.latestWorkspaceGitFingerprint = gitFingerprint;
+    target.latestWorkspaceStructureFingerprint = structureFingerprint;
+    target.latestWorkspaceWorktreeFingerprint = worktreeFingerprint;
     target.latestWorkspaceForgeFingerprint = forgeFingerprint;
 
-    if (previousGitFingerprint === null) {
+    if (previousStructureFingerprint === null) {
       return;
     }
-    const isForgeOnlyUpdate =
-      gitFingerprint === previousGitFingerprint && forgeFingerprint !== previousForgeFingerprint;
-    if (!isForgeOnlyUpdate) {
+    const structureChanged = structureFingerprint !== previousStructureFingerprint;
+    const worktreeChanged = worktreeFingerprint !== previousWorktreeFingerprint;
+    const forgeChanged = forgeFingerprint !== previousForgeFingerprint;
+    if (structureChanged || (!worktreeChanged && !forgeChanged)) {
       this.scheduleTargetRefresh(target, false);
     }
   }
@@ -321,7 +341,8 @@ export class CheckoutDiffManager {
       listeners: new Set(),
       workingTreeWatchUnsubscribe: null,
       workspaceGitUnsubscribe: null,
-      latestWorkspaceGitFingerprint: null,
+      latestWorkspaceStructureFingerprint: null,
+      latestWorkspaceWorktreeFingerprint: null,
       latestWorkspaceForgeFingerprint: null,
       debounceTimer: null,
       pendingDebounceForce: false,

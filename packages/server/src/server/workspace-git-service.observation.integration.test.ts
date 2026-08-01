@@ -77,6 +77,7 @@ test("native recursive observation updates tracked state and prunes ignored stor
 
   let activeWatcherCount = 0;
   let watcherStartCount = 0;
+  let onWorkingTreeWatcherStopped: (() => void) | null = null;
   const deliveredEvents: Array<{
     directory: string;
     events: parcelWatcher.Event[];
@@ -96,6 +97,11 @@ test("native recursive observation updates tracked state and prunes ignored stor
       unsubscribe: async () => {
         await subscription.unsubscribe();
         activeWatcherCount -= 1;
+        if (directory === repoDir) {
+          const onStopped = onWorkingTreeWatcherStopped;
+          onWorkingTreeWatcherStopped = null;
+          onStopped?.();
+        }
       },
     };
   };
@@ -188,6 +194,10 @@ test("native recursive observation updates tracked state and prunes ignored stor
     { timeout: 5_000 },
   );
 
+  // Parcel may deliver a startup batch before subscribe resolves. Let its
+  // already-scheduled consumer debounce finish inside the bootstrap phase.
+  await new Promise((resolve) => setTimeout(resolve, 250));
+
   getCheckoutSnapshotFacts.mockClear();
   getCheckoutStatus.mockClear();
   getCheckoutShortstat.mockClear();
@@ -272,11 +282,37 @@ test("native recursive observation updates tracked state and prunes ignored stor
   buildIgnored = false;
   observedPath = newlyTrackedPath;
   observedRelativePath = "build/tracked.txt";
+  let editedDuringWatcherHandoff = false;
+  onWorkingTreeWatcherStopped = () => {
+    editedDuringWatcherHandoff = true;
+    writeFileSync(newlyTrackedPath, "first\nsecond\n");
+  };
   writeFileSync(path.join(repoDir, ".git", "index"), "force-added\n");
   await vi.waitFor(
     () => {
+      expect(editedDuringWatcherHandoff).toBe(true);
       expect(watcherStartCount).toBe(3);
       expect(activeWatcherCount).toBe(2);
+      expect(summaryListener).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          git: expect.objectContaining({
+            isDirty: true,
+            diffStat: { additions: 2, deletions: 0 },
+          }),
+        }),
+      );
+      expect(diffListener).toHaveBeenLastCalledWith({
+        cwd: repoDir,
+        files: [
+          {
+            path: "build/tracked.txt",
+            additions: 2,
+            deletions: 0,
+            status: "modified",
+          },
+        ],
+        error: null,
+      });
       expect(service.getMetrics()).toMatchObject({
         workspaceRefreshInFlightCount: 0,
         workspaceRefreshQueuedCount: 0,

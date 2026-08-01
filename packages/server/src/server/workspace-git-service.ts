@@ -1033,6 +1033,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const workingTreeTargetPromise = this.ensureWorkingTreeWatchTarget(watchCwd);
     const workingTreeTarget = await workingTreeTargetPromise;
     if (!this.isActiveObservedWorkspaceTarget(target)) {
+      queueMicrotask(() => this.closeWorkingTreeWatchTargetIfUnused(workingTreeTarget));
       return;
     }
     if (target.workingTreeWatchTarget !== workingTreeTarget) {
@@ -1325,6 +1326,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
     target.ignoredDirectories = ignoredDirectories;
     await this.startWorkingTreeSubscription(target);
+    this.notifyWorkingTreeChanged(target, "working-tree-watch-reconfigured");
   }
 
   private haveSamePaths(first: Set<string>, second: Set<string>): boolean {
@@ -2049,11 +2051,17 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     let failure: { error: unknown } | null = null;
 
     while (true) {
+      if (request.emitUnchanged === true && target.latestSnapshot) {
+        this.rememberSnapshot(target, target.latestSnapshot, {
+          notify: request.notify,
+          forceEmit: true,
+        });
+      }
       try {
         snapshot = await this.refreshSnapshot(target, request);
         this.rememberSnapshot(target, snapshot, {
           notify: request.notify,
-          forceEmit: request.force || request.emitUnchanged === true,
+          forceEmit: request.force,
         });
         failure = null;
       } catch (error) {
@@ -2401,6 +2409,19 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     if (this.workingTreeWatchTargets.get(target.cwd) === target) {
       this.workingTreeWatchTargets.delete(target.cwd);
     }
+  }
+
+  private closeWorkingTreeWatchTargetIfUnused(target: WorkingTreeWatchTarget): void {
+    if (
+      target.closed ||
+      target.workspaceKeys.size > 0 ||
+      target.listeners.size > 0 ||
+      this.workingTreeWatchTargets.get(target.cwd) !== target
+    ) {
+      return;
+    }
+    this.closeWorkingTreeWatchTarget(target);
+    this.workingTreeWatchTargets.delete(target.cwd);
   }
 
   private closeWorkspaceTarget(target: WorkspaceGitTarget): void {

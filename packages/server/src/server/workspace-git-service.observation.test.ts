@@ -238,6 +238,28 @@ describe("WorkspaceGitService checkout observation", () => {
     service.dispose();
   });
 
+  test("an observer abandoned during async setup is closed", async () => {
+    const watcher = createWatcherHarness();
+    const openedSubscription = createDeferred<{ unsubscribe: () => Promise<void> }>();
+    const unsubscribeWatcher = vi.fn(async () => {});
+    watcher.subscribe.mockImplementationOnce(async () => openedSubscription.promise);
+    const service = createService(watcher);
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+
+    await vi.waitFor(() => {
+      expect(watcher.subscribe).toHaveBeenCalledTimes(1);
+    });
+    subscription.unsubscribe();
+    openedSubscription.resolve({ unsubscribe: unsubscribeWatcher });
+
+    await vi.waitFor(() => {
+      expect(unsubscribeWatcher).toHaveBeenCalledTimes(1);
+      expect(service.getMetrics().workingTreeWatchTargetCount).toBe(0);
+    });
+
+    service.dispose();
+  });
+
   test("a tracked edit refreshes summary and active uncommitted diff without structural or forge work", async () => {
     const watcher = createWatcherHarness();
     const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => createCheckoutFacts(cwd));
