@@ -308,7 +308,7 @@ interface WorkspaceGitServiceOptions {
 interface WorkspaceGitTarget {
   cwd: string;
   listeners: Set<WorkspaceGitListener>;
-  workingTreeWatchUnsubscribe: (() => void) | null;
+  workingTreeWatchTarget: WorkingTreeWatchTarget | null;
   debounceTimer: NodeJS.Timeout | null;
   pendingDebounceRequest: WorkspaceGitRefreshRequest | null;
   selfHealTimer: NodeJS.Timeout | null;
@@ -955,7 +955,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const target: WorkspaceGitTarget = {
       cwd,
       listeners: new Set(),
-      workingTreeWatchUnsubscribe: null,
+      workingTreeWatchTarget: null,
       debounceTimer: null,
       pendingDebounceRequest: null,
       selfHealTimer: null,
@@ -1029,32 +1029,31 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     if (!this.isActiveObservedWorkspaceTarget(target)) {
       return;
     }
+    const watchCwd = facts.isGit ? facts.worktreeRoot : target.cwd;
+    const workingTreeTargetPromise = this.ensureWorkingTreeWatchTarget(watchCwd);
+    const workingTreeTarget = await workingTreeTargetPromise;
+    if (!this.isActiveObservedWorkspaceTarget(target)) {
+      return;
+    }
+    if (target.workingTreeWatchTarget !== workingTreeTarget) {
+      if (target.workingTreeWatchTarget) {
+        this.removeWorkspaceWorkingTreeLink(target.workingTreeWatchTarget, target.cwd);
+      }
+      target.workingTreeWatchTarget = workingTreeTarget;
+    }
+    workingTreeTarget.workspaceKeys.add(target.cwd);
+
     if (!facts.isGit || !facts.absoluteGitDir) {
       target.observationSetupComplete = true;
       return;
     }
+    await this.promoteWorkingTreeWatchTarget(workingTreeTarget, facts.worktreeRoot);
     const gitDir = facts.absoluteGitDir;
-
     const repoGitRoot = facts.gitCommonDir ?? (await this.resolveWorkspaceGitRefsRoot(gitDir));
     if (!this.isActiveObservedWorkspaceTarget(target)) {
       return;
     }
     target.repoGitRoot = repoGitRoot;
-    const workingTreeTargetPromise = this.ensureWorkingTreeWatchTarget(facts.worktreeRoot);
-    target.workingTreeWatchUnsubscribe = () => {
-      void workingTreeTargetPromise.then(
-        (workingTreeTarget) => {
-          this.removeWorkspaceWorkingTreeLink(workingTreeTarget, target.cwd);
-          return undefined;
-        },
-        () => undefined,
-      );
-    };
-    const workingTreeTarget = await workingTreeTargetPromise;
-    if (!this.isActiveObservedWorkspaceTarget(target)) {
-      return;
-    }
-    workingTreeTarget.workspaceKeys.add(target.cwd);
     await this.ensureRepoTarget(target);
     if (this.isActiveObservedWorkspaceTarget(target)) {
       target.observationSetupComplete = true;
@@ -1189,17 +1188,21 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           }
           await this.refreshWorkspaceTarget(workspaceTarget, {
             force: false,
-            refreshStructure: false,
+            refreshStructure: target.repoRoot === null,
             refreshWorktree: true,
             includeForge: false,
             reason: "working-tree-watch-fallback",
             notify: true,
             queueIfBusy: true,
           });
+          if (target.repoRoot === null && workspaceTarget.latestGit?.isGit === true) {
+            workspaceTarget.observationSetupComplete = false;
+            this.scheduleWorkspaceObservationSetup(workspaceTarget);
+          }
         }),
       );
       this.notifyWorkingTreeConsumers(target);
-      if (!target.closed) {
+      if (!target.closed && (target.subscription === null || target.repoRoot === null)) {
         target.fallbackPollTimer = setTimeout(poll, DEGRADED_GIT_POLL_INTERVAL_MS);
       }
     };
@@ -1223,6 +1226,21 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       });
     }
     this.startWorkingTreeWatchFallback(target, reason);
+  }
+
+  private async promoteWorkingTreeWatchTarget(
+    target: WorkingTreeWatchTarget,
+    repoRoot: string,
+  ): Promise<void> {
+    if (target.repoRoot !== null) {
+      return;
+    }
+    target.repoRoot = repoRoot;
+    if (target.subscription && target.fallbackPollTimer) {
+      clearTimeout(target.fallbackPollTimer);
+      target.fallbackPollTimer = null;
+    }
+    await this.refreshWorkingTreeIgnoredDirectories(target);
   }
 
   private hasRelevantWorkingTreeEvent(
@@ -1350,11 +1368,8 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private getWorkingTreeWatchTargetForWorkspace(
     workspaceTarget: WorkspaceGitTarget,
   ): WorkingTreeWatchTarget | null {
-    const cwd = workspaceTarget.latestFacts?.isGit
-      ? workspaceTarget.latestFacts.worktreeRoot
-      : workspaceTarget.cwd;
-    const targetCwd = this.workingTreeWatchAliases.get(cwd);
-    return targetCwd ? (this.workingTreeWatchTargets.get(targetCwd) ?? null) : null;
+    const target = workspaceTarget.workingTreeWatchTarget;
+    return target && !target.closed ? target : null;
   }
 
   private async resolveCheckoutWatchRoot(cwd: string): Promise<string | null> {
@@ -1443,6 +1458,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       join(target.repoGitRoot, "logs"),
       join(target.repoGitRoot, "objects"),
     ];
+    const matchesRepoGitRoot = createRealpathAwarePathMatcher(target.repoGitRoot);
     try {
       const subscription = await this.deps.subscribe(
         target.repoGitRoot,
@@ -1455,7 +1471,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
             this.degradeRepoMetadataWatch(target);
             return;
           }
-          if (events.length > 0) {
+          const hasRelevantEvent = events.some(
+            (event) =>
+              !matchesRepoGitRoot(event.path) &&
+              ignore.every((ignoredPath) => !isRealpathInsideRoot(ignoredPath, event.path)),
+          );
+          if (hasRelevantEvent) {
             this.scheduleRepoMetadataRefresh(target, "git-metadata-watch", true);
           }
         },
@@ -2384,8 +2405,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   private closeWorkspaceTarget(target: WorkspaceGitTarget): void {
     target.closed = true;
-    target.workingTreeWatchUnsubscribe?.();
-    target.workingTreeWatchUnsubscribe = null;
+    if (target.workingTreeWatchTarget) {
+      this.removeWorkspaceWorkingTreeLink(target.workingTreeWatchTarget, target.cwd);
+      target.workingTreeWatchTarget = null;
+    }
     if (target.debounceTimer) {
       clearTimeout(target.debounceTimer);
       target.debounceTimer = null;
