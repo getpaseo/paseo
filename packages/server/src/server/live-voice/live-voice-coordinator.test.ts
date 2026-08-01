@@ -595,13 +595,18 @@ describe("LiveVoiceCoordinator", () => {
     );
     expect(harness.createConfigs[0]?.systemPrompt).toContain("create_workspace");
     expect(harness.createConfigs[0]?.systemPrompt).toContain("create_agent");
-    expect(harness.createConfigs[0]?.systemPrompt).toContain("sphragistic-oriflamme-731");
+    expect(harness.createConfigs[0]?.systemPrompt).toMatch(/chief of staff/i);
+    expect(harness.createConfigs[0]?.systemPrompt).toMatch(
+      /started through Paseo so it is visible/i,
+    );
     expect(harness.provider().startCalls[0]).toMatchObject({
       prompt,
       initialItems: [{ role: "developer", text: "state snapshot" }],
       includeStartupContext: false,
     });
-    expect(harness.provider().startCalls[0]?.prompt).not.toContain("sphragistic-oriflamme-731");
+    expect(harness.provider().startCalls[0]?.prompt).not.toContain(
+      "Delegations arrive here from a live voice call",
+    );
   });
 
   it("still places the call when building the Paseo context fails", async () => {

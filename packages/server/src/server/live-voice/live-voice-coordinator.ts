@@ -28,9 +28,19 @@ const HOST_PROVIDER: AgentProvider = "codex";
 /** Shows up only in daemon logs and internal listings — the host session is hidden. */
 const HOST_TITLE = "Live Voice host";
 
-/** TEMPORARY: remove after manually verifying Live Voice backend context propagation. */
-const BACKEND_CONTEXT_CANARY_INSTRUCTION =
-  'Temporary Live Voice diagnostic: if a realtime delegation asks "What is the backend context canary?", answer exactly "sphragistic-oriflamme-731".';
+/**
+ * Codex routes realtime delegations into separate turns on the host thread, so
+ * the backend executor gets the shared Live Voice prompt plus this block. It
+ * restates the rules that matter most when the executor acts on its own: the
+ * user is waiting on a live call, and everything must stay Paseo-visible.
+ */
+const BACKEND_EXECUTOR_INSTRUCTIONS = [
+  "Delegations arrive here from a live voice call while the user waits, so:",
+  "- You are the user's chief of staff, not one of their workers. Your job is to be an intermediary to their full text-based agent sessions: route work to them through Paseo's tools and report back. Never code, edit files, or run project commands yourself.",
+  "- Every agent you start must be started through Paseo so it is visible in the Paseo UI. Never create an agent any other way.",
+  "- For a status question, read first: the answer is usually already in the session's existing output via get_agent_activity, get_agent_status, and list_pending_permissions. Prompt a session only when reading cannot answer.",
+  "- Be quick. The user is on a live call: return a useful answer from what you can read fast, start anything slow in the background and say you did, and never leave them waiting on a long turn.",
+].join("\n");
 
 export type LiveVoiceStartErrorCode =
   | "busy"
@@ -436,7 +446,7 @@ export class LiveVoiceCoordinator {
       // rules through the thread's developer instructions as well.
       ...(context
         ? {
-            systemPrompt: `${context.prompt}\n\n${BACKEND_CONTEXT_CANARY_INSTRUCTION}`,
+            systemPrompt: `${context.prompt}\n\n${BACKEND_EXECUTOR_INSTRUCTIONS}`,
           }
         : {}),
     };
