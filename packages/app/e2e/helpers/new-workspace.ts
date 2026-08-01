@@ -126,8 +126,15 @@ export async function archiveWorkspaceFromDaemon(
   workspaceDirectory: string,
   options?: { scope?: "workspace" | "worktree" },
 ): Promise<void> {
+  const workspace = (await client.fetchWorkspaces()).entries.find(
+    (entry) => entry.workspaceDirectory === workspaceDirectory,
+  );
+  if (!workspace) {
+    throw new Error(`Workspace descriptor not found for ${workspaceDirectory}`);
+  }
   const payload = await client.archivePaseoWorktree({
     worktreePath: workspaceDirectory,
+    repoRoot: workspace.projectRootPath,
     ...(options?.scope !== undefined ? { scope: options.scope } : {}),
   });
   if (payload.error) {
@@ -156,7 +163,7 @@ export async function createWorktreeViaDaemon(
   input: { cwd: string; slug: string },
 ): Promise<OpenedProject> {
   const payload = await client.createPaseoWorktree({
-    cwd: input.cwd,
+    repoRoot: input.cwd,
     worktreeSlug: input.slug,
   });
   const workspace = requireWorkspace(payload);

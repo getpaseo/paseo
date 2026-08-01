@@ -3698,7 +3698,6 @@ test("create paseo worktree response preserves an explicit non-Git project", asy
   try {
     await session.handleCreatePaseoWorktreeRequest({
       type: "create_paseo_worktree_request",
-      cwd: repoDir,
       projectId: explicitProject.projectId,
       worktreeSlug: "worktree-123",
       requestId: "req-worktree",

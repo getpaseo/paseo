@@ -240,6 +240,25 @@ test("Hub management requires daemon support before dispatching requests", async
   expect(mock.sent).toEqual([]);
 });
 
+test("worktree commands require repository-identity support before dispatching requests", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "worktree_repository_identity_unit_test",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen();
+  await connecting;
+
+  await expect(client.getPaseoWorktreeList({ repoRoot: "/repo" })).rejects.toThrow(
+    "Update the host to use repository-scoped worktree commands.",
+  );
+  expect(mock.sent).toEqual([]);
+});
+
 test("sets the complete viewed timeline subscription only when the daemon supports it", async () => {
   const supportedTransport = createMockTransport();
   const supportedClient = new DaemonClient({
@@ -2287,11 +2306,11 @@ test("sends structured first-agent context attachments with create_paseo_worktre
   clients.push(client);
 
   const connectPromise = client.connect();
-  mock.triggerOpen();
+  mock.triggerOpen({ features: { worktreeRepositoryIdentity: true } });
   await connectPromise;
 
   const createPromise = client.createPaseoWorktree({
-    cwd: "/tmp/project",
+    repoRoot: "/tmp/project",
     worktreeSlug: "review-pr-123",
     firstAgentContext: {
       attachments: [
@@ -2649,12 +2668,12 @@ test("sends worktree base-ref fields in create_paseo_worktree_request", async ()
   clients.push(client);
 
   const connectPromise = client.connect();
-  mock.triggerOpen();
+  mock.triggerOpen({ features: { worktreeRepositoryIdentity: true } });
   await connectPromise;
 
   const createPromise = client.createPaseoWorktree(
     {
-      cwd: "/tmp/project",
+      repoRoot: "/tmp/project",
       projectId: "remote:github.com/acme/project",
       worktreeSlug: "review-pr-123",
       refName: "feature/worktree-base-ref",
@@ -2668,7 +2687,7 @@ test("sends worktree base-ref fields in create_paseo_worktree_request", async ()
   const request = parseSentFrame(mock.sent[0]);
   expect(request).toEqual({
     type: "create_paseo_worktree_request",
-    cwd: "/tmp/project",
+    repoRoot: "/tmp/project",
     projectId: "remote:github.com/acme/project",
     worktreeSlug: "review-pr-123",
     refName: "feature/worktree-base-ref",
@@ -2697,7 +2716,7 @@ test("sends worktree base-ref fields in create_paseo_worktree_request", async ()
   });
 });
 
-test("omitting create_paseo_worktree_request worktree base-ref fields preserves legacy wire shape", async () => {
+test("sends a repository root when create-worktree base-ref fields are omitted", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
 
@@ -2711,12 +2730,12 @@ test("omitting create_paseo_worktree_request worktree base-ref fields preserves 
   clients.push(client);
 
   const connectPromise = client.connect();
-  mock.triggerOpen();
+  mock.triggerOpen({ features: { worktreeRepositoryIdentity: true } });
   await connectPromise;
 
   const createPromise = client.createPaseoWorktree(
     {
-      cwd: "/tmp/project",
+      repoRoot: "/tmp/project",
       worktreeSlug: "feature-a",
     },
     "req-worktree-legacy",
@@ -2727,7 +2746,7 @@ test("omitting create_paseo_worktree_request worktree base-ref fields preserves 
       type: "session",
       message: {
         type: "create_paseo_worktree_request",
-        cwd: "/tmp/project",
+        repoRoot: "/tmp/project",
         worktreeSlug: "feature-a",
         requestId: "req-worktree-legacy",
       },

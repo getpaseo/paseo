@@ -5,7 +5,7 @@ const REPO = "/tmp/repo";
 
 function build(options: WorktreeCreateOptions): unknown {
   try {
-    return buildCreateWorktreeRequest(options, REPO);
+    return buildCreateWorktreeRequest(options, { repoRoot: REPO });
   } catch (err) {
     return err;
   }
@@ -26,7 +26,7 @@ describe("buildCreateWorktreeRequest", () => {
 
   it("branch-off builds a daemon request with a new branch", () => {
     expect(build({ mode: "branch-off", newBranch: "feature-x" })).toEqual({
-      cwd: REPO,
+      repoRoot: REPO,
       worktreeSlug: "feature-x",
       action: "branch-off",
     });
@@ -34,7 +34,7 @@ describe("buildCreateWorktreeRequest", () => {
 
   it("branch-off includes the base ref when provided", () => {
     expect(build({ mode: "branch-off", newBranch: "feature-x", base: "main" })).toEqual({
-      cwd: REPO,
+      repoRoot: REPO,
       worktreeSlug: "feature-x",
       action: "branch-off",
       refName: "main",
@@ -47,7 +47,7 @@ describe("buildCreateWorktreeRequest", () => {
 
   it("checkout-branch builds a checkout request for the branch", () => {
     expect(build({ mode: "checkout-branch", branch: "feat/x" })).toEqual({
-      cwd: REPO,
+      repoRoot: REPO,
       action: "checkout",
       refName: "feat/x",
     });
@@ -71,7 +71,7 @@ describe("buildCreateWorktreeRequest", () => {
 
   it("checkout-pr builds a checkout request for the pull request", () => {
     expect(build({ mode: "checkout-pr", prNumber: "42" })).toEqual({
-      cwd: REPO,
+      repoRoot: REPO,
       action: "checkout",
       githubPrNumber: 42,
     });

@@ -8,6 +8,7 @@ import type {
   OutputSchema,
   CommandError,
 } from "../../output/index.js";
+import { resolveWorktreeRepositoryIdentity } from "./repository-identity.js";
 
 /** Result type for worktree archive command */
 export interface WorktreeArchiveResult {
@@ -31,6 +32,8 @@ export const archiveSchema: OutputSchema<WorktreeArchiveResult> = {
 
 export interface WorktreeArchiveOptions extends CommandOptions {
   host?: string;
+  project?: string;
+  repoRoot?: string;
 }
 
 export type WorktreeArchiveCommandResult = SingleResult<WorktreeArchiveResult>;
@@ -48,8 +51,6 @@ export async function runArchiveCommandWithDeps(
   options: WorktreeArchiveOptions,
   deps: { connectToDaemon: typeof connectToDaemon },
 ): Promise<WorktreeArchiveCommandResult> {
-  const host = getDaemonHost({ host: options.host });
-
   // Validate arguments
   if (!nameArg || nameArg.trim().length === 0) {
     const error: CommandError = {
@@ -64,6 +65,7 @@ export async function runArchiveCommandWithDeps(
   try {
     client = await deps.connectToDaemon({ host: options.host });
   } catch (err) {
+    const host = getDaemonHost({ host: options.host });
     const message = err instanceof Error ? err.message : String(err);
     const error: CommandError = {
       code: "DAEMON_NOT_RUNNING",
@@ -74,8 +76,9 @@ export async function runArchiveCommandWithDeps(
   }
 
   try {
+    const identity = resolveWorktreeRepositoryIdentity(options, client);
     // Get the list of worktrees first to resolve the name
-    const listResponse = await client.getPaseoWorktreeList({});
+    const listResponse = await client.getPaseoWorktreeList(identity);
 
     if (listResponse.error) {
       const error: CommandError = {
@@ -104,6 +107,8 @@ export async function runArchiveCommandWithDeps(
     // the directory and then removes the directory (Paseo-owned gated).
     const response = await client.archivePaseoWorktree({
       worktreePath: worktree.worktreePath,
+      ...identity,
+      branchName: worktree.branchName ?? undefined,
       scope: "worktree",
     });
 

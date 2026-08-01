@@ -4,6 +4,7 @@ import { basename, join, sep } from "node:path";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from "../../output/index.js";
+import { resolveWorktreeRepositoryIdentity } from "./repository-identity.js";
 
 /** Worktree list item for display */
 export interface WorktreeListItem {
@@ -55,6 +56,8 @@ export type WorktreeLsResult = ListResult<WorktreeListItem>;
 
 export interface WorktreeLsOptions extends CommandOptions {
   host?: string;
+  project?: string;
+  repoRoot?: string;
 }
 
 export async function runLsCommand(
@@ -81,7 +84,8 @@ export async function runLsCommand(
     const agents = agentsPayload.entries.map((entry) => entry.agent);
 
     // Get worktree list from daemon
-    const response = await client.getPaseoWorktreeList({});
+    const identity = resolveWorktreeRepositoryIdentity(options, client);
+    const response = await client.getPaseoWorktreeList(identity);
 
     await client.close();
 

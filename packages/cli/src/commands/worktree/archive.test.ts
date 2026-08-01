@@ -1,13 +1,18 @@
 import { describe, expect, it } from "vitest";
+import { hostname } from "node:os";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { runArchiveCommandWithDeps } from "./archive.js";
 
 function createFakeDaemonClient(
   overrides: Partial<
-    Pick<DaemonClient, "getPaseoWorktreeList" | "archivePaseoWorktree" | "close">
+    Pick<
+      DaemonClient,
+      "getLastServerInfoMessage" | "getPaseoWorktreeList" | "archivePaseoWorktree" | "close"
+    >
   > = {},
 ): DaemonClient {
   return {
+    getLastServerInfoMessage: () => ({ hostname: hostname() }),
     getPaseoWorktreeList: async () => ({
       worktrees: [],
       error: null,
@@ -69,6 +74,7 @@ describe("runArchiveCommand", () => {
     expect(archiveCalls).toHaveLength(1);
     expect(archiveCalls[0]?.input.scope).toBe("worktree");
     expect(archiveCalls[0]?.input.worktreePath).toBe(worktreePath);
+    expect(archiveCalls[0]?.input.repoRoot).toBe(process.cwd());
     expect(result).toEqual({
       type: "single",
       data: {
@@ -120,6 +126,7 @@ describe("runArchiveCommand", () => {
     expect(archiveCalls).toHaveLength(1);
     expect(archiveCalls[0]?.input.scope).toBe("worktree");
     expect(archiveCalls[0]?.input.worktreePath).toBe(worktreePath);
+    expect(archiveCalls[0]?.input.repoRoot).toBe(process.cwd());
   });
 
   it("throws a CommandError when the worktree is not found", async () => {

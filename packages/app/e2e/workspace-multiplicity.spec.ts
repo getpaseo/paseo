@@ -165,9 +165,15 @@ test.describe("Workspace multiplicity creation flow", () => {
         (entry) => entry.id === worktree.workspaceId,
       );
       expect(descriptor?.workspaceKind).toBe("worktree");
+      if (!descriptor) {
+        throw new Error(`Workspace descriptor not found for ${worktree.workspaceId}`);
+      }
 
       await client
-        .archivePaseoWorktree({ worktreePath: worktree.workspaceDirectory })
+        .archivePaseoWorktree({
+          worktreePath: worktree.workspaceDirectory,
+          repoRoot: descriptor.projectRootPath,
+        })
         .catch(() => undefined);
     } finally {
       await seeded.cleanup();

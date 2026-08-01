@@ -19,6 +19,7 @@ import {
   createPaseoWorktreeWorkflow,
   handlePaseoWorktreeArchiveRequest,
   handlePaseoWorktreeListRequest,
+  resolveRepositoryWorktreePath,
   resolveGitCreateBaseBranch,
   runWorktreeSetupInBackground,
   handleCreatePaseoWorktreeRequest,
@@ -85,6 +86,21 @@ function createLogger(): Logger {
   vi.spyOn(logger, "warn").mockImplementation(() => undefined);
   vi.spyOn(logger, "error").mockImplementation(() => undefined);
   return logger;
+}
+
+function createProjectRegistryForRoot(rootPath: string): Pick<ProjectRegistry, "get" | "list"> {
+  const project = createPersistedProjectRecord({
+    projectId: "prj-worktree-test",
+    rootPath,
+    kind: "git",
+    displayName: path.basename(rootPath),
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  });
+  return {
+    get: async (projectId) => (projectId === project.projectId ? project : null),
+    list: async () => [project],
+  };
 }
 
 function createWorkflowForRequestTest(options: {
@@ -292,8 +308,10 @@ function createWorkspaceDescriptor(input: {
 function createPaseoWorktreeForTest(options: {
   paseoHome: string;
   events?: string[];
+  project?: PersistedProjectRecord;
 }): CreatePaseoWorktreeFn {
   const projects = new Map<string, PersistedProjectRecord>();
+  if (options.project) projects.set(options.project.projectId, options.project);
   const workspaces = new Map<string, PersistedWorkspaceRecord>();
   const workspaceGitService = new WorkspaceGitServiceImpl({
     logger: createLogger(),
@@ -368,6 +386,19 @@ function createPaseoWorktreeForTest(options: {
   });
 
   return (input, serviceOptions) => {
+    if (input.projectId && !projects.has(input.projectId)) {
+      projects.set(
+        input.projectId,
+        createPersistedProjectRecord({
+          projectId: input.projectId,
+          rootPath: input.cwd,
+          kind: "git",
+          displayName: path.basename(input.cwd),
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        }),
+      );
+    }
     return createPaseoWorktreeService(input, {
       github: createGitHubServiceStub(),
       ...(serviceOptions?.resolveDefaultBranch
@@ -382,6 +413,7 @@ function createPaseoWorktreeForTest(options: {
 describe("handlePaseoWorktreeListRequest", () => {
   test("lists worktrees through the workspace git service", async () => {
     const emitted: SessionOutboundMessage[] = [];
+    const repoRoot = realpathSync.native(process.cwd());
     const workspaceGitService = {
       listWorktrees: vi.fn().mockResolvedValue([
         {
@@ -398,16 +430,17 @@ describe("handlePaseoWorktreeListRequest", () => {
         emit: (message) => emitted.push(message),
         paseoHome: "/tmp/paseo-home",
         workspaceGitService: workspaceGitService as unknown as WorkspaceGitService,
+        projectRegistry: createProjectRegistryForRoot(repoRoot),
       },
       {
         type: "paseo_worktree_list_request",
-        cwd: "/tmp/repo",
+        repoRoot,
         requestId: "request-worktrees",
       },
     );
 
     expect(workspaceGitService.listWorktrees).toHaveBeenCalledTimes(1);
-    expect(workspaceGitService.listWorktrees).toHaveBeenCalledWith("/tmp/repo");
+    expect(workspaceGitService.listWorktrees).toHaveBeenCalledWith(repoRoot);
     expect(emitted).toContainEqual({
       type: "paseo_worktree_list_response",
       payload: {
@@ -423,6 +456,63 @@ describe("handlePaseoWorktreeListRequest", () => {
         requestId: "request-worktrees",
       },
     });
+  });
+
+  test("rejects a legacy caller cwd without touching Git", async () => {
+    const emitted: SessionOutboundMessage[] = [];
+    const workspaceGitService = { listWorktrees: vi.fn() };
+
+    await handlePaseoWorktreeListRequest(
+      {
+        emit: (message) => emitted.push(message),
+        workspaceGitService: workspaceGitService as unknown as WorkspaceGitService,
+        projectRegistry: createProjectRegistryForRoot(realpathSync.native(process.cwd())),
+      },
+      {
+        type: "paseo_worktree_list_request",
+        cwd: "/remote-callers/unrelated/repo",
+        requestId: "request-unscoped-worktrees",
+      },
+    );
+
+    expect(workspaceGitService.listWorktrees).not.toHaveBeenCalled();
+    expect(emitted).toContainEqual({
+      type: "paseo_worktree_list_response",
+      payload: {
+        worktrees: [],
+        error: expect.objectContaining({ message: expect.stringContaining("required") }),
+        requestId: "request-unscoped-worktrees",
+      },
+    });
+  });
+});
+
+describe("resolveRepositoryWorktreePath", () => {
+  test("rejects a worktree path from another repository", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const otherPath = path.join(tempDir, "other-repository-worktree");
+    mkdirSync(otherPath);
+
+    try {
+      await expect(
+        resolveRepositoryWorktreePath(
+          {
+            listWorktrees: vi.fn(async () => [
+              {
+                path: path.join(tempDir, "known-worktree"),
+                branchName: "known",
+                createdAt: "2026-01-01T00:00:00.000Z",
+              },
+            ]),
+          },
+          repoDir,
+          otherPath,
+          undefined,
+        ),
+      ).rejects.toThrow("not a worktree for the selected repository");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -1292,6 +1382,14 @@ describe("handleCreatePaseoWorktreeRequest", () => {
     const emitted: SessionOutboundMessage[] = [];
     const logger = createLogger();
     const paseoHome = path.join(tempDir, ".paseo");
+    const project = createPersistedProjectRecord({
+      projectId: "prj-worktree-test",
+      rootPath: repoDir,
+      kind: "git",
+      displayName: path.basename(repoDir),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
 
     await handleCreatePaseoWorktreeRequest(
       {
@@ -1300,12 +1398,17 @@ describe("handleCreatePaseoWorktreeRequest", () => {
           createWorkspaceDescriptor({ workspace: result.workspace, repoDir }),
         emit: (message) => emitted.push(message),
         sessionLogger: logger,
-        createPaseoWorktreeWorkflow: createWorkflowForRequestTest({ paseoHome }),
+        projectRegistry: createProjectRegistryForRoot(repoDir),
+        createPaseoWorktreeWorkflow: createWorkflowForRequestTest({
+          paseoHome,
+          createPaseoWorktree: createPaseoWorktreeForTest({ paseoHome, project }),
+        }),
       },
       {
         type: "create_paseo_worktree_request",
         requestId: "req-pr-worktree",
         cwd: repoDir,
+        repoRoot: repoDir,
         worktreeSlug: "review-pr-123",
         action: "checkout",
         githubPrNumber: 123,
@@ -1597,6 +1700,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
           paseoHome,
           sessionLogger: createLogger(),
           emit: (message) => emitted.push(message),
+          projectRegistry: createProjectRegistryForRoot(repoDir),
           createPaseoWorktreeWorkflow: createWorkflowForRequestTest({
             paseoHome,
             createPaseoWorktree: createPaseoWorktreeForTest({ paseoHome, events }),
@@ -1628,6 +1732,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
         {
           type: "create_paseo_worktree_request",
           cwd: repoDir,
+          repoRoot: repoDir,
           worktreeSlug: "single-call",
           requestId: "req-single-call",
         },
@@ -1660,6 +1765,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
           paseoHome,
           sessionLogger: createLogger(),
           emit: (message) => emitted.push(message),
+          projectRegistry: createProjectRegistryForRoot(repoDir),
           createPaseoWorktreeWorkflow: createWorkflowForRequestTest({
             paseoHome,
             createPaseoWorktree: async (input) => {
@@ -1678,6 +1784,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
         {
           type: "create_paseo_worktree_request",
           cwd: repoDir,
+          repoRoot: repoDir,
           worktreeSlug: "response-after-create",
           requestId: "req-1",
         },
@@ -1742,6 +1849,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
           paseoHome,
           sessionLogger: createLogger(),
           emit: (message) => emitted.push(message),
+          projectRegistry: createProjectRegistryForRoot(repoDir),
           createPaseoWorktreeWorkflow: createWorkflowForRequestTest({ paseoHome }),
           describeWorkspaceRecord: vi.fn(async (result) =>
             createWorkspaceDescriptor({ workspace: result.workspace, repoDir }),
@@ -1750,6 +1858,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
         {
           type: "create_paseo_worktree_request",
           cwd: repoDir,
+          repoRoot: repoDir,
           action: "checkout",
           requestId: "req-missing-target",
         },
@@ -1780,6 +1889,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
           paseoHome,
           sessionLogger: createLogger(),
           emit: (message) => emitted.push(message),
+          projectRegistry: createProjectRegistryForRoot(repoDir),
           createPaseoWorktreeWorkflow: createWorkflowForRequestTest({ paseoHome }),
           describeWorkspaceRecord: vi.fn(async (result) =>
             createWorkspaceDescriptor({ workspace: result.workspace, repoDir }),
@@ -1788,6 +1898,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
         {
           type: "create_paseo_worktree_request",
           cwd: repoDir,
+          repoRoot: repoDir,
           action: "checkout",
           refName: "missing-branch",
           requestId: "req-unknown-branch",
@@ -1848,8 +1959,15 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
         github: createGitHubServiceStub(),
         workspaceGitService: {
           getSnapshot: vi.fn(async () => null),
-          listWorktrees: vi.fn(async () => []),
+          listWorktrees: vi.fn(async () => [
+            {
+              path: sharedCwd,
+              branchName: "archive-worktree-scope",
+              createdAt: "2026-01-01T00:00:00.000Z",
+            },
+          ]),
         },
+        projectRegistry: createProjectRegistryForRoot(repoDir),
         agentManager: {
           listAgents: () => [],
           archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
@@ -1919,8 +2037,15 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
         github: createGitHubServiceStub(),
         workspaceGitService: {
           getSnapshot: vi.fn(async () => null),
-          listWorktrees: vi.fn(async () => []),
+          listWorktrees: vi.fn(async () => [
+            {
+              path: created.worktreePath,
+              branchName: "archive-default-scope",
+              createdAt: "2026-01-01T00:00:00.000Z",
+            },
+          ]),
         },
+        projectRegistry: createProjectRegistryForRoot(repoDir),
         agentManager: {
           listAgents: () => [],
           archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
@@ -1995,8 +2120,15 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
         github: createGitHubServiceStub(),
         workspaceGitService: {
           getSnapshot: vi.fn(async () => null),
-          listWorktrees: vi.fn(async () => []),
+          listWorktrees: vi.fn(async () => [
+            {
+              path: sharedCwd,
+              branchName: "archive-default-scope-sibling",
+              createdAt: "2026-01-01T00:00:00.000Z",
+            },
+          ]),
         },
+        projectRegistry: createProjectRegistryForRoot(repoDir),
         agentManager: {
           listAgents: () => [],
           archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
@@ -2071,8 +2203,15 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
       github: createGitHubServiceStub(),
       workspaceGitService: {
         getSnapshot: vi.fn(async () => null),
-        listWorktrees: vi.fn(async () => []),
+        listWorktrees: vi.fn(async () => [
+          {
+            path: sharedCwd,
+            branchName: "archive-delete-flag",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        ]),
       },
+      projectRegistry: createProjectRegistryForRoot(repoDir),
       agentManager: {
         listAgents: () => [],
         archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),

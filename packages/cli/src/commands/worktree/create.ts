@@ -4,6 +4,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type { CommandError, OutputSchema, SingleResult } from "../../output/index.js";
 import { buildCreateWorktreeRequest, type WorktreeCreateOptions } from "./create-input.js";
+import { resolveWorktreeRepositoryIdentity } from "./repository-identity.js";
 
 export interface WorktreeCreateResult {
   name: string;
@@ -28,9 +29,6 @@ export async function runCreateCommand(
   options: WorktreeCreateOptions,
   _command: Command,
 ): Promise<SingleResult<WorktreeCreateResult>> {
-  const cwd = options.cwd ?? process.cwd();
-  const request = buildCreateWorktreeRequest(options, cwd);
-
   const host = getDaemonHost({ host: options.host });
   let client: DaemonClient;
   try {
@@ -45,6 +43,8 @@ export async function runCreateCommand(
   }
 
   try {
+    const identity = resolveWorktreeRepositoryIdentity(options, client);
+    const request = buildCreateWorktreeRequest(options, identity);
     const response = await client.createPaseoWorktree(request);
 
     const workspace = response.workspace;

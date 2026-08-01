@@ -3,7 +3,8 @@ import type { CommandError, CommandOptions } from "../../output/index.js";
 
 export interface WorktreeCreateOptions extends CommandOptions {
   host?: string;
-  cwd?: string;
+  project?: string;
+  repoRoot?: string;
   mode?: string;
   newBranch?: string;
   base?: string;
@@ -17,7 +18,7 @@ type CreatePaseoWorktreeRequest = Parameters<DaemonClient["createPaseoWorktree"]
 
 export function buildCreateWorktreeRequest(
   options: WorktreeCreateOptions,
-  cwd: string,
+  identity: { projectId?: string; repoRoot?: string },
 ): CreatePaseoWorktreeRequest {
   const mode = options.mode;
   if (!mode) {
@@ -30,11 +31,11 @@ export function buildCreateWorktreeRequest(
 
   switch (mode) {
     case "branch-off":
-      return buildBranchOffRequest(options, cwd);
+      return buildBranchOffRequest(options, identity);
     case "checkout-branch":
-      return buildCheckoutBranchRequest(options, cwd);
+      return buildCheckoutBranchRequest(options, identity);
     case "checkout-pr":
-      return buildCheckoutPrRequest(options, cwd);
+      return buildCheckoutPrRequest(options, identity);
     default:
       throw cmdError(
         "INVALID_MODE",
@@ -46,14 +47,14 @@ export function buildCreateWorktreeRequest(
 
 function buildBranchOffRequest(
   options: WorktreeCreateOptions,
-  cwd: string,
+  identity: { projectId?: string; repoRoot?: string },
 ): CreatePaseoWorktreeRequest {
   if (!options.newBranch) {
     throw cmdError("MISSING_NEW_BRANCH", "--new-branch is required for --mode branch-off");
   }
 
   return {
-    cwd,
+    ...identity,
     worktreeSlug: options.newBranch,
     action: "branch-off",
     ...(options.base ? { refName: options.base } : {}),
@@ -62,14 +63,14 @@ function buildBranchOffRequest(
 
 function buildCheckoutBranchRequest(
   options: WorktreeCreateOptions,
-  cwd: string,
+  identity: { projectId?: string; repoRoot?: string },
 ): CreatePaseoWorktreeRequest {
   if (!options.branch) {
     throw cmdError("MISSING_BRANCH", "--branch is required for --mode checkout-branch");
   }
 
   return {
-    cwd,
+    ...identity,
     action: "checkout",
     refName: options.branch,
   };
@@ -77,7 +78,7 @@ function buildCheckoutBranchRequest(
 
 function buildCheckoutPrRequest(
   options: WorktreeCreateOptions,
-  cwd: string,
+  identity: { projectId?: string; repoRoot?: string },
 ): CreatePaseoWorktreeRequest {
   if (options.prNumber === undefined || options.prNumber === "") {
     throw cmdError("MISSING_PR_NUMBER", "--pr-number is required for --mode checkout-pr");
@@ -93,7 +94,7 @@ function buildCheckoutPrRequest(
   }
 
   return {
-    cwd,
+    ...identity,
     action: "checkout",
     githubPrNumber: prNumber,
   };

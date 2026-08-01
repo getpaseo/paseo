@@ -206,7 +206,10 @@ export async function createWorkspaceThroughDaemon(
   client: WorkspaceSetupDaemonClient,
   input: { cwd: string; worktreeSlug: string },
 ): Promise<{ id: string; name: string }> {
-  const result = await client.createPaseoWorktree(input);
+  const result = await client.createPaseoWorktree({
+    repoRoot: input.cwd,
+    worktreeSlug: input.worktreeSlug,
+  });
   if (!result.workspace || result.error) {
     throw new Error(result.error ?? `Failed to create workspace for ${input.cwd}`);
   }

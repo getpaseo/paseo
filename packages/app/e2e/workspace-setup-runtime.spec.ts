@@ -55,7 +55,7 @@ test.describe("Workspace setup runtime authority", () => {
       // no longer has a standalone terminal button
       const worktreeSlug = `setup-terminal-${Date.now()}`;
       const result = await client.createPaseoWorktree({
-        cwd: repo.path,
+        repoRoot: repo.path,
         worktreeSlug,
       });
       if (!result.workspace || result.error) {

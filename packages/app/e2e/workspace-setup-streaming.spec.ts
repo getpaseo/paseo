@@ -288,7 +288,7 @@ test.describe("Workspace setup streaming", () => {
       );
 
       const result = await client.createPaseoWorktree({
-        cwd: repo.path,
+        repoRoot: repo.path,
         worktreeSlug: "workspace-setup-scripts",
       });
       if (!result.workspace) {

@@ -3925,15 +3925,16 @@ export class DaemonClient {
   }
 
   async getPaseoWorktreeList(
-    input: { cwd?: string; repoRoot?: string },
+    input: { repoRoot?: string; projectId?: string },
     requestId?: string,
   ): Promise<PaseoWorktreeListPayload> {
+    this.requireWorktreeRepositoryIdentitySupport();
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
         type: "paseo_worktree_list_request",
-        cwd: input.cwd,
         repoRoot: input.repoRoot,
+        projectId: input.projectId,
       },
       responseType: "paseo_worktree_list_response",
     });
@@ -3943,18 +3944,21 @@ export class DaemonClient {
     input: {
       worktreePath?: string;
       repoRoot?: string;
+      projectId?: string;
       branchName?: string;
       workspaceId?: string;
       scope?: "workspace" | "worktree";
     },
     requestId?: string,
   ): Promise<PaseoWorktreeArchivePayload> {
+    this.requireWorktreeRepositoryIdentitySupport();
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
         type: "paseo_worktree_archive_request",
         worktreePath: input.worktreePath,
         repoRoot: input.repoRoot,
+        projectId: input.projectId,
         branchName: input.branchName,
         ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
         ...(input.scope !== undefined ? { scope: input.scope } : {}),
@@ -3964,14 +3968,16 @@ export class DaemonClient {
   }
 
   async createPaseoWorktree(
-    input: CreatePaseoWorktreeInput,
+    input: Omit<CreatePaseoWorktreeRequest, "type" | "requestId">,
     requestId?: string,
   ): Promise<CreatePaseoWorktreePayload> {
+    this.requireWorktreeRepositoryIdentitySupport();
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
         type: "create_paseo_worktree_request",
-        cwd: input.cwd,
+        ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+        ...(input.repoRoot !== undefined ? { repoRoot: input.repoRoot } : {}),
         ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
         worktreeSlug: input.worktreeSlug,
         ...(input.firstAgentContext !== undefined
@@ -5250,6 +5256,13 @@ export class DaemonClient {
     // COMPAT(hubRelationship): added in v0.1.X, drop the gate when floor >= v0.1.X.
     if (this.lastServerInfoMessage?.features?.hubRelationship !== true) {
       throw new Error("Update the host to use Hub relationship management.");
+    }
+  }
+
+  private requireWorktreeRepositoryIdentitySupport(): void {
+    // COMPAT(worktreeRepositoryIdentity): added in v0.2.5, remove gate after 2027-02-01.
+    if (this.lastServerInfoMessage?.features?.worktreeRepositoryIdentity !== true) {
+      throw new Error("Update the host to use repository-scoped worktree commands.");
     }
   }
 

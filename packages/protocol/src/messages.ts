@@ -1922,8 +1922,11 @@ export const DirectorySuggestionsRequestSchema = z.object({
 
 export const PaseoWorktreeListRequestSchema = z.object({
   type: z.literal("paseo_worktree_list_request"),
+  // COMPAT(worktreeRepositoryIdentity): added in v0.2.5, remove legacy cwd
+  // parsing after 2027-02-01. The daemon rejects requests without an identity.
   cwd: z.string().optional(),
   repoRoot: z.string().optional(),
+  projectId: z.string().optional(),
   requestId: z.string(),
 });
 
@@ -1931,6 +1934,7 @@ export const PaseoWorktreeArchiveRequestSchema = z.object({
   type: z.literal("paseo_worktree_archive_request"),
   worktreePath: z.string().optional(),
   repoRoot: z.string().optional(),
+  projectId: z.string().optional(),
   branchName: z.string().optional(),
   // COMPAT(worktreeArchiveWorkspaceId): added in v0.1.97, drop the optional gate when floor >= v0.1.97.
   // Explicit workspace record to archive. A directory can back multiple workspaces
@@ -1958,7 +1962,10 @@ export const FirstAgentContextSchema = z.object({
 
 export const CreatePaseoWorktreeRequestSchema = z.object({
   type: z.literal("create_paseo_worktree_request"),
-  cwd: z.string(),
+  // COMPAT(worktreeRepositoryIdentity): added in v0.2.5, remove legacy cwd
+  // parsing after 2027-02-01. The daemon rejects requests without an identity.
+  cwd: z.string().optional(),
+  repoRoot: z.string().optional(),
   projectId: z.string().optional(),
   worktreeSlug: z.string().optional(),
   nameContext: z.string().optional(),
@@ -2840,6 +2847,8 @@ export const ServerInfoStatusPayloadSchema = z
         stableProjectIdentity: z.boolean().optional(),
         // COMPAT(workspaceScriptManagement): added in v0.1.105, remove gate after 2027-01-10.
         workspaceScriptManagement: z.boolean().optional(),
+        // COMPAT(worktreeRepositoryIdentity): added in v0.2.5, remove gate after 2027-02-01.
+        worktreeRepositoryIdentity: z.boolean().optional(),
       })
       .optional(),
   })

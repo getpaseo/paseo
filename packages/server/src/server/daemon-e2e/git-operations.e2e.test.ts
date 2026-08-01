@@ -772,6 +772,7 @@ test("archiving a worktree shuts down its terminals but leaves the worktree on d
 
   const archive = await ctx.client.archivePaseoWorktree({
     worktreePath: agent.cwd,
+    repoRoot,
   });
   expect(archive.error).toBeNull();
   expect(archive.success).toBe(true);

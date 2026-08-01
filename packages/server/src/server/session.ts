@@ -3791,6 +3791,7 @@ export class Session {
         emit: (message) => this.emit(message),
         paseoHome: this.paseoHome,
         workspaceGitService: this.workspaceGitService,
+        projectRegistry: this.projectRegistry,
       },
       msg,
     );
@@ -3805,6 +3806,7 @@ export class Session {
         paseoWorktreesBaseRoot: this.worktreesRoot,
         github: this.github,
         workspaceGitService: this.workspaceGitService,
+        projectRegistry: this.projectRegistry,
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
@@ -5670,6 +5672,7 @@ export class Session {
         describeWorkspaceRecord: (result) => this.describeCreatedWorktreeWorkspace(result),
         emit: (message) => this.emit(message),
         sessionLogger: this.sessionLogger,
+        projectRegistry: this.projectRegistry,
         createPaseoWorktreeWorkflow: (input) => this.createPaseoWorktreeWorkflow(input),
       },
       request,

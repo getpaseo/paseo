@@ -286,6 +286,7 @@ describe("daemon checkout PR merge loop", () => {
 
         const archiveResult = await ctx.client.archivePaseoWorktree({
           worktreePath: worktree.worktreePath,
+          repoRoot: repoDir,
         });
         expect(archiveResult.error).toBeNull();
         expect(archiveResult.success).toBe(true);
@@ -297,7 +298,9 @@ describe("daemon checkout PR merge loop", () => {
         agentId = null;
       } finally {
         if (worktreePath) {
-          await ctx.client.archivePaseoWorktree({ worktreePath }).catch(() => undefined);
+          await ctx.client
+            .archivePaseoWorktree({ worktreePath, repoRoot: repoDir })
+            .catch(() => undefined);
         }
         if (agentId) {
           await ctx.client.deleteAgent(agentId).catch(() => undefined);

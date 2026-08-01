@@ -93,7 +93,7 @@ async function callWorkspaceCreation({
 }) {
   if (creationMethod === "create_worktree") {
     return connectedClient.createPaseoWorktree({
-      cwd: input.cwd,
+      repoRoot: input.cwd,
       worktreeSlug: createNameId(),
     });
   }
