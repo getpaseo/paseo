@@ -3223,6 +3223,10 @@ export class AgentManager {
   ): Promise<void> {
     await this.drainSessionEvents(agent.id);
     const hydrationToken = this.beginHistoryHydration(agent.id);
+    // Session events drained above may still have timeline output waiting in the coalescer.
+    // Capture that output at the front of the owned buffer before streamHistory can interleave
+    // newer live events, preserving the original per-agent event order across replacement.
+    this.agentStreamCoalescer.flushAndDiscard(agent.id);
     try {
       const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
       const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
@@ -3281,6 +3285,8 @@ export class AgentManager {
   ): Promise<void> {
     await this.drainSessionEvents(agent.id);
     const hydrationToken = this.beginHistoryHydration(agent.id);
+    // Preserve pre-hydration coalescer output ahead of any live events emitted by streamHistory.
+    this.agentStreamCoalescer.flushAndDiscard(agent.id);
     const timelineEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
     const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
     let historyAvailable = true;

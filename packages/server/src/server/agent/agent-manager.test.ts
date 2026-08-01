@@ -3196,6 +3196,77 @@ test("force provider hydration preserves out-of-band timeline output during repl
   }
 });
 
+test("force provider hydration preserves a synthesized start failure during replacement", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-force-start-failure-"));
+  const agentId = "00000000-0000-4000-8000-000000000157";
+  const historyEntered = deferred<void>();
+  const releaseHistory = deferred<void>();
+  const startAttempted = deferred<void>();
+
+  class StartFailureHistorySession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      startAttempted.resolve();
+      throw new Error("provider start failed");
+    }
+
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      historyEntered.resolve();
+      await releaseHistory.promise;
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: "replacement history" },
+      };
+    }
+  }
+  class StartFailureHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new StartFailureHistorySession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new StartFailureHistoryClient() },
+    logger,
+    idFactory: () => agentId,
+  });
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const hydration = manager.hydrateTimelineFromProvider(created.id, { force: true });
+    await historyEntered.promise;
+
+    const failedRun = manager.streamAgent(created.id, "fail while history is replacing").next();
+    let failedRunSettled = false;
+    void failedRun.then(
+      () => {
+        failedRunSettled = true;
+        return undefined;
+      },
+      () => {
+        failedRunSettled = true;
+        return undefined;
+      },
+    );
+    await startAttempted.promise;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(failedRunSettled).toBe(false);
+
+    releaseHistory.resolve();
+    await hydration;
+    await expect(failedRun).rejects.toThrow("provider start failed");
+    expect(manager.getTimeline(created.id)).toEqual([
+      { type: "user_message", text: "replacement history" },
+      { type: "assistant_message", text: "[System Error] provider start failed" },
+    ]);
+  } finally {
+    releaseHistory.resolve();
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test.each([
   { outcome: "success" as const, error: null },
   { outcome: "failure" as const, error: new Error("provider history failed") },
@@ -3271,6 +3342,79 @@ test.each([
     rmSync(workdir, { recursive: true, force: true });
   }
 });
+
+test.each([
+  { outcome: "success" as const, error: null },
+  { outcome: "failure" as const, error: new Error("provider history failed") },
+])(
+  "force hydration keeps pre-gate coalesced output ahead of later live events on $outcome",
+  async ({ error }) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-force-pregate-order-"));
+    const agentId = randomUUID();
+    let session: PreGateOrderingSession | null = null;
+
+    class PreGateOrderingSession extends TestAgentSession {
+      override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        this.pushEvent({
+          type: "timeline",
+          provider: "codex",
+          item: { type: "user_message", text: "later live boundary" },
+        });
+        if (error) {
+          throw error;
+        }
+        yield {
+          type: "timeline",
+          provider: "codex",
+          item: { type: "user_message", text: "replacement history" },
+        };
+      }
+    }
+    class PreGateOrderingClient extends TestAgentClient {
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        session = new PreGateOrderingSession(config);
+        return session;
+      }
+    }
+
+    const manager = new AgentManager({
+      clients: { codex: new PreGateOrderingClient() },
+      logger,
+      idFactory: () => agentId,
+      agentStreamCoalesceWindowMs: 60_000,
+    });
+    try {
+      const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      session?.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "earlier coalesced output" },
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      const hydration = manager.hydrateTimelineFromProvider(created.id, { force: true });
+      if (error) {
+        await expect(hydration).rejects.toThrow(error.message);
+        expect(manager.getTimeline(created.id)).toEqual([
+          { type: "assistant_message", text: "earlier coalesced output" },
+          { type: "user_message", text: "later live boundary" },
+        ]);
+      } else {
+        await hydration;
+        expect(manager.getTimeline(created.id)).toEqual([
+          { type: "user_message", text: "replacement history" },
+          { type: "assistant_message", text: "earlier coalesced output" },
+          { type: "user_message", text: "later live boundary" },
+        ]);
+      }
+    } finally {
+      await manager.closeAgent(agentId).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
 
 test("an immediate second force hydration cannot inherit a late coalescer flush", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-force-late-flush-"));
