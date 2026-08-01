@@ -34,6 +34,10 @@ export interface AutonomousAgentRun {
 
 export type TrackedAgentRun = PendingForegroundRun | AutonomousAgentRun;
 
+interface InvalidatedPendingRun {
+  stagedLifecycleEvents: AgentStreamEvent[];
+}
+
 export interface ForegroundRunAgentState {
   foregroundTurnWaiters: Set<ForegroundTurnWaiter>;
   finalizedForegroundTurnIds: Set<string>;
@@ -41,6 +45,7 @@ export interface ForegroundRunAgentState {
 
 export class AgentRunState {
   private readonly runs = new Map<string, TrackedAgentRun>();
+  private readonly invalidatedPendingRuns = new Map<string, Map<string, InvalidatedPendingRun>>();
 
   createPendingRun(agentId: string): PendingForegroundRun {
     const pendingRun = createPendingForegroundRun();
@@ -71,12 +76,19 @@ export class AgentRunState {
     event: AgentStreamEvent,
     options: { terminal: boolean; finalized: boolean },
   ): boolean {
+    if (options.finalized) {
+      return true;
+    }
+
+    const invalidatedRun = this.invalidatedPendingRuns.get(agentId)?.values().next().value;
+    if (invalidatedRun && (event.type === "turn_started" || options.terminal)) {
+      invalidatedRun.stagedLifecycleEvents.push(event);
+      return true;
+    }
+
     const run = this.runs.get(agentId);
     if (run?.kind !== "foreground" || run.started) {
       return false;
-    }
-    if (options.finalized) {
-      return true;
     }
 
     run.stagedEvents.push(event);
@@ -150,11 +162,39 @@ export class AgentRunState {
     return true;
   }
 
+  invalidatePendingRun(agentId: string, token: string): boolean {
+    const run = this.runs.get(agentId);
+    if (run?.kind !== "foreground" || run.token !== token || run.started) {
+      return false;
+    }
+
+    this.clearRun(agentId, run);
+    const invalidatedRuns = this.invalidatedPendingRuns.get(agentId) ?? new Map();
+    invalidatedRuns.set(token, { stagedLifecycleEvents: [] });
+    this.invalidatedPendingRuns.set(agentId, invalidatedRuns);
+    return true;
+  }
+
+  takeInvalidatedPendingRunEvents(agentId: string, token: string): AgentStreamEvent[] | null {
+    const invalidatedRuns = this.invalidatedPendingRuns.get(agentId);
+    const invalidatedRun = invalidatedRuns?.get(token);
+    if (!invalidatedRuns || !invalidatedRun) {
+      return null;
+    }
+
+    invalidatedRuns.delete(token);
+    if (invalidatedRuns.size === 0) {
+      this.invalidatedPendingRuns.delete(agentId);
+    }
+    return invalidatedRun.stagedLifecycleEvents;
+  }
+
   clearAgentRun(agentId: string): void {
     const run = this.runs.get(agentId);
     if (run) {
       this.clearRun(agentId, run);
     }
+    this.invalidatedPendingRuns.delete(agentId);
   }
 
   createTurnStream(turnId: string): ForegroundTurnStream {

@@ -40,6 +40,7 @@ import type {
 } from "./agent-sdk-types.js";
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
+import type { AgentRunState } from "./agent-run-state.js";
 import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js";
 import {
   createFakeCodexAppServer,
@@ -524,6 +525,55 @@ class PendingStartSession extends TestAgentSession {
   completePendingStartBeforeResolution(): void {
     const turnId = "pending-start-turn-1";
     this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+    this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+  }
+
+  override async interrupt(): Promise<void> {}
+}
+
+class InvalidatedGenerationSession extends TestAgentSession {
+  private readonly firstStartRequested = deferred<void>();
+  private readonly firstStartAllowed = deferred<void>();
+  private readonly replacementStartRequested = deferred<void>();
+  private readonly replacementStartAllowed = deferred<void>();
+  private turnCount = 0;
+
+  override async startTurn(): Promise<{ turnId: string }> {
+    this.turnCount += 1;
+    if (this.turnCount === 1) {
+      this.firstStartRequested.resolve();
+      await this.firstStartAllowed.promise;
+      return { turnId: "invalidated-turn" };
+    }
+    if (this.turnCount === 2) {
+      this.replacementStartRequested.resolve();
+      await this.replacementStartAllowed.promise;
+      return { turnId: "replacement-turn" };
+    }
+    throw new Error(`Unexpected turn ${this.turnCount}`);
+  }
+
+  waitForFirstStart(): Promise<void> {
+    return this.firstStartRequested.promise;
+  }
+
+  waitForReplacementStart(): Promise<void> {
+    return this.replacementStartRequested.promise;
+  }
+
+  resolveFirstStart(): void {
+    this.firstStartAllowed.resolve();
+  }
+
+  resolveReplacementStart(): void {
+    this.replacementStartAllowed.resolve();
+  }
+
+  emitTurnStarted(turnId: string): void {
+    this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+  }
+
+  emitTurnCompleted(turnId: string): void {
     this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
   }
 
@@ -1866,6 +1916,94 @@ test("replaceAgentRun keeps ownership when the canceled pending start resolves l
     });
   } finally {
     await fixture.cleanup();
+  }
+});
+
+test("late lifecycle from an invalidated pending start cannot settle its replacement", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-invalidated-start-fence-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const session = new InvalidatedGenerationSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10 },
+    idFactory: () => "00000000-0000-4000-8000-000000000314",
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const runs = castInternals<{ runs: AgentRunState }>(manager).runs;
+  const firstRun = manager.streamAgent(agent.id, "first pending turn");
+  const firstRunDrain = (async () => {
+    for await (const _event of firstRun) {
+      // The invalidated generation exits after its delayed start response resolves.
+    }
+  })();
+  let replacementDrain: Promise<void> | null = null;
+
+  try {
+    await session.waitForFirstStart();
+    const replacement = await manager.replaceAgentRun(agent.id, "replacement turn");
+    replacementDrain = (async () => {
+      for await (const _event of replacement) {
+        // Drain through the replacement's real terminal.
+      }
+    })();
+    await session.waitForReplacementStart();
+
+    session.emitTurnStarted("invalidated-turn");
+    session.emitTurnCompleted("invalidated-turn");
+    expect(runs.getPendingRun(agent.id)).toMatchObject({
+      observedTurnId: null,
+      settled: false,
+    });
+
+    session.resolveFirstStart();
+    await firstRunDrain;
+    expect(runs.getPendingRun(agent.id)).toMatchObject({
+      observedTurnId: null,
+      settled: false,
+    });
+
+    session.emitTurnStarted("replacement-turn");
+    await vi.waitFor(() => {
+      expect(runs.getPendingRun(agent.id)).toMatchObject({
+        observedTurnId: "replacement-turn",
+        settled: false,
+      });
+    });
+    session.resolveReplacementStart();
+    await manager.waitForAgentRunStart(agent.id);
+
+    await expect(manager.replaceAgentRun(agent.id, "must not overlap")).rejects.toThrow(
+      `Cannot replace agent ${agent.id} because its active run cancellation was not acknowledged`,
+    );
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "running",
+      activeForegroundTurnId: "replacement-turn",
+    });
+
+    session.emitTurnCompleted("replacement-turn");
+    await replacementDrain;
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+    });
+  } finally {
+    session.resolveFirstStart();
+    session.resolveReplacementStart();
+    session.emitTurnCompleted("replacement-turn");
+    await firstRunDrain.catch(() => undefined);
+    await replacementDrain?.catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
   }
 });
 
