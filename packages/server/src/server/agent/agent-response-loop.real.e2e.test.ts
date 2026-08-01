@@ -1,5 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
 import { createServer } from "http";
+import { createServer as createSocketServer, type Socket } from "net";
+import { execFileSync } from "child_process";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
@@ -8,11 +10,16 @@ import { z } from "zod";
 import express from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import { generateStructuredAgentResponse } from "./agent-response-loop.js";
+import {
+  generateStructuredAgentResponse,
+  StructuredAgentTimeoutError,
+} from "./agent-response-loop.js";
 import { AgentManager } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
 import { createAgentMcpServer } from "./mcp-server.js";
 import { shutdownProviders } from "./provider-registry.js";
+import { ClaudeAgentClient } from "./providers/claude/agent.js";
+import { isCommandAvailable } from "../../executable-resolution/executable-resolution.js";
 import {
   canRunRealProvider,
   createRealProviderClients,
@@ -148,6 +155,54 @@ async function startAgentMcpServer(logger: pino.Logger): Promise<AgentMcpServerH
   };
 }
 
+interface SinkholeHandle {
+  port: number;
+  close: () => Promise<void>;
+}
+
+// Accepts connections and never answers them, which is what a hung provider
+// looks like from here. Live connections are destroyed on close because
+// net.Server#close waits for them, and the killed child's socket can outlive
+// the child.
+async function startSinkhole(): Promise<SinkholeHandle> {
+  const sockets = new Set<Socket>();
+  const server = createSocketServer((socket) => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+    socket.on("error", () => undefined);
+  });
+  server.on("error", () => undefined);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+
+  return {
+    port: typeof address === "object" && address ? address.port : 0,
+    close: async () => {
+      for (const socket of sockets) {
+        socket.destroy();
+      }
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
+// The provider CLI runs as a child of this process, so a leak is visible in the
+// process table and nowhere else.
+function providerCliPids(): Set<string> {
+  const out = execFileSync("ps", ["-eo", "pid,args"], { encoding: "utf8" });
+  const pids = new Set<string>();
+  for (const line of out.split("\n")) {
+    if (!line.includes("--output-format stream-json")) {
+      continue;
+    }
+    const pid = line.trim().split(/\s+/)[0];
+    if (pid) {
+      pids.add(pid);
+    }
+  }
+  return pids;
+}
+
 describe("getStructuredAgentResponse (e2e)", () => {
   let manager: AgentManager;
   let cwd: string;
@@ -250,4 +305,96 @@ describe("getStructuredAgentResponse (e2e)", () => {
 
     expect(result.message.trim().toLowerCase()).toBe("hello");
   }, 180000);
+});
+
+// Regression for #1937: a generation that never reaches a terminal event left
+// its provider CLI child (~250MB) alive for the lifetime of the daemon, because
+// the close that reaps it lives in a finally block the run never reached.
+//
+// Separate from the suite above because it needs no API key and must not use
+// one: the stall is a socket that accepts and never answers, which is what a
+// hung provider looks like from here. Only the real `claude` binary is required.
+describe("generateStructuredAgentResponse process cleanup (e2e)", () => {
+  const logger = pino({ level: "silent" });
+  let cwd: string;
+  let claudeInstalled = false;
+
+  beforeAll(async () => {
+    claudeInstalled = await isCommandAvailable("claude");
+  });
+
+  beforeEach(() => {
+    cwd = mkdtempSync(path.join(tmpdir(), "agent-response-loop-stall-"));
+  });
+
+  afterEach(async () => {
+    rmSync(cwd, { recursive: true, force: true });
+    await shutdownProviders(logger);
+  }, 60000);
+
+  test("reaps the provider CLI child when the run stalls", async (context) => {
+    if (!claudeInstalled || process.platform === "win32") {
+      context.skip();
+    }
+
+    const sinkhole = await startSinkhole();
+
+    const manager = new AgentManager({
+      clients: {
+        claude: new ClaudeAgentClient({
+          logger,
+          runtimeSettings: {
+            env: {
+              ANTHROPIC_BASE_URL: `http://127.0.0.1:${sinkhole.port}`,
+              ANTHROPIC_AUTH_TOKEN: "sinkhole",
+              ANTHROPIC_API_KEY: "",
+            },
+          },
+        }),
+      },
+      logger,
+    });
+
+    const before = providerCliPids();
+    // Poll rather than checking only at the end, so "no leak" cannot pass
+    // trivially by never spawning a child in the first place.
+    const spawned = new Set<string>();
+    const watcher = setInterval(() => {
+      for (const pid of providerCliPids()) {
+        if (!before.has(pid)) {
+          spawned.add(pid);
+        }
+      }
+    }, 100);
+
+    try {
+      await expect(
+        generateStructuredAgentResponse({
+          manager,
+          agentConfig: {
+            provider: "claude",
+            model: CLAUDE_TEST_MODEL,
+            cwd,
+            title: "Stalled Generation Test",
+            internal: true,
+          },
+          persistSession: false,
+          prompt: "Return JSON with a short message.",
+          schema: z.object({ message: z.string() }),
+          maxRetries: 0,
+          timeoutMs: 20000,
+        }),
+      ).rejects.toBeInstanceOf(StructuredAgentTimeoutError);
+    } finally {
+      clearInterval(watcher);
+      await sinkhole.close();
+    }
+
+    // SIGTERM then SIGKILL, then the OS has to reap.
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    const after = providerCliPids();
+
+    expect(spawned.size).toBeGreaterThan(0);
+    expect([...spawned].filter((pid) => after.has(pid))).toEqual([]);
+  }, 120000);
 });

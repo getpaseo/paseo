@@ -212,7 +212,9 @@ describe("generateStructuredAgentResponse", () => {
       }),
     ).rejects.toBeInstanceOf(StructuredAgentTimeoutError);
 
-    expect(attempts).toBeLessThan(101);
+    // 60ms of budget at 20ms per attempt: three or four, nowhere near the 101
+    // that a per-retry bound would have allowed.
+    expect(attempts).toBeLessThanOrEqual(4);
     expect(closed).toEqual(["generator"]);
   });
 });
@@ -339,6 +341,41 @@ describe("generateStructuredAgentResponseWithFallback", () => {
       { provider: "codex", model: "gpt-5.4-mini" },
     ]);
     expect(manager.checkedProviders).toEqual(["claude", "codex"]);
+  });
+
+  it("spends one shared deadline across the waterfall", async () => {
+    const timeouts: Array<number | undefined> = [];
+    const manager = createManager([
+      { provider: "claude", available: true, error: null },
+      { provider: "codex", available: true, error: null },
+      { provider: "opencode", available: true, error: null },
+    ]);
+
+    await expect(
+      generateStructuredAgentResponseWithFallback({
+        manager,
+        cwd: "/tmp/project",
+        prompt: "Return JSON",
+        schema,
+        providers: [
+          { provider: "claude", model: "haiku" },
+          { provider: "codex", model: "gpt-5.4-mini" },
+          { provider: "opencode", model: "opencode/gpt-5-nano" },
+        ],
+        timeoutMs: 50,
+        runner: async (options) => {
+          timeouts.push(options.timeoutMs);
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          throw new Error("failed");
+        },
+      }),
+    ).rejects.toBeInstanceOf(StructuredAgentFallbackError);
+
+    // Each candidate gets what is left of the budget, not a fresh copy of it,
+    // and once it is spent the rest are skipped instead of run.
+    expect(timeouts).toHaveLength(2);
+    expect(timeouts[0]).toBeLessThanOrEqual(50);
+    expect(timeouts[1]).toBeLessThan(timeouts[0] as number);
   });
 
   it("throws a fallback error when all providers are unavailable or fail", async () => {

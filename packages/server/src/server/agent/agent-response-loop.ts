@@ -42,7 +42,11 @@ export interface StructuredGenerationAttempt {
 // An unbounded wait pins the provider CLI child process (~250MB for `claude`)
 // for the lifetime of the daemon, because the close that reaps it lives in the
 // finally block this wait never reaches. Bound the run so cleanup always runs.
-export const DEFAULT_STRUCTURED_GENERATION_TIMEOUT_MS = 120_000;
+// Generous on purpose: the bound exists to stop a leak that otherwise lasts for
+// the daemon's lifetime, so it only has to be shorter than "forever". Cutting a
+// slow but legitimate generation short is the worse failure — the largest real
+// prompt is a 200k-char patch (MAX_PULL_REQUEST_PATCH_CHARS).
+export const DEFAULT_STRUCTURED_GENERATION_TIMEOUT_MS = 300_000;
 
 export class StructuredAgentTimeoutError extends Error {
   readonly timeoutMs: number;
@@ -446,12 +450,28 @@ export async function generateStructuredAgentResponseWithFallback<T>(
     throw new StructuredAgentFallbackError([]);
   }
 
+  // One deadline for the whole waterfall. A per-candidate bound would stack, so
+  // a total provider outage would keep the caller waiting timeoutMs once per
+  // candidate instead of once.
+  const deadline = Date.now() + (timeoutMs ?? DEFAULT_STRUCTURED_GENERATION_TIMEOUT_MS);
+
   const runStructured =
     runner ??
     ((input: StructuredAgentGenerationOptions<T>) => generateStructuredAgentResponse<T>(input));
   const attempts: StructuredGenerationAttempt[] = [];
 
   for (const candidate of providers) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      attempts.push({
+        provider: candidate.provider,
+        model: candidate.model ?? null,
+        available: false,
+        error: "structured generation deadline exceeded",
+      });
+      continue;
+    }
+
     const availabilityEntry = await manager.getProviderAvailability(candidate.provider);
     if (!availabilityEntry.available) {
       const reason = availabilityEntry.error ?? "unavailable";
@@ -476,7 +496,7 @@ export async function generateStructuredAgentResponseWithFallback<T>(
         maxRetries,
         schemaName,
         persistSession,
-        ...(timeoutMs === undefined ? {} : { timeoutMs }),
+        timeoutMs: remainingMs,
         agentConfig: {
           ...agentConfigOverrides,
           provider: candidate.provider,
