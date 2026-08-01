@@ -8748,6 +8748,91 @@ test("Codex replacement waits for the provider terminal before admitting the nex
   }
 });
 
+test("Codex replacement bounds a pending accepted turn without surrendering ownership", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-codex-pending-replace-terminal-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const firstStartResponse = deferred<void>();
+  let turnStartCount = 0;
+  const catalogAppServer = createFakeCodexAppServer();
+  const appServer = createFakeCodexAppServer({
+    "turn/start": async () => {
+      turnStartCount += 1;
+      if (turnStartCount === 1) {
+        await firstStartResponse.promise;
+      }
+      return {};
+    },
+    "turn/interrupt": () => ({}),
+  });
+  const manager = new AgentManager({
+    clients: {
+      codex: createCodexProviderWithFakeAppServers([catalogAppServer, appServer]),
+    },
+    registry: storage,
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10 },
+    idFactory: () => "00000000-0000-4000-8000-000000000502",
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const firstRun = manager.streamAgent(agent.id, "first prompt");
+    const firstRunDrain = (async () => {
+      for await (const _event of firstRun) {
+        // Drain the pending provider-backed turn until its late start result is invalidated.
+      }
+    })();
+
+    await appServer.waitForTurnStart();
+    appServer.startsTurn({ threadId: "thread-1", turnId: "native-turn-1" });
+
+    const refusedReplacement = manager.replaceAgentRun(agent.id, "too early");
+    await appServer.waitForTurnInterrupt();
+    await expect(refusedReplacement).rejects.toThrow(
+      `Cannot replace agent ${agent.id} because its active run cancellation was not acknowledged`,
+    );
+    expect(turnStartCount).toBe(1);
+    expect(manager.getAgent(agent.id)).toMatchObject({ lifecycle: "running" });
+    expect(manager.hasInFlightRun(agent.id)).toBe(true);
+
+    appServer.interruptTurn({ threadId: "thread-1", turnId: "native-turn-1" });
+    const replacement = await manager.replaceAgentRun(agent.id, "replacement prompt");
+    const replacementEvents: AgentStreamEvent[] = [];
+    const replacementDrain = (async () => {
+      for await (const event of replacement) replacementEvents.push(event);
+    })();
+
+    await appServer.waitForTurnStart(2);
+    appServer.startsTurn({ threadId: "thread-1", turnId: "native-turn-2" });
+    await manager.waitForAgentRunStart(agent.id);
+    const replacementTurnId = manager.getAgent(agent.id)?.activeForegroundTurnId;
+
+    firstStartResponse.resolve(undefined);
+    await firstRunDrain;
+    appServer.completeTurn({ threadId: "thread-1", turnId: "native-turn-1" });
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "running",
+      activeForegroundTurnId: replacementTurnId,
+    });
+
+    appServer.completeTurn({ threadId: "thread-1", turnId: "native-turn-2" });
+    await replacementDrain;
+
+    expect(replacementEvents.some((event) => event.type === "turn_completed")).toBe(true);
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+    catalogAppServer.assertNoErrors();
+    appServer.assertNoErrors();
+    await manager.closeAgent(agent.id);
+  } finally {
+    firstStartResponse.resolve(undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("Codex reload replaces the provider session without waiting for its old terminal", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-codex-reload-terminal-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);

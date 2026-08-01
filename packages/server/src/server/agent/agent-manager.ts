@@ -2401,12 +2401,22 @@ export class AgentManager {
     if (!run) {
       return { status: "not_running" };
     }
+    if (
+      run.kind === "foreground" &&
+      run.settled &&
+      this.runs.settleForegroundRun(agentId, run.token)
+    ) {
+      agent.lastError = undefined;
+      this.finalizeForegroundTurn(agent);
+      return { status: "settled" };
+    }
 
     const interruptAcknowledged = await this.interruptSession(agent.session, agentId);
     if (
       interruptAcknowledged &&
       run.kind === "foreground" &&
       run.turnId === null &&
+      run.observedTurnId === null &&
       this.runs.settleForegroundRun(agentId, run.token)
     ) {
       agent.lastError = undefined;
@@ -2434,13 +2444,41 @@ export class AgentManager {
     agentId: string,
     action: "reload" | "replace" | "rewind",
   ): Promise<void> {
+    const cancellationStartedAt = Date.now();
     const run = this.runs.getRun(agentId);
     const result = await this.cancelAgentRun(agentId);
     if (result.status === "refused") {
       throw new AgentRunCancellationError(agentId, action);
     }
     if (action !== "reload" && run && !run.settled) {
-      await run.settledPromise;
+      const timeoutMs = Math.max(
+        0,
+        this.rescueTimeouts.interruptSessionMs - (Date.now() - cancellationStartedAt),
+      );
+      if (timeoutMs === 0) {
+        throw new AgentRunCancellationError(agentId, action);
+      }
+      const settlement = await this.waitWithTimeout({
+        operation: run.settledPromise,
+        timeoutMs,
+      });
+      if (settlement === "timed_out") {
+        this.logger.warn(
+          { agentId, action, turnId: run.turnId, kind: run.kind },
+          "Timed out waiting for the interrupted run terminal",
+        );
+        throw new AgentRunCancellationError(agentId, action);
+      }
+    }
+    if (
+      action !== "reload" &&
+      run?.kind === "foreground" &&
+      run.settled &&
+      this.runs.settleForegroundRun(agentId, run.token)
+    ) {
+      const agent = this.requireSessionAgent(agentId);
+      agent.lastError = undefined;
+      this.finalizeForegroundTurn(agent);
     }
   }
 
@@ -3065,19 +3103,30 @@ export class AgentManager {
   }
 
   private enqueueSessionEvent(agentId: string, event: AgentStreamEvent): void {
+    const agent = this.agents.get(agentId);
+    const turnId = getAgentStreamEventTurnId(event);
+    const terminal = isTurnTerminalEvent(event);
     this.logger.trace(
       {
         agentId,
         provider: event.provider,
-        sessionId: this.agents.get(agentId)?.persistence?.sessionId ?? undefined,
-        turnId: getAgentStreamEventTurnId(event),
+        sessionId: agent?.persistence?.sessionId ?? undefined,
+        turnId,
         event,
       },
       "agent.manager.enqueue",
     );
-    const pendingRun = this.runs.getPendingRun(agentId);
-    if (pendingRun && !pendingRun.started) {
-      pendingRun.stagedEvents.push(event);
+    if (
+      this.runs.stagePendingRunEvent(agentId, event, {
+        terminal,
+        finalized: Boolean(
+          agent &&
+          turnId &&
+          (event.type === "turn_started" || terminal) &&
+          this.runs.hasFinalizedTurn(agent, turnId),
+        ),
+      })
+    ) {
       return;
     }
     const previous = this.sessionEventTails.get(agentId) ?? Promise.resolve();

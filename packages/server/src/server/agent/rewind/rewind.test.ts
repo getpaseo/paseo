@@ -226,6 +226,70 @@ describe("AgentManager rewind", () => {
     });
   });
 
+  test("bounds rewind while a pending start still owns an accepted provider turn", async () => {
+    let resolveStart!: () => void;
+    let startRequested!: () => void;
+    const startGate = new Promise<void>((resolve) => {
+      resolveStart = resolve;
+    });
+    const requested = new Promise<void>((resolve) => {
+      startRequested = resolve;
+    });
+
+    class PendingAcceptedRewindSession extends FakeRewindSession {
+      override async startTurn(): Promise<{ turnId: string }> {
+        this.activeTurnId = "pending-accepted-rewind-turn";
+        this.emit({
+          type: "turn_started",
+          provider: this.provider,
+          turnId: this.activeTurnId,
+        });
+        startRequested();
+        await startGate;
+        return { turnId: "pending-accepted-rewind-turn" };
+      }
+
+      override async interrupt(): Promise<void> {
+        this.aborted = true;
+      }
+    }
+
+    const session = new PendingAcceptedRewindSession();
+    const manager = new AgentManager({
+      clients: { claude: new FakeRewindClient(session) },
+      logger: createTestLogger(),
+      rescueTimeouts: { interruptSessionMs: 10 },
+      idFactory: () => "00000000-0000-4000-8000-000000000905",
+    });
+    const agent = await manager.createAgent({ provider: "claude", cwd: process.cwd() }, undefined, {
+      workspaceId: undefined,
+    });
+    const stream = manager.streamAgent(agent.id, "keep working");
+    const drain = (async () => {
+      for await (const _event of stream) {
+        // Drain until the late start result exits after rewind recovery.
+      }
+    })();
+    await requested;
+
+    await expect(manager.rewind(agent.id, "message-1", "files")).rejects.toThrow(
+      `Cannot rewind agent ${agent.id} because its active run cancellation was not acknowledged`,
+    );
+    expect(session.recordedRewinds).toEqual([]);
+    expect(manager.hasInFlightRun(agent.id)).toBe(true);
+
+    session.completeActiveTurn();
+    await manager.rewind(agent.id, "message-1", "files");
+    resolveStart();
+    await drain;
+
+    expect(session.recordedRewinds).toEqual([{ mode: "files", messageId: "message-1" }]);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+    });
+  });
+
   test("blocks new prompts until the rehydrate epoch broadcasts", async () => {
     const historyGate = new RewindHistoryGate();
     historyGate.hold();

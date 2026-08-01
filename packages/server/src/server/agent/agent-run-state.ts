@@ -14,6 +14,7 @@ export interface PendingForegroundRun {
   token: string;
   kind: "foreground";
   stagedEvents: AgentStreamEvent[];
+  observedTurnId: string | null;
   turnId: string | null;
   started: boolean;
   settled: boolean;
@@ -63,6 +64,29 @@ export class AgentRunState {
   isPendingRun(agentId: string, token: string): boolean {
     const run = this.runs.get(agentId);
     return run?.kind === "foreground" && run.token === token;
+  }
+
+  stagePendingRunEvent(
+    agentId: string,
+    event: AgentStreamEvent,
+    options: { terminal: boolean; finalized: boolean },
+  ): boolean {
+    const run = this.runs.get(agentId);
+    if (run?.kind !== "foreground" || run.started) {
+      return false;
+    }
+    if (options.finalized) {
+      return true;
+    }
+
+    run.stagedEvents.push(event);
+    const eventTurnId = getAgentStreamEventTurnId(event);
+    if (event.type === "turn_started" && eventTurnId && run.observedTurnId === null) {
+      run.observedTurnId = eventTurnId;
+    } else if (options.terminal && eventTurnId === run.observedTurnId) {
+      settleTrackedRun(run);
+    }
+    return true;
   }
 
   bindPendingRun(agentId: string, token: string, turnId: string): AgentStreamEvent[] | null {
@@ -285,6 +309,7 @@ function createPendingForegroundRun(): PendingForegroundRun {
   return {
     ...createTrackedRunState(),
     kind: "foreground",
+    observedTurnId: null,
     turnId: null,
     started: false,
     stagedEvents: [],
