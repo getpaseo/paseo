@@ -3667,7 +3667,7 @@ export class AgentManager {
   private async onStreamTimelineEvent(params: {
     agent: ActiveManagedAgent;
     event: Extract<AgentStreamEvent, { type: "timeline" }>;
-    options: { fromHistory?: boolean } | undefined;
+    options: HandleStreamEventOptions | undefined;
     isForegroundEvent: boolean;
     flags: StreamEventFlags;
   }): Promise<void> {
@@ -3680,17 +3680,29 @@ export class AgentManager {
     }
 
     if (options?.fromHistory) {
-      this.recordTimeline(
+      await this.runOrBufferTimelineWriter(
         agent.id,
-        event.item,
-        event.timestamp ? { timestamp: event.timestamp } : undefined,
+        async () => {
+          this.recordTimeline(
+            agent.id,
+            event.item,
+            event.timestamp ? { timestamp: event.timestamp } : undefined,
+          );
+        },
+        options.historyHydrationToken,
       );
       flags.shouldDispatchEvent = false;
       flags.shouldNotifyWaiters = false;
       return;
     }
 
-    this.recordAndDispatchTimelineItem(agent.id, event.item, event.provider, event.turnId);
+    await this.runOrBufferTimelineWriter(
+      agent.id,
+      async () => {
+        this.recordAndDispatchTimelineItem(agent.id, event.item, event.provider, event.turnId);
+      },
+      options?.historyHydrationToken,
+    );
     if (event.item.type === "user_message") {
       agent.lastUserMessageAt = new Date();
       this.emitState(agent);
@@ -3736,7 +3748,7 @@ export class AgentManager {
     event: Extract<AgentStreamEvent, { type: "turn_failed" }>;
     eventTurnId: string | undefined;
     isForegroundEvent: boolean;
-    options: { fromHistory?: boolean } | undefined;
+    options: HandleStreamEventOptions | undefined;
   }): Promise<void> {
     const { agent, event, eventTurnId, isForegroundEvent, options } = params;
     this.logger.warn(
@@ -3913,7 +3925,7 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     provider: AgentProvider,
     message: string,
-    options?: { fromHistory?: boolean },
+    options?: HandleStreamEventOptions,
   ): Promise<void> {
     if (options?.fromHistory) {
       return;
@@ -3924,26 +3936,32 @@ export class AgentManager {
       return;
     }
 
-    const text = `${SYSTEM_ERROR_PREFIX} ${normalized}`;
-    const lastItem = await this.getLastItemFromStores(agent.id);
-    if (lastItem?.type === "assistant_message" && lastItem.text === text) {
-      return;
-    }
-
-    const item: AgentTimelineItem = { type: "assistant_message", text };
-    const row = this.recordTimeline(agent.id, item);
-    this.dispatchStream(
+    await this.runOrBufferTimelineWriter(
       agent.id,
-      {
-        type: "timeline",
-        item,
-        provider,
+      async () => {
+        const text = `${SYSTEM_ERROR_PREFIX} ${normalized}`;
+        const lastItem = await this.getLastItemFromStores(agent.id);
+        if (lastItem?.type === "assistant_message" && lastItem.text === text) {
+          return;
+        }
+
+        const item: AgentTimelineItem = { type: "assistant_message", text };
+        const row = this.recordTimeline(agent.id, item);
+        this.dispatchStream(
+          agent.id,
+          {
+            type: "timeline",
+            item,
+            provider,
+          },
+          {
+            seq: row.seq,
+            epoch: this.timelineStore.getEpoch(agent.id),
+            timestamp: row.timestamp,
+          },
+        );
       },
-      {
-        seq: row.seq,
-        epoch: this.timelineStore.getEpoch(agent.id),
-        timestamp: row.timestamp,
-      },
+      options?.historyHydrationToken,
     );
   }
 
